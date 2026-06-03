@@ -1,0 +1,20 @@
+---
+description: Mantener documentacion backend/API sincronizada con endpoints, mocks y permisos
+globs: src/app/api/**/*.ts,src/modules/**/services/*.mock-server.ts,src/lib/api/**/*.ts,src/shared/mocks/erp-data.ts,src/shared/auth/permissions.ts,public/openapi.yml,docs/**/*.md
+alwaysApply: false
+---
+
+# Backend API Documentation Rule
+
+Cuando cambies endpoints, servicios mock/server, permisos, mocks de backend o flujos API:
+
+- Revisa `docs/backend-api-agent-guide.md` antes de modificar.
+- Mantén el handler en `src/app/api/**/route.ts` delgado: permisos, Zod, servicio y respuesta.
+- Actualiza `public/openapi.yml` para cada endpoint, query param, payload, respuesta o permiso nuevo.
+- Actualiza `docs/mock-api-endpoints.md` con permisos, payloads y ejemplos relevantes.
+- Actualiza `docs/api-endpoints-checklist.md` con estado `[x]`, `[~]` o `[ ]`.
+- Actualiza `docs/auth-permissions.md` si cambian roles, permisos o overrides.
+- Actualiza `docs/server-side-api-strategy.md` si cambia arquitectura, flujo o plan Supabase.
+- Si agregas o cambias mocks, valida que `src/shared/mocks/erp-data.ts` cubra escenarios realistas.
+- Agrega o ajusta tests de Route Handlers.
+- Antes de cerrar, ejecuta `npm test`, `npm run typecheck` y `npm run lint` cuando el cambio sea sustantivo.

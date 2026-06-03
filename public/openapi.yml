@@ -1,0 +1,2345 @@
+openapi: 3.0.3
+info:
+  title: Control Ventas API (BFF)
+  version: 0.2.0
+  description: Contrato de endpoints internos Next.js (mock en tests, Supabase en runtime).
+servers:
+  - url: http://localhost:3000
+    description: Desarrollo local
+security:
+  - DemoRole: []
+tags:
+  - name: Dashboard
+  - name: Categories
+  - name: Products
+  - name: Inventory
+  - name: Sales
+  - name: Purchases
+  - name: Contacts
+  - name: SupplierProducts
+  - name: Payments
+  - name: Reports
+  - name: ExchangeRates
+  - name: Settings
+  - name: Users
+  - name: Auth
+  - name: Docs
+paths:
+  /api/docs:
+    get:
+      tags: [Docs]
+      summary: Redirigir a la documentacion visual de la API
+      responses:
+        "307":
+          description: Redireccion temporal hacia /api-docs
+  /api/dashboard/summary:
+    get:
+      tags: [Dashboard]
+      summary: Obtener resumen del dashboard
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee `daily_sales_summary`, `low_stock_products` y ventas pendientes.
+      x-permission: dashboard.view
+      responses:
+        "200":
+          $ref: "#/components/responses/DashboardSummaryResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/dashboard/metrics:
+    get:
+      tags: [Dashboard]
+      summary: Obtener metricas del dashboard
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase agrega ventas e items en el rango `from`/`to`.
+      x-permission: dashboard.view
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/dashboard/recent-sales:
+    get:
+      tags: [Dashboard]
+      summary: Obtener ultimas ventas
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Pagina con `skip`/`limit`.
+      x-permission: dashboard.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/SaleArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/dashboard/low-stock:
+    get:
+      tags: [Dashboard]
+      summary: Obtener stock bajo compacto
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee la vista `low_stock_products`.
+      x-permission: dashboard.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/categories:
+    get:
+      tags: [Categories]
+      summary: Listar categorias
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`.
+      x-permission: products.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Search"
+      responses:
+        "200":
+          description: Lista paginada de categorias
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Category"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Categories]
+      summary: Crear categoria
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CategoryInput"
+      responses:
+        "201":
+          description: Categoria creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/categories/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Categories]
+      summary: Obtener categoria
+      x-permission: products.view
+      responses:
+        "200":
+          description: Categoria
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Categories]
+      summary: Actualizar categoria
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CategoryUpdateInput"
+      responses:
+        "200":
+          description: Categoria actualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [Categories]
+      summary: Borrar categoria (soft delete)
+      description: Mock devuelve `deleted=true`. Supabase marca `is_active=false`.
+      x-permission: products.manage
+      responses:
+        "200":
+          description: Categoria borrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/products:
+    get:
+      tags: [Products]
+      summary: Listar productos
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Pagina con `skip`/`limit` y `count` exacto.
+      x-permission: products.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Search"
+        - name: isActive
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Filtra productos activos o inactivos.
+        - name: categoryId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filtra productos por categoria.
+      responses:
+        "200":
+          description: Lista paginada de productos
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Product"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Products]
+      summary: Crear producto
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. SKU duplicado responde `409`.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductCreateInput"
+      responses:
+        "201":
+          description: Producto creado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/products/import/template:
+    get:
+      tags: [Products]
+      summary: Descargar plantilla Excel de importacion masiva
+      description: |
+        Devuelve un archivo `.xlsx` con hojas Productos, Categorias e Instrucciones.
+        Las categorias activas se cargan desde mock o Supabase segun `API_DATA_SOURCE`.
+        La importacion fila a fila usa `POST /api/products`.
+      x-permission: products.view
+      responses:
+        "200":
+          description: Plantilla Excel
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: attachment; filename="plantilla-productos.xlsx"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/products/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Products]
+      summary: Obtener producto
+      x-permission: products.view
+      responses:
+        "200":
+          description: Producto
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Products]
+      summary: Actualizar producto
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. SKU duplicado responde `409`.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductUpdateInput"
+      responses:
+        "200":
+          description: Producto actualizado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [Products]
+      summary: Borrar producto (soft delete)
+      description: Mock devuelve `deleted=true`. Supabase marca `is_active=false`.
+      x-permission: products.manage
+      responses:
+        "200":
+          description: Producto borrado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/Product"
+                      - type: object
+                        properties:
+                          deleted:
+                            type: boolean
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/products/{id}/price:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [Products]
+      summary: Cambiar precio de producto
+      description: Mock simula historial. Supabase usa RPC `update_product_price`.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductPriceInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/products/{id}/price-history:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/Skip"
+      - $ref: "#/components/parameters/Limit"
+    get:
+      tags: [Products]
+      summary: Obtener historial de precios
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Pagina con `skip`/`limit`.
+      x-permission: products.view
+      responses:
+        "200":
+          description: Historial paginado de precios
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/ProductPriceHistory"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/products/{id}/suppliers:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Products]
+      summary: Listar proveedores de un producto
+      x-permission: products.view
+      responses:
+        "200":
+          $ref: "#/components/responses/SupplierProductArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/inventory:
+    get:
+      tags: [Inventory]
+      summary: Listar stock actual
+      x-permission: inventory.view
+      parameters:
+        - name: lowStock
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Productos en inventario
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Product"
+  /api/inventory/movements:
+    get:
+      tags: [Inventory]
+      summary: Listar movimientos de inventario
+      x-permission: inventory.view
+      parameters:
+        - name: productId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Movimientos de stock
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/StockMovement"
+  /api/inventory/stock-card:
+    get:
+      tags: [Inventory]
+      summary: Obtener kardex de inventario
+      x-permission: inventory.view
+      parameters:
+        - name: productId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Movimientos del kardex
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/StockMovement"
+  /api/inventory/adjustments:
+    post:
+      tags: [Inventory]
+      summary: Crear ajuste de inventario simulado
+      x-permission: inventory.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockAdjustmentInput"
+      responses:
+        "201":
+          description: Movimiento creado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockMovementResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/sales:
+    get:
+      tags: [Sales]
+      summary: Listar ventas
+      x-permission: sales.view
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/SaleStatus"
+        - name: customerId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Lista de ventas
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Sale"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Sales]
+      summary: Crear venta simulada
+      x-permission: sales.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleCreateInput"
+      responses:
+        "201":
+          description: Venta creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/sales/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Sales]
+      summary: Obtener venta
+      x-permission: sales.view
+      responses:
+        "200":
+          description: Venta
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/sales/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      tags: [Sales]
+      summary: Cancelar venta mock
+      x-permission: sales.create
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/sales/{id}/return:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [Sales]
+      summary: Registrar devolucion de cliente
+      description: Devuelve una venta mediante RPC `return_sale` cuando `API_DATA_SOURCE=supabase`.
+      x-permission: sales.create
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/sales/{id}/receipt:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Sales]
+      summary: Obtener recibo o factura
+      description: Payload compuesto de venta, items y cliente para impresion o vista de recibo.
+      x-permission: sales.view
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/purchases:
+    get:
+      tags: [Purchases]
+      summary: Listar compras
+      x-permission: purchases.view
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PurchaseStatus"
+        - name: supplierId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Lista de compras
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Purchase"
+    post:
+      tags: [Purchases]
+      summary: Crear compra
+      x-permission: purchases.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchaseCreateInput"
+      responses:
+        "201":
+          description: Compra creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/purchases/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Purchases]
+      summary: Obtener compra
+      x-permission: purchases.view
+      responses:
+        "200":
+          description: Compra
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/purchases/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      tags: [Purchases]
+      summary: Cancelar compra
+      x-permission: purchases.create
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/purchases/{id}/receive:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      tags: [Purchases]
+      summary: Recibir mercancia de compra en pedido
+      x-permission: purchases.create
+      responses:
+        "200":
+          description: Compra recibida
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/purchases/{id}/return:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [Purchases]
+      summary: Registrar devolucion a proveedor
+      x-permission: purchases.create
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/contacts:
+    get:
+      tags: [Contacts]
+      summary: Listar contactos
+      description: Listado paginado desde tabla `contacts` cuando `API_DATA_SOURCE=supabase`.
+      x-permission: contacts.view
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ContactType"
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Lista paginada de contactos
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Contact"
+    post:
+      tags: [Contacts]
+      summary: Crear contacto
+      description: Inserta en `contacts`. `tax_id` unico devuelve `409`.
+      x-permission: contacts.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContactCreateInput"
+      responses:
+        "201":
+          description: Contacto creado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/contacts/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Contacts]
+      summary: Obtener contacto
+      x-permission: contacts.view
+      responses:
+        "200":
+          description: Contacto
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Contacts]
+      summary: Actualizar contacto
+      description: Actualiza fila en `contacts`. `tax_id` duplicado devuelve `409`.
+      x-permission: contacts.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContactUpdateInput"
+      responses:
+        "200":
+          description: Contacto actualizado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/contacts/{id}/activity:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Contacts]
+      summary: Obtener actividad de un contacto
+      x-permission: contacts.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/contacts/{id}/sales:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Contacts]
+      summary: Obtener ventas de un cliente
+      x-permission: contacts.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/contacts/{id}/purchases:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Contacts]
+      summary: Obtener compras de un proveedor
+      x-permission: contacts.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/contacts/{id}/payments:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Contacts]
+      summary: Obtener pagos de un contacto
+      x-permission: contacts.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/supplier-products:
+    get:
+      tags: [SupplierProducts]
+      summary: Listar relaciones proveedor-producto
+      x-permission: products.view
+      parameters:
+        - name: supplierId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: productId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SupplierProductArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [SupplierProducts]
+      summary: Crear relacion proveedor-producto
+      description: Inserta en `supplier_products` tras validar proveedor con RPC `assert_contact_type`.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierProductInput"
+      responses:
+        "201":
+          description: Relacion creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierProductResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/supplier-products/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      tags: [SupplierProducts]
+      summary: Actualizar relacion proveedor-producto
+      description: Actualiza `supplier_products`; valida tipo de proveedor al cambiar `supplierId`.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierProductUpdateInput"
+      responses:
+        "200":
+          description: Relacion actualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierProductResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/suppliers/{id}/products:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [SupplierProducts]
+      summary: Listar productos de un proveedor
+      x-permission: products.view
+      responses:
+        "200":
+          $ref: "#/components/responses/SupplierProductArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/payments:
+    get:
+      tags: [Payments]
+      summary: Listar pagos
+      description: Listado paginado desde tabla `payments` cuando `API_DATA_SOURCE=supabase`.
+      x-permission: payments.view
+      parameters:
+        - name: direction
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PaymentDirection"
+        - name: saleId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: purchaseId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: contactId
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Lista paginada de pagos
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Payment"
+    post:
+      tags: [Payments]
+      summary: Registrar pago
+      description: Crea pago con RPC `register_payment` cuando `API_DATA_SOURCE=supabase`.
+      x-permission: payments.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentCreateInput"
+      responses:
+        "201":
+          description: Pago creado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/payments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Payments]
+      summary: Obtener pago
+      description: Detalle con contacto embebido y saldo pendiente de la venta o compra asociada.
+      x-permission: payments.view
+      responses:
+        "200":
+          description: Pago
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Payments]
+      summary: Actualizar metadatos de pago
+      description: Actualiza notas y datos de referencia bancaria (no modifica montos).
+      x-permission: payments.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentUpdateInput"
+      responses:
+        "200":
+          description: Pago actualizado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/reports/daily-sales:
+    get:
+      tags: [Reports]
+      summary: Reporte diario de ventas
+      x-permission: reports.view
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/gross-profit:
+    get:
+      tags: [Reports]
+      summary: Reporte de ganancia bruta
+      x-permission: reports.view
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/product-profitability:
+    get:
+      tags: [Reports]
+      summary: Reporte de rentabilidad por producto
+      x-permission: reports.view
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/low-stock:
+    get:
+      tags: [Reports]
+      summary: Reporte de stock bajo
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee la vista `low_stock_products`.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Productos bajo minimo
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Product"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/customer-purchases:
+    get:
+      tags: [Reports]
+      summary: Reporte de compras por cliente
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee la vista `customer_purchase_summary`.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/supplier-purchases:
+    get:
+      tags: [Reports]
+      summary: Reporte de compras por proveedor
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee la vista `supplier_purchase_summary`.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/stock-card:
+    get:
+      tags: [Reports]
+      summary: Kardex o tarjeta de stock
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee la vista `stock_card`.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: productId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/top-products:
+    get:
+      tags: [Reports]
+      summary: Productos mas vendidos
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase agrega `sale_items` filtrados por rango de ventas.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/top-customers:
+    get:
+      tags: [Reports]
+      summary: Clientes principales
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase agrega ventas por cliente en el rango.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/purchases:
+    get:
+      tags: [Reports]
+      summary: Reporte de compras
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lista compras con paginacion y filtros.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: supplierId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/exchange-rates:
+    get:
+      tags: [ExchangeRates]
+      summary: Listar tasas ref/VES
+      x-permission: dashboard.view
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Lista de tasas
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ExchangeRate"
+    post:
+      tags: [ExchangeRates]
+      summary: Crear tasa simulada
+      x-permission: payments.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExchangeRateCreateInput"
+      responses:
+        "201":
+          description: Tasa creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExchangeRateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/exchange-rates/current:
+    get:
+      tags: [ExchangeRates]
+      summary: Obtener tasa vigente (DolarAPI oficial)
+      description: |
+        Consulta la tasa USD/VES en el servidor (sin exponer DolarAPI al cliente).
+        Usa el campo `promedio` de https://ve.dolarapi.com/v1/dolares/oficial.
+        Cache en memoria (~15 min). Persiste en `exchange_rates` cuando cambia el dia o el valor.
+        El registro manual POST /api/exchange-rates no altera esta respuesta.
+      x-permission: dashboard.view
+      responses:
+        "200":
+          description: Tasa vigente oficial
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExchangeRateResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "502":
+          description: Respuesta invalida o error del proveedor de tasa
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Timeout o indisponibilidad del proveedor de tasa
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/settings:
+    get:
+      tags: [Settings]
+      summary: Obtener configuracion general (singleton app_settings)
+      x-permission: settings.view
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      tags: [Settings]
+      summary: Actualizar configuracion general (admin)
+      x-permission: users.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppSettingsInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/users:
+    get:
+      tags: [Users]
+      summary: Listar perfiles mock
+      x-permission: users.manage
+      responses:
+        "200":
+          description: Usuarios mock
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/UserProfile"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      tags: [Users]
+      summary: Actualizar perfil mock
+      x-permission: users.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserProfileInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/UserProfileResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Obtener usuario actual mock
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login mock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout mock
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+  /api/openapi:
+    get:
+      tags: [Docs]
+      summary: Servir contrato OpenAPI YAML
+      responses:
+        "200":
+          description: Contrato OpenAPI YAML
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /api/docs:
+    get:
+      tags: [Docs]
+      summary: Redirigir a Swagger UI
+      responses:
+        "307":
+          description: Redireccion temporal a `/api-docs`.
+components:
+  securitySchemes:
+    DemoRole:
+      type: apiKey
+      in: header
+      name: x-demo-role
+      description: "Rol temporal para endpoints mock: admin, vendedor, almacen o contador."
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    Search:
+      name: search
+      in: query
+      required: false
+      schema:
+        type: string
+    Skip:
+      name: skip
+      in: query
+      required: false
+      description: Registros a omitir desde el inicio del resultado filtrado.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Cantidad por pagina. Minimo 10, default 10.
+      schema:
+        type: integer
+        minimum: 10
+        default: 10
+  responses:
+    BadRequest:
+      description: Solicitud invalida
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Sin permiso
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Conflicto de negocio, por ejemplo SKU duplicado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    DashboardSummaryResponse:
+      description: Resumen del dashboard
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: "#/components/schemas/DashboardSummary"
+    ReportArrayResponse:
+      description: Lista paginada generica
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: "#/components/schemas/PaginatedList"
+    ReportObjectResponse:
+      description: Objeto generico
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: object
+    SaleArrayResponse:
+      description: Lista paginada de ventas
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedList"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Sale"
+    SupplierProductArrayResponse:
+      description: Lista paginada de relaciones proveedor-producto
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedList"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SupplierProduct"
+    UserProfileResponse:
+      description: Perfil de usuario
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: "#/components/schemas/UserProfile"
+  schemas:
+    PaginatedList:
+      type: object
+      required: [items, skip, limit, total]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+        skip:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          minimum: 10
+        total:
+          type: integer
+          minimum: 0
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [BAD_REQUEST, CONFLICT, FORBIDDEN, INTERNAL_ERROR, NOT_FOUND, UNAUTHORIZED]
+            message:
+              type: string
+            issues:
+              type: array
+              items:
+                type: object
+    ContactType:
+      type: string
+      enum: [cliente, proveedor, ambos]
+    SaleStatus:
+      type: string
+      enum: [borrador, pendiente_pago, pagada, cancelada, devuelta]
+    PurchaseStatus:
+      type: string
+      enum: [pedido, recibido, cancelado, devuelto]
+    PaymentDirection:
+      type: string
+      enum: [entrada, salida]
+    PaymentMethod:
+      type: string
+      enum: [efectivo_ves, efectivo_usd, pago_movil, punto_venta, transferencia]
+    StockMovementType:
+      type: string
+      enum:
+        - venta
+        - compra
+        - ajuste_entrada
+        - ajuste_salida
+        - devolucion_cliente
+        - devolucion_proveedor
+        - inventario_inicial
+    UserRole:
+      type: string
+      enum: [admin, vendedor, almacen, contador]
+    Permission:
+      type: string
+      enum:
+        - dashboard.view
+        - sales.view
+        - sales.create
+        - purchases.view
+        - purchases.create
+        - inventory.view
+        - inventory.manage
+        - products.view
+        - products.manage
+        - contacts.view
+        - contacts.manage
+        - payments.view
+        - payments.manage
+        - reports.view
+        - settings.view
+        - users.manage
+    Category:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+    CategoryResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Category"
+    CategoryInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+    CategoryUpdateInput:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+    SupplierProduct:
+      type: object
+      required: [id, supplierId, productId, lastCostRef]
+      properties:
+        id:
+          type: string
+        supplierId:
+          type: string
+        productId:
+          type: string
+        lastCostRef:
+          type: number
+        supplierSku:
+          type: string
+        supplier:
+          $ref: "#/components/schemas/Contact"
+        product:
+          $ref: "#/components/schemas/Product"
+    SupplierProductResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/SupplierProduct"
+    SupplierProductInput:
+      type: object
+      required: [supplierId, productId]
+      properties:
+        supplierId:
+          type: string
+        productId:
+          type: string
+        lastCostRef:
+          type: number
+          minimum: 0
+        supplierSku:
+          type: string
+    SupplierProductUpdateInput:
+      type: object
+      properties:
+        supplierId:
+          type: string
+        productId:
+          type: string
+        lastCostRef:
+          type: number
+          minimum: 0
+        supplierSku:
+          type: string
+    Product:
+      type: object
+      required: [id, sku, name, salePriceRef, currentCostRef, currentStock, minStock, isActive]
+      properties:
+        id:
+          type: string
+        categoryId:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        salePriceRef:
+          type: number
+        currentCostRef:
+          type: number
+        currentStock:
+          type: integer
+        minStock:
+          type: integer
+        isActive:
+          type: boolean
+    ProductResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Product"
+    ProductCreateInput:
+      type: object
+      required: [name, sku, salePriceRef]
+      properties:
+        categoryId:
+          type: string
+        currentCostRef:
+          type: number
+          minimum: 0
+        currentStock:
+          type: integer
+          minimum: 0
+        minStock:
+          type: integer
+          minimum: 0
+        name:
+          type: string
+          minLength: 1
+        salePriceRef:
+          type: number
+          minimum: 0
+        sku:
+          type: string
+          minLength: 1
+    ProductUpdateInput:
+      type: object
+      properties:
+        categoryId:
+          type: string
+        currentCostRef:
+          type: number
+          minimum: 0
+        currentStock:
+          type: integer
+          minimum: 0
+        minStock:
+          type: integer
+          minimum: 0
+        name:
+          type: string
+          minLength: 1
+        salePriceRef:
+          type: number
+          minimum: 0
+        sku:
+          type: string
+          minLength: 1
+    ProductPriceInput:
+      type: object
+      required: [salePriceRef]
+      properties:
+        salePriceRef:
+          type: number
+          minimum: 0
+    ProductPriceHistory:
+      type: object
+      required: [id, productId, salePriceRef, createdAt, userId]
+      properties:
+        id:
+          type: string
+        productId:
+          type: string
+        salePriceRef:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+        userId:
+          type: string
+    Contact:
+      type: object
+      required: [id, name, type, isActive]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          $ref: "#/components/schemas/ContactType"
+        taxId:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        address:
+          type: string
+        isActive:
+          type: boolean
+    ContactResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Contact"
+    ContactCreateInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        type:
+          $ref: "#/components/schemas/ContactType"
+        taxId:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        address:
+          type: string
+    ContactUpdateInput:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        type:
+          $ref: "#/components/schemas/ContactType"
+        taxId:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        address:
+          type: string
+    Sale:
+      type: object
+      required: [id, invoiceNumber, customerId, status, totalRef, totalVes, paidVes]
+      properties:
+        id:
+          type: string
+        invoiceNumber:
+          type: string
+        customerId:
+          type: string
+        status:
+          $ref: "#/components/schemas/SaleStatus"
+        subtotalRef:
+          type: number
+        discountRef:
+          type: number
+        taxRef:
+          type: number
+        totalRef:
+          type: number
+        totalVes:
+          type: number
+        paidVes:
+          type: number
+        refRateVes:
+          type: number
+        notes:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    SaleResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Sale"
+    SaleCreateInput:
+      type: object
+      required: [customerId, items]
+      properties:
+        customerId:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LineItemInput"
+        discountRef:
+          type: number
+          minimum: 0
+        taxRef:
+          type: number
+          minimum: 0
+        refRateVes:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+    Purchase:
+      type: object
+      required: [id, purchaseNumber, supplierId, status, totalRef, totalVes, paidVes]
+      properties:
+        id:
+          type: string
+        purchaseNumber:
+          type: string
+        supplierId:
+          type: string
+        status:
+          $ref: "#/components/schemas/PurchaseStatus"
+        subtotalRef:
+          type: number
+        discountRef:
+          type: number
+        taxRef:
+          type: number
+        totalRef:
+          type: number
+        totalVes:
+          type: number
+        paidVes:
+          type: number
+        refRateVes:
+          type: number
+    PurchaseResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Purchase"
+    PurchaseCreateInput:
+      type: object
+      required: [supplierId, items]
+      properties:
+        supplierId:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PurchaseLineItemInput"
+        status:
+          $ref: "#/components/schemas/PurchaseStatus"
+          description: Estado inicial. Solo `pedido` o `recibido`.
+        notes:
+          type: string
+        purchaseNumber:
+          type: string
+        exchangeRateId:
+          type: string
+          format: uuid
+        discountRef:
+          type: number
+          minimum: 0
+        taxRef:
+          type: number
+          minimum: 0
+        refRateVes:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+    Payment:
+      type: object
+      required: [id, direction, method, amount, amountVes, amountRef, contactId]
+      properties:
+        id:
+          type: string
+        direction:
+          $ref: "#/components/schemas/PaymentDirection"
+        method:
+          $ref: "#/components/schemas/PaymentMethod"
+        saleId:
+          type: string
+        purchaseId:
+          type: string
+        contactId:
+          type: string
+        amount:
+          type: number
+        amountVes:
+          type: number
+        amountRef:
+          type: number
+        refRateVes:
+          type: number
+        bankName:
+          type: string
+        currency:
+          type: string
+          enum: [USD, VES]
+        pendingBalanceVes:
+          type: number
+        notes:
+          type: string
+        phone:
+          type: string
+        referenceCode:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        contact:
+          $ref: "#/components/schemas/Contact"
+    PaymentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Payment"
+    PaymentCreateInput:
+      type: object
+      required: [method, amount]
+      description: "Debe incluir saleId o purchaseId, pero no ambos. pago_movil requiere bankName, phone y referenceCode de 4 digitos. transferencia requiere bankName y referenceCode."
+      properties:
+        saleId:
+          type: string
+        purchaseId:
+          type: string
+        method:
+          $ref: "#/components/schemas/PaymentMethod"
+        currency:
+          type: string
+          enum: [USD, VES]
+        amount:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+        bankName:
+          type: string
+        phone:
+          type: string
+        referenceCode:
+          type: string
+          description: Referencia bancaria; para pago movil debe tener 4 digitos.
+        notes:
+          type: string
+    PaymentUpdateInput:
+      type: object
+      description: Solo metadatos editables; montos y metodo no se modifican tras el registro.
+      properties:
+        bankName:
+          type: string
+        phone:
+          type: string
+        referenceCode:
+          type: string
+        notes:
+          type: string
+    ExchangeRate:
+      type: object
+      required: [id, rateVes, source, createdAt]
+      properties:
+        id:
+          type: string
+        rateVes:
+          type: number
+        source:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    ExchangeRateResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/ExchangeRate"
+    ExchangeRateCreateInput:
+      type: object
+      required: [rateVes]
+      properties:
+        rateVes:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+        source:
+          type: string
+    UserProfile:
+      type: object
+      required: [id, email, name, role, isActive]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          $ref: "#/components/schemas/UserRole"
+        isActive:
+          type: boolean
+        grantedPermissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permission"
+        deniedPermissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permission"
+    UserProfileInput:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        role:
+          $ref: "#/components/schemas/UserRole"
+        isActive:
+          type: boolean
+        grantedPermissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permission"
+        deniedPermissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permission"
+    AppSettingsInput:
+      type: object
+      properties:
+        businessName:
+          type: string
+          minLength: 1
+        defaultTaxRate:
+          type: number
+          minimum: 0
+        invoicePrefix:
+          type: string
+          minLength: 1
+        lowStockThreshold:
+          type: integer
+          minimum: 0
+    LoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+        role:
+          $ref: "#/components/schemas/UserRole"
+    StockMovement:
+      type: object
+      required: [id, productId, type, quantityDelta, stockAfter, createdAt]
+      properties:
+        id:
+          type: string
+        productId:
+          type: string
+        type:
+          $ref: "#/components/schemas/StockMovementType"
+        quantityDelta:
+          type: integer
+        stockAfter:
+          type: integer
+        reason:
+          type: string
+        type:
+          $ref: "#/components/schemas/StockMovementType"
+        createdAt:
+          type: string
+          format: date-time
+    StockMovementResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/StockMovement"
+    StockAdjustmentInput:
+      type: object
+      required: [productId, quantityDelta]
+      properties:
+        productId:
+          type: string
+        quantityDelta:
+          type: integer
+        reason:
+          type: string
+        type:
+          $ref: "#/components/schemas/StockMovementType"
+    DashboardSummary:
+      type: object
+      required: [salesCount, totalRef, totalVes, lowStockCount, pendingSalesCount]
+      properties:
+        salesCount:
+          type: integer
+        totalRef:
+          type: number
+        totalVes:
+          type: number
+        lowStockCount:
+          type: integer
+        pendingSalesCount:
+          type: integer
+    LineItemInput:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+    PurchaseLineItemInput:
+      type: object
+      required: [productId, quantity, unitCostRef]
+      properties:
+        productId:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitCostRef:
+          type: number
+          minimum: 0
+        supplierSku:
+          type: string
