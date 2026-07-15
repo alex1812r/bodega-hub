@@ -1,374 +1,259 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { useContacts } from "@/modules/contacts/hooks/useContacts";
-import { useProducts } from "@/modules/products/hooks/useProducts";
+import { useCreatePayment } from "@/modules/payments/hooks/usePayments";
+import { useProductBarcodeScan } from "@/modules/products/hooks/useProductBarcodeScan";
+import { useCategories, useProducts } from "@/modules/products/hooks/useProducts";
+import { matchesProductSearch } from "@/modules/products/services/productSearch";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
+import { PageBackButton } from "@/shared/components/PageBackButton";
 import { Button } from "@/shared/components/Button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/shared/components/Card";
-import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
-import { EmptyState } from "@/shared/components/EmptyState";
+import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/shared/components/Card";
 import { ErrorState } from "@/shared/components/ErrorState";
-import { Input } from "@/shared/components/Input";
-import { PageHeader } from "@/shared/components/PageHeader";
-import { SelectField } from "@/shared/components/SelectField";
-import { Textarea } from "@/shared/components/Textarea";
-import { formatRef, formatVes, refToVes } from "@/shared/utils/currency";
+import type { PaymentMethod } from "@/shared/mocks/erp-data";
+import { refToVes } from "@/shared/utils/currency";
 
 import { type SaleCreateInput, useCreateSale } from "../hooks/useSales";
-
-type CartItem = {
-  productId: string;
-  productName: string;
-  quantity: number;
-  stock: number;
-  unitPriceRef: number;
-};
-
-const itemColumns: DataTableColumn<CartItem>[] = [
-  {
-    header: "Producto",
-    hideInCard: true,
-    key: "product",
-    render: (item) => item.productName,
-  },
-  { align: "right", header: "Cantidad", key: "quantity", render: (item) => item.quantity },
-  {
-    align: "right",
-    header: "Precio ref",
-    key: "unitPriceRef",
-    render: (item) => formatRef(item.unitPriceRef),
-  },
-  {
-    align: "right",
-    header: "Subtotal ref",
-    key: "subtotalRef",
-    render: (item) => formatRef(item.unitPriceRef * item.quantity),
-  },
-];
+import { PosCartPanel } from "./components/PosCartPanel";
+import { PosCatalogToolbar } from "./components/PosCatalogToolbar";
+import { PosCategorySlider } from "./components/PosCategorySlider";
+import { PosProductGrid } from "./components/PosProductGrid";
+import { PosScanModal } from "./components/PosScanModal";
+import { PosWorkspace } from "./components/PosWorkspace";
+import { usePosCart } from "./hooks/usePosCart";
 
 export function SaleCreatePage() {
-  const contacts = useContacts();
-  const products = useProducts({ isActive: true });
+  const contacts = useContacts({ limit: 100 });
+  const categories = useCategories();
+  const products = useProducts({ isActive: true, limit: 100 });
   const currentRate = useCurrentExchangeRate();
   const createSale = useCreateSale();
+  const createPayment = useCreatePayment();
+  const cart = usePosCart();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const barcodeScan = useProductBarcodeScan({ isActive: true });
+
   const [customerId, setCustomerId] = useState("");
-  const [productId, setProductId] = useState("");
-  const [quantity, setQuantity] = useState(1);
-  const [discountRef, setDiscountRef] = useState(0);
-  const [taxRef, setTaxRef] = useState(0);
-  const [notes, setNotes] = useState("");
-  const [items, setItems] = useState<CartItem[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("efectivo_ves");
+  const [search, setSearch] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [scanOpen, setScanOpen] = useState(false);
   const [formError, setFormError] = useState<string>();
 
   const customers = getPaginatedItems(contacts.data).filter(
     (contact) => contact.type === "cliente" || contact.type === "ambos",
   );
+  const categoryOptions = getPaginatedItems(categories.data);
   const activeProducts = getPaginatedItems(products.data);
   const dependencyError = contacts.error ?? products.error ?? currentRate.error;
   const rateVes = currentRate.data?.rateVes ?? 0;
-  const subtotalRef = useMemo(
-    () => items.reduce((total, item) => total + item.quantity * item.unitPriceRef, 0),
-    [items],
-  );
-  const totalRef = subtotalRef - discountRef + taxRef;
+  const totalRef = cart.subtotalRef;
   const totalVes = rateVes ? refToVes(totalRef, rateVes) : 0;
-  const selectedProduct = activeProducts.find((product) => product.id === productId);
+  const isSubmitting = createSale.isPending || createPayment.isPending;
 
-  function handleAddItem() {
-    setFormError(undefined);
+  const cartProductIds = useMemo(
+    () => new Set(cart.items.map((item) => item.productId)),
+    [cart.items],
+  );
 
-    if (!selectedProduct) {
-      setFormError("Selecciona un producto para agregarlo a la venta.");
-      return;
-    }
+  const filteredProducts = useMemo(() => {
+    const query = search.trim().toLowerCase();
 
-    if (quantity < 1) {
-      setFormError("La cantidad debe ser mayor a cero.");
-      return;
-    }
+    return activeProducts.filter((product) => {
+      const matchesCategory = !categoryId || product.categoryId === categoryId;
+      const matchesSearch = !query || matchesProductSearch(product, query);
 
-    setItems((current) => {
-      const existing = current.find((item) => item.productId === selectedProduct.id);
-
-      if (existing) {
-        return current.map((item) =>
-          item.productId === selectedProduct.id
-            ? { ...item, quantity: item.quantity + quantity }
-            : item,
-        );
-      }
-
-      return [
-        ...current,
-        {
-          productId: selectedProduct.id,
-          productName: selectedProduct.name,
-          quantity,
-          stock: selectedProduct.currentStock,
-          unitPriceRef: selectedProduct.salePriceRef,
-        },
-      ];
+      return matchesCategory && matchesSearch;
     });
-    setProductId("");
-    setQuantity(1);
+  }, [activeProducts, categoryId, search]);
+
+  function handleSearchChange(value: string) {
+    barcodeScan.clearScanError();
+    setSearch(value);
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function handleBarcodeScanSubmit(code: string) {
+    void barcodeScan.handleScanSubmit(code, {
+      onResolved: (product) => {
+        cart.addProduct(product);
+        setSearch("");
+        barcodeScan.clearScanError();
+      },
+    });
+  }
+
+  async function handleProcessSale() {
     setFormError(undefined);
 
     if (!customerId) {
-      setFormError("Selecciona un cliente para registrar la venta.");
+      setFormError("Selecciona un cliente antes de procesar la venta.");
       return;
     }
 
-    if (items.length === 0) {
-      setFormError("Agrega al menos un producto a la venta.");
+    if (cart.items.length === 0) {
+      setFormError("Agrega al menos un producto al carrito.");
       return;
     }
 
     const input: SaleCreateInput = {
       customerId,
-      discountRef,
-      items: items.map((item) => ({
+      items: cart.items.map((item) => ({
         productId: item.productId,
         quantity: item.quantity,
       })),
-      notes: notes || undefined,
       refRateVes: rateVes || undefined,
-      taxRef,
     };
 
-    await createSale.mutateAsync(input);
+    try {
+      const sale = await createSale.mutateAsync(input);
+
+      const paysInUsd = paymentMethod === "efectivo_usd";
+
+      if ((paysInUsd && totalRef > 0) || (!paysInUsd && totalVes > 0)) {
+        await createPayment.mutateAsync({
+          amount: paysInUsd ? totalRef : totalVes,
+          currency: paysInUsd ? "USD" : "VES",
+          method: paymentMethod,
+          saleId: sale.id,
+        });
+      }
+
+      cart.clearCart();
+      setCustomerId("");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "No pudimos procesar la venta.");
+    }
   }
 
   return (
-    <form className="space-y-5 pb-24 lg:pb-6" onSubmit={handleSubmit}>
-      <PageHeader
-        actions={
-          <>
-            <Button asChild className="w-full sm:w-auto" variant="outline">
-              <Link href="/sales">Volver</Link>
-            </Button>
-            <Button
-              className="hidden w-full sm:w-auto lg:inline-flex"
-              disabled={createSale.isPending}
-              type="submit"
-            >
-              {createSale.isPending ? "Registrando..." : "Registrar venta"}
-            </Button>
-          </>
-        }
-        badge={<p className="text-sm font-medium text-blue-600">Ventas</p>}
-        description="Crea una venta usando clientes, productos activos y la tasa vigente."
-        title="Nueva venta"
-      />
+    <div className="flex min-h-0 w-full max-w-none flex-1 flex-col overflow-hidden">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-surface-container-lowest px-4 py-3 dark:border-slate-800">
+        <div>
+          <p className="text-xs font-semibold tracking-wide text-primary uppercase">
+            Punto de venta
+          </p>
+          <h1 className="text-xl font-semibold text-foreground">Realizar venta</h1>
+        </div>
+        <PageBackButton href="/sales" label="Volver a ventas" size="sm" />
+      </header>
 
-      {formError || createSale.error ? (
-        <ErrorState
-          description={
-            formError ??
-            (createSale.error instanceof Error
-              ? createSale.error.message
-              : "No pudimos registrar la venta.")
-          }
-          title="Revisa la venta"
-        />
+      {formError ? (
+        <div className="shrink-0 px-4 pt-4">
+          <ErrorState description={formError} title="Revisa la venta" />
+        </div>
       ) : null}
 
       {dependencyError ? (
-        <ErrorState
-          description={
-            dependencyError instanceof Error
-              ? dependencyError.message
-              : "No pudimos cargar clientes, productos o tasa vigente."
-          }
-          onRetry={() => {
-            void contacts.refetch();
-            void products.refetch();
-            void currentRate.refetch();
-          }}
-          title="No pudimos cargar datos base"
-        />
+        <div className="shrink-0 px-4 pt-4">
+          <ErrorState
+            description={
+              dependencyError instanceof Error
+                ? dependencyError.message
+                : "No pudimos cargar clientes, productos o tasa vigente."
+            }
+            onRetry={() => {
+              void contacts.refetch();
+              void products.refetch();
+              void currentRate.refetch();
+            }}
+            title="No pudimos cargar datos base"
+          />
+        </div>
       ) : null}
 
       {createSale.data ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Venta registrada</CardTitle>
-            <CardDescription>
-              La API respondio con la venta {createSale.data.invoiceNumber}.
-            </CardDescription>
-          </CardHeader>
-          <CardFooter>
-            <Button asChild size="sm">
-              <Link href="/sales">Volver al listado</Link>
-            </Button>
-          </CardFooter>
-        </Card>
+        <div className="shrink-0 px-4 pt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Venta registrada</CardTitle>
+              <CardDescription>
+                Factura {createSale.data.invoiceNumber}. Puedes seguir vendiendo o volver al
+                listado.
+              </CardDescription>
+            </CardHeader>
+            <CardFooter className="gap-2">
+              <Button asChild size="sm" variant="outline">
+                <Link href="/sales">Ver ventas</Link>
+              </Button>
+              <Button
+                onClick={() => createSale.reset()}
+                size="sm"
+                type="button"
+                variant="primary"
+              >
+                Nueva venta
+              </Button>
+            </CardFooter>
+          </Card>
+        </div>
       ) : null}
 
-      <div className="grid min-w-0 gap-5 lg:grid-cols-[1fr_24rem]">
-        <div className="min-w-0 space-y-5">
-          <Card>
-            <CardHeader>
-              <CardTitle>Cliente y productos</CardTitle>
-              <CardDescription>
-                Selecciona el cliente y arma el carrito antes de registrar.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <SelectField
-                disabled={contacts.isLoading}
-                helperText={
-                  !contacts.isLoading && customers.length === 0
-                    ? "No hay clientes activos disponibles."
-                    : undefined
-                }
-                label="Cliente"
-                onChange={(event) => setCustomerId(event.target.value)}
-                options={customers.map((contact) => ({
-                  label: contact.name,
-                  value: contact.id,
-                }))}
-                placeholder={contacts.isLoading ? "Cargando clientes..." : "Selecciona cliente"}
-                value={customerId}
-              />
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-[1fr_9rem_auto] md:items-end">
-                <div className="sm:col-span-2 md:col-span-1">
-                <SelectField
-                  disabled={products.isLoading}
-                  helperText={
-                    !products.isLoading && activeProducts.length === 0
-                      ? "No hay productos activos disponibles."
-                      : undefined
-                  }
-                  label="Producto"
-                  onChange={(event) => setProductId(event.target.value)}
-                  options={activeProducts.map((product) => ({
-                    label: `${product.name} - ${formatRef(product.salePriceRef)}`,
-                    value: product.id,
-                  }))}
-                  placeholder={products.isLoading ? "Cargando productos..." : "Selecciona"}
-                  value={productId}
-                />
-                </div>
-                <Input
-                  label="Cantidad"
-                  min={1}
-                  onChange={(event) => setQuantity(Number(event.target.value))}
-                  type="number"
-                  value={quantity}
-                />
-                <Button className="w-full md:w-auto" onClick={handleAddItem} type="button">
-                  Agregar
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+      {!createSale.data ? (
+        <PosWorkspace
+          className="min-h-0 flex-1"
+          cart={
+            <PosCartPanel
+              className="h-full border-t lg:border-t-0"
+              customerId={customerId}
+              customers={customers}
+              isSubmitting={isSubmitting}
+              items={cart.items}
+              itemsCount={cart.itemsCount}
+              onClearOrder={cart.clearCart}
+              onCustomerChange={setCustomerId}
+              onPaymentMethodChange={setPaymentMethod}
+              onProcessSale={() => void handleProcessSale()}
+              onQuantityChange={cart.setQuantity}
+              onRemoveItem={(productId) => cart.setQuantity(productId, 0)}
+              paymentMethod={paymentMethod}
+              rateVes={rateVes}
+              subtotalRef={cart.subtotalRef}
+              totalRef={totalRef}
+              totalVes={totalVes}
+            />
+          }
+          catalogScroll={
+            <PosProductGrid
+              isLoading={products.isLoading}
+              onAddProduct={cart.addProduct}
+              products={filteredProducts}
+              rateVes={rateVes}
+              selectedProductIds={cartProductIds}
+            />
+          }
+          categorySlider={
+            <PosCategorySlider
+              categories={categoryOptions}
+              onSelect={setCategoryId}
+              selectedCategoryId={categoryId}
+            />
+          }
+          toolbar={
+            <PosCatalogToolbar
+              isLookingUp={barcodeScan.isLookingUp}
+              onOpenScan={() => setScanOpen(true)}
+              onScanSubmit={handleBarcodeScanSubmit}
+              onSearchChange={handleSearchChange}
+              ref={searchInputRef}
+              scanError={barcodeScan.scanError}
+              search={search}
+            />
+          }
+        />
+      ) : null}
 
-          <DataTable
-            actions={(item) => [
-              {
-                label: "Quitar",
-                onSelect: () =>
-                  setItems((current) =>
-                    current.filter((candidate) => candidate.productId !== item.productId),
-                  ),
-                variant: "danger",
-              },
-            ]}
-            cardTitle={(item) => item.productName}
-            columns={itemColumns}
-            data={items}
-            emptyState={
-              <EmptyState
-                description="Agrega productos activos para calcular los totales."
-                title="La venta no tiene productos"
-              />
-            }
-            getRowId={(item) => item.productId}
-          />
-        </div>
-
-        <div className="min-w-0 space-y-5">
-          <Card>
-            <CardHeader>
-              <CardTitle>Totales</CardTitle>
-              <CardDescription>
-                Tasa vigente: {rateVes ? formatVes(rateVes) : "cargando..."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Input
-                label="Descuento ref"
-                min={0}
-                onChange={(event) => setDiscountRef(Number(event.target.value))}
-                step="0.01"
-                type="number"
-                value={discountRef}
-              />
-              <Input
-                label="Impuesto ref"
-                min={0}
-                onChange={(event) => setTaxRef(Number(event.target.value))}
-                step="0.01"
-                type="number"
-                value={taxRef}
-              />
-              <Textarea
-                label="Notas"
-                onChange={(event) => setNotes(event.target.value)}
-                placeholder="Observaciones internas"
-                value={notes}
-              />
-              <dl className="space-y-3 rounded-xl bg-slate-50 p-4 text-sm dark:bg-slate-950">
-                <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500 dark:text-slate-400">Subtotal</dt>
-                  <dd className="font-medium text-slate-950 dark:text-slate-100">
-                    {formatRef(subtotalRef)}
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500 dark:text-slate-400">Total ref</dt>
-                  <dd className="font-medium text-slate-950 dark:text-slate-100">
-                    {formatRef(totalRef)}
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500 dark:text-slate-400">Total VES</dt>
-                  <dd className="font-semibold text-slate-950 dark:text-slate-100">
-                    {formatVes(totalVes)}
-                  </dd>
-                </div>
-              </dl>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 lg:hidden">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs text-slate-500 dark:text-slate-400">Total ref</p>
-            <p className="truncate text-lg font-semibold">{formatRef(totalRef)}</p>
-          </div>
-          <Button className="shrink-0" disabled={createSale.isPending} type="submit">
-            {createSale.isPending ? "Registrando..." : "Registrar venta"}
-          </Button>
-        </div>
-      </div>
-    </form>
+      <PosScanModal
+        onFocusSearch={() => {
+          setScanOpen(false);
+          searchInputRef.current?.focus();
+        }}
+        onOpenChange={setScanOpen}
+        open={scanOpen}
+      />
+    </div>
   );
 }

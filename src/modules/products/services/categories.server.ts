@@ -18,6 +18,7 @@ function toCategoryInsert(input: CategoryInput) {
 function toCategoryUpdate(input: CategoryInput) {
   return {
     ...(input.description !== undefined ? { description: input.description ?? null } : {}),
+    ...(input.isActive !== undefined ? { is_active: input.isActive } : {}),
     ...(input.name !== undefined ? { name: input.name } : {}),
   };
 }
@@ -26,12 +27,19 @@ export async function listCategories(searchParams: URLSearchParams) {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
   const search = searchParams.get("search")?.trim();
+  const isActive = searchParams.get("isActive");
 
   let query = supabase
     .from("categories")
     .select(categorySelect, { count: "exact" })
-    .eq("is_active", true)
     .order("name", { ascending: true });
+
+  // Sin filtro: solo activas (selectores de producto/POS). Admin pasa isActive=true|false|all via query.
+  if (isActive === null) {
+    query = query.eq("is_active", true);
+  } else if (isActive.toLowerCase() !== "all") {
+    query = query.eq("is_active", isActive.toLowerCase() === "true");
+  }
 
   if (search) {
     query = query.ilike("name", `%${search}%`);
@@ -55,7 +63,6 @@ export async function getCategoryById(id: string) {
     .from("categories")
     .select(categorySelect)
     .eq("id", id)
-    .eq("is_active", true)
     .maybeSingle<CategoryRow>();
 
   throwIfSupabaseError(error);
@@ -90,7 +97,6 @@ export async function updateCategory(id: string, input: CategoryInput) {
     .from("categories")
     .update(toCategoryUpdate(input))
     .eq("id", id)
-    .eq("is_active", true)
     .select(categorySelect)
     .maybeSingle<CategoryRow>();
 

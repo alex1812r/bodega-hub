@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
-import { useCreatePayment, usePayment, usePayments } from "./usePayments";
+import { useCancelPayment, useCreatePayment, usePayment, usePayments } from "./usePayments";
 
 function paginated<T>(items: T[]) {
   return { items, limit: 10, skip: 0, total: items.length };
@@ -100,6 +100,24 @@ describe("payments hooks", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/payments",
       expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("cancels a payment", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ data: { id: "pay-001", status: "anulado" } }),
+    );
+
+    const { result } = renderHook(() => useCancelPayment("pay-001"), {
+      wrapper: createWrapper(),
+    });
+
+    result.current.mutate("pay-001");
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/payments/pay-001/cancel",
+      expect.objectContaining({ method: "PATCH" }),
     );
   });
 });

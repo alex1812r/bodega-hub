@@ -41,9 +41,9 @@ export function DataTableCards<TData>({
   const errorMessage = error instanceof Error ? error.message : error;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div className="overflow-hidden rounded-lg border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800 dark:bg-slate-900">
       {isFetching && data.length > 0 ? (
-        <div className="border-b border-blue-100 bg-blue-50 px-4 py-2 text-xs font-medium text-blue-700 dark:border-blue-950 dark:bg-blue-950 dark:text-blue-300">
+        <div className="border-b border-indigo-100 bg-indigo-50 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-indigo-700 dark:border-indigo-950 dark:bg-indigo-950 dark:text-indigo-300">
           Actualizando...
         </div>
       ) : null}

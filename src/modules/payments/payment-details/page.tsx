@@ -1,39 +1,23 @@
 "use client";
 
-import Link from "next/link";
+import { Plus } from "lucide-react";
+import { useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
-import { DetailSection } from "@/shared/components/DetailSection";
 import { ErrorState } from "@/shared/components/ErrorState";
-import { InfoGrid } from "@/shared/components/InfoGrid";
-import { PageHeader } from "@/shared/components/PageHeader";
-import { formatVes } from "@/shared/utils/currency";
-import { formatDate } from "@/shared/utils/date";
 
+import { PaymentCancelConfirmModal } from "../components/PaymentCancelConfirmModal";
 import { RegisterPaymentModal } from "../components/RegisterPaymentModal";
-import { usePayment } from "../hooks/usePayments";
-import { PaymentMethodDetailsCard } from "./components/PaymentMethodDetailsCard";
-import { PaymentTimeline } from "./components/PaymentTimeline";
+import { useCancelPayment, usePayment } from "../hooks/usePayments";
+import { PaymentDetailBalanceCard } from "./components/PaymentDetailBalanceCard";
+import { PaymentDetailHeaderCard } from "./components/PaymentDetailHeaderCard";
+import { PaymentDetailInfoCard } from "./components/PaymentDetailInfoCard";
+import { PaymentDetailPageHeader } from "./components/PaymentDetailPageHeader";
 
 type PaymentDetailsPageProps = {
   paymentId?: string;
 };
-
-function getPaymentContextLabel(payment: {
-  purchaseId?: string;
-  saleId?: string;
-}) {
-  if (payment.saleId) {
-    return `venta ${payment.saleId}`;
-  }
-
-  if (payment.purchaseId) {
-    return `compra ${payment.purchaseId}`;
-  }
-
-  return "documento sin contexto";
-}
 
 function getPaymentCurrency(payment: {
   currency?: "USD" | "VES";
@@ -46,6 +30,8 @@ export function PaymentDetailsPage({
   paymentId = "pay-001",
 }: PaymentDetailsPageProps) {
   const payment = usePayment(paymentId);
+  const cancelPayment = useCancelPayment(paymentId);
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
 
   if (payment.isLoading) {
     return <DetailSkeleton itemsPerSection={4} />;
@@ -65,78 +51,82 @@ export function PaymentDetailsPage({
     );
   }
 
+  const data = payment.data;
+  const linkedDocument = data.relatedDocument ?? data.documentBalance;
+  const isCancelled = data.status === "anulado";
+
+  async function handleCancelPayment() {
+    await cancelPayment.mutateAsync(paymentId);
+    setIsCancelModalOpen(false);
+  }
+
   return (
-    <div className="space-y-5">
-      <PageHeader
-        actions={
-          <>
-            <Button asChild className="w-full sm:w-auto" variant="outline">
-              <Link href="/payments">Volver</Link>
-            </Button>
+    <div className="mx-auto w-full max-w-7xl space-y-6">
+      <PaymentDetailPageHeader />
+
+      <PaymentDetailHeaderCard
+        isCancelling={cancelPayment.isPending}
+        onCancel={() => setIsCancelModalOpen(true)}
+        paymentId={data.id}
+        registerPaymentAction={
+          !isCancelled ? (
             <RegisterPaymentModal
-              purchaseId={payment.data.purchaseId}
-              saleId={payment.data.saleId}
-              trigger={<Button className="w-full sm:w-auto">Registrar otro pago</Button>}
+              purchaseId={data.purchaseId}
+              saleId={data.saleId}
+              trigger={
+                <Button className="gap-2 shadow-sm" size="sm" type="button">
+                  <Plus aria-hidden className="size-[1.125rem]" />
+                  Registrar otro pago
+                </Button>
+              }
             />
-            <Button
-              className="w-full sm:w-auto"
-              disabled
-              title="Pendiente: no existe endpoint de anulacion"
-              variant="danger"
-            >
-              Anular pago
-            </Button>
-          </>
+          ) : undefined
         }
-        badge={<p className="text-sm font-medium text-blue-600">Pagos</p>}
-        description="Detalle del pago, metodo usado y trazabilidad conectada a la API."
-        title={`Pago ${payment.data.id}`}
+        status={data.status}
       />
 
-      <DetailSection description="Relacion del pago con el documento origen." title="Resumen">
-        <InfoGrid
-          items={[
-            {
-              label: "Contacto",
-              value: payment.data.contact?.name ?? payment.data.contactId,
-            },
-            { label: "Contexto", value: getPaymentContextLabel(payment.data) },
-            { label: "Fecha", value: formatDate(payment.data.createdAt) },
-            { label: "Tasa ref", value: formatVes(payment.data.refRateVes) },
-            {
-              label: "Saldo pendiente",
-              value:
-                payment.data.pendingBalanceVes !== undefined
-                  ? formatVes(payment.data.pendingBalanceVes)
-                  : "No informado",
-            },
-          ]}
+      <PaymentCancelConfirmModal
+        isConfirming={cancelPayment.isPending}
+        onConfirm={handleCancelPayment}
+        onOpenChange={setIsCancelModalOpen}
+        open={isCancelModalOpen}
+        paymentId={data.id}
+      />
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-8">
+          <PaymentDetailInfoCard
+            amountRef={data.amountRef}
+            amountVes={data.amountVes}
+            bankName={data.bankName}
+            createdAt={data.createdAt}
+            currency={getPaymentCurrency(data)}
+            linkedDocument={linkedDocument}
+            method={data.method}
+            notes={data.notes}
+            phone={data.phone}
+            referenceCode={data.referenceCode}
+            refRateVes={data.refRateVes}
+          />
+        </div>
+        <div className="lg:col-span-4">
+          <PaymentDetailBalanceCard
+            documentBalance={data.documentBalance}
+            refRateVes={data.refRateVes}
+          />
+        </div>
+      </div>
+
+      {cancelPayment.error ? (
+        <ErrorState
+          description={
+            cancelPayment.error instanceof Error
+              ? cancelPayment.error.message
+              : "No se pudo anular el pago."
+          }
+          title="No pudimos anular el pago"
         />
-      </DetailSection>
-
-      <PaymentMethodDetailsCard
-        payment={{
-          ...payment.data,
-          currency: getPaymentCurrency(payment.data),
-        }}
-      />
-      <PaymentTimeline
-        items={[
-          {
-            description: `Pago asociado a ${getPaymentContextLabel(payment.data)}.`,
-            id: `${payment.data.id}-created`,
-            timestamp: formatDate(payment.data.createdAt),
-            title: "Pago registrado",
-          },
-          {
-            description:
-              "La anulacion queda pendiente hasta que exista un endpoint de API.",
-            id: `${payment.data.id}-cancel-pending`,
-            timestamp: "Pendiente",
-            title: "Anular pago pendiente",
-          },
-        ]}
-      />
+      ) : null}
     </div>
   );
 }

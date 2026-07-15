@@ -5,16 +5,18 @@ import { InventoryMovementsTable } from "./InventoryMovementsTable";
 const meta = {
   component: InventoryMovementsTable,
   tags: ["ai-generated"],
-  args: {
+    args: {
     rows: [
       {
+        createdAt: "2026-05-18T14:30:00.000Z",
         id: "MOV-001",
-        date: "18/05/2026",
         product: "Aceite 1L",
-        type: "compra",
+        productSku: "ACE-1L",
+        purchaseId: "purchase-001",
         quantity: 12,
         reason: "Compra C-0001",
         stockAfter: 24,
+        type: "compra",
       },
     ],
   },

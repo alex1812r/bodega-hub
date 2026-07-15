@@ -18,12 +18,20 @@ export type PaymentsFilters = PaginationParams & {
   saleId?: string;
 };
 
+import type { PaymentDocumentBalance } from "../payment-details/types";
+import type { PaymentRelatedDocument } from "../utils/resolvePaymentRelatedDocument";
+
+export type { PaymentDocumentBalance, PaymentRelatedDocument };
+
 export type PaymentListItem = PaymentMock & {
   contact?: ContactMock;
+  relatedDocument?: PaymentRelatedDocument;
 };
 
 export type PaymentDetail = PaymentMock & {
   contact?: ContactMock;
+  documentBalance?: PaymentDocumentBalance;
+  relatedDocument?: PaymentRelatedDocument;
 };
 
 export type PaymentCreateInput = {
@@ -108,6 +116,27 @@ export function useCreatePayment() {
             };
           });
         });
+      void queryClient.invalidateQueries({ queryKey: ["sales"] });
+      void queryClient.invalidateQueries({ queryKey: ["purchases"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["reports"] });
+    },
+  });
+}
+
+export function useCancelPayment(id?: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (paymentId?: string) =>
+      apiFetch<PaymentDetail>(`/api/payments/${paymentId ?? id}/cancel`, {
+        method: "PATCH",
+      }),
+    onSuccess: (payment, paymentId) => {
+      const affectedPaymentId = paymentId ?? id ?? payment.id;
+      queryClient.setQueryData(paymentsQueryKeys.detail(affectedPaymentId), payment);
+      void queryClient.invalidateQueries({ queryKey: paymentsQueryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["sales"] });
       void queryClient.invalidateQueries({ queryKey: ["purchases"] });
       void queryClient.invalidateQueries({ queryKey: ["contacts"] });

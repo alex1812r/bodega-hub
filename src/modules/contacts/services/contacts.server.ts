@@ -17,7 +17,7 @@ import type { ContactInput } from "./contacts.mock-server";
 
 const SUPPLIER_PRODUCT_SELECT = `
   *,
-  product:products(id, sku, name, category_id, sale_price_ref, current_cost_ref, current_stock, min_stock, is_active, image_url),
+  product:products(id, sku, barcode, name, category_id, sale_price_ref, current_cost_ref, current_stock, min_stock, is_active, image_url),
   supplier:contacts(id, type, name, tax_id, email, phone, address, is_active, created_at, updated_at)
 `;
 

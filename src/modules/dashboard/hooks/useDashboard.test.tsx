@@ -52,8 +52,11 @@ describe("dashboard hooks", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         data: {
+          activeCustomers: 4,
+          dayOverDayChangePercent: 12.5,
           lowStockCount: 2,
           pendingSalesCount: 1,
+          previousDayTotalRef: 35,
           salesCount: 3,
           totalRef: 40,
           totalVes: 20400,

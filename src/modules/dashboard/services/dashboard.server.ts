@@ -2,6 +2,8 @@ import { parsePagination, type PaginatedList } from "@/lib/api/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 
+import { shiftIsoDate } from "../utils/businessDate";
+
 type DbSale = {
   created_at: string;
   customer_id: string;
@@ -35,24 +37,6 @@ const METRICS_SALE_STATUSES = ["borrador", "pagada", "pendiente_pago"] as const;
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function mapSale(row: DbSale) {
-  return {
-    createdAt: row.created_at,
-    customerId: row.customer_id,
-    discountRef: Number(row.discount_ref),
-    id: row.id,
-    invoiceNumber: row.invoice_number,
-    paidVes: Number(row.paid_ves),
-    refRateVes: Number(row.ref_rate_ves),
-    status: row.status,
-    subtotalRef: Number(row.subtotal_ref),
-    taxRef: Number(row.tax_ref),
-    totalRef: Number(row.total_ref),
-    totalVes: Number(row.total_ves),
-    userId: row.user_id ?? "",
-  };
 }
 
 function mapLowStockProduct(row: DbProduct) {
@@ -108,11 +92,38 @@ export async function getDashboardSummary() {
 
   throwIfSupabaseError(pendingError);
 
+  const yesterday = shiftIsoDate(today, -1);
+  const { data: yesterdayRow, error: yesterdayError } = await supabase
+    .from("daily_sales_summary")
+    .select("total_ref")
+    .eq("sale_date", yesterday)
+    .maybeSingle();
+
+  throwIfSupabaseError(yesterdayError);
+
+  const totalRef = Number(todayRow?.total_ref ?? 0);
+  const previousDayTotalRef = Number(yesterdayRow?.total_ref ?? 0);
+  const dayOverDayChangePercent =
+    previousDayTotalRef > 0
+      ? ((totalRef - previousDayTotalRef) / previousDayTotalRef) * 100
+      : null;
+
+  const { count: activeCustomers, error: customersError } = await supabase
+    .from("contacts")
+    .select("id", { count: "exact", head: true })
+    .eq("is_active", true)
+    .in("type", ["cliente", "ambos"]);
+
+  throwIfSupabaseError(customersError);
+
   return {
+    activeCustomers: activeCustomers ?? 0,
+    dayOverDayChangePercent,
     lowStockCount: lowStockCount ?? 0,
     pendingSalesCount: pendingSalesCount ?? 0,
+    previousDayTotalRef,
     salesCount: todayRow?.sales_count ?? 0,
-    totalRef: Number(todayRow?.total_ref ?? 0),
+    totalRef,
     totalVes: Number(todayRow?.total_ves ?? 0),
   };
 }
@@ -162,20 +173,75 @@ export async function getDashboardMetrics(searchParams: URLSearchParams) {
   };
 }
 
-export async function getRecentSales(searchParams: URLSearchParams): Promise<PaginatedList<ReturnType<typeof mapSale>>> {
+type DbSaleWithCustomer = DbSale & {
+  contacts: { name: string } | { name: string }[] | null;
+};
+
+function mapRecentSale(row: DbSaleWithCustomer) {
+  const contact = row.contacts;
+  const customerName = Array.isArray(contact)
+    ? contact[0]?.name
+    : contact?.name;
+
+  return {
+    createdAt: row.created_at,
+    customerName: customerName ?? "Sin cliente",
+    id: row.id,
+    invoiceNumber: row.invoice_number,
+    status: row.status,
+    totalRef: Number(row.total_ref),
+  };
+}
+
+export async function getDashboardSalesTrend(searchParams: URLSearchParams) {
+  const from = searchParams.get("from");
+  const to = searchParams.get("to");
+  const supabase = await createRouteSupabaseClient();
+
+  let query = supabase
+    .from("daily_sales_summary")
+    .select("sale_date, sales_count, total_ref, total_ves, paid_ves")
+    .order("sale_date", { ascending: true })
+    .limit(400);
+
+  if (from) {
+    query = query.gte("sale_date", from);
+  }
+
+  if (to) {
+    query = query.lte("sale_date", to);
+  }
+
+  const { data, error } = await query;
+  throwIfSupabaseError(error);
+
+  return {
+    items: (data ?? []).map((row) => ({
+      paidVes: Number(row.paid_ves),
+      saleDate: row.sale_date,
+      salesCount: row.sales_count,
+      totalRef: Number(row.total_ref),
+      totalVes: Number(row.total_ves),
+    })),
+  };
+}
+
+export async function getRecentSales(searchParams: URLSearchParams) {
   const { limit, skip } = parsePagination(searchParams);
   const supabase = await createRouteSupabaseClient();
 
   const { data, error, count } = await supabase
     .from("sales")
-    .select("*", { count: "exact" })
+    .select("id, invoice_number, created_at, status, total_ref, contacts(name)", {
+      count: "exact",
+    })
     .order("created_at", { ascending: false })
     .range(skip, skip + limit - 1);
 
   throwIfSupabaseError(error);
 
   return {
-    items: (data ?? []).map((row) => mapSale(row as DbSale)),
+    items: (data ?? []).map((row) => mapRecentSale(row as DbSaleWithCustomer)),
     limit,
     skip,
     total: count ?? 0,

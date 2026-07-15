@@ -1,62 +1,65 @@
-import { DetailSection } from "@/shared/components/DetailSection";
-import { Input } from "@/shared/components/Input";
-import { SelectField } from "@/shared/components/SelectField";
+"use client";
+
+import { Building2 } from "lucide-react";
+import { useMemo, useState } from "react";
+
 import type { ContactMock } from "@/shared/mocks/erp-data";
-import { formatVes } from "@/shared/utils/currency";
+
+import { PurchaseCreateSectionCard } from "./PurchaseCreateSectionCard";
+import {
+  PurchaseSearchAutocomplete,
+  type PurchaseSearchOption,
+} from "./PurchaseSearchAutocomplete";
 
 type PurchaseSupplierCardProps = {
-  isRateLoading?: boolean;
-  onRateChange?: (rate: number) => void;
-  onSupplierChange?: (supplierId: string) => void;
-  rateVes?: number;
-  selectedSupplierId?: string;
-  suppliers?: ContactMock[];
+  onSupplierChange: (supplierId: string) => void;
+  selectedSupplierId: string;
+  suppliers: ContactMock[];
 };
 
 export function PurchaseSupplierCard({
-  isRateLoading = false,
-  onRateChange,
   onSupplierChange,
-  rateVes = 510,
-  selectedSupplierId = "",
-  suppliers = [],
+  selectedSupplierId,
+  suppliers,
 }: PurchaseSupplierCardProps) {
+  const [query, setQuery] = useState("");
+
+  const selectedSupplier = suppliers.find((supplier) => supplier.id === selectedSupplierId);
+
+  const options = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!term) {
+      return [];
+    }
+
+    return suppliers
+      .filter(
+        (supplier) =>
+          supplier.name.toLowerCase().includes(term) ||
+          (supplier.taxId ?? "").toLowerCase().includes(term),
+      )
+      .slice(0, 8)
+      .map(
+        (supplier): PurchaseSearchOption => ({
+          id: supplier.id,
+          label: supplier.name,
+          sublabel: supplier.taxId,
+        }),
+      );
+  }, [query, suppliers]);
+
   return (
-    <DetailSection
-      description="Selecciona el proveedor y datos base de la compra."
-      title="Proveedor"
-    >
-      <div className="grid gap-4 md:grid-cols-3">
-        <SelectField
-          label="Proveedor"
-          onChange={(event) => onSupplierChange?.(event.target.value)}
-          options={suppliers.map((supplier) => ({
-            label: supplier.name,
-            value: supplier.id,
-          }))}
-          placeholder="Selecciona proveedor"
-          value={selectedSupplierId}
-        />
-        <SelectField
-          label="Estado"
-          options={[
-            { label: "Recibido", value: "recibido" },
-            { label: "Pedido", value: "pedido" },
-          ]}
-          placeholder="Selecciona estado"
-          defaultValue="recibido"
-          disabled
-        />
-        <Input
-          helperText={isRateLoading ? "Consultando tasa vigente..." : `Tasa actual: ${formatVes(rateVes)}`}
-          label="Tasa ref/VES"
-          min="0"
-          onChange={(event) => onRateChange?.(Number(event.target.value))}
-          step="0.01"
-          type="number"
-          value={rateVes}
-        />
-      </div>
-    </DetailSection>
+    <PurchaseCreateSectionCard icon={Building2} title="Datos del Proveedor">
+      <PurchaseSearchAutocomplete
+        label="Proveedor"
+        onQueryChange={setQuery}
+        onSelect={(option) => onSupplierChange(option.id)}
+        options={options}
+        placeholder="Buscar proveedor por nombre o RIF..."
+        query={query}
+        required
+        selectedLabel={selectedSupplier?.name}
+      />
+    </PurchaseCreateSectionCard>
   );
 }

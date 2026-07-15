@@ -1,18 +1,14 @@
 "use client";
 
-import {
-  getConnectedToApiPhrase,
-  getPriceChangeReason,
-  isMockDataSource,
-} from "@/lib/api/dataSourceUi";
+import { Pencil } from "lucide-react";
+
+import { getPriceChangeReason } from "@/lib/api/dataSourceUi";
 import { getPaginatedItems } from "@/lib/api/pagination";
-import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
-import { DetailSection } from "@/shared/components/DetailSection";
-import { PageHeader } from "@/shared/components/PageHeader";
+import { Can } from "@/shared/auth/Can";
+import { usePermission } from "@/shared/auth/usePermission";
+import { Button } from "@/shared/components/Button";
+import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
-import { LoadingState } from "@/shared/components/LoadingState";
-import type { SupplierProductMock } from "@/shared/mocks/erp-data";
-import { formatRef } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
 
 import {
@@ -24,43 +20,28 @@ import {
   useUpdateProduct,
   useUpdateProductPrice,
 } from "../hooks/useProducts";
+import type { ProductFormSubmitContext } from "./components/ProductFormModal";
+import { ProductDetailInfoCard } from "./components/ProductDetailInfoCard";
+import { ProductDetailPageHeader } from "./components/ProductDetailPageHeader";
+import { ProductDetailPriceChangeCard } from "./components/ProductDetailPriceChangeCard";
+import {
+  ProductDetailPriceHistoryTable,
+  type ProductPriceHistoryRow,
+} from "./components/ProductDetailPriceHistoryTable";
+import { ProductDetailStockCard } from "./components/ProductDetailStockCard";
+import {
+  ProductDetailSuppliersTable,
+  type ProductSupplierRow,
+} from "./components/ProductDetailSuppliersTable";
 import { ProductFormModal } from "./components/ProductFormModal";
-import { ProductPriceHistoryTable } from "./components/ProductPriceHistoryTable";
-import { ProductStockSummary } from "./components/ProductStockSummary";
-import { ProductSummaryCard } from "./components/ProductSummaryCard";
 
 type ProductDetailsPageProps = {
   productId?: string;
 };
 
-type ProductSupplierRow = SupplierProductMock & {
-  supplier?: {
-    name: string;
-  };
-};
-
-const supplierColumns: DataTableColumn<ProductSupplierRow>[] = [
-  {
-    header: "Proveedor",
-    key: "supplier",
-    render: (row) => row.supplier?.name ?? row.supplierId,
-  },
-  {
-    header: "SKU proveedor",
-    key: "supplierSku",
-    render: (row) => row.supplierSku ?? "Sin SKU",
-  },
-  {
-    align: "right",
-    header: "Ultimo costo",
-    key: "lastCostRef",
-    render: (row) => formatRef(row.lastCostRef),
-  },
-];
-
 function mapPriceHistory(
   rows: { createdAt: string; id: string; salePriceRef: number; userId: string }[],
-) {
+): ProductPriceHistoryRow[] {
   return rows.map((row, index) => ({
     changedBy: row.userId,
     date: formatDate(row.createdAt),
@@ -72,6 +53,7 @@ function mapPriceHistory(
 }
 
 export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsPageProps) {
+  const { can } = usePermission();
   const product = useProduct(productId);
   const categories = useCategories();
   const priceHistory = useProductPriceHistory(productId);
@@ -79,7 +61,7 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
   const updateProduct = useUpdateProduct(productId);
   const updateProductPrice = useUpdateProductPrice(productId);
 
-  async function handleUpdateProduct(input: ProductInput) {
+  async function handleUpdateProduct(input: ProductInput, context?: ProductFormSubmitContext) {
     const currentPrice = product.data?.salePriceRef;
     const { salePriceRef, ...productInput } = input;
 
@@ -90,13 +72,12 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
     }
   }
 
+  async function handleQuickPriceUpdate(salePriceRef: number) {
+    await updateProductPrice.mutateAsync({ salePriceRef });
+  }
+
   if (product.isLoading) {
-    return (
-      <LoadingState
-        description="Estamos consultando producto, precios y proveedores."
-        title="Cargando producto"
-      />
-    );
+    return <DetailSkeleton itemsPerSection={4} />;
   }
 
   if (product.error || !product.data) {
@@ -113,62 +94,96 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
     );
   }
 
-  const summary = {
-    category: product.data.category?.name ?? "Sin categoria",
-    costRef: product.data.currentCostRef,
-    name: product.data.name,
-    priceRef: product.data.salePriceRef,
-    sku: product.data.sku,
-    status: product.data.isActive ? "activo" as const : "inactivo" as const,
-  };
-  const stock = {
-    lastMovement: "Consulta movimientos en Inventario",
-    minimumStock: product.data.minStock,
-    stock: product.data.currentStock,
-  };
+  const data = product.data;
+  const isSaving = updateProduct.isPending || updateProductPrice.isPending;
+  const supplierRows = getPaginatedItems(suppliers.data) as ProductSupplierRow[];
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    <div className="mx-auto w-full max-w-7xl space-y-6">
+      <ProductDetailPageHeader
         actions={
-          <ProductFormModal
-            categories={getPaginatedItems(categories.data)}
-            errorMessage={updateProduct.error?.message ?? updateProductPrice.error?.message}
-            isSubmitting={updateProduct.isPending || updateProductPrice.isPending}
-            mode="edit"
-            onSubmit={handleUpdateProduct}
-            product={product.data}
-          />
+          <Can permission="products.manage">
+            <ProductFormModal
+              categories={getPaginatedItems(categories.data)}
+              errorMessage={updateProduct.error?.message ?? updateProductPrice.error?.message}
+              isSubmitting={isSaving}
+              mode="edit"
+              onImageUpdated={() => void product.refetch()}
+              onSubmit={handleUpdateProduct}
+              product={data}
+              trigger={
+                <Button
+                  className="w-full gap-2 sm:w-auto"
+                  disabled={isSaving}
+                  size="sm"
+                  type="button"
+                >
+                  <Pencil aria-hidden className="size-[1.125rem]" />
+                  {isSaving ? "Guardando..." : "Editar"}
+                </Button>
+              }
+            />
+          </Can>
         }
-        badge={<p className="text-sm font-medium text-blue-600">Producto</p>}
-        description={`Vista del producto ${getConnectedToApiPhrase()}.`}
-        title={product.data.name}
+        productName={data.name}
+        barcode={data.barcode}
+        sku={data.sku}
       />
 
-      <ProductSummaryCard product={summary} />
-      <ProductStockSummary stock={stock} />
-      <ProductPriceHistoryTable
-        rows={mapPriceHistory(getPaginatedItems(priceHistory.data))}
-      />
-      <DetailSection
-        description={
-          isMockDataSource()
-            ? "Relacion proveedor-producto conectada al endpoint mock."
-            : "Relacion proveedor-producto desde Supabase."
-        }
-        title="Proveedores"
-      >
-        <DataTable
-          columns={supplierColumns}
-          data={getPaginatedItems(suppliers.data) as ProductSupplierRow[]}
-          error={suppliers.error}
-          getRowId={(row) => row.id}
-          isFetching={suppliers.isFetching}
-          isLoading={suppliers.isLoading}
-          loadingRows={3}
-          onRetry={() => void suppliers.refetch()}
+      {updateProduct.error || updateProductPrice.error ? (
+        <ErrorState
+          description={
+            (updateProduct.error ?? updateProductPrice.error) instanceof Error
+              ? (updateProduct.error ?? updateProductPrice.error)?.message
+              : "No se pudo guardar el cambio."
+          }
+          title="No pudimos actualizar el producto"
         />
-      </DetailSection>
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-8">
+          <ProductDetailInfoCard
+            categoryName={data.category?.name ?? "Sin categoría"}
+            costRef={data.currentCostRef}
+            imageUrl={data.imageUrl}
+            isActive={data.isActive}
+            salePriceRef={data.salePriceRef}
+          />
+        </div>
+        <div className="lg:col-span-4">
+          <ProductDetailStockCard
+            currentStock={data.currentStock}
+            minStock={data.minStock}
+          />
+        </div>
+        <div className="lg:col-span-4">
+          <Can permission="products.manage">
+            <ProductDetailPriceChangeCard
+              currentPriceRef={data.salePriceRef}
+              isSubmitting={updateProductPrice.isPending}
+              onSubmit={handleQuickPriceUpdate}
+            />
+          </Can>
+        </div>
+        <div className={can("products.manage") ? "lg:col-span-8" : "lg:col-span-12"}>
+          <ProductDetailPriceHistoryTable
+            rows={mapPriceHistory(getPaginatedItems(priceHistory.data))}
+          />
+        </div>
+        <div className="lg:col-span-12">
+          <ProductDetailSuppliersTable
+            error={suppliers.error}
+            isLoading={suppliers.isLoading}
+            onRetry={() => void suppliers.refetch()}
+            productId={productId}
+            productName={data.name}
+            productSku={data.sku}
+            rows={supplierRows}
+            salePriceRef={data.salePriceRef}
+          />
+        </div>
+      </div>
     </div>
   );
 }

@@ -66,6 +66,32 @@ describe("/api/products/[id]", () => {
     expect(body.data.salePriceRef).toBe(16);
   });
 
+  it("deactivates a product via PATCH isActive false", async () => {
+    const response = await PATCH(
+      new Request("http://localhost/api/products/prod-cable", {
+        body: JSON.stringify({ isActive: false }),
+        headers: {
+          "content-type": "application/json",
+          "x-demo-role": "almacen",
+        },
+        method: "PATCH",
+      }),
+      context("prod-cable"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.isActive).toBe(false);
+
+    const getResponse = await GET(
+      new Request("http://localhost/api/products/prod-cable"),
+      context("prod-cable"),
+    );
+    const getBody = await getResponse.json();
+
+    expect(getBody.data.isActive).toBe(false);
+  });
+
   it("deletes a product in mock mode", async () => {
     const response = await DELETE(
       new Request("http://localhost/api/products/prod-drill", {
@@ -101,7 +127,7 @@ describe("/api/products/[id]", () => {
                   min_stock: 2,
                   name: "Taladro",
                   sale_price_ref: 15,
-                  sku: "SKU-001",
+                  sku: "sku-001",
                 },
                 error: null,
               }),
@@ -121,9 +147,56 @@ describe("/api/products/[id]", () => {
         expect.objectContaining({
           id: "prod-1",
           salePriceRef: 15,
-          sku: "SKU-001",
+          sku: "sku-001",
         }),
       );
+    });
+
+    it("persists isActive on PATCH", async () => {
+      const update = jest.fn(() => ({
+        eq: jest.fn(() => ({
+          select: jest.fn(() => ({
+            maybeSingle: jest.fn().mockResolvedValue({
+              data: {
+                category: { id: "cat-1", is_active: true, name: "Tools" },
+                category_id: "cat-1",
+                current_cost_ref: 10,
+                current_stock: 5,
+                id: "prod-1",
+                is_active: false,
+                min_stock: 2,
+                name: "Taladro",
+                sale_price_ref: 15,
+                sku: "sku-001",
+              },
+              error: null,
+            }),
+          })),
+        })),
+      }));
+
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
+        from: jest.fn(() => ({
+          update,
+        })),
+      });
+
+      const response = await PATCH(
+        new Request("http://localhost/api/products/prod-1", {
+          body: JSON.stringify({ isActive: false }),
+          headers: {
+            "content-type": "application/json",
+            "x-demo-role": "almacen",
+          },
+          method: "PATCH",
+        }),
+        context("prod-1"),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.data.isActive).toBe(false);
+      expect(update).toHaveBeenCalledWith({ is_active: false });
     });
   });
 });

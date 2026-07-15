@@ -246,7 +246,7 @@ GET /api/reports/sales     -> reports.view
 | Tasas | `/api/exchange-rates` | `GET` | `dashboard.view` | `exchange_rates` |
 | Tasas | `/api/exchange-rates` | `POST` | `payments.manage` | `exchange_rates` |
 
-Nota: `contacts.manage` separa la gestion de contactos de la lectura. Esto permite que un rol pueda ver clientes/proveedores sin poder cambiar datos fiscales o crear proveedores.
+Lista completa y actualizada: [`modules-catalog.md`](modules-catalog.md) y [`mock-api-endpoints.md`](mock-api-endpoints.md) (incluye proveedor-producto, cancel/return ventas-compras, import template, DolarAPI en `/exchange-rates/current`, etc.).
 
 ## RPC Del Schema
 
@@ -257,6 +257,11 @@ Usar estas funciones para operaciones atomicas:
 - `create_sale`: venta completa con items y descuento de stock.
 - `create_purchase`: compra completa con items y entrada de stock.
 - `register_payment`: pago de venta o compra con actualizacion de saldo/estado.
+- `register_supplier_product_price`: cotizacion/ajuste de costo proveedor-producto + historial.
+- `deactivate_supplier_product`: baja logica de relacion proveedor-producto.
+- `cancel_sale` / `return_sale` / `cancel_purchase` / `return_purchase`: anulaciones y devoluciones con movimiento de stock.
+
+Nota: `contacts.manage` separa la gestion de contactos de la lectura. Esto permite que un rol pueda ver clientes/proveedores sin poder cambiar datos fiscales o crear proveedores.
 
 No crear directamente desde `/api`:
 

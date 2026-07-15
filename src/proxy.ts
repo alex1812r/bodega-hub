@@ -1,6 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { getDefaultHomePathForAuthUserId } from "@/lib/supabase/auth/profile.server";
+
 const privatePathPrefixes = [
   "/dashboard",
   "/products",
@@ -75,19 +77,42 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (pathname === "/") {
-    return redirectTo(request, user ? "/dashboard" : "/login", response);
+    const homePath = user
+      ? await getDefaultHomePathForAuthUserId(supabase, user.id)
+      : "/login";
+
+    return redirectTo(request, homePath, response);
   }
 
   if (pathname === "/login" && user) {
-    return redirectTo(request, "/dashboard", response);
+    const homePath = await getDefaultHomePathForAuthUserId(supabase, user.id);
+
+    return redirectTo(request, homePath, response);
   }
 
   if (isPrivatePath(pathname) && !user) {
     const isDemoAuthEnabled = process.env.ALLOW_DEMO_AUTH === "true";
 
     if (!isDemoAuthEnabled) {
-      return redirectTo(request, "/login", response);
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/login";
+      loginUrl.searchParams.set("next", pathname);
+      const redirectResponse = NextResponse.redirect(loginUrl);
+      copyCookies(response, redirectResponse);
+      return redirectResponse;
     }
+  }
+
+  const isDevToolkitEnabled =
+    process.env.NODE_ENV === "development" ||
+    process.env.ALLOW_DEMO_AUTH === "true" ||
+    process.env.API_DATA_SOURCE === "mock";
+
+  if (
+    !isDevToolkitEnabled &&
+    (pathname === "/dev/welcome" || pathname.startsWith("/dev/") || pathname === "/api-docs")
+  ) {
+    return redirectTo(request, "/login", response);
   }
 
   return response;

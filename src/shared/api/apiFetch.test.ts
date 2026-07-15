@@ -57,6 +57,7 @@ describe("apiFetch", () => {
   });
 
   it("adds demo auth headers from local storage in the browser", async () => {
+    process.env.NEXT_PUBLIC_ALLOW_DEMO_AUTH = "true";
     window.localStorage.setItem("control-ventas:user-role", "contador");
     window.localStorage.setItem("control-ventas:user-id", "user-accountant");
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: { ok: true } }));
@@ -67,6 +68,20 @@ describe("apiFetch", () => {
 
     expect(headers.get("x-demo-role")).toBe("contador");
     expect(headers.get("x-demo-user-id")).toBe("user-accountant");
+  });
+
+  it("skips demo auth headers when demo auth is disabled", async () => {
+    delete process.env.NEXT_PUBLIC_ALLOW_DEMO_AUTH;
+    window.localStorage.setItem("control-ventas:user-role", "contador");
+    window.localStorage.setItem("control-ventas:user-id", "user-accountant");
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: { ok: true } }));
+
+    await apiFetch("/api/settings");
+
+    const headers = fetchMock.mock.calls[0][1].headers as Headers;
+
+    expect(headers.get("x-demo-role")).toBeNull();
+    expect(headers.get("x-demo-user-id")).toBeNull();
   });
 
   it("throws a typed API error from error payloads", async () => {

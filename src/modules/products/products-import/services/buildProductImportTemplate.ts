@@ -18,14 +18,22 @@ const INSTRUCTIONS = [
   "2. No modifique los encabezados de la fila 1.",
   "3. En columna categoria use SOLO el desplegable (lista validada).",
   "4. No escriba categorias manualmente ni valores fuera de la lista.",
-  "5. No repita SKU dentro del archivo.",
-  "6. Maximo 500 filas de datos.",
-  "7. Requiere permiso products.manage para importar.",
+  "5. No repita SKU ni codigo_barras dentro del archivo.",
+  "6. codigo_barras es opcional y debe ser unico si se indica.",
+  "7. Maximo 500 filas de datos.",
+  "8. Requiere permiso products.manage para importar.",
 ];
 
-const CATEGORY_COLUMN = "C";
+const CATEGORY_COLUMN = "D";
 const FIRST_DATA_ROW = 3;
 const LAST_DATA_ROW = PRODUCT_IMPORT_MAX_ROWS + FIRST_DATA_ROW - 1;
+
+type WorksheetWithDataValidations = ExcelJS.Worksheet & {
+  dataValidations: {
+    add: (range: string, rule: ExcelJS.DataValidation) => void;
+    model?: Record<string, ExcelJS.DataValidation>;
+  };
+};
 
 function applyCategoryDropdown(
   productsSheet: ExcelJS.Worksheet,
@@ -38,7 +46,7 @@ function applyCategoryDropdown(
   const lastCategoryRow = categoryCount + 1;
   const listRange = `${PRODUCT_IMPORT_CATEGORIES_SHEET}!$A$2:$A$${lastCategoryRow}`;
 
-  productsSheet.dataValidations.add(
+  (productsSheet as WorksheetWithDataValidations).dataValidations.add(
     `${CATEGORY_COLUMN}${FIRST_DATA_ROW}:${CATEGORY_COLUMN}${LAST_DATA_ROW}`,
     {
       type: "list",
@@ -76,6 +84,7 @@ export async function buildProductImportWorkbook(categories: CategoryMock[] = []
   productsSheet.addRow([...PRODUCT_IMPORT_HEADERS]);
   productsSheet.addRow([
     PRODUCT_IMPORT_EXAMPLE_ROW.sku,
+    PRODUCT_IMPORT_EXAMPLE_ROW.codigo_barras ?? "",
     PRODUCT_IMPORT_EXAMPLE_ROW.nombre,
     exampleCategory,
     PRODUCT_IMPORT_EXAMPLE_ROW.precio_ref,

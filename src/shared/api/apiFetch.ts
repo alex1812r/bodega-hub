@@ -1,5 +1,9 @@
 import { getStoredDemoRole, getStoredDemoUserId } from "@/shared/auth/demoAuth";
 
+function isDemoAuthEnabledOnClient() {
+  return process.env.NEXT_PUBLIC_ALLOW_DEMO_AUTH === "true";
+}
+
 export type ApiErrorPayload = {
   code: string;
   issues?: unknown;
@@ -89,6 +93,10 @@ function getHeader(headers: MutableHeaders, key: string) {
 }
 
 function applyDemoAuthHeaders(headers: MutableHeaders) {
+  if (!isDemoAuthEnabledOnClient()) {
+    return;
+  }
+
   const role = getStoredDemoRole();
   const userId = getStoredDemoUserId();
 

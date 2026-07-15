@@ -3,7 +3,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
+import type { SortOrder } from "@/lib/api/sorting";
 import { apiFetch } from "@/shared/api/apiFetch";
+import type { CategoryInput } from "../services/categories.mock-server";
 import type {
   CategoryMock,
   ProductMock,
@@ -11,20 +13,32 @@ import type {
   SupplierProductMock,
 } from "@/shared/mocks/erp-data";
 
+export type { CategoryInput };
+
+export type CategoriesFilters = PaginationParams & {
+  isActive?: boolean | string;
+  search?: string;
+};
+
 export type ProductWithCategory = ProductMock & {
   category?: CategoryMock;
 };
 
 export type ProductsFilters = PaginationParams & {
+  barcode?: string;
   categoryId?: string;
   isActive?: boolean | string;
   search?: string;
+  sortBy?: string;
+  sortOrder?: SortOrder;
 };
 
 export type ProductInput = {
+  barcode?: string | null;
   categoryId?: string;
   currentCostRef?: number;
   currentStock?: number;
+  imageUrl?: string | null;
   minStock?: number;
   name: string;
   salePriceRef: number;
@@ -46,7 +60,8 @@ export type ProductPriceUpdateResult = {
 
 export const productsQueryKeys = {
   all: ["products"] as const,
-  categories: () => [...productsQueryKeys.all, "categories"] as const,
+  categories: (filters: CategoriesFilters = {}) =>
+    [...productsQueryKeys.all, "categories", filters] as const,
   detail: (id: string) => [...productsQueryKeys.all, "detail", id] as const,
   list: (filters: ProductsFilters = {}) =>
     [...productsQueryKeys.all, "list", filters] as const,
@@ -73,10 +88,61 @@ export function useProduct(id: string) {
   });
 }
 
-export function useCategories() {
+export function useCategories(filters: CategoriesFilters = {}) {
   return useQuery({
-    queryKey: productsQueryKeys.categories(),
-    queryFn: () => apiFetch<PaginatedList<CategoryMock>>("/api/categories"),
+    queryKey: productsQueryKeys.categories(filters),
+    queryFn: () =>
+      apiFetch<PaginatedList<CategoryMock>>("/api/categories", {
+        query: filters,
+      }),
+  });
+}
+
+export function useCreateCategory() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: CategoryInput) =>
+      apiFetch<CategoryMock>("/api/categories", {
+        body: input,
+        method: "POST",
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+    },
+  });
+}
+
+export function useUpdateCategory(id: string = "") {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: CategoryInput & { id?: string }) => {
+      const categoryId = input.id ?? id;
+      const { id: _ignored, ...body } = input;
+
+      return apiFetch<CategoryMock>(`/api/categories/${categoryId}`, {
+        body,
+        method: "PATCH",
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+    },
+  });
+}
+
+export function useDeleteCategory() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<CategoryMock & { deleted?: boolean }>(`/api/categories/${id}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+    },
   });
 }
 

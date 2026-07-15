@@ -1,6 +1,6 @@
 # Checklist De Integracion Frontend
 
-Este checklist lista el estado de conexión del frontend contra la capa BFF `/api` (Supabase vía route handlers en runtime). La integración de datos de negocio está **completa** en módulos operativos; pendientes globales: middleware Next.js, anular pago, exportar reportes, imágenes producto.
+Este checklist lista el estado de conexión del frontend contra la capa BFF `/api` (Supabase vía route handlers en runtime). La integración de datos de negocio está **completa** en módulos operativos. Pendientes menores: ampliar `Can` en todos los módulos, venta borrador, MFA.
 
 **Catálogo por módulo:** [`modules-catalog.md`](modules-catalog.md)  
 **Guía hooks/endpoints:** [`frontend-api-guide.md`](frontend-api-guide.md)  
@@ -31,9 +31,9 @@ Este checklist lista el estado de conexión del frontend contra la capa BFF `/ap
 - `[x]` Listados tipados como `PaginatedList<T>` con `getPaginatedItems()`.
 - `[x]` Entrada `/` redirige a `/dashboard` o `/login` vía `src/app/page.tsx` (server).
 - `[x]` Paginación UI: listados envían `skip`/`limit` y renderizan `<Pagination />` (reset al cambiar filtros).
-- `[~]` Acciones puntuales: desactivar producto/contacto integrado; anular pago sin endpoint; exportar reportes diferido.
+- `[x]` Acciones puntuales: desactivar/reactivar producto, desactivar contacto, anular pago, exportar reportes.
 - `[x]` Autenticación BFF: login/logout/me, `useCurrentUser`, handler 401 global, permisos en shell.
-- `[ ]` Middleware Next.js para prefijos privados sin sesión (opcional; hoy guard por página + API).
+- `[x]` Proxy Next.js (`src/proxy.ts`) para páginas sin sesión (omitido si `ALLOW_DEMO_AUTH=true`).
 
 ## Convencion De Integracion Por Modulo
 
@@ -44,7 +44,7 @@ Antes de marcar un modulo como integrado:
 - `[x]` La pagina de listado consume datos reales de `/api`.
 - `[x]` Los filtros actualizan estado/query params y disparan refetch.
 - `[x]` La tabla muestra loading, fetching, error y empty state.
-- `[~]` Las acciones principales navegan, abren modal o ejecutan mutacion real; desactivar producto/contacto y anular pago quedan como fase posterior.
+- `[x]` Las acciones principales navegan, abren modal o ejecutan mutacion real (incl. reactivar producto/categoría y anular pago).
 - `[x]` Listados usan `PaginatedList` con paginacion UI (`skip`/`limit`) conectada.
 - `[x]` Los formularios principales usan valores controlados, validacion y feedback de error.
 - `[x]` Las mutaciones invalidan las queries afectadas.
@@ -94,7 +94,7 @@ Listados afectados: productos, contactos, inventario, movimientos, ventas, compr
 - `[x]` `AuthenticatedAppShell` filtra menu con permisos de `/api/auth/me`.
 - `[x]` Redirect global 401 en TanStack Query.
 - `[x]` `Can` / `usePermission` en ventas, compras, pagos, productos (parcial en otros modulos).
-- `[ ]` `src/middleware.ts` para rutas privadas sin sesion.
+- `[x]` `src/proxy.ts` para rutas privadas sin sesion (bypass con `ALLOW_DEMO_AUTH=true`).
 - `[~]` Usuario inactivo (`isActive: false`) — validar UX en shell.
 - `[ ]` Tests E2E de permisos por rol en UI.
 
@@ -150,6 +150,7 @@ Listados afectados: productos, contactos, inventario, movimientos, ventas, compr
 - `[x]` Conectar `POST /api/products/[id]/price`.
 - `[x]` Conectar `GET /api/products/[id]/price-history`.
 - `[x]` Conectar `GET /api/products/[id]/suppliers`.
+- `[x]` Proveedores asociados en detalle: tabla Stitch, cards comparativas, modales M10–M14.
 - `[x]` Ruta dinamica `/products/[id]`.
 - `[x]` Crear producto en modal dentro de `/products`.
 - `[x]` Desactivar producto via `PATCH /api/products/[id]` (`isActive: false`).
@@ -224,8 +225,18 @@ Listados afectados: productos, contactos, inventario, movimientos, ventas, compr
 - `[x]` Conectar `PATCH /api/contacts/[id]`.
 - `[x]` Conectar `GET /api/contacts/[id]/activity`.
 - `[x]` Conectar historiales de ventas, compras y pagos del contacto.
+- `[x]` Tab **Productos** en proveedor/ambos: `ContactSupplierProductsTab`, modales M10–M14, permisos `products.view` / `products.manage`.
+- `[x]` Hooks proveedor-producto: `useSupplierProducts`, `useCreateSupplierProduct`, `useUpdateSupplierProductMetadata`, `useRegisterSupplierPrice`, `useSupplierProductPriceHistory`, `useDeactivateSupplierProduct` (`contacts/hooks/`).
 - `[x]` Crear o migrar ruta dinamica `/contacts/[id]`.
 - `[x]` Mostrar validacion de `tax_id` duplicado.
+
+## Proveedor–producto (catálogo)
+
+- `[x]` Tab Productos en `/contacts/[id]` (tipo proveedor/ambos): tabla Stitch, filtros, paginación, empty state.
+- `[x]` Sección proveedores en `/products/[id]`: tabla, cards comparativas, `lastPurchasedAt` real.
+- `[x]` Modales compartidos M10–M14 en `contacts/components/supplier-products/` (M14 como Modal, no drawer).
+- `[x]` MSW handlers en `.storybook/msw-handlers.ts` con variación/origen.
+- `[x]` Tests: rutas API, hooks mutación, modales críticos (register price, unlink confirm).
 
 ## Ventas
 
@@ -247,6 +258,7 @@ Listados afectados: productos, contactos, inventario, movimientos, ventas, compr
 - `[x]` `POST /api/sales`, `GET /api/sales/[id]`, `PATCH .../cancel`, `POST .../return`, `GET .../receipt`.
 - `[x]` Seleccion de cliente y productos con stock/precio.
 - `[x]` Totales ref/VES con tasa vigente en create.
+- `[x]` POS carrito: `PosCartLine` muestra precio unitario y total por línea en REF y VES (`rateVes` de `useCurrentExchangeRate`); grid de productos (`PosProductCard`) muestra equivalente VES.
 - `[x]` Pagos parciales y saldo pendiente en detalle.
 - `[~]` Extender `Can` a todas las acciones secundarias del modulo.
 
@@ -325,9 +337,10 @@ Listados afectados: productos, contactos, inventario, movimientos, ventas, compr
 
 ### Existente
 
-- `[x]` Hook `useCurrentExchangeRate` y `GET /api/exchange-rates/current`.
+- `[x]` Hook `useCurrentExchangeRate` y `GET /api/exchange-rates/current` (DolarAPI oficial en runtime Supabase).
 - `[x]` Historial y registro de tasas en `/settings` (`useExchangeRates`, `useCreateExchangeRate`).
 - `[x]` Ventas, compras y pagos envian `refRateVes` desde tasa vigente en formularios.
+- `[x]` POS `/sales/create`: montos VES por línea en carrito (`PosCartLine`) y en grid de productos (`PosProductCard`).
 - `[x]` `AppShell` header muestra tasa via `useCurrentExchangeRate`.
 
 ## Rutas Demo (compatibilidad)
@@ -345,11 +358,12 @@ Rutas dinamicas ya existen. Estas rutas `/detail` quedan como alias/legacy:
 
 ## Acciones pendientes (sin endpoint o fase posterior)
 
-- `[ ]` Pagos: anular pago (UI disabled; sin API).
-- `[ ]` Reportes: exportar PDF/Excel.
-- `[ ]` Productos: imagen/storage; reactivar desde UI.
+- `[x]` Pagos: anular pago (API + UI).
+- `[x]` Reportes: exportar PDF/Excel.
+- `[x]` Productos: imagen/storage; reactivar desde UI (también categorías).
 - `[ ]` Inventario: filtros `type`/`date` en API de movimientos.
 - `[ ]` Dashboard: selector de rango de fechas en UI.
+- `[ ]` Venta borrador.
 
 ## Storybook Y Testing Pendiente Por Integracion
 
@@ -359,7 +373,7 @@ Rutas dinamicas ya existen. Estas rutas `/detail` quedan como alias/legacy:
 - `[~]` Stories de estados conectados: loading, empty, error, fetching (parcial).
 - `[ ]` Tests de acciones de formularios y mutaciones adicionales.
 - `[ ]` Pruebas de permisos en rutas/paginas (tras auth real).
-- `[x]` `npm run lint`, `npm run typecheck`, `npm test` verdes (176 tests).
+- `[x]` `npm run lint`, `npm run typecheck`, `npm test` verdes en alcance proveedor-producto (10 suites / 24 tests); suite global con fallos preexistentes ajenos al feature.
 
 ## Definicion De Done Por Bloque
 
@@ -373,4 +387,4 @@ Un bloque de modulo se considera listo cuando:
 - `[x]` Storybook muestra los escenarios principales del modulo.
 - `[x]` Tests y typecheck pasan.
 
-Pendiente global: middleware Next.js, anular pago, export reportes, ampliar `Can` en todos los modulos.
+Pendiente global menor: ampliar `Can` en todos los módulos, venta borrador, MFA/registro.

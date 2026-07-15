@@ -4,7 +4,7 @@ Este documento detalla la estructura relacional para un ERP web usando Supabase 
 
 **Implementación SQL:** [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql)  
 **Catálogo módulos ↔ tablas:** [`modules-catalog.md`](modules-catalog.md)  
-**Última revisión doc:** mayo 2026 (alineado con schema en repo).
+**Última revisión doc:** julio 2026 (alineado con schema en repo).
 
 La unidad base de precios será `ref`, equivalente operacional al valor de referencia en dólares. Los montos en VES se calculan con la tasa `ref_rate_ves` vigente al momento de la operación y se guardan como snapshot histórico para evitar que ventas o compras pasadas cambien cuando cambie la tasa.
 
@@ -125,7 +125,7 @@ Clientes y proveedores en una misma tabla diferenciados por tipo.
 
 ### 3.8 Productos por Proveedor (`supplier_products`)
 
-Relación entre proveedores y productos, incluyendo último costo conocido.
+Relación entre proveedores y productos, incluyendo último costo conocido y metadatos de catálogo.
 
 *   `id`: uuid (PK, default: `gen_random_uuid()`)
 *   `supplier_id`: uuid (FK references `contacts`)
@@ -134,8 +134,43 @@ Relación entre proveedores y productos, incluyendo último costo conocido.
 *   `last_cost_ref`: decimal(12,2)
 *   `last_cost_ves`: decimal(14,2)
 *   `last_purchased_at`: timestamp with time zone
+*   `notes`: text — observaciones de la relación (SKU alternativo, condiciones, etc.)
+*   `is_active`: boolean (default: true) — baja lógica; `false` oculta en catálogos operativos con filtro "Solo activos"
 *   `created_at`: timestamp with time zone
 *   `updated_at`: timestamp with time zone
+
+**Índices:** `(supplier_id)`, `(product_id)`, `(is_active)`.
+
+**RPC de escritura:**
+
+| RPC | Uso |
+|-----|-----|
+| `register_supplier_product_price(...)` | Registrar cotización/ajuste; append historial + actualizar snapshot; retorna `variation_percent` |
+| `deactivate_supplier_product(p_id)` | Baja lógica (`is_active = false`) sin borrar historial |
+| `create_purchase` / `receive_purchase` | Al recibir compra, upsert snapshot + append historial con `origin = compra` |
+
+### 3.8.1 Historial de precios proveedor-producto (`supplier_product_price_history`)
+
+Auditoría de cambios de costo por par proveedor-producto.
+
+*   `id`: uuid (PK, default: `gen_random_uuid()`)
+*   `supplier_product_id`: uuid (FK references `supplier_products` on delete cascade)
+*   `old_cost_ref`: decimal(12,2) — null en primer registro
+*   `new_cost_ref`: decimal(12,2) (not null)
+*   `old_cost_ves`: decimal(14,2)
+*   `new_cost_ves`: decimal(14,2)
+*   `origin`: text — `cotizacion` \| `compra` \| `ajuste` \| `vinculacion`
+*   `changed_by`: uuid (FK references `profiles`)
+*   `notes`: text
+*   `created_at`: timestamp with time zone
+
+**Índice:** `(supplier_product_id, created_at desc)`.
+
+**Variación:** calculada en API/mapper: `(new - old) / old * 100` cuando `old_cost_ref > 0`.
+
+**RLS:** SELECT autenticados; INSERT admin/almacén (escritura principal vía RPC `security definer`).
+
+**Migración remota:** ejecutar ALTER + CREATE TABLE + RPCs desde `supabase/supabase-schema.sql` en el SQL Editor de Supabase (no auto-deploy).
 
 ### 3.9 Ventas (`sales`)
 

@@ -28,8 +28,11 @@ export type ProfileListRow = {
 };
 
 export function mapExchangeRate(row: ExchangeRateRow) {
+  const { id } = mapBaseEntity(row);
+
   return {
-    ...mapBaseEntity(row),
+    id,
+    createdAt: row.created_at ?? new Date().toISOString(),
     rateVes: Number(row.rate_ves),
     source: row.source ?? "Manual",
   };

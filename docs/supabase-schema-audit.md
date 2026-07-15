@@ -1,6 +1,6 @@
 # Auditoria Del Schema SQL
 
-Estado de [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql) frente a la app (`/api`, permisos y flujos). Ultima revision: mayo 2026.
+Estado de [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql) frente a la app (`/api`, permisos y flujos). Ultima revision: julio 2026.
 
 **Catálogo módulos ↔ RPC:** [`modules-catalog.md`](modules-catalog.md)
 
@@ -39,6 +39,7 @@ Estado de [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql) fren
 | `product_price_history` | Si | Si | OK |
 | `contacts` | Si | Si | OK |
 | `supplier_products` | Si | Si | OK |
+| `supplier_product_price_history` | Si | Si | OK (§3.8.1; historial cotizaciones/compras/vinculacion) |
 | `sales` / `sale_items` | Si | Si | OK |
 | `purchases` / `purchase_items` | Si | Si | OK |
 | `payments` | Si | Si | OK |
@@ -58,6 +59,8 @@ Estado de [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql) fren
 | Devolver venta | `POST .../return` | `return_sale` | **Nuevo en SQL** |
 | Cancelar compra | `PATCH .../cancel` | `cancel_purchase` | **Nuevo en SQL** |
 | Devolver compra | `POST .../return` | `return_purchase` | **Nuevo en SQL** |
+| Registrar precio proveedor-producto | `POST /api/supplier-products/[id]/prices` | `register_supplier_product_price` | OK |
+| Desvincular proveedor-producto | `PATCH /api/supplier-products/[id]/deactivate` | `deactivate_supplier_product` | OK |
 
 ### Vistas de reportes
 

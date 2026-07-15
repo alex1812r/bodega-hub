@@ -8,6 +8,7 @@ export type PaymentMethod =
   | "punto_venta"
   | "transferencia";
 export type PaymentDirection = "entrada" | "salida";
+export type PaymentStatus = "activo" | "anulado";
 export type PurchaseStatus = "cancelado" | "devuelto" | "pedido" | "recibido";
 export type SaleStatus =
   | "borrador"
@@ -27,6 +28,7 @@ export type StockMovementType =
 export type CategoryMock = {
   description?: string;
   id: string;
+  isActive: boolean;
   name: string;
 };
 
@@ -42,11 +44,12 @@ export type ContactMock = {
 };
 
 export type ProductMock = {
+  barcode?: string | null;
   categoryId: string;
   currentCostRef: number;
   currentStock: number;
   id: string;
-  imageUrl?: string;
+  imageUrl?: string | null;
   isActive: boolean;
   minStock: number;
   name: string;
@@ -112,6 +115,10 @@ export type PurchaseMock = {
 };
 
 export type PurchaseItemMock = {
+  entryMode?: "pack" | "unit";
+  packCostRef?: number;
+  packCount?: number;
+  packLabel?: string;
   productId: string;
   purchaseId: string;
   quantity: number;
@@ -119,6 +126,7 @@ export type PurchaseItemMock = {
   subtotalVes: number;
   unitCostRef: number;
   unitCostVes: number;
+  unitsPerPack?: number;
 };
 
 export type PaymentMock = {
@@ -126,6 +134,7 @@ export type PaymentMock = {
   amountRef: number;
   amountVes: number;
   bankName?: string;
+  cancelledAt?: string;
   contactId: string;
   createdAt: string;
   currency?: "USD" | "VES";
@@ -139,6 +148,7 @@ export type PaymentMock = {
   referenceCode?: string;
   refRateVes: number;
   saleId?: string;
+  status?: PaymentStatus;
 };
 
 export type StockMovementMock = {
@@ -153,12 +163,46 @@ export type StockMovementMock = {
   type: StockMovementType;
 };
 
+export type SupplierProductPriceOrigin = "ajuste" | "compra" | "cotizacion" | "vinculacion";
+
 export type SupplierProductMock = {
+  createdAt?: string;
   id: string;
+  isActive?: boolean;
   lastCostRef: number;
+  lastCostVes?: number;
+  lastPackCostRef?: number;
+  lastPriceOrigin?: SupplierProductPriceOrigin;
+  lastPurchasedAt?: string;
+  notes?: string;
   productId: string;
   supplierId: string;
   supplierSku?: string;
+  updatedAt?: string;
+  variationPercent?: number | null;
+};
+
+export type SupplierProductPriceHistoryMock = {
+  changedBy?: string;
+  createdAt: string;
+  id: string;
+  newCostRef: number;
+  newCostVes?: number;
+  notes?: string;
+  oldCostRef?: number;
+  oldCostVes?: number;
+  origin: SupplierProductPriceOrigin;
+  supplierProductId: string;
+  variationPercent?: number | null;
+};
+
+export type SupplierProductPackUnitMock = {
+  id: string;
+  isActive?: boolean;
+  isDefault?: boolean;
+  label: string;
+  supplierProductId: string;
+  unitsPerPack: number;
 };
 
 export type UserProfileMock = {
@@ -179,14 +223,41 @@ export type AppSettingsMock = {
 };
 
 export const mockCategories: CategoryMock[] = [
-  { description: "Herramientas manuales y electricas", id: "cat-tools", name: "Herramientas" },
-  { description: "Material electrico", id: "cat-electric", name: "Electricidad" },
-  { description: "Pinturas y acabados", id: "cat-paint", name: "Pintura" },
-  { description: "Tuberias, conexiones y accesorios", id: "cat-plumbing", name: "Plomeria" },
+  {
+    description: "Herramientas manuales y electricas",
+    id: "cat-tools",
+    isActive: true,
+    name: "Herramientas",
+  },
+  {
+    description: "Material electrico",
+    id: "cat-electric",
+    isActive: true,
+    name: "Electricidad",
+  },
+  {
+    description: "Pinturas y acabados",
+    id: "cat-paint",
+    isActive: true,
+    name: "Pintura",
+  },
+  {
+    description: "Tuberias, conexiones y accesorios",
+    id: "cat-plumbing",
+    isActive: true,
+    name: "Plomeria",
+  },
+  {
+    description: "Categoria archivada para pruebas",
+    id: "cat-archived",
+    isActive: false,
+    name: "Archivada",
+  },
 ];
 
 export const mockProducts: ProductMock[] = [
   {
+    barcode: "7501234567890",
     categoryId: "cat-tools",
     currentCostRef: 8.5,
     currentStock: 18,
@@ -195,9 +266,10 @@ export const mockProducts: ProductMock[] = [
     minStock: 5,
     name: "Taladro percutor",
     salePriceRef: 15,
-    sku: "HER-TAL-001",
+    sku: "her-tal-001",
   },
   {
+    barcode: "7598765432101",
     categoryId: "cat-electric",
     currentCostRef: 2.1,
     currentStock: 4,
@@ -206,7 +278,7 @@ export const mockProducts: ProductMock[] = [
     minStock: 10,
     name: "Cable THW 12",
     salePriceRef: 3.5,
-    sku: "ELE-CAB-012",
+    sku: "ele-cab-012",
   },
   {
     categoryId: "cat-paint",
@@ -217,7 +289,7 @@ export const mockProducts: ProductMock[] = [
     minStock: 4,
     name: "Pintura blanca galon",
     salePriceRef: 20,
-    sku: "PIN-BLA-001",
+    sku: "pin-bla-001",
   },
   {
     categoryId: "cat-tools",
@@ -229,7 +301,7 @@ export const mockProducts: ProductMock[] = [
     minStock: 3,
     name: "Martillo de una",
     salePriceRef: 7,
-    sku: "HER-MAR-002",
+    sku: "her-mar-002",
   },
   {
     categoryId: "cat-electric",
@@ -240,7 +312,7 @@ export const mockProducts: ProductMock[] = [
     minStock: 8,
     name: "Interruptor sencillo",
     salePriceRef: 2.5,
-    sku: "ELE-INT-001",
+    sku: "ele-int-001",
   },
   {
     categoryId: "cat-paint",
@@ -252,7 +324,7 @@ export const mockProducts: ProductMock[] = [
     minStock: 2,
     name: "Pintura latex azul",
     salePriceRef: 16,
-    sku: "PIN-AZU-002",
+    sku: "pin-azu-002",
   },
   {
     categoryId: "cat-plumbing",
@@ -263,7 +335,7 @@ export const mockProducts: ProductMock[] = [
     minStock: 6,
     name: "Tubo PVC 1/2",
     salePriceRef: 8,
-    sku: "PLO-PVC-012",
+    sku: "plo-pvc-012",
   },
 ];
 
@@ -756,7 +828,8 @@ export const mockPayments: PaymentMock[] = [
     direction: "entrada",
     id: "pay-002",
     method: "pago_movil",
-    referenceCode: "1234",
+    notes: "Pago parcial de factura de venta VEN-0128",
+    referenceCode: "998821",
     refRateVes: 510,
     saleId: "sale-002",
   },
@@ -938,39 +1011,139 @@ export const mockStockMovements: StockMovementMock[] = [
 
 export const mockSupplierProducts: SupplierProductMock[] = [
   {
+    createdAt: "2026-01-10T10:00:00.000Z",
     id: "supp-prod-cable",
+    isActive: true,
     lastCostRef: 2,
+    lastCostVes: 730,
+    lastPriceOrigin: "compra",
+    lastPurchasedAt: "2026-01-10T10:00:00.000Z",
     productId: "prod-cable",
     supplierId: "cont-supplier",
-    supplierSku: "SUP-CAB-12",
+    supplierSku: "sup-cab-12",
+    updatedAt: "2026-01-10T10:00:00.000Z",
+    variationPercent: null,
   },
   {
+    createdAt: "2026-01-12T14:00:00.000Z",
     id: "supp-prod-drill",
+    isActive: true,
     lastCostRef: 8.5,
+    lastCostVes: 3102.5,
+    lastPriceOrigin: "cotizacion",
     productId: "prod-drill",
     supplierId: "cont-both",
-    supplierSku: "DOB-TAL-01",
+    supplierSku: "dob-tal-01",
+    updatedAt: "2026-02-01T09:30:00.000Z",
+    variationPercent: 6.25,
   },
   {
+    createdAt: "2026-01-08T08:00:00.000Z",
     id: "supp-prod-hammer",
+    isActive: true,
     lastCostRef: 3.25,
+    lastCostVes: 1186.25,
+    lastPriceOrigin: "compra",
+    lastPurchasedAt: "2026-01-08T08:00:00.000Z",
     productId: "prod-hammer",
     supplierId: "cont-supplier-tools",
-    supplierSku: "HDL-MAR-16",
+    supplierSku: "hdl-mar-16",
+    updatedAt: "2026-01-08T08:00:00.000Z",
+    variationPercent: null,
   },
   {
+    createdAt: "2026-01-15T11:00:00.000Z",
     id: "supp-prod-pipe",
+    isActive: false,
     lastCostRef: 4.8,
+    lastCostVes: 1752,
+    lastPriceOrigin: "ajuste",
     productId: "prod-pipe",
     supplierId: "cont-both",
-    supplierSku: "DOB-PVC-012",
+    supplierSku: "dob-pvc-012",
+    updatedAt: "2026-02-10T16:00:00.000Z",
+    variationPercent: -2.04,
   },
   {
+    createdAt: "2026-01-20T09:00:00.000Z",
     id: "supp-prod-switch",
+    isActive: true,
     lastCostRef: 1.2,
+    lastCostVes: 438,
+    lastPriceOrigin: "vinculacion",
     productId: "prod-switch",
     supplierId: "cont-supplier",
-    supplierSku: "SUP-INT-001",
+    supplierSku: "sup-int-001",
+    updatedAt: "2026-01-20T09:00:00.000Z",
+    variationPercent: null,
+  },
+];
+
+export const mockSupplierProductPackUnits: SupplierProductPackUnitMock[] = [
+  {
+    id: "sp-pack-cable-bulto",
+    isActive: true,
+    isDefault: true,
+    label: "Bulto",
+    supplierProductId: "supp-prod-cable",
+    unitsPerPack: 12,
+  },
+  {
+    id: "sp-pack-hammer-caja",
+    isActive: true,
+    isDefault: true,
+    label: "Caja",
+    supplierProductId: "supp-prod-hammer",
+    unitsPerPack: 24,
+  },
+];
+
+export const mockSupplierProductPriceHistory: SupplierProductPriceHistoryMock[] = [
+  {
+    changedBy: "user-admin",
+    createdAt: "2026-01-10T10:00:00.000Z",
+    id: "sph-cable-1",
+    newCostRef: 2,
+    newCostVes: 730,
+    origin: "compra",
+    supplierProductId: "supp-prod-cable",
+    variationPercent: null,
+  },
+  {
+    changedBy: "user-admin",
+    createdAt: "2026-01-12T14:00:00.000Z",
+    id: "sph-drill-1",
+    newCostRef: 8,
+    newCostVes: 2920,
+    origin: "vinculacion",
+    supplierProductId: "supp-prod-drill",
+    variationPercent: null,
+  },
+  {
+    changedBy: "user-almacen",
+    createdAt: "2026-02-01T09:30:00.000Z",
+    id: "sph-drill-2",
+    newCostRef: 8.5,
+    newCostVes: 3102.5,
+    notes: "Relevamiento febrero",
+    oldCostRef: 8,
+    oldCostVes: 2920,
+    origin: "cotizacion",
+    supplierProductId: "supp-prod-drill",
+    variationPercent: 6.25,
+  },
+  {
+    changedBy: "user-admin",
+    createdAt: "2026-02-10T16:00:00.000Z",
+    id: "sph-pipe-1",
+    newCostRef: 4.8,
+    newCostVes: 1752,
+    notes: "Desvinculado por falta de stock",
+    oldCostRef: 4.9,
+    oldCostVes: 1788.5,
+    origin: "ajuste",
+    supplierProductId: "supp-prod-pipe",
+    variationPercent: -2.04,
   },
 ];
 

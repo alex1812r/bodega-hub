@@ -1,7 +1,9 @@
 import { mapBaseEntity, mapBoolean, mapNullableString } from "@/lib/supabase/mappers/base";
 import { mapCategory, type CategoryRow } from "@/lib/supabase/mappers/categories";
+import { normalizeSku } from "@/shared/utils/skuGeneration";
 
 export type DbProductSummaryRow = {
+  barcode?: string | null;
   category_id?: string | null;
   current_cost_ref?: number | string | null;
   current_stock?: number | null;
@@ -42,6 +44,7 @@ function toNumber(value: number | string | null | undefined, fallback = 0) {
 
 export function mapProductSummary(row: DbProductSummaryRow) {
   return {
+    barcode: mapNullableString(row.barcode),
     categoryId: mapNullableString(row.category_id) ?? "",
     currentCostRef: toNumber(row.current_cost_ref),
     currentStock: row.current_stock ?? 0,
@@ -51,7 +54,7 @@ export function mapProductSummary(row: DbProductSummaryRow) {
     minStock: row.min_stock ?? 0,
     name: row.name,
     salePriceRef: toNumber(row.sale_price_ref),
-    sku: row.sku,
+    sku: normalizeSku(row.sku),
   };
 }
 

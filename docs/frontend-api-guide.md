@@ -22,7 +22,7 @@ Documentos relacionados:
 | `/dashboard` | Panel principal | `dashboard.view` en layout |
 | `/dev/welcome` | Referencia demo | Solo desarrollo |
 
-Rutas privadas: cada `page.tsx` usa `AuthenticatedAppShell` con `requiredPermission`. No existe `src/middleware.ts` (pendiente opcional).
+Rutas privadas: cada `page.tsx` usa `AuthenticatedAppShell` con `requiredPermission`. Además [`src/proxy.ts`](../src/proxy.ts) redirige a login si no hay sesión (salvo `ALLOW_DEMO_AUTH=true`).
 
 Rutas públicas: `/login`, `/api-docs`, `/dev/*`, assets estáticos.
 
@@ -134,7 +134,7 @@ const products = useProducts({ ...filters, skip, limit });
 
 ## Autenticación y permisos
 
-### Estado actual (mayo 2026)
+### Estado actual (julio 2026)
 
 | Pieza | Estado |
 |-------|--------|
@@ -145,7 +145,7 @@ const products = useProducts({ ...filters, skip, limit });
 | Shell | `AuthenticatedAppShell` + `requiredPermission` por página |
 | 401 global | `query-client.ts` → `/login` |
 | Tasa header | `useCurrentExchangeRate` en shell |
-| Pendiente | `middleware.ts` para prefijos privados; MFA |
+| Pendiente | MFA (proxy de sesión ya en `src/proxy.ts`) |
 
 ### Hooks auth
 
@@ -239,7 +239,7 @@ Incluir **filtros e ids** en la key para que el cache sea correcto.
 | Dashboard | [`src/modules/dashboard/hooks/useDashboard.ts`](../src/modules/dashboard/hooks/useDashboard.ts) |
 | Productos / categorías | [`src/modules/products/hooks/useProducts.ts`](../src/modules/products/hooks/useProducts.ts) |
 | Inventario | [`src/modules/inventory/hooks/useInventory.ts`](../src/modules/inventory/hooks/useInventory.ts) |
-| Contactos | [`src/modules/contacts/hooks/useContacts.ts`](../src/modules/contacts/hooks/useContacts.ts) |
+| Contactos | [`src/modules/contacts/hooks/useContacts.ts`](../src/modules/contacts/hooks/useContacts.ts), [`useSupplierProducts.ts`](../src/modules/contacts/hooks/useSupplierProducts.ts), [`useSupplierProductMutations.ts`](../src/modules/contacts/hooks/useSupplierProductMutations.ts) |
 | Ventas | [`src/modules/sales/hooks/useSales.ts`](../src/modules/sales/hooks/useSales.ts) |
 | Compras | [`src/modules/purchases/hooks/usePurchases.ts`](../src/modules/purchases/hooks/usePurchases.ts) |
 | Pagos | [`src/modules/payments/hooks/usePayments.ts`](../src/modules/payments/hooks/usePayments.ts) |
@@ -317,16 +317,21 @@ Tipos: `cliente`, `proveedor`, `ambos`. `taxId` duplicado → 409. **No hay DELE
 
 ### Proveedor–producto
 
-Sin hook dedicado aún; usar `apiFetch` o añadir en módulo productos/compras:
+Hooks en `src/modules/contacts/hooks/` (modales compartidos en `contacts/components/supplier-products/`):
 
-| Acción | Método | Endpoint | Permiso |
-|--------|--------|----------|---------|
-| Listar | GET | `/api/supplier-products?supplierId=&productId=` | `products.view` |
-| Crear | POST | `/api/supplier-products` | `products.manage` |
-| Actualizar | PATCH | `/api/supplier-products/[id]` | `products.manage` |
-| Por proveedor | GET | `/api/suppliers/[id]/products` | `products.view` |
+| Hook | Método | Endpoint | Permiso |
+|------|--------|----------|---------|
+| `useSupplierProducts` | GET | `/api/suppliers/[id]/products?isActive=` | `products.view` |
+| `useProductSupplierProducts` | GET | `/api/products/[id]/suppliers` | `products.view` |
+| `useCreateSupplierProduct` | POST | `/api/supplier-products` | `products.manage` |
+| `useUpdateSupplierProductMetadata` | PATCH | `/api/supplier-products/[id]` | `products.manage` |
+| `useRegisterSupplierPrice` | POST | `/api/supplier-products/[id]/prices` | `products.manage` |
+| `useSupplierProductPriceHistory` | GET | `/api/supplier-products/[id]/price-history` | `products.view` |
+| `useDeactivateSupplierProduct` | PATCH | `/api/supplier-products/[id]/deactivate` | `products.manage` |
 
-`useSupplierProducts(supplierId)` ya envuelve la última ruta.
+`usePurchases` re-exporta `useSupplierProducts` con `isActive=true` por defecto para catálogo OC.
+
+UI: tab **Productos** en `/contacts/[id]` (proveedor/ambos), sección proveedores en `/products/[id]`, modales M10–M14 (M10: autocomplete producto o proveedor; historial M14 como Modal `sm:max-w-3xl`).
 
 ### Compras
 
@@ -337,7 +342,7 @@ Sin hook dedicado aún; usar `apiFetch` o añadir en módulo productos/compras:
 | `useCreatePurchase` | POST | `/api/purchases` | `purchases.create` |
 | `useCancelPurchase` | PATCH | `/api/purchases/[id]/cancel` | `purchases.create` |
 | `useReturnPurchase` | POST | `/api/purchases/[id]/return` | `purchases.create` |
-| *(pendiente)* `useReceivePurchase` | PATCH | `/api/purchases/[id]/receive` | `purchases.create` |
+| `useReceivePurchase` | PATCH | `/api/purchases/[id]/receive` | `purchases.create` |
 
 Body `POST /api/purchases`:
 
@@ -387,6 +392,16 @@ Body `POST /api/sales`:
 Antes de enviar: comprobar stock (`GET /api/products/[id]` o listado inventario). Cantidad > stock → 400/409.
 
 Estados típicos: `pendiente_pago`, `pagada`, `cancelada`. El detalle incluye `items` y `payments`.
+
+**UI POS (`/sales/create`):** componentes en `src/modules/sales/sale-create/components/`:
+
+| Componente | Rol |
+|------------|-----|
+| `PosProductGrid` / `PosProductCard` | Catálogo clickeable; precio REF + VES por producto |
+| `PosCartPanel` / `PosCartLine` | Carrito; cada línea muestra unitario y total en REF y VES |
+| `usePosCart` | Estado local del carrito antes de `useCreateSale` |
+
+La tasa viene de `useCurrentExchangeRate` (`rateVes`); conversiones con `refToVes` / `formatVes`. Si no hay tasa (`rateVes === 0`), la UI muestra solo montos REF.
 
 ### Pagos
 
@@ -571,11 +586,11 @@ Ocultar botones si el permiso no está en el perfil; igual manejar 403 del API.
 |------|-------|
 | `/dashboard` | `useDashboardSummary`, `useDashboardMetrics`, `useDashboardRecentSales`, `useDashboardLowStock` |
 | `/products` | `useProducts`, `useCategories`, `useCreateProduct`, `useUpdateProduct` |
-| `/products/[id]` | `useProduct`, `useProductPriceHistory`, `useProductSuppliers`, `useUpdateProductPrice` |
+| `/products/[id]` | `useProduct`, `useProductPriceHistory`, `useProductSuppliers`, `useUpdateProductPrice`, mutaciones M10–M14 |
 | `/inventory` | `useInventory`, `useAdjustInventory` |
 | `/inventory/movements` | `useInventoryMovements`, `useStockCard` |
 | `/contacts` | `useContacts`, `useCreateContact` |
-| `/contacts/[id]` | `useContact`, `useContactActivity`, `useContactSales`, `useContactPurchases`, `useContactPayments` |
+| `/contacts/[id]` | `useContact`, `useContactActivity`, `useContactSales`, `useContactPurchases`, `useContactPayments`, `useSupplierProducts`, mutaciones M10–M13 |
 | `/sales` | `useSales` |
 | `/sales/create` | `useCreateSale`, `useContacts`, `useProducts`, `useCurrentExchangeRate` |
 | `/sales/[id]` | `useSale`, `useSaleReceipt`, `useCancelSale`, `useReturnSale`, `useCreatePayment` |
@@ -593,7 +608,7 @@ Ocultar botones si el permiso no está en el perfil; igual manejar 403 del API.
 | Gap | Impacto UI | Prioridad | Workaround |
 |-----|------------|-----------|------------|
 | Sin `DELETE` contactos | Baja vía PATCH `isActive: false` | Baja | `useUpdateContact({ isActive: false })` |
-| Sin `DELETE` supplier-products | No quitar relación | Baja | — |
+| Baja proveedor-producto | `PATCH .../deactivate` (no DELETE) | Baja | `useDeactivateSupplierProduct` |
 | Sin `PATCH /api/payments/[id]/cancel` | Anular pago deshabilitado en UI | Baja | Botón disabled documentado |
 | PATCH notas venta/pago | RLS puede exigir admin | Baja | Mostrar error o usar rol admin |
 | Permisos en botones (cobertura parcial) | Algunas pantallas aún sin `Can` | Media | Extender `usePermission` / `<Can>` |

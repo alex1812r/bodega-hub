@@ -95,4 +95,35 @@ describe("useLogin", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: authQueryKeys.all });
     expect(pushMock).toHaveBeenCalledWith("/dashboard");
   });
+
+  it("redirects to next path when safe", async () => {
+    window.history.pushState({}, "", "/login?next=/products");
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        data: {
+          role: "admin",
+          user: {
+            email: "admin@example.com",
+            id: "user-admin",
+            isActive: true,
+            name: "Administrador",
+          },
+        },
+      }),
+    );
+
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => useLogin(), { wrapper: Wrapper });
+
+    result.current.mutate({
+      email: "admin@example.com",
+      password: "secret",
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(pushMock).toHaveBeenCalledWith("/products");
+
+    window.history.pushState({}, "", "/");
+  });
 });

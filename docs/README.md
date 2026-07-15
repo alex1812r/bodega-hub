@@ -1,6 +1,6 @@
 # Documentación — Control Ventas ERP
 
-Índice de documentación alineada con el código (mayo 2026).
+Índice de documentación alineada con el código (julio 2026).
 
 ## Empezar aquí
 
@@ -31,6 +31,9 @@
 | [frontend-product-bulk-import.md](frontend-product-bulk-import.md) | Importación masiva Excel en `/products/import` |
 | [auth-permissions.md](auth-permissions.md) | Roles, permisos, sesión y demo |
 | [responsive-ui.md](responsive-ui.md) | Breakpoints, drawer, tablas en tarjetas y formularios |
+| [stitch-design-checklist.md](stitch-design-checklist.md) | Checklist UI/UX en Google Stitch (pantallas, modales, pendientes) |
+| [stitch-prompts/README.md](stitch-prompts/README.md) | Prompts listos para pegar en Google Stitch (generación y rediseños) |
+| [stitch-theming.md](stitch-theming.md) | Tokens BodegaSync (Stitch) vs theming actual y plan de alineación |
 
 ## Planificación
 
@@ -38,6 +41,7 @@
 |-----------|----------------|
 | [plan-erp.md](plan-erp.md) | Visión funcional y objetivos del producto |
 | [web-app-build-checklist.md](web-app-build-checklist.md) | Plan histórico de construcción (MVP ya hecho) |
+| [multi-store-options.md](multi-store-options.md) | Opciones para múltiples negocios/tiendas (sin membresías; exploración) |
 
 ## Contrato machine-readable
 

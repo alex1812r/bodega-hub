@@ -14,7 +14,7 @@ const badgeVariants = cva(
         warning:
           "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
         danger: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
-        info: "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
+        info: "bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300",
       },
     },
     defaultVariants: {

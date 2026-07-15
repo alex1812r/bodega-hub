@@ -1,6 +1,6 @@
 # Checklist de Creacion de la Aplicacion Web ERP
 
-> **Estado mayo 2026:** el MVP de este plan **ya está implementado** (App Router, módulos, BFF `/api`, Supabase, Storybook, tests). Use como referencia del plan original; para el estado **actual** del producto consulte [`modules-catalog.md`](modules-catalog.md) y [`frontend-integration-checklist.md`](frontend-integration-checklist.md).
+> **Estado julio 2026:** el MVP de este plan **ya está implementado** (App Router, módulos, BFF `/api`, Supabase, Storybook, tests). Use como referencia del plan original; para el estado **actual** del producto consulte [`modules-catalog.md`](modules-catalog.md) y [`frontend-integration-checklist.md`](frontend-integration-checklist.md).
 
 Este archivo es el plan operativo histórico para construir la aplicacion web punto a punto. Debe usarse junto con:
 

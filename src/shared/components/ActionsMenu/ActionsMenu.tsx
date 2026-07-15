@@ -1,6 +1,6 @@
 "use client";
 
-import { MoreHorizontal } from "lucide-react";
+import { MoreVertical } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -134,7 +134,7 @@ export function ActionsMenu({ actions, label = "Abrir acciones" }: ActionsMenuPr
         aria-expanded={isOpen}
         aria-haspopup="menu"
         aria-label={label}
-        icon={<MoreHorizontal className="h-4 w-4" />}
+        icon={<MoreVertical className="h-4 w-4" />}
         onClick={() => setIsOpen((current) => !current)}
         variant="ghost"
       />

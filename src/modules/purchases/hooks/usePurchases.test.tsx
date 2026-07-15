@@ -90,7 +90,7 @@ describe("purchase hooks", () => {
 
     expect(fetchMock).toHaveBeenCalledWith("/api/purchases/purchase-001", expect.any(Object));
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/suppliers/cont-supplier/products",
+      "/api/suppliers/cont-supplier/products?isActive=true",
       expect.any(Object),
     );
   });
@@ -119,7 +119,7 @@ describe("purchase hooks", () => {
     });
 
     createPurchase.result.current.mutate({
-      items: [{ productId: "prod-cable", quantity: 2, unitCostRef: 2 }],
+      items: [{ entryMode: "unit", productId: "prod-cable", quantity: 2, unitCostRef: 2 }],
       supplierId: "cont-supplier",
     });
     await waitFor(() => expect(createPurchase.result.current.isSuccess).toBe(true));

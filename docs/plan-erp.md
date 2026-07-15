@@ -2,7 +2,7 @@
 
 Este documento detalla la **vision y requisitos funcionales** del ERP. Para implementacion actual (rutas, hooks, endpoints, tablas) use [`modules-catalog.md`](modules-catalog.md).
 
-## 0. Estado de implementacion (mayo 2026)
+## 0. Estado de implementacion (julio 2026)
 
 | Area | Estado | Referencia |
 |------|--------|------------|
@@ -11,12 +11,16 @@ Este documento detalla la **vision y requisitos funcionales** del ERP. Para impl
 | UI modulos operativos | Implementado | [`frontend-integration-checklist.md`](frontend-integration-checklist.md) |
 | Schema + RPC | Implementado | [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql) |
 | Import Excel productos | Implementado | [`frontend-product-bulk-import.md`](frontend-product-bulk-import.md) |
+| Catálogo proveedor-producto | Implementado | Tab Productos contacto, proveedores en producto, M10–M14, historial precios |
+| POS dual currency (REF + VES) | Implementado | Carrito y grid en `/sales/create` con `PosCartLine` / `PosProductCard` |
 | E2E manual bodegon | Implementado | [`backend-e2e-bodegon.md`](backend-e2e-bodegon.md) |
-| Anular pago | No implementado | Sin endpoint |
-| Export PDF/Excel reportes | No implementado | UI disabled |
-| Imagen producto (storage) | Parcial (campo BD) | Sin UI |
-| Middleware rutas privadas | No implementado | Guard por pagina |
+| Anular pago | Implementado | `PATCH /api/payments/[id]/cancel` + UI |
+| Export PDF/Excel reportes | Implementado | `ReportsExportActions` |
+| Imagen producto (storage) | Implementado | Recorte 4:3, signed upload, quitar fondo opcional |
+| Proxy rutas privadas (Next 16) | Implementado | [`src/proxy.ts`](../src/proxy.ts) |
 | Venta borrador | No implementado | `create_sale` → `pendiente_pago` |
+| Escaneo barcode (lector USB) | Implementado | POS/compras Enter + lookup exacto |
+| Reactivar producto/categoría | Implementado | Acciones en listados |
 
 ## 1. Vision General
 

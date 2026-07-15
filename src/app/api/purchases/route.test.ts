@@ -21,7 +21,7 @@ describe("/api/purchases", () => {
     const response = await POST(
       new Request("http://localhost/api/purchases", {
         body: JSON.stringify({
-          items: [{ productId: "prod-cable", quantity: 2, unitCostRef: 2 }],
+          items: [{ entryMode: "unit", productId: "prod-cable", quantity: 2, unitCostRef: 2 }],
           supplierId: "cont-supplier",
         }),
         headers: {
@@ -41,7 +41,7 @@ describe("/api/purchases", () => {
     const response = await POST(
       new Request("http://localhost/api/purchases", {
         body: JSON.stringify({
-          items: [{ productId: "prod-cable", quantity: 2, unitCostRef: 2 }],
+          items: [{ entryMode: "unit", productId: "prod-cable", quantity: 2, unitCostRef: 2 }],
           status: "pedido",
           supplierId: "cont-supplier",
         }),

@@ -39,6 +39,8 @@ const productRow = {
 function createQueryBuilder(result: { count?: number; data?: unknown; error?: unknown }) {
   const builder = {
     eq: jest.fn().mockReturnThis(),
+    gte: jest.fn().mockReturnThis(),
+    lte: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),
     range: jest.fn().mockResolvedValue(result),
     select: jest.fn().mockReturnThis(),
@@ -61,7 +63,7 @@ describe("inventory.server", () => {
     ).toEqual({
       createdAt: movementRow.created_at,
       id: movementRow.id,
-      product: expect.objectContaining({ sku: "ELE-CAB-001" }),
+      product: expect.objectContaining({ sku: "ele-cab-001" }),
       productId: movementRow.product_id,
       quantityDelta: 3,
       reason: "Conteo fisico",
@@ -84,7 +86,7 @@ describe("inventory.server", () => {
     const result = await listInventory(new URLSearchParams("lowStock=true&skip=0&limit=10"));
 
     expect(result.total).toBe(1);
-    expect(result.items[0]).toEqual(expect.objectContaining({ sku: "ELE-CAB-001" }));
+    expect(result.items[0]).toEqual(expect.objectContaining({ sku: "ele-cab-001" }));
   });
 
   it("lists stock movements with product join", async () => {
@@ -114,6 +116,34 @@ describe("inventory.server", () => {
     );
   });
 
+  it("lists stock movements with type and date filters", async () => {
+    const builder = createQueryBuilder({
+      count: 0,
+      data: [],
+      error: null,
+    });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
+      from: jest.fn().mockReturnValue(builder),
+    });
+
+    await listStockMovements(
+      new URLSearchParams(
+        "type=venta&from=2026-05-01&to=2026-05-31&skip=0&limit=10",
+      ),
+    );
+
+    expect(builder.eq).toHaveBeenCalledWith("type", "venta");
+    expect(builder.gte).toHaveBeenCalledWith(
+      "created_at",
+      "2026-05-01T00:00:00.000Z",
+    );
+    expect(builder.lte).toHaveBeenCalledWith(
+      "created_at",
+      "2026-05-31T23:59:59.999Z",
+    );
+  });
+
   it("reads stock card entries from stock_card view", async () => {
     const builder = createQueryBuilder({
       count: 1,
@@ -140,7 +170,7 @@ describe("inventory.server", () => {
 
     expect(result.items[0]).toEqual(
       expect.objectContaining({
-        product: expect.objectContaining({ sku: "ELE-CAB-001" }),
+        product: expect.objectContaining({ sku: "ele-cab-001" }),
         productId: movementRow.product_id,
       }),
     );

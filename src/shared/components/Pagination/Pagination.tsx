@@ -17,7 +17,7 @@ import {
 
 const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
-export type PaginationVariant = "default" | "compact";
+export type PaginationVariant = "compact" | "default" | "embedded" | "stitch";
 
 export type PaginationProps = {
   className?: string;
@@ -30,6 +30,10 @@ export type PaginationProps = {
   total: number;
   /** Use in narrow containers (e.g. dashboard cards) to avoid horizontal overflow. */
   variant?: PaginationVariant;
+  /** Sufijo del total en variante stitch: "ventas", "productos", etc. */
+  entityLabel?: string;
+  /** Oculta el texto "Mostrando X a Y de Z" (p. ej. cuando el contenedor padre ya lo muestra). */
+  showSummary?: boolean;
 };
 
 export function Pagination({
@@ -39,6 +43,8 @@ export function Pagination({
   onLimitChange,
   onSkipChange,
   pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
+  entityLabel = "registros",
+  showSummary = true,
   skip,
   total,
   variant = "default",
@@ -75,41 +81,65 @@ export function Pagination({
   };
 
   const isCompact = variant === "compact";
+  const isEmbedded = variant === "embedded";
+  const isStitch = variant === "stitch";
 
   return (
     <nav
       aria-label="Paginacion de resultados"
       className={cn(
-        "flex max-w-full min-w-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-900",
-        isCompact ? "gap-3" : "gap-4 sm:flex-row sm:items-center sm:justify-between",
+        "flex max-w-full min-w-0 flex-col gap-3",
+        isStitch
+          ? "flex-row items-center justify-between gap-4"
+          : isEmbedded
+            ? "gap-3 sm:flex-row sm:items-center sm:justify-between"
+            : cn(
+                "rounded-lg border border-border bg-surface-container-lowest px-4 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-900",
+                isCompact ? "gap-3" : "gap-4 sm:flex-row sm:items-center sm:justify-between",
+              ),
         className,
       )}
     >
-      <p className="shrink-0 text-sm text-slate-600 dark:text-slate-400">
-        {total > 0 ? (
-          <>
-            Mostrando <span className="font-medium text-slate-900 dark:text-slate-100">{from}</span>
-            {" - "}
-            <span className="font-medium text-slate-900 dark:text-slate-100">{to}</span> de{" "}
-            <span className="font-medium text-slate-900 dark:text-slate-100">{total}</span>
-          </>
-        ) : (
-          "Sin resultados"
-        )}
-      </p>
+      {showSummary ? (
+        <p
+          className={cn(
+            "shrink-0 text-sm",
+            isStitch
+              ? "text-on-surface-variant"
+              : "text-slate-600 dark:text-slate-400",
+          )}
+        >
+          {total > 0 ? (
+            isStitch ? (
+              <>
+                Mostrando {from} a {to} de {total} {entityLabel}
+              </>
+            ) : (
+              <>
+                Mostrando <span className="font-medium text-slate-900 dark:text-slate-100">{from}</span>
+                {" - "}
+                <span className="font-medium text-slate-900 dark:text-slate-100">{to}</span> de{" "}
+                <span className="font-medium text-slate-900 dark:text-slate-100">{total}</span>
+              </>
+            )
+          ) : (
+            "Sin resultados"
+          )}
+        </p>
+      ) : null}
 
       <div
         className={cn(
           "flex min-w-0 flex-wrap items-center gap-2",
-          isCompact ? "justify-between" : "flex-col gap-3 sm:flex-row sm:items-center",
+          isStitch ? "gap-1" : isCompact ? "justify-between" : "flex-col gap-3 sm:flex-row sm:items-center",
         )}
       >
-        {showPageSizeSelector ? (
+        {showPageSizeSelector && !isStitch ? (
           <label className="flex shrink-0 items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
             <span className="whitespace-nowrap">Por pagina</span>
             <select
               aria-label="Resultados por pagina"
-              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-600 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-blue-500 dark:focus:ring-blue-950"
+              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none transition-colors focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-indigo-500 dark:focus:ring-indigo-950"
               disabled={isDisabled}
               onChange={(event) => handleLimitChange(Number(event.target.value))}
               value={limit}
@@ -124,13 +154,28 @@ export function Pagination({
         ) : null}
 
         <div className="flex min-w-0 shrink items-center gap-1">
-          <IconButton
-            aria-label="Pagina anterior"
-            disabled={isDisabled || !canGoPrevious}
-            icon={<ChevronLeft className="h-4 w-4" />}
-            onClick={() => goToPage(currentPage - 1)}
-            variant="outline"
-          />
+          {isStitch ? (
+            <Button
+              className={cn(
+                "h-auto px-3 py-1 text-sm",
+                !canGoPrevious && "cursor-not-allowed text-slate-400",
+              )}
+              disabled={isDisabled || !canGoPrevious}
+              onClick={() => goToPage(currentPage - 1)}
+              size="sm"
+              variant="outline"
+            >
+              Anterior
+            </Button>
+          ) : (
+            <IconButton
+              aria-label="Pagina anterior"
+              disabled={isDisabled || !canGoPrevious}
+              icon={<ChevronLeft className="h-4 w-4" />}
+              onClick={() => goToPage(currentPage - 1)}
+              variant="outline"
+            />
+          )}
 
           {isCompact ? (
             <p className="whitespace-nowrap px-1 text-sm text-slate-500 dark:text-slate-400">
@@ -154,9 +199,11 @@ export function Pagination({
                     aria-current={page === currentPage ? "page" : undefined}
                     aria-label={`Ir a pagina ${page}`}
                     className={cn(
-                      "min-w-9 px-2",
+                      isStitch ? "h-auto min-w-9 px-3 py-1 text-sm" : "min-w-9 px-2",
                       page === currentPage &&
-                        "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700",
+                        (isStitch
+                          ? "border-primary bg-primary text-primary-foreground hover:bg-indigo-700"
+                          : "bg-indigo-600 text-white hover:bg-indigo-700 dark:bg-indigo-600 dark:hover:bg-indigo-700"),
                     )}
                     disabled={isDisabled}
                     key={page}
@@ -171,16 +218,28 @@ export function Pagination({
             </div>
           )}
 
-          <IconButton
-            aria-label="Pagina siguiente"
-            disabled={isDisabled || !canGoNext}
-            icon={<ChevronRight className="h-4 w-4" />}
-            onClick={() => goToPage(currentPage + 1)}
-            variant="outline"
-          />
+          {isStitch ? (
+            <Button
+              className="h-auto px-3 py-1 text-sm"
+              disabled={isDisabled || !canGoNext}
+              onClick={() => goToPage(currentPage + 1)}
+              size="sm"
+              variant="outline"
+            >
+              Siguiente
+            </Button>
+          ) : (
+            <IconButton
+              aria-label="Pagina siguiente"
+              disabled={isDisabled || !canGoNext}
+              icon={<ChevronRight className="h-4 w-4" />}
+              onClick={() => goToPage(currentPage + 1)}
+              variant="outline"
+            />
+          )}
         </div>
 
-        {!isCompact ? (
+        {!isCompact && !isStitch ? (
           <p className="shrink-0 text-sm text-slate-500 dark:text-slate-400">
             Pagina{" "}
             <span className="font-medium text-slate-900 dark:text-slate-100">{currentPage}</span> de{" "}

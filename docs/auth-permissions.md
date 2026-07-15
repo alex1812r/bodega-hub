@@ -2,10 +2,11 @@
 
 Este proyecto usa una capa de permisos por rol (y overrides por usuario) para controlar qué módulos puede ver o usar cada perfil. La **validación definitiva** ocurre en el backend (`requirePermission`, RLS). La UI replica permisos para ocultar menú y acciones.
 
-Estado de autenticación (mayo 2026):
+Estado de autenticación (julio 2026):
 
 - **Backend auth:** `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` operativos (Supabase + cookies).
-- **Entrada app:** `/` redirige en [`src/app/page.tsx`](../src/app/page.tsx) (server): con sesión → `/dashboard`, sin sesión → `/login`. **No existe** `src/middleware.ts`.
+- **Entrada app:** `/` redirige en [`src/app/page.tsx`](../src/app/page.tsx) (server): con sesión → home por rol, sin sesión → `/login`.
+- **Proxy (Next 16):** [`src/proxy.ts`](../src/proxy.ts) redirige a `/login?next=...` si no hay sesión Supabase en rutas privadas. Se omite cuando `ALLOW_DEMO_AUTH=true` (dev con `x-demo-role`). `/api/*` no se bloquea (auth en handlers).
 - **UI auth:** `useLogin` (BFF), `useLogout`, `useCurrentUser`; `AuthenticatedAppShell` carga perfil real y filtra menú por permisos.
 - **401 global:** [`src/lib/query/query-client.ts`](../src/lib/query/query-client.ts) redirige a `/login`.
 - **Demo dev:** `ALLOW_DEMO_AUTH=true` + `x-demo-role` desde `localStorage` (no usar en producción).
@@ -65,9 +66,8 @@ Login (POST /api/auth/login)
 | Hook perfil | `src/modules/auth/hooks/useCurrentUser.ts` |
 | Shell autenticado | `src/shared/components/AppShell/AuthenticatedAppShell.tsx` |
 | Redirect entrada | `src/app/page.tsx` |
+| Proxy sesión | `src/proxy.ts` |
 | Handler 401 global | `src/lib/query/query-client.ts` |
-
-**Pendiente:** `src/middleware.ts` para bloquear prefijos privados sin sesión antes de renderizar (hoy la API y el shell cubren el caso).
 
 La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 

@@ -2,10 +2,14 @@ import { mapPermissionList } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import {
+  getDefaultHomePathForRole,
+} from "@/shared/auth/defaultHomePath";
+import {
   isUserRole,
   type Permission,
   type UserRole,
 } from "@/shared/auth/permissions";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type ServerAuthProfile = {
   deniedPermissions: Permission[];
@@ -33,7 +37,19 @@ export async function getAuthProfileFromSession(): Promise<ServerAuthProfile | n
     error: userError,
   } = await supabase.auth.getUser();
 
-  throwIfSupabaseError(userError);
+  // Sin cookie/sesión, getUser puede devolver AuthSessionMissingError (no es fallo de servidor).
+  if (userError) {
+    const message = userError.message?.toLowerCase() ?? "";
+    const code = "code" in userError ? String(userError.code ?? "") : "";
+    if (
+      message.includes("auth session missing") ||
+      code === "session_not_found" ||
+      code === "AuthSessionMissingError"
+    ) {
+      return null;
+    }
+    throwIfSupabaseError(userError);
+  }
 
   if (!user) {
     return null;
@@ -60,6 +76,27 @@ export async function getAuthProfileFromSession(): Promise<ServerAuthProfile | n
     name: profile.full_name ?? user.email ?? "Usuario",
     role: profile.role,
   };
+}
+
+export async function getDefaultHomePathForAuthUserId(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", userId)
+    .maybeSingle<{ role: string }>();
+
+  if (error) {
+    return "/dashboard";
+  }
+
+  if (data?.role && isUserRole(data.role)) {
+    return getDefaultHomePathForRole(data.role);
+  }
+
+  return "/dashboard";
 }
 
 export async function getProfileByUserId(userId: string): Promise<ServerAuthProfile | null> {

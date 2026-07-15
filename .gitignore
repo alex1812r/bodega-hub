@@ -13,6 +13,7 @@
 # testing
 /coverage
 scripts/e2e-bodegon/last-run.json
+scripts/smoke-post-patches-last-run.json
 
 # next.js
 /.next/
@@ -24,6 +25,12 @@ scripts/e2e-bodegon/last-run.json
 # misc
 .DS_Store
 *.pem
+
+# Stitch / design scratch exports (keep docs/stitch-prompts)
+.stitch-*.html
+.tmp-*
+.cursor/stitch-*-snippet.html
+.cursor/mcp.json
 
 # debug
 npm-debug.log*

@@ -15,6 +15,7 @@ export type ProductImportErrorPolicy = "continue" | "stop";
 
 export type ProductImportRawRow = {
   categoria?: string;
+  codigo_barras?: string;
   costo_ref?: number;
   nombre: string;
   precio_ref: number;

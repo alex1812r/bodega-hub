@@ -91,7 +91,7 @@ describe("purchases.server", () => {
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
 
     const result = await createPurchase({
-      items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 2, unitCostRef: 2 }],
+      items: [{ entryMode: "unit", productId: "44444444-4444-4444-4444-444444444444", quantity: 2, unitCostRef: 2 }],
       refRateVes: 510,
       status: "pedido",
       supplierId: purchaseRow.supplier_id,
@@ -100,7 +100,14 @@ describe("purchases.server", () => {
     expect(rpc).toHaveBeenCalledWith("create_purchase", {
       p_discount_ref: 0,
       p_exchange_rate_id: null,
-      p_items: [{ product_id: "44444444-4444-4444-4444-444444444444", quantity: 2, unit_cost_ref: 2 }],
+      p_items: [
+        {
+          entry_mode: "unit",
+          product_id: "44444444-4444-4444-4444-444444444444",
+          quantity: 2,
+          unit_cost_ref: 2,
+        },
+      ],
       p_notes: null,
       p_purchase_number: null,
       p_ref_rate_ves: 510,

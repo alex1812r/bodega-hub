@@ -57,8 +57,11 @@ describe("dashboard.server", () => {
     const summary = await getDashboardSummary();
 
     expect(summary).toEqual({
+      activeCustomers: 1,
+      dayOverDayChangePercent: 0,
       lowStockCount: 2,
       pendingSalesCount: 1,
+      previousDayTotalRef: 120,
       salesCount: 3,
       totalRef: 120,
       totalVes: 60000,

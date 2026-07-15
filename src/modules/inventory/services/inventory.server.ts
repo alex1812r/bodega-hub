@@ -1,8 +1,10 @@
-import { parsePagination } from "@/lib/api/pagination";
+import { paginateList, parsePagination } from "@/lib/api/pagination";
 import {
+  mapCategory,
   mapProductSummary,
   mapStockCardEntry,
   mapStockMovement,
+  type CategoryRow,
   type DbProductSummaryRow,
   type DbStockMovementRow,
   type StockCardRow,
@@ -11,8 +13,30 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import type { StockMovementType } from "@/shared/mocks/erp-data";
 
+import {
+  matchesInventoryListFilters,
+  parseInventoryListFilters,
+} from "../utils/inventoryListFilters";
+import {
+  matchesInventoryMovementFilters,
+  parseInventoryMovementFilters,
+} from "../utils/inventoryMovementFilters";
+import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
+
 const productSummarySelect =
-  "id, category_id, sku, name, sale_price_ref, current_cost_ref, current_stock, min_stock, image_url, is_active";
+  "id, category_id, sku, barcode, name, sale_price_ref, current_cost_ref, current_stock, min_stock, image_url, is_active";
+
+const productInventorySelect = `
+  ${productSummarySelect},
+  category:categories(id, name, description, is_active, created_at, updated_at)
+`;
+
+function mapInventoryItem(row: DbProductSummaryRow & { category?: CategoryRow | null }) {
+  return {
+    ...mapProductSummary(row),
+    category: row.category ? mapCategory(row.category) : undefined,
+  };
+}
 
 const stockMovementSelect = `
   id,
@@ -32,30 +56,59 @@ const stockCardSelect =
 
 export async function listInventory(searchParams: URLSearchParams) {
   const supabase = await createRouteSupabaseClient();
-  const { limit, skip } = parsePagination(searchParams);
-  const onlyLowStock = searchParams.get("lowStock") === "true";
-  const search = searchParams.get("search")?.trim();
+  const filters = parseInventoryListFilters(searchParams);
+  const needsInMemoryPagination =
+    Boolean(filters.stockStatus?.length) ||
+    filters.minPriceRef !== undefined ||
+    filters.maxPriceRef !== undefined;
 
-  const table = onlyLowStock ? "low_stock_products" : "products";
+  const table = filters.lowStock ? "low_stock_products" : "products";
   let query = supabase
     .from(table)
-    .select(productSummarySelect, { count: "exact" })
+    .select(productInventorySelect, {
+      count: needsInMemoryPagination ? undefined : "exact",
+    })
     .order("name", { ascending: true });
 
-  if (!onlyLowStock) {
+  if (!filters.lowStock) {
     query = query.eq("is_active", true);
   }
 
-  if (search) {
-    query = query.or(`name.ilike.%${search}%,sku.ilike.%${search}%`);
+  if (filters.search) {
+    query = query.or(buildProductSearchOrFilter(filters.search));
   }
 
+  if (filters.categoryId) {
+    query = query.eq("category_id", filters.categoryId);
+  }
+
+  if (needsInMemoryPagination) {
+    const { data, error } = await query;
+
+    throwIfSupabaseError(error);
+
+    const items = (data ?? [])
+      .map((row) =>
+        mapInventoryItem(
+          row as unknown as DbProductSummaryRow & { category?: CategoryRow | null },
+        ),
+      )
+      .filter((item) => matchesInventoryListFilters(item, filters));
+
+    return paginateList(items, searchParams);
+  }
+
+  const { limit, skip } = parsePagination(searchParams);
   const { count, data, error } = await query.range(skip, skip + limit - 1);
 
   throwIfSupabaseError(error);
 
   return {
-    items: (data ?? []).map((row) => mapProductSummary(row as DbProductSummaryRow)),
+    items: (data ?? []).map((row) =>
+      mapInventoryItem(
+        row as unknown as DbProductSummaryRow & { category?: CategoryRow | null },
+      ),
+    ),
     limit,
     skip,
     total: count ?? 0,
@@ -65,15 +118,27 @@ export async function listInventory(searchParams: URLSearchParams) {
 export async function listStockMovements(searchParams: URLSearchParams) {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
-  const productId = searchParams.get("productId");
+  const filters = parseInventoryMovementFilters(searchParams);
 
   let query = supabase
     .from("stock_movements")
     .select(stockMovementSelect, { count: "exact" })
     .order("created_at", { ascending: false });
 
-  if (productId) {
-    query = query.eq("product_id", productId);
+  if (filters.productId) {
+    query = query.eq("product_id", filters.productId);
+  }
+
+  if (filters.type) {
+    query = query.eq("type", filters.type);
+  }
+
+  if (filters.from) {
+    query = query.gte("created_at", `${filters.from}T00:00:00.000Z`);
+  }
+
+  if (filters.to) {
+    query = query.lte("created_at", `${filters.to}T23:59:59.999Z`);
   }
 
   const { count, data, error } = await query.range(skip, skip + limit - 1);

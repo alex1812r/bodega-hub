@@ -86,6 +86,23 @@ describe("product hooks", () => {
     );
   });
 
+  it("loads products with sort params", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ data: paginated([{ id: "prod-drill", name: "Taladro" }]) }),
+    );
+
+    const { result } = renderHook(
+      () => useProducts({ sortBy: "currentStock", sortOrder: "desc" }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/products?sortBy=currentStock&sortOrder=desc",
+      expect.any(Object),
+    );
+  });
+
   it("loads product detail, categories, price history and suppliers", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ data: { id: "prod-drill" } }))

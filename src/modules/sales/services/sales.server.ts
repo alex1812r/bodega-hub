@@ -255,6 +255,11 @@ export async function listSales(searchParams: URLSearchParams): Promise<Paginate
     query = query.eq("customer_id", customerId);
   }
 
+  const search = searchParams.get("search")?.trim();
+  if (search) {
+    query = query.ilike("invoice_number", `%${search}%`);
+  }
+
   const from = searchParams.get("from");
   if (from) {
     query = query.gte("created_at", `${from}T00:00:00.000Z`);

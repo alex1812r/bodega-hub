@@ -13,11 +13,15 @@ import type {
   ProductInput,
   ProductPriceInput,
 } from "./products.mock-server";
+import { applyProductSort } from "./productSort";
+import { buildProductSearchOrFilter, normalizeBarcode } from "./productSearch";
+import { normalizeOptionalSku, normalizeSku } from "@/shared/utils/skuGeneration";
 
 const productSelect = `
   id,
   category_id,
   sku,
+  barcode,
   name,
   description,
   sale_price_ref,
@@ -33,25 +37,30 @@ const productSelect = `
 
 function toProductInsert(input: ProductInput) {
   return {
+    barcode: normalizeBarcode(input.barcode),
     category_id: input.categoryId ?? null,
     current_cost_ref: input.currentCostRef ?? 0,
     current_stock: input.currentStock ?? 0,
+    image_url: input.imageUrl ?? null,
     min_stock: input.minStock ?? 5,
     name: input.name ?? "Producto",
     sale_price_ref: input.salePriceRef ?? 0,
-    sku: input.sku ?? "",
+    sku: normalizeSku(input.sku ?? ""),
   };
 }
 
 function toProductUpdate(input: ProductInput) {
   return {
+    ...(input.barcode !== undefined ? { barcode: normalizeBarcode(input.barcode) } : {}),
     ...(input.categoryId !== undefined ? { category_id: input.categoryId ?? null } : {}),
     ...(input.currentCostRef !== undefined ? { current_cost_ref: input.currentCostRef } : {}),
     ...(input.currentStock !== undefined ? { current_stock: input.currentStock } : {}),
+    ...(input.imageUrl !== undefined ? { image_url: input.imageUrl } : {}),
+    ...(input.isActive !== undefined ? { is_active: input.isActive } : {}),
     ...(input.minStock !== undefined ? { min_stock: input.minStock } : {}),
     ...(input.name !== undefined ? { name: input.name } : {}),
     ...(input.salePriceRef !== undefined ? { sale_price_ref: input.salePriceRef } : {}),
-    ...(input.sku !== undefined ? { sku: input.sku } : {}),
+    ...(input.sku !== undefined ? { sku: normalizeSku(input.sku) } : {}),
   };
 }
 
@@ -59,6 +68,7 @@ function applyProductFilters<TQuery extends {
   eq: (column: string, value: boolean | string) => TQuery;
   or: (filters: string) => TQuery;
 }>(query: TQuery, searchParams: URLSearchParams): TQuery {
+  const barcode = normalizeBarcode(searchParams.get("barcode"));
   const categoryId = searchParams.get("categoryId");
   const isActive = searchParams.get("isActive");
   const search = searchParams.get("search")?.trim();
@@ -73,8 +83,12 @@ function applyProductFilters<TQuery extends {
     filteredQuery = filteredQuery.eq("is_active", isActive.toLowerCase() === "true");
   }
 
+  if (barcode) {
+    return filteredQuery.eq("barcode", barcode);
+  }
+
   if (search) {
-    filteredQuery = filteredQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`);
+    filteredQuery = filteredQuery.or(buildProductSearchOrFilter(search));
   }
 
   return filteredQuery;
@@ -86,10 +100,10 @@ export async function listProducts(searchParams: URLSearchParams) {
 
   let query = supabase
     .from("products")
-    .select(productSelect, { count: "exact" })
-    .order("name", { ascending: true });
+    .select(productSelect, { count: "exact" });
 
   query = applyProductFilters(query, searchParams);
+  query = applyProductSort(query, searchParams);
 
   const { count, data, error } = await query.range(skip, skip + limit - 1);
 

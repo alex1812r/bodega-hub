@@ -104,6 +104,15 @@ describe("Pagination", () => {
     expect(getByText("Sin resultados")).toBeVisible();
   });
 
+  it("renders embedded variant without card chrome", () => {
+    const { getByRole } = render(
+      <Pagination limit={10} onSkipChange={jest.fn()} skip={0} total={25} variant="embedded" />,
+    );
+
+    expect(getByRole("navigation")).not.toHaveClass("border");
+    expect(getByRole("navigation")).not.toHaveClass("shadow-sm");
+  });
+
   it("renders compact variant without numbered page buttons", () => {
     const { getByRole, queryByRole } = render(
       <Pagination

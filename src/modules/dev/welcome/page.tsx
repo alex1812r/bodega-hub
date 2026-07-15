@@ -12,7 +12,7 @@ export function WelcomePage() {
     <main className="min-h-screen bg-slate-50 px-6 py-10 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
       <section className="mx-auto flex max-w-5xl flex-col gap-8">
         <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <p className="text-sm font-medium text-blue-600 dark:text-blue-400">ERP Web</p>
+          <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">ERP Web</p>
           <h1 className="mt-3 max-w-3xl text-4xl font-semibold tracking-tight">
             Control de ventas, compras, inventario y pagos en ref/VES.
           </h1>

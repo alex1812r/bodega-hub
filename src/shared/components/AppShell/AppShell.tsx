@@ -8,14 +8,21 @@ import {
   type UserRole,
 } from "@/shared/auth/permissions";
 
+import { cn } from "@/shared/utils/cn";
+
 import { appNavItems } from "./appShellNav";
 import { AppHeader } from "./AppHeader";
 import { AppSidebar } from "./AppSidebar";
 import { MobileNavDrawer } from "./MobileNavDrawer";
+import { SidebarCollapseToggle } from "./SidebarCollapseToggle";
+import { useSidebarCollapsed } from "./useSidebarCollapsed";
 
 type AppShellProps = {
   children: ReactNode;
   currentPath?: string;
+  mainClassName?: string;
+  /** Cuando es `hidden`, el scroll queda en el contenido hijo (p. ej. POS). */
+  mainScroll?: "auto" | "hidden";
   onSignOut?: () => void;
   permissions?: readonly Permission[];
   refRateError?: boolean;
@@ -28,15 +35,19 @@ type AppShellProps = {
 export function AppShell({
   children,
   currentPath = "/dashboard",
+  mainClassName,
+  mainScroll = "auto",
   onSignOut,
   permissions,
   refRateError = false,
   refRateVes,
   role,
   userName = "Admin",
-  userRole = "admin",
+  userRole = "Administrador",
 }: AppShellProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const { collapsed: sidebarCollapsed, toggle: toggleSidebarCollapsed } =
+    useSidebarCollapsed();
   const effectivePermissions =
     permissions ?? (role ? [...getRolePermissions(role)] : []);
   const visibleNavItems = appNavItems.filter((item) =>
@@ -44,26 +55,51 @@ export function AppShell({
   );
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
-      <AppSidebar currentPath={currentPath} items={visibleNavItems} />
+    <div className="flex h-dvh overflow-hidden bg-background text-foreground">
+      <AppSidebar
+        collapsed={sidebarCollapsed}
+        currentPath={currentPath}
+        items={visibleNavItems}
+        onSignOut={onSignOut}
+        userRole={userRole}
+      />
+      <SidebarCollapseToggle
+        collapsed={sidebarCollapsed}
+        onToggle={toggleSidebarCollapsed}
+      />
       <MobileNavDrawer
         currentPath={currentPath}
         items={visibleNavItems}
         onOpenChange={setMobileNavOpen}
+        onSignOut={onSignOut}
         open={mobileNavOpen}
+        userRole={userRole}
       />
 
-      <div className="min-w-0 lg:pl-72">
+      <div
+        className="app-shell-content flex min-h-0 min-w-0 flex-1 flex-col"
+        data-sidebar-collapsed={sidebarCollapsed ? "true" : "false"}
+      >
         <AppHeader
+          className="shrink-0"
           onOpenMenu={() => setMobileNavOpen(true)}
-          onSignOut={onSignOut}
           refRateError={refRateError}
           refRateVes={refRateVes}
           userName={userName}
           userRole={userRole}
         />
 
-        <main className="min-w-0 max-w-full px-4 py-6 lg:px-8">{children}</main>
+        <main
+          className={cn(
+            "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-surface",
+            mainScroll === "hidden"
+              ? "w-full max-w-none overflow-y-hidden"
+              : "overflow-y-auto px-4 py-6 lg:px-6",
+            mainClassName,
+          )}
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

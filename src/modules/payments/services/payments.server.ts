@@ -5,11 +5,16 @@ import { mapPayment, type DbPaymentRow } from "@/lib/supabase/mappers/transactio
 import { getPaginationRange, toPaginatedList } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
+import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
+import type { PaymentDocumentBalance } from "../payment-details/types";
+import type { PaymentRelatedDocument } from "../utils/resolvePaymentRelatedDocument";
 import type { PaymentInput } from "./payments.mock-server";
 
 const PAYMENT_SELECT = `
   *,
-  contact:contacts(id, type, name, tax_id, email, phone, address, is_active, created_at, updated_at)
+  contact:contacts(id, type, name, tax_id, email, phone, address, is_active, created_at, updated_at),
+  sale:sales(id, invoice_number),
+  purchase:purchases(id, purchase_number)
 `;
 
 export type PaymentUpdateInput = {
@@ -21,7 +26,27 @@ export type PaymentUpdateInput = {
 
 type PaymentRowWithContact = DbPaymentRow & {
   contact?: DbContactRow | null;
+  purchase?: { id: string; purchase_number: string } | null;
+  sale?: { id: string; invoice_number: string } | null;
 };
+
+function mapPaymentRelatedDocument(row: PaymentRowWithContact): PaymentRelatedDocument | undefined {
+  if (row.sale?.id && row.sale.invoice_number) {
+    return {
+      href: `/sales/${row.sale.id}`,
+      label: row.sale.invoice_number,
+    };
+  }
+
+  if (row.purchase?.id && row.purchase.purchase_number) {
+    return {
+      href: `/purchases/${row.purchase.id}`,
+      label: formatPurchaseNumberDisplay(row.purchase.purchase_number),
+    };
+  }
+
+  return undefined;
+}
 
 function throwIfRpcError(error: unknown): void {
   if (!error) {
@@ -55,22 +80,31 @@ function throwIfRpcError(error: unknown): void {
   throw mapSupabaseError(error);
 }
 
-function mapPaymentWithContact(row: PaymentRowWithContact, pendingBalanceVes?: number) {
+function mapPaymentWithContact(
+  row: PaymentRowWithContact,
+  documentBalance?: PaymentDocumentBalance,
+) {
   return {
     ...mapPayment(row),
     contact: row.contact ? mapContact(row.contact) : undefined,
-    ...(pendingBalanceVes !== undefined ? { pendingBalanceVes } : {}),
+    relatedDocument: mapPaymentRelatedDocument(row),
+    ...(documentBalance
+      ? {
+          documentBalance,
+          pendingBalanceVes: documentBalance.pendingVes,
+        }
+      : {}),
   };
 }
 
-async function resolvePendingBalanceVes(
+async function resolveDocumentBalance(
   supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
   payment: DbPaymentRow,
-) {
+): Promise<PaymentDocumentBalance | undefined> {
   if (payment.sale_id) {
     const { data, error } = await supabase
       .from("sales")
-      .select("total_ves, paid_ves")
+      .select("id, invoice_number, total_ves, paid_ves")
       .eq("id", payment.sale_id)
       .maybeSingle();
 
@@ -80,13 +114,22 @@ async function resolvePendingBalanceVes(
       return undefined;
     }
 
-    return Math.max(Number(data.total_ves ?? 0) - Number(data.paid_ves ?? 0), 0);
+    const totalVes = Number(data.total_ves ?? 0);
+    const paidVes = Number(data.paid_ves ?? 0);
+
+    return {
+      href: `/sales/${data.id}`,
+      label: data.invoice_number,
+      paidVes,
+      pendingVes: Math.max(totalVes - paidVes, 0),
+      totalVes,
+    };
   }
 
   if (payment.purchase_id) {
     const { data, error } = await supabase
       .from("purchases")
-      .select("total_ves, paid_ves")
+      .select("id, purchase_number, total_ves, paid_ves")
       .eq("id", payment.purchase_id)
       .maybeSingle();
 
@@ -96,7 +139,16 @@ async function resolvePendingBalanceVes(
       return undefined;
     }
 
-    return Math.max(Number(data.total_ves ?? 0) - Number(data.paid_ves ?? 0), 0);
+    const totalVes = Number(data.total_ves ?? 0);
+    const paidVes = Number(data.paid_ves ?? 0);
+
+    return {
+      href: `/purchases/${data.id}`,
+      label: formatPurchaseNumberDisplay(data.purchase_number),
+      paidVes,
+      pendingVes: Math.max(totalVes - paidVes, 0),
+      totalVes,
+    };
   }
 
   return undefined;
@@ -160,9 +212,9 @@ export async function getPaymentById(id: string) {
     throw new ApiError(404, "NOT_FOUND", "Pago no encontrado.");
   }
 
-  const pendingBalanceVes = await resolvePendingBalanceVes(supabase, data);
+  const documentBalance = await resolveDocumentBalance(supabase, data);
 
-  return mapPaymentWithContact(data, pendingBalanceVes);
+  return mapPaymentWithContact(data, documentBalance);
 }
 
 export async function createPayment(input: PaymentInput) {
@@ -184,9 +236,9 @@ export async function createPayment(input: PaymentInput) {
     throw new ApiError(500, "INTERNAL_ERROR", "No se pudo registrar el pago.");
   }
 
-  const pendingBalanceVes = await resolvePendingBalanceVes(supabase, data as DbPaymentRow);
+  const documentBalance = await resolveDocumentBalance(supabase, data as DbPaymentRow);
 
-  return mapPaymentWithContact(data as PaymentRowWithContact, pendingBalanceVes);
+  return mapPaymentWithContact(data as PaymentRowWithContact, documentBalance);
 }
 
 export async function updatePayment(id: string, input: PaymentUpdateInput) {
@@ -209,7 +261,24 @@ export async function updatePayment(id: string, input: PaymentUpdateInput) {
     throw new ApiError(404, "NOT_FOUND", "Pago no encontrado.");
   }
 
-  const pendingBalanceVes = await resolvePendingBalanceVes(supabase, data);
+  const documentBalance = await resolveDocumentBalance(supabase, data);
 
-  return mapPaymentWithContact(data, pendingBalanceVes);
+  return mapPaymentWithContact(data, documentBalance);
+}
+
+export async function cancelPayment(id: string) {
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase.rpc("cancel_payment", {
+    p_payment_id: id,
+  });
+
+  throwIfRpcError(error);
+
+  if (!data) {
+    throw new ApiError(404, "NOT_FOUND", "Pago no encontrado.");
+  }
+
+  const documentBalance = await resolveDocumentBalance(supabase, data as DbPaymentRow);
+
+  return mapPaymentWithContact(data as PaymentRowWithContact, documentBalance);
 }

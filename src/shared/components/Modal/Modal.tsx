@@ -14,6 +14,7 @@ type ModalFooterHelpers = {
 
 type ModalProps = {
   children: ReactNode;
+  contentClassName?: string;
   description?: string;
   footer?: ReactNode | ((helpers: ModalFooterHelpers) => ReactNode);
   onOpenChange?: (open: boolean) => void;
@@ -24,6 +25,7 @@ type ModalProps = {
 
 export function Modal({
   children,
+  contentClassName,
   description,
   footer,
   onOpenChange,
@@ -55,7 +57,8 @@ export function Modal({
         <Dialog.Content
           className={cn(
             "fixed z-50 flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900",
-            "inset-x-0 bottom-0 top-auto max-h-[90vh] rounded-t-2xl p-5 sm:inset-x-auto sm:inset-y-auto sm:left-1/2 sm:top-1/2 sm:w-[calc(100%-2rem)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:p-6",
+            "inset-x-0 bottom-0 top-auto max-h-[90vh] rounded-t-lg p-5 sm:inset-x-auto sm:inset-y-auto sm:left-1/2 sm:top-1/2 sm:w-[calc(100%-2rem)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-lg sm:p-6",
+            contentClassName,
           )}
         >
           <div className="shrink-0 space-y-1 pr-10">

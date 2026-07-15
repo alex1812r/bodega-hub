@@ -1,6 +1,6 @@
 # Catálogo de módulos — Control Ventas ERP
 
-Documento maestro (mayo 2026) que describe **todos los módulos** del proyecto: rutas, permisos, pantallas, hooks, endpoints API, tablas Supabase y huecos conocidos.
+Documento maestro (julio 2026) que describe **todos los módulos** del proyecto: rutas, permisos, pantallas, hooks, endpoints API, tablas Supabase y huecos conocidos.
 
 Documentos relacionados:
 
@@ -21,7 +21,7 @@ Documentos relacionados:
 |--------|-----------|----------------|-------------------|
 | Auth | `/login`, `/` | — / sesión | `profiles`, `auth.users` |
 | Dashboard | `/dashboard` | `dashboard.view` | vistas agregadas, `sales`, `products` |
-| Productos | `/products`, `/products/[id]`, `/products/import` | `products.view` / `products.manage` | `products`, `categories`, `product_price_history` |
+| Productos | `/products`, `/products/[id]`, `/products/categories`, `/products/import` | `products.view` / `products.manage` | `products`, `categories`, `product_price_history` |
 | Inventario | `/inventory`, `/inventory/movements` | `inventory.view` / `inventory.manage` | `products`, `stock_movements` |
 | Contactos | `/contacts`, `/contacts/[id]` | `contacts.view` / `contacts.manage` | `contacts` |
 | Ventas | `/sales`, `/sales/create`, `/sales/[id]` | `sales.view` / `sales.create` | `sales`, `sale_items`, `payments` |
@@ -48,7 +48,7 @@ page.tsx (App Router)
 ```
 
 - **Sesión:** cookies Supabase vía `POST /api/auth/login`; perfil `GET /api/auth/me`.
-- **Entrada `/`:** redirect server en [`src/app/page.tsx`](../src/app/page.tsx) (no hay `middleware.ts`).
+- **Entrada `/`:** redirect en [`src/proxy.ts`](../src/proxy.ts) según sesión/rol (home del usuario o `/login`).
 - **401 global:** [`src/lib/query/query-client.ts`](../src/lib/query/query-client.ts) redirige a `/login`.
 - **Demo dev:** `ALLOW_DEMO_AUTH=true` + headers `x-demo-role` desde `localStorage`.
 - **Paginación:** `PaginatedList<T>` con `skip`, `limit`, `total`, `items`.
@@ -81,7 +81,6 @@ page.tsx (App Router)
 
 ### Pendiente
 
-- Middleware Next.js para prefijos privados (hoy guard por página + API 401).
 - MFA, registro, recuperación de contraseña.
 
 ---
@@ -114,8 +113,9 @@ page.tsx (App Router)
 
 | Ruta | Permiso | Pantalla |
 |------|---------|----------|
-| `/products` | `products.view` | Listado, filtros, crear, importar, desactivar |
-| `/products/[id]` | `products.view` | Resumen, stock, historial precios, proveedores, editar |
+| `/products` | `products.view` | Listado, filtros, crear, importar, desactivar, enlace a categorías |
+| `/products/categories` | `products.view` | CRUD categorías (escritura: `products.manage`) |
+| `/products/[id]` | `products.view` | Resumen, stock, historial precios, proveedores (tabla + cards + M10–M14), editar |
 | `/products/import` | `products.manage` | Wizard importación Excel |
 
 ### Hooks y endpoints
@@ -129,7 +129,10 @@ page.tsx (App Router)
 | `useUpdateProductPrice` | POST `/api/products/[id]/price` → RPC `update_product_price` |
 | `useProductPriceHistory` | GET `/api/products/[id]/price-history` |
 | `useProductSuppliers` | GET `/api/products/[id]/suppliers` |
-| `useCategories` | GET `/api/categories` |
+| `useCategories` | GET `/api/categories` — `search`, `skip`, `limit` |
+| `useCreateCategory` | POST `/api/categories` |
+| `useUpdateCategory` | PATCH `/api/categories/[id]` |
+| `useDeleteCategory` | DELETE `/api/categories/[id]` (soft delete) |
 | `useProductBulkImport` | GET template, POST por fila — ver [`frontend-product-bulk-import.md`](frontend-product-bulk-import.md) |
 
 ### Campos producto (API / formulario)
@@ -144,26 +147,45 @@ page.tsx (App Router)
 | `currentStock` | sí | `current_stock` |
 | `minStock` | sí | `min_stock` |
 | `description` | textarea UI | `description` (no siempre enviado) |
+| `imageUrl` | subida con recorte 4:3 | `image_url` |
 | `isActive` | desactivar listado | `is_active` |
 
-### Categorías (API)
+### Imagen de producto
+
+| Endpoint | Permiso | Descripcion |
+|----------|---------|-------------|
+| POST `/api/products/[id]/image-upload-url` | `products.manage` | URL firmada para subir `cover.webp` a Supabase Storage |
+| DELETE `/api/products/[id]/image` | `products.manage` | Borra archivo Storage y limpia `image_url` |
+| PATCH `/api/products/[id]` | `products.manage` | Persiste `imageUrl` tras subida |
+
+- Bucket: `product-images` (patch [`supabase/patches/20260707-product-images-storage.sql`](../supabase/patches/20260707-product-images-storage.sql)).
+- Path: `{productId}/cover.webp` o `{productId}/cover.png` si se quita el fondo (PNG con transparencia).
+- Recorte opcional con **quitar fondo** vía `@imgly/background-removal` (IA en el navegador, sin servidor).
+- Crear producto: recorte en modal → POST producto → subida post-id → PATCH `imageUrl`.
+- Editar producto: subida o borrado inmediato desde el mismo modal.
+
+### Categorías (API + UI)
 
 | Endpoint | Permiso |
 |----------|---------|
 | GET/POST `/api/categories` | `products.view` / `products.manage` |
 | GET/PATCH/DELETE `/api/categories/[id]` | soft delete |
 
+UI: [`/products/categories`](../../src/modules/products/categories-list/page.tsx) — listado, búsqueda, modal crear/editar, desactivar. Diseño Stitch: [`docs/stitch-prompts/categories-list.md`](stitch-prompts/categories-list.md).
+
 ### Import Excel
 
-Columnas plantilla: `sku`, `nombre`, `categoria` (lista validada), `precio_ref`, `costo_ref`, `stock_inicial`, `stock_minimo`. Máx. 500 filas.
+Columnas plantilla: `sku`, `codigo_barras`, `nombre`, `categoria` (lista validada), `precio_ref`, `costo_ref`, `stock_inicial`, `stock_minimo`. Máx. 500 filas.
 
 ### Pendiente
 
-- CRUD categorías en UI; imágenes (`image_url`); reactivar producto; import masivo server-side validate.
+- Import masivo server-side validate (`POST /api/products/import/validate`).
 
 ---
 
 ## Inventario
+
+Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alertas y movimientos. Precios, alta de productos e importación viven en **Productos**.
 
 | Ruta | Permiso |
 |------|---------|
@@ -172,7 +194,7 @@ Columnas plantilla: `sku`, `nombre`, `categoria` (lista validada), `precio_ref`,
 
 | Hook | Endpoint |
 |------|----------|
-| `useInventory` | GET `/api/inventory` — `search`, `lowStock`, paginación |
+| `useInventory` | GET `/api/inventory` — `search`, `categoryId`, `stockStatus`, `lowStock`, paginación |
 | `useInventoryMovements` | GET `/api/inventory/movements` — `productId` (+ filtros `type`/`date` solo en cliente) |
 | `useStockCard` | GET `/api/inventory/stock-card` — `productId` |
 | `useAdjustInventory` | POST `/api/inventory/adjustments` → RPC `adjust_stock` |
@@ -181,7 +203,7 @@ Columnas plantilla: `sku`, `nombre`, `categoria` (lista validada), `precio_ref`,
 
 **Tabla:** `stock_movements`; stock actual en `products.current_stock`.
 
-**Pendiente:** filtros movimiento en API; anular movimiento.
+**Pendiente:** anular movimiento (filtros de movimiento en API opcionales).
 
 ---
 
@@ -202,10 +224,18 @@ Columnas plantilla: `sku`, `nombre`, `categoria` (lista validada), `precio_ref`,
 | `useContactSales` | GET `/api/contacts/[id]/sales` |
 | `useContactPurchases` | GET `/api/contacts/[id]/purchases` |
 | `useContactPayments` | GET `/api/contacts/[id]/payments` |
+| `useSupplierProducts` | GET `/api/suppliers/[id]/products` — `isActive`, paginación |
+| `useCreateSupplierProduct` | POST `/api/supplier-products` |
+| `useUpdateSupplierProductMetadata` | PATCH `/api/supplier-products/[id]` |
+| `useRegisterSupplierPrice` | POST `/api/supplier-products/[id]/prices` |
+| `useSupplierProductPriceHistory` | GET `/api/supplier-products/[id]/price-history` |
+| `useDeactivateSupplierProduct` | PATCH `/api/supplier-products/[id]/deactivate` |
 
 **Campos:** `name`, `type` (`cliente`|`proveedor`|`ambos`), `taxId`, `email`, `phone`, `address`, `notes`, `isActive`.
 
 **Tabla:** `contacts`. Sin `DELETE` API (desactivar vía `PATCH isActive: false`).
+
+**UI proveedor/ambos:** tab **Productos** (`ContactSupplierProductsTab`) — vincular (M10 con autocomplete producto/proveedor según contexto), cotizar, historial, editar metadatos, desvincular (modales M10–M14 en `contacts/components/supplier-products/`). Permisos `products.view` / `products.manage`.
 
 **Pendiente:** `Can` en botón crear; enlaces desde tablas de actividad a detalle venta/compra.
 
@@ -230,11 +260,13 @@ Columnas plantilla: `sku`, `nombre`, `categoria` (lista validada), `precio_ref`,
 
 **Crear venta:** `customerId`, `items[]` (`productId`, `quantity`), `discountRef`, `taxRef`, `refRateVes`, `notes`.
 
+**UI POS (`/sales/create`):** grid de productos (`PosProductGrid` / `PosProductCard`) y carrito (`PosCartPanel` / `PosCartLine`) muestran precios en REF y equivalente VES por línea usando `useCurrentExchangeRate` → `rateVes` y `refToVes` (`src/shared/utils/currency.ts`). Cada línea del carrito: precio unitario REF + VES, total línea REF + VES; panel de totales incluye total VES cuando hay tasa vigente.
+
 **Estados:** `borrador`, `pendiente_pago`, `pagada`, `cancelada`, `devuelta`.
 
 **Tablas:** `sales`, `sale_items`, `payments`, `stock_movements`.
 
-**Pendiente:** PDF recibo; venta borrador; confirmación antes de anular.
+**Pendiente:** PDF recibo (detalle ya exporta factura PDF); venta borrador; confirmación antes de anular (parcial vía menú).
 
 ---
 
@@ -256,11 +288,15 @@ Columnas plantilla: `sku`, `nombre`, `categoria` (lista validada), `precio_ref`,
 | `useReturnPurchase` | POST `/api/purchases/[id]/return` |
 | `useSupplierProducts` | GET `/api/suppliers/[id]/products` |
 
-**Crear:** `supplierId`, `status` (`pedido`|`recibido`), `items[]`, `discountRef`, `taxRef`, `refRateVes`, pago inicial opcional.
+**Crear:** `supplierId`, `status` (`pedido`|`recibido`), `items[]` con `entryMode` `unit` o `pack`, `discountRef`, `taxRef`, `refRateVes`, pago inicial opcional. Modo **empaque:** `packLabel`, `packCount`, `unitsPerPack`, `packCostRef` (RPC normaliza a unidades y costo unitario). Modo **unidad:** `quantity`, `unitCostRef`.
 
-**Relaciones proveedor-producto:** GET/POST `/api/supplier-products`, PATCH `/api/supplier-products/[id]`.
+**UI `/purchases/create`:** toggle Unidad/Empaque por línea; presets desde catálogo `supplier_product_pack_units`; autocompletado si hay empaque predeterminado al agregar producto.
 
-**Tablas:** `purchases`, `purchase_items`, `supplier_products`.
+**Relaciones proveedor-producto:** GET/POST `/api/supplier-products`, PATCH metadatos `/api/supplier-products/[id]`, POST precios `/api/supplier-products/[id]/prices`, GET historial `/api/supplier-products/[id]/price-history`, PATCH baja `/api/supplier-products/[id]/deactivate`, **empaques** GET/POST `/api/supplier-products/[id]/pack-units`, PATCH/DELETE `/api/supplier-products/[id]/pack-units/[packId]`. Modal M15 `ManageSupplierProductPackUnitsModal` en tab Productos (contacto) y tabla Proveedores (producto).
+
+**Tablas:** `purchases`, `purchase_items` (metadata `entry_mode`, `pack_*`), `supplier_products`, `supplier_product_price_history`, `supplier_product_pack_units`.
+
+**Migración Supabase remota:** aplicar en SQL Editor los cambios de §3.8–3.8.1 en [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql) (`notes`, `is_active`, tabla historial, RPCs `register_supplier_product_price` / `deactivate_supplier_product`, append en `create_purchase`/`receive_purchase`). No hay auto-deploy; ver [`supabase-setup.md`](supabase-setup.md).
 
 ---
 
@@ -279,7 +315,7 @@ Columnas plantilla: `sku`, `nombre`, `categoria` (lista validada), `precio_ref`,
 
 **Métodos:** `efectivo_ves`, `efectivo_usd`, `pago_movil`, `punto_venta`, `transferencia`. Validación por método en API.
 
-**Pendiente:** anular pago (sin endpoint; botones disabled en UI).
+**Pendiente:** revisión UX confirmación al anular (endpoint y UI ya existen).
 
 ---
 
@@ -302,7 +338,7 @@ Columnas plantilla: `sku`, `nombre`, `categoria` (lista validada), `precio_ref`,
 | `useTopCustomersReport` | GET `/api/reports/top-customers` | agregado ventas |
 | `usePurchasesReport` | GET `/api/reports/purchases` | tabla `purchases` |
 
-**Pendiente:** export PDF/Excel; filtros fecha en todos los reportes; gráficos.
+**Pendiente:** filtros fecha en todos los reportes; gráficos. Export PDF/Excel ya disponible.
 
 ---
 
@@ -342,6 +378,8 @@ Columnas plantilla: `sku`, `nombre`, `categoria` (lista validada), `precio_ref`,
 | `register_payment` | POST `/api/payments` |
 | `adjust_stock` | POST `/api/inventory/adjustments` |
 | `update_product_price` | POST `/api/products/[id]/price` |
+| `register_supplier_product_price` | POST `/api/supplier-products/[id]/prices` |
+| `deactivate_supplier_product` | PATCH `/api/supplier-products/[id]/deactivate` |
 | `cancel_sale` | PATCH `/api/sales/[id]/cancel` |
 | `return_sale` | POST `/api/sales/[id]/return` |
 | `cancel_purchase` | PATCH `/api/purchases/[id]/cancel` |
@@ -355,9 +393,9 @@ Schema: [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql).
 
 | Funcionalidad | API | UI |
 |---------------|-----|-----|
-| Anular pago | No existe | Botón disabled |
 | DELETE contacto | No existe | Desactivar vía PATCH |
-| Export reportes | No existe | Botón disabled |
-| Imagen producto | Campo en BD | No en formulario |
-| Middleware rutas | — | Guard por página |
+| Venta borrador | No | `create_sale` → `pendiente_pago` |
+| MFA / registro / reset password | No | — |
+| Multitienda | No | Ver [`multi-store-options.md`](multi-store-options.md) |
 | `POST /api/products/import/validate` | Opcional futuro | — |
+| Escaneo por cámara | No | Lector USB sí |

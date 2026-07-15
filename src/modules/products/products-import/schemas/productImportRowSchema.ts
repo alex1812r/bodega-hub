@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { normalizeBarcode } from "@/modules/products/services/productSearch";
+
 export const PRODUCT_IMPORT_MAX_ROWS = 500;
 
 export const PRODUCT_IMPORT_SHEET = "Productos";
@@ -8,6 +10,7 @@ export const PRODUCT_IMPORT_INSTRUCTIONS_SHEET = "Instrucciones";
 
 export const PRODUCT_IMPORT_HEADERS = [
   "sku",
+  "codigo_barras",
   "nombre",
   "categoria",
   "precio_ref",
@@ -18,12 +21,19 @@ export const PRODUCT_IMPORT_HEADERS = [
 
 export type ProductImportHeader = (typeof PRODUCT_IMPORT_HEADERS)[number];
 
+const optionalBarcodeSchema = z
+  .string()
+  .trim()
+  .optional()
+  .transform((value) => normalizeBarcode(value ?? null));
+
 export const productImportRowSchema = z.object({
   categoria: z.string().trim().optional(),
+  codigo_barras: optionalBarcodeSchema,
   costo_ref: z.number().min(0).optional(),
   nombre: z.string().trim().min(1, "El nombre es obligatorio."),
   precio_ref: z.number().min(0, "El precio ref debe ser mayor o igual a 0."),
-  sku: z.string().trim().min(1, "El SKU es obligatorio."),
+  sku: z.string().trim().min(1, "El SKU es obligatorio.").transform((value) => value.toLowerCase()),
   stock_inicial: z.number().int().min(0).optional(),
   stock_minimo: z.number().int().min(0).optional(),
 });
@@ -31,7 +41,8 @@ export const productImportRowSchema = z.object({
 export type ProductImportRowParsed = z.infer<typeof productImportRowSchema>;
 
 export const PRODUCT_IMPORT_EXAMPLE_ROW: ProductImportRowParsed = {
-  sku: "BOD-EJ-001",
+  codigo_barras: "7501234567890",
+  sku: "bod-ej-001",
   nombre: "Producto ejemplo",
   categoria: "Chucherias",
   precio_ref: 1.5,

@@ -21,12 +21,16 @@ import { AppShell } from "./AppShell";
 type AuthenticatedAppShellProps = {
   children: ReactNode;
   currentPath: string;
+  mainClassName?: string;
+  mainScroll?: "auto" | "hidden";
   requiredPermission?: Permission;
 };
 
 export function AuthenticatedAppShell({
   children,
   currentPath,
+  mainClassName,
+  mainScroll,
   requiredPermission,
 }: AuthenticatedAppShellProps) {
   const router = useRouter();
@@ -119,6 +123,8 @@ export function AuthenticatedAppShell({
     return (
       <AppShell
         currentPath={currentPath}
+        mainClassName={mainClassName}
+        mainScroll={mainScroll}
         onSignOut={() => logout.mutate()}
         permissions={profile.permissions}
         refRateError={refRateError}
@@ -145,6 +151,8 @@ export function AuthenticatedAppShell({
   return (
     <AppShell
       currentPath={currentPath}
+      mainClassName={mainClassName}
+      mainScroll={mainScroll}
       onSignOut={() => logout.mutate()}
       permissions={profile.permissions}
       refRateError={refRateError}

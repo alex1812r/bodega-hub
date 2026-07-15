@@ -1,67 +1,49 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
-import { Button } from "@/shared/components/Button";
-import { ErrorState } from "@/shared/components/ErrorState";
-import { Input } from "@/shared/components/Input";
-import { PageHeader } from "@/shared/components/PageHeader";
 import { useContacts } from "@/modules/contacts/hooks/useContacts";
-import { useProducts } from "@/modules/products/hooks/useProducts";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
+import { ErrorState } from "@/shared/components/ErrorState";
+import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 
+import { PurchaseCreateHeader } from "./components/PurchaseCreateHeader";
 import {
-  type PurchaseDraftItem,
-  PurchaseItemsTable,
-} from "./components/PurchaseItemsTable";
-import {
-  type PurchaseInitialPayment,
-  PurchasePaymentSection,
-} from "./components/PurchasePaymentSection";
+  PurchaseProductPickerCard,
+  type PurchaseCatalogProduct,
+} from "./components/PurchaseProductPickerCard";
+import { buildPurchaseCatalog } from "./utils/buildPurchaseCatalog";
+import { PurchaseStatusNotesCard } from "./components/PurchaseStatusNotesCard";
+import { PurchaseSummaryCard } from "./components/PurchaseSummaryCard";
 import { PurchaseSupplierCard } from "./components/PurchaseSupplierCard";
-import { PurchaseTotalsCard } from "./components/PurchaseTotalsCard";
-import { useCreatePayment } from "@/modules/payments/hooks/usePayments";
-import type { PaymentMethod, PurchaseStatus } from "@/shared/mocks/erp-data";
-import { SelectField } from "@/shared/components/SelectField";
-import { formatRef } from "@/shared/utils/currency";
-
+import type { PurchaseLineItemMeta } from "./components/PurchaseLineItemsTable";
 import { useCreatePurchase, useSupplierProducts } from "../hooks/usePurchases";
-
-const emptyInitialPayment: PurchaseInitialPayment = {
-  amount: 0,
-  method: "",
-  referenceCode: "",
-};
-
-function createEmptyItem(productId = "", id = "purchase-item-1"): PurchaseDraftItem {
-  return {
-    id,
-    productId,
-    quantity: 1,
-    unitCostRef: 0,
-  };
-}
+import {
+  createPackDraftItem,
+  createUnitDraftItem,
+  type PurchaseDraftItem,
+} from "./types";
+import {
+  draftToPurchaseItemInput,
+  getDraftSubtotalRef,
+  syncPackDerivedFields,
+} from "./utils/normalizePurchaseLine";
 
 export function PurchaseCreatePage() {
   const router = useRouter();
-  const suppliersQuery = useContacts();
-  const productsQuery = useProducts({ isActive: true });
+  const suppliersQuery = useContacts({ limit: 100, type: "proveedor" });
   const exchangeRate = useCurrentExchangeRate();
   const createPurchase = useCreatePurchase();
-  const createPayment = useCreatePayment();
   const [supplierId, setSupplierId] = useState("");
   const [status, setStatus] = useState<PurchaseStatus>("recibido");
-  const [rateVes, setRateVes] = useState(exchangeRate.data?.rateVes ?? 510);
+  const [notes, setNotes] = useState("");
   const [discountRef, setDiscountRef] = useState(0);
-  const [taxRef, setTaxRef] = useState(0);
-  const [items, setItems] = useState<PurchaseDraftItem[]>([createEmptyItem()]);
-  const [payment, setPayment] = useState<PurchaseInitialPayment>(emptyInitialPayment);
+  const [items, setItems] = useState<PurchaseDraftItem[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const supplierProducts = useSupplierProducts(supplierId);
-  const activeRateVes = exchangeRate.data?.rateVes ?? rateVes;
+  const activeRateVes = exchangeRate.data?.rateVes ?? 510;
 
   const suppliers = useMemo(
     () =>
@@ -71,57 +53,112 @@ export function PurchaseCreatePage() {
     [suppliersQuery.data],
   );
 
-  const productOptions = useMemo(() => {
-    const supplierRows = getPaginatedItems(supplierProducts.data);
+  const catalog = useMemo(
+    () => buildPurchaseCatalog(supplierId, getPaginatedItems(supplierProducts.data)),
+    [supplierId, supplierProducts.data],
+  );
 
-    if (supplierRows.length > 0) {
-      return supplierRows
-        .filter((row) => row.product)
-        .map((row) => ({
-          label: `${row.product?.name ?? row.productId} (${row.supplierSku ?? "sin SKU"})`,
-          lastCostRef: row.lastCostRef,
-          value: row.productId,
-        }));
+  const metaByProductId = useMemo(() => {
+    const map = new Map<string, PurchaseLineItemMeta>();
+    for (const product of catalog) {
+      map.set(product.productId, {
+        name: product.name,
+        packUnits: product.packUnits,
+        sku: product.sku,
+      });
     }
-
-    return getPaginatedItems(productsQuery.data).map((product) => ({
-      label: product.name,
-      lastCostRef: product.currentCostRef,
-      value: product.id,
-    }));
-  }, [productsQuery.data, supplierProducts.data]);
+    return map;
+  }, [catalog]);
 
   const subtotalRef = items.reduce(
-    (total, item) => total + item.quantity * item.unitCostRef,
+    (total, item) => total + getDraftSubtotalRef(syncPackDerivedFields(item)),
     0,
   );
-  const validItems = items.filter(
-    (item) => item.productId && item.quantity > 0 && item.unitCostRef >= 0,
-  );
+  const taxRef = 0;
+  const validItems = items.filter((item) => {
+    const normalized = syncPackDerivedFields(item);
+    if (!item.productId) return false;
+    if (item.entryMode === "pack") {
+      return (
+        item.packCount > 0 &&
+        item.unitsPerPack > 0 &&
+        item.packCostRef >= 0 &&
+        item.packLabel.trim().length > 0 &&
+        normalized.quantity > 0
+      );
+    }
+
+    return normalized.quantity > 0 && normalized.unitCostRef >= 0;
+  });
+
+  function getItemMeta(productId: string): PurchaseLineItemMeta {
+    return metaByProductId.get(productId) ?? { name: "Producto", sku: "—" };
+  }
 
   function handleSupplierChange(nextSupplierId: string) {
     setSupplierId(nextSupplierId);
-    setItems([createEmptyItem()]);
+    setItems([]);
   }
 
-  function handleAddItem() {
-    const firstProduct = productOptions[0];
+  function handleAddProduct(product: PurchaseCatalogProduct) {
+    setItems((current) => {
+      const existing = current.find((item) => item.productId === product.productId);
 
-    setItems((current) => [
-      ...current,
-      {
-        ...createEmptyItem(
-          firstProduct?.value ?? "",
-          `purchase-item-${current.length + 1}-${Date.now()}`,
-        ),
-        unitCostRef: firstProduct?.lastCostRef ?? 0,
-      },
-    ]);
+      if (existing) {
+        if (existing.entryMode === "pack") {
+          return current.map((item) =>
+            item.id === existing.id
+              ? syncPackDerivedFields({
+                  ...item,
+                  packCount: item.packCount + 1,
+                })
+              : item,
+          );
+        }
+
+        return current.map((item) =>
+          item.id === existing.id ? { ...item, quantity: item.quantity + 1 } : item,
+        );
+      }
+
+      const defaultPack = product.defaultPackUnit ?? product.packUnits[0];
+
+      if (defaultPack) {
+        const packCostRef =
+          product.unitCostRef > 0
+            ? Math.round(product.unitCostRef * defaultPack.unitsPerPack * 100) / 100
+            : 0;
+
+        return [
+          ...current,
+          createPackDraftItem({
+            id: `purchase-item-${Date.now()}`,
+            packCostRef,
+            packLabel: defaultPack.label,
+            packUnitId: defaultPack.id,
+            productId: product.productId,
+            unitCostRef: product.unitCostRef,
+            unitsPerPack: defaultPack.unitsPerPack,
+          }),
+        ];
+      }
+
+      return [
+        ...current,
+        createUnitDraftItem({
+          id: `purchase-item-${Date.now()}`,
+          productId: product.productId,
+          unitCostRef: product.unitCostRef,
+        }),
+      ];
+    });
   }
 
   function handleUpdateItem(itemId: string, input: Partial<PurchaseDraftItem>) {
     setItems((current) =>
-      current.map((item) => (item.id === itemId ? { ...item, ...input } : item)),
+      current.map((item) =>
+        item.id === itemId ? syncPackDerivedFields({ ...item, ...input }) : item,
+      ),
     );
   }
 
@@ -140,60 +177,38 @@ export function PurchaseCreatePage() {
       return;
     }
 
-    if (payment.amount > 0 && !payment.method) {
-      setFormError("Selecciona un metodo de pago para el pago inicial.");
-      return;
-    }
-
     setFormError(null);
-    const purchase = await createPurchase.mutateAsync({
-      discountRef,
-      items: validItems.map((item) => ({
-        productId: item.productId,
-        quantity: item.quantity,
-        unitCostRef: item.unitCostRef,
-      })),
-      refRateVes: activeRateVes,
-      status,
-      supplierId,
-      taxRef,
-    });
 
-    if (payment.amount > 0 && payment.method) {
-      await createPayment.mutateAsync({
-        amount: payment.amount,
-        method: payment.method as PaymentMethod,
-        purchaseId: purchase.id,
-        referenceCode: payment.referenceCode || undefined,
+    try {
+      const purchase = await createPurchase.mutateAsync({
+        discountRef,
+        items: validItems.map((item) => draftToPurchaseItemInput(syncPackDerivedFields(item))),
+        notes: notes.trim() || undefined,
+        refRateVes: activeRateVes,
+        status,
+        supplierId,
+        taxRef,
       });
-    }
 
-    router.push(`/purchases/${purchase.id}`);
+      router.push(`/purchases/${purchase.id}`);
+    } catch {
+      // Error surfaced via createPurchase.error
+    }
   }
 
-  const totalRef = subtotalRef - discountRef + taxRef;
+  const dependencyError =
+    suppliersQuery.error ?? exchangeRate.error ?? supplierProducts.error;
 
   return (
-    <div className="space-y-5 pb-24 lg:pb-6">
-      <PageHeader
-        actions={
-          <>
-            <Button asChild className="w-full sm:w-auto" variant="outline">
-              <Link href="/purchases">Volver</Link>
-            </Button>
-            <Button
-              className="hidden w-full sm:w-auto lg:inline-flex"
-              disabled={createPurchase.isPending}
-              onClick={() => void handleSubmit()}
-            >
-              {createPurchase.isPending ? "Confirmando..." : "Confirmar compra"}
-            </Button>
-          </>
-        }
-        badge={<p className="text-sm font-medium text-blue-600">Compras</p>}
-        description="Pantalla visual para registrar productos comprados a un proveedor."
-        title="Registrar compra"
-      />
+    <div className="space-y-6 pb-8">
+      <PurchaseCreateHeader />
+
+      {dependencyError ? (
+        <ErrorState
+          description={dependencyError.message}
+          title="No pudimos cargar los datos de la compra"
+        />
+      ) : null}
 
       {formError || createPurchase.error ? (
         <ErrorState
@@ -202,78 +217,41 @@ export function PurchaseCreatePage() {
         />
       ) : null}
 
-      <PurchaseSupplierCard
-        isRateLoading={exchangeRate.isLoading}
-        onRateChange={setRateVes}
-        onSupplierChange={handleSupplierChange}
-        rateVes={activeRateVes}
-        selectedSupplierId={supplierId}
-        suppliers={suppliers}
-      />
-      <PurchaseItemsTable
-        items={items}
-        onAddItem={handleAddItem}
-        onRemoveItem={handleRemoveItem}
-        onUpdateItem={handleUpdateItem}
-        productOptions={productOptions}
-        rateVes={activeRateVes}
-      />
-      <div className="grid min-w-0 gap-5 lg:grid-cols-2">
-        <div className="min-w-0 space-y-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <SelectField
-              label="Estado inicial"
-              onChange={(event) => setStatus(event.target.value as PurchaseStatus)}
-              options={[
-                { label: "Pedido", value: "pedido" },
-                { label: "Recibido", value: "recibido" },
-              ]}
-              value={status}
-            />
-            <Input
-              label="Descuento ref"
-              min="0"
-              onChange={(event) => setDiscountRef(Number(event.target.value))}
-              type="number"
-              value={discountRef}
-            />
-            <Input
-              label="Impuesto ref"
-              min="0"
-              onChange={(event) => setTaxRef(Number(event.target.value))}
-              type="number"
-              value={taxRef}
-            />
-          </div>
-          <PurchaseTotalsCard
-            discountRef={discountRef}
-            rateVes={activeRateVes}
-            subtotalRef={subtotalRef}
-            taxRef={taxRef}
+      <div className="grid gap-6 lg:grid-cols-12 lg:items-start">
+        <div className="flex flex-col gap-6 lg:col-span-8">
+          <PurchaseSupplierCard
+            onSupplierChange={handleSupplierChange}
+            selectedSupplierId={supplierId}
+            suppliers={suppliers}
+          />
+          <PurchaseProductPickerCard
+            catalog={catalog}
+            getItemMeta={getItemMeta}
+            hasSupplier={Boolean(supplierId)}
+            items={items}
+            onAddProduct={handleAddProduct}
+            onRemoveItem={handleRemoveItem}
+            onUpdateItem={handleUpdateItem}
           />
         </div>
-        <PurchasePaymentSection onPaymentChange={setPayment} payment={payment} />
-      </div>
-      {createPayment.error ? (
-        <ErrorState
-          description={createPayment.error.message}
-          title="La compra se creo pero fallo el pago inicial"
-        />
-      ) : null}
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 lg:hidden">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs text-slate-500 dark:text-slate-400">Subtotal ref</p>
-            <p className="truncate text-lg font-semibold">{formatRef(totalRef)}</p>
-          </div>
-          <Button
-            className="shrink-0"
-            disabled={createPurchase.isPending}
-            onClick={() => void handleSubmit()}
-          >
-            {createPurchase.isPending ? "Confirmando..." : "Confirmar"}
-          </Button>
+        <div className="flex flex-col gap-6 lg:col-span-4 lg:sticky lg:top-6">
+          <PurchaseStatusNotesCard
+            notes={notes}
+            onNotesChange={setNotes}
+            onStatusChange={setStatus}
+            status={status}
+          />
+          <PurchaseSummaryCard
+            discountRef={discountRef}
+            isSubmitting={createPurchase.isPending}
+            onConfirm={() => void handleSubmit()}
+            onDiscountChange={setDiscountRef}
+            rateVes={activeRateVes}
+            subtotalRef={subtotalRef}
+            taxPercentLabel="0%"
+            taxRef={taxRef}
+          />
         </div>
       </div>
     </div>

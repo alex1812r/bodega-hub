@@ -7,12 +7,9 @@ import { Input } from "@/shared/components/Input";
 import { SelectField } from "@/shared/components/SelectField";
 import { formatRef, formatVes, refToVes } from "@/shared/utils/currency";
 
-export type PurchaseDraftItem = {
-  id: string;
-  productId: string;
-  quantity: number;
-  unitCostRef: number;
-};
+import type { PurchaseDraftItem } from "../types";
+
+export type { PurchaseDraftItem };
 
 type PurchaseProductOption = {
   label: string;
@@ -35,8 +32,8 @@ function findProductLabel(productOptions: PurchaseProductOption[], productId: st
 
 export function PurchaseItemsTable({
   items = [
-    { id: "PI-001", productId: "prod-cable", quantity: 12, unitCostRef: 2.8 },
-    { id: "PI-002", productId: "prod-hammer", quantity: 24, unitCostRef: 1.1 },
+    { id: "PI-001", entryMode: "unit", packCostRef: 0, packCount: 1, packLabel: "", productId: "prod-cable", quantity: 12, unitCostRef: 2.8, unitsPerPack: 1 },
+    { id: "PI-002", entryMode: "unit", packCostRef: 0, packCount: 1, packLabel: "", productId: "prod-hammer", quantity: 24, unitCostRef: 1.1, unitsPerPack: 1 },
   ],
   onAddItem,
   onRemoveItem,

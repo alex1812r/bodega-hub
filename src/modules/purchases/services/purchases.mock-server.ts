@@ -9,22 +9,37 @@ import {
   type PurchaseMock,
 } from "@/shared/mocks/erp-data";
 
+import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
+import { normalizePurchaseLine } from "../schemas/purchaseItem.schema";
+
 export type PurchaseInput = Partial<
   Pick<PurchaseMock, "discountRef" | "refRateVes" | "status" | "supplierId" | "taxRef">
 > & {
   exchangeRateId?: string;
-  items?: Array<{
-    productId: string;
-    quantity: number;
-    supplierSku?: string;
-    unitCostRef: number;
-  }>;
+  items?: PurchaseItemInput[];
   notes?: string;
   purchaseNumber?: string;
 };
 
+function matchesPurchaseSearch(
+  purchase: PurchaseMock,
+  supplierName: string | undefined,
+  search: string,
+) {
+  const term = search.trim().toLowerCase();
+  if (!term) {
+    return true;
+  }
+
+  const number = purchase.purchaseNumber.toLowerCase();
+  const supplier = (supplierName ?? "").toLowerCase();
+
+  return number.includes(term) || supplier.includes(term);
+}
+
 export function listPurchases(searchParams: URLSearchParams) {
   const from = searchParams.get("from");
+  const search = searchParams.get("search");
   const status = searchParams.get("status");
   const supplierId = searchParams.get("supplierId");
   const to = searchParams.get("to");
@@ -32,12 +47,14 @@ export function listPurchases(searchParams: URLSearchParams) {
   const items = mockPurchases
     .filter((purchase) => {
       const purchaseDate = purchase.createdAt.slice(0, 10);
+      const supplier = mockContacts.find((contact) => contact.id === purchase.supplierId);
 
       return (
         (!status || purchase.status === status) &&
         (!supplierId || purchase.supplierId === supplierId) &&
         (!from || purchaseDate >= from) &&
-        (!to || purchaseDate <= to)
+        (!to || purchaseDate <= to) &&
+        (!search || matchesPurchaseSearch(purchase, supplier?.name, search))
       );
     })
     .map((purchase) => ({
@@ -74,7 +91,7 @@ export function getPurchaseById(id: string) {
 export function createPurchase(input: PurchaseInput) {
   const refRateVes = input.refRateVes ?? 510;
   const subtotalRef =
-    input.items?.reduce((total, item) => total + item.unitCostRef * item.quantity, 0) ?? 0;
+    input.items?.reduce((total, item) => total + normalizePurchaseLine(item).subtotalRef, 0) ?? 0;
   const totalRef = subtotalRef - (input.discountRef ?? 0) + (input.taxRef ?? 0);
 
   const status = input.status ?? "recibido";

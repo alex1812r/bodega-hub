@@ -20,7 +20,7 @@ export function PaymentTimeline({ items }: PaymentTimelineProps) {
       <ol className="space-y-4">
         {items.map((item) => (
           <li className="flex gap-3" key={item.id}>
-            <span className="mt-1 h-2.5 w-2.5 rounded-full bg-blue-600" />
+            <span className="mt-1 h-2.5 w-2.5 rounded-full bg-indigo-600" />
             <div>
               <p className="text-sm font-semibold text-slate-950 dark:text-slate-100">
                 {item.title}

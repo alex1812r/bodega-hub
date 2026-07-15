@@ -3,12 +3,14 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@/shared/utils/cn";
 
 type LoadingStateProps = {
+  className?: string;
   description?: string;
   title?: string;
   variant?: "page" | "section" | "inline";
 };
 
 export function LoadingState({
+  className,
   description,
   title = "Cargando...",
   variant = "section",
@@ -23,12 +25,13 @@ export function LoadingState({
         variant === "section" && "min-h-40 rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900",
         isInline && "gap-2",
         !isInline && "flex-col text-center",
+        className,
       )}
       role="status"
     >
       <Loader2
         aria-hidden="true"
-        className={cn("h-5 w-5 animate-spin", !isInline && "mb-3")}
+        className={cn("h-5 w-5 animate-spin text-indigo-600", !isInline && "mb-3")}
       />
       <div>
         <p className="text-sm font-medium text-slate-700 dark:text-slate-300">

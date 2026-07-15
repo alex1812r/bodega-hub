@@ -7,12 +7,14 @@ const meta = {
   tags: ["ai-generated"],
   args: {
     contact: {
-      name: "Maria Perez",
-      type: "cliente",
-      phone: "0412-0000000",
-      email: "maria@email.com",
-      taxId: "V-12345678",
       address: "Av. Principal, Caracas",
+      email: "maria@email.com",
+      id: "cont-1",
+      isActive: true,
+      name: "Maria Perez",
+      phone: "0412-0000000",
+      taxId: "V-12345678",
+      type: "cliente",
     },
   },
 } satisfies Meta<typeof ContactProfileCard>;
@@ -25,12 +27,14 @@ export const Customer: Story = {};
 export const Supplier: Story = {
   args: {
     contact: {
-      name: "Distribuidora Central",
-      type: "proveedor",
-      phone: "0212-1111111",
-      email: "ventas@central.com",
-      taxId: "J-12345678-9",
       address: "Zona industrial",
+      email: "ventas@central.com",
+      id: "cont-2",
+      isActive: true,
+      name: "Distribuidora Central",
+      phone: "0212-1111111",
+      taxId: "J-12345678-9",
+      type: "proveedor",
     },
   },
 };

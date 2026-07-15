@@ -13,3 +13,11 @@ export function resolveDataSource(): ApiDataSource {
 export function isSupabaseDataSource() {
   return resolveDataSource() === "supabase";
 }
+
+export function isDevToolkitEnabled() {
+  return (
+    process.env.NODE_ENV === "development" ||
+    process.env.ALLOW_DEMO_AUTH === "true" ||
+    resolveDataSource() === "mock"
+  );
+}

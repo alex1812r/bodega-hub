@@ -27,7 +27,23 @@ describe("/api/categories", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.data.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: "cat-tools" })]));
+    expect(body.data.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "cat-tools" })]),
+    );
+    expect(body.data.items.every((category: { isActive: boolean }) => category.isActive)).toBe(
+      true,
+    );
+  });
+
+  it("lists inactive categories when filtered", async () => {
+    const response = await GET(new Request("http://localhost/api/categories?isActive=false"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.items.length).toBeGreaterThan(0);
+    expect(body.data.items.every((category: { isActive: boolean }) => !category.isActive)).toBe(
+      true,
+    );
   });
 
   it("creates a simulated category with warehouse role", async () => {

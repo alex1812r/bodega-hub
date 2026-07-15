@@ -59,6 +59,22 @@ describe("/api/products", () => {
     ).toBe(true);
   });
 
+  it("filters products by exact barcode", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/products?barcode=7501234567890&isActive=true"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.items).toEqual([
+      expect.objectContaining({
+        barcode: "7501234567890",
+        id: "prod-drill",
+      }),
+    ]);
+    expect(body.data.total).toBe(1);
+  });
+
   it("paginates products with skip and limit", async () => {
     const response = await GET(new Request("http://localhost/api/products?skip=1&limit=10"));
     const body = await response.json();
@@ -67,6 +83,22 @@ describe("/api/products", () => {
     expect(body.data.skip).toBe(1);
     expect(body.data.limit).toBe(10);
     expect(body.data.items.length).toBeLessThanOrEqual(10);
+  });
+
+  it("sorts products by stock descending in mock mode", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/products?sortBy=currentStock&sortOrder=desc&limit=100"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.items.length).toBeGreaterThan(1);
+
+    for (let index = 0; index < body.data.items.length - 1; index += 1) {
+      expect(body.data.items[index].currentStock).toBeGreaterThanOrEqual(
+        body.data.items[index + 1].currentStock,
+      );
+    }
   });
 
   it("blocks unauthorized product creation", async () => {
@@ -125,11 +157,12 @@ describe("/api/products", () => {
 
   describe("supabase data source", () => {
     const mockRange = jest.fn();
+    const mockOrder = jest.fn().mockReturnThis();
     const mockSelect = jest.fn(() => ({
       eq: jest.fn().mockReturnThis(),
       ilike: jest.fn().mockReturnThis(),
       or: jest.fn().mockReturnThis(),
-      order: jest.fn().mockReturnThis(),
+      order: mockOrder,
       range: mockRange,
     }));
 
@@ -148,7 +181,7 @@ describe("/api/products", () => {
             min_stock: 2,
             name: "Taladro",
             sale_price_ref: 15,
-            sku: "SKU-001",
+            sku: "sku-001",
           },
         ],
         error: null,
@@ -170,11 +203,20 @@ describe("/api/products", () => {
           categoryId: "cat-1",
           id: "prod-1",
           salePriceRef: 15,
-          sku: "SKU-001",
+          sku: "sku-001",
         }),
       ]);
       expect(body.data.total).toBe(1);
       expect(mockRange).toHaveBeenCalledWith(0, 9);
+    });
+
+    it("applies sort params when listing products from supabase", async () => {
+      const response = await GET(
+        new Request("http://localhost/api/products?sortBy=currentStock&sortOrder=desc&limit=10"),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockOrder).toHaveBeenCalledWith("current_stock", { ascending: false });
     });
   });
 });

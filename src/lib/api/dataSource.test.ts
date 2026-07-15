@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-import { resolveDataSource } from "@/lib/api/dataSource";
+import { isDevToolkitEnabled, resolveDataSource } from "@/lib/api/dataSource";
 
 describe("resolveDataSource", () => {
   const originalEnv = process.env;
@@ -44,5 +44,21 @@ describe("resolveDataSource", () => {
       value: originalNodeEnv,
       writable: true,
     });
+  });
+
+  it("enables dev toolkit only in development, demo auth or mock mode", () => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      configurable: true,
+      value: "production",
+      writable: true,
+    });
+    delete process.env.ALLOW_DEMO_AUTH;
+    process.env.API_DATA_SOURCE = "supabase";
+
+    expect(isDevToolkitEnabled()).toBe(false);
+
+    process.env.ALLOW_DEMO_AUTH = "true";
+
+    expect(isDevToolkitEnabled()).toBe(true);
   });
 });

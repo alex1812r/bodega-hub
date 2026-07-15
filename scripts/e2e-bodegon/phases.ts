@@ -313,11 +313,54 @@ export async function phase6SupplierProducts(client: ApiClient, manifest: E2eMan
 
   const spId = manifest.supplierProductIds[0];
   if (spId) {
+    await client.step("6", "POST /api/supplier-products/[id]/prices", () =>
+      client.request(`/api/supplier-products/${spId}/prices`, {
+        method: "POST",
+        body: JSON.stringify({
+          newCostRef: 2.55,
+          origin: "cotizacion",
+          notes: "Relevamiento E2E",
+        }),
+      }),
+    );
+
+    await client.step("6", "GET /api/supplier-products/[id]/price-history", () =>
+      client.request(`/api/supplier-products/${spId}/price-history?limit=10`),
+    );
+
     await client.step("6", "PATCH /api/supplier-products/[id]", () =>
       client.request(`/api/supplier-products/${spId}`, {
         method: "PATCH",
-        body: JSON.stringify({ lastCostRef: 2.5, supplierSku: "SNK-OREO-V2" }),
+        body: JSON.stringify({ supplierSku: "SNK-OREO-V2", notes: "SKU actualizado E2E" }),
       }),
+    );
+
+    await client.step("6", "PATCH /api/supplier-products/[id]/deactivate", () =>
+      client.request(`/api/supplier-products/${spId}/deactivate`, {
+        method: "PATCH",
+      }),
+    );
+
+    await client.step("6", "GET /api/supplier-products?isActive=true", () =>
+      client.request("/api/supplier-products?isActive=true&limit=50"),
+    );
+  }
+
+  const firstLink = SUPPLIER_PRODUCT_LINKS[0];
+  const duplicateProductId = manifest.productIds[firstLink.productKey];
+  const duplicateSupplierId = manifest.contactIds[firstLink.supplierKey];
+  if (duplicateProductId && duplicateSupplierId) {
+    await client.step("6", "POST supplier-product duplicado (409)", () =>
+      client.request("/api/supplier-products", {
+        method: "POST",
+        body: JSON.stringify({
+          productId: duplicateProductId,
+          supplierId: duplicateSupplierId,
+          supplierSku: "SNK-DUP",
+          lastCostRef: 1,
+        }),
+      }),
+      { expectStatus: [409] },
     );
   }
 

@@ -2,15 +2,18 @@ import * as XLSX from "xlsx";
 
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
-import type { ProductInput } from "../../hooks/useProducts";
 import {
   PRODUCT_IMPORT_HEADERS,
   PRODUCT_IMPORT_MAX_ROWS,
   PRODUCT_IMPORT_SHEET,
-  productImportRowSchema,
 } from "../schemas/productImportRowSchema";
 import type { ProductImportRawRow, ProductImportValidatedRow } from "../types";
-import { resolveCategoryIdByName } from "./resolveCategoryIds";
+import {
+  formatZodIssuesForLog,
+  logProductImportRowValidation,
+  rawCellsFromExcelRow,
+} from "./logProductImportValidation";
+import { revalidateProductImportRows } from "./validateProductImportRows";
 
 function parseNumber(value: unknown): number | undefined {
   if (value === null || value === undefined || value === "") {
@@ -44,27 +47,13 @@ function toRawRow(rowIndex: number, values: unknown[]): ProductImportRawRow {
   return {
     rowIndex,
     sku: cellToString(values[0]),
-    nombre: cellToString(values[1]),
-    categoria: cellToString(values[2]) || undefined,
-    precio_ref: parseNumber(values[3]) ?? NaN,
-    costo_ref: parseNumber(values[4]),
-    stock_inicial: parseNumber(values[5]),
-    stock_minimo: parseNumber(values[6]),
-  };
-}
-
-function toProductInput(
-  parsed: ReturnType<typeof productImportRowSchema.parse>,
-  categoryId?: string,
-): ProductInput {
-  return {
-    sku: parsed.sku,
-    name: parsed.nombre,
-    categoryId,
-    salePriceRef: parsed.precio_ref,
-    currentCostRef: parsed.costo_ref ?? 0,
-    currentStock: parsed.stock_inicial ?? 0,
-    minStock: parsed.stock_minimo ?? 5,
+    codigo_barras: cellToString(values[1]) || undefined,
+    nombre: cellToString(values[2]),
+    categoria: cellToString(values[3]) || undefined,
+    precio_ref: parseNumber(values[4]) ?? NaN,
+    costo_ref: parseNumber(values[5]),
+    stock_inicial: parseNumber(values[6]),
+    stock_minimo: parseNumber(values[7]),
   };
 }
 
@@ -106,83 +95,47 @@ export function parseProductImportWorkbook(
     throw new Error(`Maximo ${PRODUCT_IMPORT_MAX_ROWS} filas de datos por archivo.`);
   }
 
-  const skuInFile = new Map<string, number>();
-  const validated: ProductImportValidatedRow[] = [];
+  const rawRows = dataRows.map((row, index) => toRawRow(index + 3, row));
+  const categoryNames = categories.map((category) => category.name);
 
-  dataRows.forEach((row, index) => {
-    const rowIndex = index + 3;
-    const raw = toRawRow(rowIndex, row);
-    const messages: string[] = [];
-    let status: ProductImportValidatedRow["status"] = "valid";
-    let input: ProductInput | undefined;
+  const validated = revalidateProductImportRows(rawRows, {
+    categories,
+    existingSkus,
+  });
 
-    if (Number.isNaN(raw.precio_ref)) {
-      messages.push("precio_ref debe ser un numero valido.");
+  validated.forEach((validatedRow, index) => {
+    const raw = rawRows[index];
+    const excelRow = dataRows[index] ?? [];
+
+    if (validatedRow.status === "valid") {
+      return;
     }
 
-    if (raw.costo_ref !== undefined && Number.isNaN(raw.costo_ref)) {
-      messages.push("costo_ref debe ser un numero valido.");
-    }
-
-    if (raw.stock_inicial !== undefined && Number.isNaN(raw.stock_inicial)) {
-      messages.push("stock_inicial debe ser un numero entero valido.");
-    }
-
-    if (raw.stock_minimo !== undefined && Number.isNaN(raw.stock_minimo)) {
-      messages.push("stock_minimo debe ser un numero entero valido.");
-    }
-
-    const zodResult = productImportRowSchema.safeParse({
-      sku: raw.sku,
-      nombre: raw.nombre,
-      categoria: raw.categoria,
-      precio_ref: Number.isNaN(raw.precio_ref) ? -1 : raw.precio_ref,
-      costo_ref: raw.costo_ref,
-      stock_inicial: raw.stock_inicial,
-      stock_minimo: raw.stock_minimo,
-    });
-
-    if (!zodResult.success) {
-      zodResult.error.issues.forEach((issue) => {
-        messages.push(issue.message);
-      });
-      status = "error";
-    } else {
-      const skuKey = zodResult.data.sku.toLowerCase();
-
-      if (skuInFile.has(skuKey)) {
-        messages.push(
-          `SKU duplicado en el archivo (fila ${skuInFile.get(skuKey)}).`,
-        );
-        status = "error";
-      } else {
-        skuInFile.set(skuKey, rowIndex);
-      }
-
-      const categoryResult = resolveCategoryIdByName(zodResult.data.categoria, categories);
-
-      if (categoryResult.error) {
-        messages.push(categoryResult.error);
-        status = "error";
-      }
-
-      if (status !== "error") {
-        input = toProductInput(zodResult.data, categoryResult.categoryId);
-
-        if (existingSkus.has(skuKey)) {
-          messages.push("Este SKU ya existe en el catalogo.");
-          status = "warning";
-        }
-      }
-    }
-
-    validated.push({
-      rowIndex,
-      sku: raw.sku || `(fila ${rowIndex})`,
-      name: raw.nombre,
-      status,
-      messages,
-      input,
+    logProductImportRowValidation({
+      availableCategories: categoryNames,
+      categoryInput: raw.categoria,
+      messages: validatedRow.messages,
+      name: validatedRow.name,
+      parsedValues: {
+        sku: raw.sku,
+        nombre: raw.nombre,
+        categoria: raw.categoria ?? null,
+        precio_ref: raw.precio_ref,
+        precio_ref_valido: !Number.isNaN(raw.precio_ref),
+        costo_ref: raw.costo_ref ?? null,
+        costo_ref_valido:
+          raw.costo_ref === undefined ? "sin valor" : !Number.isNaN(raw.costo_ref),
+        stock_inicial: raw.stock_inicial ?? null,
+        stock_inicial_valido:
+          raw.stock_inicial === undefined ? "sin valor" : !Number.isNaN(raw.stock_inicial),
+        stock_minimo: raw.stock_minimo ?? null,
+        stock_minimo_valido:
+          raw.stock_minimo === undefined ? "sin valor" : !Number.isNaN(raw.stock_minimo),
+      },
+      rawCells: rawCellsFromExcelRow(excelRow),
+      rowIndex: validatedRow.rowIndex,
+      sku: validatedRow.sku,
+      status: validatedRow.status,
     });
   });
 

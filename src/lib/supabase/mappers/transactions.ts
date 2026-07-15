@@ -3,6 +3,7 @@ import { mapProductSummary, type DbProductSummaryRow } from "@/lib/supabase/mapp
 import type {
   PaymentDirection,
   PaymentMethod,
+  PaymentStatus,
   PurchaseStatus,
   SaleStatus,
   StockMovementType,
@@ -56,6 +57,7 @@ export type DbPaymentRow = {
   amount_ref?: number | string | null;
   amount_ves?: number | string | null;
   bank_name?: string | null;
+  cancelled_at?: string | null;
   contact_id: string;
   created_at?: string | null;
   currency?: "USD" | "VES" | null;
@@ -68,6 +70,7 @@ export type DbPaymentRow = {
   reference_code?: string | null;
   ref_rate_ves?: number | string | null;
   sale_id?: string | null;
+  status?: PaymentStatus | null;
 };
 
 export function mapSale(row: DbSaleRow) {
@@ -112,6 +115,7 @@ export function mapPayment(row: DbPaymentRow) {
     amountRef: toNumber(row.amount_ref),
     amountVes: toNumber(row.amount_ves),
     bankName: row.bank_name ?? undefined,
+    cancelledAt: row.cancelled_at ?? undefined,
     contactId: row.contact_id,
     createdAt: row.created_at ?? "",
     currency: row.currency ?? undefined,
@@ -124,10 +128,15 @@ export function mapPayment(row: DbPaymentRow) {
     referenceCode: row.reference_code ?? undefined,
     refRateVes: toNumber(row.ref_rate_ves),
     saleId: row.sale_id ?? undefined,
+    status: row.status ?? "activo",
   };
 }
 
 export type DbPurchaseItemRow = {
+  entry_mode?: string | null;
+  pack_cost_ref?: number | string | null;
+  pack_count?: number | null;
+  pack_label?: string | null;
   product?: DbProductSummaryRow | null;
   product_id: string;
   purchase_id: string;
@@ -136,6 +145,7 @@ export type DbPurchaseItemRow = {
   subtotal_ves?: number | string | null;
   unit_cost_ref?: number | string | null;
   unit_cost_ves?: number | string | null;
+  units_per_pack?: number | null;
 };
 
 export type DbStockMovementRow = {
@@ -162,7 +172,16 @@ function resolveEmbeddedProduct(
 }
 
 export function mapPurchaseItem(row: DbPurchaseItemRow) {
+  const entryMode = row.entry_mode === "pack" ? "pack" : "unit";
+
   return {
+    entryMode,
+    packCostRef:
+      row.pack_cost_ref != null && row.pack_cost_ref !== ""
+        ? toNumber(row.pack_cost_ref)
+        : undefined,
+    packCount: row.pack_count ?? undefined,
+    packLabel: row.pack_label ?? undefined,
     product: row.product ? mapProductSummary(row.product) : undefined,
     productId: row.product_id,
     purchaseId: row.purchase_id,
@@ -171,6 +190,7 @@ export function mapPurchaseItem(row: DbPurchaseItemRow) {
     subtotalVes: toNumber(row.subtotal_ves),
     unitCostRef: toNumber(row.unit_cost_ref),
     unitCostVes: toNumber(row.unit_cost_ves),
+    unitsPerPack: row.units_per_pack ?? undefined,
   };
 }
 

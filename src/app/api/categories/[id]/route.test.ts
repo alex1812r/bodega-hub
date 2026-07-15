@@ -64,6 +64,24 @@ describe("/api/categories/[id]", () => {
     expect(body.data.name).toBe("Herramientas Pro");
   });
 
+  it("reactivates an inactive category", async () => {
+    const response = await PATCH(
+      new Request("http://localhost/api/categories/cat-archived", {
+        body: JSON.stringify({ isActive: true }),
+        headers: {
+          "content-type": "application/json",
+          "x-demo-role": "admin",
+        },
+        method: "PATCH",
+      }),
+      context("cat-archived"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.isActive).toBe(true);
+  });
+
   it("deletes a category in mock mode", async () => {
     const response = await DELETE(
       new Request("http://localhost/api/categories/cat-tools", {

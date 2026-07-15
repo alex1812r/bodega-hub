@@ -67,6 +67,30 @@ paths:
           $ref: "#/components/responses/ReportObjectResponse"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/dashboard/sales-trend:
+    get:
+      tags: [Dashboard]
+      summary: Obtener tendencia de ventas para el grafico del dashboard
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Agrega ventas por dia en el rango `from`/`to`.
+      x-permission: dashboard.view
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/dashboard/recent-sales:
     get:
       tags: [Dashboard]
@@ -360,6 +384,69 @@ paths:
                         properties:
                           deleted:
                             type: boolean
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/products/{id}/image:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    delete:
+      tags: [Products]
+      summary: Quitar imagen de producto
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Limpia `imageUrl` del producto.
+      x-permission: products.manage
+      responses:
+        "200":
+          description: Producto sin imagen
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/products/{id}/image-upload-url:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [Products]
+      summary: Obtener URL firmada para subir imagen
+      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Devuelve `uploadUrl`, `publicUrl` y `path`.
+      x-permission: products.manage
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                format:
+                  type: string
+                  enum: [webp, jpeg, png]
+                  default: webp
+      responses:
+        "200":
+          description: Datos para subir imagen
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [path, publicUrl, uploadUrl]
+                    properties:
+                      path:
+                        type: string
+                      publicUrl:
+                        type: string
+                        format: uri
+                      uploadUrl:
+                        type: string
+                        format: uri
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -932,6 +1019,7 @@ paths:
     get:
       tags: [SupplierProducts]
       summary: Listar relaciones proveedor-producto
+      description: Lista paginada con filtros opcionales. Por defecto incluye activos e inactivos; use `isActive=true` para filtrar solo activos.
       x-permission: products.view
       parameters:
         - name: supplierId
@@ -944,6 +1032,13 @@ paths:
           required: false
           schema:
             type: string
+        - name: isActive
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
       responses:
         "200":
           $ref: "#/components/responses/SupplierProductArrayResponse"
@@ -952,7 +1047,7 @@ paths:
     post:
       tags: [SupplierProducts]
       summary: Crear relacion proveedor-producto
-      description: Inserta en `supplier_products` tras validar proveedor con RPC `assert_contact_type`.
+      description: Inserta en `supplier_products` tras validar proveedor con RPC `assert_contact_type`. Si incluye `lastCostRef`, registra historial con origen `vinculacion`.
       x-permission: products.manage
       requestBody:
         required: true
@@ -971,13 +1066,30 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/supplier-products/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
+    get:
+      tags: [SupplierProducts]
+      summary: Obtener relacion proveedor-producto por id
+      x-permission: products.view
+      responses:
+        "200":
+          description: Relacion encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierProductResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     patch:
       tags: [SupplierProducts]
-      summary: Actualizar relacion proveedor-producto
-      description: Actualiza `supplier_products`; valida tipo de proveedor al cambiar `supplierId`.
+      summary: Actualizar metadatos de relacion proveedor-producto
+      description: Actualiza solo metadatos (`supplierSku`, `notes`, `isActive`). Los precios se registran via POST `/api/supplier-products/{id}/prices`.
       x-permission: products.manage
       requestBody:
         required: true
@@ -994,6 +1106,172 @@ paths:
                 $ref: "#/components/schemas/SupplierProductResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/supplier-products/{id}/prices:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [SupplierProducts]
+      summary: Registrar precio de proveedor
+      description: Llama RPC `register_supplier_product_price` para append de historial y actualizar snapshot. Retorna variacion porcentual vs precio anterior.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierProductPriceInput"
+      responses:
+        "200":
+          description: Precio registrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterSupplierPriceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/supplier-products/{id}/price-history:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/Skip"
+      - $ref: "#/components/parameters/Limit"
+    get:
+      tags: [SupplierProducts]
+      summary: Obtener historial de precios proveedor-producto
+      description: Lista paginada de `supplier_product_price_history` para la relacion indicada.
+      x-permission: products.view
+      responses:
+        "200":
+          $ref: "#/components/responses/SupplierProductPriceHistoryArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/supplier-products/{id}/pack-units:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [SupplierProducts]
+      summary: Listar empaques de un vínculo proveedor-producto
+      x-permission: products.view
+      responses:
+        "200":
+          description: Lista de empaques
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SupplierProductPackUnit"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [SupplierProducts]
+      summary: Crear empaque para proveedor-producto
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierProductPackUnitInput"
+      responses:
+        "201":
+          description: Empaque creado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SupplierProductPackUnit"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/supplier-products/{id}/pack-units/{packId}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - name: packId
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [SupplierProducts]
+      summary: Actualizar empaque
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierProductPackUnitUpdateInput"
+      responses:
+        "200":
+          description: Empaque actualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SupplierProductPackUnit"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [SupplierProducts]
+      summary: Desactivar empaque
+      x-permission: products.manage
+      responses:
+        "200":
+          description: Empaque desactivado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SupplierProductPackUnit"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/supplier-products/{id}/deactivate:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      tags: [SupplierProducts]
+      summary: Desactivar relacion proveedor-producto
+      description: Baja logica via RPC `deactivate_supplier_product` (`is_active = false`). Conserva historial.
+      x-permission: products.manage
+      requestBody:
+        required: false
+      responses:
+        "200":
+          description: Relacion desactivada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierProductResponse"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -1118,6 +1396,25 @@ paths:
                 $ref: "#/components/schemas/PaymentResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/payments/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      tags: [Payments]
+      summary: Anular pago
+      description: Marca el pago como anulado y ajusta saldo del documento vinculado (RPC `cancel_payment` en Supabase).
+      x-permission: payments.manage
+      responses:
+        "200":
+          description: Pago anulado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentResponse"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -1632,6 +1929,23 @@ components:
                         type: array
                         items:
                           $ref: "#/components/schemas/SupplierProduct"
+    SupplierProductPriceHistoryArrayResponse:
+      description: Lista paginada de historial de precios proveedor-producto
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedList"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SupplierProductPriceHistory"
     UserProfileResponse:
       description: Perfil de usuario
       content:
@@ -1759,7 +2073,7 @@ components:
           type: string
     SupplierProduct:
       type: object
-      required: [id, supplierId, productId, lastCostRef]
+      required: [id, supplierId, productId, isActive]
       properties:
         id:
           type: string
@@ -1769,12 +2083,125 @@ components:
           type: string
         lastCostRef:
           type: number
+          minimum: 0
+        lastCostVes:
+          type: number
+          minimum: 0
+        lastPurchasedAt:
+          type: string
+          format: date-time
         supplierSku:
           type: string
+        notes:
+          type: string
+        isActive:
+          type: boolean
+        lastPriceOrigin:
+          $ref: "#/components/schemas/SupplierProductPriceOrigin"
+        variationPercent:
+          type: number
+          description: Variacion porcentual vs penultimo registro de historial (null si primer registro)
         supplier:
           $ref: "#/components/schemas/Contact"
         product:
           $ref: "#/components/schemas/Product"
+        packUnits:
+          type: array
+          items:
+            $ref: "#/components/schemas/SupplierProductPackUnit"
+        defaultPackUnit:
+          $ref: "#/components/schemas/SupplierProductPackUnit"
+    SupplierProductPackUnit:
+      type: object
+      required: [id, supplierProductId, label, unitsPerPack, isDefault, isActive]
+      properties:
+        id:
+          type: string
+        supplierProductId:
+          type: string
+        label:
+          type: string
+        unitsPerPack:
+          type: integer
+          minimum: 1
+        isDefault:
+          type: boolean
+        isActive:
+          type: boolean
+    SupplierProductPackUnitInput:
+      type: object
+      required: [label, unitsPerPack]
+      properties:
+        label:
+          type: string
+          minLength: 1
+        unitsPerPack:
+          type: integer
+          minimum: 1
+        isDefault:
+          type: boolean
+    SupplierProductPackUnitUpdateInput:
+      type: object
+      properties:
+        label:
+          type: string
+          minLength: 1
+        unitsPerPack:
+          type: integer
+          minimum: 1
+        isDefault:
+          type: boolean
+        isActive:
+          type: boolean
+    SupplierProductPriceOrigin:
+      type: string
+      enum: [cotizacion, compra, ajuste, vinculacion]
+    SupplierProductPriceHistory:
+      type: object
+      required: [id, supplierProductId, newCostRef, origin, createdAt]
+      properties:
+        id:
+          type: string
+        supplierProductId:
+          type: string
+        oldCostRef:
+          type: number
+          minimum: 0
+        newCostRef:
+          type: number
+          minimum: 0
+        oldCostVes:
+          type: number
+          minimum: 0
+        newCostVes:
+          type: number
+          minimum: 0
+        origin:
+          $ref: "#/components/schemas/SupplierProductPriceOrigin"
+        variationPercent:
+          type: number
+          description: Calculado en mapper cuando oldCostRef > 0
+        changedBy:
+          type: string
+        notes:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    RegisterSupplierPriceResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [supplierProduct, historyId]
+          properties:
+            supplierProduct:
+              $ref: "#/components/schemas/SupplierProduct"
+            variationPercent:
+              type: number
+            historyId:
+              type: string
     SupplierProductResponse:
       type: object
       required: [data]
@@ -1792,19 +2219,35 @@ components:
         lastCostRef:
           type: number
           minimum: 0
+        lastCostVes:
+          type: number
+          minimum: 0
         supplierSku:
+          type: string
+        notes:
           type: string
     SupplierProductUpdateInput:
       type: object
       properties:
-        supplierId:
+        supplierSku:
           type: string
-        productId:
+        notes:
           type: string
-        lastCostRef:
+        isActive:
+          type: boolean
+    SupplierProductPriceInput:
+      type: object
+      required: [newCostRef, origin]
+      properties:
+        newCostRef:
           type: number
           minimum: 0
-        supplierSku:
+        newCostVes:
+          type: number
+          minimum: 0
+        origin:
+          $ref: "#/components/schemas/SupplierProductPriceOrigin"
+        notes:
           type: string
     Product:
       type: object

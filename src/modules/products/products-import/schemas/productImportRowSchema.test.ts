@@ -7,6 +7,7 @@ describe("productImportRowSchema", () => {
   it("accepts a valid row", () => {
     const result = productImportRowSchema.safeParse({
       sku: "BOD-001",
+      codigo_barras: "7501234567890",
       nombre: "Chicle",
       categoria: "Chucherias",
       precio_ref: 1.5,
@@ -16,6 +17,24 @@ describe("productImportRowSchema", () => {
     });
 
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sku).toBe("bod-001");
+      expect(result.data.codigo_barras).toBe("7501234567890");
+    }
+  });
+
+  it("normalizes optional barcode", () => {
+    const result = productImportRowSchema.safeParse({
+      sku: "bod-002",
+      codigo_barras: " 750999 ",
+      nombre: "Oreo",
+      precio_ref: 1,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.codigo_barras).toBe("750999");
+    }
   });
 
   it("rejects empty sku and name", () => {

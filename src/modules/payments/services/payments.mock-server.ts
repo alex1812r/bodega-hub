@@ -9,6 +9,10 @@ import {
   type PaymentMock,
 } from "@/shared/mocks/erp-data";
 
+import type { PaymentDocumentBalance } from "../payment-details/types";
+import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
+import { resolvePaymentRelatedDocument } from "../utils/resolvePaymentRelatedDocument";
+
 export type PaymentInput = {
   amount: number;
   bankName?: string;
@@ -46,9 +50,48 @@ export function listPayments(searchParams: URLSearchParams) {
     .map((payment) => ({
       ...payment,
       contact: mockContacts.find((contact) => contact.id === payment.contactId),
+      relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, mockPurchases),
     }));
 
   return paginateList(items, searchParams);
+}
+
+function resolveMockDocumentBalance(
+  payment: PaymentMock,
+): PaymentDocumentBalance | undefined {
+  if (payment.saleId) {
+    const sale = mockSales.find((candidate) => candidate.id === payment.saleId);
+
+    if (!sale) {
+      return undefined;
+    }
+
+    return {
+      href: `/sales/${sale.id}`,
+      label: sale.invoiceNumber,
+      paidVes: sale.paidVes,
+      pendingVes: Math.max(sale.totalVes - sale.paidVes, 0),
+      totalVes: sale.totalVes,
+    };
+  }
+
+  if (payment.purchaseId) {
+    const purchase = mockPurchases.find((candidate) => candidate.id === payment.purchaseId);
+
+    if (!purchase) {
+      return undefined;
+    }
+
+    return {
+      href: `/purchases/${purchase.id}`,
+      label: formatPurchaseNumberDisplay(purchase.purchaseNumber),
+      paidVes: purchase.paidVes,
+      pendingVes: Math.max(purchase.totalVes - purchase.paidVes, 0),
+      totalVes: purchase.totalVes,
+    };
+  }
+
+  return undefined;
 }
 
 export function getPaymentById(id: string) {
@@ -58,19 +101,14 @@ export function getPaymentById(id: string) {
     throw new ApiError(404, "NOT_FOUND", "Pago no encontrado.");
   }
 
-  const sale = payment.saleId
-    ? mockSales.find((candidate) => candidate.id === payment.saleId)
-    : undefined;
-  const purchase = payment.purchaseId
-    ? mockPurchases.find((candidate) => candidate.id === payment.purchaseId)
-    : undefined;
-  const totalVes = sale?.totalVes ?? purchase?.totalVes ?? 0;
-  const paidVes = sale?.paidVes ?? purchase?.paidVes ?? 0;
+  const documentBalance = resolveMockDocumentBalance(payment);
 
   return {
     ...payment,
     contact: mockContacts.find((contact) => contact.id === payment.contactId),
-    pendingBalanceVes: Math.max(totalVes - paidVes, 0),
+    documentBalance,
+    pendingBalanceVes: documentBalance?.pendingVes,
+    relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, mockPurchases),
   };
 }
 
@@ -135,6 +173,76 @@ export function createPayment(input: PaymentInput) {
     referenceCode: input.referenceCode,
     refRateVes,
     saleId: input.saleId,
+    status: "activo",
     pendingBalanceVes: Math.max(totalVes - paidVes - amountVes, 0),
   } satisfies PaymentMock;
+}
+
+export function cancelPayment(id: string) {
+  const payment = mockPayments.find((item) => item.id === id);
+
+  if (!payment) {
+    throw new ApiError(404, "NOT_FOUND", "Pago no encontrado.");
+  }
+
+  if (payment.status === "anulado") {
+    throw new ApiError(400, "BAD_REQUEST", "El pago ya fue anulado.");
+  }
+
+  if (payment.saleId) {
+    const sale = mockSales.find((candidate) => candidate.id === payment.saleId);
+
+    if (!sale) {
+      throw new ApiError(404, "NOT_FOUND", "Venta no encontrada.");
+    }
+
+    if (sale.status === "cancelada" || sale.status === "devuelta") {
+      throw new ApiError(
+        400,
+        "BAD_REQUEST",
+        "No se puede anular un pago de una venta cancelada o devuelta.",
+      );
+    }
+
+    if (sale.paidVes < payment.amountVes) {
+      throw new ApiError(400, "BAD_REQUEST", "El monto del pago excede lo registrado en la venta.");
+    }
+
+    sale.paidVes -= payment.amountVes;
+
+    if (sale.status !== "borrador") {
+      sale.status = sale.paidVes >= sale.totalVes ? "pagada" : "pendiente_pago";
+    }
+  }
+
+  if (payment.purchaseId) {
+    const purchase = mockPurchases.find((candidate) => candidate.id === payment.purchaseId);
+
+    if (!purchase) {
+      throw new ApiError(404, "NOT_FOUND", "Compra no encontrada.");
+    }
+
+    if (purchase.status === "cancelado" || purchase.status === "devuelto") {
+      throw new ApiError(
+        400,
+        "BAD_REQUEST",
+        "No se puede anular un pago de una compra cancelada o devuelta.",
+      );
+    }
+
+    if (purchase.paidVes < payment.amountVes) {
+      throw new ApiError(
+        400,
+        "BAD_REQUEST",
+        "El monto del pago excede lo registrado en la compra.",
+      );
+    }
+
+    purchase.paidVes -= payment.amountVes;
+  }
+
+  payment.status = "anulado";
+  payment.cancelledAt = new Date().toISOString();
+
+  return getPaymentById(id);
 }

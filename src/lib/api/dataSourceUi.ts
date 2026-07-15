@@ -22,24 +22,38 @@ export function isDemoAuthEnabledUi() {
   return process.env.NEXT_PUBLIC_ALLOW_DEMO_AUTH === "true";
 }
 
+/** UI de desarrollo: auth demo, copy mock o herramientas /dev. */
+export function isDevToolkitEnabledUi() {
+  return (
+    process.env.NODE_ENV === "development" ||
+    isDemoAuthEnabledUi() ||
+    isMockDataSource()
+  );
+}
+
 export function getApiLayerName() {
   return isMockDataSource() ? "API mock" : "Supabase";
 }
 
 export function getConnectedToLayerPhrase() {
-  return isMockDataSource()
-    ? "conectado a la capa API mock"
-    : "conectado a Supabase";
+  return isMockDataSource() ? "conectado a la capa API mock" : "";
 }
 
 export function getConnectedToApiPhrase() {
-  return isMockDataSource() ? "conectado a la API mock" : "conectado a Supabase";
+  return isMockDataSource() ? "conectado a la API mock" : "";
+}
+
+/** Sufijo opcional para descripciones de pagina (solo en modo mock). */
+export function getPageDataSourceSuffix() {
+  const phrase = getConnectedToApiPhrase();
+
+  return phrase ? ` ${phrase}.` : ".";
 }
 
 export function getFormSaveDescription() {
   return isMockDataSource()
     ? "Los cambios se envian a la API mock y luego invalidan las consultas del modulo."
-    : "Los cambios se guardan en Supabase y luego invalidan las consultas del modulo.";
+    : "Confirma los datos antes de guardar.";
 }
 
 export function getSettingsSavedMessage() {

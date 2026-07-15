@@ -6,6 +6,12 @@ import {
 } from "../schemas/productImportRowSchema";
 import { buildProductImportWorkbook, productImportTemplateToBuffer } from "./buildProductImportTemplate";
 
+type WorksheetWithDataValidations = ExcelJS.Worksheet & {
+  dataValidations?: {
+    model?: Record<string, ExcelJS.DataValidation>;
+  };
+};
+
 describe("buildProductImportTemplate", () => {
   const categories = [
     { id: "cat-1", name: "Chucherias", isActive: true },
@@ -14,9 +20,11 @@ describe("buildProductImportTemplate", () => {
 
   it("adds list validation on categoria column referencing Categorias sheet", async () => {
     const workbook = await buildProductImportWorkbook(categories);
-    const productsSheetBeforeWrite = workbook.getWorksheet(PRODUCT_IMPORT_SHEET);
+    const productsSheetBeforeWrite = workbook.getWorksheet(PRODUCT_IMPORT_SHEET) as
+      | WorksheetWithDataValidations
+      | undefined;
     const rangeValidation =
-      productsSheetBeforeWrite?.dataValidations?.model?.["C3:C502"];
+      productsSheetBeforeWrite?.dataValidations?.model?.["D3:D502"];
 
     expect(rangeValidation?.type).toBe("list");
     expect(rangeValidation?.formulae?.[0]).toContain(PRODUCT_IMPORT_CATEGORIES_SHEET);
@@ -24,10 +32,12 @@ describe("buildProductImportTemplate", () => {
 
     const buffer = await productImportTemplateToBuffer(categories);
     const loadedWorkbook = new ExcelJS.Workbook();
-    await loadedWorkbook.xlsx.load(buffer);
+    await loadedWorkbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
 
-    const productsSheet = loadedWorkbook.getWorksheet(PRODUCT_IMPORT_SHEET);
-    const cellValidation = productsSheet?.dataValidations?.model?.["C3"];
+    const productsSheet = loadedWorkbook.getWorksheet(PRODUCT_IMPORT_SHEET) as
+      | WorksheetWithDataValidations
+      | undefined;
+    const cellValidation = productsSheet?.dataValidations?.model?.["D3"];
 
     expect(cellValidation?.type).toBe("list");
     expect(cellValidation?.formulae?.[0]).toContain(PRODUCT_IMPORT_CATEGORIES_SHEET);

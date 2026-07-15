@@ -3,17 +3,21 @@ import { type ComponentPropsWithoutRef, type ElementType } from "react";
 
 import { cn } from "@/shared/utils/cn";
 
-const typographyVariants = cva("text-slate-950 dark:text-slate-100", {
+const typographyVariants = cva("text-foreground", {
   variants: {
     variant: {
-      display: "text-4xl font-semibold tracking-tight md:text-5xl",
-      h1: "text-3xl font-semibold tracking-tight",
-      h2: "text-2xl font-semibold tracking-tight",
-      h3: "text-xl font-semibold",
-      body: "text-base leading-7",
-      muted: "text-sm leading-6 text-slate-500 dark:text-slate-400",
-      label: "text-sm font-medium",
-      caption: "text-xs leading-5 text-slate-500 dark:text-slate-400",
+      display:
+        "text-[28px] font-bold leading-9 tracking-[-0.02em] md:text-[36px] md:leading-[44px]",
+      h1: "text-2xl font-semibold leading-8 tracking-[-0.01em]",
+      h2: "text-xl font-semibold leading-7",
+      h3: "text-lg font-semibold leading-7",
+      body: "text-sm leading-5",
+      "body-lg": "text-base leading-6",
+      muted: "text-sm leading-5 text-muted-foreground",
+      label: "text-sm font-medium leading-5",
+      caption: "text-xs leading-4 text-muted-foreground",
+      "table-label":
+        "text-xs font-semibold uppercase tracking-wider text-muted-foreground",
     },
   },
   defaultVariants: {

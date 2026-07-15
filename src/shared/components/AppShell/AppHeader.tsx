@@ -1,16 +1,16 @@
 "use client";
 
-import { Menu } from "lucide-react";
+import { Menu, UserCircle } from "lucide-react";
 
-import { Badge } from "@/shared/components/Badge";
-import { Button } from "@/shared/components/Button";
 import { IconButton } from "@/shared/components/IconButton";
 import { ThemeToggle } from "@/shared/components/ThemeToggle";
-import { formatVes } from "@/shared/utils/currency";
+import { cn } from "@/shared/utils/cn";
+
+import { ExchangeRateBadge } from "./ExchangeRateBadge";
 
 type AppHeaderProps = {
+  className?: string;
   onOpenMenu: () => void;
-  onSignOut?: () => void;
   refRateError?: boolean;
   refRateVes?: number;
   userName?: string;
@@ -18,54 +18,44 @@ type AppHeaderProps = {
 };
 
 export function AppHeader({
+  className,
   onOpenMenu,
-  onSignOut,
   refRateError = false,
   refRateVes,
   userName = "Admin",
-  userRole = "admin",
+  userRole = "Administrador",
 }: AppHeaderProps) {
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90 lg:px-8">
-      <div className="flex min-w-0 items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <IconButton
-            aria-label="Abrir menu de navegacion"
-            className="shrink-0 lg:hidden"
-            icon={<Menu className="h-5 w-5" />}
-            onClick={onOpenMenu}
-          />
-          <div className="min-w-0">
-            <p className="truncate text-xs text-slate-500 dark:text-slate-400 sm:text-sm">
-              Tasa oficial (REF/VES)
-            </p>
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-base font-semibold sm:text-lg">
-                {refRateVes != null ? formatVes(refRateVes) : "—"}
-              </span>
-              {refRateError ? (
-                <span className="shrink-0 text-xs text-amber-600 dark:text-amber-400">
-                  No disponible
-                </span>
-              ) : null}
-              <Badge className="shrink-0" variant="info">
-                ref
-              </Badge>
-            </div>
-          </div>
-        </div>
+    <header
+      className={cn(
+        "sticky top-0 z-40 flex h-16 w-full shrink-0 items-center justify-between gap-3 border-b border-outline-variant bg-surface px-4 lg:px-6",
+        className,
+      )}
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <IconButton
+          aria-label="Abrir menu de navegacion"
+          className="shrink-0 text-foreground hover:bg-surface-container hover:text-primary lg:hidden"
+          icon={<Menu className="h-5 w-5" />}
+          onClick={onOpenMenu}
+          variant="ghost"
+        />
+        <ExchangeRateBadge hasError={refRateError} rateVes={refRateVes} />
+      </div>
 
-        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-          <ThemeToggle />
-          <div className="hidden text-right sm:block">
-            <p className="max-w-[8rem] truncate text-sm font-medium lg:max-w-none">{userName}</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">{userRole}</p>
+      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+        <ThemeToggle />
+        <div className="hidden items-center gap-2 border-l border-border pl-4 sm:flex">
+          <div className="text-right">
+            <p className="max-w-[10rem] truncate text-sm font-bold leading-tight text-foreground lg:max-w-none">
+              {userName}
+            </p>
+            <p className="text-xs text-muted-foreground">{userRole}</p>
           </div>
-          {onSignOut ? (
-            <Button onClick={onSignOut} size="sm" variant="outline">
-              Salir
-            </Button>
-          ) : null}
+          <UserCircle
+            aria-hidden
+            className="h-8 w-8 shrink-0 text-muted-foreground"
+          />
         </div>
       </div>
     </header>

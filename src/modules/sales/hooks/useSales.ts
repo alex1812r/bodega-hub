@@ -17,6 +17,7 @@ import type {
 export type SalesFilters = PaginationParams & {
   customerId?: string;
   from?: string;
+  search?: string;
   status?: SaleStatus | string;
   to?: string;
 };

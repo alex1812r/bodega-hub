@@ -3,21 +3,19 @@ import { delay, http, HttpResponse } from "msw";
 
 import {
   getDashboardLowStock,
-  getDashboardMetrics,
+  getDashboardSalesTrend,
   getDashboardSummary,
   getRecentSales,
 } from "@/modules/dashboard/services/dashboard.mock-server";
-import { getCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.mock-server";
-
 import DashboardPage from "./page";
 
 const dashboardHandlers = [
   http.get("/api/dashboard/summary", () =>
     HttpResponse.json({ data: getDashboardSummary() }),
   ),
-  http.get("/api/dashboard/metrics", ({ request }) =>
+  http.get("/api/dashboard/sales-trend", ({ request }) =>
     HttpResponse.json({
-      data: getDashboardMetrics(new URL(request.url).searchParams),
+      data: getDashboardSalesTrend(new URL(request.url).searchParams),
     }),
   ),
   http.get("/api/dashboard/recent-sales", ({ request }) =>
@@ -29,9 +27,6 @@ const dashboardHandlers = [
     HttpResponse.json({
       data: getDashboardLowStock(new URL(request.url).searchParams),
     }),
-  ),
-  http.get("/api/exchange-rates/current", () =>
-    HttpResponse.json({ data: getCurrentExchangeRate() }),
   ),
 ];
 
@@ -59,19 +54,7 @@ export const Loading: Story = {
           await delay(10_000);
           return HttpResponse.json({ data: getDashboardSummary() });
         }),
-        http.get("/api/dashboard/metrics", async () => {
-          await delay(10_000);
-          return HttpResponse.json({
-            data: getDashboardMetrics(
-              new URLSearchParams("from=2026-05-18&to=2026-05-18"),
-            ),
-          });
-        }),
-        http.get("/api/exchange-rates/current", async () => {
-          await delay(10_000);
-          return HttpResponse.json({ data: getCurrentExchangeRate() });
-        }),
-        ...dashboardHandlers.slice(2),
+        ...dashboardHandlers.slice(1),
       ],
     },
   },

@@ -15,6 +15,8 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 
+import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
+import { normalizePurchaseLine, toRpcPurchaseItem } from "../schemas/purchaseItem.schema";
 import type { PurchaseInput } from "./purchases.mock-server";
 
 const contactSelect =
@@ -68,6 +70,11 @@ const purchaseDetailSelect = `
     unit_cost_ves,
     subtotal_ref,
     subtotal_ves,
+    entry_mode,
+    pack_label,
+    pack_count,
+    units_per_pack,
+    pack_cost_ref,
     product:products(${productSelect})
   )
 `;
@@ -86,24 +93,31 @@ type PurchaseDetailRow = DbPurchaseRow & {
 };
 
 function toRpcItems(items: NonNullable<PurchaseInput["items"]>) {
-  return items.map((item) => ({
-    product_id: item.productId,
-    quantity: item.quantity,
-    unit_cost_ref: item.unitCostRef,
-    ...(item.supplierSku ? { supplier_sku: item.supplierSku } : {}),
-  }));
+  return items.map((item) => toRpcPurchaseItem(item as PurchaseItemInput));
 }
 
-function applyPurchaseFilters<T extends { eq: (col: string, val: string) => T; gte: (col: string, val: string) => T; lte: (col: string, val: string) => T }>(
+function applyPurchaseFilters<
+  T extends {
+    eq: (col: string, val: string) => T;
+    gte: (col: string, val: string) => T;
+    ilike: (col: string, val: string) => T;
+    lte: (col: string, val: string) => T;
+  },
+>(
   query: T,
   searchParams: URLSearchParams,
 ) {
   const from = searchParams.get("from");
+  const search = searchParams.get("search")?.trim();
   const status = searchParams.get("status");
   const supplierId = searchParams.get("supplierId");
   const to = searchParams.get("to");
 
   let filteredQuery = query;
+
+  if (search) {
+    filteredQuery = filteredQuery.ilike("purchase_number", `%${search}%`);
+  }
 
   if (status) {
     filteredQuery = filteredQuery.eq("status", status);

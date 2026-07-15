@@ -202,7 +202,7 @@ export function RegisterPaymentModal({
         ) : null}
 
         {pendingBalanceVes !== undefined ? (
-          <p className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+          <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
             Saldo pendiente actual: {formatVes(pendingBalanceVes)}
           </p>
         ) : null}

@@ -5,34 +5,39 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
+  CategoryMock,
   ProductMock,
   StockMovementMock,
   StockMovementType,
 } from "@/shared/mocks/erp-data";
 
+import type { InventoryAdjustmentType } from "../inventory-movements/utils/movementTypeLabels";
+
 export type InventoryFilters = PaginationParams & {
+  categoryId?: string;
   lowStock?: boolean;
+  maxPriceRef?: number;
+  minPriceRef?: number;
   search?: string;
+  stockStatus?: string;
 };
 
 export type InventoryMovementFilters = PaginationParams & {
+  from?: string;
   productId?: string;
+  to?: string;
+  type?: StockMovementType;
 };
 
-export type InventoryItem = ProductMock;
+export type InventoryItem = ProductMock & {
+  category?: CategoryMock;
+};
 
 export type InventoryMovement = StockMovementMock & {
   product?: ProductMock;
 };
 
-export type InventoryAdjustmentType = Extract<
-  StockMovementType,
-  | "ajuste_entrada"
-  | "ajuste_salida"
-  | "devolucion_cliente"
-  | "devolucion_proveedor"
-  | "inventario_inicial"
->;
+export type { InventoryAdjustmentType };
 
 export type InventoryAdjustmentInput = {
   productId: string;

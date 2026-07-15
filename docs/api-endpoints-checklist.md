@@ -1,6 +1,6 @@
 # Checklist De Endpoints API
 
-Este checklist compara el plan funcional del ERP contra los endpoints actuales en `src/app/api` (mayo 2026). Runtime usa Supabase por defecto; mock en tests (`API_DATA_SOURCE=mock`).
+Este checklist compara el plan funcional del ERP contra los endpoints actuales en `src/app/api` (julio 2026). Runtime usa Supabase por defecto; mock en tests (`API_DATA_SOURCE=mock`).
 
 **Catálogo por módulo (pantallas, hooks, tablas):** [`modules-catalog.md`](modules-catalog.md)
 
@@ -18,7 +18,7 @@ Este checklist compara el plan funcional del ERP contra los endpoints actuales e
 - `[x]` Existe header mock `x-demo-role` para permisos (dev/test con `ALLOW_DEMO_AUTH=true`).
 - `[x]` Los endpoints operativos usan `resolveDataSource()` o factory de servicios (`getContactsService`) para alternar mock/Supabase.
 - `[x]` Cliente Supabase server-side (`createRouteSupabaseClient`) en servicios `.server.ts`.
-- `[x]` Servicios `.server.ts` reales en productos, categorias, inventario, contactos, ventas, compras, pagos, dashboard, reportes, settings y tasas.
+- `[x]` Servicios `.server.ts` reales en productos, categorias, inventario, contactos, proveedor-producto, ventas, compras, pagos, dashboard, reportes, settings y tasas.
 - `[x]` Auth server-side: login/logout/me con Supabase Auth + perfil en `profiles`.
 - `[~]` Los permisos soportan sesion real; `x-demo-role` sigue disponible en dev.
 - `[x]` Hooks cliente TanStack Query consumen `/api` en todos los módulos operativos (ver [`modules-catalog.md`](modules-catalog.md)).
@@ -164,11 +164,15 @@ Este checklist compara el plan funcional del ERP contra los endpoints actuales e
 ## Proveedores Y Relacion Producto-Proveedor
 
 - `[~]` Proveedores se manejan como `contacts` con `type=proveedor`.
-- `[x]` `GET /api/supplier-products`: relaciones proveedor-producto.
-- `[x]` `POST /api/supplier-products`: crear relacion (mock o Supabase `supplier_products`).
-- `[x]` `PATCH /api/supplier-products/[id]`: actualizar ultimo costo/SKU proveedor.
-- `[x]` `GET /api/suppliers/[id]/products`: productos por proveedor.
+- `[x]` `GET /api/supplier-products`: relaciones proveedor-producto (`isActive`, enriquecido con `variationPercent`, `lastPriceOrigin`).
+- `[x]` `POST /api/supplier-products`: crear relacion + historial `vinculacion` si hay costo inicial.
+- `[x]` `PATCH /api/supplier-products/[id]`: actualizar metadatos (`supplierSku`, `notes`, `isActive`); precio vía `/prices`.
+- `[x]` `POST /api/supplier-products/[id]/prices`: registrar cotización (RPC `register_supplier_product_price`).
+- `[x]` `GET /api/supplier-products/[id]/price-history`: historial paginado.
+- `[x]` `PATCH /api/supplier-products/[id]/deactivate`: baja lógica (RPC `deactivate_supplier_product`).
+- `[x]` `GET /api/suppliers/[id]/products`: productos por proveedor (filtro `isActive` opcional).
 - `[x]` `GET /api/products/[id]/suppliers`: proveedores por producto.
+- `[ ]` **Migración remota:** ejecutar en Supabase SQL Editor §3.8–3.8.1 de `supabase/supabase-schema.sql` (`notes`, `is_active`, `supplier_product_price_history`, RPCs) antes de usar endpoints en prod.
 
 ## Tasa Ref/VES
 
@@ -177,7 +181,7 @@ Este checklist compara el plan funcional del ERP contra los endpoints actuales e
 - `[x]` `POST /api/exchange-rates`: crear tasa mock.
 - `[x]` `POST /api/exchange-rates`: insert Supabase con `created_by` de sesion.
 - `[x]` `GET /api/exchange-rates/current`: tasa vigente mock.
-- `[x]` `GET /api/exchange-rates/current`: ultima tasa Supabase por `created_at`.
+- `[x]` `GET /api/exchange-rates/current`: tasa oficial vía [DolarAPI](https://ve.dolarapi.com/v1/dolares/oficial) (`promedio` → `rateVes`), cache en servidor, persistencia diaria en `exchange_rates` con `source = "DolarAPI oficial"`. Errores 502/503 si el proveedor falla.
 - `[x]` `GET /api/exchange-rates?from=&to=`: historial por rango.
 - `[x]` Validar que la tasa sea mayor a cero.
 - `[x]` Registrar usuario creador cuando exista auth real (`created_by` en Supabase).

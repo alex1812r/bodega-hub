@@ -1,14 +1,16 @@
 "use client";
 
+import { Save } from "lucide-react";
 import { type FormEvent, useMemo, useState } from "react";
 
 import {
-  getConnectedToApiPhrase,
   getExchangeRateSavedMessage,
+  getPageDataSourceSuffix,
   getSettingsSavedMessage,
   isDemoAuthEnabledUi,
   isMockDataSource,
 } from "@/lib/api/dataSourceUi";
+import { getPaginatedItems } from "@/lib/api/pagination";
 import { getStoredDemoRole, setStoredDemoRole } from "@/shared/auth/demoAuth";
 import { roleLabels, userRoles, type UserRole } from "@/shared/auth/permissions";
 import { Button } from "@/shared/components/Button";
@@ -62,6 +64,22 @@ const initialExchangeRateForm: ExchangeRateFormState = {
   rateVes: "",
   source: "Manual",
 };
+
+const SETTINGS_FORM_ID = "settings-general-form";
+
+function toSettingsFormState(data: {
+  businessName: string;
+  defaultTaxRate: number;
+  invoicePrefix: string;
+  lowStockThreshold: number;
+}): SettingsFormState {
+  return {
+    businessName: data.businessName,
+    defaultTaxRate: String(data.defaultTaxRate),
+    invoicePrefix: data.invoicePrefix,
+    lowStockThreshold: String(data.lowStockThreshold),
+  };
+}
 
 function SettingsUserRow({ user }: { user: UserProfileMock }) {
   const updateUser = useUpdateUser(user.id);
@@ -117,6 +135,39 @@ const roleOptions = userRoles.map((role) => ({
   value: role,
 }));
 
+function DemoAuthCard() {
+  const [demoRole, setDemoRole] = useState<UserRole>(
+    () => getStoredDemoRole() ?? "admin",
+  );
+
+  function handleDemoRoleChange(role: UserRole) {
+    setDemoRole(role);
+    setStoredDemoRole(role);
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Auth demo</CardTitle>
+        <CardDescription>
+          Este rol se guarda localmente y viaja como header demo al API.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <SelectField
+          label="Rol activo"
+          onChange={(event) => handleDemoRoleChange(event.target.value as UserRole)}
+          options={roleOptions}
+          value={demoRole}
+        />
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          Rol actual: <strong>{roleLabels[demoRole]}</strong>
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function SettingsListPage() {
   const settingsQuery = useSettings();
   const usersPagination = usePaginationState([]);
@@ -137,9 +188,7 @@ export function SettingsListPage() {
   const [exchangeRateForm, setExchangeRateForm] = useState<ExchangeRateFormState>(
     initialExchangeRateForm,
   );
-  const [demoRole, setDemoRole] = useState<UserRole>(
-    () => getStoredDemoRole() ?? "admin",
-  );
+  const showDemoAuthCard = isDemoAuthEnabledUi();
   const loadedSettingsKey = settingsQuery.data
     ? `${settingsQuery.data.businessName}-${settingsQuery.data.invoicePrefix}`
     : "";
@@ -147,13 +196,23 @@ export function SettingsListPage() {
 
   if (loadedSettingsKey && loadedSettingsKey !== syncedSettingsKey) {
     setSyncedSettingsKey(loadedSettingsKey);
-    setSettingsForm({
-      businessName: settingsQuery.data!.businessName,
-      defaultTaxRate: String(settingsQuery.data!.defaultTaxRate),
-      invoicePrefix: settingsQuery.data!.invoicePrefix,
-      lowStockThreshold: String(settingsQuery.data!.lowStockThreshold),
-    });
+    setSettingsForm(toSettingsFormState(settingsQuery.data!));
   }
+
+  const isSettingsDirty = useMemo(() => {
+    if (!settingsQuery.data) {
+      return false;
+    }
+
+    const loaded = toSettingsFormState(settingsQuery.data);
+
+    return (
+      settingsForm.businessName !== loaded.businessName ||
+      settingsForm.defaultTaxRate !== loaded.defaultTaxRate ||
+      settingsForm.invoicePrefix !== loaded.invoicePrefix ||
+      settingsForm.lowStockThreshold !== loaded.lowStockThreshold
+    );
+  }, [settingsForm, settingsQuery.data]);
 
   const currentRateDescription = useMemo(() => {
     if (currentRateQuery.isError) {
@@ -192,17 +251,52 @@ export function SettingsListPage() {
     setExchangeRateForm(initialExchangeRateForm);
   }
 
-  function handleDemoRoleChange(role: UserRole) {
-    setDemoRole(role);
-    setStoredDemoRole(role);
+  function handleDiscardSettings() {
+    if (!settingsQuery.data) {
+      return;
+    }
+
+    setSettingsForm(toSettingsFormState(settingsQuery.data));
   }
+
+  const headerActions = (
+    <>
+      <Button
+        disabled={!isSettingsDirty || settingsQuery.isLoading}
+        onClick={handleDiscardSettings}
+        type="button"
+        variant="secondary"
+      >
+        Descartar cambios
+      </Button>
+      <Button
+        disabled={
+          !isSettingsDirty || updateSettings.isPending || settingsQuery.isLoading
+        }
+        form={SETTINGS_FORM_ID}
+        type="submit"
+        variant="primary"
+      >
+        <Save aria-hidden className="h-4 w-4" />
+        {updateSettings.isPending ? "Guardando..." : "Guardar"}
+      </Button>
+    </>
+  );
 
   return (
     <EntityListPage
-      description={`Configuracion operativa, usuarios y tasa ref/VES ${getConnectedToApiPhrase()}.`}
-      title="Configuracion"
+      actions={headerActions}
+      description={`Administra los parametros generales de BodegaSync${getPageDataSourceSuffix()}`}
+      layout="sections"
+      title="Configuracion del sistema"
     >
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+      <div
+        className={
+          showDemoAuthCard
+            ? "grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]"
+            : "grid grid-cols-1 gap-4"
+        }
+      >
         <Card>
           <CardHeader>
             <CardTitle>Datos generales</CardTitle>
@@ -211,7 +305,11 @@ export function SettingsListPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSettingsSubmit}>
+            <form
+              className="grid gap-4 md:grid-cols-2"
+              id={SETTINGS_FORM_ID}
+              onSubmit={handleSettingsSubmit}
+            >
               <Input
                 disabled={settingsQuery.isLoading}
                 label="Nombre del negocio"
@@ -261,44 +359,27 @@ export function SettingsListPage() {
                 type="number"
                 value={settingsForm.lowStockThreshold}
               />
-              <div className="flex flex-wrap items-center gap-3 md:col-span-2">
-                <Button disabled={updateSettings.isPending} type="submit">
-                  {updateSettings.isPending ? "Guardando..." : "Guardar ajustes"}
-                </Button>
-                {updateSettings.isSuccess ? (
-                  <span className="text-sm text-emerald-600 dark:text-emerald-400">
-                    {getSettingsSavedMessage()}
-                  </span>
-                ) : null}
-                {settingsQuery.error || updateSettings.error ? (
-                  <span className="text-sm text-red-600 dark:text-red-400">
-                    No se pudieron guardar los ajustes.
-                  </span>
-                ) : null}
-              </div>
+              {(updateSettings.isSuccess ||
+                settingsQuery.error ||
+                updateSettings.error) && (
+                <div className="flex flex-wrap items-center gap-3 md:col-span-2">
+                  {updateSettings.isSuccess ? (
+                    <span className="text-sm text-emerald-600 dark:text-emerald-400">
+                      {getSettingsSavedMessage()}
+                    </span>
+                  ) : null}
+                  {settingsQuery.error || updateSettings.error ? (
+                    <span className="text-sm text-red-600 dark:text-red-400">
+                      No se pudieron guardar los ajustes.
+                    </span>
+                  ) : null}
+                </div>
+              )}
             </form>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Auth demo</CardTitle>
-            <CardDescription>
-              Este rol se guarda localmente y viaja como header demo al API.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <SelectField
-              label="Rol activo"
-              onChange={(event) => handleDemoRoleChange(event.target.value as UserRole)}
-              options={roleOptions}
-              value={demoRole}
-            />
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Rol actual: <strong>{roleLabels[demoRole]}</strong>
-            </p>
-          </CardContent>
-        </Card>
+        {showDemoAuthCard ? <DemoAuthCard /> : null}
       </div>
 
       <Card>

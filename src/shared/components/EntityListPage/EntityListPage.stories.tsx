@@ -54,3 +54,22 @@ export const WithoutActions: Story = {
     actions: undefined,
   },
 };
+
+export const SectionsLayout: Story = {
+  args: {
+    layout: "sections",
+    title: "Configuracion del sistema",
+    description: "Administra los parametros generales de BodegaSync.",
+    actions: (
+      <>
+        <Button variant="secondary">Descartar cambios</Button>
+        <Button variant="primary">Guardar</Button>
+      </>
+    ),
+    children: (
+      <div className="rounded-lg border border-border bg-surface-container-lowest p-4">
+        Seccion independiente (sin card contenedora global).
+      </div>
+    ),
+  },
+};

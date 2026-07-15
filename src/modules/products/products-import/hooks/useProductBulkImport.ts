@@ -8,7 +8,12 @@ import type { CategoryMock } from "@/shared/mocks/erp-data";
 import { productsQueryKeys } from "../../hooks/useProducts";
 import { downloadProductImportTemplateFromApi } from "../services/buildProductImportTemplate";
 import { fetchExistingSkus } from "../services/fetchExistingSkus";
+import { logProductImportParseSummary } from "../services/logProductImportValidation";
 import { parseProductImportWorkbook } from "../services/parseProductImportWorkbook";
+import {
+  updateImportRowDraft,
+  type ProductImportRowDraft,
+} from "../services/validateProductImportRows";
 import { runProductImportJob } from "../services/runProductImportJob";
 import type {
   ProductImportErrorPolicy,
@@ -26,6 +31,7 @@ type UseProductBulkImportOptions = {
 export function useProductBulkImport({ categories = [] }: UseProductBulkImportOptions = {}) {
   const queryClient = useQueryClient();
   const abortRef = useRef<AbortController | null>(null);
+  const existingSkusRef = useRef<Set<string>>(new Set());
 
   const [status, setStatus] = useState<ProductImportStatus>("idle");
   const [step, setStep] = useState<ProductImportStep>("template");
@@ -87,7 +93,14 @@ export function useProductBulkImport({ categories = [] }: UseProductBulkImportOp
 
         const buffer = await file.arrayBuffer();
         const existingSkus = await fetchExistingSkus();
+        existingSkusRef.current = existingSkus;
         const rows = parseProductImportWorkbook(buffer, categories, existingSkus);
+
+        logProductImportParseSummary({
+          categoriesLoaded: categories.length,
+          fileName: file.name,
+          rows,
+        });
 
         setValidatedRows(rows);
         setStatus("validated");
@@ -158,6 +171,18 @@ export function useProductBulkImport({ categories = [] }: UseProductBulkImportOp
     abortRef.current?.abort();
   }, []);
 
+  const updatePreviewRow = useCallback(
+    (draft: ProductImportRowDraft) => {
+      setValidatedRows((previous) =>
+        updateImportRowDraft(previous, draft, {
+          categories,
+          existingSkus: existingSkusRef.current,
+        }),
+      );
+    },
+    [categories],
+  );
+
   const validCount = validatedRows.filter((row) => row.status === "valid").length;
   const warningCount = validatedRows.filter((row) => row.status === "warning").length;
   const errorCount = validatedRows.filter((row) => row.status === "error").length;
@@ -184,6 +209,7 @@ export function useProductBulkImport({ categories = [] }: UseProductBulkImportOp
     status,
     step,
     templateDownloadMessage,
+    updatePreviewRow,
     validCount,
     validatedRows,
     warningCount,

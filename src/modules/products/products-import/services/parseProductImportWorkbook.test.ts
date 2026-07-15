@@ -38,25 +38,44 @@ describe("parseProductImportWorkbook", () => {
   it("parses valid rows", async () => {
     const { parseProductImportWorkbook } = await import("./parseProductImportWorkbook");
     const buffer = buildWorkbookBuffer([
-      ["sku", "nombre", "categoria", "precio_ref", "costo_ref", "stock_inicial", "stock_minimo"],
-      ["BOD-EJ-001", "Ejemplo", "Chucherias", 1.5, 0.8, 0, 5],
-      ["BOD-001", "Chicle", "Chucherias", 2, 1, 10, 5],
+      [
+        "sku",
+        "codigo_barras",
+        "nombre",
+        "categoria",
+        "precio_ref",
+        "costo_ref",
+        "stock_inicial",
+        "stock_minimo",
+      ],
+      ["BOD-EJ-001", "", "Ejemplo", "Chucherias", 1.5, 0.8, 0, 5],
+      ["BOD-001", "7501111111111", "Chicle", "Chucherias", 2, 1, 10, 5],
     ]);
 
     const rows = parseProductImportWorkbook(buffer, categories);
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.status).toBe("valid");
-    expect(rows[0]?.input?.sku).toBe("BOD-001");
+    expect(rows[0]?.input?.sku).toBe("bod-001");
+    expect(rows[0]?.input?.barcode).toBe("7501111111111");
   });
 
   it("flags duplicate sku in file", async () => {
     const { parseProductImportWorkbook } = await import("./parseProductImportWorkbook");
     const buffer = buildWorkbookBuffer([
-      ["sku", "nombre", "categoria", "precio_ref", "costo_ref", "stock_inicial", "stock_minimo"],
-      ["BOD-EJ-001", "Ejemplo", "Chucherias", 1.5, 0.8, 0, 5],
-      ["BOD-DUP", "A", "Chucherias", 1, 0.5, 0, 5],
-      ["BOD-DUP", "B", "Chucherias", 2, 1, 0, 5],
+      [
+        "sku",
+        "codigo_barras",
+        "nombre",
+        "categoria",
+        "precio_ref",
+        "costo_ref",
+        "stock_inicial",
+        "stock_minimo",
+      ],
+      ["BOD-EJ-001", "", "Ejemplo", "Chucherias", 1.5, 0.8, 0, 5],
+      ["BOD-DUP", "", "A", "Chucherias", 1, 0.5, 0, 5],
+      ["BOD-DUP", "", "B", "Chucherias", 2, 1, 0, 5],
     ]);
 
     const rows = parseProductImportWorkbook(buffer, categories);

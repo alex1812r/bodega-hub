@@ -14,6 +14,7 @@ import {
 import {
   getDashboardLowStock,
   getDashboardMetrics,
+  getDashboardSalesTrend,
   getDashboardSummary,
   getRecentSales,
 } from "../src/modules/dashboard/services/dashboard.mock-server";
@@ -30,7 +31,10 @@ import {
 } from "../src/modules/payments/services/payments.mock-server";
 import {
   createCategory,
+  deleteCategory,
+  getCategoryById,
   listCategories,
+  updateCategory,
 } from "../src/modules/products/services/categories.mock-server";
 import {
   createProduct,
@@ -80,11 +84,18 @@ import {
 } from "../src/modules/settings/services/settings.mock-server";
 import {
   createSupplierProduct,
+  createSupplierProductPackUnit,
+  deactivateSupplierProduct,
+  deactivateSupplierProductPackUnit,
   getSupplierProductById,
   listProductSuppliers,
+  listSupplierProductPackUnits,
+  listSupplierProductPriceHistory,
   listSupplierProducts,
   listSupplierProductsBySupplier,
+  registerSupplierProductPrice,
   updateSupplierProduct,
+  updateSupplierProductPackUnit,
 } from "../src/modules/contacts/services/supplierProducts.mock-server";
 import {
   getEffectivePermissions,
@@ -213,6 +224,9 @@ export const mswHandlers = [
   ),
   http.get("/api/dashboard/metrics", ({ request }) =>
     fromService(() => getDashboardMetrics(searchParams(request))),
+  ),
+  http.get("/api/dashboard/sales-trend", ({ request }) =>
+    fromService(() => getDashboardSalesTrend(searchParams(request))),
   ),
   http.get("/api/dashboard/recent-sales", ({ request }) =>
     fromService(() => getRecentSales(searchParams(request))),
@@ -371,6 +385,15 @@ export const mswHandlers = [
     fromService(() => listCategories(searchParams(request))),
   ),
   http.post("/api/categories", async ({ request }) => fromJson(request, createCategory, 201)),
+  http.get("/api/categories/:id", ({ params }) =>
+    fromService(() => getCategoryById(String(params.id))),
+  ),
+  http.patch("/api/categories/:id", async ({ params, request }) =>
+    fromJson(request, (input) => updateCategory(String(params.id), input)),
+  ),
+  http.delete("/api/categories/:id", ({ params }) =>
+    fromService(() => deleteCategory(String(params.id))),
+  ),
   http.get("/api/supplier-products", ({ request }) =>
     fromService(() => listSupplierProducts(searchParams(request))),
   ),
@@ -382,6 +405,33 @@ export const mswHandlers = [
   ),
   http.get("/api/supplier-products/:id", ({ params }) =>
     fromService(() => getSupplierProductById(String(params.id))),
+  ),
+  http.post("/api/supplier-products/:id/prices", async ({ params, request }) =>
+    fromJson(request, (input) => registerSupplierProductPrice(String(params.id), input)),
+  ),
+  http.get("/api/supplier-products/:id/price-history", ({ params, request }) =>
+    fromService(() =>
+      listSupplierProductPriceHistory(String(params.id), searchParams(request)),
+    ),
+  ),
+  http.patch("/api/supplier-products/:id/deactivate", ({ params }) =>
+    fromService(() => deactivateSupplierProduct(String(params.id))),
+  ),
+  http.get("/api/supplier-products/:id/pack-units", ({ params }) =>
+    fromService(() => listSupplierProductPackUnits(String(params.id))),
+  ),
+  http.post("/api/supplier-products/:id/pack-units", async ({ params, request }) =>
+    fromJson(request, (input) => createSupplierProductPackUnit(String(params.id), input), 201),
+  ),
+  http.patch("/api/supplier-products/:id/pack-units/:packId", async ({ params, request }) =>
+    fromJson(request, (input) =>
+      updateSupplierProductPackUnit(String(params.id), String(params.packId), input),
+    ),
+  ),
+  http.delete("/api/supplier-products/:id/pack-units/:packId", ({ params }) =>
+    fromService(() =>
+      deactivateSupplierProductPackUnit(String(params.id), String(params.packId)),
+    ),
   ),
   http.get("/api/suppliers/:id/products", ({ params, request }) =>
     fromService(() =>

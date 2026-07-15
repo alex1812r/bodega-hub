@@ -1,29 +1,39 @@
 import { ApiError } from "@/lib/api/apiError";
 import { paginateList } from "@/lib/api/pagination";
-import { mockProducts, mockStockMovements, type StockMovementType } from "@/shared/mocks/erp-data";
+import {
+  mockCategories,
+  mockProducts,
+  mockStockMovements,
+  type StockMovementType,
+} from "@/shared/mocks/erp-data";
+
+import {
+  matchesInventoryListFilters,
+  parseInventoryListFilters,
+} from "../utils/inventoryListFilters";
+import {
+  matchesInventoryMovementFilters,
+  parseInventoryMovementFilters,
+} from "../utils/inventoryMovementFilters";
 
 export function listInventory(searchParams: URLSearchParams) {
-  const onlyLowStock = searchParams.get("lowStock") === "true";
-  const search = searchParams.get("search")?.toLowerCase();
+  const filters = parseInventoryListFilters(searchParams);
 
-  const items = mockProducts.filter((product) => {
-    const matchesLowStock = !onlyLowStock || product.currentStock <= product.minStock;
-    const matchesSearch =
-      !search ||
-      product.name.toLowerCase().includes(search) ||
-      product.sku.toLowerCase().includes(search);
-
-    return matchesLowStock && matchesSearch;
-  });
+  const items = mockProducts
+    .filter((product) => matchesInventoryListFilters(product, filters))
+    .map((product) => ({
+      ...product,
+      category: mockCategories.find((category) => category.id === product.categoryId),
+    }));
 
   return paginateList(items, searchParams);
 }
 
 export function listStockMovements(searchParams: URLSearchParams) {
-  const productId = searchParams.get("productId");
+  const filters = parseInventoryMovementFilters(searchParams);
 
   const items = mockStockMovements
-    .filter((movement) => !productId || movement.productId === productId)
+    .filter((movement) => matchesInventoryMovementFilters(movement, filters))
     .map((movement) => ({
       ...movement,
       product: mockProducts.find((product) => product.id === movement.productId),
@@ -60,6 +70,6 @@ export function createStockAdjustment(input: {
     quantityDelta: input.quantityDelta,
     reason: input.reason,
     stockAfter,
-    type: input.type ?? (input.quantityDelta >= 0 ? "ajuste_entrada" : "ajuste_salida"),
+    type: input.type ?? "ajuste_entrada",
   };
 }

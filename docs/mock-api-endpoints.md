@@ -93,10 +93,13 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 | `/api/auth/login` | `POST` | ninguno | Login Supabase Auth + cookies de sesión |
 | `/api/auth/logout` | `POST` | ninguno | Cierra sesión Supabase y limpia cookies |
 | `/api/openapi` | `GET` | ninguno | Contrato OpenAPI YAML |
-| `/api/supplier-products` | `GET` | `products.view` | Relaciones proveedor-producto paginadas |
-| `/api/supplier-products` | `POST` | `products.manage` | Crea relacion (`assert_contact_type` + `supplier_products`) |
-| `/api/supplier-products/[id]` | `PATCH` | `products.manage` | Actualiza relacion proveedor-producto |
-| `/api/suppliers/[id]/products` | `GET` | `products.view` | Productos por proveedor |
+| `/api/supplier-products` | `GET` | `products.view` | Relaciones proveedor-producto paginadas (`isActive`, enriquecido) |
+| `/api/supplier-products` | `POST` | `products.manage` | Crea relacion + historial `vinculacion` si hay costo inicial |
+| `/api/supplier-products/[id]` | `PATCH` | `products.manage` | Metadatos (`supplierSku`, `notes`, `isActive`); precio vía `/prices` |
+| `/api/supplier-products/[id]/prices` | `POST` | `products.manage` | Registrar cotización (RPC `register_supplier_product_price`) |
+| `/api/supplier-products/[id]/price-history` | `GET` | `products.view` | Historial paginado de costos |
+| `/api/supplier-products/[id]/deactivate` | `PATCH` | `products.manage` | Baja lógica (RPC `deactivate_supplier_product`) |
+| `/api/suppliers/[id]/products` | `GET` | `products.view` | Productos por proveedor (`isActive` opcional) |
 
 ## Query Params Soportados
 
@@ -107,6 +110,8 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 - `/api/dashboard/metrics?from=2026-05-18&to=2026-05-18`: calcula metricas de dashboard por rango.
 - `/api/supplier-products?supplierId=cont-supplier`: filtra relaciones por proveedor.
 - `/api/supplier-products?productId=prod-cable`: filtra relaciones por producto.
+- `/api/supplier-products?isActive=true`: solo relaciones activas (catálogo OC y tab Productos).
+- `/api/suppliers/[id]/products?isActive=true`: productos activos del proveedor.
 - `/api/categories?search=herra`: filtra categorias por nombre.
 - `/api/contacts?type=cliente&search=central`: filtra por tipo y busqueda.
 - `/api/sales?status=pendiente_pago`: filtra ventas por estado.
@@ -254,6 +259,55 @@ Validaciones mock por metodo:
   "source": "Manual"
 }
 ```
+
+### Vincular producto a proveedor
+
+`POST /api/supplier-products`
+
+```json
+{
+  "supplierId": "cont-supplier",
+  "productId": "prod-cable",
+  "supplierSku": "CAB-001-P",
+  "lastCostRef": 2.5,
+  "lastCostVes": 120,
+  "notes": "Entrega semanal"
+}
+```
+
+Duplicado `(supplierId, productId)` → `409`. Si incluye `lastCostRef`, append historial con `origin = vinculacion`.
+
+### Actualizar metadatos proveedor-producto
+
+`PATCH /api/supplier-products/[id]`
+
+```json
+{
+  "supplierSku": "CAB-001-P2",
+  "notes": "Precio sujeto a confirmación"
+}
+```
+
+No actualiza costo directamente; usar `/prices`.
+
+### Registrar cotización proveedor
+
+`POST /api/supplier-products/[id]/prices`
+
+```json
+{
+  "newCostRef": 2.8,
+  "newCostVes": 134.4,
+  "origin": "cotizacion",
+  "notes": "Relevamiento mayo 2026"
+}
+```
+
+`origin`: `cotizacion` | `compra` | `ajuste` | `vinculacion`. Respuesta incluye `variationPercent` y snapshot actualizado.
+
+### Baja lógica proveedor-producto
+
+`PATCH /api/supplier-products/[id]/deactivate` — body vacío; marca `isActive: false` sin borrar historial.
 
 ## Ejemplos Curl
 

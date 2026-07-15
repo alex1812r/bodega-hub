@@ -6,7 +6,7 @@ jest.mock("../../../lib/supabase/route-client");
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
-import { createPayment, getPaymentById, listPayments, updatePayment } from "./payments.server";
+import { createPayment, getPaymentById, listPayments, updatePayment, cancelPayment } from "./payments.server";
 
 const paymentRow = {
   amount: 1000,
@@ -88,7 +88,12 @@ describe("payments.server", () => {
   it("registers a payment through register_payment RPC", async () => {
     const rpc = jest.fn().mockResolvedValue({ data: paymentRow, error: null });
     const saleBuilder = createQueryBuilder({
-      data: { paid_ves: 7650, total_ves: 7650 },
+      data: {
+        id: paymentRow.sale_id,
+        invoice_number: "VEN-0128",
+        paid_ves: 7650,
+        total_ves: 7650,
+      },
       error: null,
     });
 
@@ -137,7 +142,12 @@ describe("payments.server", () => {
       error: null,
     });
     const saleBuilder = createQueryBuilder({
-      data: { paid_ves: 3000, total_ves: 8475 },
+      data: {
+        id: paymentRow.sale_id,
+        invoice_number: "VEN-0128",
+        paid_ves: 3000,
+        total_ves: 8475,
+      },
       error: null,
     });
 
@@ -154,6 +164,15 @@ describe("payments.server", () => {
     const result = await getPaymentById(paymentRow.id);
 
     expect(result.pendingBalanceVes).toBe(5475);
+    expect(result.documentBalance).toEqual(
+      expect.objectContaining({
+        href: `/sales/${paymentRow.sale_id}`,
+        label: "VEN-0128",
+        paidVes: 3000,
+        pendingVes: 5475,
+        totalVes: 8475,
+      }),
+    );
     expect(result.contact).toEqual(expect.objectContaining({ name: "Cliente Demo" }));
   });
 
@@ -188,5 +207,31 @@ describe("payments.server", () => {
       expect.objectContaining({ notes: "Comprobante corregido" }),
     );
     expect(result.notes).toBe("Comprobante corregido");
+  });
+
+  it("cancels a payment through cancel_payment RPC", async () => {
+    const rpc = jest.fn().mockResolvedValue({
+      data: { ...paymentRow, status: "anulado" },
+      error: null,
+    });
+    const saleBuilder = createQueryBuilder({
+      data: {
+        id: paymentRow.sale_id,
+        invoice_number: "V-000001",
+        paid_ves: 6650,
+        total_ves: 7650,
+      },
+      error: null,
+    });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
+      from: jest.fn().mockReturnValue(saleBuilder),
+      rpc,
+    });
+
+    const result = await cancelPayment(paymentRow.id);
+
+    expect(rpc).toHaveBeenCalledWith("cancel_payment", { p_payment_id: paymentRow.id });
+    expect(result.status).toBe("anulado");
   });
 });

@@ -26,21 +26,40 @@ export type SaleUpdateInput = {
   notes?: string;
 };
 
+function matchesSaleSearch(
+  sale: SaleMock,
+  customerName: string | undefined,
+  search: string,
+) {
+  const term = search.trim().toLowerCase();
+  if (!term) {
+    return true;
+  }
+
+  const invoice = sale.invoiceNumber.toLowerCase();
+  const customer = (customerName ?? "").toLowerCase();
+
+  return invoice.includes(term) || customer.includes(term);
+}
+
 export function listSales(searchParams: URLSearchParams) {
   const customerId = searchParams.get("customerId");
   const from = searchParams.get("from");
+  const search = searchParams.get("search");
   const status = searchParams.get("status");
   const to = searchParams.get("to");
 
   const items = mockSales
     .filter((sale) => {
       const saleDate = sale.createdAt.slice(0, 10);
+      const customer = mockContacts.find((contact) => contact.id === sale.customerId);
 
       return (
         (!status || sale.status === status) &&
         (!customerId || sale.customerId === customerId) &&
         (!from || saleDate >= from) &&
-        (!to || saleDate <= to)
+        (!to || saleDate <= to) &&
+        (!search || matchesSaleSearch(sale, customer?.name, search))
       );
     })
     .map((sale) => ({

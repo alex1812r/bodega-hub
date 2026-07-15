@@ -9,6 +9,7 @@ import * as categoriesServer from "@/modules/products/services/categories.server
 
 const updateCategorySchema = z.object({
   description: z.string().optional(),
+  isActive: z.boolean().optional(),
   name: z.string().min(1).optional(),
 });
 

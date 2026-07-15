@@ -4,20 +4,14 @@ import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
 import { requirePermission } from "@/lib/api/requirePermission";
+import { purchaseItemInputSchema } from "@/modules/purchases/schemas/purchaseItem.schema";
 import * as purchasesMockServer from "@/modules/purchases/services/purchases.mock-server";
 import * as purchasesServer from "@/modules/purchases/services/purchases.server";
 
 const createPurchaseSchema = z.object({
   discountRef: z.number().min(0).default(0),
   exchangeRateId: z.string().uuid().optional(),
-  items: z.array(
-    z.object({
-      productId: z.string().min(1),
-      quantity: z.number().int().positive(),
-      supplierSku: z.string().optional(),
-      unitCostRef: z.number().min(0),
-    }),
-  ),
+  items: z.array(purchaseItemInputSchema).min(1),
   notes: z.string().optional(),
   purchaseNumber: z.string().optional(),
   refRateVes: z.number().positive().optional(),

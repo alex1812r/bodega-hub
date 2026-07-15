@@ -57,6 +57,11 @@ exception when duplicate_object then null;
 end $$;
 
 do $$ begin
+  create type public.payment_status as enum ('activo', 'anulado');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
   create type public.stock_movement_type as enum (
     'venta',
     'compra',
@@ -109,6 +114,7 @@ create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
   category_id uuid references public.categories(id) on delete set null,
   sku text not null unique,
+  barcode text,
   name text not null,
   description text,
   sale_price_ref numeric(12,2) not null default 0 check (sale_price_ref >= 0),
@@ -161,10 +167,43 @@ create table if not exists public.supplier_products (
   supplier_sku text,
   last_cost_ref numeric(12,2) check (last_cost_ref is null or last_cost_ref >= 0),
   last_cost_ves numeric(14,2) check (last_cost_ves is null or last_cost_ves >= 0),
+  last_pack_cost_ref numeric(12,2) check (last_pack_cost_ref is null or last_pack_cost_ref >= 0),
   last_purchased_at timestamptz,
+  notes text,
+  is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (supplier_id, product_id)
+);
+
+-- Migración: tablas supplier_products creadas antes del catálogo proveedor-producto
+alter table public.supplier_products
+  add column if not exists notes text,
+  add column if not exists is_active boolean not null default true,
+  add column if not exists last_pack_cost_ref numeric(12,2) check (last_pack_cost_ref is null or last_pack_cost_ref >= 0);
+
+create table if not exists public.supplier_product_price_history (
+  id uuid primary key default gen_random_uuid(),
+  supplier_product_id uuid not null references public.supplier_products(id) on delete cascade,
+  old_cost_ref numeric(12,2) check (old_cost_ref is null or old_cost_ref >= 0),
+  new_cost_ref numeric(12,2) not null check (new_cost_ref >= 0),
+  old_cost_ves numeric(14,2) check (old_cost_ves is null or old_cost_ves >= 0),
+  new_cost_ves numeric(14,2) check (new_cost_ves is null or new_cost_ves >= 0),
+  origin text not null check (origin in ('cotizacion', 'compra', 'ajuste', 'vinculacion')),
+  changed_by uuid references public.profiles(id) on delete set null default auth.uid(),
+  notes text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.supplier_product_pack_units (
+  id uuid primary key default gen_random_uuid(),
+  supplier_product_id uuid not null references public.supplier_products(id) on delete cascade,
+  label text not null,
+  units_per_pack integer not null check (units_per_pack > 0),
+  is_default boolean not null default false,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists public.sales (
@@ -225,8 +264,25 @@ create table if not exists public.purchase_items (
   unit_cost_ref numeric(12,2) not null check (unit_cost_ref >= 0),
   unit_cost_ves numeric(14,2) not null default 0 check (unit_cost_ves >= 0),
   subtotal_ref numeric(14,2) generated always as (round((quantity::numeric * unit_cost_ref), 2)) stored,
-  subtotal_ves numeric(14,2) not null default 0 check (subtotal_ves >= 0)
+  subtotal_ves numeric(14,2) not null default 0 check (subtotal_ves >= 0),
+  entry_mode text not null default 'unit' check (entry_mode in ('unit', 'pack')),
+  pack_label text,
+  pack_count integer check (pack_count is null or pack_count > 0),
+  units_per_pack integer check (units_per_pack is null or units_per_pack > 0),
+  pack_cost_ref numeric(12,2) check (pack_cost_ref is null or pack_cost_ref >= 0)
 );
+
+-- Migración: metadata de empaque en líneas de compra
+alter table public.purchase_items
+  add column if not exists entry_mode text not null default 'unit',
+  add column if not exists pack_label text,
+  add column if not exists pack_count integer check (pack_count is null or pack_count > 0),
+  add column if not exists units_per_pack integer check (units_per_pack is null or units_per_pack > 0),
+  add column if not exists pack_cost_ref numeric(12,2) check (pack_cost_ref is null or pack_cost_ref >= 0);
+
+alter table public.purchase_items drop constraint if exists purchase_items_entry_mode_check;
+alter table public.purchase_items
+  add constraint purchase_items_entry_mode_check check (entry_mode in ('unit', 'pack'));
 
 create table if not exists public.payments (
   id uuid primary key default gen_random_uuid(),
@@ -244,6 +300,9 @@ create table if not exists public.payments (
   phone text,
   reference_code text,
   notes text,
+  status public.payment_status not null default 'activo',
+  cancelled_at timestamptz,
+  cancelled_by uuid references public.profiles(id) on delete set null,
   created_by uuid references public.profiles(id) on delete set null default auth.uid(),
   created_at timestamptz not null default now(),
   check (
@@ -278,6 +337,12 @@ create table if not exists public.payments (
   )
 );
 
+-- Migración: tablas payments creadas antes de anulación de pagos
+alter table public.payments
+  add column if not exists status public.payment_status not null default 'activo',
+  add column if not exists cancelled_at timestamptz,
+  add column if not exists cancelled_by uuid references public.profiles(id) on delete set null;
+
 create table if not exists public.stock_movements (
   id uuid primary key default gen_random_uuid(),
   product_id uuid not null references public.products(id),
@@ -303,10 +368,24 @@ create index if not exists idx_categories_is_active on public.categories(is_acti
 
 create index if not exists idx_products_category_id on public.products(category_id);
 create index if not exists idx_products_is_active on public.products(is_active);
+create unique index if not exists products_barcode_unique
+  on public.products (barcode)
+  where barcode is not null and trim(barcode) <> '';
 create index if not exists idx_contacts_type on public.contacts(type);
 create index if not exists idx_contacts_tax_id on public.contacts(tax_id);
 create index if not exists idx_exchange_rates_created_at on public.exchange_rates(created_at desc);
 create index if not exists idx_product_price_history_product_id on public.product_price_history(product_id);
+create index if not exists idx_supplier_products_supplier_id on public.supplier_products(supplier_id);
+create index if not exists idx_supplier_products_product_id on public.supplier_products(product_id);
+create index if not exists idx_supplier_products_is_active on public.supplier_products(is_active);
+create index if not exists idx_supplier_product_price_history_sp_created
+  on public.supplier_product_price_history(supplier_product_id, created_at desc);
+create index if not exists idx_supplier_product_pack_units_sp_id
+  on public.supplier_product_pack_units(supplier_product_id);
+create unique index if not exists idx_supplier_product_pack_units_one_default
+  on public.supplier_product_pack_units(supplier_product_id)
+  where is_default = true and is_active = true;
+
 create index if not exists idx_sales_created_at on public.sales(created_at desc);
 create index if not exists idx_sales_customer_id on public.sales(customer_id);
 create index if not exists idx_sales_status on public.sales(status);
@@ -319,6 +398,8 @@ create index if not exists idx_purchase_items_product_id on public.purchase_item
 create index if not exists idx_payments_sale_id on public.payments(sale_id);
 create index if not exists idx_payments_purchase_id on public.payments(purchase_id);
 create index if not exists idx_payments_contact_created_at on public.payments(contact_id, created_at desc);
+create index if not exists idx_payments_status on public.payments(status);
+
 create index if not exists idx_stock_movements_product_created_at on public.stock_movements(product_id, created_at desc);
 
 -- =========================
@@ -363,6 +444,11 @@ for each row execute function public.set_updated_at();
 drop trigger if exists trg_supplier_products_updated_at on public.supplier_products;
 create trigger trg_supplier_products_updated_at
 before update on public.supplier_products
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_supplier_product_pack_units_updated_at on public.supplier_product_pack_units;
+create trigger trg_supplier_product_pack_units_updated_at
+before update on public.supplier_product_pack_units
 for each row execute function public.set_updated_at();
 
 drop trigger if exists trg_sales_updated_at on public.sales;
@@ -773,6 +859,14 @@ declare
   v_total_ves numeric(14,2);
   v_stock_after integer;
   v_supplier_sku text;
+  v_sp_id uuid;
+  v_old_cost_ref numeric(12,2);
+  v_old_cost_ves numeric(14,2);
+  v_entry_mode text;
+  v_pack_label text;
+  v_pack_count integer;
+  v_units_per_pack integer;
+  v_pack_cost_ref numeric(12,2);
 begin
   if public.current_user_role() not in ('admin', 'almacen') then
     raise exception 'No autorizado para crear compras';
@@ -827,16 +921,52 @@ begin
   for v_item in select * from jsonb_array_elements(p_items)
   loop
     v_product_id := (v_item ->> 'product_id')::uuid;
-    v_quantity := (v_item ->> 'quantity')::integer;
-    v_unit_cost_ref := (v_item ->> 'unit_cost_ref')::numeric;
     v_supplier_sku := v_item ->> 'supplier_sku';
+    v_entry_mode := coalesce(nullif(trim(v_item ->> 'entry_mode'), ''), 'unit');
 
-    if v_quantity is null or v_quantity <= 0 then
-      raise exception 'Cantidad invalida en item de compra';
-    end if;
+    if v_entry_mode = 'pack' then
+      v_pack_label := nullif(trim(v_item ->> 'pack_label'), '');
+      v_pack_count := (v_item ->> 'pack_count')::integer;
+      v_units_per_pack := (v_item ->> 'units_per_pack')::integer;
+      v_pack_cost_ref := (v_item ->> 'pack_cost_ref')::numeric;
 
-    if v_unit_cost_ref is null or v_unit_cost_ref < 0 then
-      raise exception 'Costo invalido en item de compra';
+      if v_pack_label is null then
+        raise exception 'Etiqueta de empaque requerida en item de compra';
+      end if;
+
+      if v_pack_count is null or v_pack_count <= 0 then
+        raise exception 'Cantidad de empaques invalida en item de compra';
+      end if;
+
+      if v_units_per_pack is null or v_units_per_pack <= 0 then
+        raise exception 'Unidades por empaque invalidas en item de compra';
+      end if;
+
+      if v_pack_cost_ref is null or v_pack_cost_ref < 0 then
+        raise exception 'Costo por empaque invalido en item de compra';
+      end if;
+
+      v_quantity := v_pack_count * v_units_per_pack;
+      v_unit_cost_ref := round(v_pack_cost_ref / v_units_per_pack, 2);
+      v_line_subtotal_ref := round(v_pack_count::numeric * v_pack_cost_ref, 2);
+    else
+      v_entry_mode := 'unit';
+      v_pack_label := null;
+      v_pack_count := null;
+      v_units_per_pack := null;
+      v_pack_cost_ref := null;
+      v_quantity := (v_item ->> 'quantity')::integer;
+      v_unit_cost_ref := (v_item ->> 'unit_cost_ref')::numeric;
+
+      if v_quantity is null or v_quantity <= 0 then
+        raise exception 'Cantidad invalida en item de compra';
+      end if;
+
+      if v_unit_cost_ref is null or v_unit_cost_ref < 0 then
+        raise exception 'Costo invalido en item de compra';
+      end if;
+
+      v_line_subtotal_ref := round(v_quantity::numeric * v_unit_cost_ref, 2);
     end if;
 
     select * into v_product
@@ -849,7 +979,6 @@ begin
     end if;
 
     v_unit_cost_ves := round(v_unit_cost_ref * v_rate, 2);
-    v_line_subtotal_ref := round(v_quantity::numeric * v_unit_cost_ref, 2);
     v_line_subtotal_ves := round(v_line_subtotal_ref * v_rate, 2);
     v_subtotal_ref := v_subtotal_ref + v_line_subtotal_ref;
 
@@ -859,7 +988,12 @@ begin
       quantity,
       unit_cost_ref,
       unit_cost_ves,
-      subtotal_ves
+      subtotal_ves,
+      entry_mode,
+      pack_label,
+      pack_count,
+      units_per_pack,
+      pack_cost_ref
     )
     values (
       v_purchase.id,
@@ -867,7 +1001,12 @@ begin
       v_quantity,
       v_unit_cost_ref,
       v_unit_cost_ves,
-      v_line_subtotal_ves
+      v_line_subtotal_ves,
+      v_entry_mode,
+      v_pack_label,
+      v_pack_count,
+      v_units_per_pack,
+      v_pack_cost_ref
     );
 
     if p_status = 'recibido' then
@@ -877,6 +1016,12 @@ begin
       set current_stock = v_stock_after,
           current_cost_ref = v_unit_cost_ref
       where id = v_product_id;
+
+      select id, last_cost_ref, last_cost_ves
+      into v_sp_id, v_old_cost_ref, v_old_cost_ves
+      from public.supplier_products
+      where supplier_id = p_supplier_id
+        and product_id = v_product_id;
 
       insert into public.supplier_products (
         supplier_id,
@@ -900,7 +1045,19 @@ begin
         last_cost_ref = excluded.last_cost_ref,
         last_cost_ves = excluded.last_cost_ves,
         last_purchased_at = excluded.last_purchased_at,
-        updated_at = now();
+        is_active = true,
+        updated_at = now()
+      returning id into v_sp_id;
+
+      perform public.append_supplier_product_price_history(
+        v_sp_id,
+        v_old_cost_ref,
+        v_old_cost_ves,
+        v_unit_cost_ref,
+        v_unit_cost_ves,
+        'compra',
+        'Compra ' || v_purchase.purchase_number
+      );
 
       insert into public.stock_movements (
         product_id,
@@ -1106,6 +1263,97 @@ begin
 end;
 $$;
 
+create or replace function public.cancel_payment(p_payment_id uuid)
+returns public.payments
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_payment public.payments;
+  v_sale public.sales;
+  v_purchase public.purchases;
+  v_new_paid_ves numeric(14,2);
+begin
+  if public.current_user_role() not in ('admin', 'contador') then
+    raise exception 'No autorizado para anular pagos';
+  end if;
+
+  select * into v_payment
+  from public.payments
+  where id = p_payment_id
+  for update;
+
+  if not found then
+    raise exception 'Pago no encontrado';
+  end if;
+
+  if v_payment.status = 'anulado' then
+    raise exception 'El pago ya fue anulado';
+  end if;
+
+  if v_payment.sale_id is not null then
+    select * into v_sale
+    from public.sales
+    where id = v_payment.sale_id
+    for update;
+
+    if not found then
+      raise exception 'Venta no encontrada';
+    end if;
+
+    if v_sale.status in ('cancelada', 'devuelta') then
+      raise exception 'No se puede anular un pago de una venta cancelada o devuelta';
+    end if;
+
+    if v_sale.paid_ves < v_payment.amount_ves then
+      raise exception 'El monto del pago excede lo registrado en la venta';
+    end if;
+
+    v_new_paid_ves := v_sale.paid_ves - v_payment.amount_ves;
+
+    update public.sales
+    set paid_ves = v_new_paid_ves,
+        status = case
+          when v_sale.status = 'borrador' then v_sale.status
+          when v_new_paid_ves >= v_sale.total_ves then 'pagada'::public.sale_status
+          else 'pendiente_pago'::public.sale_status
+        end
+    where id = v_payment.sale_id;
+  else
+    select * into v_purchase
+    from public.purchases
+    where id = v_payment.purchase_id
+    for update;
+
+    if not found then
+      raise exception 'Compra no encontrada';
+    end if;
+
+    if v_purchase.status in ('cancelado', 'devuelto') then
+      raise exception 'No se puede anular un pago de una compra cancelada o devuelta';
+    end if;
+
+    if v_purchase.paid_ves < v_payment.amount_ves then
+      raise exception 'El monto del pago excede lo registrado en la compra';
+    end if;
+
+    update public.purchases
+    set paid_ves = paid_ves - v_payment.amount_ves
+    where id = v_payment.purchase_id;
+  end if;
+
+  update public.payments
+  set status = 'anulado',
+      cancelled_at = now(),
+      cancelled_by = auth.uid()
+  where id = p_payment_id
+  returning * into v_payment;
+
+  return v_payment;
+end;
+$$;
+
 create or replace function public.receive_purchase(p_purchase_id uuid)
 returns public.purchases
 language plpgsql
@@ -1117,6 +1365,9 @@ declare
   v_item public.purchase_items;
   v_product public.products;
   v_stock_after integer;
+  v_sp_id uuid;
+  v_old_cost_ref numeric(12,2);
+  v_old_cost_ves numeric(14,2);
 begin
   if public.current_user_role() not in ('admin', 'almacen') then
     raise exception 'No autorizado para recibir compras';
@@ -1152,6 +1403,12 @@ begin
         current_cost_ref = v_item.unit_cost_ref
     where id = v_item.product_id;
 
+    select id, last_cost_ref, last_cost_ves
+    into v_sp_id, v_old_cost_ref, v_old_cost_ves
+    from public.supplier_products
+    where supplier_id = v_purchase.supplier_id
+      and product_id = v_item.product_id;
+
     insert into public.supplier_products (
       supplier_id,
       product_id,
@@ -1171,7 +1428,19 @@ begin
       last_cost_ref = excluded.last_cost_ref,
       last_cost_ves = excluded.last_cost_ves,
       last_purchased_at = excluded.last_purchased_at,
-      updated_at = now();
+      is_active = true,
+      updated_at = now()
+    returning id into v_sp_id;
+
+    perform public.append_supplier_product_price_history(
+      v_sp_id,
+      v_old_cost_ref,
+      v_old_cost_ves,
+      v_item.unit_cost_ref,
+      v_item.unit_cost_ves,
+      'compra',
+      'Recepcion ' || v_purchase.purchase_number
+    );
 
     insert into public.stock_movements (
       product_id,
@@ -1199,6 +1468,177 @@ begin
   returning * into v_purchase;
 
   return v_purchase;
+end;
+$$;
+
+create or replace function public.append_supplier_product_price_history(
+  p_supplier_product_id uuid,
+  p_old_cost_ref numeric,
+  p_old_cost_ves numeric,
+  p_new_cost_ref numeric,
+  p_new_cost_ves numeric,
+  p_origin text,
+  p_notes text default null,
+  p_changed_by uuid default auth.uid()
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_history_id uuid;
+begin
+  if p_origin not in ('cotizacion', 'compra', 'ajuste', 'vinculacion') then
+    raise exception 'Origen de precio invalido';
+  end if;
+
+  insert into public.supplier_product_price_history (
+    supplier_product_id,
+    old_cost_ref,
+    new_cost_ref,
+    old_cost_ves,
+    new_cost_ves,
+    origin,
+    changed_by,
+    notes
+  )
+  values (
+    p_supplier_product_id,
+    p_old_cost_ref,
+    p_new_cost_ref,
+    p_old_cost_ves,
+    p_new_cost_ves,
+    p_origin,
+    p_changed_by,
+    p_notes
+  )
+  returning id into v_history_id;
+
+  return v_history_id;
+end;
+$$;
+
+drop function if exists public.register_supplier_product_price(uuid, numeric, numeric, text, text);
+
+create or replace function public.register_supplier_product_price(
+  p_supplier_product_id uuid,
+  p_new_cost_ref numeric,
+  p_new_cost_ves numeric,
+  p_origin text,
+  p_notes text default null,
+  p_new_pack_cost_ref numeric default null,
+  p_price_input_mode text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sp public.supplier_products;
+  v_old_cost_ref numeric(12,2);
+  v_old_cost_ves numeric(14,2);
+  v_variation_percent numeric(8,2);
+  v_history_id uuid;
+begin
+  if public.current_user_role() not in ('admin', 'almacen') then
+    raise exception 'No autorizado para registrar precios de proveedor';
+  end if;
+
+  if p_new_cost_ref is null or p_new_cost_ref < 0 then
+    raise exception 'El costo no puede ser negativo';
+  end if;
+
+  if p_origin not in ('cotizacion', 'compra', 'ajuste', 'vinculacion') then
+    raise exception 'Origen de precio invalido';
+  end if;
+
+  if p_price_input_mode is not null and p_price_input_mode not in ('unit', 'pack') then
+    raise exception 'Modo de precio invalido';
+  end if;
+
+  if p_price_input_mode = 'pack' and (p_new_pack_cost_ref is null or p_new_pack_cost_ref < 0) then
+    raise exception 'Indica un precio de empaque valido';
+  end if;
+
+  select * into v_sp
+  from public.supplier_products
+  where id = p_supplier_product_id
+  for update;
+
+  if not found then
+    raise exception 'Relacion proveedor-producto no encontrada';
+  end if;
+
+  if not v_sp.is_active then
+    raise exception 'No se puede registrar precio en una relacion inactiva';
+  end if;
+
+  v_old_cost_ref := v_sp.last_cost_ref;
+  v_old_cost_ves := v_sp.last_cost_ves;
+
+  v_history_id := public.append_supplier_product_price_history(
+    p_supplier_product_id,
+    v_old_cost_ref,
+    v_old_cost_ves,
+    p_new_cost_ref,
+    p_new_cost_ves,
+    p_origin,
+    p_notes
+  );
+
+  update public.supplier_products
+  set last_cost_ref = p_new_cost_ref,
+      last_cost_ves = p_new_cost_ves,
+      last_pack_cost_ref = case
+        when p_price_input_mode = 'pack' then p_new_pack_cost_ref
+        when p_price_input_mode = 'unit' then null
+        else last_pack_cost_ref
+      end,
+      last_purchased_at = case when p_origin = 'compra' then now() else last_purchased_at end,
+      updated_at = now()
+  where id = p_supplier_product_id
+  returning * into v_sp;
+
+  if v_old_cost_ref is not null and v_old_cost_ref > 0 then
+    v_variation_percent := round(((p_new_cost_ref - v_old_cost_ref) / v_old_cost_ref) * 100, 2);
+  else
+    v_variation_percent := null;
+  end if;
+
+  return jsonb_build_object(
+    'supplier_product', to_jsonb(v_sp),
+    'variation_percent', v_variation_percent,
+    'history_id', v_history_id
+  );
+end;
+$$;
+
+create or replace function public.deactivate_supplier_product(p_id uuid)
+returns public.supplier_products
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sp public.supplier_products;
+begin
+  if public.current_user_role() not in ('admin', 'almacen') then
+    raise exception 'No autorizado para desactivar relaciones proveedor-producto';
+  end if;
+
+  update public.supplier_products
+  set is_active = false,
+      updated_at = now()
+  where id = p_id
+  returning * into v_sp;
+
+  if not found then
+    raise exception 'Relacion proveedor-producto no encontrada';
+  end if;
+
+  return v_sp;
 end;
 $$;
 
@@ -1618,6 +2058,8 @@ alter table public.exchange_rates enable row level security;
 alter table public.product_price_history enable row level security;
 alter table public.contacts enable row level security;
 alter table public.supplier_products enable row level security;
+alter table public.supplier_product_price_history enable row level security;
+alter table public.supplier_product_pack_units enable row level security;
 alter table public.sales enable row level security;
 alter table public.sale_items enable row level security;
 alter table public.purchases enable row level security;
@@ -1733,6 +2175,31 @@ to authenticated
 using (public.current_user_role() in ('admin', 'almacen'))
 with check (public.current_user_role() in ('admin', 'almacen'));
 
+drop policy if exists "Authenticated users read supplier product price history" on public.supplier_product_price_history;
+create policy "Authenticated users read supplier product price history"
+on public.supplier_product_price_history for select
+to authenticated
+using (true);
+
+drop policy if exists "Admins and warehouse insert supplier product price history" on public.supplier_product_price_history;
+create policy "Admins and warehouse insert supplier product price history"
+on public.supplier_product_price_history for insert
+to authenticated
+with check (public.current_user_role() in ('admin', 'almacen'));
+
+drop policy if exists "Authenticated users read supplier product pack units" on public.supplier_product_pack_units;
+create policy "Authenticated users read supplier product pack units"
+on public.supplier_product_pack_units for select
+to authenticated
+using (true);
+
+drop policy if exists "Admins and warehouse manage supplier product pack units" on public.supplier_product_pack_units;
+create policy "Admins and warehouse manage supplier product pack units"
+on public.supplier_product_pack_units for all
+to authenticated
+using (public.current_user_role() in ('admin', 'almacen'))
+with check (public.current_user_role() in ('admin', 'almacen'));
+
 drop policy if exists "Authenticated users read sales" on public.sales;
 create policy "Authenticated users read sales"
 on public.sales for select
@@ -1829,7 +2296,11 @@ grant execute on function public.adjust_stock(uuid, integer, text, public.stock_
 grant execute on function public.create_sale(uuid, jsonb, uuid, numeric, numeric, numeric, text, text) to authenticated;
 grant execute on function public.create_purchase(uuid, jsonb, uuid, numeric, numeric, numeric, text, text, public.purchase_status) to authenticated;
 grant execute on function public.receive_purchase(uuid) to authenticated;
+grant execute on function public.append_supplier_product_price_history(uuid, numeric, numeric, numeric, numeric, text, text, uuid) to authenticated;
+grant execute on function public.register_supplier_product_price(uuid, numeric, numeric, text, text, numeric, text) to authenticated;
+grant execute on function public.deactivate_supplier_product(uuid) to authenticated;
 grant execute on function public.register_payment(uuid, uuid, public.payment_method, numeric, text, text, text, text) to authenticated;
+grant execute on function public.cancel_payment(uuid) to authenticated;
 grant execute on function public.cancel_sale(uuid) to authenticated;
 grant execute on function public.return_sale(uuid) to authenticated;
 grant execute on function public.cancel_purchase(uuid) to authenticated;

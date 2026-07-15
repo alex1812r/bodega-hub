@@ -4,6 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import { apiFetch } from "@/shared/api/apiFetch";
+import {
+  useSupplierProducts as useContactSupplierProducts,
+  type SupplierProductsFilters,
+} from "@/modules/contacts/hooks/useSupplierProducts";
+import type { SupplierProduct } from "@/modules/contacts/types/supplierProducts";
+import type { PurchaseItemInput } from "@/modules/purchases/schemas/purchaseItem.schema";
 import type {
   ContactMock,
   PaymentMock,
@@ -11,11 +17,11 @@ import type {
   PurchaseItemMock,
   PurchaseMock,
   PurchaseStatus,
-  SupplierProductMock,
 } from "@/shared/mocks/erp-data";
 
 export type PurchasesFilters = PaginationParams & {
   from?: string;
+  search?: string;
   status?: PurchaseStatus | string;
   supplierId?: string;
   to?: string;
@@ -23,11 +29,8 @@ export type PurchasesFilters = PaginationParams & {
 
 export type PurchaseInput = {
   discountRef?: number;
-  items: Array<{
-    productId: string;
-    quantity: number;
-    unitCostRef: number;
-  }>;
+  items: PurchaseItemInput[];
+  notes?: string;
   refRateVes?: number;
   status?: PurchaseStatus;
   supplierId: string;
@@ -41,11 +44,13 @@ export type PurchaseListRow = PurchaseMock & {
 
 export type PurchaseDetails = PurchaseMock & {
   items: Array<PurchaseItemMock & { product?: ProductMock }>;
+  notes?: string;
   payments: PaymentMock[];
   supplier?: ContactMock;
+  updatedAt?: string;
 };
 
-export type SupplierProductWithProduct = SupplierProductMock & {
+export type SupplierProductWithProduct = SupplierProduct & {
   product?: ProductMock;
 };
 
@@ -89,15 +94,11 @@ export function usePurchase(id?: string) {
   });
 }
 
-export function useSupplierProducts(supplierId?: string) {
-  return useQuery({
-    enabled: Boolean(supplierId),
-    queryKey: purchasesQueryKeys.supplierProducts(supplierId ?? ""),
-    queryFn: () =>
-      apiFetch<PaginatedList<SupplierProductWithProduct>>(
-        `/api/suppliers/${supplierId}/products`,
-      ),
-  });
+export function useSupplierProducts(
+  supplierId?: string,
+  filters: Omit<SupplierProductsFilters, "supplierId"> = {},
+) {
+  return useContactSupplierProducts(supplierId, filters);
 }
 
 export function useCreatePurchase() {
