@@ -2,17 +2,22 @@
  * @jest-environment node
  */
 
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
+
 import { createSupplierProduct, registerSupplierProductPrice } from "./supplierProducts.mock-server";
 
 describe("supplierProducts.mock-server", () => {
   it("reactivates an inactive supplier-product link instead of returning 409", () => {
-    const result = createSupplierProduct({
-      lastCostRef: 5.1,
-      notes: "Relinked pipe",
-      productId: "prod-pipe",
-      supplierId: "cont-both",
-      supplierSku: "DOB-PVC-012-NEW",
-    });
+    const result = createSupplierProduct(
+      {
+        lastCostRef: 5.1,
+        notes: "Relinked pipe",
+        productId: "prod-pipe",
+        supplierId: "cont-both",
+        supplierSku: "DOB-PVC-012-NEW",
+      },
+      DEFAULT_STORE_ID,
+    );
 
     expect(result.id).toBe("supp-prod-pipe");
     expect(result.isActive).toBe(true);
@@ -22,21 +27,29 @@ describe("supplierProducts.mock-server", () => {
   });
 
   it("stores pack price when registering by empaque and clears it for unit mode", () => {
-    const packResult = registerSupplierProductPrice("supp-prod-drill", {
-      newCostRef: 2.33,
-      newPackCostRef: 28,
-      origin: "cotizacion",
-      priceInputMode: "pack",
-    });
+    const packResult = registerSupplierProductPrice(
+      "supp-prod-drill",
+      {
+        newCostRef: 2.33,
+        newPackCostRef: 28,
+        origin: "cotizacion",
+        priceInputMode: "pack",
+      },
+      DEFAULT_STORE_ID,
+    );
 
     expect(packResult.supplierProduct.lastCostRef).toBe(2.33);
     expect(packResult.supplierProduct.lastPackCostRef).toBe(28);
 
-    const unitResult = registerSupplierProductPrice("supp-prod-drill", {
-      newCostRef: 2.5,
-      origin: "cotizacion",
-      priceInputMode: "unit",
-    });
+    const unitResult = registerSupplierProductPrice(
+      "supp-prod-drill",
+      {
+        newCostRef: 2.5,
+        origin: "cotizacion",
+        priceInputMode: "unit",
+      },
+      DEFAULT_STORE_ID,
+    );
 
     expect(unitResult.supplierProduct.lastCostRef).toBe(2.5);
     expect(unitResult.supplierProduct.lastPackCostRef).toBeUndefined();
@@ -44,11 +57,14 @@ describe("supplierProducts.mock-server", () => {
 
   it("returns 409 when linking an already active supplier-product pair", async () => {
     expect(() =>
-      createSupplierProduct({
-        productId: "prod-cable",
-        supplierId: "cont-supplier",
-        supplierSku: "SUP-CAB-DUP",
-      }),
+      createSupplierProduct(
+        {
+          productId: "prod-cable",
+          supplierId: "cont-supplier",
+          supplierSku: "SUP-CAB-DUP",
+        },
+        DEFAULT_STORE_ID,
+      ),
     ).toThrow(
       expect.objectContaining({
         code: "CONFLICT",

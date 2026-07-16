@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
 import {
   mockContacts,
@@ -8,6 +9,7 @@ import {
   type PaymentMethod,
   type PaymentMock,
 } from "@/shared/mocks/erp-data";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { PaymentDocumentBalance } from "../payment-details/types";
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
@@ -32,7 +34,7 @@ export type PaymentUpdateInput = {
   referenceCode?: string;
 };
 
-export function listPayments(searchParams: URLSearchParams) {
+export function listPayments(searchParams: URLSearchParams, storeId: string) {
   const contactId = searchParams.get("contactId");
   const direction = searchParams.get("direction");
   const purchaseId = searchParams.get("purchaseId");
@@ -41,6 +43,7 @@ export function listPayments(searchParams: URLSearchParams) {
   const items = mockPayments
     .filter((payment) => {
       return (
+        (payment.storeId ?? DEFAULT_STORE_ID) === storeId &&
         (!direction || payment.direction === direction) &&
         (!saleId || payment.saleId === saleId) &&
         (!purchaseId || payment.purchaseId === purchaseId) &&
@@ -94,12 +97,9 @@ function resolveMockDocumentBalance(
   return undefined;
 }
 
-export function getPaymentById(id: string) {
+export function getPaymentById(id: string, storeId: string) {
   const payment = mockPayments.find((item) => item.id === id);
-
-  if (!payment) {
-    throw new ApiError(404, "NOT_FOUND", "Pago no encontrado.");
-  }
+  assertMockStoreResource(payment, storeId, "Pago no encontrado.");
 
   const documentBalance = resolveMockDocumentBalance(payment);
 
@@ -112,12 +112,9 @@ export function getPaymentById(id: string) {
   };
 }
 
-export function updatePayment(id: string, input: PaymentUpdateInput) {
+export function updatePayment(id: string, input: PaymentUpdateInput, storeId: string) {
   const payment = mockPayments.find((item) => item.id === id);
-
-  if (!payment) {
-    throw new ApiError(404, "NOT_FOUND", "Pago no encontrado.");
-  }
+  assertMockStoreResource(payment, storeId, "Pago no encontrado.");
 
   if (input.bankName !== undefined) {
     payment.bankName = input.bankName;
@@ -135,16 +132,24 @@ export function updatePayment(id: string, input: PaymentUpdateInput) {
     payment.referenceCode = input.referenceCode;
   }
 
-  return getPaymentById(id);
+  return getPaymentById(id, storeId);
 }
 
-export function createPayment(input: PaymentInput) {
+export function createPayment(input: PaymentInput, storeId: string) {
   const sale = input.saleId
     ? mockSales.find((candidate) => candidate.id === input.saleId)
     : undefined;
   const purchase = input.purchaseId
     ? mockPurchases.find((candidate) => candidate.id === input.purchaseId)
     : undefined;
+
+  if (sale) {
+    assertMockStoreResource(sale, storeId, "Venta no encontrada.");
+  }
+  if (purchase) {
+    assertMockStoreResource(purchase, storeId, "Compra no encontrada.");
+  }
+
   const direction = sale ? "entrada" : "salida";
   const refRateVes = sale?.refRateVes ?? purchase?.refRateVes ?? 510;
   const amountVes =
@@ -174,16 +179,14 @@ export function createPayment(input: PaymentInput) {
     refRateVes,
     saleId: input.saleId,
     status: "activo",
+    storeId,
     pendingBalanceVes: Math.max(totalVes - paidVes - amountVes, 0),
   } satisfies PaymentMock;
 }
 
-export function cancelPayment(id: string) {
+export function cancelPayment(id: string, storeId: string) {
   const payment = mockPayments.find((item) => item.id === id);
-
-  if (!payment) {
-    throw new ApiError(404, "NOT_FOUND", "Pago no encontrado.");
-  }
+  assertMockStoreResource(payment, storeId, "Pago no encontrado.");
 
   if (payment.status === "anulado") {
     throw new ApiError(400, "BAD_REQUEST", "El pago ya fue anulado.");
@@ -191,10 +194,7 @@ export function cancelPayment(id: string) {
 
   if (payment.saleId) {
     const sale = mockSales.find((candidate) => candidate.id === payment.saleId);
-
-    if (!sale) {
-      throw new ApiError(404, "NOT_FOUND", "Venta no encontrada.");
-    }
+    assertMockStoreResource(sale, storeId, "Venta no encontrada.");
 
     if (sale.status === "cancelada" || sale.status === "devuelta") {
       throw new ApiError(
@@ -217,10 +217,7 @@ export function cancelPayment(id: string) {
 
   if (payment.purchaseId) {
     const purchase = mockPurchases.find((candidate) => candidate.id === payment.purchaseId);
-
-    if (!purchase) {
-      throw new ApiError(404, "NOT_FOUND", "Compra no encontrada.");
-    }
+    assertMockStoreResource(purchase, storeId, "Compra no encontrada.");
 
     if (purchase.status === "cancelado" || purchase.status === "devuelto") {
       throw new ApiError(
@@ -244,5 +241,5 @@ export function cancelPayment(id: string) {
   payment.status = "anulado";
   payment.cancelledAt = new Date().toISOString();
 
-  return getPaymentById(id);
+  return getPaymentById(id, storeId);
 }

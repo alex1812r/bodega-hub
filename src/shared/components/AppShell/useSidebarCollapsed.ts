@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-const STORAGE_KEY = "control-ventas:sidebar-collapsed";
+const STORAGE_KEY = "bodega-hub:sidebar-collapsed";
 
 export function useSidebarCollapsed() {
   const [collapsed, setCollapsed] = useState(false);

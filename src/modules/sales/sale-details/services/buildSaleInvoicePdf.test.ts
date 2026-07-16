@@ -59,7 +59,7 @@ describe("buildSaleInvoicePdf", () => {
   it("generates a valid PDF document", () => {
     const pdf = buildSaleInvoicePdf({
       cashierName: "Cajero Demo",
-      companyName: "BodegaSync S.A.",
+      companyName: "BodegaHub S.A.",
       generatedAt: "2026-05-20T12:00:00.000Z",
       sale: sampleSale,
     });

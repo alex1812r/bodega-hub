@@ -24,10 +24,19 @@ export type PurchasesReportFilters = ReportDateRangeFilters & {
   supplierId?: string;
 };
 
+/** Alcance opcional para reportes de plataforma (multi-tienda). */
+export type ReportRequestScope = {
+  enabled?: boolean;
+  pathPrefix?: "/api/reports" | "/api/platform/reports";
+  storeIds?: string;
+  storeScope?: "all" | "one" | "selected";
+};
+
 export type DailySalesReportRow = {
   paidVes: number;
   saleDate: string;
   salesCount: number;
+  storeId?: string | null;
   totalRef: number;
   totalVes: number;
 };
@@ -37,6 +46,7 @@ export type GrossProfitReportRow = {
   grossProfitRef: number;
   revenueRef: number;
   saleDate: string;
+  storeId?: string | null;
 };
 
 export type ProductProfitabilityReportRow = {
@@ -44,13 +54,16 @@ export type ProductProfitabilityReportRow = {
   grossProfitRef: number;
   productId: string;
   sku: string;
+  storeId?: string | null;
   unitsSold: number;
 };
 
 export type LowStockReportRow = Pick<
   ProductMock,
   "currentStock" | "id" | "minStock" | "name" | "sku"
->;
+> & {
+  storeId?: string | null;
+};
 
 export type CustomerPurchasesReportRow = {
   customerId: string;
@@ -58,6 +71,7 @@ export type CustomerPurchasesReportRow = {
   name: string;
   pendingVes: number;
   salesCount: number;
+  storeId?: string | null;
   totalRef: number;
   totalVes: number;
 };
@@ -67,6 +81,7 @@ export type SupplierPurchasesReportRow = {
   name: string;
   pendingVes: number;
   purchasesCount: number;
+  storeId?: string | null;
   supplierId: string;
   totalRef: number;
   totalVes: number;
@@ -76,6 +91,7 @@ export type TopProductsReportRow = {
   productId: string;
   revenueRef: number;
   sku: string;
+  storeId?: string | null;
   unitsSold: number;
 };
 
@@ -83,6 +99,7 @@ export type TopCustomersReportRow = {
   customerId: string;
   name: string;
   salesCount: number;
+  storeId?: string | null;
   totalRef: number;
   totalVes: number;
 };
@@ -92,126 +109,201 @@ export type PurchasesReportRow = PurchaseMock & {
   supplier?: ContactMock;
 };
 
+function reportPath(slug: string, scope?: ReportRequestScope) {
+  const prefix = scope?.pathPrefix ?? "/api/reports";
+  return `${prefix}/${slug}`;
+}
+
+function withScopeQuery<T extends Record<string, unknown>>(
+  filters: T,
+  scope?: ReportRequestScope,
+) {
+  if (scope?.pathPrefix !== "/api/platform/reports") {
+    return filters;
+  }
+
+  return {
+    ...filters,
+    storeIds: scope.storeIds,
+    storeScope: scope.storeScope ?? "all",
+  };
+}
+
+function scopeKey(scope?: ReportRequestScope) {
+  if (!scope || scope.pathPrefix !== "/api/platform/reports") {
+    return "store";
+  }
+
+  return {
+    pathPrefix: scope.pathPrefix,
+    storeIds: scope.storeIds ?? "",
+    storeScope: scope.storeScope ?? "all",
+  } as const;
+}
+
 export const reportsQueryKeys = {
   all: ["reports"] as const,
-  customerPurchases: () =>
-    [...reportsQueryKeys.all, "customer-purchases"] as const,
-  dailySales: () => [...reportsQueryKeys.all, "daily-sales"] as const,
-  grossProfit: () => [...reportsQueryKeys.all, "gross-profit"] as const,
-  lowStock: () => [...reportsQueryKeys.all, "low-stock"] as const,
-  productProfitability: () =>
-    [...reportsQueryKeys.all, "product-profitability"] as const,
-  purchases: (filters: PurchasesReportFilters = {}) =>
-    [...reportsQueryKeys.all, "purchases", filters] as const,
-  stockCard: (filters: StockCardReportFilters = {}) =>
-    [...reportsQueryKeys.all, "stock-card", filters] as const,
-  supplierPurchases: () =>
-    [...reportsQueryKeys.all, "supplier-purchases"] as const,
-  topCustomers: (filters: ReportDateRangeFilters = {}) =>
-    [...reportsQueryKeys.all, "top-customers", filters] as const,
-  topProducts: (filters: ReportDateRangeFilters = {}) =>
-    [...reportsQueryKeys.all, "top-products", filters] as const,
+  customerPurchases: (scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "customer-purchases", scopeKey(scope)] as const,
+  dailySales: (scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "daily-sales", scopeKey(scope)] as const,
+  grossProfit: (scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "gross-profit", scopeKey(scope)] as const,
+  lowStock: (scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "low-stock", scopeKey(scope)] as const,
+  productProfitability: (scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "product-profitability", scopeKey(scope)] as const,
+  purchases: (filters: PurchasesReportFilters = {}, scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "purchases", scopeKey(scope), filters] as const,
+  stockCard: (filters: StockCardReportFilters = {}, scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "stock-card", scopeKey(scope), filters] as const,
+  supplierPurchases: (scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "supplier-purchases", scopeKey(scope)] as const,
+  topCustomers: (filters: ReportDateRangeFilters = {}, scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "top-customers", scopeKey(scope), filters] as const,
+  topProducts: (filters: ReportDateRangeFilters = {}, scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "top-products", scopeKey(scope), filters] as const,
 };
 
-export function useDailySalesReport(filters: PaginationParams = {}) {
+export function useDailySalesReport(
+  filters: PaginationParams = {},
+  scope?: ReportRequestScope,
+) {
   return useQuery({
-    queryKey: [...reportsQueryKeys.dailySales(), filters] as const,
+    enabled: scope?.enabled ?? true,
+    queryKey: [...reportsQueryKeys.dailySales(scope), filters] as const,
     queryFn: () =>
-      apiFetch<PaginatedList<DailySalesReportRow>>("/api/reports/daily-sales", {
-        query: filters,
+      apiFetch<PaginatedList<DailySalesReportRow>>(reportPath("daily-sales", scope), {
+        query: withScopeQuery(filters, scope),
       }),
   });
 }
 
-export function useGrossProfitReport(filters: PaginationParams = {}) {
+export function useGrossProfitReport(
+  filters: PaginationParams = {},
+  scope?: ReportRequestScope,
+) {
   return useQuery({
-    queryKey: [...reportsQueryKeys.grossProfit(), filters] as const,
+    enabled: scope?.enabled ?? true,
+    queryKey: [...reportsQueryKeys.grossProfit(scope), filters] as const,
     queryFn: () =>
-      apiFetch<PaginatedList<GrossProfitReportRow>>("/api/reports/gross-profit", {
-        query: filters,
+      apiFetch<PaginatedList<GrossProfitReportRow>>(reportPath("gross-profit", scope), {
+        query: withScopeQuery(filters, scope),
       }),
   });
 }
 
-export function useProductProfitabilityReport(filters: PaginationParams = {}) {
+export function useProductProfitabilityReport(
+  filters: PaginationParams = {},
+  scope?: ReportRequestScope,
+) {
   return useQuery({
-    queryKey: [...reportsQueryKeys.productProfitability(), filters] as const,
+    enabled: scope?.enabled ?? true,
+    queryKey: [...reportsQueryKeys.productProfitability(scope), filters] as const,
     queryFn: () =>
       apiFetch<PaginatedList<ProductProfitabilityReportRow>>(
-        "/api/reports/product-profitability",
-        { query: filters },
+        reportPath("product-profitability", scope),
+        { query: withScopeQuery(filters, scope) },
       ),
   });
 }
 
-export function useLowStockReport(filters: PaginationParams = {}) {
+export function useLowStockReport(
+  filters: PaginationParams = {},
+  scope?: ReportRequestScope,
+) {
   return useQuery({
-    queryKey: [...reportsQueryKeys.lowStock(), filters] as const,
+    enabled: scope?.enabled ?? true,
+    queryKey: [...reportsQueryKeys.lowStock(scope), filters] as const,
     queryFn: () =>
-      apiFetch<PaginatedList<LowStockReportRow>>("/api/reports/low-stock", {
-        query: filters,
+      apiFetch<PaginatedList<LowStockReportRow>>(reportPath("low-stock", scope), {
+        query: withScopeQuery(filters, scope),
       }),
   });
 }
 
-export function useCustomerPurchasesReport(filters: PaginationParams = {}) {
+export function useCustomerPurchasesReport(
+  filters: PaginationParams = {},
+  scope?: ReportRequestScope,
+) {
   return useQuery({
-    queryKey: [...reportsQueryKeys.customerPurchases(), filters] as const,
+    enabled: scope?.enabled ?? true,
+    queryKey: [...reportsQueryKeys.customerPurchases(scope), filters] as const,
     queryFn: () =>
       apiFetch<PaginatedList<CustomerPurchasesReportRow>>(
-        "/api/reports/customer-purchases",
-        { query: filters },
+        reportPath("customer-purchases", scope),
+        { query: withScopeQuery(filters, scope) },
       ),
   });
 }
 
-export function useSupplierPurchasesReport(filters: PaginationParams = {}) {
+export function useSupplierPurchasesReport(
+  filters: PaginationParams = {},
+  scope?: ReportRequestScope,
+) {
   return useQuery({
-    queryKey: [...reportsQueryKeys.supplierPurchases(), filters] as const,
+    enabled: scope?.enabled ?? true,
+    queryKey: [...reportsQueryKeys.supplierPurchases(scope), filters] as const,
     queryFn: () =>
       apiFetch<PaginatedList<SupplierPurchasesReportRow>>(
-        "/api/reports/supplier-purchases",
-        { query: filters },
+        reportPath("supplier-purchases", scope),
+        { query: withScopeQuery(filters, scope) },
       ),
   });
 }
 
-export function useStockCardReport(filters: StockCardReportFilters = {}) {
+export function useStockCardReport(
+  filters: StockCardReportFilters = {},
+  scope?: ReportRequestScope,
+) {
   return useQuery({
-    queryKey: reportsQueryKeys.stockCard(filters),
+    enabled: scope?.enabled ?? true,
+    queryKey: reportsQueryKeys.stockCard(filters, scope),
     queryFn: () =>
-      apiFetch<PaginatedList<StockMovementMock>>("/api/reports/stock-card", {
-        query: filters,
+      apiFetch<PaginatedList<StockMovementMock>>(reportPath("stock-card", scope), {
+        query: withScopeQuery(filters, scope),
       }),
   });
 }
 
-export function useTopProductsReport(filters: ReportDateRangeFilters = {}) {
+export function useTopProductsReport(
+  filters: ReportDateRangeFilters = {},
+  scope?: ReportRequestScope,
+) {
   return useQuery({
-    queryKey: reportsQueryKeys.topProducts(filters),
+    enabled: scope?.enabled ?? true,
+    queryKey: reportsQueryKeys.topProducts(filters, scope),
     queryFn: () =>
-      apiFetch<PaginatedList<TopProductsReportRow>>("/api/reports/top-products", {
-        query: filters,
+      apiFetch<PaginatedList<TopProductsReportRow>>(reportPath("top-products", scope), {
+        query: withScopeQuery(filters, scope),
       }),
   });
 }
 
-export function useTopCustomersReport(filters: ReportDateRangeFilters = {}) {
+export function useTopCustomersReport(
+  filters: ReportDateRangeFilters = {},
+  scope?: ReportRequestScope,
+) {
   return useQuery({
-    queryKey: reportsQueryKeys.topCustomers(filters),
+    enabled: scope?.enabled ?? true,
+    queryKey: reportsQueryKeys.topCustomers(filters, scope),
     queryFn: () =>
-      apiFetch<PaginatedList<TopCustomersReportRow>>("/api/reports/top-customers", {
-        query: filters,
+      apiFetch<PaginatedList<TopCustomersReportRow>>(reportPath("top-customers", scope), {
+        query: withScopeQuery(filters, scope),
       }),
   });
 }
 
-export function usePurchasesReport(filters: PurchasesReportFilters = {}) {
+export function usePurchasesReport(
+  filters: PurchasesReportFilters = {},
+  scope?: ReportRequestScope,
+) {
   return useQuery({
-    queryKey: reportsQueryKeys.purchases(filters),
+    enabled: scope?.enabled ?? true,
+    queryKey: reportsQueryKeys.purchases(filters, scope),
     queryFn: () =>
-      apiFetch<PaginatedList<PurchasesReportRow>>("/api/reports/purchases", {
-        query: filters,
+      apiFetch<PaginatedList<PurchasesReportRow>>(reportPath("purchases", scope), {
+        query: withScopeQuery(filters, scope),
       }),
   });
 }

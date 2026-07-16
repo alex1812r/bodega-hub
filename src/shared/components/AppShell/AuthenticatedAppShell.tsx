@@ -36,9 +36,17 @@ export function AuthenticatedAppShell({
   const router = useRouter();
   const currentUser = useCurrentUser();
   const logout = useLogout();
-  const exchangeRate = useCurrentExchangeRate();
+  const profile = currentUser.data;
+  const isSuperadmin = profile?.role === "superadmin";
+  const canLoadExchangeRate = Boolean(profile);
+  const exchangeRate = useCurrentExchangeRate({
+    enabled: canLoadExchangeRate,
+    path: isSuperadmin
+      ? "/api/platform/home/exchange-rate"
+      : "/api/exchange-rates/current",
+  });
   const refRateVes = exchangeRate.data?.rateVes;
-  const refRateError = exchangeRate.isError && refRateVes == null;
+  const refRateError = canLoadExchangeRate && exchangeRate.isError && refRateVes == null;
 
   useEffect(() => {
     if (!currentUser.isError) {
@@ -94,8 +102,6 @@ export function AuthenticatedAppShell({
       />
     );
   }
-
-  const profile = currentUser.data;
 
   if (!profile) {
     return null;

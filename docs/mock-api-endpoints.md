@@ -39,6 +39,20 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 | `/api/products/import/template` | `GET` | `products.view` | Plantilla Excel importacion masiva (`.xlsx`) |
 | `/api/products/[id]` | `GET` | `products.view` | Detalle de producto |
 | `/api/products/[id]` | `PATCH` | `products.manage` | Actualiza producto (`409` si SKU duplicado) |
+| `/api/platform/stores` | `GET` | `platform.stores.view` | Lista tiendas, filtros `search`, `status`, `skip`, `limit` |
+| `/api/platform/stores` | `POST` | `platform.stores.manage` | Crea tienda y perfil administrador |
+| `/api/platform/stores/[id]` | `GET` | `platform.stores.view` | Detalle con usuarios de la tienda |
+| `/api/platform/stores/[id]` | `PATCH` | `platform.stores.manage` | Edita nombre, slug, notas o estado |
+| `/api/platform/users` | `GET` | `platform.users.view` | Lista usuarios de tienda (excluye superadmin); filtros `search`, `storeId`, `role` |
+| `/api/platform/users` | `POST` | `platform.users.manage` | Crea **solo** admin de una tienda (`storeId`, email, fullName, password) |
+| `/api/platform/users/[id]` | `GET` | `platform.users.view` | Detalle de usuario (tienda, rol, overrides) |
+| `/api/platform/reports/[report]` | `GET` | `platform.reports.view` | Mismos reportes que `/api/reports/*`; `storeScope=all\|one\|selected` + `storeIds` |
+| `/api/platform/home/summary` | `GET` | `platform.dashboard.view` | Resumen agregado multi-tienda (`storeScope` + `storeIds`) |
+| `/api/platform/home/metrics` | `GET` | `platform.dashboard.view` | Metrics de periodo multi-tienda |
+| `/api/platform/home/sales-trend` | `GET` | `platform.dashboard.view` | Tendencia diaria rollup por fecha |
+| `/api/platform/home/recent-sales` | `GET` | `platform.dashboard.view` | Ventas recientes (incluye tienda) |
+| `/api/platform/home/low-stock` | `GET` | `platform.dashboard.view` | Bajo stock (incluye tienda) |
+| `/api/platform/home/exchange-rate` | `GET` | `platform.dashboard.view` | Tasa REF/VES de referencia (header plataforma) |
 | `/api/products/[id]` | `DELETE` | `products.manage` | Borrado logico de producto |
 | `/api/products/[id]/price` | `POST` | `products.manage` | Cambia precio (RPC `update_product_price` en Supabase) |
 | `/api/products/[id]/price-history` | `GET` | `products.view` | Historial paginado de precios |

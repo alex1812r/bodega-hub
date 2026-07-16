@@ -7,7 +7,7 @@ Prompt listo para copiar y pegar en un agente (Cursor, Claude, etc.) que analice
 ## Prompt (copiar desde aquí)
 
 ```
-Eres un analista de abastecimiento para **Control Ventas ERP** (retail Venezuela/LATAM). Tu tarea es leer un documento PDF (o imagen) con una **lista de precios de proveedor** y producir un análisis estructurado, completo y accionable para cargar o actualizar el catálogo en el sistema.
+Eres un analista de abastecimiento para **BodegaHub** (retail Venezuela/LATAM). Tu tarea es leer un documento PDF (o imagen) con una **lista de precios de proveedor** y producir un análisis estructurado, completo y accionable para cargar o actualizar el catálogo en el sistema.
 
 ### Contexto del negocio
 

@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { parsePagination } from "@/lib/api/pagination";
 import {
   mapProduct,
@@ -35,7 +36,7 @@ const productSelect = `
   category:categories(id, name, description, is_active, created_at, updated_at)
 `;
 
-function toProductInsert(input: ProductInput) {
+function toProductInsert(input: ProductInput, storeId: string) {
   return {
     barcode: normalizeBarcode(input.barcode),
     category_id: input.categoryId ?? null,
@@ -46,6 +47,7 @@ function toProductInsert(input: ProductInput) {
     name: input.name ?? "Producto",
     sale_price_ref: input.salePriceRef ?? 0,
     sku: normalizeSku(input.sku ?? ""),
+    store_id: storeId,
   };
 }
 
@@ -94,13 +96,14 @@ function applyProductFilters<TQuery extends {
   return filteredQuery;
 }
 
-export async function listProducts(searchParams: URLSearchParams) {
+export async function listProducts(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
 
   let query = supabase
     .from("products")
-    .select(productSelect, { count: "exact" });
+    .select(productSelect, { count: "exact" })
+    .eq("store_id", storeId);
 
   query = applyProductFilters(query, searchParams);
   query = applyProductSort(query, searchParams);
@@ -117,7 +120,8 @@ export async function listProducts(searchParams: URLSearchParams) {
   };
 }
 
-export async function getProductById(id: string) {
+export async function getProductById(id: string, storeId: string) {
+  await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("products")
@@ -134,11 +138,11 @@ export async function getProductById(id: string) {
   return mapProduct(data);
 }
 
-export async function createProduct(input: ProductInput) {
+export async function createProduct(input: ProductInput, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("products")
-    .insert(toProductInsert(input))
+    .insert(toProductInsert(input, storeId))
     .select(productSelect)
     .single<ProductRow>();
 
@@ -151,7 +155,8 @@ export async function createProduct(input: ProductInput) {
   return mapProduct(data);
 }
 
-export async function updateProduct(id: string, input: ProductInput) {
+export async function updateProduct(id: string, input: ProductInput, storeId: string) {
+  await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("products")
@@ -169,7 +174,8 @@ export async function updateProduct(id: string, input: ProductInput) {
   return mapProduct(data);
 }
 
-export async function deleteProduct(id: string) {
+export async function deleteProduct(id: string, storeId: string) {
+  await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("products")
@@ -191,7 +197,8 @@ export async function deleteProduct(id: string) {
   };
 }
 
-export async function updateProductPrice(id: string, input: ProductPriceInput) {
+export async function updateProductPrice(id: string, input: ProductPriceInput, storeId: string) {
+  await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
 
   const { data: productRow, error: productError } = await supabase.rpc("update_product_price", {
@@ -220,7 +227,7 @@ export async function updateProductPrice(id: string, input: ProductPriceInput) {
     throw new ApiError(500, "INTERNAL_ERROR", "No se pudo registrar el historial de precio.");
   }
 
-  const product = await getProductById(id);
+  const product = await getProductById(id, storeId);
 
   return {
     history: mapProductPriceHistory(historyRow),
@@ -228,7 +235,12 @@ export async function updateProductPrice(id: string, input: ProductPriceInput) {
   };
 }
 
-export async function getProductPriceHistory(id: string, searchParams: URLSearchParams) {
+export async function getProductPriceHistory(
+  id: string,
+  searchParams: URLSearchParams,
+  storeId: string,
+) {
+  await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
 

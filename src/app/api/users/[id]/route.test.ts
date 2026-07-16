@@ -78,12 +78,15 @@ describe("/api/users/[id]", () => {
 
   describe("supabase data source", () => {
     const mockMaybeSingle = jest.fn();
-    const mockEq = jest.fn(() => ({
-      select: jest.fn(() => ({
-        maybeSingle: mockMaybeSingle,
-      })),
+    const mockSelect = jest.fn(() => ({
+      maybeSingle: mockMaybeSingle,
     }));
-    const mockUpdate = jest.fn();
+    const chain = {
+      eq: jest.fn(),
+      select: mockSelect,
+    };
+    chain.eq.mockReturnValue(chain);
+    const mockUpdate = jest.fn(() => chain);
 
     beforeEach(() => {
       process.env.API_DATA_SOURCE = "supabase";
@@ -97,9 +100,6 @@ describe("/api/users/[id]", () => {
           role: "contador",
         },
         error: null,
-      });
-      mockUpdate.mockReturnValue({
-        eq: mockEq,
       });
       (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
         from: jest.fn(() => ({

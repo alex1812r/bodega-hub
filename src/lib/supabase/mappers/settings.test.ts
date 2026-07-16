@@ -20,14 +20,14 @@ describe("settings mappers", () => {
   it("maps app settings rows to API shape", () => {
     expect(
       mapAppSettings({
-        business_name: "Control Ventas ERP",
+        business_name: "BodegaHub",
         default_tax_rate: "16",
         id: 1,
         invoice_prefix: "FAC",
         low_stock_threshold: 5,
       }),
     ).toEqual({
-      businessName: "Control Ventas ERP",
+      businessName: "BodegaHub",
       defaultTaxRate: 16,
       invoicePrefix: "FAC",
       lowStockThreshold: 5,

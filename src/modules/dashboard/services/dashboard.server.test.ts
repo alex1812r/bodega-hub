@@ -5,6 +5,7 @@
 jest.mock("../../../lib/supabase/route-client");
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import {
   getDashboardLowStock,
@@ -54,7 +55,7 @@ describe("dashboard.server", () => {
       return createQueryBuilder({ count: table === "low_stock_products" ? 2 : 1, error: null });
     });
 
-    const summary = await getDashboardSummary();
+    const summary = await getDashboardSummary(DEFAULT_STORE_ID);
 
     expect(summary).toEqual({
       activeCustomers: 1,
@@ -91,6 +92,7 @@ describe("dashboard.server", () => {
 
     const metrics = await getDashboardMetrics(
       new URLSearchParams("from=2026-05-18&to=2026-05-18"),
+      DEFAULT_STORE_ID,
     );
 
     expect(metrics).toEqual(
@@ -130,7 +132,7 @@ describe("dashboard.server", () => {
       }),
     );
 
-    const result = await getRecentSales(new URLSearchParams("skip=0&limit=10"));
+    const result = await getRecentSales(new URLSearchParams("skip=0&limit=10"), DEFAULT_STORE_ID);
 
     expect(result.total).toBe(1);
     expect(result.items[0]).toEqual(
@@ -158,7 +160,7 @@ describe("dashboard.server", () => {
       }),
     );
 
-    const result = await getDashboardLowStock(new URLSearchParams("skip=0&limit=10"));
+    const result = await getDashboardLowStock(new URLSearchParams("skip=0&limit=10"), DEFAULT_STORE_ID);
 
     expect(result.items[0]).toEqual({
       currentStock: 1,

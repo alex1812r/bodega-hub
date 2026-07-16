@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Control Ventas API (BFF)
+  title: BodegaHub API (BFF)
   version: 0.2.0
   description: Contrato de endpoints internos Next.js (mock en tests, Supabase en runtime).
 servers:
@@ -1713,6 +1713,236 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/platform/stores:
+    get:
+      tags: [Platform]
+      summary: Listar tiendas de la plataforma
+      x-permission: platform.stores.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Search"
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, paused] }
+      responses:
+        "200": { description: Lista paginada de tiendas }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Platform]
+      summary: Crear una tienda y su administrador inicial
+      x-permission: platform.stores.manage
+      responses:
+        "201": { description: Tienda creada }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/platform/stores/{id}:
+    get:
+      tags: [Platform]
+      summary: Ver detalle de una tienda y sus usuarios
+      x-permission: platform.stores.view
+      responses:
+        "200": { description: Detalle de tienda }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Platform]
+      summary: Actualizar o pausar una tienda
+      x-permission: platform.stores.manage
+      responses:
+        "200": { description: Tienda actualizada }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/platform/users:
+    get:
+      tags: [Platform]
+      summary: Listar usuarios de todas las tiendas
+      x-permission: platform.users.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Search"
+        - name: storeId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: role
+          in: query
+          schema: { type: string, enum: [admin, vendedor, almacen, contador] }
+      responses:
+        "200": { description: Lista paginada de usuarios de tienda }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Platform]
+      summary: Crear administrador de una tienda existente
+      description: Solo crea rol admin. Otros roles los gestiona el admin de cada tienda.
+      x-permission: platform.users.manage
+      responses:
+        "201": { description: Administrador creado }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/platform/users/{id}:
+    get:
+      tags: [Platform]
+      summary: Ver detalle de un usuario de tienda
+      x-permission: platform.users.view
+      responses:
+        "200": { description: Detalle de usuario }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/platform/reports/{report}:
+    get:
+      tags: [Platform]
+      summary: Generar un reporte de plataforma con alcance multi-tienda
+      description: |
+        Mismos reportes que `/api/reports/*`.
+        `storeScope=all` (default), `one` o `selected`.
+        Con `one`/`selected` requiere `storeIds` (CSV o repetido `storeId`).
+      x-permission: platform.reports.view
+      parameters:
+        - name: report
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              [
+                daily-sales,
+                gross-profit,
+                product-profitability,
+                low-stock,
+                customer-purchases,
+                supplier-purchases,
+                stock-card,
+                top-products,
+                top-customers,
+                purchases,
+              ]
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: storeScope
+          in: query
+          schema: { type: string, enum: [all, one, selected], default: all }
+        - name: storeIds
+          in: query
+          schema: { type: string }
+          description: UUIDs separados por coma
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: productId
+          in: query
+          schema: { type: string }
+        - name: supplierId
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { description: Lista paginada del reporte }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/platform/home/summary:
+    get:
+      tags: [Platform]
+      summary: Resumen agregado multi-tienda
+      x-permission: platform.dashboard.view
+      parameters:
+        - name: storeScope
+          in: query
+          schema: { type: string, enum: [all, one, selected], default: all }
+        - name: storeIds
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { description: Resumen del dia agregado }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/platform/home/metrics:
+    get:
+      tags: [Platform]
+      summary: Metricas de periodo multi-tienda
+      x-permission: platform.dashboard.view
+      parameters:
+        - name: storeScope
+          in: query
+          schema: { type: string, enum: [all, one, selected], default: all }
+        - name: storeIds
+          in: query
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200": { description: Metricas del periodo }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/platform/home/sales-trend:
+    get:
+      tags: [Platform]
+      summary: Tendencia de ventas multi-tienda (rollup por fecha)
+      x-permission: platform.dashboard.view
+      parameters:
+        - name: storeScope
+          in: query
+          schema: { type: string, enum: [all, one, selected], default: all }
+        - name: storeIds
+          in: query
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200": { description: Serie diaria agregada }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/platform/home/recent-sales:
+    get:
+      tags: [Platform]
+      summary: Ventas recientes multi-tienda
+      x-permission: platform.dashboard.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: storeScope
+          in: query
+          schema: { type: string, enum: [all, one, selected], default: all }
+        - name: storeIds
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { description: Lista paginada de ventas }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/platform/home/low-stock:
+    get:
+      tags: [Platform]
+      summary: Bajo stock multi-tienda
+      x-permission: platform.dashboard.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: storeScope
+          in: query
+          schema: { type: string, enum: [all, one, selected], default: all }
+        - name: storeIds
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { description: Lista paginada de productos }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/platform/home/exchange-rate:
+    get:
+      tags: [Platform]
+      summary: Tasa REF/VES de referencia para el header de plataforma
+      x-permission: platform.dashboard.view
+      responses:
+        "200": { description: Tasa vigente }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/users:
     get:
       tags: [Users]

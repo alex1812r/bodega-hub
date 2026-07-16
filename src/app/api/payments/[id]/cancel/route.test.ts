@@ -18,6 +18,13 @@ jest.mock("../../../../../modules/payments/services/payments.server", () => ({
 
 jest.mock("../../../../../lib/api/requirePermission", () => ({
   requirePermission: jest.fn().mockResolvedValue(undefined),
+  requireStorePermission: jest.fn().mockResolvedValue({
+    isSuperadmin: false,
+    permissions: [],
+    role: "admin",
+    storeId: "00000000-0000-4000-8000-000000000001",
+    userId: "user-admin",
+  }),
 }));
 
 const { cancelPayment: cancelPaymentMock } = jest.requireMock<{
@@ -46,6 +53,8 @@ describe("/api/payments/[id]/cancel", () => {
 
     expect(response.status).toBe(200);
     expect(body.data.status).toBe("anulado");
-    expect(cancelPaymentMock).toHaveBeenCalledWith("pay-001");
-  });
+    expect(cancelPaymentMock).toHaveBeenCalledWith(
+      "pay-001",
+      "00000000-0000-4000-8000-000000000001",
+    );  });
 });

@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { getSupabaseErrorMessage, mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { mapContact, type DbContactRow } from "@/lib/supabase/mappers/contacts";
 import { mapPayment, type DbPaymentRow } from "@/lib/supabase/mappers/transactions";
@@ -183,11 +184,11 @@ function applyPaymentFilters<T extends {
   return filteredQuery;
 }
 
-export async function listPayments(searchParams: URLSearchParams) {
+export async function listPayments(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
 
-  let query = supabase.from("payments").select(PAYMENT_SELECT, { count: "exact" });
+  let query = supabase.from("payments").select(PAYMENT_SELECT, { count: "exact" }).eq("store_id", storeId);
 
   query = applyPaymentFilters(query, searchParams);
 
@@ -198,7 +199,8 @@ export async function listPayments(searchParams: URLSearchParams) {
   );
 }
 
-export async function getPaymentById(id: string) {
+export async function getPaymentById(id: string, storeId: string) {
+  await assertSupabaseStoreResource("payments", id, storeId, "Pago no encontrado.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("payments")
@@ -217,7 +219,7 @@ export async function getPaymentById(id: string) {
   return mapPaymentWithContact(data, documentBalance);
 }
 
-export async function createPayment(input: PaymentInput) {
+export async function createPayment(input: PaymentInput, _storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.rpc("register_payment", {
     p_amount: input.amount,
@@ -241,7 +243,8 @@ export async function createPayment(input: PaymentInput) {
   return mapPaymentWithContact(data as PaymentRowWithContact, documentBalance);
 }
 
-export async function updatePayment(id: string, input: PaymentUpdateInput) {
+export async function updatePayment(id: string, input: PaymentUpdateInput, storeId: string) {
+  await assertSupabaseStoreResource("payments", id, storeId, "Pago no encontrado.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("payments")
@@ -266,7 +269,8 @@ export async function updatePayment(id: string, input: PaymentUpdateInput) {
   return mapPaymentWithContact(data, documentBalance);
 }
 
-export async function cancelPayment(id: string) {
+export async function cancelPayment(id: string, storeId: string) {
+  await assertSupabaseStoreResource("payments", id, storeId, "Pago no encontrado.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.rpc("cancel_payment", {
     p_payment_id: id,

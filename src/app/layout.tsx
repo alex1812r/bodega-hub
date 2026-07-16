@@ -6,7 +6,7 @@ import { AppProviders } from "./providers/app-providers";
 
 const themeScript = `
   try {
-    var theme = localStorage.getItem("control-ventas:theme");
+    var theme = localStorage.getItem("bodega-hub:theme");
     var resolvedTheme = theme === "dark" || theme === "light" ? theme : "light";
     document.documentElement.classList.remove("light", "dark");
     document.documentElement.classList.add(resolvedTheme);
@@ -28,7 +28,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "BodegaSync ERP",
+  title: "BodegaHub ERP",
   description: "ERP web para ventas, compras, inventario y pagos.",
 };
 

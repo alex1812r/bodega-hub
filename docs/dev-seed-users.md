@@ -1,110 +1,101 @@
 # Usuarios de desarrollo (seed)
 
-Credenciales y roles de los usuarios creados por `[supabase/seed.sql](../supabase/seed.sql)`. Solo para entornos **dev/staging**. No usar estas contraseñas en producción.
+Credenciales y roles de los usuarios creados por [`supabase/seed.sql`](../supabase/seed.sql) y el patch [`20260716c-seed-superadmin.sql`](../supabase/patches/20260716c-seed-superadmin.sql). Solo para entornos **dev/staging**. No usar estas contraseñas en producción.
 
-Matriz de permisos por rol: `[auth-permissions.md](auth-permissions.md)`. Índice de docs: `[README.md](README.md)`.
+Matriz de permisos por rol: [`auth-permissions.md`](auth-permissions.md). Multitienda: [`multi-store-options.md`](multi-store-options.md).
 
 ## Requisito
 
-Los usuarios existen en Supabase **solo después** de ejecutar el seed. Ver `[supabase-setup.md](supabase-setup.md)`.
+Los usuarios existen en Supabase **solo después** de ejecutar el seed (o el patch `20260716c` en un proyecto ya migrado). Ver [`supabase-setup.md`](supabase-setup.md).
 
 ## Contraseña compartida
 
-
-| Campo            | Valor       |
-| ---------------- | ----------- |
+| Campo | Valor |
+|-------|-------|
 | Password (todos) | `Admin123!` |
-
 
 ## Usuarios
 
+| Nombre | Email | Rol | Ámbito | UUID | Activo |
+|--------|-------|-----|--------|------|--------|
+| Superadmin Demo | `superadmin@example.com` | `superadmin` | Plataforma (`store_id` null) | `66666666-6666-4666-8666-666666666666` | Sí |
+| Admin Demo | `admin@example.com` | `admin` | Tienda default | `11111111-1111-4111-8111-111111111111` | Sí |
+| Vendedor Demo | `vendedor@example.com` | `vendedor` | Tienda default | `22222222-2222-4222-8222-222222222222` | Sí |
+| Vendedor Contactos Demo | `vendedor.contactos@example.com` | `vendedor` | Tienda default | `55555555-5555-4555-8555-555555555555` | Sí |
+| Almacen Demo | `almacen@example.com` | `almacen` | Tienda default | `33333333-3333-4333-8333-333333333333` | Sí |
+| Contador Demo | `contador@example.com` | `contador` | Tienda default | `44444444-4444-4444-8444-444444444444` | Sí |
 
-| Nombre                  | Email                            | Rol        | Etiqueta UI   | UUID                                   | Activo |
-| ----------------------- | -------------------------------- | ---------- | ------------- | -------------------------------------- | ------ |
-| Admin Demo              | `admin@example.com`              | `admin`    | Administrador | `11111111-1111-4111-8111-111111111111` | Sí     |
-| Vendedor Demo           | `vendedor@example.com`           | `vendedor` | Vendedor      | `22222222-2222-4222-8222-222222222222` | Sí     |
-| Vendedor Contactos Demo | `vendedor.contactos@example.com` | `vendedor` | Vendedor      | `55555555-5555-4555-8555-555555555555` | Sí     |
-| Almacen Demo            | `almacen@example.com`            | `almacen`  | Almacen       | `33333333-3333-4333-8333-333333333333` | Sí     |
-| Contador Demo           | `contador@example.com`           | `contador` | Contador      | `44444444-4444-4444-8444-444444444444` | Sí     |
+Tienda default: `00000000-0000-4000-8000-000000000001` (`slug = default`).
 
+## Estado tras multitienda
+
+| Usuario | Qué hacer |
+|---------|-----------|
+| `admin@example.com` / `vendedor@…` | **Se quedan** como usuarios de la tienda existente. No los conviertas en superadmin. |
+| `superadmin@example.com` | Usuario **nuevo** solo para `/platform/*` (dashboard, tiendas, usuarios, reportes). |
+
+Si el proyecto ya tenía seed antes del multitienda, ejecuta en SQL Editor:
+
+```text
+supabase/patches/20260716c-seed-superadmin.sql
+```
+
+Eso crea el superadmin y reafirma que admin/vendedor siguen en la tienda default.
 
 ## Qué puede hacer cada rol
 
-Resumen funcional. La matriz completa de permisos está en `[auth-permissions.md](auth-permissions.md)` y en `src/shared/auth/permissions.ts`.
+### `superadmin` — Plataforma
 
-### `admin` — Administrador
+- Solo backoffice: listar/crear/pausar tiendas y asignar admin inicial.
+- **No** opera el ERP (productos, ventas, etc.).
 
-- Acceso total al ERP.
-- Configuración (`settings.view`), gestión de usuarios (`users.manage`) y todos los módulos operativos.
+### `admin` — Administrador de tienda
+
+- Acceso total al ERP de **su** tienda.
+- Configuración y gestión de usuarios de la tienda.
 
 ### `vendedor` — Vendedor
 
 - Dashboard, ventas (ver y crear), productos (solo ver), contactos (solo ver), pagos (solo ver).
-- No compras, inventario, reportes ni configuración.
-- Sin crear/editar contactos ni registrar pagos (solo lectura en esos módulos).
 
-**Usuario híbrido de prueba:** `vendedor.contactos@example.com` tiene el rol `vendedor` más `contacts.manage` concedido (puede crear/editar contactos).
+**Usuario híbrido:** `vendedor.contactos@example.com` tiene además `contacts.manage`.
 
 ### `almacen` — Almacén
 
-- Dashboard, compras (ver y crear), inventario (ver y gestionar), productos (ver y gestionar).
-- No ventas, pagos, reportes ni configuración.
+- Compras, inventario y productos (gestión).
 
 ### `contador` — Contador
 
-- Dashboard, ventas y compras (solo ver), contactos (ver), pagos (ver y gestionar), reportes.
-- No crear ventas/compras, inventario ni configuración.
+- Pagos, reportes y lectura contable.
 
 ## Overrides por usuario (seed)
 
-
-| Email                            | `granted_permissions` | `denied_permissions` |
-| -------------------------------- | --------------------- | -------------------- |
-| `admin@example.com`              | —                     | —                    |
-| `vendedor@example.com`           | —                     | —                    |
-| `vendedor.contactos@example.com` | `contacts.manage`     | —                    |
-| `almacen@example.com`            | —                     | —                    |
-| `contador@example.com`           | —                     | —                    |
-
-
-Fórmula de permisos efectivos:
-
-```text
-permisos efectivos = permisos del rol + granted - denied
-```
+| Email | `granted_permissions` | `denied_permissions` |
+|-------|----------------------|----------------------|
+| `superadmin@example.com` | — | — |
+| `admin@example.com` | — | — |
+| `vendedor@example.com` | — | — |
+| `vendedor.contactos@example.com` | `contacts.manage` | — |
+| `almacen@example.com` | — | — |
+| `contador@example.com` | — | — |
 
 ## Login de prueba
 
-Con la app en dev (`npm run dev`) y `API_DATA_SOURCE=supabase`:
-
 ```bash
+# Plataforma
+curl -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"superadmin@example.com","password":"Admin123!"}' \
+  -c cookies-sa.txt
+
+# Tienda (ERP)
 curl -X POST http://localhost:3000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@example.com","password":"Admin123!"}' \
-  -c cookies.txt
-
-curl http://localhost:3000/api/auth/me -b cookies.txt
+  -c cookies-admin.txt
 ```
-
-También puedes usar `scripts/smoke-api.ts` con `SMOKE_API_EMAIL` y `SMOKE_API_PASSWORD` (ver `[backend-api-agent-guide.md](backend-api-agent-guide.md)`).
-
-## Otros datos del seed
-
-Además de usuarios, el seed crea:
-
-
-| Recurso          | Detalle                                                            |
-| ---------------- | ------------------------------------------------------------------ |
-| `app_settings`   | Negocio "Control Ventas ERP", IVA 16%, prefijo `FAC`, stock bajo 5 |
-| `categories`     | Categoría "General" (`aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`)       |
-| `exchange_rates` | Tasa 45.5 VES, fuente BCV                                          |
-
-
-No incluye productos, contactos, ventas ni compras.
 
 ## Seguridad
 
 - Cambiar o eliminar estos usuarios antes de exponer el proyecto.
-- En producción: `ALLOW_DEMO_AUTH=false` y no commitear contraseñas reales.
-- Este archivo documenta credenciales de demo a propósito; no reutilizar el mismo password en entornos reales.
-
+- En producción: `ALLOW_DEMO_AUTH=false` y no reutilizar estas contraseñas.

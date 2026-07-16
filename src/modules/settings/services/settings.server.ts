@@ -54,12 +54,12 @@ async function loadAuthEmailsById() {
   );
 }
 
-export async function getSettings() {
+export async function getSettings(storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("app_settings")
     .select(appSettingsSelect)
-    .eq("id", APP_SETTINGS_ID)
+    .eq("store_id", storeId)
     .maybeSingle<AppSettingsRow>();
 
   throwIfSupabaseError(error);
@@ -71,7 +71,7 @@ export async function getSettings() {
   return mapAppSettings(data);
 }
 
-export async function updateSettings(input: SettingsInput) {
+export async function updateSettings(input: SettingsInput, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const {
     data: { user },
@@ -86,7 +86,7 @@ export async function updateSettings(input: SettingsInput) {
       ...toSettingsUpdate(input),
       updated_by: user?.id ?? null,
     })
-    .eq("id", APP_SETTINGS_ID)
+    .eq("store_id", storeId)
     .select(appSettingsSelect)
     .maybeSingle<AppSettingsRow>();
 
@@ -99,13 +99,14 @@ export async function updateSettings(input: SettingsInput) {
   return mapAppSettings(data);
 }
 
-export async function listUsers(searchParams: URLSearchParams) {
+export async function listUsers(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
 
   const { count, data, error } = await supabase
     .from("profiles")
     .select(profileSelect, { count: "exact" })
+    .eq("store_id", storeId)
     .order("full_name", { ascending: true, nullsFirst: false })
     .range(skip, skip + limit - 1);
 
@@ -123,12 +124,13 @@ export async function listUsers(searchParams: URLSearchParams) {
   };
 }
 
-export async function updateUser(id: string, input: UserProfileInput) {
+export async function updateUser(id: string, input: UserProfileInput, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("profiles")
     .update(toProfileUpdate(input))
     .eq("id", id)
+    .eq("store_id", storeId)
     .select(profileSelect)
     .maybeSingle<ProfileListRow>();
 

@@ -1,4 +1,4 @@
-import { ApiError } from "@/lib/api/apiError";
+import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
 import {
   mockContacts,
@@ -8,6 +8,7 @@ import {
   mockSales,
   type SaleMock,
 } from "@/shared/mocks/erp-data";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 export type SaleInput = Partial<
   Pick<SaleMock, "customerId" | "discountRef" | "refRateVes" | "taxRef">
@@ -42,7 +43,7 @@ function matchesSaleSearch(
   return invoice.includes(term) || customer.includes(term);
 }
 
-export function listSales(searchParams: URLSearchParams) {
+export function listSales(searchParams: URLSearchParams, storeId: string) {
   const customerId = searchParams.get("customerId");
   const from = searchParams.get("from");
   const search = searchParams.get("search");
@@ -55,6 +56,7 @@ export function listSales(searchParams: URLSearchParams) {
       const customer = mockContacts.find((contact) => contact.id === sale.customerId);
 
       return (
+        (sale.storeId ?? DEFAULT_STORE_ID) === storeId &&
         (!status || sale.status === status) &&
         (!customerId || sale.customerId === customerId) &&
         (!from || saleDate >= from) &&
@@ -71,12 +73,9 @@ export function listSales(searchParams: URLSearchParams) {
   return paginateList(items, searchParams);
 }
 
-export function getSaleById(id: string) {
+export function getSaleById(id: string, storeId: string) {
   const sale = mockSales.find((item) => item.id === id);
-
-  if (!sale) {
-    throw new ApiError(404, "NOT_FOUND", "Venta no encontrada.");
-  }
+  assertMockStoreResource(sale, storeId, "Venta no encontrada.");
 
   const items = mockSaleItems
     .filter((item) => item.saleId === id)
@@ -93,7 +92,7 @@ export function getSaleById(id: string) {
   };
 }
 
-export function createSale(input: SaleInput) {
+export function createSale(input: SaleInput, storeId: string) {
   const refRateVes = input.refRateVes ?? 510;
   const subtotalRef =
     input.items?.reduce((total, item) => {
@@ -111,6 +110,7 @@ export function createSale(input: SaleInput) {
     paidVes: 0,
     refRateVes,
     status: "pendiente_pago",
+    storeId,
     subtotalRef,
     taxRef: input.taxRef ?? 0,
     totalRef,
@@ -119,8 +119,8 @@ export function createSale(input: SaleInput) {
   } satisfies SaleMock;
 }
 
-export function updateSale(id: string, input: SaleUpdateInput) {
-  const sale = getSaleById(id);
+export function updateSale(id: string, input: SaleUpdateInput, storeId: string) {
+  const sale = getSaleById(id, storeId);
 
   return {
     ...sale,
@@ -128,15 +128,15 @@ export function updateSale(id: string, input: SaleUpdateInput) {
   };
 }
 
-export function cancelSale(id: string) {
+export function cancelSale(id: string, storeId: string) {
   return {
-    ...getSaleById(id),
+    ...getSaleById(id, storeId),
     status: "cancelada",
   };
 }
 
-export function returnSale(id: string) {
-  const sale = getSaleById(id);
+export function returnSale(id: string, storeId: string) {
+  const sale = getSaleById(id, storeId);
 
   return {
     sale: {
@@ -150,13 +150,14 @@ export function returnSale(id: string) {
       quantityDelta: item.quantity,
       reason: `Devolucion de venta ${sale.invoiceNumber}`,
       saleId: sale.id,
+      storeId,
       type: "devolucion_cliente",
     })),
   };
 }
 
-export function getSaleReceipt(id: string) {
-  const sale = getSaleById(id);
+export function getSaleReceipt(id: string, storeId: string) {
+  const sale = getSaleById(id, storeId);
 
   return {
     customer: sale.customer,

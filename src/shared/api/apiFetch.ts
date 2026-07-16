@@ -1,4 +1,8 @@
-import { getStoredDemoRole, getStoredDemoUserId } from "@/shared/auth/demoAuth";
+import {
+  getStoredDemoRole,
+  getStoredDemoStoreId,
+  getStoredDemoUserId,
+} from "@/shared/auth/demoAuth";
 
 function isDemoAuthEnabledOnClient() {
   return process.env.NEXT_PUBLIC_ALLOW_DEMO_AUTH === "true";
@@ -99,6 +103,7 @@ function applyDemoAuthHeaders(headers: MutableHeaders) {
 
   const role = getStoredDemoRole();
   const userId = getStoredDemoUserId();
+  const storeId = getStoredDemoStoreId();
 
   if (role && !getHeader(headers, "x-demo-role")) {
     setHeader(headers, "x-demo-role", role);
@@ -106,6 +111,10 @@ function applyDemoAuthHeaders(headers: MutableHeaders) {
 
   if (userId && !getHeader(headers, "x-demo-user-id")) {
     setHeader(headers, "x-demo-user-id", userId);
+  }
+
+  if (storeId && !getHeader(headers, "x-demo-store-id")) {
+    setHeader(headers, "x-demo-store-id", storeId);
   }
 }
 
@@ -149,7 +158,7 @@ export async function apiFetch<TData>(
       error?.code ?? (isHtmlNotFound ? "NOT_FOUND" : "UNKNOWN_ERROR"),
       error?.message ??
         (isHtmlNotFound
-          ? `El endpoint ${path} no esta disponible. Reinicia el servidor de desarrollo (npm run dev).`
+          ? `El endpoint ${path} no esta disponible (HTML 404). Para Turbopack: para el dev server, borra la carpeta .next y vuelve a ejecutar npm run dev.`
           : "No se pudo completar la solicitud."),
       error?.issues,
     );

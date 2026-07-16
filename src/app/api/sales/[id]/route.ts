@@ -3,7 +3,7 @@ import { z } from "zod";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonData } from "@/lib/api/jsonResponse";
-import { requirePermission } from "@/lib/api/requirePermission";
+import { requireStorePermission } from "@/lib/api/requirePermission";
 import {
   getSaleById as getSaleByIdMock,
   updateSale as updateSaleMock,
@@ -23,12 +23,12 @@ const updateSaleSchema = z
 
 export async function GET(request: Request, context: RouteContext<"/api/sales/[id]">) {
   try {
-    await requirePermission(request, "sales.view");
+    const auth = await requireStorePermission(request, "sales.view");
     const { id } = await context.params;
     const data =
       resolveDataSource() === "supabase"
-        ? await getSaleByIdServer(id)
-        : getSaleByIdMock(id);
+        ? await getSaleByIdServer(id, auth.storeId)
+        : getSaleByIdMock(id, auth.storeId);
 
     return jsonData(data);
   } catch (error) {
@@ -38,13 +38,13 @@ export async function GET(request: Request, context: RouteContext<"/api/sales/[i
 
 export async function PATCH(request: Request, context: RouteContext<"/api/sales/[id]">) {
   try {
-    await requirePermission(request, "sales.create");
+    const auth = await requireStorePermission(request, "sales.create");
     const { id } = await context.params;
     const input = updateSaleSchema.parse(await request.json());
     const data =
       resolveDataSource() === "supabase"
-        ? await updateSaleServer(id, input)
-        : updateSaleMock(id, input);
+        ? await updateSaleServer(id, input, auth.storeId)
+        : updateSaleMock(id, input, auth.storeId);
 
     return jsonData(data);
   } catch (error) {

@@ -2,17 +2,33 @@
 
 import { AlertTriangle, Package } from "lucide-react";
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { cn } from "@/shared/utils/cn";
 
-import { useDashboardLowStock } from "../hooks/useDashboard";
+import {
+  type DashboardRequestScope,
+  useDashboardLowStock,
+} from "../hooks/useDashboard";
 
 const LOW_STOCK_LIMIT = 8;
 
-export function DashboardLowStockCard({ totalCount }: { totalCount: number }) {
-  const lowStock = useDashboardLowStock({ limit: LOW_STOCK_LIMIT, skip: 0 });
+type DashboardLowStockCardProps = {
+  footer?: ReactNode;
+  scope?: DashboardRequestScope;
+  showStore?: boolean;
+  totalCount: number;
+};
+
+export function DashboardLowStockCard({
+  footer,
+  scope,
+  showStore = false,
+  totalCount,
+}: DashboardLowStockCardProps) {
+  const lowStock = useDashboardLowStock({ limit: LOW_STOCK_LIMIT, skip: 0 }, scope);
   const products = lowStock.data?.items ?? [];
 
   return (
@@ -60,7 +76,10 @@ export function DashboardLowStockCard({ totalCount }: { totalCount: number }) {
                     </div>
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-foreground">{product.name}</p>
-                      <p className="text-xs text-muted-foreground">{product.sku}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {product.sku}
+                        {showStore && product.storeName ? ` · ${product.storeName}` : ""}
+                      </p>
                     </div>
                   </div>
                   <div className="text-right">
@@ -82,9 +101,11 @@ export function DashboardLowStockCard({ totalCount }: { totalCount: number }) {
       </div>
 
       <div className="border-t border-border/50 p-4">
-        <Button asChild className="w-full" variant="secondary">
-          <Link href="/purchases/create">Generar orden de compra</Link>
-        </Button>
+        {footer ?? (
+          <Button asChild className="w-full" variant="secondary">
+            <Link href="/purchases/create">Generar orden de compra</Link>
+          </Button>
+        )}
       </div>
     </div>
   );

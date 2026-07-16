@@ -1,232 +1,78 @@
-# Opciones: múltiples tiendas / negocios
+# Multitienda (modelo vigente)
 
-Documento de exploración (julio 2026). **No es un plan de implementación.** Define caminos posibles para que un mismo dueño administre varios negocios desde esta app.
+Documento de producto e implementación (julio 2026). Reemplaza el enfoque exploratorio anterior (owner + selector de negocio sin membresías).
 
-## Contexto y restricciones
+## Modelo acordado
 
-| Premisa | Decisión |
-|---------|----------|
-| Uso | Proyecto personal: varios negocios bajo el mismo dueño |
-| Membresías usuario↔tienda | **Fuera de alcance** por ahora |
-| Roles tipo “admin por tienda + equipo” | No requerido ahora |
-| Superadmin / selector de negocio | Sí: la persona dueña debe poder entrar a cada negocio y administrarlo |
-| Estado actual del ERP | Single-tenant: un conjunto de datos global, roles `admin` / `vendedor` / `almacen` / `contador` |
+| Actor | Comportamiento |
+|-------|----------------|
+| **Superadmin** | Solo backoffice plataforma: dashboard multi-tienda, crear/pausar/activar tiendas, ver todos los usuarios (tienda, rol, detalle), crear **solo** admins de tienda y generar **reportes** por una/varias/todas las tiendas. **No** opera el ERP ni crea vendedor/almacen/contador (v1). |
+| **Admin de tienda** | Gestiona usuarios (roles operativos), ventas, stock, etc. de **su** tienda. |
+| **Login** | Email/password → entrada directa a la tienda del `profiles.store_id`. Sin selector. Superadmin → `/platform/dashboard`. |
 
-Hoy no existe `store_id` / `business_id`. Productos, contactos, ventas, compras, pagos, inventario, tasas y settings son compartidos en una sola “instancia lógica”.
+Reglas:
 
----
+- Toda tienda debe tener **≥ 1** admin al crearse.
+- Un usuario de tienda pertenece a **exactamente una** tienda (`profiles.store_id`).
+- Superadmin tiene `profiles.store_id = null` y rol `superadmin`.
 
-## Qué problema se quiere resolver
+## Datos
 
-Poder:
+- Tabla `stores` (`name`, `slug` único interno, `status` active|paused, `notes`).
+- `store_id` en: categories, products, contacts, sales, purchases, payments, stock_movements, supplier_products, exchange_rates, app_settings.
+- Uniques compuestos por tienda (SKU, factura, etc.).
+- Migración: tienda default `00000000-0000-4000-8000-000000000001` (`slug = default`) + backfill.
 
-1. Tener **varios negocios** (ej. bodegón A, ferretería B, snack C).
-2. **Aislar** catálogo, stock, clientes, caja y reportes por negocio (recomendado para negocios no emparentados).
-3. Como dueño, **cambiar de negocio** y ver solo datos de ese contexto.
-4. Opcionalmente, una vista “todos mis negocios” (dashboard agregado o listado).
+Patch: [`supabase/patches/20260716-multi-store.sql`](../supabase/patches/20260716-multi-store.sql).
 
-Sin:
+## Seguridad API
 
-- Invitaciones de usuarios por tienda.
-- Un vendedor que trabaja en dos locales con login único.
-- Facturación SaaS multi-cliente (otros dueños pagando suscripción).
+1. `requirePermission` — permisos de módulo; superadmin **solo** `platform.dashboard.view`, `platform.stores.*`, `platform.users.*` y `platform.reports.view`.
+2. `requireStorePermission` — exige `storeId` y **bloquea** superadmin en endpoints ERP.
+3. Servicios filtran por `store_id`; get/update con recurso de otra tienda → **403**.
+4. RLS: `store_id = current_user_store_id()`; tabla `stores` solo superadmin.
+5. RPCs security definer: `assert_store_context()` (mínimo en `adjust_stock`; ampliar en siguientes patches).
 
----
+## UI plataforma (Stitch)
 
-## Comparativa rápida de enfoques
+| Pantalla | Ruta |
+|----------|------|
+| Inicio (dashboard multi-tienda) | `/platform/dashboard` |
+| Gestión de Tiendas | `/platform/stores` |
+| Crear Nueva Tienda (página completa) | `/platform/stores/new` |
+| Detalle de Tienda | `/platform/stores/[id]` |
+| Usuarios (todas las tiendas) | `/platform/users` |
+| Detalle de usuario | `/platform/users/[id]` |
+| Nuevo admin de tienda | `/platform/users/new-admin` |
+| Reportes multi-tienda | `/platform/reports` |
 
-| # | Enfoque | Aislamiento | Complejidad | Encaje personal multi-negocio |
-|---|---------|-------------|-------------|-------------------------------|
-| A | Shared DB + `business_id` | Lógico (filas) | Media–alta | **Recomendado** |
-| B | Schema Postgres por negocio | Fuerte | Alta | Solo si hay requisitos legales extremos |
-| C | Proyecto Supabase por negocio | Muy fuerte | Muy alta (ops) | No conviene para un solo dueño |
-| D | “Copia” de deploy / `.env` por negocio | Fuerte | Baja en código, alta en operación | Útil solo temporalmente |
-| E | Soft multi-negocio (prefijos / tags) | Débil | Baja | **No recomendado** (fuga de datos fácil) |
+Módulo: `src/modules/platform/`. APIs: `/api/platform/home/*`, `/api/platform/stores`, `/api/platform/users`, `/api/platform/reports/[report]`.
 
----
+`POST /api/platform/users` crea **solo** rol `admin` para una tienda existente. No acepta otros roles.
 
-## Opción A — Shared DB + `business_id` (recomendada)
+Dashboard y reportes plataforma: query `storeScope=all|one|selected` y `storeIds` (CSV). Usa service role en Supabase.
 
-Una sola base Supabase. Una tabla `businesses` (o `stores`). Casi todas las tablas de negocio llevan `business_id`.
+## Fuera de v1
 
-### Modelo mental
+- Impersonación / operar ERP como superadmin
+- Selector de tienda post-login
+- URLs públicas por slug
+- Asignar admin existente / multi-membresía
+- Config global de plataforma
+- Comparativa side-by-side tienda vs tienda en dashboard
 
-```text
-auth.users (vos)
-    └── profiles (rol global: admin / superadmin)
-            └── session: business_id activo (cookie / claim / header)
+## Smoke aislamiento (mock)
 
-businesses
-    ├── products, categories, contacts, ...
-    ├── sales, purchases, payments, inventory_movements
-    └── exchange_rates / app_settings (por negocio o con defaults)
+```bash
+# Terminal con API_DATA_SOURCE=mock ALLOW_DEMO_AUTH=true
+npx jest src/lib/api/storeAccess.test.ts src/app/api/platform/stores src/app/api/platform/users src/app/api/platform/reports src/app/api/platform/home --no-coverage
 ```
 
-### Roles (sin membresías)
+Manual:
 
-Para tu caso personal bastan:
-
-| Rol | Comportamiento |
-|-----|----------------|
-| `superadmin` o `owner` | Lista todos los negocios; puede crear/activar negocios; elige cuál está activo |
-| `admin` (opcional) | Si más adelante hay ayuda, queda scoped; **ahora** el dueño puede ser siempre owner |
-
-Sin tabla `store_memberships`: el dueño ve todos los `businesses` porque es owner de la plataforma (o because `businesses.owner_user_id = auth.uid()`).
-
-### Ventajas
-
-- Un solo deploy, un solo login.
-- Superadmin / vista cruzada natural (sumar ventas de todos los negocios).
-- Migración desde el schema actual: crear un negocio “default”, backfill `business_id`, luego permitir el segundo.
-- Storage: `product-images/{businessId}/{productId}/cover.webp`.
-
-### Desventajas
-
-- Migración amplia: índices únicos pasan a `(business_id, sku)`, RLS y RPC deben filtrar.
-- Bug de filtrado = riesgo de mezclar datos entre negocios (mitigado con RLS).
-
-### Decisiones de producto dentro de A
-
-| Tema | Variante A1 (aislamiento total) | Variante A2 (compartir selectivo) |
-|------|----------------------------------|-----------------------------------|
-| Productos / categorías | Por negocio | Catálogo maestro compartido + stock por negocio |
-| Contactos | Por negocio | Contactos compartidos |
-| Tasa REF | Por negocio | Una tasa global |
-| Settings | Por negocio | Globales + overrides |
-
-Para negocios **distintos** (bodegón vs ferretería), **A1** es la más segura y simple de razonar.
-
-### UI mínima
-
-1. Tras login: si hay 1 negocio → entrar directo; si hay N → selector.
-2. Shell: chip “Negocio actual” + cambiar.
-3. Settings: alta de negocio (nombre, slug, activo).
-4. Todas las queries API reciben el negocio activo (cookie o header validado).
-
----
-
-## Opción B — Schema Postgres por negocio
-
-`business_bodegon`, `business_ferreteria`, mismas tablas en cada schema.
-
-| Pros | Contras |
-|------|---------|
-| Aislamiento fuerte a nivel SQL | Contener RPCs, migraciones y RLS N veces |
-| Menos riesgo de leak por query olvidada | Superadmin cross-negocio muy torpe |
-| | Supabase Auth/RLS y tooling son más dolorosos |
-
-**Cuándo:** compliance o auditoría que exija separación física de datos. **No** el camino natural de un proyecto personal.
-
----
-
-## Opción C — Proyecto / instancia Supabase por negocio
-
-Cada negocio = URL, anon key, service role distintos.
-
-| Pros | Contras |
-|------|---------|
-| Aislamiento máximo | Cambiar de negocio = cambiar entorno o app |
-| Fallo de un proyecto no tumba otros | N seeds, N patches, N backups |
-| | “Ver todos mis negocios” requiere un meta-panel aparte |
-
-**Cuándo:** negocios operados casi como productos separados. Para un solo dueño en una sola app, overhead alto.
-
----
-
-## Opción D — Varias apps / env por negocio (workaround)
-
-Misma codebase, varios deploys o varios `.env` apuntando a DBs distintas.
-
-| Pros | Contras |
-|------|---------|
-| Casi cero cambio de schema actual | No hay selector en la misma sesión |
-| Útil para probar “dos bodegones” ya | Duplicás usuarios, auth y mantenimiento |
-
-Puede servir como **puente temporal** mientras no se migra a A.
-
----
-
-## Opción E — Tags / prefijos sin `business_id` (evitar)
-
-Ej. SKU prefijado `BOD-` / `FER-` y filtros de UI.
-
-| Riesgo |
-|--------|
-| Un listado sin filtro mezcla inventario |
-| FK y reportes no garantizan aislamiento |
-| Deuda técnica que luego cuesta más que A |
-
----
-
-## Recomendación para este repo
-
-**Ir a la Opción A (shared DB + `business_id`), variante A1: aislamiento total por negocio, sin membresías.**
-
-Motivos alineados a tu uso:
-
-1. Un login, muchos negocios.
-2. Catálogos e inventarios independientes (negocios no relacionados).
-3. Dueño = quien crea y selecciona negocios (`owner_user_id` o rol platform).
-4. Misma stack actual (BFF Next + Supabase + RLS), evolucionando lo que ya existe.
-5. Deja abierta fase 2 (membresías / roles por tienda) sin rehacer el modelo.
-
-### Esqueleto de datos (borrador conceptual)
-
-```sql
--- Conceptual; no ejecutar aún
-create table public.businesses (
-  id uuid primary key default gen_random_uuid(),
-  owner_user_id uuid not null references auth.users(id),
-  name text not null,
-  slug text not null unique,
-  is_active boolean not null default true,
-  created_at timestamptz not null default now()
-);
-
--- En products, contacts, sales, ...:
--- business_id uuid not null references public.businesses(id)
--- unique (business_id, sku)
-```
-
-Sesión activa: cookie `business_id` o claim tras `POST /api/businesses/select`.
-
-### Qué habría que tocar (cuando se implemente)
-
-1. Patch SQL: `businesses` + `business_id` + backfill a un negocio default.
-2. RLS / RPC con filtro por negocio activo.
-3. Auth/`/api/auth/me`: lista de negocios + negocio activo.
-4. Shell: selector de negocio.
-5. Seeds, mocks, e2e bodegón parametrizados por negocio.
-6. Storage paths con prefijo de negocio.
-
----
-
-## Fuera de alcance (fase posterior)
-
-- Tabla `store_memberships` y “admin por tienda” con equipo.
-- Catálogo compartido entre negocios de una misma cadena.
-- SaaS multi-dueño (otros clientes con sus propios negocios).
-- Billing / límites por plan.
-
----
-
-## Checklist de decisión (antes de implementar)
-
-- [ ] ¿Cada negocio tiene su propia tasa REF?
-- [ ] ¿Se puede borrar / desactivar un negocio sin borrar histórico?
-- [ ] ¿El dashboard del dueño muestra KPIs cruzados o solo del negocio activo?
-- [ ] ¿El slug público importa (URLs `/b/bodegon/...`) o solo selector interno?
-- [ ] ¿Migrar mocks y e2e al mismo modelo desde el día 1?
-
----
-
-## Relación con docs actuales
-
-| Doc | Relación |
-|-----|----------|
-| [`database-design.md`](database-design.md) | Hoy single-tenant; A modifica el modelo relacional |
-| [`auth-permissions.md`](auth-permissions.md) | Falta rol/contexto de negocio activo |
-| [`supabase-schema-audit.md`](supabase-schema-audit.md) | RLS “authenticated read all” no sirve para multi-negocio |
-| [`plan-erp.md`](plan-erp.md) | Visión producto; este archivo añade eje multi-negocio |
-
-Cuando se elija implementar, conviene un plan de migración aparte (epic) basado en **Opción A / A1**, sin membresías.
+1. Demo role `superadmin` → `/platform/dashboard` (home) → filtro todas/una/seleccionadas.
+2. Superadmin → `/platform/stores` → crear tienda B con admin.
+3. Superadmin → `/platform/users` → ver usuarios cross-tienda y crear otro admin.
+4. Superadmin → `/platform/reports` → todas / una / seleccionadas.
+5. Demo role `admin` + store default → listar productos (solo tienda default).
+6. Superadmin no debe poder `GET /api/products` (403).

@@ -1,4 +1,4 @@
-# UI responsive — Control Ventas ERP
+# UI responsive — BodegaHub
 
 Contrato de breakpoints y patrones compartidos para móvil, tablet y desktop.
 

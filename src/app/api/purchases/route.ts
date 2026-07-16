@@ -3,7 +3,7 @@ import { z } from "zod";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
-import { requirePermission } from "@/lib/api/requirePermission";
+import { requireStorePermission } from "@/lib/api/requirePermission";
 import { purchaseItemInputSchema } from "@/modules/purchases/schemas/purchaseItem.schema";
 import * as purchasesMockServer from "@/modules/purchases/services/purchases.mock-server";
 import * as purchasesServer from "@/modules/purchases/services/purchases.server";
@@ -26,9 +26,9 @@ function getPurchasesService() {
 
 export async function GET(request: Request) {
   try {
-    await requirePermission(request, "purchases.view");
+    const auth = await requireStorePermission(request, "purchases.view");
     const service = getPurchasesService();
-    return jsonData(await service.listPurchases(new URL(request.url).searchParams));
+    return jsonData(await service.listPurchases(new URL(request.url).searchParams, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);
   }
@@ -36,10 +36,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await requirePermission(request, "purchases.create");
+    const auth = await requireStorePermission(request, "purchases.create");
     const input = createPurchaseSchema.parse(await request.json());
     const service = getPurchasesService();
-    return jsonCreated(await service.createPurchase(input));
+    return jsonCreated(await service.createPurchase(input, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);
   }

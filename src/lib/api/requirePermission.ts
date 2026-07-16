@@ -3,15 +3,27 @@ import { getAuthProfileFromSession } from "@/lib/supabase/auth/profile.server";
 import {
   getEffectivePermissions,
   hasEffectivePermission,
+  isPlatformPermission,
+  isSuperadminRole,
   isUserRole,
   type Permission,
   type UserRole,
 } from "@/shared/auth/permissions";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { mockUserProfiles, type UserProfileMock } from "@/shared/mocks/erp-data";
 
+import {
+  SUPERADMIN_ERP_FORBIDDEN_MESSAGE,
+  requireStoreId,
+  toStoreAuthContext,
+  type StoreAuthContext,
+} from "./storeAccess";
+
 export type ApiAuthContext = {
+  isSuperadmin: boolean;
   permissions: readonly Permission[];
   role: UserRole;
+  storeId: string | null;
   userId?: string;
 };
 
@@ -36,6 +48,7 @@ export function getDemoUserProfile(request: Request): UserProfileMock {
   }
 
   const role = getDemoRole(request);
+  const storeHeader = request.headers.get("x-demo-store-id");
 
   return {
     email: `${role}@example.com`,
@@ -43,10 +56,13 @@ export function getDemoUserProfile(request: Request): UserProfileMock {
     isActive: true,
     name: `Usuario ${role}`,
     role,
+    storeId: role === "superadmin" ? null : (storeHeader ?? DEFAULT_STORE_ID),
   };
 }
 
-function toPermissionProfile(profile: UserProfileMock | Awaited<ReturnType<typeof getAuthProfileFromSession>>) {
+function toPermissionProfile(
+  profile: UserProfileMock | Awaited<ReturnType<typeof getAuthProfileFromSession>>,
+) {
   if (!profile) {
     return null;
   }
@@ -56,6 +72,7 @@ function toPermissionProfile(profile: UserProfileMock | Awaited<ReturnType<typeo
     grantedPermissions: profile.grantedPermissions,
     role: profile.role,
     isActive: profile.isActive,
+    storeId: profile.storeId ?? null,
     userId: profile.id,
   };
 }
@@ -73,6 +90,7 @@ export async function resolveUserProfile(request: Request): Promise<UserProfileM
       isActive: sessionProfile.isActive,
       name: sessionProfile.name,
       role: sessionProfile.role,
+      storeId: sessionProfile.storeId,
     };
   }
 
@@ -101,9 +119,33 @@ export async function requirePermission(
     throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
   }
 
+  const isSuperadmin = isSuperadminRole(profile.role);
+
+  if (isSuperadmin && !isPlatformPermission(permission)) {
+    throw new ApiError(403, "FORBIDDEN", SUPERADMIN_ERP_FORBIDDEN_MESSAGE);
+  }
+
+  if (!isSuperadmin && isPlatformPermission(permission)) {
+    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+  }
+
   return {
+    isSuperadmin,
     permissions: getEffectivePermissions(profile),
     role: profile.role,
+    storeId: profile.storeId ?? null,
     userId: profile.userId,
   };
 }
+
+/** Permiso de modulo ERP + storeId obligatorio (bloquea superadmin). */
+export async function requireStorePermission(
+  request: Request,
+  permission: Permission,
+): Promise<StoreAuthContext> {
+  const auth = await requirePermission(request, permission);
+  return toStoreAuthContext(auth);
+}
+
+export { requireStoreId, toStoreAuthContext };
+export type { StoreAuthContext };

@@ -176,7 +176,7 @@ Detalle de flujo: [`auth-permissions.md`](auth-permissions.md).
 En desarrollo, si no hay sesión real, la API puede aceptar headers demo. `apiFetch` los añade desde `localStorage`:
 
 ```js
-localStorage.setItem("control-ventas:user-role", "vendedor");
+localStorage.setItem("bodega-hub:user-role", "vendedor");
 location.reload();
 ```
 

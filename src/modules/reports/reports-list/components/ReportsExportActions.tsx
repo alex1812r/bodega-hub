@@ -19,6 +19,11 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
   const [exportError, setExportError] = useState<string | null>(null);
 
   const isExporting = isExportingExcel || isExportingPdf;
+  const exportDisabled =
+    isExporting ||
+    (exportFilters.scope?.pathPrefix === "/api/platform/reports" &&
+      exportFilters.scope.enabled === false);
+
 
   async function handleExportExcel() {
     setIsExportingExcel(true);
@@ -57,7 +62,7 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
       <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
         <Button
           className="gap-2 border-outline-variant bg-surface-container-lowest hover:bg-surface-container-low"
-          disabled={isExporting}
+          disabled={exportDisabled}
           onClick={() => void handleExportPdf()}
           variant="outline"
         >
@@ -70,7 +75,7 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
         </Button>
         <Button
           className="gap-2 border-outline-variant bg-surface-container-lowest hover:bg-surface-container-low"
-          disabled={isExporting}
+          disabled={exportDisabled}
           onClick={() => void handleExportExcel()}
           variant="outline"
         >

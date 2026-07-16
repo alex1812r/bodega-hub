@@ -13,6 +13,7 @@ const privatePathPrefixes = [
   "/payments",
   "/reports",
   "/settings",
+  "/platform",
 ] as const;
 
 function isPrivatePath(pathname: string) {
@@ -103,6 +104,24 @@ export async function proxy(request: NextRequest) {
     }
   }
 
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle<{ role: string }>();
+    const isPlatformPath = pathname === "/platform" || pathname.startsWith("/platform/");
+    const isSuperadmin = profile?.role === "superadmin";
+
+    if (isPlatformPath && !isSuperadmin) {
+      return redirectTo(request, "/dashboard", response);
+    }
+
+    if (!isPlatformPath && isPrivatePath(pathname) && isSuperadmin) {
+      return redirectTo(request, "/platform/dashboard", response);
+    }
+  }
+
   const isDevToolkitEnabled =
     process.env.NODE_ENV === "development" ||
     process.env.ALLOW_DEMO_AUTH === "true" ||
@@ -120,6 +139,11 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    /*
+     * Exclude static assets and `/api/*` route handlers.
+     * Running the auth proxy on API paths is unnecessary (handlers auth themselves)
+     * and has coincided with Turbopack serving HTML 404s for registered routes.
+     */
+    "/((?!_next/static|_next/image|favicon.ico|api/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

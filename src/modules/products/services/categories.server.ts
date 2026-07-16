@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { parsePagination } from "@/lib/api/pagination";
 import { mapCategory, type CategoryRow } from "@/lib/supabase/mappers";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
@@ -8,10 +9,11 @@ import type { CategoryInput } from "./categories.mock-server";
 
 const categorySelect = "id, name, description, is_active, created_at, updated_at";
 
-function toCategoryInsert(input: CategoryInput) {
+function toCategoryInsert(input: CategoryInput, storeId: string) {
   return {
     description: input.description ?? null,
     name: input.name ?? "Categoria",
+    store_id: storeId,
   };
 }
 
@@ -23,7 +25,7 @@ function toCategoryUpdate(input: CategoryInput) {
   };
 }
 
-export async function listCategories(searchParams: URLSearchParams) {
+export async function listCategories(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
   const search = searchParams.get("search")?.trim();
@@ -32,6 +34,7 @@ export async function listCategories(searchParams: URLSearchParams) {
   let query = supabase
     .from("categories")
     .select(categorySelect, { count: "exact" })
+    .eq("store_id", storeId)
     .order("name", { ascending: true });
 
   // Sin filtro: solo activas (selectores de producto/POS). Admin pasa isActive=true|false|all via query.
@@ -57,12 +60,14 @@ export async function listCategories(searchParams: URLSearchParams) {
   };
 }
 
-export async function getCategoryById(id: string) {
+export async function getCategoryById(id: string, storeId: string) {
+  await assertSupabaseStoreResource("categories", id, storeId, "Categoria no encontrada.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("categories")
     .select(categorySelect)
     .eq("id", id)
+    .eq("store_id", storeId)
     .maybeSingle<CategoryRow>();
 
   throwIfSupabaseError(error);
@@ -74,11 +79,11 @@ export async function getCategoryById(id: string) {
   return mapCategory(data);
 }
 
-export async function createCategory(input: CategoryInput) {
+export async function createCategory(input: CategoryInput, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("categories")
-    .insert(toCategoryInsert(input))
+    .insert(toCategoryInsert(input, storeId))
     .select(categorySelect)
     .single<CategoryRow>();
 
@@ -91,12 +96,14 @@ export async function createCategory(input: CategoryInput) {
   return mapCategory(data);
 }
 
-export async function updateCategory(id: string, input: CategoryInput) {
+export async function updateCategory(id: string, input: CategoryInput, storeId: string) {
+  await assertSupabaseStoreResource("categories", id, storeId, "Categoria no encontrada.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("categories")
     .update(toCategoryUpdate(input))
     .eq("id", id)
+    .eq("store_id", storeId)
     .select(categorySelect)
     .maybeSingle<CategoryRow>();
 
@@ -109,12 +116,14 @@ export async function updateCategory(id: string, input: CategoryInput) {
   return mapCategory(data);
 }
 
-export async function deleteCategory(id: string) {
+export async function deleteCategory(id: string, storeId: string) {
+  await assertSupabaseStoreResource("categories", id, storeId, "Categoria no encontrada.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("categories")
     .update({ is_active: false })
     .eq("id", id)
+    .eq("store_id", storeId)
     .eq("is_active", true)
     .select(categorySelect)
     .maybeSingle<CategoryRow>();

@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { parsePagination, type PaginatedList } from "@/lib/api/pagination";
 import { getSupabaseErrorMessage, mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { mapBaseEntity, mapNullableString } from "@/lib/supabase/mappers";
@@ -231,7 +232,7 @@ function mapCreateSaleItems(items: NonNullable<SaleInput["items"]>) {
   }));
 }
 
-export async function listSales(searchParams: URLSearchParams): Promise<PaginatedList<ReturnType<typeof mapSaleRow> & {
+export async function listSales(searchParams: URLSearchParams, storeId: string): Promise<PaginatedList<ReturnType<typeof mapSaleRow> & {
   customer?: ReturnType<typeof mapContact>;
   itemsCount: number;
 }>> {
@@ -243,7 +244,8 @@ export async function listSales(searchParams: URLSearchParams): Promise<Paginate
     .select(
       "*, customer:contacts!sales_customer_id_fkey(id, name, type, email, phone, address), sale_items(count)",
       { count: "exact" },
-    );
+    )
+    .eq("store_id", storeId);
 
   const status = searchParams.get("status");
   if (status) {
@@ -290,7 +292,8 @@ export async function listSales(searchParams: URLSearchParams): Promise<Paginate
   };
 }
 
-export async function getSaleById(id: string) {
+export async function getSaleById(id: string, storeId: string) {
+  await assertSupabaseStoreResource("sales", id, storeId, "Venta no encontrada.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("sales")
@@ -314,7 +317,7 @@ export async function getSaleById(id: string) {
   };
 }
 
-export async function createSale(input: SaleInput) {
+export async function createSale(input: SaleInput, _storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.rpc("create_sale", {
     p_customer_id: input.customerId,
@@ -336,7 +339,8 @@ export async function createSale(input: SaleInput) {
   return mapSaleRow(data as SaleRow);
 }
 
-export async function updateSale(id: string, input: SaleUpdateInput) {
+export async function updateSale(id: string, input: SaleUpdateInput, storeId: string) {
+  await assertSupabaseStoreResource("sales", id, storeId, "Venta no encontrada.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("sales")
@@ -354,10 +358,11 @@ export async function updateSale(id: string, input: SaleUpdateInput) {
     throw new ApiError(404, "NOT_FOUND", "Venta no encontrada.");
   }
 
-  return getSaleById(data.id);
+  return getSaleById(data.id, storeId);
 }
 
-export async function cancelSale(id: string) {
+export async function cancelSale(id: string, storeId: string) {
+  await assertSupabaseStoreResource("sales", id, storeId, "Venta no encontrada.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.rpc("cancel_sale", {
     p_sale_id: id,
@@ -369,10 +374,11 @@ export async function cancelSale(id: string) {
     throw new ApiError(404, "NOT_FOUND", "Venta no encontrada.");
   }
 
-  return getSaleById((data as SaleRow).id);
+  return getSaleById((data as SaleRow).id, storeId);
 }
 
-export async function returnSale(id: string) {
+export async function returnSale(id: string, storeId: string) {
+  await assertSupabaseStoreResource("sales", id, storeId, "Venta no encontrada.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.rpc("return_sale", {
     p_sale_id: id,
@@ -384,7 +390,7 @@ export async function returnSale(id: string) {
     throw new ApiError(404, "NOT_FOUND", "Venta no encontrada.");
   }
 
-  const sale = await getSaleById((data as SaleRow).id);
+  const sale = await getSaleById((data as SaleRow).id, storeId);
   const { data: movements, error: movementsError } = await supabase
     .from("stock_movements")
     .select("id, product_id, type, quantity_delta, reason, sale_id, created_at")
@@ -402,8 +408,8 @@ export async function returnSale(id: string) {
   };
 }
 
-export async function getSaleReceipt(id: string) {
-  const sale = await getSaleById(id);
+export async function getSaleReceipt(id: string, storeId: string) {
+  const sale = await getSaleById(id, storeId);
 
   return {
     customer: sale.customer,

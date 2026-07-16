@@ -6,7 +6,7 @@ import { isDevToolkitEnabled } from "@/lib/api/dataSource";
 import { ApiDocsClient } from "./ApiDocsClient";
 
 export const metadata: Metadata = {
-  title: "API Docs | Control Ventas ERP",
+  title: "API Docs | BodegaHub",
   description: "Documentacion visual de la API REST interna.",
 };
 

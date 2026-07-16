@@ -1,4 +1,4 @@
-# Catálogo de módulos — Control Ventas ERP
+# Catálogo de módulos — BodegaHub
 
 Documento maestro (julio 2026) que describe **todos los módulos** del proyecto: rutas, permisos, pantallas, hooks, endpoints API, tablas Supabase y huecos conocidos.
 
@@ -20,6 +20,7 @@ Documentos relacionados:
 | Módulo | Rutas app | Permiso mínimo | Tablas principales |
 |--------|-----------|----------------|-------------------|
 | Auth | `/login`, `/` | — / sesión | `profiles`, `auth.users` |
+| Platform (superadmin) | `/platform/dashboard`, `/platform/stores`, `/platform/users`, `/platform/reports` | `platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view` | `stores`, `profiles`, vistas de reportes/dashboard |
 | Dashboard | `/dashboard` | `dashboard.view` | vistas agregadas, `sales`, `products` |
 | Productos | `/products`, `/products/[id]`, `/products/categories`, `/products/import` | `products.view` / `products.manage` | `products`, `categories`, `product_price_history` |
 | Inventario | `/inventory`, `/inventory/movements` | `inventory.view` / `inventory.manage` | `products`, `stock_movements` |
@@ -58,12 +59,18 @@ page.tsx (App Router)
 
 ## Auth
 
+Login, sesión y perfil. Roles: `superadmin`, `admin`, `vendedor`, `almacen`, `contador`.
+
 ### Rutas y permisos
 
 | Ruta | Guard | Descripción |
 |------|-------|-------------|
 | `/login` | Público | Formulario email/password |
-| `/` | Server redirect | Con sesión → `/dashboard`; sin sesión → `/login` |
+| `/` | Server redirect | Con sesión → home por rol; sin sesión → `/login` |
+| `/platform/dashboard` | `platform.dashboard.view` | Inicio multi-tienda (KPIs, tendencia, ventas, bajo stock) |
+| `/platform/stores*` | `platform.stores.*` | Backoffice tiendas (no opera ERP) |
+| `/platform/users*` | `platform.users.*` | Directorio usuarios + crear admin de tienda |
+| `/platform/reports` | `platform.reports.view` | Reportes multi-tienda (una / seleccionadas / todas) |
 
 ### Hooks y endpoints
 
@@ -71,13 +78,28 @@ page.tsx (App Router)
 |------|--------|----------|-------------------|
 | `useLogin` | POST | `/api/auth/login` | Body: `email`, `password` → cookies + `{ role, user }` |
 | `useLogout` | POST | `/api/auth/logout` | Limpia sesión y cache |
-| `useCurrentUser` | GET | `/api/auth/me` | `user`, `role`, `permissions`, `grantedPermissions`, `deniedPermissions` |
+| `useCurrentUser` | GET | `/api/auth/me` | `user`, `role`, `storeId`, `permissions`, overrides |
+
+### Platform (superadmin)
+
+| Ruta UI | Permiso | API |
+|---------|---------|-----|
+| `/platform/dashboard` | `platform.dashboard.view` | `GET /api/platform/home/*?storeScope=&storeIds=` |
+| `/platform/stores` | `platform.stores.view` | `GET /api/platform/stores` |
+| `/platform/stores/new` | `platform.stores.manage` | `POST /api/platform/stores` |
+| `/platform/stores/[id]` | `platform.stores.view` / `.manage` | `GET/PATCH /api/platform/stores/[id]` |
+| `/platform/users` | `platform.users.view` | `GET /api/platform/users` |
+| `/platform/users/[id]` | `platform.users.view` | `GET /api/platform/users/[id]` |
+| `/platform/users/new-admin` | `platform.users.manage` | `POST /api/platform/users` (solo rol `admin`) |
+| `/platform/reports` | `platform.reports.view` | `GET /api/platform/reports/[report]?storeScope=&storeIds=` |
+
+Módulo: `src/modules/platform/`. Aislamiento ERP: `requireStorePermission` + `store_id`. Ver [`multi-store-options.md`](multi-store-options.md).
 
 ### Flujo
 
 1. Usuario envía credenciales → BFF valida en Supabase Auth + `profiles.is_active`.
 2. Shell carga `useCurrentUser` → filtra menú con permisos efectivos.
-3. Cada request de negocio pasa `requirePermission` en el handler.
+3. Cada request de negocio pasa `requireStorePermission` (ERP) o `requirePermission` (plataforma).
 
 ### Pendiente
 
@@ -396,6 +418,6 @@ Schema: [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql).
 | DELETE contacto | No existe | Desactivar vía PATCH |
 | Venta borrador | No | `create_sale` → `pendiente_pago` |
 | MFA / registro / reset password | No | — |
-| Multitienda | No | Ver [`multi-store-options.md`](multi-store-options.md) |
+| Multitienda / superadmin | Sí (v1) | `/platform/dashboard`, `/platform/stores`, `/platform/users`, `/platform/reports` — ver [`multi-store-options.md`](multi-store-options.md) |
 | `POST /api/products/import/validate` | Opcional futuro | — |
 | Escaneo por cámara | No | Lector USB sí |

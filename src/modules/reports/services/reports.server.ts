@@ -1,7 +1,32 @@
 import { paginateList, parsePagination, type PaginatedList } from "@/lib/api/pagination";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { mapNullableString } from "@/lib/supabase/mappers";
+
+import { normalizeStoreIds } from "./storeScope";
+
+export type ReportQueryOptions = {
+  /** Usa service role (necesario para superadmin / multi-tienda). */
+  useAdmin?: boolean;
+};
+
+async function getReportsClient(options?: ReportQueryOptions) {
+  return options?.useAdmin ? createAdminSupabaseClient() : await createRouteSupabaseClient();
+}
+
+function applyStoreIdsFilter<
+  T extends {
+    eq: (col: string, val: string) => T;
+    in: (col: string, vals: string[]) => T;
+  },
+>(query: T, storeIds: string[]) {
+  if (storeIds.length === 1) {
+    return query.eq("store_id", storeIds[0]!);
+  }
+
+  return query.in("store_id", storeIds);
+}
 
 type DbProduct = {
   category_id: string | null;
@@ -236,29 +261,32 @@ async function listView<T>(
   view: string,
   searchParams: URLSearchParams,
   mapRow: (row: never) => T,
-  options?: {
+  options: {
     dateColumn?: string;
     order?: { ascending?: boolean; column: string };
     productIdColumn?: string;
+    storeIds: string[];
+    useAdmin?: boolean;
   },
 ): Promise<PaginatedList<T>> {
   const { limit, skip } = parsePagination(searchParams);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
   const productId = searchParams.get("productId");
-  const supabase = await createRouteSupabaseClient();
+  const supabase = await getReportsClient(options);
 
   let query = supabase.from(view).select("*", { count: "exact" });
+  query = applyStoreIdsFilter(query, options.storeIds);
 
-  if (options?.dateColumn) {
+  if (options.dateColumn) {
     query = applyDateColumnRange(query, options.dateColumn, from, to);
   }
 
-  if (options?.productIdColumn && productId) {
+  if (options.productIdColumn && productId) {
     query = query.eq(options.productIdColumn, productId);
   }
 
-  if (options?.order) {
+  if (options.order) {
     query = query.order(options.order.column, { ascending: options.order.ascending ?? true });
   }
 
@@ -273,33 +301,57 @@ async function listView<T>(
   };
 }
 
-export async function getDailySalesReport(searchParams: URLSearchParams) {
+export async function getDailySalesReport(
+  searchParams: URLSearchParams,
+  storeIdOrIds: string | string[],
+  options?: ReportQueryOptions,
+) {
   return listView("daily_sales_summary", searchParams, mapDailySalesRow, {
     dateColumn: "sale_date",
     order: { column: "sale_date", ascending: false },
+    storeIds: normalizeStoreIds(storeIdOrIds),
+    useAdmin: options?.useAdmin,
   });
 }
 
-export async function getGrossProfitReport(searchParams: URLSearchParams) {
+export async function getGrossProfitReport(
+  searchParams: URLSearchParams,
+  storeIdOrIds: string | string[],
+  options?: ReportQueryOptions,
+) {
   return listView("gross_profit_summary", searchParams, mapGrossProfitRow, {
     dateColumn: "sale_date",
     order: { column: "sale_date", ascending: false },
+    storeIds: normalizeStoreIds(storeIdOrIds),
+    useAdmin: options?.useAdmin,
   });
 }
 
-export async function getProductProfitabilityReport(searchParams: URLSearchParams) {
+export async function getProductProfitabilityReport(
+  searchParams: URLSearchParams,
+  storeIdOrIds: string | string[],
+  options?: ReportQueryOptions,
+) {
   return listView("product_profitability", searchParams, mapProductProfitabilityRow, {
     order: { column: "gross_profit_ref", ascending: false },
+    storeIds: normalizeStoreIds(storeIdOrIds),
+    useAdmin: options?.useAdmin,
   });
 }
 
-export async function getLowStockReport(searchParams: URLSearchParams) {
+export async function getLowStockReport(
+  searchParams: URLSearchParams,
+  storeIdOrIds: string | string[],
+  options?: ReportQueryOptions,
+) {
+  const storeIds = normalizeStoreIds(storeIdOrIds);
   const { limit, skip } = parsePagination(searchParams);
-  const supabase = await createRouteSupabaseClient();
+  const supabase = await getReportsClient(options);
 
-  const { data, error, count } = await supabase
-    .from("low_stock_products")
-    .select("*", { count: "exact" })
+  let query = supabase.from("low_stock_products").select("*", { count: "exact" });
+  query = applyStoreIdsFilter(query, storeIds);
+
+  const { data, error, count } = await query
     .order("name", { ascending: true })
     .range(skip, skip + limit - 1);
 
@@ -313,35 +365,58 @@ export async function getLowStockReport(searchParams: URLSearchParams) {
   };
 }
 
-export async function getStockCard(searchParams: URLSearchParams) {
+export async function getStockCard(
+  searchParams: URLSearchParams,
+  storeIdOrIds: string | string[],
+  options?: ReportQueryOptions,
+) {
   return listView("stock_card", searchParams, mapStockCardRow, {
     order: { column: "created_at", ascending: false },
     productIdColumn: "product_id",
+    storeIds: normalizeStoreIds(storeIdOrIds),
+    useAdmin: options?.useAdmin,
   });
 }
 
-export async function getCustomerPurchasesReport(searchParams: URLSearchParams) {
+export async function getCustomerPurchasesReport(
+  searchParams: URLSearchParams,
+  storeIdOrIds: string | string[],
+  options?: ReportQueryOptions,
+) {
   return listView("customer_purchase_summary", searchParams, mapCustomerPurchaseRow, {
     order: { column: "total_ves", ascending: false },
+    storeIds: normalizeStoreIds(storeIdOrIds),
+    useAdmin: options?.useAdmin,
   });
 }
 
-export async function getSupplierPurchasesReport(searchParams: URLSearchParams) {
+export async function getSupplierPurchasesReport(
+  searchParams: URLSearchParams,
+  storeIdOrIds: string | string[],
+  options?: ReportQueryOptions,
+) {
   return listView("supplier_purchase_summary", searchParams, mapSupplierPurchaseRow, {
     order: { column: "total_ves", ascending: false },
+    storeIds: normalizeStoreIds(storeIdOrIds),
+    useAdmin: options?.useAdmin,
   });
 }
 
-export async function getTopProductsReport(searchParams: URLSearchParams) {
+export async function getTopProductsReport(
+  searchParams: URLSearchParams,
+  storeIdOrIds: string | string[],
+  options?: ReportQueryOptions,
+) {
+  const storeIds = normalizeStoreIds(storeIdOrIds);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
-  const supabase = await createRouteSupabaseClient();
+  const supabase = await getReportsClient(options);
 
   let salesQuery = supabase
     .from("sales")
     .select("id")
     .in("status", ["borrador", "pagada", "pendiente_pago"]);
-
+  salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
   salesQuery = applyCreatedAtRange(salesQuery, from, to);
 
   const { data: sales, error: salesError } = await salesQuery;
@@ -398,16 +473,21 @@ export async function getTopProductsReport(searchParams: URLSearchParams) {
   return paginateList(ranked, searchParams);
 }
 
-export async function getTopCustomersReport(searchParams: URLSearchParams) {
+export async function getTopCustomersReport(
+  searchParams: URLSearchParams,
+  storeIdOrIds: string | string[],
+  options?: ReportQueryOptions,
+) {
+  const storeIds = normalizeStoreIds(storeIdOrIds);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
-  const supabase = await createRouteSupabaseClient();
+  const supabase = await getReportsClient(options);
 
   let salesQuery = supabase
     .from("sales")
     .select("customer_id, total_ref, total_ves")
     .in("status", ["borrador", "pagada", "pendiente_pago"]);
-
+  salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
   salesQuery = applyCreatedAtRange(salesQuery, from, to);
 
   const { data: sales, error: salesError } = await salesQuery;
@@ -456,14 +536,20 @@ export async function getTopCustomersReport(searchParams: URLSearchParams) {
   return paginateList(ranked, searchParams);
 }
 
-export async function getPurchasesReport(searchParams: URLSearchParams) {
+export async function getPurchasesReport(
+  searchParams: URLSearchParams,
+  storeIdOrIds: string | string[],
+  options?: ReportQueryOptions,
+) {
+  const storeIds = normalizeStoreIds(storeIdOrIds);
   const from = searchParams.get("from");
   const supplierId = searchParams.get("supplierId");
   const to = searchParams.get("to");
   const { limit, skip } = parsePagination(searchParams);
-  const supabase = await createRouteSupabaseClient();
+  const supabase = await getReportsClient(options);
 
   let query = supabase.from("purchases").select("*", { count: "exact" });
+  query = applyStoreIdsFilter(query, storeIds);
 
   if (supplierId) {
     query = query.eq("supplier_id", supplierId);

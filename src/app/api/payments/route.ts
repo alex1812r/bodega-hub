@@ -3,7 +3,7 @@ import { z } from "zod";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
-import { requirePermission } from "@/lib/api/requirePermission";
+import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as paymentsMockServer from "@/modules/payments/services/payments.mock-server";
 import * as paymentsServer from "@/modules/payments/services/payments.server";
 
@@ -88,9 +88,9 @@ function getPaymentsService() {
 
 export async function GET(request: Request) {
   try {
-    await requirePermission(request, "payments.view");
+    const auth = await requireStorePermission(request, "payments.view");
     const service = getPaymentsService();
-    return jsonData(await service.listPayments(new URL(request.url).searchParams));
+    return jsonData(await service.listPayments(new URL(request.url).searchParams, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);
   }
@@ -98,10 +98,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await requirePermission(request, "payments.manage");
+    const auth = await requireStorePermission(request, "payments.manage");
     const input = createPaymentSchema.parse(await request.json());
     const service = getPaymentsService();
-    return jsonCreated(await service.createPayment(input));
+    return jsonCreated(await service.createPayment(input, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);
   }

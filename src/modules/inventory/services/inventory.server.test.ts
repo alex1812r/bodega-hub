@@ -6,6 +6,7 @@ jest.mock("../../../lib/supabase/route-client");
 
 import { mapStockMovement } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import {
   createStockAdjustment,
@@ -83,7 +84,10 @@ describe("inventory.server", () => {
       from: jest.fn().mockReturnValue(builder),
     });
 
-    const result = await listInventory(new URLSearchParams("lowStock=true&skip=0&limit=10"));
+    const result = await listInventory(
+      new URLSearchParams("lowStock=true&skip=0&limit=10"),
+      DEFAULT_STORE_ID,
+    );
 
     expect(result.total).toBe(1);
     expect(result.items[0]).toEqual(expect.objectContaining({ sku: "ele-cab-001" }));
@@ -102,6 +106,7 @@ describe("inventory.server", () => {
 
     const result = await listStockMovements(
       new URLSearchParams("productId=22222222-2222-4222-8222-222222222222"),
+      DEFAULT_STORE_ID,
     );
 
     expect(builder.eq).toHaveBeenCalledWith(
@@ -131,6 +136,7 @@ describe("inventory.server", () => {
       new URLSearchParams(
         "type=venta&from=2026-05-01&to=2026-05-31&skip=0&limit=10",
       ),
+      DEFAULT_STORE_ID,
     );
 
     expect(builder.eq).toHaveBeenCalledWith("type", "venta");
@@ -166,6 +172,7 @@ describe("inventory.server", () => {
 
     const result = await getStockCard(
       new URLSearchParams("productId=22222222-2222-4222-8222-222222222222"),
+      DEFAULT_STORE_ID,
     );
 
     expect(result.items[0]).toEqual(
@@ -181,12 +188,15 @@ describe("inventory.server", () => {
 
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
 
-    const result = await createStockAdjustment({
-      productId: movementRow.product_id,
-      quantityDelta: 3,
-      reason: "Conteo fisico",
-      type: "ajuste_entrada",
-    });
+    const result = await createStockAdjustment(
+      {
+        productId: movementRow.product_id,
+        quantityDelta: 3,
+        reason: "Conteo fisico",
+        type: "ajuste_entrada",
+      },
+      DEFAULT_STORE_ID,
+    );
 
     expect(rpc).toHaveBeenCalledWith("adjust_stock", {
       p_product_id: movementRow.product_id,
@@ -207,10 +217,13 @@ describe("inventory.server", () => {
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
 
     await expect(
-      createStockAdjustment({
-        productId: movementRow.product_id,
-        quantityDelta: -99,
-      }),
+      createStockAdjustment(
+        {
+          productId: movementRow.product_id,
+          quantityDelta: -99,
+        },
+        DEFAULT_STORE_ID,
+      ),
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
       status: 400,

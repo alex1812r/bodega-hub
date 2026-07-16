@@ -1,4 +1,4 @@
-/** Shared field styles aligned with BodegaSync / Stitch form controls. */
+/** Shared field styles aligned with BodegaHub / Stitch form controls. */
 
 /** Listados y POS: fondo `bg-surface` como el buscador del catálogo. */
 export const stitchListFilterFieldClassName =

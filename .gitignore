@@ -26,11 +26,22 @@ scripts/smoke-post-patches-last-run.json
 .DS_Store
 *.pem
 
-# Stitch / design scratch exports (keep docs/stitch-prompts)
+# Stitch / design scratch (HTML exports, prompts, MCP local)
 .stitch-*.html
 .tmp-*
 .cursor/stitch-*-snippet.html
 .cursor/mcp.json
+.cursor/plans/
+docs/stitch-prompts/
+docs/stitch-design-checklist.md
+docs/stitch-theming.md
+
+# Supplier catalog scratch / raw imports (local only)
+scripts/**/catalogo.json
+scripts/**/catalogo_packs.json
+scripts/**/raw_data.txt
+scripts/**/raw-data.txt
+scripts/**/raw*.txt
 
 # debug
 npm-debug.log*

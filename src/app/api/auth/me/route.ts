@@ -22,6 +22,7 @@ export async function GET(request: Request) {
       permissions: getEffectivePermissions(profile),
       role: profile.role,
       roles: userRoles,
+      storeId: profile.storeId ?? null,
       user: {
         email: profile.email,
         id: profile.id,

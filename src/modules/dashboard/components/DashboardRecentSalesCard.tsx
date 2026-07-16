@@ -6,25 +6,42 @@ import { LoadingState } from "@/shared/components/LoadingState";
 import { formatRef } from "@/shared/utils/currency";
 import { DATE_FORMATS, formatDate } from "@/shared/utils/date";
 
-import { useDashboardRecentSales } from "../hooks/useDashboard";
+import {
+  type DashboardRequestScope,
+  useDashboardRecentSales,
+} from "../hooks/useDashboard";
 import { SaleStatusBadge } from "./saleStatusBadge";
 
 const RECENT_SALES_LIMIT = 4;
 
-export function DashboardRecentSalesCard() {
-  const recentSales = useDashboardRecentSales({ limit: RECENT_SALES_LIMIT, skip: 0 });
+type DashboardRecentSalesCardProps = {
+  scope?: DashboardRequestScope;
+  showStore?: boolean;
+  viewAllHref?: string;
+  viewAllLabel?: string;
+};
+
+export function DashboardRecentSalesCard({
+  scope,
+  showStore = false,
+  viewAllHref = "/sales",
+  viewAllLabel = "Ver todas",
+}: DashboardRecentSalesCardProps = {}) {
+  const recentSales = useDashboardRecentSales({ limit: RECENT_SALES_LIMIT, skip: 0 }, scope);
   const rows = recentSales.data?.items ?? [];
 
   return (
     <div className="flex w-full min-w-0 flex-col rounded-xl border border-border bg-surface-container-lowest p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-foreground">Ventas recientes</h2>
-        <Link
-          className="text-sm font-medium text-primary no-underline hover:text-indigo-700"
-          href="/sales"
-        >
-          Ver todas
-        </Link>
+        {viewAllHref ? (
+          <Link
+            className="text-sm font-medium text-primary no-underline hover:text-indigo-700"
+            href={viewAllHref}
+          >
+            {viewAllLabel}
+          </Link>
+        ) : null}
       </div>
 
       {recentSales.isLoading ? (
@@ -44,6 +61,7 @@ export function DashboardRecentSalesCard() {
               <tr className="border-b border-border/50 text-muted-foreground">
                 <th className="px-2 py-3 font-medium">Ref</th>
                 <th className="px-2 py-3 font-medium">Hora</th>
+                {showStore ? <th className="px-2 py-3 font-medium">Tienda</th> : null}
                 <th className="px-2 py-3 font-medium">Cliente</th>
                 <th className="px-2 py-3 text-right font-medium">Monto (REF)</th>
                 <th className="px-2 py-3 text-center font-medium">Estado</th>
@@ -59,6 +77,20 @@ export function DashboardRecentSalesCard() {
                   <td className="px-2 py-3 text-muted-foreground">
                     {formatDate(sale.createdAt, DATE_FORMATS.time)}
                   </td>
+                  {showStore ? (
+                    <td className="px-2 py-3 text-muted-foreground">
+                      {sale.storeId ? (
+                        <Link
+                          className="text-primary hover:underline"
+                          href={`/platform/stores/${sale.storeId}`}
+                        >
+                          {sale.storeName ?? "Tienda"}
+                        </Link>
+                      ) : (
+                        (sale.storeName ?? "—")
+                      )}
+                    </td>
+                  ) : null}
                   <td className="px-2 py-3 text-foreground">{sale.customerName}</td>
                   <td className="px-2 py-3 text-right font-medium text-foreground">
                     {formatRef(sale.totalRef)}

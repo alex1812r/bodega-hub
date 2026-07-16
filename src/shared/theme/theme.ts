@@ -1,4 +1,4 @@
-export const themeStorageKey = "control-ventas:theme";
+export const themeStorageKey = "bodega-hub:theme";
 
 export const themes = ["light", "dark"] as const;
 

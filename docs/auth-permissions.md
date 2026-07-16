@@ -15,35 +15,43 @@ Ver [`frontend-api-guide.md`](frontend-api-guide.md#autenticación-y-permisos) y
 
 ## Roles Iniciales
 
-- `admin`: acceso total al ERP, configuracion y gestion de usuarios.
+- `superadmin`: solo backoffice plataforma (`platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view`). Home en `/platform/dashboard`. Puede ver usuarios de todas las tiendas, crear **solo** admins y generar reportes/KPIs multi-tienda. No opera el ERP ni crea otros roles.
+- `admin`: acceso total al ERP de **su** tienda (sin permisos `platform.*`).
 - `vendedor`: acceso a ventas y datos necesarios para vender.
 - `almacen`: acceso a compras, productos e inventario.
 - `contador`: acceso a pagos, reportes y lectura contable.
 
-La fuente de verdad de **definición** de permisos en frontend está en `src/shared/auth/permissions.ts`. La fuente de verdad de **perfil activo** es `GET /api/auth/me` consumido por `useCurrentUser` en el shell.
+Cada usuario de tienda tiene `profiles.store_id`. Superadmin tiene `store_id = null`.
+
+La fuente de verdad de **definición** de permisos en frontend está en `src/shared/auth/permissions.ts`. La fuente de verdad de **perfil activo** es `GET /api/auth/me` (incluye `storeId`) consumido por `useCurrentUser` en el shell.
+
+Ver también [`multi-store-options.md`](multi-store-options.md).
 
 ## Modo demo (solo desarrollo)
 
 Con sesión real, el shell usa el perfil de `/api/auth/me`. Para probar otro rol **sin** login (solo `ALLOW_DEMO_AUTH=true`):
 
 ```js
-localStorage.setItem("control-ventas:user-role", "vendedor");
+localStorage.setItem("bodega-hub:user-role", "vendedor");
 location.reload();
 ```
 
 Valores válidos:
 
+- `superadmin`
 - `admin`
 - `vendedor`
 - `almacen`
 - `contador`
+
+Opcional: `localStorage.setItem("bodega-hub:demo-store-id", "<uuid>")` → header `x-demo-store-id`.
 
 `apiFetch` envía `x-demo-role` y `x-demo-user-id` si existen en `localStorage`. **No usar esto en producción.**
 
 Para volver al acceso completo en demo:
 
 ```js
-localStorage.setItem("control-ventas:user-role", "admin");
+localStorage.setItem("bodega-hub:user-role", "admin");
 location.reload();
 ```
 
@@ -91,6 +99,8 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | `reports.view` | Si | No | No | Si |
 | `settings.view` | Si | No | No | No |
 | `users.manage` | Si | No | No | No |
+
+Permisos de plataforma (`platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view`): solo `superadmin`. Los roles de tienda no los tienen.
 
 ## Permisos Efectivos Por Usuario
 

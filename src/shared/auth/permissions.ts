@@ -1,8 +1,9 @@
-export const userRoles = ["admin", "vendedor", "almacen", "contador"] as const;
+export const userRoles = ["superadmin", "admin", "vendedor", "almacen", "contador"] as const;
 
 export type UserRole = (typeof userRoles)[number];
 
 export const roleLabels: Record<UserRole, string> = {
+  superadmin: "Superadmin",
   admin: "Administrador",
   vendedor: "Vendedor",
   almacen: "Almacen",
@@ -26,6 +27,12 @@ export const permissions = [
   "reports.view",
   "settings.view",
   "users.manage",
+  "platform.stores.view",
+  "platform.stores.manage",
+  "platform.users.view",
+  "platform.users.manage",
+  "platform.reports.view",
+  "platform.dashboard.view",
 ] as const;
 
 export type Permission = (typeof permissions)[number];
@@ -36,8 +43,17 @@ export type PermissionProfile = {
   role: UserRole;
 };
 
+const storePermissions = permissions.filter(
+  (permission) => !permission.startsWith("platform."),
+) as Permission[];
+
+const platformPermissions = permissions.filter((permission) =>
+  permission.startsWith("platform."),
+) as Permission[];
+
 export const rolePermissions: Record<UserRole, readonly Permission[]> = {
-  admin: permissions,
+  superadmin: platformPermissions,
+  admin: storePermissions,
   vendedor: [
     "dashboard.view",
     "sales.view",
@@ -79,8 +95,12 @@ export function getRolePermissions(role: UserRole) {
 }
 
 export function getEffectivePermissions(profile: PermissionProfile) {
+  if (profile.role === "superadmin") {
+    return [...rolePermissions.superadmin];
+  }
+
   if (profile.role === "admin") {
-    return permissions;
+    return [...storePermissions];
   }
 
   const effectivePermissions = new Set<Permission>([
@@ -101,4 +121,12 @@ export function hasEffectivePermission(profile: PermissionProfile, permission: P
 
 export function hasPermission(role: UserRole, permission: Permission) {
   return getRolePermissions(role).includes(permission);
+}
+
+export function isSuperadminRole(role: UserRole) {
+  return role === "superadmin";
+}
+
+export function isPlatformPermission(permission: Permission) {
+  return permission.startsWith("platform.");
 }

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
-import { requirePermission } from "@/lib/api/requirePermission";
+import { requireStorePermission } from "@/lib/api/requirePermission";
 import {
   createSale as createSaleMock,
   listSales as listSalesMock,
@@ -32,12 +32,12 @@ const createSaleSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    await requirePermission(request, "sales.view");
+    const auth = await requireStorePermission(request, "sales.view");
     const searchParams = new URL(request.url).searchParams;
     const data =
       resolveDataSource() === "supabase"
-        ? await listSalesServer(searchParams)
-        : listSalesMock(searchParams);
+        ? await listSalesServer(searchParams, auth.storeId)
+        : listSalesMock(searchParams, auth.storeId);
 
     return jsonData(data);
   } catch (error) {
@@ -47,12 +47,12 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await requirePermission(request, "sales.create");
+    const auth = await requireStorePermission(request, "sales.create");
     const input = createSaleSchema.parse(await request.json());
     const data =
       resolveDataSource() === "supabase"
-        ? await createSaleServer(input)
-        : createSaleMock(input);
+        ? await createSaleServer(input, auth.storeId)
+        : createSaleMock(input, auth.storeId);
 
     return jsonCreated(data);
   } catch (error) {

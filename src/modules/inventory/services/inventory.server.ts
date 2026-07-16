@@ -1,3 +1,4 @@
+import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList, parsePagination } from "@/lib/api/pagination";
 import {
   mapCategory,
@@ -54,7 +55,7 @@ const stockMovementSelect = `
 const stockCardSelect =
   "id, product_id, sku, product_name, type, quantity_delta, stock_after, sale_id, purchase_id, reason, created_by, created_at";
 
-export async function listInventory(searchParams: URLSearchParams) {
+export async function listInventory(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const filters = parseInventoryListFilters(searchParams);
   const needsInMemoryPagination =
@@ -68,6 +69,7 @@ export async function listInventory(searchParams: URLSearchParams) {
     .select(productInventorySelect, {
       count: needsInMemoryPagination ? undefined : "exact",
     })
+    .eq("store_id", storeId)
     .order("name", { ascending: true });
 
   if (!filters.lowStock) {
@@ -115,7 +117,7 @@ export async function listInventory(searchParams: URLSearchParams) {
   };
 }
 
-export async function listStockMovements(searchParams: URLSearchParams) {
+export async function listStockMovements(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
   const filters = parseInventoryMovementFilters(searchParams);
@@ -123,6 +125,7 @@ export async function listStockMovements(searchParams: URLSearchParams) {
   let query = supabase
     .from("stock_movements")
     .select(stockMovementSelect, { count: "exact" })
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false });
 
   if (filters.productId) {
@@ -153,7 +156,7 @@ export async function listStockMovements(searchParams: URLSearchParams) {
   };
 }
 
-export async function getStockCard(searchParams: URLSearchParams) {
+export async function getStockCard(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
   const productId = searchParams.get("productId");
@@ -161,6 +164,7 @@ export async function getStockCard(searchParams: URLSearchParams) {
   let query = supabase
     .from("stock_card")
     .select(stockCardSelect, { count: "exact" })
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false });
 
   if (productId) {
@@ -179,12 +183,16 @@ export async function getStockCard(searchParams: URLSearchParams) {
   };
 }
 
-export async function createStockAdjustment(input: {
-  productId: string;
-  quantityDelta: number;
-  reason?: string;
-  type?: StockMovementType;
-}) {
+export async function createStockAdjustment(
+  input: {
+    productId: string;
+    quantityDelta: number;
+    reason?: string;
+    type?: StockMovementType;
+  },
+  storeId: string,
+) {
+  await assertSupabaseStoreResource("products", input.productId, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.rpc("adjust_stock", {
     p_product_id: input.productId,

@@ -75,6 +75,7 @@ describe("/api/exchange-rates", () => {
   describe("supabase data source", () => {
     const mockRange = jest.fn();
     const mockSelect = jest.fn(() => ({
+      eq: jest.fn().mockReturnThis(),
       gte: jest.fn().mockReturnThis(),
       lte: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnThis(),
@@ -167,6 +168,7 @@ describe("/api/exchange-rates", () => {
           created_by: "user-admin",
           rate_ves: 512,
           source: "Manual",
+          store_id: "00000000-0000-4000-8000-000000000001",
         }),
       );
     });

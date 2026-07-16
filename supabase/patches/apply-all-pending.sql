@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Aplicar TODOS los patches pendientes (orden cronologico)
--- Proyecto: Control Ventas ERP
+-- Proyecto: BodegaHub
 -- Uso: pegar en Supabase Dashboard → SQL Editor → Run
 -- Idempotente: se puede re-ejecutar sin romper datos existentes.
 -- Ver: docs/supabase-setup.md (seccion patches)
@@ -146,3 +146,10 @@ to public
 using (bucket_id = 'product-images');
 
 notify pgrst, 'reload schema';
+
+-- -----------------------------------------------------------------------------
+-- 20260716 — multitienda (stores + store_id + superadmin)
+-- -----------------------------------------------------------------------------
+-- Ejecutar por separado el archivo completo:
+--   supabase/patches/20260716-multi-store.sql
+-- (demasiado largo para incrustar aqui; el SQL Editor de Supabase no soporta \i)

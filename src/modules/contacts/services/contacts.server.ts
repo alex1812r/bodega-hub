@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { mapContact } from "@/lib/supabase/mappers/contacts";
@@ -48,13 +49,13 @@ function applyContactTypeFilter<T extends { eq: (column: string, value: string) 
   return query.eq("type", type);
 }
 
-export async function listContacts(searchParams: URLSearchParams) {
+export async function listContacts(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const type = searchParams.get("type");
   const search = searchParams.get("search")?.trim();
   const { skip, to } = getPaginationRange(searchParams);
 
-  let query = supabase.from("contacts").select("*", { count: "exact" });
+  let query = supabase.from("contacts").select("*", { count: "exact" }).eq("store_id", storeId);
 
   query = applyContactTypeFilter(query, type);
 
@@ -68,7 +69,8 @@ export async function listContacts(searchParams: URLSearchParams) {
   return toPaginatedList(searchParams, result, mapContact);
 }
 
-export async function getContactById(id: string) {
+export async function getContactById(id: string, storeId: string) {
+  await assertSupabaseStoreResource("contacts", id, storeId, "Contacto no encontrado.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.from("contacts").select("*").eq("id", id).single();
 
@@ -77,7 +79,7 @@ export async function getContactById(id: string) {
   return mapContact(data);
 }
 
-export async function createContact(input: ContactInput) {
+export async function createContact(input: ContactInput, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("contacts")
@@ -86,6 +88,7 @@ export async function createContact(input: ContactInput) {
       email: input.email ?? null,
       name: input.name ?? "Contacto",
       phone: input.phone ?? null,
+      store_id: storeId,
       tax_id: input.taxId ?? null,
       type: input.type ?? "cliente",
     })
@@ -101,7 +104,8 @@ export async function createContact(input: ContactInput) {
   return mapContact(data);
 }
 
-export async function updateContact(id: string, input: ContactInput) {
+export async function updateContact(id: string, input: ContactInput, storeId: string) {
+  await assertSupabaseStoreResource("contacts", id, storeId, "Contacto no encontrado.");
   const supabase = await createRouteSupabaseClient();
   const payload: Record<string, string | null | undefined> = {};
 
@@ -128,12 +132,12 @@ export async function updateContact(id: string, input: ContactInput) {
   return mapContact(data);
 }
 
-async function ensureContactExists(id: string) {
-  await getContactById(id);
+async function ensureContactExists(id: string, storeId: string) {
+  await getContactById(id, storeId);
 }
 
-export async function getContactSales(id: string, searchParams: URLSearchParams) {
-  await ensureContactExists(id);
+export async function getContactSales(id: string, searchParams: URLSearchParams, storeId: string) {
+  await ensureContactExists(id, storeId);
 
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
@@ -141,14 +145,15 @@ export async function getContactSales(id: string, searchParams: URLSearchParams)
     .from("sales")
     .select("*", { count: "exact" })
     .eq("customer_id", id)
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false })
     .range(skip, to);
 
   return toPaginatedList(searchParams, result as { count: number | null; data: DbSaleRow[] | null; error: unknown }, mapSale);
 }
 
-export async function getContactPurchases(id: string, searchParams: URLSearchParams) {
-  await ensureContactExists(id);
+export async function getContactPurchases(id: string, searchParams: URLSearchParams, storeId: string) {
+  await ensureContactExists(id, storeId);
 
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
@@ -156,6 +161,7 @@ export async function getContactPurchases(id: string, searchParams: URLSearchPar
     .from("purchases")
     .select("*", { count: "exact" })
     .eq("supplier_id", id)
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false })
     .range(skip, to);
 
@@ -166,8 +172,8 @@ export async function getContactPurchases(id: string, searchParams: URLSearchPar
   );
 }
 
-export async function getContactPayments(id: string, searchParams: URLSearchParams) {
-  await ensureContactExists(id);
+export async function getContactPayments(id: string, searchParams: URLSearchParams, storeId: string) {
+  await ensureContactExists(id, storeId);
 
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
@@ -175,6 +181,7 @@ export async function getContactPayments(id: string, searchParams: URLSearchPara
     .from("payments")
     .select("*", { count: "exact" })
     .eq("contact_id", id)
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false })
     .range(skip, to);
 
@@ -185,14 +192,14 @@ export async function getContactPayments(id: string, searchParams: URLSearchPara
   );
 }
 
-export async function getContactActivity(id: string, searchParams: URLSearchParams) {
-  await ensureContactExists(id);
+export async function getContactActivity(id: string, searchParams: URLSearchParams, storeId: string) {
+  await ensureContactExists(id, storeId);
 
   const supabase = await createRouteSupabaseClient();
   const [salesResult, purchasesResult, paymentsResult] = await Promise.all([
-    supabase.from("sales").select("id, total_ves, created_at").eq("customer_id", id),
-    supabase.from("purchases").select("id, total_ves, created_at").eq("supplier_id", id),
-    supabase.from("payments").select("id, amount_ves, created_at").eq("contact_id", id),
+    supabase.from("sales").select("id, total_ves, created_at").eq("customer_id", id).eq("store_id", storeId),
+    supabase.from("purchases").select("id, total_ves, created_at").eq("supplier_id", id).eq("store_id", storeId),
+    supabase.from("payments").select("id, amount_ves, created_at").eq("contact_id", id).eq("store_id", storeId),
   ]);
 
   throwIfSupabaseError(salesResult.error);

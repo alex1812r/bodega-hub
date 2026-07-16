@@ -11,9 +11,10 @@ const MOCK_SUPABASE_URL = "https://mock-project.supabase.co";
 
 export async function createProductImageUploadUrl(
   productId: string,
-  format: ProductImageFormat = "webp",
+  format: ProductImageFormat,
+  storeId: string,
 ) {
-  getProductById(productId);
+  getProductById(productId, storeId);
 
   const path = getProductImageStoragePath(productId, format);
 
@@ -24,9 +25,9 @@ export async function createProductImageUploadUrl(
   };
 }
 
-export async function deleteProductImage(productId: string) {
-  getProductById(productId);
-  return updateProduct(productId, { imageUrl: null });
+export async function deleteProductImage(productId: string, storeId: string) {
+  getProductById(productId, storeId);
+  return updateProduct(productId, { imageUrl: null }, storeId);
 }
 
 export function applyMockProductImageUpload(productId: string) {

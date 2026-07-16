@@ -286,7 +286,7 @@ export function SettingsListPage() {
   return (
     <EntityListPage
       actions={headerActions}
-      description={`Administra los parametros generales de BodegaSync${getPageDataSourceSuffix()}`}
+      description={`Administra los parametros generales de BodegaHub${getPageDataSourceSuffix()}`}
       layout="sections"
       title="Configuracion del sistema"
     >

@@ -5,6 +5,7 @@
 jest.mock("../../../lib/supabase/route-client");
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import {
   cancelSale,
@@ -97,7 +98,10 @@ describe("sales.server", () => {
       from: jest.fn().mockReturnValue(builder),
     });
 
-    const result = await listSales(new URLSearchParams("status=pagada&skip=0&limit=10"));
+    const result = await listSales(
+      new URLSearchParams("status=pagada&skip=0&limit=10"),
+      DEFAULT_STORE_ID,
+    );
 
     expect(result.total).toBe(1);
     expect(result.items[0]).toEqual(
@@ -114,11 +118,14 @@ describe("sales.server", () => {
 
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
 
-    const result = await createSale({
-      customerId: saleRow.customer_id,
-      items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
-      refRateVes: 510,
-    });
+    const result = await createSale(
+      {
+        customerId: saleRow.customer_id,
+        items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+        refRateVes: 510,
+      },
+      DEFAULT_STORE_ID,
+    );
 
     expect(rpc).toHaveBeenCalledWith("create_sale", {
       p_customer_id: saleRow.customer_id,
@@ -140,7 +147,7 @@ describe("sales.server", () => {
       from: jest.fn().mockReturnValue(builder),
     });
 
-    await expect(getSaleById("missing")).rejects.toMatchObject({
+    await expect(getSaleById("missing", DEFAULT_STORE_ID)).rejects.toMatchObject({
       code: "NOT_FOUND",
       status: 404,
     });
@@ -167,7 +174,7 @@ describe("sales.server", () => {
       rpc,
     });
 
-    const result = await cancelSale(saleRow.id);
+    const result = await cancelSale(saleRow.id, DEFAULT_STORE_ID);
 
     expect(rpc).toHaveBeenCalledWith("cancel_sale", { p_sale_id: saleRow.id });
     expect(result.status).toBe("cancelada");
@@ -218,7 +225,7 @@ describe("sales.server", () => {
       rpc,
     });
 
-    const result = await returnSale(saleRow.id);
+    const result = await returnSale(saleRow.id, DEFAULT_STORE_ID);
 
     expect(rpc).toHaveBeenCalledWith("return_sale", { p_sale_id: saleRow.id });
     expect(result.sale.status).toBe("devuelta");

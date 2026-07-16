@@ -18,6 +18,7 @@ import {
   type PurchasesReportFilters,
   type PurchasesReportRow,
   type ReportDateRangeFilters,
+  type ReportRequestScope,
   type StockCardReportFilters,
   type SupplierPurchasesReportRow,
   type TopCustomersReportRow,
@@ -246,6 +247,7 @@ type ReportsResultPanelProps = {
   dateFilters: ReportDateRangeFilters;
   purchasesFilters: PurchasesReportFilters;
   report: ReportDefinition;
+  scope?: ReportRequestScope;
   stockCardFilters: StockCardReportFilters;
 };
 
@@ -253,25 +255,30 @@ export function ReportsResultPanel({
   dateFilters,
   purchasesFilters,
   report,
+  scope,
   stockCardFilters,
 }: ReportsResultPanelProps) {
+  const scopeResetDeps = [scope?.pathPrefix, scope?.storeScope, scope?.storeIds, scope?.enabled];
+
   switch (report.id) {
     case "daily-sales":
       return (
         <PaginatedReportTable
           columns={dailySalesColumns}
-          getRowId={(row) => `${row.saleDate}-${row.totalVes}-${row.paidVes}`}
+          getRowId={(row) => `${row.saleDate}-${row.totalVes}-${row.paidVes}-${row.storeId ?? ""}`}
           report={report}
-          useReport={useDailySalesReport}
+          resetDeps={scopeResetDeps}
+          useReport={(filters) => useDailySalesReport(filters, scope)}
         />
       );
     case "gross-profit":
       return (
         <PaginatedReportTable
           columns={grossProfitColumns}
-          getRowId={(row) => `${row.saleDate}-${row.revenueRef}-${row.costRef}`}
+          getRowId={(row) => `${row.saleDate}-${row.revenueRef}-${row.costRef}-${row.storeId ?? ""}`}
           report={report}
-          useReport={useGrossProfitReport}
+          resetDeps={scopeResetDeps}
+          useReport={(filters) => useGrossProfitReport(filters, scope)}
         />
       );
     case "product-profitability":
@@ -280,7 +287,8 @@ export function ReportsResultPanel({
           columns={productProfitabilityColumns}
           getRowId={(row) => row.productId}
           report={report}
-          useReport={useProductProfitabilityReport}
+          resetDeps={scopeResetDeps}
+          useReport={(filters) => useProductProfitabilityReport(filters, scope)}
         />
       );
     case "low-stock":
@@ -289,7 +297,8 @@ export function ReportsResultPanel({
           columns={lowStockColumns}
           getRowId={(row) => row.id}
           report={report}
-          useReport={useLowStockReport}
+          resetDeps={scopeResetDeps}
+          useReport={(filters) => useLowStockReport(filters, scope)}
         />
       );
     case "customer-purchases":
@@ -298,7 +307,8 @@ export function ReportsResultPanel({
           columns={customerPurchasesColumns}
           getRowId={(row) => row.customerId}
           report={report}
-          useReport={useCustomerPurchasesReport}
+          resetDeps={scopeResetDeps}
+          useReport={(filters) => useCustomerPurchasesReport(filters, scope)}
         />
       );
     case "supplier-purchases":
@@ -307,7 +317,8 @@ export function ReportsResultPanel({
           columns={supplierPurchasesColumns}
           getRowId={(row) => row.supplierId}
           report={report}
-          useReport={useSupplierPurchasesReport}
+          resetDeps={scopeResetDeps}
+          useReport={(filters) => useSupplierPurchasesReport(filters, scope)}
         />
       );
     case "stock-card":
@@ -317,8 +328,8 @@ export function ReportsResultPanel({
           filters={stockCardFilters}
           getRowId={(row) => row.id}
           report={report}
-          resetDeps={[stockCardFilters.productId]}
-          useReport={useStockCardReport}
+          resetDeps={[...scopeResetDeps, stockCardFilters.productId]}
+          useReport={(filters) => useStockCardReport(filters, scope)}
         />
       );
     case "top-products":
@@ -328,8 +339,8 @@ export function ReportsResultPanel({
           filters={dateFilters}
           getRowId={(row) => row.productId}
           report={report}
-          resetDeps={[dateFilters.from, dateFilters.to]}
-          useReport={useTopProductsReport}
+          resetDeps={[...scopeResetDeps, dateFilters.from, dateFilters.to]}
+          useReport={(filters) => useTopProductsReport(filters, scope)}
         />
       );
     case "top-customers":
@@ -339,8 +350,8 @@ export function ReportsResultPanel({
           filters={dateFilters}
           getRowId={(row) => row.customerId}
           report={report}
-          resetDeps={[dateFilters.from, dateFilters.to]}
-          useReport={useTopCustomersReport}
+          resetDeps={[...scopeResetDeps, dateFilters.from, dateFilters.to]}
+          useReport={(filters) => useTopCustomersReport(filters, scope)}
         />
       );
     case "purchases":
@@ -350,8 +361,13 @@ export function ReportsResultPanel({
           filters={purchasesFilters}
           getRowId={(row) => row.id}
           report={report}
-          resetDeps={[purchasesFilters.from, purchasesFilters.to, purchasesFilters.supplierId]}
-          useReport={usePurchasesReport}
+          resetDeps={[
+            ...scopeResetDeps,
+            purchasesFilters.from,
+            purchasesFilters.to,
+            purchasesFilters.supplierId,
+          ]}
+          useReport={(filters) => usePurchasesReport(filters, scope)}
         />
       );
     default:

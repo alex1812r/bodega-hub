@@ -20,6 +20,8 @@ export type DashboardRecentSale = {
   id: string;
   invoiceNumber: string;
   status: string;
+  storeId?: string | null;
+  storeName?: string;
   totalRef: number;
 };
 
@@ -53,67 +55,133 @@ export type DashboardMetrics = {
 export type DashboardLowStockProduct = Pick<
   ProductMock,
   "currentStock" | "id" | "minStock" | "name" | "sku"
->;
+> & {
+  storeId?: string | null;
+  storeName?: string;
+};
 
 export type DashboardSalesTrendFilters = {
   from?: string;
   to?: string;
 };
 
-export const dashboardQueryKeys = {
-  all: ["dashboard"] as const,
-  lowStock: () => [...dashboardQueryKeys.all, "low-stock"] as const,
-  metrics: (filters: DashboardMetricsFilters = {}) =>
-    [...dashboardQueryKeys.all, "metrics", filters] as const,
-  recentSales: () => [...dashboardQueryKeys.all, "recent-sales"] as const,
-  salesTrend: (filters: DashboardSalesTrendFilters = {}) =>
-    [...dashboardQueryKeys.all, "sales-trend", filters] as const,
-  summary: () => [...dashboardQueryKeys.all, "summary"] as const,
+/** Alcance opcional para dashboard de plataforma (multi-tienda). */
+export type DashboardRequestScope = {
+  enabled?: boolean;
+  pathPrefix?: "/api/dashboard" | "/api/platform/home";
+  storeIds?: string;
+  storeScope?: "all" | "one" | "selected";
 };
 
-export function useDashboardSummary() {
-  return useQuery({
-    queryKey: dashboardQueryKeys.summary(),
-    queryFn: () => apiFetch<DashboardSummary>("/api/dashboard/summary"),
-  });
+function dashboardPath(slug: string, scope?: DashboardRequestScope) {
+  const prefix = scope?.pathPrefix ?? "/api/dashboard";
+  return `${prefix}/${slug}`;
 }
 
-export function useDashboardMetrics(filters: DashboardMetricsFilters = {}) {
+function withScopeQuery<T extends Record<string, unknown>>(
+  filters: T,
+  scope?: DashboardRequestScope,
+) {
+  if (scope?.pathPrefix !== "/api/platform/home") {
+    return filters;
+  }
+
+  return {
+    ...filters,
+    storeIds: scope.storeIds,
+    storeScope: scope.storeScope ?? "all",
+  };
+}
+
+function scopeKey(scope?: DashboardRequestScope) {
+  if (!scope || scope.pathPrefix !== "/api/platform/home") {
+    return "store";
+  }
+
+  return {
+    pathPrefix: scope.pathPrefix,
+    storeIds: scope.storeIds ?? "",
+    storeScope: scope.storeScope ?? "all",
+  } as const;
+}
+
+export const dashboardQueryKeys = {
+  all: ["dashboard"] as const,
+  lowStock: (scope?: DashboardRequestScope) =>
+    [...dashboardQueryKeys.all, "low-stock", scopeKey(scope)] as const,
+  metrics: (filters: DashboardMetricsFilters = {}, scope?: DashboardRequestScope) =>
+    [...dashboardQueryKeys.all, "metrics", scopeKey(scope), filters] as const,
+  recentSales: (scope?: DashboardRequestScope) =>
+    [...dashboardQueryKeys.all, "recent-sales", scopeKey(scope)] as const,
+  salesTrend: (filters: DashboardSalesTrendFilters = {}, scope?: DashboardRequestScope) =>
+    [...dashboardQueryKeys.all, "sales-trend", scopeKey(scope), filters] as const,
+  summary: (scope?: DashboardRequestScope) =>
+    [...dashboardQueryKeys.all, "summary", scopeKey(scope)] as const,
+};
+
+export function useDashboardSummary(scope?: DashboardRequestScope) {
   return useQuery({
-    queryKey: dashboardQueryKeys.metrics(filters),
+    enabled: scope?.enabled ?? true,
+    queryKey: dashboardQueryKeys.summary(scope),
     queryFn: () =>
-      apiFetch<DashboardMetrics>("/api/dashboard/metrics", {
-        query: filters,
+      apiFetch<DashboardSummary>(dashboardPath("summary", scope), {
+        query: withScopeQuery({}, scope),
       }),
   });
 }
 
-export function useDashboardSalesTrend(filters: DashboardSalesTrendFilters = {}) {
+export function useDashboardMetrics(
+  filters: DashboardMetricsFilters = {},
+  scope?: DashboardRequestScope,
+) {
   return useQuery({
-    queryKey: dashboardQueryKeys.salesTrend(filters),
+    enabled: scope?.enabled ?? true,
+    queryKey: dashboardQueryKeys.metrics(filters, scope),
     queryFn: () =>
-      apiFetch<{ items: DashboardSalesTrendPoint[] }>("/api/dashboard/sales-trend", {
-        query: filters,
+      apiFetch<DashboardMetrics>(dashboardPath("metrics", scope), {
+        query: withScopeQuery(filters, scope),
       }),
   });
 }
 
-export function useDashboardRecentSales(filters: PaginationParams = {}) {
+export function useDashboardSalesTrend(
+  filters: DashboardSalesTrendFilters = {},
+  scope?: DashboardRequestScope,
+) {
   return useQuery({
-    queryKey: [...dashboardQueryKeys.recentSales(), filters] as const,
+    enabled: scope?.enabled ?? true,
+    queryKey: dashboardQueryKeys.salesTrend(filters, scope),
     queryFn: () =>
-      apiFetch<PaginatedList<DashboardRecentSale>>("/api/dashboard/recent-sales", {
-        query: filters,
+      apiFetch<{ items: DashboardSalesTrendPoint[] }>(dashboardPath("sales-trend", scope), {
+        query: withScopeQuery(filters, scope),
       }),
   });
 }
 
-export function useDashboardLowStock(filters: PaginationParams = {}) {
+export function useDashboardRecentSales(
+  filters: PaginationParams = {},
+  scope?: DashboardRequestScope,
+) {
   return useQuery({
-    queryKey: [...dashboardQueryKeys.lowStock(), filters] as const,
+    enabled: scope?.enabled ?? true,
+    queryKey: [...dashboardQueryKeys.recentSales(scope), filters] as const,
     queryFn: () =>
-      apiFetch<PaginatedList<DashboardLowStockProduct>>("/api/dashboard/low-stock", {
-        query: filters,
+      apiFetch<PaginatedList<DashboardRecentSale>>(dashboardPath("recent-sales", scope), {
+        query: withScopeQuery(filters, scope),
+      }),
+  });
+}
+
+export function useDashboardLowStock(
+  filters: PaginationParams = {},
+  scope?: DashboardRequestScope,
+) {
+  return useQuery({
+    enabled: scope?.enabled ?? true,
+    queryKey: [...dashboardQueryKeys.lowStock(scope), filters] as const,
+    queryFn: () =>
+      apiFetch<PaginatedList<DashboardLowStockProduct>>(dashboardPath("low-stock", scope), {
+        query: withScopeQuery(filters, scope),
       }),
   });
 }

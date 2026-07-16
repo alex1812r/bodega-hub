@@ -24,9 +24,10 @@ async function removeExistingProductImages(productId: string) {
 
 export async function createProductImageUploadUrl(
   productId: string,
-  format: ProductImageFormat = "webp",
+  format: ProductImageFormat,
+  storeId: string,
 ) {
-  await getProductById(productId);
+  await getProductById(productId, storeId);
 
   const path = getProductImageStoragePath(productId, format);
   const supabase = createAdminSupabaseClient();
@@ -52,8 +53,8 @@ export async function createProductImageUploadUrl(
   } satisfies ProductImageUploadUrlResult;
 }
 
-export async function deleteProductImage(productId: string) {
-  await getProductById(productId);
+export async function deleteProductImage(productId: string, storeId: string) {
+  await getProductById(productId, storeId);
 
   const supabase = createAdminSupabaseClient();
   const { error } = await supabase.storage
@@ -64,5 +65,5 @@ export async function deleteProductImage(productId: string) {
     throw new ApiError(500, "INTERNAL_ERROR", error.message);
   }
 
-  return updateProduct(productId, { imageUrl: null });
+  return updateProduct(productId, { imageUrl: null }, storeId);
 }

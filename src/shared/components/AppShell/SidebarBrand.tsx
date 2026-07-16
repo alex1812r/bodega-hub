@@ -47,7 +47,7 @@ export function SidebarBrand({
             collapsed ? "max-w-0 opacity-0" : "max-w-[11rem] opacity-100",
           )}
         >
-          <p className="truncate text-base leading-tight font-bold text-white">BodegaSync</p>
+          <p className="truncate text-base leading-tight font-bold text-white">BodegaHub</p>
           <p className="truncate text-xs leading-snug text-sidebar-muted">{userRole}</p>
         </div>
       </div>

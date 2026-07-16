@@ -1,12 +1,14 @@
 import {
   BarChart3,
   Boxes,
+  Building2,
   CreditCard,
   Home,
   Package,
   Receipt,
   Settings,
   ShoppingCart,
+  UserCog,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -21,6 +23,10 @@ export type AppNavItem = {
 };
 
 export const appNavItems: AppNavItem[] = [
+  { href: "/platform/dashboard", icon: Home, label: "Inicio", permission: "platform.dashboard.view" },
+  { href: "/platform/stores", icon: Building2, label: "Tiendas", permission: "platform.stores.view" },
+  { href: "/platform/users", icon: UserCog, label: "Usuarios", permission: "platform.users.view" },
+  { href: "/platform/reports", icon: BarChart3, label: "Reportes", permission: "platform.reports.view" },
   { href: "/dashboard", icon: Home, label: "Inicio", permission: "dashboard.view" },
   { href: "/sales", icon: Receipt, label: "Ventas", permission: "sales.view" },
   { href: "/purchases", icon: ShoppingCart, label: "Compras", permission: "purchases.view" },

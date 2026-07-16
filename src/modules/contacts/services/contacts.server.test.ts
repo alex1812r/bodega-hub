@@ -5,6 +5,7 @@
 jest.mock("../../../lib/supabase/route-client");
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { createContact, listContacts } from "./contacts.server";
 
@@ -69,7 +70,7 @@ describe("contacts.server", () => {
     });
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue(supabase);
 
-    const result = await listContacts(new URLSearchParams("skip=0&limit=10"));
+    const result = await listContacts(new URLSearchParams("skip=0&limit=10"), DEFAULT_STORE_ID);
 
     expect(result.total).toBe(1);
     expect(result.items[0]).toEqual(
@@ -90,11 +91,14 @@ describe("contacts.server", () => {
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue(supabase);
 
     await expect(
-      createContact({
-        name: "Duplicado",
-        taxId: "J-00000001-1",
-        type: "cliente",
-      }),
+      createContact(
+        {
+          name: "Duplicado",
+          taxId: "J-00000001-1",
+          type: "cliente",
+        },
+        DEFAULT_STORE_ID,
+      ),
     ).rejects.toMatchObject({
       code: "CONFLICT",
       status: 409,

@@ -7,6 +7,10 @@ describe("getDefaultHomePathForRole", () => {
     expect(getDefaultHomePathForRole("vendedor")).toBe("/sales/create");
   });
 
+  it("sends superadmin to platform dashboard", () => {
+    expect(getDefaultHomePathForRole("superadmin")).toBe("/platform/dashboard");
+  });
+
   it("sends other roles to dashboard", () => {
     expect(getDefaultHomePathForRole("admin")).toBe("/dashboard");
     expect(getDefaultHomePathForRole("almacen")).toBe("/dashboard");

@@ -53,7 +53,7 @@ describe("settings hooks", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           data: {
-            businessName: "Control Ventas ERP",
+            businessName: "BodegaHub",
             defaultTaxRate: 0,
             invoicePrefix: "V",
             lowStockThreshold: 5,

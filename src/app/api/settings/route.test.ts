@@ -25,7 +25,7 @@ describe("/api/settings", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.data.businessName).toBe("Control Ventas ERP");
+    expect(body.data.businessName).toBe("BodegaHub");
   });
 
   it("updates settings for admin", async () => {
@@ -60,7 +60,7 @@ describe("/api/settings", () => {
       process.env.API_DATA_SOURCE = "supabase";
       mockMaybeSingle.mockResolvedValue({
         data: {
-          business_name: "Control Ventas ERP",
+          business_name: "BodegaHub",
           default_tax_rate: 16,
           id: 1,
           invoice_prefix: "FAC",
@@ -94,7 +94,7 @@ describe("/api/settings", () => {
 
       expect(response.status).toBe(200);
       expect(body.data).toEqual({
-        businessName: "Control Ventas ERP",
+        businessName: "BodegaHub",
         defaultTaxRate: 16,
         invoicePrefix: "FAC",
         lowStockThreshold: 5,

@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
 import {
   mockContacts,
@@ -8,6 +9,7 @@ import {
   mockPurchases,
   type PurchaseMock,
 } from "@/shared/mocks/erp-data";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
 import { normalizePurchaseLine } from "../schemas/purchaseItem.schema";
@@ -37,7 +39,7 @@ function matchesPurchaseSearch(
   return number.includes(term) || supplier.includes(term);
 }
 
-export function listPurchases(searchParams: URLSearchParams) {
+export function listPurchases(searchParams: URLSearchParams, storeId: string) {
   const from = searchParams.get("from");
   const search = searchParams.get("search");
   const status = searchParams.get("status");
@@ -50,6 +52,7 @@ export function listPurchases(searchParams: URLSearchParams) {
       const supplier = mockContacts.find((contact) => contact.id === purchase.supplierId);
 
       return (
+        (purchase.storeId ?? DEFAULT_STORE_ID) === storeId &&
         (!status || purchase.status === status) &&
         (!supplierId || purchase.supplierId === supplierId) &&
         (!from || purchaseDate >= from) &&
@@ -66,12 +69,9 @@ export function listPurchases(searchParams: URLSearchParams) {
   return paginateList(items, searchParams);
 }
 
-export function getPurchaseById(id: string) {
+export function getPurchaseById(id: string, storeId: string) {
   const purchase = mockPurchases.find((item) => item.id === id);
-
-  if (!purchase) {
-    throw new ApiError(404, "NOT_FOUND", "Compra no encontrada.");
-  }
+  assertMockStoreResource(purchase, storeId, "Compra no encontrada.");
 
   const items = mockPurchaseItems
     .filter((item) => item.purchaseId === id)
@@ -88,7 +88,7 @@ export function getPurchaseById(id: string) {
   };
 }
 
-export function createPurchase(input: PurchaseInput) {
+export function createPurchase(input: PurchaseInput, storeId: string) {
   const refRateVes = input.refRateVes ?? 510;
   const subtotalRef =
     input.items?.reduce((total, item) => total + normalizePurchaseLine(item).subtotalRef, 0) ?? 0;
@@ -104,6 +104,7 @@ export function createPurchase(input: PurchaseInput) {
     purchaseNumber: input.purchaseNumber ?? `C-MOCK-${Date.now()}`,
     refRateVes,
     status,
+    storeId,
     subtotalRef,
     supplierId: input.supplierId ?? "cont-supplier",
     taxRef: input.taxRef ?? 0,
@@ -113,8 +114,8 @@ export function createPurchase(input: PurchaseInput) {
   } satisfies PurchaseMock;
 }
 
-export function receivePurchase(id: string) {
-  const purchase = getPurchaseById(id);
+export function receivePurchase(id: string, storeId: string) {
+  const purchase = getPurchaseById(id, storeId);
 
   if (purchase.status !== "pedido") {
     throw new ApiError(400, "BAD_REQUEST", "Solo se pueden recibir compras en estado pedido.");
@@ -126,15 +127,15 @@ export function receivePurchase(id: string) {
   };
 }
 
-export function cancelPurchase(id: string) {
+export function cancelPurchase(id: string, storeId: string) {
   return {
-    ...getPurchaseById(id),
+    ...getPurchaseById(id, storeId),
     status: "cancelado",
   };
 }
 
-export function returnPurchase(id: string) {
-  const purchase = getPurchaseById(id);
+export function returnPurchase(id: string, storeId: string) {
+  const purchase = getPurchaseById(id, storeId);
 
   return {
     purchase: {
@@ -148,6 +149,7 @@ export function returnPurchase(id: string) {
       purchaseId: purchase.id,
       quantityDelta: -item.quantity,
       reason: `Devolucion de compra ${purchase.purchaseNumber}`,
+      storeId,
       type: "devolucion_proveedor",
     })),
   };

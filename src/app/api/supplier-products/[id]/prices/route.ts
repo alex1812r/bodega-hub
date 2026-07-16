@@ -1,6 +1,6 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonData } from "@/lib/api/jsonResponse";
-import { requirePermission } from "@/lib/api/requirePermission";
+import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 import { supplierProductPriceInputSchema } from "@/modules/contacts/services/supplierProducts.schemas";
 
@@ -9,7 +9,7 @@ export async function POST(
   context: RouteContext<"/api/supplier-products/[id]/prices">,
 ) {
   try {
-    await requirePermission(request, "products.manage");
+    const auth = await requireStorePermission(request, "products.manage");
     const { id } = await context.params;
     const input = supplierProductPriceInputSchema.parse(await request.json());
 
@@ -21,7 +21,7 @@ export async function POST(
         notes: input.notes,
         origin: input.origin,
         priceInputMode: input.priceInputMode,
-      }),
+      }, auth.storeId),
     );
   } catch (error) {
     return toErrorResponse(error);

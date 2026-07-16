@@ -7,25 +7,26 @@ import {
   getDashboardSummary,
   getRecentSales,
 } from "@/modules/dashboard/services/dashboard.mock-server";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import DashboardPage from "./page";
 
 const dashboardHandlers = [
   http.get("/api/dashboard/summary", () =>
-    HttpResponse.json({ data: getDashboardSummary() }),
+    HttpResponse.json({ data: getDashboardSummary(DEFAULT_STORE_ID) }),
   ),
   http.get("/api/dashboard/sales-trend", ({ request }) =>
     HttpResponse.json({
-      data: getDashboardSalesTrend(new URL(request.url).searchParams),
+      data: getDashboardSalesTrend(new URL(request.url).searchParams, DEFAULT_STORE_ID),
     }),
   ),
   http.get("/api/dashboard/recent-sales", ({ request }) =>
     HttpResponse.json({
-      data: getRecentSales(new URL(request.url).searchParams),
+      data: getRecentSales(new URL(request.url).searchParams, DEFAULT_STORE_ID),
     }),
   ),
   http.get("/api/dashboard/low-stock", ({ request }) =>
     HttpResponse.json({
-      data: getDashboardLowStock(new URL(request.url).searchParams),
+      data: getDashboardLowStock(new URL(request.url).searchParams, DEFAULT_STORE_ID),
     }),
   ),
 ];
@@ -52,7 +53,7 @@ export const Loading: Story = {
       handlers: [
         http.get("/api/dashboard/summary", async () => {
           await delay(10_000);
-          return HttpResponse.json({ data: getDashboardSummary() });
+          return HttpResponse.json({ data: getDashboardSummary(DEFAULT_STORE_ID) });
         }),
         ...dashboardHandlers.slice(1),
       ],

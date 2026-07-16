@@ -49,7 +49,7 @@ export async function buildReportsExportWorkbook(
   metadata: ReportsExportWorkbookMetadata,
 ): Promise<ArrayBuffer> {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Control Ventas";
+  workbook.creator = "BodegaHub";
   workbook.created = new Date(metadata.exportedAt);
 
   for (const section of buildReportExportSections(data, metadata.filters)) {

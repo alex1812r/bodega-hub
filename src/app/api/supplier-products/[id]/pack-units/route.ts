@@ -1,6 +1,6 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
-import { requirePermission } from "@/lib/api/requirePermission";
+import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 import {
   supplierProductPackUnitInputSchema,
@@ -13,10 +13,10 @@ type PackUnitsRouteContext = {
 
 export async function GET(request: Request, context: PackUnitsRouteContext) {
   try {
-    await requirePermission(request, "products.view");
+    const auth = await requireStorePermission(request, "products.view");
     const { id } = await context.params;
 
-    return jsonData(await getSupplierProductsService().listSupplierProductPackUnits(id));
+    return jsonData(await getSupplierProductsService().listSupplierProductPackUnits(id, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);
   }
@@ -24,11 +24,11 @@ export async function GET(request: Request, context: PackUnitsRouteContext) {
 
 export async function POST(request: Request, context: PackUnitsRouteContext) {
   try {
-    await requirePermission(request, "products.manage");
+    const auth = await requireStorePermission(request, "products.manage");
     const { id } = await context.params;
     const input = supplierProductPackUnitInputSchema.parse(await request.json());
 
-    return jsonCreated(await getSupplierProductsService().createSupplierProductPackUnit(id, input));
+    return jsonCreated(await getSupplierProductsService().createSupplierProductPackUnit(id, input, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);
   }

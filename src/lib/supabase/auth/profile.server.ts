@@ -19,6 +19,7 @@ export type ServerAuthProfile = {
   isActive: boolean;
   name: string;
   role: UserRole;
+  storeId: string | null;
 };
 
 type ProfileRow = {
@@ -28,7 +29,28 @@ type ProfileRow = {
   id: string;
   is_active: boolean;
   role: string;
+  store_id: string | null;
 };
+
+function mapProfileRow(
+  profile: ProfileRow,
+  email?: string | null,
+): ServerAuthProfile | null {
+  if (!isUserRole(profile.role)) {
+    return null;
+  }
+
+  return {
+    deniedPermissions: mapPermissionList(profile.denied_permissions),
+    email: email ?? undefined,
+    grantedPermissions: mapPermissionList(profile.granted_permissions),
+    id: profile.id,
+    isActive: profile.is_active,
+    name: profile.full_name ?? email ?? "Usuario",
+    role: profile.role,
+    storeId: profile.store_id,
+  };
+}
 
 export async function getAuthProfileFromSession(): Promise<ServerAuthProfile | null> {
   const supabase = await createRouteSupabaseClient();
@@ -57,25 +79,17 @@ export async function getAuthProfileFromSession(): Promise<ServerAuthProfile | n
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("id, full_name, role, is_active, granted_permissions, denied_permissions")
+    .select("id, full_name, role, is_active, granted_permissions, denied_permissions, store_id")
     .eq("id", user.id)
     .maybeSingle<ProfileRow>();
 
   throwIfSupabaseError(profileError);
 
-  if (!profile || !isUserRole(profile.role)) {
+  if (!profile) {
     return null;
   }
 
-  return {
-    deniedPermissions: mapPermissionList(profile.denied_permissions),
-    email: user.email,
-    grantedPermissions: mapPermissionList(profile.granted_permissions),
-    id: profile.id,
-    isActive: profile.is_active,
-    name: profile.full_name ?? user.email ?? "Usuario",
-    role: profile.role,
-  };
+  return mapProfileRow(profile, user.email);
 }
 
 export async function getDefaultHomePathForAuthUserId(
@@ -103,13 +117,13 @@ export async function getProfileByUserId(userId: string): Promise<ServerAuthProf
   const supabase = await createRouteSupabaseClient();
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("id, full_name, role, is_active, granted_permissions, denied_permissions")
+    .select("id, full_name, role, is_active, granted_permissions, denied_permissions, store_id")
     .eq("id", userId)
     .maybeSingle<ProfileRow>();
 
   throwIfSupabaseError(profileError);
 
-  if (!profile || !isUserRole(profile.role)) {
+  if (!profile) {
     return null;
   }
 
@@ -117,13 +131,5 @@ export async function getProfileByUserId(userId: string): Promise<ServerAuthProf
     data: { user },
   } = await supabase.auth.getUser();
 
-  return {
-    deniedPermissions: mapPermissionList(profile.denied_permissions),
-    email: user?.email,
-    grantedPermissions: mapPermissionList(profile.granted_permissions),
-    id: profile.id,
-    isActive: profile.is_active,
-    name: profile.full_name ?? user?.email ?? "Usuario",
-    role: profile.role,
-  };
+  return mapProfileRow(profile, user?.email);
 }

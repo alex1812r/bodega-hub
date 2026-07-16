@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { parsePagination } from "@/lib/api/pagination";
 import { mapContact, type DbContactRow } from "@/lib/supabase/mappers/contacts";
 import {
@@ -146,13 +147,14 @@ function mapPurchaseListRow(row: PurchaseListRow) {
   };
 }
 
-export async function listPurchases(searchParams: URLSearchParams) {
+export async function listPurchases(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
 
   let query = supabase
     .from("purchases")
     .select(purchaseSelect, { count: "exact" })
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false });
 
   query = applyPurchaseFilters(query, searchParams);
@@ -169,7 +171,8 @@ export async function listPurchases(searchParams: URLSearchParams) {
   };
 }
 
-export async function getPurchaseById(id: string) {
+export async function getPurchaseById(id: string, storeId: string) {
+  await assertSupabaseStoreResource("purchases", id, storeId, "Compra no encontrada.");
   const supabase = await createRouteSupabaseClient();
 
   const { data, error } = await supabase
@@ -200,7 +203,7 @@ export async function getPurchaseById(id: string) {
   };
 }
 
-export async function createPurchase(input: PurchaseInput) {
+export async function createPurchase(input: PurchaseInput, _storeId: string) {
   const supabase = await createRouteSupabaseClient();
 
   const { data, error } = await supabase.rpc("create_purchase", {
@@ -224,7 +227,8 @@ export async function createPurchase(input: PurchaseInput) {
   return mapPurchase(data as DbPurchaseRow);
 }
 
-export async function receivePurchase(id: string) {
+export async function receivePurchase(id: string, storeId: string) {
+  await assertSupabaseStoreResource("purchases", id, storeId, "Compra no encontrada.");
   const supabase = await createRouteSupabaseClient();
 
   const { data, error } = await supabase.rpc("receive_purchase", {
@@ -237,10 +241,11 @@ export async function receivePurchase(id: string) {
     throw new ApiError(404, "NOT_FOUND", "Compra no encontrada.");
   }
 
-  return getPurchaseById(id);
+  return getPurchaseById(id, storeId);
 }
 
-export async function cancelPurchase(id: string) {
+export async function cancelPurchase(id: string, storeId: string) {
+  await assertSupabaseStoreResource("purchases", id, storeId, "Compra no encontrada.");
   const supabase = await createRouteSupabaseClient();
 
   const { data, error } = await supabase.rpc("cancel_purchase", {
@@ -253,10 +258,11 @@ export async function cancelPurchase(id: string) {
     throw new ApiError(404, "NOT_FOUND", "Compra no encontrada.");
   }
 
-  return getPurchaseById(id);
+  return getPurchaseById(id, storeId);
 }
 
-export async function returnPurchase(id: string) {
+export async function returnPurchase(id: string, storeId: string) {
+  await assertSupabaseStoreResource("purchases", id, storeId, "Compra no encontrada.");
   const supabase = await createRouteSupabaseClient();
 
   const { data, error } = await supabase.rpc("return_purchase", {
@@ -269,7 +275,7 @@ export async function returnPurchase(id: string) {
     throw new ApiError(404, "NOT_FOUND", "Compra no encontrada.");
   }
 
-  const purchase = await getPurchaseById(id);
+  const purchase = await getPurchaseById(id, storeId);
 
   const { data: stockMovements, error: movementsError } = await supabase
     .from("stock_movements")

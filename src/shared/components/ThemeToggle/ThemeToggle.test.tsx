@@ -21,6 +21,6 @@ describe("ThemeToggle", () => {
     fireEvent.click(getByLabelText(/cambiar a tema oscuro/i));
 
     expect(document.documentElement).toHaveClass("dark");
-    expect(window.localStorage.getItem("control-ventas:theme")).toBe("dark");
+    expect(window.localStorage.getItem("bodega-hub:theme")).toBe("dark");
   });
 });

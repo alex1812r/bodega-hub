@@ -5,6 +5,7 @@
 jest.mock("../../../lib/supabase/route-client");
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import {
   cancelPurchase,
@@ -73,7 +74,10 @@ describe("purchases.server", () => {
       from: jest.fn().mockReturnValue(builder),
     });
 
-    const result = await listPurchases(new URLSearchParams("status=recibido&skip=0&limit=10"));
+    const result = await listPurchases(
+      new URLSearchParams("status=recibido&skip=0&limit=10"),
+      DEFAULT_STORE_ID,
+    );
 
     expect(result.total).toBe(1);
     expect(result.items[0]).toEqual(
@@ -90,12 +94,15 @@ describe("purchases.server", () => {
 
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
 
-    const result = await createPurchase({
-      items: [{ entryMode: "unit", productId: "44444444-4444-4444-4444-444444444444", quantity: 2, unitCostRef: 2 }],
-      refRateVes: 510,
-      status: "pedido",
-      supplierId: purchaseRow.supplier_id,
-    });
+    const result = await createPurchase(
+      {
+        items: [{ entryMode: "unit", productId: "44444444-4444-4444-4444-444444444444", quantity: 2, unitCostRef: 2 }],
+        refRateVes: 510,
+        status: "pedido",
+        supplierId: purchaseRow.supplier_id,
+      },
+      DEFAULT_STORE_ID,
+    );
 
     expect(rpc).toHaveBeenCalledWith("create_purchase", {
       p_discount_ref: 0,
@@ -125,7 +132,7 @@ describe("purchases.server", () => {
       from: jest.fn().mockReturnValue(builder),
     });
 
-    await expect(getPurchaseById("missing")).rejects.toMatchObject({
+    await expect(getPurchaseById("missing", DEFAULT_STORE_ID)).rejects.toMatchObject({
       code: "NOT_FOUND",
       status: 404,
     });
@@ -163,7 +170,7 @@ describe("purchases.server", () => {
       rpc,
     });
 
-    const result = await receivePurchase(purchaseRow.id);
+    const result = await receivePurchase(purchaseRow.id, DEFAULT_STORE_ID);
 
     expect(rpc).toHaveBeenCalledWith("receive_purchase", { p_purchase_id: purchaseRow.id });
     expect(result.status).toBe("recibido");
@@ -201,7 +208,7 @@ describe("purchases.server", () => {
       rpc,
     });
 
-    const result = await cancelPurchase(purchaseRow.id);
+    const result = await cancelPurchase(purchaseRow.id, DEFAULT_STORE_ID);
 
     expect(rpc).toHaveBeenCalledWith("cancel_purchase", { p_purchase_id: purchaseRow.id });
     expect(result.status).toBe("cancelado");
@@ -261,7 +268,7 @@ describe("purchases.server", () => {
       rpc,
     });
 
-    const result = await returnPurchase(purchaseRow.id);
+    const result = await returnPurchase(purchaseRow.id, DEFAULT_STORE_ID);
 
     expect(rpc).toHaveBeenCalledWith("return_purchase", { p_purchase_id: purchaseRow.id });
     expect(result.purchase.status).toBe("devuelto");

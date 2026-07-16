@@ -19,7 +19,8 @@ La unidad base de precios será `ref`, equivalente operacional al valor de refer
 
 ## 2. Tipos Enum Sugeridos
 
-*   `user_role`: `admin`, `vendedor`, `almacen`, `contador`
+*   `user_role`: `superadmin`, `admin`, `vendedor`, `almacen`, `contador`
+*   `store_status`: `active`, `paused`
 *   `contact_type`: `cliente`, `proveedor`, `ambos`
 *   `sale_status`: `borrador`, `pendiente_pago`, `pagada`, `cancelada`, `devuelta`
 *   `purchase_status`: `pedido`, `recibido`, `cancelado`, `devuelto`
@@ -30,24 +31,34 @@ La unidad base de precios será `ref`, equivalente operacional al valor de refer
 
 ## 3. Entidades y Atributos
 
+### 3.0 Tiendas (`stores`)
+
+Raíz de aislamiento multitienda. Ver [`multi-store-options.md`](multi-store-options.md).
+
+*   `id`, `name`, `slug` (unique), `status` (`store_status`), `notes`, `created_by`, timestamps
+*   Patch: `supabase/patches/20260716-multi-store.sql`
+*   Las tablas de negocio llevan `store_id` NOT NULL (tras backfill de tienda `default`)
+
 ### 3.1 Perfiles (`profiles`)
 Extensión de la tabla `auth.users` de Supabase para manejar roles y datos adicionales.
 
 *   `id`: uuid (PK, references `auth.users`)
 *   `full_name`: text
 *   `role`: `user_role`
+*   `store_id`: uuid (FK `stores`; **null solo si** `role = superadmin`)
 *   `is_active`: boolean (default: true)
 *   `granted_permissions`: jsonb (array de strings; overrides que agregan permisos)
 *   `denied_permissions`: jsonb (array de strings; overrides que quitan permisos)
 *   `created_at`: timestamp with time zone
 *   `updated_at`: timestamp with time zone
 
-Permisos efectivos en app: rol base + granted − denied (admin siempre tiene todos). Ver [`auth-permissions.md`](auth-permissions.md).
+Permisos efectivos en app: rol base + granted − denied (`admin` = todos los de tienda; `superadmin` = solo `platform.dashboard.view`, `platform.stores.*`, `platform.users.*` y `platform.reports.view`). Ver [`auth-permissions.md`](auth-permissions.md).
 
 ### 3.2 Configuración (`app_settings`)
-Singleton de negocio (fila `id = 1`).
+Una fila por tienda (`store_id` unique).
 
-*   `id`: smallint (PK, fijo `1`)
+*   `store_id`: uuid (PK/unique, FK `stores`)
+*   `id`: smallint (legado; ya no es singleton global)
 *   `business_name`: text
 *   `default_tax_rate`: numeric(5,2)
 *   `invoice_prefix`: text
@@ -60,6 +71,7 @@ API: `GET`/`PATCH /api/settings`.
 ### 3.3 Categorías (`categories`)
 
 *   `id`: uuid (PK, default: `gen_random_uuid()`)
+*   `store_id`: uuid (FK `stores`, not null)
 *   `name`: text (not null)
 *   `description`: text
 *   `is_active`: boolean (default: true) — borrado lógico vía API DELETE

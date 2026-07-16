@@ -7,7 +7,7 @@ import {
 } from "../../utils/inventoryStockStatus";
 
 /**
- * Chips de estado — Stitch Inventario - BodegaSync.
+ * Chips de estado — Stitch Inventario - BodegaHub.
  * Fondo semántico + texto en dos líneas; evita utilidades `bg-*-container` que no siempre se generan en Tailwind v4.
  */
 const statusStyles: Record<

@@ -6,6 +6,7 @@ import {
   listContacts,
   type ContactInput as ContactServerInput,
 } from "../services/contacts.mock-server";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { ContactsListPage } from "./page";
 
@@ -16,12 +17,12 @@ const meta = {
       handlers: [
         http.get("/api/contacts", ({ request }) =>
           HttpResponse.json({
-            data: listContacts(new URL(request.url).searchParams),
+            data: listContacts(new URL(request.url).searchParams, DEFAULT_STORE_ID),
           }),
         ),
         http.post("/api/contacts", async ({ request }) =>
           HttpResponse.json(
-            { data: createContact((await request.json()) as ContactServerInput) },
+            { data: createContact((await request.json()) as ContactServerInput, DEFAULT_STORE_ID) },
             { status: 201 },
           ),
         ),

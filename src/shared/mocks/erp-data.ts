@@ -30,6 +30,7 @@ export type CategoryMock = {
   id: string;
   isActive: boolean;
   name: string;
+  storeId?: string | null;
 };
 
 export type ContactMock = {
@@ -41,6 +42,7 @@ export type ContactMock = {
   phone: string;
   taxId: string;
   type: ContactType;
+  storeId?: string | null;
 };
 
 export type ProductMock = {
@@ -55,6 +57,7 @@ export type ProductMock = {
   name: string;
   salePriceRef: number;
   sku: string;
+  storeId?: string | null;
 };
 
 export type ProductPriceHistoryMock = {
@@ -70,6 +73,7 @@ export type ExchangeRateMock = {
   id: string;
   rateVes: number;
   source: string;
+  storeId?: string | null;
 };
 
 export type SaleMock = {
@@ -86,6 +90,7 @@ export type SaleMock = {
   totalRef: number;
   totalVes: number;
   userId: string;
+  storeId?: string | null;
 };
 
 export type SaleItemMock = {
@@ -112,6 +117,7 @@ export type PurchaseMock = {
   totalRef: number;
   totalVes: number;
   userId: string;
+  storeId?: string | null;
 };
 
 export type PurchaseItemMock = {
@@ -149,6 +155,7 @@ export type PaymentMock = {
   refRateVes: number;
   saleId?: string;
   status?: PaymentStatus;
+  storeId?: string | null;
 };
 
 export type StockMovementMock = {
@@ -161,6 +168,7 @@ export type StockMovementMock = {
   saleId?: string;
   stockAfter: number;
   type: StockMovementType;
+  storeId?: string | null;
 };
 
 export type SupplierProductPriceOrigin = "ajuste" | "compra" | "cotizacion" | "vinculacion";
@@ -180,6 +188,7 @@ export type SupplierProductMock = {
   supplierSku?: string;
   updatedAt?: string;
   variationPercent?: number | null;
+  storeId?: string | null;
 };
 
 export type SupplierProductPriceHistoryMock = {
@@ -213,6 +222,8 @@ export type UserProfileMock = {
   isActive: boolean;
   name: string;
   role: UserRole;
+  /** null solo para superadmin */
+  storeId?: string | null;
 };
 
 export type AppSettingsMock = {
@@ -220,6 +231,7 @@ export type AppSettingsMock = {
   defaultTaxRate: number;
   invoicePrefix: string;
   lowStockThreshold: number;
+  storeId?: string | null;
 };
 
 export const mockCategories: CategoryMock[] = [
@@ -1149,11 +1161,20 @@ export const mockSupplierProductPriceHistory: SupplierProductPriceHistoryMock[] 
 
 export const mockUserProfiles: UserProfileMock[] = [
   {
+    email: "superadmin@example.com",
+    id: "66666666-6666-4666-8666-666666666666",
+    isActive: true,
+    name: "Superadmin Demo",
+    role: "superadmin",
+    storeId: null,
+  },
+  {
     email: "admin@example.com",
     id: "user-admin",
     isActive: true,
     name: "Admin Demo",
     role: "admin",
+    storeId: "00000000-0000-4000-8000-000000000001",
   },
   {
     email: "vendedor@example.com",
@@ -1161,6 +1182,7 @@ export const mockUserProfiles: UserProfileMock[] = [
     isActive: true,
     name: "Vendedor Demo",
     role: "vendedor",
+    storeId: "00000000-0000-4000-8000-000000000001",
   },
   {
     email: "vendedor.contactos@example.com",
@@ -1169,6 +1191,7 @@ export const mockUserProfiles: UserProfileMock[] = [
     isActive: true,
     name: "Vendedor Contactos Demo",
     role: "vendedor",
+    storeId: "00000000-0000-4000-8000-000000000001",
   },
   {
     email: "almacen@example.com",
@@ -1176,6 +1199,7 @@ export const mockUserProfiles: UserProfileMock[] = [
     isActive: true,
     name: "Almacen Demo",
     role: "almacen",
+    storeId: "00000000-0000-4000-8000-000000000001",
   },
   {
     email: "contador@example.com",
@@ -1183,6 +1207,7 @@ export const mockUserProfiles: UserProfileMock[] = [
     isActive: true,
     name: "Contador Demo",
     role: "contador",
+    storeId: "00000000-0000-4000-8000-000000000001",
   },
   {
     deniedPermissions: ["products.manage"],
@@ -1191,6 +1216,7 @@ export const mockUserProfiles: UserProfileMock[] = [
     isActive: true,
     name: "Almacen Limitado",
     role: "almacen",
+    storeId: "00000000-0000-4000-8000-000000000001",
   },
   {
     deniedPermissions: ["payments.view"],
@@ -1200,6 +1226,7 @@ export const mockUserProfiles: UserProfileMock[] = [
     isActive: true,
     name: "Vendedor Cajero",
     role: "vendedor",
+    storeId: "00000000-0000-4000-8000-000000000001",
   },
   {
     email: "usuario.inactivo@example.com",
@@ -1207,11 +1234,12 @@ export const mockUserProfiles: UserProfileMock[] = [
     isActive: false,
     name: "Usuario Inactivo",
     role: "vendedor",
+    storeId: "00000000-0000-4000-8000-000000000001",
   },
 ];
 
 export const mockAppSettings: AppSettingsMock = {
-  businessName: "Control Ventas ERP",
+  businessName: "BodegaHub",
   defaultTaxRate: 0,
   invoicePrefix: "V",
   lowStockThreshold: 5,

@@ -59,7 +59,7 @@ export const SectionsLayout: Story = {
   args: {
     layout: "sections",
     title: "Configuracion del sistema",
-    description: "Administra los parametros generales de BodegaSync.",
+    description: "Administra los parametros generales de BodegaHub.",
     actions: (
       <>
         <Button variant="secondary">Descartar cambios</Button>

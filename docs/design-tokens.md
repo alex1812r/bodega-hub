@@ -1,6 +1,6 @@
-# Design tokens — BodegaSync
+# Design tokens — BodegaHub
 
-Contrato visual alineado con **Google Stitch** (proyecto BodegaSync ERP Design System). Usar estos tokens en `src/shared/**` y módulos; evitar `blue-*` como color de marca.
+Contrato visual alineado con **Google Stitch** (proyecto BodegaHub ERP Design System). Usar estos tokens en `src/shared/**` y módulos; evitar `blue-*` como color de marca.
 
 ## Marca
 
@@ -49,8 +49,8 @@ Contrato visual alineado con **Google Stitch** (proyecto BodegaSync ERP Design S
 
 ## Nombre de producto
 
-- **Shell / login:** BodegaSync
-- **Nombre legal en settings:** `businessName` (puede seguir siendo "Control Ventas ERP")
+- **Shell / login:** BodegaHub
+- **Nombre legal en settings:** `businessName` (puede seguir siendo "BodegaHub")
 
 ## Verificación
 

@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { assertContactType } from "@/lib/supabase/contacts";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import {
@@ -142,17 +143,22 @@ async function finalizeSupplierProductCreate(
   row: DbSupplierProductRow,
   input: SupplierProductCreateInput,
   rollback: () => Promise<void>,
+  storeId: string,
 ) {
   if (input.lastCostRef != null && input.lastCostRef >= 0) {
     try {
-      await registerSupplierProductPrice(row.id, {
-        newCostRef: input.lastCostRef,
-        newCostVes: input.lastCostVes,
-        notes: input.notes,
-        origin: "vinculacion",
-      });
+      await registerSupplierProductPrice(
+        row.id,
+        {
+          newCostRef: input.lastCostRef,
+          newCostVes: input.lastCostVes,
+          notes: input.notes,
+          origin: "vinculacion",
+        },
+        storeId,
+      );
 
-      return getSupplierProductById(row.id);
+      return getSupplierProductById(row.id, storeId);
     } catch (error) {
       await rollback();
       throw error;
@@ -288,7 +294,7 @@ function mapRowsWithHistory(
   });
 }
 
-export async function listSupplierProducts(searchParams: URLSearchParams) {
+export async function listSupplierProducts(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const productId = searchParams.get("productId");
   const supplierId = searchParams.get("supplierId");
@@ -296,7 +302,7 @@ export async function listSupplierProducts(searchParams: URLSearchParams) {
   const search = searchParams.get("search");
   const { skip, to } = getPaginationRange(searchParams);
 
-  let query = supabase.from("supplier_products").select(SUPPLIER_PRODUCT_SELECT, { count: "exact" });
+  let query = supabase.from("supplier_products").select(SUPPLIER_PRODUCT_SELECT, { count: "exact" }).eq("store_id", storeId);
 
   if (productId) {
     query = query.eq("product_id", productId);
@@ -332,26 +338,32 @@ export async function listSupplierProducts(searchParams: URLSearchParams) {
   );
 }
 
-export async function listProductSuppliers(productId: string, searchParams: URLSearchParams) {
+export async function listProductSuppliers(productId: string, searchParams: URLSearchParams, storeId: string) {
   await ensureProductExists(productId);
 
   const params = new URLSearchParams(searchParams);
   params.set("productId", productId);
 
-  return listSupplierProducts(params);
+  return listSupplierProducts(params, storeId);
 }
 
-export async function listSupplierProductsBySupplier(supplierId: string, searchParams: URLSearchParams) {
+export async function listSupplierProductsBySupplier(supplierId: string, searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   await assertContactType(supabase, supplierId, ["proveedor", "ambos"]);
 
   const params = new URLSearchParams(searchParams);
   params.set("supplierId", supplierId);
 
-  return listSupplierProducts(params);
+  return listSupplierProducts(params, storeId);
 }
 
-export async function getSupplierProductById(id: string) {
+export async function getSupplierProductById(id: string, storeId: string) {
+  await assertSupabaseStoreResource(
+    "supplier_products",
+    id,
+    storeId,
+    "Relacion proveedor-producto no encontrada.",
+  );
   const row = await fetchSupplierProductRow(id);
   const historyMap = await fetchLatestHistoryBySupplierProductIds([id]);
   const packUnitsMap = await fetchPackUnitsBySupplierProductIds([id]);
@@ -369,7 +381,7 @@ export async function getSupplierProductById(id: string) {
   });
 }
 
-export async function createSupplierProduct(input: SupplierProductCreateInput) {
+export async function createSupplierProduct(input: SupplierProductCreateInput, storeId: string) {
   const supabase = await createRouteSupabaseClient();
 
   if (!input.productId || !input.supplierId) {
@@ -390,12 +402,13 @@ export async function createSupplierProduct(input: SupplierProductCreateInput) {
 
     return finalizeSupplierProductCreate(reactivated, input, async () => {
       await supabase.from("supplier_products").update({ is_active: false }).eq("id", existing.id);
-    });
+    }, storeId);
   }
 
   const { data, error } = await supabase
     .from("supplier_products")
     .insert({
+      store_id: storeId,
       is_active: true,
       notes: input.notes ?? null,
       product_id: input.productId,
@@ -413,7 +426,7 @@ export async function createSupplierProduct(input: SupplierProductCreateInput) {
 
       return finalizeSupplierProductCreate(reactivated, input, async () => {
         await supabase.from("supplier_products").update({ is_active: false }).eq("id", duplicate.id);
-      });
+      }, storeId);
     }
 
     throw new ApiError(409, "CONFLICT", "Ya existe una relacion para este proveedor y producto.");
@@ -425,12 +438,12 @@ export async function createSupplierProduct(input: SupplierProductCreateInput) {
 
   return finalizeSupplierProductCreate(row, input, async () => {
     await deleteSupplierProductRow(row.id);
-  });
+  }, storeId);
 }
 
-export async function updateSupplierProduct(id: string, input: SupplierProductMetadataUpdateInput) {
+export async function updateSupplierProduct(id: string, input: SupplierProductMetadataUpdateInput, storeId: string) {
   const supabase = await createRouteSupabaseClient();
-  await getSupplierProductById(id);
+  await getSupplierProductById(id, storeId);
 
   if (input.supplierId) {
     await assertContactType(supabase, input.supplierId, ["proveedor", "ambos"]);
@@ -463,13 +476,11 @@ export async function updateSupplierProduct(id: string, input: SupplierProductMe
 
   throwIfSupabaseError(error);
 
-  return getSupplierProductById(id);
+  return getSupplierProductById(id, storeId);
 }
 
-export async function registerSupplierProductPrice(
-  id: string,
-  input: SupplierProductRegisterPriceInput,
-) {
+export async function registerSupplierProductPrice(id: string,
+  input: SupplierProductRegisterPriceInput, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.rpc("register_supplier_product_price", {
     p_new_cost_ref: input.newCostRef,
@@ -499,7 +510,7 @@ export async function registerSupplierProductPrice(
   };
 }
 
-export async function deactivateSupplierProduct(id: string) {
+export async function deactivateSupplierProduct(id: string, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.rpc("deactivate_supplier_product", {
     p_id: id,
@@ -507,11 +518,11 @@ export async function deactivateSupplierProduct(id: string) {
 
   throwIfSupabaseError(error);
 
-  return getSupplierProductById((data as DbSupplierProductRow).id);
+  return getSupplierProductById((data as DbSupplierProductRow).id, storeId);
 }
 
-export async function listSupplierProductPriceHistory(id: string, searchParams: URLSearchParams) {
-  await getSupplierProductById(id);
+export async function listSupplierProductPriceHistory(id: string, searchParams: URLSearchParams, storeId: string) {
+  await getSupplierProductById(id, storeId);
 
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
@@ -545,8 +556,8 @@ async function unsetDefaultPackUnits(supplierProductId: string, excludeId?: stri
   throwIfSupabaseError(error);
 }
 
-export async function listSupplierProductPackUnits(supplierProductId: string) {
-  await getSupplierProductById(supplierProductId);
+export async function listSupplierProductPackUnits(supplierProductId: string, storeId: string) {
+  await getSupplierProductById(supplierProductId, storeId);
 
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
@@ -565,11 +576,9 @@ export async function listSupplierProductPackUnits(supplierProductId: string) {
   return ((data ?? []) as DbSupplierProductPackUnitRow[]).map(mapSupplierProductPackUnit);
 }
 
-export async function createSupplierProductPackUnit(
-  supplierProductId: string,
-  input: SupplierProductPackUnitInput,
-) {
-  await getSupplierProductById(supplierProductId);
+export async function createSupplierProductPackUnit(supplierProductId: string,
+  input: SupplierProductPackUnitInput, storeId: string) {
+  await getSupplierProductById(supplierProductId, storeId);
 
   const supabase = await createRouteSupabaseClient();
   const isDefault = input.isDefault ?? false;
@@ -595,12 +604,10 @@ export async function createSupplierProductPackUnit(
   return mapSupplierProductPackUnit(data as DbSupplierProductPackUnitRow);
 }
 
-export async function updateSupplierProductPackUnit(
-  supplierProductId: string,
+export async function updateSupplierProductPackUnit(supplierProductId: string,
   packUnitId: string,
-  input: SupplierProductPackUnitUpdateInput,
-) {
-  await getSupplierProductById(supplierProductId);
+  input: SupplierProductPackUnitUpdateInput, storeId: string) {
+  await getSupplierProductById(supplierProductId, storeId);
 
   const supabase = await createRouteSupabaseClient();
   const { data: existing, error: existingError } = await supabase
@@ -639,14 +646,12 @@ export async function updateSupplierProductPackUnit(
   return mapSupplierProductPackUnit(data as DbSupplierProductPackUnitRow);
 }
 
-export async function deactivateSupplierProductPackUnit(
-  supplierProductId: string,
-  packUnitId: string,
-) {
+export async function deactivateSupplierProductPackUnit(supplierProductId: string,
+  packUnitId: string, storeId: string) {
   return updateSupplierProductPackUnit(supplierProductId, packUnitId, {
     isActive: false,
     isDefault: false,
-  });
+  }, storeId);
 }
 
 export type SupplierProductInput = SupplierProductCreateInput;

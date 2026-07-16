@@ -27,7 +27,7 @@ function drawPageFooter(doc: jsPDF, purchaseLabel: string, exportedAtLabel: stri
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(120, 128, 140);
-  doc.text(`Control Ventas · ${purchaseLabel} · ${exportedAtLabel}`, PAGE_MARGIN_MM, footerY);
+  doc.text(`BodegaHub · ${purchaseLabel} · ${exportedAtLabel}`, PAGE_MARGIN_MM, footerY);
   doc.text(
     `Pagina ${doc.getCurrentPageInfo().pageNumber}`,
     PAGE_WIDTH_MM - PAGE_MARGIN_MM,

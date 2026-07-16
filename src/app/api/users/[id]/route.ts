@@ -3,7 +3,7 @@ import { z } from "zod";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
-import { requirePermission } from "@/lib/api/requirePermission";
+import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as settingsMockServer from "@/modules/settings/services/settings.mock-server";
 import * as settingsServer from "@/modules/settings/services/settings.server";
 import { permissions } from "@/shared/auth/permissions";
@@ -24,11 +24,11 @@ function getUsersService() {
 
 export async function PATCH(request: Request, context: RouteContext<"/api/users/[id]">) {
   try {
-    await requirePermission(request, "users.manage");
+    const auth = await requireStorePermission(request, "users.manage");
     const { id } = await context.params;
     const input = userSchema.parse(await request.json());
     const service = getUsersService();
-    return jsonData(await service.updateUser(id, input));
+    return jsonData(await service.updateUser(id, input, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);
   }

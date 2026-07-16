@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonData } from "@/lib/api/jsonResponse";
-import { requirePermission } from "@/lib/api/requirePermission";
+import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getContactsService } from "@/modules/contacts/services";
 
 const updateContactSchema = z.object({
@@ -17,9 +17,9 @@ const updateContactSchema = z.object({
 
 export async function GET(request: Request, context: RouteContext<"/api/contacts/[id]">) {
   try {
-    await requirePermission(request, "contacts.view");
+    const auth = await requireStorePermission(request, "contacts.view");
     const { id } = await context.params;
-    return jsonData(await getContactsService().getContactById(id));
+    return jsonData(await getContactsService().getContactById(id, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);
   }
@@ -27,10 +27,10 @@ export async function GET(request: Request, context: RouteContext<"/api/contacts
 
 export async function PATCH(request: Request, context: RouteContext<"/api/contacts/[id]">) {
   try {
-    await requirePermission(request, "contacts.manage");
+    const auth = await requireStorePermission(request, "contacts.manage");
     const { id } = await context.params;
     const input = updateContactSchema.parse(await request.json());
-    return jsonData(await getContactsService().updateContact(id, input));
+    return jsonData(await getContactsService().updateContact(id, input, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);
   }

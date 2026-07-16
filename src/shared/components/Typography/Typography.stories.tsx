@@ -14,7 +14,7 @@ export const Headings: Story = {
   render: () => (
     <div className="space-y-4">
       <Typography as="h1" variant="display">
-        Control Ventas ERP
+        BodegaHub
       </Typography>
       <Typography as="h2" variant="h1">
         Ventas del dia

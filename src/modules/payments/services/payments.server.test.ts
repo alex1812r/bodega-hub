@@ -5,6 +5,7 @@
 jest.mock("../../../lib/supabase/route-client");
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { createPayment, getPaymentById, listPayments, updatePayment, cancelPayment } from "./payments.server";
 
@@ -72,6 +73,7 @@ describe("payments.server", () => {
 
     const result = await listPayments(
       new URLSearchParams("saleId=33333333-3333-3333-3333-333333333333&skip=0&limit=10"),
+      DEFAULT_STORE_ID,
     );
 
     expect(builder.eq).toHaveBeenCalledWith("sale_id", "33333333-3333-3333-3333-333333333333");
@@ -102,11 +104,14 @@ describe("payments.server", () => {
       rpc,
     });
 
-    const result = await createPayment({
-      amount: 1000,
-      method: "punto_venta",
-      saleId: paymentRow.sale_id!,
-    });
+    const result = await createPayment(
+      {
+        amount: 1000,
+        method: "punto_venta",
+        saleId: paymentRow.sale_id!,
+      },
+      DEFAULT_STORE_ID,
+    );
 
     expect(rpc).toHaveBeenCalledWith(
       "register_payment",
@@ -161,7 +166,7 @@ describe("payments.server", () => {
       }),
     });
 
-    const result = await getPaymentById(paymentRow.id);
+    const result = await getPaymentById(paymentRow.id, DEFAULT_STORE_ID);
 
     expect(result.pendingBalanceVes).toBe(5475);
     expect(result.documentBalance).toEqual(
@@ -199,9 +204,13 @@ describe("payments.server", () => {
       }),
     });
 
-    const result = await updatePayment(paymentRow.id, {
-      notes: "Comprobante corregido",
-    });
+    const result = await updatePayment(
+      paymentRow.id,
+      {
+        notes: "Comprobante corregido",
+      },
+      DEFAULT_STORE_ID,
+    );
 
     expect(paymentBuilder.update).toHaveBeenCalledWith(
       expect.objectContaining({ notes: "Comprobante corregido" }),
@@ -229,7 +238,7 @@ describe("payments.server", () => {
       rpc,
     });
 
-    const result = await cancelPayment(paymentRow.id);
+    const result = await cancelPayment(paymentRow.id, DEFAULT_STORE_ID);
 
     expect(rpc).toHaveBeenCalledWith("cancel_payment", { p_payment_id: paymentRow.id });
     expect(result.status).toBe("anulado");

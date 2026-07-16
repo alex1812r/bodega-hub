@@ -37,11 +37,16 @@ export function useExchangeRates(filters: ExchangeRateFilters = {}) {
   });
 }
 
-export function useCurrentExchangeRate() {
+export function useCurrentExchangeRate(options?: {
+  enabled?: boolean;
+  path?: string;
+}) {
+  const path = options?.path ?? "/api/exchange-rates/current";
+
   return useQuery({
-    queryKey: exchangeRateQueryKeys.current(),
-    queryFn: () =>
-      apiFetch<ExchangeRateMock>("/api/exchange-rates/current"),
+    enabled: options?.enabled ?? true,
+    queryKey: [...exchangeRateQueryKeys.current(), path] as const,
+    queryFn: () => apiFetch<ExchangeRateMock>(path),
   });
 }
 

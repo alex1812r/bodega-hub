@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
-import { requirePermission } from "@/lib/api/requirePermission";
+import { requireStorePermission } from "@/lib/api/requirePermission";
 import { productImportTemplateToBuffer } from "@/modules/products/products-import/services/buildProductImportTemplate";
 import * as categoriesMockServer from "@/modules/products/services/categories.mock-server";
 import * as categoriesServer from "@/modules/products/services/categories.server";
@@ -11,7 +11,7 @@ function getCategoriesService() {
   return resolveDataSource() === "supabase" ? categoriesServer : categoriesMockServer;
 }
 
-async function listAllActiveCategories() {
+async function listAllActiveCategories(storeId: string) {
   const service = getCategoriesService();
   const items = [];
   let skip = 0;
@@ -22,7 +22,7 @@ async function listAllActiveCategories() {
       limit: "100",
       skip: String(skip),
     });
-    const page = await service.listCategories(params);
+    const page = await service.listCategories(params, storeId);
     items.push(...page.items);
     total = page.total;
     skip += page.limit;
@@ -37,8 +37,8 @@ async function listAllActiveCategories() {
 
 export async function GET(request: Request) {
   try {
-    await requirePermission(request, "products.view");
-    const categories = await listAllActiveCategories();
+    const auth = await requireStorePermission(request, "products.view");
+    const categories = await listAllActiveCategories(auth.storeId);
     const buffer = await productImportTemplateToBuffer(categories);
 
     return new NextResponse(buffer, {

@@ -1,5 +1,7 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import {
   mockCategories,
   mockProductPriceHistory,
@@ -30,7 +32,7 @@ export type ProductInput = Partial<
 
 export type ProductPriceInput = Pick<ProductMock, "salePriceRef">;
 
-export function listProducts(searchParams: URLSearchParams) {
+export function listProducts(searchParams: URLSearchParams, storeId: string) {
   const barcode = normalizeBarcode(searchParams.get("barcode"));
   const categoryId = searchParams.get("categoryId");
   const isActive = searchParams.get("isActive");
@@ -43,7 +45,13 @@ export function listProducts(searchParams: URLSearchParams) {
     const matchesActive =
       isActive === null || product.isActive === (isActive.toLowerCase() === "true");
 
-    return matchesBarcode && matchesSearch && matchesCategory && matchesActive;
+    return (
+      (product.storeId ?? DEFAULT_STORE_ID) === storeId &&
+      matchesBarcode &&
+      matchesSearch &&
+      matchesCategory &&
+      matchesActive
+    );
   });
 
   const items = products.map((product) => ({
@@ -57,12 +65,9 @@ export function listProducts(searchParams: URLSearchParams) {
   return paginateList(sortedItems, searchParams);
 }
 
-export function getProductById(id: string) {
+export function getProductById(id: string, storeId: string) {
   const product = mockProducts.find((item) => item.id === id);
-
-  if (!product) {
-    throw new ApiError(404, "NOT_FOUND", "Producto no encontrado.");
-  }
+  assertMockStoreResource(product, storeId, "Producto no encontrado.");
 
   return {
     ...product,
@@ -70,7 +75,7 @@ export function getProductById(id: string) {
   };
 }
 
-export function createProduct(input: ProductInput) {
+export function createProduct(input: ProductInput, storeId: string) {
   const sku = normalizeSku(input.sku ?? `mock-${Date.now()}`);
 
   if (mockProducts.some((product) => product.sku === sku)) {
@@ -89,10 +94,11 @@ export function createProduct(input: ProductInput) {
     name: input.name ?? "Producto mock",
     salePriceRef: input.salePriceRef ?? 0,
     sku,
+    storeId,
   } satisfies ProductMock;
 }
 
-export function updateProduct(id: string, input: ProductInput) {
+export function updateProduct(id: string, input: ProductInput, storeId: string) {
   if (input.sku) {
     const sku = normalizeSku(input.sku);
 
@@ -102,10 +108,7 @@ export function updateProduct(id: string, input: ProductInput) {
   }
 
   const product = mockProducts.find((item) => item.id === id);
-
-  if (!product) {
-    throw new ApiError(404, "NOT_FOUND", "Producto no encontrado.");
-  }
+  assertMockStoreResource(product, storeId, "Producto no encontrado.");
 
   if (input.barcode !== undefined) product.barcode = normalizeBarcode(input.barcode);
   if (input.categoryId !== undefined) product.categoryId = input.categoryId;
@@ -118,11 +121,11 @@ export function updateProduct(id: string, input: ProductInput) {
   if (input.salePriceRef !== undefined) product.salePriceRef = input.salePriceRef;
   if (input.sku !== undefined) product.sku = normalizeSku(input.sku);
 
-  return getProductById(id);
+  return getProductById(id, storeId);
 }
 
-export function updateProductPrice(id: string, input: ProductPriceInput) {
-  const product = getProductById(id);
+export function updateProductPrice(id: string, input: ProductPriceInput, storeId: string) {
+  const product = getProductById(id, storeId);
 
   return {
     ...product,
@@ -130,12 +133,9 @@ export function updateProductPrice(id: string, input: ProductPriceInput) {
   };
 }
 
-export function deleteProduct(id: string) {
+export function deleteProduct(id: string, storeId: string) {
   const product = mockProducts.find((item) => item.id === id);
-
-  if (!product) {
-    throw new ApiError(404, "NOT_FOUND", "Producto no encontrado.");
-  }
+  assertMockStoreResource(product, storeId, "Producto no encontrado.");
 
   if (product.isActive === false) {
     throw new ApiError(404, "NOT_FOUND", "Producto no encontrado.");
@@ -144,21 +144,21 @@ export function deleteProduct(id: string) {
   product.isActive = false;
 
   return {
-    ...getProductById(id),
+    ...getProductById(id, storeId),
     deleted: true,
   };
 }
 
-export function getProductPriceHistory(id: string, searchParams: URLSearchParams) {
-  getProductById(id);
+export function getProductPriceHistory(id: string, searchParams: URLSearchParams, storeId: string) {
+  getProductById(id, storeId);
 
   const history = mockProductPriceHistory.filter((item) => item.productId === id);
 
   return paginateList(history, searchParams);
 }
 
-export function createProductPriceHistoryEntry(id: string, input: ProductPriceInput) {
-  getProductById(id);
+export function createProductPriceHistoryEntry(id: string, input: ProductPriceInput, storeId: string) {
+  getProductById(id, storeId);
 
   return {
     createdAt: new Date().toISOString(),

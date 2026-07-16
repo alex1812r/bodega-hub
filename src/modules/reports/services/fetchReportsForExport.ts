@@ -10,6 +10,7 @@ import type {
   PurchasesReportFilters,
   PurchasesReportRow,
   ReportDateRangeFilters,
+  ReportRequestScope,
   StockCardReportFilters,
   SupplierPurchasesReportRow,
   TopCustomersReportRow,
@@ -19,6 +20,7 @@ import type {
 export type ReportsExportFilters = {
   dateFilters: Pick<ReportDateRangeFilters, "from" | "to">;
   purchasesFilters: Pick<PurchasesReportFilters, "from" | "supplierId" | "to">;
+  scope?: ReportRequestScope;
   stockCardFilters: Pick<StockCardReportFilters, "productId">;
 };
 
@@ -51,16 +53,41 @@ function pickPurchasesQuery(filters: ReportsExportFilters["purchasesFilters"]) {
   };
 }
 
+function reportExportPath(slug: string, scope?: ReportRequestScope) {
+  const prefix = scope?.pathPrefix ?? "/api/reports";
+  return `${prefix}/${slug}`;
+}
+
+function withExportScopeQuery(
+  query: Record<string, string | undefined>,
+  scope?: ReportRequestScope,
+) {
+  if (scope?.pathPrefix !== "/api/platform/reports") {
+    return query;
+  }
+
+  return {
+    ...query,
+    storeIds: scope.storeIds,
+    storeScope: scope.storeScope ?? "all",
+  };
+}
+
 /** Consulta la API en el momento de exportar (sin cache de UI). */
 export async function fetchReportsForExport(
   filters: ReportsExportFilters,
 ): Promise<ReportsExportDataset> {
-  const dateQuery = pickDateQuery(filters.dateFilters);
-  const purchasesQuery = pickPurchasesQuery(filters.purchasesFilters);
+  const scope = filters.scope;
+  const dateQuery = withExportScopeQuery(pickDateQuery(filters.dateFilters), scope);
+  const purchasesQuery = withExportScopeQuery(
+    pickPurchasesQuery(filters.purchasesFilters),
+    scope,
+  );
   const productId = filters.stockCardFilters.productId?.trim();
 
   const stockCardPromise = productId
-    ? fetchAllPaginatedItems<StockMovementMock>("/api/reports/stock-card", {
+    ? fetchAllPaginatedItems<StockMovementMock>(reportExportPath("stock-card", scope), {
+        ...withExportScopeQuery({}, scope),
         productId,
       })
     : Promise.resolve([] as StockMovementMock[]);
@@ -77,22 +104,43 @@ export async function fetchReportsForExport(
     topCustomers,
     purchases,
   ] = await Promise.all([
-    fetchAllPaginatedItems<DailySalesReportRow>("/api/reports/daily-sales", dateQuery),
-    fetchAllPaginatedItems<GrossProfitReportRow>("/api/reports/gross-profit", dateQuery),
-    fetchAllPaginatedItems<ProductProfitabilityReportRow>(
-      "/api/reports/product-profitability",
+    fetchAllPaginatedItems<DailySalesReportRow>(
+      reportExportPath("daily-sales", scope),
+      dateQuery,
     ),
-    fetchAllPaginatedItems<LowStockReportRow>("/api/reports/low-stock"),
+    fetchAllPaginatedItems<GrossProfitReportRow>(
+      reportExportPath("gross-profit", scope),
+      dateQuery,
+    ),
+    fetchAllPaginatedItems<ProductProfitabilityReportRow>(
+      reportExportPath("product-profitability", scope),
+      withExportScopeQuery({}, scope),
+    ),
+    fetchAllPaginatedItems<LowStockReportRow>(
+      reportExportPath("low-stock", scope),
+      withExportScopeQuery({}, scope),
+    ),
     fetchAllPaginatedItems<CustomerPurchasesReportRow>(
-      "/api/reports/customer-purchases",
+      reportExportPath("customer-purchases", scope),
+      withExportScopeQuery({}, scope),
     ),
     fetchAllPaginatedItems<SupplierPurchasesReportRow>(
-      "/api/reports/supplier-purchases",
+      reportExportPath("supplier-purchases", scope),
+      withExportScopeQuery({}, scope),
     ),
     stockCardPromise,
-    fetchAllPaginatedItems<TopProductsReportRow>("/api/reports/top-products", dateQuery),
-    fetchAllPaginatedItems<TopCustomersReportRow>("/api/reports/top-customers", dateQuery),
-    fetchAllPaginatedItems<PurchasesReportRow>("/api/reports/purchases", purchasesQuery),
+    fetchAllPaginatedItems<TopProductsReportRow>(
+      reportExportPath("top-products", scope),
+      dateQuery,
+    ),
+    fetchAllPaginatedItems<TopCustomersReportRow>(
+      reportExportPath("top-customers", scope),
+      dateQuery,
+    ),
+    fetchAllPaginatedItems<PurchasesReportRow>(
+      reportExportPath("purchases", scope),
+      purchasesQuery,
+    ),
   ]);
 
   return {

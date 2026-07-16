@@ -225,6 +225,16 @@ Este checklist compara el plan funcional del ERP contra los endpoints actuales e
 - `[x]` `requirePermission` soporta sesion Supabase y fallback demo (`ALLOW_DEMO_AUTH`).
 - `[x]` Cargar `profiles.role` y `profiles.is_active` desde Supabase en permisos API.
 
+## Plataforma
+
+- `[x]` `GET /api/platform/stores`: listado paginado con filtros `search` y `status`.
+- `[x]` `POST /api/platform/stores`: crea tienda, administrador y configuracion inicial.
+- `[x]` `GET /api/platform/stores/[id]`: detalle con usuarios de la tienda.
+- `[x]` `PATCH /api/platform/stores/[id]`: actualiza datos y estado de la tienda.
+- `[x]` `GET /api/platform/home/summary|metrics|sales-trend|recent-sales|low-stock`: dashboard multi-tienda (`storeScope` + `storeIds`).
+- `[x]` `GET /api/platform/users` / `[id]` / `POST` (solo admin): directorio y alta de admin.
+- `[x]` `GET /api/platform/reports/[report]`: reportes multi-tienda.
+
 ## Autenticacion
 
 - `[x]` Login UI usa BFF `POST /api/auth/login` (`useLogin` → `loginWithPassword`).

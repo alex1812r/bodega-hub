@@ -58,8 +58,8 @@ describe("apiFetch", () => {
 
   it("adds demo auth headers from local storage in the browser", async () => {
     process.env.NEXT_PUBLIC_ALLOW_DEMO_AUTH = "true";
-    window.localStorage.setItem("control-ventas:user-role", "contador");
-    window.localStorage.setItem("control-ventas:user-id", "user-accountant");
+    window.localStorage.setItem("bodega-hub:user-role", "contador");
+    window.localStorage.setItem("bodega-hub:user-id", "user-accountant");
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: { ok: true } }));
 
     await apiFetch("/api/settings");
@@ -72,8 +72,8 @@ describe("apiFetch", () => {
 
   it("skips demo auth headers when demo auth is disabled", async () => {
     delete process.env.NEXT_PUBLIC_ALLOW_DEMO_AUTH;
-    window.localStorage.setItem("control-ventas:user-role", "contador");
-    window.localStorage.setItem("control-ventas:user-id", "user-accountant");
+    window.localStorage.setItem("bodega-hub:user-role", "contador");
+    window.localStorage.setItem("bodega-hub:user-id", "user-accountant");
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: { ok: true } }));
 
     await apiFetch("/api/settings");

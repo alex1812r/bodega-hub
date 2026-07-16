@@ -1,7 +1,7 @@
 "use client";
 
 import { Filter } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -16,7 +16,10 @@ import { IconButton } from "@/shared/components/IconButton";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { formatRef } from "@/shared/utils/currency";
 
-import { useDashboardSalesTrend } from "../hooks/useDashboard";
+import {
+  type DashboardRequestScope,
+  useDashboardSalesTrend,
+} from "../hooks/useDashboard";
 import {
   DASHBOARD_CHART_PERIODS,
   type DashboardChartPeriodDays,
@@ -28,12 +31,22 @@ import { DashboardPeriodFilterModal } from "./DashboardPeriodFilterModal";
 
 const CHART_PRIMARY = "#4f46e5";
 
-export function DashboardSalesChartCard() {
+type DashboardSalesChartCardProps = {
+  scope?: DashboardRequestScope;
+};
+
+export function DashboardSalesChartCard({ scope }: DashboardSalesChartCardProps = {}) {
   const [periodDays, setPeriodDays] = useState<DashboardChartPeriodDays>(7);
   const [periodModalOpen, setPeriodModalOpen] = useState(false);
   const [draftPeriodDays, setDraftPeriodDays] = useState<DashboardChartPeriodDays>(7);
+  const [chartReady, setChartReady] = useState(false);
   const range = useMemo(() => getChartDateRange(periodDays), [periodDays]);
-  const trendQuery = useDashboardSalesTrend(range);
+  const trendQuery = useDashboardSalesTrend(range, scope);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setChartReady(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   const chartData = useMemo(
     () => buildChartSeries(trendQuery.data?.items ?? [], range.from, range.to),
@@ -71,7 +84,7 @@ export function DashboardSalesChartCard() {
       </div>
 
       <div className="h-64 min-h-64 w-full min-w-0 rounded-lg border border-border/30 bg-surface">
-        {trendQuery.isLoading ? (
+        {trendQuery.isLoading || !chartReady ? (
           <div className="flex h-full min-h-64 items-center justify-center">
             <LoadingState
               description="Cargando ventas del periodo seleccionado."

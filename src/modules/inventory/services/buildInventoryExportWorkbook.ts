@@ -12,7 +12,7 @@ export async function buildInventoryExportWorkbook(
   metadata: InventoryExportWorkbookMetadata,
 ): Promise<ArrayBuffer> {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Control Ventas";
+  workbook.creator = "BodegaHub";
   workbook.created = new Date(metadata.exportedAt);
 
   const worksheet = workbook.addWorksheet("Inventario");

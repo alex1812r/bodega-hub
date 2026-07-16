@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
 import {
   mockContacts,
@@ -11,6 +12,7 @@ import {
   type SupplierProductPriceHistoryMock,
   type SupplierProductPriceOrigin,
 } from "@/shared/mocks/erp-data";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { matchesProductSearch } from "@/modules/products/services/productSearch";
 import { normalizeOptionalSku } from "@/shared/utils/skuGeneration";
@@ -175,7 +177,7 @@ function matchesSupplierProductSearch(relation: SupplierProductMock, search: str
   );
 }
 
-export function listSupplierProducts(searchParams: URLSearchParams) {
+export function listSupplierProducts(searchParams: URLSearchParams, storeId: string) {
   const productId = searchParams.get("productId");
   const supplierId = searchParams.get("supplierId");
   const isActive = searchParams.get("isActive");
@@ -189,6 +191,7 @@ export function listSupplierProducts(searchParams: URLSearchParams) {
         String(relation.isActive ?? true) === isActive.toLowerCase();
 
       return (
+        (relation.storeId ?? DEFAULT_STORE_ID) === storeId &&
         matchesActive &&
         (!productId || relation.productId === productId) &&
         (!supplierId || relation.supplierId === supplierId) &&
@@ -203,25 +206,27 @@ export function listSupplierProducts(searchParams: URLSearchParams) {
   return paginateList(sortedItems, searchParams);
 }
 
-export function listProductSuppliers(productId: string, searchParams: URLSearchParams) {
+export function listProductSuppliers(productId: string, searchParams: URLSearchParams, storeId: string) {
   const params = new URLSearchParams(searchParams);
   params.set("productId", productId);
 
-  return listSupplierProducts(params);
+  return listSupplierProducts(params, storeId);
 }
 
-export function listSupplierProductsBySupplier(supplierId: string, searchParams: URLSearchParams) {
+export function listSupplierProductsBySupplier(supplierId: string, searchParams: URLSearchParams, storeId: string) {
   const params = new URLSearchParams(searchParams);
   params.set("supplierId", supplierId);
 
-  return listSupplierProducts(params);
+  return listSupplierProducts(params, storeId);
 }
 
-export function getSupplierProductById(id: string) {
-  return enrichSupplierProduct(findRelation(id));
+export function getSupplierProductById(id: string, storeId: string) {
+  const relation = findRelation(id);
+  assertMockStoreResource(relation, storeId, "Relacion proveedor-producto no encontrada.");
+  return enrichSupplierProduct(relation);
 }
 
-export function createSupplierProduct(input: SupplierProductCreateInput) {
+export function createSupplierProduct(input: SupplierProductCreateInput, storeId: string) {
   const existing = findLink(input.supplierId, input.productId);
 
   if (existing) {
@@ -253,6 +258,7 @@ export function createSupplierProduct(input: SupplierProductCreateInput) {
     lastCostRef: 0,
     notes: input.notes,
     productId: input.productId,
+    storeId,
     supplierId: input.supplierId,
     supplierSku: normalizeOptionalSku(input.supplierSku) ?? undefined,
     updatedAt: now,
@@ -271,8 +277,9 @@ export function createSupplierProduct(input: SupplierProductCreateInput) {
   return enrichSupplierProduct(relation);
 }
 
-export function updateSupplierProduct(id: string, input: SupplierProductMetadataUpdateInput) {
+export function updateSupplierProduct(id: string, input: SupplierProductMetadataUpdateInput, storeId: string) {
   const relation = findRelation(id);
+  assertMockStoreResource(relation, storeId, "Relacion proveedor-producto no encontrada.");
 
   if (input.supplierId && input.productId) {
     assertUniqueActiveLink(input.supplierId, input.productId, id);
@@ -294,11 +301,10 @@ export function updateSupplierProduct(id: string, input: SupplierProductMetadata
   return enrichSupplierProduct(relation);
 }
 
-export function registerSupplierProductPrice(
-  id: string,
-  input: SupplierProductRegisterPriceInput,
-) {
+export function registerSupplierProductPrice(id: string,
+  input: SupplierProductRegisterPriceInput, storeId: string) {
   const relation = findRelation(id);
+  assertMockStoreResource(relation, storeId, "Relacion proveedor-producto no encontrada.");
 
   if (relation.isActive === false) {
     throw new ApiError(400, "BAD_REQUEST", "No se puede registrar precio en una relacion inactiva.");
@@ -335,16 +341,17 @@ export function registerSupplierProductPrice(
   };
 }
 
-export function deactivateSupplierProduct(id: string) {
+export function deactivateSupplierProduct(id: string, storeId: string) {
   const relation = findRelation(id);
+  assertMockStoreResource(relation, storeId, "Relacion proveedor-producto no encontrada.");
   relation.isActive = false;
   relation.updatedAt = new Date().toISOString();
 
   return enrichSupplierProduct(relation);
 }
 
-export function listSupplierProductPriceHistory(id: string, searchParams: URLSearchParams) {
-  findRelation(id);
+export function listSupplierProductPriceHistory(id: string, searchParams: URLSearchParams, storeId: string) {
+  getSupplierProductById(id, storeId);
 
   const items = priceHistory
     .filter((entry) => entry.supplierProductId === id)
@@ -365,19 +372,17 @@ function findPackUnit(supplierProductId: string, packUnitId: string) {
   return packUnit;
 }
 
-export function listSupplierProductPackUnits(supplierProductId: string) {
-  findRelation(supplierProductId);
+export function listSupplierProductPackUnits(supplierProductId: string, storeId: string) {
+  getSupplierProductById(supplierProductId, storeId);
 
   return packUnits
     .filter((item) => item.supplierProductId === supplierProductId)
     .map((item) => ({ ...item, isActive: item.isActive ?? true, isDefault: item.isDefault ?? false }));
 }
 
-export function createSupplierProductPackUnit(
-  supplierProductId: string,
-  input: SupplierProductPackUnitInput,
-) {
-  findRelation(supplierProductId);
+export function createSupplierProductPackUnit(supplierProductId: string,
+  input: SupplierProductPackUnitInput, storeId: string) {
+  getSupplierProductById(supplierProductId, storeId);
 
   const isDefault = input.isDefault ?? false;
 
@@ -402,11 +407,10 @@ export function createSupplierProductPackUnit(
   return created;
 }
 
-export function updateSupplierProductPackUnit(
-  supplierProductId: string,
+export function updateSupplierProductPackUnit(supplierProductId: string,
   packUnitId: string,
-  input: SupplierProductPackUnitUpdateInput,
-) {
+  input: SupplierProductPackUnitUpdateInput, storeId: string) {
+  getSupplierProductById(supplierProductId, storeId);
   const packUnit = findPackUnit(supplierProductId, packUnitId);
 
   if (input.isDefault === true) {
@@ -430,11 +434,11 @@ export function updateSupplierProductPackUnit(
   return { ...packUnit, isActive: packUnit.isActive ?? true, isDefault: packUnit.isDefault ?? false };
 }
 
-export function deactivateSupplierProductPackUnit(supplierProductId: string, packUnitId: string) {
+export function deactivateSupplierProductPackUnit(supplierProductId: string, packUnitId: string, storeId: string) {
   return updateSupplierProductPackUnit(supplierProductId, packUnitId, {
     isActive: false,
     isDefault: false,
-  });
+  }, storeId);
 }
 
 export type SupplierProductInput = SupplierProductCreateInput;

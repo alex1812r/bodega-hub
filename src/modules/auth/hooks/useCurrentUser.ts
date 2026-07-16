@@ -19,6 +19,8 @@ export type CurrentUserResponse = {
   permissions: Permission[];
   role: UserRole;
   roles: UserRole[];
+  /** null para superadmin */
+  storeId: string | null;
   user: CurrentUser;
 };
 

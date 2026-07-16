@@ -45,6 +45,7 @@ describe("/api/users", () => {
   describe("supabase data source", () => {
     const mockRange = jest.fn();
     const mockSelect = jest.fn(() => ({
+      eq: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnThis(),
       range: mockRange,
     }));

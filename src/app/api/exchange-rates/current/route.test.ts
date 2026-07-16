@@ -37,16 +37,16 @@ describe("/api/exchange-rates/current", () => {
 
   describe("supabase data source", () => {
     const mockMaybeSingle = jest.fn();
-    const mockEq = jest.fn(() => ({
-      order: jest.fn(() => ({
-        limit: jest.fn(() => ({
-          maybeSingle: mockMaybeSingle,
-        })),
-      })),
-    }));
-    const mockSelect = jest.fn(() => ({
-      eq: mockEq,
-    }));
+    const query = {
+      eq: jest.fn(),
+      limit: jest.fn(),
+      maybeSingle: mockMaybeSingle,
+      order: jest.fn(),
+    };
+    query.eq.mockReturnValue(query);
+    query.order.mockReturnValue(query);
+    query.limit.mockReturnValue(query);
+    const mockSelect = jest.fn(() => query);
     const mockInsertSingle = jest.fn();
 
     beforeEach(() => {

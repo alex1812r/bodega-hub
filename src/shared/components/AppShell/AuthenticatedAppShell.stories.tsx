@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/Ca
 
 import { AuthenticatedAppShell } from "./AuthenticatedAppShell";
 
-const localRoleStorageKey = "control-ventas:user-role";
+const localRoleStorageKey = "bodega-hub:user-role";
 
 function setLocalRole(role: string) {
   if (typeof window !== "undefined") {

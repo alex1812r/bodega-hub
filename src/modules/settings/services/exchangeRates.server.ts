@@ -18,7 +18,7 @@ const exchangeRateSelect = "id, rate_ves, source, notes, created_at";
 
 const RATE_EPSILON = 0.0001;
 
-export async function listExchangeRates(searchParams: URLSearchParams) {
+export async function listExchangeRates(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
   const from = searchParams.get("from");
@@ -27,6 +27,7 @@ export async function listExchangeRates(searchParams: URLSearchParams) {
   let query = supabase
     .from("exchange_rates")
     .select(exchangeRateSelect, { count: "exact" })
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false });
 
   if (from) {
@@ -53,12 +54,13 @@ function ratesDiffer(previous: number, next: number) {
   return Math.abs(previous - next) >= RATE_EPSILON;
 }
 
-async function getLastOfficialRateRow() {
+async function getLastOfficialRateRow(storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("exchange_rates")
     .select(exchangeRateSelect)
     .eq("source", DOLAR_API_OFFICIAL_SOURCE)
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle<ExchangeRateRow>();
@@ -70,8 +72,9 @@ async function getLastOfficialRateRow() {
 
 async function persistOfficialRateIfNeeded(
   official: Awaited<ReturnType<typeof fetchOfficialDollarRate>>,
+  storeId: string,
 ): Promise<ExchangeRateMock> {
-  const last = await getLastOfficialRateRow();
+  const last = await getLastOfficialRateRow(storeId);
   const officialDayKey = toAmericaCaracasDateKey(official.fechaActualizacion);
   const lastDayKey = last ? toAmericaCaracasDateKey(last.created_at) : null;
   const lastRate = last ? Number(last.rate_ves) : null;
@@ -93,6 +96,7 @@ async function persistOfficialRateIfNeeded(
       notes: `fechaActualizacion=${official.fechaActualizacion}`,
       rate_ves: official.rateVes,
       source: official.source,
+      store_id: storeId,
     })
     .select(exchangeRateSelect)
     .single<ExchangeRateRow>();
@@ -117,7 +121,7 @@ function toLiveExchangeRate(
   };
 }
 
-export async function getCurrentExchangeRate() {
+export async function getCurrentExchangeRate(storeId: string) {
   const cached = getCachedOfficialRate();
 
   if (cached) {
@@ -129,7 +133,7 @@ export async function getCurrentExchangeRate() {
   let rate: ExchangeRateMock;
 
   try {
-    rate = await persistOfficialRateIfNeeded(official);
+    rate = await persistOfficialRateIfNeeded(official, storeId);
   } catch {
     rate = toLiveExchangeRate(official);
   }
@@ -139,7 +143,10 @@ export async function getCurrentExchangeRate() {
   return rate;
 }
 
-export async function createExchangeRate(input: { rateVes: number; source?: string }) {
+export async function createExchangeRate(
+  input: { rateVes: number; source?: string },
+  storeId: string,
+) {
   const supabase = await createRouteSupabaseClient();
   const {
     data: { user },
@@ -154,6 +161,7 @@ export async function createExchangeRate(input: { rateVes: number; source?: stri
       created_by: user?.id ?? null,
       rate_ves: input.rateVes,
       source: input.source ?? "Manual",
+      store_id: storeId,
     })
     .select(exchangeRateSelect)
     .single<ExchangeRateRow>();

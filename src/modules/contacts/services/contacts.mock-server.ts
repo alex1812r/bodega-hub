@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
+import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
 import {
   mockContacts,
@@ -7,18 +8,20 @@ import {
   mockSales,
   type ContactMock,
 } from "@/shared/mocks/erp-data";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 export type ContactInput = Partial<
   Pick<ContactMock, "address" | "email" | "isActive" | "name" | "phone" | "taxId" | "type">
 >;
 
-export function listContacts(searchParams: URLSearchParams) {
+export function listContacts(searchParams: URLSearchParams, storeId: string) {
   const type = searchParams.get("type");
   const search = searchParams.get("search")?.toLowerCase();
 
   const isActive = searchParams.get("isActive");
 
   const items = mockContacts.filter((contact) => {
+    const matchesStore = (contact.storeId ?? DEFAULT_STORE_ID) === storeId;
     const matchesType = !type || contact.type === type || contact.type === "ambos";
     const matchesSearch =
       !search ||
@@ -28,23 +31,20 @@ export function listContacts(searchParams: URLSearchParams) {
     const matchesActive =
       isActive === null || isActive === "" || String(contact.isActive) === isActive;
 
-    return matchesType && matchesSearch && matchesActive;
+    return matchesStore && matchesType && matchesSearch && matchesActive;
   });
 
   return paginateList(items, searchParams);
 }
 
-export function getContactById(id: string) {
+export function getContactById(id: string, storeId: string) {
   const contact = mockContacts.find((item) => item.id === id);
-
-  if (!contact) {
-    throw new ApiError(404, "NOT_FOUND", "Contacto no encontrado.");
-  }
+  assertMockStoreResource(contact, storeId, "Contacto no encontrado.");
 
   return contact;
 }
 
-export function createContact(input: ContactInput) {
+export function createContact(input: ContactInput, storeId: string) {
   if (input.taxId && mockContacts.some((contact) => contact.taxId === input.taxId)) {
     throw new ApiError(409, "CONFLICT", "Ya existe un contacto con este RIF/CI.");
   }
@@ -56,12 +56,13 @@ export function createContact(input: ContactInput) {
     isActive: true,
     name: input.name ?? "Contacto mock",
     phone: input.phone ?? "",
+    storeId,
     taxId: input.taxId ?? `MOCK-${Date.now()}`,
     type: input.type ?? "cliente",
   } satisfies ContactMock;
 }
 
-export function updateContact(id: string, input: ContactInput) {
+export function updateContact(id: string, input: ContactInput, storeId: string) {
   if (
     input.taxId &&
     mockContacts.some((contact) => contact.id !== id && contact.taxId === input.taxId)
@@ -70,58 +71,74 @@ export function updateContact(id: string, input: ContactInput) {
   }
 
   return {
-    ...getContactById(id),
+    ...getContactById(id, storeId),
     ...input,
   };
 }
 
-export function getContactSales(id: string, searchParams: URLSearchParams) {
-  getContactById(id);
-  const items = mockSales.filter((sale) => sale.customerId === id);
+export function getContactSales(id: string, searchParams: URLSearchParams, storeId: string) {
+  getContactById(id, storeId);
+  const items = mockSales.filter(
+    (sale) => sale.customerId === id && (sale.storeId ?? DEFAULT_STORE_ID) === storeId,
+  );
 
   return paginateList(items, searchParams);
 }
 
-export function getContactPurchases(id: string, searchParams: URLSearchParams) {
-  getContactById(id);
-  const items = mockPurchases.filter((purchase) => purchase.supplierId === id);
+export function getContactPurchases(id: string, searchParams: URLSearchParams, storeId: string) {
+  getContactById(id, storeId);
+  const items = mockPurchases.filter(
+    (purchase) =>
+      purchase.supplierId === id && (purchase.storeId ?? DEFAULT_STORE_ID) === storeId,
+  );
 
   return paginateList(items, searchParams);
 }
 
-export function getContactPayments(id: string, searchParams: URLSearchParams) {
-  getContactById(id);
-  const items = mockPayments.filter((payment) => payment.contactId === id);
+export function getContactPayments(id: string, searchParams: URLSearchParams, storeId: string) {
+  getContactById(id, storeId);
+  const items = mockPayments.filter(
+    (payment) =>
+      payment.contactId === id && (payment.storeId ?? DEFAULT_STORE_ID) === storeId,
+  );
 
   return paginateList(items, searchParams);
 }
 
-export function getContactActivity(id: string, searchParams: URLSearchParams) {
-  getContactById(id);
+export function getContactActivity(id: string, searchParams: URLSearchParams, storeId: string) {
+  getContactById(id, storeId);
   const sales = mockSales
-    .filter((sale) => sale.customerId === id)
+    .filter(
+      (sale) => sale.customerId === id && (sale.storeId ?? DEFAULT_STORE_ID) === storeId,
+    )
     .map((sale) => ({
-    amountVes: sale.totalVes,
-    createdAt: sale.createdAt,
-    id: sale.id,
-    type: "sale",
-  }));
+      amountVes: sale.totalVes,
+      createdAt: sale.createdAt,
+      id: sale.id,
+      type: "sale",
+    }));
   const purchases = mockPurchases
-    .filter((purchase) => purchase.supplierId === id)
+    .filter(
+      (purchase) =>
+        purchase.supplierId === id && (purchase.storeId ?? DEFAULT_STORE_ID) === storeId,
+    )
     .map((purchase) => ({
-    amountVes: purchase.totalVes,
-    createdAt: purchase.createdAt,
-    id: purchase.id,
-    type: "purchase",
-  }));
+      amountVes: purchase.totalVes,
+      createdAt: purchase.createdAt,
+      id: purchase.id,
+      type: "purchase",
+    }));
   const payments = mockPayments
-    .filter((payment) => payment.contactId === id)
+    .filter(
+      (payment) =>
+        payment.contactId === id && (payment.storeId ?? DEFAULT_STORE_ID) === storeId,
+    )
     .map((payment) => ({
-    amountVes: payment.amountVes,
-    createdAt: payment.createdAt,
-    id: payment.id,
-    type: "payment",
-  }));
+      amountVes: payment.amountVes,
+      createdAt: payment.createdAt,
+      id: payment.id,
+      type: "payment",
+    }));
 
   const items = [...sales, ...purchases, ...payments].sort((first, second) =>
     first.createdAt.localeCompare(second.createdAt),

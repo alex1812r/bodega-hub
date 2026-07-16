@@ -1,4 +1,4 @@
-# Supabase setup — Control Ventas ERP
+# Supabase setup — BodegaHub
 
 Guia minima para levantar la base de datos de desarrollo y probar auth real contra `/api/auth/*`.
 
@@ -43,6 +43,12 @@ Orden individual (si prefieres uno por uno):
 | 1 | `20260705-supplier-product-pack-cost.sql` | `last_pack_cost_ref` + RPC precio empaque |
 | 2 | `20260706-product-barcode.sql` | `products.barcode` + indice unico |
 | 3 | `20260707-product-images-storage.sql` | bucket `product-images` + policy lectura |
+| 4a | `20260716a-user-role-superadmin.sql` | Enum `user_role.superadmin` (**corrida aparte**) |
+| 4b | `20260716-multi-store.sql` | `stores`, `store_id`, RLS por tienda |
+| 4c | `20260716b-multi-store-views.sql` | Vistas con `store_id` (dashboard/reportes) |
+| 4d | `20260716c-seed-superadmin.sql` | Usuario `superadmin@example.com` (admin/vendedor intactos) |
+
+**Importante:** el patch 4b/4c **no** están embebidos en `apply-all-pending.sql`. Ejecuta **4a → 4b → 4c** en Runs separados del SQL Editor (PostgreSQL no permite usar un enum nuevo en la misma transacción donde se agregó).
 
 Los patches son **idempotentes** (se pueden re-ejecutar). Requieren que el schema base y RPCs auxiliares (`append_supplier_product_price_history`, `current_user_role`) ya existan.
 

@@ -6,6 +6,7 @@ jest.mock("../../../lib/supabase/route-client");
 
 import { ApiError } from "@/lib/api/apiError";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { createSupplierProduct } from "./supplierProducts.server";
 
@@ -71,11 +72,14 @@ describe("supplierProducts.server", () => {
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue(supabase);
 
     await expect(
-      createSupplierProduct({
-        productId,
-        supplierId,
-        supplierSku: undefined,
-      }),
+      createSupplierProduct(
+        {
+          productId,
+          supplierId,
+          supplierSku: undefined,
+        },
+        DEFAULT_STORE_ID,
+      ),
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
       status: 400,
@@ -149,12 +153,15 @@ describe("supplierProducts.server", () => {
 
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue(createMockSupabase({ from, rpc }));
 
-    const result = await createSupplierProduct({
-      lastCostRef: 4.5,
-      productId,
-      supplierId,
-      supplierSku: "SUP-RELINK",
-    });
+    const result = await createSupplierProduct(
+      {
+        lastCostRef: 4.5,
+        productId,
+        supplierId,
+        supplierSku: "SUP-RELINK",
+      },
+      DEFAULT_STORE_ID,
+    );
 
     expect(result.id).toBe(supplierProductId);
     expect(result.isActive).toBe(true);
@@ -203,12 +210,15 @@ describe("supplierProducts.server", () => {
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue(createMockSupabase({ from, rpc }));
 
     await expect(
-      createSupplierProduct({
-        lastCostRef: 3,
-        productId,
-        supplierId,
-        supplierSku: undefined,
-      }),
+      createSupplierProduct(
+        {
+          lastCostRef: 3,
+          productId,
+          supplierId,
+          supplierSku: undefined,
+        },
+        DEFAULT_STORE_ID,
+      ),
     ).rejects.toMatchObject({
       code: "INTERNAL_ERROR",
       status: 500,

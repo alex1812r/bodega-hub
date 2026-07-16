@@ -1,4 +1,4 @@
--- Reset operativo de Control Ventas ERP (dev/staging).
+-- Reset operativo de BodegaHub (dev/staging).
 -- Borra productos, contactos, ventas, compras, pagos, inventario, etc.
 -- Conserva: auth.users, auth.identities, public.profiles, public.categories.
 --
@@ -25,7 +25,7 @@ restart identity cascade;
 
 -- Singleton de configuración (no es dato de negocio, pero la app lo requiere).
 insert into public.app_settings (id, business_name, default_tax_rate, invoice_prefix, low_stock_threshold)
-values (1, 'Control Ventas ERP', 16, 'FAC', 5)
+values (1, 'BodegaHub', 16, 'FAC', 5)
 on conflict (id) do update set
   business_name = excluded.business_name,
   default_tax_rate = excluded.default_tax_rate,

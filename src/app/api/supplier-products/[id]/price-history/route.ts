@@ -1,6 +1,6 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonData } from "@/lib/api/jsonResponse";
-import { requirePermission } from "@/lib/api/requirePermission";
+import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 
 export async function GET(
@@ -8,13 +8,14 @@ export async function GET(
   context: RouteContext<"/api/supplier-products/[id]/price-history">,
 ) {
   try {
-    await requirePermission(request, "products.view");
+    const auth = await requireStorePermission(request, "products.view");
     const { id } = await context.params;
 
     return jsonData(
       await getSupplierProductsService().listSupplierProductPriceHistory(
         id,
         new URL(request.url).searchParams,
+        auth.storeId,
       ),
     );
   } catch (error) {

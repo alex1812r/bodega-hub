@@ -1,7 +1,6 @@
 import {
   getEffectivePermissions,
   hasEffectivePermission,
-  permissions,
 } from "./permissions";
 
 describe("permissions", () => {
@@ -23,9 +22,28 @@ describe("permissions", () => {
     expect(hasEffectivePermission(profile, "payments.view")).toBe(false);
   });
 
-  it("keeps admin with the full permission catalog", () => {
-    expect(getEffectivePermissions({ deniedPermissions: ["users.manage"], role: "admin" })).toEqual(
-      permissions,
-    );
+  it("gives admin all store permissions but not platform ones", () => {
+    const effective = getEffectivePermissions({
+      deniedPermissions: ["users.manage"],
+      role: "admin",
+    });
+
+    expect(effective).toContain("products.view");
+    expect(effective).toContain("users.manage");
+    expect(effective).not.toContain("platform.stores.view");
+    expect(effective).not.toContain("platform.stores.manage");
+  });
+
+  it("gives superadmin only platform permissions", () => {
+    const effective = getEffectivePermissions({ role: "superadmin" });
+
+    expect(effective).toEqual([
+      "platform.stores.view",
+      "platform.stores.manage",
+      "platform.users.view",
+      "platform.users.manage",
+      "platform.reports.view",
+      "platform.dashboard.view",
+    ]);
   });
 });

@@ -23,9 +23,9 @@ export const Default: Story = {
       <section className="hidden flex-1 bg-indigo-700 p-10 text-white lg:flex lg:flex-col lg:justify-between">
         <div>
           <p className="text-sm font-medium uppercase tracking-[0.2em] text-indigo-100">
-            BodegaSync
+            BodegaHub
           </p>
-          <p className="mt-2 text-sm text-indigo-200">Control de Ventas ERP</p>
+          <p className="mt-2 text-sm text-indigo-200">BodegaHub</p>
           <Typography as="h1" className="mt-6 max-w-xl text-white" variant="display">
             Administra ventas, compras e inventario desde una sola plataforma.
           </Typography>
@@ -43,10 +43,10 @@ export const Default: Story = {
             <span className="text-2xl font-bold text-white">B</span>
           </div>
           <p className="text-lg font-semibold tracking-tight text-indigo-700 dark:text-indigo-400">
-            BodegaSync
+            BodegaHub
           </p>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Control de Ventas ERP
+            BodegaHub
           </p>
         </div>
 

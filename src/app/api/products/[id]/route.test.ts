@@ -6,6 +6,11 @@ jest.mock("../../../../lib/supabase/route-client", () => ({
   createRouteSupabaseClient: jest.fn(),
 }));
 
+jest.mock("../../../../lib/api/assertStoreResource", () => ({
+  ...jest.requireActual("../../../../lib/api/assertStoreResource"),
+  assertSupabaseStoreResource: jest.fn(),
+}));
+
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import { DELETE, GET, PATCH } from "./route";

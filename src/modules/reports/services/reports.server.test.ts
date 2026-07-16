@@ -5,6 +5,7 @@
 jest.mock("../../../lib/supabase/route-client");
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import {
   getCustomerPurchasesReport,
@@ -55,7 +56,7 @@ describe("reports.server", () => {
       }),
     );
 
-    const result = await getDailySalesReport(new URLSearchParams("skip=0&limit=10"));
+    const result = await getDailySalesReport(new URLSearchParams("skip=0&limit=10"), DEFAULT_STORE_ID);
 
     expect(result.items[0]).toEqual({
       paidVes: 100,
@@ -82,7 +83,7 @@ describe("reports.server", () => {
       }),
     );
 
-    const result = await getGrossProfitReport(new URLSearchParams("skip=0&limit=10"));
+    const result = await getGrossProfitReport(new URLSearchParams("skip=0&limit=10"), DEFAULT_STORE_ID);
 
     expect(result.items[0]).toEqual({
       costRef: 20,
@@ -114,7 +115,7 @@ describe("reports.server", () => {
       }),
     );
 
-    const result = await getLowStockReport(new URLSearchParams("skip=0&limit=10"));
+    const result = await getLowStockReport(new URLSearchParams("skip=0&limit=10"), DEFAULT_STORE_ID);
 
     expect(result.items[0]).toEqual(
       expect.objectContaining({
@@ -148,7 +149,7 @@ describe("reports.server", () => {
 
     mockFrom.mockReturnValue(builder);
 
-    await getStockCard(new URLSearchParams("productId=prod-1&skip=0&limit=10"));
+    await getStockCard(new URLSearchParams("productId=prod-1&skip=0&limit=10"), DEFAULT_STORE_ID);
 
     expect(builder.eq).toHaveBeenCalledWith("product_id", "prod-1");
   });
@@ -172,7 +173,10 @@ describe("reports.server", () => {
       }),
     );
 
-    const result = await getCustomerPurchasesReport(new URLSearchParams("skip=0&limit=10"));
+    const result = await getCustomerPurchasesReport(
+      new URLSearchParams("skip=0&limit=10"),
+      DEFAULT_STORE_ID,
+    );
 
     expect(result.items[0]).toEqual({
       customerId: "cust-1",

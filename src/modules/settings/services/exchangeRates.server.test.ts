@@ -11,6 +11,7 @@ import { clearOfficialRateCache } from "@/lib/exchange-rates/officialRateCache";
 import { DOLAR_API_OFFICIAL_SOURCE } from "@/lib/exchange-rates/constants";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { getCurrentExchangeRate } from "./exchangeRates.server";
 
@@ -69,7 +70,7 @@ describe("exchangeRates.server getCurrentExchangeRate", () => {
   });
 
   it("fetches DolarAPI and persists when there is no official row", async () => {
-    const rate = await getCurrentExchangeRate();
+    const rate = await getCurrentExchangeRate(DEFAULT_STORE_ID);
 
     expect(fetchOfficialDollarRate).toHaveBeenCalled();
     expect(mockInsert).toHaveBeenCalled();
@@ -79,10 +80,10 @@ describe("exchangeRates.server getCurrentExchangeRate", () => {
   });
 
   it("returns cached rate without calling DolarAPI again", async () => {
-    await getCurrentExchangeRate();
+    await getCurrentExchangeRate(DEFAULT_STORE_ID);
     jest.clearAllMocks();
 
-    const rate = await getCurrentExchangeRate();
+    const rate = await getCurrentExchangeRate(DEFAULT_STORE_ID);
 
     expect(fetchOfficialDollarRate).not.toHaveBeenCalled();
     expect(rate.rateVes).toBe(558.6436);
@@ -99,7 +100,7 @@ describe("exchangeRates.server getCurrentExchangeRate", () => {
       error: null,
     });
 
-    const rate = await getCurrentExchangeRate();
+    const rate = await getCurrentExchangeRate(DEFAULT_STORE_ID);
 
     expect(mockInsert).not.toHaveBeenCalled();
     expect(rate.id).toBe("rate-existing");

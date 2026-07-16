@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Verificar patches aplicados
--- Ejecutar despues de apply-all-pending.sql (SQL Editor → Run)
+-- Ejecutar despues de apply-all-pending.sql Y 20260716-multi-store.sql
 -- Cada fila debe mostrar ok = true
 -- =============================================================================
 
@@ -15,12 +15,12 @@ select
   ) as ok
 union all
 select
-  'index products_barcode_unique',
+  'index products_store_barcode_unique',
   exists (
     select 1
     from pg_indexes
     where schemaname = 'public'
-      and indexname = 'products_barcode_unique'
+      and indexname = 'products_store_barcode_unique'
   )
 union all
 select
@@ -61,5 +61,52 @@ select
     where schemaname = 'storage'
       and tablename = 'objects'
       and policyname = 'Public read product images'
+  )
+union all
+select
+  'table stores',
+  exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'stores'
+  )
+union all
+select
+  'products.store_id',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'products' and column_name = 'store_id'
+  )
+union all
+select
+  'profiles.store_id',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'profiles' and column_name = 'store_id'
+  )
+union all
+select
+  'fn current_user_store_id',
+  exists (
+    select 1 from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'current_user_store_id'
+  )
+union all
+select
+  'view daily_sales_summary.store_id',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'daily_sales_summary'
+      and column_name = 'store_id'
+  )
+union all
+select
+  'view low_stock_products.store_id',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'low_stock_products'
+      and column_name = 'store_id'
   )
 order by 1;
