@@ -52,7 +52,7 @@ export async function resolvePlatformReportStoreIds(
   const allIds = await listAllStoreIds();
 
   if (allIds.length === 0) {
-    throw new ApiError(400, "VALIDATION_ERROR", "No hay tiendas disponibles para reportar.");
+    throw new ApiError(400, "BAD_REQUEST", "No hay tiendas disponibles para reportar.");
   }
 
   if (scope === "all") {
@@ -60,16 +60,16 @@ export async function resolvePlatformReportStoreIds(
   }
 
   if (selected.length === 0) {
-    throw new ApiError(400, "VALIDATION_ERROR", "Selecciona al menos una tienda.");
+    throw new ApiError(400, "BAD_REQUEST", "Selecciona al menos una tienda.");
   }
 
   if (scope === "one" && selected.length !== 1) {
-    throw new ApiError(400, "VALIDATION_ERROR", "Selecciona exactamente una tienda.");
+    throw new ApiError(400, "BAD_REQUEST", "Selecciona exactamente una tienda.");
   }
 
   const unknown = selected.filter((id) => !allIds.includes(id));
   if (unknown.length > 0) {
-    throw new ApiError(400, "VALIDATION_ERROR", "Una o mas tiendas no existen.");
+    throw new ApiError(400, "BAD_REQUEST", "Una o mas tiendas no existen.");
   }
 
   return selected;
