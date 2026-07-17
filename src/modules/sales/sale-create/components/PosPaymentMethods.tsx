@@ -1,29 +1,47 @@
 "use client";
 
 import type { PaymentMethod } from "@/shared/mocks/erp-data";
+import {
+  DEFAULT_ENABLED_PAYMENT_METHODS,
+  filterEnabledPaymentMethods,
+  paymentMethodLabels,
+} from "@/shared/payments/paymentMethods";
 import { cn } from "@/shared/utils/cn";
 
-const paymentOptions: Array<{ label: string; value: PaymentMethod }> = [
-  { label: "Efectivo VES", value: "efectivo_ves" },
-  { label: "Efectivo USD", value: "efectivo_usd" },
-  { label: "Pago movil", value: "pago_movil" },
-  { label: "Punto de venta", value: "punto_venta" },
-  { label: "Transferencia", value: "transferencia" },
-];
-
 type PosPaymentMethodsProps = {
+  disabled?: boolean;
+  enabledMethods?: readonly PaymentMethod[];
   onChange: (method: PaymentMethod) => void;
-  selectedMethod: PaymentMethod;
+  onOpenMixedPayments?: () => void;
+  selectedMethod: PaymentMethod | null;
+  showMixedPaymentsLink?: boolean;
 };
 
-export function PosPaymentMethods({ onChange, selectedMethod }: PosPaymentMethodsProps) {
+export function PosPaymentMethods({
+  disabled = false,
+  enabledMethods = DEFAULT_ENABLED_PAYMENT_METHODS,
+  onChange,
+  onOpenMixedPayments,
+  selectedMethod,
+  showMixedPaymentsLink = true,
+}: PosPaymentMethodsProps) {
+  const paymentOptions = filterEnabledPaymentMethods(enabledMethods).map((value) => ({
+    label: paymentMethodLabels[value],
+    value,
+  }));
+
   return (
     <fieldset className="min-w-0 space-y-2">
       <legend className="text-sm font-medium text-foreground">Metodo de pago</legend>
       <div className="min-w-0 overflow-hidden">
-        <div className="flex max-w-full gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div
+          className={cn(
+            "flex max-w-full gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            disabled && "opacity-50",
+          )}
+        >
           {paymentOptions.map((option) => {
-            const isActive = option.value === selectedMethod;
+            const isActive = option.value === selectedMethod && !disabled;
 
             return (
               <button
@@ -33,7 +51,9 @@ export function PosPaymentMethods({ onChange, selectedMethod }: PosPaymentMethod
                   isActive
                     ? "border-primary bg-primary text-primary-foreground shadow-sm"
                     : "border-border bg-surface-container-lowest text-foreground hover:bg-surface-container-low",
+                  disabled && "cursor-not-allowed hover:bg-surface-container-lowest",
                 )}
+                disabled={disabled}
                 key={option.value}
                 onClick={() => onChange(option.value)}
                 type="button"
@@ -44,6 +64,17 @@ export function PosPaymentMethods({ onChange, selectedMethod }: PosPaymentMethod
           })}
         </div>
       </div>
+      {onOpenMixedPayments && showMixedPaymentsLink ? (
+        <button
+          className="cursor-pointer text-sm font-medium text-primary hover:underline"
+          onClick={onOpenMixedPayments}
+          type="button"
+        >
+          {disabled ? "Editar pago mixto" : "Pago mixto"}
+        </button>
+      ) : null}
     </fieldset>
   );
 }
+
+export { paymentMethodLabels as posPaymentMethodLabels };

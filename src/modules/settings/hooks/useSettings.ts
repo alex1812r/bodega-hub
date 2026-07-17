@@ -17,6 +17,7 @@ export type UserUpdateInput = Partial<
 export const settingsQueryKeys = {
   all: ["settings"] as const,
   detail: () => [...settingsQueryKeys.all, "detail"] as const,
+  paymentMethods: () => [...settingsQueryKeys.all, "payment-methods"] as const,
   users: () => [...settingsQueryKeys.all, "users"] as const,
 };
 
@@ -24,6 +25,19 @@ export function useSettings() {
   return useQuery({
     queryKey: settingsQueryKeys.detail(),
     queryFn: () => apiFetch<AppSettingsMock>("/api/settings"),
+  });
+}
+
+export function useEnabledPaymentMethods() {
+  return useQuery({
+    queryKey: settingsQueryKeys.paymentMethods(),
+    queryFn: async () => {
+      const data = await apiFetch<{ enabledPaymentMethods: AppSettingsMock["enabledPaymentMethods"] }>(
+        "/api/settings/payment-methods",
+      );
+      return data.enabledPaymentMethods;
+    },
+    staleTime: 60_000,
   });
 }
 
@@ -38,8 +52,16 @@ export function useUpdateSettings() {
       }),
     onSuccess: (settings) => {
       queryClient.setQueryData(settingsQueryKeys.detail(), settings);
+      queryClient.setQueryData(
+        settingsQueryKeys.paymentMethods(),
+        settings.enabledPaymentMethods,
+      );
       void queryClient.invalidateQueries({
         queryKey: settingsQueryKeys.detail(),
+        refetchType: "none",
+      });
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.paymentMethods(),
         refetchType: "none",
       });
     },

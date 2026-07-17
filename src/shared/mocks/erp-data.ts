@@ -229,6 +229,7 @@ export type UserProfileMock = {
 export type AppSettingsMock = {
   businessName: string;
   defaultTaxRate: number;
+  enabledPaymentMethods: PaymentMethod[];
   invoicePrefix: string;
   lowStockThreshold: number;
   storeId?: string | null;
@@ -1241,6 +1242,13 @@ export const mockUserProfiles: UserProfileMock[] = [
 export const mockAppSettings: AppSettingsMock = {
   businessName: "BodegaHub",
   defaultTaxRate: 0,
+  enabledPaymentMethods: [
+    "efectivo_ves",
+    "efectivo_usd",
+    "pago_movil",
+    "punto_venta",
+    "transferencia",
+  ],
   invoicePrefix: "V",
   lowStockThreshold: 5,
 };

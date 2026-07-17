@@ -25,23 +25,35 @@ export function usePosCart() {
       const existing = current.find((item) => item.productId === product.id);
 
       if (existing) {
-        return current.map((item) =>
-          item.productId === product.id
-            ? { ...item, quantity: item.quantity + quantity }
-            : item,
-        );
+        const stock = Math.max(product.currentStock, 0);
+        const nextQuantity = Math.min(stock, existing.quantity + quantity);
+        const updated: PosCartItem = {
+          ...existing,
+          imageUrl: product.imageUrl ?? existing.imageUrl,
+          productName: product.name,
+          quantity: nextQuantity,
+          stock,
+          unitPriceRef: product.salePriceRef,
+        };
+        // Move the line to the top so rescan/selection feedback is obvious.
+        return [updated, ...current.filter((item) => item.productId !== product.id)];
+      }
+
+      const initialQuantity = Math.min(Math.max(product.currentStock, 0), quantity);
+      if (initialQuantity < 1) {
+        return current;
       }
 
       return [
-        ...current,
         {
           imageUrl: product.imageUrl ?? undefined,
           productId: product.id,
           productName: product.name,
-          quantity,
+          quantity: initialQuantity,
           stock: product.currentStock,
           unitPriceRef: product.salePriceRef,
         },
+        ...current,
       ];
     });
   }
@@ -54,7 +66,9 @@ export function usePosCart() {
 
     setItems((current) =>
       current.map((item) =>
-        item.productId === productId ? { ...item, quantity } : item,
+        item.productId === productId
+          ? { ...item, quantity: Math.min(item.stock, quantity) }
+          : item,
       ),
     );
   }

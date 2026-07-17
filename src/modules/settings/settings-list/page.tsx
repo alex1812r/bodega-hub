@@ -25,7 +25,13 @@ import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import { Input } from "@/shared/components/Input";
 import { SelectField } from "@/shared/components/SelectField";
-import type { ExchangeRateMock, UserProfileMock } from "@/shared/mocks/erp-data";
+import type { ExchangeRateMock, PaymentMethod, UserProfileMock } from "@/shared/mocks/erp-data";
+import {
+  DEFAULT_ENABLED_PAYMENT_METHODS,
+  normalizeEnabledPaymentMethods,
+  PAYMENT_METHODS,
+  paymentMethodLabels,
+} from "@/shared/payments/paymentMethods";
 
 import {
   useCreateExchangeRate,
@@ -44,6 +50,7 @@ import {
 type SettingsFormState = {
   businessName: string;
   defaultTaxRate: string;
+  enabledPaymentMethods: PaymentMethod[];
   invoicePrefix: string;
   lowStockThreshold: string;
 };
@@ -56,6 +63,7 @@ type ExchangeRateFormState = {
 const initialSettingsForm: SettingsFormState = {
   businessName: "",
   defaultTaxRate: "0",
+  enabledPaymentMethods: [...DEFAULT_ENABLED_PAYMENT_METHODS],
   invoicePrefix: "",
   lowStockThreshold: "0",
 };
@@ -70,12 +78,14 @@ const SETTINGS_FORM_ID = "settings-general-form";
 function toSettingsFormState(data: {
   businessName: string;
   defaultTaxRate: number;
+  enabledPaymentMethods?: PaymentMethod[];
   invoicePrefix: string;
   lowStockThreshold: number;
 }): SettingsFormState {
   return {
     businessName: data.businessName,
     defaultTaxRate: String(data.defaultTaxRate),
+    enabledPaymentMethods: normalizeEnabledPaymentMethods(data.enabledPaymentMethods),
     invoicePrefix: data.invoicePrefix,
     lowStockThreshold: String(data.lowStockThreshold),
   };
@@ -190,7 +200,7 @@ export function SettingsListPage() {
   );
   const showDemoAuthCard = isDemoAuthEnabledUi();
   const loadedSettingsKey = settingsQuery.data
-    ? `${settingsQuery.data.businessName}-${settingsQuery.data.invoicePrefix}`
+    ? `${settingsQuery.data.businessName}-${settingsQuery.data.invoicePrefix}-${settingsQuery.data.enabledPaymentMethods.join(",")}`
     : "";
   const [syncedSettingsKey, setSyncedSettingsKey] = useState("");
 
@@ -205,12 +215,18 @@ export function SettingsListPage() {
     }
 
     const loaded = toSettingsFormState(settingsQuery.data);
+    const enabledChanged =
+      settingsForm.enabledPaymentMethods.length !== loaded.enabledPaymentMethods.length ||
+      settingsForm.enabledPaymentMethods.some(
+        (method) => !loaded.enabledPaymentMethods.includes(method),
+      );
 
     return (
       settingsForm.businessName !== loaded.businessName ||
       settingsForm.defaultTaxRate !== loaded.defaultTaxRate ||
       settingsForm.invoicePrefix !== loaded.invoicePrefix ||
-      settingsForm.lowStockThreshold !== loaded.lowStockThreshold
+      settingsForm.lowStockThreshold !== loaded.lowStockThreshold ||
+      enabledChanged
     );
   }, [settingsForm, settingsQuery.data]);
 
@@ -233,11 +249,38 @@ export function SettingsListPage() {
   function handleSettingsSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    if (settingsForm.enabledPaymentMethods.length === 0) {
+      return;
+    }
+
     updateSettings.mutate({
       businessName: settingsForm.businessName,
       defaultTaxRate: Number(settingsForm.defaultTaxRate),
+      enabledPaymentMethods: settingsForm.enabledPaymentMethods,
       invoicePrefix: settingsForm.invoicePrefix,
       lowStockThreshold: Number(settingsForm.lowStockThreshold),
+    });
+  }
+
+  function togglePaymentMethod(method: PaymentMethod) {
+    setSettingsForm((current) => {
+      const isEnabled = current.enabledPaymentMethods.includes(method);
+      if (isEnabled) {
+        if (current.enabledPaymentMethods.length <= 1) {
+          return current;
+        }
+        return {
+          ...current,
+          enabledPaymentMethods: current.enabledPaymentMethods.filter(
+            (item) => item !== method,
+          ),
+        };
+      }
+
+      return {
+        ...current,
+        enabledPaymentMethods: [...current.enabledPaymentMethods, method],
+      };
     });
   }
 
@@ -359,6 +402,40 @@ export function SettingsListPage() {
                 type="number"
                 value={settingsForm.lowStockThreshold}
               />
+
+              <fieldset className="space-y-3 md:col-span-2">
+                <legend className="text-sm font-medium text-foreground">
+                  Metodos de pago habilitados
+                </legend>
+                <p className="text-sm text-muted-foreground">
+                  Solo estos metodos estaran disponibles al vender. Debes dejar al menos uno
+                  activo.
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {PAYMENT_METHODS.map((method) => {
+                    const checked = settingsForm.enabledPaymentMethods.includes(method);
+                    const isLastEnabled =
+                      checked && settingsForm.enabledPaymentMethods.length === 1;
+
+                    return (
+                      <label
+                        className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-surface-container-lowest px-3 py-2 text-sm text-foreground dark:border-slate-700"
+                        key={method}
+                      >
+                        <input
+                          checked={checked}
+                          className="size-4 accent-[var(--secondary)]"
+                          disabled={settingsQuery.isLoading || isLastEnabled}
+                          onChange={() => togglePaymentMethod(method)}
+                          type="checkbox"
+                        />
+                        {paymentMethodLabels[method]}
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
+
               {(updateSettings.isSuccess ||
                 settingsQuery.error ||
                 updateSettings.error) && (

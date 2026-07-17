@@ -76,6 +76,12 @@ export function PurchaseProductPickerCard({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
+  function focusSearchInput() {
+    requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+    });
+  }
+
   function handleSearchChange(value: string) {
     barcodeScan.clearScanError();
     setSearch(value);
@@ -88,21 +94,25 @@ export function PurchaseProductPickerCard({
       return;
     }
 
-    void barcodeScan.handleScanSubmit(code, {
-      onNotFound: () => undefined,
-      onResolved: (product) => {
-        const catalogProduct = catalog.find((item) => item.productId === product.id);
-        if (!catalogProduct) {
-          barcodeScan.setScanError("Producto no vinculado a este proveedor.");
-          return;
-        }
+    void barcodeScan
+      .handleScanSubmit(code, {
+        onNotFound: () => undefined,
+        onResolved: (product) => {
+          const catalogProduct = catalog.find((item) => item.productId === product.id);
+          if (!catalogProduct) {
+            barcodeScan.setScanError("Producto no vinculado a este proveedor.");
+            return;
+          }
 
-        onAddProduct(catalogProduct);
-        setSearch("");
-        setPickerOpen(false);
-        barcodeScan.clearScanError();
-      },
-    });
+          onAddProduct(catalogProduct);
+          setSearch("");
+          setPickerOpen(false);
+          barcodeScan.clearScanError();
+        },
+      })
+      .finally(() => {
+        focusSearchInput();
+      });
   }
 
   return (

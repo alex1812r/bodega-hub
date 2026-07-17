@@ -97,9 +97,33 @@ create table if not exists public.app_settings (
   default_tax_rate numeric(5,2) not null default 16 check (default_tax_rate >= 0),
   invoice_prefix text not null default 'FAC',
   low_stock_threshold integer not null default 5 check (low_stock_threshold >= 0),
+  enabled_payment_methods public.payment_method[] not null default array[
+    'efectivo_ves'::public.payment_method,
+    'efectivo_usd'::public.payment_method,
+    'pago_movil'::public.payment_method,
+    'punto_venta'::public.payment_method,
+    'transferencia'::public.payment_method
+  ],
   updated_at timestamptz not null default now(),
-  updated_by uuid references public.profiles(id) on delete set null
+  updated_by uuid references public.profiles(id) on delete set null,
+  check (cardinality(enabled_payment_methods) >= 1)
 );
+
+-- Migración: metodos de pago habilitados por tienda
+alter table public.app_settings
+  add column if not exists enabled_payment_methods public.payment_method[] not null
+  default array[
+    'efectivo_ves'::public.payment_method,
+    'efectivo_usd'::public.payment_method,
+    'pago_movil'::public.payment_method,
+    'punto_venta'::public.payment_method,
+    'transferencia'::public.payment_method
+  ];
+
+alter table public.app_settings drop constraint if exists app_settings_enabled_payment_methods_len;
+alter table public.app_settings
+  add constraint app_settings_enabled_payment_methods_len
+  check (cardinality(enabled_payment_methods) >= 1);
 
 create table if not exists public.categories (
   id uuid primary key default gen_random_uuid(),

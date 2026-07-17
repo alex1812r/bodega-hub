@@ -39,7 +39,8 @@ export const PosCatalogToolbar = forwardRef<HTMLInputElement, PosCatalogToolbarP
         return;
       }
 
-      const code = search.trim();
+      // Prefer the live input value: barcode scanners type + Enter faster than React state updates.
+      const code = event.currentTarget.value.trim() || search.trim();
       if (!code) {
         return;
       }
@@ -70,10 +71,11 @@ export const PosCatalogToolbar = forwardRef<HTMLInputElement, PosCatalogToolbarP
               aria-label="Buscar productos"
               autoFocus={autoFocus && !embedded}
               className="h-12 w-full border-0 bg-transparent py-0 pr-3 pl-10 text-base text-foreground outline-none placeholder:text-muted-foreground/80"
-              disabled={isLookingUp}
               onChange={(event) => onSearchChange(event.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
+              // Keep focus during lookup: `disabled` blurs and breaks continuous USB scanning.
+              readOnly={isLookingUp}
               type="search"
               value={search}
             />

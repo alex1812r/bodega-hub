@@ -15,7 +15,7 @@ import type { SettingsInput, UserProfileInput } from "./settings.mock-server";
 const APP_SETTINGS_ID = 1;
 
 const appSettingsSelect =
-  "id, business_name, default_tax_rate, invoice_prefix, low_stock_threshold";
+  "id, business_name, default_tax_rate, invoice_prefix, low_stock_threshold, enabled_payment_methods";
 
 const profileSelect =
   "id, full_name, role, is_active, granted_permissions, denied_permissions";
@@ -26,6 +26,9 @@ function toSettingsUpdate(input: SettingsInput) {
     ...(input.defaultTaxRate !== undefined ? { default_tax_rate: input.defaultTaxRate } : {}),
     ...(input.invoicePrefix !== undefined ? { invoice_prefix: input.invoicePrefix } : {}),
     ...(input.lowStockThreshold !== undefined ? { low_stock_threshold: input.lowStockThreshold } : {}),
+    ...(input.enabledPaymentMethods !== undefined
+      ? { enabled_payment_methods: input.enabledPaymentMethods }
+      : {}),
   };
 }
 

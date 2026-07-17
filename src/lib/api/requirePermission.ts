@@ -147,5 +147,43 @@ export async function requireStorePermission(
   return toStoreAuthContext(auth);
 }
 
+/** Al menos uno de los permisos ERP + storeId obligatorio. */
+export async function requireStoreAnyPermission(
+  request: Request,
+  permissions: readonly Permission[],
+): Promise<StoreAuthContext> {
+  if (permissions.length === 0) {
+    throw new ApiError(500, "INTERNAL_ERROR", "Se requiere al menos un permiso.");
+  }
+
+  const profile = await resolveAuthProfile(request);
+
+  if (!profile) {
+    throw new ApiError(401, "UNAUTHORIZED", "Debes iniciar sesion para continuar.");
+  }
+
+  const allowed = permissions.some((permission) =>
+    hasEffectivePermission(profile, permission),
+  );
+
+  if (!profile.isActive || !allowed) {
+    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+  }
+
+  const isSuperadmin = isSuperadminRole(profile.role);
+
+  if (isSuperadmin) {
+    throw new ApiError(403, "FORBIDDEN", SUPERADMIN_ERP_FORBIDDEN_MESSAGE);
+  }
+
+  return toStoreAuthContext({
+    isSuperadmin,
+    permissions: getEffectivePermissions(profile),
+    role: profile.role,
+    storeId: profile.storeId ?? null,
+    userId: profile.userId,
+  });
+}
+
 export { requireStoreId, toStoreAuthContext };
 export type { StoreAuthContext };

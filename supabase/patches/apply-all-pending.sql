@@ -153,3 +153,8 @@ notify pgrst, 'reload schema';
 -- Ejecutar por separado el archivo completo:
 --   supabase/patches/20260716-multi-store.sql
 -- (demasiado largo para incrustar aqui; el SQL Editor de Supabase no soporta \i)
+
+-- -----------------------------------------------------------------------------
+-- 20260717 — metodos de pago habilitados por tienda
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20260717-enabled-payment-methods.sql

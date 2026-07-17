@@ -63,10 +63,11 @@ Una fila por tienda (`store_id` unique).
 *   `default_tax_rate`: numeric(5,2)
 *   `invoice_prefix`: text
 *   `low_stock_threshold`: integer
+*   `enabled_payment_methods`: `payment_method[]` (al menos 1; default todos)
 *   `updated_at`: timestamptz
 *   `updated_by`: uuid (FK `profiles`, nullable)
 
-API: `GET`/`PATCH /api/settings`.
+API: `GET`/`PATCH /api/settings`. Lectura liviana para POS: `GET /api/settings/payment-methods`.
 
 ### 3.3 Categorías (`categories`)
 

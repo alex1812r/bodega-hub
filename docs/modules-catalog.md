@@ -382,7 +382,7 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 
 **Tasa vigente (servidor):** [`src/lib/exchange-rates/dolarApi.ts`](../src/lib/exchange-rates/dolarApi.ts), cache [`officialRateCache.ts`](../src/lib/exchange-rates/officialRateCache.ts), persistencia en `exchange_rates` con `source = "DolarAPI oficial"` (admin client, 1x/día o al cambiar valor). Variables: `DOLAR_API_OFFICIAL_URL`, `DOLAR_API_CACHE_TTL_MS`, `DOLAR_API_FETCH_TIMEOUT_MS`.
 
-**`app_settings`:** `businessName`, `invoicePrefix`, `defaultTaxRate`, `lowStockThreshold`.
+**`app_settings`:** `businessName`, `invoicePrefix`, `defaultTaxRate`, `lowStockThreshold`, `enabledPaymentMethods`.
 
 **`profiles`:** `role`, `isActive`, `grantedPermissions`, `deniedPermissions`.
 

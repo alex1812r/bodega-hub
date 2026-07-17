@@ -1,4 +1,5 @@
 import { isUserRole, type UserRole } from "@/shared/auth/permissions";
+import { normalizeEnabledPaymentMethods } from "@/shared/payments/paymentMethods";
 
 import { mapBaseEntity, mapBoolean } from "./base";
 import { mapPermissionList } from "./permissions";
@@ -13,6 +14,7 @@ export type ExchangeRateRow = {
 export type AppSettingsRow = {
   business_name: string;
   default_tax_rate: number | string;
+  enabled_payment_methods?: unknown;
   id: number;
   invoice_prefix: string;
   low_stock_threshold: number;
@@ -42,6 +44,7 @@ export function mapAppSettings(row: AppSettingsRow) {
   return {
     businessName: row.business_name,
     defaultTaxRate: Number(row.default_tax_rate),
+    enabledPaymentMethods: normalizeEnabledPaymentMethods(row.enabled_payment_methods),
     invoicePrefix: row.invoice_prefix,
     lowStockThreshold: row.low_stock_threshold,
   };

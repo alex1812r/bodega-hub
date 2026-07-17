@@ -109,4 +109,14 @@ select
       and table_name = 'low_stock_products'
       and column_name = 'store_id'
   )
+union all
+select
+  'app_settings.enabled_payment_methods',
+  exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'app_settings'
+      and column_name = 'enabled_payment_methods'
+  )
 order by 1;

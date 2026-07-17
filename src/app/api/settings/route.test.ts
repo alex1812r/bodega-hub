@@ -62,6 +62,13 @@ describe("/api/settings", () => {
         data: {
           business_name: "BodegaHub",
           default_tax_rate: 16,
+          enabled_payment_methods: [
+            "efectivo_ves",
+            "efectivo_usd",
+            "pago_movil",
+            "punto_venta",
+            "transferencia",
+          ],
           id: 1,
           invoice_prefix: "FAC",
           low_stock_threshold: 5,
@@ -96,9 +103,62 @@ describe("/api/settings", () => {
       expect(body.data).toEqual({
         businessName: "BodegaHub",
         defaultTaxRate: 16,
+        enabledPaymentMethods: [
+          "efectivo_ves",
+          "efectivo_usd",
+          "pago_movil",
+          "punto_venta",
+          "transferencia",
+        ],
         invoicePrefix: "FAC",
         lowStockThreshold: 5,
       });
+    });
+
+    it("updates enabled payment methods in supabase", async () => {
+      mockMaybeSingle.mockResolvedValue({
+        data: {
+          business_name: "BodegaHub",
+          default_tax_rate: 16,
+          enabled_payment_methods: ["efectivo_ves", "pago_movil"],
+          id: 1,
+          invoice_prefix: "FAC",
+          low_stock_threshold: 5,
+        },
+        error: null,
+      });
+
+      const response = await PATCH(
+        new Request("http://localhost/api/settings", {
+          body: JSON.stringify({
+            enabledPaymentMethods: ["efectivo_ves", "pago_movil"],
+          }),
+          headers: { "content-type": "application/json" },
+          method: "PATCH",
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.data.enabledPaymentMethods).toEqual(["efectivo_ves", "pago_movil"]);
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enabled_payment_methods: ["efectivo_ves", "pago_movil"],
+          updated_by: "user-admin",
+        }),
+      );
+    });
+
+    it("rejects empty enabled payment methods", async () => {
+      const response = await PATCH(
+        new Request("http://localhost/api/settings", {
+          body: JSON.stringify({ enabledPaymentMethods: [] }),
+          headers: { "content-type": "application/json" },
+          method: "PATCH",
+        }),
+      );
+
+      expect(response.status).toBe(400);
     });
 
     it("updates app settings in supabase", async () => {
