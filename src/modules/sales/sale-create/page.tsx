@@ -389,7 +389,7 @@ export function SaleCreatePage() {
       {!createSale.data ? (
         <PosWorkspace
           className="min-h-0 flex-1"
-          cart={
+          cart={({ onRequestClose }) => (
             <PosCartPanel
               className="h-full border-t lg:border-t-0"
               customerId={customerId}
@@ -416,6 +416,7 @@ export function SaleCreatePage() {
               onProcessSale={() => void handleProcessSale()}
               onQuantityChange={cart.setQuantity}
               onRemoveItem={(productId) => cart.setQuantity(productId, 0)}
+              onRequestClose={onRequestClose}
               paymentDetails={paymentDetails}
               paymentMethod={paymentMethod}
               rateVes={rateVes}
@@ -423,7 +424,7 @@ export function SaleCreatePage() {
               totalRef={totalRef}
               totalVes={totalVes}
             />
-          }
+          )}
           catalogScroll={
             <PosProductGrid
               isLoading={products.isLoading}
@@ -440,6 +441,8 @@ export function SaleCreatePage() {
               selectedCategoryId={categoryId}
             />
           }
+          itemsCount={cart.itemsCount}
+          rateVes={rateVes}
           toolbar={
             <PosCatalogToolbar
               isLookingUp={barcodeScan.isLookingUp}
@@ -451,6 +454,8 @@ export function SaleCreatePage() {
               search={search}
             />
           }
+          totalRef={totalRef}
+          totalVes={totalVes}
         />
       ) : null}
 

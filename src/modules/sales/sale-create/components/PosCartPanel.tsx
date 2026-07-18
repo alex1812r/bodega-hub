@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Trash2, UserRound } from "lucide-react";
+import { CheckCircle2, Trash2, UserRound, X } from "lucide-react";
 import { useState } from "react";
 
 import type { ContactMock, PaymentMethod } from "@/shared/mocks/erp-data";
@@ -43,6 +43,7 @@ type PosCartPanelProps = {
   onProcessSale: () => void;
   onQuantityChange: (productId: string, quantity: number) => void;
   onRemoveItem: (productId: string) => void;
+  onRequestClose?: () => void;
   paymentDetails?: PosSinglePaymentDetails | null;
   paymentMethod: PaymentMethod | null;
   rateVes: number;
@@ -69,6 +70,7 @@ export function PosCartPanel({
   onProcessSale,
   onQuantityChange,
   onRemoveItem,
+  onRequestClose,
   paymentDetails = null,
   paymentMethod,
   rateVes,
@@ -107,15 +109,27 @@ export function PosCartPanel({
             {selectedCustomer ? selectedCustomer.name : "Seleccionar cliente"}
           </span>
         </button>
-        <button
-          aria-label="Limpiar orden"
-          className="shrink-0 cursor-pointer rounded-lg p-2 text-muted-foreground transition-colors hover:bg-surface-container hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40"
-          disabled={items.length === 0}
-          onClick={onClearOrder}
-          type="button"
-        >
-          <Trash2 aria-hidden className="size-5" />
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            aria-label="Limpiar orden"
+            className="cursor-pointer rounded-lg p-2 text-muted-foreground transition-colors hover:bg-surface-container hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={items.length === 0}
+            onClick={onClearOrder}
+            type="button"
+          >
+            <Trash2 aria-hidden className="size-5" />
+          </button>
+          {onRequestClose ? (
+            <button
+              aria-label="Cerrar carrito"
+              className="cursor-pointer rounded-lg p-2 text-muted-foreground transition-colors hover:bg-surface-container hover:text-foreground"
+              onClick={onRequestClose}
+              type="button"
+            >
+              <X aria-hidden className="size-5" />
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex items-center justify-between border-b border-border px-4 py-2 dark:border-slate-800">

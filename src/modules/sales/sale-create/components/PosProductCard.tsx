@@ -43,7 +43,7 @@ export function PosProductCard({
     >
       <div className="relative aspect-[4/3] w-full overflow-hidden bg-surface-container">
         <PosProductImage alt={product.name} imageUrl={product.imageUrl ?? undefined} />
-        <span className="absolute top-2 right-2 rounded-md bg-surface-container-lowest/90 px-2 py-0.5 text-[11px] font-medium text-on-surface-variant shadow-sm">
+        <span className="absolute top-2 right-2 rounded-md bg-surface-container-lowest/95 px-2 py-0.5 text-[11px] font-medium text-foreground shadow-sm dark:bg-slate-800/95 dark:text-slate-100">
           Stock: {product.currentStock}
         </span>
       </div>
