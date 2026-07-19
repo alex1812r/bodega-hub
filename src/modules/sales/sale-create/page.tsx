@@ -112,10 +112,13 @@ export function SaleCreatePage() {
   const totalVes = rateVes ? refToVes(totalRef, rateVes) : 0;
   const isSubmitting = createSale.isPending || createPayment.isPending;
 
-  const cartProductIds = useMemo(
-    () => new Set(cart.items.map((item) => item.productId)),
-    [cart.items],
-  );
+  const cartQuantitiesByProductId = useMemo(() => {
+    const quantities = new Map<string, number>();
+    for (const item of cart.items) {
+      quantities.set(item.productId, item.quantity);
+    }
+    return quantities;
+  }, [cart.items]);
 
   const filteredProducts = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -431,7 +434,7 @@ export function SaleCreatePage() {
               onAddProduct={cart.addProduct}
               products={filteredProducts}
               rateVes={rateVes}
-              selectedProductIds={cartProductIds}
+              selectedQuantities={cartQuantitiesByProductId}
             />
           }
           categorySlider={

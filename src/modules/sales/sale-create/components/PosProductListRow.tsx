@@ -13,6 +13,7 @@ type PosProductListRowProps = {
   onAdd: (product: ProductWithCategory) => void;
   product: ProductWithCategory;
   rateVes: number;
+  selectedQuantity?: number;
 };
 
 export function PosProductListRow({
@@ -20,15 +21,32 @@ export function PosProductListRow({
   onAdd,
   product,
   rateVes,
+  selectedQuantity = 0,
 }: PosProductListRowProps) {
   const isOutOfStock = product.currentStock === 0;
   const isLowStock =
     product.currentStock > 0 && product.currentStock <= product.minStock;
   const priceVes = rateVes > 0 ? refToVes(product.salePriceRef, rateVes) : 0;
+  const quantityLabel =
+    selectedQuantity > 99 ? "99+" : String(selectedQuantity);
 
   return (
-    <li>
+    <li className="relative">
+      {selectedQuantity > 0 ? (
+        <span
+          aria-hidden
+          className="absolute -top-2 -right-2 z-10 flex size-7 items-center justify-center rounded-full bg-primary text-[11px] font-bold leading-none text-primary-foreground shadow-md"
+        >
+          {quantityLabel}
+        </span>
+      ) : null}
+
       <button
+        aria-label={
+          selectedQuantity > 0
+            ? `${product.name}, ${selectedQuantity} en carrito`
+            : product.name
+        }
         aria-pressed={isSelected}
         className={cn(
           "flex w-full cursor-pointer items-center gap-2.5 rounded-xl border bg-surface-container-lowest p-2.5 text-left shadow-sm transition-all",

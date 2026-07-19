@@ -12,7 +12,7 @@ type PosProductGridProps = {
   onAddProduct: (product: ProductWithCategory) => void;
   products: ProductWithCategory[];
   rateVes: number;
-  selectedProductIds?: ReadonlySet<string>;
+  selectedQuantities?: ReadonlyMap<string, number>;
 };
 
 export function PosProductGrid({
@@ -20,7 +20,7 @@ export function PosProductGrid({
   onAddProduct,
   products,
   rateVes,
-  selectedProductIds,
+  selectedQuantities,
 }: PosProductGridProps) {
   if (isLoading) {
     return (
@@ -46,27 +46,36 @@ export function PosProductGrid({
   return (
     <>
       <ul className="flex flex-col gap-2 p-3 lg:hidden">
-        {products.map((product) => (
-          <PosProductListRow
-            isSelected={selectedProductIds?.has(product.id) ?? false}
-            key={product.id}
-            onAdd={onAddProduct}
-            product={product}
-            rateVes={rateVes}
-          />
-        ))}
+        {products.map((product) => {
+          const selectedQuantity = selectedQuantities?.get(product.id) ?? 0;
+
+          return (
+            <PosProductListRow
+              isSelected={selectedQuantity > 0}
+              key={product.id}
+              onAdd={onAddProduct}
+              product={product}
+              rateVes={rateVes}
+              selectedQuantity={selectedQuantity}
+            />
+          );
+        })}
       </ul>
 
       <div className="hidden min-w-0 grid-cols-[repeat(auto-fill,minmax(9.5rem,11rem))] justify-start gap-3 p-4 lg:grid">
-        {products.map((product) => (
-          <PosProductCard
-            isSelected={selectedProductIds?.has(product.id) ?? false}
-            key={product.id}
-            onAdd={onAddProduct}
-            product={product}
-            rateVes={rateVes}
-          />
-        ))}
+        {products.map((product) => {
+          const selectedQuantity = selectedQuantities?.get(product.id) ?? 0;
+
+          return (
+            <PosProductCard
+              isSelected={selectedQuantity > 0}
+              key={product.id}
+              onAdd={onAddProduct}
+              product={product}
+              rateVes={rateVes}
+            />
+          );
+        })}
       </div>
     </>
   );
