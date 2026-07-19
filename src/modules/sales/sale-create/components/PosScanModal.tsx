@@ -3,18 +3,29 @@
 import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
 
-import { PosBarcodeScannerIcon } from "./PosBarcodeScannerIcon";
+import { PosCameraBarcodeScanner } from "./PosCameraBarcodeScanner";
 
 type PosScanModalProps = {
+  isLookingUp?: boolean;
+  onDetected: (code: string) => void;
   onFocusSearch?: () => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  scanError?: string | null;
 };
 
-export function PosScanModal({ onFocusSearch, onOpenChange, open }: PosScanModalProps) {
+export function PosScanModal({
+  isLookingUp = false,
+  onDetected,
+  onFocusSearch,
+  onOpenChange,
+  open,
+  scanError,
+}: PosScanModalProps) {
   return (
     <Modal
-      description="Enfoca el buscador y escanea con tu lector USB. Al terminar, el lector envia Enter y el producto se agrega automaticamente."
+      contentClassName="sm:max-w-lg"
+      description="Usa la camara para leer el codigo, o el lector USB con el buscador enfocado."
       footer={({ close }) => (
         <div className="flex flex-wrap justify-end gap-2">
           {onFocusSearch ? (
@@ -26,11 +37,11 @@ export function PosScanModal({ onFocusSearch, onOpenChange, open }: PosScanModal
               type="button"
               variant="outline"
             >
-              Ir al buscador
+              Usar buscador / USB
             </Button>
           ) : null}
           <Button onClick={close} type="button" variant="primary">
-            Entendido
+            Cerrar
           </Button>
         </div>
       )}
@@ -38,17 +49,20 @@ export function PosScanModal({ onFocusSearch, onOpenChange, open }: PosScanModal
       open={open}
       title="Escanear producto"
     >
-      <div className="flex flex-col items-center gap-4 py-6 text-center">
-        <div className="flex size-16 items-center justify-center rounded-full bg-surface-container text-primary">
-          <PosBarcodeScannerIcon className="size-8" />
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Coloca el cursor en el campo de busqueda del catalogo y escanea el codigo de barras. No
-          necesitas abrir la camara: la mayoria de lectores funcionan como teclado.
-        </p>
-        <p className="rounded-lg border border-dashed border-border bg-surface-container-low px-4 py-3 text-xs font-medium text-muted-foreground">
-          Escaneo por camara: proxima version
-        </p>
+      <div className="space-y-3">
+        {open ? (
+          <PosCameraBarcodeScanner
+            key="pos-camera-scanner"
+            onDetected={onDetected}
+            paused={isLookingUp}
+          />
+        ) : null}
+
+        {scanError ? (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300" role="alert">
+            {scanError}
+          </p>
+        ) : null}
       </div>
     </Modal>
   );

@@ -460,12 +460,34 @@ export function SaleCreatePage() {
       ) : null}
 
       <PosScanModal
+        isLookingUp={barcodeScan.isLookingUp}
+        onDetected={(code) => {
+          void barcodeScan
+            .handleScanSubmit(code, {
+              onResolved: (product) => {
+                cart.addProduct(product);
+                setSearch("");
+                barcodeScan.clearScanError();
+                setScanOpen(false);
+                focusSearchInput();
+              },
+            })
+            .finally(() => {
+              // Keep modal open on errors so the user can retry immediately.
+            });
+        }}
         onFocusSearch={() => {
           setScanOpen(false);
           searchInputRef.current?.focus();
         }}
-        onOpenChange={setScanOpen}
+        onOpenChange={(nextOpen) => {
+          setScanOpen(nextOpen);
+          if (!nextOpen) {
+            barcodeScan.clearScanError();
+          }
+        }}
         open={scanOpen}
+        scanError={barcodeScan.scanError}
       />
 
       <PosSingleMethodDetailsModal
