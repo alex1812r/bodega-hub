@@ -88,7 +88,10 @@ export function PurchaseProductPickerCard({
     setPickerOpen(true);
   }
 
-  function handleBarcodeScanSubmit(code: string) {
+  function handleBarcodeScanSubmit(
+    code: string,
+    options?: { closeScanOnSuccess?: boolean },
+  ) {
     if (!hasSupplier) {
       barcodeScan.setScanError("Selecciona un proveedor antes de escanear productos.");
       return;
@@ -108,6 +111,9 @@ export function PurchaseProductPickerCard({
           setSearch("");
           setPickerOpen(false);
           barcodeScan.clearScanError();
+          if (options?.closeScanOnSuccess) {
+            setScanOpen(false);
+          }
         },
       })
       .finally(() => {
@@ -169,12 +175,22 @@ export function PurchaseProductPickerCard({
       </div>
 
       <PosScanModal
+        isLookingUp={barcodeScan.isLookingUp}
+        onDetected={(code) => {
+          handleBarcodeScanSubmit(code, { closeScanOnSuccess: true });
+        }}
         onFocusSearch={() => {
           setScanOpen(false);
           searchInputRef.current?.focus();
         }}
-        onOpenChange={setScanOpen}
+        onOpenChange={(nextOpen) => {
+          setScanOpen(nextOpen);
+          if (!nextOpen) {
+            barcodeScan.clearScanError();
+          }
+        }}
         open={scanOpen}
+        scanError={barcodeScan.scanError}
       />
     </section>
   );
