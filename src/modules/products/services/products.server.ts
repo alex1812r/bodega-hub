@@ -33,7 +33,7 @@ const productSelect = `
   is_active,
   created_at,
   updated_at,
-  category:categories(id, name, description, is_active, created_at, updated_at)
+  category:categories(id, name, description, tax_rate, is_active, created_at, updated_at)
 `;
 
 function toProductInsert(input: ProductInput, storeId: string) {

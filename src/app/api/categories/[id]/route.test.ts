@@ -6,7 +6,13 @@ jest.mock("../../../../lib/supabase/route-client", () => ({
   createRouteSupabaseClient: jest.fn(),
 }));
 
+jest.mock("../../../../lib/supabase/admin-client", () => ({
+  createAdminSupabaseClient: jest.fn(),
+}));
+
+import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { DELETE, GET, PATCH } from "./route";
 
@@ -102,6 +108,19 @@ describe("/api/categories/[id]", () => {
     });
 
     it("soft deletes a category in supabase", async () => {
+      (createAdminSupabaseClient as jest.Mock).mockReturnValue({
+        from: jest.fn(() => ({
+          select: jest.fn(() => ({
+            eq: jest.fn(() => ({
+              maybeSingle: jest.fn().mockResolvedValue({
+                data: { store_id: DEFAULT_STORE_ID },
+                error: null,
+              }),
+            })),
+          })),
+        })),
+      });
+
       (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
         from: jest.fn(() => ({
           update: jest.fn(() => ({
@@ -113,6 +132,7 @@ describe("/api/categories/[id]", () => {
                   id: "cat-1",
                   is_active: false,
                   name: "Herramientas",
+                  tax_rate: 16,
                 },
                 error: null,
               }),

@@ -38,14 +38,18 @@ export type DbSaleRow = {
 export type DbPurchaseRow = {
   created_at?: string | null;
   discount_ref?: number | string | null;
+  discount_ves?: number | string | null;
   id: string;
+  paid_ref?: number | string | null;
   paid_ves?: number | string | null;
   purchase_number: string;
   ref_rate_ves?: number | string | null;
   status: PurchaseStatus;
   subtotal_ref?: number | string | null;
+  subtotal_ves?: number | string | null;
   supplier_id: string;
   tax_ref?: number | string | null;
+  tax_ves?: number | string | null;
   total_ref?: number | string | null;
   total_ves?: number | string | null;
   updated_at?: string | null;
@@ -60,6 +64,7 @@ export type DbPaymentRow = {
   cancelled_at?: string | null;
   contact_id: string;
   created_at?: string | null;
+  created_by?: string | null;
   currency?: "USD" | "VES" | null;
   direction: PaymentDirection;
   id: string;
@@ -96,13 +101,17 @@ export function mapPurchase(row: DbPurchaseRow) {
     ...mapBaseEntity(row),
     createdAt: row.created_at ?? "",
     discountRef: toNumber(row.discount_ref),
+    discountVes: toNumber(row.discount_ves),
+    paidRef: toNumber(row.paid_ref),
     paidVes: toNumber(row.paid_ves),
     purchaseNumber: row.purchase_number,
     refRateVes: toNumber(row.ref_rate_ves),
     status: row.status,
     subtotalRef: toNumber(row.subtotal_ref),
+    subtotalVes: toNumber(row.subtotal_ves),
     supplierId: row.supplier_id,
     taxRef: toNumber(row.tax_ref),
+    taxVes: toNumber(row.tax_ves),
     totalRef: toNumber(row.total_ref),
     totalVes: toNumber(row.total_ves),
     userId: row.user_id ?? "",
@@ -118,6 +127,7 @@ export function mapPayment(row: DbPaymentRow) {
     cancelledAt: row.cancelled_at ?? undefined,
     contactId: row.contact_id,
     createdAt: row.created_at ?? "",
+    createdById: row.created_by ?? undefined,
     currency: row.currency ?? undefined,
     direction: row.direction,
     id: row.id,
@@ -133,8 +143,10 @@ export function mapPayment(row: DbPaymentRow) {
 }
 
 export type DbPurchaseItemRow = {
+  cost_currency?: string | null;
   entry_mode?: string | null;
   pack_cost_ref?: number | string | null;
+  pack_cost_ves?: number | string | null;
   pack_count?: number | null;
   pack_label?: string | null;
   product?: DbProductSummaryRow | null;
@@ -143,6 +155,9 @@ export type DbPurchaseItemRow = {
   quantity: number;
   subtotal_ref?: number | string | null;
   subtotal_ves?: number | string | null;
+  tax_rate?: number | string | null;
+  tax_ref?: number | string | null;
+  tax_ves?: number | string | null;
   unit_cost_ref?: number | string | null;
   unit_cost_ves?: number | string | null;
   units_per_pack?: number | null;
@@ -175,10 +190,15 @@ export function mapPurchaseItem(row: DbPurchaseItemRow) {
   const entryMode = row.entry_mode === "pack" ? "pack" : "unit";
 
   return {
+    costCurrency: row.cost_currency === "ves" ? "ves" : "ref",
     entryMode,
     packCostRef:
       row.pack_cost_ref != null && row.pack_cost_ref !== ""
         ? toNumber(row.pack_cost_ref)
+        : undefined,
+    packCostVes:
+      row.pack_cost_ves != null && row.pack_cost_ves !== ""
+        ? toNumber(row.pack_cost_ves)
         : undefined,
     packCount: row.pack_count ?? undefined,
     packLabel: row.pack_label ?? undefined,
@@ -188,6 +208,9 @@ export function mapPurchaseItem(row: DbPurchaseItemRow) {
     quantity: row.quantity,
     subtotalRef: toNumber(row.subtotal_ref),
     subtotalVes: toNumber(row.subtotal_ves),
+    taxRate: toNumber(row.tax_rate),
+    taxRef: toNumber(row.tax_ref),
+    taxVes: toNumber(row.tax_ves),
     unitCostRef: toNumber(row.unit_cost_ref),
     unitCostVes: toNumber(row.unit_cost_ves),
     unitsPerPack: row.units_per_pack ?? undefined,

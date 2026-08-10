@@ -12,24 +12,27 @@ begin;
 -- Categorías
 -- =========================
 
-insert into public.categories (id, name, description, is_active)
+insert into public.categories (id, name, description, is_active, tax_rate)
 values
   (
     'f1111111-1111-4111-8111-111111111111',
     'Bebidas',
     'Refrescos y bebidas gaseosas',
-    true
+    true,
+    16
   ),
   (
     'f2222222-2222-4222-8222-222222222222',
     'Chucherias',
     'Snacks, papitas y golosinas',
-    true
+    true,
+    16
   )
 on conflict (id) do update set
   name = excluded.name,
   description = excluded.description,
-  is_active = excluded.is_active;
+  is_active = excluded.is_active,
+  tax_rate = excluded.tax_rate;
 
 -- =========================
 -- Proveedores

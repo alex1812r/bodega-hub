@@ -33,11 +33,15 @@ const purchaseSelect = `
   user_id,
   ref_rate_ves,
   subtotal_ref,
+  subtotal_ves,
   discount_ref,
+  discount_ves,
   tax_ref,
+  tax_ves,
   total_ref,
   total_ves,
   paid_ves,
+  paid_ref,
   status,
   notes,
   created_at,
@@ -53,11 +57,15 @@ const purchaseDetailSelect = `
   user_id,
   ref_rate_ves,
   subtotal_ref,
+  subtotal_ves,
   discount_ref,
+  discount_ves,
   tax_ref,
+  tax_ves,
   total_ref,
   total_ves,
   paid_ves,
+  paid_ref,
   status,
   notes,
   created_at,
@@ -76,12 +84,32 @@ const purchaseDetailSelect = `
     pack_count,
     units_per_pack,
     pack_cost_ref,
+    pack_cost_ves,
+    tax_rate,
+    tax_ref,
+    tax_ves,
+    cost_currency,
     product:products(${productSelect})
   )
 `;
 
-const paymentSelect =
-  "id, direction, sale_id, purchase_id, contact_id, method, currency, amount, amount_ves, amount_ref, ref_rate_ves, bank_name, reference_code, created_at";
+const paymentSelect = `
+  id,
+  direction,
+  sale_id,
+  purchase_id,
+  contact_id,
+  method,
+  currency,
+  amount,
+  amount_ves,
+  amount_ref,
+  ref_rate_ves,
+  bank_name,
+  reference_code,
+  created_at,
+  contact:contacts(${contactSelect})
+`;
 
 type PurchaseListRow = DbPurchaseRow & {
   purchase_items?: Array<{ count: number }>;
@@ -195,10 +223,42 @@ export async function getPurchaseById(id: string, storeId: string) {
 
   throwIfSupabaseError(paymentsError);
 
+  const mappedPayments = (payments ?? []).map((payment) => {
+    const row = payment as DbPaymentRow & { contact?: DbContactRow | null };
+
+    return {
+      ...mapPayment(row),
+      contact: row.contact ? mapContact(row.contact) : undefined,
+    };
+  });
+
+  const activePayments = mappedPayments.filter((payment) => payment.status !== "anulado");
+  const paidRefFromPayments =
+    Math.round(
+      activePayments.reduce((sum, payment) => {
+        if (payment.amountRef > 0) {
+          return sum + payment.amountRef;
+        }
+
+        if (payment.refRateVes > 0 && payment.amountVes > 0) {
+          return sum + payment.amountVes / payment.refRateVes;
+        }
+
+        return sum;
+      }, 0) * 100,
+    ) / 100;
+  const paidVesFromPayments =
+    Math.round(activePayments.reduce((sum, payment) => sum + payment.amountVes, 0) * 100) / 100;
+
+  const mappedPurchase = mapPurchase(data);
+
   return {
-    ...mapPurchase(data),
+    ...mappedPurchase,
+    // Prefer sums from payment history so the status card stays in sync with the table.
+    paidRef: paidRefFromPayments,
+    paidVes: paidVesFromPayments,
     items: (data.purchase_items ?? []).map((item) => mapPurchaseItem(item)),
-    payments: (payments ?? []).map((payment) => mapPayment(payment as DbPaymentRow)),
+    payments: mappedPayments,
     supplier: data.supplier ? mapContact(data.supplier) : undefined,
   };
 }
@@ -208,14 +268,18 @@ export async function createPurchase(input: PurchaseInput, _storeId: string) {
 
   const { data, error } = await supabase.rpc("create_purchase", {
     p_discount_ref: input.discountRef ?? 0,
+    p_discount_ves: input.discountVes ?? null,
     p_exchange_rate_id: input.exchangeRateId ?? null,
     p_items: toRpcItems(input.items ?? []),
     p_notes: input.notes ?? null,
     p_purchase_number: input.purchaseNumber ?? null,
     p_ref_rate_ves: input.refRateVes ?? null,
     p_status: (input.status ?? "recibido") as PurchaseStatus,
+    p_subtotal_ref: input.subtotalRef ?? null,
+    p_subtotal_ves: input.subtotalVes ?? null,
     p_supplier_id: input.supplierId,
     p_tax_ref: input.taxRef ?? 0,
+    p_tax_ves: input.taxVes ?? null,
   });
 
   throwIfSupabaseError(error);

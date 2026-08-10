@@ -51,6 +51,7 @@ export type SupplierProduct = {
     id: string;
     name: string;
     sku: string;
+    taxRate?: number;
   };
   productId: string;
   supplier?: {

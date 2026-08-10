@@ -96,31 +96,62 @@ describe("purchases.server", () => {
 
     const result = await createPurchase(
       {
-        items: [{ entryMode: "unit", productId: "44444444-4444-4444-4444-444444444444", quantity: 2, unitCostRef: 2 }],
+        discountRef: 0,
+        discountVes: 0,
+        items: [
+          {
+            costCurrency: "ref",
+            entryMode: "unit",
+            productId: "44444444-4444-4444-4444-444444444444",
+            quantity: 2,
+            subtotalRef: 4,
+            subtotalVes: 2040,
+            taxRate: 0,
+            taxRef: 0,
+            taxVes: 0,
+            unitCostRef: 2,
+            unitCostVes: 1020,
+          },
+        ],
         refRateVes: 510,
         status: "pedido",
+        subtotalRef: 4,
+        subtotalVes: 2040,
         supplierId: purchaseRow.supplier_id,
+        taxRef: 0,
+        taxVes: 0,
       },
       DEFAULT_STORE_ID,
     );
 
     expect(rpc).toHaveBeenCalledWith("create_purchase", {
       p_discount_ref: 0,
+      p_discount_ves: 0,
       p_exchange_rate_id: null,
       p_items: [
         {
+          cost_currency: "ref",
           entry_mode: "unit",
           product_id: "44444444-4444-4444-4444-444444444444",
           quantity: 2,
+          subtotal_ref: 4,
+          subtotal_ves: 2040,
+          tax_rate: 0,
+          tax_ref: 0,
+          tax_ves: 0,
           unit_cost_ref: 2,
+          unit_cost_ves: 1020,
         },
       ],
       p_notes: null,
       p_purchase_number: null,
       p_ref_rate_ves: 510,
       p_status: "pedido",
+      p_subtotal_ref: 4,
+      p_subtotal_ves: 2040,
       p_supplier_id: purchaseRow.supplier_id,
       p_tax_ref: 0,
+      p_tax_ves: 0,
     });
     expect(result.purchaseNumber).toBe("C-000001");
   });

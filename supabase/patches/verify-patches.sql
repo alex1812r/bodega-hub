@@ -119,4 +119,100 @@ select
       and table_name = 'app_settings'
       and column_name = 'enabled_payment_methods'
   )
+union all
+select
+  'categories.tax_rate',
+  exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'categories'
+      and column_name = 'tax_rate'
+  )
+union all
+select
+  'rpc create_purchase uses assert_store_context',
+  exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'create_purchase'
+      and pg_get_functiondef(p.oid) ilike '%assert_store_context%'
+  )
+union all
+select
+  'rpc create_sale uses assert_store_context',
+  exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'create_sale'
+      and pg_get_functiondef(p.oid) ilike '%assert_store_context%'
+  )
+union all
+select
+  'purchases.subtotal_ves',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'purchases' and column_name = 'subtotal_ves'
+  )
+union all
+select
+  'purchases.discount_ves',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'purchases' and column_name = 'discount_ves'
+  )
+union all
+select
+  'purchases.tax_ves',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'purchases' and column_name = 'tax_ves'
+  )
+union all
+select
+  'purchase_items.pack_cost_ves',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'purchase_items' and column_name = 'pack_cost_ves'
+  )
+union all
+select
+  'purchase_items.tax_rate',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'purchase_items' and column_name = 'tax_rate'
+  )
+union all
+select
+  'rpc create_purchase accepts p_tax_ves',
+  exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'create_purchase'
+      and pg_get_function_identity_arguments(p.oid) ilike '%p_tax_ves%'
+  )
+union all
+select
+  'rpc create_purchase accepts p_subtotal_ref',
+  exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'create_purchase'
+      and pg_get_function_identity_arguments(p.oid) ilike '%p_subtotal_ref%'
+  )
+union all
+select
+  'purchases.paid_ref',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'purchases' and column_name = 'paid_ref'
+  )
 order by 1;

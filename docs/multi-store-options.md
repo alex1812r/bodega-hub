@@ -31,7 +31,7 @@ Patch: [`supabase/patches/20260716-multi-store.sql`](../supabase/patches/2026071
 2. `requireStorePermission` — exige `storeId` y **bloquea** superadmin en endpoints ERP.
 3. Servicios filtran por `store_id`; get/update con recurso de otra tienda → **403**.
 4. RLS: `store_id = current_user_store_id()`; tabla `stores` solo superadmin.
-5. RPCs security definer: `assert_store_context()` (mínimo en `adjust_stock`; ampliar en siguientes patches).
+5. RPCs security definer: `assert_store_context()` en `adjust_stock`, `create_sale`, `create_purchase`, `register_payment`, `receive_purchase`, `cancel_*` y `return_*` (patch [`20260810-rpc-store-context.sql`](../supabase/patches/20260810-rpc-store-context.sql)). Compras además persisten VES de cabecera/línea + tax snapshot ([`20260810b-purchase-ves-fields.sql`](../supabase/patches/20260810b-purchase-ves-fields.sql)).
 
 ## UI plataforma (Stitch)
 

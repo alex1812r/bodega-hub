@@ -22,6 +22,7 @@ type PaymentDetailInfoCardProps = {
   amountVes: number;
   bankName?: string;
   createdAt: string;
+  createdByName?: string;
   currency: "USD" | "VES";
   linkedDocument?: PaymentRelatedDocument;
   method: PaymentMethod;
@@ -67,6 +68,7 @@ export function PaymentDetailInfoCard({
   amountVes,
   bankName,
   createdAt,
+  createdByName,
   currency,
   linkedDocument,
   method,
@@ -146,7 +148,7 @@ export function PaymentDetailInfoCard({
             </p>
           </div>
 
-          <PaymentDetailRegisteredBy />
+          <PaymentDetailRegisteredBy name={createdByName} />
         </div>
       </div>
     </section>

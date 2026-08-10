@@ -9,15 +9,19 @@ import * as purchasesMockServer from "@/modules/purchases/services/purchases.moc
 import * as purchasesServer from "@/modules/purchases/services/purchases.server";
 
 const createPurchaseSchema = z.object({
-  discountRef: z.number().min(0).default(0),
+  discountRef: z.number().min(0),
+  discountVes: z.number().min(0),
   exchangeRateId: z.string().uuid().optional(),
   items: z.array(purchaseItemInputSchema).min(1),
   notes: z.string().optional(),
   purchaseNumber: z.string().optional(),
-  refRateVes: z.number().positive().optional(),
+  refRateVes: z.number().positive(),
   status: z.enum(["pedido", "recibido"]).default("recibido"),
+  subtotalRef: z.number().min(0),
+  subtotalVes: z.number().min(0),
   supplierId: z.string().min(1),
-  taxRef: z.number().min(0).default(0),
+  taxRef: z.number().min(0),
+  taxVes: z.number().min(0),
 });
 
 function getPurchasesService() {

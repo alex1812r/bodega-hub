@@ -1,21 +1,27 @@
 import { Receipt } from "lucide-react";
 
-import { formatVesBs } from "@/shared/utils/currency";
+import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
 
 import { PurchaseDetailInfoCard } from "./PurchaseDetailInfoCard";
 
 type PurchaseDetailPaymentStatusCardProps = {
+  currentRateVes?: number;
+  paidRef: number;
   paidVes: number;
-  pendingVes: number;
+  pendingRef: number;
 };
 
 export function PurchaseDetailPaymentStatusCard({
+  currentRateVes = 0,
+  paidRef,
   paidVes,
-  pendingVes,
+  pendingRef,
 }: PurchaseDetailPaymentStatusCardProps) {
-  const isPaid = pendingVes < 0.01;
-  const isPartial = !isPaid && paidVes > 0.01;
+  const isPaid = pendingRef < 0.01;
+  const isPartial = !isPaid && paidRef > 0.01;
+  const pendingVesToday =
+    currentRateVes > 0 ? Math.round(pendingRef * currentRateVes * 100) / 100 : null;
 
   const statusLabel = isPaid ? "Pagado" : isPartial ? "Pago parcial" : "Pendiente";
 
@@ -35,20 +41,35 @@ export function PurchaseDetailPaymentStatusCard({
           >
             {statusLabel}
           </span>
-          <span className="text-sm font-semibold tabular-nums text-foreground">
-            {formatVesBs(paidVes)}
-          </span>
+          <div className="flex flex-col items-start leading-tight">
+            <span className="text-sm font-semibold tabular-nums text-foreground">
+              Pagado {formatRefUsd(paidRef)}
+            </span>
+            <span className="text-xs tabular-nums text-on-surface-variant">
+              {formatVesBs(paidVes)}
+            </span>
+          </div>
         </div>
-        <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/50 pt-3 dark:border-slate-800">
-          <span className="text-sm text-on-surface-variant">Pendiente:</span>
-          <span
-            className={cn(
-              "text-sm font-semibold tabular-nums",
-              pendingVes > 0.01 ? "text-destructive" : "text-foreground",
-            )}
-          >
-            {formatVesBs(pendingVes)}
-          </span>
+        <div className="mt-3 space-y-1 border-t border-border/50 pt-3 dark:border-slate-800">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm text-on-surface-variant">Pendiente (REF):</span>
+            <span
+              className={cn(
+                "text-sm font-semibold tabular-nums",
+                pendingRef > 0.01 ? "text-destructive" : "text-foreground",
+              )}
+            >
+              {formatRefUsd(pendingRef)}
+            </span>
+          </div>
+          {pendingVesToday != null ? (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-on-surface-variant">≈ hoy en Bs:</span>
+              <span className="text-xs font-medium tabular-nums text-on-surface-variant">
+                {formatVesBs(pendingVesToday)}
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
     </PurchaseDetailInfoCard>

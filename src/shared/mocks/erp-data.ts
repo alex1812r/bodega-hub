@@ -31,6 +31,8 @@ export type CategoryMock = {
   isActive: boolean;
   name: string;
   storeId?: string | null;
+  /** Impuesto de la categoria en porcentaje (ej. 16 = IVA 16%). */
+  taxRate: number;
 };
 
 export type ContactMock = {
@@ -58,6 +60,8 @@ export type ProductMock = {
   salePriceRef: number;
   sku: string;
   storeId?: string | null;
+  /** Impuesto de la categoria (enriquecido al listar proveedor-producto). */
+  taxRate?: number;
 };
 
 export type ProductPriceHistoryMock = {
@@ -106,14 +110,18 @@ export type SaleItemMock = {
 export type PurchaseMock = {
   createdAt: string;
   discountRef: number;
+  discountVes?: number;
   id: string;
+  paidRef?: number;
   paidVes: number;
   purchaseNumber: string;
   refRateVes: number;
   status: PurchaseStatus;
   subtotalRef: number;
+  subtotalVes?: number;
   supplierId: string;
   taxRef: number;
+  taxVes?: number;
   totalRef: number;
   totalVes: number;
   userId: string;
@@ -121,8 +129,10 @@ export type PurchaseMock = {
 };
 
 export type PurchaseItemMock = {
+  costCurrency?: "ves" | "ref";
   entryMode?: "pack" | "unit";
   packCostRef?: number;
+  packCostVes?: number;
   packCount?: number;
   packLabel?: string;
   productId: string;
@@ -130,6 +140,9 @@ export type PurchaseItemMock = {
   quantity: number;
   subtotalRef: number;
   subtotalVes: number;
+  taxRate?: number;
+  taxRef?: number;
+  taxVes?: number;
   unitCostRef: number;
   unitCostVes: number;
   unitsPerPack?: number;
@@ -143,6 +156,7 @@ export type PaymentMock = {
   cancelledAt?: string;
   contactId: string;
   createdAt: string;
+  createdById?: string;
   currency?: "USD" | "VES";
   direction: PaymentDirection;
   id: string;
@@ -241,30 +255,35 @@ export const mockCategories: CategoryMock[] = [
     id: "cat-tools",
     isActive: true,
     name: "Herramientas",
+    taxRate: 16,
   },
   {
     description: "Material electrico",
     id: "cat-electric",
     isActive: true,
     name: "Electricidad",
+    taxRate: 16,
   },
   {
     description: "Pinturas y acabados",
     id: "cat-paint",
     isActive: true,
     name: "Pintura",
+    taxRate: 16,
   },
   {
     description: "Tuberias, conexiones y accesorios",
     id: "cat-plumbing",
     isActive: true,
     name: "Plomeria",
+    taxRate: 16,
   },
   {
     description: "Categoria archivada para pruebas",
     id: "cat-archived",
     isActive: false,
     name: "Archivada",
+    taxRate: 0,
   },
 ];
 

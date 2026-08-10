@@ -50,9 +50,12 @@ export function CategoryFormModal({
     event.preventDefault();
 
     const formData = new FormData(event.currentTarget);
+    const taxRateRaw = String(formData.get("taxRate") ?? "").trim();
+    const taxRate = taxRateRaw === "" ? 16 : Number(taxRateRaw);
     const input: CategoryInput = {
       description: String(formData.get("description") ?? "").trim() || undefined,
       name: String(formData.get("name") ?? "").trim(),
+      taxRate: Number.isFinite(taxRate) ? Math.min(100, Math.max(0, taxRate)) : 16,
     };
 
     await onSubmit?.(input);
@@ -81,6 +84,17 @@ export function CategoryFormModal({
           label="Nombre"
           name="name"
           required
+        />
+        <Input
+          defaultValue={category?.taxRate ?? 16}
+          helperText="Porcentaje de impuesto aplicable a productos de esta categoría (ej. 16 = IVA 16%)."
+          label="Impuesto (%)"
+          max={100}
+          min={0}
+          name="taxRate"
+          required
+          step="0.01"
+          type="number"
         />
         <Textarea
           defaultValue={category?.description ?? ""}

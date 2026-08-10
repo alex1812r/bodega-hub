@@ -29,10 +29,22 @@ export function PaymentDetailBalanceCard({
     );
   }
 
-  const pendingRef = refRateVes > 0 ? documentBalance.pendingVes / refRateVes : 0;
   const isSale = documentBalance.href.startsWith("/sales");
   const documentKind = isSale ? "venta" : "compra";
   const documentKindLabel = isSale ? "factura" : "compra";
+
+  const pendingRef = isSale
+    ? refRateVes > 0
+      ? documentBalance.pendingVes / refRateVes
+      : 0
+    : (documentBalance.pendingRef ??
+      Math.max((documentBalance.totalRef ?? 0) - (documentBalance.paidRef ?? 0), 0));
+
+  const pendingVesDisplay = isSale
+    ? documentBalance.pendingVes
+    : refRateVes > 0
+      ? Math.round(pendingRef * refRateVes * 100) / 100
+      : documentBalance.pendingVes;
 
   return (
     <section className="overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm lg:sticky lg:top-[5.5rem]">
@@ -44,14 +56,18 @@ export function PaymentDetailBalanceCard({
             Total {documentKind}
           </span>
           <span className="text-sm font-semibold tabular-nums text-foreground">
-            {formatVesStitch(documentBalance.totalVes)}
+            {isSale
+              ? formatVesStitch(documentBalance.totalVes)
+              : formatRefStitch(documentBalance.totalRef ?? 0)}
           </span>
         </div>
 
         <div className="flex items-center justify-between gap-4 border-b border-outline-variant/50 py-2">
           <span className="text-sm text-on-surface-variant">Total pagado a la fecha</span>
           <span className="text-sm font-semibold tabular-nums text-secondary">
-            {formatVesStitch(documentBalance.paidVes)}
+            {isSale
+              ? formatVesStitch(documentBalance.paidVes)
+              : formatRefStitch(documentBalance.paidRef ?? 0)}
           </span>
         </div>
 
@@ -61,17 +77,25 @@ export function PaymentDetailBalanceCard({
               Saldo restante
             </span>
             <div className="flex items-end justify-between gap-4">
-              <span className="text-2xl font-bold tracking-tight text-destructive tabular-nums">
-                {documentBalance.pendingVes.toLocaleString("es-VE", {
-                  maximumFractionDigits: 2,
-                  minimumFractionDigits: 2,
-                })}{" "}
-                <span className="text-xl">VES</span>
-              </span>
+              {isSale ? (
+                <span className="text-2xl font-bold tracking-tight text-destructive tabular-nums">
+                  {documentBalance.pendingVes.toLocaleString("es-VE", {
+                    maximumFractionDigits: 2,
+                    minimumFractionDigits: 2,
+                  })}{" "}
+                  <span className="text-xl">VES</span>
+                </span>
+              ) : (
+                <span className="text-2xl font-bold tracking-tight text-destructive tabular-nums">
+                  {formatRefStitch(pendingRef)}
+                </span>
+              )}
             </div>
-            {documentBalance.pendingVes > 0 ? (
+            {pendingRef > 0 || documentBalance.pendingVes > 0 ? (
               <span className="text-right text-sm text-on-surface-variant tabular-nums">
-                ~ {formatRefStitch(pendingRef)}
+                {isSale
+                  ? `~ ${formatRefStitch(pendingRef)}`
+                  : `≈ ${formatVesStitch(pendingVesDisplay)} hoy`}
               </span>
             ) : null}
           </div>

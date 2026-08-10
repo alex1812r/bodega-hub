@@ -156,8 +156,16 @@ export function buildPurchaseDetailPdf(
       ["Impuesto (REF)", formatRefUsd(purchase.taxRef)],
       ["Total (REF)", formatRefUsd(purchase.totalRef)],
       ["Total (VES)", formatVesBs(purchase.totalVes)],
+      ["Pagado (REF)", formatRefUsd(purchase.paidRef ?? 0)],
       ["Pagado (VES)", formatVesBs(purchase.paidVes)],
-      ["Pendiente (VES)", formatVesBs(Math.max(0, purchase.totalVes - purchase.paidVes))],
+      [
+        "Pendiente (REF)",
+        formatRefUsd(Math.max(0, purchase.totalRef - (purchase.paidRef ?? 0))),
+      ],
+      [
+        "Pendiente (VES histórico)",
+        formatVesBs(Math.max(0, purchase.totalVes - purchase.paidVes)),
+      ],
     ],
     columnStyles: {
       0: { fontStyle: "bold", halign: "left" },

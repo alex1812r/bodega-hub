@@ -4,6 +4,7 @@ import { normalizeSku } from "@/shared/utils/skuGeneration";
 
 export type DbProductSummaryRow = {
   barcode?: string | null;
+  category?: CategoryRow | null;
   category_id?: string | null;
   current_cost_ref?: number | string | null;
   current_stock?: number | null;
@@ -17,7 +18,6 @@ export type DbProductSummaryRow = {
 };
 
 export type ProductRow = DbProductSummaryRow & {
-  category?: CategoryRow | null;
   created_at?: string | null;
   description?: string | null;
   updated_at?: string | null;
@@ -43,9 +43,11 @@ function toNumber(value: number | string | null | undefined, fallback = 0) {
 }
 
 export function mapProductSummary(row: DbProductSummaryRow) {
+  const category = row.category ? mapCategory(row.category) : undefined;
+
   return {
     barcode: mapNullableString(row.barcode),
-    categoryId: mapNullableString(row.category_id) ?? "",
+    categoryId: mapNullableString(row.category_id) ?? category?.id ?? "",
     currentCostRef: toNumber(row.current_cost_ref),
     currentStock: row.current_stock ?? 0,
     id: row.id,
@@ -55,12 +57,14 @@ export function mapProductSummary(row: DbProductSummaryRow) {
     name: row.name,
     salePriceRef: toNumber(row.sale_price_ref),
     sku: normalizeSku(row.sku),
+    taxRate: category?.taxRate ?? 0,
   };
 }
 
 export function mapProduct(row: ProductRow) {
+  const summary = mapProductSummary(row);
   return {
-    ...mapProductSummary(row),
+    ...summary,
     ...mapBaseEntity(row),
     category: row.category ? mapCategory(row.category) : undefined,
     description: mapNullableString(row.description),

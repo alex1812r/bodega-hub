@@ -39,6 +39,7 @@ describe("buildPurchaseCatalog", () => {
         name: "Cable 12 AWG",
         packUnits: [],
         sku: "sup-cab-12",
+        taxRate: 0,
         unitCostRef: 2,
       },
     ]);

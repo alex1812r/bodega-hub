@@ -47,6 +47,13 @@ Orden individual (si prefieres uno por uno):
 | 4b | `20260716-multi-store.sql` | `stores`, `store_id`, RLS por tienda |
 | 4c | `20260716b-multi-store-views.sql` | Vistas con `store_id` (dashboard/reportes) |
 | 4d | `20260716c-seed-superadmin.sql` | Usuario `superadmin@example.com` (admin/vendedor intactos) |
+| 5 | `20260717-enabled-payment-methods.sql` | Metodos de pago habilitados por tienda |
+| 6 | `20260809-category-tax-rate.sql` | `categories.tax_rate` |
+| 7 | `20260810-rpc-store-context.sql` | RPCs de compra/venta/pago con `store_id` |
+| 8 | `20260810b-purchase-ves-fields.sql` | VES + tax snapshot en compras |
+| 9 | `20260810c-purchase-trust-frontend.sql` | `create_purchase` confia REF+VES del frontend |
+| 10 | `20260810d-purchase-paid-ref.sql` | `purchases.paid_ref` + saldo pendiente en REF |
+| 10b | `20260810d-fix-existing-purchase-payment.sql` | One-shot: ajusta pago parcial existente (opcional) |
 
 **Importante:** el patch 4b/4c **no** están embebidos en `apply-all-pending.sql`. Ejecuta **4a → 4b → 4c** en Runs separados del SQL Editor (PostgreSQL no permite usar un enum nuevo en la misma transacción donde se agregó).
 

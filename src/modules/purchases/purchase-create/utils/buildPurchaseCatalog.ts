@@ -19,6 +19,7 @@ export function buildPurchaseCatalog(
       packUnits: row.packUnits ?? [],
       productId: row.productId,
       sku: row.supplierSku ?? row.product?.sku ?? "—",
+      taxRate: row.product?.taxRate ?? 0,
       unitCostRef: row.lastCostRef ?? 0,
     }));
 }

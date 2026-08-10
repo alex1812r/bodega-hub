@@ -88,8 +88,14 @@ function resolveMockDocumentBalance(
     return {
       href: `/purchases/${purchase.id}`,
       label: formatPurchaseNumberDisplay(purchase.purchaseNumber),
+      paidRef: purchase.paidRef ?? 0,
       paidVes: purchase.paidVes,
+      pendingRef: Math.max(
+        Math.round((purchase.totalRef - (purchase.paidRef ?? 0)) * 100) / 100,
+        0,
+      ),
       pendingVes: Math.max(purchase.totalVes - purchase.paidVes, 0),
+      totalRef: purchase.totalRef,
       totalVes: purchase.totalVes,
     };
   }
@@ -163,6 +169,24 @@ export function createPayment(input: PaymentInput, storeId: string) {
   const totalVes = sale?.totalVes ?? purchase?.totalVes ?? 0;
   const paidVes = sale?.paidVes ?? purchase?.paidVes ?? 0;
 
+  if (sale) {
+    sale.paidVes = Math.round((sale.paidVes + amountVes) * 100) / 100;
+  }
+
+  if (purchase) {
+    purchase.paidVes = Math.round((purchase.paidVes + amountVes) * 100) / 100;
+    purchase.paidRef = Math.round(((purchase.paidRef ?? 0) + amountRef) * 100) / 100;
+  }
+
+  const pendingBalanceVes = purchase
+    ? Math.max(
+        Math.round(
+          ((purchase.totalRef - (purchase.paidRef ?? 0)) * refRateVes) * 100,
+        ) / 100,
+        0,
+      )
+    : Math.max(totalVes - paidVes - amountVes, 0);
+
   return {
     amount: input.amount,
     amountRef,
@@ -180,7 +204,7 @@ export function createPayment(input: PaymentInput, storeId: string) {
     saleId: input.saleId,
     status: "activo",
     storeId,
-    pendingBalanceVes: Math.max(totalVes - paidVes - amountVes, 0),
+    pendingBalanceVes,
   } satisfies PaymentMock;
 }
 
@@ -236,6 +260,10 @@ export function cancelPayment(id: string, storeId: string) {
     }
 
     purchase.paidVes -= payment.amountVes;
+    purchase.paidRef = Math.max(
+      0,
+      Math.round(((purchase.paidRef ?? 0) - payment.amountRef) * 100) / 100,
+    );
   }
 
   payment.status = "anulado";

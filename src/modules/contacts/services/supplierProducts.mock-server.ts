@@ -2,6 +2,7 @@ import { ApiError } from "@/lib/api/apiError";
 import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
 import {
+  mockCategories,
   mockContacts,
   mockProducts,
   mockSupplierProductPackUnits,
@@ -62,6 +63,10 @@ function enrichSupplierProduct(relation: SupplierProductMock) {
     .map(normalizePackUnit);
   const defaultPackUnit =
     relationPackUnits.find((packUnit) => packUnit.isDefault) ?? relationPackUnits[0];
+  const product = mockProducts.find((item) => item.id === relation.productId);
+  const category = product
+    ? mockCategories.find((item) => item.id === product.categoryId)
+    : undefined;
 
   return {
     ...relation,
@@ -69,7 +74,12 @@ function enrichSupplierProduct(relation: SupplierProductMock) {
     isActive: relation.isActive ?? true,
     lastPriceOrigin: relation.lastPriceOrigin ?? latest[0]?.origin,
     packUnits: relationPackUnits,
-    product: mockProducts.find((product) => product.id === relation.productId),
+    product: product
+      ? {
+          ...product,
+          taxRate: category?.taxRate ?? 0,
+        }
+      : undefined,
     supplier: mockContacts.find((contact) => contact.id === relation.supplierId),
     variationPercent:
       relation.variationPercent ??

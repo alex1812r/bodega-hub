@@ -100,6 +100,7 @@ export function PaymentDetailsPage({
             amountVes={data.amountVes}
             bankName={data.bankName}
             createdAt={data.createdAt}
+            createdByName={data.createdBy?.name}
             currency={getPaymentCurrency(data)}
             linkedDocument={linkedDocument}
             method={data.method}

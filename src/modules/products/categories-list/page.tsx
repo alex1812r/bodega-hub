@@ -60,6 +60,15 @@ const columns: DataTableColumn<CategoryMock>[] = [
     ),
   },
   {
+    cellClassName: "tabular-nums text-on-surface-variant",
+    header: "Impuesto",
+    key: "taxRate",
+    render: (category) => (
+      <span className={cn(!category.isActive && "text-outline")}>{category.taxRate}%</span>
+    ),
+    visibility: "md",
+  },
+  {
     header: "Estado",
     key: "isActive",
     render: (category) => <ProductsStatusBadge isActive={category.isActive} />,

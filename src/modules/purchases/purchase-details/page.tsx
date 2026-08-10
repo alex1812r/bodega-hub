@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 
 import {
   useCancelPurchase,
@@ -30,6 +31,7 @@ export function PurchaseDetailsPage({
   purchaseId = "purchase-001",
 }: PurchaseDetailsPageProps) {
   const purchase = usePurchase(purchaseId);
+  const exchangeRate = useCurrentExchangeRate();
   const cancelPurchase = useCancelPurchase(purchaseId);
   const receivePurchase = useReceivePurchase(purchaseId);
   const returnPurchase = useReturnPurchase(purchaseId);
@@ -68,7 +70,9 @@ export function PurchaseDetailsPage({
   }
 
   const data = purchase.data;
-  const pendingVes = Math.max(0, data.totalVes - data.paidVes);
+  const paidRef = data.paidRef ?? 0;
+  const pendingRef = Math.max(0, Math.round((data.totalRef - paidRef) * 100) / 100);
+  const currentRateVes = exchangeRate.data?.rateVes ?? 0;
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">
@@ -114,7 +118,12 @@ export function PurchaseDetailsPage({
           totalRef={data.totalRef}
           totalVes={data.totalVes}
         />
-        <PurchaseDetailPaymentStatusCard paidVes={data.paidVes} pendingVes={pendingVes} />
+        <PurchaseDetailPaymentStatusCard
+          currentRateVes={currentRateVes}
+          paidRef={paidRef}
+          paidVes={data.paidVes}
+          pendingRef={pendingRef}
+        />
       </div>
 
       <PurchaseDetailInfoBanner
@@ -124,7 +133,15 @@ export function PurchaseDetailsPage({
         updatedAt={data.updatedAt}
       />
 
-      <PurchaseDetailProductsTable items={data.items} totalRef={data.totalRef} />
+      <PurchaseDetailProductsTable
+        discountRef={data.discountRef}
+        discountVes={data.discountVes ?? 0}
+        items={data.items}
+        taxRef={data.taxRef}
+        taxVes={data.taxVes ?? 0}
+        totalRef={data.totalRef}
+        totalVes={data.totalVes}
+      />
       <PurchaseDetailPaymentsTable payments={data.payments} />
     </div>
   );

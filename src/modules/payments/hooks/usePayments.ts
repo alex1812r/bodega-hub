@@ -30,6 +30,10 @@ export type PaymentListItem = PaymentMock & {
 
 export type PaymentDetail = PaymentMock & {
   contact?: ContactMock;
+  createdBy?: {
+    id: string;
+    name: string;
+  };
   documentBalance?: PaymentDocumentBalance;
   relatedDocument?: PaymentRelatedDocument;
 };

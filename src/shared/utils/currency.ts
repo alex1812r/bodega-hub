@@ -28,3 +28,17 @@ export function formatVesBs(value: number) {
 export function refToVes(valueRef: number, refRateVes: number) {
   return valueRef * refRateVes;
 }
+
+/** Convert VES → REF using the official rate (1 REF = refRateVes VES). */
+export function vesToRef(valueVes: number, refRateVes: number) {
+  if (refRateVes <= 0) {
+    return 0;
+  }
+
+  return valueVes / refRateVes;
+}
+
+/** Round money amounts to 2 decimal places. */
+export function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}

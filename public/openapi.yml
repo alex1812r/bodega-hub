@@ -2270,7 +2270,7 @@ components:
         - users.manage
     Category:
       type: object
-      required: [id, name]
+      required: [id, name, taxRate]
       properties:
         id:
           type: string
@@ -2278,6 +2278,13 @@ components:
           type: string
         description:
           type: string
+        taxRate:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Impuesto de la categoria en porcentaje (ej. 16 = IVA 16%).
+        isActive:
+          type: boolean
     CategoryResponse:
       type: object
       required: [data]
@@ -2293,6 +2300,10 @@ components:
           minLength: 1
         description:
           type: string
+        taxRate:
+          type: number
+          minimum: 0
+          maximum: 100
     CategoryUpdateInput:
       type: object
       properties:
@@ -2301,6 +2312,12 @@ components:
           minLength: 1
         description:
           type: string
+        taxRate:
+          type: number
+          minimum: 0
+          maximum: 100
+        isActive:
+          type: boolean
     SupplierProduct:
       type: object
       required: [id, supplierId, productId, isActive]

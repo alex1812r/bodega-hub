@@ -1,14 +1,14 @@
 "use client";
 
 import { Package } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useProductBarcodeScan } from "@/modules/products/hooks/useProductBarcodeScan";
 import { PosCatalogToolbar } from "@/modules/sales/sale-create/components/PosCatalogToolbar";
 import { PosScanModal } from "@/modules/sales/sale-create/components/PosScanModal";
-import { matchesProductSearch } from "@/modules/products/services/productSearch";
 
 import type { PurchaseDraftItem } from "../types";
+import { resolveSupplierCatalogProduct } from "../services/resolveSupplierCatalogProduct";
 import { PurchaseLineItemsTable, type PurchaseLineItemMeta } from "./PurchaseLineItemsTable";
 
 import type { SupplierProductPackUnit } from "@/modules/contacts/types/supplierProducts";
@@ -20,50 +20,45 @@ export type PurchaseCatalogProduct = {
   packUnits: SupplierProductPackUnit[];
   productId: string;
   sku: string;
+  taxRate: number;
   unitCostRef: number;
 };
 
 type PurchaseProductPickerCardProps = {
   catalog: PurchaseCatalogProduct[];
   getItemMeta: (productId: string) => PurchaseLineItemMeta;
-  hasSupplier: boolean;
+  isSearching?: boolean;
   items: PurchaseDraftItem[];
   onAddProduct: (product: PurchaseCatalogProduct) => void;
   onRemoveItem: (itemId: string) => void;
+  onSearchChange: (value: string) => void;
   onUpdateItem: (itemId: string, input: Partial<PurchaseDraftItem>) => void;
+  rateVes: number;
+  search: string;
+  supplierId: string;
 };
 
 export function PurchaseProductPickerCard({
   catalog,
   getItemMeta,
-  hasSupplier,
+  isSearching = false,
   items,
   onAddProduct,
   onRemoveItem,
+  onSearchChange,
   onUpdateItem,
+  rateVes,
+  search,
+  supplierId,
 }: PurchaseProductPickerCardProps) {
-  const [search, setSearch] = useState("");
   const [scanOpen, setScanOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const barcodeScan = useProductBarcodeScan({ isActive: true });
-
-  const matches = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) {
-      return [];
-    }
-
-    return catalog
-      .filter((product) =>
-        matchesProductSearch(
-          { barcode: product.barcode, name: product.name, sku: product.sku },
-          term,
-        ),
-      )
-      .slice(0, 8);
-  }, [catalog, search]);
+  const hasSupplier = Boolean(supplierId);
+  const trimmedSearch = search.trim();
+  const showResults = pickerOpen && trimmedSearch.length > 0;
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -84,8 +79,23 @@ export function PurchaseProductPickerCard({
 
   function handleSearchChange(value: string) {
     barcodeScan.clearScanError();
-    setSearch(value);
+    onSearchChange(value);
     setPickerOpen(true);
+  }
+
+  async function resolveCatalogProduct(
+    productId: string,
+  ): Promise<PurchaseCatalogProduct | null> {
+    const fromCatalog = catalog.find((item) => item.productId === productId);
+    if (fromCatalog) {
+      return fromCatalog;
+    }
+
+    if (!supplierId) {
+      return null;
+    }
+
+    return resolveSupplierCatalogProduct(supplierId, productId);
   }
 
   function handleBarcodeScanSubmit(
@@ -101,19 +111,20 @@ export function PurchaseProductPickerCard({
       .handleScanSubmit(code, {
         onNotFound: () => undefined,
         onResolved: (product) => {
-          const catalogProduct = catalog.find((item) => item.productId === product.id);
-          if (!catalogProduct) {
-            barcodeScan.setScanError("Producto no vinculado a este proveedor.");
-            return;
-          }
+          void resolveCatalogProduct(product.id).then((catalogProduct) => {
+            if (!catalogProduct) {
+              barcodeScan.setScanError("Producto no vinculado a este proveedor.");
+              return;
+            }
 
-          onAddProduct(catalogProduct);
-          setSearch("");
-          setPickerOpen(false);
-          barcodeScan.clearScanError();
-          if (options?.closeScanOnSuccess) {
-            setScanOpen(false);
-          }
+            onAddProduct(catalogProduct);
+            onSearchChange("");
+            setPickerOpen(false);
+            barcodeScan.clearScanError();
+            if (options?.closeScanOnSuccess) {
+              setScanOpen(false);
+            }
+          });
         },
       })
       .finally(() => {
@@ -142,15 +153,20 @@ export function PurchaseProductPickerCard({
             scanError={barcodeScan.scanError}
             search={search}
           />
-          {pickerOpen && search.trim() && matches.length > 0 ? (
+          {showResults && isSearching ? (
+            <p className="absolute left-0 right-0 top-full z-20 mt-1 rounded-lg border border-border bg-surface-container-lowest px-4 py-2.5 text-sm text-muted-foreground shadow-lg dark:border-slate-700">
+              Buscando...
+            </p>
+          ) : null}
+          {showResults && !isSearching && catalog.length > 0 ? (
             <ul className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-lg border border-border bg-surface-container-lowest py-1 shadow-lg dark:border-slate-700">
-              {matches.map((product) => (
+              {catalog.map((product) => (
                 <li key={product.productId}>
                   <button
                     className="flex w-full cursor-pointer flex-col px-4 py-2.5 text-left transition-colors hover:bg-surface-container-low"
                     onClick={() => {
                       onAddProduct(product);
-                      setSearch("");
+                      onSearchChange("");
                       setPickerOpen(false);
                     }}
                     type="button"
@@ -162,6 +178,11 @@ export function PurchaseProductPickerCard({
               ))}
             </ul>
           ) : null}
+          {showResults && !isSearching && catalog.length === 0 ? (
+            <p className="absolute left-0 right-0 top-full z-20 mt-1 rounded-lg border border-border bg-surface-container-lowest px-4 py-2.5 text-sm text-muted-foreground shadow-lg dark:border-slate-700">
+              Sin resultados
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -171,6 +192,7 @@ export function PurchaseProductPickerCard({
           items={items}
           onRemoveItem={onRemoveItem}
           onUpdateItem={onUpdateItem}
+          rateVes={rateVes}
         />
       </div>
 

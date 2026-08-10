@@ -15,7 +15,18 @@ import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
 import { normalizePurchaseLine } from "../schemas/purchaseItem.schema";
 
 export type PurchaseInput = Partial<
-  Pick<PurchaseMock, "discountRef" | "refRateVes" | "status" | "supplierId" | "taxRef">
+  Pick<
+    PurchaseMock,
+    | "discountRef"
+    | "discountVes"
+    | "refRateVes"
+    | "status"
+    | "subtotalRef"
+    | "subtotalVes"
+    | "supplierId"
+    | "taxRef"
+    | "taxVes"
+  >
 > & {
   exchangeRateId?: string;
   items?: PurchaseItemInput[];
@@ -83,7 +94,12 @@ export function getPurchaseById(id: string, storeId: string) {
   return {
     ...purchase,
     items,
-    payments: mockPayments.filter((payment) => payment.purchaseId === id),
+    payments: mockPayments
+      .filter((payment) => payment.purchaseId === id)
+      .map((payment) => ({
+        ...payment,
+        contact: mockContacts.find((contact) => contact.id === payment.contactId),
+      })),
     supplier: mockContacts.find((contact) => contact.id === purchase.supplierId),
   };
 }
@@ -91,25 +107,38 @@ export function getPurchaseById(id: string, storeId: string) {
 export function createPurchase(input: PurchaseInput, storeId: string) {
   const refRateVes = input.refRateVes ?? 510;
   const subtotalRef =
-    input.items?.reduce((total, item) => total + normalizePurchaseLine(item).subtotalRef, 0) ?? 0;
-  const totalRef = subtotalRef - (input.discountRef ?? 0) + (input.taxRef ?? 0);
+    input.subtotalRef ??
+    input.items?.reduce((total, item) => total + normalizePurchaseLine(item).subtotalRef, 0) ??
+    0;
+  const discountRef = input.discountRef ?? 0;
+  const taxRef = input.taxRef ?? 0;
+  const totalRef = subtotalRef - discountRef + taxRef;
+  const subtotalVes =
+    input.subtotalVes ?? Math.round(subtotalRef * refRateVes * 100) / 100;
+  const discountVes =
+    input.discountVes ?? Math.round(discountRef * refRateVes * 100) / 100;
+  const taxVes = input.taxVes ?? Math.round(taxRef * refRateVes * 100) / 100;
 
   const status = input.status ?? "recibido";
 
   return {
     createdAt: new Date().toISOString(),
-    discountRef: input.discountRef ?? 0,
+    discountRef,
+    discountVes,
     id: `purchase-mock-${Date.now()}`,
+    paidRef: 0,
     paidVes: 0,
     purchaseNumber: input.purchaseNumber ?? `C-MOCK-${Date.now()}`,
     refRateVes,
     status,
     storeId,
     subtotalRef,
+    subtotalVes,
     supplierId: input.supplierId ?? "cont-supplier",
-    taxRef: input.taxRef ?? 0,
+    taxRef,
+    taxVes,
     totalRef,
-    totalVes: Math.round(totalRef * refRateVes * 100) / 100,
+    totalVes: Math.round((subtotalVes - discountVes + taxVes) * 100) / 100,
     userId: "user-demo",
   } satisfies PurchaseMock;
 }

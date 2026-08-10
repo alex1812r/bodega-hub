@@ -7,13 +7,14 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import type { CategoryInput } from "./categories.mock-server";
 
-const categorySelect = "id, name, description, is_active, created_at, updated_at";
+const categorySelect = "id, name, description, tax_rate, is_active, created_at, updated_at";
 
 function toCategoryInsert(input: CategoryInput, storeId: string) {
   return {
     description: input.description ?? null,
     name: input.name ?? "Categoria",
     store_id: storeId,
+    tax_rate: input.taxRate ?? 16,
   };
 }
 
@@ -22,6 +23,7 @@ function toCategoryUpdate(input: CategoryInput) {
     ...(input.description !== undefined ? { description: input.description ?? null } : {}),
     ...(input.isActive !== undefined ? { is_active: input.isActive } : {}),
     ...(input.name !== undefined ? { name: input.name } : {}),
+    ...(input.taxRate !== undefined ? { tax_rate: input.taxRate } : {}),
   };
 }
 

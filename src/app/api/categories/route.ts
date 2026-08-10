@@ -10,6 +10,7 @@ import * as categoriesServer from "@/modules/products/services/categories.server
 const categorySchema = z.object({
   description: z.string().optional(),
   name: z.string().min(1),
+  taxRate: z.number().min(0).max(100).optional(),
 });
 
 function getCategoriesService() {

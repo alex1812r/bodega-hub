@@ -22,6 +22,19 @@ begin;
 --   rate: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
 -- Default store (multitienda)
 --   store: 00000000-0000-4000-8000-000000000001
+--
+-- Importante: la tienda debe existir ANTES de auth.users.
+-- El trigger handle_new_user() asigna store_id default a roles no-superadmin.
+
+insert into public.stores (id, name, slug, status, notes)
+values (
+  '00000000-0000-4000-8000-000000000001'::uuid,
+  'BodegaHub',
+  'default',
+  'active',
+  'Tienda principal seed'
+)
+on conflict (id) do nothing;
 
 insert into auth.users (
   instance_id,
@@ -175,17 +188,6 @@ where id in (
 )
 on conflict do nothing;
 
--- Tienda default (multitienda). Idempotente si el patch ya la creo.
-insert into public.stores (id, name, slug, status, notes)
-values (
-  '00000000-0000-4000-8000-000000000001'::uuid,
-  'BodegaHub',
-  'default',
-  'active',
-  'Tienda principal seed'
-)
-on conflict (id) do nothing;
-
 insert into public.profiles (id, full_name, role, is_active, granted_permissions, denied_permissions, store_id)
 values
   (
@@ -265,18 +267,20 @@ on conflict (store_id) do update set
   invoice_prefix = excluded.invoice_prefix,
   low_stock_threshold = excluded.low_stock_threshold;
 
-insert into public.categories (id, name, description, is_active, store_id)
+insert into public.categories (id, name, description, is_active, tax_rate, store_id)
 values (
   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   'General',
   'Categoria inicial de desarrollo',
   true,
+  16,
   '00000000-0000-4000-8000-000000000001'::uuid
 )
 on conflict (id) do update set
   name = excluded.name,
   description = excluded.description,
   is_active = excluded.is_active,
+  tax_rate = excluded.tax_rate,
   store_id = excluded.store_id;
 
 insert into public.exchange_rates (id, rate_ves, source, notes, created_by, store_id)

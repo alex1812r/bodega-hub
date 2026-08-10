@@ -158,3 +158,30 @@ notify pgrst, 'reload schema';
 -- 20260717 — metodos de pago habilitados por tienda
 -- -----------------------------------------------------------------------------
 -- Ejecutar: supabase/patches/20260717-enabled-payment-methods.sql
+
+-- -----------------------------------------------------------------------------
+-- 20260809 — impuesto (%) por categoria
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20260809-category-tax-rate.sql
+
+-- -----------------------------------------------------------------------------
+-- 20260810 — RPCs con store_id (create_purchase/sale, pagos, receive/cancel/return)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20260810-rpc-store-context.sql
+-- Requiere multitienda (assert_store_context + columnas store_id).
+-- -----------------------------------------------------------------------------
+-- 20260810b — campos VES + tax snapshot en compras
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20260810b-purchase-ves-fields.sql
+-- Requiere 20260810-rpc-store-context.sql
+-- -----------------------------------------------------------------------------
+-- 20260810c — create_purchase confia en REF+VES del frontend
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20260810c-purchase-trust-frontend.sql
+-- Requiere 20260810b-purchase-ves-fields.sql
+-- -----------------------------------------------------------------------------
+-- 20260810d — saldo compras en REF (paid_ref)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20260810d-purchase-paid-ref.sql
+-- Luego (opcional one-shot): supabase/patches/20260810d-fix-existing-purchase-payment.sql
+-- Requiere 20260810-rpc-store-context.sql

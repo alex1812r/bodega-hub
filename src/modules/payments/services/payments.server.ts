@@ -14,6 +14,7 @@ import type { PaymentInput } from "./payments.mock-server";
 const PAYMENT_SELECT = `
   *,
   contact:contacts(id, type, name, tax_id, email, phone, address, is_active, created_at, updated_at),
+  created_by_profile:profiles!payments_created_by_fkey(id, full_name),
   sale:sales(id, invoice_number),
   purchase:purchases(id, purchase_number)
 `;
@@ -25,8 +26,14 @@ export type PaymentUpdateInput = {
   referenceCode?: string;
 };
 
+type PaymentCreatedByProfile = {
+  full_name?: string | null;
+  id: string;
+};
+
 type PaymentRowWithContact = DbPaymentRow & {
   contact?: DbContactRow | null;
+  created_by_profile?: PaymentCreatedByProfile | PaymentCreatedByProfile[] | null;
   purchase?: { id: string; purchase_number: string } | null;
   sale?: { id: string; invoice_number: string } | null;
 };
@@ -47,6 +54,20 @@ function mapPaymentRelatedDocument(row: PaymentRowWithContact): PaymentRelatedDo
   }
 
   return undefined;
+}
+
+function mapCreatedByProfile(
+  profile: PaymentCreatedByProfile | PaymentCreatedByProfile[] | null | undefined,
+) {
+  const row = Array.isArray(profile) ? profile[0] : profile;
+  if (!row?.id) {
+    return undefined;
+  }
+
+  return {
+    id: row.id,
+    name: row.full_name?.trim() || "Usuario",
+  };
 }
 
 function throwIfRpcError(error: unknown): void {
@@ -88,6 +109,7 @@ function mapPaymentWithContact(
   return {
     ...mapPayment(row),
     contact: row.contact ? mapContact(row.contact) : undefined,
+    createdBy: mapCreatedByProfile(row.created_by_profile),
     relatedDocument: mapPaymentRelatedDocument(row),
     ...(documentBalance
       ? {
@@ -130,7 +152,7 @@ async function resolveDocumentBalance(
   if (payment.purchase_id) {
     const { data, error } = await supabase
       .from("purchases")
-      .select("id, purchase_number, total_ves, paid_ves")
+      .select("id, purchase_number, total_ves, total_ref, paid_ves, paid_ref")
       .eq("id", payment.purchase_id)
       .maybeSingle();
 
@@ -142,12 +164,17 @@ async function resolveDocumentBalance(
 
     const totalVes = Number(data.total_ves ?? 0);
     const paidVes = Number(data.paid_ves ?? 0);
+    const totalRef = Number(data.total_ref ?? 0);
+    const paidRef = Number(data.paid_ref ?? 0);
 
     return {
       href: `/purchases/${data.id}`,
       label: formatPurchaseNumberDisplay(data.purchase_number),
+      paidRef,
       paidVes,
+      pendingRef: Math.max(Math.round((totalRef - paidRef) * 100) / 100, 0),
       pendingVes: Math.max(totalVes - paidVes, 0),
+      totalRef,
       totalVes,
     };
   }

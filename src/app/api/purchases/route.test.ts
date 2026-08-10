@@ -21,8 +21,29 @@ describe("/api/purchases", () => {
     const response = await POST(
       new Request("http://localhost/api/purchases", {
         body: JSON.stringify({
-          items: [{ entryMode: "unit", productId: "prod-cable", quantity: 2, unitCostRef: 2 }],
+          discountRef: 0,
+          discountVes: 0,
+          items: [
+            {
+              costCurrency: "ref",
+              entryMode: "unit",
+              productId: "prod-cable",
+              quantity: 2,
+              subtotalRef: 4,
+              subtotalVes: 2040,
+              taxRate: 0,
+              taxRef: 0,
+              taxVes: 0,
+              unitCostRef: 2,
+              unitCostVes: 1020,
+            },
+          ],
+          refRateVes: 510,
+          subtotalRef: 4,
+          subtotalVes: 2040,
           supplierId: "cont-supplier",
+          taxRef: 0,
+          taxVes: 0,
         }),
         headers: {
           "content-type": "application/json",
@@ -41,9 +62,30 @@ describe("/api/purchases", () => {
     const response = await POST(
       new Request("http://localhost/api/purchases", {
         body: JSON.stringify({
-          items: [{ entryMode: "unit", productId: "prod-cable", quantity: 2, unitCostRef: 2 }],
+          discountRef: 0,
+          discountVes: 0,
+          items: [
+            {
+              costCurrency: "ref",
+              entryMode: "unit",
+              productId: "prod-cable",
+              quantity: 2,
+              subtotalRef: 4,
+              subtotalVes: 2040,
+              taxRate: 0,
+              taxRef: 0,
+              taxVes: 0,
+              unitCostRef: 2,
+              unitCostVes: 1020,
+            },
+          ],
+          refRateVes: 510,
           status: "pedido",
+          subtotalRef: 4,
+          subtotalVes: 2040,
           supplierId: "cont-supplier",
+          taxRef: 0,
+          taxVes: 0,
         }),
         headers: {
           "content-type": "application/json",

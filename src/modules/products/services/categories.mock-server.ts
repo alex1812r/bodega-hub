@@ -3,7 +3,9 @@ import { paginateList } from "@/lib/api/pagination";
 import { mockCategories, type CategoryMock } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
-export type CategoryInput = Partial<Pick<CategoryMock, "description" | "isActive" | "name">>;
+export type CategoryInput = Partial<
+  Pick<CategoryMock, "description" | "isActive" | "name" | "taxRate">
+>;
 
 export function listCategories(searchParams: URLSearchParams, storeId: string) {
   const search = searchParams.get("search")?.toLowerCase();
@@ -37,6 +39,7 @@ export function createCategory(input: CategoryInput, storeId: string) {
     isActive: input.isActive ?? true,
     name: input.name ?? "Categoria mock",
     storeId,
+    taxRate: input.taxRate ?? 16,
   } satisfies CategoryMock;
 }
 
@@ -46,6 +49,7 @@ export function updateCategory(id: string, input: CategoryInput, storeId: string
   if (input.description !== undefined) category.description = input.description;
   if (input.isActive !== undefined) category.isActive = input.isActive;
   if (input.name !== undefined) category.name = input.name;
+  if (input.taxRate !== undefined) category.taxRate = input.taxRate;
 
   return getCategoryById(id, storeId);
 }

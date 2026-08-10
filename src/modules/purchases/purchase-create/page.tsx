@@ -1,13 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
+import { refToVes, roundMoney } from "@/shared/utils/currency";
 
 import { PurchaseCreateHeader } from "./components/PurchaseCreateHeader";
 import {
@@ -28,8 +30,14 @@ import {
 import {
   draftToPurchaseItemInput,
   getDraftSubtotalRef,
-  syncPackDerivedFields,
+  getDraftSubtotalVes,
+  getDraftTaxAmount,
+  switchCostCurrency,
+  syncLineCostFields,
 } from "./utils/normalizePurchaseLine";
+
+const PRODUCT_SEARCH_DEBOUNCE_MS = 300;
+const PRODUCT_SEARCH_LIMIT = 20;
 
 export function PurchaseCreatePage() {
   const router = useRouter();
@@ -37,12 +45,26 @@ export function PurchaseCreatePage() {
   const exchangeRate = useCurrentExchangeRate();
   const createPurchase = useCreatePurchase();
   const [supplierId, setSupplierId] = useState("");
+  const [productSearch, setProductSearch] = useState("");
   const [status, setStatus] = useState<PurchaseStatus>("recibido");
   const [notes, setNotes] = useState("");
   const [discountRef, setDiscountRef] = useState(0);
   const [items, setItems] = useState<PurchaseDraftItem[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
-  const supplierProducts = useSupplierProducts(supplierId);
+  const [lineMetaByProductId, setLineMetaByProductId] = useState(
+    () => new Map<string, PurchaseLineItemMeta>(),
+  );
+  const debouncedProductSearch = useDebouncedValue(
+    productSearch.trim(),
+    PRODUCT_SEARCH_DEBOUNCE_MS,
+  );
+  const supplierProducts = useSupplierProducts(
+    debouncedProductSearch ? supplierId : undefined,
+    {
+      limit: PRODUCT_SEARCH_LIMIT,
+      search: debouncedProductSearch || undefined,
+    },
+  );
   const activeRateVes = exchangeRate.data?.rateVes ?? 510;
 
   const suppliers = useMemo(
@@ -58,25 +80,49 @@ export function PurchaseCreatePage() {
     [supplierId, supplierProducts.data],
   );
 
-  const metaByProductId = useMemo(() => {
-    const map = new Map<string, PurchaseLineItemMeta>();
-    for (const product of catalog) {
-      map.set(product.productId, {
-        name: product.name,
-        packUnits: product.packUnits,
-        sku: product.sku,
-      });
+  useEffect(() => {
+    if (!supplierId) {
+      setLineMetaByProductId(new Map());
+      return;
     }
-    return map;
-  }, [catalog]);
+
+    setLineMetaByProductId((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const product of catalog) {
+        const meta: PurchaseLineItemMeta = {
+          name: product.name,
+          packUnits: product.packUnits,
+          sku: product.sku,
+          taxRate: product.taxRate,
+        };
+        const current = next.get(product.productId);
+        if (
+          !current ||
+          current.name !== meta.name ||
+          current.sku !== meta.sku ||
+          current.packUnits !== meta.packUnits ||
+          current.taxRate !== meta.taxRate
+        ) {
+          next.set(product.productId, meta);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [catalog, supplierId]);
 
   const subtotalRef = items.reduce(
-    (total, item) => total + getDraftSubtotalRef(syncPackDerivedFields(item)),
+    (total, item) => total + getDraftSubtotalRef(syncLineCostFields(item, activeRateVes)),
     0,
   );
-  const taxRef = 0;
+  const taxRef = items.reduce((total, item) => {
+    const normalized = syncLineCostFields(item, activeRateVes);
+    const lineSubtotal = getDraftSubtotalRef(normalized);
+    return total + roundMoney(lineSubtotal * (Math.max(0, item.taxRate) / 100));
+  }, 0);
   const validItems = items.filter((item) => {
-    const normalized = syncPackDerivedFields(item);
+    const normalized = syncLineCostFields(item, activeRateVes);
     if (!item.productId) return false;
     if (item.entryMode === "pack") {
       return (
@@ -92,33 +138,54 @@ export function PurchaseCreatePage() {
   });
 
   function getItemMeta(productId: string): PurchaseLineItemMeta {
-    return metaByProductId.get(productId) ?? { name: "Producto", sku: "—" };
+    return (
+      lineMetaByProductId.get(productId) ?? {
+        name: "Producto",
+        sku: "—",
+        taxRate: 0,
+      }
+    );
   }
 
   function handleSupplierChange(nextSupplierId: string) {
     setSupplierId(nextSupplierId);
+    setProductSearch("");
     setItems([]);
+    setLineMetaByProductId(new Map());
   }
 
   function handleAddProduct(product: PurchaseCatalogProduct) {
+    setLineMetaByProductId((prev) => {
+      const next = new Map(prev);
+      next.set(product.productId, {
+        name: product.name,
+        packUnits: product.packUnits,
+        sku: product.sku,
+        taxRate: product.taxRate,
+      });
+      return next;
+    });
+
     setItems((current) => {
       const existing = current.find((item) => item.productId === product.productId);
 
       if (existing) {
-        if (existing.entryMode === "pack") {
-          return current.map((item) =>
-            item.id === existing.id
-              ? syncPackDerivedFields({
-                  ...item,
-                  packCount: item.packCount + 1,
-                })
-              : item,
-          );
-        }
+        const rest = current.filter((item) => item.id !== existing.id);
+        const bumped =
+          existing.entryMode === "pack"
+            ? syncLineCostFields(
+                {
+                  ...existing,
+                  packCount: existing.packCount + 1,
+                },
+                activeRateVes,
+              )
+            : syncLineCostFields(
+                { ...existing, quantity: existing.quantity + 1 },
+                activeRateVes,
+              );
 
-        return current.map((item) =>
-          item.id === existing.id ? { ...item, quantity: item.quantity + 1 } : item,
-        );
+        return [bumped, ...rest];
       }
 
       const defaultPack = product.defaultPackUnit ?? product.packUnits[0];
@@ -130,35 +197,53 @@ export function PurchaseCreatePage() {
             : 0;
 
         return [
-          ...current,
           createPackDraftItem({
+            costCurrency: "ves",
             id: `purchase-item-${Date.now()}`,
             packCostRef,
             packLabel: defaultPack.label,
             packUnitId: defaultPack.id,
             productId: product.productId,
+            rateVes: activeRateVes,
+            taxRate: product.taxRate,
             unitCostRef: product.unitCostRef,
             unitsPerPack: defaultPack.unitsPerPack,
           }),
+          ...current,
         ];
       }
 
       return [
-        ...current,
         createUnitDraftItem({
+          costCurrency: "ves",
           id: `purchase-item-${Date.now()}`,
           productId: product.productId,
+          rateVes: activeRateVes,
+          taxRate: product.taxRate,
           unitCostRef: product.unitCostRef,
         }),
+        ...current,
       ];
     });
   }
 
   function handleUpdateItem(itemId: string, input: Partial<PurchaseDraftItem>) {
     setItems((current) =>
-      current.map((item) =>
-        item.id === itemId ? syncPackDerivedFields({ ...item, ...input }) : item,
-      ),
+      current.map((item) => {
+        if (item.id !== itemId) {
+          return item;
+        }
+
+        if (
+          input.costCurrency != null &&
+          input.costCurrency !== item.costCurrency &&
+          Object.keys(input).length === 1
+        ) {
+          return switchCostCurrency(item, input.costCurrency, activeRateVes);
+        }
+
+        return syncLineCostFields({ ...item, ...input }, activeRateVes);
+      }),
     );
   }
 
@@ -180,14 +265,36 @@ export function PurchaseCreatePage() {
     setFormError(null);
 
     try {
+      const syncedItems = validItems.map((item) =>
+        syncLineCostFields(item, activeRateVes),
+      );
+      const subtotalRef = roundMoney(
+        syncedItems.reduce((total, item) => total + getDraftSubtotalRef(item), 0),
+      );
+      const subtotalVes = roundMoney(
+        syncedItems.reduce((total, item) => total + getDraftSubtotalVes(item), 0),
+      );
+      const discountVes = roundMoney(refToVes(discountRef, activeRateVes));
+      const taxVes = roundMoney(
+        syncedItems.reduce(
+          (total, item) =>
+            total + getDraftTaxAmount(getDraftSubtotalVes(item), item.taxRate),
+          0,
+        ),
+      );
+
       const purchase = await createPurchase.mutateAsync({
         discountRef,
-        items: validItems.map((item) => draftToPurchaseItemInput(syncPackDerivedFields(item))),
+        discountVes,
+        items: syncedItems.map((item) => draftToPurchaseItemInput(item)),
         notes: notes.trim() || undefined,
         refRateVes: activeRateVes,
         status,
+        subtotalRef,
+        subtotalVes,
         supplierId,
         taxRef,
+        taxVes,
       });
 
       router.push(`/purchases/${purchase.id}`);
@@ -227,11 +334,19 @@ export function PurchaseCreatePage() {
           <PurchaseProductPickerCard
             catalog={catalog}
             getItemMeta={getItemMeta}
-            hasSupplier={Boolean(supplierId)}
+            isSearching={
+              Boolean(productSearch.trim()) &&
+              (supplierProducts.isFetching ||
+                productSearch.trim() !== debouncedProductSearch)
+            }
             items={items}
             onAddProduct={handleAddProduct}
             onRemoveItem={handleRemoveItem}
+            onSearchChange={setProductSearch}
             onUpdateItem={handleUpdateItem}
+            rateVes={activeRateVes}
+            search={productSearch}
+            supplierId={supplierId}
           />
         </div>
 
@@ -249,7 +364,12 @@ export function PurchaseCreatePage() {
             onDiscountChange={setDiscountRef}
             rateVes={activeRateVes}
             subtotalRef={subtotalRef}
-            taxPercentLabel="0%"
+            taxPercentLabel={(() => {
+              if (items.length === 0) return "—";
+              const rates = new Set(items.map((item) => item.taxRate));
+              if (rates.size === 1) return `${items[0]?.taxRate ?? 0}%`;
+              return "mixto";
+            })()}
             taxRef={taxRef}
           />
         </div>

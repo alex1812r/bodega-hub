@@ -1,18 +1,27 @@
-"use client";
+function initialsFromName(name: string) {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
 
-import { isDevToolkitEnabledUi } from "@/lib/api/dataSourceUi";
-
-export const MOCK_PAYMENT_REGISTERED_BY = {
-  initials: "AJ",
-  name: "A. Jiménez",
-} as const;
-
-export function PaymentDetailRegisteredBy() {
-  if (!isDevToolkitEnabledUi()) {
-    return null;
+  if (parts.length === 0) {
+    return "?";
   }
 
-  const user = MOCK_PAYMENT_REGISTERED_BY;
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0][0] ?? ""}${parts[parts.length - 1]?.[0] ?? ""}`.toUpperCase();
+}
+
+type PaymentDetailRegisteredByProps = {
+  name?: string;
+};
+
+export function PaymentDetailRegisteredBy({ name }: PaymentDetailRegisteredByProps) {
+  const displayName = name?.trim() || "Sin registrar";
+  const initials = name?.trim() ? initialsFromName(displayName) : "?";
 
   return (
     <div className="flex flex-col gap-1 md:col-span-2">
@@ -24,9 +33,9 @@ export function PaymentDetailRegisteredBy() {
           aria-hidden
           className="flex size-6 shrink-0 items-center justify-center rounded-full bg-surface-container-high text-xs font-semibold text-on-surface"
         >
-          {user.initials}
+          {initials}
         </div>
-        <span className="text-sm font-medium text-foreground">{user.name}</span>
+        <span className="text-sm font-medium text-foreground">{displayName}</span>
       </div>
     </div>
   );

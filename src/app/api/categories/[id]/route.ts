@@ -11,6 +11,7 @@ const updateCategorySchema = z.object({
   description: z.string().optional(),
   isActive: z.boolean().optional(),
   name: z.string().min(1).optional(),
+  taxRate: z.number().min(0).max(100).optional(),
 });
 
 function getCategoriesService() {

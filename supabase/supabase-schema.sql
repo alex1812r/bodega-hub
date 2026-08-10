@@ -129,6 +129,7 @@ create table if not exists public.categories (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   description text,
+  tax_rate numeric(5,2) not null default 16 check (tax_rate >= 0 and tax_rate <= 100),
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -274,6 +275,7 @@ create table if not exists public.purchases (
   total_ref numeric(14,2) not null default 0 check (total_ref >= 0),
   total_ves numeric(14,2) not null default 0 check (total_ves >= 0),
   paid_ves numeric(14,2) not null default 0 check (paid_ves >= 0),
+  paid_ref numeric(14,2) not null default 0 check (paid_ref >= 0),
   status public.purchase_status not null default 'recibido',
   notes text,
   created_at timestamptz not null default now(),

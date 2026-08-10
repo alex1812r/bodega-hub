@@ -28,13 +28,19 @@ export type PurchasesFilters = PaginationParams & {
 };
 
 export type PurchaseInput = {
-  discountRef?: number;
+  discountRef: number;
+  discountVes: number;
   items: PurchaseItemInput[];
   notes?: string;
-  refRateVes?: number;
+  refRateVes: number;
   status?: PurchaseStatus;
+  subtotalRef: number;
+  subtotalVes: number;
   supplierId: string;
-  taxRef?: number;
+  taxRef: number;
+  taxVes: number;
+  exchangeRateId?: string;
+  purchaseNumber?: string;
 };
 
 export type PurchaseListRow = PurchaseMock & {
@@ -45,7 +51,7 @@ export type PurchaseListRow = PurchaseMock & {
 export type PurchaseDetails = PurchaseMock & {
   items: Array<PurchaseItemMock & { product?: ProductMock }>;
   notes?: string;
-  payments: PaymentMock[];
+  payments: Array<PaymentMock & { contact?: ContactMock }>;
   supplier?: ContactMock;
   updatedAt?: string;
 };
