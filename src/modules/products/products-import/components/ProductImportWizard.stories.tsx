@@ -55,8 +55,8 @@ export const Step3Preview: Story = {
       <ProductImportStepper currentStep="preview" />
       <ProductImportStep3Preview
         categories={[
-          { id: "1", isActive: true, name: "Bebidas" },
-          { id: "2", isActive: true, name: "Víveres" },
+          { id: "1", isActive: true, name: "Bebidas", taxRate: 16 },
+          { id: "2", isActive: true, name: "Víveres", taxRate: 16 },
         ]}
         errorCount={1}
         errorPolicy="continue"
