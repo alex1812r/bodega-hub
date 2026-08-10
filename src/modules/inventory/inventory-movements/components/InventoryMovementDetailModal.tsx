@@ -121,6 +121,10 @@ export function InventoryMovementDetailModal({
                     purchaseId={movement.purchaseId}
                     saleId={movement.saleId}
                   />
+                ) : movement.conversionId ? (
+                  <span className="font-mono text-[13px]">
+                    Conv. {formatTruncatedCode(movement.conversionId)}
+                  </span>
                 ) : (
                   <span className="text-on-surface-variant">Manual</span>
                 )

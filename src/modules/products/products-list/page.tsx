@@ -28,7 +28,10 @@ import {
   productsQueryKeys,
   useCategories,
   useCreateProduct,
+  useProduct,
   useProducts,
+  useUpdateProduct,
+  useUpdateProductPrice,
 } from "../hooks/useProducts";
 import { DeactivateProductConfirmModal } from "./components/DeactivateProductConfirmModal";
 import { ReactivateProductConfirmModal } from "./components/ReactivateProductConfirmModal";
@@ -139,6 +142,7 @@ export function ProductsListPage() {
   >({});
   const [productToDeactivate, setProductToDeactivate] = useState<ProductWithCategory | null>(null);
   const [productToReactivate, setProductToReactivate] = useState<ProductWithCategory | null>(null);
+  const [productToEditId, setProductToEditId] = useState<string | null>(null);
   const { handleSort, sortBy, sortOrder } = useSortState();
   const { limit, setLimit, setSkip, skip } = usePaginationState([
     filters.search,
@@ -150,12 +154,19 @@ export function ProductsListPage() {
   const products = useProducts({ ...filters, limit, skip, sortBy, sortOrder });
   const categories = useCategories();
   const createProduct = useCreateProduct();
+  const productToEditQuery = useProduct(productToEditId ?? "");
+  const updateProduct = useUpdateProduct(productToEditId ?? "");
+  const updateProductPrice = useUpdateProductPrice(productToEditId ?? "");
   const productItems = getPaginatedItems(products.data);
   const totalProducts = products.data?.total ?? 0;
   const categoryOptions = getPaginatedItems(categories.data).map((category) => ({
     label: category.name,
     value: category.id,
   }));
+  const editProductFallback = productItems.find((product) => product.id === productToEditId);
+  const editProduct = productToEditQuery.data ?? editProductFallback;
+  const isEditModalOpen = Boolean(productToEditId && editProduct);
+  const isSavingEdit = updateProduct.isPending || updateProductPrice.isPending;
 
   function handleFilterChange(patch: Partial<ProductsFilters>) {
     setFilters((current) => ({ ...current, ...patch }));
@@ -169,6 +180,21 @@ export function ProductsListPage() {
       await uploadProductImageBlob(product.id, context.pendingImageBlob);
       void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
     }
+  }
+
+  async function handleUpdateProduct(input: ProductInput) {
+    if (!productToEditId || !editProduct) {
+      return;
+    }
+
+    const { salePriceRef, ...productInput } = input;
+    await updateProduct.mutateAsync(productInput);
+
+    if (salePriceRef !== editProduct.salePriceRef) {
+      await updateProductPrice.mutateAsync({ salePriceRef });
+    }
+
+    setProductToEditId(null);
   }
 
   return (
@@ -219,9 +245,19 @@ export function ProductsListPage() {
             actions={(product) => {
               const items: ActionMenuItem[] = [
                 { href: `/products/${product.id}`, label: "Ver detalle" },
-                { href: `/products/${product.id}`, label: "Editar" },
-                { href: `/products/${product.id}`, label: "Historial de precios" },
               ];
+
+              if (can("products.manage")) {
+                items.push({
+                  label: "Editar",
+                  onSelect: () => setProductToEditId(product.id),
+                });
+              }
+
+              items.push({
+                href: `/products/${product.id}`,
+                label: "Historial de precios",
+              });
 
               if (can("products.manage")) {
                 if (product.isActive) {
@@ -311,6 +347,28 @@ export function ProductsListPage() {
         open={productToReactivate != null}
         product={productToReactivate}
       />
+      {editProduct ? (
+        <ProductFormModal
+          categories={getPaginatedItems(categories.data)}
+          errorMessage={updateProduct.error?.message ?? updateProductPrice.error?.message}
+          isSubmitting={isSavingEdit}
+          key={
+            productToEditQuery.data
+              ? `detail-${productToEditQuery.data.id}`
+              : `list-${editProduct.id}`
+          }
+          mode="edit"
+          onImageUpdated={() => void productToEditQuery.refetch()}
+          onOpenChange={(open) => {
+            if (!open) {
+              setProductToEditId(null);
+            }
+          }}
+          onSubmit={handleUpdateProduct}
+          open={isEditModalOpen}
+          product={editProduct}
+        />
+      ) : null}
     </div>
   );
 }

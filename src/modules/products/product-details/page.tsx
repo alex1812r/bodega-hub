@@ -21,6 +21,7 @@ import {
   useUpdateProductPrice,
 } from "../hooks/useProducts";
 import type { ProductFormSubmitContext } from "./components/ProductFormModal";
+import { ProductDetailPackConversionCard } from "./components/ProductDetailPackConversionCard";
 import { ProductDetailInfoCard } from "./components/ProductDetailInfoCard";
 import { ProductDetailPageHeader } from "./components/ProductDetailPageHeader";
 import { ProductDetailPriceChangeCard } from "./components/ProductDetailPriceChangeCard";
@@ -157,6 +158,17 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
             minStock={data.minStock}
           />
         </div>
+        {data.packConversion ? (
+          <div className="lg:col-span-4">
+            <ProductDetailPackConversionCard
+              packConversion={data.packConversion}
+              productId={data.id}
+              productName={data.name}
+              productStock={data.currentStock}
+              onConverted={() => void product.refetch()}
+            />
+          </div>
+        ) : null}
         <div className="lg:col-span-4">
           <Can permission="products.manage">
             <ProductDetailPriceChangeCard

@@ -215,4 +215,30 @@ select
     select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'purchases' and column_name = 'paid_ref'
   )
+union all
+select
+  'table product_pack_conversions',
+  exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'product_pack_conversions'
+  )
+union all
+select
+  'stock_movements.conversion_id',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'stock_movements' and column_name = 'conversion_id'
+  )
+union all
+select
+  'rpc convert_pack_to_units',
+  exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'convert_pack_to_units'
+      and pg_get_function_identity_arguments(p.oid)
+        = 'p_pack_product_id uuid, p_pack_quantity integer, p_reason text'
+  )
 order by 1;

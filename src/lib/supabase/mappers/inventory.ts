@@ -2,6 +2,7 @@ import { mapProductSummary } from "@/lib/supabase/mappers/products";
 import { mapNullableString } from "@/lib/supabase/mappers/base";
 
 export type StockCardRow = {
+  conversion_id?: string | null;
   created_at: string;
   created_by?: string | null;
   id: string;
@@ -18,6 +19,7 @@ export type StockCardRow = {
 
 export function mapStockCardEntry(row: StockCardRow) {
   return {
+    conversionId: mapNullableString(row.conversion_id),
     createdAt: row.created_at,
     id: row.id,
     product: mapProductSummary({

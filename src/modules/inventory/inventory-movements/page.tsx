@@ -23,6 +23,7 @@ import {
   InventoryMovementsTable,
   type InventoryMovementRow,
 } from "./components/InventoryMovementsTable";
+import { InventoryPackConversionModal } from "./components/InventoryPackConversionModal";
 
 type InventoryMovementsPageProps = {
   initialFilters?: InventoryMovementFilters;
@@ -98,6 +99,7 @@ export function InventoryMovementsPage({
               }}
             />
             <Can permission="inventory.manage">
+              <InventoryPackConversionModal defaultPackProductId={filters.productId} />
               <InventoryAdjustmentModal
                 defaultProductId={filters.productId}
                 trigger={adjustStockTrigger}

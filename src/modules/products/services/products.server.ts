@@ -10,13 +10,22 @@ import {
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
+import {
+  attachPackConversionToProduct,
+  upsertPackConversionForPackProduct,
+} from "./packConversion.server";
+import type { PackConversionInput } from "./packConversionSchemas";
 import type {
   ProductInput,
   ProductPriceInput,
 } from "./products.mock-server";
 import { applyProductSort } from "./productSort";
 import { buildProductSearchOrFilter, normalizeBarcode } from "./productSearch";
-import { normalizeOptionalSku, normalizeSku } from "@/shared/utils/skuGeneration";
+import { normalizeSku } from "@/shared/utils/skuGeneration";
+
+export type ProductInputWithPackConversion = ProductInput & {
+  packConversion?: PackConversionInput;
+};
 
 const productSelect = `
   id,
@@ -135,14 +144,15 @@ export async function getProductById(id: string, storeId: string) {
     throw new ApiError(404, "NOT_FOUND", "Producto no encontrado.");
   }
 
-  return mapProduct(data);
+  return attachPackConversionToProduct(mapProduct(data), storeId);
 }
 
-export async function createProduct(input: ProductInput, storeId: string) {
+export async function createProduct(input: ProductInputWithPackConversion, storeId: string) {
   const supabase = await createRouteSupabaseClient();
+  const { packConversion, ...productInput } = input;
   const { data, error } = await supabase
     .from("products")
-    .insert(toProductInsert(input, storeId))
+    .insert(toProductInsert(productInput, storeId))
     .select(productSelect)
     .single<ProductRow>();
 
@@ -152,15 +162,28 @@ export async function createProduct(input: ProductInput, storeId: string) {
     throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear el producto.");
   }
 
-  return mapProduct(data);
+  if (packConversion) {
+    await upsertPackConversionForPackProduct(data.id, storeId, packConversion, {
+      categoryId: productInput.categoryId,
+      currentCostRef: productInput.currentCostRef,
+      name: productInput.name,
+    });
+  }
+
+  return getProductById(data.id, storeId);
 }
 
-export async function updateProduct(id: string, input: ProductInput, storeId: string) {
+export async function updateProduct(
+  id: string,
+  input: ProductInputWithPackConversion,
+  storeId: string,
+) {
   await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
+  const { packConversion, ...productInput } = input;
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("products")
-    .update(toProductUpdate(input))
+    .update(toProductUpdate(productInput))
     .eq("id", id)
     .select(productSelect)
     .maybeSingle<ProductRow>();
@@ -171,7 +194,17 @@ export async function updateProduct(id: string, input: ProductInput, storeId: st
     throw new ApiError(404, "NOT_FOUND", "Producto no encontrado.");
   }
 
-  return mapProduct(data);
+  if (packConversion) {
+    await upsertPackConversionForPackProduct(id, storeId, packConversion, {
+      categoryId: productInput.categoryId ?? data.category_id ?? undefined,
+      currentCostRef:
+        productInput.currentCostRef ??
+        (data.current_cost_ref != null ? Number(data.current_cost_ref) : undefined),
+      name: productInput.name ?? data.name,
+    });
+  }
+
+  return getProductById(id, storeId);
 }
 
 export async function deleteProduct(id: string, storeId: string) {

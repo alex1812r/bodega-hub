@@ -47,13 +47,14 @@ const stockMovementSelect = `
   stock_after,
   sale_id,
   purchase_id,
+  conversion_id,
   reason,
   created_at,
   product:products(${productSummarySelect})
 `;
 
 const stockCardSelect =
-  "id, product_id, sku, product_name, type, quantity_delta, stock_after, sale_id, purchase_id, reason, created_by, created_at";
+  "id, product_id, sku, product_name, type, quantity_delta, stock_after, sale_id, purchase_id, conversion_id, reason, created_by, created_at";
 
 export async function listInventory(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
@@ -205,3 +206,50 @@ export async function createStockAdjustment(
 
   return mapStockMovement(data as DbStockMovementRow);
 }
+
+export async function convertPackToUnits(
+  input: {
+    packProductId: string;
+    packQuantity: number;
+    reason?: string;
+  },
+  storeId: string,
+) {
+  await assertSupabaseStoreResource(
+    "products",
+    input.packProductId,
+    storeId,
+    "Producto de empaque no encontrado.",
+  );
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase.rpc("convert_pack_to_units", {
+    p_pack_product_id: input.packProductId,
+    p_pack_quantity: input.packQuantity,
+    p_reason: input.reason ?? null,
+  });
+
+  throwIfSupabaseError(error);
+
+  const payload = data as {
+    conversionId: string;
+    packMovement: DbStockMovementRow;
+    unitMovement: DbStockMovementRow;
+    packQuantity: number;
+    unitQuantity: number;
+    unitsPerPack: number;
+    unitCostRef: number;
+  };
+
+  return {
+    conversionId: payload.conversionId,
+    packQuantity: payload.packQuantity,
+    unitCostRef: payload.unitCostRef,
+    unitQuantity: payload.unitQuantity,
+    unitsPerPack: payload.unitsPerPack,
+    packMovement: mapStockMovement(payload.packMovement),
+    unitMovement: mapStockMovement(payload.unitMovement),
+  };
+}
+
+export { listPackConversions } from "@/modules/products/services/packConversion.server";
+

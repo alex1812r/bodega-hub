@@ -20,6 +20,8 @@ export type StockMovementType =
   | "ajuste_entrada"
   | "ajuste_salida"
   | "compra"
+  | "conversion_entrada"
+  | "conversion_salida"
   | "devolucion_cliente"
   | "devolucion_proveedor"
   | "inventario_inicial"
@@ -173,6 +175,7 @@ export type PaymentMock = {
 };
 
 export type StockMovementMock = {
+  conversionId?: string;
   createdAt: string;
   id: string;
   productId: string;
@@ -183,6 +186,33 @@ export type StockMovementMock = {
   stockAfter: number;
   type: StockMovementType;
   storeId?: string | null;
+};
+
+export type ProductPackConversionRole = "pack" | "unit";
+
+export type ProductPackConversionLinkedProduct = {
+  currentCostRef: number;
+  currentStock: number;
+  id: string;
+  name: string;
+  salePriceRef: number;
+  sku: string;
+};
+
+export type ProductPackConversionSummary = {
+  id: string;
+  linkedProduct: ProductPackConversionLinkedProduct;
+  role: ProductPackConversionRole;
+  unitsPerPack: number;
+};
+
+export type ProductPackConversionMock = {
+  id: string;
+  isActive: boolean;
+  packProductId: string;
+  storeId: string;
+  unitProductId: string;
+  unitsPerPack: number;
 };
 
 export type SupplierProductPriceOrigin = "ajuste" | "compra" | "cotizacion" | "vinculacion";
@@ -368,6 +398,28 @@ export const mockProducts: ProductMock[] = [
     name: "Tubo PVC 1/2",
     salePriceRef: 8,
     sku: "plo-pvc-012",
+  },
+  {
+    categoryId: "cat-tools",
+    currentCostRef: 12.5,
+    currentStock: 5,
+    id: "prod-cigar-pack",
+    isActive: true,
+    minStock: 1,
+    name: "Caja cigarros (x10)",
+    salePriceRef: 18,
+    sku: "cig-caj-010",
+  },
+  {
+    categoryId: "cat-tools",
+    currentCostRef: 1.25,
+    currentStock: 3,
+    id: "prod-cigar-unit",
+    isActive: true,
+    minStock: 5,
+    name: "Cigarro individual",
+    salePriceRef: 2,
+    sku: "cig-und-001",
   },
 ];
 
@@ -1038,6 +1090,18 @@ export const mockStockMovements: StockMovementMock[] = [
     reason: "Ajuste por inventario",
     stockAfter: 30,
     type: "ajuste_entrada",
+  },
+];
+
+/** Vínculos pack→unidad para mock (mutable en runtime). */
+export const mockProductPackConversions: ProductPackConversionMock[] = [
+  {
+    id: "ppc-cigars",
+    isActive: true,
+    packProductId: "prod-cigar-pack",
+    storeId: "00000000-0000-4000-8000-000000000001",
+    unitProductId: "prod-cigar-unit",
+    unitsPerPack: 10,
   },
 ];
 

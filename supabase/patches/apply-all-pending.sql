@@ -185,3 +185,9 @@ notify pgrst, 'reload schema';
 -- Ejecutar: supabase/patches/20260810d-purchase-paid-ref.sql
 -- Luego (opcional one-shot): supabase/patches/20260810d-fix-existing-purchase-payment.sql
 -- Requiere 20260810-rpc-store-context.sql
+-- -----------------------------------------------------------------------------
+-- 20260811 — conversión empaque → unidad (dual SKU)
+-- -----------------------------------------------------------------------------
+-- Primero (Run aparte): supabase/patches/20260811a-stock-movement-conversion-enum.sql
+-- Luego: supabase/patches/20260811-pack-unit-conversion.sql
+-- Requiere 20260716-multi-store.sql (stores, assert_store_context)

@@ -9,6 +9,8 @@ describe("movementTypeLabels", () => {
   it("labels movement types in Spanish", () => {
     expect(getMovementTypeLabel("venta")).toBe("Venta");
     expect(getMovementTypeLabel("ajuste_entrada")).toBe("Ajuste entrada");
+    expect(getMovementTypeLabel("conversion_salida")).toBe("Conversion salida");
+    expect(getMovementTypeLabel("conversion_entrada")).toBe("Conversion entrada");
   });
 
   it("computes signed adjustment deltas", () => {

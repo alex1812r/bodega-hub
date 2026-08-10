@@ -3,12 +3,14 @@ import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
 import {
   mockCategories,
+  mockProductPackConversions,
   mockProducts,
   mockStockMovements,
   type StockMovementType,
 } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
+import { listPackConversions } from "@/modules/products/services/products.mock-server";
 import {
   matchesInventoryListFilters,
   parseInventoryListFilters,
@@ -74,7 +76,9 @@ export function createStockAdjustment(
     throw new ApiError(400, "BAD_REQUEST", "El ajuste no puede dejar stock negativo.");
   }
 
-  return {
+  product.currentStock = stockAfter;
+
+  const movement = {
     createdAt: new Date().toISOString(),
     id: `mov-mock-${Date.now()}`,
     productId: input.productId,
@@ -84,4 +88,103 @@ export function createStockAdjustment(
     storeId,
     type: input.type ?? "ajuste_entrada",
   };
+
+  mockStockMovements.unshift(movement);
+  return movement;
 }
+
+export function convertPackToUnits(
+  input: {
+    packProductId: string;
+    packQuantity: number;
+    reason?: string;
+  },
+  storeId: string,
+) {
+  const link = mockProductPackConversions.find(
+    (item) =>
+      item.isActive &&
+      item.storeId === storeId &&
+      item.packProductId === input.packProductId,
+  );
+
+  if (!link) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      "El producto no tiene conversion de empaque a unidad activa.",
+    );
+  }
+
+  const pack = mockProducts.find((item) => item.id === link.packProductId);
+  const unit = mockProducts.find((item) => item.id === link.unitProductId);
+  assertMockStoreResource(pack, storeId, "Producto de empaque no encontrado.");
+  assertMockStoreResource(unit, storeId, "Producto unidad no encontrado.");
+
+  if (input.packQuantity <= 0) {
+    throw new ApiError(400, "BAD_REQUEST", "La cantidad de empaques debe ser mayor a cero.");
+  }
+
+  if (pack.currentStock < input.packQuantity) {
+    throw new ApiError(400, "BAD_REQUEST", "Stock insuficiente de empaque.");
+  }
+
+  const unitQuantity = input.packQuantity * link.unitsPerPack;
+  const transferredValue = input.packQuantity * pack.currentCostRef;
+  const unitCostRef = Number((transferredValue / unitQuantity).toFixed(2));
+  const previousUnitStock = unit.currentStock;
+  const packStockAfter = pack.currentStock - input.packQuantity;
+  const unitStockAfter = unit.currentStock + unitQuantity;
+
+  pack.currentStock = packStockAfter;
+  unit.currentStock = unitStockAfter;
+  unit.currentCostRef =
+    previousUnitStock <= 0
+      ? unitCostRef
+      : Number(
+          (
+            (previousUnitStock * unit.currentCostRef + transferredValue) /
+            unitStockAfter
+          ).toFixed(2),
+        );
+
+  const conversionId = `conv-mock-${Date.now()}`;
+  const createdAt = new Date().toISOString();
+
+  const packMovement = {
+    conversionId,
+    createdAt,
+    id: `mov-pack-${Date.now()}`,
+    productId: pack.id,
+    quantityDelta: -input.packQuantity,
+    reason: input.reason,
+    stockAfter: packStockAfter,
+    storeId,
+    type: "conversion_salida" as const,
+  };
+  const unitMovement = {
+    conversionId,
+    createdAt,
+    id: `mov-unit-${Date.now()}`,
+    productId: unit.id,
+    quantityDelta: unitQuantity,
+    reason: input.reason,
+    stockAfter: unitStockAfter,
+    storeId,
+    type: "conversion_entrada" as const,
+  };
+
+  mockStockMovements.unshift(unitMovement, packMovement);
+
+  return {
+    conversionId,
+    packQuantity: input.packQuantity,
+    unitCostRef,
+    unitQuantity,
+    unitsPerPack: link.unitsPerPack,
+    packMovement,
+    unitMovement,
+  };
+}
+
+export { listPackConversions };

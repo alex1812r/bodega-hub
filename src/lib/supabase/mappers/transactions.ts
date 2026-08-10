@@ -164,6 +164,7 @@ export type DbPurchaseItemRow = {
 };
 
 export type DbStockMovementRow = {
+  conversion_id?: string | null;
   created_at?: string | null;
   id: string;
   product?: DbProductSummaryRow | DbProductSummaryRow[] | null;
@@ -221,6 +222,7 @@ export function mapStockMovement(row: DbStockMovementRow) {
   const product = resolveEmbeddedProduct(row.product);
 
   return {
+    conversionId: row.conversion_id ?? undefined,
     createdAt: row.created_at ?? "",
     id: row.id,
     productId: row.product_id,

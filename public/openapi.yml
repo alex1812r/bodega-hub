@@ -614,6 +614,85 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/inventory/conversions:
+    post:
+      tags: [Inventory]
+      summary: Convertir empaque a unidades (dual SKU)
+      x-permission: inventory.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [packProductId, packQuantity]
+              properties:
+                packProductId:
+                  type: string
+                packQuantity:
+                  type: integer
+                  minimum: 1
+                reason:
+                  type: string
+      responses:
+        "201":
+          description: Conversion creada (par de movimientos)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required:
+                      [
+                        conversionId,
+                        packMovement,
+                        unitMovement,
+                        packQuantity,
+                        unitQuantity,
+                        unitsPerPack,
+                      ]
+                    properties:
+                      conversionId:
+                        type: string
+                      packQuantity:
+                        type: integer
+                      unitQuantity:
+                        type: integer
+                      unitsPerPack:
+                        type: integer
+                      unitCostRef:
+                        type: number
+                      packMovement:
+                        $ref: "#/components/schemas/StockMovement"
+                      unitMovement:
+                        $ref: "#/components/schemas/StockMovement"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/inventory/pack-conversions:
+    get:
+      tags: [Inventory]
+      summary: Listar vinculos empaque→unidad activos
+      x-permission: inventory.view
+      responses:
+        "200":
+          description: Lista de conversiones configuradas
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/sales:
     get:
       tags: [Sales]
@@ -2243,6 +2322,8 @@ components:
         - compra
         - ajuste_entrada
         - ajuste_salida
+        - conversion_salida
+        - conversion_entrada
         - devolucion_cliente
         - devolucion_proveedor
         - inventario_inicial
@@ -2971,10 +3052,14 @@ components:
           type: integer
         stockAfter:
           type: integer
+        conversionId:
+          type: string
         reason:
           type: string
-        type:
-          $ref: "#/components/schemas/StockMovementType"
+        saleId:
+          type: string
+        purchaseId:
+          type: string
         createdAt:
           type: string
           format: date-time

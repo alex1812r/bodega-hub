@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useId, useState } from "react";
 
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
 import { Can } from "@/shared/auth/Can";
@@ -21,6 +21,12 @@ import {
   uploadProductImageBlob,
 } from "../../services/uploadProductImage";
 import { ProductImageUploadField } from "./ProductImageUploadField";
+import {
+  createDefaultPackConversionFormState,
+  packConversionStateToInput,
+  ProductPackConversionFields,
+  type PackConversionFormState,
+} from "./ProductPackConversionFields";
 
 export type ProductFormSubmitContext = {
   pendingImageBlob?: Blob | null;
@@ -32,7 +38,9 @@ type ProductFormModalProps = {
   isSubmitting?: boolean;
   mode?: "create" | "edit";
   onImageUpdated?: () => void | Promise<void>;
+  onOpenChange?: (open: boolean) => void;
   onSubmit?: (input: ProductInput, context?: ProductFormSubmitContext) => Promise<void> | void;
+  open?: boolean;
   product?: ProductWithCategory;
   trigger?: ReactNode;
 };
@@ -49,28 +57,48 @@ export function ProductFormModal({
   isSubmitting = false,
   mode = "create",
   onImageUpdated,
+  onOpenChange,
   onSubmit,
+  open,
   product,
   trigger,
 }: ProductFormModalProps) {
   const formId = useId();
-  const [isOpen, setIsOpen] = useState(false);
+  const isControlled = open !== undefined;
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isOpen = isControlled ? open : internalOpen;
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
   const [pendingImageBlob, setPendingImageBlob] = useState<Blob | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [packConversionState, setPackConversionState] = useState<PackConversionFormState>(
+    createDefaultPackConversionFormState(product?.packConversion),
+  );
   const isEdit = mode === "edit";
+  const isUnitRole = product?.packConversion?.role === "unit";
+
+  useEffect(() => {
+    if (isOpen) {
+      resetFormFields();
+    }
+    // Reset when opening or when the loaded product payload changes (e.g. detail fetch).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional on open/product.id
+  }, [isOpen, product?.id, product?.packConversion?.id]);
 
   function resetFormFields() {
     setName(product?.name ?? "");
     setSku(product?.sku ?? "");
     setPendingImageBlob(null);
     setImageError(null);
+    setPackConversionState(createDefaultPackConversionFormState(product?.packConversion));
   }
 
   function handleOpenChange(nextOpen: boolean) {
-    setIsOpen(nextOpen);
+    if (!isControlled) {
+      setInternalOpen(nextOpen);
+    }
+    onOpenChange?.(nextOpen);
     if (nextOpen) {
       resetFormFields();
     }
@@ -81,6 +109,9 @@ export function ProductFormModal({
 
     const formData = new FormData(event.currentTarget);
     const categoryId = String(formData.get("categoryId") ?? "");
+    const shouldSendPackConversion =
+      !isUnitRole &&
+      (Boolean(product?.packConversion) || packConversionState.enabled);
     const input: ProductInput = {
       barcode: normalizeBarcode(String(formData.get("barcode") ?? "")),
       categoryId: categoryId || undefined,
@@ -88,6 +119,9 @@ export function ProductFormModal({
       currentStock: numberFromFormData(formData, "currentStock"),
       minStock: numberFromFormData(formData, "minStock"),
       name: name.trim(),
+      packConversion: shouldSendPackConversion
+        ? packConversionStateToInput(packConversionState)
+        : undefined,
       salePriceRef: Number(formData.get("salePriceRef") ?? 0),
       sku: sku.trim().toLowerCase(),
     };
@@ -152,11 +186,13 @@ export function ProductFormModal({
       open={isOpen}
       title={isEdit ? "Editar producto" : "Crear producto"}
       trigger={
-        trigger ?? (
-          <Button size="sm" variant={isEdit ? "outline" : "primary"}>
-            {isEdit ? "Editar producto" : "Nuevo producto"}
-          </Button>
-        )
+        isControlled
+          ? trigger
+          : (trigger ?? (
+              <Button size="sm" variant={isEdit ? "outline" : "primary"}>
+                {isEdit ? "Editar producto" : "Nuevo producto"}
+              </Button>
+            ))
       }
     >
       <form
@@ -247,6 +283,16 @@ export function ProductFormModal({
             type="number"
           />
         </div>
+        <ProductPackConversionFields
+          excludeProductId={product?.id}
+          isUnitRole={isUnitRole}
+          packConversion={product?.packConversion}
+          productName={name}
+          state={packConversionState}
+          onChange={(patch) =>
+            setPackConversionState((current) => ({ ...current, ...patch }))
+          }
+        />
         <Textarea label="Descripcion" placeholder="Detalles del producto" />
         {imageError ? (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">

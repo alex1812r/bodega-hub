@@ -54,6 +54,8 @@ Orden individual (si prefieres uno por uno):
 | 9 | `20260810c-purchase-trust-frontend.sql` | `create_purchase` confia REF+VES del frontend |
 | 10 | `20260810d-purchase-paid-ref.sql` | `purchases.paid_ref` + saldo pendiente en REF |
 | 10b | `20260810d-fix-existing-purchase-payment.sql` | One-shot: ajusta pago parcial existente (opcional) |
+| 11a | `20260811a-stock-movement-conversion-enum.sql` | Enum `conversion_salida` / `conversion_entrada` (**corrida aparte**) |
+| 11 | `20260811-pack-unit-conversion.sql` | Dual SKU pack→unidad: vínculo + RPC `convert_pack_to_units` |
 
 **Importante:** el patch 4b/4c **no** están embebidos en `apply-all-pending.sql`. Ejecuta **4a → 4b → 4c** en Runs separados del SQL Editor (PostgreSQL no permite usar un enum nuevo en la misma transacción donde se agregó).
 

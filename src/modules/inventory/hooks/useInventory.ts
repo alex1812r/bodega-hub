@@ -7,6 +7,7 @@ import { apiFetch } from "@/shared/api/apiFetch";
 import type {
   CategoryMock,
   ProductMock,
+  ProductPackConversionSummary,
   StockMovementMock,
   StockMovementType,
 } from "@/shared/mocks/erp-data";
@@ -46,6 +47,26 @@ export type InventoryAdjustmentInput = {
   type?: InventoryAdjustmentType;
 };
 
+export type PackConversionListItem = ProductPackConversionSummary & {
+  packProduct: ProductPackConversionSummary["linkedProduct"];
+};
+
+export type ConvertPackToUnitsInput = {
+  packProductId: string;
+  packQuantity: number;
+  reason?: string;
+};
+
+export type ConvertPackToUnitsResult = {
+  conversionId: string;
+  packMovement: StockMovementMock;
+  packQuantity: number;
+  unitCostRef: number;
+  unitMovement: StockMovementMock;
+  unitQuantity: number;
+  unitsPerPack: number;
+};
+
 export const inventoryQueryKeys = {
   all: ["inventory"] as const,
   adjustments: () => [...inventoryQueryKeys.all, "adjustments"] as const,
@@ -53,6 +74,7 @@ export const inventoryQueryKeys = {
     [...inventoryQueryKeys.all, "list", filters] as const,
   movements: (filters: InventoryMovementFilters = {}) =>
     [...inventoryQueryKeys.all, "movements", filters] as const,
+  packConversions: () => [...inventoryQueryKeys.all, "pack-conversions"] as const,
   stockCard: (filters: InventoryMovementFilters = {}) =>
     [...inventoryQueryKeys.all, "stock-card", filters] as const,
 };
@@ -101,6 +123,29 @@ export function useAdjustInventory() {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: inventoryQueryKeys.all });
+    },
+  });
+}
+
+export function usePackConversions() {
+  return useQuery({
+    queryKey: inventoryQueryKeys.packConversions(),
+    queryFn: () => apiFetch<PackConversionListItem[]>("/api/inventory/pack-conversions"),
+  });
+}
+
+export function useConvertPackToUnits() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: ConvertPackToUnitsInput) =>
+      apiFetch<ConvertPackToUnitsResult>("/api/inventory/conversions", {
+        body: input,
+        method: "POST",
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: inventoryQueryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["products"] });
     },
   });
 }

@@ -27,7 +27,7 @@ La unidad base de precios será `ref`, equivalente operacional al valor de refer
 *   `payment_direction`: `entrada`, `salida`
 *   `payment_method`: `efectivo_ves`, `efectivo_usd`, `pago_movil`, `punto_venta`, `transferencia`
 *   `payment_currency`: `VES`, `USD`
-*   `stock_movement_type`: `venta`, `compra`, `ajuste_entrada`, `ajuste_salida`, `devolucion_cliente`, `devolucion_proveedor`, `inventario_inicial`
+*   `stock_movement_type`: `venta`, `compra`, `ajuste_entrada`, `ajuste_salida`, `devolucion_cliente`, `devolucion_proveedor`, `inventario_inicial`, `conversion_salida`, `conversion_entrada`
 
 ## 3. Entidades y Atributos
 
@@ -295,9 +295,22 @@ Bitacora auditable de todo cambio de inventario.
 *   `stock_after`: integer - Stock resultante despues del movimiento.
 *   `sale_id`: uuid nullable (FK references `sales`)
 *   `purchase_id`: uuid nullable (FK references `purchases`)
+*   `conversion_id`: uuid nullable — empareja salida/entrada de conversion pack→unidad
 *   `reason`: text
 *   `created_by`: uuid (FK references `profiles`)
 *   `created_at`: timestamp with time zone
+
+### 3.14b Conversiones empaque→unidad (`product_pack_conversions`)
+
+Vinculo 1:1 entre producto empaque y producto unidad en la misma tienda.
+
+*   `id`: uuid (PK)
+*   `store_id`: uuid (FK `stores`)
+*   `pack_product_id`: uuid (FK `products`) — unique activo
+*   `unit_product_id`: uuid (FK `products`) — unique activo
+*   `units_per_pack`: integer (> 1)
+*   `is_active`: boolean
+*   Operacion: RPC `convert_pack_to_units(pack_product_id, pack_quantity, reason)`
 
 ## 4. Relaciones (ER Logic)
 

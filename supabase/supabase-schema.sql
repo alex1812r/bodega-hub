@@ -69,7 +69,9 @@ do $$ begin
     'ajuste_salida',
     'devolucion_cliente',
     'devolucion_proveedor',
-    'inventario_inicial'
+    'inventario_inicial',
+    'conversion_salida',
+    'conversion_entrada'
   );
 exception when duplicate_object then null;
 end $$;
@@ -377,10 +379,13 @@ create table if not exists public.stock_movements (
   stock_after integer not null,
   sale_id uuid references public.sales(id) on delete set null,
   purchase_id uuid references public.purchases(id) on delete set null,
+  conversion_id uuid,
   reason text,
   created_by uuid references public.profiles(id) on delete set null default auth.uid(),
   created_at timestamptz not null default now()
 );
+
+-- product_pack_conversions (dual SKU pack→unit) requiere stores: ver patch 20260811-pack-unit-conversion.sql
 
 -- =========================
 -- Indexes
@@ -427,6 +432,9 @@ create index if not exists idx_payments_contact_created_at on public.payments(co
 create index if not exists idx_payments_status on public.payments(status);
 
 create index if not exists idx_stock_movements_product_created_at on public.stock_movements(product_id, created_at desc);
+create index if not exists idx_stock_movements_conversion_id
+  on public.stock_movements(conversion_id)
+  where conversion_id is not null;
 
 -- =========================
 -- Helpers and triggers
@@ -2090,7 +2098,8 @@ select
   sm.purchase_id,
   sm.reason,
   sm.created_by,
-  sm.created_at
+  sm.created_at,
+  sm.conversion_id
 from public.stock_movements sm
 join public.products p on p.id = sm.product_id;
 

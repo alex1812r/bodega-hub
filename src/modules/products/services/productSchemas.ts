@@ -3,6 +3,8 @@ import { z } from "zod";
 import { normalizeBarcode } from "@/modules/products/services/productSearch";
 import { normalizeOptionalSku, normalizeSku } from "@/shared/utils/skuGeneration";
 
+import { packConversionInputSchema } from "./packConversionSchemas";
+
 export const optionalNullableBarcodeSchema = z
   .union([z.string(), z.null()])
   .optional()
@@ -27,6 +29,7 @@ export const createProductSchema = z.object({
   imageUrl: optionalImageUrlSchema,
   minStock: z.number().int().min(0).optional(),
   name: z.string().min(1),
+  packConversion: packConversionInputSchema.optional(),
   salePriceRef: z.number().min(0),
   sku: skuSchema,
 });
@@ -40,6 +43,7 @@ export const updateProductSchema = z.object({
   isActive: z.boolean().optional(),
   minStock: z.number().int().min(0).optional(),
   name: z.string().min(1).optional(),
+  packConversion: packConversionInputSchema.optional(),
   salePriceRef: z.number().min(0).optional(),
   sku: skuSchema.optional(),
 });

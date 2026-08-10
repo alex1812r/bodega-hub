@@ -12,6 +12,8 @@ export type InventoryAdjustmentType = Extract<
 export const movementTypeOptions: Array<{ label: string; value: StockMovementType }> = [
   { label: "Ajuste entrada", value: "ajuste_entrada" },
   { label: "Ajuste salida", value: "ajuste_salida" },
+  { label: "Conversion entrada", value: "conversion_entrada" },
+  { label: "Conversion salida", value: "conversion_salida" },
   { label: "Venta", value: "venta" },
   { label: "Compra", value: "compra" },
   { label: "Devolución cliente", value: "devolucion_cliente" },
@@ -57,6 +59,8 @@ export const movementTypeBadgeVariant = {
   ajuste_entrada: "success",
   ajuste_salida: "warning",
   compra: "success",
+  conversion_entrada: "success",
+  conversion_salida: "warning",
   devolucion_cliente: "success",
   devolucion_proveedor: "warning",
   inventario_inicial: "success",

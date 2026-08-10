@@ -220,8 +220,12 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 | `useInventoryMovements` | GET `/api/inventory/movements` — `productId` (+ filtros `type`/`date` solo en cliente) |
 | `useStockCard` | GET `/api/inventory/stock-card` — `productId` |
 | `useAdjustInventory` | POST `/api/inventory/adjustments` → RPC `adjust_stock` |
+| `usePackConversions` | GET `/api/inventory/pack-conversions` |
+| `useConvertPackToUnits` | POST `/api/inventory/conversions` → RPC `convert_pack_to_units` |
 
 **Campos ajuste:** `productId`, `quantityDelta`, `reason`, `type` (`ajuste_entrada`, `ajuste_salida`, etc.).
+
+**Conversion empaque→unidad (dual SKU):** vínculo en `product_pack_conversions`; movimiento emparejado `conversion_salida` + `conversion_entrada` con `conversion_id`. UI en detalle de producto e Inventario/movimientos.
 
 **Tabla:** `stock_movements`; stock actual en `products.current_stock`.
 
@@ -399,6 +403,7 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 | `receive_purchase` | PATCH `/api/purchases/[id]/receive` |
 | `register_payment` | POST `/api/payments` |
 | `adjust_stock` | POST `/api/inventory/adjustments` |
+| `convert_pack_to_units` | POST `/api/inventory/conversions` |
 | `update_product_price` | POST `/api/products/[id]/price` |
 | `register_supplier_product_price` | POST `/api/supplier-products/[id]/prices` |
 | `deactivate_supplier_product` | PATCH `/api/supplier-products/[id]/deactivate` |

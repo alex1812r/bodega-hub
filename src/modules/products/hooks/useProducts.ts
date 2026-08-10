@@ -9,6 +9,7 @@ import type { CategoryInput } from "../services/categories.mock-server";
 import type {
   CategoryMock,
   ProductMock,
+  ProductPackConversionSummary,
   ProductPriceHistoryMock,
   SupplierProductMock,
 } from "@/shared/mocks/erp-data";
@@ -22,6 +23,7 @@ export type CategoriesFilters = PaginationParams & {
 
 export type ProductWithCategory = ProductMock & {
   category?: CategoryMock;
+  packConversion?: ProductPackConversionSummary;
 };
 
 export type ProductsFilters = PaginationParams & {
@@ -41,6 +43,19 @@ export type ProductInput = {
   imageUrl?: string | null;
   minStock?: number;
   name: string;
+  packConversion?: {
+    enabled: boolean;
+    mode?: "create_unit" | "link_existing";
+    unitProduct?: {
+      barcode?: string | null;
+      currentCostRef?: number;
+      name?: string;
+      salePriceRef: number;
+      sku?: string;
+    };
+    unitProductId?: string;
+    unitsPerPack?: number;
+  };
   salePriceRef: number;
   sku: string;
 };

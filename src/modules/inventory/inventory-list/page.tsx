@@ -19,6 +19,7 @@ import { cn } from "@/shared/utils/cn";
 
 import { useCategories } from "../../products/hooks/useProducts";
 import { InventoryAdjustmentModal } from "../inventory-movements/components/InventoryAdjustmentModal";
+import { InventoryPackConversionModal } from "../inventory-movements/components/InventoryPackConversionModal";
 import {
   useInventory,
   type InventoryFilters,
@@ -172,6 +173,7 @@ export function InventoryListPage() {
             <InventoryExportActions exportFilters={appliedFilters} />
             <Can permission="inventory.manage">
               <div className="flex flex-wrap items-center gap-2">
+                <InventoryPackConversionModal />
                 <InventoryAdjustmentModal />
                 <Button asChild size="sm" variant="outline">
                   <Link href="/inventory/movements">Ver todos los movimientos</Link>
