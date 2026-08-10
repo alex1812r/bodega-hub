@@ -3,6 +3,7 @@ import { jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 import { supplierProductPackUnitUpdateSchema } from "@/modules/contacts/services/supplierProducts.schemas";
+import { assertCanAccessSupplierContacts } from "@/shared/auth/contactAccess";
 
 type PackUnitRouteContext = {
   params: Promise<{ id: string; packId: string }>;
@@ -11,6 +12,7 @@ type PackUnitRouteContext = {
 export async function PATCH(request: Request, context: PackUnitRouteContext) {
   try {
     const auth = await requireStorePermission(request, "products.manage");
+    assertCanAccessSupplierContacts(auth.role);
     const { id, packId } = await context.params;
     const input = supplierProductPackUnitUpdateSchema.parse(await request.json());
 
@@ -25,6 +27,7 @@ export async function PATCH(request: Request, context: PackUnitRouteContext) {
 export async function DELETE(request: Request, context: PackUnitRouteContext) {
   try {
     const auth = await requireStorePermission(request, "products.manage");
+    assertCanAccessSupplierContacts(auth.role);
     const { id, packId } = await context.params;
 
     return jsonData(

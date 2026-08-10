@@ -2025,11 +2025,11 @@ paths:
   /api/users:
     get:
       tags: [Users]
-      summary: Listar perfiles mock
+      summary: Listar perfiles de la tienda
       x-permission: users.manage
       responses:
         "200":
-          description: Usuarios mock
+          description: Usuarios de la tienda
           content:
             application/json:
               schema:
@@ -2037,11 +2037,45 @@ paths:
                 required: [data]
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/UserProfile"
+                    type: object
+                    required: [items, limit, skip, total]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UserProfile"
+                      limit: { type: integer }
+                      skip: { type: integer }
+                      total: { type: integer }
         "403":
           $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Users]
+      summary: Crear usuario de la tienda
+      x-permission: users.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, fullName, password, role]
+              properties:
+                email: { type: string, format: email }
+                fullName: { type: string, minLength: 1 }
+                password: { type: string, minLength: 8 }
+                role:
+                  type: string
+                  enum: [admin, vendedor, almacen, contador]
+      responses:
+        "201":
+          $ref: "#/components/responses/UserProfileResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/users/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"

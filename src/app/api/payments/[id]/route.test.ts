@@ -40,4 +40,15 @@ describe("/api/payments/[id]", () => {
     expect(response.status).toBe(200);
     expect(body.data.notes).toBe("Nota de seguimiento");
   });
+
+  it("forbids vendedor from viewing a purchase payment", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/payments/pay-003", {
+        headers: { "x-demo-role": "vendedor" },
+      }),
+      context("pay-003"),
+    );
+
+    expect(response.status).toBe(403);
+  });
 });

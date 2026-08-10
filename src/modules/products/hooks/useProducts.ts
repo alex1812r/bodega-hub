@@ -170,10 +170,10 @@ export function useProductPriceHistory(id: string) {
   });
 }
 
-export function useProductSuppliers(id: string) {
+export function useProductSuppliers(id?: string) {
   return useQuery({
     enabled: Boolean(id),
-    queryKey: productsQueryKeys.suppliers(id),
+    queryKey: productsQueryKeys.suppliers(id ?? ""),
     queryFn: () =>
       apiFetch<PaginatedList<SupplierProductMock>>(`/api/products/${id}/suppliers`),
   });

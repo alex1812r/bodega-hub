@@ -26,6 +26,7 @@ import {
 } from "@/shared/payments/paymentMethods";
 
 type RegisterPaymentModalProps = {
+  allowPurchaseContext?: boolean;
   purchaseId?: string;
   saleId?: string;
   trigger?: ReactNode;
@@ -54,17 +55,19 @@ function needsReference(method: PaymentMethod) {
 }
 
 export function RegisterPaymentModal({
+  allowPurchaseContext = true,
   purchaseId,
   saleId,
   trigger,
 }: RegisterPaymentModalProps) {
   const formId = useId();
-  const hasFixedContext = Boolean(saleId || purchaseId);
+  const resolvedPurchaseId = allowPurchaseContext ? purchaseId : undefined;
+  const hasFixedContext = Boolean(saleId || resolvedPurchaseId);
   const [open, setOpen] = useState(false);
   const [contextType, setContextType] = useState<ContextType>(
-    purchaseId ? "purchase" : "sale",
+    resolvedPurchaseId ? "purchase" : "sale",
   );
-  const [contextId, setContextId] = useState(saleId ?? purchaseId ?? "");
+  const [contextId, setContextId] = useState(saleId ?? resolvedPurchaseId ?? "");
   const [method, setMethod] = useState<PaymentMethod>("efectivo_ves");
   const [amount, setAmount] = useState("");
   const [bankName, setBankName] = useState("");
@@ -85,7 +88,8 @@ export function RegisterPaymentModal({
   }, [enabledPaymentMethodsQuery.data]);
   const selectedSaleId = saleId ?? (contextType === "sale" ? contextId : undefined);
   const selectedPurchaseId =
-    purchaseId ?? (contextType === "purchase" ? contextId : undefined);
+    resolvedPurchaseId ??
+    (allowPurchaseContext && contextType === "purchase" ? contextId : undefined);
   const sale = useSale(selectedSaleId);
   const purchase = usePurchase(selectedPurchaseId);
   const pendingBalanceVes = useMemo(() => {
@@ -173,7 +177,11 @@ export function RegisterPaymentModal({
 
   return (
     <Modal
-      description="Registra un abono asociado a una venta o compra existente."
+      description={
+        allowPurchaseContext
+          ? "Registra un abono asociado a una venta o compra existente."
+          : "Registra un abono asociado a una venta existente."
+      }
       footer={({ close }) => (
         <FormActions
           isSubmitting={createPayment.isPending}
@@ -199,27 +207,31 @@ export function RegisterPaymentModal({
       <form className="grid gap-4" id={formId} onSubmit={handleSubmit}>
         {!hasFixedContext ? (
           <div className="grid gap-4 md:grid-cols-2">
-            <SelectField
-              label="Contexto"
-              onChange={(event) => {
-                setContextType(event.target.value as ContextType);
-                setContextId("");
-              }}
-              options={[
-                { label: "Venta", value: "sale" },
-                { label: "Compra", value: "purchase" },
-              ]}
-              value={contextType}
-            />
+            {allowPurchaseContext ? (
+              <SelectField
+                label="Contexto"
+                onChange={(event) => {
+                  setContextType(event.target.value as ContextType);
+                  setContextId("");
+                }}
+                options={[
+                  { label: "Venta", value: "sale" },
+                  { label: "Compra", value: "purchase" },
+                ]}
+                value={contextType}
+              />
+            ) : null}
             <Input
               error={
                 hasSubmitted && !contextIsValid
-                  ? "Indica una venta o compra."
+                  ? "Indica una venta."
                   : undefined
               }
-              label={contextType === "sale" ? "ID venta" : "ID compra"}
+              label={contextType === "sale" || !allowPurchaseContext ? "ID venta" : "ID compra"}
               onChange={(event) => setContextId(event.target.value)}
-              placeholder={contextType === "sale" ? "sale-002" : "purchase-002"}
+              placeholder={
+                contextType === "sale" || !allowPurchaseContext ? "sale-002" : "purchase-002"
+              }
               value={contextId}
             />
           </div>

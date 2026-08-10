@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 
 import { DashboardKpiCard } from "@/modules/dashboard/components/DashboardKpiCard";
+import { usePermission } from "@/shared/auth/usePermission";
 import type { ContactType } from "@/shared/mocks/erp-data";
 import { formatRefUsd } from "@/shared/utils/currency";
 
@@ -19,10 +20,12 @@ type ContactDetailMetricsProps = {
 };
 
 export function ContactDetailMetrics({ contactType, metrics }: ContactDetailMetricsProps) {
+  const { can } = usePermission();
   const hasReceivable = metrics.receivableRef > 0;
   const hasPayable = metrics.payableRef > 0;
   const showReceivable = showsReceivableMetric(contactType);
-  const showPayable = showsPayableMetric(contactType);
+  const showPayable = showsPayableMetric(contactType) && can("purchases.view");
+
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

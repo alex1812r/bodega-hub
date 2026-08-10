@@ -259,6 +259,8 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 
 **Campos:** `name`, `type` (`cliente`|`proveedor`|`ambos`), `taxId`, `email`, `phone`, `address`, `notes`, `isActive`.
 
+**Acceso por rol:** el `vendedor` solo ve contactos con `type = cliente` (no `proveedor` ni `ambos`). Se aplica en listado/detalle/subrecursos de `/api/contacts`, y en catálogo proveedor-producto (`/api/supplier-products`, `/api/products/[id]/suppliers`, etc.).
+
 **Tabla:** `contacts`. Sin `DELETE` API (desactivar vía `PATCH isActive: false`).
 
 **UI proveedor/ambos:** tab **Productos** (`ContactSupplierProductsTab`) — vincular (M10 con autocomplete producto/proveedor según contexto), cotizar, historial, editar metadatos, desvincular (modales M10–M14 en `contacts/components/supplier-products/`). Permisos `products.view` / `products.manage`.
@@ -341,6 +343,8 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 
 **Métodos:** `efectivo_ves`, `efectivo_usd`, `pago_movil`, `punto_venta`, `transferencia`. Validación por método en API.
 
+**Acceso por rol:** el `vendedor` solo ve/opera pagos de ventas (`purchase_id` nulo). Se aplica en `GET/POST /api/payments`, detalle, cancelación, `GET /api/contacts/[id]/payments` y actividad del contacto. En UI se ocultan filtros de compra/salida.
+
 **Pendiente:** revisión UX confirmación al anular (endpoint y UI ya existen).
 
 ---
@@ -379,10 +383,13 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 | `useSettings` | GET `/api/settings` |
 | `useUpdateSettings` | PATCH `/api/settings` |
 | `useUsers` | GET `/api/users` |
+| `useCreateUser` | POST `/api/users` — roles de tienda: admin, vendedor, almacen, contador |
 | `useUpdateUser` | PATCH `/api/users/[id]` |
 | `useExchangeRates` | GET `/api/exchange-rates` |
 | `useCurrentExchangeRate` | GET `/api/exchange-rates/current` — tasa oficial vía servidor ([DolarAPI](https://ve.dolarapi.com/v1/dolares/oficial), campo `promedio`) |
 | `useCreateExchangeRate` | POST `/api/exchange-rates` — solo historial manual |
+
+**UI:** tabs en `/settings` — General / sistema, Usuarios (crear + listar/editar), Tasas.
 
 **Tasa vigente (servidor):** [`src/lib/exchange-rates/dolarApi.ts`](../src/lib/exchange-rates/dolarApi.ts), cache [`officialRateCache.ts`](../src/lib/exchange-rates/officialRateCache.ts), persistencia en `exchange_rates` con `source = "DolarAPI oficial"` (admin client, 1x/día o al cambiar valor). Variables: `DOLAR_API_OFFICIAL_URL`, `DOLAR_API_CACHE_TTL_MS`, `DOLAR_API_FETCH_TIMEOUT_MS`.
 
@@ -390,7 +397,7 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 
 **`profiles`:** `role`, `isActive`, `grantedPermissions`, `deniedPermissions`.
 
-**Pendiente:** UI para editar granted/denied por usuario; crear usuarios desde app.
+**Pendiente:** UI para editar granted/denied por usuario.
 
 ---
 

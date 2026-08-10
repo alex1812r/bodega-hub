@@ -5,9 +5,15 @@ import { getContactsService } from "@/modules/contacts/services";
 
 export async function GET(request: Request, context: RouteContext<"/api/contacts/[id]/purchases">) {
   try {
-    const auth = await requireStorePermission(request, "contacts.view");
+    const auth = await requireStorePermission(request, "purchases.view");
     const { id } = await context.params;
-    return jsonData(await getContactsService().getContactPurchases(id, new URL(request.url).searchParams, auth.storeId));
+    return jsonData(
+      await getContactsService().getContactPurchases(
+        id,
+        new URL(request.url).searchParams,
+        auth.storeId,
+      ),
+    );
   } catch (error) {
     return toErrorResponse(error);
   }

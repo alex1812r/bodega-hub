@@ -10,10 +10,12 @@ jest.mock("../../../../../lib/api/dataSource", () => ({
 
 jest.mock("../../../../../modules/payments/services/payments.mock-server", () => ({
   cancelPayment: jest.fn(),
+  getPaymentById: jest.fn(),
 }));
 
 jest.mock("../../../../../modules/payments/services/payments.server", () => ({
   cancelPayment: jest.fn(),
+  getPaymentById: jest.fn(),
 }));
 
 jest.mock("../../../../../lib/api/requirePermission", () => ({
@@ -27,14 +29,23 @@ jest.mock("../../../../../lib/api/requirePermission", () => ({
   }),
 }));
 
-const { cancelPayment: cancelPaymentMock } = jest.requireMock<{
+const {
+  cancelPayment: cancelPaymentMock,
+  getPaymentById: getPaymentByIdMock,
+} = jest.requireMock<{
   cancelPayment: jest.Mock;
+  getPaymentById: jest.Mock;
 }>("../../../../../modules/payments/services/payments.mock-server");
 
 describe("/api/payments/[id]/cancel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (resolveDataSource as jest.Mock).mockReturnValue("mock");
+    getPaymentByIdMock.mockResolvedValue({
+      direction: "entrada",
+      id: "pay-001",
+      saleId: "sale-001",
+    });
     cancelPaymentMock.mockResolvedValue({
       id: "pay-001",
       status: "anulado",
@@ -53,8 +64,13 @@ describe("/api/payments/[id]/cancel", () => {
 
     expect(response.status).toBe(200);
     expect(body.data.status).toBe("anulado");
+    expect(getPaymentByIdMock).toHaveBeenCalledWith(
+      "pay-001",
+      "00000000-0000-4000-8000-000000000001",
+    );
     expect(cancelPaymentMock).toHaveBeenCalledWith(
       "pay-001",
       "00000000-0000-4000-8000-000000000001",
-    );  });
+    );
+  });
 });

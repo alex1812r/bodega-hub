@@ -6,6 +6,7 @@ import { jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as paymentsMockServer from "@/modules/payments/services/payments.mock-server";
 import * as paymentsServer from "@/modules/payments/services/payments.server";
+import { assertCanAccessPayment } from "@/shared/auth/paymentAccess";
 
 const updatePaymentSchema = z.object({
   bankName: z.string().optional(),
@@ -23,7 +24,9 @@ export async function GET(request: Request, context: RouteContext<"/api/payments
     const auth = await requireStorePermission(request, "payments.view");
     const { id } = await context.params;
     const service = getPaymentsService();
-    return jsonData(await service.getPaymentById(id, auth.storeId));
+    const payment = await service.getPaymentById(id, auth.storeId);
+    assertCanAccessPayment(auth.role, payment);
+    return jsonData(payment);
   } catch (error) {
     return toErrorResponse(error);
   }
@@ -35,6 +38,8 @@ export async function PATCH(request: Request, context: RouteContext<"/api/paymen
     const { id } = await context.params;
     const input = updatePaymentSchema.parse(await request.json());
     const service = getPaymentsService();
+    const existing = await service.getPaymentById(id, auth.storeId);
+    assertCanAccessPayment(auth.role, existing);
     return jsonData(await service.updatePayment(id, input, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);

@@ -4,6 +4,8 @@ import { useMemo } from "react";
 
 import { getConnectedToApiPhrase } from "@/lib/api/dataSourceUi";
 import { Can } from "@/shared/auth/Can";
+import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
+import { usePermission } from "@/shared/auth/usePermission";
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { PageBackButton } from "@/shared/components/PageBackButton";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
@@ -54,15 +56,20 @@ function mapActivityRows(rows: ContactActivityApiRow[]) {
 }
 
 export function ContactDetailsPage({ contactId = "cont-customer" }: ContactDetailsPageProps) {
+  const { can, role } = usePermission();
+  const customersOnly = role ? !canViewSupplierContacts(role) : false;
+  const canViewPurchases = can("purchases.view");
   const contact = useContact(contactId);
   const activity = useContactActivity(contactId);
   const sales = useContactSales(contactId);
-  const purchases = useContactPurchases(contactId);
+  const purchases = useContactPurchases(canViewPurchases ? contactId : undefined);
   const payments = useContactPayments(contactId);
   const updateContact = useUpdateContact(contactId);
 
   const salesRows = getPaginatedItems(sales.data) as SaleMock[];
-  const purchaseRows = getPaginatedItems(purchases.data) as PurchaseMock[];
+  const purchaseRows = canViewPurchases
+    ? (getPaginatedItems(purchases.data) as PurchaseMock[])
+    : [];
   const paymentRows = getPaginatedItems(payments.data) as PaymentMock[];
 
   const metrics = useMemo(
@@ -116,6 +123,7 @@ export function ContactDetailsPage({ contactId = "cont-customer" }: ContactDetai
             <Can permission="contacts.manage">
               <ContactFormModal
                 contact={data}
+                customersOnly={customersOnly}
                 errorMessage={updateContact.error?.message}
                 isSubmitting={isSaving}
                 mode="edit"

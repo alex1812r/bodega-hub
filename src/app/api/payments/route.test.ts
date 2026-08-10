@@ -107,7 +107,8 @@ describe("/api/payments", () => {
     expect(response.status).toBe(201);
     expect(body.data.amountRef).toBe(5);
     expect(body.data.amountVes).toBe(2550);
-    expect(body.data.pendingBalanceVes).toBe(5925);
+    // sale-002 ya recibe un abono en el test anterior de este suite
+    expect(body.data.pendingBalanceVes).toBe(4925);
   });
 
   it("accepts punto de venta without reference", async () => {
@@ -145,5 +146,32 @@ describe("/api/payments", () => {
     );
 
     expect(response.status).toBe(400);
+  });
+
+  it("hides purchase payments from vendedor", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/payments", {
+        headers: { "x-demo-role": "vendedor" },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.items.every((payment: { purchaseId?: string }) => !payment.purchaseId)).toBe(
+      true,
+    );
+    expect(
+      body.data.items.every((payment: { direction: string }) => payment.direction !== "salida"),
+    ).toBe(true);
+  });
+
+  it("forbids vendedor from filtering purchase payments", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/payments?purchaseId=purchase-001", {
+        headers: { "x-demo-role": "vendedor" },
+      }),
+    );
+
+    expect(response.status).toBe(403);
   });
 });

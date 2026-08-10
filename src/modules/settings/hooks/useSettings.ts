@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type { AppSettingsMock, UserProfileMock } from "@/shared/mocks/erp-data";
+import type { StoreUserRole } from "@/shared/auth/permissions";
 
 export type SettingsInput = Partial<AppSettingsMock>;
 export type UserUpdateInput = Partial<
@@ -13,6 +14,12 @@ export type UserUpdateInput = Partial<
     "deniedPermissions" | "grantedPermissions" | "isActive" | "name" | "role"
   >
 >;
+export type CreateUserInput = {
+  email: string;
+  fullName: string;
+  password: string;
+  role: StoreUserRole;
+};
 
 export const settingsQueryKeys = {
   all: ["settings"] as const,
@@ -89,22 +96,26 @@ export function useUpdateUser(id: string) {
         body: input,
         method: "PATCH",
       }),
-    onSuccess: (updatedUser) => {
-      queryClient.setQueryData<PaginatedList<UserProfileMock>>(
-        settingsQueryKeys.users(),
-        (page) =>
-          page
-            ? {
-                ...page,
-                items: page.items.map((user) =>
-                  user.id === updatedUser.id ? updatedUser : user,
-                ),
-              }
-            : page,
-      );
+    onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: settingsQueryKeys.users(),
-        refetchType: "none",
+      });
+    },
+  });
+}
+
+export function useCreateUser() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: CreateUserInput) =>
+      apiFetch<UserProfileMock>("/api/users", {
+        body: input,
+        method: "POST",
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.users(),
       });
     },
   });

@@ -34,7 +34,27 @@ export type PaymentUpdateInput = {
   referenceCode?: string;
 };
 
-export function listPayments(searchParams: URLSearchParams, storeId: string) {
+export type PaymentAccessOptions = {
+  /** Cuando true, solo pagos de venta (sin purchaseId / sin salida). */
+  salePaymentsOnly?: boolean;
+};
+
+function matchesSalePaymentsOnly(
+  payment: PaymentMock,
+  salePaymentsOnly: boolean | undefined,
+) {
+  if (!salePaymentsOnly) {
+    return true;
+  }
+
+  return !payment.purchaseId && payment.direction !== "salida";
+}
+
+export function listPayments(
+  searchParams: URLSearchParams,
+  storeId: string,
+  options: PaymentAccessOptions = {},
+) {
   const contactId = searchParams.get("contactId");
   const direction = searchParams.get("direction");
   const purchaseId = searchParams.get("purchaseId");
@@ -44,6 +64,7 @@ export function listPayments(searchParams: URLSearchParams, storeId: string) {
     .filter((payment) => {
       return (
         (payment.storeId ?? DEFAULT_STORE_ID) === storeId &&
+        matchesSalePaymentsOnly(payment, options.salePaymentsOnly) &&
         (!direction || payment.direction === direction) &&
         (!saleId || payment.saleId === saleId) &&
         (!purchaseId || payment.purchaseId === purchaseId) &&

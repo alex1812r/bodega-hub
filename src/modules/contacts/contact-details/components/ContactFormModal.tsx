@@ -15,6 +15,7 @@ import type { ContactInput } from "../../hooks/useContacts";
 
 type ContactFormModalProps = {
   contact?: ContactMock;
+  customersOnly?: boolean;
   errorMessage?: string;
   isSubmitting?: boolean;
   mode?: "create" | "edit";
@@ -26,6 +27,7 @@ type ContactFormModalProps = {
 
 export function ContactFormModal({
   contact,
+  customersOnly = false,
   errorMessage,
   isSubmitting = false,
   mode = "create",
@@ -95,14 +97,18 @@ export function ContactFormModal({
       >
         <Input defaultValue={contact?.name} label="Nombre" name="name" required />
         <SelectField
-          defaultValue={contact?.type ?? ""}
+          defaultValue={contact?.type ?? "cliente"}
           label="Tipo"
           name="type"
-          options={[
-            { label: "Cliente", value: "cliente" },
-            { label: "Proveedor", value: "proveedor" },
-            { label: "Cliente y proveedor", value: "ambos" },
-          ]}
+          options={
+            customersOnly
+              ? [{ label: "Cliente", value: "cliente" }]
+              : [
+                  { label: "Cliente", value: "cliente" },
+                  { label: "Proveedor", value: "proveedor" },
+                  { label: "Cliente y proveedor", value: "ambos" },
+                ]
+          }
           placeholder="Selecciona tipo"
           required
         />

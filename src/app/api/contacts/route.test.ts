@@ -64,6 +64,30 @@ describe("/api/contacts", () => {
     expect(response.status).toBe(403);
   });
 
+  it("lists only customer contacts for vendedor", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/contacts", {
+        headers: { "x-demo-role": "vendedor" },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.items.every((contact: { type: string }) => contact.type === "cliente")).toBe(
+      true,
+    );
+  });
+
+  it("forbids vendedor from filtering supplier contacts", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/contacts?type=proveedor", {
+        headers: { "x-demo-role": "vendedor" },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+  });
+
   it("allows contact creation with a user-specific permission grant", async () => {
     const response = await POST(
       new Request("http://localhost/api/contacts", {

@@ -184,13 +184,18 @@ async function resolveDocumentBalance(
 
 function applyPaymentFilters<T extends {
   eq: (column: string, value: string) => T;
-}>(query: T, searchParams: URLSearchParams) {
+  is: (column: string, value: null) => T;
+}>(query: T, searchParams: URLSearchParams, salePaymentsOnly?: boolean) {
   const contactId = searchParams.get("contactId");
   const direction = searchParams.get("direction");
   const purchaseId = searchParams.get("purchaseId");
   const saleId = searchParams.get("saleId");
 
   let filteredQuery = query;
+
+  if (salePaymentsOnly) {
+    filteredQuery = filteredQuery.is("purchase_id", null);
+  }
 
   if (direction) {
     filteredQuery = filteredQuery.eq("direction", direction);
@@ -211,13 +216,21 @@ function applyPaymentFilters<T extends {
   return filteredQuery;
 }
 
-export async function listPayments(searchParams: URLSearchParams, storeId: string) {
+export type PaymentAccessOptions = {
+  salePaymentsOnly?: boolean;
+};
+
+export async function listPayments(
+  searchParams: URLSearchParams,
+  storeId: string,
+  options: PaymentAccessOptions = {},
+) {
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
 
   let query = supabase.from("payments").select(PAYMENT_SELECT, { count: "exact" }).eq("store_id", storeId);
 
-  query = applyPaymentFilters(query, searchParams);
+  query = applyPaymentFilters(query, searchParams, options.salePaymentsOnly);
 
   const result = await query.order("created_at", { ascending: false }).range(skip, to);
 

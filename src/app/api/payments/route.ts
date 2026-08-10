@@ -6,6 +6,11 @@ import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as paymentsMockServer from "@/modules/payments/services/payments.mock-server";
 import * as paymentsServer from "@/modules/payments/services/payments.server";
+import {
+  assertCanCreatePurchasePayment,
+  assertCanQueryPurchasePayments,
+  canViewPurchasePayments,
+} from "@/shared/auth/paymentAccess";
 
 const createPaymentSchema = z
   .object({
@@ -89,8 +94,14 @@ function getPaymentsService() {
 export async function GET(request: Request) {
   try {
     const auth = await requireStorePermission(request, "payments.view");
+    const searchParams = new URL(request.url).searchParams;
+    assertCanQueryPurchasePayments(auth.role, searchParams);
     const service = getPaymentsService();
-    return jsonData(await service.listPayments(new URL(request.url).searchParams, auth.storeId));
+    return jsonData(
+      await service.listPayments(searchParams, auth.storeId, {
+        salePaymentsOnly: !canViewPurchasePayments(auth.role),
+      }),
+    );
   } catch (error) {
     return toErrorResponse(error);
   }
@@ -100,6 +111,7 @@ export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "payments.manage");
     const input = createPaymentSchema.parse(await request.json());
+    assertCanCreatePurchasePayment(auth.role, input);
     const service = getPaymentsService();
     return jsonCreated(await service.createPayment(input, auth.storeId));
   } catch (error) {

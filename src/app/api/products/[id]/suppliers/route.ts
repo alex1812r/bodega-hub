@@ -5,10 +5,12 @@ import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 import { getProductById } from "@/modules/products/services/products.mock-server";
 import { getProductById as getProductByIdServer } from "@/modules/products/services/products.server";
+import { assertCanAccessSupplierContacts } from "@/shared/auth/contactAccess";
 
 export async function GET(request: Request, context: RouteContext<"/api/products/[id]/suppliers">) {
   try {
     const auth = await requireStorePermission(request, "products.view");
+    assertCanAccessSupplierContacts(auth.role);
     const { id } = await context.params;
 
     if (resolveDataSource() === "mock") {
@@ -23,7 +25,8 @@ export async function GET(request: Request, context: RouteContext<"/api/products
         new URL(request.url).searchParams,
         auth.storeId,
       ),
-    );  } catch (error) {
+    );
+  } catch (error) {
     return toErrorResponse(error);
   }
 }

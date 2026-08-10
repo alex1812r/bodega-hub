@@ -20,4 +20,15 @@ describe("/api/products/[id]/suppliers", () => {
     expect(body.data.items).toEqual(expect.arrayContaining([expect.objectContaining({ supplierId: "cont-supplier" })]),
     );
   });
+
+  it("forbids vendedor from listing product suppliers", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/products/prod-cable/suppliers", {
+        headers: { "x-demo-role": "vendedor" },
+      }),
+      context("prod-cable"),
+    );
+
+    expect(response.status).toBe(403);
+  });
 });

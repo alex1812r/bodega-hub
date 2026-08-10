@@ -4,8 +4,8 @@ import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 import {
   supplierProductPackUnitInputSchema,
-  supplierProductPackUnitUpdateSchema,
 } from "@/modules/contacts/services/supplierProducts.schemas";
+import { assertCanAccessSupplierContacts } from "@/shared/auth/contactAccess";
 
 type PackUnitsRouteContext = {
   params: Promise<{ id: string }>;
@@ -14,6 +14,7 @@ type PackUnitsRouteContext = {
 export async function GET(request: Request, context: PackUnitsRouteContext) {
   try {
     const auth = await requireStorePermission(request, "products.view");
+    assertCanAccessSupplierContacts(auth.role);
     const { id } = await context.params;
 
     return jsonData(await getSupplierProductsService().listSupplierProductPackUnits(id, auth.storeId));
@@ -25,6 +26,7 @@ export async function GET(request: Request, context: PackUnitsRouteContext) {
 export async function POST(request: Request, context: PackUnitsRouteContext) {
   try {
     const auth = await requireStorePermission(request, "products.manage");
+    assertCanAccessSupplierContacts(auth.role);
     const { id } = await context.params;
     const input = supplierProductPackUnitInputSchema.parse(await request.json());
 

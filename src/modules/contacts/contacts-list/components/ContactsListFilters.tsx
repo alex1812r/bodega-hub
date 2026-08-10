@@ -11,6 +11,7 @@ import { cn } from "@/shared/utils/cn";
 import type { ContactsFilters } from "../../hooks/useContacts";
 
 type ContactsListFiltersProps = {
+  customersOnly?: boolean;
   filters: Pick<ContactsFilters, "isActive" | "search" | "type">;
   onChange: (patch: Partial<ContactsFilters>) => void;
 };
@@ -27,7 +28,11 @@ function isActiveFilterValue(isActive: ContactsFilters["isActive"]) {
   return "";
 }
 
-export function ContactsListFilters({ filters, onChange }: ContactsListFiltersProps) {
+export function ContactsListFilters({
+  customersOnly = false,
+  filters,
+  onChange,
+}: ContactsListFiltersProps) {
   return (
     <section className="flex flex-wrap items-end gap-4 rounded-xl border border-border bg-surface-container-lowest p-4 shadow-sm dark:border-slate-800 md:p-5">
       <div className="min-w-0 flex-1 basis-[16rem]">
@@ -52,26 +57,28 @@ export function ContactsListFilters({ filters, onChange }: ContactsListFiltersPr
         </div>
       </div>
 
-      <div className="w-full min-w-[10rem] md:w-48">
-        <label className={stitchListFilterLabelClassName} htmlFor="contacts-type">
-          Tipo
-        </label>
-        <select
-          className={cn(stitchListFilterFieldClassName, "w-full")}
-          id="contacts-type"
-          onChange={(event) =>
-            onChange({
-              type: (event.target.value || undefined) as ContactsFilters["type"],
-            })
-          }
-          value={filters.type ?? ""}
-        >
-          <option value="">Todos los tipos</option>
-          <option value="cliente">Cliente</option>
-          <option value="proveedor">Proveedor</option>
-          <option value="ambos">Ambos</option>
-        </select>
-      </div>
+      {customersOnly ? null : (
+        <div className="w-full min-w-[10rem] md:w-48">
+          <label className={stitchListFilterLabelClassName} htmlFor="contacts-type">
+            Tipo
+          </label>
+          <select
+            className={cn(stitchListFilterFieldClassName, "w-full")}
+            id="contacts-type"
+            onChange={(event) =>
+              onChange({
+                type: (event.target.value || undefined) as ContactsFilters["type"],
+              })
+            }
+            value={filters.type ?? ""}
+          >
+            <option value="">Todos los tipos</option>
+            <option value="cliente">Cliente</option>
+            <option value="proveedor">Proveedor</option>
+            <option value="ambos">Ambos</option>
+          </select>
+        </div>
+      )}
 
       <div className="w-full min-w-[10rem] md:w-48">
         <label className={stitchListFilterLabelClassName} htmlFor="contacts-status">

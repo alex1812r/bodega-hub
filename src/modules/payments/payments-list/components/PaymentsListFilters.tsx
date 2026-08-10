@@ -10,13 +10,24 @@ import type { PaymentsFilters } from "../../hooks/usePayments";
 
 type PaymentsListFiltersProps = {
   filters: Pick<PaymentsFilters, "contactId" | "direction" | "purchaseId" | "saleId">;
+  hidePurchaseFilters?: boolean;
   onChange: (patch: Partial<PaymentsFilters>) => void;
 };
 
-export function PaymentsListFilters({ filters, onChange }: PaymentsListFiltersProps) {
+export function PaymentsListFilters({
+  filters,
+  hidePurchaseFilters = false,
+  onChange,
+}: PaymentsListFiltersProps) {
   return (
     <section className="rounded-xl border border-border bg-surface-container-lowest p-4 shadow-sm dark:border-slate-800 md:p-5">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div
+        className={
+          hidePurchaseFilters
+            ? "grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
+            : "grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4"
+        }
+      >
         <div className="flex flex-col gap-1.5">
           <label className={stitchListFilterLabelClassName} htmlFor="payments-contact">
             Contacto
@@ -49,21 +60,23 @@ export function PaymentsListFilters({ filters, onChange }: PaymentsListFiltersPr
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label className={stitchListFilterLabelClassName} htmlFor="payments-purchase">
-            Compra
-          </label>
-          <input
-            className={cn(stitchListFilterFieldClassName, "w-full")}
-            id="payments-purchase"
-            onChange={(event) =>
-              onChange({ purchaseId: event.target.value.trim() || undefined })
-            }
-            placeholder="purchase-001"
-            type="text"
-            value={filters.purchaseId ?? ""}
-          />
-        </div>
+        {hidePurchaseFilters ? null : (
+          <div className="flex flex-col gap-1.5">
+            <label className={stitchListFilterLabelClassName} htmlFor="payments-purchase">
+              Compra
+            </label>
+            <input
+              className={cn(stitchListFilterFieldClassName, "w-full")}
+              id="payments-purchase"
+              onChange={(event) =>
+                onChange({ purchaseId: event.target.value.trim() || undefined })
+              }
+              placeholder="purchase-001"
+              type="text"
+              value={filters.purchaseId ?? ""}
+            />
+          </div>
+        )}
 
         <div className="flex flex-col gap-1.5">
           <label className={stitchListFilterLabelClassName} htmlFor="payments-type">
@@ -79,9 +92,17 @@ export function PaymentsListFilters({ filters, onChange }: PaymentsListFiltersPr
             }
             value={filters.direction ?? ""}
           >
-            <option value="">Todos los tipos</option>
-            <option value="entrada">Entrada</option>
-            <option value="salida">Salida</option>
+            {hidePurchaseFilters ? (
+              <>
+                <option value="entrada">Entrada</option>
+              </>
+            ) : (
+              <>
+                <option value="">Todos los tipos</option>
+                <option value="entrada">Entrada</option>
+                <option value="salida">Salida</option>
+              </>
+            )}
           </select>
         </div>
       </div>

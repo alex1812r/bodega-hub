@@ -9,7 +9,9 @@ import {
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { isStoreUserRole } from "@/shared/auth/permissions";
 
+import type { CreateStoreUserInput } from "./createStoreUserSchema";
 import type { SettingsInput, UserProfileInput } from "./settings.mock-server";
 
 const APP_SETTINGS_ID = 1;
@@ -128,6 +130,10 @@ export async function listUsers(searchParams: URLSearchParams, storeId: string) 
 }
 
 export async function updateUser(id: string, input: UserProfileInput, storeId: string) {
+  if (input.role !== undefined && !isStoreUserRole(input.role)) {
+    throw new ApiError(400, "BAD_REQUEST", "Rol no permitido para usuarios de tienda.");
+  }
+
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("profiles")
@@ -146,4 +152,60 @@ export async function updateUser(id: string, input: UserProfileInput, storeId: s
   const emailsById = await loadAuthEmailsById();
 
   return mapUserProfile(data, emailsById.get(data.id) ?? "");
+}
+
+export async function createUser(input: CreateStoreUserInput, storeId: string) {
+  if (!isStoreUserRole(input.role)) {
+    throw new ApiError(400, "BAD_REQUEST", "Rol no permitido para usuarios de tienda.");
+  }
+
+  const admin = createAdminSupabaseClient();
+  let userId: string | undefined;
+
+  try {
+    const { data: auth, error: authError } = await admin.auth.admin.createUser({
+      email: input.email.trim().toLowerCase(),
+      email_confirm: true,
+      password: input.password,
+      user_metadata: {
+        full_name: input.fullName.trim(),
+        role: input.role,
+        store_id: storeId,
+      },
+    });
+    throwIfSupabaseError(authError);
+
+    if (!auth.user) {
+      throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear el usuario.");
+    }
+
+    userId = auth.user.id;
+
+    const { error: profileError } = await admin.from("profiles").upsert({
+      full_name: input.fullName.trim(),
+      id: userId,
+      is_active: true,
+      role: input.role,
+      store_id: storeId,
+    });
+    throwIfSupabaseError(profileError);
+
+    const { data: profile, error: loadError } = await admin
+      .from("profiles")
+      .select(profileSelect)
+      .eq("id", userId)
+      .maybeSingle<ProfileListRow>();
+    throwIfSupabaseError(loadError);
+
+    if (!profile) {
+      throw new ApiError(500, "INTERNAL_ERROR", "No se pudo cargar el perfil creado.");
+    }
+
+    return mapUserProfile(profile, auth.user.email ?? input.email);
+  } catch (error) {
+    if (userId) {
+      await admin.auth.admin.deleteUser(userId).catch(() => undefined);
+    }
+    throw error;
+  }
 }

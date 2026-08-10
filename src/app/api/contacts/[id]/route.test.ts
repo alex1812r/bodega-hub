@@ -50,4 +50,15 @@ describe("/api/contacts/[id]", () => {
 
     expect(response.status).toBe(403);
   });
+
+  it("forbids vendedor from viewing a supplier contact", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/contacts/cont-supplier", {
+        headers: { "x-demo-role": "vendedor" },
+      }),
+      context("cont-supplier"),
+    );
+
+    expect(response.status).toBe(403);
+  });
 });

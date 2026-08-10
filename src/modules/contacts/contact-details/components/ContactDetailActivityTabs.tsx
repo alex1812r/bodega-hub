@@ -3,6 +3,7 @@
 import { useId, useState } from "react";
 
 import { usePermission } from "@/shared/auth/usePermission";
+import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
 import type { ContactType } from "@/shared/mocks/erp-data";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import type { PaymentMock, PurchaseMock, SaleMock } from "@/shared/mocks/erp-data";
@@ -99,12 +100,16 @@ export function ContactDetailActivityTabs({
   sales,
 }: ContactDetailActivityTabsProps) {
   const baseId = useId();
-  const { can } = usePermission();
+  const { can, role } = usePermission();
   const [activeTab, setActiveTab] = useState<ContactDetailTabId>("activity");
-  const showProductsTab = isSupplierContact(contactType) && can("products.view");
-  const tabs = showProductsTab
-    ? [...baseTabs, { id: "products" as const, label: "Productos" }]
-    : baseTabs;
+  const canSeeSuppliers = role ? canViewSupplierContacts(role) : false;
+  const showProductsTab =
+    isSupplierContact(contactType) && can("products.view") && canSeeSuppliers;
+  const showPurchasesTab = can("purchases.view") && canSeeSuppliers;
+  const tabs = [
+    ...baseTabs.filter((tab) => tab.id !== "purchases" || showPurchasesTab),
+    ...(showProductsTab ? [{ id: "products" as const, label: "Productos" }] : []),
+  ];
 
   return (
     <section className="flex flex-col overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">

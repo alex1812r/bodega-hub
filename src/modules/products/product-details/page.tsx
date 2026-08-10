@@ -5,6 +5,7 @@ import { Pencil } from "lucide-react";
 import { getPriceChangeReason } from "@/lib/api/dataSourceUi";
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Can } from "@/shared/auth/Can";
+import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
@@ -54,11 +55,12 @@ function mapPriceHistory(
 }
 
 export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsPageProps) {
-  const { can } = usePermission();
+  const { can, role } = usePermission();
+  const canSeeSuppliers = role ? canViewSupplierContacts(role) : false;
   const product = useProduct(productId);
   const categories = useCategories();
   const priceHistory = useProductPriceHistory(productId);
-  const suppliers = useProductSuppliers(productId);
+  const suppliers = useProductSuppliers(canSeeSuppliers ? productId : undefined);
   const updateProduct = useUpdateProduct(productId);
   const updateProductPrice = useUpdateProductPrice(productId);
 
@@ -183,18 +185,20 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
             rows={mapPriceHistory(getPaginatedItems(priceHistory.data))}
           />
         </div>
-        <div className="lg:col-span-12">
-          <ProductDetailSuppliersTable
-            error={suppliers.error}
-            isLoading={suppliers.isLoading}
-            onRetry={() => void suppliers.refetch()}
-            productId={productId}
-            productName={data.name}
-            productSku={data.sku}
-            rows={supplierRows}
-            salePriceRef={data.salePriceRef}
-          />
-        </div>
+        {canSeeSuppliers ? (
+          <div className="lg:col-span-12">
+            <ProductDetailSuppliersTable
+              error={suppliers.error}
+              isLoading={suppliers.isLoading}
+              onRetry={() => void suppliers.refetch()}
+              productId={productId}
+              productName={data.name}
+              productSku={data.sku}
+              rows={supplierRows}
+              salePriceRef={data.salePriceRef}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );

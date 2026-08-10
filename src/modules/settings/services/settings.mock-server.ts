@@ -7,7 +7,8 @@ import {
   type AppSettingsMock,
   type UserProfileMock,
 } from "@/shared/mocks/erp-data";
-import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
+
+import type { CreateStoreUserInput } from "./createStoreUserSchema";
 
 export type SettingsInput = Partial<AppSettingsMock>;
 export type UserProfileInput = Partial<
@@ -47,8 +48,29 @@ export function updateUser(id: string, input: UserProfileInput, storeId: string)
     throw new ApiError(404, "NOT_FOUND", "Usuario no encontrado.");
   }
 
+  Object.assign(user, input);
+
   return {
     ...user,
-    ...input,
   };
+}
+
+export function createUser(input: CreateStoreUserInput, storeId: string) {
+  const email = input.email.trim().toLowerCase();
+
+  if (mockUserProfiles.some((profile) => profile.email.toLowerCase() === email)) {
+    throw new ApiError(409, "CONFLICT", "Ya existe un usuario con este correo.");
+  }
+
+  const user: UserProfileMock = {
+    email,
+    id: `user-mock-${Date.now()}`,
+    isActive: true,
+    name: input.fullName.trim(),
+    role: input.role,
+    storeId,
+  };
+
+  mockUserProfiles.push(user);
+  return user;
 }

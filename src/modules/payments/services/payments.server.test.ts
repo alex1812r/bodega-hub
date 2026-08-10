@@ -3,7 +3,9 @@
  */
 
 jest.mock("../../../lib/supabase/route-client");
+jest.mock("../../../lib/supabase/admin-client");
 
+import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
@@ -31,6 +33,7 @@ const paymentRow = {
 function createQueryBuilder(result: { count?: number; data?: unknown; error?: unknown }) {
   const builder = {
     eq: jest.fn().mockReturnThis(),
+    is: jest.fn().mockReturnThis(),
     maybeSingle: jest.fn().mockResolvedValue(result),
     order: jest.fn().mockReturnThis(),
     range: jest.fn().mockResolvedValue(result),
@@ -41,9 +44,27 @@ function createQueryBuilder(result: { count?: number; data?: unknown; error?: un
   return builder;
 }
 
+function mockAdminStoreLookup(storeId = DEFAULT_STORE_ID) {
+  const maybeSingle = jest.fn().mockResolvedValue({
+    data: { store_id: storeId },
+    error: null,
+  });
+
+  (createAdminSupabaseClient as jest.Mock).mockReturnValue({
+    from: jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        eq: jest.fn().mockReturnValue({
+          maybeSingle,
+        }),
+      }),
+    }),
+  });
+}
+
 describe("payments.server", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAdminStoreLookup();
   });
 
   it("lists payments with filters and contact embed", async () => {

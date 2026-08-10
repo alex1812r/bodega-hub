@@ -3,6 +3,7 @@ import { jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 import { supplierProductUpdateSchema } from "@/modules/contacts/services/supplierProducts.schemas";
+import { assertCanAccessSupplierContacts } from "@/shared/auth/contactAccess";
 import { z } from "zod";
 
 const updateSupplierProductSchema = supplierProductUpdateSchema.extend({
@@ -13,6 +14,7 @@ const updateSupplierProductSchema = supplierProductUpdateSchema.extend({
 export async function GET(_request: Request, context: RouteContext<"/api/supplier-products/[id]">) {
   try {
     const auth = await requireStorePermission(_request, "products.view");
+    assertCanAccessSupplierContacts(auth.role);
     const { id } = await context.params;
     return jsonData(await getSupplierProductsService().getSupplierProductById(id, auth.storeId));
   } catch (error) {
@@ -23,6 +25,7 @@ export async function GET(_request: Request, context: RouteContext<"/api/supplie
 export async function PATCH(request: Request, context: RouteContext<"/api/supplier-products/[id]">) {
   try {
     const auth = await requireStorePermission(request, "products.manage");
+    assertCanAccessSupplierContacts(auth.role);
     const { id } = await context.params;
     const input = updateSupplierProductSchema.parse(await request.json());
     return jsonData(await getSupplierProductsService().updateSupplierProduct(id, input, auth.storeId));

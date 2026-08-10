@@ -36,7 +36,12 @@ function isUniqueViolation(error: unknown) {
 function applyContactTypeFilter<T extends { eq: (column: string, value: string) => T; in: (column: string, values: string[]) => T }>(
   query: T,
   type: string | null,
+  customersOnly?: boolean,
 ) {
+  if (customersOnly) {
+    return query.eq("type", "cliente");
+  }
+
   if (!type) {
     return query;
   }
@@ -52,7 +57,15 @@ function applyContactTypeFilter<T extends { eq: (column: string, value: string) 
   return query.eq("type", type);
 }
 
-export async function listContacts(searchParams: URLSearchParams, storeId: string) {
+export type ContactAccessOptions = {
+  customersOnly?: boolean;
+};
+
+export async function listContacts(
+  searchParams: URLSearchParams,
+  storeId: string,
+  options: ContactAccessOptions = {},
+) {
   const supabase = await createRouteSupabaseClient();
   const type = searchParams.get("type");
   const search = searchParams.get("search")?.trim();
@@ -60,7 +73,7 @@ export async function listContacts(searchParams: URLSearchParams, storeId: strin
 
   let query = supabase.from("contacts").select("*", { count: "exact" }).eq("store_id", storeId);
 
-  query = applyContactTypeFilter(query, type);
+  query = applyContactTypeFilter(query, type, options.customersOnly);
 
   if (search) {
     const term = escapeIlike(search);
@@ -175,18 +188,27 @@ export async function getContactPurchases(id: string, searchParams: URLSearchPar
   );
 }
 
-export async function getContactPayments(id: string, searchParams: URLSearchParams, storeId: string) {
+export async function getContactPayments(
+  id: string,
+  searchParams: URLSearchParams,
+  storeId: string,
+  options: { salePaymentsOnly?: boolean } = {},
+) {
   await ensureContactExists(id, storeId);
 
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
-  const result = await supabase
+  let query = supabase
     .from("payments")
     .select("*", { count: "exact" })
     .eq("contact_id", id)
-    .eq("store_id", storeId)
-    .order("created_at", { ascending: false })
-    .range(skip, to);
+    .eq("store_id", storeId);
+
+  if (options.salePaymentsOnly) {
+    query = query.is("purchase_id", null);
+  }
+
+  const result = await query.order("created_at", { ascending: false }).range(skip, to);
 
   return toPaginatedList(
     searchParams,
@@ -195,14 +217,38 @@ export async function getContactPayments(id: string, searchParams: URLSearchPara
   );
 }
 
-export async function getContactActivity(id: string, searchParams: URLSearchParams, storeId: string) {
+export async function getContactActivity(
+  id: string,
+  searchParams: URLSearchParams,
+  storeId: string,
+  options: { includePurchases?: boolean; salePaymentsOnly?: boolean } = {},
+) {
   await ensureContactExists(id, storeId);
 
+  const includePurchases = options.includePurchases !== false;
   const supabase = await createRouteSupabaseClient();
   const [salesResult, purchasesResult, paymentsResult] = await Promise.all([
     supabase.from("sales").select("id, total_ves, created_at").eq("customer_id", id).eq("store_id", storeId),
-    supabase.from("purchases").select("id, total_ves, created_at").eq("supplier_id", id).eq("store_id", storeId),
-    supabase.from("payments").select("id, amount_ves, created_at").eq("contact_id", id).eq("store_id", storeId),
+    includePurchases
+      ? supabase
+          .from("purchases")
+          .select("id, total_ves, created_at")
+          .eq("supplier_id", id)
+          .eq("store_id", storeId)
+      : Promise.resolve({ data: [], error: null }),
+    (() => {
+      let paymentsQuery = supabase
+        .from("payments")
+        .select("id, amount_ves, created_at, purchase_id, direction")
+        .eq("contact_id", id)
+        .eq("store_id", storeId);
+
+      if (options.salePaymentsOnly) {
+        paymentsQuery = paymentsQuery.is("purchase_id", null);
+      }
+
+      return paymentsQuery;
+    })(),
   ]);
 
   throwIfSupabaseError(salesResult.error);

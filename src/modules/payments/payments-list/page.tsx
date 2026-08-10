@@ -5,6 +5,8 @@ import { useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Can } from "@/shared/auth/Can";
+import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
+import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
@@ -148,6 +150,8 @@ const columns: DataTableColumn<PaymentListItem>[] = [
 ];
 
 export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps) {
+  const { role } = usePermission();
+  const salePaymentsOnly = role ? !canViewPurchasePayments(role) : false;
   const [filters, setFilters] = useState<PaymentsFilters>(initialFilters);
   const [paymentToCancel, setPaymentToCancel] = useState<string | null>(null);
   const { limit, setLimit, setSkip, skip } = usePaginationState([
@@ -156,13 +160,32 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
     filters.purchaseId,
     filters.saleId,
   ]);
-  const payments = usePayments({ ...filters, limit, skip });
+  const effectiveFilters: PaymentsFilters = salePaymentsOnly
+    ? {
+        ...filters,
+        direction:
+          filters.direction === "salida" || !filters.direction
+            ? "entrada"
+            : filters.direction,
+        purchaseId: undefined,
+      }
+    : filters;
+  const payments = usePayments({ ...effectiveFilters, limit, skip });
   const cancelPayment = useCancelPayment();
   const paymentItems = getPaginatedItems(payments.data);
   const totalPayments = payments.data?.total ?? 0;
 
   function handleFilterChange(patch: Partial<PaymentsFilters>) {
-    setFilters((current) => ({ ...current, ...patch }));
+    setFilters((current) => {
+      const next = { ...current, ...patch };
+      if (salePaymentsOnly) {
+        next.purchaseId = undefined;
+        if (!next.direction || next.direction === "salida") {
+          next.direction = "entrada";
+        }
+      }
+      return next;
+    });
     setSkip(0);
   }
 
@@ -180,11 +203,12 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
       <EntityListPage
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
-            <PaymentsExportActions exportFilters={filters} />
+            <PaymentsExportActions exportFilters={effectiveFilters} />
             <Can permission="payments.manage">
               <RegisterPaymentModal
-                purchaseId={filters.purchaseId}
-                saleId={filters.saleId}
+                allowPurchaseContext={!salePaymentsOnly}
+                purchaseId={effectiveFilters.purchaseId}
+                saleId={effectiveFilters.saleId}
                 trigger={
                   <Button className="w-full gap-2 shadow-sm sm:w-auto" size="sm">
                     <Plus aria-hidden className="size-5" />
@@ -195,11 +219,19 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
             </Can>
           </div>
         }
-        description="Gestione las entradas y salidas de fondos de la empresa."
+        description={
+          salePaymentsOnly
+            ? "Gestione los cobros asociados a ventas."
+            : "Gestione las entradas y salidas de fondos de la empresa."
+        }
         layout="sections"
         title="Pagos"
       >
-        <PaymentsListFilters filters={filters} onChange={handleFilterChange} />
+        <PaymentsListFilters
+          filters={effectiveFilters}
+          hidePurchaseFilters={salePaymentsOnly}
+          onChange={handleFilterChange}
+        />
 
         <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
           <DataTable
@@ -227,8 +259,9 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
                 action={
                   <Can permission="payments.manage">
                     <RegisterPaymentModal
-                      purchaseId={filters.purchaseId}
-                      saleId={filters.saleId}
+                      allowPurchaseContext={!salePaymentsOnly}
+                      purchaseId={effectiveFilters.purchaseId}
+                      saleId={effectiveFilters.saleId}
                       trigger={
                         <Button className="gap-2" size="sm">
                           <Plus aria-hidden className="size-5" />

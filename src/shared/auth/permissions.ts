@@ -2,6 +2,11 @@ export const userRoles = ["superadmin", "admin", "vendedor", "almacen", "contado
 
 export type UserRole = (typeof userRoles)[number];
 
+/** Roles que un admin de tienda puede asignar al crear/editar usuarios. */
+export const storeUserRoles = ["admin", "vendedor", "almacen", "contador"] as const;
+
+export type StoreUserRole = (typeof storeUserRoles)[number];
+
 export const roleLabels: Record<UserRole, string> = {
   superadmin: "Superadmin",
   admin: "Administrador",
@@ -9,6 +14,10 @@ export const roleLabels: Record<UserRole, string> = {
   almacen: "Almacen",
   contador: "Contador",
 };
+
+export function isStoreUserRole(value: unknown): value is StoreUserRole {
+  return typeof value === "string" && storeUserRoles.includes(value as StoreUserRole);
+}
 
 export const permissions = [
   "dashboard.view",

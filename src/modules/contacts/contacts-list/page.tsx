@@ -7,6 +7,7 @@ import { useState } from "react";
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { apiFetch } from "@/shared/api/apiFetch";
 import { Can } from "@/shared/auth/Can";
+import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
 import { usePermission } from "@/shared/auth/usePermission";
 import { type ActionMenuItem } from "@/shared/components/ActionsMenu";
 import { Button } from "@/shared/components/Button";
@@ -78,7 +79,8 @@ const columns: DataTableColumn<ContactMock>[] = [
 
 export function ContactsListPage() {
   const queryClient = useQueryClient();
-  const { can } = usePermission();
+  const { can, role } = usePermission();
+  const customersOnly = role ? !canViewSupplierContacts(role) : false;
   const [filters, setFilters] = useState<
     Pick<ContactsFilters, "isActive" | "search" | "type">
   >({});
@@ -88,14 +90,23 @@ export function ContactsListPage() {
     filters.type,
     filters.isActive,
   ]);
-  const contacts = useContacts({ ...filters, limit, skip });
+  const effectiveFilters = customersOnly
+    ? { ...filters, type: undefined }
+    : filters;
+  const contacts = useContacts({ ...effectiveFilters, limit, skip });
   const createContact = useCreateContact();
   const updateContact = useUpdateContact(editingContact?.id ?? "");
   const contactItems = getPaginatedItems(contacts.data);
   const totalContacts = contacts.data?.total ?? 0;
 
   function handleFilterChange(patch: Partial<ContactsFilters>) {
-    setFilters((current) => ({ ...current, ...patch }));
+    setFilters((current) => {
+      const next = { ...current, ...patch };
+      if (customersOnly) {
+        next.type = undefined;
+      }
+      return next;
+    });
     setSkip(0);
   }
 
@@ -125,9 +136,10 @@ export function ContactsListPage() {
       <EntityListPage
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
-            <ContactsExportActions exportFilters={filters} />
+            <ContactsExportActions exportFilters={effectiveFilters} />
             <Can permission="contacts.manage">
               <ContactFormModal
+                customersOnly={customersOnly}
                 errorMessage={createContact.error?.message}
                 isSubmitting={createContact.isPending}
                 onSubmit={handleCreateContact}
@@ -141,11 +153,19 @@ export function ContactsListPage() {
             </Can>
           </div>
         }
-        description="Gestione el directorio de clientes y proveedores de la empresa."
+        description={
+          customersOnly
+            ? "Gestione el directorio de clientes de la empresa."
+            : "Gestione el directorio de clientes y proveedores de la empresa."
+        }
         layout="sections"
         title="Contactos"
       >
-        <ContactsListFilters filters={filters} onChange={handleFilterChange} />
+        <ContactsListFilters
+          customersOnly={customersOnly}
+          filters={filters}
+          onChange={handleFilterChange}
+        />
 
         <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
           <DataTable
@@ -190,6 +210,7 @@ export function ContactsListPage() {
                 action={
                   <Can permission="contacts.manage">
                     <ContactFormModal
+                      customersOnly={customersOnly}
                       errorMessage={createContact.error?.message}
                       isSubmitting={createContact.isPending}
                       onSubmit={handleCreateContact}
@@ -232,6 +253,7 @@ export function ContactsListPage() {
       {editingContact ? (
         <ContactFormModal
           contact={editingContact}
+          customersOnly={customersOnly}
           errorMessage={updateContact.error?.message}
           isSubmitting={updateContact.isPending}
           mode="edit"

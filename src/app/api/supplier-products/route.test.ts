@@ -75,7 +75,7 @@ describe("/api/supplier-products", () => {
     expect(body.data.lastPriceOrigin).toBe("vinculacion");
   });
 
-  it("allows vendedor to list supplier products with products.view", async () => {
+  it("blocks vendedor from listing supplier products", async () => {
     const response = await GET(
       new Request("http://localhost/api/supplier-products?supplierId=cont-supplier", {
         headers: { "x-demo-role": "vendedor" },
@@ -83,8 +83,8 @@ describe("/api/supplier-products", () => {
     );
     const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(body.data.items.length).toBeGreaterThan(0);
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("FORBIDDEN");
   });
 
   it("blocks vendedor from creating supplier-product links", async () => {
