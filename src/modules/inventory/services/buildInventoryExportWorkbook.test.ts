@@ -8,7 +8,7 @@ import type { InventoryItem } from "../hooks/useInventory";
 import { buildInventoryExportWorkbook } from "./buildInventoryExportWorkbook";
 
 const sampleItem: InventoryItem = {
-  category: { id: "cat-1", isActive: true, name: "Cables" },
+  category: { id: "cat-1", isActive: true, name: "Cables", taxRate: 16 },
   categoryId: "cat-1",
   currentCostRef: 10,
   currentStock: 3,

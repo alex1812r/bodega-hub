@@ -224,11 +224,14 @@ export async function getPurchaseById(id: string, storeId: string) {
   throwIfSupabaseError(paymentsError);
 
   const mappedPayments = (payments ?? []).map((payment) => {
-    const row = payment as DbPaymentRow & { contact?: DbContactRow | null };
+    const row = payment as unknown as DbPaymentRow & {
+      contact?: DbContactRow | DbContactRow[] | null;
+    };
+    const contact = Array.isArray(row.contact) ? row.contact[0] : row.contact;
 
     return {
       ...mapPayment(row),
-      contact: row.contact ? mapContact(row.contact) : undefined,
+      contact: contact ? mapContact(contact) : undefined,
     };
   });
 
