@@ -176,15 +176,17 @@ Módulo: `src/modules/platform/`. Aislamiento ERP: `requireStorePermission` + `s
 
 | Endpoint | Permiso | Descripcion |
 |----------|---------|-------------|
-| POST `/api/products/[id]/image-upload-url` | `products.manage` | URL firmada para subir `cover.webp` a Supabase Storage |
+| POST `/api/products/[id]/image-upload-url` | `products.manage` | URL firmada (`upsert`); `publicUrl` desde Storage `getPublicUrl` (host = `NEXT_PUBLIC_SUPABASE_URL`) |
+| POST `/api/products/[id]/image` | `products.manage` | Confirma subida: verifica objeto en Storage, borra el otro formato, persiste `image_url` |
 | DELETE `/api/products/[id]/image` | `products.manage` | Borra archivo Storage y limpia `image_url` |
-| PATCH `/api/products/[id]` | `products.manage` | Persiste `imageUrl` tras subida |
+| PATCH `/api/products/[id]` | `products.manage` | Si envía `imageUrl`, solo acepta cover pública de ese producto en `product-images` |
 
 - Bucket: `product-images` (patch [`supabase/patches/20260707-product-images-storage.sql`](../supabase/patches/20260707-product-images-storage.sql)).
 - Path: `{productId}/cover.webp` o `{productId}/cover.png` si se quita el fondo (PNG con transparencia).
 - Recorte opcional con **quitar fondo** vía `@imgly/background-removal` (IA en el navegador, sin servidor).
-- Crear producto: recorte en modal → POST producto → subida post-id → PATCH `imageUrl`.
-- Editar producto: subida o borrado inmediato desde el mismo modal.
+- Crear producto: recorte en modal → POST producto → signed upload → HEAD pública → POST `/image` (confirm).
+- Editar producto: misma confirmación o borrado inmediato desde el mismo modal.
+- No se borran covers existentes antes del PUT (evita `NoSuchKey` si la subida falla).
 
 ### Categorías (API + UI)
 

@@ -108,7 +108,7 @@ export function ProductImageUploadField({
             fill
             sizes="(max-width: 320px) 100vw, 320px"
             src={previewUrl}
-            unoptimized={previewUrl.startsWith("blob:")}
+            unoptimized
           />
         ) : (
           <div className="flex size-full items-center justify-center text-sm text-muted-foreground">

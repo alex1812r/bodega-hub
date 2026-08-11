@@ -391,6 +391,35 @@ paths:
   /api/products/{id}/image:
     parameters:
       - $ref: "#/components/parameters/Id"
+    post:
+      tags: [Products]
+      summary: Confirmar imagen subida a Storage
+      description: Verifica que el objeto exista, usa `getPublicUrl`, elimina el otro formato (webp/png) y persiste `imageUrl`.
+      x-permission: products.manage
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                format:
+                  type: string
+                  enum: [webp, png]
+                  default: webp
+      responses:
+        "200":
+          description: Producto con imagen confirmada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       tags: [Products]
       summary: Quitar imagen de producto
@@ -424,11 +453,11 @@ paths:
               properties:
                 format:
                   type: string
-                  enum: [webp, jpeg, png]
+                  enum: [webp, png]
                   default: webp
       responses:
         "200":
-          description: Datos para subir imagen
+          description: Datos para subir imagen (`publicUrl` desde Storage getPublicUrl)
           content:
             application/json:
               schema:

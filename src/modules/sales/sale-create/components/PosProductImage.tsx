@@ -17,9 +17,6 @@ type PosProductImageProps = {
 export function PosProductImage({ alt, className, compact = false, imageUrl }: PosProductImageProps) {
   const [failed, setFailed] = useState(false);
   const showPlaceholder = !imageUrl || failed;
-  const isRemoteStorageImage =
-    imageUrl?.includes(".supabase.co/storage/v1/object/public/product-images/") ?? false;
-
   if (showPlaceholder) {
     return (
       <div
@@ -45,7 +42,7 @@ export function PosProductImage({ alt, className, compact = false, imageUrl }: P
       height={160}
       onError={() => setFailed(true)}
       src={imageUrl}
-      unoptimized={!isRemoteStorageImage}
+      unoptimized
       width={160}
     />
   );

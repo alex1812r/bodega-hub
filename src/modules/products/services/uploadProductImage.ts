@@ -22,6 +22,13 @@ export async function requestProductImageUploadUrl(
   });
 }
 
+export async function confirmProductImageUpload(productId: string, format: ProductImageFormat) {
+  return apiFetch<ProductWithCategory>(`/api/products/${productId}/image`, {
+    body: { format },
+    method: "POST",
+  });
+}
+
 export async function uploadProductImageBlob(productId: string, blob: Blob) {
   const format = getProductImageFormatFromMime(blob.type || "image/webp");
   const { publicUrl, uploadUrl } = await requestProductImageUploadUrl(productId, format);
@@ -38,12 +45,16 @@ export async function uploadProductImageBlob(productId: string, blob: Blob) {
     if (!uploadResponse.ok) {
       throw new Error("No se pudo subir la imagen del producto.");
     }
+
+    const probe = await fetch(publicUrl, { method: "HEAD", cache: "no-store" });
+    if (!probe.ok) {
+      throw new Error(
+        `La imagen se subio pero no es accesible en Storage (${probe.status}). Revisa el bucket product-images.`,
+      );
+    }
   }
 
-  return apiFetch<ProductWithCategory>(`/api/products/${productId}`, {
-    body: { imageUrl: publicUrl },
-    method: "PATCH",
-  });
+  return confirmProductImageUpload(productId, format);
 }
 
 export async function removeProductImage(productId: string) {

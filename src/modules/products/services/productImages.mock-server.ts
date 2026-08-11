@@ -25,6 +25,20 @@ export async function createProductImageUploadUrl(
   };
 }
 
+export async function confirmProductImageUpload(
+  productId: string,
+  format: ProductImageFormat,
+  storeId: string,
+) {
+  getProductById(productId, storeId);
+  const path = getProductImageStoragePath(productId, format);
+  return updateProduct(
+    productId,
+    { imageUrl: buildProductImagePublicUrl(MOCK_SUPABASE_URL, path) },
+    storeId,
+  );
+}
+
 export async function deleteProductImage(productId: string, storeId: string) {
   getProductById(productId, storeId);
   return updateProduct(productId, { imageUrl: null }, storeId);

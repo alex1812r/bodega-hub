@@ -8,6 +8,7 @@ import {
   type ProductRow,
 } from "@/lib/supabase/mappers";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { getSupabaseUrl } from "@/lib/supabase/env";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import {
@@ -15,6 +16,7 @@ import {
   upsertPackConversionForPackProduct,
 } from "./packConversion.server";
 import type { PackConversionInput } from "./packConversionSchemas";
+import { assertAllowedProductImageUrl } from "./productImagePaths";
 import type {
   ProductInput,
   ProductPriceInput,
@@ -22,6 +24,22 @@ import type {
 import { applyProductSort } from "./productSort";
 import { buildProductSearchOrFilter, normalizeBarcode } from "./productSearch";
 import { normalizeSku } from "@/shared/utils/skuGeneration";
+
+function assertProductImageUrlInput(productId: string, imageUrl: string | null | undefined) {
+  if (imageUrl == null) {
+    return;
+  }
+
+  try {
+    assertAllowedProductImageUrl(getSupabaseUrl(), productId, imageUrl);
+  } catch (error) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      error instanceof Error ? error.message : "imageUrl no es valido para este producto.",
+    );
+  }
+}
 
 export type ProductInputWithPackConversion = ProductInput & {
   packConversion?: PackConversionInput;
@@ -179,6 +197,9 @@ export async function updateProduct(
   storeId: string,
 ) {
   await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
+  if (input.imageUrl !== undefined) {
+    assertProductImageUrlInput(id, input.imageUrl);
+  }
   const { packConversion, ...productInput } = input;
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
