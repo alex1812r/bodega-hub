@@ -1,32 +1,32 @@
 import type { NextConfig } from "next";
 
-const supabaseHostname = (() => {
+function getSupabaseImageHostname() {
   const raw = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!raw) {
-    return "*.supabase.co";
+    return null;
   }
 
   try {
-    return new URL(raw).hostname;
+    return new URL(raw.replace(/\\r\\n$/g, "").trim()).hostname;
   } catch {
-    return "*.supabase.co";
+    return null;
   }
-})();
+}
+
+const supabaseHostname = getSupabaseImageHostname();
 
 const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
-      {
-        hostname: supabaseHostname,
-        pathname: "/storage/v1/object/public/product-images/**",
-        protocol: "https",
-      },
-      // Fallback for local/preview if env hostname differs from production assets
-      {
-        hostname: "*.supabase.co",
-        pathname: "/storage/v1/object/public/product-images/**",
-        protocol: "https",
-      },
+      ...(supabaseHostname
+        ? [
+            {
+              hostname: supabaseHostname,
+              pathname: "/storage/v1/object/public/product-images/**",
+              protocol: "https" as const,
+            },
+          ]
+        : []),
     ],
   },
 };

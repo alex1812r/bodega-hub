@@ -34,6 +34,7 @@ import {
   useUpdateProductPrice,
 } from "../hooks/useProducts";
 import { DeactivateProductConfirmModal } from "./components/DeactivateProductConfirmModal";
+import { ProductNameWithThumb } from "./components/ProductNameWithThumb";
 import { ReactivateProductConfirmModal } from "./components/ReactivateProductConfirmModal";
 import { ProductsListFilters } from "./components/ProductsListFilters";
 import { ProductsStatusBadge } from "./components/ProductsStatusBadge";
@@ -56,19 +57,15 @@ const columns: DataTableColumn<ProductWithCategory>[] = [
     sortable: true,
   },
   {
-    cellClassName: "min-w-[8rem] font-medium",
+    cellClassName: "min-w-[10rem] font-medium",
     header: "Nombre",
     key: "name",
     render: (product) => (
-      <span
-        className={cn(
-          "line-clamp-2 min-w-0 text-sm leading-snug",
-          product.isActive ? "text-foreground" : "text-outline",
-        )}
-        title={product.name}
-      >
-        {product.name}
-      </span>
+      <ProductNameWithThumb
+        imageUrl={product.imageUrl}
+        isActive={product.isActive}
+        name={product.name}
+      />
     ),
     sortable: true,
   },
@@ -277,7 +274,13 @@ export function ProductsListPage() {
               return items;
             }}
             cardSubtitle={(product) => product.category?.name ?? "Sin categoría"}
-            cardTitle={(product) => product.name}
+            cardTitle={(product) => (
+              <ProductNameWithThumb
+                imageUrl={product.imageUrl}
+                isActive={product.isActive}
+                name={product.name}
+              />
+            )}
             columns={columns}
             data={productItems}
             embedded
