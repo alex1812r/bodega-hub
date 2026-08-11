@@ -9,6 +9,7 @@ import { useCreatePayment } from "@/modules/payments/hooks/usePayments";
 import { useProductBarcodeScan } from "@/modules/products/hooks/useProductBarcodeScan";
 import { useCategories, useProducts } from "@/modules/products/hooks/useProducts";
 import { matchesProductSearch } from "@/modules/products/services/productSearch";
+import { sortPosCatalogProducts } from "@/modules/sales/sale-create/utils/sortPosCatalogProducts";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import { PageBackButton } from "@/shared/components/PageBackButton";
@@ -123,12 +124,14 @@ export function SaleCreatePage() {
   const filteredProducts = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return activeProducts.filter((product) => {
+    const filtered = activeProducts.filter((product) => {
       const matchesCategory = !categoryId || product.categoryId === categoryId;
       const matchesSearch = !query || matchesProductSearch(product, query);
 
       return matchesCategory && matchesSearch;
     });
+
+    return sortPosCatalogProducts(filtered);
   }, [activeProducts, categoryId, search]);
 
   function focusSearchInput() {

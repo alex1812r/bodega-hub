@@ -290,7 +290,7 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 
 **Crear venta:** `customerId`, `items[]` (`productId`, `quantity`), `discountRef`, `taxRef`, `refRateVes`, `notes`.
 
-**UI POS (`/sales/create`):** grid de productos (`PosProductGrid` / `PosProductCard`) y carrito (`PosCartPanel` / `PosCartLine`) muestran precios en REF y equivalente VES por línea usando `useCurrentExchangeRate` → `rateVes` y `refToVes` (`src/shared/utils/currency.ts`). Cada línea del carrito: precio unitario REF + VES, total línea REF + VES; panel de totales incluye total VES cuando hay tasa vigente.
+**UI POS (`/sales/create`):** grid de productos (`PosProductGrid` / `PosProductCard`) y carrito (`PosCartPanel` / `PosCartLine`) muestran precios en REF y equivalente VES por línea usando `useCurrentExchangeRate` → `rateVes` y `refToVes` (`src/shared/utils/currency.ts`). Cada línea del carrito: precio unitario REF + VES, total línea REF + VES; panel de totales incluye total VES cuando hay tasa vigente. Catálogo ordenado con stock (`currentStock > 0`) primero y sin stock al final; dentro de cada grupo, por nombre.
 
 **Estados:** `borrador`, `pendiente_pago`, `pagada`, `cancelada`, `devuelta`.
 
