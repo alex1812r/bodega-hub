@@ -1,5 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
-import { addTransferOut } from "@/modules/cash/services/cash.session.mock-server";
+import { markSessionsTransferredToVault } from "@/modules/cash/services/cash.session.mock-server";
 
 import type { StoreVault, VaultMovement } from "../types";
 
@@ -11,7 +11,15 @@ function getOrCreate(storeId: string) {
   let vault = vaults.find((item) => item.storeId === storeId);
   if (!vault) {
     const now = new Date().toISOString();
-    vault = { balanceRef: 0, balanceVes: 0, createdAt: now, id: `vault-${storeId}`, storeId, updatedAt: now };
+    vault = {
+      balanceEfectivoVes: 0,
+      balanceRef: 0,
+      balanceVes: 0,
+      createdAt: now,
+      id: `vault-${storeId}`,
+      storeId,
+      updatedAt: now,
+    };
     vaults.push(vault);
   }
   return vault;
@@ -23,29 +31,80 @@ function validate(input: AmountInput) {
   }
 }
 
-function record(vault: StoreVault, input: AmountInput, type: VaultMovement["type"], fromSessionId?: string) {
-  movements.unshift({ amountRef: input.amountRef, amountVes: input.amountVes, createdAt: new Date().toISOString(), fromSessionId, id: `vault-movement-${Date.now()}`, notes: input.notes, type, vaultId: vault.id });
+function record(
+  vault: StoreVault,
+  input: AmountInput,
+  type: VaultMovement["type"],
+  bucket: VaultMovement["bucket"],
+  fromSessionId?: string,
+) {
+  movements.unshift({
+    amountRef: input.amountRef,
+    amountVes: input.amountVes,
+    bucket,
+    createdAt: new Date().toISOString(),
+    fromSessionId,
+    id: `vault-movement-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    notes: input.notes,
+    type,
+    vaultId: vault.id,
+  });
 }
 
-export function getVault(storeId: string) { return getOrCreate(storeId); }
+export function getVault(storeId: string) {
+  return getOrCreate(storeId);
+}
+
 export function listVaultMovements(storeId: string) {
   const vault = getOrCreate(storeId);
   return movements.filter((item) => item.vaultId === vault.id);
 }
+
 export function deposit(input: AmountInput, storeId: string) {
-  validate(input); const vault = getOrCreate(storeId);
-  vault.balanceRef += input.amountRef; vault.balanceVes += input.amountVes; vault.updatedAt = new Date().toISOString();
-  record(vault, input, "deposit"); return vault;
+  validate(input);
+  const vault = getOrCreate(storeId);
+  vault.balanceEfectivoVes += input.amountVes;
+  vault.balanceRef += input.amountRef;
+  vault.updatedAt = new Date().toISOString();
+  record(vault, input, "deposit", "efectivo");
+  return vault;
 }
+
 export function withdrawal(input: AmountInput, storeId: string) {
-  validate(input); const vault = getOrCreate(storeId);
-  if (input.amountRef > vault.balanceRef || input.amountVes > vault.balanceVes) throw new ApiError(400, "INSUFFICIENT_VAULT_BALANCE", "Saldo insuficiente en el baúl.", { balanceRef: vault.balanceRef, balanceVes: vault.balanceVes });
-  vault.balanceRef -= input.amountRef; vault.balanceVes -= input.amountVes; vault.updatedAt = new Date().toISOString();
-  record(vault, input, "withdrawal"); return vault;
+  validate(input);
+  const vault = getOrCreate(storeId);
+  if (input.amountRef > vault.balanceRef || input.amountVes > vault.balanceEfectivoVes) {
+    throw new ApiError(400, "INSUFFICIENT_VAULT_BALANCE", "Saldo insuficiente en el baúl (efectivo).", {
+      balanceEfectivoVes: vault.balanceEfectivoVes,
+      balanceRef: vault.balanceRef,
+    });
+  }
+  vault.balanceEfectivoVes -= input.amountVes;
+  vault.balanceRef -= input.amountRef;
+  vault.updatedAt = new Date().toISOString();
+  record(vault, input, "withdrawal", "efectivo");
+  return vault;
 }
-export function transferFromCash(input: AmountInput & { sessionId: string }, storeId: string) {
-  validate(input); const vault = getOrCreate(storeId);
-  addTransferOut(input.sessionId, input.amountVes, input.amountRef, input.notes);
-  vault.balanceRef += input.amountRef; vault.balanceVes += input.amountVes; vault.updatedAt = new Date().toISOString();
-  record(vault, input, "transfer_in", input.sessionId); return vault;
+
+export function transferFromCash(
+  input: { notes?: string; sessionIds: string[] },
+  storeId: string,
+) {
+  if (!input.sessionIds.length) {
+    throw new ApiError(400, "BAD_REQUEST", "Selecciona al menos un cierre de caja para transferir.");
+  }
+  const closures = markSessionsTransferredToVault(input.sessionIds, storeId);
+  const vault = getOrCreate(storeId);
+  for (const session of closures) {
+    const amount = {
+      amountRef: session.closingRef ?? 0,
+      amountVes: session.closingVes ?? 0,
+      notes: input.notes,
+    };
+    vault.balanceEfectivoVes += amount.amountVes;
+    vault.balanceRef += amount.amountRef;
+    record(vault, amount, "transfer_in", "efectivo", session.id);
+  }
+  vault.updatedAt = new Date().toISOString();
+  return vault;
 }

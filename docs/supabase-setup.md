@@ -57,6 +57,11 @@ Orden individual (si prefieres uno por uno):
 | 11a | `20260811a-stock-movement-conversion-enum.sql` | Enum `conversion_salida` / `conversion_entrada` (**corrida aparte**) |
 | 11 | `20260811-pack-unit-conversion.sql` | Dual SKU pack→unidad: vínculo + RPC `convert_pack_to_units` |
 | 12 | `20260811b-cash-registers-vault.sql` | Cajas, sesiones, baúl, RPC open/close/transfer/deposit + pagos efectivo |
+| 13 | `20260811c-transfer-closures-to-vault.sql` | Transferencia al baúl por cierres pendientes (`vault_transferred_at`) |
+| 14 | `20260811d-absorb-closures-on-reopen.sql` | Absorbe cierres pendientes al reabrir caja (`absorbed_by_session_id`) |
+| 15 | `20260812-one-shot-backfill-vault-informal-purchase.sql` | One-shot: depósito+egreso baúl compra informal `C-20260810204259934` (opcional; ya aplicado en prod si corriste el backfill) |
+| 16 | `20260812b-one-shot-backfill-vault-market-catia-purchase.sql` | One-shot: depósito+egreso baúl ligados al pago `punto_venta` existente de `C-20260810155452483` (sin crear pago nuevo) |
+| 17 | `20260812c-vault-efectivo-vs-cuenta.sql` | Separa `balance_efectivo_ves` vs `balance_ves` (cuenta); PM/transfer/punto en caja `account_in` |
 
 **Importante:** el patch 4b/4c **no** están embebidos en `apply-all-pending.sql`. Ejecuta **4a → 4b → 4c** en Runs separados del SQL Editor (PostgreSQL no permite usar un enum nuevo en la misma transacción donde se agregó).
 
@@ -165,7 +170,10 @@ npx tsx scripts/seed-field-research/run.ts
 
 ## 12. Caja y baúl
 
-Aplica `supabase/patches/20260811b-cash-registers-vault.sql` después de las
-patches de multitienda y pagos. Crea las tablas de cajas, sesiones, movimientos
-de caja y baúl, junto con las RPC de apertura, cierre, depósito, retiro y
-transferencia.
+Aplica `supabase/patches/20260811b-cash-registers-vault.sql`, luego
+`20260811c-transfer-closures-to-vault.sql` y
+`20260811d-absorb-closures-on-reopen.sql` después de las patches de multitienda
+y pagos. Crea las tablas de cajas, sesiones, movimientos de caja y baúl, junto
+con las RPC de apertura, cierre, depósito, retiro y transferencia de **cierres
+pendientes** al baúl. Al reabrir una caja, los cierres no transferidos de esa
+caja se marcan absorbidos (`absorbed_by_session_id`) para no duplicar efectivo.

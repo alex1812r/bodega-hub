@@ -65,9 +65,19 @@ const platformPermissions = permissions.filter((permission) =>
   permission.startsWith("platform."),
 ) as Permission[];
 
+/**
+ * Admin opera el comercio pero no vende en POS ni opera "Mi caja".
+ * Los permisos siguen existiendo para reactivarlos por rol/overrides más adelante.
+ */
+const adminBlockedPermissions = new Set<Permission>(["sales.create", "cash.operate"]);
+
+const adminStorePermissions = storePermissions.filter(
+  (permission) => !adminBlockedPermissions.has(permission),
+);
+
 export const rolePermissions: Record<UserRole, readonly Permission[]> = {
   superadmin: platformPermissions,
-  admin: storePermissions,
+  admin: adminStorePermissions,
   vendedor: [
     "dashboard.view",
     "sales.view",
@@ -118,7 +128,8 @@ export function getEffectivePermissions(profile: PermissionProfile) {
   }
 
   if (profile.role === "admin") {
-    return [...storePermissions];
+    // Admin ignores per-user overrides; base role already excludes sales.create / cash.operate.
+    return [...rolePermissions.admin];
   }
 
   const effectivePermissions = new Set<Permission>([

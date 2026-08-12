@@ -28,6 +28,8 @@ create table if not exists public.cash_sessions (
   closing_ref numeric(14,2) check (closing_ref >= 0),
   theoretical_closing_ves numeric(14,2),
   theoretical_closing_ref numeric(14,2),
+  vault_transferred_at timestamptz,
+  absorbed_by_session_id uuid references public.cash_sessions(id) on delete restrict,
   opened_at timestamptz not null default now(),
   closed_at timestamptz,
   created_at timestamptz not null default now(),
@@ -81,6 +83,9 @@ create unique index if not exists cash_registers_one_active_assignment_per_store
 create unique index if not exists cash_sessions_one_open_per_register_idx
   on public.cash_sessions (register_id) where status = 'open';
 create index if not exists cash_sessions_store_status_idx on public.cash_sessions (store_id, status);
+create index if not exists cash_sessions_pending_vault_transfer_idx
+  on public.cash_sessions (store_id, closed_at desc)
+  where status = 'closed' and vault_transferred_at is null and absorbed_by_session_id is null;
 create index if not exists cash_movements_session_created_at_idx on public.cash_movements (session_id, created_at);
 create index if not exists cash_movements_payment_id_idx on public.cash_movements (payment_id) where payment_id is not null;
 create index if not exists vault_movements_vault_created_at_idx on public.vault_movements (vault_id, created_at);
@@ -207,6 +212,16 @@ begin
   insert into public.cash_sessions (store_id, register_id, opened_by, opening_ves, opening_ref)
   values (v_store_id, v_register.id, auth.uid(), round(coalesce(p_opening_ves, 0), 2), round(coalesce(p_opening_ref, 0), 2))
   returning * into v_session;
+  -- Cierres pendientes de esta caja quedan absorbidos por la nueva sesión:
+  -- el efectivo sigue en circulación y solo el próximo cierre será transferible.
+  update public.cash_sessions
+  set absorbed_by_session_id = v_session.id
+  where register_id = v_register.id
+    and store_id = v_store_id
+    and status = 'closed'
+    and vault_transferred_at is null
+    and absorbed_by_session_id is null
+    and id <> v_session.id;
   if v_session.opening_ves > 0 or v_session.opening_ref > 0 then
     insert into public.cash_movements (store_id, session_id, type, amount_ves, amount_ref, notes, created_by)
     values (v_store_id, v_session.id, 'opening', v_session.opening_ves, v_session.opening_ref,
@@ -248,34 +263,92 @@ begin
 end;
 $$;
 
-create or replace function public.transfer_cash_to_vault(
-  p_session_id uuid, p_amount_ves numeric, p_amount_ref numeric, p_notes text default null
+create or replace function public.transfer_cash_closures_to_vault(
+  p_session_ids uuid[],
+  p_notes text default null
 ) returns public.store_vaults language plpgsql security definer set search_path = public as $$
-declare v_store_id uuid; v_session public.cash_sessions; v_vault public.store_vaults; v_ves numeric(14,2); v_ref numeric(14,2);
+declare
+  v_store_id uuid;
+  v_session public.cash_sessions;
+  v_vault public.store_vaults;
+  v_session_id uuid;
+  v_amount_ves numeric(14,2);
+  v_amount_ref numeric(14,2);
+  v_notes text;
+  v_transferred int := 0;
 begin
   v_store_id := public.assert_store_context();
-  if public.current_user_role() <> 'admin' then raise exception 'Solo un administrador puede transferir efectivo al baúl'; end if;
-  if coalesce(p_amount_ves, 0) < 0 or coalesce(p_amount_ref, 0) < 0 or (coalesce(p_amount_ves, 0) = 0 and coalesce(p_amount_ref, 0) = 0) then
-    raise exception 'Debe transferir al menos un monto mayor a cero';
+  if public.current_user_role() <> 'admin' then
+    raise exception 'Solo un administrador puede transferir efectivo al baúl';
   end if;
-  select * into v_session from public.cash_sessions where id = p_session_id and store_id = v_store_id for update;
-  if not found then raise exception 'Sesión de caja no encontrada'; end if;
-  if v_session.status <> 'open' then raise exception 'Solo se puede transferir efectivo desde una sesión abierta'; end if;
-  select round(v_session.opening_ves + coalesce(sum(case when type in ('sale_in', 'adjustment') then amount_ves when type in ('transfer_out', 'refund_out') then -amount_ves else 0 end), 0), 2),
-         round(v_session.opening_ref + coalesce(sum(case when type in ('sale_in', 'adjustment') then amount_ref when type in ('transfer_out', 'refund_out') then -amount_ref else 0 end), 0), 2)
-  into v_ves, v_ref from public.cash_movements where session_id = v_session.id;
-  if p_amount_ves > v_ves or p_amount_ref > v_ref then
-    raise exception 'El monto a transferir excede el saldo teórico de la caja. Disponible VES: %, REF: %', v_ves, v_ref;
+  if p_session_ids is null or cardinality(p_session_ids) = 0 then
+    raise exception 'Selecciona al menos un cierre de caja para transferir';
   end if;
+
+  v_notes := nullif(trim(p_notes), '');
   perform public.ensure_store_vault(v_store_id);
   select * into v_vault from public.store_vaults where store_id = v_store_id for update;
-  insert into public.cash_movements (store_id, session_id, type, amount_ves, amount_ref, notes, created_by)
-  values (v_store_id, v_session.id, 'transfer_out', round(p_amount_ves, 2), round(p_amount_ref, 2), nullif(trim(p_notes), ''), auth.uid());
-  insert into public.vault_movements (store_id, vault_id, type, amount_ves, amount_ref, from_session_id, notes, created_by)
-  values (v_store_id, v_vault.id, 'transfer_in', round(p_amount_ves, 2), round(p_amount_ref, 2), v_session.id, nullif(trim(p_notes), ''), auth.uid());
-  update public.store_vaults set balance_ves = balance_ves + round(p_amount_ves, 2),
-    balance_ref = balance_ref + round(p_amount_ref, 2) where id = v_vault.id returning * into v_vault;
+
+  foreach v_session_id in array p_session_ids loop
+    select * into v_session
+    from public.cash_sessions
+    where id = v_session_id and store_id = v_store_id
+    for update;
+
+    if not found then
+      raise exception 'Sesión de caja no encontrada';
+    end if;
+    if v_session.status <> 'closed' then
+      raise exception 'Solo se pueden transferir cierres. La caja sigue en circulación hasta que registres un cierre';
+    end if;
+    if v_session.vault_transferred_at is not null then
+      raise exception 'El cierre seleccionado ya fue transferido al baúl';
+    end if;
+    if v_session.absorbed_by_session_id is not null then
+      raise exception 'El cierre ya fue absorbido por una apertura posterior y no se puede transferir por separado';
+    end if;
+
+    v_amount_ves := round(coalesce(v_session.closing_ves, 0), 2);
+    v_amount_ref := round(coalesce(v_session.closing_ref, 0), 2);
+    if v_amount_ves <= 0 and v_amount_ref <= 0 then
+      raise exception 'El cierre no tiene monto para transferir';
+    end if;
+
+    insert into public.vault_movements (
+      store_id, vault_id, type, amount_ves, amount_ref, from_session_id, notes, created_by
+    ) values (
+      v_store_id, v_vault.id, 'transfer_in', v_amount_ves, v_amount_ref, v_session.id, v_notes, auth.uid()
+    );
+
+    update public.store_vaults
+    set balance_ves = balance_ves + v_amount_ves,
+        balance_ref = balance_ref + v_amount_ref
+    where id = v_vault.id
+    returning * into v_vault;
+
+    update public.cash_sessions
+    set vault_transferred_at = now()
+    where id = v_session.id;
+
+    v_transferred := v_transferred + 1;
+  end loop;
+
+  if v_transferred = 0 then
+    raise exception 'Selecciona al menos un cierre de caja para transferir';
+  end if;
+
   return v_vault;
+end;
+$$;
+
+drop function if exists public.transfer_cash_to_vault(uuid, numeric, numeric, text);
+
+create or replace function public.transfer_cash_to_vault(
+  p_session_id uuid,
+  p_notes text default null
+) returns public.store_vaults language plpgsql security definer set search_path = public as $$
+begin
+  return public.transfer_cash_closures_to_vault(array[p_session_id], p_notes);
 end;
 $$;
 
@@ -486,12 +559,14 @@ revoke all on function public.ensure_store_vault(uuid) from public;
 revoke all on function public.get_open_cash_session_for_user(uuid, uuid) from public;
 revoke all on function public.open_cash_session(uuid, numeric, numeric) from public;
 revoke all on function public.close_cash_session(uuid, numeric, numeric) from public;
-revoke all on function public.transfer_cash_to_vault(uuid, numeric, numeric, text) from public;
+revoke all on function public.transfer_cash_closures_to_vault(uuid[], text) from public;
+revoke all on function public.transfer_cash_to_vault(uuid, text) from public;
 revoke all on function public.register_vault_deposit(numeric, numeric, text) from public;
 revoke all on function public.register_vault_withdrawal(numeric, numeric, text) from public;
 grant execute on function public.open_cash_session(uuid, numeric, numeric) to authenticated;
 grant execute on function public.close_cash_session(uuid, numeric, numeric) to authenticated;
-grant execute on function public.transfer_cash_to_vault(uuid, numeric, numeric, text) to authenticated;
+grant execute on function public.transfer_cash_closures_to_vault(uuid[], text) to authenticated;
+grant execute on function public.transfer_cash_to_vault(uuid, text) to authenticated;
 grant execute on function public.register_vault_deposit(numeric, numeric, text) to authenticated;
 grant execute on function public.register_vault_withdrawal(numeric, numeric, text) to authenticated;
 

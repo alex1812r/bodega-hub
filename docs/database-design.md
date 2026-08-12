@@ -586,8 +586,16 @@ erDiagram
 ## 9. Caja y baúl
 
 Cada tienda define sus `cash_registers` y asigna a lo sumo una caja activa por
-vendedor. `cash_sessions` conserva apertura, cierre y saldo teórico; los
-movimientos de efectivo se registran en `cash_movements`. `store_vaults` guarda
-un saldo por tienda y `vault_movements` audita depósitos, retiros, pagos de
-compras y transferencias desde caja. Las mutaciones monetarias se realizan con
-RPC transaccionales para mantener ambos saldos consistentes.
+vendedor. `cash_sessions` conserva apertura, cierre y saldo teórico de **efectivo**;
+los cobros por pago móvil / transferencia / punto se registran en la misma sesión
+como `account_in` (cubeta cuenta) sin mezclarse con el cierre físico. Al cerrar, el
+monto declarado de efectivo queda pendiente hasta transferirlo al baúl
+(`vault_transferred_at`). Si la caja se reabre sin transferir, esos cierres se
+absorben (`absorbed_by_session_id`).
+
+`store_vaults` separa:
+- `balance_efectivo_ves` + `balance_ref`: efectivo físico
+- `balance_ves`: cuenta (PM / transferencia / punto)
+
+`vault_movements.bucket` indica `efectivo` o `cuenta`. Las mutaciones monetarias
+usan RPC transaccionales.

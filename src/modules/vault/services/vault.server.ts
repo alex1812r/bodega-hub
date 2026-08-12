@@ -9,10 +9,29 @@ type AmountInput = Parameters<typeof mockDeposit>[0];
 type TransferInput = Parameters<typeof mockTransfer>[0];
 
 function mapVault(row: Record<string, unknown>): StoreVault {
-  return { balanceRef: Number(row.balance_ref), balanceVes: Number(row.balance_ves), createdAt: row.created_at as string, id: row.id as string, storeId: row.store_id as string, updatedAt: row.updated_at as string };
+  return {
+    balanceEfectivoVes: Number(row.balance_efectivo_ves ?? 0),
+    balanceRef: Number(row.balance_ref),
+    balanceVes: Number(row.balance_ves),
+    createdAt: row.created_at as string,
+    id: row.id as string,
+    storeId: row.store_id as string,
+    updatedAt: row.updated_at as string,
+  };
 }
 function mapMovement(row: Record<string, unknown>): VaultMovement {
-  return { amountRef: Number(row.amount_ref), amountVes: Number(row.amount_ves), createdAt: row.created_at as string, fromSessionId: row.from_session_id as string | null, id: row.id as string, notes: row.notes as string | null, paymentId: row.payment_id as string | null, type: row.type as VaultMovement["type"], vaultId: row.vault_id as string };
+  return {
+    amountRef: Number(row.amount_ref),
+    amountVes: Number(row.amount_ves),
+    bucket: (row.bucket as VaultMovement["bucket"] | undefined) ?? "cuenta",
+    createdAt: row.created_at as string,
+    fromSessionId: row.from_session_id as string | null,
+    id: row.id as string,
+    notes: row.notes as string | null,
+    paymentId: row.payment_id as string | null,
+    type: row.type as VaultMovement["type"],
+    vaultId: row.vault_id as string,
+  };
 }
 function rpcError(error: unknown) {
   if (!error) return;
@@ -48,7 +67,11 @@ export async function withdrawal(input: Parameters<typeof mockWithdrawal>[0], _s
 }
 export async function transferFromCash(input: TransferInput, _storeId: string) {
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase.rpc("transfer_cash_to_vault", { p_amount_ref: input.amountRef, p_amount_ves: input.amountVes, p_notes: input.notes ?? null, p_session_id: input.sessionId });
-  rpcError(error); if (!data) throw new ApiError(500, "INTERNAL_ERROR", "No se pudo transferir el efectivo.");
+  const { data, error } = await supabase.rpc("transfer_cash_closures_to_vault", {
+    p_notes: input.notes ?? null,
+    p_session_ids: input.sessionIds,
+  });
+  rpcError(error);
+  if (!data) throw new ApiError(500, "INTERNAL_ERROR", "No se pudo transferir el efectivo.");
   return mapVault(data as Record<string, unknown>);
 }

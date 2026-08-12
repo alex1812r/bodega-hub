@@ -3,6 +3,8 @@
 - `GET/POST /api/cash/registers`, `PATCH /api/cash/registers/[id]`: cajas (admin).
 - `GET /api/cash/session`, `POST /api/cash/session/open|close`, `GET /api/cash/movements`: operación de caja.
 - `GET /api/vault`, `GET /api/vault/movements`, `POST /api/vault/deposits|withdrawals|transfers-from-cash`: baúl.
+- `GET /api/cash/closures/pending`: cierres cerrados aún no transferidos al baúl.
+- `GET /api/cash/registers/[id]/last-untransferred-closure`: último cierre de la caja si aún no fue al baúl (sugerido en apertura).
 
 # Endpoints BFF (Mock y Supabase)
 

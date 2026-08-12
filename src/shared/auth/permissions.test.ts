@@ -22,7 +22,7 @@ describe("permissions", () => {
     expect(hasEffectivePermission(profile, "payments.view")).toBe(false);
   });
 
-  it("gives admin all store permissions but not platform ones", () => {
+  it("gives admin store permissions except sales.create and cash.operate", () => {
     const effective = getEffectivePermissions({
       deniedPermissions: ["users.manage"],
       role: "admin",
@@ -30,6 +30,11 @@ describe("permissions", () => {
 
     expect(effective).toContain("products.view");
     expect(effective).toContain("users.manage");
+    expect(effective).toContain("cash.manage");
+    expect(effective).toContain("vault.manage");
+    expect(effective).toContain("sales.view");
+    expect(effective).not.toContain("sales.create");
+    expect(effective).not.toContain("cash.operate");
     expect(effective).not.toContain("platform.stores.view");
     expect(effective).not.toContain("platform.stores.manage");
   });

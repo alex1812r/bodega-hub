@@ -19,9 +19,14 @@ export type ActionMenuItem = {
 type ActionsMenuProps = {
   actions: ActionMenuItem[];
   label?: string;
+  variant?: "ghost" | "secondary" | "outline" | "primary" | "danger";
 };
 
-export function ActionsMenu({ actions, label = "Abrir acciones" }: ActionsMenuProps) {
+export function ActionsMenu({
+  actions,
+  label = "Abrir acciones",
+  variant = "ghost",
+}: ActionsMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
   const triggerRef = useRef<HTMLDivElement>(null);
@@ -136,7 +141,7 @@ export function ActionsMenu({ actions, label = "Abrir acciones" }: ActionsMenuPr
         aria-label={label}
         icon={<MoreVertical className="h-4 w-4" />}
         onClick={() => setIsOpen((current) => !current)}
-        variant="ghost"
+        variant={variant}
       />
 
       {typeof document !== "undefined" && menuContent

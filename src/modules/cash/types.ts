@@ -10,6 +10,7 @@ export type CashRegister = {
 };
 
 export type CashSession = {
+  absorbedBySessionId?: string | null;
   closedAt?: string | null;
   closingRef?: number | null;
   closingVes?: number | null;
@@ -22,6 +23,7 @@ export type CashSession = {
   status: "open" | "closed";
   theoreticalClosingRef?: number | null;
   theoreticalClosingVes?: number | null;
+  vaultTransferredAt?: string | null;
 };
 
 export type CashMovement = {
@@ -32,5 +34,5 @@ export type CashMovement = {
   notes?: string | null;
   paymentId?: string | null;
   sessionId: string;
-  type: "sale_in" | "transfer_out" | "opening" | "adjustment" | "refund_out";
+  type: "sale_in" | "transfer_out" | "opening" | "adjustment" | "refund_out" | "account_in" | "account_out";
 };

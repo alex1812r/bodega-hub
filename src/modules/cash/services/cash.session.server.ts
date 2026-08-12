@@ -8,6 +8,7 @@ import type { CloseCashSessionInput, OpenCashSessionInput } from "./cash.session
 function mapSession(row: Record<string, unknown>): CashSession {
   const register = row.cash_registers as Record<string, unknown> | undefined;
   return {
+    absorbedBySessionId: (row.absorbed_by_session_id as string | null | undefined) ?? null,
     closedAt: row.closed_at as string | null,
     closingRef: Number(row.closing_ref ?? 0),
     closingVes: Number(row.closing_ves ?? 0),
@@ -27,6 +28,7 @@ function mapSession(row: Record<string, unknown>): CashSession {
     status: row.status as "open" | "closed",
     theoreticalClosingRef: Number(row.theoretical_closing_ref ?? 0),
     theoreticalClosingVes: Number(row.theoretical_closing_ves ?? 0),
+    vaultTransferredAt: (row.vault_transferred_at as string | null | undefined) ?? null,
   };
 }
 
@@ -72,11 +74,24 @@ export async function listCashMovements(sessionId: string, storeId: string) {
   throwIfSupabaseError(session.error);
   if (!session.data) throw new ApiError(404, "NOT_FOUND", "Sesión de caja no encontrada.");
   const base = mapSession(session.data as Record<string, unknown>);
-  const theoretical = items.reduce((total, movement) => {
-    const sign = ["transfer_out", "refund_out"].includes(movement.type) ? -1 : 1;
-    total.ref += sign * movement.amountRef; total.ves += sign * movement.amountVes; return total;
-  }, { ref: base.openingRef, ves: base.openingVes });
-  return { items, theoretical };
+  const theoretical = items.reduce(
+    (total, movement) => {
+      if (movement.type === "opening" || movement.type === "account_in" || movement.type === "account_out") {
+        return total;
+      }
+      const sign = ["transfer_out", "refund_out"].includes(movement.type) ? -1 : 1;
+      total.ref += sign * movement.amountRef;
+      total.ves += sign * movement.amountVes;
+      return total;
+    },
+    { ref: base.openingRef, ves: base.openingVes },
+  );
+  const accountVes = items.reduce((total, movement) => {
+    if (movement.type === "account_in") return total + movement.amountVes;
+    if (movement.type === "account_out") return total - movement.amountVes;
+    return total;
+  }, 0);
+  return { accountVes, items, theoretical };
 }
 
 export async function listOpenCashSessions(storeId: string) {
@@ -84,4 +99,40 @@ export async function listOpenCashSessions(storeId: string) {
   const { data, error } = await supabase.from("cash_sessions").select("*, cash_registers(*)").eq("store_id", storeId).eq("status", "open");
   throwIfSupabaseError(error);
   return (data ?? []).map((row) => mapSession(row as Record<string, unknown>));
+}
+
+export async function listPendingClosures(storeId: string) {
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("cash_sessions")
+    .select("*, cash_registers(*)")
+    .eq("store_id", storeId)
+    .eq("status", "closed")
+    .is("vault_transferred_at", null)
+    .is("absorbed_by_session_id", null)
+    .order("closed_at", { ascending: false });
+  throwIfSupabaseError(error);
+  return (data ?? [])
+    .map((row) => mapSession(row as Record<string, unknown>))
+    .filter((session) => (session.closingRef ?? 0) > 0 || (session.closingVes ?? 0) > 0);
+}
+
+export async function getLastUntransferredClosure(registerId: string, storeId: string) {
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("cash_sessions")
+    .select("*, cash_registers(*)")
+    .eq("store_id", storeId)
+    .eq("register_id", registerId)
+    .eq("status", "closed")
+    .is("vault_transferred_at", null)
+    .is("absorbed_by_session_id", null)
+    .order("closed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  throwIfSupabaseError(error);
+  if (!data) {
+    return null;
+  }
+  return mapSession(data as Record<string, unknown>);
 }

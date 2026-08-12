@@ -16,7 +16,7 @@ Ver [`frontend-api-guide.md`](frontend-api-guide.md#autenticación-y-permisos) y
 ## Roles Iniciales
 
 - `superadmin`: solo backoffice plataforma (`platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view`). Home en `/platform/dashboard`. Puede ver usuarios de todas las tiendas, crear **solo** admins y generar reportes/KPIs multi-tienda. No opera el ERP ni crea otros roles.
-- `admin`: acceso total al ERP de **su** tienda (sin permisos `platform.*`).
+- `admin`: acceso total al ERP de **su** tienda (sin permisos `platform.*`), **excepto** venta POS (`sales.create`) y operar caja (`cash.operate`). Puede ver ventas, gestionar cajas/baúl y el resto de módulos.
 - `vendedor`: acceso a ventas y datos necesarios para vender.
 - `almacen`: acceso a compras, productos e inventario.
 - `contador`: acceso a pagos, reportes y lectura contable.
@@ -85,7 +85,7 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | --- | --- | --- | --- | --- |
 | `dashboard.view` | Si | Si | Si | Si |
 | `sales.view` | Si | Si | No | Si |
-| `sales.create` | Si | Si | No | No |
+| `sales.create` | No | Si | No | No |
 | `purchases.view` | Si | No | Si | Si |
 | `purchases.create` | Si | No | Si | No |
 | `inventory.view` | Si | No | Si | No |
@@ -97,7 +97,7 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | `payments.view` | Si | Si | No | Si |
 | `payments.manage` | Si | No | No | Si |
 | `cash.view` | Si | Si | No | Si |
-| `cash.operate` | Si | Si | No | No |
+| `cash.operate` | No | Si | No | No |
 | `cash.manage` | Si | No | No | No |
 | `vault.view` | Si | No | No | Si |
 | `vault.manage` | Si | No | No | No |
@@ -232,7 +232,7 @@ El control en UI no reemplaza RLS ni `requirePermission` en el backend.
 | Permiso | Vendedor | Contador | Administrador |
 | --- | --- | --- | --- |
 | `cash.view` | Sí | Sí | Sí |
-| `cash.operate` | Sí | No | Sí |
+| `cash.operate` | Sí | No | No |
 | `cash.manage` | No | No | Sí |
 | `vault.view` | No | Sí | Sí |
 | `vault.manage` | No | No | Sí |

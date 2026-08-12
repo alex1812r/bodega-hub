@@ -25,6 +25,7 @@ import { refToVes } from "@/shared/utils/currency";
 
 import { type SaleCreateInput, useCreateSale } from "../hooks/useSales";
 import { PosCartPanel } from "./components/PosCartPanel";
+import { PosCashSessionGate } from "./components/PosCashSessionGate";
 import { PosCatalogToolbar } from "./components/PosCatalogToolbar";
 import { PosCategorySlider } from "./components/PosCategorySlider";
 import { PosProductGrid } from "./components/PosProductGrid";
@@ -47,6 +48,14 @@ type PaymentSelectionSnapshot = {
 };
 
 export function SaleCreatePage() {
+  return (
+    <PosCashSessionGate>
+      <SaleCreatePosWorkspace />
+    </PosCashSessionGate>
+  );
+}
+
+function SaleCreatePosWorkspace() {
   const contacts = useContacts({ limit: 100 });
   const categories = useCategories();
   const products = useProducts({ isActive: true, limit: 100 });
