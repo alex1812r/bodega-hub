@@ -56,6 +56,7 @@ Orden individual (si prefieres uno por uno):
 | 10b | `20260810d-fix-existing-purchase-payment.sql` | One-shot: ajusta pago parcial existente (opcional) |
 | 11a | `20260811a-stock-movement-conversion-enum.sql` | Enum `conversion_salida` / `conversion_entrada` (**corrida aparte**) |
 | 11 | `20260811-pack-unit-conversion.sql` | Dual SKU pack→unidad: vínculo + RPC `convert_pack_to_units` |
+| 12 | `20260811b-cash-registers-vault.sql` | Cajas, sesiones, baúl, RPC open/close/transfer/deposit + pagos efectivo |
 
 **Importante:** el patch 4b/4c **no** están embebidos en `apply-all-pending.sql`. Ejecuta **4a → 4b → 4c** en Runs separados del SQL Editor (PostgreSQL no permite usar un enum nuevo en la misma transacción donde se agregó).
 
@@ -161,3 +162,10 @@ npx tsx scripts/seed-field-research/run.ts
 - `API_DATA_SOURCE=supabase`
 - `ALLOW_DEMO_AUTH=false` (obligatorio)
 - No commitear `.env` ni claves reales.
+
+## 12. Caja y baúl
+
+Aplica `supabase/patches/20260811b-cash-registers-vault.sql` después de las
+patches de multitienda y pagos. Crea las tablas de cajas, sesiones, movimientos
+de caja y baúl, junto con las RPC de apertura, cierre, depósito, retiro y
+transferencia.

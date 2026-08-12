@@ -4,6 +4,7 @@ export type ApiErrorCode =
   | "BAD_REQUEST"
   | "CONFLICT"
   | "FORBIDDEN"
+  | "INSUFFICIENT_VAULT_BALANCE"
   | "INTERNAL_ERROR"
   | "NOT_FOUND"
   | "UNAUTHORIZED";
@@ -13,6 +14,7 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: ApiErrorCode,
     message: string,
+    public readonly details?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -25,6 +27,7 @@ export function toErrorResponse(error: unknown) {
       {
         error: {
           code: error.code,
+          ...(error.details === undefined ? {} : { details: error.details }),
           message: error.message,
         },
       },

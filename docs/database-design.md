@@ -582,3 +582,12 @@ erDiagram
 *   `stock_movements(product_id, created_at)`
 *   `payments(contact_id, created_at)`
 *   `exchange_rates(created_at)`
+
+## 9. Caja y baúl
+
+Cada tienda define sus `cash_registers` y asigna a lo sumo una caja activa por
+vendedor. `cash_sessions` conserva apertura, cierre y saldo teórico; los
+movimientos de efectivo se registran en `cash_movements`. `store_vaults` guarda
+un saldo por tienda y `vault_movements` audita depósitos, retiros, pagos de
+compras y transferencias desde caja. Las mutaciones monetarias se realizan con
+RPC transaccionales para mantener ambos saldos consistentes.

@@ -96,6 +96,11 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | `contacts.manage` | Si | No | No | No |
 | `payments.view` | Si | Si | No | Si |
 | `payments.manage` | Si | No | No | Si |
+| `cash.view` | Si | Si | No | Si |
+| `cash.operate` | Si | Si | No | No |
+| `cash.manage` | Si | No | No | No |
+| `vault.view` | Si | No | No | Si |
+| `vault.manage` | Si | No | No | No |
 | `reports.view` | Si | No | No | Si |
 | `settings.view` | Si | No | No | No |
 | `users.manage` | Si | No | No | No |
@@ -221,3 +226,13 @@ with check (public.current_user_role() in ('admin', 'vendedor'));
 En dev con `ALLOW_DEMO_AUTH=true`, sin cookies se puede usar `x-demo-role` (ver sección demo).
 
 El control en UI no reemplaza RLS ni `requirePermission` en el backend.
+
+## Caja y baúl
+
+| Permiso | Vendedor | Contador | Administrador |
+| --- | --- | --- | --- |
+| `cash.view` | Sí | Sí | Sí |
+| `cash.operate` | Sí | No | Sí |
+| `cash.manage` | No | No | Sí |
+| `vault.view` | No | Sí | Sí |
+| `vault.manage` | No | No | Sí |

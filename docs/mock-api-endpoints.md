@@ -1,3 +1,9 @@
+# Caja y baúl
+
+- `GET/POST /api/cash/registers`, `PATCH /api/cash/registers/[id]`: cajas (admin).
+- `GET /api/cash/session`, `POST /api/cash/session/open|close`, `GET /api/cash/movements`: operación de caja.
+- `GET /api/vault`, `GET /api/vault/movements`, `POST /api/vault/deposits|withdrawals|transfers-from-cash`: baúl.
+
 # Endpoints BFF (Mock y Supabase)
 
 Esta documentacion describe los endpoints internos en `src/app/api`. Los handlers enrutan a servicios mock o Supabase segun `API_DATA_SOURCE` (`mock` en tests; `supabase` en runtime por defecto).

@@ -78,6 +78,14 @@ function throwIfRpcError(error: unknown): void {
   const message = getSupabaseErrorMessage(error);
   const normalized = message.toLowerCase();
 
+  if (normalized.includes("saldo insuficiente en el baul")) {
+    throw new ApiError(400, "INSUFFICIENT_VAULT_BALANCE", message);
+  }
+
+  if (normalized.includes("sesión de caja abierta") || normalized.includes("sesion de caja abierta")) {
+    throw new ApiError(400, "BAD_REQUEST", message);
+  }
+
   if (normalized.includes("no encontrad") || normalized.includes("not found")) {
     throw new ApiError(404, "NOT_FOUND", message);
   }

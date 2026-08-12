@@ -28,6 +28,8 @@ Documentos relacionados:
 | Ventas | `/sales`, `/sales/create`, `/sales/[id]` | `sales.view` / `sales.create` | `sales`, `sale_items`, `payments` |
 | Compras | `/purchases`, `/purchases/create`, `/purchases/[id]` | `purchases.view` / `purchases.create` | `purchases`, `purchase_items`, `supplier_products` |
 | Pagos | `/payments`, `/payments/[id]` | `payments.view` / `payments.manage` | `payments` |
+| Caja | `/cash`, `/cash/registers` | `cash.view` / `cash.operate` / `cash.manage` | `cash_registers`, `cash_sessions`, `cash_movements` |
+| Baúl | `/vault` | `vault.view` / `vault.manage` | `store_vaults`, `vault_movements` |
 | Reportes | `/reports` | `reports.view` | vistas `daily_sales_summary`, etc. |
 | Settings | `/settings` | `settings.view` / `users.manage` | `app_settings`, `profiles`, `exchange_rates` |
 
@@ -420,6 +422,9 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 | `return_sale` | POST `/api/sales/[id]/return` |
 | `cancel_purchase` | PATCH `/api/purchases/[id]/cancel` |
 | `return_purchase` | POST `/api/purchases/[id]/return` |
+| `open_cash_session`, `close_cash_session` | POST `/api/cash/session/open`, `/api/cash/session/close` |
+| `transfer_cash_to_vault` | POST `/api/vault/transfers-from-cash` |
+| `register_vault_deposit`, `register_vault_withdrawal` | POST `/api/vault/deposits`, `/api/vault/withdrawals` |
 
 Schema: [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql).
 

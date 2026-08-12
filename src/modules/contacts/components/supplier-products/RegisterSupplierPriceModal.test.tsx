@@ -107,7 +107,7 @@ describe("RegisterSupplierPriceModal", () => {
 
     await user.click(screen.getByRole("button", { name: /empaque \(bulto 12 und\)/i }));
     await user.type(screen.getByLabelText(/precio del empaque/i), "109.2");
-    expect(screen.getByText(/costo unitario calculado/i)).toHaveTextContent("$9.10");
+    expect(screen.getByText(/costo unitario calculado/i)).toHaveTextContent("ref 9.10");
 
     await user.click(screen.getByRole("button", { name: /registrar precio/i }));
 
@@ -115,7 +115,7 @@ describe("RegisterSupplierPriceModal", () => {
       expect(mockMutateAsync).toHaveBeenCalledWith({
         newCostRef: 9.1,
         newPackCostRef: 109.2,
-        notes: "$109.20 ref / Bulto 12 und",
+        notes: "ref 109.20 / Bulto 12 und",
         origin: "cotizacion",
         priceInputMode: "pack",
       }),

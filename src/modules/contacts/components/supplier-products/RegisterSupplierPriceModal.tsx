@@ -116,7 +116,7 @@ export function RegisterSupplierPriceModal({
     const noteParts = [notes.trim()].filter(Boolean);
     if (inputMode === "pack" && defaultPackUnit) {
       noteParts.unshift(
-        `${formatRefUsd(parsed)} ref / ${defaultPackUnit.label} ${defaultPackUnit.unitsPerPack} und`,
+        `${formatRefUsd(parsed)} / ${defaultPackUnit.label} ${defaultPackUnit.unitsPerPack} und`,
       );
     }
 

@@ -25,6 +25,30 @@ tags:
   - name: Auth
   - name: Docs
 paths:
+  /api/cash/registers:
+    get: { summary: Listar cajas registradoras }
+    post: { summary: Crear caja registradora }
+  /api/cash/registers/{id}:
+    patch: { summary: Actualizar caja registradora }
+  /api/cash/session:
+    get: { summary: Obtener sesión de caja actual }
+  /api/cash/session/open:
+    get: { summary: Listar sesiones abiertas }
+    post: { summary: Abrir sesión de caja }
+  /api/cash/session/close:
+    post: { summary: Cerrar sesión de caja }
+  /api/cash/movements:
+    get: { summary: Listar movimientos de caja }
+  /api/vault:
+    get: { summary: Obtener baúl de la tienda }
+  /api/vault/movements:
+    get: { summary: Listar movimientos del baúl }
+  /api/vault/deposits:
+    post: { summary: Registrar depósito en baúl }
+  /api/vault/withdrawals:
+    post: { summary: Registrar retiro de baúl }
+  /api/vault/transfers-from-cash:
+    post: { summary: Transferir efectivo desde caja }
   /api/docs:
     get:
       tags: [Docs]
