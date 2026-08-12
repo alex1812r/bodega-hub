@@ -17,6 +17,8 @@ const supabaseHostname = getSupabaseImageHostname();
 
 const nextConfig: NextConfig = {
   images: {
+    // Cache del optimizador de Next para covers de productos (segundos).
+    minimumCacheTTL: 60 * 60 * 24,
     remotePatterns: [
       ...(supabaseHostname
         ? [

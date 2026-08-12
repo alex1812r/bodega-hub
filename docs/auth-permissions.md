@@ -105,6 +105,9 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | `settings.view` | Si | No | No | No |
 | `users.manage` | Si | No | No | No |
 
+Notas de pagos:
+- El **vendedor** no tiene `payments.manage`, pero puede **registrar cobros de venta** (POS / `POST /api/payments` con `saleId`) con `sales.create`. No puede pagar compras ni anular pagos.
+
 Permisos de plataforma (`platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view`): solo `superadmin`. Los roles de tienda no los tienen.
 
 ## Permisos Efectivos Por Usuario

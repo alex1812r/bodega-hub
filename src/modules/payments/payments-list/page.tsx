@@ -4,7 +4,6 @@ import { Plus } from "lucide-react";
 import { useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
-import { Can } from "@/shared/auth/Can";
 import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
@@ -150,8 +149,9 @@ const columns: DataTableColumn<PaymentListItem>[] = [
 ];
 
 export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps) {
-  const { role } = usePermission();
+  const { can, role } = usePermission();
   const salePaymentsOnly = role ? !canViewPurchasePayments(role) : false;
+  const canRegisterPayment = can("payments.manage") || can("sales.create");
   const [filters, setFilters] = useState<PaymentsFilters>(initialFilters);
   const [paymentToCancel, setPaymentToCancel] = useState<string | null>(null);
   const { limit, setLimit, setSkip, skip } = usePaginationState([
@@ -204,9 +204,9 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
             <PaymentsExportActions exportFilters={effectiveFilters} />
-            <Can permission="payments.manage">
+            {canRegisterPayment ? (
               <RegisterPaymentModal
-                allowPurchaseContext={!salePaymentsOnly}
+                allowPurchaseContext={can("payments.manage") && !salePaymentsOnly}
                 purchaseId={effectiveFilters.purchaseId}
                 saleId={effectiveFilters.saleId}
                 trigger={
@@ -216,7 +216,7 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
                   </Button>
                 }
               />
-            </Can>
+            ) : null}
           </div>
         }
         description={
@@ -237,14 +237,18 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
           <DataTable
             actions={(payment) => [
               { href: `/payments/${payment.id}`, label: "Ver comprobante" },
-              {
-                disabled:
-                  cancelPayment.isPending ||
-                  payment.status === "anulado",
-                label: "Anular",
-                onSelect: () => setPaymentToCancel(payment.id),
-                variant: "danger",
-              },
+              ...(can("payments.manage")
+                ? [
+                    {
+                      disabled:
+                        cancelPayment.isPending ||
+                        payment.status === "anulado",
+                      label: "Anular",
+                      onSelect: () => setPaymentToCancel(payment.id),
+                      variant: "danger" as const,
+                    },
+                  ]
+                : []),
             ]}
             cardSubtitle={(payment) => {
               const reference = getPaymentReference(payment);
@@ -257,9 +261,9 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
             emptyState={
               <EmptyState
                 action={
-                  <Can permission="payments.manage">
+                  canRegisterPayment ? (
                     <RegisterPaymentModal
-                      allowPurchaseContext={!salePaymentsOnly}
+                      allowPurchaseContext={can("payments.manage") && !salePaymentsOnly}
                       purchaseId={effectiveFilters.purchaseId}
                       saleId={effectiveFilters.saleId}
                       trigger={
@@ -269,7 +273,7 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
                         </Button>
                       }
                     />
-                  </Can>
+                  ) : undefined
                 }
                 description="Registra un pago o ajusta los filtros para ver otros resultados."
                 title="No hay pagos para mostrar"

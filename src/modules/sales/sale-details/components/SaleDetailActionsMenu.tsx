@@ -107,7 +107,7 @@ export function SaleDetailActionsMenu({
       );
     }
 
-    if (can("payments.manage")) {
+    if (can("payments.manage") || can("sales.create")) {
       items.push({
         href: `/payments?saleId=${saleId}`,
         label: "Registrar pago",

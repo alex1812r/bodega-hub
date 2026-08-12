@@ -1,5 +1,9 @@
 import { ApiError } from "@/lib/api/apiError";
 import { parsePagination } from "@/lib/api/pagination";
+import {
+  POS_DEFAULT_CUSTOMER_NAME,
+  POS_DEFAULT_CUSTOMER_NOTES,
+} from "@/modules/contacts/constants";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
@@ -125,6 +129,15 @@ export async function createStore(input: CreateStoreInput) {
       store_id: storeId,
     });
     throwIfSupabaseError(settingsError);
+    const { error: defaultCustomerError } = await admin.from("contacts").insert({
+      is_active: true,
+      is_pos_default: true,
+      name: POS_DEFAULT_CUSTOMER_NAME,
+      notes: POS_DEFAULT_CUSTOMER_NOTES,
+      store_id: storeId,
+      type: "cliente",
+    });
+    throwIfSupabaseError(defaultCustomerError);
     return getStore(storeId);
   } catch (error) {
     if (userId) await admin.auth.admin.deleteUser(userId);

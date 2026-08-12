@@ -241,4 +241,22 @@ select
       and pg_get_function_identity_arguments(p.oid)
         = 'p_pack_product_id uuid, p_pack_quantity integer, p_reason text'
   )
+union all
+select
+  'contacts.is_pos_default',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'contacts'
+      and column_name = 'is_pos_default'
+  )
+union all
+select
+  'index contacts_store_pos_default_unique',
+  exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'public'
+      and indexname = 'contacts_store_pos_default_unique'
+  )
 order by 1;

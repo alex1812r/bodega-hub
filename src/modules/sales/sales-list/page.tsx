@@ -11,7 +11,6 @@ import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
-import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDateTimeShort } from "@/shared/utils/date";
 import { cn } from "@/shared/utils/cn";
 
@@ -24,6 +23,7 @@ import {
 } from "../hooks/useSales";
 import { SalesExportActions } from "./components/SalesExportActions";
 import { SalesListFilters } from "./components/SalesListFilters";
+import { estimatePaidRef, SalesMoneyCell } from "./components/SalesMoneyCell";
 import { SalesStatusBadge } from "./components/SalesStatusBadge";
 
 function formatInvoiceNumber(invoiceNumber: string) {
@@ -65,54 +65,37 @@ const columns: DataTableColumn<SaleListItem>[] = [
   },
   {
     align: "right",
-    cellClassName: "tabular-nums",
-    header: "Total (REF)",
-    key: "totalRef",
+    header: "Total",
+    key: "total",
     render: (sale) => (
-      <span
-        className={cn(
-          sale.status === "cancelada" && "text-slate-400 line-through",
-        )}
-      >
-        {formatRefUsd(sale.totalRef)}
-      </span>
+      <SalesMoneyCell
+        refAmount={sale.totalRef}
+        strike={sale.status === "cancelada"}
+        vesAmount={sale.totalVes}
+      />
     ),
   },
   {
     align: "right",
-    cellClassName: "tabular-nums",
-    header: "Total (VES)",
-    key: "totalVes",
+    header: "Pagado",
+    key: "paid",
     render: (sale) => (
-      <span
+      <SalesMoneyCell
         className={cn(
-          sale.status === "cancelada" && "text-slate-400 line-through",
+          isPartiallyPaid(sale) && "[&_span:first-child]:text-amber-700 dark:[&_span:first-child]:text-amber-400",
         )}
-      >
-        {formatVesBs(sale.totalVes)}
-      </span>
-    ),
-    visibility: "lg",
-  },
-  {
-    align: "right",
-    cellClassName: "tabular-nums",
-    header: "Pagado (VES)",
-    key: "paidVes",
-    render: (sale) => (
-      <span
-        className={cn(
-          sale.status === "cancelada" && "text-slate-400",
-          isPartiallyPaid(sale) && "text-amber-700 dark:text-amber-400",
-          !isPartiallyPaid(sale) &&
-            sale.status !== "cancelada" &&
-            "text-on-surface-variant",
+        muted={sale.status !== "cancelada" && !isPartiallyPaid(sale)}
+        refAmount={estimatePaidRef(
+          sale.paidVes,
+          sale.totalRef,
+          sale.totalVes,
+          sale.refRateVes,
         )}
-      >
-        {formatVesBs(sale.paidVes)}
-      </span>
+        strike={sale.status === "cancelada"}
+        vesAmount={sale.paidVes}
+      />
     ),
-    visibility: "lg",
+    visibility: "md",
   },
 ];
 

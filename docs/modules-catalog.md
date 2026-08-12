@@ -294,7 +294,7 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 
 **Crear venta:** `customerId`, `items[]` (`productId`, `quantity`), `discountRef`, `taxRef`, `refRateVes`, `notes`.
 
-**UI POS (`/sales/create`):** grid de productos (`PosProductGrid` / `PosProductCard`) y carrito (`PosCartPanel` / `PosCartLine`) muestran precios en REF y equivalente VES por línea usando `useCurrentExchangeRate` → `rateVes` y `refToVes` (`src/shared/utils/currency.ts`). Cada línea del carrito: precio unitario REF + VES, total línea REF + VES; panel de totales incluye total VES cuando hay tasa vigente. Catálogo ordenado con stock (`currentStock > 0`) primero y sin stock al final; dentro de cada grupo, por nombre.
+**UI POS (`/sales/create`):** exige caja abierta (`PosCashSessionGate`). Preselecciona el cliente sistema **Consumidor final** (`isPosDefault` / `contacts.is_pos_default`) para venta rápida; el vendedor puede cambiarlo. Grid de productos (`PosProductGrid` / `PosProductCard`) y carrito (`PosCartPanel` / `PosCartLine`) muestran precios en REF y equivalente VES por línea usando `useCurrentExchangeRate` → `rateVes` y `refToVes` (`src/shared/utils/currency.ts`). Cada línea del carrito: precio unitario REF + VES, total línea REF + VES; panel de totales incluye total VES cuando hay tasa vigente. Catálogo ordenado con stock (`currentStock > 0`) primero y sin stock al final; dentro de cada grupo, por nombre.
 
 **Estados:** `borrador`, `pendiente_pago`, `pagada`, `cancelada`, `devuelta`.
 
@@ -345,11 +345,11 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 |------|----------|
 | `usePayments` | GET `/api/payments` — `direction`, `saleId`, `purchaseId`, `contactId` |
 | `usePayment` | GET `/api/payments/[id]` |
-| `useCreatePayment` | POST `/api/payments` → RPC `register_payment` |
+| `useCreatePayment` | POST `/api/payments` → RPC `register_payment` (`payments.manage` o `sales.create` para ventas) |
 
 **Métodos:** `efectivo_ves`, `efectivo_usd`, `pago_movil`, `punto_venta`, `transferencia`. Validación por método en API.
 
-**Acceso por rol:** el `vendedor` solo ve/opera pagos de ventas (`purchase_id` nulo). Se aplica en `GET/POST /api/payments`, detalle, cancelación, `GET /api/contacts/[id]/payments` y actividad del contacto. En UI se ocultan filtros de compra/salida.
+**Acceso por rol:** el `vendedor` ve/opera pagos de ventas (`purchase_id` nulo) y puede **crear** cobros de venta en POS/API con `sales.create` (sin necesitar `payments.manage`). Se aplica en `GET/POST /api/payments`, detalle, `GET /api/contacts/[id]/payments` y actividad del contacto. Anular pagos y pagar compras siguen reservados a `payments.manage`. En UI se ocultan filtros de compra/salida.
 
 **Pendiente:** revisión UX confirmación al anular (endpoint y UI ya existen).
 

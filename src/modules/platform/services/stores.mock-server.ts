@@ -1,7 +1,8 @@
 import { ApiError } from "@/lib/api/apiError";
 import { paginateList } from "@/lib/api/pagination";
+import { POS_DEFAULT_CUSTOMER_NAME } from "@/modules/contacts/constants";
+import { mockContacts, mockUserProfiles } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID, DEFAULT_STORE_SLUG } from "@/shared/stores/constants";
-import { mockUserProfiles } from "@/shared/mocks/erp-data";
 
 import type {
   CreateStoreInput,
@@ -84,6 +85,18 @@ export function createStore(input: CreateStoreInput) {
     name: input.admin.fullName,
     role: "admin",
     storeId: store.id,
+  });
+  mockContacts.push({
+    address: "",
+    email: "",
+    id: `cont-walk-in-${store.id}`,
+    isActive: true,
+    isPosDefault: true,
+    name: POS_DEFAULT_CUSTOMER_NAME,
+    phone: "",
+    storeId: store.id,
+    taxId: "",
+    type: "cliente",
   });
   return getStore(store.id);
 }

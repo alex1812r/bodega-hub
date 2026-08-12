@@ -123,7 +123,17 @@ export async function createContact(input: ContactInput, storeId: string) {
 export async function updateContact(id: string, input: ContactInput, storeId: string) {
   await assertSupabaseStoreResource("contacts", id, storeId, "Contacto no encontrado.");
   const supabase = await createRouteSupabaseClient();
-  const payload: Record<string, string | null | undefined> = {};
+  const current = await getContactById(id, storeId);
+
+  if (current.isPosDefault && input.isActive === false) {
+    throw new ApiError(400, "BAD_REQUEST", "No se puede desactivar el cliente default del POS.");
+  }
+
+  if (current.isPosDefault && input.type && input.type !== "cliente" && input.type !== "ambos") {
+    throw new ApiError(400, "BAD_REQUEST", "El cliente default del POS debe ser tipo cliente.");
+  }
+
+  const payload: Record<string, string | boolean | null | undefined> = {};
 
   if (input.address !== undefined) payload.address = input.address;
   if (input.email !== undefined) payload.email = input.email;
@@ -131,6 +141,7 @@ export async function updateContact(id: string, input: ContactInput, storeId: st
   if (input.phone !== undefined) payload.phone = input.phone;
   if (input.taxId !== undefined) payload.tax_id = input.taxId;
   if (input.type !== undefined) payload.type = input.type;
+  if (input.isActive !== undefined) payload.is_active = input.isActive;
 
   const { data, error } = await supabase
     .from("contacts")

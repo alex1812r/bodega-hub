@@ -217,7 +217,7 @@ GET /api/sales             -> sales.view
 POST /api/sales            -> sales.create
 GET /api/products          -> products.view
 PATCH /api/products/[id]   -> products.manage
-POST /api/payments         -> payments.manage
+POST /api/payments         -> payments.manage | sales.create (venta)
 GET /api/reports/sales     -> reports.view
 ```
 

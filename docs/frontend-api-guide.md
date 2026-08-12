@@ -397,9 +397,12 @@ Estados típicos: `pendiente_pago`, `pagada`, `cancelada`. El detalle incluye `i
 
 | Componente | Rol |
 |------------|-----|
+| `PosCashSessionGate` | Exige caja abierta antes de cargar catálogo/clientes |
 | `PosProductGrid` / `PosProductCard` | Catálogo clickeable; precio REF + VES por producto |
 | `PosCartPanel` / `PosCartLine` | Carrito; cada línea muestra unitario y total en REF y VES |
 | `usePosCart` | Estado local del carrito antes de `useCreateSale` |
+
+El POS preselecciona el cliente con `isPosDefault` (**Consumidor final**, uno por tienda). Tras una venta exitosa vuelve a ese default.
 
 La tasa viene de `useCurrentExchangeRate` (`rateVes`); conversiones con `refToVes` / `formatVes`. Si no hay tasa (`rateVes === 0`), la UI muestra solo montos REF.
 
@@ -409,7 +412,7 @@ La tasa viene de `useCurrentExchangeRate` (`rateVes`); conversiones con `refToVe
 |------|--------|----------|---------|
 | `usePayments` | GET | `/api/payments?direction=&saleId=&purchaseId=&contactId=` | `payments.view` |
 | `usePayment` | GET | `/api/payments/[id]` | `payments.view` |
-| `useCreatePayment` | POST | `/api/payments` | `payments.manage` |
+| `useCreatePayment` | POST | `/api/payments` | `payments.manage` **o** `sales.create` (solo pagos de venta) |
 
 Body común:
 
@@ -576,7 +579,7 @@ Solo lectura tras tener ventas/compras/pagos. Usar rango de fechas coherente (`f
 | Ver reportes | Sí | No | No | Sí |
 | Gestionar usuarios | Sí | **403** | No | No |
 
-\* Vendedor tiene `payments.view` pero no `payments.manage`.
+\* Vendedor tiene `payments.view` y puede registrar **pagos de venta** vía `sales.create` (sin `payments.manage`). No puede anular pagos ni pagar compras.
 
 Ocultar botones si el permiso no está en el perfil; igual manejar 403 del API.
 

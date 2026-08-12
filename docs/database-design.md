@@ -133,8 +133,11 @@ Clientes y proveedores en una misma tabla diferenciados por tipo.
 *   `address`: text
 *   `notes`: text
 *   `is_active`: boolean (default: true)
+*   `is_pos_default`: boolean (default: false) — cliente sistema preseleccionado en POS; **uno por tienda** (índice único parcial)
 *   `created_at`: timestamp with time zone
 *   `updated_at`: timestamp with time zone
+
+Cada tienda tiene un contacto **Consumidor final** con `is_pos_default = true` (seed al crear tienda + patch `20260812d`). El POS lo preselecciona para ventas rápidas.
 
 ### 3.8 Productos por Proveedor (`supplier_products`)
 

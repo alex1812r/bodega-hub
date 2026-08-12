@@ -191,3 +191,7 @@ notify pgrst, 'reload schema';
 -- Primero (Run aparte): supabase/patches/20260811a-stock-movement-conversion-enum.sql
 -- Luego: supabase/patches/20260811-pack-unit-conversion.sql
 -- Requiere 20260716-multi-store.sql (stores, assert_store_context)
+-- -----------------------------------------------------------------------------
+-- 20260812d — cliente POS default por tienda
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20260812d-pos-default-customer.sql

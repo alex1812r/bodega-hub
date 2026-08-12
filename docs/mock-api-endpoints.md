@@ -91,7 +91,7 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 | `/api/contacts/[id]/purchases` | `GET` | `contacts.view` | Compras del proveedor paginadas |
 | `/api/contacts/[id]/payments` | `GET` | `contacts.view` | Pagos del contacto paginados |
 | `/api/payments` | `GET` | `payments.view` | Lista pagos paginada (`payments` + contacto) |
-| `/api/payments` | `POST` | `payments.manage` | Registra pago (`register_payment` RPC en Supabase) |
+| `/api/payments` | `POST` | `payments.manage` o `sales.create` | Registra pago (`register_payment` RPC). Vendedor solo ventas. |
 | `/api/payments/[id]` | `GET` | `payments.view` | Detalle con saldo pendiente |
 | `/api/payments/[id]` | `PATCH` | `payments.manage` | Actualiza notas y referencia bancaria |
 | `/api/reports/daily-sales` | `GET` | `reports.view` | Vista `daily_sales_summary` (`from`, `to`, paginacion) |

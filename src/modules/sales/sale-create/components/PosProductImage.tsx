@@ -38,12 +38,15 @@ export function PosProductImage({ alt, className, compact = false, imageUrl }: P
   return (
     <Image
       alt={alt}
-      className={cn("size-full object-cover", className)}
-      height={160}
+      className={cn("object-cover", className)}
+      fill
       onError={() => setFailed(true)}
+      sizes={
+        compact
+          ? "48px"
+          : "(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 200px"
+      }
       src={imageUrl}
-      unoptimized
-      width={160}
     />
   );
 }

@@ -3,23 +3,20 @@
 import { useState } from "react";
 
 import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
+import { CloseCashSessionModal } from "@/modules/cash/components/CloseCashSessionModal";
 import { OpenCashSessionModal } from "@/modules/cash/components/OpenCashSessionModal";
 import { Button } from "@/shared/components/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/Card";
 import { DataTable } from "@/shared/components/DataTable";
 import { EntityListPage } from "@/shared/components/EntityListPage";
-import { Input } from "@/shared/components/Input";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 
 import {
   useCashMovements,
   useCashRegisters,
-  useCloseCashSession,
   useMyCashSession,
 } from "../hooks/useCash";
 import type { CashMovement } from "../types";
-
-const number = (value: string) => Number(value || 0);
 
 const movementTypeLabels: Record<CashMovement["type"], string> = {
   account_in: "Cuenta (ingreso)",
@@ -36,10 +33,8 @@ export function CashDeskPage() {
   const session = useMyCashSession();
   const currentUser = useCurrentUser();
   const movements = useCashMovements(session.data?.id);
-  const close = useCloseCashSession();
   const [openModal, setOpenModal] = useState(false);
-  const [closingVes, setClosingVes] = useState("");
-  const [closingRef, setClosingRef] = useState("");
+  const [closeModal, setCloseModal] = useState(false);
 
   const userId = currentUser.data?.user.id;
   const register =
@@ -50,14 +45,20 @@ export function CashDeskPage() {
   const theoretical = movements.data?.theoretical;
   const accountVes = movements.data?.accountVes ?? 0;
   const hasOpenSession = Boolean(session.data);
+  const theoreticalRef = theoretical?.ref ?? session.data?.openingRef ?? 0;
+  const theoreticalVes = theoretical?.ves ?? session.data?.openingVes ?? 0;
 
   return (
     <>
       <EntityListPage
         actions={
-          !hasOpenSession && register ? (
+          register && !hasOpenSession ? (
             <Button onClick={() => setOpenModal(true)} type="button">
               Abrir caja
+            </Button>
+          ) : register && hasOpenSession ? (
+            <Button onClick={() => setCloseModal(true)} type="button" variant="outline">
+              Cerrar caja
             </Button>
           ) : undefined
         }
@@ -82,61 +83,29 @@ export function CashDeskPage() {
                 sesion e indicar el fondo inicial.
               </p>
             ) : (
-              <div className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div>
-                    <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-                      Efectivo teorico
-                    </p>
-                    <p className="font-semibold tabular-nums">
-                      {formatRefUsd(theoretical?.ref ?? session.data!.openingRef)}
-                    </p>
-                    <p className="text-sm text-on-surface-variant tabular-nums">
-                      {formatVesBs(theoretical?.ves ?? session.data!.openingVes)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-                      Cuenta Bs. (turno)
-                    </p>
-                    <p className="font-semibold tabular-nums text-emerald-700">
-                      {formatVesBs(accountVes)}
-                    </p>
-                    <p className="text-xs text-on-surface-variant">
-                      Pago movil, transferencia y punto
-                    </p>
-                  </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+                    Efectivo teorico
+                  </p>
+                  <p className="font-semibold tabular-nums">
+                    {formatRefUsd(theoreticalRef)}
+                  </p>
+                  <p className="text-sm text-on-surface-variant tabular-nums">
+                    {formatVesBs(theoreticalVes)}
+                  </p>
                 </div>
-
-                <form
-                  className="grid gap-3 sm:grid-cols-3"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    close.mutate({
-                      closingRef: number(closingRef),
-                      closingVes: number(closingVes),
-                      sessionId: session.data!.id,
-                    });
-                  }}
-                >
-                  <Input
-                    label="Cierre efectivo Bs."
-                    min="0"
-                    onChange={(event) => setClosingVes(event.target.value)}
-                    type="number"
-                    value={closingVes}
-                  />
-                  <Input
-                    label="Cierre efectivo REF"
-                    min="0"
-                    onChange={(event) => setClosingRef(event.target.value)}
-                    type="number"
-                    value={closingRef}
-                  />
-                  <Button disabled={close.isPending} type="submit">
-                    Cerrar caja
-                  </Button>
-                </form>
+                <div>
+                  <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+                    Cuenta Bs. (turno)
+                  </p>
+                  <p className="font-semibold tabular-nums text-emerald-700">
+                    {formatVesBs(accountVes)}
+                  </p>
+                  <p className="text-xs text-on-surface-variant">
+                    Pago movil, transferencia y punto
+                  </p>
+                </div>
               </div>
             )}
           </CardContent>
@@ -180,6 +149,18 @@ export function CashDeskPage() {
           open={openModal}
           registerId={register.id}
           registerName={register.name}
+        />
+      ) : null}
+
+      {session.data && register ? (
+        <CloseCashSessionModal
+          accountVes={accountVes}
+          onOpenChange={setCloseModal}
+          open={closeModal}
+          registerName={register.name}
+          sessionId={session.data.id}
+          theoreticalRef={theoreticalRef}
+          theoreticalVes={theoreticalVes}
         />
       ) : null}
     </>

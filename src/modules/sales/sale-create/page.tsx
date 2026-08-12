@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
@@ -12,16 +11,14 @@ import { matchesProductSearch } from "@/modules/products/services/productSearch"
 import { sortPosCatalogProducts } from "@/modules/sales/sale-create/utils/sortPosCatalogProducts";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
-import { PageBackButton } from "@/shared/components/PageBackButton";
-import { Button } from "@/shared/components/Button";
-import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/shared/components/Card";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { PageBackButton } from "@/shared/components/PageBackButton";
 import type { PaymentMethod } from "@/shared/mocks/erp-data";
 import {
   DEFAULT_ENABLED_PAYMENT_METHODS,
   isPaymentMethodEnabled,
 } from "@/shared/payments/paymentMethods";
-import { refToVes } from "@/shared/utils/currency";
+import { refToVes, roundMoney } from "@/shared/utils/currency";
 
 import { type SaleCreateInput, useCreateSale } from "../hooks/useSales";
 import { PosCartPanel } from "./components/PosCartPanel";
@@ -29,9 +26,11 @@ import { PosCashSessionGate } from "./components/PosCashSessionGate";
 import { PosCatalogToolbar } from "./components/PosCatalogToolbar";
 import { PosCategorySlider } from "./components/PosCategorySlider";
 import { PosProductGrid } from "./components/PosProductGrid";
+import { PosSaleSuccessOverlay } from "./components/PosSaleSuccessOverlay";
 import { PosScanModal } from "./components/PosScanModal";
 import { PosSingleMethodDetailsModal } from "./components/PosSingleMethodDetailsModal";
 import { PosWorkspace } from "./components/PosWorkspace";
+import { posCatalogQueryOptions } from "./constants/posCatalogCache";
 import { usePosCart } from "./hooks/usePosCart";
 import {
   getPaymentCurrency,
@@ -47,6 +46,11 @@ type PaymentSelectionSnapshot = {
   method: PaymentMethod | null;
 };
 
+type CompletedSaleSummary = {
+  id: string;
+  invoiceNumber: string;
+};
+
 export function SaleCreatePage() {
   return (
     <PosCashSessionGate>
@@ -56,9 +60,9 @@ export function SaleCreatePage() {
 }
 
 function SaleCreatePosWorkspace() {
-  const contacts = useContacts({ limit: 100 });
-  const categories = useCategories();
-  const products = useProducts({ isActive: true, limit: 100 });
+  const contacts = useContacts({ limit: 100 }, posCatalogQueryOptions);
+  const categories = useCategories({}, posCatalogQueryOptions);
+  const products = useProducts({ isActive: true, limit: 100 }, posCatalogQueryOptions);
   const currentRate = useCurrentExchangeRate();
   const createSale = useCreateSale();
   const createPayment = useCreatePayment();
@@ -82,6 +86,7 @@ function SaleCreatePosWorkspace() {
   const [categoryId, setCategoryId] = useState("");
   const [scanOpen, setScanOpen] = useState(false);
   const [formError, setFormError] = useState<string>();
+  const [completedSale, setCompletedSale] = useState<CompletedSaleSummary | null>(null);
 
   useEffect(() => {
     // Recover interaction if a previous modal guard left the page blocked.
@@ -111,16 +116,36 @@ function SaleCreatePosWorkspace() {
     }
   }, [enabledPaymentMethods, mixedPayments]);
 
-  const customers = getPaginatedItems(contacts.data).filter(
-    (contact) => contact.type === "cliente" || contact.type === "ambos",
+  const customers = useMemo(() => {
+    return getPaginatedItems(contacts.data)
+      .filter((contact) => contact.type === "cliente" || contact.type === "ambos")
+      .slice()
+      .sort((left, right) => {
+        const leftDefault = left.isPosDefault ? 1 : 0;
+        const rightDefault = right.isPosDefault ? 1 : 0;
+        if (leftDefault !== rightDefault) {
+          return rightDefault - leftDefault;
+        }
+        return left.name.localeCompare(right.name, "es");
+      });
+  }, [contacts.data]);
+  const defaultCustomerId = useMemo(
+    () => customers.find((customer) => customer.isPosDefault)?.id ?? "",
+    [customers],
   );
   const categoryOptions = getPaginatedItems(categories.data);
   const activeProducts = getPaginatedItems(products.data);
   const dependencyError = contacts.error ?? products.error ?? currentRate.error;
   const rateVes = currentRate.data?.rateVes ?? 0;
   const totalRef = cart.subtotalRef;
-  const totalVes = rateVes ? refToVes(totalRef, rateVes) : 0;
+  const totalVes = rateVes ? roundMoney(refToVes(totalRef, rateVes)) : 0;
   const isSubmitting = createSale.isPending || createPayment.isPending;
+
+  useEffect(() => {
+    if (!customerId && defaultCustomerId) {
+      setCustomerId(defaultCustomerId);
+    }
+  }, [customerId, defaultCustomerId]);
 
   const cartQuantitiesByProductId = useMemo(() => {
     const quantities = new Map<string, number>();
@@ -181,9 +206,15 @@ function SaleCreatePosWorkspace() {
 
   function resetAfterSuccessfulSale() {
     cart.clearCart();
-    setCustomerId("");
+    setCustomerId(defaultCustomerId);
     setMixedPayments(null);
     resetPaymentSelection();
+  }
+
+  function handleStartNewSale() {
+    setCompletedSale(null);
+    createSale.reset();
+    focusSearchInput();
   }
 
   function handlePaymentMethodChange(nextMethod: PaymentMethod) {
@@ -333,6 +364,11 @@ function SaleCreatePosWorkspace() {
       }
 
       resetAfterSuccessfulSale();
+      setCompletedSale({
+        id: sale.id,
+        invoiceNumber: sale.invoiceNumber,
+      });
+      createSale.reset();
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "No pudimos procesar la venta.");
     }
@@ -374,34 +410,12 @@ function SaleCreatePosWorkspace() {
         </div>
       ) : null}
 
-      {createSale.data ? (
-        <div className="shrink-0 px-4 pt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Venta registrada</CardTitle>
-              <CardDescription>
-                Factura {createSale.data.invoiceNumber}. Puedes seguir vendiendo o volver al
-                listado.
-              </CardDescription>
-            </CardHeader>
-            <CardFooter className="gap-2">
-              <Button asChild size="sm" variant="outline">
-                <Link href="/sales">Ver ventas</Link>
-              </Button>
-              <Button
-                onClick={() => createSale.reset()}
-                size="sm"
-                type="button"
-                variant="primary"
-              >
-                Nueva venta
-              </Button>
-            </CardFooter>
-          </Card>
-        </div>
-      ) : null}
-
-      {!createSale.data ? (
+      {completedSale ? (
+        <PosSaleSuccessOverlay
+          invoiceNumber={completedSale.invoiceNumber}
+          onNewSale={handleStartNewSale}
+        />
+      ) : (
         <PosWorkspace
           className="min-h-0 flex-1"
           cart={({ onRequestClose }) => (
@@ -472,7 +486,7 @@ function SaleCreatePosWorkspace() {
           totalRef={totalRef}
           totalVes={totalVes}
         />
-      ) : null}
+      )}
 
       <PosScanModal
         isLookingUp={barcodeScan.isLookingUp}

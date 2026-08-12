@@ -67,7 +67,14 @@ export function PosCustomerPickerModal({
                 type="button"
               >
                 <UserRound aria-hidden className="size-4 shrink-0" />
-                <span className="font-medium">{customer.name}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">{customer.name}</span>
+                  {customer.isPosDefault ? (
+                    <span className="mt-0.5 block text-xs text-on-surface-variant">
+                      Default POS
+                    </span>
+                  ) : null}
+                </span>
               </button>
             </li>
           );

@@ -1,9 +1,12 @@
 import { z } from "zod";
 
-import { toErrorResponse } from "@/lib/api/apiError";
+import { ApiError, toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
-import { requireStorePermission } from "@/lib/api/requirePermission";
+import {
+  requireStoreAnyPermission,
+  requireStorePermission,
+} from "@/lib/api/requirePermission";
 import * as paymentsMockServer from "@/modules/payments/services/payments.mock-server";
 import * as paymentsServer from "@/modules/payments/services/payments.server";
 import {
@@ -11,6 +14,7 @@ import {
   assertCanQueryPurchasePayments,
   canViewPurchasePayments,
 } from "@/shared/auth/paymentAccess";
+import type { Permission } from "@/shared/auth/permissions";
 
 const createPaymentSchema = z
   .object({
@@ -109,9 +113,27 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const auth = await requireStorePermission(request, "payments.manage");
+    // Vendedor cobra en POS con sales.create; contador/admin con payments.manage.
+    // RPC register_payment ya autoriza vendedor solo en pagos de venta.
+    const auth = await requireStoreAnyPermission(request, [
+      "payments.manage",
+      "sales.create",
+    ] satisfies Permission[]);
     const input = createPaymentSchema.parse(await request.json());
     assertCanCreatePurchasePayment(auth.role, input);
+
+    const canManagePayments = auth.permissions.includes("payments.manage");
+    if (input.purchaseId && !canManagePayments) {
+      throw new ApiError(
+        403,
+        "FORBIDDEN",
+        "No tienes permiso para registrar pagos de compras.",
+      );
+    }
+    if (input.saleId && !canManagePayments && !auth.permissions.includes("sales.create")) {
+      throw new ApiError(403, "FORBIDDEN", "No tienes permiso para registrar pagos de ventas.");
+    }
+
     const service = getPaymentsService();
     return jsonCreated(await service.createPayment(input, auth.storeId));
   } catch (error) {

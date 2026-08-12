@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { UseQueryOptions } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import { apiFetch } from "@/shared/api/apiFetch";
@@ -49,13 +50,22 @@ export const contactsQueryKeys = {
   sales: (id: string) => [...contactsQueryKeys.detail(id), "sales"] as const,
 };
 
-export function useContacts(filters: ContactsFilters = {}) {
+type ContactsListQueryOptions = Pick<
+  UseQueryOptions<PaginatedList<ContactMock>>,
+  "enabled" | "gcTime" | "refetchOnMount" | "staleTime"
+>;
+
+export function useContacts(
+  filters: ContactsFilters = {},
+  options: ContactsListQueryOptions = {},
+) {
   return useQuery({
     queryKey: contactsQueryKeys.list(filters),
     queryFn: () =>
       apiFetch<PaginatedList<ContactMock>>("/api/contacts", {
         query: filters,
       }),
+    ...options,
   });
 }
 

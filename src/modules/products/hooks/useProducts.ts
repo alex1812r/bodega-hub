@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { UseQueryOptions } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import type { SortOrder } from "@/lib/api/sorting";
@@ -85,13 +86,27 @@ export const productsQueryKeys = {
   suppliers: (id: string) => [...productsQueryKeys.all, "suppliers", id] as const,
 };
 
-export function useProducts(filters: ProductsFilters = {}) {
+type ProductsListQueryOptions = Pick<
+  UseQueryOptions<PaginatedList<ProductWithCategory>>,
+  "enabled" | "gcTime" | "refetchOnMount" | "staleTime"
+>;
+
+type CategoriesListQueryOptions = Pick<
+  UseQueryOptions<PaginatedList<CategoryMock>>,
+  "enabled" | "gcTime" | "refetchOnMount" | "staleTime"
+>;
+
+export function useProducts(
+  filters: ProductsFilters = {},
+  options: ProductsListQueryOptions = {},
+) {
   return useQuery({
     queryKey: productsQueryKeys.list(filters),
     queryFn: () =>
       apiFetch<PaginatedList<ProductWithCategory>>("/api/products", {
         query: filters,
       }),
+    ...options,
   });
 }
 
@@ -103,13 +118,17 @@ export function useProduct(id: string) {
   });
 }
 
-export function useCategories(filters: CategoriesFilters = {}) {
+export function useCategories(
+  filters: CategoriesFilters = {},
+  options: CategoriesListQueryOptions = {},
+) {
   return useQuery({
     queryKey: productsQueryKeys.categories(filters),
     queryFn: () =>
       apiFetch<PaginatedList<CategoryMock>>("/api/categories", {
         query: filters,
       }),
+    ...options,
   });
 }
 

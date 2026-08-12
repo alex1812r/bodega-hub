@@ -68,6 +68,7 @@ export function createContact(input: ContactInput, storeId: string) {
     email: input.email ?? "",
     id: `cont-mock-${Date.now()}`,
     isActive: true,
+    isPosDefault: false,
     name: input.name ?? "Contacto mock",
     phone: input.phone ?? "",
     storeId,
@@ -77,6 +78,16 @@ export function createContact(input: ContactInput, storeId: string) {
 }
 
 export function updateContact(id: string, input: ContactInput, storeId: string) {
+  const current = getContactById(id, storeId);
+
+  if (current.isPosDefault && input.isActive === false) {
+    throw new ApiError(400, "BAD_REQUEST", "No se puede desactivar el cliente default del POS.");
+  }
+
+  if (current.isPosDefault && input.type && input.type !== "cliente" && input.type !== "ambos") {
+    throw new ApiError(400, "BAD_REQUEST", "El cliente default del POS debe ser tipo cliente.");
+  }
+
   if (
     input.taxId &&
     mockContacts.some((contact) => contact.id !== id && contact.taxId === input.taxId)
@@ -85,8 +96,9 @@ export function updateContact(id: string, input: ContactInput, storeId: string) 
   }
 
   return {
-    ...getContactById(id, storeId),
+    ...current,
     ...input,
+    isPosDefault: current.isPosDefault,
   };
 }
 

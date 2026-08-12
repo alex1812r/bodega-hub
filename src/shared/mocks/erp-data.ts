@@ -42,6 +42,8 @@ export type ContactMock = {
   email: string;
   id: string;
   isActive: boolean;
+  /** Cliente sistema preseleccionado en POS (uno por tienda). */
+  isPosDefault?: boolean;
   name: string;
   phone: string;
   taxId: string;
@@ -469,6 +471,18 @@ export const mockProductPriceHistory: ProductPriceHistoryMock[] = [
 ];
 
 export const mockContacts: ContactMock[] = [
+  {
+    address: "",
+    email: "",
+    id: "cont-walk-in",
+    isActive: true,
+    isPosDefault: true,
+    name: "Consumidor final",
+    phone: "",
+    storeId: "00000000-0000-4000-8000-000000000001",
+    taxId: "",
+    type: "cliente",
+  },
   {
     address: "Av. Principal, Caracas",
     email: "cliente@example.com",

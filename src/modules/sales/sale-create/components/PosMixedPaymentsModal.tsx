@@ -21,6 +21,8 @@ import { cn } from "@/shared/utils/cn";
 
 import {
   MIXED_PAYMENT_MIN_LINES,
+  MIXED_PAYMENT_TOLERANCE_VES,
+  amountToCoverRemainingVes,
   buildRemainingFillHelperText,
   buildVesAmountHelperText,
   createDefaultMixedPaymentLines,
@@ -28,12 +30,13 @@ import {
   getAvailablePaymentMethods,
   getMaxMixedPaymentLines,
   getRemainingRef,
+  getRemainingVes,
+  getSaleTotalVes,
   isUsdPaymentMethod,
   needsBank,
   needsPhone,
   needsReference,
   pickNextAvailablePaymentMethod,
-  refToPaymentAmount,
   validateMixedPayments,
   type PosMixedPaymentLine,
 } from "../utils/mixedPayments";
@@ -88,8 +91,18 @@ export function PosMixedPaymentsModal({
     );
   }, [enabledPaymentMethods, initialLines, open]);
 
+  const saleTotalVes = useMemo(
+    () => getSaleTotalVes(totalRef, rateVes) || totalVes,
+    [rateVes, totalRef, totalVes],
+  );
+
   const remainingRef = useMemo(
     () => getRemainingRef(totalRef, lines, rateVes),
+    [lines, rateVes, totalRef],
+  );
+
+  const remainingVes = useMemo(
+    () => getRemainingVes(totalRef, lines, rateVes),
     [lines, rateVes, totalRef],
   );
 
@@ -111,8 +124,8 @@ export function PosMixedPaymentsModal({
         return current;
       }
 
-      const remaining = getRemainingRef(totalRef, current, rateVes, id);
-      const amount = refToPaymentAmount(target.method, remaining, rateVes);
+      const remaining = getRemainingVes(totalRef, current, rateVes, id);
+      const amount = amountToCoverRemainingVes(target.method, remaining, rateVes);
       return current.map((line) => (line.id === id ? { ...line, amount } : line));
     });
   }
@@ -156,20 +169,21 @@ export function PosMixedPaymentsModal({
             <div className="text-right">
               <p className="font-semibold text-foreground">{formatRef(totalRef)}</p>
               {rateVes > 0 ? (
-                <p className="text-xs text-muted-foreground">{formatVes(totalVes)}</p>
+                <p className="text-xs text-muted-foreground">{formatVes(saleTotalVes)}</p>
               ) : null}
             </div>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             Tasa: {rateVes > 0 ? formatVes(rateVes) : "no disponible"} · Restante:{" "}
             {formatRef(remainingRef)}
+            {rateVes > 0 ? ` / ${formatVes(remainingVes)}` : ""}
           </p>
         </div>
 
         <div className="space-y-4">
           {lines.map((line, index) => {
-            const lineRemaining = getRemainingRef(totalRef, lines, rateVes, line.id);
-            const canFill = lineRemaining > 0.01;
+            const lineRemainingVes = getRemainingVes(totalRef, lines, rateVes, line.id);
+            const canFill = lineRemainingVes > MIXED_PAYMENT_TOLERANCE_VES;
             const availableMethods = getAvailablePaymentMethods(
               lines,
               line.id,
@@ -181,10 +195,10 @@ export function PosMixedPaymentsModal({
                 : [line.method, ...availableMethods],
             );
             const helperText = isUsdPaymentMethod(line.method)
-              ? buildRemainingFillHelperText(line.method, lineRemaining, rateVes) ??
+              ? buildRemainingFillHelperText(line.method, lineRemainingVes, rateVes) ??
                 "Monto en USD / REF."
               : buildVesAmountHelperText(line.amount, rateVes) ??
-                buildRemainingFillHelperText(line.method, lineRemaining, rateVes) ??
+                buildRemainingFillHelperText(line.method, lineRemainingVes, rateVes) ??
                 "Monto en VES.";
 
             return (

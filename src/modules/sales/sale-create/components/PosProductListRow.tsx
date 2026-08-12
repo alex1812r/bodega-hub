@@ -60,7 +60,7 @@ export function PosProductListRow({
         onClick={() => onAdd(product)}
         type="button"
       >
-        <div className="size-12 shrink-0 overflow-hidden rounded bg-surface-container">
+        <div className="relative size-12 shrink-0 overflow-hidden rounded bg-surface-container">
           <PosProductImage
             alt={product.name}
             compact

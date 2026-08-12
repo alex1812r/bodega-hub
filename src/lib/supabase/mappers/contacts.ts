@@ -6,6 +6,7 @@ export type DbContactRow = {
   email?: string | null;
   id: string;
   is_active?: boolean | null;
+  is_pos_default?: boolean | null;
   name: string;
   notes?: string | null;
   phone?: string | null;
@@ -21,6 +22,7 @@ export function mapContact(row: DbContactRow) {
     address: mapNullableString(row.address) ?? "",
     email: mapNullableString(row.email) ?? "",
     isActive: mapBoolean(row.is_active, true),
+    isPosDefault: mapBoolean(row.is_pos_default, false),
     name: row.name,
     phone: mapNullableString(row.phone) ?? "",
     taxId: mapNullableString(row.tax_id) ?? "",

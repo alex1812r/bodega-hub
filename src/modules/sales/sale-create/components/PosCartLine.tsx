@@ -23,7 +23,7 @@ export function PosCartLine({ item, onQuantityChange, onRemove, rateVes }: PosCa
 
   return (
     <li className="group relative flex items-center gap-2.5 rounded-xl border border-border bg-surface-container-lowest p-2.5 shadow-sm sm:gap-3 sm:p-3 dark:border-slate-800">
-      <div className="size-12 shrink-0 overflow-hidden rounded bg-surface-container">
+      <div className="relative size-12 shrink-0 overflow-hidden rounded bg-surface-container">
         <PosProductImage alt={item.productName} compact imageUrl={item.imageUrl} />
       </div>
 

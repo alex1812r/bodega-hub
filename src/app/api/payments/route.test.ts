@@ -174,4 +174,47 @@ describe("/api/payments", () => {
 
     expect(response.status).toBe(403);
   });
+
+  it("allows vendedor to register a sale payment", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/payments", {
+        body: JSON.stringify({
+          amount: 500,
+          method: "efectivo_ves",
+          saleId: "sale-002",
+        }),
+        headers: {
+          "content-type": "application/json",
+          "x-demo-role": "vendedor",
+        },
+        method: "POST",
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body.data.direction).toBe("entrada");
+    expect(body.data.saleId).toBe("sale-002");
+  });
+
+  it("forbids vendedor from registering a purchase payment", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/payments", {
+        body: JSON.stringify({
+          amount: 500,
+          method: "transferencia",
+          bankName: "Banco Nacional",
+          purchaseId: "purchase-001",
+          referenceCode: "TRX-VENDEDOR",
+        }),
+        headers: {
+          "content-type": "application/json",
+          "x-demo-role": "vendedor",
+        },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(403);
+  });
 });

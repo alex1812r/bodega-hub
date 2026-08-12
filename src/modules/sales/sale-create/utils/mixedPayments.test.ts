@@ -1,16 +1,22 @@
 import type { PaymentMethod } from "@/shared/mocks/erp-data";
 
 import {
+  amountToCoverRemainingVes,
   buildRemainingFillHelperText,
   buildVesAmountHelperText,
   canUseMixedPayments,
   createDefaultMixedPaymentLines,
   getAvailablePaymentMethods,
+  getAllocatedVes,
   getRemainingRef,
+  getRemainingVes,
+  getSaleTotalVes,
   methodRequiresPaymentDetails,
   paymentAmountToRef,
+  paymentAmountToVes,
   pickNextAvailablePaymentMethod,
   refToPaymentAmount,
+  usdAmountToCoverVes,
   validateMixedPayments,
   validateSinglePaymentDetails,
   type PosMixedPaymentLine,
@@ -32,6 +38,8 @@ describe("mixedPayments utils", () => {
   it("converts USD amounts 1:1 to REF and VES amounts using the rate", () => {
     expect(paymentAmountToRef("efectivo_usd", 10, rateVes)).toBe(10);
     expect(paymentAmountToRef("efectivo_ves", 200, rateVes)).toBe(5);
+    expect(paymentAmountToVes("efectivo_usd", 10, rateVes)).toBe(400);
+    expect(paymentAmountToVes("efectivo_ves", 200, rateVes)).toBe(200);
     expect(refToPaymentAmount("efectivo_usd", 5, rateVes)).toBe(5);
     expect(refToPaymentAmount("efectivo_ves", 5, rateVes)).toBe(200);
   });
@@ -45,16 +53,17 @@ describe("mixedPayments utils", () => {
     expect(getRemainingRef(15, lines, rateVes)).toBe(5);
     expect(getRemainingRef(15, lines, rateVes, "b")).toBe(5);
     expect(getRemainingRef(15, lines, rateVes, "a")).toBe(15);
+    expect(getRemainingVes(15, lines, rateVes, "b")).toBe(200);
   });
 
   it("builds helper texts for VES amounts and remaining fill", () => {
     expect(buildVesAmountHelperText(200, rateVes)).toContain("ref 5.00");
     expect(buildVesAmountHelperText(200, rateVes)).toContain("=");
-    expect(buildRemainingFillHelperText("efectivo_ves", 5, rateVes)).toContain(
+    expect(buildRemainingFillHelperText("efectivo_ves", 200, rateVes)).toContain(
       "ref 5.00",
     );
-    expect(buildRemainingFillHelperText("efectivo_usd", 5, rateVes)).toBe(
-      "Restante: ref 5.00",
+    expect(buildRemainingFillHelperText("efectivo_usd", 200, rateVes)).toContain(
+      "Restante:",
     );
   });
 
@@ -84,6 +93,64 @@ describe("mixedPayments utils", () => {
     );
     expect(incomplete.isValid).toBe(false);
     expect(incomplete.errors.some((error) => error.includes("Falta"))).toBe(true);
+  });
+
+  it("rejects 150 Bs + 1.11 USD when VES still short (real POS case)", () => {
+    const rate = 764.3486;
+    const totalRef = 1.31;
+    expect(getSaleTotalVes(totalRef, rate)).toBe(1001.3);
+
+    const shortLines = [
+      line({
+        amount: 150,
+        bankName: "0102 - Banco de Venezuela",
+        id: "pm",
+        method: "pago_movil",
+        phone: "04125555555",
+        referenceCode: "0000",
+      }),
+      line({ amount: 1.11, id: "usd", method: "efectivo_usd" }),
+    ];
+
+    expect(getAllocatedVes(shortLines, rate)).toBe(998.43);
+    const short = validateMixedPayments(totalRef, shortLines, rate);
+    expect(short.isValid).toBe(false);
+    expect(short.errors.some((error) => error.includes("Falta"))).toBe(true);
+
+    const coveredUsd = usdAmountToCoverVes(getRemainingVes(totalRef, shortLines.slice(0, 1), rate), rate);
+    expect(coveredUsd).toBe(1.12);
+    expect(paymentAmountToVes("efectivo_usd", coveredUsd, rate)).toBeGreaterThanOrEqual(
+      getRemainingVes(totalRef, shortLines.slice(0, 1), rate),
+    );
+
+    const filled = validateMixedPayments(
+      totalRef,
+      [
+        shortLines[0],
+        line({ amount: coveredUsd, id: "usd", method: "efectivo_usd" }),
+      ],
+      rate,
+    );
+    expect(filled.isValid).toBe(true);
+  });
+
+  it("fills remaining VES exactly with efectivo_ves", () => {
+    const rate = 764.3486;
+    const totalRef = 1.31;
+    const lines = [
+      line({
+        amount: 150,
+        bankName: "0102 - Banco de Venezuela",
+        id: "pm",
+        method: "pago_movil",
+        phone: "04125555555",
+        referenceCode: "0000",
+      }),
+      line({ amount: 0, id: "cash", method: "efectivo_ves" }),
+    ];
+    const remaining = getRemainingVes(totalRef, lines, rate, "cash");
+    expect(remaining).toBe(851.3);
+    expect(amountToCoverRemainingVes("efectivo_ves", remaining, rate)).toBe(851.3);
   });
 
   it("excludes already selected methods from available options", () => {

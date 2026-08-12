@@ -5,13 +5,16 @@ import {
   PAYMENT_METHODS,
   paymentMethodLabels,
 } from "@/shared/payments/paymentMethods";
-import { formatRef, formatVes, refToVes } from "@/shared/utils/currency";
+import { formatRef, formatVes, roundMoney } from "@/shared/utils/currency";
 import { isKnownBankLabel } from "@/shared/venezuela/banks";
 import { isValidVeMobilePhone } from "@/shared/venezuela/phone";
 
 export const MIXED_PAYMENT_MAX_LINES = 4;
 export const MIXED_PAYMENT_MIN_LINES = 2;
+/** Tolerancia en REF (legacy / UI). La validacion de cierre usa VES. */
 export const MIXED_PAYMENT_TOLERANCE_REF = 0.01;
+/** Tolerancia en Bs. alineada a round(..., 2) del backend. */
+export const MIXED_PAYMENT_TOLERANCE_VES = 0.01;
 
 /** @deprecated Prefer PAYMENT_METHODS from shared/payments/paymentMethods */
 export const MIXED_PAYMENT_METHODS: PaymentMethod[] = [...PAYMENT_METHODS];
@@ -139,6 +142,7 @@ export function validateSinglePaymentDetails(
   };
 }
 
+/** Misma conversion REF que usa el POS para mostrar/estimar. */
 export function paymentAmountToRef(
   method: PaymentMethod,
   amount: number,
@@ -159,24 +163,36 @@ export function paymentAmountToRef(
   return amount / rateVes;
 }
 
-export function refToPaymentAmount(
+/**
+ * Conversion a Bs. alineada a `register_payment`:
+ * - USD: round(amount * rate, 2)
+ * - VES: round(amount, 2)
+ */
+export function paymentAmountToVes(
   method: PaymentMethod,
-  remainingRef: number,
+  amount: number,
   rateVes: number,
 ) {
-  if (!Number.isFinite(remainingRef) || remainingRef <= 0) {
+  if (!Number.isFinite(amount) || amount <= 0) {
     return 0;
   }
 
   if (isUsdPaymentMethod(method)) {
-    return roundMoney(remainingRef);
+    if (!rateVes || rateVes <= 0) {
+      return 0;
+    }
+    return roundMoney(amount * rateVes);
   }
 
-  if (!rateVes || rateVes <= 0) {
+  return roundMoney(amount);
+}
+
+/** Total VES de la venta: round(totalRef * rate), igual que `create_sale`. */
+export function getSaleTotalVes(totalRef: number, rateVes: number) {
+  if (!Number.isFinite(totalRef) || totalRef <= 0 || !rateVes || rateVes <= 0) {
     return 0;
   }
-
-  return roundMoney(refToVes(remainingRef, rateVes));
+  return roundMoney(totalRef * rateVes);
 }
 
 export function getAllocatedRef(
@@ -186,6 +202,18 @@ export function getAllocatedRef(
   return lines.reduce(
     (total, line) => total + paymentAmountToRef(line.method, line.amount, rateVes),
     0,
+  );
+}
+
+export function getAllocatedVes(
+  lines: Array<Pick<PosMixedPaymentLine, "amount" | "method">>,
+  rateVes: number,
+) {
+  return roundMoney(
+    lines.reduce(
+      (total, line) => total + paymentAmountToVes(line.method, line.amount, rateVes),
+      0,
+    ),
   );
 }
 
@@ -202,6 +230,86 @@ export function getRemainingRef(
   return Math.max(0, roundMoney(totalRef - getAllocatedRef(source, rateVes)));
 }
 
+export function getRemainingVes(
+  totalRef: number,
+  lines: Array<Pick<PosMixedPaymentLine, "amount" | "id" | "method">>,
+  rateVes: number,
+  excludeLineId?: string,
+) {
+  const source = excludeLineId
+    ? lines.filter((line) => line.id !== excludeLineId)
+    : lines;
+
+  return Math.max(
+    0,
+    roundMoney(getSaleTotalVes(totalRef, rateVes) - getAllocatedVes(source, rateVes)),
+  );
+}
+
+/**
+ * Minimo USD (2 decimales) tal que round(usd * rate, 2) >= remainingVes.
+ * Evita el hueco de centavos al redondear el restante REF→USD.
+ */
+export function usdAmountToCoverVes(remainingVes: number, rateVes: number) {
+  if (!Number.isFinite(remainingVes) || remainingVes <= 0 || !rateVes || rateVes <= 0) {
+    return 0;
+  }
+
+  let amount = roundMoney(remainingVes / rateVes);
+  let guard = 0;
+
+  while (paymentAmountToVes("efectivo_usd", amount, rateVes) + 1e-9 < remainingVes && guard < 20) {
+    amount = roundMoney(amount + 0.01);
+    guard += 1;
+  }
+
+  return amount;
+}
+
+/** Monto en la moneda del metodo para cubrir un restante en Bs. */
+export function amountToCoverRemainingVes(
+  method: PaymentMethod,
+  remainingVes: number,
+  rateVes: number,
+) {
+  if (!Number.isFinite(remainingVes) || remainingVes <= 0) {
+    return 0;
+  }
+
+  if (isUsdPaymentMethod(method)) {
+    return usdAmountToCoverVes(remainingVes, rateVes);
+  }
+
+  return roundMoney(remainingVes);
+}
+
+/**
+ * @deprecated Prefer amountToCoverRemainingVes for fill-remaining (cierra en Bs.).
+ * Conservado para callers que parten de restante REF.
+ */
+export function refToPaymentAmount(
+  method: PaymentMethod,
+  remainingRef: number,
+  rateVes: number,
+) {
+  if (!Number.isFinite(remainingRef) || remainingRef <= 0) {
+    return 0;
+  }
+
+  if (isUsdPaymentMethod(method)) {
+    if (!rateVes || rateVes <= 0) {
+      return roundMoney(remainingRef);
+    }
+    return usdAmountToCoverVes(roundMoney(remainingRef * rateVes), rateVes);
+  }
+
+  if (!rateVes || rateVes <= 0) {
+    return 0;
+  }
+
+  return roundMoney(remainingRef * rateVes);
+}
+
 export function buildVesAmountHelperText(amountVes: number, rateVes: number) {
   if (!rateVes || rateVes <= 0 || !Number.isFinite(amountVes) || amountVes <= 0) {
     return undefined;
@@ -213,23 +321,25 @@ export function buildVesAmountHelperText(amountVes: number, rateVes: number) {
 
 export function buildRemainingFillHelperText(
   method: PaymentMethod,
-  remainingRef: number,
+  remainingVes: number,
   rateVes: number,
 ) {
-  if (remainingRef <= MIXED_PAYMENT_TOLERANCE_REF) {
+  if (remainingVes <= MIXED_PAYMENT_TOLERANCE_VES) {
     return undefined;
   }
 
+  const amount = amountToCoverRemainingVes(method, remainingVes, rateVes);
+
   if (isUsdPaymentMethod(method)) {
-    return `Restante: ${formatRef(remainingRef)}`;
+    const coversVes = paymentAmountToVes("efectivo_usd", amount, rateVes);
+    return `Restante: ${formatVes(remainingVes)} → ${formatRef(amount)} (cubre ${formatVes(coversVes)})`;
   }
 
   if (!rateVes || rateVes <= 0) {
     return undefined;
   }
 
-  const amountVes = refToPaymentAmount(method, remainingRef, rateVes);
-  return `${formatRef(remainingRef)} × ${formatVes(rateVes)} = ${formatVes(amountVes)}`;
+  return `${formatRef(remainingVes / rateVes)} × ${formatVes(rateVes)} = ${formatVes(amount)}`;
 }
 
 export function createEmptyMixedPaymentLine(
@@ -256,6 +366,14 @@ export type MixedPaymentsValidationResult = {
   errors: string[];
   isValid: boolean;
 };
+
+/** Maximo sobrepago permitido en Bs. al cerrar con USD (1 centavo USD a la tasa). */
+export function getMixedPaymentMaxOverageVes(rateVes: number) {
+  if (!rateVes || rateVes <= 0) {
+    return MIXED_PAYMENT_TOLERANCE_VES;
+  }
+  return roundMoney(0.01 * rateVes + MIXED_PAYMENT_TOLERANCE_VES);
+}
 
 export function validateMixedPayments(
   totalRef: number,
@@ -323,17 +441,20 @@ export function validateMixedPayments(
     errors.push("Cada metodo de pago solo puede usarse una vez.");
   }
 
-  const allocated = getAllocatedRef(lines, rateVes);
-  const delta = Math.abs(allocated - totalRef);
+  if (rateVes > 0) {
+    const totalVes = getSaleTotalVes(totalRef, rateVes);
+    const allocatedVes = getAllocatedVes(lines, rateVes);
+    const shortfall = roundMoney(totalVes - allocatedVes);
+    const overage = roundMoney(allocatedVes - totalVes);
+    const maxOverage = getMixedPaymentMaxOverageVes(rateVes);
 
-  if (delta > MIXED_PAYMENT_TOLERANCE_REF) {
-    if (allocated < totalRef) {
+    if (shortfall > MIXED_PAYMENT_TOLERANCE_VES) {
       errors.push(
-        `Falta por cubrir ${formatRef(totalRef - allocated)} del total ${formatRef(totalRef)}.`,
+        `Falta por cubrir ${formatVes(shortfall)} del total ${formatVes(totalVes)}.`,
       );
-    } else {
+    } else if (overage > maxOverage) {
       errors.push(
-        `La suma excede el total por ${formatRef(allocated - totalRef)} (total ${formatRef(totalRef)}).`,
+        `La suma excede el total por ${formatVes(overage)} (total ${formatVes(totalVes)}).`,
       );
     }
   }
@@ -342,8 +463,4 @@ export function validateMixedPayments(
     errors,
     isValid: errors.length === 0,
   };
-}
-
-function roundMoney(value: number) {
-  return Math.round(value * 100) / 100;
 }
