@@ -35,8 +35,8 @@ export function ProductsListFilters({
 }: ProductsListFiltersProps) {
   return (
     <section className="w-full min-w-0 rounded-xl border border-border bg-surface-container-lowest p-4 shadow-sm dark:border-slate-800 md:p-5">
-      <div className="products-list-filters-grid">
-        <div className="min-w-0">
+      <div className="flex w-full min-w-0 flex-col gap-4 md:flex-row md:items-end">
+        <div className="min-w-0 md:flex-[5_1_0%]">
           <label className={stitchListFilterLabelClassName} htmlFor="products-search">
             Búsqueda
           </label>
@@ -58,7 +58,7 @@ export function ProductsListFilters({
           </div>
         </div>
 
-        <div className="min-w-0">
+        <div className="min-w-0 md:max-w-56 md:flex-[4_0_10rem]">
           <label className={stitchListFilterLabelClassName} htmlFor="products-category">
             Categoría
           </label>
@@ -79,7 +79,7 @@ export function ProductsListFilters({
           </select>
         </div>
 
-        <div className="min-w-0">
+        <div className="min-w-0 md:max-w-48 md:flex-[3_0_9rem]">
           <label className={stitchListFilterLabelClassName} htmlFor="products-status">
             Estado
           </label>

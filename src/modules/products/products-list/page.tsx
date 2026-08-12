@@ -62,6 +62,7 @@ function buildProductColumns(rateVes: number): DataTableColumn<ProductWithCatego
     {
       cellClassName: "min-w-[10rem] font-medium",
       header: "Nombre",
+      hideInCard: true,
       key: "name",
       render: (product) => (
         <ProductNameWithThumb
@@ -75,6 +76,7 @@ function buildProductColumns(rateVes: number): DataTableColumn<ProductWithCatego
     {
       cellClassName: "text-on-surface-variant",
       header: "Categoría",
+      hideInCard: true,
       key: "category",
       render: (product) => product.category?.name ?? "Sin categoría",
       sortable: true,
@@ -255,7 +257,7 @@ export function ProductsListPage() {
           onChange={handleFilterChange}
         />
 
-        <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
+        <div className="flex w-full flex-col md:overflow-hidden md:rounded-xl md:border md:border-border md:bg-surface-container-lowest md:shadow-sm dark:md:border-slate-800">
           <DataTable
             actions={(product) => {
               const items: ActionMenuItem[] = [
@@ -335,7 +337,7 @@ export function ProductsListPage() {
             variant="stitch-purchases"
           />
 
-          <div className="border-t border-border bg-surface px-4 py-3 dark:border-slate-800 sm:px-6">
+          <div className="mt-3 rounded-xl border border-border bg-surface-container-lowest px-4 py-3 shadow-sm dark:border-slate-800 md:mt-0 md:rounded-none md:border-0 md:border-t md:bg-surface md:shadow-none dark:md:border-slate-800 sm:px-6">
             <ResponsivePagination
               entityLabel="productos"
               isDisabled={products.isFetching}

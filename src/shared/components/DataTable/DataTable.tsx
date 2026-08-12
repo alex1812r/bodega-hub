@@ -149,6 +149,7 @@ export function DataTable<TData>({
         cardTitle={cardTitle}
         columns={columns}
         data={data}
+        embedded={embedded}
         emptyState={emptyState}
         error={error}
         getRowId={getRowId}

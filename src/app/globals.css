@@ -334,33 +334,6 @@ button.pos-cart-remove svg {
   background-color: #334155;
 }
 
-/* Listado de productos: 3 columnas en una fila (búsqueda 5fr + categoría 4fr + estado 3fr) */
-.products-list-filters-grid {
-  display: flex;
-  flex-flow: row nowrap;
-  align-items: flex-end;
-  gap: 1rem;
-  width: 100%;
-  min-width: 0;
-}
-
-.products-list-filters-grid > *:nth-child(1) {
-  flex: 5 1 0;
-  min-width: 0;
-}
-
-.products-list-filters-grid > *:nth-child(2) {
-  flex: 4 0 10rem;
-  min-width: 0;
-  max-width: 14rem;
-}
-
-.products-list-filters-grid > *:nth-child(3) {
-  flex: 3 0 9rem;
-  min-width: 0;
-  max-width: 12rem;
-}
-
 /* POS: producto agregado al carrito */
 .pos-product-card--selected {
   border-color: var(--primary) !important;
