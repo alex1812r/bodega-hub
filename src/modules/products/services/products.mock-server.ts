@@ -176,10 +176,14 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
     );
   });
 
-  const items = products.map((product) => ({
-    ...product,
-    category: mockCategories.find((category) => category.id === product.categoryId),
-  }));
+  const items = products.map((product) => {
+    const category = mockCategories.find((item) => item.id === product.categoryId);
+    return {
+      ...product,
+      category,
+      taxRate: product.taxRate ?? category?.taxRate ?? 0,
+    };
+  });
 
   const { sortBy, sortOrder } = parseProductSort(searchParams);
   const sortedItems = sortProductItems(items, sortBy, sortOrder);

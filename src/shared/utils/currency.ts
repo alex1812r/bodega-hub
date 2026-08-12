@@ -12,9 +12,9 @@ export function formatRef(value: number) {
   return `ref ${value.toFixed(2)}`;
 }
 
-/** Stitch tablas de ventas: "$120.50" */
+/** Tablas / montos REF: "ref 120.50" (evita el simbolo $). */
 export function formatRefUsd(value: number) {
-  return `$${value.toFixed(2)}`;
+  return `ref ${value.toFixed(2)}`;
 }
 
 /** Stitch tablas de ventas: "Bs. 4,398.25" */
@@ -41,4 +41,10 @@ export function vesToRef(valueVes: number, refRateVes: number) {
 /** Round money amounts to 2 decimal places. */
 export function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+/** Apply a tax rate (%) on top of a net REF/VES amount (e.g. cost sin impuesto → con impuesto). */
+export function amountWithTax(netAmount: number, taxRatePercent: number) {
+  const rate = Math.max(0, taxRatePercent);
+  return roundMoney(netAmount * (1 + rate / 100));
 }

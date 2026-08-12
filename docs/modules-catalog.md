@@ -135,7 +135,7 @@ Módulo: `src/modules/platform/`. Aislamiento ERP: `requireStorePermission` + `s
 
 | Ruta | Permiso | Pantalla |
 |------|---------|----------|
-| `/products` | `products.view` | Listado, filtros, crear, importar, desactivar, enlace a categorías |
+| `/products` | `products.view` | Listado, filtros, crear, importar, desactivar, enlace a categorías. Costo/PVP en una columna: **REF** (principal) + Bs (secundario) con `useCurrentExchangeRate`. Costo se muestra **con impuesto** de la categoría (`currentCostRef × (1 + taxRate/100)`); en DB el costo sigue siendo neto |
 | `/products/categories` | `products.view` | CRUD categorías (escritura: `products.manage`) |
 | `/products/[id]` | `products.view` | Resumen, stock, historial precios, proveedores (tabla + cards + M10–M14), editar |
 | `/products/import` | `products.manage` | Wizard importación Excel |

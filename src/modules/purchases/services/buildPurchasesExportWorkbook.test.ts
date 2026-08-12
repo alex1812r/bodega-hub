@@ -58,6 +58,6 @@ describe("buildPurchasesExportWorkbook", () => {
     expect(workbook.getWorksheet("Compras")?.getCell("A5").value).toBe("N° Compra");
     expect(workbook.getWorksheet("Compras")?.getCell("A6").value).toBe("#C-1001");
     expect(workbook.getWorksheet("Compras")?.getCell("C6").value).toBe("Distribuidora ACME");
-    expect(workbook.getWorksheet("Compras")?.getCell("E6").value).toBe("$120.50");
+    expect(workbook.getWorksheet("Compras")?.getCell("E6").value).toBe("ref 120.50");
   });
 });

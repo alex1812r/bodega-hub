@@ -2,11 +2,12 @@
 
 import { Plus, Tags, Upload } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { InventorySkuCell } from "@/modules/inventory/inventory-list/components/InventorySkuCell";
+import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { Can } from "@/shared/auth/Can";
 import { usePermission } from "@/shared/auth/usePermission";
 import { type ActionMenuItem } from "@/shared/components/ActionsMenu";
@@ -15,7 +16,7 @@ import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import { ResponsivePagination, usePaginationState, useSortState } from "@/shared/components/Pagination";
-import { formatRefUsd } from "@/shared/utils/currency";
+import { amountWithTax } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
 
 import { ProductFormModal } from "../product-details/components/ProductFormModal";
@@ -34,6 +35,7 @@ import {
   useUpdateProductPrice,
 } from "../hooks/useProducts";
 import { DeactivateProductConfirmModal } from "./components/DeactivateProductConfirmModal";
+import { ProductMoneyCell } from "./components/ProductMoneyCell";
 import { ProductNameWithThumb } from "./components/ProductNameWithThumb";
 import { ReactivateProductConfirmModal } from "./components/ReactivateProductConfirmModal";
 import { ProductsListFilters } from "./components/ProductsListFilters";
@@ -46,90 +48,103 @@ function isLowStock(product: ProductWithCategory) {
   return product.isActive && product.currentStock > 0 && product.currentStock <= product.minStock;
 }
 
-const columns: DataTableColumn<ProductWithCategory>[] = [
-  {
-    cellClassName: skuCellClass,
-    className: skuHeaderClass,
-    header: "SKU",
-    hideInCard: true,
-    key: "sku",
-    render: (product) => <InventorySkuCell sku={product.sku} />,
-    sortable: true,
-  },
-  {
-    cellClassName: "min-w-[10rem] font-medium",
-    header: "Nombre",
-    key: "name",
-    render: (product) => (
-      <ProductNameWithThumb
-        imageUrl={product.imageUrl}
-        isActive={product.isActive}
-        name={product.name}
-      />
-    ),
-    sortable: true,
-  },
-  {
-    cellClassName: "text-on-surface-variant",
-    header: "Categoría",
-    key: "category",
-    render: (product) => product.category?.name ?? "Sin categoría",
-    sortable: true,
-    sortKey: "category",
-    visibility: "md",
-  },
-  {
-    align: "right",
-    cellClassName: "font-mono text-sm tabular-nums text-on-surface-variant",
-    header: "Costo (REF)",
-    key: "currentCostRef",
-    render: (product) => formatRefUsd(product.currentCostRef),
-    sortable: true,
-    visibility: "lg",
-  },
-  {
-    align: "right",
-    cellClassName: "font-mono text-sm font-medium tabular-nums",
-    header: "PVP (REF)",
-    key: "salePriceRef",
-    render: (product) => (
-      <span className={cn(!product.isActive && "text-outline")}>
-        {formatRefUsd(product.salePriceRef)}
-      </span>
-    ),
-    sortable: true,
-  },
-  {
-    align: "right",
-    cellClassName: "tabular-nums",
-    header: "Stock",
-    key: "currentStock",
-    render: (product) => (
-      <span
-        className={cn(
-          !product.isActive && "text-outline",
-          product.currentStock === 0 && product.isActive && "font-medium text-destructive",
-          isLowStock(product) && "font-medium text-destructive",
-        )}
-      >
-        {product.currentStock} un
-      </span>
-    ),
-    sortable: true,
-  },
-  {
-    align: "center",
-    header: "Estado",
-    key: "status",
-    render: (product) => (
-      <div className="flex justify-center">
-        <ProductsStatusBadge isActive={product.isActive} />
-      </div>
-    ),
-    sortable: true,
-    sortKey: "status",
-  },
-];
+function buildProductColumns(rateVes: number): DataTableColumn<ProductWithCategory>[] {
+  return [
+    {
+      cellClassName: skuCellClass,
+      className: skuHeaderClass,
+      header: "SKU",
+      hideInCard: true,
+      key: "sku",
+      render: (product) => <InventorySkuCell sku={product.sku} />,
+      sortable: true,
+    },
+    {
+      cellClassName: "min-w-[10rem] font-medium",
+      header: "Nombre",
+      key: "name",
+      render: (product) => (
+        <ProductNameWithThumb
+          imageUrl={product.imageUrl}
+          isActive={product.isActive}
+          name={product.name}
+        />
+      ),
+      sortable: true,
+    },
+    {
+      cellClassName: "text-on-surface-variant",
+      header: "Categoría",
+      key: "category",
+      render: (product) => product.category?.name ?? "Sin categoría",
+      sortable: true,
+      sortKey: "category",
+      visibility: "md",
+    },
+    {
+      align: "right",
+      cellClassName: "min-w-[7.5rem]",
+      header: "Costo c/imp.",
+      key: "currentCostRef",
+      render: (product) => {
+        const taxRate = product.taxRate ?? product.category?.taxRate ?? 0;
+        return (
+          <ProductMoneyCell
+            isActive={product.isActive}
+            rateVes={rateVes}
+            refAmount={amountWithTax(product.currentCostRef, taxRate)}
+          />
+        );
+      },
+      sortable: true,
+      visibility: "lg",
+    },
+    {
+      align: "right",
+      cellClassName: "min-w-[7.5rem]",
+      header: "PVP",
+      key: "salePriceRef",
+      render: (product) => (
+        <ProductMoneyCell
+          isActive={product.isActive}
+          rateVes={rateVes}
+          refAmount={product.salePriceRef}
+        />
+      ),
+      sortable: true,
+    },
+    {
+      align: "right",
+      cellClassName: "tabular-nums",
+      header: "Stock",
+      key: "currentStock",
+      render: (product) => (
+        <span
+          className={cn(
+            !product.isActive && "text-outline",
+            product.currentStock === 0 && product.isActive && "font-medium text-destructive",
+            isLowStock(product) && "font-medium text-destructive",
+          )}
+        >
+          {product.currentStock} un
+        </span>
+      ),
+      sortable: true,
+    },
+    {
+      align: "center",
+      header: "Estado",
+      key: "status",
+      render: (product) => (
+        <div className="flex justify-center">
+          <ProductsStatusBadge isActive={product.isActive} />
+        </div>
+      ),
+      sortable: true,
+      sortKey: "status",
+    },
+  ];
+}
 
 export function ProductsListPage() {
   const { can } = usePermission();
@@ -150,6 +165,9 @@ export function ProductsListPage() {
   ]);
   const products = useProducts({ ...filters, limit, skip, sortBy, sortOrder });
   const categories = useCategories();
+  const currentRate = useCurrentExchangeRate();
+  const rateVes = currentRate.data?.rateVes ?? 0;
+  const columns = useMemo(() => buildProductColumns(rateVes), [rateVes]);
   const createProduct = useCreateProduct();
   const productToEditQuery = useProduct(productToEditId ?? "");
   const updateProduct = useUpdateProduct(productToEditId ?? "");
