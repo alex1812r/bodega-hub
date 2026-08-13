@@ -47,3 +47,15 @@ export const updateProductSchema = z.object({
   salePriceRef: z.number().min(0).optional(),
   sku: skuSchema.optional(),
 });
+
+/** Solo asignar barcode cuando el producto aun no tiene uno. */
+export const addProductBarcodeSchema = z.object({
+  barcode: z
+    .string()
+    .trim()
+    .min(1, "El codigo de barras es obligatorio")
+    .transform((value) => normalizeBarcode(value))
+    .refine((value): value is string => Boolean(value), {
+      message: "El codigo de barras es obligatorio",
+    }),
+});

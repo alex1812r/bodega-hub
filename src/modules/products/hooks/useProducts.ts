@@ -251,3 +251,23 @@ export function useUpdateProductPrice(id: string) {
     },
   });
 }
+
+export function useAddProductBarcode(id: string = "") {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: { barcode: string }) =>
+      apiFetch<ProductWithCategory>(`/api/products/${id}/barcode`, {
+        body: input,
+        method: "POST",
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+      if (id) {
+        void queryClient.invalidateQueries({
+          queryKey: productsQueryKeys.detail(id),
+        });
+      }
+    },
+  });
+}

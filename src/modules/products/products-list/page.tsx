@@ -35,11 +35,13 @@ import {
   useUpdateProductPrice,
 } from "../hooks/useProducts";
 import { DeactivateProductConfirmModal } from "./components/DeactivateProductConfirmModal";
+import { AddProductBarcodeModal } from "./components/AddProductBarcodeModal";
 import { ProductMoneyCell } from "./components/ProductMoneyCell";
 import { ProductNameWithThumb } from "./components/ProductNameWithThumb";
 import { ReactivateProductConfirmModal } from "./components/ReactivateProductConfirmModal";
 import { ProductsListFilters } from "./components/ProductsListFilters";
 import { ProductsStatusBadge } from "./components/ProductsStatusBadge";
+import { normalizeBarcode } from "../services/productSearch";
 
 const skuHeaderClass = "w-[5.75rem] max-w-[5.75rem]";
 const skuCellClass = "min-w-0 w-[5.75rem] max-w-[5.75rem] overflow-hidden";
@@ -156,6 +158,7 @@ export function ProductsListPage() {
   >({});
   const [productToDeactivate, setProductToDeactivate] = useState<ProductWithCategory | null>(null);
   const [productToReactivate, setProductToReactivate] = useState<ProductWithCategory | null>(null);
+  const [productToAddBarcode, setProductToAddBarcode] = useState<ProductWithCategory | null>(null);
   const [productToEditId, setProductToEditId] = useState<string | null>(null);
   const { handleSort, sortBy, sortOrder } = useSortState();
   const { limit, setLimit, setSkip, skip } = usePaginationState([
@@ -264,6 +267,13 @@ export function ProductsListPage() {
                 { href: `/products/${product.id}`, label: "Ver detalle" },
               ];
 
+              if (!normalizeBarcode(product.barcode) && can("products.view")) {
+                items.push({
+                  label: "Agregar codigo de barras",
+                  onSelect: () => setProductToAddBarcode(product),
+                });
+              }
+
               if (can("products.manage")) {
                 items.push({
                   label: "Editar",
@@ -369,6 +379,15 @@ export function ProductsListPage() {
         }}
         open={productToReactivate != null}
         product={productToReactivate}
+      />
+      <AddProductBarcodeModal
+        onOpenChange={(open) => {
+          if (!open) {
+            setProductToAddBarcode(null);
+          }
+        }}
+        open={productToAddBarcode != null}
+        product={productToAddBarcode}
       />
       {editProduct ? (
         <ProductFormModal

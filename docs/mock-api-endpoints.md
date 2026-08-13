@@ -47,6 +47,7 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 | `/api/products/import/template` | `GET` | `products.view` | Plantilla Excel importacion masiva (`.xlsx`) |
 | `/api/products/[id]` | `GET` | `products.view` | Detalle de producto |
 | `/api/products/[id]` | `PATCH` | `products.manage` | Actualiza producto (`409` si SKU duplicado) |
+| `/api/products/[id]/barcode` | `POST` | `products.view` o `products.manage` | Asigna barcode solo si el producto no tiene (`400` si ya tiene; `409` si duplicado) |
 | `/api/platform/stores` | `GET` | `platform.stores.view` | Lista tiendas, filtros `search`, `status`, `skip`, `limit` |
 | `/api/platform/stores` | `POST` | `platform.stores.manage` | Crea tienda y perfil administrador |
 | `/api/platform/stores/[id]` | `GET` | `platform.stores.view` | Detalle con usuarios de la tienda |

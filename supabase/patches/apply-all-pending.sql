@@ -195,3 +195,7 @@ notify pgrst, 'reload schema';
 -- 20260812d — cliente POS default por tienda
 -- -----------------------------------------------------------------------------
 -- Ejecutar: supabase/patches/20260812d-pos-default-customer.sql
+-- -----------------------------------------------------------------------------
+-- 20260813 — agregar barcode sin editar producto (vendedor/cajero)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20260813-add-product-barcode.sql

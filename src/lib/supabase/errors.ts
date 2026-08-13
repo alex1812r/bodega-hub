@@ -68,6 +68,26 @@ export function mapSupabaseError(error: unknown): ApiError {
       return new ApiError(404, "NOT_FOUND", "Producto no encontrado.");
     }
 
+    if (message.includes("ya tiene codigo de barras")) {
+      return new ApiError(
+        400,
+        "BAD_REQUEST",
+        "El producto ya tiene codigo de barras; no se puede modificar desde esta accion.",
+      );
+    }
+
+    if (message.includes("ya existe un producto con este codigo de barras")) {
+      return new ApiError(409, "CONFLICT", "Ya existe un producto con este codigo de barras.");
+    }
+
+    if (message.includes("no autorizado para agregar codigo de barras")) {
+      return new ApiError(403, "FORBIDDEN", "No autorizado para agregar codigo de barras.");
+    }
+
+    if (message.includes("el codigo de barras es obligatorio")) {
+      return new ApiError(400, "BAD_REQUEST", "El codigo de barras es obligatorio.");
+    }
+
     if (message.includes("ajuste de stock no puede ser cero")) {
       return new ApiError(400, "BAD_REQUEST", "El ajuste no puede ser cero.");
     }

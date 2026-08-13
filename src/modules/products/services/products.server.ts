@@ -228,6 +228,28 @@ export async function updateProduct(
   return getProductById(id, storeId);
 }
 
+export async function addProductBarcode(id: string, barcode: string, storeId: string) {
+  await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
+  const normalized = normalizeBarcode(barcode);
+  if (!normalized) {
+    throw new ApiError(400, "BAD_REQUEST", "El codigo de barras es obligatorio.");
+  }
+
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase.rpc("add_product_barcode", {
+    p_barcode: normalized,
+    p_product_id: id,
+  });
+
+  throwIfSupabaseError(error);
+
+  if (!data) {
+    throw new ApiError(404, "NOT_FOUND", "Producto no encontrado.");
+  }
+
+  return getProductById(id, storeId);
+}
+
 export async function deleteProduct(id: string, storeId: string) {
   await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();

@@ -265,6 +265,38 @@ export function updateProduct(id: string, input: ProductInput, storeId: string) 
   return getProductById(id, storeId);
 }
 
+export function addProductBarcode(id: string, barcode: string, storeId: string) {
+  const product = mockProducts.find((item) => item.id === id);
+  assertMockStoreResource(product, storeId, "Producto no encontrado.");
+
+  const normalized = normalizeBarcode(barcode);
+  if (!normalized) {
+    throw new ApiError(400, "BAD_REQUEST", "El codigo de barras es obligatorio.");
+  }
+
+  if (normalizeBarcode(product.barcode)) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      "El producto ya tiene codigo de barras; no se puede modificar desde esta accion.",
+    );
+  }
+
+  if (
+    mockProducts.some(
+      (item) =>
+        item.id !== id &&
+        item.storeId === storeId &&
+        normalizeBarcode(item.barcode) === normalized,
+    )
+  ) {
+    throw new ApiError(409, "CONFLICT", "Ya existe un producto con este codigo de barras.");
+  }
+
+  product.barcode = normalized;
+  return getProductById(id, storeId);
+}
+
 export function updateProductPrice(id: string, input: ProductPriceInput, storeId: string) {
   const product = getProductById(id, storeId);
 

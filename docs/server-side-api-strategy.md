@@ -227,7 +227,7 @@ GET /api/reports/sales     -> reports.view
 | --- | --- | --- | --- | --- |
 | Productos | `/api/products` | `GET` | `products.view` | `products`, `categories` |
 | Productos | `/api/products` | `POST` | `products.manage` | `products` |
-| Productos | `/api/products/[id]` | `PATCH` | `products.manage` | `products` |
+| Productos | `/api/products/[id]/barcode` | `POST` | `products.view` o `products.manage` | Asigna barcode solo si el producto no tiene uno |
 | Inventario | `/api/inventory/movements` | `GET` | `inventory.view` | `stock_movements` |
 | Inventario | `/api/inventory/adjustments` | `POST` | `inventory.manage` | RPC `adjust_stock` |
 | Ventas | `/api/sales` | `GET` | `sales.view` | `sales`, `sale_items` |

@@ -63,6 +63,7 @@ Orden individual (si prefieres uno por uno):
 | 16 | `20260812b-one-shot-backfill-vault-market-catia-purchase.sql` | One-shot: depósito+egreso baúl ligados al pago `punto_venta` existente de `C-20260810155452483` (sin crear pago nuevo) |
 | 17 | `20260812c-vault-efectivo-vs-cuenta.sql` | Separa `balance_efectivo_ves` vs `balance_ves` (cuenta); PM/transfer/punto en caja `account_in` |
 | 18 | `20260812d-pos-default-customer.sql` | Cliente sistema `Consumidor final` (`is_pos_default`) por tienda para ventas rapidas en POS |
+| 19 | `20260813-add-product-barcode.sql` | RPC `add_product_barcode`: vendedor/cajero puede asignar barcode solo si el producto no tiene |
 
 **Importante:** el patch 4b/4c **no** están embebidos en `apply-all-pending.sql`. Ejecuta **4a → 4b → 4c** en Runs separados del SQL Editor (PostgreSQL no permite usar un enum nuevo en la misma transacción donde se agregó).
 

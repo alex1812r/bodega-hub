@@ -259,4 +259,15 @@ select
     where schemaname = 'public'
       and indexname = 'contacts_store_pos_default_unique'
   )
+union all
+select
+  'rpc add_product_barcode',
+  exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'add_product_barcode'
+      and pg_get_function_identity_arguments(p.oid) = 'p_product_id uuid, p_barcode text'
+  )
 order by 1;
