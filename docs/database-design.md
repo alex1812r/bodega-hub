@@ -87,7 +87,7 @@ API: `GET`/`PATCH /api/settings`. Lectura liviana para POS: `GET /api/settings/p
 *   `name`: text (not null)
 *   `description`: text
 *   `sale_price_ref`: decimal(12,2) (not null) - Precio actual de venta en `ref`.
-*   `current_cost_ref`: decimal(12,2) - Costo referencial actual, derivado de la última compra o actualizado manualmente.
+*   `current_cost_ref`: decimal(12,2) - Costo referencial actual **con el IVA de la ultima compra recibida** (`unit_cost_ref * (1 + tax_rate/100)` de la linea). Si la linea fue exenta (`tax_rate = 0`), coincide con el neto. No se recalcula con el IVA de la categoria.
 *   `current_stock`: integer (default: 0)
 *   `min_stock`: integer (default: 5)
 *   `image_url`: text

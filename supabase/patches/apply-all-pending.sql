@@ -199,3 +199,23 @@ notify pgrst, 'reload schema';
 -- 20260813 — agregar barcode sin editar producto (vendedor/cajero)
 -- -----------------------------------------------------------------------------
 -- Ejecutar: supabase/patches/20260813-add-product-barcode.sql
+-- -----------------------------------------------------------------------------
+-- 20260813b — costo producto = unitario con IVA de la linea de compra
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20260813b-product-cost-with-line-tax.sql
+-- -----------------------------------------------------------------------------
+-- 20260813c — one-shot backfill costos producto con IVA de ultima compra
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional, una vez): supabase/patches/20260813c-one-shot-backfill-product-cost-with-line-tax.sql
+-- -----------------------------------------------------------------------------
+-- 20260813d — one-shot split jabo-harm → 3 variantes (24 stock c/u)
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260813d-one-shot-split-jabo-harm-variants.sql
+-- -----------------------------------------------------------------------------
+-- 20260813e — one-shot corrige qty shampoo en compra C-20260810155452483
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260813e-one-shot-fix-shampoo-pack-qty.sql
+-- -----------------------------------------------------------------------------
+-- 20260813f — one-shot transfer 12u shampoo a variante suav-mane-ro
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260813f-one-shot-transfer-shampoo-suav-mane-ro.sql

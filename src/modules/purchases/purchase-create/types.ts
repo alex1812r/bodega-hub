@@ -15,7 +15,7 @@ export type PurchaseDraftItem = {
   packUnitId?: string;
   productId: string;
   quantity: number;
-  /** Impuesto de la categoria del producto en porcentaje. */
+  /** % IVA de la linea (snapshot; editable en compra para exentos / factura especial). */
   taxRate: number;
   unitCostRef: number;
   unitCostVes: number;

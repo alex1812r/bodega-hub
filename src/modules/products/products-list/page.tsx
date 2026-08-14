@@ -16,7 +16,6 @@ import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import { ResponsivePagination, usePaginationState, useSortState } from "@/shared/components/Pagination";
-import { amountWithTax } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
 
 import { ProductFormModal } from "../product-details/components/ProductFormModal";
@@ -88,18 +87,16 @@ function buildProductColumns(rateVes: number): DataTableColumn<ProductWithCatego
     {
       align: "right",
       cellClassName: "min-w-[7.5rem]",
-      header: "Costo c/imp.",
+      header: "Costo",
       key: "currentCostRef",
-      render: (product) => {
-        const taxRate = product.taxRate ?? product.category?.taxRate ?? 0;
-        return (
-          <ProductMoneyCell
-            isActive={product.isActive}
-            rateVes={rateVes}
-            refAmount={amountWithTax(product.currentCostRef, taxRate)}
-          />
-        );
-      },
+      render: (product) => (
+        <ProductMoneyCell
+          isActive={product.isActive}
+          rateVes={rateVes}
+          // Costo final guardado en la ultima compra (neto + IVA de esa linea; 0% si exento).
+          refAmount={product.currentCostRef}
+        />
+      ),
       sortable: true,
       visibility: "lg",
     },

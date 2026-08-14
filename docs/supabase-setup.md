@@ -64,6 +64,11 @@ Orden individual (si prefieres uno por uno):
 | 17 | `20260812c-vault-efectivo-vs-cuenta.sql` | Separa `balance_efectivo_ves` vs `balance_ves` (cuenta); PM/transfer/punto en caja `account_in` |
 | 18 | `20260812d-pos-default-customer.sql` | Cliente sistema `Consumidor final` (`is_pos_default`) por tienda para ventas rapidas en POS |
 | 19 | `20260813-add-product-barcode.sql` | RPC `add_product_barcode`: vendedor/cajero puede asignar barcode solo si el producto no tiene |
+| 20 | `20260813b-product-cost-with-line-tax.sql` | Al comprar/recibir, `products.current_cost_ref` = unitario × (1 + tax_rate de la linea); exento queda neto |
+| 21 | `20260813c-one-shot-backfill-product-cost-with-line-tax.sql` | One-shot: recalcula `current_cost_ref` (y `supplier_products.last_cost_*`) desde la ultima compra recibida |
+| 22 | `20260813d-one-shot-split-jabo-harm-variants.sql` | One-shot: split `jabo-harm` → `jabo-harm-1/2/3` (24 stock c/u) y desactiva el original |
+| 23 | `20260813e-one-shot-fix-shampoo-pack-qty.sql` | One-shot: `sham-sobr-head-shou` en `C-20260810155452483` → 3×12=36 u, **mismo costo total**, baja unitario; ajusta stock |
+| 24 | `20260813f-one-shot-transfer-shampoo-suav-mane-ro.sql` | One-shot: transfiere 12 u `sham-sobr-head-shou-18ml` → `sham-sobr-head-shou-suav-mane-ro` (mismo precio/costo) |
 
 **Importante:** el patch 4b/4c **no** están embebidos en `apply-all-pending.sql`. Ejecuta **4a → 4b → 4c** en Runs separados del SQL Editor (PostgreSQL no permite usar un enum nuevo en la misma transacción donde se agregó).
 
