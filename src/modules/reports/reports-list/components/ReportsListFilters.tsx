@@ -34,6 +34,7 @@ export function ReportsListFilters({
       <div className="mb-4 flex items-center gap-2 text-on-surface">
         <Filter aria-hidden className="size-5 shrink-0" />
         <h3 className="text-sm font-medium text-foreground">Filtros globales</h3>
+        <p className="text-xs text-muted-foreground">Dia operativo Caracas (America/Caracas)</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">

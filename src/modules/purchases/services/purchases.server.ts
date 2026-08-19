@@ -13,6 +13,7 @@ import {
   type DbStockMovementRow,
 } from "@/lib/supabase/mappers/transactions";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 
@@ -130,6 +131,7 @@ function applyPurchaseFilters<
     eq: (col: string, val: string) => T;
     gte: (col: string, val: string) => T;
     ilike: (col: string, val: string) => T;
+    lt: (col: string, val: string) => T;
     lte: (col: string, val: string) => T;
   },
 >(
@@ -156,13 +158,7 @@ function applyPurchaseFilters<
     filteredQuery = filteredQuery.eq("supplier_id", supplierId);
   }
 
-  if (from) {
-    filteredQuery = filteredQuery.gte("created_at", `${from}T00:00:00.000Z`);
-  }
-
-  if (to) {
-    filteredQuery = filteredQuery.lte("created_at", `${to}T23:59:59.999Z`);
-  }
+  filteredQuery = applyCreatedAtCaracasRange(filteredQuery, from, to);
 
   return filteredQuery;
 }

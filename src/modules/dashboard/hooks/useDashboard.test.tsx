@@ -104,6 +104,44 @@ describe("dashboard hooks", () => {
     );
   });
 
+  it("loads dashboard metrics from the start of history", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        data: {
+          from: null,
+          paidVes: 1000,
+          pendingVes: 500,
+          salesCount: 6,
+          to: "2026-05-18",
+          totalRef: 120,
+          totalVes: 60000,
+          unitsSold: 10,
+        },
+      }),
+    );
+
+    const { result } = renderHook(
+      () => useDashboardMetrics({ fromStart: true, to: "2026-05-18" }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/dashboard/metrics?fromStart=1&to=2026-05-18",
+      expect.any(Object),
+    );
+  });
+
+  it("does not fetch previous metrics when the query is disabled", async () => {
+    const { result } = renderHook(
+      () => useDashboardMetrics({}, { enabled: false }),
+      { wrapper: createWrapper() },
+    );
+
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("loads recent sales and low stock products", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ data: paginated([{ id: "sale-001" }]) }))

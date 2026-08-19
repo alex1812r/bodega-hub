@@ -13,6 +13,7 @@ type ModalFooterHelpers = {
 };
 
 type ModalProps = {
+  bodyClassName?: string;
   children: ReactNode;
   contentClassName?: string;
   description?: string;
@@ -30,6 +31,7 @@ function clearStuckBodyPointerEvents() {
 }
 
 export function Modal({
+  bodyClassName,
   children,
   contentClassName,
   description,
@@ -120,7 +122,9 @@ export function Modal({
             ) : null}
           </div>
 
-          <div className="mt-5 min-h-0 overflow-y-auto pr-1">{children}</div>
+          <div className={cn("mt-5 min-h-0 flex-1 overflow-y-auto pr-1", bodyClassName)}>
+            {children}
+          </div>
 
           {footer ? (
             <div className="mt-6 flex shrink-0 flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end sm:gap-3 dark:border-slate-800">

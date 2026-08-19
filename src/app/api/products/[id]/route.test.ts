@@ -19,6 +19,37 @@ const context = (id: string) => ({
   params: Promise.resolve({ id }),
 });
 
+const productRow = {
+  category: { id: "cat-1", is_active: true, name: "Tools" },
+  category_id: "cat-1",
+  current_cost_ref: 10,
+  current_stock: 5,
+  id: "prod-1",
+  is_active: true,
+  min_stock: 2,
+  name: "Taladro",
+  sale_price_ref: 15,
+  sku: "sku-001",
+};
+
+function createSupabaseTableChain(
+  result: { data: unknown; error: null },
+  update?: jest.Mock,
+) {
+  const chain: Record<string, jest.Mock> = {};
+  chain.eq = jest.fn(() => chain);
+  chain.or = jest.fn(() => chain);
+  chain.select = jest.fn(() => chain);
+  chain.order = jest.fn(() => chain);
+  chain.limit = jest.fn(() => chain);
+  chain.update = update ?? jest.fn(() => chain);
+  if (update) {
+    update.mockReturnValue(chain);
+  }
+  chain.maybeSingle = jest.fn().mockResolvedValue(result);
+  return chain;
+}
+
 describe("/api/products/[id]", () => {
   const originalDataSource = process.env.API_DATA_SOURCE;
 
@@ -118,27 +149,7 @@ describe("/api/products/[id]", () => {
 
     it("returns a product from supabase", async () => {
       (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
-        from: jest.fn(() => ({
-          select: jest.fn(() => ({
-            eq: jest.fn(() => ({
-              maybeSingle: jest.fn().mockResolvedValue({
-                data: {
-                  category: { id: "cat-1", is_active: true, name: "Tools" },
-                  category_id: "cat-1",
-                  current_cost_ref: 10,
-                  current_stock: 5,
-                  id: "prod-1",
-                  is_active: true,
-                  min_stock: 2,
-                  name: "Taladro",
-                  sale_price_ref: 15,
-                  sku: "sku-001",
-                },
-                error: null,
-              }),
-            })),
-          })),
-        })),
+        from: jest.fn(() => createSupabaseTableChain({ data: productRow, error: null })),
       });
 
       const response = await GET(
@@ -158,32 +169,17 @@ describe("/api/products/[id]", () => {
     });
 
     it("persists isActive on PATCH", async () => {
-      const update = jest.fn(() => ({
-        eq: jest.fn(() => ({
-          select: jest.fn(() => ({
-            maybeSingle: jest.fn().mockResolvedValue({
-              data: {
-                category: { id: "cat-1", is_active: true, name: "Tools" },
-                category_id: "cat-1",
-                current_cost_ref: 10,
-                current_stock: 5,
-                id: "prod-1",
-                is_active: false,
-                min_stock: 2,
-                name: "Taladro",
-                sale_price_ref: 15,
-                sku: "sku-001",
-              },
-              error: null,
-            }),
-          })),
-        })),
-      }));
+      const update = jest.fn();
+      const chain = createSupabaseTableChain(
+        {
+          data: { ...productRow, is_active: false },
+          error: null,
+        },
+        update,
+      );
 
       (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
-        from: jest.fn(() => ({
-          update,
-        })),
+        from: jest.fn(() => chain),
       });
 
       const response = await PATCH(

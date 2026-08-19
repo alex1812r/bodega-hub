@@ -10,9 +10,12 @@ import type { ReportsExportDataset } from "./fetchReportsForExport";
 
 const emptyDataset: ReportsExportDataset = {
   customerPurchases: [],
+  dailyClose: [],
   dailySales: [],
+  fxDepreciation: [],
   grossProfit: [],
   lowStock: [],
+  paymentMethods: [],
   productProfitability: [],
   purchases: [],
   stockCard: [],

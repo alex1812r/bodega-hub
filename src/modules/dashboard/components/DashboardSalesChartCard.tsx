@@ -135,9 +135,9 @@ export function DashboardSalesChartCard({ scope }: DashboardSalesChartCardProps 
 
       <DashboardPeriodFilterModal
         description="Selecciona el rango para el flujo de ventas."
-        draftPeriodDays={draftPeriodDays}
+        draftPeriodKey={String(draftPeriodDays)}
         onApply={applyPeriod}
-        onDraftPeriodChange={(days) => setDraftPeriodDays(days as DashboardChartPeriodDays)}
+        onDraftPeriodKeyChange={(key) => setDraftPeriodDays(Number(key) as DashboardChartPeriodDays)}
         onOpenChange={setPeriodModalOpen}
         open={periodModalOpen}
         periods={DASHBOARD_CHART_PERIODS}

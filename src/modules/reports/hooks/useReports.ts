@@ -3,9 +3,11 @@
 import { useQuery } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
+import type { DailyCloseSummary } from "../services/dailyCloseSummary";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
   ContactMock,
+  PaymentMethod,
   ProductMock,
   PurchaseMock,
   StockMovementMock,
@@ -13,6 +15,7 @@ import type {
 
 export type ReportDateRangeFilters = PaginationParams & {
   from?: string;
+  fromStart?: boolean;
   to?: string;
 };
 
@@ -109,6 +112,67 @@ export type PurchasesReportRow = PurchaseMock & {
   supplier?: ContactMock;
 };
 
+export type FxDepreciationReportRow = {
+  invoiceNumber: string;
+  lossRef: number;
+  rateAtSale: number;
+  saleDate: string;
+  saleId: string;
+  storeId?: string | null;
+  totalRef: number;
+  usdRef: number;
+  vesCollected: number;
+  vesRefAtCollection: number;
+  vesRefToday: number;
+};
+
+export type FxDepreciationMethodBreakdown = {
+  amountRef: number;
+  amountVes: number;
+  exposedToFx: boolean;
+  lossRef: number;
+  method: string;
+  paymentCount: number;
+  refToday: number;
+};
+
+export type FxDepreciationReportSummary = {
+  byMethod: FxDepreciationMethodBreakdown[];
+  capitalLossRef: number;
+  capitalRefAtCollection: number;
+  capitalRefToday: number;
+  depreciationPctOnVes: number;
+  generatedAt: string;
+  usdHeldRef: number;
+  valuationRateAt: string | null;
+  valuationRateVes: number;
+  vesExposed: number;
+  vesLossRef: number;
+  vesRefAtCollection: number;
+  vesRefToday: number;
+};
+
+export type FxDepreciationReportResult = PaginatedList<FxDepreciationReportRow> & {
+  summary: FxDepreciationReportSummary;
+};
+
+export type PaymentMethodReportRow = {
+  amountRef: number;
+  amountVes: number;
+  method: PaymentMethod;
+  paymentCount: number;
+};
+
+export type PaymentMethodsReportSummary = {
+  paymentCount: number;
+  totalRef: number;
+  totalVes: number;
+};
+
+export type PaymentMethodsReportResult = PaginatedList<PaymentMethodReportRow> & {
+  summary: PaymentMethodsReportSummary;
+};
+
 function reportPath(slug: string, scope?: ReportRequestScope) {
   const prefix = scope?.pathPrefix ?? "/api/reports";
   return `${prefix}/${slug}`;
@@ -145,10 +209,16 @@ export const reportsQueryKeys = {
   all: ["reports"] as const,
   customerPurchases: (scope?: ReportRequestScope) =>
     [...reportsQueryKeys.all, "customer-purchases", scopeKey(scope)] as const,
+  dailyClose: (filters: ReportDateRangeFilters = {}, scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "daily-close", scopeKey(scope), filters] as const,
   dailySales: (scope?: ReportRequestScope) =>
     [...reportsQueryKeys.all, "daily-sales", scopeKey(scope)] as const,
+  fxDepreciation: (filters: ReportDateRangeFilters = {}, scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "fx-depreciation", scopeKey(scope), filters] as const,
   grossProfit: (scope?: ReportRequestScope) =>
     [...reportsQueryKeys.all, "gross-profit", scopeKey(scope)] as const,
+  paymentMethods: (filters: ReportDateRangeFilters = {}, scope?: ReportRequestScope) =>
+    [...reportsQueryKeys.all, "payment-methods", scopeKey(scope), filters] as const,
   lowStock: (scope?: ReportRequestScope) =>
     [...reportsQueryKeys.all, "low-stock", scopeKey(scope)] as const,
   productProfitability: (scope?: ReportRequestScope) =>
@@ -189,6 +259,62 @@ export function useGrossProfitReport(
     queryFn: () =>
       apiFetch<PaginatedList<GrossProfitReportRow>>(reportPath("gross-profit", scope), {
         query: withScopeQuery(filters, scope),
+      }),
+  });
+}
+
+export function useFxDepreciationReport(
+  filters: ReportDateRangeFilters = {},
+  scope?: ReportRequestScope,
+) {
+  return useQuery({
+    enabled: scope?.enabled ?? true,
+    queryKey: reportsQueryKeys.fxDepreciation(filters, scope),
+    queryFn: () =>
+      apiFetch<FxDepreciationReportResult>(reportPath("fx-depreciation", scope), {
+        query: withScopeQuery(filters, scope),
+      }),
+  });
+}
+
+export function useDailyCloseReport(
+  filters: ReportDateRangeFilters = {},
+  scope?: ReportRequestScope,
+) {
+  return useQuery({
+    enabled: scope?.enabled ?? true,
+    queryKey: reportsQueryKeys.dailyClose(filters, scope),
+    queryFn: () =>
+      apiFetch<DailyCloseSummary>(reportPath("daily-close", scope), {
+        query: withScopeQuery(
+          {
+            ...filters,
+            from: filters.fromStart ? undefined : filters.from,
+            fromStart: filters.fromStart ? 1 : undefined,
+          },
+          scope,
+        ),
+      }),
+  });
+}
+
+export function usePaymentMethodsReport(
+  filters: ReportDateRangeFilters = {},
+  scope?: ReportRequestScope,
+) {
+  return useQuery({
+    enabled: scope?.enabled ?? true,
+    queryKey: reportsQueryKeys.paymentMethods(filters, scope),
+    queryFn: () =>
+      apiFetch<PaymentMethodsReportResult>(reportPath("payment-methods", scope), {
+        query: withScopeQuery(
+          {
+            ...filters,
+            from: filters.fromStart ? undefined : filters.from,
+            fromStart: filters.fromStart ? 1 : undefined,
+          },
+          scope,
+        ),
       }),
   });
 }

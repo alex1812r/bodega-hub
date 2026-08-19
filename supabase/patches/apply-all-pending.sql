@@ -219,3 +219,27 @@ notify pgrst, 'reload schema';
 -- 20260813f — one-shot transfer 12u shampoo a variante suav-mane-ro
 -- -----------------------------------------------------------------------------
 -- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260813f-one-shot-transfer-shampoo-suav-mane-ro.sql
+-- -----------------------------------------------------------------------------
+-- 20260813g — one-shot vault Mercaseu C-20260814011924874 (deposito efectivo)
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260813g-one-shot-backfill-vault-mercaseu-purchase.sql
+-- -----------------------------------------------------------------------------
+-- 20260813h — fix adjust_stock store_id
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20260813h-fix-adjust-stock-store-id.sql
+-- -----------------------------------------------------------------------------
+-- 20260815 — one-shot vault Mercaseu C-20260814214845696 (deposito efectivo)
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260815-one-shot-backfill-vault-mercaseu-C-20260814214845696.sql
+-- -----------------------------------------------------------------------------
+-- 20260815b — one-shot vault Delilicor C-20260815204121850 (deposito efectivo)
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260815b-one-shot-backfill-vault-delilicor-purchase.sql
+-- -----------------------------------------------------------------------------
+-- 20260815c — one-shot transfer mitad malta manzana verde
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260815c-one-shot-transfer-malta-manz-verd.sql
+-- -----------------------------------------------------------------------------
+-- 20260819 — tope de apertura de caja (medianoche Caracas + 24 h)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20260819-cash-session-auto-close.sql

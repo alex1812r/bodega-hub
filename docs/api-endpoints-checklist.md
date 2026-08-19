@@ -46,6 +46,7 @@ Este checklist compara el plan funcional del ERP contra los endpoints actuales e
 - `[x]` `DELETE /api/products/[id]`: borrado logico (`deleted=true` / `is_active=false`).
 - `[x]` `POST /api/products/[id]/price`: cambio de precio via RPC `update_product_price` en Supabase.
 - `[x]` `GET /api/products/[id]/price-history`: historial paginado de precios.
+- `[x]` `GET /api/products/[id]/sales`: historial paginado de ventas del SKU; totales excluyen `cancelada`.
 - `[x]` `GET /api/products/[id]/suppliers`: proveedores asociados al producto.
 - `[x]` Validar SKU duplicado con `409`.
 - `[x]` `GET /api/products/import/template`: plantilla Excel para importacion masiva (categorias desde BD/mock).
@@ -209,6 +210,7 @@ Este checklist compara el plan funcional del ERP contra los endpoints actuales e
 - `[x]` `GET /api/reports/top-customers`: Supabase agrega ventas por cliente en rango.
 - `[x]` `GET /api/reports/purchases?from=&to=&supplierId=`.
 - `[x]` `GET /api/reports/purchases`: Supabase lista `purchases` con filtros y paginacion.
+- `[x]` `GET /api/reports/payment-methods?from=&to=`: mix de pagos de venta activos (5 metodos, Caracas).
 - `[~]` Filtros globales `from`, `to`, `groupBy` (parcial: por endpoint, sin `groupBy`).
 - `[ ]` Exportacion PDF/Excel en fase posterior.
 

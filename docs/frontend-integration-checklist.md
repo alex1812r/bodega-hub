@@ -149,6 +149,7 @@ Listados afectados: productos, contactos, inventario, movimientos, ventas, compr
 - `[x]` Conectar `PATCH /api/products/[id]`.
 - `[x]` Conectar `POST /api/products/[id]/price`.
 - `[x]` Conectar `GET /api/products/[id]/price-history`.
+- `[x]` Conectar `GET /api/products/[id]/sales` (historial de ventas del SKU).
 - `[x]` Conectar `GET /api/products/[id]/suppliers`.
 - `[x]` Proveedores asociados en detalle: tabla Stitch, cards comparativas, modales M10–M14.
 - `[x]` Ruta dinamica `/products/[id]`.

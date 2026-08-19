@@ -9,9 +9,12 @@ export type CashRegister = {
   updatedAt: string;
 };
 
+export type CashSessionClosedReason = "manual" | "end_of_day" | "max_24h";
+
 export type CashSession = {
   absorbedBySessionId?: string | null;
   closedAt?: string | null;
+  closedReason?: CashSessionClosedReason | null;
   closingRef?: number | null;
   closingVes?: number | null;
   id: string;

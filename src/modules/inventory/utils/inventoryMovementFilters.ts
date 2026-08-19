@@ -1,4 +1,5 @@
 import type { StockMovementType } from "@/shared/mocks/erp-data";
+import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 
 export type InventoryMovementListFilters = {
   from?: string;
@@ -32,15 +33,5 @@ export function matchesInventoryMovementFilters(
     return false;
   }
 
-  const date = movement.createdAt.slice(0, 10);
-
-  if (filters.from && date < filters.from) {
-    return false;
-  }
-
-  if (filters.to && date > filters.to) {
-    return false;
-  }
-
-  return true;
+  return isUtcTimestampInCaracasDateRange(movement.createdAt, filters.from, filters.to);
 }

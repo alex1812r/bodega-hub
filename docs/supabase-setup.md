@@ -69,6 +69,11 @@ Orden individual (si prefieres uno por uno):
 | 22 | `20260813d-one-shot-split-jabo-harm-variants.sql` | One-shot: split `jabo-harm` → `jabo-harm-1/2/3` (24 stock c/u) y desactiva el original |
 | 23 | `20260813e-one-shot-fix-shampoo-pack-qty.sql` | One-shot: `sham-sobr-head-shou` en `C-20260810155452483` → 3×12=36 u, **mismo costo total**, baja unitario; ajusta stock |
 | 24 | `20260813f-one-shot-transfer-shampoo-suav-mane-ro.sql` | One-shot: transfiere 12 u `sham-sobr-head-shou-18ml` → `sham-sobr-head-shou-suav-mane-ro` (mismo precio/costo) |
+| 25 | `20260813g-one-shot-backfill-vault-mercaseu-purchase.sql` | One-shot: depósito efectivo + pago + `purchase_out` baúl para `C-20260814011924874` (Mercaseu) |
+| 26 | `20260813h-fix-adjust-stock-store-id.sql` | Fix RPC `adjust_stock`: setea `store_id` en `stock_movements` + contexto de tienda |
+| 27 | `20260815-one-shot-backfill-vault-mercaseu-C-20260814214845696.sql` | One-shot: depósito efectivo + pago + `purchase_out` baúl para `C-20260814214845696` (Mercaseu) |
+| 28 | `20260815b-one-shot-backfill-vault-delilicor-purchase.sql` | One-shot: depósito efectivo + pago + `purchase_out` baúl para `C-20260815204121850` (Delilicor) |
+| 29 | `20260815c-one-shot-transfer-malta-manz-verd.sql` | One-shot: transfiere 6 u `mal-port-175-lt` → `mal-port-manz-verd-1-75lt` (mismo precio/costo) |
 
 **Importante:** el patch 4b/4c **no** están embebidos en `apply-all-pending.sql`. Ejecuta **4a → 4b → 4c** en Runs separados del SQL Editor (PostgreSQL no permite usar un enum nuevo en la misma transacción donde se agregó).
 
@@ -184,3 +189,8 @@ y pagos. Crea las tablas de cajas, sesiones, movimientos de caja y baúl, junto
 con las RPC de apertura, cierre, depósito, retiro y transferencia de **cierres
 pendientes** al baúl. Al reabrir una caja, los cierres no transferidos de esa
 caja se marcan absorbidos (`absorbed_by_session_id`) para no duplicar efectivo.
+
+Tope de jornada: aplica `supabase/patches/20260819-cash-session-auto-close.sql`.
+Las sesiones abiertas se cierran solas al cruzar medianoche Caracas o 24 h
+(lo que ocurra primero), con el efectivo teórico. Configura `CRON_SECRET` y el
+cron de Vercel (`vercel.json`, cada 15 min) hacia `/api/cron/cash-sessions/auto-close`.

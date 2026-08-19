@@ -3,8 +3,15 @@
 import { type ReactNode, useState } from "react";
 
 import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
+import { CashSessionCountdown } from "@/modules/cash/components/CashSessionCountdown";
+import { CashSessionExpiredPanel } from "@/modules/cash/components/CashSessionExpiredPanel";
 import { OpenCashSessionModal } from "@/modules/cash/components/OpenCashSessionModal";
-import { useCashRegisters, useMyCashSession } from "@/modules/cash/hooks/useCash";
+import {
+  useCashMovements,
+  useCashRegisters,
+  useMyCashSession,
+} from "@/modules/cash/hooks/useCash";
+import { useCashSessionClock } from "@/modules/cash/hooks/useCashSessionClock";
 import { Button } from "@/shared/components/Button";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
@@ -19,6 +26,8 @@ export function PosCashSessionGate({ children }: PosCashSessionGateProps) {
   const registers = useCashRegisters();
   const currentUser = useCurrentUser();
   const [openModal, setOpenModal] = useState(false);
+  const movements = useCashMovements(session.data?.id);
+  const clock = useCashSessionClock(session.data?.openedAt);
 
   const userId = currentUser.data?.user.id;
   const register =
@@ -57,8 +66,35 @@ export function PosCashSessionGate({ children }: PosCashSessionGateProps) {
     );
   }
 
+  if (session.data && clock.expired) {
+    const registerName = session.data.register.name;
+    const theoreticalRef = movements.data?.theoretical.ref ?? session.data.openingRef;
+    const theoreticalVes = movements.data?.theoretical.ves ?? session.data.openingVes;
+
+    return (
+      <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+        <PosGateHeader />
+        <div className="flex flex-1 items-center justify-center p-6">
+          <CashSessionExpiredPanel
+            registerName={registerName}
+            sessionId={session.data.id}
+            theoreticalRef={theoreticalRef}
+            theoreticalVes={theoreticalVes}
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (session.data) {
-    return children;
+    return (
+      <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+        <div className="shrink-0 border-b border-border bg-surface-container-lowest px-4 py-2">
+          <CashSessionCountdown openedAt={session.data.openedAt} />
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
+      </div>
+    );
   }
 
   if (registers.isLoading) {

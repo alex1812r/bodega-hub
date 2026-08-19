@@ -7,17 +7,29 @@ import { DataTable } from "@/shared/components/DataTable";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import { Input } from "@/shared/components/Input";
 import { SelectField } from "@/shared/components/SelectField";
-import { useCashRegisters, useCreateCashRegister, useUpdateCashRegister } from "../hooks/useCash";
+import { useCashRegisters, useCreateCashRegister, useOpenCashSessions, useUpdateCashRegister } from "../hooks/useCash";
+import { isCashSessionExpired } from "../utils/cashSessionDeadline";
 import type { CashRegister } from "../types";
 type User = { id: string; name: string; role: string };
 export function CashRegistersListPage() {
   const [name, setName] = useState(""); const registers = useCashRegisters(); const create = useCreateCashRegister();
+  const openSessions = useOpenCashSessions();
   const users = useQuery({ queryKey: ["users", "vendors"], queryFn: () => apiFetch<{ items: User[] }>("/api/users", { query: { limit: 100 } }) });
   const vendors = (users.data?.items ?? []).filter((user) => user.role === "vendedor");
   return <EntityListPage description="Crea, asigna y desactiva las cajas de la tienda." layout="sections" title="Cajas">
     <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); if (name.trim()) { create.mutate({ name }); setName(""); } }}><Input aria-label="Nombre de caja" onChange={(event) => setName(event.target.value)} placeholder="Nombre de la caja" value={name} /><Button disabled={create.isPending} type="submit">Crear caja</Button></form>
-    <DataTable columns={[{ header: "Caja", key: "name", render: (item) => item.name }, { header: "Asignar vendedor", key: "assignedUserId", render: (item: CashRegister) => <RegisterAssignment register={item} vendors={vendors} /> }, { header: "Estado", key: "isActive", render: (item) => item.isActive ? "Activa" : "Inactiva" }]} data={registers.data ?? []} emptyState={<p className="p-4 text-sm">No hay cajas registradoras.</p>} getRowId={(item) => item.id} isLoading={registers.isLoading} />
+    <DataTable columns={[{ header: "Caja", key: "name", render: (item) => item.name }, { header: "Asignar vendedor", key: "assignedUserId", render: (item: CashRegister) => <RegisterAssignment register={item} vendors={vendors} /> }, { header: "Turno", key: "session", render: (item) => <RegisterSessionStatus registerId={item.id} sessions={openSessions.data ?? []} /> }, { header: "Estado", key: "isActive", render: (item) => item.isActive ? "Activa" : "Inactiva" }]} data={registers.data ?? []} emptyState={<p className="p-4 text-sm">No hay cajas registradoras.</p>} getRowId={(item) => item.id} isLoading={registers.isLoading} />
   </EntityListPage>;
+}
+function RegisterSessionStatus({ registerId, sessions }: { registerId: string; sessions: { openedAt: string; registerId: string }[] }) {
+  const session = sessions.find((item) => item.registerId === registerId);
+  if (!session) {
+    return <span className="text-sm text-on-surface-variant">Cerrada</span>;
+  }
+  if (isCashSessionExpired(session.openedAt)) {
+    return <span className="text-sm font-medium text-destructive">Vencida</span>;
+  }
+  return <span className="text-sm text-foreground">Abierta</span>;
 }
 function RegisterAssignment({ register, vendors }: { register: CashRegister; vendors: User[] }) {
   const update = useUpdateCashRegister(register.id);

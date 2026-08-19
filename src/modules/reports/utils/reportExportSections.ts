@@ -2,9 +2,12 @@ import { reportCatalog } from "../reports-list/config/reportCatalog";
 import type { ReportsExportDataset, ReportsExportFilters } from "../services/fetchReportsForExport";
 import {
   customerPurchasesExportColumns,
+  dailyCloseExportColumns,
   dailySalesExportColumns,
+  fxDepreciationExportColumns,
   grossProfitExportColumns,
   lowStockExportColumns,
+  paymentMethodsExportColumns,
   productProfitabilityExportColumns,
   purchasesExportColumns,
   stockCardExportColumns,
@@ -16,6 +19,7 @@ import {
 
 export type ReportExportSection = {
   columns: ReportExportColumn<unknown>[];
+  id: string;
   note?: string;
   periodLabel: string;
   rows: unknown[];
@@ -58,6 +62,11 @@ export function buildReportExportSections(
     : "Sin producto seleccionado";
 
   const sectionsByReportId = {
+    "daily-close": {
+      columns: dailyCloseExportColumns,
+      periodLabel: datePeriod,
+      rows: data.dailyClose,
+    },
     "daily-sales": {
       columns: dailySalesExportColumns,
       periodLabel: datePeriod,
@@ -67,6 +76,17 @@ export function buildReportExportSections(
       columns: grossProfitExportColumns,
       periodLabel: datePeriod,
       rows: data.grossProfit,
+    },
+    "fx-depreciation": {
+      columns: fxDepreciationExportColumns,
+      periodLabel: datePeriod,
+      note: data.fxDepreciationNote,
+      rows: data.fxDepreciation,
+    },
+    "payment-methods": {
+      columns: paymentMethodsExportColumns,
+      periodLabel: datePeriod,
+      rows: data.paymentMethods,
     },
     "product-profitability": {
       columns: productProfitabilityExportColumns,
@@ -115,6 +135,7 @@ export function buildReportExportSections(
     const section = sectionsByReportId[report.id];
 
     return {
+      id: report.id,
       title: report.name,
       columns: section.columns as ReportExportColumn<unknown>[],
       periodLabel: section.periodLabel,

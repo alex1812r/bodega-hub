@@ -29,6 +29,13 @@ describe("settings mappers", () => {
     ).toEqual({
       businessName: "BodegaHub",
       defaultTaxRate: 16,
+      enabledPaymentMethods: [
+        "efectivo_ves",
+        "efectivo_usd",
+        "pago_movil",
+        "punto_venta",
+        "transferencia",
+      ],
       invoicePrefix: "FAC",
       lowStockThreshold: 5,
     });

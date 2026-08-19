@@ -1,5 +1,9 @@
 import { ApiError } from "@/lib/api/apiError";
 
+import {
+  cashSessionAutoCloseReason,
+  isCashSessionExpired,
+} from "../utils/cashSessionDeadline";
 import { getCashRegister } from "./cash.registers.mock-server";
 import type { CashMovement, CashSession } from "../types";
 
@@ -93,6 +97,7 @@ export function closeCashSession(input: CloseCashSessionInput, userId: string, s
   const balance = theoretical(session);
   Object.assign(session, {
     closedAt: new Date().toISOString(),
+    closedReason: "manual" as const,
     closingRef: input.closingRef,
     closingVes: input.closingVes,
     status: "closed" as const,
@@ -101,6 +106,30 @@ export function closeCashSession(input: CloseCashSessionInput, userId: string, s
     vaultTransferredAt: null,
   });
   return session;
+}
+
+export function autoCloseStaleCashSessions(now = new Date()) {
+  const closedIds: string[] = [];
+
+  for (const session of sessions) {
+    if (session.status !== "open" || !isCashSessionExpired(session.openedAt, now)) {
+      continue;
+    }
+
+    const balance = theoretical(session);
+    Object.assign(session, {
+      closedAt: now.toISOString(),
+      closedReason: cashSessionAutoCloseReason(session.openedAt),
+      closingRef: balance.ref,
+      closingVes: balance.ves,
+      status: "closed" as const,
+      theoreticalClosingRef: balance.ref,
+      theoreticalClosingVes: balance.ves,
+    });
+    closedIds.push(session.id);
+  }
+
+  return { closedCount: closedIds.length, sessionIds: closedIds };
 }
 
 export function listCashMovements(sessionId: string, storeId: string) {

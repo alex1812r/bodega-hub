@@ -98,6 +98,7 @@ describe("/api/products/[id]/price", () => {
             select: jest.fn(() => ({
               eq: jest.fn().mockReturnThis(),
               maybeSingle: productMaybeSingle,
+              or: jest.fn().mockReturnThis(),
             })),
           };
         }),

@@ -28,12 +28,14 @@ Documentos relacionados:
 | Ventas | `/sales`, `/sales/create`, `/sales/[id]` | `sales.view` / `sales.create` | `sales`, `sale_items`, `payments` |
 | Compras | `/purchases`, `/purchases/create`, `/purchases/[id]` | `purchases.view` / `purchases.create` | `purchases`, `purchase_items`, `supplier_products` |
 | Pagos | `/payments`, `/payments/[id]` | `payments.view` / `payments.manage` | `payments` |
-| Caja | `/cash`, `/cash/registers` | `cash.view` / `cash.operate` / `cash.manage` | `cash_registers`, `cash_sessions`, `cash_movements` |
+| Caja | `/cash`, `/cash/registers` | `cash.view` / `cash.operate` / `cash.manage` | `cash_registers`, `cash_sessions` (`closed_reason`), `cash_movements` |
 | Baúl | `/vault` | `vault.view` / `vault.manage` | `store_vaults` (`balance_efectivo_ves`, `balance_ves` cuenta, `balance_ref`), `vault_movements.bucket` |
 | Reportes | `/reports` | `reports.view` | vistas `daily_sales_summary`, etc. |
 | Settings | `/settings` | `settings.view` / `users.manage` | `app_settings`, `profiles`, `exchange_rates` |
 
 **Rol admin:** sin `sales.create` ni `cash.operate` (no POS ni “Mi caja”). Conserva `sales.view`, `cash.manage` y `vault.*`. Para reactivar: devolver esos permisos en [`src/shared/auth/permissions.ts`](../src/shared/auth/permissions.ts).
+
+**Caja — tope de jornada:** una sesión abierta vence al **mínimo** entre medianoche Caracas del día de apertura y 24 h. El cron `GET/POST /api/cron/cash-sessions/auto-close` (cada 15 min, `CRON_SECRET`) cierra con el monto teórico y no transfiere al baúl. POS y Mi caja muestran cuenta regresiva y bloquean ventas al vencer. Patch: `supabase/patches/20260819-cash-session-auto-close.sql`.
 
 Rutas auxiliares: `/api-docs` (Swagger), `/dev/welcome` (demo). Rutas legacy `/products/detail`, `/contacts/detail`, etc. redirigen a `[id]` con query `?id=`.
 
@@ -117,19 +119,22 @@ Módulo: `src/modules/platform/`. Aislamiento ERP: `requireStorePermission` + `s
 |------|---------|
 | `/dashboard` | `dashboard.view` |
 
-**UI:** tarjetas resumen, métricas por rango, tablas ventas recientes y stock bajo con paginación.
+**UI:** tarjetas resumen, métricas por rango, tablas ventas recientes y stock bajo con paginación. Filtros de fecha = **día operativo America/Caracas** (`from`/`to` → UTC `[T04:00Z, siguiente T04:00Z)`). KPIs: Hoy / Ayer / rango / Desde el inicio, con comparación al periodo anterior equivalente (segunda llamada a metrics).
 
 | Hook | Endpoint | Query / notas |
 |------|----------|---------------|
 | `useDashboardSummary` | GET `/api/dashboard/summary` | — |
-| `useDashboardMetrics` | GET `/api/dashboard/metrics` | `from`, `to` (UI aún con fechas fijas en código) |
+| `useDashboardMetrics` | GET `/api/dashboard/metrics` | `from`, `to`, `fromStart` (`fromStart=1` omite cota inferior; `to` = hoy) |
+| `useDashboardRecentSales` | GET `/api/dashboard/recent-sales` | `skip`, `limit` |
+| `useDashboardLowStock` | GET `/api/dashboard/low-stock` | `skip`, `limit` |
+| — | GET `/api/dashboard/daily-close` | Cierre del día: ventas + mix pagos + FX + caja/baúl |
 | `useDashboardRecentSales` | GET `/api/dashboard/recent-sales` | `skip`, `limit` |
 | `useDashboardLowStock` | GET `/api/dashboard/low-stock` | `skip`, `limit` |
 | `useCurrentExchangeRate` | GET `/api/exchange-rates/current` | Tasa en header del shell |
 
 **Tablas/vistas:** `daily_sales_summary`, `low_stock_products`, agregados sobre `sales`.
 
-**Pendiente:** selector de rango de fechas en UI; enlaces desde filas a detalle.
+**Pendiente:** enlaces desde filas a detalle.
 
 ---
 
@@ -141,7 +146,7 @@ Módulo: `src/modules/platform/`. Aislamiento ERP: `requireStorePermission` + `s
 |------|---------|----------|
 | `/products` | `products.view` | Listado, filtros, crear, importar, desactivar, enlace a categorías. Costo/PVP en una columna: **REF** (principal) + Bs (secundario) con `useCurrentExchangeRate`. Costo se muestra **con impuesto** de la categoría (`currentCostRef × (1 + taxRate/100)`); en DB el costo sigue siendo neto |
 | `/products/categories` | `products.view` | CRUD categorías (escritura: `products.manage`) |
-| `/products/[id]` | `products.view` | Resumen, stock, historial precios, proveedores (tabla + cards + M10–M14), editar |
+| `/products/[id]` | `products.view` | Resumen, stock, historial precios, historial de ventas del SKU, proveedores (tabla + cards + M10–M14), editar |
 | `/products/import` | `products.manage` | Wizard importación Excel |
 
 ### Hooks y endpoints
@@ -154,6 +159,7 @@ Módulo: `src/modules/platform/`. Aislamiento ERP: `requireStorePermission` + `s
 | `useUpdateProduct` | PATCH `/api/products/[id]` |
 | `useUpdateProductPrice` | POST `/api/products/[id]/price` → RPC `update_product_price` |
 | `useProductPriceHistory` | GET `/api/products/[id]/price-history` |
+| `useProductSales` | GET `/api/products/[id]/sales` — `skip`, `limit`; datetime Caracas; totales `units`/`totalRef`/`totalVes` (excluye `cancelada`) |
 | `useProductSuppliers` | GET `/api/products/[id]/suppliers` |
 | `useCategories` | GET `/api/categories` — `search`, `skip`, `limit` |
 | `useCreateCategory` | POST `/api/categories` |
@@ -285,7 +291,7 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 
 | Hook | Endpoint |
 |------|----------|
-| `useSales` | GET `/api/sales` — `status`, `customerId`, `from`, `to` |
+| `useSales` | GET `/api/sales` — `status`, `customerId`, `from`, `to` (día operativo Caracas) |
 | `useSale` | GET `/api/sales/[id]` |
 | `useCreateSale` | POST `/api/sales` → RPC `create_sale` |
 | `useCancelSale` | PATCH `/api/sales/[id]/cancel` |
@@ -373,8 +379,13 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 | `useTopProductsReport` | GET `/api/reports/top-products` | agregado `sale_items` |
 | `useTopCustomersReport` | GET `/api/reports/top-customers` | agregado ventas |
 | `usePurchasesReport` | GET `/api/reports/purchases` | tabla `purchases` |
+| `useFxDepreciationReport` | GET `/api/reports/fx-depreciation` | pagos de venta + tasa vigente (`exchange_rates`) |
+| `usePaymentMethodsReport` | GET `/api/reports/payment-methods` | pagos de venta activos (`status=activo`, `sale_id` not null) por método |
+| `useDailyCloseReport` | GET `/api/reports/daily-close` | composición: ventas Caracas + mix pagos + FX + snapshot caja/baúl |
 
-**Pendiente:** filtros fecha en todos los reportes; gráficos. Export PDF/Excel ya disponible.
+Rangos `from`/`to` en reportes de fecha usan **día operativo America/Caracas**.
+
+**Pendiente:** filtros fecha en todos los reportes; gráficos. Vista previa modal + export PDF/Excel.
 
 ---
 
@@ -425,6 +436,7 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 | `cancel_purchase` | PATCH `/api/purchases/[id]/cancel` |
 | `return_purchase` | POST `/api/purchases/[id]/return` |
 | `open_cash_session`, `close_cash_session` | POST `/api/cash/session/open`, `/api/cash/session/close` |
+| `auto_close_stale_cash_sessions` | GET/POST `/api/cron/cash-sessions/auto-close` (`CRON_SECRET`; cada 15 min en Vercel) |
 | `transfer_cash_closures_to_vault` | POST `/api/vault/transfers-from-cash` (`sessionIds`) |
 | `register_vault_deposit`, `register_vault_withdrawal` | POST `/api/vault/deposits`, `/api/vault/withdrawals` |
 

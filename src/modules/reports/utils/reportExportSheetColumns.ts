@@ -1,11 +1,14 @@
 import type { StockMovementMock } from "@/shared/mocks/erp-data";
+import { paymentMethodLabels } from "@/shared/payments/paymentMethods";
 import { formatDate } from "@/shared/utils/date";
 
 import type {
   CustomerPurchasesReportRow,
   DailySalesReportRow,
+  FxDepreciationReportRow,
   GrossProfitReportRow,
   LowStockReportRow,
+  PaymentMethodReportRow,
   ProductProfitabilityReportRow,
   PurchasesReportRow,
   SupplierPurchasesReportRow,
@@ -102,4 +105,32 @@ export const purchasesExportColumns: ReportExportColumn<PurchasesReportRow>[] = 
   { header: "Fecha", value: (row) => formatDate(row.createdAt) },
   { header: "Items", value: (row) => row.itemsCount },
   { header: "Total VES", value: (row) => row.totalVes },
+];
+
+export const fxDepreciationExportColumns: ReportExportColumn<FxDepreciationReportRow>[] = [
+  { header: "Factura", value: (row) => row.invoiceNumber },
+  { header: "Fecha", value: (row) => formatDate(row.saleDate) },
+  { header: "Tasa venta", value: (row) => row.rateAtSale },
+  { header: "VES cobrado", value: (row) => row.vesCollected },
+  { header: "USD REF", value: (row) => row.usdRef },
+  { header: "REF al cobrar", value: (row) => row.vesRefAtCollection },
+  { header: "REF hoy", value: (row) => row.vesRefToday },
+  { header: "Perdida REF", value: (row) => row.lossRef },
+];
+
+export type DailyCloseExportRow = {
+  metric: string;
+  value: number | string;
+};
+
+export const dailyCloseExportColumns: ReportExportColumn<DailyCloseExportRow>[] = [
+  { header: "Indicador", value: (row) => row.metric },
+  { header: "Valor", value: (row) => row.value },
+];
+
+export const paymentMethodsExportColumns: ReportExportColumn<PaymentMethodReportRow>[] = [
+  { header: "Metodo", value: (row) => paymentMethodLabels[row.method] ?? row.method },
+  { header: "Pagos", value: (row) => row.paymentCount },
+  { header: "REF", value: (row) => row.amountRef },
+  { header: "VES", value: (row) => row.amountVes },
 ];

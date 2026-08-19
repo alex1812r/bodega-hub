@@ -280,6 +280,7 @@ Invalidar `["dashboard"]` tras ventas, pagos, inventario.
 | `useUpdateProduct` | PATCH | `/api/products/[id]` | `products.manage` |
 | `useUpdateProductPrice` | POST | `/api/products/[id]/price` | `products.manage` |
 | `useProductPriceHistory` | GET | `/api/products/[id]/price-history` | `products.view` |
+| `useProductSales` | GET | `/api/products/[id]/sales` | `products.view` |
 | `useProductSuppliers` | GET | `/api/products/[id]/suppliers` | `products.view` |
 | `useCategories` | GET | `/api/categories` | `products.view` |
 
@@ -479,6 +480,7 @@ Todos GET, permiso `reports.view`. Pasar `from` / `to` donde aplique; `stock-car
 | `useTopProductsReport` | `/api/reports/top-products?from=&to=` |
 | `useTopCustomersReport` | `/api/reports/top-customers?from=&to=` |
 | `usePurchasesReport` | `/api/reports/purchases?supplierId=&from=&to=` |
+| `usePaymentMethodsReport` | `/api/reports/payment-methods?from=&to=` |
 
 ## Flujos de negocio (orden recomendado)
 
@@ -589,7 +591,7 @@ Ocultar botones si el permiso no está en el perfil; igual manejar 403 del API.
 |------|-------|
 | `/dashboard` | `useDashboardSummary`, `useDashboardMetrics`, `useDashboardRecentSales`, `useDashboardLowStock` |
 | `/products` | `useProducts`, `useCategories`, `useCreateProduct`, `useUpdateProduct` |
-| `/products/[id]` | `useProduct`, `useProductPriceHistory`, `useProductSuppliers`, `useUpdateProductPrice`, mutaciones M10–M14 |
+| `/products/[id]` | `useProduct`, `useProductPriceHistory`, `useProductSales`, `useProductSuppliers`, `useUpdateProductPrice`, mutaciones M10–M14 |
 | `/inventory` | `useInventory`, `useAdjustInventory` |
 | `/inventory/movements` | `useInventoryMovements`, `useStockCard` |
 | `/contacts` | `useContacts`, `useCreateContact` |

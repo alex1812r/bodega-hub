@@ -1,22 +1,28 @@
 import {
+  ClipboardCheck,
   LineChart,
   Package,
   PackageMinus,
   PieChart,
   ShoppingCart,
+  TrendingDown,
   TrendingUp,
   Truck,
   Trophy,
   UserRoundCheck,
   Users,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
 export type ReportId =
   | "customer-purchases"
+  | "daily-close"
   | "daily-sales"
+  | "fx-depreciation"
   | "gross-profit"
   | "low-stock"
+  | "payment-methods"
   | "product-profitability"
   | "purchases"
   | "stock-card"
@@ -35,6 +41,14 @@ export type ReportDefinition = {
 
 export const reportCatalog: ReportDefinition[] = [
   {
+    id: "daily-close",
+    icon: ClipboardCheck,
+    name: "Cierre del dia",
+    period: "Dia operativo Caracas",
+    description:
+      "Ventas, mix de pagos, perdida FX de VES y snapshot de caja/baul para el dia operativo.",
+  },
+  {
     id: "daily-sales",
     icon: LineChart,
     ignoresGlobalFilters: true,
@@ -48,6 +62,21 @@ export const reportCatalog: ReportDefinition[] = [
     name: "Ganancia bruta",
     period: "Diario",
     description: "Ingresos, costos y utilidad bruta por venta.",
+  },
+  {
+    id: "fx-depreciation",
+    icon: TrendingDown,
+    name: "Depreciacion FX",
+    period: "Al generar",
+    description:
+      "Capital cobrado en VES/USD valorizado a la tasa del dia: cuanto tienes a la mano en REF hoy.",
+  },
+  {
+    id: "payment-methods",
+    icon: Wallet,
+    name: "Metodos de pago",
+    period: "Hoy / Ayer / Rango",
+    description: "Pagos de venta activos agrupados por metodo: cantidad, REF y VES.",
   },
   {
     id: "product-profitability",

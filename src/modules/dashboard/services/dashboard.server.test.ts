@@ -6,6 +6,7 @@ jest.mock("../../../lib/supabase/route-client");
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
+import { getCaracasIsoDate, shiftIsoDate } from "@/shared/utils/caracasBusinessDay";
 
 import {
   getDashboardLowStock,
@@ -19,7 +20,9 @@ function createQueryBuilder(result: { count?: number | null; data?: unknown; err
     eq: jest.fn().mockReturnThis(),
     gte: jest.fn().mockReturnThis(),
     in: jest.fn().mockReturnThis(),
+    lt: jest.fn().mockReturnThis(),
     lte: jest.fn().mockReturnThis(),
+    not: jest.fn().mockReturnThis(),
     maybeSingle: jest.fn().mockResolvedValue(result),
     order: jest.fn().mockReturnThis(),
     range: jest.fn().mockReturnThis(),
@@ -43,11 +46,20 @@ describe("dashboard.server", () => {
     });
   });
 
-  it("builds dashboard summary from views and sales", async () => {
+  it("builds dashboard summary from Caracas operational-day sales", async () => {
+    const today = getCaracasIsoDate();
+    const yesterday = shiftIsoDate(today, -1);
+
     mockFrom.mockImplementation((table: string) => {
-      if (table === "daily_sales_summary") {
+      if (table === "sales") {
         return createQueryBuilder({
-          data: { sales_count: 3, total_ref: 120, total_ves: 60000 },
+          count: 1,
+          data: [
+            { created_at: `${today}T12:00:00.000Z`, total_ref: 40, total_ves: 20000 },
+            { created_at: `${today}T16:00:00.000Z`, total_ref: 40, total_ves: 20000 },
+            { created_at: `${today}T20:00:00.000Z`, total_ref: 40, total_ves: 20000 },
+            { created_at: `${yesterday}T12:00:00.000Z`, total_ref: 120, total_ves: 60000 },
+          ],
           error: null,
         });
       }
@@ -105,6 +117,42 @@ describe("dashboard.server", () => {
         unitsSold: 3,
       }),
     );
+  });
+
+  it("applies Caracas operational-day bounds for a single from/to date", async () => {
+    const salesBuilder = createQueryBuilder({ data: [], error: null });
+    mockFrom.mockReturnValue(salesBuilder);
+
+    await getDashboardMetrics(
+      new URLSearchParams("from=2026-08-16&to=2026-08-16"),
+      DEFAULT_STORE_ID,
+    );
+
+    expect(salesBuilder.gte).toHaveBeenCalledWith("created_at", "2026-08-16T04:00:00.000Z");
+    expect(salesBuilder.lt).toHaveBeenCalledWith("created_at", "2026-08-17T04:00:00.000Z");
+  });
+
+  it("skips the lower bound when fromStart is set", async () => {
+    const salesBuilder = createQueryBuilder({ data: [], error: null });
+    mockFrom.mockReturnValue(salesBuilder);
+
+    await getDashboardMetrics(
+      new URLSearchParams("fromStart=1&from=2026-08-01&to=2026-08-16"),
+      DEFAULT_STORE_ID,
+    );
+
+    expect(salesBuilder.gte).not.toHaveBeenCalled();
+    expect(salesBuilder.lt).toHaveBeenCalledWith("created_at", "2026-08-17T04:00:00.000Z");
+  });
+
+  it("does not call gte when from is omitted", async () => {
+    const salesBuilder = createQueryBuilder({ data: [], error: null });
+    mockFrom.mockReturnValue(salesBuilder);
+
+    await getDashboardMetrics(new URLSearchParams("to=2026-08-16"), DEFAULT_STORE_ID);
+
+    expect(salesBuilder.gte).not.toHaveBeenCalled();
+    expect(salesBuilder.lt).toHaveBeenCalledWith("created_at", "2026-08-17T04:00:00.000Z");
   });
 
   it("returns paginated recent sales", async () => {

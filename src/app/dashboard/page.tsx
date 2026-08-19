@@ -1,56 +1,43 @@
 "use client";
 
 import { Filter } from "lucide-react";
-import { useMemo, useState } from "react";
 
 import { getPageDataSourceSuffix } from "@/lib/api/dataSourceUi";
 import { DashboardContentGrid } from "@/modules/dashboard/components/DashboardContentGrid";
 import { DashboardKpiCardsGrid } from "@/modules/dashboard/components/DashboardKpiCardsGrid";
+import { DashboardDailyCloseCard } from "@/modules/dashboard/components/DashboardDailyCloseCard";
 import { DashboardLowStockCard } from "@/modules/dashboard/components/DashboardLowStockCard";
+import { DashboardPaymentMethodsCard } from "@/modules/dashboard/components/DashboardPaymentMethodsCard";
 import { DashboardPeriodFilterModal } from "@/modules/dashboard/components/DashboardPeriodFilterModal";
 import { DashboardRecentSalesCard } from "@/modules/dashboard/components/DashboardRecentSalesCard";
 import { DashboardSalesChartCard } from "@/modules/dashboard/components/DashboardSalesChartCard";
+import { useDashboardKpiPeriod } from "@/modules/dashboard/hooks/useDashboardKpiPeriod";
 import {
   useDashboardMetrics,
   useDashboardSummary,
 } from "@/modules/dashboard/hooks/useDashboard";
-import {
-  DASHBOARD_KPI_PERIODS,
-  type DashboardKpiPeriodDays,
-  getDashboardDateRange,
-  getKpiPeriodLabel,
-} from "@/modules/dashboard/utils/chartPeriod";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { IconButton } from "@/shared/components/IconButton";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { Typography } from "@/shared/components/Typography";
 
 export default function DashboardPage() {
-  const [kpiPeriodDays, setKpiPeriodDays] = useState<DashboardKpiPeriodDays>(1);
-  const [kpiPeriodModalOpen, setKpiPeriodModalOpen] = useState(false);
-  const [draftKpiPeriodDays, setDraftKpiPeriodDays] = useState<DashboardKpiPeriodDays>(1);
-
-  const kpiRange = useMemo(() => getDashboardDateRange(kpiPeriodDays), [kpiPeriodDays]);
+  const kpiPeriod = useDashboardKpiPeriod();
   const summary = useDashboardSummary();
-  const metrics = useDashboardMetrics(kpiRange);
+  const metrics = useDashboardMetrics(kpiPeriod.currentFilters);
+  const previousMetrics = useDashboardMetrics(kpiPeriod.previousFilters ?? {}, {
+    enabled: Boolean(kpiPeriod.previousFilters),
+  });
 
   const isInitialLoading = summary.isLoading;
   const criticalError = summary.error;
-  const kpiPeriodLabel = getKpiPeriodLabel(kpiPeriodDays);
 
   function refetchDashboard() {
     void summary.refetch();
     void metrics.refetch();
-  }
-
-  function openKpiPeriodModal() {
-    setDraftKpiPeriodDays(kpiPeriodDays);
-    setKpiPeriodModalOpen(true);
-  }
-
-  function applyKpiPeriod() {
-    setKpiPeriodDays(draftKpiPeriodDays);
-    setKpiPeriodModalOpen(false);
+    if (kpiPeriod.previousFilters) {
+      void previousMetrics.refetch();
+    }
   }
 
   return (
@@ -61,28 +48,38 @@ export default function DashboardPage() {
             Resumen del dia
           </Typography>
           <Typography className="mt-2" variant="muted">
-            Monitoreo general de operaciones y estado de inventario{kpiPeriodDays === 1
+            Monitoreo general de operaciones y estado de inventario. Dia operativo Caracas
+            (America/Caracas)
+            {kpiPeriod.preset === "hoy"
               ? getPageDataSourceSuffix()
-              : `. Indicadores de ventas: ${kpiPeriodLabel.toLowerCase()}.`}
+              : ` Indicadores de ventas: ${kpiPeriod.kpiPeriodLabel.toLowerCase()}.`}
           </Typography>
         </div>
         <IconButton
           aria-label="Filtrar periodo de indicadores"
           className="shrink-0 text-muted-foreground hover:bg-surface-container hover:text-primary"
           icon={<Filter className="h-5 w-5" />}
-          onClick={openKpiPeriodModal}
+          onClick={kpiPeriod.openModal}
           variant="ghost"
         />
       </div>
 
       <DashboardPeriodFilterModal
-        description="Selecciona el rango para ventas REF, total VES y cobros del periodo."
-        draftPeriodDays={draftKpiPeriodDays}
-        onApply={applyKpiPeriod}
-        onDraftPeriodChange={(days) => setDraftKpiPeriodDays(days as DashboardKpiPeriodDays)}
-        onOpenChange={setKpiPeriodModalOpen}
-        open={kpiPeriodModalOpen}
-        periods={DASHBOARD_KPI_PERIODS}
+        applyDisabled={kpiPeriod.applyDisabled}
+        customRange={{
+          from: kpiPeriod.draftFrom,
+          max: kpiPeriod.today,
+          onFromChange: kpiPeriod.setDraftFrom,
+          onToChange: kpiPeriod.setDraftTo,
+          to: kpiPeriod.draftTo,
+        }}
+        description="Selecciona Hoy, Ayer, un rango o desde el inicio para ventas REF, total VES y cantidad de ventas."
+        draftPeriodKey={kpiPeriod.draftPreset}
+        onApply={kpiPeriod.apply}
+        onDraftPeriodKeyChange={kpiPeriod.changeDraftPreset}
+        onOpenChange={kpiPeriod.setModalOpen}
+        open={kpiPeriod.modalOpen}
+        periods={kpiPeriod.periods}
         title="Periodo de indicadores"
       />
 
@@ -105,10 +102,27 @@ export default function DashboardPage() {
       ) : (
         <>
           <DashboardKpiCardsGrid
+            comparisonLabel={kpiPeriod.comparisonLabel}
             isMetricsLoading={metrics.isLoading || metrics.isFetching}
+            isPreviousLoading={previousMetrics.isLoading || previousMetrics.isFetching}
             metrics={metrics.data}
-            periodDays={kpiPeriodDays}
+            previousMetrics={previousMetrics.data}
+            preset={kpiPeriod.preset}
             summary={summary.data}
+          />
+
+          <DashboardPaymentMethodsCard
+            from={kpiPeriod.currentFilters.from}
+            fromStart={kpiPeriod.currentFilters.fromStart}
+            periodLabel={kpiPeriod.kpiPeriodLabel}
+            to={kpiPeriod.currentFilters.to}
+          />
+
+          <DashboardDailyCloseCard
+            from={kpiPeriod.currentFilters.from}
+            fromStart={kpiPeriod.currentFilters.fromStart}
+            periodLabel={kpiPeriod.kpiPeriodLabel}
+            to={kpiPeriod.currentFilters.to}
           />
 
           <DashboardContentGrid

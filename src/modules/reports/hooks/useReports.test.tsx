@@ -7,6 +7,7 @@ import {
   useDailySalesReport,
   useGrossProfitReport,
   useLowStockReport,
+  usePaymentMethodsReport,
   useProductProfitabilityReport,
   usePurchasesReport,
   useStockCardReport,
@@ -127,7 +128,18 @@ describe("report hooks", () => {
       .mockResolvedValueOnce(jsonResponse({ data: paginated([{ productId: "prod-cable" }]) }))
       .mockResolvedValueOnce(jsonResponse({ data: paginated([{ productId: "prod-cable" }]) }))
       .mockResolvedValueOnce(jsonResponse({ data: paginated([{ customerId: "cont-customer" }]) }))
-      .mockResolvedValueOnce(jsonResponse({ data: paginated([{ id: "purchase-001" }]) }));
+      .mockResolvedValueOnce(jsonResponse({ data: paginated([{ id: "purchase-001" }]) }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: {
+            items: [{ method: "efectivo_ves", paymentCount: 1, amountRef: 10, amountVes: 5000 }],
+            limit: 10,
+            skip: 0,
+            summary: { paymentCount: 1, totalRef: 10, totalVes: 5000 },
+            total: 5,
+          },
+        }),
+      );
 
     const stockCard = renderHook(
       () => useStockCardReport({ productId: "prod-cable" }),
@@ -150,11 +162,16 @@ describe("report hooks", () => {
         }),
       { wrapper: createWrapper() },
     );
+    const paymentMethods = renderHook(
+      () => usePaymentMethodsReport({ from: "2026-05-18", to: "2026-05-18" }),
+      { wrapper: createWrapper() },
+    );
 
     await waitFor(() => expect(stockCard.result.current.isSuccess).toBe(true));
     await waitFor(() => expect(topProducts.result.current.isSuccess).toBe(true));
     await waitFor(() => expect(topCustomers.result.current.isSuccess).toBe(true));
     await waitFor(() => expect(purchases.result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(paymentMethods.result.current.isSuccess).toBe(true));
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/reports/stock-card?productId=prod-cable",
@@ -170,6 +187,10 @@ describe("report hooks", () => {
     );
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/reports/purchases?from=2026-05-17&supplierId=cont-supplier&to=2026-05-19",
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/reports/payment-methods?from=2026-05-18&to=2026-05-18",
       expect.any(Object),
     );
   });

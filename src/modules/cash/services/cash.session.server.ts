@@ -2,6 +2,8 @@ import { ApiError } from "@/lib/api/apiError";
 import { getSupabaseErrorMessage, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
+import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
+
 import type { CashMovement, CashSession } from "../types";
 import type { CloseCashSessionInput, OpenCashSessionInput } from "./cash.session.mock-server";
 
@@ -10,6 +12,7 @@ function mapSession(row: Record<string, unknown>): CashSession {
   return {
     absorbedBySessionId: (row.absorbed_by_session_id as string | null | undefined) ?? null,
     closedAt: row.closed_at as string | null,
+    closedReason: (row.closed_reason as CashSession["closedReason"]) ?? null,
     closingRef: Number(row.closing_ref ?? 0),
     closingVes: Number(row.closing_ves ?? 0),
     id: row.id as string,
@@ -135,4 +138,15 @@ export async function getLastUntransferredClosure(registerId: string, storeId: s
     return null;
   }
   return mapSession(data as Record<string, unknown>);
+}
+
+export async function autoCloseStaleCashSessions() {
+  const supabase = createAdminSupabaseClient();
+  const { data, error } = await supabase.rpc("auto_close_stale_cash_sessions");
+  throwIfSupabaseError(error);
+  const payload = (data ?? {}) as { closedCount?: number; sessionIds?: string[] };
+  return {
+    closedCount: Number(payload.closedCount ?? 0),
+    sessionIds: payload.sessionIds ?? [],
+  };
 }

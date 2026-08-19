@@ -91,6 +91,9 @@ export function SalesListFilters({ filters, onChange }: SalesListFiltersProps) {
           />
         </div>
       </div>
+      <p className="w-full text-xs text-muted-foreground md:ml-auto md:w-auto">
+        Dia operativo Caracas
+      </p>
     </section>
   );
 }

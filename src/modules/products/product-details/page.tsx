@@ -30,6 +30,7 @@ import {
   ProductDetailPriceHistoryTable,
   type ProductPriceHistoryRow,
 } from "./components/ProductDetailPriceHistoryTable";
+import { ProductDetailSalesHistoryCard } from "./components/ProductDetailSalesHistoryCard";
 import { ProductDetailStockCard } from "./components/ProductDetailStockCard";
 import {
   ProductDetailSuppliersTable,
@@ -199,6 +200,9 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
             />
           </div>
         ) : null}
+        <div className="lg:col-span-12">
+          <ProductDetailSalesHistoryCard productId={productId} />
+        </div>
       </div>
     </div>
   );

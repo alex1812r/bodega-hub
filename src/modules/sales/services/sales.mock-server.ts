@@ -9,6 +9,7 @@ import {
   type SaleMock,
 } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
+import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 
 export type SaleInput = Partial<
   Pick<SaleMock, "customerId" | "discountRef" | "refRateVes" | "taxRef">
@@ -52,15 +53,13 @@ export function listSales(searchParams: URLSearchParams, storeId: string) {
 
   const items = mockSales
     .filter((sale) => {
-      const saleDate = sale.createdAt.slice(0, 10);
       const customer = mockContacts.find((contact) => contact.id === sale.customerId);
 
       return (
         (sale.storeId ?? DEFAULT_STORE_ID) === storeId &&
         (!status || sale.status === status) &&
         (!customerId || sale.customerId === customerId) &&
-        (!from || saleDate >= from) &&
-        (!to || saleDate <= to) &&
+        isUtcTimestampInCaracasDateRange(sale.createdAt, from, to) &&
         (!search || matchesSaleSearch(sale, customer?.name, search))
       );
     })

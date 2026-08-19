@@ -23,6 +23,10 @@ import type {
 } from "./products.mock-server";
 import { applyProductSort } from "./productSort";
 import { buildProductSearchOrFilter, normalizeBarcode } from "./productSearch";
+import {
+  buildProductSaleHistoryResult,
+  mapProductSaleHistoryRow,
+} from "./productSales";
 import { normalizeSku } from "@/shared/utils/skuGeneration";
 
 function assertProductImageUrlInput(productId: string, imageUrl: string | null | undefined) {
@@ -348,4 +352,92 @@ export async function getProductPriceHistory(
     skip,
     total: count ?? 0,
   };
+}
+
+type ProductSaleEmbed = {
+  created_at: string;
+  invoice_number: string;
+  status: string;
+  store_id: string;
+};
+
+type ProductSaleItemRow = {
+  id: string;
+  product_id: string;
+  quantity: number;
+  sale_id: string;
+  sales: ProductSaleEmbed | ProductSaleEmbed[] | null;
+  subtotal_ref: number;
+  subtotal_ves: number;
+  unit_price_ref: number;
+};
+
+const productSaleItemsSelect = `
+  id,
+  quantity,
+  unit_price_ref,
+  subtotal_ref,
+  subtotal_ves,
+  sale_id,
+  product_id,
+  sales!inner (
+    invoice_number,
+    created_at,
+    status,
+    store_id
+  )
+`;
+
+function unwrapProductSale(sales: ProductSaleItemRow["sales"]) {
+  if (!sales) {
+    return null;
+  }
+
+  return Array.isArray(sales) ? (sales[0] ?? null) : sales;
+}
+
+export async function getProductSales(
+  id: string,
+  searchParams: URLSearchParams,
+  storeId: string,
+) {
+  await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("sale_items")
+    .select(productSaleItemsSelect)
+    .eq("product_id", id)
+    .eq("sales.store_id", storeId);
+
+  throwIfSupabaseError(error);
+
+  const rows = ((data ?? []) as ProductSaleItemRow[]).flatMap((row) => {
+    const sale = unwrapProductSale(row.sales);
+
+    if (!sale) {
+      return [];
+    }
+
+    return [
+      mapProductSaleHistoryRow(
+        {
+          id: row.id,
+          quantity: row.quantity,
+          saleId: row.sale_id,
+          subtotalRef: Number(row.subtotal_ref),
+          subtotalVes: Number(row.subtotal_ves),
+          unitPriceRef: Number(row.unit_price_ref),
+        },
+        {
+          createdAt: sale.created_at,
+          id: row.sale_id,
+          invoiceNumber: sale.invoice_number,
+          status: sale.status,
+          storeId: sale.store_id,
+        },
+      ),
+    ];
+  });
+
+  return buildProductSaleHistoryResult(rows, searchParams);
 }

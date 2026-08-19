@@ -38,6 +38,7 @@ export type DashboardSummary = {
 
 export type DashboardMetricsFilters = {
   from?: string;
+  fromStart?: boolean;
   to?: string;
 };
 
@@ -105,6 +106,14 @@ function scopeKey(scope?: DashboardRequestScope) {
   } as const;
 }
 
+function toMetricsQuery(filters: DashboardMetricsFilters) {
+  return {
+    from: filters.fromStart ? undefined : filters.from,
+    fromStart: filters.fromStart ? 1 : undefined,
+    to: filters.to,
+  };
+}
+
 export const dashboardQueryKeys = {
   all: ["dashboard"] as const,
   lowStock: (scope?: DashboardRequestScope) =>
@@ -139,7 +148,7 @@ export function useDashboardMetrics(
     queryKey: dashboardQueryKeys.metrics(filters, scope),
     queryFn: () =>
       apiFetch<DashboardMetrics>(dashboardPath("metrics", scope), {
-        query: withScopeQuery(filters, scope),
+        query: withScopeQuery(toMetricsQuery(filters), scope),
       }),
   });
 }

@@ -1,97 +1,90 @@
 "use client";
 
-import { FileSpreadsheet, FileText, Loader2 } from "lucide-react";
+import { Eye, Loader2 } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 
-import type { ReportsExportFilters } from "../../services/fetchReportsForExport";
-import { exportReportsToExcel } from "../../services/exportReportsExcel";
-import { exportReportsToPdf } from "../../services/exportReportsPdf";
+import {
+  fetchReportsForExport,
+  type ReportsExportDataset,
+  type ReportsExportFilters,
+} from "../../services/fetchReportsForExport";
+import { ReportsExportPreviewModal } from "./ReportsExportPreviewModal";
 
 type ReportsExportActionsProps = {
   exportFilters: ReportsExportFilters;
 };
 
 export function ReportsExportActions({ exportFilters }: ReportsExportActionsProps) {
-  const [isExportingExcel, setIsExportingExcel] = useState(false);
-  const [isExportingPdf, setIsExportingPdf] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewData, setPreviewData] = useState<ReportsExportDataset | null>(null);
+  const [exportedAt, setExportedAt] = useState<string | null>(null);
 
-  const isExporting = isExportingExcel || isExportingPdf;
   const exportDisabled =
-    isExporting ||
+    isLoadingPreview ||
     (exportFilters.scope?.pathPrefix === "/api/platform/reports" &&
       exportFilters.scope.enabled === false);
 
-
-  async function handleExportExcel() {
-    setIsExportingExcel(true);
-    setExportError(null);
+  async function openPreview() {
+    setIsLoadingPreview(true);
+    setPreviewError(null);
 
     try {
-      await exportReportsToExcel(exportFilters);
+      const nextExportedAt = new Date().toISOString();
+      const data = await fetchReportsForExport(exportFilters);
+      setExportedAt(nextExportedAt);
+      setPreviewData(data);
+      setPreviewOpen(true);
     } catch (error) {
-      setExportError(
+      setPreviewError(
         error instanceof Error
           ? error.message
-          : "No se pudo exportar el reporte a Excel.",
+          : "No se pudo generar la vista previa de reportes.",
       );
     } finally {
-      setIsExportingExcel(false);
+      setIsLoadingPreview(false);
     }
   }
 
-  async function handleExportPdf() {
-    setIsExportingPdf(true);
-    setExportError(null);
-
-    try {
-      await exportReportsToPdf(exportFilters);
-    } catch (error) {
-      setExportError(
-        error instanceof Error ? error.message : "No se pudo exportar el reporte a PDF.",
-      );
-    } finally {
-      setIsExportingPdf(false);
+  function handlePreviewOpenChange(open: boolean) {
+    setPreviewOpen(open);
+    if (!open) {
+      setPreviewData(null);
+      setExportedAt(null);
     }
   }
 
   return (
     <div className="flex w-full flex-col gap-2 sm:w-auto">
-      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
-        <Button
-          className="gap-2 border-outline-variant bg-surface-container-lowest hover:bg-surface-container-low"
-          disabled={exportDisabled}
-          onClick={() => void handleExportPdf()}
-          variant="outline"
-        >
-          {isExportingPdf ? (
-            <Loader2 aria-hidden className="size-[1.125rem] shrink-0 animate-spin" />
-          ) : (
-            <FileText aria-hidden className="size-[1.125rem] shrink-0" />
-          )}
-          {isExportingPdf ? "Exportando..." : "Exportar PDF"}
-        </Button>
-        <Button
-          className="gap-2 border-outline-variant bg-surface-container-lowest hover:bg-surface-container-low"
-          disabled={exportDisabled}
-          onClick={() => void handleExportExcel()}
-          variant="outline"
-        >
-          {isExportingExcel ? (
-            <Loader2 aria-hidden className="size-[1.125rem] shrink-0 animate-spin" />
-          ) : (
-            <FileSpreadsheet aria-hidden className="size-[1.125rem] shrink-0" />
-          )}
-          {isExportingExcel ? "Exportando..." : "Exportar Excel"}
-        </Button>
-      </div>
-      {exportError ? (
+      <Button
+        className="gap-2 border-outline-variant bg-surface-container-lowest hover:bg-surface-container-low"
+        disabled={exportDisabled}
+        onClick={() => void openPreview()}
+        variant="outline"
+      >
+        {isLoadingPreview ? (
+          <Loader2 aria-hidden className="size-[1.125rem] shrink-0 animate-spin" />
+        ) : (
+          <Eye aria-hidden className="size-[1.125rem] shrink-0" />
+        )}
+        {isLoadingPreview ? "Generando vista previa..." : "Vista previa / exportar"}
+      </Button>
+      {previewError ? (
         <p className="text-xs text-error" role="alert">
-          {exportError}
+          {previewError}
         </p>
       ) : null}
+
+      <ReportsExportPreviewModal
+        data={previewData}
+        exportedAt={exportedAt}
+        filters={exportFilters}
+        onOpenChange={handlePreviewOpenChange}
+        open={previewOpen}
+      />
     </div>
   );
 }

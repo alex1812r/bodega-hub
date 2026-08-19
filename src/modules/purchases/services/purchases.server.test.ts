@@ -3,7 +3,9 @@
  */
 
 jest.mock("../../../lib/supabase/route-client");
+jest.mock("../../../lib/supabase/admin-client");
 
+import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
@@ -37,6 +39,7 @@ function createQueryBuilder(result: { count?: number; data?: unknown; error?: un
   const builder = {
     eq: jest.fn().mockReturnThis(),
     gte: jest.fn().mockReturnThis(),
+    lt: jest.fn().mockReturnThis(),
     lte: jest.fn().mockReturnThis(),
     maybeSingle: jest.fn().mockResolvedValue(result),
     order: jest.fn().mockReturnThis(),
@@ -47,9 +50,25 @@ function createQueryBuilder(result: { count?: number; data?: unknown; error?: un
   return builder;
 }
 
+function mockAdminStoreLookup(found = true) {
+  (createAdminSupabaseClient as jest.Mock).mockReturnValue({
+    from: jest.fn(() => ({
+      select: jest.fn(() => ({
+        eq: jest.fn(() => ({
+          maybeSingle: jest.fn().mockResolvedValue({
+            data: found ? { store_id: DEFAULT_STORE_ID } : null,
+            error: null,
+          }),
+        })),
+      })),
+    })),
+  });
+}
+
 describe("purchases.server", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAdminStoreLookup(true);
   });
 
   it("lists purchases with pagination", async () => {
@@ -157,6 +176,7 @@ describe("purchases.server", () => {
   });
 
   it("returns not found when purchase detail is missing", async () => {
+    mockAdminStoreLookup(false);
     const builder = createQueryBuilder({ data: null, error: null });
 
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue({

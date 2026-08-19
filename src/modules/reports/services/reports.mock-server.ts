@@ -10,11 +10,10 @@ import {
 } from "@/shared/mocks/erp-data";
 
 import { matchesStoreIds, normalizeStoreIds } from "./storeScope";
+import { isUtcTimestampInCaracasDateRange, toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
 function isWithinDateRange(createdAt: string, from?: string | null, to?: string | null) {
-  const date = createdAt.slice(0, 10);
-
-  return (!from || date >= from) && (!to || date <= to);
+  return isUtcTimestampInCaracasDateRange(createdAt, from, to);
 }
 
 function toStoreIds(storeIdOrIds: string | string[]) {
@@ -27,7 +26,7 @@ export function getDailySalesReport(searchParams: URLSearchParams, storeIdOrIds:
     .filter((sale) => matchesStoreIds(sale.storeId, storeIds))
     .map((sale) => ({
       paidVes: sale.paidVes,
-      saleDate: sale.createdAt.slice(0, 10),
+      saleDate: toCaracasDateKey(sale.createdAt),
       salesCount: 1,
       storeId: sale.storeId,
       totalRef: sale.totalRef,
@@ -51,7 +50,7 @@ export function getGrossProfitReport(searchParams: URLSearchParams, storeIdOrIds
       costRef,
       grossProfitRef: revenueRef - costRef,
       revenueRef,
-      saleDate: sale.createdAt.slice(0, 10),
+      saleDate: toCaracasDateKey(sale.createdAt),
       storeId: sale.storeId,
     };
   });
@@ -257,3 +256,6 @@ export function getPurchasesReport(searchParams: URLSearchParams, storeIdOrIds: 
 
   return paginateList(items, searchParams);
 }
+
+export { getFxDepreciationReport } from "./fxDepreciationReport.mock-server";
+export { getPaymentMethodsReport } from "./paymentMethodsReport.mock-server";

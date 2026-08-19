@@ -7,6 +7,8 @@ import {
   mockProductPackConversions,
   mockProductPriceHistory,
   mockProducts,
+  mockSaleItems,
+  mockSales,
   type ProductPriceHistoryMock,
   type ProductMock,
 } from "@/shared/mocks/erp-data";
@@ -16,6 +18,7 @@ import type { PackConversionInput } from "./packConversionSchemas";
 import { buildPackConversionSummary } from "./packConversionSummary";
 import { parseProductSort, sortProductItems } from "./productSort";
 import { matchesProductSearch, matchesExactBarcode, normalizeBarcode } from "./productSearch";
+import { buildProductSaleHistoryResult, joinProductSaleItems } from "./productSales";
 
 export type ProductInput = Partial<
   Pick<
@@ -328,6 +331,28 @@ export function getProductPriceHistory(id: string, searchParams: URLSearchParams
   const history = mockProductPriceHistory.filter((item) => item.productId === id);
 
   return paginateList(history, searchParams);
+}
+
+export function getProductSales(id: string, searchParams: URLSearchParams, storeId: string) {
+  getProductById(id, storeId);
+
+  const salesById = new Map(mockSales.map((sale) => [sale.id, sale]));
+  const rows = joinProductSaleItems(
+    mockSaleItems
+      .filter((item) => item.productId === id)
+      .map((item) => ({
+        id: `${item.saleId}:${item.productId}`,
+        quantity: item.quantity,
+        saleId: item.saleId,
+        subtotalRef: item.subtotalRef,
+        subtotalVes: item.subtotalVes,
+        unitPriceRef: item.unitPriceRef,
+      })),
+    salesById,
+    storeId,
+  );
+
+  return buildProductSaleHistoryResult(rows, searchParams);
 }
 
 export function createProductPriceHistoryEntry(id: string, input: ProductPriceInput, storeId: string) {

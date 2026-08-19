@@ -23,6 +23,7 @@ import {
   parseInventoryMovementFilters,
 } from "../utils/inventoryMovementFilters";
 import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
+import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
 const productSummarySelect =
   "id, category_id, sku, barcode, name, sale_price_ref, current_cost_ref, current_stock, min_stock, image_url, is_active";
@@ -137,13 +138,7 @@ export async function listStockMovements(searchParams: URLSearchParams, storeId:
     query = query.eq("type", filters.type);
   }
 
-  if (filters.from) {
-    query = query.gte("created_at", `${filters.from}T00:00:00.000Z`);
-  }
-
-  if (filters.to) {
-    query = query.lte("created_at", `${filters.to}T23:59:59.999Z`);
-  }
+  query = applyCreatedAtCaracasRange(query, filters.from, filters.to);
 
   const { count, data, error } = await query.range(skip, skip + limit - 1);
 

@@ -3,16 +3,29 @@ import { delay, http, HttpResponse } from "msw";
 
 import {
   getDashboardLowStock,
+  getDashboardMetrics,
   getDashboardSalesTrend,
   getDashboardSummary,
   getRecentSales,
 } from "@/modules/dashboard/services/dashboard.mock-server";
+import { getDailyCloseSummary } from "@/modules/reports/services/dailyCloseSummary.mock-server";
+import { getPaymentMethodsReport } from "@/modules/reports/services/paymentMethodsReport.mock-server";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import DashboardPage from "./page";
 
 const dashboardHandlers = [
   http.get("/api/dashboard/summary", () =>
     HttpResponse.json({ data: getDashboardSummary(DEFAULT_STORE_ID) }),
+  ),
+  http.get("/api/dashboard/metrics", ({ request }) =>
+    HttpResponse.json({
+      data: getDashboardMetrics(new URL(request.url).searchParams, DEFAULT_STORE_ID),
+    }),
+  ),
+  http.get("/api/dashboard/daily-close", ({ request }) =>
+    HttpResponse.json({
+      data: getDailyCloseSummary(new URL(request.url).searchParams, DEFAULT_STORE_ID),
+    }),
   ),
   http.get("/api/dashboard/sales-trend", ({ request }) =>
     HttpResponse.json({
@@ -27,6 +40,11 @@ const dashboardHandlers = [
   http.get("/api/dashboard/low-stock", ({ request }) =>
     HttpResponse.json({
       data: getDashboardLowStock(new URL(request.url).searchParams, DEFAULT_STORE_ID),
+    }),
+  ),
+  http.get("/api/reports/payment-methods", ({ request }) =>
+    HttpResponse.json({
+      data: getPaymentMethodsReport(new URL(request.url).searchParams, DEFAULT_STORE_ID),
     }),
   ),
 ];

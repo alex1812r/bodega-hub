@@ -8,15 +8,19 @@ import {
 } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { matchesStoreIds, normalizeStoreIds } from "@/modules/reports/services/storeScope";
+import {
+  isUtcTimestampInCaracasDate,
+  isUtcTimestampInCaracasDateRange,
+  toCaracasDateKey,
+} from "@/shared/utils/caracasBusinessDay";
 
 import { getBusinessTodayIsoDate, shiftIsoDate } from "../utils/businessDate";
+import { parseDashboardMetricsDateParams } from "../utils/kpiPeriod";
 import { buildDemoSalesTrend } from "../utils/demoChartSeries";
 import * as storesMock from "@/modules/platform/services/stores.mock-server";
 
 function isWithinDateRange(createdAt: string, from?: string | null, to?: string | null) {
-  const date = createdAt.slice(0, 10);
-
-  return (!from || date >= from) && (!to || date <= to);
+  return isUtcTimestampInCaracasDateRange(createdAt, from, to);
 }
 
 function sumSalesTotalRef(sales: typeof mockSales) {
@@ -50,8 +54,18 @@ export function getDashboardSummary(storeIdOrIds: string | string[]) {
   const today = getBusinessTodayIsoDate();
   const yesterday = shiftIsoDate(today, -1);
   const storeSales = salesForStores(storeIds);
-  const todaysSales = storeSales.filter((sale) => sale.createdAt.startsWith(today));
-  const yesterdaysSales = storeSales.filter((sale) => sale.createdAt.startsWith(yesterday));
+  const todaysSales = storeSales.filter(
+    (sale) =>
+      sale.status !== "cancelada" &&
+      sale.status !== "devuelta" &&
+      isUtcTimestampInCaracasDate(sale.createdAt, today),
+  );
+  const yesterdaysSales = storeSales.filter(
+    (sale) =>
+      sale.status !== "cancelada" &&
+      sale.status !== "devuelta" &&
+      isUtcTimestampInCaracasDate(sale.createdAt, yesterday),
+  );
   const totalRef = sumSalesTotalRef(todaysSales);
   const totalVes = todaysSales.reduce((total, sale) => total + sale.totalVes, 0);
   const previousDayTotalRef = sumSalesTotalRef(yesterdaysSales);
@@ -81,11 +95,15 @@ export function getDashboardSummary(storeIdOrIds: string | string[]) {
   };
 }
 
+const METRICS_SALE_STATUSES = new Set(["borrador", "pagada", "pendiente_pago"]);
+
 export function getDashboardMetrics(searchParams: URLSearchParams, storeIdOrIds: string | string[]) {
   const storeIds = toStoreIds(storeIdOrIds);
-  const from = searchParams.get("from");
-  const to = searchParams.get("to");
-  const sales = salesForStores(storeIds).filter((sale) => isWithinDateRange(sale.createdAt, from, to));
+  const { from, to } = parseDashboardMetricsDateParams(searchParams);
+  const sales = salesForStores(storeIds).filter(
+    (sale) =>
+      METRICS_SALE_STATUSES.has(sale.status) && isWithinDateRange(sale.createdAt, from, to),
+  );
   const totalRef = sales.reduce((total, sale) => total + sale.totalRef, 0);
   const totalVes = sales.reduce((total, sale) => total + sale.totalVes, 0);
   const paidVes = sales.reduce((total, sale) => total + sale.paidVes, 0);
@@ -132,7 +150,7 @@ export function getDashboardSalesTrend(
       continue;
     }
 
-    const saleDate = sale.createdAt.slice(0, 10);
+    const saleDate = toCaracasDateKey(sale.createdAt);
     const current = byDate.get(saleDate) ?? {
       paidVes: 0,
       saleDate,

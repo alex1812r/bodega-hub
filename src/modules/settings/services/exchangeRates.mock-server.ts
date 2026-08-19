@@ -2,6 +2,7 @@ import { paginateList } from "@/lib/api/pagination";
 import { DOLAR_API_OFFICIAL_SOURCE } from "@/lib/exchange-rates/constants";
 import { mockExchangeRates, type ExchangeRateMock } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
+import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 
 /** Mock: no llama a DolarAPI; devuelve tasa fija para tests y API_DATA_SOURCE=mock. */
 
@@ -10,12 +11,9 @@ export function listExchangeRates(searchParams = new URLSearchParams(), storeId 
   const to = searchParams.get("to");
 
   const items = mockExchangeRates.filter((rate) => {
-    const date = rate.createdAt.slice(0, 10);
-
     return (
       (rate.storeId ?? DEFAULT_STORE_ID) === storeId &&
-      (!from || date >= from) &&
-      (!to || date <= to)
+      isUtcTimestampInCaracasDateRange(rate.createdAt, from, to)
     );
   });
 

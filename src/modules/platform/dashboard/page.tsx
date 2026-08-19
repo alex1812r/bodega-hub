@@ -11,17 +11,12 @@ import { DashboardLowStockCard } from "@/modules/dashboard/components/DashboardL
 import { DashboardPeriodFilterModal } from "@/modules/dashboard/components/DashboardPeriodFilterModal";
 import { DashboardRecentSalesCard } from "@/modules/dashboard/components/DashboardRecentSalesCard";
 import { DashboardSalesChartCard } from "@/modules/dashboard/components/DashboardSalesChartCard";
+import { useDashboardKpiPeriod } from "@/modules/dashboard/hooks/useDashboardKpiPeriod";
 import {
   type DashboardRequestScope,
   useDashboardMetrics,
   useDashboardSummary,
 } from "@/modules/dashboard/hooks/useDashboard";
-import {
-  DASHBOARD_KPI_PERIODS,
-  type DashboardKpiPeriodDays,
-  getDashboardDateRange,
-  getKpiPeriodLabel,
-} from "@/modules/dashboard/utils/chartPeriod";
 import { Button } from "@/shared/components/Button";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { IconButton } from "@/shared/components/IconButton";
@@ -40,9 +35,7 @@ function scopeSubtitle(scope: PlatformStoreScope, selectedCount: number) {
 }
 
 export function PlatformDashboardPage() {
-  const [kpiPeriodDays, setKpiPeriodDays] = useState<DashboardKpiPeriodDays>(1);
-  const [kpiPeriodModalOpen, setKpiPeriodModalOpen] = useState(false);
-  const [draftKpiPeriodDays, setDraftKpiPeriodDays] = useState<DashboardKpiPeriodDays>(1);
+  const kpiPeriod = useDashboardKpiPeriod();
   const [storeScope, setStoreScope] = useState<PlatformStoreScope>("all");
   const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
 
@@ -61,27 +54,22 @@ export function PlatformDashboardPage() {
     [scopeReady, selectedStoreIds, storeScope],
   );
 
-  const kpiRange = useMemo(() => getDashboardDateRange(kpiPeriodDays), [kpiPeriodDays]);
   const summary = useDashboardSummary(dashboardScope);
-  const metrics = useDashboardMetrics(kpiRange, dashboardScope);
+  const metrics = useDashboardMetrics(kpiPeriod.currentFilters, dashboardScope);
+  const previousMetrics = useDashboardMetrics(kpiPeriod.previousFilters ?? {}, {
+    ...dashboardScope,
+    enabled: scopeReady && Boolean(kpiPeriod.previousFilters),
+  });
 
   const isInitialLoading = scopeReady && summary.isLoading;
   const criticalError = summary.error;
-  const kpiPeriodLabel = getKpiPeriodLabel(kpiPeriodDays);
 
   function refetchDashboard() {
     void summary.refetch();
     void metrics.refetch();
-  }
-
-  function openKpiPeriodModal() {
-    setDraftKpiPeriodDays(kpiPeriodDays);
-    setKpiPeriodModalOpen(true);
-  }
-
-  function applyKpiPeriod() {
-    setKpiPeriodDays(draftKpiPeriodDays);
-    setKpiPeriodModalOpen(false);
+    if (kpiPeriod.previousFilters) {
+      void previousMetrics.refetch();
+    }
   }
 
   return (
@@ -92,17 +80,18 @@ export function PlatformDashboardPage() {
             Resumen de plataforma
           </Typography>
           <Typography className="mt-2" variant="muted">
-            {scopeSubtitle(storeScope, selectedStoreIds.length)}
-            {kpiPeriodDays === 1
+            {scopeSubtitle(storeScope, selectedStoreIds.length)}. Dia operativo Caracas
+            (America/Caracas)
+            {kpiPeriod.preset === "hoy"
               ? getPageDataSourceSuffix()
-              : `. Indicadores de ventas: ${kpiPeriodLabel.toLowerCase()}.`}
+              : ` Indicadores de ventas: ${kpiPeriod.kpiPeriodLabel.toLowerCase()}.`}
           </Typography>
         </div>
         <IconButton
           aria-label="Filtrar periodo de indicadores"
           className="shrink-0 text-muted-foreground hover:bg-surface-container hover:text-primary"
           icon={<Filter className="h-5 w-5" />}
-          onClick={openKpiPeriodModal}
+          onClick={kpiPeriod.openModal}
           variant="ghost"
         />
       </div>
@@ -116,13 +105,21 @@ export function PlatformDashboardPage() {
       />
 
       <DashboardPeriodFilterModal
-        description="Selecciona el rango para ventas REF, total VES y cobros del periodo."
-        draftPeriodDays={draftKpiPeriodDays}
-        onApply={applyKpiPeriod}
-        onDraftPeriodChange={(days) => setDraftKpiPeriodDays(days as DashboardKpiPeriodDays)}
-        onOpenChange={setKpiPeriodModalOpen}
-        open={kpiPeriodModalOpen}
-        periods={DASHBOARD_KPI_PERIODS}
+        applyDisabled={kpiPeriod.applyDisabled}
+        customRange={{
+          from: kpiPeriod.draftFrom,
+          max: kpiPeriod.today,
+          onFromChange: kpiPeriod.setDraftFrom,
+          onToChange: kpiPeriod.setDraftTo,
+          to: kpiPeriod.draftTo,
+        }}
+        description="Selecciona Hoy, Ayer, un rango o desde el inicio para ventas REF, total VES y cantidad de ventas."
+        draftPeriodKey={kpiPeriod.draftPreset}
+        onApply={kpiPeriod.apply}
+        onDraftPeriodKeyChange={kpiPeriod.changeDraftPreset}
+        onOpenChange={kpiPeriod.setModalOpen}
+        open={kpiPeriod.modalOpen}
+        periods={kpiPeriod.periods}
         title="Periodo de indicadores"
       />
 
@@ -149,9 +146,12 @@ export function PlatformDashboardPage() {
       ) : (
         <>
           <DashboardKpiCardsGrid
+            comparisonLabel={kpiPeriod.comparisonLabel}
             isMetricsLoading={metrics.isLoading || metrics.isFetching}
+            isPreviousLoading={previousMetrics.isLoading || previousMetrics.isFetching}
             metrics={metrics.data}
-            periodDays={kpiPeriodDays}
+            previousMetrics={previousMetrics.data}
+            preset={kpiPeriod.preset}
             summary={summary.data}
           />
 

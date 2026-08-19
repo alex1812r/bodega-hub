@@ -3,8 +3,10 @@
  */
 
 jest.mock("../../../lib/supabase/route-client");
+jest.mock("../../../lib/supabase/admin-client");
 
 import { ApiError } from "@/lib/api/apiError";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
@@ -62,6 +64,18 @@ const supplierProductId = "44444444-4444-4444-8444-444444444444";
 describe("supplierProducts.server", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (createAdminSupabaseClient as jest.Mock).mockReturnValue({
+      from: jest.fn(() => ({
+        select: jest.fn(() => ({
+          eq: jest.fn(() => ({
+            maybeSingle: jest.fn().mockResolvedValue({
+              data: { store_id: DEFAULT_STORE_ID },
+              error: null,
+            }),
+          })),
+        })),
+      })),
+    });
   });
 
   it("validates supplier type before creating a relation", async () => {

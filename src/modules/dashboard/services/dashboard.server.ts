@@ -3,8 +3,14 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { normalizeStoreIds } from "@/modules/reports/services/storeScope";
+import {
+  applyCreatedAtCaracasRange,
+  getCaracasIsoDate,
+  isUtcTimestampInCaracasDate,
+} from "@/shared/utils/caracasBusinessDay";
 
 import { shiftIsoDate } from "../utils/businessDate";
+import { parseDashboardMetricsDateParams } from "../utils/kpiPeriod";
 
 type DbSale = {
   created_at: string;
@@ -44,7 +50,7 @@ export type DashboardQueryOptions = {
 const METRICS_SALE_STATUSES = ["borrador", "pagada", "pendiente_pago"] as const;
 
 function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  return getCaracasIsoDate();
 }
 
 async function getDashboardClient(options?: DashboardQueryOptions) {
@@ -76,40 +82,10 @@ function mapLowStockProduct(row: DbProduct & { store_name?: string | null }) {
   };
 }
 
-function applyCreatedAtRange<T extends { gte: (col: string, val: string) => T; lte: (col: string, val: string) => T }>(
-  query: T,
-  from: string | null,
-  to: string | null,
-) {
-  let next = query;
-
-  if (from) {
-    next = next.gte("created_at", `${from}T00:00:00.000Z`);
-  }
-
-  if (to) {
-    next = next.lte("created_at", `${to}T23:59:59.999Z`);
-  }
-
-  return next;
-}
-
-function sumDailyRows(
-  rows:
-    | Array<{ sales_count?: number | null; total_ref?: number | string | null; total_ves?: number | string | null }>
-    | { sales_count?: number | null; total_ref?: number | string | null; total_ves?: number | string | null }
-    | null
-    | undefined,
-) {
-  const list = Array.isArray(rows) ? rows : rows ? [rows] : [];
-  return list.reduce(
-    (acc, row) => ({
-      salesCount: acc.salesCount + Number(row.sales_count ?? 0),
-      totalRef: acc.totalRef + Number(row.total_ref ?? 0),
-      totalVes: acc.totalVes + Number(row.total_ves ?? 0),
-    }),
-    { salesCount: 0, totalRef: 0, totalVes: 0 },
-  );
+function applyCreatedAtRange<
+  T extends { gte: (col: string, val: string) => T; lt: (col: string, val: string) => T },
+>(query: T, from: string | null, to: string | null) {
+  return applyCreatedAtCaracasRange(query, from, to);
 }
 
 export async function getDashboardSummary(
@@ -119,17 +95,34 @@ export async function getDashboardSummary(
   const storeIds = normalizeStoreIds(storeIdOrIds);
   const supabase = await getDashboardClient(options);
   const today = todayIsoDate();
+  const yesterday = shiftIsoDate(today, -1);
 
-  let todayQuery = supabase
-    .from("daily_sales_summary")
-    .select("sales_count, total_ref, total_ves")
-    .eq("sale_date", today);
-  todayQuery = applyStoreIdsFilter(todayQuery, storeIds);
+  let salesQuery = supabase
+    .from("sales")
+    .select("created_at, total_ref, total_ves")
+    .not("status", "in", "(cancelada,devuelta)");
+  salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
+  salesQuery = applyCreatedAtRange(salesQuery, yesterday, today);
 
-  const { data: todayRows, error: todayError } = await todayQuery;
-  throwIfSupabaseError(todayError);
+  const { data: salesRows, error: salesError } = await salesQuery;
+  throwIfSupabaseError(salesError);
 
-  const todayTotals = sumDailyRows(todayRows ?? []);
+  const todayTotals = { salesCount: 0, totalRef: 0, totalVes: 0 };
+  let previousDayTotalRef = 0;
+
+  for (const row of salesRows ?? []) {
+    const createdAt = row.created_at as string;
+    const totalRef = Number(row.total_ref ?? 0);
+    const totalVes = Number(row.total_ves ?? 0);
+
+    if (isUtcTimestampInCaracasDate(createdAt, today)) {
+      todayTotals.salesCount += 1;
+      todayTotals.totalRef += totalRef;
+      todayTotals.totalVes += totalVes;
+    } else if (isUtcTimestampInCaracasDate(createdAt, yesterday)) {
+      previousDayTotalRef += totalRef;
+    }
+  }
 
   let lowStockQuery = supabase.from("low_stock_products").select("id", { count: "exact", head: true });
   lowStockQuery = applyStoreIdsFilter(lowStockQuery, storeIds);
@@ -144,16 +137,6 @@ export async function getDashboardSummary(
   const { count: pendingSalesCount, error: pendingError } = await pendingQuery;
   throwIfSupabaseError(pendingError);
 
-  const yesterday = shiftIsoDate(today, -1);
-  let yesterdayQuery = supabase
-    .from("daily_sales_summary")
-    .select("total_ref")
-    .eq("sale_date", yesterday);
-  yesterdayQuery = applyStoreIdsFilter(yesterdayQuery, storeIds);
-  const { data: yesterdayRows, error: yesterdayError } = await yesterdayQuery;
-  throwIfSupabaseError(yesterdayError);
-
-  const previousDayTotalRef = sumDailyRows(yesterdayRows ?? []).totalRef;
   const dayOverDayChangePercent =
     previousDayTotalRef > 0
       ? ((todayTotals.totalRef - previousDayTotalRef) / previousDayTotalRef) * 100
@@ -186,8 +169,7 @@ export async function getDashboardMetrics(
   options?: DashboardQueryOptions,
 ) {
   const storeIds = normalizeStoreIds(storeIdOrIds);
-  const from = searchParams.get("from");
-  const to = searchParams.get("to");
+  const { from, to } = parseDashboardMetricsDateParams(searchParams);
   const supabase = await getDashboardClient(options);
 
   let salesQuery = supabase
@@ -267,6 +249,7 @@ export async function getDashboardSalesTrend(
     .limit(2000);
   query = applyStoreIdsFilter(query, storeIds);
 
+  // daily_sales_summary.sale_date is UTC date_trunc, not Caracas operational day.
   if (from) {
     query = query.gte("sale_date", from);
   }

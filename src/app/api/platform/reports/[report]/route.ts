@@ -5,15 +5,25 @@ import { requirePermission } from "@/lib/api/requirePermission";
 import { resolvePlatformReportStoreIds } from "@/modules/platform/services/reportStoreScope";
 import * as reportsMock from "@/modules/reports/services/reports.mock-server";
 import * as reportsServer from "@/modules/reports/services/reports.server";
+import { getDailyCloseSummary as getDailyCloseSummaryMock } from "@/modules/reports/services/dailyCloseSummary.mock-server";
+import { getDailyCloseSummary as getDailyCloseSummaryServer } from "@/modules/reports/services/dailyCloseSummary.server";
 
 const reportHandlers = {
   "customer-purchases": {
     mock: reportsMock.getCustomerPurchasesReport,
     server: reportsServer.getCustomerPurchasesReport,
   },
+  "daily-close": {
+    mock: getDailyCloseSummaryMock,
+    server: getDailyCloseSummaryServer,
+  },
   "daily-sales": {
     mock: reportsMock.getDailySalesReport,
     server: reportsServer.getDailySalesReport,
+  },
+  "fx-depreciation": {
+    mock: reportsMock.getFxDepreciationReport,
+    server: reportsServer.getFxDepreciationReport,
   },
   "gross-profit": {
     mock: reportsMock.getGrossProfitReport,
@@ -22,6 +32,10 @@ const reportHandlers = {
   "low-stock": {
     mock: reportsMock.getLowStockReport,
     server: reportsServer.getLowStockReport,
+  },
+  "payment-methods": {
+    mock: reportsMock.getPaymentMethodsReport,
+    server: reportsServer.getPaymentMethodsReport,
   },
   "product-profitability": {
     mock: reportsMock.getProductProfitabilityReport,

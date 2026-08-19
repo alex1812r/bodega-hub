@@ -1,18 +1,15 @@
 import { isMockDataSource } from "@/lib/api/dataSourceUi";
+import { getCaracasIsoDate, shiftIsoDate as shiftCaracasIsoDate } from "@/shared/utils/caracasBusinessDay";
 
-/** Fecha operativa del negocio (mock fija; produccion usa hoy). */
+/** Fecha operativa del negocio (mock fija; produccion usa hoy en America/Caracas). */
 export function getBusinessTodayIsoDate() {
   if (isMockDataSource()) {
     return "2026-05-18";
   }
 
-  return new Date().toISOString().slice(0, 10);
+  return getCaracasIsoDate();
 }
 
 export function shiftIsoDate(isoDate: string, days: number) {
-  const date = new Date(`${isoDate}T12:00:00`);
-
-  date.setDate(date.getDate() + days);
-
-  return date.toISOString().slice(0, 10);
+  return shiftCaracasIsoDate(isoDate, days);
 }

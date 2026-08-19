@@ -15,30 +15,78 @@ import type {
   DashboardMetrics,
   DashboardSummary,
 } from "@/modules/dashboard/hooks/useDashboard";
-import type { DashboardKpiPeriodDays } from "@/modules/dashboard/utils/chartPeriod";
+import type { DashboardKpiPreset } from "@/modules/dashboard/utils/kpiPeriod";
+import { kpiChangePercent } from "@/modules/dashboard/utils/kpiPeriod";
 import { formatRef, formatVes } from "@/shared/utils/currency";
 
 type DashboardKpiCardsGridProps = {
+  comparisonLabel?: string | null;
   isMetricsLoading?: boolean;
+  isPreviousLoading?: boolean;
   metrics?: DashboardMetrics;
-  periodDays: DashboardKpiPeriodDays;
+  previousMetrics?: DashboardMetrics;
+  preset: DashboardKpiPreset;
   summary?: DashboardSummary;
 };
 
+function salesCardLabel(preset: DashboardKpiPreset) {
+  if (preset === "hoy") {
+    return "Ventas del dia";
+  }
+
+  if (preset === "ayer") {
+    return "Ventas de ayer";
+  }
+
+  if (preset === "desde_inicio") {
+    return "Ventas desde el inicio";
+  }
+
+  return "Ventas del periodo";
+}
+
+function vesCardLabel(preset: DashboardKpiPreset) {
+  if (preset === "hoy") {
+    return "Total VES";
+  }
+
+  if (preset === "desde_inicio") {
+    return "Total VES desde el inicio";
+  }
+
+  return "Total VES del periodo";
+}
+
 export function DashboardKpiCardsGrid({
+  comparisonLabel,
   isMetricsLoading = false,
+  isPreviousLoading = false,
   metrics,
-  periodDays,
+  previousMetrics,
+  preset,
   summary,
 }: DashboardKpiCardsGridProps) {
-  const isToday = periodDays === 1;
-  const salesLabel = isToday ? "Ventas del dia" : "Ventas del periodo";
-  const vesLabel = isToday ? "Total VES" : "Total VES del periodo";
+  const isToday = preset === "hoy";
+  const salesLabel = salesCardLabel(preset);
+  const vesLabel = vesCardLabel(preset);
+  const hasPreviousPeriod = preset !== "desde_inicio";
 
-  const salesValue = isMetricsLoading
-    ? "—"
-    : formatRef(metrics?.totalRef ?? 0);
+  const salesValue = isMetricsLoading ? "—" : formatRef(metrics?.totalRef ?? 0);
   const vesValue = isMetricsLoading ? "—" : formatVes(metrics?.totalVes ?? 0);
+  const salesCount = metrics?.salesCount ?? 0;
+  const salesCountDelta =
+    !isPreviousLoading && previousMetrics ? salesCount - previousMetrics.salesCount : null;
+
+  const changePercent =
+    isMetricsLoading || isPreviousLoading
+      ? null
+      : kpiChangePercent(metrics?.totalRef ?? 0, previousMetrics?.totalRef);
+
+  const trendNeutralLabel = !hasPreviousPeriod
+    ? "Sin periodo anterior comparable"
+    : isPreviousLoading
+      ? "Comparando..."
+      : "Sin datos del periodo anterior";
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -48,16 +96,26 @@ export function DashboardKpiCardsGrid({
         iconClassName="text-primary"
         label={salesLabel}
         trend={
-          isToday ? (
-            <DashboardKpiTrend changePercent={summary?.dayOverDayChangePercent} />
-          ) : (
-            <p className="mt-2 text-sm text-muted-foreground">
+          <>
+            <DashboardKpiTrend
+              changePercent={changePercent}
+              comparisonLabel={comparisonLabel ?? "vs periodo anterior"}
+              neutralLabel={trendNeutralLabel}
+            />
+            <p className="mt-1 text-sm text-muted-foreground">
               <span className="font-medium text-foreground">
-                {isMetricsLoading ? "—" : (metrics?.salesCount ?? 0)}
+                {isMetricsLoading ? "—" : salesCount}
               </span>{" "}
-              ventas en el periodo
+              ventas
+              {salesCountDelta != null && salesCountDelta !== 0 ? (
+                <span className="text-xs">
+                  {" "}
+                  ({salesCountDelta > 0 ? "+" : ""}
+                  {salesCountDelta})
+                </span>
+              ) : null}
             </p>
-          )
+          </>
         }
         value={salesValue}
       />

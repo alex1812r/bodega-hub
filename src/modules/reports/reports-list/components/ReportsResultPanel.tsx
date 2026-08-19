@@ -35,6 +35,9 @@ import {
   useTopProductsReport,
 } from "../../hooks/useReports";
 import { type ReportDefinition } from "../config/reportCatalog";
+import { DailyCloseReportPanel } from "./DailyCloseReportPanel";
+import { FxDepreciationReportPanel } from "./FxDepreciationReportPanel";
+import { PaymentMethodsReportPanel } from "./PaymentMethodsReportPanel";
 
 const dailySalesColumns: DataTableColumn<DailySalesReportRow>[] = [
   { header: "Fecha", key: "saleDate", render: (row) => formatDate(row.saleDate) },
@@ -281,6 +284,12 @@ export function ReportsResultPanel({
           useReport={(filters) => useGrossProfitReport(filters, scope)}
         />
       );
+    case "fx-depreciation":
+      return <FxDepreciationReportPanel dateFilters={dateFilters} scope={scope} />;
+    case "daily-close":
+      return <DailyCloseReportPanel dateFilters={dateFilters} scope={scope} />;
+    case "payment-methods":
+      return <PaymentMethodsReportPanel dateFilters={dateFilters} scope={scope} />;
     case "product-profitability":
       return (
         <PaginatedReportTable

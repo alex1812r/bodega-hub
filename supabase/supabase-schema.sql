@@ -649,11 +649,14 @@ security definer
 set search_path = public
 as $$
 declare
+  v_store_id uuid;
   v_product public.products;
   v_new_stock integer;
   v_type public.stock_movement_type;
   v_movement public.stock_movements;
 begin
+  v_store_id := public.assert_store_context();
+
   if public.current_user_role() not in ('admin', 'almacen') then
     raise exception 'No autorizado para ajustar stock';
   end if;
@@ -665,6 +668,7 @@ begin
   select * into v_product
   from public.products
   where id = p_product_id
+    and store_id = v_store_id
   for update;
 
   if not found then
@@ -685,12 +689,22 @@ begin
     end
   );
 
-  if v_type in ('venta', 'compra') then
-    raise exception 'Use create_sale o create_purchase para movimientos de venta o compra';
+  if v_type in ('venta', 'compra', 'conversion_entrada', 'conversion_salida') then
+    raise exception 'Use create_sale, create_purchase o convert_pack_to_units para este tipo de movimiento';
+  end if;
+
+  if v_type in ('ajuste_salida', 'devolucion_proveedor') and p_quantity_delta > 0 then
+    raise exception 'ajuste_salida / devolucion_proveedor requiere quantity_delta negativo';
+  end if;
+
+  if v_type in ('ajuste_entrada', 'devolucion_cliente', 'inventario_inicial')
+     and p_quantity_delta < 0 then
+    raise exception 'Este tipo de ajuste requiere quantity_delta positivo';
   end if;
 
   update public.products
-  set current_stock = v_new_stock
+  set current_stock = v_new_stock,
+      updated_at = now()
   where id = p_product_id;
 
   insert into public.stock_movements (
@@ -699,7 +713,8 @@ begin
     quantity_delta,
     stock_after,
     reason,
-    created_by
+    created_by,
+    store_id
   )
   values (
     p_product_id,
@@ -707,7 +722,8 @@ begin
     p_quantity_delta,
     v_new_stock,
     p_reason,
-    auth.uid()
+    auth.uid(),
+    v_store_id
   )
   returning * into v_movement;
 

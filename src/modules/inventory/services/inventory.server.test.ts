@@ -3,8 +3,10 @@
  */
 
 jest.mock("../../../lib/supabase/route-client");
+jest.mock("../../../lib/supabase/admin-client");
 
 import { mapStockMovement } from "@/lib/supabase/mappers";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
@@ -42,6 +44,7 @@ function createQueryBuilder(result: { count?: number; data?: unknown; error?: un
     eq: jest.fn().mockReturnThis(),
     gte: jest.fn().mockReturnThis(),
     lte: jest.fn().mockReturnThis(),
+    lt: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),
     range: jest.fn().mockResolvedValue(result),
     select: jest.fn().mockReturnThis(),
@@ -53,6 +56,18 @@ function createQueryBuilder(result: { count?: number; data?: unknown; error?: un
 describe("inventory.server", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (createAdminSupabaseClient as jest.Mock).mockReturnValue({
+      from: jest.fn(() => ({
+        select: jest.fn(() => ({
+          eq: jest.fn(() => ({
+            maybeSingle: jest.fn().mockResolvedValue({
+              data: { store_id: DEFAULT_STORE_ID },
+              error: null,
+            }),
+          })),
+        })),
+      })),
+    });
   });
 
   it("maps stock movement rows to camelCase", () => {
@@ -142,11 +157,11 @@ describe("inventory.server", () => {
     expect(builder.eq).toHaveBeenCalledWith("type", "venta");
     expect(builder.gte).toHaveBeenCalledWith(
       "created_at",
-      "2026-05-01T00:00:00.000Z",
+      "2026-05-01T04:00:00.000Z",
     );
-    expect(builder.lte).toHaveBeenCalledWith(
+    expect(builder.lt).toHaveBeenCalledWith(
       "created_at",
-      "2026-05-31T23:59:59.999Z",
+      "2026-06-01T04:00:00.000Z",
     );
   });
 

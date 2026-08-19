@@ -4,6 +4,8 @@ import { useState } from "react";
 
 import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
 import { CloseCashSessionModal } from "@/modules/cash/components/CloseCashSessionModal";
+import { CashSessionCountdown } from "@/modules/cash/components/CashSessionCountdown";
+import { CashSessionExpiredPanel } from "@/modules/cash/components/CashSessionExpiredPanel";
 import { OpenCashSessionModal } from "@/modules/cash/components/OpenCashSessionModal";
 import { Button } from "@/shared/components/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/Card";
@@ -16,6 +18,7 @@ import {
   useCashRegisters,
   useMyCashSession,
 } from "../hooks/useCash";
+import { useCashSessionClock } from "../hooks/useCashSessionClock";
 import type { CashMovement } from "../types";
 
 const movementTypeLabels: Record<CashMovement["type"], string> = {
@@ -33,6 +36,7 @@ export function CashDeskPage() {
   const session = useMyCashSession();
   const currentUser = useCurrentUser();
   const movements = useCashMovements(session.data?.id);
+  const clock = useCashSessionClock(session.data?.openedAt);
   const [openModal, setOpenModal] = useState(false);
   const [closeModal, setCloseModal] = useState(false);
 
@@ -56,7 +60,7 @@ export function CashDeskPage() {
             <Button onClick={() => setOpenModal(true)} type="button">
               Abrir caja
             </Button>
-          ) : register && hasOpenSession ? (
+          ) : register && hasOpenSession && !clock.expired ? (
             <Button onClick={() => setCloseModal(true)} type="button" variant="outline">
               Cerrar caja
             </Button>
@@ -82,6 +86,13 @@ export function CashDeskPage() {
                 La caja esta cerrada. Usa el boton <strong>Abrir caja</strong> para iniciar una
                 sesion e indicar el fondo inicial.
               </p>
+            ) : clock.expired && session.data ? (
+              <CashSessionExpiredPanel
+                registerName={register.name}
+                sessionId={session.data.id}
+                theoreticalRef={theoreticalRef}
+                theoreticalVes={theoreticalVes}
+              />
             ) : (
               <div className="grid gap-3 sm:grid-cols-3">
                 <div>
@@ -105,6 +116,12 @@ export function CashDeskPage() {
                   <p className="text-xs text-on-surface-variant">
                     Pago movil, transferencia y punto
                   </p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+                    Tiempo de jornada
+                  </p>
+                  {session.data ? <CashSessionCountdown openedAt={session.data.openedAt} /> : null}
                 </div>
               </div>
             )}

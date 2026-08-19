@@ -20,6 +20,7 @@ function createQueryBuilder(result: { count?: number | null; data?: unknown; err
     eq: jest.fn().mockReturnThis(),
     gte: jest.fn().mockReturnThis(),
     in: jest.fn().mockReturnThis(),
+    lt: jest.fn().mockReturnThis(),
     lte: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),
     range: jest.fn().mockResolvedValue(result),

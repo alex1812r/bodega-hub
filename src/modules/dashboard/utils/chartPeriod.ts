@@ -8,15 +8,8 @@ export const DASHBOARD_CHART_PERIODS = [
   { days: 180, label: "6 meses" },
 ] as const;
 
-export const DASHBOARD_KPI_PERIODS = [
-  { days: 1, label: "Hoy" },
-  ...DASHBOARD_CHART_PERIODS,
-] as const;
-
 export type DashboardChartPeriodDays =
   (typeof DASHBOARD_CHART_PERIODS)[number]["days"];
-
-export type DashboardKpiPeriodDays = (typeof DASHBOARD_KPI_PERIODS)[number]["days"];
 
 type PeriodOption = { days: number; label: string };
 
@@ -40,8 +33,4 @@ export function getChartDateRange(days: DashboardChartPeriodDays) {
 
 export function getChartPeriodLabel(days: DashboardChartPeriodDays) {
   return getDashboardPeriodLabel(days, DASHBOARD_CHART_PERIODS);
-}
-
-export function getKpiPeriodLabel(days: DashboardKpiPeriodDays) {
-  return getDashboardPeriodLabel(days, DASHBOARD_KPI_PERIODS);
 }

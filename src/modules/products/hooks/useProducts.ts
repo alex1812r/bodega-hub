@@ -8,6 +8,10 @@ import type { SortOrder } from "@/lib/api/sorting";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type { CategoryInput } from "../services/categories.mock-server";
 import type {
+  ProductSaleHistoryResult,
+  ProductSaleHistoryRow,
+} from "../services/productSales";
+import type {
   CategoryMock,
   ProductMock,
   ProductPackConversionSummary,
@@ -16,6 +20,7 @@ import type {
 } from "@/shared/mocks/erp-data";
 
 export type { CategoryInput };
+export type { ProductSaleHistoryResult, ProductSaleHistoryRow };
 
 export type CategoriesFilters = PaginationParams & {
   isActive?: boolean | string;
@@ -83,6 +88,7 @@ export const productsQueryKeys = {
     [...productsQueryKeys.all, "list", filters] as const,
   priceHistory: (id: string) =>
     [...productsQueryKeys.all, "price-history", id] as const,
+  sales: (id: string) => [...productsQueryKeys.all, "sales", id] as const,
   suppliers: (id: string) => [...productsQueryKeys.all, "suppliers", id] as const,
 };
 
@@ -186,6 +192,17 @@ export function useProductPriceHistory(id: string) {
     queryKey: productsQueryKeys.priceHistory(id),
     queryFn: () =>
       apiFetch<PaginatedList<ProductPriceHistoryMock>>(`/api/products/${id}/price-history`),
+  });
+}
+
+export function useProductSales(productId: string, pagination: PaginationParams = {}) {
+  return useQuery({
+    enabled: Boolean(productId),
+    queryKey: [...productsQueryKeys.sales(productId), pagination],
+    queryFn: () =>
+      apiFetch<ProductSaleHistoryResult>(`/api/products/${productId}/sales`, {
+        query: pagination,
+      }),
   });
 }
 

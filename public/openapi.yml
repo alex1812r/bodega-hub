@@ -30,6 +30,8 @@ paths:
     post: { summary: Crear caja registradora }
   /api/cash/registers/{id}:
     patch: { summary: Actualizar caja registradora }
+  /api/cash/registers/{id}/last-untransferred-closure:
+    get: { summary: Ultimo cierre de caja no transferido al baul }
   /api/cash/session:
     get: { summary: Obtener sesión de caja actual }
   /api/cash/session/open:
@@ -39,6 +41,11 @@ paths:
     post: { summary: Cerrar sesión de caja }
   /api/cash/movements:
     get: { summary: Listar movimientos de caja }
+  /api/cash/closures/pending:
+    get: { summary: Listar cierres de caja pendientes de transferir al baul }
+  /api/cron/cash-sessions/auto-close:
+    get: { summary: Cerrar sesiones de caja vencidas (medianoche Caracas o 24 h) }
+    post: { summary: Cerrar sesiones de caja vencidas (medianoche Caracas o 24 h) }
   /api/vault:
     get: { summary: Obtener baúl de la tienda }
   /api/vault/movements:
@@ -86,6 +93,12 @@ paths:
           schema:
             type: string
             format: date
+        - name: fromStart
+          in: query
+          required: false
+          description: Si es truthy (`1`, `true`), omite la cota inferior `from`.
+          schema:
+            type: string
       responses:
         "200":
           $ref: "#/components/responses/ReportObjectResponse"
@@ -141,6 +154,35 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/dashboard/daily-close:
+    get:
+      tags: [Dashboard]
+      summary: Cierre del dia
+      description: Composicion de ventas (dia operativo Caracas), mix de pagos, perdida FX y snapshot de caja/baul.
+      x-permission: dashboard.view
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: fromStart
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/categories:
@@ -555,6 +597,55 @@ paths:
                             type: array
                             items:
                               $ref: "#/components/schemas/ProductPriceHistory"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/products/{id}/sales:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/Skip"
+      - $ref: "#/components/parameters/Limit"
+    get:
+      tags: [Products]
+      summary: Obtener historial de ventas del producto
+      description: Lista `sale_items` del SKU unidos a `sales`, ordenados por `created_at` desc. Las filas `cancelada` se muestran; los totales `units`/`totalRef`/`totalVes` las excluyen y cubren todo el conjunto, no solo la página. Pagina con `skip`/`limit`.
+      x-permission: products.view
+      responses:
+        "200":
+          description: Historial paginado de ventas del producto
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        required: [items, totals]
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/ProductSaleHistory"
+                          totals:
+                            $ref: "#/components/schemas/ProductSaleHistoryTotals"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/products/{id}/barcode:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [Products]
+      summary: Asignar codigo de barras a un producto sin barcode
+      x-permission: products.view
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -1735,6 +1826,87 @@ paths:
           $ref: "#/components/responses/ReportArrayResponse"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/reports/payment-methods:
+    get:
+      tags: [Reports]
+      summary: Mix de metodos de pago
+      description: Pagos de venta activos agrupados por metodo (cantidad, REF, VES). Rango `from`/`to` en dia operativo America/Caracas.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/fx-depreciation:
+    get:
+      tags: [Reports]
+      summary: Depreciacion FX de tenencias VES
+      description: Pagos de venta valorizados a la tasa vigente. Rango `from`/`to` en dia operativo America/Caracas.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/daily-close:
+    get:
+      tags: [Reports]
+      summary: Cierre del dia
+      description: Ventas, mix de pagos, perdida FX y snapshot de caja/baul para el dia operativo Caracas.
+      x-permission: reports.view
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: fromStart
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/exchange-rates:
     get:
       tags: [ExchangeRates]
@@ -1843,6 +2015,16 @@ paths:
           $ref: "#/components/responses/ReportObjectResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/settings/payment-methods:
+    get:
+      tags: [Settings]
+      summary: Metodos de pago habilitados de la tienda
+      x-permission: sales.create
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/platform/stores:
@@ -2009,6 +2191,10 @@ paths:
         - name: to
           in: query
           schema: { type: string, format: date }
+        - name: fromStart
+          in: query
+          description: Si es truthy (`1`, `true`), omite la cota inferior `from`.
+          schema: { type: string }
       responses:
         "200": { description: Metricas del periodo }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -2761,6 +2947,48 @@ components:
           format: date-time
         userId:
           type: string
+    ProductSaleHistory:
+      type: object
+      required:
+        - id
+        - saleId
+        - invoiceNumber
+        - createdAt
+        - quantity
+        - unitPriceRef
+        - subtotalRef
+        - subtotalVes
+        - status
+      properties:
+        id:
+          type: string
+        saleId:
+          type: string
+        invoiceNumber:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        quantity:
+          type: number
+        unitPriceRef:
+          type: number
+        subtotalRef:
+          type: number
+        subtotalVes:
+          type: number
+        status:
+          $ref: "#/components/schemas/SaleStatus"
+    ProductSaleHistoryTotals:
+      type: object
+      required: [units, totalRef, totalVes]
+      properties:
+        units:
+          type: number
+        totalRef:
+          type: number
+        totalVes:
+          type: number
     Contact:
       type: object
       required: [id, name, type, isActive]

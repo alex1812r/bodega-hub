@@ -10,6 +10,7 @@ import {
   type PurchaseMock,
 } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
+import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
 import { normalizePurchaseLine } from "../schemas/purchaseItem.schema";
@@ -59,15 +60,13 @@ export function listPurchases(searchParams: URLSearchParams, storeId: string) {
 
   const items = mockPurchases
     .filter((purchase) => {
-      const purchaseDate = purchase.createdAt.slice(0, 10);
       const supplier = mockContacts.find((contact) => contact.id === purchase.supplierId);
 
       return (
         (purchase.storeId ?? DEFAULT_STORE_ID) === storeId &&
         (!status || purchase.status === status) &&
         (!supplierId || purchase.supplierId === supplierId) &&
-        (!from || purchaseDate >= from) &&
-        (!to || purchaseDate <= to) &&
+        isUtcTimestampInCaracasDateRange(purchase.createdAt, from, to) &&
         (!search || matchesPurchaseSearch(purchase, supplier?.name, search))
       );
     })

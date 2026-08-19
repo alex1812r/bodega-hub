@@ -5,6 +5,8 @@ import { getSupabaseErrorMessage, mapSupabaseError, throwIfSupabaseError } from 
 import { mapBaseEntity, mapNullableString } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
+import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
+
 import type { SaleInput, SaleUpdateInput } from "./sales.mock-server";
 
 type SaleStatus =
@@ -262,15 +264,7 @@ export async function listSales(searchParams: URLSearchParams, storeId: string):
     query = query.ilike("invoice_number", `%${search}%`);
   }
 
-  const from = searchParams.get("from");
-  if (from) {
-    query = query.gte("created_at", `${from}T00:00:00.000Z`);
-  }
-
-  const to = searchParams.get("to");
-  if (to) {
-    query = query.lte("created_at", `${to}T23:59:59.999Z`);
-  }
+  query = applyCreatedAtCaracasRange(query, searchParams.get("from"), searchParams.get("to"));
 
   const { count, data, error } = await query
     .order("created_at", { ascending: false })

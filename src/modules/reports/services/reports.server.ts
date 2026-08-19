@@ -4,6 +4,8 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { mapNullableString } from "@/lib/supabase/mappers";
 
+import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
+
 import { normalizeStoreIds } from "./storeScope";
 
 export type ReportQueryOptions = {
@@ -81,22 +83,10 @@ function applyDateColumnRange<T extends { gte: (col: string, val: string) => T; 
   return next;
 }
 
-function applyCreatedAtRange<T extends { gte: (col: string, val: string) => T; lte: (col: string, val: string) => T }>(
-  query: T,
-  from: string | null,
-  to: string | null,
-) {
-  let next = query;
-
-  if (from) {
-    next = next.gte("created_at", `${from}T00:00:00.000Z`);
-  }
-
-  if (to) {
-    next = next.lte("created_at", `${to}T23:59:59.999Z`);
-  }
-
-  return next;
+function applyCreatedAtRange<
+  T extends { gte: (col: string, val: string) => T; lt: (col: string, val: string) => T },
+>(query: T, from: string | null, to: string | null) {
+  return applyCreatedAtCaracasRange(query, from, to);
 }
 
 function mapProduct(row: DbProduct) {
@@ -605,3 +595,6 @@ export async function getPurchasesReport(
     total: count ?? 0,
   };
 }
+
+export { getFxDepreciationReport } from "./fxDepreciationReport.server";
+export { getPaymentMethodsReport } from "./paymentMethodsReport.server";

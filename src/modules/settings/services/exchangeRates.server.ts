@@ -2,6 +2,7 @@ import { ApiError } from "@/lib/api/apiError";
 import { parsePagination } from "@/lib/api/pagination";
 import { DOLAR_API_OFFICIAL_SOURCE } from "@/lib/exchange-rates/constants";
 import { toAmericaCaracasDateKey } from "@/lib/exchange-rates/dateCaracas";
+import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 import { fetchOfficialDollarRate } from "@/lib/exchange-rates/dolarApi";
 import {
   clearOfficialRateCache,
@@ -30,13 +31,7 @@ export async function listExchangeRates(searchParams: URLSearchParams, storeId: 
     .eq("store_id", storeId)
     .order("created_at", { ascending: false });
 
-  if (from) {
-    query = query.gte("created_at", `${from}T00:00:00.000Z`);
-  }
-
-  if (to) {
-    query = query.lte("created_at", `${to}T23:59:59.999Z`);
-  }
+  query = applyCreatedAtCaracasRange(query, from, to);
 
   const { count, data, error } = await query.range(skip, skip + limit - 1);
 

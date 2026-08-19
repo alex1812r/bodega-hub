@@ -17,16 +17,16 @@ import { getCurrentExchangeRate } from "./exchangeRates.server";
 
 describe("exchangeRates.server getCurrentExchangeRate", () => {
   const mockMaybeSingle = jest.fn();
-  const mockEq = jest.fn(() => ({
-    order: jest.fn(() => ({
-      limit: jest.fn(() => ({
-        maybeSingle: mockMaybeSingle,
-      })),
-    })),
-  }));
-  const mockSelect = jest.fn(() => ({
-    eq: mockEq,
-  }));
+  const officialRateQuery = {
+    eq: jest.fn(),
+    limit: jest.fn(),
+    maybeSingle: mockMaybeSingle,
+    order: jest.fn(),
+  };
+  officialRateQuery.eq.mockReturnValue(officialRateQuery);
+  officialRateQuery.order.mockReturnValue(officialRateQuery);
+  officialRateQuery.limit.mockReturnValue(officialRateQuery);
+  const mockSelect = jest.fn(() => officialRateQuery);
 
   const mockInsertSingle = jest.fn();
   const mockInsert = jest.fn(() => ({
@@ -38,6 +38,9 @@ describe("exchangeRates.server getCurrentExchangeRate", () => {
   beforeEach(() => {
     clearOfficialRateCache();
     jest.clearAllMocks();
+    officialRateQuery.eq.mockReturnValue(officialRateQuery);
+    officialRateQuery.order.mockReturnValue(officialRateQuery);
+    officialRateQuery.limit.mockReturnValue(officialRateQuery);
 
     (fetchOfficialDollarRate as jest.Mock).mockResolvedValue({
       fechaActualizacion: "2026-06-03T00:00:00-04:00",

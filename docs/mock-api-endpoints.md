@@ -5,6 +5,7 @@
 - `GET /api/vault`, `GET /api/vault/movements`, `POST /api/vault/deposits|withdrawals|transfers-from-cash`: baúl.
 - `GET /api/cash/closures/pending`: cierres cerrados aún no transferidos al baúl.
 - `GET /api/cash/registers/[id]/last-untransferred-closure`: último cierre de la caja si aún no fue al baúl (sugerido en apertura).
+- `GET/POST /api/cron/cash-sessions/auto-close`: cierra sesiones vencidas (medianoche Caracas o 24 h). Requiere `CRON_SECRET`.
 
 # Endpoints BFF (Mock y Supabase)
 
@@ -65,6 +66,7 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 | `/api/products/[id]` | `DELETE` | `products.manage` | Borrado logico de producto |
 | `/api/products/[id]/price` | `POST` | `products.manage` | Cambia precio (RPC `update_product_price` en Supabase) |
 | `/api/products/[id]/price-history` | `GET` | `products.view` | Historial paginado de precios |
+| `/api/products/[id]/sales` | `GET` | `products.view` | Historial paginado de ventas del SKU (`sale_items` + `sales`); totales excluyen `cancelada` |
 | `/api/products/[id]/suppliers` | `GET` | `products.view` | Proveedores asociados al producto |
 | `/api/inventory` | `GET` | `inventory.view` | Stock actual (`products` / vista `low_stock_products`) |
 | `/api/inventory/movements` | `GET` | `inventory.view` | Movimientos de stock (`stock_movements`) |
@@ -105,6 +107,7 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 | `/api/reports/top-products` | `GET` | `reports.view` | Agregado Supabase de `sale_items` por rango |
 | `/api/reports/top-customers` | `GET` | `reports.view` | Agregado Supabase de ventas por cliente |
 | `/api/reports/purchases` | `GET` | `reports.view` | Listado Supabase de compras con filtros |
+| `/api/reports/payment-methods` | `GET` | `reports.view` | Pagos de venta activos agrupados por metodo (`from`, `to`, Caracas) |
 | `/api/exchange-rates` | `GET` | `dashboard.view` | Lista tasas ref/VES (mock o `exchange_rates`) |
 | `/api/exchange-rates/current` | `GET` | `dashboard.view` | Tasa vigente oficial: servidor consulta [DolarAPI](https://ve.dolarapi.com/v1/dolares/oficial) (`promedio` → `rateVes`), cache ~15 min, persistencia diaria en `exchange_rates`. No usa ultimo POST manual. Errores 502/503 si el proveedor falla. |
 | `/api/exchange-rates` | `POST` | `payments.manage` | Registro manual solo historial (no redefine tasa vigente) |
@@ -153,6 +156,7 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 - `/api/reports/top-products?from=2026-05-18&to=2026-05-18`: filtra productos mas vendidos por rango.
 - `/api/reports/top-customers?from=2026-05-18&to=2026-05-18`: filtra clientes principales por rango.
 - `/api/reports/purchases?supplierId=cont-supplier&from=2026-05-17&to=2026-05-17`: filtra reporte de compras.
+- `/api/reports/payment-methods?from=2026-05-18&to=2026-05-18`: mix de pagos de venta activos por metodo (Caracas).
 
 ## Payloads De Escritura
 
