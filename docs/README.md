@@ -19,6 +19,7 @@
 | [server-side-api-strategy.md](server-side-api-strategy.md) | Arquitectura BFF, mock/Supabase, RPC |
 | [database-design.md](database-design.md) | Modelo relacional, enums, RPC y vistas |
 | [supabase-setup.md](supabase-setup.md) | Levantar proyecto Supabase local |
+| [cash-auto-close-github-actions.md](cash-auto-close-github-actions.md) | Cron gratis con GitHub Actions para autocierre de caja |
 | [supabase-schema-audit.md](supabase-schema-audit.md) | Auditoría SQL vs app |
 | [dev-seed-users.md](dev-seed-users.md) | Usuarios y credenciales de prueba |
 | [backend-e2e-bodegon.md](backend-e2e-bodegon.md) | Suite E2E `npm run e2e:bodegon` |

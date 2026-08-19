@@ -1,8 +1,0 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/cash-sessions/auto-close",
-      "schedule": "*/15 * * * *"
-    }
-  ]
-}

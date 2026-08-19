@@ -192,5 +192,6 @@ caja se marcan absorbidos (`absorbed_by_session_id`) para no duplicar efectivo.
 
 Tope de jornada: aplica `supabase/patches/20260819-cash-session-auto-close.sql`.
 Las sesiones abiertas se cierran solas al cruzar medianoche Caracas o 24 h
-(lo que ocurra primero), con el efectivo teórico. Configura `CRON_SECRET` y el
-cron de Vercel (`vercel.json`, cada 15 min) hacia `/api/cron/cash-sessions/auto-close`.
+(lo que ocurra primero), con el efectivo teórico. Configura `CRON_SECRET` y un
+cron externo (GitHub Actions recomendado) hacia `/api/cron/cash-sessions/auto-close`.
+Ver guía: [`cash-auto-close-github-actions.md`](cash-auto-close-github-actions.md).
