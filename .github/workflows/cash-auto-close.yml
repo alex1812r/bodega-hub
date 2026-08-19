@@ -12,14 +12,9 @@ jobs:
     steps:
       - name: Invoke cash auto-close endpoint
         env:
-          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_BASE_URL: https://bodega-hub.vercel.app
+          CRON_SECRET: 1f8b3c9a7d4e42a0b6c1f0d8c4a1e3f9b7a6d2c5e4f3a9b1c8d7e6f5a4b3c2d1
         run: |
-          if [ -z "$APP_BASE_URL" ] || [ -z "$CRON_SECRET" ]; then
-            echo "Missing APP_BASE_URL or CRON_SECRET secret" >&2
-            exit 1
-          fi
-
           URL="${APP_BASE_URL%/}/api/cron/cash-sessions/auto-close"
           echo "Calling $URL"
 
