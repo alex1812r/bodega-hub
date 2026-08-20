@@ -94,10 +94,21 @@ export function CashDeskPage() {
                 theoreticalVes={theoreticalVes}
               />
             ) : (
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div>
                   <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-                    Efectivo teorico
+                    Fondo apertura
+                  </p>
+                  <p className="font-semibold tabular-nums">
+                    {formatRefUsd(session.data?.openingRef ?? 0)}
+                  </p>
+                  <p className="text-sm text-on-surface-variant tabular-nums">
+                    {formatVesBs(session.data?.openingVes ?? 0)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+                    Efectivo en cajon
                   </p>
                   <p className="font-semibold tabular-nums">
                     {formatRefUsd(theoreticalRef)}
@@ -105,6 +116,7 @@ export function CashDeskPage() {
                   <p className="text-sm text-on-surface-variant tabular-nums">
                     {formatVesBs(theoreticalVes)}
                   </p>
+                  <p className="text-xs text-on-surface-variant">Apertura + ventas efectivo</p>
                 </div>
                 <div>
                   <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
@@ -174,6 +186,8 @@ export function CashDeskPage() {
           accountVes={accountVes}
           onOpenChange={setCloseModal}
           open={closeModal}
+          openingRef={session.data.openingRef}
+          openingVes={session.data.openingVes}
           registerName={register.name}
           sessionId={session.data.id}
           theoreticalRef={theoreticalRef}
