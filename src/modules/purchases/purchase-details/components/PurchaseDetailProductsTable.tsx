@@ -1,5 +1,8 @@
+"use client";
+
 import { Package } from "lucide-react";
 import type { ReactNode } from "react";
+import { useState } from "react";
 
 import type { PurchaseItemMock, ProductMock } from "@/shared/mocks/erp-data";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
@@ -8,7 +11,7 @@ import { cn } from "@/shared/utils/cn";
 import { PurchaseDetailSectionCard } from "./PurchaseDetailSectionCard";
 
 export type PurchaseDetailItemRow = PurchaseItemMock & {
-  product?: Pick<ProductMock, "name" | "sku">;
+  product?: Pick<ProductMock, "imageUrl" | "name" | "sku">;
 };
 
 type PurchaseDetailProductsTableProps = {
@@ -58,6 +61,37 @@ function FooterLabelCell({ children }: { children: ReactNode }) {
     >
       {children}
     </td>
+  );
+}
+
+function ProductThumb({
+  alt,
+  imageUrl,
+}: {
+  alt: string;
+  imageUrl?: string | null;
+}) {
+  const [failed, setFailed] = useState(false);
+  const showImage = Boolean(imageUrl) && !failed;
+
+  return (
+    <div className="relative flex size-10 shrink-0 overflow-hidden rounded bg-surface-container text-on-surface-variant dark:bg-slate-800">
+      {showImage ? (
+        // Native img: avoids next/image remote config for many tiny table thumbs.
+        // eslint-disable-next-line @next/next/no-img-element -- purchase line thumbs are unoptimized remote URLs
+        <img
+          alt={alt}
+          className="size-full object-cover"
+          loading="lazy"
+          onError={() => setFailed(true)}
+          src={imageUrl!}
+        />
+      ) : (
+        <span className="flex size-full items-center justify-center">
+          <Package aria-hidden className="size-[1.125rem] opacity-60" />
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -139,9 +173,10 @@ export function PurchaseDetailProductsTable({
                   >
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <div className="flex size-10 shrink-0 items-center justify-center rounded bg-surface-container text-on-surface-variant dark:bg-slate-800">
-                          <Package aria-hidden className="size-[1.125rem]" />
-                        </div>
+                        <ProductThumb
+                          alt={item.product?.name ?? "Producto"}
+                          imageUrl={item.product?.imageUrl}
+                        />
                         <div className="min-w-0">
                           <p className="font-medium text-foreground">
                             {item.product?.name ?? item.productId}

@@ -149,7 +149,7 @@ export type DbPurchaseItemRow = {
   pack_cost_ves?: number | string | null;
   pack_count?: number | null;
   pack_label?: string | null;
-  product?: DbProductSummaryRow | null;
+  product?: DbProductSummaryRow | DbProductSummaryRow[] | null;
   product_id: string;
   purchase_id: string;
   quantity: number;
@@ -189,6 +189,7 @@ function resolveEmbeddedProduct(
 
 export function mapPurchaseItem(row: DbPurchaseItemRow) {
   const entryMode = row.entry_mode === "pack" ? "pack" : "unit";
+  const product = resolveEmbeddedProduct(row.product);
 
   return {
     costCurrency: row.cost_currency === "ves" ? "ves" : "ref",
@@ -203,7 +204,7 @@ export function mapPurchaseItem(row: DbPurchaseItemRow) {
         : undefined,
     packCount: row.pack_count ?? undefined,
     packLabel: row.pack_label ?? undefined,
-    product: row.product ? mapProductSummary(row.product) : undefined,
+    product: product ? mapProductSummary(product) : undefined,
     productId: row.product_id,
     purchaseId: row.purchase_id,
     quantity: row.quantity,

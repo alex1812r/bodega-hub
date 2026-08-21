@@ -247,3 +247,7 @@ notify pgrst, 'reload schema';
 -- 20260819b — one-shot: corregir cierre cab7b096 (omitio fondo apertura)
 -- -----------------------------------------------------------------------------
 -- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260819b-fix-cash-close-cab7b096.sql
+-- -----------------------------------------------------------------------------
+-- 20260821 — one-shot: compra C-20260821230623761 puff-mora → puff-azul
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260821-one-shot-fix-purchase-puff-product.sql
