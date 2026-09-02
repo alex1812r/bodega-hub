@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryOptions } from "@tanstack/react-query";
 
+import { fetchAllPaginatedItems } from "@/lib/api/fetchAllPaginatedItems";
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import type { SortOrder } from "@/lib/api/sorting";
 import { apiFetch } from "@/shared/api/apiFetch";
@@ -40,6 +41,9 @@ export type ProductsFilters = PaginationParams & {
   sortBy?: string;
   sortOrder?: SortOrder;
 };
+
+/** Filtros del catálogo completo: la paginación la resuelve el hook. */
+export type ProductsCatalogFilters = Omit<ProductsFilters, "limit" | "skip">;
 
 export type ProductInput = {
   barcode?: string | null;
@@ -86,6 +90,8 @@ export const productsQueryKeys = {
   detail: (id: string) => [...productsQueryKeys.all, "detail", id] as const,
   list: (filters: ProductsFilters = {}) =>
     [...productsQueryKeys.all, "list", filters] as const,
+  listAll: (filters: ProductsCatalogFilters = {}) =>
+    [...productsQueryKeys.all, "list-all", filters] as const,
   priceHistory: (id: string) =>
     [...productsQueryKeys.all, "price-history", id] as const,
   sales: (id: string) => [...productsQueryKeys.all, "sales", id] as const,
@@ -112,6 +118,29 @@ export function useProducts(
       apiFetch<PaginatedList<ProductWithCategory>>("/api/products", {
         query: filters,
       }),
+    ...options,
+  });
+}
+
+/**
+ * Catálogo completo. `/api/products` tope `MAX_PAGE_LIMIT` (100) por página, así que
+ * una sola consulta corta el catálogo en seco: usar esto donde la pantalla necesita
+ * todos los productos (POS, selectores) y no una lista paginada.
+ */
+export function useAllProducts(
+  filters: ProductsCatalogFilters = {},
+  options: ProductsListQueryOptions = {},
+) {
+  return useQuery({
+    queryKey: productsQueryKeys.listAll(filters),
+    queryFn: async (): Promise<PaginatedList<ProductWithCategory>> => {
+      const items = await fetchAllPaginatedItems<ProductWithCategory>(
+        "/api/products",
+        filters,
+      );
+
+      return { items, limit: items.length, skip: 0, total: items.length };
+    },
     ...options,
   });
 }

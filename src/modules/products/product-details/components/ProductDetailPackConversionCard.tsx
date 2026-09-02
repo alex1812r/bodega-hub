@@ -95,7 +95,9 @@ export function ProductDetailPackConversionCard({
           </dd>
         </div>
         <div className="flex justify-between gap-3">
-          <dt className="text-on-surface-variant">Stock vinculado</dt>
+          <dt className="text-on-surface-variant">
+            Stock de {packConversion.linkedProduct.name}
+          </dt>
           <dd className="font-medium text-on-surface">
             {packConversion.linkedProduct.currentStock}
           </dd>

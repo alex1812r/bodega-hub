@@ -6,7 +6,7 @@ import { getPaginatedItems } from "@/lib/api/pagination";
 import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useCreatePayment } from "@/modules/payments/hooks/usePayments";
 import { useProductBarcodeScan } from "@/modules/products/hooks/useProductBarcodeScan";
-import { useCategories, useProducts } from "@/modules/products/hooks/useProducts";
+import { useAllProducts, useCategories } from "@/modules/products/hooks/useProducts";
 import { matchesProductSearch } from "@/modules/products/services/productSearch";
 import { sortPosCatalogProducts } from "@/modules/sales/sale-create/utils/sortPosCatalogProducts";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
@@ -62,7 +62,9 @@ export function SaleCreatePage() {
 function SaleCreatePosWorkspace() {
   const contacts = useContacts({ limit: 100 }, posCatalogQueryOptions);
   const categories = useCategories({}, posCatalogQueryOptions);
-  const products = useProducts({ isActive: true, limit: 100 }, posCatalogQueryOptions);
+  // Catálogo completo: con `limit: 100` el POS dejaba fuera todo producto que
+  // cayera pasado el corte alfabético, y la búsqueda filtra en cliente.
+  const products = useAllProducts({ isActive: true }, posCatalogQueryOptions);
   const currentRate = useCurrentExchangeRate();
   const createSale = useCreateSale();
   const createPayment = useCreatePayment();

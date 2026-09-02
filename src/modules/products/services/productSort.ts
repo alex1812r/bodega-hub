@@ -44,6 +44,18 @@ export function applyProductSort<TQuery extends ProductSortQuery>(
   const { sortBy, sortOrder } = parseProductSort(searchParams);
   const ascending = sortOrder === "asc";
 
+  // Desempate estable: sin él, dos productos con el mismo valor en la columna
+  // ordenada pueden repetirse u omitirse al paginar (el POS recorre páginas).
+  return applyPrimaryProductSort(query, sortBy, ascending).order("id", {
+    ascending: true,
+  }) as TQuery;
+}
+
+function applyPrimaryProductSort<TQuery extends ProductSortQuery>(
+  query: TQuery,
+  sortBy: ProductSortBy,
+  ascending: boolean,
+): TQuery {
   switch (sortBy) {
     case "sku":
       return query.order("sku", { ascending }) as TQuery;
