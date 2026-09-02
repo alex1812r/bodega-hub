@@ -251,3 +251,44 @@ notify pgrst, 'reload schema';
 -- 20260821 — one-shot: compra C-20260821230623761 puff-mora → puff-azul
 -- -----------------------------------------------------------------------------
 -- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260821-one-shot-fix-purchase-puff-product.sql
+-- -----------------------------------------------------------------------------
+-- 20260821b — one-shot: transferir efectivo dia 20-ago (cierre 0e06be09) al baul
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260821b-one-shot-transfer-yesterday-cash-to-vault.sql
+-- -----------------------------------------------------------------------------
+-- 20260821c — one-shot: completar efectivo ventas acumulado hasta 20-ago al baul
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260821c-one-shot-backfill-cash-sales-thru-yesterday-vault.sql
+-- -----------------------------------------------------------------------------
+-- 20260824 — one-shot: transferir efectivo VES caja hasta 24-ago 00:35 Caracas
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260824-one-shot-transfer-cash-thru-240835-vault.sql
+-- -----------------------------------------------------------------------------
+-- 20260828 — one-shot: corrige pago mixto USD+VES venta V-20260828013116483
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260828-one-shot-fix-sale-mixed-usd-ves-payment.sql
+-- -----------------------------------------------------------------------------
+-- 20260830 — one-shot: cancelar 6 ventas pendiente_pago sin pago (SOLO sales)
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260830-one-shot-cancel-unpaid-pendiente-pago-sales.sql
+-- NO toca compras. Equivalente a cancel_sale: status cancelada + restock ajuste_entrada.
+-- -----------------------------------------------------------------------------
+-- 20260830b — one-shot: remueve 1u cerv-pola-ligh-lata-250m de V-20260829180857754
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260830b-one-shot-remove-sale-pola-ligh-unit.sql
+-- Ajusta pago_movil + cash account_in + vault sale_in cuenta; stock → 1.
+-- -----------------------------------------------------------------------------
+-- 20260830b — one-shot: +1 Polar (cerv-pola-lata-250m) en V-20260830152541402
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260830b-one-shot-add-polar-unit-sale-V-20260830152541402.sql
+-- NO toca Polar Light ni compras. Marker FIX_ADD_POLAR:V-20260830152541402.
+-- -----------------------------------------------------------------------------
+-- 20260830c — one-shot: swap just-dura-400-ml → just-manz-15-lt en V-20260830152541402
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260830c-one-shot-swap-justy-dura-to-manz-sale-V-20260830152541402.sql
+-- Preserva Polar 9 + snacks. Restock dura + venta manzana. Marker FIX_SWAP_JUSTY:V-20260830152541402.
+-- -----------------------------------------------------------------------------
+-- 20260830d — one-shot: +1 plat-tom-80gr en V-20260830152541402
+-- -----------------------------------------------------------------------------
+-- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260830d-one-shot-add-plat-tom-sale-V-20260830152541402.sql
+-- Inserta linea Platanitos Tom ×1; ajusta pago_movil + vault. Marker FIX_ADD_PLAT_TOM:V-20260830152541402.

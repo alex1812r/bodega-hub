@@ -64,3 +64,5 @@ storybook-static
 
 .vercel
 .purchases
+# Supabase CLI scratch state
+supabase/.temp/
