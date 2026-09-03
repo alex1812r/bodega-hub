@@ -66,8 +66,15 @@ export function VaultTransferFromCashModal({
     );
   }
 
+  /**
+   * Deja fuera los cierres absorbidos: son anteriores a `20260904b`, su monto
+   * incluye el fondo de apertura que el turno siguiente volvio a usar, y
+   * transferirlos en bloque re-infla el baul (docs/cuadre-baul.md §2.2).
+   */
   function selectAll() {
-    setSelectedIds(pending.map((session) => session.id));
+    setSelectedIds(
+      pending.filter((session) => !session.absorbedBySessionId).map((session) => session.id),
+    );
   }
 
   async function handleSubmit() {
@@ -169,6 +176,12 @@ export function VaultTransferFromCashModal({
                         <span>{formatRefUsd(session.closingRef ?? 0)}</span>
                         <span>{formatVesBs(session.closingVes ?? 0)}</span>
                       </span>
+                      {session.absorbedBySessionId ? (
+                        <span className="mt-1 block text-xs text-amber-700 dark:text-amber-300">
+                          Cierre anterior al cambio de apertura: el monto incluye el fondo, que
+                          se reciclo en el turno siguiente. Revisalo antes de transferirlo.
+                        </span>
+                      ) : null}
                     </span>
                   </label>
                 </li>

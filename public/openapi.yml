@@ -29,9 +29,12 @@ paths:
     get: { summary: Listar cajas registradoras }
     post: { summary: Crear caja registradora }
   /api/cash/registers/{id}:
+    get: { summary: Obtener caja registradora }
     patch: { summary: Actualizar caja registradora }
   /api/cash/registers/{id}/last-untransferred-closure:
     get: { summary: Ultimo cierre de caja no transferido al baul }
+  /api/cash/registers/{id}/sessions:
+    get: { summary: Historial de sesiones de una caja registradora }
   /api/cash/session:
     get: { summary: Obtener sesión de caja actual }
   /api/cash/session/open:
@@ -43,6 +46,8 @@ paths:
     get: { summary: Listar movimientos de caja }
   /api/cash/closures/pending:
     get: { summary: Listar cierres de caja pendientes de transferir al baul }
+  /api/cash/closures/untransferred:
+    get: { summary: Listar cierres de caja sin transferir al baul (incluye historicos absorbidos) }
   /api/cron/cash-sessions/auto-close:
     get: { summary: Cerrar sesiones de caja vencidas (medianoche Caracas o 24 h) }
     post: { summary: Cerrar sesiones de caja vencidas (medianoche Caracas o 24 h) }
@@ -3243,6 +3248,43 @@ components:
           type: string
           description: Referencia bancaria; para pago movil debe tener 4 digitos.
         notes:
+          type: string
+        change:
+          $ref: "#/components/schemas/PaymentChangeInput"
+        receivedDenominations:
+          $ref: "#/components/schemas/PaymentDenominations"
+        changeDenominations:
+          $ref: "#/components/schemas/PaymentDenominations"
+    PaymentDenominations:
+      type: object
+      nullable: true
+      description: 'Desglose de billetes por moneda, p. ej. {"USD": {"1": 3}}.'
+      properties:
+        USD:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        VES:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+    PaymentChangeInput:
+      type: object
+      required: [amount]
+      description: "Vuelto devuelto por el excedente del cobro. Solo aplica a pagos de venta; con amount mayor a cero exige method. Banco, telefono y referencia son opcionales (es una salida) y se archivan en notes."
+      properties:
+        amount:
+          type: number
+          minimum: 0
+        method:
+          $ref: "#/components/schemas/PaymentMethod"
+        bankName:
+          type: string
+        phone:
+          type: string
+        referenceCode:
           type: string
     PaymentUpdateInput:
       type: object

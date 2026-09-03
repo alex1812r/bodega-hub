@@ -4,6 +4,7 @@ import {
   cashSessionAutoCloseReason,
   isCashSessionExpired,
 } from "../utils/cashSessionDeadline";
+import { computeCashSessionTotals } from "../utils/cashSessionTotals";
 import { getCashRegister } from "./cash.registers.mock-server";
 import type { CashMovement, CashSession } from "../types";
 
@@ -13,44 +14,29 @@ const movements: CashMovement[] = [];
 export type OpenCashSessionInput = { openingRef?: number; openingVes?: number; registerId: string };
 export type CloseCashSessionInput = { closingRef: number; closingVes: number; sessionId: string };
 
-function theoretical(session: CashSession) {
-  return movements
-    .filter((movement) => movement.sessionId === session.id)
-    .reduce(
-      (total, movement) => {
-        if (
-          movement.type === "opening" ||
-          movement.type === "account_in" ||
-          movement.type === "account_out"
-        ) {
-          return total;
-        }
-        const sign = ["transfer_out", "refund_out"].includes(movement.type) ? -1 : 1;
-        total.ref += sign * movement.amountRef;
-        total.ves += sign * movement.amountVes;
-        return total;
-      },
-      { ref: session.openingRef, ves: session.openingVes },
-    );
+function sessionTotals(session: CashSession) {
+  return computeCashSessionTotals(
+    movements.filter((movement) => movement.sessionId === session.id),
+    session,
+  );
 }
 
-function accountVesForSession(sessionId: string) {
-  return movements
-    .filter((movement) => movement.sessionId === sessionId)
-    .reduce((total, movement) => {
-      if (movement.type === "account_in") return total + movement.amountVes;
-      if (movement.type === "account_out") return total - movement.amountVes;
-      return total;
-    }, 0);
+function theoretical(session: CashSession) {
+  const totals = sessionTotals(session);
+  return { ref: totals.cashRef, ves: totals.cashVes };
 }
 
 export function getCurrentCashSession(userId: string, storeId: string) {
-  return sessions.find(
-    (session) =>
-      session.status === "open" &&
-      session.register.storeId === storeId &&
-      session.register.assignedUserId === userId,
-  ) ?? null;
+  const session = sessions.find(
+    (candidate) =>
+      candidate.status === "open" &&
+      candidate.register.storeId === storeId &&
+      candidate.register.assignedUserId === userId,
+  );
+
+  // El POS usa `liveTotals` para limitar el vuelto en efectivo al contenido real
+  // de la gaveta (docs/cobro-pos-billetes.md §5).
+  return session ? { ...session, liveTotals: sessionTotals(session) } : null;
 }
 
 export function openCashSession(input: OpenCashSessionInput, userId: string, storeId: string) {
@@ -72,17 +58,8 @@ export function openCashSession(input: OpenCashSessionInput, userId: string, sto
     status: "open",
   };
   sessions.push(session);
-  for (const previous of sessions) {
-    if (
-      previous.registerId === register.id &&
-      previous.status === "closed" &&
-      !previous.vaultTransferredAt &&
-      !previous.absorbedBySessionId &&
-      previous.id !== session.id
-    ) {
-      previous.absorbedBySessionId = session.id;
-    }
-  }
+  // Desde `20260904b-cash-lifecycle.sql` la apertura ya no absorbe los cierres
+  // previos: el efectivo del turno anterior sigue siendo transferible al baul.
   if (session.openingRef || session.openingVes) {
     movements.push({ amountRef: session.openingRef, amountVes: session.openingVes, createdAt: openedAt, id: `cash-movement-${Date.now()}`, notes: "Monto de apertura de caja", sessionId: session.id, type: "opening" });
   }
@@ -135,10 +112,11 @@ export function autoCloseStaleCashSessions(now = new Date()) {
 export function listCashMovements(sessionId: string, storeId: string) {
   const session = sessions.find((item) => item.id === sessionId && item.register.storeId === storeId);
   if (!session) throw new ApiError(404, "NOT_FOUND", "Sesión de caja no encontrada.");
+  const totals = sessionTotals(session);
   return {
-    accountVes: accountVesForSession(sessionId),
+    accountVes: totals.accountVes,
     items: movements.filter((movement) => movement.sessionId === sessionId),
-    theoretical: theoretical(session),
+    theoretical: { ref: totals.cashRef, ves: totals.cashVes },
   };
 }
 
@@ -152,8 +130,7 @@ export function markSessionsTransferredToVault(sessionIds: string[], storeId: st
       sessionIds.includes(session.id) &&
       session.register.storeId === storeId &&
       session.status === "closed" &&
-      !session.vaultTransferredAt &&
-      !session.absorbedBySessionId,
+      !session.vaultTransferredAt,
   );
   if (selected.length !== sessionIds.length) {
     throw new ApiError(400, "BAD_REQUEST", "Solo se pueden transferir cierres pendientes al baúl.");
@@ -169,7 +146,31 @@ export function markSessionsTransferredToVault(sessionIds: string[], storeId: st
 }
 
 export function listOpenCashSessions(storeId: string) {
-  return sessions.filter((session) => session.status === "open" && session.register.storeId === storeId);
+  return sessions
+    .filter((session) => session.status === "open" && session.register.storeId === storeId)
+    .map((session) => ({ ...session, liveTotals: sessionTotals(session) }));
+}
+
+export function listRegisterSessions(registerId: string, storeId: string, limit = 20) {
+  return sessions
+    .filter(
+      (session) => session.registerId === registerId && session.register.storeId === storeId,
+    )
+    .sort((left, right) => Date.parse(right.openedAt) - Date.parse(left.openedAt))
+    .slice(0, limit)
+    .map((session) =>
+      session.status === "open" ? { ...session, liveTotals: sessionTotals(session) } : session,
+    );
+}
+
+export function listUntransferredClosures(storeId: string) {
+  return sessions.filter(
+    (session) =>
+      session.status === "closed" &&
+      session.register.storeId === storeId &&
+      !session.vaultTransferredAt &&
+      ((session.closingRef ?? 0) > 0 || (session.closingVes ?? 0) > 0),
+  );
 }
 
 export function listPendingClosures(storeId: string) {
@@ -178,7 +179,6 @@ export function listPendingClosures(storeId: string) {
       session.status === "closed" &&
       session.register.storeId === storeId &&
       !session.vaultTransferredAt &&
-      !session.absorbedBySessionId &&
       ((session.closingRef ?? 0) > 0 || (session.closingVes ?? 0) > 0),
   );
 }
@@ -190,8 +190,7 @@ export function getLastUntransferredClosure(registerId: string, storeId: string)
         session.registerId === registerId &&
         session.register.storeId === storeId &&
         session.status === "closed" &&
-        !session.vaultTransferredAt &&
-        !session.absorbedBySessionId,
+        !session.vaultTransferredAt,
     )
     .sort((left, right) => {
       const leftTime = left.closedAt ? Date.parse(left.closedAt) : 0;

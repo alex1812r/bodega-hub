@@ -5,6 +5,7 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 
 import type { CashMovement, CashSession } from "../types";
+import { computeCashSessionTotals } from "../utils/cashSessionTotals";
 import type { CloseCashSessionInput, OpenCashSessionInput } from "./cash.session.mock-server";
 
 function mapSession(row: Record<string, unknown>): CashSession {
@@ -49,7 +50,31 @@ export async function getCurrentCashSession(userId: string, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.from("cash_sessions").select("*, cash_registers(*)").eq("store_id", storeId).eq("status", "open").eq("opened_by", userId).maybeSingle();
   throwIfSupabaseError(error);
-  return data ? mapSession(data as Record<string, unknown>) : null;
+  if (!data) {
+    return null;
+  }
+  const session = mapSession(data as Record<string, unknown>);
+  // El POS necesita el efectivo vivo de la gaveta para no ofrecer un vuelto en
+  // efectivo que la caja no tiene (docs/cobro-pos-billetes.md §5).
+  const movements = await supabase
+    .from("cash_movements")
+    .select("amount_ref, amount_ves, session_id, type")
+    .eq("store_id", storeId)
+    .eq("session_id", session.id);
+  throwIfSupabaseError(movements.error);
+  const rows = (movements.data ?? []).map((row) => {
+    const record = row as Record<string, unknown>;
+    return {
+      amountRef: Number(record.amount_ref),
+      amountVes: Number(record.amount_ves),
+      createdAt: "",
+      id: "",
+      sessionId: session.id,
+      type: record.type as CashMovement["type"],
+    } satisfies CashMovement;
+  });
+
+  return { ...session, liveTotals: computeCashSessionTotals(rows, session) };
 }
 
 export async function openCashSession(input: OpenCashSessionInput, _userId: string, _storeId: string) {
@@ -77,33 +102,113 @@ export async function listCashMovements(sessionId: string, storeId: string) {
   throwIfSupabaseError(session.error);
   if (!session.data) throw new ApiError(404, "NOT_FOUND", "Sesión de caja no encontrada.");
   const base = mapSession(session.data as Record<string, unknown>);
-  const theoretical = items.reduce(
-    (total, movement) => {
-      if (movement.type === "opening" || movement.type === "account_in" || movement.type === "account_out") {
-        return total;
-      }
-      const sign = ["transfer_out", "refund_out"].includes(movement.type) ? -1 : 1;
-      total.ref += sign * movement.amountRef;
-      total.ves += sign * movement.amountVes;
-      return total;
-    },
-    { ref: base.openingRef, ves: base.openingVes },
-  );
-  const accountVes = items.reduce((total, movement) => {
-    if (movement.type === "account_in") return total + movement.amountVes;
-    if (movement.type === "account_out") return total - movement.amountVes;
-    return total;
-  }, 0);
-  return { accountVes, items, theoretical };
+  const totals = computeCashSessionTotals(items, base);
+  return {
+    accountVes: totals.accountVes,
+    items,
+    theoretical: { ref: totals.cashRef, ves: totals.cashVes },
+  };
 }
 
 export async function listOpenCashSessions(storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.from("cash_sessions").select("*, cash_registers(*)").eq("store_id", storeId).eq("status", "open");
   throwIfSupabaseError(error);
-  return (data ?? []).map((row) => mapSession(row as Record<string, unknown>));
+  const sessions = (data ?? []).map((row) => mapSession(row as Record<string, unknown>));
+  if (sessions.length === 0) {
+    return sessions;
+  }
+  const movements = await supabase
+    .from("cash_movements")
+    .select("amount_ref, amount_ves, session_id, type")
+    .eq("store_id", storeId)
+    .in("session_id", sessions.map((session) => session.id));
+  throwIfSupabaseError(movements.error);
+  const bySession = new Map<string, CashMovement[]>();
+  for (const row of movements.data ?? []) {
+    const record = row as Record<string, unknown>;
+    const sessionId = record.session_id as string;
+    const list = bySession.get(sessionId) ?? [];
+    list.push({
+      amountRef: Number(record.amount_ref),
+      amountVes: Number(record.amount_ves),
+      createdAt: "",
+      id: "",
+      sessionId,
+      type: record.type as CashMovement["type"],
+    });
+    bySession.set(sessionId, list);
+  }
+  return sessions.map((session) => ({
+    ...session,
+    liveTotals: computeCashSessionTotals(bySession.get(session.id) ?? [], session),
+  }));
 }
 
+/** Turnos de una caja, del mas reciente al mas antiguo, con saldos vivos si sigue abierto. */
+export async function listRegisterSessions(registerId: string, storeId: string, limit = 20) {
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("cash_sessions")
+    .select("*, cash_registers(*)")
+    .eq("store_id", storeId)
+    .eq("register_id", registerId)
+    .order("opened_at", { ascending: false })
+    .limit(limit);
+  throwIfSupabaseError(error);
+  const sessions = (data ?? []).map((row) => mapSession(row as Record<string, unknown>));
+  const openSession = sessions.find((session) => session.status === "open");
+  if (!openSession) {
+    return sessions;
+  }
+  const movements = await supabase
+    .from("cash_movements")
+    .select("amount_ref, amount_ves, type")
+    .eq("store_id", storeId)
+    .eq("session_id", openSession.id);
+  throwIfSupabaseError(movements.error);
+  const totals = computeCashSessionTotals(
+    (movements.data ?? []).map((row) => {
+      const record = row as Record<string, unknown>;
+      return {
+        amountRef: Number(record.amount_ref),
+        amountVes: Number(record.amount_ves),
+        type: record.type as CashMovement["type"],
+      };
+    }),
+    openSession,
+  );
+  return sessions.map((session) =>
+    session.id === openSession.id ? { ...session, liveTotals: totals } : session,
+  );
+}
+
+/**
+ * Cierres con efectivo que aun no llega al baul, incluidos los absorbidos por una apertura
+ * posterior (que `transfer_cash_closures_to_vault` rechaza). Para la vista del admin;
+ * `listPendingClosures` sigue devolviendo solo los transferibles.
+ */
+export async function listUntransferredClosures(storeId: string) {
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("cash_sessions")
+    .select("*, cash_registers(*)")
+    .eq("store_id", storeId)
+    .eq("status", "closed")
+    .is("vault_transferred_at", null)
+    .order("closed_at", { ascending: false });
+  throwIfSupabaseError(error);
+  return (data ?? [])
+    .map((row) => mapSession(row as Record<string, unknown>))
+    .filter((session) => (session.closingRef ?? 0) > 0 || (session.closingVes ?? 0) > 0);
+}
+
+/**
+ * Cierres que el baul puede recibir. Desde `20260904b-cash-lifecycle.sql` la
+ * apertura ya no absorbe cierres y `transfer_cash_closures_to_vault` acepta los
+ * absorbidos historicos, asi que ya no se filtran: es la unica via para que ese
+ * efectivo varado llegue al baul sin SQL manual.
+ */
 export async function listPendingClosures(storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
@@ -112,7 +217,6 @@ export async function listPendingClosures(storeId: string) {
     .eq("store_id", storeId)
     .eq("status", "closed")
     .is("vault_transferred_at", null)
-    .is("absorbed_by_session_id", null)
     .order("closed_at", { ascending: false });
   throwIfSupabaseError(error);
   return (data ?? [])
@@ -129,7 +233,6 @@ export async function getLastUntransferredClosure(registerId: string, storeId: s
     .eq("register_id", registerId)
     .eq("status", "closed")
     .is("vault_transferred_at", null)
-    .is("absorbed_by_session_id", null)
     .order("closed_at", { ascending: false })
     .limit(1)
     .maybeSingle();

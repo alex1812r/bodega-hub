@@ -10,11 +10,28 @@ export const cashKeys = {
   lastUntransferredClosure: (registerId: string) =>
     ["cash", "last-untransferred-closure", registerId] as const,
   movements: (sessionId: string) => ["cash", "movements", sessionId] as const,
+  register: (registerId: string) => ["cash", "registers", registerId] as const,
+  registerSessions: (registerId: string) =>
+    ["cash", "register-sessions", registerId] as const,
 };
 export function useCashRegisters() {
   return useQuery({
     queryKey: cashKeys.registers,
     queryFn: () => apiFetch<CashRegister[]>("/api/cash/registers"),
+  });
+}
+export function useCashRegister(id: string) {
+  return useQuery({
+    enabled: Boolean(id),
+    queryKey: cashKeys.register(id),
+    queryFn: () => apiFetch<CashRegister>(`/api/cash/registers/${id}`),
+  });
+}
+export function useCashRegisterSessions(id: string) {
+  return useQuery({
+    enabled: Boolean(id),
+    queryKey: cashKeys.registerSessions(id),
+    queryFn: () => apiFetch<CashSession[]>(`/api/cash/registers/${id}/sessions`),
   });
 }
 export function useMyCashSession() {
@@ -27,6 +44,12 @@ export function useOpenCashSessions() {
   return useQuery({
     queryKey: [...cashKeys.all, "open-sessions"],
     queryFn: () => apiFetch<CashSession[]>("/api/cash/session/open"),
+  });
+}
+export function useUntransferredCashClosures() {
+  return useQuery({
+    queryKey: [...cashKeys.all, "untransferred-closures"],
+    queryFn: () => apiFetch<CashSession[]>("/api/cash/closures/untransferred"),
   });
 }
 export function usePendingCashClosures() {

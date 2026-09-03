@@ -25,6 +25,7 @@ const movementTypeLabels: Record<CashMovement["type"], string> = {
   account_in: "Cuenta (ingreso)",
   account_out: "Cuenta (egreso)",
   adjustment: "Ajuste",
+  change_out: "Vuelto entregado",
   opening: "Apertura",
   refund_out: "Devolucion",
   sale_in: "Efectivo venta",
