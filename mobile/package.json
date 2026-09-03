@@ -58,7 +58,9 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "e2e": "node e2e/runner.mjs",
+    "e2e:parser": "node --test e2e/parseFlow.test.mjs"
   },
   "private": true
 }
