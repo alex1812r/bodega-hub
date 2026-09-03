@@ -70,3 +70,15 @@ src/modules/assistant/server/README-sdk-notes.md
 scripts/assistant-eval/last-run.json
 scripts/e2e-assistant/screenshots/
 .tmp-probe/
+
+# BodegaHub Mobile
+mobile/.notes/*
+!mobile/.notes/progress.md
+mobile/node_modules/
+mobile/.expo/
+mobile/android/
+mobile/ios/
+mobile/android/keystores/
+mobile/credentials.md
+mobile/e2e/screenshots/
+mobile/.env
