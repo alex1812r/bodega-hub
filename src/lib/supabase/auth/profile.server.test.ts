@@ -96,6 +96,38 @@ describe("getAuthProfileFromSession", () => {
     expect(profile?.role).toBe("vendedor");
   });
 
+  it.each([
+    ["malformed", { code: "bad_jwt", message: "invalid JWT: token is malformed", status: 403 }],
+    ["expired", { code: "bad_jwt", message: "invalid JWT: token is expired", status: 401 }],
+    ["revoked session", { code: "session_not_found", message: "Session from session_id not found", status: 401 }],
+  ])("answers unauthenticated (not a server error) for a %s token", async (_label, error) => {
+    const getUser = jest.fn(async () => ({ data: { user: null }, error }));
+    mockedCreateClient.mockResolvedValue(
+      buildSupabaseStub(getUser) as unknown as Awaited<
+        ReturnType<typeof createRouteSupabaseClient>
+      >,
+    );
+    withAuthorization("Bearer whatever");
+
+    // Debe ser null -> 401, nunca una excepcion -> 500: la app movil refresca y reintenta.
+    await expect(getAuthProfileFromSession()).resolves.toBeNull();
+  });
+
+  it("still surfaces a real Supabase outage as an error", async () => {
+    const getUser = jest.fn(async () => ({
+      data: { user: null },
+      error: { code: "unexpected_failure", message: "Database is unavailable", status: 500 },
+    }));
+    mockedCreateClient.mockResolvedValue(
+      buildSupabaseStub(getUser) as unknown as Awaited<
+        ReturnType<typeof createRouteSupabaseClient>
+      >,
+    );
+    withAuthorization("Bearer whatever");
+
+    await expect(getAuthProfileFromSession()).rejects.toThrow();
+  });
+
   it("returns null when the token is rejected", async () => {
     const getUser = jest.fn(async () => ({
       data: { user: null },
