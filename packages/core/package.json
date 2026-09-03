@@ -19,9 +19,6 @@
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "moment": "^2.30.1"
-  },
   "devDependencies": {
     "typescript": "^5"
   }
