@@ -461,7 +461,7 @@ La tool devuelve **cada componente por separado** además del total y su equival
 | `ANTHROPIC_API_KEY` | — | Alternativa de pago |
 | `ASSISTANT_DAILY_LIMIT` | `100` | Consultas por usuario por día (día Caracas) |
 
-`temperature: 0`, `stopWhen: stepCountIs(5)`, historial recortado a los **últimos 10 mensajes**, timeout de **45 s** al proveedor. El body solo acepta mensajes `user`/`assistant`: un `system` inyectado desde el cliente devuelve 400.
+`temperature: 0`, `stopWhen: stepCountIs(5)`, historial recortado a los **últimos 10 mensajes**, timeout de **45 s** al proveedor. El body solo acepta mensajes `user`/`assistant`: un `system` inyectado desde el cliente devuelve 400. Del historial solo sobrevive el **texto**: un `tool-*` fabricado en `parts` se descarta antes de llegar al modelo.
 
 > El free tier de Gemini es de **20 peticiones/día por modelo** (medido sep 2026), asi que el modelo elegido no cambia la cuota. El default es `gemini-2.5-flash` por estabilidad: `gemini-flash-latest` apunta a un preview que ya devolvio "high demand". Ver [`chat-ia-analisis.md`](chat-ia-analisis.md) §9.
 

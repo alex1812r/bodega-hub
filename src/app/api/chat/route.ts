@@ -42,6 +42,24 @@ const messageSchema = z.object({
   role: z.enum(["assistant", "user"]),
 });
 
+type ChatMessage = z.infer<typeof messageSchema>;
+
+/**
+ * Del historial que manda el cliente solo sobrevive el texto. Un `parts` con un
+ * `tool-*` fabricado seria un resultado de herramienta falso para el modelo:
+ * las herramientas se vuelven a ejecutar en el servidor si hacen falta.
+ */
+function sanitizeMessages(messages: ChatMessage[]) {
+  return messages
+    .map((message) => ({
+      ...message,
+      parts: message.parts.filter(
+        (part) => part.type === "text" && typeof part.text === "string",
+      ),
+    }))
+    .filter((message) => message.parts.length > 0);
+}
+
 const bodySchema = z.object({
   messages: z.array(messageSchema).min(1).max(200),
 });
@@ -66,7 +84,12 @@ export async function POST(request: Request) {
     assertUnderDailyLimit(usage);
 
     const body = bodySchema.parse(await request.json());
-    const history = body.messages.slice(-HISTORY_LIMIT);
+    const history = sanitizeMessages(body.messages).slice(-HISTORY_LIMIT);
+
+    if (history.length === 0) {
+      throw new ApiError(400, "BAD_REQUEST", "La consulta no tiene texto.");
+    }
+
     const question = messageText(history.at(-1)!);
     const tools = toolsForContext(ctx);
 
