@@ -1,14 +1,16 @@
+import type {
+  PaymentDirection,
+  PaymentMethod,
+  PaymentStatus,
+} from "@bodega/core/types";
+
 import type { Permission, UserRole } from "@/shared/auth/permissions";
 
 export type ContactType = "ambos" | "cliente" | "proveedor";
-export type PaymentMethod =
-  | "efectivo_usd"
-  | "efectivo_ves"
-  | "pago_movil"
-  | "punto_venta"
-  | "transferencia";
-export type PaymentDirection = "entrada" | "salida";
-export type PaymentStatus = "activo" | "anulado";
+// Definidos en @bodega/core para que la app movil y las validaciones por metodo
+// de pago no arrastren estos mocks. Se importan y re-exportan (no un
+// `export ... from` a secas) porque este archivo tambien los usa localmente.
+export type { PaymentDirection, PaymentMethod, PaymentStatus };
 export type PurchaseStatus = "cancelado" | "devuelto" | "pedido" | "recibido";
 export type SaleStatus =
   | "borrador"

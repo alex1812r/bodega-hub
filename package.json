@@ -2,6 +2,10 @@
   "name": "bodega-hub",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "packages/*",
+    "mobile"
+  ],
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build",

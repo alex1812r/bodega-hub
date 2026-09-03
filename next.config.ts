@@ -19,6 +19,9 @@ const nextConfig: NextConfig = {
   // El AI SDK v7 se publica solo como ESM; transpilarlo permite que Jest
   // (via next/jest) tambien lo cargue en los tests de las rutas.
   transpilePackages: [
+    // @bodega/core se consume como fuente TypeScript (sin build), asi que Next
+    // tiene que transpilarlo igual que hace con el AI SDK.
+    "@bodega/core",
     "ai",
     "@ai-sdk/anthropic",
     "@ai-sdk/mcp",
