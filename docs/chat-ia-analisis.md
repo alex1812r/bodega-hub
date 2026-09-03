@@ -106,3 +106,61 @@ Fecha y hora actual en America/Caracas; que REF = USD referencia y Bs = VES; que
 ## 9. Plan de ejecución
 
 Plan autónomo paso a paso para Claude Code: [`agent-prompts/chat-ia-gtm.md`](agent-prompts/chat-ia-gtm.md).
+
+## 9. Estado de implementación (2 sep 2026)
+
+Rama `feat/assistant-chat`. Detalle funcional en [`modules-catalog.md`](modules-catalog.md#asistente-ia-de-consultas).
+
+**Qué quedó hecho:** ruta `/api/chat` con streaming, 10 herramientas de tienda + 2 de plataforma, permiso `assistant.use`, pantalla `/assistant`, servicio de capital (mock + Supabase), límite diario por usuario, bitácora `assistant_queries` y banco de preguntas ejecutable.
+
+**Variables de entorno** (ver `.env.local.example`):
+
+```text
+ASSISTANT_PROVIDER=google            # google | anthropic | mock
+ASSISTANT_MODEL=                     # opcional; default gemini-2.5-flash / claude-haiku-4-5
+GOOGLE_GENERATIVE_AI_API_KEY=
+ANTHROPIC_API_KEY=
+ASSISTANT_DAILY_LIMIT=100
+```
+
+**Parches SQL a aplicar en el SQL Editor** (en este orden):
+
+1. `supabase/patches/20260906-store-capital-summary.sql` — vista `store_capital_summary`.
+2. `supabase/patches/20260906b-assistant-queries.sql` — tabla `assistant_queries` + RLS.
+
+Sin ellos el asistente funciona igual en `API_DATA_SOURCE=mock`; en Supabase, `capital_actual` y el contador diario fallan de forma controlada.
+
+**Cómo correr el banco de preguntas:**
+
+```bash
+# 1. Dev server con datos mock y demo auth
+API_DATA_SOURCE=mock ALLOW_DEMO_AUTH=true npm run dev
+
+# 2. Plumbing (sin consumir cuota): ASSISTANT_PROVIDER=mock en .env.local
+npm run assistant:eval
+
+# 3. Modelo real, paceado para el free tier
+ASSISTANT_EVAL_DELAY_MS=27000 npm run assistant:eval
+```
+
+### Corrección al §4: el free tier de Gemini es mucho más chico de lo estimado
+
+Medido contra la API con una key real (sep 2026), el free tier de Gemini es **por modelo y por proyecto**:
+
+| Modelo | Free tier medido |
+|--------|------------------|
+| `gemini-2.5-flash` | 20 peticiones/día, 5 por minuto |
+| `gemini-3.8-flash` (`gemini-flash-latest`) | 20 peticiones/día |
+| `gemini-3.5-flash`, `gemini-3.1-flash-lite-preview` | 20 peticiones/día (cuota independiente por modelo) |
+
+Además, `gemini-2.0-flash` y `gemini-2.5-flash-lite` ya **no están disponibles para keys nuevas**.
+
+Una consulta del asistente consume **2 llamadas** (una para elegir la herramienta, otra para redactar). Es decir: **~10 consultas al día**, no las ~700 que estimaba el §4. Eso no alcanza ni para un solo admin.
+
+Consecuencias:
+
+- La opción "costo cero" del §4 queda descartada tal como estaba planteada. `ASSISTANT_DAILY_LIMIT=100` protege la app, no la cuota.
+- Caminos reales: (a) activar facturación en Google (Gemini Flash de pago cuesta una fracción de Haiku), o (b) `ASSISTANT_PROVIDER=anthropic` con Haiku 4.5 (~$0,006–0,011 por consulta, ver §4).
+- El proveedor `mock` sigue disponible para demos y tests sin gastar cuota.
+
+La decisión de privacidad del §4 sigue en pie y ahora es más simple: si de todos modos hay que pagar, el free tier deja de ser un argumento para aceptar el entrenamiento con los datos del cliente.

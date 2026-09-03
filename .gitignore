@@ -67,3 +67,6 @@ storybook-static
 # Supabase CLI scratch state
 supabase/.temp/
 src/modules/assistant/server/README-sdk-notes.md
+scripts/assistant-eval/last-run.json
+scripts/e2e-assistant/screenshots/
+.tmp-probe/

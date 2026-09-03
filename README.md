@@ -28,4 +28,5 @@ Abrir [http://localhost:3000](http://localhost:3000). Credenciales de desarrollo
 npm run typecheck
 npm test
 npm run e2e:bodegon
+npm run assistant:eval   # banco de preguntas del asistente IA contra /api/chat
 ```

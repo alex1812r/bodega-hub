@@ -43,7 +43,8 @@
 | [plan-erp.md](plan-erp.md) | Visión funcional y objetivos del producto |
 | [web-app-build-checklist.md](web-app-build-checklist.md) | Plan histórico de construcción (MVP ya hecho) |
 | [multi-store-options.md](multi-store-options.md) | Multitienda vigente: superadmin, `stores`, aislamiento API/RLS |
-| [chat-ia-analisis.md](chat-ia-analisis.md) | Chat IA de consultas: alcance, arquitectura (tools sobre servicios), proveedor y costo |
+| [chat-ia-analisis.md](chat-ia-analisis.md) | Chat IA de consultas: alcance, arquitectura (tools sobre servicios), proveedor, costo y estado de implementacion (§9) |
+| [agent-prompts/chat-ia-gtm.md](agent-prompts/chat-ia-gtm.md) | Plan de ejecucion del asistente IA hasta GTM |
 
 ## Contrato machine-readable
 

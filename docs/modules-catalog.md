@@ -31,6 +31,7 @@ Documentos relacionados:
 | Caja | `/cash`, `/cash/registers` | `cash.view` / `cash.operate` / `cash.manage` | `cash_registers`, `cash_sessions` (`closed_reason`), `cash_movements` |
 | Baúl | `/vault` | `vault.view` / `vault.manage` | `store_vaults` (`balance_efectivo_ves`, `balance_ves` cuenta, `balance_ref`), `vault_movements.bucket` |
 | Reportes | `/reports` | `reports.view` | vistas `daily_sales_summary`, etc. |
+| Asistente IA | `/assistant` | `assistant.use` | `assistant_queries`, vista `store_capital_summary` |
 | Settings | `/settings` | `settings.view` / `users.manage` | `app_settings`, `profiles`, `exchange_rates` |
 
 **Rol admin:** sin `sales.create` ni `cash.operate` (no POS ni “Mi caja”). Conserva `sales.view`, `cash.manage` y `vault.*`. Para reactivar: devolver esos permisos en [`src/shared/auth/permissions.ts`](../src/shared/auth/permissions.ts).
@@ -386,6 +387,101 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 Rangos `from`/`to` en reportes de fecha usan **día operativo America/Caracas**.
 
 **Pendiente:** filtros fecha en todos los reportes; gráficos. Vista previa modal + export PDF/Excel.
+
+---
+
+## Asistente IA de consultas
+
+Chat en lenguaje natural sobre los datos del negocio. El modelo **no escribe SQL ni ve la base**: solo elige qué reporte llamar y con qué parámetros. Diseño y costos: [`chat-ia-analisis.md`](chat-ia-analisis.md).
+
+| Ruta | Permiso |
+|------|---------|
+| `/assistant` | `assistant.use` (admin y superadmin; ningún otro rol) |
+
+| Hook | Endpoint | Notas |
+|------|----------|-------|
+| `useAssistantChat` | POST `/api/chat` | Envuelve `useChat` del AI SDK con `DefaultChatTransport`; mapea 429/502 a mensajes en español |
+| `useAssistantUsage` | GET `/api/assistant/usage` | `{ used, limit, resetsAt }` |
+
+### Aislamiento (regla que no se negocia)
+
+`store_id` **jamás** es argumento del modelo. `resolveAssistantContext` lo toma de la sesión:
+
+- **admin** → `scope: "store"`, `storeIds = [auth.storeId]`, solo herramientas de tienda.
+- **superadmin** → `scope: "platform"`, `storeIds` = tiendas activas, solo herramientas de plataforma. Los nombres de tienda que da el usuario los resuelve el servidor (`resolveStoreRefs`); si no coinciden, la herramienta devuelve `ok:false` con la lista de candidatos.
+
+Los dos conjuntos de herramientas son **disjuntos**: un admin nunca ve `comparar_tiendas` y un superadmin nunca ve `ventas_periodo`.
+
+> `requirePermission` bloquea al superadmin en cualquier permiso sin prefijo `platform.`, por eso el asistente resuelve su contexto en [`session.ts`](../src/modules/assistant/server/session.ts) en vez de reutilizar ese guard.
+
+### Herramientas
+
+Tienda (`scope: "store"`), todas envoltorios finos de servicios existentes:
+
+| Tool | Servicio |
+|------|----------|
+| `ventas_periodo` | `getDashboardMetrics` (2 llamadas si se pide comparación) |
+| `ganancia_bruta` | `getGrossProfitReport` + agrupación por día o mes |
+| `top_productos` | `getTopProductsReport` (+ nombres vía `resolveProductNames`) |
+| `top_clientes` | `getTopCustomersReport` |
+| `rentabilidad_productos` | `getProductProfitabilityReport` |
+| `compras_periodo` | `getPurchasesReport` / `getSupplierPurchasesReport` |
+| `stock_bajo` | `getLowStockReport` |
+| `cierre_dia` | `getDailyCloseSummary` |
+| `metodos_pago` | `getPaymentMethodsReport` |
+| `capital_actual` | `capital.server.ts` / `capital.mock-server.ts` (nuevo) |
+
+Plataforma (`scope: "platform"`): `listar_tiendas` (`listStores`) y `comparar_tiendas` (ventas + ganancia + capital por tienda, con ranking).
+
+Toda salida es `AssistantToolResult`: `{ ok, source, range?, data, note? }` o `{ ok:false, error, options? }`. Las listas se recortan a **20 filas** con `note: "Mostrando N de M"`. Una excepción dentro de una tool se convierte en `ok:false`, nunca en un 500.
+
+### Capital actual (definición fija)
+
+```
+capital_ref = baúl.balance_ref
+            + (baúl.balance_efectivo_ves + baúl.balance_ves) / tasa_del_día
+            + inventario_a_costo_ref            (Σ current_stock × current_cost_ref, activos)
+            + cuentas_por_cobrar_ref            (ventas `pendiente_pago`: total_ref − paid_ves/ref_rate_ves)
+            − cuentas_por_pagar_ref             (compras `pedido`/`recibido`: total_ref − paid_ref)
+```
+
+La tool devuelve **cada componente por separado** además del total y su equivalente en Bs. Los componentes salen de la vista `store_capital_summary`; la conversión Bs→REF la hace el servicio con la tasa vigente. La respuesta siempre agrega la nota *"El saldo del baúl depende de que los cierres de caja estén transferidos"* (ver [`cuadre-baul.md`](cuadre-baul.md)).
+
+### Fechas
+
+`resolveRange({from,to,preset})` devuelve un rango ISO en **día operativo America/Caracas**. Presets: `hoy`, `ayer`, `desde_ayer`, `esta_semana`, `semana_pasada`, `este_mes`, `mes_pasado`, `ultimos_7_dias`, `ultimos_30_dias`, `ultimos_3_meses`, `este_anio`. Rangos invertidos se corrigen, fechas futuras se recortan a hoy y fechas inexistentes (`2026-02-30`) devuelven error controlado.
+
+### Proveedor y límites
+
+| Variable | Default | Uso |
+|----------|---------|-----|
+| `ASSISTANT_PROVIDER` | `google` | `google` \| `anthropic` \| `mock` |
+| `ASSISTANT_MODEL` | — | Fija el modelo; si se omite: `gemini-2.5-flash` / `claude-haiku-4-5` |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | — | Sin key utilizable el proveedor cae a `mock` con un `console.warn` |
+| `ANTHROPIC_API_KEY` | — | Alternativa de pago |
+| `ASSISTANT_DAILY_LIMIT` | `100` | Consultas por usuario por día (día Caracas) |
+
+`temperature: 0`, `stopWhen: stepCountIs(5)`, historial recortado a los **últimos 10 mensajes**, timeout de **45 s** al proveedor. El body solo acepta mensajes `user`/`assistant`: un `system` inyectado desde el cliente devuelve 400.
+
+> El free tier de Gemini es de **20 peticiones/día por modelo** (medido sep 2026), asi que el modelo elegido no cambia la cuota. El default es `gemini-2.5-flash` por estabilidad: `gemini-flash-latest` apunta a un preview que ya devolvio "high demand". Ver [`chat-ia-analisis.md`](chat-ia-analisis.md) §9.
+
+### Tablas y parches
+
+| Objeto | Parche |
+|--------|--------|
+| Vista `store_capital_summary` | `supabase/patches/20260906-store-capital-summary.sql` |
+| Tabla `assistant_queries` | `supabase/patches/20260906b-assistant-queries.sql` |
+
+`assistant_queries` guarda pregunta, herramientas usadas, tokens, duración y error. La escribe **solo el service role**; admin lee las de su tienda y superadmin todas. Con `API_DATA_SOURCE=mock` el registro y el contador viven en memoria del proceso.
+
+### Anti-alucinación
+
+- El system prompt prohíbe cifras que no vengan de una herramienta y obliga a decir explícitamente cuando un rango viene vacío.
+- La UI muestra, por cada tool call, un bloque plegable **"Fuente: {tool} · {from} → {to}"** con el resultado crudo tabulado.
+- El contenido de las herramientas se declara como **datos, no instrucciones**: nombres de productos o clientes con texto tipo orden se tratan como texto literal.
+- `npm run assistant:eval` corre el banco de `scripts/assistant-eval/questions.json` contra `/api/chat` y marca cualquier número de la respuesta que no aparezca en algún tool result. Con `ASSISTANT_EVAL_DELAY_MS` se pacea para el free tier.
+
+**Pendientes:** el nombre de la tienda no llega al system prompt (el perfil no lo expone); no hay caché de respuestas repetidas; el historial no se persiste entre sesiones.
 
 ---
 

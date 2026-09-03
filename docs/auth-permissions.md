@@ -15,7 +15,7 @@ Ver [`frontend-api-guide.md`](frontend-api-guide.md#autenticación-y-permisos) y
 
 ## Roles Iniciales
 
-- `superadmin`: solo backoffice plataforma (`platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view`). Home en `/platform/dashboard`. Puede ver usuarios de todas las tiendas, crear **solo** admins y generar reportes/KPIs multi-tienda. No opera el ERP ni crea otros roles.
+- `superadmin`: solo backoffice plataforma (`platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view`) mas `assistant.use`. Home en `/platform/dashboard`. Puede ver usuarios de todas las tiendas, crear **solo** admins y generar reportes/KPIs multi-tienda. No opera el ERP ni crea otros roles.
 - `admin`: acceso total al ERP de **su** tienda (sin permisos `platform.*`), **excepto** venta POS (`sales.create`) y operar caja (`cash.operate`). Puede ver ventas, gestionar cajas/baúl y el resto de módulos.
 - `vendedor`: acceso a ventas y datos necesarios para vender.
 - `almacen`: acceso a compras, productos e inventario.
@@ -102,6 +102,7 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | `vault.view` | Si | No | No | Si |
 | `vault.manage` | Si | No | No | No |
 | `reports.view` | Si | No | No | Si |
+| `assistant.use` | Si | No | No | No |
 | `settings.view` | Si | No | No | No |
 | `users.manage` | Si | No | No | No |
 
@@ -109,6 +110,8 @@ Notas de pagos:
 - El **vendedor** no tiene `payments.manage`, pero puede **registrar cobros de venta** (POS / `POST /api/payments` con `saleId`) con `sales.create`. No puede pagar compras ni anular pagos.
 
 Permisos de plataforma (`platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view`): solo `superadmin`. Los roles de tienda no los tienen.
+
+`assistant.use` es el unico permiso **transversal**: no lleva prefijo `platform.` y aun asi el `superadmin` lo tiene (se agrega explicitamente en `rolePermissions.superadmin`). Da acceso a `/assistant`: el admin pregunta por su tienda y el superadmin por todas. Como `requirePermission` bloquea al superadmin en permisos sin prefijo `platform.`, la ruta `/api/chat` resuelve su contexto con `resolveAssistantContext` (ver [`modules-catalog.md`](modules-catalog.md#asistente-ia-de-consultas)).
 
 ## Permisos Efectivos Por Usuario
 

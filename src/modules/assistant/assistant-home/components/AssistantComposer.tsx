@@ -56,7 +56,7 @@ export function AssistantComposer({
         id="assistant-composer"
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={disabled ? disabledReason : "Pregunta por ventas, ganancia, stock, capital…"}
+        placeholder={disabled ? disabledReason : "Pregunta por tus datos…"}
         ref={inputRef}
         rows={1}
         value={value}

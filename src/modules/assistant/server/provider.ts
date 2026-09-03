@@ -8,8 +8,13 @@ export const assistantProviders = ["anthropic", "google", "mock"] as const;
 
 export type AssistantProvider = (typeof assistantProviders)[number];
 
-/** Alias estable de Google al Flash vigente; evita fijar una version que se retira. */
-const DEFAULT_GOOGLE_MODEL = "gemini-flash-latest";
+/**
+ * Se fija un modelo estable en vez de `gemini-flash-latest` (que hoy apunta a
+ * un preview y ya devolvio "high demand"). El free tier de Gemini es de 20
+ * peticiones al dia POR MODELO, asi que la eleccion no cambia la cuota: es por
+ * estabilidad y costo. Para otro Flash, `ASSISTANT_MODEL`.
+ */
+const DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash";
 const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5";
 
 export type AssistantModelInfo = {

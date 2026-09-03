@@ -14,7 +14,8 @@
     "test:watch": "jest --watch",
     "e2e:bodegon": "npx tsx scripts/e2e-bodegon/run.ts",
     "smoke:patches": "npx tsx scripts/smoke-post-patches.ts",
-    "test:storybook": "vitest --project storybook run"
+    "test:storybook": "vitest --project storybook run",
+    "assistant:eval": "npx tsx scripts/assistant-eval/run.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.49",

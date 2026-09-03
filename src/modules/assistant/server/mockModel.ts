@@ -27,9 +27,9 @@ const STORE_RULES: Rule[] = [
     tool: "metodos_pago",
   },
   { keywords: ["cerro", "cerró", "cierre", "cierra"], tool: "cierre_dia" },
-  { keywords: ["ganancia", "utilidad", "beneficio"], tool: "ganancia_bruta" },
+  { keywords: ["ganancia", "gananz", "utilidad", "beneficio"], tool: "ganancia_bruta" },
   { keywords: ["producto", "articulo", "artículo", "mas vendido", "más vendido", "top"], tool: "top_productos" },
-  { keywords: ["vend", "vent", "factur", "ingres"], tool: "ventas_periodo" },
+  { keywords: ["vend", "bend", "vent", "factur", "ingres"], tool: "ventas_periodo" },
 ];
 
 const PLATFORM_RULES: Rule[] = [
@@ -99,16 +99,28 @@ function availableToolNames(options: LanguageModelV4CallOptions) {
   return new Set((options.tools ?? []).map((entry) => entry.name));
 }
 
+/** Marcadores de "comparame tiendas", que un admin de tienda no puede pedir. */
+const CROSS_STORE_MARKERS = ["mas venta", "mas ganancia", "compar", "ranking", "mejor tienda", "cual tienda"];
+
 function pickTool(question: string, options: LanguageModelV4CallOptions) {
   const available = availableToolNames(options);
   const normalized = normalize(question);
-  const rules = available.has("comparar_tiendas") ? PLATFORM_RULES : STORE_RULES;
+  const isPlatform = available.has("comparar_tiendas");
+  const rules = isPlatform ? PLATFORM_RULES : STORE_RULES;
 
   if (OUT_OF_SCOPE.some((keyword) => normalized.includes(normalize(keyword)))) {
     return null;
   }
 
   if (WRITE_INTENT.some((keyword) => normalized.includes(normalize(keyword)))) {
+    return null;
+  }
+
+  if (
+    !isPlatform &&
+    normalized.includes("tienda") &&
+    CROSS_STORE_MARKERS.some((marker) => normalized.includes(marker))
+  ) {
     return null;
   }
 
@@ -186,11 +198,36 @@ function inferExplicitRange(question: string, today: string) {
   return { from: `${year}-${month}-${pad(fromDay)}`, to: `${year}-${month}-${pad(toDay)}` };
 }
 
+/**
+ * Nombres propios (secuencias en mayuscula inicial) que no abren la frase:
+ * en preguntas de plataforma son los nombres de tienda.
+ */
+function inferStoreNames(question: string) {
+  if (question === question.toUpperCase()) {
+    return [];
+  }
+
+  const withoutLead = question.replace(/^[¿¡\s]*\S+\s*/u, " ");
+  const matches = withoutLead.match(
+    /\b[A-ZÁÉÍÓÚÑ][\p{L}\d]*(?:\s+[A-ZÁÉÍÓÚÑ][\p{L}\d]*)*/gu,
+  );
+
+  return (matches ?? []).map((name) => name.trim()).filter((name) => name.length > 2);
+}
+
 function buildToolInput(toolName: string, question: string, today: string) {
   const input: Record<string, unknown> = {};
 
   if (toolName === "listar_tiendas") {
     return input;
+  }
+
+  if (toolName === "comparar_tiendas") {
+    const names = inferStoreNames(question);
+
+    if (names.length > 0) {
+      input.tiendas = names;
+    }
   }
 
   if (toolName === "stock_bajo") {
