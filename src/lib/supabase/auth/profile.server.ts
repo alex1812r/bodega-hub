@@ -1,3 +1,4 @@
+import { getBearerToken } from "@/lib/supabase/bearer";
 import { mapPermissionList } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
@@ -53,11 +54,14 @@ function mapProfileRow(
 }
 
 export async function getAuthProfileFromSession(): Promise<ServerAuthProfile | null> {
+  // El token del header manda cuando existe: `getUser()` sin argumento lee la
+  // sesion de cookies y con Bearer devolveria "Auth session missing" -> 401.
+  const bearerToken = await getBearerToken();
   const supabase = await createRouteSupabaseClient();
   const {
     data: { user },
     error: userError,
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser(bearerToken ?? undefined);
 
   // Sin cookie/sesión, getUser puede devolver AuthSessionMissingError (no es fallo de servidor).
   if (userError) {
@@ -114,6 +118,7 @@ export async function getDefaultHomePathForAuthUserId(
 }
 
 export async function getProfileByUserId(userId: string): Promise<ServerAuthProfile | null> {
+  const bearerToken = await getBearerToken();
   const supabase = await createRouteSupabaseClient();
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
@@ -129,7 +134,7 @@ export async function getProfileByUserId(userId: string): Promise<ServerAuthProf
 
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser(bearerToken ?? undefined);
 
   return mapProfileRow(profile, user?.email);
 }
