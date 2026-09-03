@@ -39,6 +39,7 @@ export const permissions = [
   "vault.view",
   "vault.manage",
   "reports.view",
+  "assistant.use",
   "settings.view",
   "users.manage",
   "platform.stores.view",
@@ -75,8 +76,14 @@ const adminStorePermissions = storePermissions.filter(
   (permission) => !adminBlockedPermissions.has(permission),
 );
 
+/**
+ * El asistente es transversal: no lleva prefijo `platform.` pero el superadmin
+ * tambien lo usa (en modo plataforma), asi que se agrega explicitamente.
+ */
+const superadminPermissions: Permission[] = [...platformPermissions, "assistant.use"];
+
 export const rolePermissions: Record<UserRole, readonly Permission[]> = {
-  superadmin: platformPermissions,
+  superadmin: superadminPermissions,
   admin: adminStorePermissions,
   vendedor: [
     "dashboard.view",

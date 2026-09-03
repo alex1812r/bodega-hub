@@ -16,6 +16,21 @@ function getSupabaseImageHostname() {
 const supabaseHostname = getSupabaseImageHostname();
 
 const nextConfig: NextConfig = {
+  // El AI SDK v7 se publica solo como ESM; transpilarlo permite que Jest
+  // (via next/jest) tambien lo cargue en los tests de las rutas.
+  transpilePackages: [
+    "ai",
+    "@ai-sdk/anthropic",
+    "@ai-sdk/mcp",
+    "@ai-sdk/gateway",
+    "@ai-sdk/google",
+    "@ai-sdk/provider",
+    "@ai-sdk/provider-utils",
+    "@ai-sdk/react",
+    "@standard-schema/spec",
+    "@workflow/serde",
+    "eventsource-parser",
+  ],
   images: {
     // Cache del optimizador de Next para covers de productos (segundos).
     minimumCacheTTL: 60 * 60 * 24,

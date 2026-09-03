@@ -5,6 +5,7 @@ import {
   CreditCard,
   Home,
   Landmark,
+  MessageSquare,
   Package,
   Receipt,
   Settings,
@@ -40,5 +41,6 @@ export const appNavItems: AppNavItem[] = [
   { href: "/contacts", icon: Users, label: "Contactos", permission: "contacts.view" },
   { href: "/payments", icon: CreditCard, label: "Pagos", permission: "payments.view" },
   { href: "/reports", icon: BarChart3, label: "Reportes", permission: "reports.view" },
+  { href: "/assistant", icon: MessageSquare, label: "Asistente", permission: "assistant.use" },
   { href: "/settings", icon: Settings, label: "Configuracion", permission: "settings.view" },
 ];

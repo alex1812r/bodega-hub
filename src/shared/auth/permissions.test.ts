@@ -39,7 +39,7 @@ describe("permissions", () => {
     expect(effective).not.toContain("platform.stores.manage");
   });
 
-  it("gives superadmin only platform permissions", () => {
+  it("gives superadmin platform permissions plus the assistant", () => {
     const effective = getEffectivePermissions({ role: "superadmin" });
 
     expect(effective).toEqual([
@@ -49,6 +49,16 @@ describe("permissions", () => {
       "platform.users.manage",
       "platform.reports.view",
       "platform.dashboard.view",
+      "assistant.use",
     ]);
+  });
+
+  it("grants assistant.use to admin and superadmin only", () => {
+    expect(hasEffectivePermission({ role: "admin" }, "assistant.use")).toBe(true);
+    expect(hasEffectivePermission({ role: "superadmin" }, "assistant.use")).toBe(true);
+
+    for (const role of ["vendedor", "almacen", "contador"] as const) {
+      expect(hasEffectivePermission({ role }, "assistant.use")).toBe(false);
+    }
   });
 });

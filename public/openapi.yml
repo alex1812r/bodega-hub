@@ -24,6 +24,7 @@ tags:
   - name: Users
   - name: Auth
   - name: Docs
+  - name: Assistant
 paths:
   /api/cash/registers:
     get: { summary: Listar cajas registradoras }
@@ -61,6 +62,68 @@ paths:
     post: { summary: Registrar retiro de baúl }
   /api/vault/transfers-from-cash:
     post: { summary: Transferir efectivo desde caja }
+  /api/chat:
+    post:
+      tags: [Assistant]
+      summary: Conversar con el asistente IA de consultas
+      description: >-
+        Stream de mensajes del AI SDK (SSE). El servidor impone el alcance de tiendas
+        desde la sesion; el modelo nunca recibe un storeId. Limite diario por usuario
+        via ASSISTANT_DAILY_LIMIT.
+      x-permission: assistant.use
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    required: [role, parts]
+                    properties:
+                      role: { type: string, enum: [user, assistant] }
+                      parts:
+                        type: array
+                        items: { type: object }
+      responses:
+        "200":
+          description: Stream de mensajes UI del AI SDK
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401":
+          description: Sin sesion
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429":
+          description: Limite diario de consultas alcanzado
+        "502":
+          description: El proveedor de IA no esta disponible
+  /api/assistant/usage:
+    get:
+      tags: [Assistant]
+      summary: Consultas usadas hoy y limite diario del asistente
+      x-permission: assistant.use
+      responses:
+        "200":
+          description: Uso diario del asistente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      used: { type: integer }
+                      limit: { type: integer }
+                      resetsAt: { type: string, format: date-time }
+        "401":
+          description: Sin sesion
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/docs:
     get:
       tags: [Docs]
