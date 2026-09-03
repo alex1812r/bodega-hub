@@ -46,6 +46,7 @@
 | [chat-ia-analisis.md](chat-ia-analisis.md) | Chat IA de consultas: alcance, arquitectura (tools sobre servicios), proveedor, costo y estado de implementacion (§9) |
 | [agent-prompts/chat-ia-gtm.md](agent-prompts/chat-ia-gtm.md) | Plan de ejecucion del asistente IA hasta GTM |
 | [agent-prompts/mobile-app-gtm.md](agent-prompts/mobile-app-gtm.md) | Plan de ejecucion de la app movil (Expo) hasta GTM |
+| [mobile-app.md](mobile-app.md) | App movil BodegaHub: setup, arquitectura, auth Bearer, tabs por rol, E2E y exclusiones |
 
 ## Contrato machine-readable
 
