@@ -12,6 +12,9 @@ import type {
   UpdateStoreInput,
 } from "../types/stores";
 
+/** Segunda tienda mock: habilita las comparaciones multitienda del asistente. */
+export const SECOND_MOCK_STORE_ID = "00000000-0000-4000-8000-000000000002";
+
 const mockStores: Omit<PlatformStore, "usersCount">[] = [
   {
     createdAt: "2026-07-16T12:00:00.000Z",
@@ -19,6 +22,14 @@ const mockStores: Omit<PlatformStore, "usersCount">[] = [
     name: "BodegaHub",
     notes: "Tienda principal",
     slug: DEFAULT_STORE_SLUG,
+    status: "active",
+  },
+  {
+    createdAt: "2026-07-17T12:00:00.000Z",
+    id: SECOND_MOCK_STORE_ID,
+    name: "Bodega Sur",
+    notes: "Segunda tienda de demostracion",
+    slug: "bodega-sur",
     status: "active",
   },
 ];

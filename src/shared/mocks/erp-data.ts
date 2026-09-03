@@ -423,6 +423,30 @@ export const mockProducts: ProductMock[] = [
     salePriceRef: 2,
     sku: "cig-und-001",
   },
+  {
+    categoryId: "cat-tools",
+    currentCostRef: 1.2,
+    currentStock: 120,
+    id: "prod-sur-arroz",
+    isActive: true,
+    minStock: 30,
+    name: "Arroz blanco 1kg",
+    salePriceRef: 2,
+    sku: "sur-arr-001",
+    storeId: "00000000-0000-4000-8000-000000000002",
+  },
+  {
+    categoryId: "cat-tools",
+    currentCostRef: 3.4,
+    currentStock: 8,
+    id: "prod-sur-aceite",
+    isActive: true,
+    minStock: 20,
+    name: "Aceite de maiz 1L",
+    salePriceRef: 5.5,
+    sku: "sur-ace-001",
+    storeId: "00000000-0000-4000-8000-000000000002",
+  },
 ];
 
 export const mockProductPriceHistory: ProductPriceHistoryMock[] = [
@@ -543,6 +567,17 @@ export const mockContacts: ContactMock[] = [
     taxId: "J-00000006-6",
     type: "cliente",
   },
+  {
+    address: "Calle Sur, Maracay",
+    email: "cliente.sur@example.com",
+    id: "cont-sur-customer",
+    isActive: true,
+    name: "Abasto El Sur",
+    phone: "0412-0000009",
+    storeId: "00000000-0000-4000-8000-000000000002",
+    taxId: "J-00000009-9",
+    type: "cliente",
+  },
 ];
 
 export const mockExchangeRates: ExchangeRateMock[] = [
@@ -575,6 +610,13 @@ export const mockExchangeRates: ExchangeRateMock[] = [
     id: "rate-four-days-ago",
     rateVes: 496,
     source: "Manual",
+  },
+  {
+    createdAt: "2026-05-18T12:00:00.000Z",
+    id: "rate-sur-today",
+    rateVes: 510,
+    source: "Manual",
+    storeId: "00000000-0000-4000-8000-000000000002",
   },
 ];
 
@@ -668,6 +710,38 @@ export const mockSales: SaleMock[] = [
     totalRef: 37.5,
     totalVes: 18600,
     userId: "user-admin",
+  },
+  {
+    createdAt: "2026-05-18T16:00:00.000Z",
+    customerId: "cont-sur-customer",
+    discountRef: 0,
+    id: "sale-sur-001",
+    invoiceNumber: "S-000001",
+    paidVes: 20400,
+    refRateVes: 510,
+    status: "pagada",
+    storeId: "00000000-0000-4000-8000-000000000002",
+    subtotalRef: 40,
+    taxRef: 0,
+    totalRef: 40,
+    totalVes: 20400,
+    userId: "user-sur-admin",
+  },
+  {
+    createdAt: "2026-05-17T11:00:00.000Z",
+    customerId: "cont-sur-customer",
+    discountRef: 0,
+    id: "sale-sur-002",
+    invoiceNumber: "S-000002",
+    paidVes: 0,
+    refRateVes: 505,
+    status: "pendiente_pago",
+    storeId: "00000000-0000-4000-8000-000000000002",
+    subtotalRef: 11,
+    taxRef: 0,
+    totalRef: 11,
+    totalVes: 5555,
+    userId: "user-sur-admin",
   },
 ];
 
@@ -770,6 +844,24 @@ export const mockSaleItems: SaleItemMock[] = [
     subtotalVes: 1736,
     unitCostRefSnapshot: 2.1,
     unitPriceRef: 3.5,
+  },
+  {
+    productId: "prod-sur-arroz",
+    quantity: 20,
+    saleId: "sale-sur-001",
+    subtotalRef: 40,
+    subtotalVes: 20400,
+    unitCostRefSnapshot: 1.2,
+    unitPriceRef: 2,
+  },
+  {
+    productId: "prod-sur-aceite",
+    quantity: 2,
+    saleId: "sale-sur-002",
+    subtotalRef: 11,
+    subtotalVes: 5555,
+    unitCostRefSnapshot: 3.4,
+    unitPriceRef: 5.5,
   },
 ];
 
@@ -1333,6 +1425,14 @@ export const mockUserProfiles: UserProfileMock[] = [
     name: "Usuario Inactivo",
     role: "vendedor",
     storeId: "00000000-0000-4000-8000-000000000001",
+  },
+  {
+    email: "admin.sur@example.com",
+    id: "user-sur-admin",
+    isActive: true,
+    name: "Admin Bodega Sur",
+    role: "admin",
+    storeId: "00000000-0000-4000-8000-000000000002",
   },
 ];
 
