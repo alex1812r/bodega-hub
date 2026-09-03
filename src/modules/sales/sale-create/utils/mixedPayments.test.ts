@@ -5,18 +5,27 @@ import {
   buildRemainingFillHelperText,
   buildVesAmountHelperText,
   canUseMixedPayments,
+  changeAmountForOverage,
+  createCheckoutForMethod,
   createDefaultMixedPaymentLines,
   getAvailablePaymentMethods,
   getAllocatedVes,
+  getChangeMethodOptions,
+  getChangeVes,
+  getDefaultChangeMethod,
+  getMaxChangeRoundingVes,
   getRemainingRef,
   getRemainingVes,
   getSaleTotalVes,
+  getTenderOverageVes,
   methodRequiresPaymentDetails,
   paymentAmountToRef,
   paymentAmountToVes,
+  pickChangeCarrierLineId,
   pickNextAvailablePaymentMethod,
   refToPaymentAmount,
   usdAmountToCoverVes,
+  validateCheckout,
   validateMixedPayments,
   validateSinglePaymentDetails,
   type PosMixedPaymentLine,
@@ -248,5 +257,168 @@ describe("mixedPayments utils", () => {
         referenceCode: "",
       }).isValid,
     ).toBe(false);
+  });
+});
+
+describe("tender con vuelto", () => {
+  // Caso de la spec: venta de $2,30 pagada con billetes de $1.
+  const rate = 801.17;
+  const totalRef = 2.3;
+  const usdTender = [line({ amount: 3, id: "usd", method: "efectivo_usd" })];
+
+  function checkoutWithChange(
+    changeAmount: number,
+    changeMethod: PosMixedPaymentLine["method"] = "efectivo_ves",
+  ) {
+    return {
+      change: { amount: changeAmount, method: changeMethod },
+      changeCarrierLineId: "usd",
+      lines: usdTender,
+    };
+  }
+
+  it("computes the overage a tender leaves over the sale total", () => {
+    expect(getSaleTotalVes(totalRef, rate)).toBe(1842.69);
+    expect(getTenderOverageVes(totalRef, usdTender, rate)).toBe(560.82);
+    // Pago exacto: sin excedente.
+    expect(
+      getTenderOverageVes(totalRef, [line({ amount: 1842.69, method: "efectivo_ves" })], rate),
+    ).toBe(0);
+  });
+
+  it("converts an overage into a change amount without ever overshooting", () => {
+    expect(changeAmountForOverage("efectivo_ves", 560.82, rate)).toBe(560.82);
+    expect(changeAmountForOverage("pago_movil", 560.82, rate)).toBe(560.82);
+    // USD trunca a centavos: devolver de mas descuadra la gaveta.
+    expect(changeAmountForOverage("efectivo_usd", 560.82, rate)).toBe(0.7);
+    expect(paymentAmountToVes("efectivo_usd", 0.7, rate)).toBeLessThanOrEqual(560.82);
+    expect(changeAmountForOverage("efectivo_ves", 0, rate)).toBe(0);
+  });
+
+  it("converts a declared change back to VES", () => {
+    expect(getChangeVes({ amount: 560, method: "efectivo_ves" }, rate)).toBe(560);
+    expect(getChangeVes({ amount: 0.7, method: "efectivo_usd" }, rate)).toBe(560.82);
+    expect(getChangeVes(null, rate)).toBe(0);
+  });
+
+  it("accepts an overage absorbed by the declared change", () => {
+    // Bs 560 es lo maximo entregable en billetes; Bs 0,82 quedan en la gaveta.
+    const result = validateCheckout(totalRef, checkoutWithChange(560), rate);
+    expect(result.isValid).toBe(true);
+  });
+
+  it("rejects a cash change bigger than the drawer", () => {
+    const result = validateCheckout(totalRef, checkoutWithChange(560), rate, undefined, {
+      ves: 100,
+    });
+
+    expect(result.isValid).toBe(false);
+    expect(result.errors[0]).toContain("No hay suficiente efectivo en la caja");
+  });
+
+  it("counts the cash received in this sale as available for the change", () => {
+    const result = validateCheckout(totalRef, checkoutWithChange(560), rate, undefined, {
+      ves: 560,
+    });
+
+    expect(result.isValid).toBe(true);
+  });
+
+  it("still rejects an overage with no change declared", () => {
+    const result = validateCheckout(
+      totalRef,
+      { change: null, changeCarrierLineId: null, lines: usdTender },
+      rate,
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.errors.some((error) => error.includes("excede el total"))).toBe(true);
+  });
+
+  it("rejects change over the overage, change with no overage and short change", () => {
+    const tooMuch = validateCheckout(totalRef, checkoutWithChange(600), rate);
+    expect(tooMuch.isValid).toBe(false);
+    expect(tooMuch.errors.some((error) => error.includes("supera el excedente"))).toBe(true);
+
+    const noOverage = validateCheckout(
+      totalRef,
+      {
+        change: { amount: 100, method: "efectivo_ves" },
+        changeCarrierLineId: "ves",
+        lines: [line({ amount: 1842.69, id: "ves", method: "efectivo_ves" })],
+      },
+      rate,
+    );
+    expect(noOverage.isValid).toBe(false);
+    expect(noOverage.errors.some((error) => error.includes("No hay excedente"))).toBe(true);
+
+    // Bs 550 deja Bs 10,82 sin devolver: cabe otro billete de Bs 10.
+    const short = validateCheckout(totalRef, checkoutWithChange(550), rate);
+    expect(short.isValid).toBe(false);
+    expect(short.errors.some((error) => error.includes("sin devolver"))).toBe(true);
+  });
+
+  it("requires an exact change amount when it is paid from the account", () => {
+    expect(validateCheckout(totalRef, checkoutWithChange(560.82, "pago_movil"), rate).isValid).toBe(
+      true,
+    );
+
+    const rounded = validateCheckout(totalRef, checkoutWithChange(560, "pago_movil"), rate);
+    expect(rounded.isValid).toBe(false);
+    expect(rounded.errors.some((error) => error.includes("sin devolver"))).toBe(true);
+  });
+
+  it("caps the acceptable rounding at the smallest bill of the change currency", () => {
+    expect(getMaxChangeRoundingVes("efectivo_ves", rate)).toBe(9.99);
+    expect(getMaxChangeRoundingVes("efectivo_usd", rate)).toBe(801.16);
+    expect(getMaxChangeRoundingVes("pago_movil", rate)).toBe(0.01);
+    expect(getMaxChangeRoundingVes("transferencia", rate)).toBe(0.01);
+  });
+
+  it("puts the change on the received line that can cover it", () => {
+    const lines = [
+      line({ amount: 2, id: "usd", method: "efectivo_usd" }),
+      line({ amount: 300, id: "ves", method: "efectivo_ves" }),
+    ];
+
+    // 2 USD = Bs 1602,34 es la unica linea que alcanza Bs 900.
+    expect(pickChangeCarrierLineId(lines, rate, 900)).toBe("usd");
+    // Con Bs 100 gana la de mayor monto en Bs.
+    expect(pickChangeCarrierLineId(lines, rate, 100)).toBe("usd");
+    expect(pickChangeCarrierLineId(lines, rate, 5000)).toBeNull();
+    expect(pickChangeCarrierLineId(lines, rate, 0)).toBeNull();
+  });
+
+  it("defaults the change method to cash Bs when the drawer has bolivares", () => {
+    expect(getDefaultChangeMethod(undefined, 5000)).toBe("efectivo_ves");
+    expect(getDefaultChangeMethod(undefined, 0)).toBe("pago_movil");
+    expect(getDefaultChangeMethod(["efectivo_usd", "punto_venta"], 5000)).toBe("efectivo_usd");
+    expect(getDefaultChangeMethod(["punto_venta"], 5000)).toBeNull();
+    expect(getChangeMethodOptions()).toEqual([
+      "efectivo_ves",
+      "pago_movil",
+      "efectivo_usd",
+      "transferencia",
+    ]);
+    // Punto de venta no devuelve vuelto.
+    expect(getChangeMethodOptions(["punto_venta", "efectivo_ves"])).toEqual(["efectivo_ves"]);
+  });
+
+  it("prefills a single exact line from the quick method chip", () => {
+    const checkout = createCheckoutForMethod("efectivo_ves", totalRef, rate);
+
+    expect(checkout.change).toBeNull();
+    expect(checkout.lines).toHaveLength(1);
+    expect(checkout.lines[0].amount).toBe(1842.69);
+    expect(validateCheckout(totalRef, checkout, rate).isValid).toBe(true);
+  });
+
+  it("keeps the classic mixed payment rule of at least two lines", () => {
+    const single = validateMixedPayments(totalRef, [
+      line({ amount: 1842.69, method: "efectivo_ves" }),
+    ], rate);
+
+    expect(single.isValid).toBe(false);
+    expect(single.errors.some((error) => error.includes("al menos 2"))).toBe(true);
   });
 });

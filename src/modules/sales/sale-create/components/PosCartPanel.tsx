@@ -11,34 +11,38 @@ import { cn } from "@/shared/utils/cn";
 
 import type { PosCartItem } from "../hooks/usePosCart";
 import {
-  canUseMixedPayments,
   isUsdPaymentMethod,
   methodRequiresPaymentDetails,
-  type PosMixedPaymentLine,
+  type PosCheckout,
   type PosSinglePaymentDetails,
 } from "../utils/mixedPayments";
 import { PosCartLine } from "./PosCartLine";
+import { PosCheckoutModal } from "./PosCheckoutModal";
 import { PosCustomerPickerModal } from "./PosCustomerPickerModal";
-import { PosMixedPaymentsModal } from "./PosMixedPaymentsModal";
 import {
   PosPaymentMethods,
   posPaymentMethodLabels,
 } from "./PosPaymentMethods";
 
 type PosCartPanelProps = {
+  checkout: PosCheckout | null;
   className?: string;
   customerId: string;
   customers: ContactMock[];
+  /** Bs. en la gaveta: decide el metodo de vuelto por defecto. */
+  drawerRef?: number;
+  /** Error del ultimo intento de cobro; se muestra junto al boton. */
+  error?: string;
+  drawerVes?: number;
   enabledPaymentMethods: PaymentMethod[];
   isSubmitting?: boolean;
   items: PosCartItem[];
   itemsCount: number;
-  mixedPayments: PosMixedPaymentLine[] | null;
-  onClearMixedPayments: () => void;
+  onCheckoutChange: (checkout: PosCheckout) => void;
+  onClearCheckout: () => void;
   onClearOrder: () => void;
   onCustomerChange: (customerId: string) => void;
   onEditPaymentDetails?: () => void;
-  onMixedPaymentsChange: (lines: PosMixedPaymentLine[]) => void;
   onPaymentMethodChange: (method: PaymentMethod) => void;
   onProcessSale: () => void;
   onQuantityChange: (productId: string, quantity: number) => void;
@@ -53,19 +57,22 @@ type PosCartPanelProps = {
 };
 
 export function PosCartPanel({
+  checkout,
   className,
   customerId,
   customers,
+  drawerRef = 0,
+  error,
+  drawerVes = 0,
   enabledPaymentMethods,
   isSubmitting = false,
   items,
   itemsCount,
-  mixedPayments,
-  onClearMixedPayments,
+  onCheckoutChange,
+  onClearCheckout,
   onClearOrder,
   onCustomerChange,
   onEditPaymentDetails,
-  onMixedPaymentsChange,
   onPaymentMethodChange,
   onProcessSale,
   onQuantityChange,
@@ -79,17 +86,17 @@ export function PosCartPanel({
   totalVes,
 }: PosCartPanelProps) {
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
-  const [mixedModalOpen, setMixedModalOpen] = useState(false);
+  const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
+  // Cambia en cada apertura para remontar el modal con estado limpio.
+  const [checkoutSession, setCheckoutSession] = useState(0);
   const selectedCustomer = customers.find((customer) => customer.id === customerId);
-  const hasMixedPayments = Boolean(mixedPayments && mixedPayments.length > 0);
-  const mixedPaymentsAvailable = canUseMixedPayments(enabledPaymentMethods);
+  const hasCheckout = Boolean(checkout && checkout.lines.length > 0);
   const hasSingleMethodDetails =
-    !hasMixedPayments &&
+    !hasCheckout &&
     paymentMethod != null &&
     methodRequiresPaymentDetails(paymentMethod) &&
     Boolean(paymentDetails);
-  const canProcessSale =
-    items.length > 0 && (hasMixedPayments || paymentMethod != null);
+  const canProcessSale = items.length > 0 && (hasCheckout || paymentMethod != null);
 
   return (
     <aside
@@ -163,30 +170,30 @@ export function PosCartPanel({
 
       <div className="shrink-0 space-y-4 border-t border-border px-4 py-4 dark:border-slate-800">
         <PosPaymentMethods
-          disabled={hasMixedPayments}
+          disabled={hasCheckout}
           enabledMethods={enabledPaymentMethods}
           onChange={onPaymentMethodChange}
-          onOpenMixedPayments={
-            mixedPaymentsAvailable ? () => setMixedModalOpen(true) : undefined
-          }
+          onOpenCheckout={() => {
+            setCheckoutSession((current) => current + 1);
+            setCheckoutModalOpen(true);
+          }}
           selectedMethod={paymentMethod}
-          showMixedPaymentsLink={mixedPaymentsAvailable || hasMixedPayments}
         />
 
-        {hasMixedPayments && mixedPayments ? (
+        {hasCheckout && checkout ? (
           <div className="space-y-2 rounded-lg border border-border bg-surface-container-low px-3 py-2 dark:border-slate-700">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-medium text-foreground">Pago mixto</p>
+              <p className="text-sm font-medium text-foreground">Recibido</p>
               <button
                 className="cursor-pointer text-xs font-medium text-destructive hover:underline"
-                onClick={onClearMixedPayments}
+                onClick={onClearCheckout}
                 type="button"
               >
                 Quitar
               </button>
             </div>
             <ul className="space-y-1 text-xs text-muted-foreground">
-              {mixedPayments.map((line) => (
+              {checkout.lines.map((line) => (
                 <li className="flex justify-between gap-2" key={line.id}>
                   <span>{posPaymentMethodLabels[line.method]}</span>
                   <span className="font-medium text-foreground">
@@ -196,6 +203,17 @@ export function PosCartPanel({
                   </span>
                 </li>
               ))}
+              {checkout.change ? (
+                <li className="flex justify-between gap-2 border-t border-border pt-1 dark:border-slate-700">
+                  <span>Vuelto en {posPaymentMethodLabels[checkout.change.method]}</span>
+                  <span className="font-medium text-destructive">
+                    −{" "}
+                    {isUsdPaymentMethod(checkout.change.method)
+                      ? formatRefUsd(checkout.change.amount)
+                      : formatVes(checkout.change.amount)}
+                  </span>
+                </li>
+              ) : null}
             </ul>
           </div>
         ) : null}
@@ -240,6 +258,15 @@ export function PosCartPanel({
           </div>
         </dl>
 
+        {error ? (
+          <p
+            className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="alert"
+          >
+            {error}
+          </p>
+        ) : null}
+
         <Button
           className="w-full gap-2 border-transparent bg-[var(--secondary)] text-white hover:bg-[color-mix(in_srgb,var(--secondary)_85%,black)] hover:text-white"
           disabled={isSubmitting || !canProcessSale}
@@ -260,15 +287,18 @@ export function PosCartPanel({
         selectedCustomerId={customerId}
       />
 
-      <PosMixedPaymentsModal
+      <PosCheckoutModal
+        defaultMethod={paymentMethod}
+        drawerRef={drawerRef}
+        drawerVes={drawerVes}
         enabledPaymentMethods={enabledPaymentMethods}
-        initialLines={mixedPayments}
-        onConfirm={onMixedPaymentsChange}
-        onOpenChange={setMixedModalOpen}
-        open={mixedModalOpen}
+        initialCheckout={checkout}
+        key={checkoutSession}
+        onConfirm={onCheckoutChange}
+        onOpenChange={setCheckoutModalOpen}
+        open={checkoutModalOpen}
         rateVes={rateVes}
         totalRef={totalRef}
-        totalVes={totalVes}
       />
     </aside>
   );

@@ -9,6 +9,8 @@ import { formatRef, formatVes, roundMoney } from "@/shared/utils/currency";
 import { isKnownBankLabel } from "@/shared/venezuela/banks";
 import { isValidVeMobilePhone } from "@/shared/venezuela/phone";
 
+import { USD_BILLS, VES_BILLS, type DenominationCounts } from "./denominations";
+
 export const MIXED_PAYMENT_MAX_LINES = 4;
 export const MIXED_PAYMENT_MIN_LINES = 2;
 /** Tolerancia en REF (legacy / UI). La validacion de cierre usa VES. */
@@ -22,11 +24,37 @@ export const MIXED_PAYMENT_METHODS: PaymentMethod[] = [...PAYMENT_METHODS];
 export type PosMixedPaymentLine = {
   amount: number;
   bankName?: string;
+  /** Billetes contados en el pad; solo para efectivo. */
+  denominations?: DenominationCounts | null;
   id: string;
   method: PaymentMethod;
   phone?: string;
   referenceCode?: string;
 };
+
+/** Lo que se devuelve porque el recibido supero el total: un solo metodo. */
+export type PosChangeDeclaration = {
+  /** Monto en la moneda de `method`. */
+  amount: number;
+  denominations?: DenominationCounts | null;
+  method: PaymentMethod;
+};
+
+/** Resultado del modal «Cobrar»: recibido (1..4 lineas) + vuelto opcional. */
+export type PosCheckout = {
+  change: PosChangeDeclaration | null;
+  /** Linea de `lines` que carga las columnas `change_*` del pago. */
+  changeCarrierLineId: string | null;
+  lines: PosMixedPaymentLine[];
+};
+
+/** Metodos por los que tiene sentido devolver vuelto. */
+export const CHANGE_PAYMENT_METHODS: PaymentMethod[] = [
+  "efectivo_ves",
+  "pago_movil",
+  "efectivo_usd",
+  "transferencia",
+];
 
 export function getMaxMixedPaymentLines(enabledCount: number) {
   return Math.min(MIXED_PAYMENT_MAX_LINES, Math.max(0, enabledCount));
@@ -65,6 +93,11 @@ export function pickNextAvailablePaymentMethod(
 
 export function isUsdPaymentMethod(method: PaymentMethod) {
   return method === "efectivo_usd";
+}
+
+/** Efectivo fisico: es lo unico que se cuenta con el pad de billetes. */
+export function isCashPaymentMethod(method: PaymentMethod) {
+  return method === "efectivo_usd" || method === "efectivo_ves";
 }
 
 export function getPaymentCurrency(method: PaymentMethod): "USD" | "VES" {
@@ -362,6 +395,26 @@ export function createDefaultMixedPaymentLines(
   return [createEmptyMixedPaymentLine(first), createEmptyMixedPaymentLine(second)];
 }
 
+/** Checkout inicial: una linea con el monto exacto del metodo elegido. */
+export function createCheckoutForMethod(
+  method: PaymentMethod,
+  totalRef: number,
+  rateVes: number,
+): PosCheckout {
+  const totalVes = getSaleTotalVes(totalRef, rateVes);
+
+  return {
+    change: null,
+    changeCarrierLineId: null,
+    lines: [
+      {
+        ...createEmptyMixedPaymentLine(method),
+        amount: amountToCoverRemainingVes(method, totalVes, rateVes),
+      },
+    ],
+  };
+}
+
 export type MixedPaymentsValidationResult = {
   errors: string[];
   isValid: boolean;
@@ -375,18 +428,161 @@ export function getMixedPaymentMaxOverageVes(rateVes: number) {
   return roundMoney(0.01 * rateVes + MIXED_PAYMENT_TOLERANCE_VES);
 }
 
+/** Excedente en Bs. del recibido sobre el total de la venta. */
+export function getTenderOverageVes(
+  totalRef: number,
+  lines: Array<Pick<PosMixedPaymentLine, "amount" | "method">>,
+  rateVes: number,
+) {
+  if (!rateVes || rateVes <= 0) {
+    return 0;
+  }
+
+  return Math.max(
+    0,
+    roundMoney(getAllocatedVes(lines, rateVes) - getSaleTotalVes(totalRef, rateVes)),
+  );
+}
+
+/** Vuelto declarado convertido a Bs., igual que `register_payment`. */
+export function getChangeVes(
+  change: PosChangeDeclaration | null | undefined,
+  rateVes: number,
+) {
+  if (!change || !Number.isFinite(change.amount) || change.amount <= 0) {
+    return 0;
+  }
+
+  return paymentAmountToVes(change.method, change.amount, rateVes);
+}
+
+export function getChangeMethodOptions(
+  enabledMethods: readonly PaymentMethod[] = DEFAULT_ENABLED_PAYMENT_METHODS,
+) {
+  return filterEnabledPaymentMethods(enabledMethods, CHANGE_PAYMENT_METHODS);
+}
+
+/**
+ * `efectivo_ves` si la gaveta alcanza para ese vuelto; si no, `pago_movil`.
+ * Proponer efectivo cuando no hay con que pagarlo solo obliga al cajero a
+ * corregir el metodo despues de ver el error.
+ */
+export function getDefaultChangeMethod(
+  enabledMethods: readonly PaymentMethod[] = DEFAULT_ENABLED_PAYMENT_METHODS,
+  drawerVes = 0,
+  changeVes = 0,
+): PaymentMethod | null {
+  const options = getChangeMethodOptions(enabledMethods);
+
+  if (options.length === 0) {
+    return null;
+  }
+
+  if (drawerVes > 0 && drawerVes >= changeVes && options.includes("efectivo_ves")) {
+    return "efectivo_ves";
+  }
+
+  if (options.includes("pago_movil")) {
+    return "pago_movil";
+  }
+
+  return options[0];
+}
+
+/**
+ * Monto de vuelto, en la moneda del metodo, que absorbe el excedente sin pasarse.
+ * En USD trunca a centavos porque devolver de mas descuadra la gaveta.
+ */
+export function changeAmountForOverage(
+  method: PaymentMethod,
+  overageVes: number,
+  rateVes: number,
+) {
+  if (!Number.isFinite(overageVes) || overageVes <= 0) {
+    return 0;
+  }
+
+  if (isUsdPaymentMethod(method)) {
+    if (!rateVes || rateVes <= 0) {
+      return 0;
+    }
+    return Math.floor((overageVes / rateVes) * 100) / 100;
+  }
+
+  return roundMoney(overageVes);
+}
+
+/**
+ * Sobrante en Bs. que puede quedar en la gaveta por no ser representable con
+ * billetes. En metodos bancarios el vuelto sale exacto, asi que solo se admite
+ * el centavo de redondeo.
+ */
+export function getMaxChangeRoundingVes(method: PaymentMethod, rateVes: number) {
+  if (method === "efectivo_ves") {
+    return roundMoney(Math.min(...VES_BILLS) - MIXED_PAYMENT_TOLERANCE_VES);
+  }
+
+  if (method === "efectivo_usd") {
+    if (!rateVes || rateVes <= 0) {
+      return MIXED_PAYMENT_TOLERANCE_VES;
+    }
+    return roundMoney(Math.min(...USD_BILLS) * rateVes - MIXED_PAYMENT_TOLERANCE_VES);
+  }
+
+  return MIXED_PAYMENT_TOLERANCE_VES;
+}
+
+/**
+ * Linea de recibido que carga las columnas `change_*`: la de mayor monto en Bs.
+ * que alcance el vuelto (el CHECK del patch exige `change_ves <= amount_ves`).
+ */
+export function pickChangeCarrierLineId(
+  lines: Array<Pick<PosMixedPaymentLine, "amount" | "id" | "method">>,
+  rateVes: number,
+  changeVes: number,
+) {
+  if (!Number.isFinite(changeVes) || changeVes <= 0) {
+    return null;
+  }
+
+  const carrier = lines
+    .map((line) => ({
+      amountVes: paymentAmountToVes(line.method, line.amount, rateVes),
+      id: line.id,
+    }))
+    .filter((line) => line.amountVes + MIXED_PAYMENT_TOLERANCE_VES >= changeVes)
+    .sort((left, right) => right.amountVes - left.amountVes)[0];
+
+  return carrier?.id ?? null;
+}
+
+export type ValidateMixedPaymentsOptions = {
+  /** Vuelto declarado que absorbe el excedente (spec cobro-pos-billetes §5.6). */
+  change?: PosChangeDeclaration | null;
+  /** Minimo de lineas: 1 en el modal «Cobrar», 2 en el pago mixto clasico. */
+  minLines?: number;
+};
+
 export function validateMixedPayments(
   totalRef: number,
   lines: PosMixedPaymentLine[],
   rateVes: number,
   enabledMethods: readonly PaymentMethod[] = DEFAULT_ENABLED_PAYMENT_METHODS,
+  options: ValidateMixedPaymentsOptions = {},
 ): MixedPaymentsValidationResult {
   const errors: string[] = [];
   const enabled = filterEnabledPaymentMethods(enabledMethods);
   const maxLines = getMaxMixedPaymentLines(enabled.length);
+  const minLines = Math.max(1, options.minLines ?? MIXED_PAYMENT_MIN_LINES);
+  const change =
+    options.change && options.change.amount > 0 ? options.change : null;
 
-  if (lines.length < MIXED_PAYMENT_MIN_LINES) {
-    errors.push(`Agrega al menos ${MIXED_PAYMENT_MIN_LINES} metodos de pago.`);
+  if (lines.length < minLines) {
+    errors.push(
+      minLines === 1
+        ? "Agrega al menos un metodo de pago."
+        : `Agrega al menos ${minLines} metodos de pago.`,
+    );
   }
 
   if (lines.length > maxLines) {
@@ -441,21 +637,53 @@ export function validateMixedPayments(
     errors.push("Cada metodo de pago solo puede usarse una vez.");
   }
 
+  if (options.change && options.change.amount < 0) {
+    errors.push("El vuelto no puede ser negativo.");
+  }
+
+  if (change && !enabled.includes(change.method)) {
+    errors.push(
+      `El vuelto por ${paymentMethodLabels[change.method]} no esta habilitado en la tienda.`,
+    );
+  }
+
   if (rateVes > 0) {
     const totalVes = getSaleTotalVes(totalRef, rateVes);
     const allocatedVes = getAllocatedVes(lines, rateVes);
     const shortfall = roundMoney(totalVes - allocatedVes);
     const overage = roundMoney(allocatedVes - totalVes);
     const maxOverage = getMixedPaymentMaxOverageVes(rateVes);
+    const changeVes = getChangeVes(change, rateVes);
 
     if (shortfall > MIXED_PAYMENT_TOLERANCE_VES) {
       errors.push(
         `Falta por cubrir ${formatVes(shortfall)} del total ${formatVes(totalVes)}.`,
       );
-    } else if (overage > maxOverage) {
+    } else if (!change) {
+      if (overage > maxOverage) {
+        errors.push(
+          `La suma excede el total por ${formatVes(overage)} (total ${formatVes(totalVes)}). Declara el vuelto.`,
+        );
+      }
+    } else if (overage <= MIXED_PAYMENT_TOLERANCE_VES) {
+      errors.push("No hay excedente que devolver: quita el vuelto.");
+    } else if (changeVes > roundMoney(overage + MIXED_PAYMENT_TOLERANCE_VES)) {
       errors.push(
-        `La suma excede el total por ${formatVes(overage)} (total ${formatVes(totalVes)}).`,
+        `El vuelto ${formatVes(changeVes)} supera el excedente ${formatVes(overage)}.`,
       );
+    } else if (!pickChangeCarrierLineId(lines, rateVes, changeVes)) {
+      errors.push(
+        `Ninguna linea recibida alcanza para devolver ${formatVes(changeVes)}.`,
+      );
+    } else {
+      const rounding = roundMoney(overage - changeVes);
+      const maxRounding = getMaxChangeRoundingVes(change.method, rateVes);
+
+      if (rounding > roundMoney(maxRounding + MIXED_PAYMENT_TOLERANCE_VES)) {
+        errors.push(
+          `El vuelto declarado deja ${formatVes(rounding)} sin devolver: ajusta el monto.`,
+        );
+      }
     }
   }
 
@@ -463,4 +691,84 @@ export function validateMixedPayments(
     errors,
     isValid: errors.length === 0,
   };
+}
+
+/** Validacion del modal «Cobrar»: admite una sola linea y vuelto declarado. */
+export type PosDrawerCash = {
+  /** Efectivo en USD disponible en la gaveta. */
+  ref?: number;
+  /** Efectivo en Bs. disponible en la gaveta. */
+  ves?: number;
+};
+
+/**
+ * El vuelto en efectivo sale de la gaveta: `register_payment` lo rechaza si no
+ * alcanza. Se valida aqui tambien para no crear la venta y dejarla huerfana en
+ * `pendiente_pago` cuando el pago falla despues.
+ */
+export function validateChangeAgainstDrawer(
+  checkout: PosCheckout,
+  rateVes: number,
+  drawer: PosDrawerCash,
+): string[] {
+  const change = checkout.change;
+
+  if (!change || !isCashPaymentMethod(change.method) || change.amount <= 0) {
+    return [];
+  }
+
+  // El efectivo recibido en esta misma venta ya cuenta como disponible.
+  const receivedVes = roundMoney(
+    checkout.lines
+      .filter((line) => line.method === "efectivo_ves")
+      .reduce((total, line) => total + line.amount, 0),
+  );
+  const receivedRef = roundMoney(
+    checkout.lines
+      .filter((line) => line.method === "efectivo_usd")
+      .reduce((total, line) => total + line.amount, 0),
+  );
+
+  if (change.method === "efectivo_ves") {
+    // Sin dato de gaveta no se inventa un limite: lo valida el backend.
+    if (drawer.ves == null) {
+      return [];
+    }
+    const available = roundMoney(drawer.ves + receivedVes);
+    if (roundMoney(change.amount) > available + MIXED_PAYMENT_TOLERANCE_VES) {
+      return [
+        `No hay suficiente efectivo en la caja para el vuelto: disponible ${formatVes(available)}, vuelto ${formatVes(change.amount)}.`,
+      ];
+    }
+    return [];
+  }
+
+  if (drawer.ref == null) {
+    return [];
+  }
+
+  const available = roundMoney(drawer.ref + receivedRef);
+  if (roundMoney(change.amount) > available + 0.01) {
+    return [
+      `No hay suficiente efectivo en dolares en la caja para el vuelto: disponible ${formatRef(available)}, vuelto ${formatRef(change.amount)}.`,
+    ];
+  }
+  return [];
+}
+
+export function validateCheckout(
+  totalRef: number,
+  checkout: PosCheckout,
+  rateVes: number,
+  enabledMethods: readonly PaymentMethod[] = DEFAULT_ENABLED_PAYMENT_METHODS,
+  drawer: PosDrawerCash = {},
+): MixedPaymentsValidationResult {
+  const base = validateMixedPayments(totalRef, checkout.lines, rateVes, enabledMethods, {
+    change: checkout.change,
+    minLines: 1,
+  });
+  const drawerErrors = validateChangeAgainstDrawer(checkout, rateVes, drawer);
+  const errors = [...base.errors, ...drawerErrors];
+
+  return { errors, isValid: errors.length === 0 };
 }

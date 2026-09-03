@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
+import { roundMoney } from "@/shared/utils/currency";
 
 export type PosCartItem = {
   imageUrl?: string;
@@ -77,8 +78,16 @@ export function usePosCart() {
     setItems([]);
   }
 
+  // Suma de lineas ya redondeadas: el subtotal es el monto que se cobra y que
+  // viaja como monto de pago, no puede arrastrar ruido de punto flotante.
   const subtotalRef = useMemo(
-    () => items.reduce((total, item) => total + item.quantity * item.unitPriceRef, 0),
+    () =>
+      roundMoney(
+        items.reduce(
+          (total, item) => total + roundMoney(item.quantity * item.unitPriceRef),
+          0,
+        ),
+      ),
     [items],
   );
 

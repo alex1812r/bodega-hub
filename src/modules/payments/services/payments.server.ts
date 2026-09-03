@@ -1,4 +1,4 @@
-import { ApiError } from "@/lib/api/apiError";
+import { ApiError, type ApiErrorCode } from "@/lib/api/apiError";
 import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { getSupabaseErrorMessage, mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { mapContact, type DbContactRow } from "@/lib/supabase/mappers/contacts";
@@ -70,19 +70,80 @@ function mapCreatedByProfile(
   };
 }
 
+/**
+ * SQLSTATE deliberados de `register_payment` / `cancel_payment`
+ * (`supabase/patches/20260904-payment-guards.sql`). La clase `PT` esta
+ * reservada para codigos de usuario y PostgREST la interpreta como el status
+ * HTTP, asi que basta con leer `error.code`: un mensaje de validacion nuevo ya
+ * no puede caer en un 500 por no estar en una lista de substrings.
+ */
+const RPC_SQLSTATE_MAP: Record<string, { code: ApiErrorCode; status: number }> = {
+  PT400: { code: "BAD_REQUEST", status: 400 },
+  PT402: { code: "INSUFFICIENT_VAULT_BALANCE", status: 400 },
+  PT403: { code: "FORBIDDEN", status: 403 },
+  PT404: { code: "NOT_FOUND", status: 404 },
+  PT409: { code: "CONFLICT", status: 409 },
+};
+
+/**
+ * Marcadores de reglas de negocio para los RPC que todavia levantan el `P0001`
+ * por defecto (`create_sale`, `create_purchase`, triggers de contacto/tienda).
+ * Se comparan sin acentos.
+ */
+const RPC_BUSINESS_RULE_MARKERS = [
+  "debe",
+  "requiere",
+  "invalid",
+  "mayor a cero",
+  "no se puede",
+  "no puede",
+  "no pertenece",
+  "ya fue anulado",
+  "ya esta",
+  "excede",
+  "suficiente",
+  "solo aplica",
+  "desglose de billetes",
+  "vuelto",
+  "saldo pendiente",
+];
+
+function getSupabaseErrorSqlState(error: unknown) {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+
+  return undefined;
+}
+
+/** Minusculas y sin acentos: los mensajes del RPC vienen acentuados. */
+function normalizeRpcMessage(message: string) {
+  return message
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function throwIfRpcError(error: unknown): void {
   if (!error) {
     return;
   }
 
   const message = getSupabaseErrorMessage(error);
-  const normalized = message.toLowerCase();
+  const mapped = RPC_SQLSTATE_MAP[getSupabaseErrorSqlState(error) ?? ""];
+
+  if (mapped) {
+    throw new ApiError(mapped.status, mapped.code, message);
+  }
+
+  const normalized = normalizeRpcMessage(message);
 
   if (normalized.includes("saldo insuficiente en el baul")) {
     throw new ApiError(400, "INSUFFICIENT_VAULT_BALANCE", message);
   }
 
-  if (normalized.includes("sesión de caja abierta") || normalized.includes("sesion de caja abierta")) {
+  if (normalized.includes("sesion de caja abierta")) {
     throw new ApiError(400, "BAD_REQUEST", message);
   }
 
@@ -98,12 +159,7 @@ function throwIfRpcError(error: unknown): void {
     throw new ApiError(403, "FORBIDDEN", message);
   }
 
-  if (
-    normalized.includes("debe") ||
-    normalized.includes("requiere") ||
-    normalized.includes("invalid") ||
-    normalized.includes("mayor a cero")
-  ) {
+  if (RPC_BUSINESS_RULE_MARKERS.some((marker) => normalized.includes(marker))) {
     throw new ApiError(400, "BAD_REQUEST", message);
   }
 
@@ -267,17 +323,59 @@ export async function getPaymentById(id: string, storeId: string) {
   return mapPaymentWithContact(data, documentBalance);
 }
 
+/**
+ * El vuelto es una salida, no un cobro: banco/telefono/referencia son opcionales
+ * y se archivan en `notes` porque las columnas de la fila son las del cobro.
+ */
+function buildPaymentNotes(input: PaymentInput) {
+  const change = input.change;
+  const notes = input.notes?.trim();
+
+  if (!change?.method || change.amount <= 0) {
+    return notes || null;
+  }
+
+  const details = [
+    change.bankName?.trim() ? `banco ${change.bankName.trim()}` : null,
+    change.phone?.trim() ? `telefono ${change.phone.trim()}` : null,
+    change.referenceCode?.trim() ? `referencia ${change.referenceCode.trim()}` : null,
+  ].filter((detail): detail is string => Boolean(detail));
+
+  if (details.length === 0) {
+    return notes || null;
+  }
+
+  return [notes, `Vuelto por ${change.method}: ${details.join(", ")}`]
+    .filter((part): part is string => Boolean(part))
+    .join(" | ");
+}
+
 export async function createPayment(input: PaymentInput, _storeId: string) {
   const supabase = await createRouteSupabaseClient();
+  const changeAmount = input.change?.method ? Math.max(0, input.change.amount) : 0;
   const { data, error } = await supabase.rpc("register_payment", {
     p_amount: input.amount,
     p_bank_name: input.bankName ?? null,
     p_method: input.method,
-    p_notes: input.notes ?? null,
+    p_notes: buildPaymentNotes(input),
     p_phone: input.phone ?? null,
     p_purchase_id: input.purchaseId ?? null,
     p_reference_code: input.referenceCode ?? null,
     p_sale_id: input.saleId ?? null,
+    // Solo se mandan cuando hay algo que registrar: asi un cobro simple sigue
+    // resolviendo la firma corta de `register_payment`.
+    ...(changeAmount > 0
+      ? {
+          p_change_amount: changeAmount,
+          p_change_method: input.change?.method ?? null,
+        }
+      : {}),
+    ...(input.changeDenominations
+      ? { p_change_denominations: input.changeDenominations }
+      : {}),
+    ...(input.receivedDenominations
+      ? { p_received_denominations: input.receivedDenominations }
+      : {}),
   });
 
   throwIfRpcError(error);

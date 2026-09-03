@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
+import { useMyCashSession } from "@/modules/cash/hooks/useCash";
 import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useCreatePayment } from "@/modules/payments/hooks/usePayments";
 import { useProductBarcodeScan } from "@/modules/products/hooks/useProductBarcodeScan";
@@ -32,12 +33,13 @@ import { PosSingleMethodDetailsModal } from "./components/PosSingleMethodDetails
 import { PosWorkspace } from "./components/PosWorkspace";
 import { posCatalogQueryOptions } from "./constants/posCatalogCache";
 import { usePosCart } from "./hooks/usePosCart";
+import { toDenominationsPayload } from "./utils/denominations";
 import {
   getPaymentCurrency,
   methodRequiresPaymentDetails,
-  validateMixedPayments,
+  validateCheckout,
   validateSinglePaymentDetails,
-  type PosMixedPaymentLine,
+  type PosCheckout,
   type PosSinglePaymentDetails,
 } from "./utils/mixedPayments";
 
@@ -66,6 +68,7 @@ function SaleCreatePosWorkspace() {
   // cayera pasado el corte alfabético, y la búsqueda filtra en cliente.
   const products = useAllProducts({ isActive: true }, posCatalogQueryOptions);
   const currentRate = useCurrentExchangeRate();
+  const cashSession = useMyCashSession();
   const createSale = useCreateSale();
   const createPayment = useCreatePayment();
   const cart = usePosCart();
@@ -83,7 +86,7 @@ function SaleCreatePosWorkspace() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null);
   const [paymentDetails, setPaymentDetails] = useState<PosSinglePaymentDetails | null>(null);
   const [paymentDetailsModalOpen, setPaymentDetailsModalOpen] = useState(false);
-  const [mixedPayments, setMixedPayments] = useState<PosMixedPaymentLine[] | null>(null);
+  const [checkout, setCheckout] = useState<PosCheckout | null>(null);
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [scanOpen, setScanOpen] = useState(false);
@@ -109,14 +112,17 @@ function SaleCreatePosWorkspace() {
   }, [enabledPaymentMethods, paymentMethod]);
 
   useEffect(() => {
-    if (
-      mixedPayments?.some(
+    const hasDisabledMethod =
+      checkout?.lines.some(
         (line) => !isPaymentMethodEnabled(line.method, enabledPaymentMethods),
-      )
-    ) {
-      setMixedPayments(null);
+      ) ||
+      (checkout?.change != null &&
+        !isPaymentMethodEnabled(checkout.change.method, enabledPaymentMethods));
+
+    if (hasDisabledMethod) {
+      setCheckout(null);
     }
-  }, [enabledPaymentMethods, mixedPayments]);
+  }, [checkout, enabledPaymentMethods]);
 
   const customers = useMemo(() => {
     return getPaginatedItems(contacts.data)
@@ -139,6 +145,8 @@ function SaleCreatePosWorkspace() {
   const activeProducts = getPaginatedItems(products.data);
   const dependencyError = contacts.error ?? products.error ?? currentRate.error;
   const rateVes = currentRate.data?.rateVes ?? 0;
+  const drawerVes = cashSession.data?.liveTotals?.cashVes ?? 0;
+  const drawerRef = cashSession.data?.liveTotals?.cashRef ?? 0;
   const totalRef = cart.subtotalRef;
   const totalVes = rateVes ? roundMoney(refToVes(totalRef, rateVes)) : 0;
   const isSubmitting = createSale.isPending || createPayment.isPending;
@@ -209,7 +217,7 @@ function SaleCreatePosWorkspace() {
   function resetAfterSuccessfulSale() {
     cart.clearCart();
     setCustomerId(defaultCustomerId);
-    setMixedPayments(null);
+    setCheckout(null);
     resetPaymentSelection();
   }
 
@@ -224,7 +232,7 @@ function SaleCreatePosWorkspace() {
       return;
     }
 
-    setMixedPayments(null);
+    setCheckout(null);
 
     if (methodRequiresPaymentDetails(nextMethod)) {
       paymentSelectionSnapshotRef.current = {
@@ -288,15 +296,13 @@ function SaleCreatePosWorkspace() {
       return;
     }
 
-    if (mixedPayments) {
-      const validation = validateMixedPayments(
-        totalRef,
-        mixedPayments,
-        rateVes,
-        enabledPaymentMethods,
-      );
+    if (checkout) {
+      const validation = validateCheckout(totalRef, checkout, rateVes, enabledPaymentMethods, {
+        ref: drawerRef,
+        ves: drawerVes,
+      });
       if (!validation.isValid) {
-        setFormError(validation.errors[0] ?? "Revisa el pago mixto.");
+        setFormError(validation.errors[0] ?? "Revisa el cobro.");
         return;
       }
     } else if (!paymentMethod) {
@@ -328,15 +334,39 @@ function SaleCreatePosWorkspace() {
     try {
       const sale = await createSale.mutateAsync(input);
 
-      if (mixedPayments) {
+      if (checkout) {
         try {
-          for (const line of mixedPayments) {
+          for (const line of checkout.lines) {
+            // El vuelto viaja en la linea que genero el excedente: es la fila
+            // `payments` que lleva las columnas `change_*`.
+            const carriesChange =
+              checkout.change != null && checkout.changeCarrierLineId === line.id;
+            const changeMethod = checkout.change?.method;
+
             await createPayment.mutateAsync({
               amount: line.amount,
               bankName: line.bankName?.trim() || undefined,
+              change:
+                carriesChange && checkout.change
+                  ? {
+                      amount: checkout.change.amount,
+                      method: checkout.change.method,
+                    }
+                  : undefined,
+              changeDenominations:
+                carriesChange && changeMethod
+                  ? toDenominationsPayload(
+                      getPaymentCurrency(changeMethod),
+                      checkout.change?.denominations,
+                    )
+                  : undefined,
               currency: getPaymentCurrency(line.method),
               method: line.method,
               phone: line.phone?.trim() || undefined,
+              receivedDenominations: toDenominationsPayload(
+                getPaymentCurrency(line.method),
+                line.denominations,
+              ),
               referenceCode: line.referenceCode?.trim() || undefined,
               saleId: sale.id,
             });
@@ -422,27 +452,30 @@ function SaleCreatePosWorkspace() {
           className="min-h-0 flex-1"
           cart={({ onRequestClose }) => (
             <PosCartPanel
+              checkout={checkout}
               className="h-full border-t lg:border-t-0"
               customerId={customerId}
               customers={customers}
+              drawerRef={drawerRef}
+              drawerVes={drawerVes}
               enabledPaymentMethods={enabledPaymentMethods}
+              error={formError}
               isSubmitting={isSubmitting}
               items={cart.items}
               itemsCount={cart.itemsCount}
-              mixedPayments={mixedPayments}
-              onClearMixedPayments={() => setMixedPayments(null)}
+              onCheckoutChange={(nextCheckout) => {
+                setCheckout(nextCheckout);
+                setPaymentDetails(null);
+                setPaymentDetailsModalOpen(false);
+              }}
+              onClearCheckout={() => setCheckout(null)}
               onClearOrder={() => {
                 cart.clearCart();
-                setMixedPayments(null);
+                setCheckout(null);
                 resetPaymentSelection();
               }}
               onCustomerChange={setCustomerId}
               onEditPaymentDetails={handleOpenPaymentDetailsModal}
-              onMixedPaymentsChange={(lines) => {
-                setMixedPayments(lines);
-                setPaymentDetails(null);
-                setPaymentDetailsModalOpen(false);
-              }}
               onPaymentMethodChange={handlePaymentMethodChange}
               onProcessSale={() => void handleProcessSale()}
               onQuantityChange={cart.setQuantity}

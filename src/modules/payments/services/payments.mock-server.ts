@@ -15,14 +15,30 @@ import type { PaymentDocumentBalance } from "../payment-details/types";
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
 import { resolvePaymentRelatedDocument } from "../utils/resolvePaymentRelatedDocument";
 
+/** Desglose de billetes por moneda: `{"USD":{"1":3}}`. */
+export type PaymentDenominations = Partial<Record<"USD" | "VES", Record<string, number>>>;
+
+/** Vuelto entregado por el excedente de un cobro (spec cobro-pos-billetes §2). */
+export type PaymentChangeInput = {
+  /** Monto en la moneda de `method`. */
+  amount: number;
+  bankName?: string;
+  method?: PaymentMethod;
+  phone?: string;
+  referenceCode?: string;
+};
+
 export type PaymentInput = {
   amount: number;
   bankName?: string;
+  change?: PaymentChangeInput | null;
+  changeDenominations?: PaymentDenominations | null;
   currency?: "USD" | "VES";
   method: PaymentMethod;
   notes?: string;
   phone?: string;
   purchaseId?: string;
+  receivedDenominations?: PaymentDenominations | null;
   referenceCode?: string;
   saleId?: string;
 };

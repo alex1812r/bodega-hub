@@ -239,6 +239,119 @@ describe("payments.server", () => {
     expect(result.notes).toBe("Comprobante corregido");
   });
 
+  describe("errores de negocio de los RPC", () => {
+    /**
+     * Cada caso llega como error de `register_payment` / `cancel_payment`. Los
+     * SQLSTATE `PT4xx` los emite supabase/patches/20260904-payment-guards.sql.
+     */
+    function mockRpcError(rpcError: { code?: string; message: string }) {
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
+        from: jest.fn().mockReturnValue(createQueryBuilder({ data: null, error: null })),
+        rpc: jest.fn().mockResolvedValue({ data: null, error: rpcError }),
+      });
+    }
+
+    async function expectCreateError(
+      rpcError: { code?: string; message: string },
+      expected: { code: string; status: number },
+    ) {
+      mockRpcError(rpcError);
+
+      await expect(
+        createPayment(
+          { amount: 1000, method: "efectivo_ves", saleId: paymentRow.sale_id! },
+          DEFAULT_STORE_ID,
+        ),
+      ).rejects.toMatchObject({
+        code: expected.code,
+        message: rpcError.message,
+        status: expected.status,
+      });
+    }
+
+    it.each([
+      ["PT400", 400, "BAD_REQUEST"],
+      ["PT402", 400, "INSUFFICIENT_VAULT_BALANCE"],
+      ["PT403", 403, "FORBIDDEN"],
+      ["PT404", 404, "NOT_FOUND"],
+      ["PT409", 409, "CONFLICT"],
+    ])("mapea el SQLSTATE %s a %s", async (sqlState, status, code) => {
+      await expectCreateError(
+        { code: sqlState as string, message: "Mensaje del RPC" },
+        { code: code as string, status: status as number },
+      );
+    });
+
+    it.each([
+      "El vuelto (Bs 7210,00) no puede superar el monto recibido en esta línea (Bs 8011,75)",
+      "No hay suficiente efectivo en la caja para entregar el vuelto. Disponible: Bs 500,00, vuelto: Bs 7210,00",
+      "El pago excede el saldo pendiente de la venta. Saldo pendiente: Bs 0,00, neto del pago: Bs 801,18",
+      "El pago excede el saldo pendiente de la compra. Saldo pendiente: Bs 1602,00, monto del pago: Bs 50000,00",
+      "El desglose de billetes recibidos viene en VES pero el monto es en USD",
+      "No se puede anular un pago de una venta cancelada o devuelta",
+      "El pago ya fue anulado",
+      "Contacto no pertenece a tu tienda",
+      "No se puede anular este pago: su cierre de caja ya fue transferido al baúl. Registre un ajuste explícito de caja o baúl para corregirlo",
+    ])("no deja escapar como 500 el mensaje %s", async (message) => {
+      mockRpcError({ code: "P0001", message });
+
+      await expect(
+        createPayment(
+          { amount: 1000, method: "efectivo_ves", saleId: paymentRow.sale_id! },
+          DEFAULT_STORE_ID,
+        ),
+      ).rejects.toMatchObject({ message, status: 400 });
+    });
+
+    it("sigue reconociendo el saldo insuficiente del baul sin SQLSTATE propio", async () => {
+      await expectCreateError(
+        { code: "P0001", message: "Saldo insuficiente en el baul (cuenta). Faltante VES: 500" },
+        { code: "INSUFFICIENT_VAULT_BALANCE", status: 400 },
+      );
+    });
+
+    it("sigue reconociendo la sesión de caja cerrada aunque venga sin acentos", async () => {
+      await expectCreateError(
+        { code: "P0001", message: "No puede registrar un pago en efectivo: no tiene una sesion de caja abierta" },
+        { code: "BAD_REQUEST", status: 400 },
+      );
+    });
+
+    it("mantiene el 404 de venta no encontrada", async () => {
+      await expectCreateError(
+        { code: "P0001", message: "Venta no encontrada" },
+        { code: "NOT_FOUND", status: 404 },
+      );
+    });
+
+    it("mantiene el 403 de permisos", async () => {
+      await expectCreateError(
+        { code: "P0001", message: "No autorizado para registrar pagos de ventas" },
+        { code: "FORBIDDEN", status: 403 },
+      );
+    });
+
+    it("deja en 500 lo que de verdad es un fallo inesperado", async () => {
+      await expectCreateError(
+        { code: "XX000", message: "connection reset by peer" },
+        { code: "INTERNAL_ERROR", status: 500 },
+      );
+    });
+
+    it("mapea el SQLSTATE también al anular un pago", async () => {
+      mockRpcError({
+        code: "PT409",
+        message:
+          "No se puede anular este pago: su cierre de caja ya fue transferido al baúl. Registre un ajuste explícito de caja o baúl para corregirlo",
+      });
+
+      await expect(cancelPayment(paymentRow.id, DEFAULT_STORE_ID)).rejects.toMatchObject({
+        code: "CONFLICT",
+        status: 409,
+      });
+    });
+  });
+
   it("cancels a payment through cancel_payment RPC", async () => {
     const rpc = jest.fn().mockResolvedValue({
       data: { ...paymentRow, status: "anulado" },

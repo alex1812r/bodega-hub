@@ -425,7 +425,7 @@ Rangos `from`/`to` en reportes de fecha usan **día operativo America/Caracas**.
 | `create_sale` | POST `/api/sales` |
 | `create_purchase` | POST `/api/purchases` |
 | `receive_purchase` | PATCH `/api/purchases/[id]/receive` |
-| `register_payment` | POST `/api/payments` |
+| `register_payment` | POST `/api/payments` — desde `20260903` acepta vuelto (`p_change_method`, `p_change_amount`) y desglose de billetes; ver [`cobro-pos-billetes.md`](cobro-pos-billetes.md) |
 | `adjust_stock` | POST `/api/inventory/adjustments` |
 | `convert_pack_to_units` | POST `/api/inventory/conversions` |
 | `update_product_price` | POST `/api/products/[id]/price` |

@@ -217,4 +217,69 @@ describe("/api/payments", () => {
 
     expect(response.status).toBe(403);
   });
+
+  it("accepts a sale payment with change and counted bills", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/payments", {
+        body: JSON.stringify({
+          amount: 3,
+          change: { amount: 560, method: "efectivo_ves" },
+          changeDenominations: { VES: { "200": 2, "100": 1, "50": 1, "10": 1 } },
+          currency: "USD",
+          method: "efectivo_usd",
+          receivedDenominations: { USD: { "1": 3 } },
+          saleId: "sale-002",
+        }),
+        headers: {
+          "content-type": "application/json",
+          "x-demo-role": "vendedor",
+        },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(201);
+  });
+
+  it("rejects change without a method", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/payments", {
+        body: JSON.stringify({
+          amount: 3,
+          change: { amount: 560 },
+          currency: "USD",
+          method: "efectivo_usd",
+          saleId: "sale-002",
+        }),
+        headers: {
+          "content-type": "application/json",
+          "x-demo-role": "vendedor",
+        },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects change on a purchase payment", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/payments", {
+        body: JSON.stringify({
+          amount: 10,
+          change: { amount: 5, method: "efectivo_ves" },
+          currency: "USD",
+          method: "efectivo_usd",
+          purchaseId: "purchase-001",
+        }),
+        headers: {
+          "content-type": "application/json",
+          "x-demo-role": "contador",
+        },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+  });
 });

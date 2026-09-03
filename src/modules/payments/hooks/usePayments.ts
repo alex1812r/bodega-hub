@@ -38,14 +38,30 @@ export type PaymentDetail = PaymentMock & {
   relatedDocument?: PaymentRelatedDocument;
 };
 
+/** Desglose de billetes por moneda: `{"USD":{"1":3}}`. */
+export type PaymentDenominations = Partial<Record<"USD" | "VES", Record<string, number>>>;
+
+/** Vuelto entregado por el excedente de un cobro (spec cobro-pos-billetes §2). */
+export type PaymentChangeInput = {
+  /** Monto en la moneda de `method`. */
+  amount: number;
+  bankName?: string;
+  method: PaymentMethod;
+  phone?: string;
+  referenceCode?: string;
+};
+
 export type PaymentCreateInput = {
   amount: number;
   bankName?: string;
+  change?: PaymentChangeInput | null;
+  changeDenominations?: PaymentDenominations | null;
   currency?: "USD" | "VES";
   method: PaymentMethod;
   notes?: string;
   phone?: string;
   purchaseId?: string;
+  receivedDenominations?: PaymentDenominations | null;
   referenceCode?: string;
   saleId?: string;
 };

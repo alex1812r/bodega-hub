@@ -12,18 +12,18 @@ type PosPaymentMethodsProps = {
   disabled?: boolean;
   enabledMethods?: readonly PaymentMethod[];
   onChange: (method: PaymentMethod) => void;
-  onOpenMixedPayments?: () => void;
+  onOpenCheckout?: () => void;
   selectedMethod: PaymentMethod | null;
-  showMixedPaymentsLink?: boolean;
+  showCheckoutLink?: boolean;
 };
 
 export function PosPaymentMethods({
   disabled = false,
   enabledMethods = DEFAULT_ENABLED_PAYMENT_METHODS,
   onChange,
-  onOpenMixedPayments,
+  onOpenCheckout,
   selectedMethod,
-  showMixedPaymentsLink = true,
+  showCheckoutLink = true,
 }: PosPaymentMethodsProps) {
   const paymentOptions = filterEnabledPaymentMethods(enabledMethods).map((value) => ({
     label: paymentMethodLabels[value],
@@ -64,13 +64,13 @@ export function PosPaymentMethods({
           })}
         </div>
       </div>
-      {onOpenMixedPayments && showMixedPaymentsLink ? (
+      {onOpenCheckout && showCheckoutLink ? (
         <button
           className="cursor-pointer text-sm font-medium text-primary hover:underline"
-          onClick={onOpenMixedPayments}
+          onClick={onOpenCheckout}
           type="button"
         >
-          {disabled ? "Editar pago mixto" : "Pago mixto"}
+          {disabled ? "Editar cobro" : "Cobrar con billetes y vuelto"}
         </button>
       ) : null}
     </fieldset>
