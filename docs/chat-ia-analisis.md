@@ -127,6 +127,7 @@ ASSISTANT_DAILY_LIMIT=100
 
 1. `supabase/patches/20260906-store-capital-summary.sql` — vista `store_capital_summary`.
 2. `supabase/patches/20260906b-assistant-queries.sql` — tabla `assistant_queries` + RLS.
+3. `supabase/patches/20260906c-store-capital-summary-rls.sql` — reancla la vista en `store_vaults` para que el admin vea su fila bajo RLS (sin esto el capital sale en cero para el admin).
 
 Sin ellos el asistente funciona igual en `API_DATA_SOURCE=mock`; en Supabase, `capital_actual` y el contador diario fallan de forma controlada.
 

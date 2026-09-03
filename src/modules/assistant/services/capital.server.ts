@@ -76,11 +76,22 @@ export async function getStoreCapitalSummary(
     }),
   );
 
-  return storeIds.map((storeId, index) =>
-    composeStoreCapital({
-      components: byStore.get(storeId) ?? EMPTY,
+  return storeIds.map((storeId, index) => {
+    const components = byStore.get(storeId);
+
+    if (!components) {
+      // Toda tienda tiene baul, asi que una fila faltante suele ser RLS, no
+      // una tienda vacia. Se responde en ceros para no tumbar el chat, pero
+      // queda registrado: un capital en cero silencioso es peor que un error.
+      console.warn(
+        `[assistant] store_capital_summary no devolvio fila para ${storeId}; se responde en cero.`,
+      );
+    }
+
+    return composeStoreCapital({
+      components: components ?? EMPTY,
       rateVes: rates[index] ?? 0,
       storeId,
-    }),
-  );
+    });
+  });
 }

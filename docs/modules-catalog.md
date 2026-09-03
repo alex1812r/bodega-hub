@@ -469,7 +469,7 @@ La tool devuelve **cada componente por separado** además del total y su equival
 
 | Objeto | Parche |
 |--------|--------|
-| Vista `store_capital_summary` | `supabase/patches/20260906-store-capital-summary.sql` |
+| Vista `store_capital_summary` | `supabase/patches/20260906-store-capital-summary.sql` + `20260906c-store-capital-summary-rls.sql` |
 | Tabla `assistant_queries` | `supabase/patches/20260906b-assistant-queries.sql` |
 
 `assistant_queries` guarda pregunta, herramientas usadas, tokens, duración y error. La escribe **solo el service role**; admin lee las de su tienda y superadmin todas. Con `API_DATA_SOURCE=mock` el registro y el contador viven en memoria del proceso.
