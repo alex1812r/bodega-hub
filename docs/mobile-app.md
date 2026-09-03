@@ -18,12 +18,13 @@ Estado de la corrida en curso: `../bodegahub-app/.notes/progress.md`.
 | Fase | Estado |
 |------|--------|
 | 0 Entorno y emulador | Hecho |
-| 1 Monorepo, `@bodega/core` y Bearer en el BFF | Hecho y verificado contra Supabase real |
-| 2 App base (login, tabs, tema, HTTP, offline, runner E2E) | Código completo y probado en unit; **falta instalarla en el emulador** |
+| 1 `@bodega/core` y Bearer en el BFF | Hecho y verificado contra Supabase real |
+| 2 App base (login, tabs, tema, HTTP, offline, runner E2E) | **Hecho y verificado en el emulador** |
 | 3–11 (módulos, POS, caja, reportes, release) | Pendientes |
 
-El build nativo está bloqueado por falta de espacio en disco, no por el código.
-Ver "Requisitos de disco" más abajo.
+Verificado en el emulador con el APK de desarrollo: login real contra Supabase,
+tasa del día leída del BFF, tabs por permisos, cierre de sesión y restauración de
+sesión al relanzar. 46 tests unitarios y 3 flujos E2E en verde.
 
 ## Setup
 
@@ -172,7 +173,7 @@ Online-first con cache persistida:
 
 ```bash
 cd ../bodegahub-app
-npm test              # 38 tests: permisos, sesión, HTTP, offline, contexto de auth
+npm test              # 46 tests: permisos, sesión, HTTP, offline, contexto de auth
 npm run e2e:parser    # parser del runner E2E
 npm run e2e           # flujos completos (necesita emulador + app instalada)
 ```
