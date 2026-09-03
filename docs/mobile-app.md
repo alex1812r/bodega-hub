@@ -4,8 +4,14 @@ App Android (preparada para iOS) del ERP/POS BodegaHub. Consume el mismo BFF
 (`/api/*`) que la web; nunca habla con Supabase directo para datos, solo para
 autenticarse.
 
+**La app vive en su propio repositorio, hermano de este:**
+`../bodegahub-app`. Esta pagina documenta como encaja con el backend; el detalle
+de la app esta en su propio README. Lo unico que comparten es
+[`packages/core`](../packages/core), que la app enlaza con
+`file:../control-ventas/packages/core`.
+
 Plan de ejecución: [`agent-prompts/mobile-app-gtm.md`](agent-prompts/mobile-app-gtm.md).
-Estado de la corrida en curso: `mobile/.notes/progress.md`.
+Estado de la corrida en curso: `../bodegahub-app/.notes/progress.md`.
 
 ## Estado actual
 
@@ -22,8 +28,9 @@ Ver "Requisitos de disco" más abajo.
 ## Setup
 
 ```bash
-npm install                      # instala raíz, packages/core y mobile (workspaces)
-cp mobile/.env.example mobile/.env
+npm install                                  # este repo (web + packages/core)
+cd ../bodegahub-app && npm install            # la app
+cp .env.example .env
 ```
 
 | Variable | Para qué |
@@ -35,11 +42,12 @@ cp mobile/.env.example mobile/.env
 Comandos:
 
 ```bash
-mobile/scripts/emulator.ps1        # arranca el emulador (reutiliza el AVD existente)
-cd mobile && npx expo run:android  # compila e instala el build de desarrollo
-cd mobile && npm test              # unit + integración (jest-expo)
-cd mobile && npm run typecheck
-cd mobile && npm run e2e           # flujos E2E sobre adb
+cd ../bodegahub-app
+./scripts/emulator.ps1     # arranca el emulador (reutiliza el AVD existente)
+npx expo run:android       # compila e instala el build de desarrollo
+npm test                   # unit + integración (jest-expo)
+npm run typecheck
+npm run e2e                # flujos E2E sobre adb
 ```
 
 ## Requisitos de disco
@@ -61,10 +69,10 @@ descarga). Si ves cualquiera de esos, comprueba el espacio libre antes de nada.
 ## Arquitectura
 
 ```text
-packages/core/          @bodega/core — código puro compartido con la web
+control-ventas/packages/core/   @bodega/core — código puro compartido
   permissions, currency, sku, dates/ (Caracas), venezuela/, payments/, types/
 
-mobile/
+bodegahub-app/                  repositorio propio
   src/
     api/        apiClient (Bearer + errores del BFF), queryClient, useApi
     auth/       sesión Supabase cifrada, AuthContext, permisos, tabs por rol
@@ -163,13 +171,14 @@ Online-first con cache persistida:
 ## Tests y E2E
 
 ```bash
-cd mobile && npm test               # 33 tests: permisos, sesión, HTTP, offline
-cd mobile && npm run e2e:parser     # parser del runner E2E
-cd mobile && npm run e2e            # flujos completos (necesita emulador + app instalada)
+cd ../bodegahub-app
+npm test              # 38 tests: permisos, sesión, HTTP, offline, contexto de auth
+npm run e2e:parser    # parser del runner E2E
+npm run e2e           # flujos completos (necesita emulador + app instalada)
 ```
 
 **Maestro no corre en Windows nativo**, solo bajo WSL2, y el emulador vive en el
-lado Windows. Por eso el runner primario es `mobile/e2e/runner.mjs`, que habla
+lado Windows. Por eso el runner primario es `e2e/runner.mjs` de la app, que habla
 `adb` directamente: `uiautomator dump` para localizar `testID`s, `input tap/text`
 para actuar, `screencap` para la evidencia.
 
@@ -177,7 +186,7 @@ Lee el mismo subconjunto de YAML que Maestro, así que los flujos de
 `e2e/flows/*.yaml` valen para los dos runners y cambiar de uno a otro no cuesta
 nada. Un paso que falla captura la pantalla antes de lanzar el error.
 
-Los `testID` viven todos en `mobile/src/testIds.ts`.
+Los `testID` viven todos en `src/testIds.ts` de la app.
 
 ## Decisiones y exclusiones
 
