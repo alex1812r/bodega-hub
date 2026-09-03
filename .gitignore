@@ -66,3 +66,4 @@ storybook-static
 .purchases
 # Supabase CLI scratch state
 supabase/.temp/
+src/modules/assistant/server/README-sdk-notes.md
