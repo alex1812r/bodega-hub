@@ -159,6 +159,78 @@ describe("sales.server", () => {
     expect(result.invoiceNumber).toBe("V-000001");
   });
 
+  it("maps an out-of-band exchange rate from create_sale to 400", async () => {
+    const rpc = jest.fn().mockResolvedValue({
+      data: null,
+      error: {
+        message:
+          "Tasa ref/VES fuera de rango: se envio 1.0000 Bs/REF y la tasa vigente de la tienda es 801.1752 Bs/REF (tolerancia +-5%). Actualiza la tasa y vuelve a intentar.",
+      },
+    });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+
+    await expect(
+      createSale(
+        {
+          customerId: saleRow.customer_id,
+          items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+          refRateVes: 1,
+        },
+        DEFAULT_STORE_ID,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
+  });
+
+  it("maps a zero unit price rejection from create_sale to 400", async () => {
+    const rpc = jest.fn().mockResolvedValue({
+      data: null,
+      error: {
+        message:
+          "Precio unitario en cero no permitido para el producto SKU-1 (precio de lista: 2.46 REF)",
+      },
+    });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+
+    await expect(
+      createSale(
+        {
+          customerId: saleRow.customer_id,
+          items: [
+            {
+              productId: "44444444-4444-4444-4444-444444444444",
+              quantity: 1,
+              unitPriceRef: 0,
+            },
+          ],
+          refRateVes: 801.1752,
+        },
+        DEFAULT_STORE_ID,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
+  });
+
+  it("maps cancel_sale rejection for active payments to 400", async () => {
+    const rpc = jest.fn().mockResolvedValue({
+      data: null,
+      error: {
+        message:
+          "La venta V-000001 tiene 1 pago(s) activo(s) por Bs 4005.88. Anula primero los pagos y luego cancela la venta.",
+      },
+    });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
+      from: jest.fn().mockReturnValue(createQueryBuilder({ data: null, error: null })),
+      rpc,
+    });
+
+    await expect(cancelSale(saleRow.id, DEFAULT_STORE_ID)).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      status: 400,
+    });
+  });
+
   it("returns not found when sale detail is missing", async () => {
     mockAdminStoreLookup(false);
     const builder = createQueryBuilder({ data: null, error: null });

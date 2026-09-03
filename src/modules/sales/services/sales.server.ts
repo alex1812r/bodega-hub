@@ -218,7 +218,13 @@ function throwIfRpcError(error: unknown): void {
     normalized.includes("invalid") ||
     normalized.includes("debe") ||
     normalized.includes("ya fue cancelada") ||
-    normalized.includes("ya fue devuelta")
+    normalized.includes("ya fue devuelta") ||
+    // create_sale: tasa fuera de la banda contra la tasa vigente de la tienda,
+    // o precio unitario en cero para un producto que si tiene precio de lista.
+    normalized.includes("tasa ref/ves fuera de rango") ||
+    normalized.includes("precio unitario") ||
+    // cancel_sale: la venta todavia tiene pagos activos que hay que anular primero.
+    normalized.includes("pago(s) activo")
   ) {
     throw new ApiError(400, "BAD_REQUEST", message);
   }

@@ -18,15 +18,21 @@ const createSaleSchema = z.object({
   discountRef: z.number().min(0).default(0),
   exchangeRateId: z.string().uuid().optional(),
   invoiceNumber: z.string().optional(),
-  items: z.array(
-    z.object({
-      productId: z.string().min(1),
-      quantity: z.number().int().positive(),
-      unitPriceRef: z.number().min(0).optional(),
-    }),
-  ),
+  items: z
+    .array(
+      z.object({
+        productId: z.string().min(1),
+        quantity: z.number().int().positive(),
+        // Un precio en cero solo lo acepta `create_sale` si el producto vale cero de
+        // lista; aqui no conocemos el producto, asi que la regla vive en el RPC.
+        unitPriceRef: z.number().min(0).finite().optional(),
+      }),
+    )
+    .min(1),
   notes: z.string().optional(),
-  refRateVes: z.number().positive().optional(),
+  // `create_sale` valida ademas que la tasa este dentro de +-5% de la tasa vigente de
+  // la tienda (`exchange_rates`); esa comparacion necesita la base y vive en el RPC.
+  refRateVes: z.number().positive().finite().optional(),
   taxRef: z.number().min(0).default(0),
 });
 
