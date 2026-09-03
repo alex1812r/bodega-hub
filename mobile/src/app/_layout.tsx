@@ -1,4 +1,4 @@
-import { QueryClientProvider } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
@@ -6,6 +6,7 @@ import { useEffect, useMemo, type ReactNode } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { createQueryClient } from "@/api/queryClient";
+import { persistedCacheMaxAge, queryPersister } from "@/offline/persister";
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import { isPlatformRole } from "@/auth/roleTabs";
 import { ThemeProvider, useTheme } from "@/theme/ThemeContext";
@@ -78,7 +79,10 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <QueryClientProvider client={queryClient}>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{ persister: queryPersister, maxAge: persistedCacheMaxAge }}
+      >
         <ThemeProvider>
           <AuthProvider>
             <AuthGate>
@@ -86,7 +90,7 @@ export default function RootLayout() {
             </AuthGate>
           </AuthProvider>
         </ThemeProvider>
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </SafeAreaProvider>
   );
 }
