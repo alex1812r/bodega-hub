@@ -9,12 +9,27 @@ import { refToVes, roundMoney, vesToRef } from "@/shared/utils/currency";
 import type { PurchaseCostCurrency, PurchaseDraftItem } from "../types";
 import type { PurchaseItemInput } from "@/modules/purchases/schemas/purchaseItem.schema";
 
-export function draftToPurchaseItemInput(item: PurchaseDraftItem): PurchaseItemInput {
-  const taxRate = item.taxRate;
-  const subtotalRef = getDraftSubtotalRef(item);
-  const subtotalVes = getDraftSubtotalVes(item);
-  const taxRef = roundMoney((subtotalRef * taxRate) / 100);
-  const taxVes = roundMoney((subtotalVes * taxRate) / 100);
+export type PurchaseDraftLineTotals = {
+  subtotalRef: number;
+  subtotalVes: number;
+  taxRef: number;
+  taxVes: number;
+  totalRef: number;
+  totalVes: number;
+};
+
+export type PurchaseDraftTotals = {
+  subtotalRef: number;
+  subtotalVes: number;
+  taxRef: number;
+  taxVes: number;
+};
+
+export function draftToPurchaseItemInput(
+  item: PurchaseDraftItem,
+  rateVes = 0,
+): PurchaseItemInput {
+  const { subtotalRef, subtotalVes, taxRef, taxVes } = getDraftLineTotals(item, rateVes);
 
   if (item.entryMode === "pack") {
     return {
@@ -27,7 +42,7 @@ export function draftToPurchaseItemInput(item: PurchaseDraftItem): PurchaseItemI
       productId: item.productId,
       subtotalRef,
       subtotalVes,
-      taxRate,
+      taxRate: item.taxRate,
       taxRef,
       taxVes,
       unitCostRef: item.unitCostRef,
@@ -43,7 +58,7 @@ export function draftToPurchaseItemInput(item: PurchaseDraftItem): PurchaseItemI
     quantity: item.quantity,
     subtotalRef,
     subtotalVes,
-    taxRate,
+    taxRate: item.taxRate,
     taxRef,
     taxVes,
     unitCostRef: item.unitCostRef,
@@ -51,20 +66,47 @@ export function draftToPurchaseItemInput(item: PurchaseDraftItem): PurchaseItemI
   };
 }
 
-export function getDraftSubtotalRef(item: PurchaseDraftItem) {
+/** Magnitud REF "cruda": cantidad x costo REF ya redondeado a 2 decimales. */
+function rawSubtotalRef(item: PurchaseDraftItem) {
   if (item.entryMode === "pack") {
-    return roundMoney(item.packCount * item.packCostRef);
+    return item.packCount * item.packCostRef;
   }
 
-  return roundMoney(item.quantity * item.unitCostRef);
+  return item.quantity * item.unitCostRef;
 }
 
-export function getDraftSubtotalVes(item: PurchaseDraftItem) {
+/** Magnitud Bs "cruda": cantidad x costo Bs ya redondeado a 2 decimales. */
+function rawSubtotalVes(item: PurchaseDraftItem) {
   if (item.entryMode === "pack") {
-    return roundMoney(item.packCount * item.packCostVes);
+    return item.packCount * item.packCostVes;
   }
 
-  return roundMoney(item.quantity * item.unitCostVes);
+  return item.quantity * item.unitCostVes;
+}
+
+/**
+ * Subtotal REF de la linea.
+ *
+ * Si la captura es en Bs, el REF exacto sale de convertir el monto en Bs de la
+ * linea completa. Multiplicar el costo unitario/por bulto ya redondeado a 2
+ * decimales arrastra el error a toda la cantidad: un bulto de 100 u a 0.0220
+ * REF/u queda como 0.02 REF/u y la linea pierde ~10%.
+ */
+export function getDraftSubtotalRef(item: PurchaseDraftItem, rateVes = 0) {
+  if (item.costCurrency === "ves" && rateVes > 0) {
+    return roundMoney(vesToRef(rawSubtotalVes(item), rateVes));
+  }
+
+  return roundMoney(rawSubtotalRef(item));
+}
+
+/** Subtotal Bs de la linea; simetrico a getDraftSubtotalRef cuando se captura en REF. */
+export function getDraftSubtotalVes(item: PurchaseDraftItem, rateVes = 0) {
+  if (item.costCurrency === "ref" && rateVes > 0) {
+    return roundMoney(refToVes(rawSubtotalRef(item), rateVes));
+  }
+
+  return roundMoney(rawSubtotalVes(item));
 }
 
 export function getDraftTaxAmount(baseAmount: number, taxRate: number) {
@@ -73,6 +115,49 @@ export function getDraftTaxAmount(baseAmount: number, taxRate: number) {
 
 export function getDraftTotalWithTax(baseAmount: number, taxRate: number) {
   return roundMoney(baseAmount + getDraftTaxAmount(baseAmount, taxRate));
+}
+
+/**
+ * Unica fuente de verdad de los montos de una linea: la tabla, el resumen y el
+ * payload que viaja al RPC leen de aqui para que no puedan desalinearse.
+ */
+export function getDraftLineTotals(
+  item: PurchaseDraftItem,
+  rateVes = 0,
+): PurchaseDraftLineTotals {
+  const subtotalRef = getDraftSubtotalRef(item, rateVes);
+  const subtotalVes = getDraftSubtotalVes(item, rateVes);
+  const taxRef = getDraftTaxAmount(subtotalRef, item.taxRate);
+  const taxVes = getDraftTaxAmount(subtotalVes, item.taxRate);
+
+  return {
+    subtotalRef,
+    subtotalVes,
+    taxRef,
+    taxVes,
+    totalRef: roundMoney(subtotalRef + taxRef),
+    totalVes: roundMoney(subtotalVes + taxVes),
+  };
+}
+
+/** Suma de lineas ya redondeadas: el encabezado siempre cuadra con lo que se ve item por item. */
+export function sumDraftPurchaseTotals(
+  items: PurchaseDraftItem[],
+  rateVes = 0,
+): PurchaseDraftTotals {
+  return items.reduce<PurchaseDraftTotals>(
+    (totals, item) => {
+      const line = getDraftLineTotals(item, rateVes);
+
+      return {
+        subtotalRef: roundMoney(totals.subtotalRef + line.subtotalRef),
+        subtotalVes: roundMoney(totals.subtotalVes + line.subtotalVes),
+        taxRef: roundMoney(totals.taxRef + line.taxRef),
+        taxVes: roundMoney(totals.taxVes + line.taxVes),
+      };
+    },
+    { subtotalRef: 0, subtotalVes: 0, taxRef: 0, taxVes: 0 },
+  );
 }
 
 /**
@@ -115,7 +200,9 @@ export function syncLineCostFields(
     const packCostVes = Math.max(0, item.packCostVes);
     const unitCostVes = roundMoney(packCostVes / unitsPerPack);
     const packCostRef = roundMoney(vesToRef(packCostVes, rateVes));
-    const unitCostRef = roundMoney(vesToRef(unitCostVes, rateVes));
+    // Deriva el unitario REF del costo Bs del bulto (no del unitario Bs ya
+    // redondeado) para no acumular dos redondeos seguidos.
+    const unitCostRef = roundMoney(vesToRef(packCostVes / unitsPerPack, rateVes));
 
     return {
       ...item,
@@ -132,7 +219,7 @@ export function syncLineCostFields(
   const packCostRef = Math.max(0, item.packCostRef);
   const unitCostRef = roundMoney(packCostRef / unitsPerPack);
   const packCostVes = roundMoney(refToVes(packCostRef, rateVes));
-  const unitCostVes = roundMoney(refToVes(unitCostRef, rateVes));
+  const unitCostVes = roundMoney(refToVes(packCostRef / unitsPerPack, rateVes));
 
   return {
     ...item,

@@ -11,6 +11,7 @@ import {
 } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
+import { roundMoney } from "@/shared/utils/currency";
 
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
 import { normalizePurchaseLine } from "../schemas/purchaseItem.schema";
@@ -105,13 +106,17 @@ export function getPurchaseById(id: string, storeId: string) {
 
 export function createPurchase(input: PurchaseInput, storeId: string) {
   const refRateVes = input.refRateVes ?? 510;
-  const subtotalRef =
+  const subtotalRef = roundMoney(
     input.subtotalRef ??
-    input.items?.reduce((total, item) => total + normalizePurchaseLine(item).subtotalRef, 0) ??
-    0;
+      input.items?.reduce(
+        (total, item) => total + normalizePurchaseLine(item).subtotalRef,
+        0,
+      ) ??
+      0,
+  );
   const discountRef = input.discountRef ?? 0;
   const taxRef = input.taxRef ?? 0;
-  const totalRef = subtotalRef - discountRef + taxRef;
+  const totalRef = roundMoney(subtotalRef - discountRef + taxRef);
   const subtotalVes =
     input.subtotalVes ?? Math.round(subtotalRef * refRateVes * 100) / 100;
   const discountVes =

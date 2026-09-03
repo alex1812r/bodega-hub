@@ -210,6 +210,16 @@ select
   )
 union all
 select
+  'purchase_items.subtotal_ref no es columna generada',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'purchase_items'
+      and column_name = 'subtotal_ref'
+      and is_generated = 'NEVER'
+  )
+union all
+select
   'purchases.paid_ref',
   exists (
     select 1 from information_schema.columns

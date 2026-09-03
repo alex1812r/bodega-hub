@@ -291,7 +291,10 @@ create table if not exists public.purchase_items (
   quantity integer not null check (quantity > 0),
   unit_cost_ref numeric(12,2) not null check (unit_cost_ref >= 0),
   unit_cost_ves numeric(14,2) not null default 0 check (unit_cost_ves >= 0),
-  subtotal_ref numeric(14,2) generated always as (round((quantity::numeric * unit_cost_ref), 2)) stored,
+  -- No derivar de unit_cost_ref: cuando la compra se captura en Bs el unitario
+  -- REF es un valor redondeado y multiplicarlo por la cantidad amplifica el
+  -- error (ver 20260905-purchase-line-subtotal-ref.sql).
+  subtotal_ref numeric(14,2) not null default 0 check (subtotal_ref >= 0),
   subtotal_ves numeric(14,2) not null default 0 check (subtotal_ves >= 0),
   entry_mode text not null default 'unit' check (entry_mode in ('unit', 'pack')),
   pack_label text,

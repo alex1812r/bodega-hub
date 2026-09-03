@@ -29,9 +29,7 @@ import {
 } from "./types";
 import {
   draftToPurchaseItemInput,
-  getDraftSubtotalRef,
-  getDraftSubtotalVes,
-  getDraftTaxAmount,
+  sumDraftPurchaseTotals,
   switchCostCurrency,
   syncLineCostFields,
 } from "./utils/normalizePurchaseLine";
@@ -112,15 +110,17 @@ export function PurchaseCreatePage() {
     });
   }, [catalog, supplierId]);
 
-  const subtotalRef = items.reduce(
-    (total, item) => total + getDraftSubtotalRef(syncLineCostFields(item, activeRateVes)),
-    0,
+  // Un solo calculo de totales: la suma de las lineas ya redondeadas, en ambas
+  // monedas, para que el resumen no pueda desalinearse de lo que muestra la tabla.
+  const syncedItems = useMemo(
+    () => items.map((item) => syncLineCostFields(item, activeRateVes)),
+    [activeRateVes, items],
   );
-  const taxRef = items.reduce((total, item) => {
-    const normalized = syncLineCostFields(item, activeRateVes);
-    const lineSubtotal = getDraftSubtotalRef(normalized);
-    return total + roundMoney(lineSubtotal * (Math.max(0, item.taxRate) / 100));
-  }, 0);
+  const totals = useMemo(
+    () => sumDraftPurchaseTotals(syncedItems, activeRateVes),
+    [activeRateVes, syncedItems],
+  );
+  const discountVes = roundMoney(refToVes(discountRef, activeRateVes));
   const validItems = items.filter((item) => {
     const normalized = syncLineCostFields(item, activeRateVes);
     if (!item.productId) return false;
@@ -265,36 +265,27 @@ export function PurchaseCreatePage() {
     setFormError(null);
 
     try {
-      const syncedItems = validItems.map((item) =>
+      const syncedValidItems = validItems.map((item) =>
         syncLineCostFields(item, activeRateVes),
       );
-      const subtotalRef = roundMoney(
-        syncedItems.reduce((total, item) => total + getDraftSubtotalRef(item), 0),
-      );
-      const subtotalVes = roundMoney(
-        syncedItems.reduce((total, item) => total + getDraftSubtotalVes(item), 0),
-      );
-      const discountVes = roundMoney(refToVes(discountRef, activeRateVes));
-      const taxVes = roundMoney(
-        syncedItems.reduce(
-          (total, item) =>
-            total + getDraftTaxAmount(getDraftSubtotalVes(item), item.taxRate),
-          0,
-        ),
-      );
+      // Mismos helpers que pintan la tabla y el resumen: lo que se envia es
+      // exactamente lo que el usuario vio.
+      const submitTotals = sumDraftPurchaseTotals(syncedValidItems, activeRateVes);
 
       const purchase = await createPurchase.mutateAsync({
         discountRef,
         discountVes,
-        items: syncedItems.map((item) => draftToPurchaseItemInput(item)),
+        items: syncedValidItems.map((item) =>
+          draftToPurchaseItemInput(item, activeRateVes),
+        ),
         notes: notes.trim() || undefined,
         refRateVes: activeRateVes,
         status,
-        subtotalRef,
-        subtotalVes,
+        subtotalRef: submitTotals.subtotalRef,
+        subtotalVes: submitTotals.subtotalVes,
         supplierId,
-        taxRef,
-        taxVes,
+        taxRef: submitTotals.taxRef,
+        taxVes: submitTotals.taxVes,
       });
 
       router.push(`/purchases/${purchase.id}`);
@@ -359,18 +350,20 @@ export function PurchaseCreatePage() {
           />
           <PurchaseSummaryCard
             discountRef={discountRef}
+            discountVes={discountVes}
             isSubmitting={createPurchase.isPending}
             onConfirm={() => void handleSubmit()}
             onDiscountChange={setDiscountRef}
-            rateVes={activeRateVes}
-            subtotalRef={subtotalRef}
+            subtotalRef={totals.subtotalRef}
+            subtotalVes={totals.subtotalVes}
             taxPercentLabel={(() => {
               if (items.length === 0) return "—";
               const rates = new Set(items.map((item) => item.taxRate));
               if (rates.size === 1) return `${items[0]?.taxRate ?? 0}%`;
               return "mixto";
             })()}
-            taxRef={taxRef}
+            taxRef={totals.taxRef}
+            taxVes={totals.taxVes}
           />
         </div>
       </div>

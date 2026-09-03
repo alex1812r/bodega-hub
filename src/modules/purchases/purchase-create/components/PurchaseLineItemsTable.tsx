@@ -9,9 +9,7 @@ import { cn } from "@/shared/utils/cn";
 
 import type { PurchaseCostCurrency, PurchaseDraftItem, PurchaseLineCatalogMeta } from "../types";
 import {
-  getDraftSubtotalRef,
-  getDraftSubtotalVes,
-  getDraftTotalWithTax,
+  getDraftLineTotals,
   syncLineCostFields,
 } from "../utils/normalizePurchaseLine";
 import {
@@ -343,8 +341,8 @@ export function PurchaseLineItemsTable({
           {items.map((item, index) => {
             const meta = getItemMeta(item.productId);
             const normalized = syncLineCostFields(item, rateVes);
-            const subtotalRef = getDraftSubtotalRef(normalized);
-            const subtotalVes = getDraftSubtotalVes(normalized);
+            const lineTotals = getDraftLineTotals(normalized, rateVes);
+            const { subtotalRef, subtotalVes } = lineTotals;
             const packUnits = meta.packUnits ?? [];
             const packLabel = isCustomPackLine(item)
               ? normalizeStandardPackLabel(item.packLabel || "Bulto")
@@ -357,8 +355,8 @@ export function PurchaseLineItemsTable({
                   : "unit";
             const isVes = item.costCurrency === "ves";
             const taxRate = item.taxRate ?? meta.taxRate ?? 0;
-            const totalWithTaxRef = getDraftTotalWithTax(subtotalRef, taxRate);
-            const totalWithTaxVes = getDraftTotalWithTax(subtotalVes, taxRate);
+            const totalWithTaxRef = lineTotals.totalRef;
+            const totalWithTaxVes = lineTotals.totalVes;
 
             return (
               <tr
