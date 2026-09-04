@@ -76,12 +76,15 @@ export function getProductProfitabilityReport(
       return {
         costRef,
         grossProfitRef: revenueRef - costRef,
+        name: product.name,
         productId: product.id,
+        revenueRef,
         sku: product.sku,
         storeId: product.storeId,
         unitsSold: items.reduce((total, item) => total + item.quantity, 0),
       };
-    });
+    })
+    .sort((first, second) => second.grossProfitRef - first.grossProfitRef);
 
   return paginateList(items, searchParams);
 }

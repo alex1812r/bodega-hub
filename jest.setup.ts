@@ -9,6 +9,9 @@ jest.mock("next/headers", () => ({
     getAll: jest.fn(() => []),
     set: jest.fn(),
   })),
+  // Por defecto no hay Authorization: la web se autentica por cookie. Los tests
+  // del camino Bearer (app movil) sobreescriben este mock.
+  headers: jest.fn(async () => new Headers()),
 }));
 
 process.env.ALLOW_DEMO_AUTH = "true";

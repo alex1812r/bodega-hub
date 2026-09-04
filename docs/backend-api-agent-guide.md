@@ -47,8 +47,43 @@ Reglas actuales:
 
 Modos soportados:
 
-- **Produccion / Supabase:** sesion via cookies en Route Handlers (`POST /api/auth/login`, `GET /api/auth/me`). `requirePermission` carga `profiles.role`, `is_active` y overrides desde DB.
+- **Produccion / Supabase (web):** sesion via cookies en Route Handlers (`POST /api/auth/login`, `GET /api/auth/me`). `requirePermission` carga `profiles.role`, `is_active` y overrides desde DB.
+- **Produccion / Supabase (app movil):** `Authorization: Bearer <access_token>` en cada request. Ver abajo.
 - **Dev/test:** headers `x-demo-role` y `x-demo-user-id` cuando `ALLOW_DEMO_AUTH=true`.
+
+### Bearer (app movil)
+
+BodegaHub Mobile no comparte cookie jar con el navegador: hace `signInWithPassword` con
+`supabase-js` en el dispositivo y manda el access token en el header. El BFF lo acepta sin
+que ninguna ruta cambie, gracias a tres piezas en `src/lib/supabase/`:
+
+1. `bearer.ts` → `getBearerToken()` lee `Authorization` de `headers()` (async en Next 16) y
+   devuelve el token o `null`. Fuera del scope de una peticion devuelve `null` en vez de lanzar.
+2. `route-client.ts` / `server-client.ts` → si hay token, crean el cliente con
+   `global.headers.Authorization` y handlers de cookies vacios. Eso cubre PostgREST y RLS.
+3. `auth/profile.server.ts` → `getAuthProfileFromSession()` y `getProfileByUserId()` llaman
+   `supabase.auth.getUser(token)`. **Es imprescindible:** `getUser()` sin argumento resuelve el
+   usuario desde las cookies y con Bearer devolveria `AuthSessionMissingError` → `null` → 401.
+
+Sin header `Authorization`, el comportamiento es exactamente el anterior (cookies). Un esquema
+distinto de `Bearer` (por ejemplo `Basic`) tambien cae al camino de cookies.
+
+Contrato para el cliente movil:
+
+- `POST /api/auth/login` **no** se usa desde la app (necesita cookies). La app hace login contra
+  Supabase directamente y luego llama `GET /api/auth/me` con el Bearer.
+- Como `/api/auth/login` es quien valida `is_active` en la web, la app debe comprobar
+  `data.user.isActive` de `/api/auth/me` y cerrar sesion si es `false`.
+- Un 401 significa token expirado o revocado: refrescar con `supabase-js` y reintentar, o volver a login.
+
+Prueba manual:
+
+```bash
+curl -s -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:3000/api/auth/me
+```
+
+Tests: `src/lib/supabase/bearer.test.ts`, `route-client.test.ts`,
+`auth/profile.server.test.ts` y `src/app/api/auth/me/route.bearer.test.ts` (ruta real sin cookies).
 
 Headers demo:
 

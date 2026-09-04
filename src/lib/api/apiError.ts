@@ -1,6 +1,8 @@
 import { ZodError } from "zod";
 
 export type ApiErrorCode =
+  | "ASSISTANT_LIMIT_REACHED"
+  | "ASSISTANT_PROVIDER_ERROR"
   | "BAD_REQUEST"
   | "CONFLICT"
   | "FORBIDDEN"

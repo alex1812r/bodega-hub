@@ -2,6 +2,9 @@
   "name": "bodega-hub",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build",
@@ -14,9 +17,13 @@
     "test:watch": "jest --watch",
     "e2e:bodegon": "npx tsx scripts/e2e-bodegon/run.ts",
     "smoke:patches": "npx tsx scripts/smoke-post-patches.ts",
-    "test:storybook": "vitest --project storybook run"
+    "test:storybook": "vitest --project storybook run",
+    "assistant:eval": "npx tsx scripts/assistant-eval/run.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.49",
+    "@ai-sdk/google": "^4.0.63",
+    "@ai-sdk/react": "^4.0.94",
     "@hookform/resolvers": "^5.2.2",
     "@imgly/background-removal": "^1.7.0",
     "@radix-ui/react-dialog": "^1.1.15",
@@ -28,6 +35,7 @@
     "@tanstack/react-table": "^8.21.3",
     "@zxing/browser": "^0.2.1",
     "@zxing/library": "^0.23.0",
+    "ai": "^7.0.91",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "exceljs": "^4.4.0",
