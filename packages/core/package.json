@@ -10,6 +10,7 @@
     ".": "./src/index.ts",
     "./permissions": "./src/permissions.ts",
     "./currency": "./src/currency.ts",
+    "./dashboard": "./src/dashboard/index.ts",
     "./sku": "./src/sku.ts",
     "./dates": "./src/dates/index.ts",
     "./venezuela": "./src/venezuela/index.ts",

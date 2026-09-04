@@ -51,3 +51,39 @@ export function formatCashSessionRemaining(remainingMs: number) {
 
   return `${seconds} s`;
 }
+
+/**
+ * Igual que `formatCashSessionRemaining` pero sin segundos mientras quede mas
+ * de un minuto: "1 h 30 min", "44 min", "45 s".
+ *
+ * Sirve para pantallas que no deben repintarse cada segundo. En el ultimo
+ * minuto vuelven los segundos, que es cuando de verdad importan.
+ */
+export function formatCashSessionRemainingCoarse(remainingMs: number) {
+  const totalSeconds = Math.floor(remainingMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  if (hours > 0) {
+    return `${hours} h ${String(minutes).padStart(2, "0")} min`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes} min`;
+  }
+
+  return `${totalSeconds % 60} s`;
+}
+
+/**
+ * Cuanto falta para que cambie la etiqueta gruesa: el siguiente minuto en punto,
+ * o un segundo cuando ya se muestran segundos.
+ */
+export function cashSessionCoarseTickMs(remainingMs: number) {
+  if (remainingMs <= 60_000) {
+    return 1000;
+  }
+
+  const untilNextMinute = remainingMs % 60_000;
+  return untilNextMinute === 0 ? 60_000 : untilNextMinute;
+}

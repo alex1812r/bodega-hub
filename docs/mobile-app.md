@@ -19,12 +19,35 @@ Estado de la corrida en curso: `../bodegahub-app/.notes/progress.md`.
 |------|--------|
 | 0 Entorno y emulador | Hecho |
 | 1 `@bodega/core` y Bearer en el BFF | Hecho y verificado contra Supabase real |
-| 2 App base (login, tabs, tema, HTTP, offline, runner E2E) | **Hecho y verificado en el emulador** |
-| 3–11 (módulos, POS, caja, reportes, release) | Pendientes |
+| 2 App base (login, tabs, tema, HTTP, offline, runner E2E) | Hecho y verificado en el emulador |
+| 3 Catálogo (productos, inventario, contactos) | Hecho y verificado en el emulador |
+| 4 POS y caja (turno, carrito, cobro con pagos mixtos) | Hecho salvo el escáner de cámara |
+| Inicio (KPIs del periodo, mix de pagos, ventas recientes, stock bajo) | **Hecho y verificado con datos reales** |
+| 5–11 (ventas/compras, baúl, reportes, platform, release) | Pendientes |
 
-Verificado en el emulador con el APK de desarrollo: login real contra Supabase,
-tasa del día leída del BFF, tabs por permisos, cierre de sesión y restauración de
-sesión al relanzar. 46 tests unitarios y 3 flujos E2E en verde.
+Verificado en el emulador con el APK de desarrollo y **datos reales** de la
+tienda sandbox `bodega-qa-caos`: login contra Supabase, tabs por permisos, ciclo
+completo de venta (abrir turno → cobrar → cerrar turno) y los indicadores de
+Inicio cuadrados contra la base de datos. 127 tests unitarios y 9 flujos E2E en
+verde.
+
+### Inicio
+
+Replica los indicadores del dashboard web, apilados: ventas del periodo en REF
+con su comparación contra el periodo anterior, total en bolívares separando
+cobrado de pendiente, clientes activos, alertas de stock, **mix de pagos**,
+ventas recientes y productos bajo el mínimo.
+
+Dos diferencias con la web, ambas deliberadas:
+
+- **El periodo se elige entre Hoy, Ayer y Desde el inicio.** El rango a medida
+  espera al selector de fechas que también necesitan los reportes.
+- **El mix de pagos solo aparece con `reports.view`.** Vive en `/api/reports/**`,
+  y el vendedor no tiene ese permiso: pedirlo igual solo daría un 403.
+
+El cálculo del periodo y de la variación es `@bodega/core/dashboard`, el mismo
+que usa la web. Cada cliente aporta su día operativo: la web fija una fecha en
+modo mock y la app usa el día de Caracas del dispositivo.
 
 ## Setup
 
