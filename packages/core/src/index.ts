@@ -3,6 +3,7 @@ export * from "./dashboard/index";
 export * from "./dates/index";
 export * from "./payments/index";
 export * from "./permissions";
+export * from "./purchases/index";
 export * from "./sku";
 export * from "./types/index";
 export * from "./venezuela/index";

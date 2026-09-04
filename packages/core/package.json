@@ -15,6 +15,7 @@
     "./dates": "./src/dates/index.ts",
     "./venezuela": "./src/venezuela/index.ts",
     "./payments": "./src/payments/index.ts",
+    "./purchases": "./src/purchases/index.ts",
     "./types": "./src/types/index.ts"
   },
   "scripts": {
