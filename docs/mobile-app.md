@@ -22,15 +22,17 @@ Estado de la corrida en curso: `../bodegahub-app/.notes/progress.md`.
 | 2 App base (login, tabs, tema, HTTP, offline, runner E2E) | Hecho y verificado en el emulador |
 | 3 Catálogo (productos, inventario, contactos) | Hecho y verificado en el emulador |
 | 4 POS y caja (turno, escáner, cobro con pagos mixtos, recibo) | **Hecho y verificado con ventas reales** |
-| 5 Ventas: lista y detalle con recibo | **Hecho**; faltan pagos, compras y devoluciones |
 | Inicio (KPIs del periodo, mix de pagos, ventas recientes, stock bajo) | **Hecho y verificado con datos reales** |
-| 6–11 (baúl, reportes, configuración, platform, release) | Pendientes |
+| 5 Ventas, pagos y compras | **Hecho** |
+| 6 Baúl, reportes y configuración del negocio | **Hecho** (sin exportación a PDF) |
+| 7 Platform (superadmin) | **Hecho**, en solo lectura |
+| 8 Asistente | **Hecho**; falta verificar el modo offline en el emulador |
+| 9–11 (rendimiento, release firmado, entrega) | Pendientes |
 
 Verificado en el emulador con el APK de desarrollo y **datos reales** de la
 tienda sandbox `bodega-qa-caos`: login contra Supabase, tabs por permisos, ciclo
 completo de venta (abrir turno → cobrar → cerrar turno) y los indicadores de
-Inicio cuadrados contra la base de datos. 127 tests unitarios y 9 flujos E2E en
-verde, y 13 flujos E2E en el emulador.
+Inicio cuadrados contra la base de datos. 183 tests unitarios y 16 flujos E2E en el emulador, todos en verde.
 
 **El vuelto se declara al backend.** `create_payment` aplica a la venta lo
 recibido menos el vuelto, así que mandar lo que entrega el cliente sin declarar
@@ -63,6 +65,16 @@ entregar el recibo.
   no expone el nombre del negocio a quien no tiene `settings.view`.
 - **Carrito compartido y persistido**: un único origen fuera de React para las
   tres pantallas del POS, guardado en cada cambio.
+
+### Qué quedó fuera y por qué
+
+- **Fotos de producto.** Necesitan cámara o galería y un flujo de subida
+  firmada; se hacen mejor desde el escritorio.
+- **Exportación de reportes a PDF/Excel.** La app consulta; archivar es trabajo
+  de escritorio.
+- **Crear tiendas y dar de alta administradores.** Backoffice web, donde hay
+  teclado y donde ese trabajo se hace de verdad.
+- **Importación por Excel y plantillas.** Igual: tarea de escritorio.
 
 ### Inicio
 
