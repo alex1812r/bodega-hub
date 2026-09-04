@@ -21,7 +21,7 @@ Estado de la corrida en curso: `../bodegahub-app/.notes/progress.md`.
 | 1 `@bodega/core` y Bearer en el BFF | Hecho y verificado contra Supabase real |
 | 2 App base (login, tabs, tema, HTTP, offline, runner E2E) | Hecho y verificado en el emulador |
 | 3 Catálogo (productos, inventario, contactos) | Hecho y verificado en el emulador |
-| 4 POS y caja (turno, carrito, cobro con pagos mixtos) | Hecho salvo el escáner de cámara |
+| 4 POS y caja (turno, escáner, cobro con pagos mixtos, recibo) | **Hecho y verificado con ventas reales** |
 | Inicio (KPIs del periodo, mix de pagos, ventas recientes, stock bajo) | **Hecho y verificado con datos reales** |
 | 5–11 (ventas/compras, baúl, reportes, platform, release) | Pendientes |
 
@@ -30,6 +30,32 @@ tienda sandbox `bodega-qa-caos`: login contra Supabase, tabs por permisos, ciclo
 completo de venta (abrir turno → cobrar → cerrar turno) y los indicadores de
 Inicio cuadrados contra la base de datos. 127 tests unitarios y 9 flujos E2E en
 verde.
+
+### POS
+
+El ciclo completo desde el teléfono: abrir turno, agregar productos, cobrar y
+entregar el recibo.
+
+- **Escáner de cámara** (`expo-camera`): EAN-13/8, UPC-A/E y Code 128. Un mismo
+  código se ignora durante 800 ms para que la cámara no cargue diez unidades
+  mientras apunta a la etiqueta; uno distinto entra al instante. La respuesta es
+  háptica, porque el vendedor no mira la pantalla mientras escanea.
+- **Lector físico** (USB o Bluetooth): son teclados que teclean el código y
+  rematan con Enter. El POS lo recoge tanto por un campo oculto como por el
+  propio buscador, porque en Android el foco de teclado suele caer ahí; solo
+  trata como código lo que parece uno (cifras, seis o más).
+- **Búsqueda exacta por `barcode`**, no el buscador general: un código parcial
+  que coincidiera con otro producto pondría el artículo equivocado en el
+  carrito. Si el producto existe pero está inactivo, lo dice en vez de responder
+  "código desconocido".
+- **Formas de cobro de la tienda**: se leen de `/api/settings/payment-methods`,
+  el único trozo de configuración que un vendedor puede consultar. Ofrecer un
+  método apagado solo consigue que el backend rechace el cobro.
+- **Recibo en PDF** (`expo-print` → `expo-sharing`): formato de ticket de 58 mm,
+  para mandarlo por WhatsApp o imprimirlo. Encabeza con "BodegaHub" porque el BFF
+  no expone el nombre del negocio a quien no tiene `settings.view`.
+- **Carrito compartido y persistido**: un único origen fuera de React para las
+  tres pantallas del POS, guardado en cada cambio.
 
 ### Inicio
 
