@@ -22,14 +22,21 @@ Estado de la corrida en curso: `../bodegahub-app/.notes/progress.md`.
 | 2 App base (login, tabs, tema, HTTP, offline, runner E2E) | Hecho y verificado en el emulador |
 | 3 Catálogo (productos, inventario, contactos) | Hecho y verificado en el emulador |
 | 4 POS y caja (turno, escáner, cobro con pagos mixtos, recibo) | **Hecho y verificado con ventas reales** |
+| 5 Ventas: lista y detalle con recibo | **Hecho**; faltan pagos, compras y devoluciones |
 | Inicio (KPIs del periodo, mix de pagos, ventas recientes, stock bajo) | **Hecho y verificado con datos reales** |
-| 5–11 (ventas/compras, baúl, reportes, platform, release) | Pendientes |
+| 6–11 (baúl, reportes, configuración, platform, release) | Pendientes |
 
 Verificado en el emulador con el APK de desarrollo y **datos reales** de la
 tienda sandbox `bodega-qa-caos`: login contra Supabase, tabs por permisos, ciclo
 completo de venta (abrir turno → cobrar → cerrar turno) y los indicadores de
 Inicio cuadrados contra la base de datos. 127 tests unitarios y 9 flujos E2E en
-verde.
+verde, y 13 flujos E2E en el emulador.
+
+**El vuelto se declara al backend.** `create_payment` aplica a la venta lo
+recibido menos el vuelto, así que mandar lo que entrega el cliente sin declarar
+lo que se le devuelve infla la venta y la gaveta. La app elige el método de
+vuelto, lo carga en la línea de cobro que puede cubrirlo y detiene el cobro si
+ninguna alcanza.
 
 ### POS
 
