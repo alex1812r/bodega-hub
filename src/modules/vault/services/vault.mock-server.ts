@@ -86,6 +86,73 @@ export function withdrawal(input: AmountInput, storeId: string) {
   return vault;
 }
 
+/**
+ * Salida de nómina. La cubeta la decide el módulo de nómina (efectivo Bs, efectivo
+ * USD o cuenta), igual que hace `pay_payroll_item` en Postgres, así que aquí solo
+ * se descuenta y se deja el asiento en el libro del baúl. La validación de saldo
+ * vive en el mock de nómina, que es quien conoce el mensaje por cubeta.
+ */
+export function registerPayrollOut(
+  input: AmountInput & { bucket: VaultMovement["bucket"]; payrollItemId: string },
+  storeId: string,
+) {
+  const vault = getOrCreate(storeId);
+
+  if (input.bucket === "efectivo") {
+    vault.balanceEfectivoVes -= input.amountVes;
+    vault.balanceRef -= input.amountRef;
+  } else {
+    vault.balanceVes -= input.amountVes;
+  }
+
+  vault.updatedAt = new Date().toISOString();
+  record(vault, input, "payroll_out", input.bucket);
+  movements[0].payrollItemId = input.payrollItemId;
+
+  return movements[0];
+}
+
+/** Anular un pago de nómina devuelve el dinero a su cubeta y borra el asiento. */
+export function revertPayrollOut(movementId: string, storeId: string) {
+  const vault = getOrCreate(storeId);
+  const index = movements.findIndex(
+    (item) => item.id === movementId && item.vaultId === vault.id,
+  );
+
+  if (index === -1) {
+    return vault;
+  }
+
+  const movement = movements[index];
+
+  if (movement.bucket === "efectivo") {
+    vault.balanceEfectivoVes += movement.amountVes;
+    vault.balanceRef += movement.amountRef;
+  } else {
+    vault.balanceVes += movement.amountVes;
+  }
+
+  vault.updatedAt = new Date().toISOString();
+  movements.splice(index, 1);
+
+  return vault;
+}
+
+/** Saldo inicial de demostración: el baúl mock nace en cero y la nómina necesita fondos. */
+export function seedVaultBalance(
+  input: { balanceEfectivoVes: number; balanceRef: number; balanceVes: number },
+  storeId: string,
+) {
+  const vault = getOrCreate(storeId);
+
+  vault.balanceEfectivoVes += input.balanceEfectivoVes;
+  vault.balanceRef += input.balanceRef;
+  vault.balanceVes += input.balanceVes;
+  vault.updatedAt = new Date().toISOString();
+
+  return vault;
+}
+
 export function transferFromCash(
   input: { notes?: string; sessionIds: string[] },
   storeId: string,

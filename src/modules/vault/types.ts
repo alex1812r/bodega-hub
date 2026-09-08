@@ -21,6 +21,15 @@ export type VaultMovement = {
   id: string;
   notes?: string | null;
   paymentId?: string | null;
-  type: "transfer_in" | "purchase_out" | "deposit" | "withdrawal" | "adjustment" | "sale_in";
+  /** Recibo de nómina que originó el movimiento (`payroll_out`). */
+  payrollItemId?: string | null;
+  type:
+    | "transfer_in"
+    | "purchase_out"
+    | "deposit"
+    | "withdrawal"
+    | "adjustment"
+    | "sale_in"
+    | "payroll_out";
   vaultId: string;
 };
