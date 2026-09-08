@@ -64,8 +64,19 @@ create table if not exists public.payroll_settings (
   reinvest_pct numeric(5,2) not null default 45 check (reinvest_pct between 0 and 100),
   reserve_pct numeric(5,2) not null default 20 check (reserve_pct between 0 and 100),
   eligible_roles public.user_role[] not null default array['vendedor']::public.user_role[],
+  -- Frontera con el pasado: ninguna venta anterior a esta fecha comisiona jamás.
+  -- Sin ella, la primera quincena que se calcule arrastraría como "cobrada tarde"
+  -- toda la historia de ventas pagadas de la tienda y la pagaría de una vez.
+  commission_since date not null default (now() at time zone 'America/Caracas')::date,
   updated_at timestamptz not null default now()
 );
+
+alter table public.payroll_settings
+  add column if not exists commission_since date not null
+    default (now() at time zone 'America/Caracas')::date;
+
+comment on column public.payroll_settings.commission_since is
+  'Desde cuándo cuentan las comisiones. Las ventas anteriores no comisionan, ni siquiera como cobradas tarde.';
 
 comment on table public.payroll_settings is
   'Parámetros de nómina por tienda. Los porcentajes de reinversión y reserva son informativos: solo alimentan el desglose del dueño.';
@@ -277,6 +288,12 @@ cross join lateral (values
 comment on view public.vault_balance_check is
   'Saldo esperado por cubeta (calculado desde vault_movements) contra store_vaults. docs/cuadre-baul.md §4 item 5.';
 
+-- `drop view` se lleva por delante los permisos, así que hay que reponerlos:
+-- son los mismos que le dio 20260904b. Sin esto el único instrumento de cuadre
+-- del efectivo queda ilegible para la aplicación.
+revoke all on public.vault_balance_check from public;
+grant select on public.vault_balance_check to authenticated, service_role;
+
 -- -----------------------------------------------------------------------------
 -- 8. Índice para el cálculo de comisiones
 -- -----------------------------------------------------------------------------
@@ -363,6 +380,39 @@ as $$
     ((p_to + 1)::text || ' 04:00:00+00')::timestamptz;
 $$;
 
+/**
+ * Un recibo pagado solo se toca desde las RPC de nómina.
+ *
+ * La política `for all` del admin le abre `payroll_items` por PostgREST: sin
+ * este candado podría devolver a `pendiente` un recibo ya pagado dejando su
+ * `payroll_out` en pie, volver a pagarlo y sacar el dinero dos veces del baúl.
+ * Las RPC marcan el paso con `app.payroll_rpc`, que solo vive dentro de su
+ * propia transacción.
+ */
+create or replace function public.payroll_guard_paid_items()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if coalesce(current_setting('app.payroll_rpc', true), '') = 'on' then
+    return new;
+  end if;
+
+  if old.status = 'pagado' then
+    raise exception 'Un recibo de nómina pagado solo se modifica anulando el pago'
+      using errcode = 'PT403';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_payroll_items_guard on public.payroll_items;
+create trigger trg_payroll_items_guard
+before update on public.payroll_items
+for each row execute function public.payroll_guard_paid_items();
+
 create or replace function public.payroll_assert_admin()
 returns uuid
 language plpgsql
@@ -388,12 +438,15 @@ $$;
 -- 11. upsert_payroll_settings
 -- -----------------------------------------------------------------------------
 
+drop function if exists public.upsert_payroll_settings(numeric, numeric, numeric, numeric, text[]);
+
 create or replace function public.upsert_payroll_settings(
   p_default_commission_pct numeric default null,
   p_warn_share_of_gross_profit_pct numeric default null,
   p_reinvest_pct numeric default null,
   p_reserve_pct numeric default null,
-  p_eligible_roles text[] default null
+  p_eligible_roles text[] default null,
+  p_commission_since date default null
 )
 returns public.payroll_settings
 language plpgsql
@@ -432,6 +485,7 @@ begin
       reinvest_pct = coalesce(p_reinvest_pct, s.reinvest_pct),
       reserve_pct = coalesce(p_reserve_pct, s.reserve_pct),
       eligible_roles = coalesce(v_roles, s.eligible_roles),
+      commission_since = coalesce(p_commission_since, s.commission_since),
       updated_at = now()
   where s.store_id = v_store_id
   returning * into v_settings;
@@ -526,11 +580,18 @@ declare
   v_store_id uuid;
   v_starts_at timestamptz;
   v_ends_at timestamptz;
+  v_since timestamptz;
 begin
   v_store_id := public.payroll_assert_admin();
 
   select b.starts_at, b.ends_at into v_starts_at, v_ends_at
   from public.payroll_caracas_bounds(p_from, p_to) b;
+
+  -- Ninguna venta anterior a `commission_since` comisiona, ni como cobrada tarde.
+  select (s.commission_since::text || ' 04:00:00+00')::timestamptz into v_since
+  from public.payroll_settings s where s.store_id = v_store_id;
+
+  v_since := coalesce(v_since, v_starts_at);
 
   return query
   with eligible as (
@@ -540,6 +601,14 @@ begin
     where e.store_id = v_store_id
       and e.is_active = true
       and p.is_active = true
+  ),
+  -- Los reversos no miran si el cajero sigue activo: lo que ya se comisionó hay
+  -- que descontarlo aunque el cajero se haya desactivado entretanto.
+  commissioned_staff as (
+    select e.id as employee_id, e.profile_id, e.commission_pct, p.full_name
+    from public.payroll_employees e
+    join public.profiles p on p.id = e.profile_id
+    where e.store_id = v_store_id
   ),
   commissionable as (
     -- Ventas cobradas que aún no comisionaron. `late` = venta anterior al rango
@@ -559,6 +628,7 @@ begin
     join eligible el on el.profile_id = s.user_id
     where s.store_id = v_store_id
       and s.status = 'pagada'
+      and s.created_at >= v_since
       and s.created_at < v_ends_at
       and not exists (
         select 1 from public.payroll_commission_sales cs
@@ -582,7 +652,7 @@ begin
     from public.payroll_commission_sales cs
     join public.sales s on s.id = cs.sale_id
     join public.payroll_items it on it.id = cs.item_id
-    join eligible el on el.profile_id = it.profile_id
+    join commissioned_staff el on el.profile_id = it.profile_id
     where cs.store_id = v_store_id
       and cs.kind in ('normal', 'late')
       and s.status in ('cancelada', 'devuelta')
@@ -913,6 +983,18 @@ begin
       raise exception 'Indica la referencia del pago' using errcode = 'PT400';
     end if;
 
+    -- El recibo se paga completo: no hay abonos parciales. Se tolera un 1 % por
+    -- si la tasa que vio la pantalla no es exactamente la que se usa aquí.
+    declare
+      v_entregado_ref numeric(14,2) :=
+        case when v_currency = 'USD' then round(p_amount, 2) else round(p_amount / v_rate, 2) end;
+    begin
+      if abs(v_entregado_ref - v_item.total_ref) > greatest(0.02, v_item.total_ref * 0.01) then
+        raise exception 'El monto no corresponde al recibo: son ref %, y se intentó pagar ref %',
+          v_item.total_ref, v_entregado_ref using errcode = 'PT400';
+      end if;
+    end;
+
     perform public.ensure_store_vault(v_store_id);
     select * into v_vault from public.store_vaults where store_id = v_store_id for update;
 
@@ -1011,6 +1093,10 @@ declare
 begin
   v_store_id := public.payroll_assert_admin();
 
+  -- Única vía legítima para tocar un recibo pagado; el candado dura lo que la
+  -- transacción. Ver `payroll_guard_paid_items`.
+  perform set_config('app.payroll_rpc', 'on', true);
+
   select * into v_item
   from public.payroll_items
   where id = p_item_id and store_id = v_store_id
@@ -1042,7 +1128,17 @@ begin
           + case when v_movement.bucket = 'cuenta' then v_movement.amount_ves else 0 end
     where id = v_vault.id;
 
-    delete from public.vault_movements where id = v_item.vault_movement_id;
+    -- El libro del baúl no se borra: se escribe el asiento contrario. Es la
+    -- lección de `docs/cuadre-baul.md` §3 — un movimiento eliminado deja el
+    -- saldo cuadrado pero sin rastro de que el pago existió.
+    insert into public.vault_movements (
+      store_id, vault_id, type, bucket, amount_ves, amount_ref, notes, created_by,
+      payroll_item_id
+    ) values (
+      v_store_id, v_vault.id, 'adjustment', v_movement.bucket,
+      v_movement.amount_ves, v_movement.amount_ref,
+      'Anulación de nómina: ' || trim(p_notes), auth.uid(), v_item.id
+    );
   end if;
 
   update public.payroll_items
@@ -1073,8 +1169,9 @@ $$;
 
 revoke all on function public.payroll_caracas_bounds(date, date) from public;
 revoke all on function public.payroll_assert_admin() from public;
+revoke all on function public.payroll_guard_paid_items() from public;
 revoke all on function public.payroll_sales_without_cashier(date, date) from public;
-revoke all on function public.upsert_payroll_settings(numeric, numeric, numeric, numeric, text[]) from public;
+revoke all on function public.upsert_payroll_settings(numeric, numeric, numeric, numeric, text[], date) from public;
 revoke all on function public.upsert_payroll_employee(uuid, numeric, boolean) from public;
 revoke all on function public.preview_payroll_commissions(date, date) from public;
 revoke all on function public.compute_payroll_period(text, date, date, numeric) from public;
@@ -1082,7 +1179,7 @@ revoke all on function public.approve_payroll_period(uuid) from public;
 revoke all on function public.pay_payroll_item(uuid, public.payment_method, numeric, text, text) from public;
 revoke all on function public.cancel_payroll_payment(uuid, text) from public;
 
-grant execute on function public.upsert_payroll_settings(numeric, numeric, numeric, numeric, text[]) to authenticated;
+grant execute on function public.upsert_payroll_settings(numeric, numeric, numeric, numeric, text[], date) to authenticated;
 grant execute on function public.upsert_payroll_employee(uuid, numeric, boolean) to authenticated;
 grant execute on function public.preview_payroll_commissions(date, date) to authenticated;
 grant execute on function public.compute_payroll_period(text, date, date, numeric) to authenticated;

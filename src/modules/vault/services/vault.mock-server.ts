@@ -41,7 +41,7 @@ function record(
   bucket: VaultMovement["bucket"],
   fromSessionId?: string,
 ) {
-  movements.unshift({
+  const movement: VaultMovement = {
     amountRef: input.amountRef,
     amountVes: input.amountVes,
     bucket,
@@ -51,7 +51,17 @@ function record(
     notes: input.notes,
     type,
     vaultId: vault.id,
-  });
+  };
+
+  movements.unshift(movement);
+
+  return movement;
+}
+
+/** Solo para tests: devuelve el baúl mock a su estado inicial (vacío). */
+export function __resetVaultMockState() {
+  vaults.length = 0;
+  movements.length = 0;
 }
 
 export function getVault(storeId: string) {
@@ -109,24 +119,27 @@ export function registerPayrollOut(
   }
 
   vault.updatedAt = new Date().toISOString();
-  record(vault, input, "payroll_out", input.bucket);
-  movements[0].payrollItemId = input.payrollItemId;
 
-  return movements[0];
+  const movement = record(vault, input, "payroll_out", input.bucket);
+  movement.payrollItemId = input.payrollItemId;
+
+  return movement;
 }
 
-/** Anular un pago de nómina devuelve el dinero a su cubeta y borra el asiento. */
-export function revertPayrollOut(movementId: string, storeId: string) {
+/**
+ * Anular un pago de nómina devuelve el dinero a su cubeta y escribe el asiento
+ * contrario. El movimiento original **no** se borra: un libro del que se puede
+ * borrar no sirve para cuadrar (ver `docs/cuadre-baul.md` §3).
+ */
+export function revertPayrollOut(movementId: string, storeId: string, notes?: string) {
   const vault = getOrCreate(storeId);
-  const index = movements.findIndex(
+  const movement = movements.find(
     (item) => item.id === movementId && item.vaultId === vault.id,
   );
 
-  if (index === -1) {
+  if (!movement) {
     return vault;
   }
-
-  const movement = movements[index];
 
   if (movement.bucket === "efectivo") {
     vault.balanceEfectivoVes += movement.amountVes;
@@ -136,7 +149,18 @@ export function revertPayrollOut(movementId: string, storeId: string) {
   }
 
   vault.updatedAt = new Date().toISOString();
-  movements.splice(index, 1);
+
+  const reversal = record(
+    vault,
+    {
+      amountRef: movement.amountRef,
+      amountVes: movement.amountVes,
+      notes: `Anulación de nómina: ${notes ?? "sin motivo"}`,
+    },
+    "adjustment",
+    movement.bucket,
+  );
+  reversal.payrollItemId = movement.payrollItemId;
 
   return vault;
 }

@@ -1,4 +1,4 @@
-import { toErrorResponse } from "@/lib/api/apiError";
+import { ApiError, toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
 import { requireStoreAnyPermission } from "@/lib/api/requirePermission";
@@ -21,6 +21,12 @@ export async function GET(request: Request, context: PeriodRouteContext) {
     ]);
     const { id } = await context.params;
     const canManage = auth.permissions.includes("payroll.manage");
+
+    // Sin identidad no hay recibo propio que enseñar: mejor un 403 claro que una
+    // consulta con `profile_id` vacío, que PostgREST devuelve como 500.
+    if (!canManage && !auth.userId) {
+      throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+    }
 
     return jsonData(
       await service().getPayrollPeriodDetail(id, auth.storeId, {

@@ -12,6 +12,12 @@ export type PayrollPeriodStatus = "borrador" | "aprobado" | "pagado";
 export type PayrollItemStatus = "pendiente" | "pagado";
 
 export type PayrollSettings = {
+  /**
+   * Desde cuándo cuentan las comisiones (`YYYY-MM-DD`, día Caracas). Las ventas
+   * anteriores no comisionan, ni siquiera como cobradas tarde: sin esta frontera
+   * la primera quincena arrastraría toda la historia de la tienda.
+   */
+  commissionSince: string;
   defaultCommissionPct: number;
   eligibleRoles: UserRole[];
   reinvestPct: number;
@@ -155,6 +161,8 @@ export type PayrollSettingsInput = {
   reinvestPct?: number;
   reservePct?: number;
   warnShareOfGrossProfitPct?: number;
+  /** Frontera con el pasado, `YYYY-MM-DD`. */
+  commissionSince?: string;
 };
 
 export type PayrollEmployeeInput = {

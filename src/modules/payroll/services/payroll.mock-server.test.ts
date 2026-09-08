@@ -2,6 +2,8 @@
  * @jest-environment node
  */
 
+import { roundMoney } from "@bodega/core";
+
 import { getVault, listVaultMovements } from "@/modules/vault/services/vault.mock-server";
 import { mockSales, type SaleMock } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
@@ -216,13 +218,40 @@ describe("payroll.mock-server", () => {
     cancelPayrollPayment(item.id, { notes: "Pago duplicado" }, DEFAULT_STORE_ID);
 
     expect(getVault(DEFAULT_STORE_ID).balanceEfectivoVes).toBe(before);
+
+    // El asiento original se conserva y se le añade el contrario: el libro del
+    // baúl no se borra (docs/cuadre-baul.md §3).
+    const after = listVaultMovements(DEFAULT_STORE_ID);
+
+    expect(after.some((row) => row.id === paid.vaultMovementId)).toBe(true);
     expect(
-      listVaultMovements(DEFAULT_STORE_ID).some((row) => row.id === paid.vaultMovementId),
-    ).toBe(false);
+      after.filter((row) => row.payrollItemId === item.id).map((row) => row.type).sort(),
+    ).toEqual(["adjustment", "payroll_out"]);
     expect(getPayrollPeriodDetail(periodA.id, DEFAULT_STORE_ID).period.status).toBe("aprobado");
   });
 
   it("rejects a payment that does not fit in the vault bucket", () => {
+    // La comisión de esta venta (ref 250 al 5 %) supera lo que queda en el baúl.
+    seedSale({ createdAt: "2026-07-05T14:00:00.000Z", id: "sale-q1", totalRef: 5000 });
+
+    const periodA = createPayrollPeriod({ periodKey: PERIOD_A }, DEFAULT_STORE_ID);
+    approvePayrollPeriod(periodA.id, DEFAULT_STORE_ID);
+
+    const { item } = cashierItem(periodA.id);
+    const vault = getVault(DEFAULT_STORE_ID);
+
+    vault.balanceEfectivoVes = 1000;
+
+    expect(() =>
+      payPayrollItem(
+        item.id,
+        { amount: roundMoney(item.totalRef * 510), method: "efectivo_ves" },
+        DEFAULT_STORE_ID,
+      ),
+    ).toThrow(/saldo insuficiente en el baul \(efectivo\)/i);
+  });
+
+  it("rejects a payment for an amount that is not the receipt total", () => {
     seedSale({ createdAt: "2026-07-05T14:00:00.000Z", id: "sale-q1", totalRef: 100 });
 
     const periodA = createPayrollPeriod({ periodKey: PERIOD_A }, DEFAULT_STORE_ID);
@@ -230,9 +259,10 @@ describe("payroll.mock-server", () => {
 
     const { item } = cashierItem(periodA.id);
 
+    // El recibo son ref 5 (Bs. 2550): ni de lejos Bs. 100.
     expect(() =>
-      payPayrollItem(item.id, { amount: 9_999_999, method: "efectivo_ves" }, DEFAULT_STORE_ID),
-    ).toThrow(/saldo insuficiente en el baul \(efectivo\)/i);
+      payPayrollItem(item.id, { amount: 100, method: "efectivo_ves" }, DEFAULT_STORE_ID),
+    ).toThrow(/no corresponde al recibo/i);
   });
 
   it("refuses to compute a fortnight that has not closed yet", () => {

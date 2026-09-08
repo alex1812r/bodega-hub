@@ -30,6 +30,7 @@ export function PayrollSettingsForm({ settings }: PayrollSettingsFormProps) {
   );
   const [reinvestPct, setReinvestPct] = useState(String(settings.reinvestPct));
   const [reservePct, setReservePct] = useState(String(settings.reservePct));
+  const [commissionSince, setCommissionSince] = useState(settings.commissionSince);
   const [eligibleRoles, setEligibleRoles] = useState<UserRole[]>(settings.eligibleRoles);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -41,6 +42,7 @@ export function PayrollSettingsForm({ settings }: PayrollSettingsFormProps) {
 
     try {
       await updateSettings.mutateAsync({
+        commissionSince,
         defaultCommissionPct: Number(defaultCommissionPct),
         eligibleRoles,
         reinvestPct: Number(reinvestPct),
@@ -64,6 +66,13 @@ export function PayrollSettingsForm({ settings }: PayrollSettingsFormProps) {
   return (
     <form className="space-y-4" onSubmit={handleSubmit}>
       <div className="grid gap-4 md:grid-cols-2">
+        <Input
+          helperText="Las ventas anteriores a esta fecha no comisionan, ni siquiera como cobradas tarde. Protege a una tienda con historia de pagar todo su pasado en la primera quincena."
+          label="Las comisiones cuentan desde"
+          onChange={(event) => setCommissionSince(event.target.value)}
+          type="date"
+          value={commissionSince}
+        />
         <Input
           helperText="Porcentaje que se usa para un cajero que aun no tiene uno propio."
           label="Comision por defecto (%)"

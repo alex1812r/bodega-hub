@@ -131,6 +131,7 @@ const detail: PayrollPeriodDetail = {
   },
   salesWithoutCashier: 0,
   settings: {
+    commissionSince: "2026-08-16",
     defaultCommissionPct: 3,
     eligibleRoles: ["vendedor"],
     reinvestPct: 45,

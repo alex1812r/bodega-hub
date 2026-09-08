@@ -1,4 +1,10 @@
-import { roundMoney, type PaymentMethod, type UserRole } from "@bodega/core";
+import {
+  getCaracasIsoDate,
+  roundMoney,
+  shiftIsoDate,
+  type PaymentMethod,
+  type UserRole,
+} from "@bodega/core";
 
 import { ApiError, type ApiErrorCode } from "@/lib/api/apiError";
 import { getPaginationRange, toPaginatedList } from "@/lib/supabase/pagination";
@@ -34,6 +40,7 @@ import {
   sumItem,
   type PayrollCommissionKind,
 } from "../utils/payrollMath";
+import { redactPeriodForCashier } from "../utils/periodVisibility";
 import {
   currentPeriodKey,
   parsePeriodKey,
@@ -140,6 +147,7 @@ function nullableNum(value: unknown) {
 
 function mapSettings(row: Row): PayrollSettings {
   return {
+    commissionSince: (row.commission_since as string | null) ?? getCaracasIsoDate(),
     defaultCommissionPct: num(row.default_commission_pct, 3),
     eligibleRoles: (row.eligible_roles as UserRole[] | null) ?? ["vendedor"],
     reinvestPct: num(row.reinvest_pct, 45),
@@ -152,6 +160,7 @@ function mapSettings(row: Row): PayrollSettings {
 
 function defaultSettings(storeId: string): PayrollSettings {
   return {
+    commissionSince: getCaracasIsoDate(),
     defaultCommissionPct: 3,
     eligibleRoles: ["vendedor"],
     reinvestPct: 45,
@@ -329,6 +338,7 @@ export async function updatePayrollSettings(
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.rpc("upsert_payroll_settings", {
     p_default_commission_pct: input.defaultCommissionPct ?? null,
+    p_commission_since: input.commissionSince ?? null,
     p_eligible_roles: input.eligibleRoles ?? null,
     p_reinvest_pct: input.reinvestPct ?? null,
     p_reserve_pct: input.reservePct ?? null,
@@ -507,7 +517,7 @@ export async function getPayrollPeriodDetail(
         )
       : null,
     items,
-    period,
+    period: access.canManage ? period : redactPeriodForCashier(period),
     salesByItem,
     salesWithoutCashier: access.canManage ? await readSalesWithoutCashier(period) : 0,
     settings,
@@ -719,16 +729,33 @@ export async function getMyPayrollCurrent(access: {
     .eq("user_id", access.profileId)
     .eq("status", "pagada")
     .gte("created_at", `${range.fromDate}T04:00:00.000Z`)
-    .lt("created_at", `${range.toDate}T04:00:00.000Z`);
+    // El día operativo Caracas termina a las 04:00Z del día siguiente: sin el
+    // `+1` la estimación perdía el último día completo de la quincena.
+    .lt("created_at", `${shiftIsoDate(range.toDate, 1)}T04:00:00.000Z`);
 
   throwIfSupabaseError(salesError);
 
+  // Una venta que ya comisionó no vuelve a contar, igual que en el cálculo real.
+  const { data: consumed, error: consumedError } = await supabase
+    .from("payroll_commission_sales")
+    .select("sale_id")
+    .eq("store_id", access.storeId)
+    .in("kind", ["normal", "late"]);
+
+  throwIfSupabaseError(consumedError);
+
+  const alreadyCommissioned = new Set(
+    (consumed ?? []).map((row) => (row as Row).sale_id as string),
+  );
+
   const totals = sumItem(
-    (sales ?? []).map((sale) => ({
-      commissionRef: roundMoney(num((sale as Row).total_ref) * (commissionPct / 100)),
-      kind: "normal" as const,
-      saleTotalRef: num((sale as Row).total_ref),
-    })),
+    (sales ?? [])
+      .filter((sale) => !alreadyCommissioned.has((sale as Row).id as string))
+      .map((sale) => ({
+        commissionRef: roundMoney(num((sale as Row).total_ref) * (commissionPct / 100)),
+        kind: "normal" as const,
+        saleTotalRef: num((sale as Row).total_ref),
+      })),
   );
 
   return {

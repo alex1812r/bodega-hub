@@ -115,15 +115,40 @@ async function main() {
     });
     check("10.14", "El vendedor intenta pagar su propio recibo", sellerPays.status === 403, `status ${sellerPays.status}`);
 
-    // 10.10 — efectivo USD por encima del saldo REF del baúl.
-    const overUsd = await call(`/api/payroll/items/${payable.id}/pay`, {
+    // 10.10b — el monto tiene que ser el del recibo: no hay abonos parciales.
+    const wrongAmount = await call(`/api/payroll/items/${payable.id}/pay`, {
       body: { amount: 999_999, method: "efectivo_usd" },
       method: "POST",
     });
-    check("10.10", "Efectivo USD sin saldo REF", overUsd.status === 400 && overUsd.code === "INSUFFICIENT_VAULT_BALANCE", `status ${overUsd.status} · ${overUsd.code} · ${overUsd.message ?? ""}`);
+    check("10.10b", "Monto distinto al del recibo", wrongAmount.status === 400, `status ${wrongAmount.status} · ${wrongAmount.message ?? ""}`);
+
+    // 10.10 — el escenario del plan: queda efectivo en Bs pero no en REF. Se
+    // vacía la cubeta REF con un retiro y se paga en USD el monto correcto.
+    const vaultBefore = (await call("/api/vault")).payload.data;
+    await call("/api/vault/withdrawals", {
+      body: { amountRef: vaultBefore.balanceRef, amountVes: 0, notes: "Caos: vaciar REF" },
+      method: "POST",
+    });
+
+    const overUsd = await call(`/api/payroll/items/${payable.id}/pay`, {
+      body: { amount: payable.totalRef, method: "efectivo_usd" },
+      method: "POST",
+    });
+    check(
+      "10.10",
+      "Efectivo USD sin saldo REF, con Bs de sobra",
+      overUsd.status === 400 && overUsd.code === "INSUFFICIENT_VAULT_BALANCE",
+      `status ${overUsd.status} · ${overUsd.code ?? ""} · ${overUsd.message ?? ""}`,
+    );
+
+    // Se devuelve el REF para no dejar el baúl torcido para los casos siguientes.
+    await call("/api/vault/deposits", {
+      body: { amountRef: vaultBefore.balanceRef, amountVes: 0, notes: "Caos: reponer REF" },
+      method: "POST",
+    });
 
     // 10.1 — dos pagos simultáneos del mismo recibo: uno solo debe pasar.
-    const body = { amount: 100, method: "efectivo_ves" };
+    const body = { amount: Math.round(payable.totalRef * 510 * 100) / 100, method: "efectivo_ves" };
     const [first, second] = await Promise.all([
       call(`/api/payroll/items/${payable.id}/pay`, { body, method: "POST" }),
       call(`/api/payroll/items/${payable.id}/pay`, { body, method: "POST" }),

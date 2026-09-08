@@ -128,12 +128,25 @@ describe("/api/payroll/items/[id]/pay", () => {
   it("returns INSUFFICIENT_VAULT_BALANCE when the bucket does not cover the payment", async () => {
     const { itemId } = seedApprovedFortnight();
 
-    const response = await post("admin", itemId, { amount: 9_999_999, method: "efectivo_ves" });
+    // El baúl se queda sin efectivo: el monto es el correcto, lo que falta es el saldo.
+    getVault(DEFAULT_STORE_ID).balanceEfectivoVes = 100;
+
+    const response = await post("admin", itemId, { amount: 2550, method: "efectivo_ves" });
     const body = await response.json();
 
     expect(response.status).toBe(400);
     expect(body.error.code).toBe("INSUFFICIENT_VAULT_BALANCE");
     expect(body.error.message).toMatch(/saldo insuficiente en el baul \(efectivo\)/i);
+  });
+
+  it("rejects an amount that is not the receipt total", async () => {
+    const { itemId } = seedApprovedFortnight();
+
+    const response = await post("admin", itemId, { amount: 9_999_999, method: "efectivo_ves" });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.message).toMatch(/no corresponde al recibo/i);
   });
 
   it("blocks a seller from paying their own receipt", async () => {

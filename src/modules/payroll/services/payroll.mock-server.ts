@@ -1,10 +1,17 @@
-import { roundMoney, shiftIsoDate, type PaymentMethod, type UserRole } from "@bodega/core";
+import {
+  getCaracasIsoDate,
+  roundMoney,
+  shiftIsoDate,
+  type PaymentMethod,
+  type UserRole,
+} from "@bodega/core";
 
 import { ApiError } from "@/lib/api/apiError";
 import { paginateList } from "@/lib/api/pagination";
 import { getGrossProfitReport } from "@/modules/reports/services/reports.mock-server";
 import { getCurrentExchangeRate } from "@/modules/settings/services/exchangeRates.mock-server";
 import {
+  __resetVaultMockState,
   registerPayrollOut,
   revertPayrollOut,
   seedVaultBalance,
@@ -41,6 +48,7 @@ import {
   type PayrollCommissionEntry,
   type PayrollCommissionKind,
 } from "../utils/payrollMath";
+import { redactPeriodForCashier } from "../utils/periodVisibility";
 import {
   currentPeriodKey,
   isPeriodClosed,
@@ -139,6 +147,10 @@ function getSettings(storeId: string): PayrollSettings {
 
   if (!settings) {
     settings = {
+      // En Supabase la frontera nace el día en que se configura la nómina, que
+      // es lo prudente para una tienda con historia. El mock la retrasa 90 días
+      // para que la demo tenga quincenas anteriores y una venta cobrada tarde.
+      commissionSince: shiftIsoDate(getCaracasIsoDate(), -90),
       defaultCommissionPct: 3,
       eligibleRoles: ["vendedor"],
       reinvestPct: 45,
@@ -236,6 +248,10 @@ function previewCommissions(
   const eligible = activePayrollEmployees(storeId);
   const rows: PayrollPreviewRow[] = [];
 
+  // Frontera con el pasado: sin ella la primera quincena arrastraría como
+  // "cobrada tarde" toda la historia de ventas pagadas de la tienda.
+  const since = `${getSettings(storeId).commissionSince}T04:00:00.000Z`;
+
   // Ventas cobradas que aún no comisionaron. `late` = venta anterior al rango
   // que se cobró después: entra en la quincena que se calcule tras cobrarla.
   for (const sale of storeSales(storeId)) {
@@ -244,6 +260,7 @@ function previewCommissions(
     if (
       !employee ||
       sale.status !== "pagada" ||
+      sale.createdAt < since ||
       sale.createdAt >= endUtcExclusive ||
       isCommissioned(sale.id)
     ) {
@@ -273,8 +290,12 @@ function previewCommissions(
 
     const sale = mockSales.find((candidate) => candidate.id === consumed.saleId);
     const item = items.find((candidate) => candidate.id === consumed.itemId);
+    // Los reversos no miran si el cajero sigue activo: lo que ya se comisionó
+    // hay que descontarlo aunque lo hayan desactivado entretanto.
     const employee = item
-      ? eligible.find((row) => row.profileId === item.profileId)
+      ? employees.find(
+          (row) => row.storeId === storeId && row.profileId === item.profileId,
+        )
       : undefined;
 
     if (
@@ -379,6 +400,7 @@ export function updatePayrollSettings(
     settings.eligibleRoles = [...input.eligibleRoles];
   }
 
+  settings.commissionSince = input.commissionSince ?? settings.commissionSince;
   settings.defaultCommissionPct = input.defaultCommissionPct ?? settings.defaultCommissionPct;
   settings.warnShareOfGrossProfitPct =
     input.warnShareOfGrossProfitPct ?? settings.warnShareOfGrossProfitPct;
@@ -716,7 +738,7 @@ export function getPayrollPeriodDetail(
         )
       : null,
     items: visible.map((item) => ({ ...item })),
-    period: { ...period },
+    period: access.canManage ? { ...period } : redactPeriodForCashier(period),
     salesByItem: Object.fromEntries(
       visible.map((item) => [item.id, grouped[item.id] ?? []]),
     ),
@@ -845,6 +867,19 @@ export function payPayrollItem(id: string, input: PayrollPayInput, storeId: stri
     const amountVes = currency === "USD" ? 0 : roundMoney(input.amount);
     const amountRef = currency === "USD" ? roundMoney(input.amount) : 0;
 
+    // El recibo se paga completo: no hay abonos parciales. Se tolera un 1 % por
+    // si la tasa que vio la pantalla no es exactamente la de este momento.
+    const deliveredRef =
+      currency === "USD" ? roundMoney(input.amount) : roundMoney(input.amount / rateVes);
+
+    if (Math.abs(deliveredRef - item.totalRef) > Math.max(0.02, item.totalRef * 0.01)) {
+      throw new ApiError(
+        400,
+        "BAD_REQUEST",
+        `El monto no corresponde al recibo: son ref ${item.totalRef.toFixed(2)}, y se intentó pagar ref ${deliveredRef.toFixed(2)}.`,
+      );
+    }
+
     assertVaultBalance(storeId, bucket, currency, amountVes, amountRef);
 
     const movement = registerPayrollOut(
@@ -901,7 +936,7 @@ export function cancelPayrollPayment(
   }
 
   if (item.vaultMovementId) {
-    revertPayrollOut(item.vaultMovementId, storeId);
+    revertPayrollOut(item.vaultMovementId, storeId, input.notes.trim());
   }
 
   item.status = "pendiente";
@@ -1018,6 +1053,9 @@ export function getMyPayrollCurrent(access: {
 
 /** Solo para tests: devuelve el módulo a su estado inicial. */
 export function __resetPayrollMockState() {
+  // El baúl también: la nómina lo siembra y le escribe movimientos, así que un
+  // test no debe heredar los del anterior.
+  __resetVaultMockState();
   settingsByStore.clear();
   employees.length = 0;
   periods.length = 0;

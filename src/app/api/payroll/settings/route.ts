@@ -9,6 +9,10 @@ import * as server from "@/modules/payroll/services/payroll.server";
 
 /** El admin nunca es elegible: sus retiros salen del baúl, no de la nómina. */
 const schema = z.object({
+  commissionSince: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Usa el formato YYYY-MM-DD.")
+    .optional(),
   defaultCommissionPct: z.number().min(0).max(100).optional(),
   eligibleRoles: z.array(z.enum(["almacen", "contador", "vendedor"])).min(1).optional(),
   reinvestPct: z.number().min(0).max(100).optional(),
