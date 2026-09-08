@@ -101,6 +101,8 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | `cash.manage` | Si | No | No | No |
 | `vault.view` | Si | No | No | Si |
 | `vault.manage` | Si | No | No | No |
+| `payroll.manage` | Si | No | No | No |
+| `payroll.view_own` | No | Si | No | No |
 | `reports.view` | Si | No | No | Si |
 | `assistant.use` | Si | No | No | No |
 | `settings.view` | Si | No | No | No |
@@ -108,6 +110,11 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 
 Notas de pagos:
 - El **vendedor** no tiene `payments.manage`, pero puede **registrar cobros de venta** (POS / `POST /api/payments` con `saleId`) con `sales.create`. No puede pagar compras ni anular pagos.
+
+Notas de nomina:
+- `payroll.manage` es del dueno: calcular, aprobar, pagar y anular quincenas.
+- `payroll.view_own` es del cajero: solo `/payroll/mine`, sus propios recibos y las ventas que le comisionaron. No ve la ganancia bruta ni el semaforo del negocio.
+- El **admin no tiene** `payroll.view_own` (esta en `adminBlockedPermissions`): es el dueno, no cobra nomina, y sus retiros ya salen del baul.
 
 Permisos de plataforma (`platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view`): solo `superadmin`. Los roles de tienda no los tienen.
 
