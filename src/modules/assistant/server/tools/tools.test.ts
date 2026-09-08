@@ -50,13 +50,14 @@ function expectOk<T>(result: AssistantToolResult<T>) {
 }
 
 describe("assistant tool registry", () => {
-  it("registers the ten store tools and the two platform tools", () => {
+  it("registers the eleven store tools and the two platform tools", () => {
     expect(toolNamesForScope("store").sort()).toEqual([
       "capital_actual",
       "cierre_dia",
       "compras_periodo",
       "ganancia_bruta",
       "metodos_pago",
+      "nomina_quincena",
       "rentabilidad_productos",
       "stock_bajo",
       "top_clientes",
@@ -208,6 +209,23 @@ describe("store tools", () => {
     );
 
     expect(result.data).toMatchObject({ totalPagos: expect.any(Number) });
+  });
+
+  it("nomina_quincena estimates the current fortnight when no key is given", async () => {
+    const result = expectOk(await run("nomina_quincena", {}, storeContext()));
+
+    expect(result.data).toMatchObject({
+      cajeros: expect.any(Array),
+      comisionEstimadaActual: expect.any(Number),
+      quincenaEnCurso: expect.stringMatching(/^\d{4}-\d{2}-Q[12]$/),
+    });
+    expect(result.note).toContain("estimacion viva");
+  });
+
+  it("nomina_quincena rejects a key that is not a fortnight", async () => {
+    const result = await run("nomina_quincena", { quincena: "agosto" }, storeContext());
+
+    expect(result.ok).toBe(false);
   });
 
   it("capital_actual breaks the capital into components", async () => {

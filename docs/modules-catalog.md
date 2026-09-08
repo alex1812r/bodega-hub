@@ -30,6 +30,7 @@ Documentos relacionados:
 | Pagos | `/payments`, `/payments/[id]` | `payments.view` / `payments.manage` | `payments` |
 | Caja | `/cash`, `/cash/registers` | `cash.view` / `cash.operate` / `cash.manage` | `cash_registers`, `cash_sessions` (`closed_reason`), `cash_movements` |
 | Baúl | `/vault` | `vault.view` / `vault.manage` | `store_vaults` (`balance_efectivo_ves`, `balance_ves` cuenta, `balance_ref`), `vault_movements.bucket` |
+| Nómina | `/payroll`, `/payroll/[id]`, `/payroll/settings`, `/payroll/mine` | `payroll.manage` / `payroll.view_own` | `payroll_settings`, `payroll_employees`, `payroll_periods`, `payroll_items`, `payroll_commission_sales` |
 | Reportes | `/reports` | `reports.view` | vistas `daily_sales_summary`, etc. |
 | Asistente IA | `/assistant` | `assistant.use` | `assistant_queries`, vista `store_capital_summary` |
 | Settings | `/settings` | `settings.view` / `users.manage` | `app_settings`, `profiles`, `exchange_rates` |
@@ -362,6 +363,47 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 
 ---
 
+## Nómina
+
+Comisión quincenal de los cajeros. **Sin sueldo fijo:** el cajero cobra un porcentaje de las ventas que él generó y que ya están cobradas. El admin es el dueño, no cobra nómina; sus retiros siguen siendo retiros del baúl.
+
+| Ruta | Permiso |
+|------|---------|
+| `/payroll` | `payroll.manage` |
+| `/payroll/[periodId]` | `payroll.manage` (o dueño del recibo) |
+| `/payroll/settings` | `payroll.manage` |
+| `/payroll/mine` | `payroll.view_own` |
+
+| Hook | Endpoint |
+|------|----------|
+| `usePayrollSettings` | GET/PATCH `/api/payroll/settings` → RPC `upsert_payroll_settings` |
+| `useUpdatePayrollEmployee` | PUT `/api/payroll/employees/[profileId]` → RPC `upsert_payroll_employee` |
+| `usePayrollPeriods` | GET `/api/payroll/periods` |
+| `useComputePayrollPeriod` | POST `/api/payroll/periods` → RPC `compute_payroll_period` |
+| `usePayrollPeriod` | GET `/api/payroll/periods/[id]` |
+| `useRecomputePayrollPeriod` | POST `/api/payroll/periods/[id]/recompute` (solo `borrador`) |
+| `useApprovePayrollPeriod` | POST `/api/payroll/periods/[id]/approve` → RPC `approve_payroll_period` |
+| `usePayPayrollItem` | POST `/api/payroll/items/[id]/pay` → RPC `pay_payroll_item` |
+| `useCancelPayrollPayment` | POST `/api/payroll/items/[id]/cancel-payment` → RPC `cancel_payroll_payment` |
+| `usePayrollCurrent` | GET `/api/payroll/current` — quincena en curso (estimación) y anterior |
+| `useMyPayroll` | GET `/api/payroll/mine`, `/api/payroll/mine/current` |
+
+**Quincenas:** Q1 = día 1–15, Q2 = día 16–último día del mes, en día operativo Caracas (`[T04:00Z, siguiente T04:00Z)`). Clave `YYYY-MM-Q1` / `YYYY-MM-Q2` ([`quincena.ts`](../src/modules/payroll/utils/quincena.ts)).
+
+**Base comisionable:** ventas con `user_id` del cajero, `status = 'pagada'`, medidas en `total_ref`, **posteriores a `payroll_settings.commission_since`** (por defecto, el día en que se configura la nómina: sin esa frontera la primera quincena arrastraría toda la historia de la tienda). Cada venta comisiona **una sola vez en toda la historia** — lo garantiza el índice único de `payroll_commission_sales`. Una venta `pendiente_pago` no comisiona; cuando se cobra entra en la siguiente quincena que se calcule, marcada *cobrada tarde*. Si una venta ya comisionada se cancela o devuelve, la siguiente quincena resta esa comisión como reverso; el total de un cajero nunca baja de 0 y la diferencia no se arrastra.
+
+**Ciclo:** `borrador` (recalculable) → `aprobado` (se consumen las ventas, `commission_pct` congelado) → `pagado` (todos los ítems pagados). Las filas de `payroll_commission_sales` se escriben al **aprobar**, no al calcular, para que recalcular no gaste ventas.
+
+**Pago:** sale del baúl con `vault_movements.type = 'payroll_out'` (cubeta `efectivo` en Bs o USD, `cuenta` para pago móvil y transferencia) y snapshot de tasa. Un ítem de total 0 se marca pagado sin movimiento. Anular restituye el saldo, escribe el asiento contrario (`adjustment`, nunca borra el original — lección de [`cuadre-baul.md`](cuadre-baul.md) §3) y devuelve el periodo a `aprobado`; exige una nota. El monto entregado tiene que ser el del recibo: no hay abonos parciales.
+
+**Semáforo:** `comisiones / ganancia bruta` de la quincena. Verde < 25 %, ámbar 25–40 %, rojo > 40 % (umbral configurable). Solo informa, **nunca bloquea el pago**. Sin ganancia bruta muestra "sin datos" en vez de dividir por cero.
+
+**Fuera de alcance:** sueldo mínimo, utilidades, prestaciones y vacaciones. Un esquema 100 % variable debe validarlo un contador.
+
+Patch: [`supabase/patches/20260907-payroll.sql`](../supabase/patches/20260907-payroll.sql) — incluye la reescritura de `vault_balance_check` para que `payroll_out` cuente como salida y no aparezca como descuadre ([`cuadre-baul.md`](cuadre-baul.md)).
+
+---
+
 ## Reportes
 
 | Ruta | Permiso |
@@ -430,6 +472,7 @@ Tienda (`scope: "store"`), todas envoltorios finos de servicios existentes:
 | `cierre_dia` | `getDailyCloseSummary` |
 | `metodos_pago` | `getPaymentMethodsReport` |
 | `capital_actual` | `capital.server.ts` / `capital.mock-server.ts` (nuevo) |
+| `nomina_quincena` | `getPayrollCurrent` / `listPayrollPeriods` — sin argumento devuelve la estimación de la quincena en curso |
 
 Plataforma (`scope: "platform"`): `listar_tiendas` (`listStores`) y `comparar_tiendas` (ventas + ganancia + capital por tienda, con ranking).
 
@@ -535,6 +578,11 @@ La tool devuelve **cada componente por separado** además del total y su equival
 | `auto_close_stale_cash_sessions` | GET/POST `/api/cron/cash-sessions/auto-close` (`CRON_SECRET`; cada 15 min en Vercel) |
 | `transfer_cash_closures_to_vault` | POST `/api/vault/transfers-from-cash` (`sessionIds`) |
 | `register_vault_deposit`, `register_vault_withdrawal` | POST `/api/vault/deposits`, `/api/vault/withdrawals` |
+| `upsert_payroll_settings`, `upsert_payroll_employee` | PATCH `/api/payroll/settings`, PUT `/api/payroll/employees/[profileId]` |
+| `preview_payroll_commissions` | GET `/api/payroll/current`, `/api/payroll/mine/current` (estimación, no escribe) |
+| `compute_payroll_period` | POST `/api/payroll/periods`, `/api/payroll/periods/[id]/recompute` |
+| `approve_payroll_period` | POST `/api/payroll/periods/[id]/approve` |
+| `pay_payroll_item`, `cancel_payroll_payment` | POST `/api/payroll/items/[id]/pay`, `/api/payroll/items/[id]/cancel-payment` |
 
 Schema: [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql).
 

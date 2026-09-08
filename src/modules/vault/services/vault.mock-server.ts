@@ -1,10 +1,13 @@
 import { ApiError } from "@/lib/api/apiError";
 import { markSessionsTransferredToVault } from "@/modules/cash/services/cash.session.mock-server";
+import { mockState } from "@/shared/mocks/mockStore";
 
 import type { StoreVault, VaultMovement } from "../types";
 
-const vaults: StoreVault[] = [];
-const movements: VaultMovement[] = [];
+// Anclado a globalThis para que los saldos sobrevivan a las recompilaciones de
+// `next dev`. Ver `src/shared/mocks/mockStore.ts`.
+const vaults = mockState<StoreVault[]>("vault:vaults", () => []);
+const movements = mockState<VaultMovement[]>("vault:movements", () => []);
 type AmountInput = { amountRef: number; amountVes: number; notes?: string };
 
 function getOrCreate(storeId: string) {
@@ -38,7 +41,7 @@ function record(
   bucket: VaultMovement["bucket"],
   fromSessionId?: string,
 ) {
-  movements.unshift({
+  const movement: VaultMovement = {
     amountRef: input.amountRef,
     amountVes: input.amountVes,
     bucket,
@@ -48,7 +51,17 @@ function record(
     notes: input.notes,
     type,
     vaultId: vault.id,
-  });
+  };
+
+  movements.unshift(movement);
+
+  return movement;
+}
+
+/** Solo para tests: devuelve el baúl mock a su estado inicial (vacío). */
+export function __resetVaultMockState() {
+  vaults.length = 0;
+  movements.length = 0;
 }
 
 export function getVault(storeId: string) {
@@ -83,6 +96,87 @@ export function withdrawal(input: AmountInput, storeId: string) {
   vault.balanceRef -= input.amountRef;
   vault.updatedAt = new Date().toISOString();
   record(vault, input, "withdrawal", "efectivo");
+  return vault;
+}
+
+/**
+ * Salida de nómina. La cubeta la decide el módulo de nómina (efectivo Bs, efectivo
+ * USD o cuenta), igual que hace `pay_payroll_item` en Postgres, así que aquí solo
+ * se descuenta y se deja el asiento en el libro del baúl. La validación de saldo
+ * vive en el mock de nómina, que es quien conoce el mensaje por cubeta.
+ */
+export function registerPayrollOut(
+  input: AmountInput & { bucket: VaultMovement["bucket"]; payrollItemId: string },
+  storeId: string,
+) {
+  const vault = getOrCreate(storeId);
+
+  if (input.bucket === "efectivo") {
+    vault.balanceEfectivoVes -= input.amountVes;
+    vault.balanceRef -= input.amountRef;
+  } else {
+    vault.balanceVes -= input.amountVes;
+  }
+
+  vault.updatedAt = new Date().toISOString();
+
+  const movement = record(vault, input, "payroll_out", input.bucket);
+  movement.payrollItemId = input.payrollItemId;
+
+  return movement;
+}
+
+/**
+ * Anular un pago de nómina devuelve el dinero a su cubeta y escribe el asiento
+ * contrario. El movimiento original **no** se borra: un libro del que se puede
+ * borrar no sirve para cuadrar (ver `docs/cuadre-baul.md` §3).
+ */
+export function revertPayrollOut(movementId: string, storeId: string, notes?: string) {
+  const vault = getOrCreate(storeId);
+  const movement = movements.find(
+    (item) => item.id === movementId && item.vaultId === vault.id,
+  );
+
+  if (!movement) {
+    return vault;
+  }
+
+  if (movement.bucket === "efectivo") {
+    vault.balanceEfectivoVes += movement.amountVes;
+    vault.balanceRef += movement.amountRef;
+  } else {
+    vault.balanceVes += movement.amountVes;
+  }
+
+  vault.updatedAt = new Date().toISOString();
+
+  const reversal = record(
+    vault,
+    {
+      amountRef: movement.amountRef,
+      amountVes: movement.amountVes,
+      notes: `Anulación de nómina: ${notes ?? "sin motivo"}`,
+    },
+    "adjustment",
+    movement.bucket,
+  );
+  reversal.payrollItemId = movement.payrollItemId;
+
+  return vault;
+}
+
+/** Saldo inicial de demostración: el baúl mock nace en cero y la nómina necesita fondos. */
+export function seedVaultBalance(
+  input: { balanceEfectivoVes: number; balanceRef: number; balanceVes: number },
+  storeId: string,
+) {
+  const vault = getOrCreate(storeId);
+
+  vault.balanceEfectivoVes += input.balanceEfectivoVes;
+  vault.balanceRef += input.balanceRef;
+  vault.balanceVes += input.balanceVes;
+  vault.updatedAt = new Date().toISOString();
+
   return vault;
 }
 

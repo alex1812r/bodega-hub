@@ -18,7 +18,9 @@
     "e2e:bodegon": "npx tsx scripts/e2e-bodegon/run.ts",
     "smoke:patches": "npx tsx scripts/smoke-post-patches.ts",
     "test:storybook": "vitest --project storybook run",
-    "assistant:eval": "npx tsx scripts/assistant-eval/run.ts"
+    "assistant:eval": "npx tsx scripts/assistant-eval/run.ts",
+    "dev:mock": "node scripts/dev-mock.mjs",
+    "payroll:chaos": "node scripts/e2e-payroll/chaos.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.49",

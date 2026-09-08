@@ -12,6 +12,7 @@ import "./comprasPeriodo";
 import "./gananciaBruta";
 import "./listarTiendas";
 import "./metodosPago";
+import "./nominaQuincena";
 import "./rentabilidadProductos";
 import "./stockBajo";
 import "./topClientes";

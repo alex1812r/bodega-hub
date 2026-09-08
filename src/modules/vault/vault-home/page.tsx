@@ -21,6 +21,7 @@ import { VaultWithdrawalModal } from "./components/VaultWithdrawalModal";
 const movementTypeLabels: Record<VaultMovement["type"], string> = {
   adjustment: "Ajuste",
   deposit: "Deposito efectivo",
+  payroll_out: "Nomina",
   purchase_out: "Pago compra",
   sale_in: "Ingreso cuenta",
   transfer_in: "Transferencia caja",

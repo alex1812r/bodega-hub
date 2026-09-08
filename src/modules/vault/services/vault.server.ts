@@ -29,6 +29,7 @@ function mapMovement(row: Record<string, unknown>): VaultMovement {
     id: row.id as string,
     notes: row.notes as string | null,
     paymentId: row.payment_id as string | null,
+    payrollItemId: (row.payroll_item_id as string | null | undefined) ?? null,
     type: row.type as VaultMovement["type"],
     vaultId: row.vault_id as string,
   };

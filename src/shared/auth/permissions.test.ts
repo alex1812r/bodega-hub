@@ -53,6 +53,20 @@ describe("permissions", () => {
     ]);
   });
 
+  it("splits payroll between the owner and the cashier", () => {
+    expect(hasEffectivePermission({ role: "admin" }, "payroll.manage")).toBe(true);
+    // El dueño no cobra nómina: no necesita "Mis recibos".
+    expect(hasEffectivePermission({ role: "admin" }, "payroll.view_own")).toBe(false);
+
+    expect(hasEffectivePermission({ role: "vendedor" }, "payroll.view_own")).toBe(true);
+    expect(hasEffectivePermission({ role: "vendedor" }, "payroll.manage")).toBe(false);
+
+    for (const role of ["almacen", "contador", "superadmin"] as const) {
+      expect(hasEffectivePermission({ role }, "payroll.manage")).toBe(false);
+      expect(hasEffectivePermission({ role }, "payroll.view_own")).toBe(false);
+    }
+  });
+
   it("grants assistant.use to admin and superadmin only", () => {
     expect(hasEffectivePermission({ role: "admin" }, "assistant.use")).toBe(true);
     expect(hasEffectivePermission({ role: "superadmin" }, "assistant.use")).toBe(true);

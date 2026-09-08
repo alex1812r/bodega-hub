@@ -38,6 +38,8 @@ export const permissions = [
   "cash.manage",
   "vault.view",
   "vault.manage",
+  "payroll.manage",
+  "payroll.view_own",
   "reports.view",
   "assistant.use",
   "settings.view",
@@ -68,9 +70,15 @@ const platformPermissions = permissions.filter((permission) =>
 
 /**
  * Admin opera el comercio pero no vende en POS ni opera "Mi caja".
+ * Tampoco cobra nómina: es el dueño y sus retiros salen del baúl, así que no
+ * necesita "Mis recibos" (`payroll.view_own`).
  * Los permisos siguen existiendo para reactivarlos por rol/overrides más adelante.
  */
-const adminBlockedPermissions = new Set<Permission>(["sales.create", "cash.operate"]);
+const adminBlockedPermissions = new Set<Permission>([
+  "sales.create",
+  "cash.operate",
+  "payroll.view_own",
+]);
 
 const adminStorePermissions = storePermissions.filter(
   (permission) => !adminBlockedPermissions.has(permission),
@@ -94,6 +102,7 @@ export const rolePermissions: Record<UserRole, readonly Permission[]> = {
     "payments.view",
     "cash.view",
     "cash.operate",
+    "payroll.view_own",
   ],
   almacen: [
     "dashboard.view",
