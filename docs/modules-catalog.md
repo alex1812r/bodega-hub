@@ -472,6 +472,7 @@ Tienda (`scope: "store"`), todas envoltorios finos de servicios existentes:
 | `cierre_dia` | `getDailyCloseSummary` |
 | `metodos_pago` | `getPaymentMethodsReport` |
 | `capital_actual` | `capital.server.ts` / `capital.mock-server.ts` (nuevo) |
+| `nomina_quincena` | `getPayrollCurrent` / `listPayrollPeriods` — sin argumento devuelve la estimación de la quincena en curso |
 
 Plataforma (`scope: "platform"`): `listar_tiendas` (`listStores`) y `comparar_tiendas` (ventas + ganancia + capital por tienda, con ranking).
 
