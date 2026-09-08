@@ -142,3 +142,38 @@ export type PayrollPayInput = {
   method: PaymentMethod;
   reference?: string | null;
 };
+
+/** `GET`/`PATCH /api/payroll/settings`: parámetros + la plantilla elegible. */
+export type PayrollSettingsView = {
+  employees: PayrollEmployee[];
+  settings: PayrollSettings;
+};
+
+export type PayrollSettingsInput = {
+  defaultCommissionPct?: number;
+  eligibleRoles?: UserRole[];
+  reinvestPct?: number;
+  reservePct?: number;
+  warnShareOfGrossProfitPct?: number;
+};
+
+export type PayrollEmployeeInput = {
+  commissionPct: number;
+  isActive?: boolean;
+};
+
+/** Anular un pago exige explicar por qué: queda en las notas de la quincena. */
+export type PayrollCancelPaymentInput = {
+  notes: string;
+};
+
+/**
+ * Estimación viva del propio cajero. El porcentaje sale del último recibo suyo:
+ * `payroll_employees` solo lo puede leer el admin, así que un vendedor sin
+ * recibos previos todavía no tiene con qué estimar.
+ */
+export type PayrollMineCurrent = {
+  commissionPct: number | null;
+  currentPeriodKey: string;
+  estimate: PayrollEstimateRow | null;
+};
