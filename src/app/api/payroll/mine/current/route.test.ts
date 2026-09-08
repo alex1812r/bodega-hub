@@ -10,7 +10,8 @@ import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { GET } from "./route";
 
 const RANGE = parsePeriodKey(currentPeriodKey());
-const ORIGINAL_SALES = [...mockSales];
+// Sin las ventas de demo de nomina: cada test siembra las suyas y afirma montos exactos.
+const ORIGINAL_SALES = mockSales.filter((sale) => !sale.id.startsWith("sale-payroll-"));
 
 /** Venta cobrada dentro de la quincena en curso: solo estimación, nada escrito. */
 function seedCurrentSale() {

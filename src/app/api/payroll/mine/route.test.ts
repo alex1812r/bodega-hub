@@ -15,7 +15,8 @@ import { GET } from "./route";
 
 const PERIOD_KEY = previousPeriodKey(currentPeriodKey()) ?? "";
 const RANGE = parsePeriodKey(PERIOD_KEY);
-const ORIGINAL_SALES = [...mockSales];
+// Sin las ventas de demo de nomina: cada test siembra las suyas y afirma montos exactos.
+const ORIGINAL_SALES = mockSales.filter((sale) => !sale.id.startsWith("sale-payroll-"));
 
 function seedApprovedFortnight() {
   payroll.__resetPayrollMockState();

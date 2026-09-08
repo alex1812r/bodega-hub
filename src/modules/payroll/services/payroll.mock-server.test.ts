@@ -25,7 +25,8 @@ import {
 const CASHIER = "user-seller";
 const PERIOD_A = "2026-07-Q1";
 const PERIOD_B = "2026-07-Q2";
-const ORIGINAL_SALES = [...mockSales];
+// Sin las ventas de demo de nomina: cada test siembra las suyas y afirma montos exactos.
+const ORIGINAL_SALES = mockSales.filter((sale) => !sale.id.startsWith("sale-payroll-"));
 
 function seedSale(sale: Partial<SaleMock> & Pick<SaleMock, "createdAt" | "id" | "totalRef">) {
   mockSales.push({

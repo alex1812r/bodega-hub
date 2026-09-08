@@ -622,6 +622,89 @@ export const mockExchangeRates: ExchangeRateMock[] = [
   },
 ];
 
+/**
+ * Ventas del cajero para poder demostrar la nomina.
+ *
+ * El resto del fixture esta fechado en mayo de 2026, asi que ninguna quincena
+ * reciente tendria ventas y `/payroll` saldria siempre en cero. Estas se fechan
+ * **relativas a hoy** para que la quincena anterior siempre traiga datos, sin
+ * importar cuando se levante el mock:
+ *
+ * - cuatro ventas `pagada` dentro de la quincena anterior → comisionan normal;
+ * - una `pendiente_pago` en el mismo rango → no comisiona hasta cobrarse;
+ * - una `pagada` de dos meses atras → aparece como "cobrada tarde".
+ */
+function buildCashierPayrollSales(): SaleMock[] {
+  const caracasToday = new Date(Date.now() - 4 * 60 * 60 * 1000);
+  const year = caracasToday.getUTCFullYear();
+  const month = caracasToday.getUTCMonth() + 1;
+  const isFirstHalf = caracasToday.getUTCDate() <= 15;
+
+  // Quincena anterior a la actual: Q1 → Q2 del mes pasado, Q2 → Q1 del mismo mes.
+  const previous = isFirstHalf
+    ? { half: 2, month: month === 1 ? 12 : month - 1, year: month === 1 ? year - 1 : year }
+    : { half: 1, month, year };
+
+  const firstDay = previous.half === 1 ? 1 : 16;
+  const dayAt = (offset: number) => {
+    const day = String(firstDay + offset).padStart(2, "0");
+    return `${String(previous.year)}-${String(previous.month).padStart(2, "0")}-${day}`;
+  };
+
+  const base = {
+    customerId: "cont-customer",
+    discountRef: 0,
+    refRateVes: 510,
+    storeId: "00000000-0000-4000-8000-000000000001",
+    taxRef: 0,
+    userId: "user-seller",
+  };
+
+  const paid = (offset: number, totalRef: number, index: number): SaleMock => ({
+    ...base,
+    createdAt: `${dayAt(offset)}T15:00:00.000Z`,
+    id: `sale-payroll-${String(index).padStart(3, "0")}`,
+    invoiceNumber: `V-90${String(index).padStart(4, "0")}`,
+    paidVes: totalRef * 510,
+    status: "pagada",
+    subtotalRef: totalRef,
+    totalRef,
+    totalVes: totalRef * 510,
+  });
+
+  return [
+    paid(0, 120, 1),
+    paid(2, 85.5, 2),
+    paid(5, 240, 3),
+    paid(8, 33.25, 4),
+    {
+      ...base,
+      createdAt: `${dayAt(3)}T17:30:00.000Z`,
+      id: "sale-payroll-005",
+      invoiceNumber: "V-900005",
+      paidVes: 0,
+      status: "pendiente_pago",
+      subtotalRef: 60,
+      totalRef: 60,
+      totalVes: 30600,
+    },
+    {
+      ...base,
+      // Dos meses antes del rango: se cobro tarde y entra en la quincena que se calcule.
+      createdAt: `${String(previous.month > 2 ? previous.year : previous.year - 1)}-${String(
+        previous.month > 2 ? previous.month - 2 : previous.month + 10,
+      ).padStart(2, "0")}-10T12:00:00.000Z`,
+      id: "sale-payroll-006",
+      invoiceNumber: "V-900006",
+      paidVes: 45900,
+      status: "pagada",
+      subtotalRef: 90,
+      totalRef: 90,
+      totalVes: 45900,
+    },
+  ];
+}
+
 export const mockSales: SaleMock[] = [
   {
     createdAt: "2026-05-18T14:30:00.000Z",
@@ -745,6 +828,7 @@ export const mockSales: SaleMock[] = [
     totalVes: 5555,
     userId: "user-sur-admin",
   },
+  ...buildCashierPayrollSales(),
 ];
 
 export const mockSaleItems: SaleItemMock[] = [

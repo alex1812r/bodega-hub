@@ -16,7 +16,8 @@ import { GET } from "./route";
 const CURRENT_KEY = currentPeriodKey();
 const PREVIOUS_KEY = previousPeriodKey(CURRENT_KEY) ?? "";
 const RANGE = parsePeriodKey(CURRENT_KEY);
-const ORIGINAL_SALES = [...mockSales];
+// Sin las ventas de demo de nomina: cada test siembra las suyas y afirma montos exactos.
+const ORIGINAL_SALES = mockSales.filter((sale) => !sale.id.startsWith("sale-payroll-"));
 
 function seedCurrentSale() {
   payroll.__resetPayrollMockState();
