@@ -663,7 +663,7 @@ begin
   v_today := (now() at time zone 'America/Caracas')::date;
 
   if p_to >= v_today then
-    raise exception 'La quincena no ha terminado: solo se puede estimar hasta que cierre el % ',
+    raise exception 'La quincena no ha terminado: solo se puede estimar hasta que cierre el %',
       to_char(p_to, 'DD/MM/YYYY') using errcode = 'PT400';
   end if;
 
