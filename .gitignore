@@ -70,3 +70,7 @@ src/modules/assistant/server/README-sdk-notes.md
 scripts/assistant-eval/last-run.json
 scripts/e2e-assistant/screenshots/
 .tmp-probe/
+
+# Agent working notes and payroll e2e captures
+.notes/
+scripts/e2e-payroll/screenshots/

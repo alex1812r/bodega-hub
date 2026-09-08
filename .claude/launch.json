@@ -11,6 +11,15 @@
       "port": 3000
     },
     {
+      "name": "dev-mock",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:mock"
+      ],
+      "port": 3000
+    },
+    {
       "name": "storybook",
       "runtimeExecutable": "npm",
       "runtimeArgs": [
