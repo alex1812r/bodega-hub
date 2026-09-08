@@ -159,7 +159,10 @@ export function ownerBreakdown(
   reinvestPct: number,
   reservePct: number,
 ) {
-  if (grossProfitRef == null || !Number.isFinite(grossProfitRef)) {
+  // Mismo criterio que `shareOfGrossProfit`: sin margen que repartir no hay
+  // desglose que mostrar. Si no, el semáforo diría "sin datos" mientras el panel
+  // de al lado afirma que quedan cifras negativas.
+  if (grossProfitRef == null || !Number.isFinite(grossProfitRef) || grossProfitRef <= 0) {
     return null;
   }
 

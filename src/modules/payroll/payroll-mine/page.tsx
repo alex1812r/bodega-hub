@@ -40,7 +40,7 @@ export function PayrollMinePage() {
   const appSettings = useSettings();
   const [salesReceipt, setSalesReceipt] = useState<PayrollMineItem | null>(null);
 
-  const receipts = receiptsQuery.data ?? [];
+  const receipts = receiptsQuery.data?.items ?? [];
   const estimate = currentQuery.data?.estimate ?? null;
 
   return (

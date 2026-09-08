@@ -1,10 +1,13 @@
 import { ApiError } from "@/lib/api/apiError";
 import { markSessionsTransferredToVault } from "@/modules/cash/services/cash.session.mock-server";
+import { mockState } from "@/shared/mocks/mockStore";
 
 import type { StoreVault, VaultMovement } from "../types";
 
-const vaults: StoreVault[] = [];
-const movements: VaultMovement[] = [];
+// Anclado a globalThis para que los saldos sobrevivan a las recompilaciones de
+// `next dev`. Ver `src/shared/mocks/mockStore.ts`.
+const vaults = mockState<StoreVault[]>("vault:vaults", () => []);
+const movements = mockState<VaultMovement[]>("vault:movements", () => []);
 type AmountInput = { amountRef: number; amountVes: number; notes?: string };
 
 function getOrCreate(storeId: string) {

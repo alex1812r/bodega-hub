@@ -82,7 +82,6 @@ export function PayrollCancelPaymentModal({
           label="Motivo"
           onChange={(event) => setNotes(event.target.value)}
           placeholder="Por ejemplo: se pago con el metodo equivocado"
-          required
           rows={3}
           value={notes}
         />

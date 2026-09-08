@@ -174,7 +174,7 @@ export function usePayrollCurrent() {
 export function useMyPayrollItems() {
   return useQuery({
     queryKey: payrollKeys.mine(),
-    queryFn: () => apiFetch<PayrollMineItem[]>("/api/payroll/mine"),
+    queryFn: () => apiFetch<PaginatedList<PayrollMineItem>>("/api/payroll/mine"),
   });
 }
 

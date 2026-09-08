@@ -15,9 +15,10 @@ type ItemRouteContext = { params: Promise<{ id: string }> };
  */
 const schema = z.object({
   amount: z.number().nonnegative(),
-  bankName: z.string().trim().max(120).optional(),
+  // `nullish`: el modal manda `null` para los campos que el método no pide.
+  bankName: z.string().trim().max(120).nullish(),
   method: z.enum(["efectivo_ves", "efectivo_usd", "pago_movil", "transferencia"]),
-  reference: z.string().trim().max(120).optional(),
+  reference: z.string().trim().max(120).nullish(),
 });
 
 const service = () => (resolveDataSource() === "supabase" ? server : mock);

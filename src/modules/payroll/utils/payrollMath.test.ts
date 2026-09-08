@@ -171,5 +171,8 @@ describe("ownerBreakdown", () => {
 
   it("sin ganancia bruta no hay desglose", () => {
     expect(ownerBreakdown(null, 200, 45, 20)).toBeNull();
+    // Coherente con el semaforo: margen cero o negativo no reparte nada.
+    expect(ownerBreakdown(0, 200, 45, 20)).toBeNull();
+    expect(ownerBreakdown(-50, 200, 45, 20)).toBeNull();
   });
 });

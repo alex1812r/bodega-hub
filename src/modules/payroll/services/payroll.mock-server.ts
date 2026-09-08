@@ -11,6 +11,7 @@ import {
   getVault,
 } from "@/modules/vault/services/vault.mock-server";
 import { mockSales, mockUserProfiles, type SaleMock } from "@/shared/mocks/erp-data";
+import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type {
@@ -91,19 +92,23 @@ type PayrollPreviewRow = {
   saleTotalRef: number;
 };
 
-const settingsByStore = new Map<string, PayrollSettings>();
-const employees: PayrollEmployeeRow[] = [];
-const periods: PayrollPeriod[] = [];
-const items: PayrollItem[] = [];
-const commissionSales: PayrollCommissionSaleRow[] = [];
-const seededVaults = new Set<string>();
-
-let sequence = 0;
+// Anclado a globalThis: `next dev` reevalua este modulo al navegar y sin esto la
+// nomina se vaciaria entre pantallas. Ver `src/shared/mocks/mockStore.ts`.
+const settingsByStore = mockState("payroll:settings", () => new Map<string, PayrollSettings>());
+const employees = mockState<PayrollEmployeeRow[]>("payroll:employees", () => []);
+const periods = mockState<PayrollPeriod[]>("payroll:periods", () => []);
+const items = mockState<PayrollItem[]>("payroll:items", () => []);
+const commissionSales = mockState<PayrollCommissionSaleRow[]>(
+  "payroll:commission-sales",
+  () => [],
+);
+const seededVaults = mockState("payroll:seeded-vaults", () => new Set<string>());
+const sequence = mockState("payroll:sequence", () => ({ value: 0 }));
 
 function nextId(prefix: string) {
-  sequence += 1;
+  sequence.value += 1;
 
-  return `${prefix}-mock-${String(sequence)}`;
+  return `${prefix}-mock-${String(sequence.value)}`;
 }
 
 function now() {
@@ -1018,5 +1023,6 @@ export function __resetPayrollMockState() {
   periods.length = 0;
   items.length = 0;
   commissionSales.length = 0;
-  sequence = 0;
+  seededVaults.clear();
+  sequence.value = 0;
 }
