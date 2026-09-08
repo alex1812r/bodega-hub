@@ -682,7 +682,8 @@ export async function listMyPayrollItems(
 
     return {
       item: mapItem(row),
-      period: mapPeriod(period as Row),
+      // El cajero ve su recibo, no las cuentas del negocio.
+      period: redactPeriodForCashier(mapPeriod(period as Row)),
       sales: (saleRows ?? [])
         .filter((sale) => (sale as Row).item_id === row.id)
         .map((sale) => mapCommissionSale(sale as CommissionSaleRow)),

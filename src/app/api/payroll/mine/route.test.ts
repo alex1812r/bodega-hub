@@ -76,6 +76,22 @@ describe("/api/payroll/mine", () => {
     expect(body.data.items[0].sales).toHaveLength(1);
   });
 
+  it("never hands the cashier the store's figures", async () => {
+    const response = await get("vendedor", "user-seller");
+    const body = await response.json();
+    const period = body.data.items[0].period;
+
+    // El recibo es suyo; la ganancia bruta, el semaforo y los totales de la
+    // tienda (que suman los de los demas cajeros) no.
+    expect(period.grossProfitRef).toBeNull();
+    expect(period.shareOfGrossProfitPct).toBeNull();
+    expect(period.totalRef).toBe(0);
+    expect(period.commissionRef).toBe(0);
+    expect(period.salesRef).toBe(0);
+    // Lo suyo sigue intacto.
+    expect(body.data.items[0].item.totalRef).toBe(5);
+  });
+
   it("returns nothing for a cashier without receipts", async () => {
     const response = await get("vendedor", "user-seller-cashier");
     const body = await response.json();

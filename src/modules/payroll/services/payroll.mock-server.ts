@@ -1019,7 +1019,8 @@ export function listMyPayrollItems(
     .filter((item) => item.storeId === access.storeId && item.profileId === access.profileId)
     .map((item) => ({
       item: { ...item },
-      period: { ...findPeriod(item.periodId, access.storeId) },
+      // El cajero ve su recibo, no las cuentas del negocio.
+      period: redactPeriodForCashier(findPeriod(item.periodId, access.storeId)),
       sales: commissionSales
         .filter((sale) => sale.itemId === item.id)
         .map(toCommissionSale),
