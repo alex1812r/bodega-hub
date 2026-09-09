@@ -7,6 +7,7 @@ import { productsQueryKeys } from "@/modules/products/hooks/useProducts";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
   ContactMock,
+  PaymentMethod,
   PaymentMock,
   ProductMock,
   SaleItemMock,
@@ -23,7 +24,35 @@ export type SalesFilters = PaginationParams & {
   to?: string;
 };
 
+/** Desglose de billetes por moneda: `{"USD":{"1":3}}`. */
+type PaymentDenominations = Partial<Record<"USD" | "VES", Record<string, number>>>;
+
+/** Linea de cobro que viaja con la venta (mismo contrato que `POST /api/payments`, sin `saleId`). */
+export type SaleCreatePaymentInput = {
+  amount: number;
+  bankName?: string;
+  change?: {
+    amount: number;
+    bankName?: string;
+    method?: PaymentMethod;
+    phone?: string;
+    referenceCode?: string;
+  };
+  changeDenominations?: PaymentDenominations | null;
+  currency?: "USD" | "VES";
+  method: PaymentMethod;
+  notes?: string;
+  phone?: string;
+  receivedDenominations?: PaymentDenominations | null;
+  referenceCode?: string;
+};
+
 export type SaleCreateInput = {
+  /**
+   * Clave de idempotencia (uuid) por intento de cobro. Con la misma clave el
+   * servidor devuelve la venta ya registrada en vez de crear otra.
+   */
+  clientRequestId?: string;
   customerId: string;
   discountRef?: number;
   items: Array<{
@@ -31,6 +60,11 @@ export type SaleCreateInput = {
     quantity: number;
   }>;
   notes?: string;
+  /**
+   * Cobros registrados en la misma transaccion que la venta
+   * (`create_sale_with_payments`): si uno falla no queda venta ni descuento de stock.
+   */
+  payments?: SaleCreatePaymentInput[];
   refRateVes?: number;
   taxRef?: number;
 };

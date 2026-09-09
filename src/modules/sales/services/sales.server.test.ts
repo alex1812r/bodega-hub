@@ -159,6 +159,149 @@ describe("sales.server", () => {
     expect(result.invoiceNumber).toBe("V-000001");
   });
 
+  it("creates sale and payments atomically through create_sale_with_payments", async () => {
+    const rpc = jest.fn().mockResolvedValue({
+      data: { ...saleRow, paid_ves: 7650, status: "pagada" },
+      error: null,
+    });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+
+    const result = await createSale(
+      {
+        clientRequestId: "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7",
+        customerId: saleRow.customer_id,
+        items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+        payments: [
+          {
+            amount: 20,
+            change: { amount: 5, method: "efectivo_usd" },
+            changeDenominations: { USD: { "5": 1 } },
+            currency: "USD",
+            method: "efectivo_usd",
+            receivedDenominations: { USD: { "20": 1 } },
+          },
+          {
+            amount: 100,
+            bankName: "Banesco",
+            method: "pago_movil",
+            phone: "04125551234",
+            referenceCode: "1234",
+          },
+        ],
+        refRateVes: 510,
+      },
+      DEFAULT_STORE_ID,
+    );
+
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("create_sale_with_payments", {
+      p_client_request_id: "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7",
+      p_customer_id: saleRow.customer_id,
+      p_discount_ref: 0,
+      p_exchange_rate_id: null,
+      p_invoice_number: null,
+      p_items: [{ product_id: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+      p_notes: null,
+      p_payments: [
+        {
+          amount: 20,
+          bank_name: null,
+          change_amount: 5,
+          change_denominations: { USD: { "5": 1 } },
+          change_method: "efectivo_usd",
+          method: "efectivo_usd",
+          notes: null,
+          phone: null,
+          received_denominations: { USD: { "20": 1 } },
+          reference_code: null,
+        },
+        {
+          amount: 100,
+          bank_name: "Banesco",
+          change_amount: 0,
+          change_denominations: null,
+          change_method: null,
+          method: "pago_movil",
+          notes: null,
+          phone: "04125551234",
+          received_denominations: null,
+          reference_code: "1234",
+        },
+      ],
+      p_ref_rate_ves: 510,
+      p_tax_ref: 0,
+    });
+    expect(result.status).toBe("pagada");
+  });
+
+  it("keeps plain create_sale for callers without payments or client request id", async () => {
+    const rpc = jest.fn().mockResolvedValue({ data: saleRow, error: null });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+
+    await createSale(
+      {
+        customerId: saleRow.customer_id,
+        items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+        payments: [],
+        refRateVes: 510,
+      },
+      DEFAULT_STORE_ID,
+    );
+
+    expect(rpc).toHaveBeenCalledWith("create_sale", expect.any(Object));
+  });
+
+  it("maps a payment rule raised inside create_sale_with_payments to 400", async () => {
+    const rpc = jest.fn().mockResolvedValue({
+      data: null,
+      error: {
+        code: "PT400",
+        message: "La venta no tiene saldo pendiente: ya está cobrada (saldo pendiente: Bs 0)",
+      },
+    });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+
+    await expect(
+      createSale(
+        {
+          customerId: saleRow.customer_id,
+          items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+          payments: [{ amount: 10, currency: "USD", method: "efectivo_usd" }],
+          refRateVes: 510,
+        },
+        DEFAULT_STORE_ID,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
+  });
+
+  it("maps an accented cash-session rule without SQLSTATE to 400", async () => {
+    const rpc = jest.fn().mockResolvedValue({
+      data: null,
+      error: {
+        code: "P0001",
+        message:
+          "No puede registrar un pago en efectivo: no tiene una sesión de caja abierta en su caja asignada",
+      },
+    });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+
+    await expect(
+      createSale(
+        {
+          customerId: saleRow.customer_id,
+          items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+          payments: [{ amount: 10, method: "efectivo_ves" }],
+          refRateVes: 510,
+        },
+        DEFAULT_STORE_ID,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
+  });
+
   it("maps an out-of-band exchange rate from create_sale to 400", async () => {
     const rpc = jest.fn().mockResolvedValue({
       data: null,

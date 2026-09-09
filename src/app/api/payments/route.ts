@@ -7,6 +7,10 @@ import {
   requireStoreAnyPermission,
   requireStorePermission,
 } from "@/lib/api/requirePermission";
+import {
+  addPaymentLineIssues,
+  paymentLineFields,
+} from "@/modules/payments/services/paymentSchemas";
 import * as paymentsMockServer from "@/modules/payments/services/payments.mock-server";
 import * as paymentsServer from "@/modules/payments/services/payments.server";
 import {
@@ -16,119 +20,26 @@ import {
 } from "@/shared/auth/paymentAccess";
 import type { Permission } from "@/shared/auth/permissions";
 
-const paymentMethodSchema = z.enum([
-  "efectivo_ves",
-  "efectivo_usd",
-  "pago_movil",
-  "punto_venta",
-  "transferencia",
-]);
-
-/** Desglose de billetes por moneda: `{"USD":{"1":3}}`. */
-const denominationsSchema = z.object({
-  USD: z.record(z.string(), z.number().int().nonnegative()).optional(),
-  VES: z.record(z.string(), z.number().int().nonnegative()).optional(),
-});
-
-/**
- * Vuelto: es una salida, no un cobro, asi que banco/telefono/referencia son
- * opcionales incluso en metodos bancarios (spec cobro-pos-billetes §4).
- */
-const changeSchema = z.object({
-  amount: z.number().nonnegative(),
-  bankName: z.string().optional(),
-  method: paymentMethodSchema.optional(),
-  phone: z.string().optional(),
-  referenceCode: z.string().optional(),
-});
-
+// Las reglas por metodo y de vuelto viven en `paymentSchemas.ts`, compartidas con
+// los cobros que viajan dentro de `POST /api/sales`.
 const createPaymentSchema = z
   .object({
-    amount: z.number().positive(),
-    bankName: z.string().optional(),
-    change: changeSchema.optional(),
-    changeDenominations: denominationsSchema.nullish(),
-    currency: z.enum(["USD", "VES"]).optional(),
-    method: paymentMethodSchema,
-    notes: z.string().optional(),
-    phone: z.string().optional(),
+    ...paymentLineFields,
     purchaseId: z.string().optional(),
-    receivedDenominations: denominationsSchema.nullish(),
-    referenceCode: z.string().optional(),
     saleId: z.string().optional(),
   })
   .refine((value) => Boolean(value.saleId) !== Boolean(value.purchaseId), {
     message: "El pago debe estar asociado a una venta o una compra.",
   })
   .superRefine((value, context) => {
-    if (value.method === "pago_movil") {
-      if (!value.bankName) {
-        context.addIssue({
-          code: "custom",
-          message: "El pago movil requiere banco.",
-          path: ["bankName"],
-        });
-      }
+    addPaymentLineIssues(value, context);
 
-      if (!value.phone) {
-        context.addIssue({
-          code: "custom",
-          message: "El pago movil requiere telefono.",
-          path: ["phone"],
-        });
-      }
-
-      if (!value.referenceCode || !/^\d{4}$/.test(value.referenceCode)) {
-        context.addIssue({
-          code: "custom",
-          message: "El pago movil requiere referencia de 4 digitos.",
-          path: ["referenceCode"],
-        });
-      }
-    }
-
-    if (value.method === "transferencia") {
-      if (!value.bankName) {
-        context.addIssue({
-          code: "custom",
-          message: "La transferencia requiere banco.",
-          path: ["bankName"],
-        });
-      }
-
-      if (!value.referenceCode) {
-        context.addIssue({
-          code: "custom",
-          message: "La transferencia requiere referencia.",
-          path: ["referenceCode"],
-        });
-      }
-    }
-
-    if (value.method === "efectivo_usd" && value.currency && value.currency !== "USD") {
+    if (value.change && value.change.amount > 0 && value.purchaseId) {
       context.addIssue({
         code: "custom",
-        message: "El efectivo USD debe registrarse con moneda USD.",
-        path: ["currency"],
+        message: "El vuelto solo aplica a pagos de venta.",
+        path: ["change"],
       });
-    }
-
-    if (value.change && value.change.amount > 0) {
-      if (!value.change.method) {
-        context.addIssue({
-          code: "custom",
-          message: "El vuelto requiere un metodo.",
-          path: ["change", "method"],
-        });
-      }
-
-      if (value.purchaseId) {
-        context.addIssue({
-          code: "custom",
-          message: "El vuelto solo aplica a pagos de venta.",
-          path: ["change"],
-        });
-      }
     }
   });
 

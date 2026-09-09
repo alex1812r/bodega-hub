@@ -153,6 +153,27 @@ select
   )
 union all
 select
+  'rpc create_sale_with_payments (20260909)',
+  exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'create_sale_with_payments'
+      and pg_get_function_identity_arguments(p.oid) like 'p_customer_id uuid, p_items jsonb, p_payments jsonb%'
+  )
+union all
+select
+  'sales.client_request_id + index (20260909)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'sales' and column_name = 'client_request_id'
+  ) and exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and indexname = 'sales_store_client_request_unique'
+  )
+union all
+select
   'purchases.subtotal_ves',
   exists (
     select 1 from information_schema.columns

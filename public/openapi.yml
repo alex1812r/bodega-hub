@@ -3489,13 +3489,27 @@ components:
     SaleCreateInput:
       type: object
       required: [customerId, items]
+      description: >-
+        Con `payments` la venta y sus cobros se registran en una sola transaccion
+        (RPC `create_sale_with_payments`): si un cobro falla no queda venta ni
+        descuento de stock. `clientRequestId` es la clave de idempotencia por
+        intento de cobro: repetir la peticion con la misma clave devuelve la venta
+        ya creada en vez de duplicarla.
       properties:
+        clientRequestId:
+          type: string
+          format: uuid
         customerId:
           type: string
         items:
           type: array
           items:
             $ref: "#/components/schemas/LineItemInput"
+        payments:
+          type: array
+          maxItems: 4
+          items:
+            $ref: "#/components/schemas/SalePaymentLineInput"
         discountRef:
           type: number
           minimum: 0
@@ -3506,6 +3520,46 @@ components:
           type: number
           minimum: 0
           exclusiveMinimum: true
+    SalePaymentLineInput:
+      type: object
+      required: [amount, method]
+      description: >-
+        Linea de cobro que viaja con la venta. Mismas reglas por metodo que
+        `POST /api/payments` (pago movil: banco, telefono y referencia de 4
+        digitos; transferencia: banco y referencia), sin `saleId`.
+      properties:
+        amount:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+        method:
+          $ref: "#/components/schemas/PaymentMethod"
+        currency:
+          type: string
+          enum: [USD, VES]
+        bankName:
+          type: string
+        phone:
+          type: string
+        referenceCode:
+          type: string
+        notes:
+          type: string
+        change:
+          type: object
+          description: Vuelto entregado por el excedente de esta linea.
+          properties:
+            amount:
+              type: number
+              minimum: 0
+            method:
+              $ref: "#/components/schemas/PaymentMethod"
+        receivedDenominations:
+          type: object
+          description: 'Desglose de billetes recibidos por moneda, p. ej. {"USD":{"20":1}}.'
+        changeDenominations:
+          type: object
+          description: Desglose de billetes entregados como vuelto.
     Purchase:
       type: object
       required: [id, purchaseNumber, supplierId, status, totalRef, totalVes, paidVes]

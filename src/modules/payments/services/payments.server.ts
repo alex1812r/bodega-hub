@@ -327,7 +327,9 @@ export async function getPaymentById(id: string, storeId: string) {
  * El vuelto es una salida, no un cobro: banco/telefono/referencia son opcionales
  * y se archivan en `notes` porque las columnas de la fila son las del cobro.
  */
-function buildPaymentNotes(input: PaymentInput) {
+export function buildPaymentNotes(
+  input: Pick<PaymentInput, "change" | "notes">,
+) {
   const change = input.change;
   const notes = input.notes?.trim();
 

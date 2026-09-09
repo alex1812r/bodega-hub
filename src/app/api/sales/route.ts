@@ -4,6 +4,7 @@ import { resolveDataSource } from "@/lib/api/dataSource";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
+import { salePaymentLineSchema } from "@/modules/payments/services/paymentSchemas";
 import {
   createSale as createSaleMock,
   listSales as listSalesMock,
@@ -14,6 +15,10 @@ import {
 } from "@/modules/sales/services/sales.server";
 
 const createSaleSchema = z.object({
+  // Clave de idempotencia por intento de cobro: con la misma clave el servidor
+  // devuelve la venta ya registrada en vez de crear otra (respuesta perdida,
+  // doble envio). Unica por tienda; opcional para clientes que no la manden.
+  clientRequestId: z.string().uuid().optional(),
   customerId: z.string().min(1),
   discountRef: z.number().min(0).default(0),
   exchangeRateId: z.string().uuid().optional(),
@@ -30,6 +35,10 @@ const createSaleSchema = z.object({
     )
     .min(1),
   notes: z.string().optional(),
+  // Cobros que se registran en la misma transaccion que la venta
+  // (`create_sale_with_payments`): si uno falla, no queda venta ni descuento de
+  // stock. Hasta 4 lineas, igual que el modal de cobro del POS.
+  payments: z.array(salePaymentLineSchema).max(4).optional(),
   // `create_sale` valida ademas que la tasa este dentro de +-5% de la tasa vigente de
   // la tienda (`exchange_rates`); esa comparacion necesita la base y vive en el RPC.
   refRateVes: z.number().positive().finite().optional(),

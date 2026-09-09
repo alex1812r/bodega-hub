@@ -297,7 +297,7 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 |------|----------|
 | `useSales` | GET `/api/sales` — `status`, `customerId`, `from`, `to` (día operativo Caracas) |
 | `useSale` | GET `/api/sales/[id]` |
-| `useCreateSale` | POST `/api/sales` → RPC `create_sale` |
+| `useCreateSale` | POST `/api/sales` → RPC `create_sale_with_payments` (con `payments[]` / `clientRequestId`) o `create_sale` |
 | `useCancelSale` | PATCH `/api/sales/[id]/cancel` |
 | `useReturnSale` | POST `/api/sales/[id]/return` |
 | `useSaleReceipt` | GET `/api/sales/[id]/receipt` |
@@ -308,7 +308,7 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 
 **Estados:** `borrador`, `pendiente_pago`, `pagada`, `cancelada`, `devuelta`.
 
-**Venta y cobro no son atómicos (blindaje sep-2026):** el POS hace `POST /api/sales` (RPC `create_sale`, una sola transacción: descuenta todos los ítems o no crea nada) y después uno o más `POST /api/payments`. Si un cobro falla, la venta ya existe y ya descargó inventario, así que el POS la anula al instante con `PATCH /api/sales/[id]/cancel` (devuelve el stock) y conserva el carrito para reintentar. Si la anulación falla porque algún pago sí llegó al servidor, vacía el carrito y ofrece **Ver venta** para completar el cobro desde el detalle, en vez de dejar que se cree una segunda venta. Un candado síncrono (`submitLockRef`) bloquea el doble clic mientras viaja la primera petición. Al vender, cancelar o devolver se invalida también la caché de `products` (el catálogo del POS se cachea 5 min; antes el cajero seguía viendo el stock previo y el carrito le dejaba pedir unidades que ya no había). Antecedente: 29-ago-2026, cinco ventas idénticas sin pago creadas en seis minutos por reintentos del cajero.
+**Venta y cobro en una sola transacción (patch `20260909-create-sale-with-payments.sql`):** el POS web manda los cobros dentro de `POST /api/sales` (`payments[]`, mismas reglas por método que `POST /api/payments`, esquema compartido en `src/modules/payments/services/paymentSchemas.ts`). El servidor llama al RPC `create_sale_with_payments`, que ejecuta `create_sale` y luego `register_payment` por línea dentro de la misma transacción: si un cobro falla (saldo, vuelto, caja cerrada…) Postgres revierte también la venta y el descuento de stock. Sin `payments` ni `clientRequestId` se sigue usando `create_sale` tal cual (app móvil y scripts cobran aparte). `clientRequestId` (uuid) es la clave de idempotencia por intento de cobro: se guarda en `sales.client_request_id` con índice único por tienda, y repetir la petición con la misma clave devuelve la venta ya creada. El POS la genera al procesar, la conserva mientras el carrito siga cargado y la descarta al vaciarlo. Un candado síncrono (`submitLockRef`) bloquea además el doble clic mientras viaja la petición. Al vender, cancelar o devolver se invalida también la caché de `products` (el catálogo del POS se cachea 5 min; antes el cajero seguía viendo el stock previo y el carrito le dejaba pedir unidades que ya no había). Antecedente: 29-ago-2026, cinco ventas idénticas sin pago creadas en seis minutos por reintentos del cajero cuando venta y cobro eran dos peticiones. **Antes de desplegar la app hay que aplicar el patch en la base**; `verify-patches.sql` lo comprueba.
 
 **Tablas:** `sales`, `sale_items`, `payments`, `stock_movements`.
 

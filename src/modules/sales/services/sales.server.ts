@@ -1,9 +1,10 @@
-import { ApiError } from "@/lib/api/apiError";
+import { ApiError, type ApiErrorCode } from "@/lib/api/apiError";
 import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { parsePagination, type PaginatedList } from "@/lib/api/pagination";
 import { getSupabaseErrorMessage, mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { mapBaseEntity, mapNullableString } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { buildPaymentNotes } from "@/modules/payments/services/payments.server";
 
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
@@ -193,13 +194,45 @@ function mapStockMovementRow(row: StockMovementRow) {
   };
 }
 
+/**
+ * SQLSTATE deliberados de `register_payment` (clase `PT`, ver
+ * `20260904-payment-guards.sql`). `create_sale_with_payments` los propaga tal
+ * cual cuando falla un cobro, asi que aqui se leen antes que los mensajes.
+ */
+const RPC_SQLSTATE_MAP: Record<string, { code: ApiErrorCode; status: number }> = {
+  PT400: { code: "BAD_REQUEST", status: 400 },
+  PT402: { code: "INSUFFICIENT_VAULT_BALANCE", status: 400 },
+  PT403: { code: "FORBIDDEN", status: 403 },
+  PT404: { code: "NOT_FOUND", status: 404 },
+  PT409: { code: "CONFLICT", status: 409 },
+};
+
+function getSupabaseErrorSqlState(error: unknown) {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+
+  return undefined;
+}
+
 function throwIfRpcError(error: unknown): void {
   if (!error) {
     return;
   }
 
   const message = getSupabaseErrorMessage(error);
-  const normalized = message.toLowerCase();
+  const mapped = RPC_SQLSTATE_MAP[getSupabaseErrorSqlState(error) ?? ""];
+
+  if (mapped) {
+    throw new ApiError(mapped.status, mapped.code, message);
+  }
+
+  // Sin acentos: los mensajes de `register_payment` vienen acentuados.
+  const normalized = message
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase();
 
   if (normalized.includes("no encontrad") || normalized.includes("not found")) {
     throw new ApiError(404, "NOT_FOUND", message);
@@ -224,7 +257,18 @@ function throwIfRpcError(error: unknown): void {
     normalized.includes("tasa ref/ves fuera de rango") ||
     normalized.includes("precio unitario") ||
     // cancel_sale: la venta todavia tiene pagos activos que hay que anular primero.
-    normalized.includes("pago(s) activo")
+    normalized.includes("pago(s) activo") ||
+    // register_payment dentro de create_sale_with_payments (reglas de cobro que
+    // todavia levantan P0001 en vez de un SQLSTATE PT).
+    normalized.includes("sesion de caja abierta") ||
+    normalized.includes("saldo pendiente") ||
+    normalized.includes("requiere") ||
+    normalized.includes("excede") ||
+    normalized.includes("vuelto") ||
+    normalized.includes("mayor a cero") ||
+    normalized.includes("no puede") ||
+    normalized.includes("solo aplica") ||
+    normalized.includes("desglose de billetes")
   ) {
     throw new ApiError(400, "BAD_REQUEST", message);
   }
@@ -317,9 +361,29 @@ export async function getSaleById(id: string, storeId: string) {
   };
 }
 
+/** Linea de cobro en el formato jsonb que consume `create_sale_with_payments`. */
+function mapCreateSalePayments(payments: NonNullable<SaleInput["payments"]>) {
+  return payments.map((payment) => {
+    const changeAmount = payment.change?.method ? Math.max(0, payment.change.amount) : 0;
+
+    return {
+      amount: payment.amount,
+      bank_name: payment.bankName ?? null,
+      change_amount: changeAmount,
+      change_denominations: changeAmount > 0 ? (payment.changeDenominations ?? null) : null,
+      change_method: changeAmount > 0 ? (payment.change?.method ?? null) : null,
+      method: payment.method,
+      notes: buildPaymentNotes(payment),
+      phone: payment.phone ?? null,
+      received_denominations: payment.receivedDenominations ?? null,
+      reference_code: payment.referenceCode ?? null,
+    };
+  });
+}
+
 export async function createSale(input: SaleInput, _storeId: string) {
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase.rpc("create_sale", {
+  const baseArgs = {
     p_customer_id: input.customerId,
     p_discount_ref: input.discountRef ?? 0,
     p_exchange_rate_id: input.exchangeRateId ?? null,
@@ -328,7 +392,20 @@ export async function createSale(input: SaleInput, _storeId: string) {
     p_notes: input.notes ?? null,
     p_ref_rate_ves: input.refRateVes ?? null,
     p_tax_ref: input.taxRef ?? 0,
-  });
+  };
+  const payments = input.payments ?? [];
+  const atomic = payments.length > 0 || Boolean(input.clientRequestId);
+
+  // Con cobros o clave de idempotencia se usa el RPC atomico: venta, stock y
+  // pagos quedan en una sola transaccion (patch 20260909). Sin ninguno de los dos
+  // se conserva `create_sale` tal cual para clientes que cobran aparte (app movil).
+  const { data, error } = atomic
+    ? await supabase.rpc("create_sale_with_payments", {
+        ...baseArgs,
+        p_client_request_id: input.clientRequestId ?? null,
+        p_payments: mapCreateSalePayments(payments),
+      })
+    : await supabase.rpc("create_sale", baseArgs);
 
   throwIfRpcError(error);
 
