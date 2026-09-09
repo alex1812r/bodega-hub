@@ -139,4 +139,45 @@ describe("sales hooks", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("invalidates the products catalog after selling, cancelling and returning", async () => {
+    // El POS cachea el catalogo 5 min: si la venta no invalida `products`, el
+    // cajero sigue viendo el stock anterior y puede intentar vender lo que ya no hay.
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ data: { id: "sale-new" } }, 201))
+      .mockResolvedValueOnce(jsonResponse({ data: { id: "sale-002" } }))
+      .mockResolvedValueOnce(
+        jsonResponse({ data: { sale: { id: "sale-002" }, stockMovements: [] } }),
+      );
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    }
+
+    const createSale = renderHook(() => useCreateSale(), { wrapper: Wrapper });
+    createSale.result.current.mutate({
+      customerId: "cont-customer",
+      items: [{ productId: "prod-drill", quantity: 1 }],
+      refRateVes: 510,
+    });
+    await waitFor(() => expect(createSale.result.current.isSuccess).toBe(true));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["products"] });
+
+    invalidateSpy.mockClear();
+    const cancelSale = renderHook(() => useCancelSale("sale-002"), { wrapper: Wrapper });
+    cancelSale.result.current.mutate("sale-002");
+    await waitFor(() => expect(cancelSale.result.current.isSuccess).toBe(true));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["products"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["inventory"] });
+
+    invalidateSpy.mockClear();
+    const returnSale = renderHook(() => useReturnSale("sale-002"), { wrapper: Wrapper });
+    returnSale.result.current.mutate("sale-002");
+    await waitFor(() => expect(returnSale.result.current.isSuccess).toBe(true));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["products"] });
+  });
 });

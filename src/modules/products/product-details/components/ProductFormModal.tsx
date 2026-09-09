@@ -116,7 +116,10 @@ export function ProductFormModal({
       barcode: normalizeBarcode(String(formData.get("barcode") ?? "")),
       categoryId: categoryId || undefined,
       currentCostRef: numberFromFormData(formData, "currentCostRef"),
-      currentStock: numberFromFormData(formData, "currentStock"),
+      // Solo al crear. En edicion el stock no viaja: el formulario mandaba el
+      // valor cargado al abrir y pisaba las ventas hechas mientras tanto, sin
+      // dejar movimiento. Las existencias se corrigen con un ajuste de inventario.
+      ...(isEdit ? {} : { currentStock: numberFromFormData(formData, "currentStock") }),
       minStock: numberFromFormData(formData, "minStock"),
       name: name.trim(),
       packConversion: shouldSendPackConversion
@@ -268,13 +271,24 @@ export function ProductFormModal({
           />
         </div>
         <div className="grid gap-4 md:grid-cols-2">
-          <Input
-            defaultValue={product?.currentStock}
-            label="Stock inicial"
-            min={0}
-            name="currentStock"
-            type="number"
-          />
+          {isEdit ? (
+            <Input
+              defaultValue={product?.currentStock}
+              disabled
+              helperText="Se corrige desde Inventario con un ajuste, para que quede registrado el movimiento."
+              label="Stock actual"
+              readOnly
+              type="number"
+            />
+          ) : (
+            <Input
+              defaultValue={product?.currentStock}
+              label="Stock inicial"
+              min={0}
+              name="currentStock"
+              type="number"
+            />
+          )}
           <Input
             defaultValue={product?.minStock}
             label="Stock minimo"

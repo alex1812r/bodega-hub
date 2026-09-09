@@ -178,11 +178,13 @@ Módulo: `src/modules/platform/`. Aislamiento ERP: `requireStorePermission` + `s
 | `categoryId` | sí | `category_id` |
 | `salePriceRef` | sí | `sale_price_ref` |
 | `currentCostRef` | sí | `current_cost_ref` |
-| `currentStock` | sí | `current_stock` |
+| `currentStock` | solo al crear (stock inicial); en edición se muestra bloqueado | `current_stock` |
 | `minStock` | sí | `min_stock` |
 | `description` | textarea UI | `description` (no siempre enviado) |
 | `imageUrl` | subida con recorte 4:3 | `image_url` |
 | `isActive` | desactivar listado | `is_active` |
+
+**El stock nunca se escribe por PATCH.** `PATCH /api/products/[id]` responde 400 si llega `currentStock`: el formulario de edición mandaba el valor cargado al abrir y pisaba las ventas hechas mientras tanto, sin dejar fila en `stock_movements`. Las existencias solo cambian por RPC con movimiento (`create_sale`, `receive_purchase`, `adjust_stock`, conversiones). Para corregir stock: Inventario → ajuste.
 
 ### Imagen de producto
 
@@ -305,6 +307,8 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 **UI POS (`/sales/create`):** exige caja abierta (`PosCashSessionGate`). Preselecciona el cliente sistema **Consumidor final** (`isPosDefault` / `contacts.is_pos_default`) para venta rápida; el vendedor puede cambiarlo. Grid de productos (`PosProductGrid` / `PosProductCard`) y carrito (`PosCartPanel` / `PosCartLine`) muestran precios en REF y equivalente VES por línea usando `useCurrentExchangeRate` → `rateVes` y `refToVes` (`src/shared/utils/currency.ts`). Cada línea del carrito: precio unitario REF + VES, total línea REF + VES; panel de totales incluye total VES cuando hay tasa vigente. Catálogo ordenado con stock (`currentStock > 0`) primero y sin stock al final; dentro de cada grupo, por nombre.
 
 **Estados:** `borrador`, `pendiente_pago`, `pagada`, `cancelada`, `devuelta`.
+
+**Venta y cobro no son atómicos (blindaje sep-2026):** el POS hace `POST /api/sales` (RPC `create_sale`, una sola transacción: descuenta todos los ítems o no crea nada) y después uno o más `POST /api/payments`. Si un cobro falla, la venta ya existe y ya descargó inventario, así que el POS la anula al instante con `PATCH /api/sales/[id]/cancel` (devuelve el stock) y conserva el carrito para reintentar. Si la anulación falla porque algún pago sí llegó al servidor, vacía el carrito y ofrece **Ver venta** para completar el cobro desde el detalle, en vez de dejar que se cree una segunda venta. Un candado síncrono (`submitLockRef`) bloquea el doble clic mientras viaja la primera petición. Al vender, cancelar o devolver se invalida también la caché de `products` (el catálogo del POS se cachea 5 min; antes el cajero seguía viendo el stock previo y el carrito le dejaba pedir unidades que ya no había). Antecedente: 29-ago-2026, cinco ventas idénticas sin pago creadas en seis minutos por reintentos del cajero.
 
 **Tablas:** `sales`, `sale_items`, `payments`, `stock_movements`.
 

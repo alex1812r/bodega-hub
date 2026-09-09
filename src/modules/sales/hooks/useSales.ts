@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
+import { productsQueryKeys } from "@/modules/products/hooks/useProducts";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
   ContactMock,
@@ -121,6 +122,9 @@ export function useCreateSale() {
       void queryClient.invalidateQueries({ queryKey: salesQueryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      // El catalogo del POS se cachea 5 min: sin esto el cajero seguia viendo el
+      // stock previo a la venta y el carrito le dejaba pedir unidades que ya no habia.
+      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["contacts"] });
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
     },
@@ -140,6 +144,9 @@ export function useCancelSale(id?: string) {
       queryClient.setQueryData(salesQueryKeys.detail(affectedSaleId), sale);
       void queryClient.invalidateQueries({ queryKey: salesQueryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      // Cancelar devuelve el stock: inventario y catalogo quedan obsoletos.
+      void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["contacts"] });
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
     },
@@ -160,6 +167,7 @@ export function useReturnSale(id?: string) {
       void queryClient.invalidateQueries({ queryKey: salesQueryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["contacts"] });
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
     },

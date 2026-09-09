@@ -3302,14 +3302,15 @@ components:
           minLength: 1
     ProductUpdateInput:
       type: object
+      description: >-
+        El stock no se edita por aqui: enviar `currentStock` responde 400. Las
+        existencias solo cambian con movimientos (ventas, compras y
+        `POST /api/inventory/adjustments`).
       properties:
         categoryId:
           type: string
         currentCostRef:
           type: number
-          minimum: 0
-        currentStock:
-          type: integer
           minimum: 0
         minStock:
           type: integer

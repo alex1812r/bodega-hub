@@ -87,7 +87,8 @@ function toProductUpdate(input: ProductInput) {
     ...(input.barcode !== undefined ? { barcode: normalizeBarcode(input.barcode) } : {}),
     ...(input.categoryId !== undefined ? { category_id: input.categoryId ?? null } : {}),
     ...(input.currentCostRef !== undefined ? { current_cost_ref: input.currentCostRef } : {}),
-    ...(input.currentStock !== undefined ? { current_stock: input.currentStock } : {}),
+    // `current_stock` nunca se escribe desde aqui: solo los RPC con movimiento
+    // (create_sale, adjust_stock, receive_purchase...) pueden moverlo.
     ...(input.imageUrl !== undefined ? { image_url: input.imageUrl } : {}),
     ...(input.isActive !== undefined ? { is_active: input.isActive } : {}),
     ...(input.minStock !== undefined ? { min_stock: input.minStock } : {}),

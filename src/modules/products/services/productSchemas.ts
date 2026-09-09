@@ -38,7 +38,15 @@ export const updateProductSchema = z.object({
   barcode: optionalNullableBarcodeSchema,
   categoryId: z.string().optional(),
   currentCostRef: z.number().min(0).optional(),
-  currentStock: z.number().int().min(0).optional(),
+  // El stock no se edita por PATCH: escribirlo directo pisaba las ventas hechas
+  // entre abrir y guardar el formulario y no dejaba fila en `stock_movements`.
+  // Se rechaza en vez de ignorarse para que ningun cliente crea que lo guardo.
+  currentStock: z
+    .never({
+      message:
+        "El stock no se edita desde el producto. Usa un ajuste de inventario (POST /api/inventory/adjustments).",
+    })
+    .optional(),
   imageUrl: optionalImageUrlSchema,
   isActive: z.boolean().optional(),
   minStock: z.number().int().min(0).optional(),

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
@@ -21,7 +22,7 @@ import {
 } from "@/shared/payments/paymentMethods";
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
-import { type SaleCreateInput, useCreateSale } from "../hooks/useSales";
+import { type SaleCreateInput, useCancelSale, useCreateSale } from "../hooks/useSales";
 import { PosCartPanel } from "./components/PosCartPanel";
 import { PosCashSessionGate } from "./components/PosCashSessionGate";
 import { PosCatalogToolbar } from "./components/PosCatalogToolbar";
@@ -69,9 +70,14 @@ function SaleCreatePosWorkspace() {
   const products = useAllProducts({ isActive: true }, posCatalogQueryOptions);
   const currentRate = useCurrentExchangeRate();
   const cashSession = useMyCashSession();
+  const router = useRouter();
   const createSale = useCreateSale();
   const createPayment = useCreatePayment();
+  const cancelSale = useCancelSale();
   const cart = usePosCart();
+  // Candado sincrono contra el doble envio: `isPending` tarda un render en
+  // reflejarse y en ese hueco un segundo clic ya habia disparado otra venta.
+  const submitLockRef = useRef(false);
   const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
   const enabledPaymentMethods =
     enabledPaymentMethodsQuery.data ?? DEFAULT_ENABLED_PAYMENT_METHODS;
@@ -91,6 +97,9 @@ function SaleCreatePosWorkspace() {
   const [categoryId, setCategoryId] = useState("");
   const [scanOpen, setScanOpen] = useState(false);
   const [formError, setFormError] = useState<string>();
+  // Venta que quedo registrada con pagos pero cuyo cobro no termino bien: se
+  // ofrece ir al detalle en vez de dejar que el cajero la vuelva a cobrar aqui.
+  const [orphanSale, setOrphanSale] = useState<CompletedSaleSummary | null>(null);
   const [completedSale, setCompletedSale] = useState<CompletedSaleSummary | null>(null);
 
   useEffect(() => {
@@ -149,7 +158,8 @@ function SaleCreatePosWorkspace() {
   const drawerRef = cashSession.data?.liveTotals?.cashRef ?? 0;
   const totalRef = cart.subtotalRef;
   const totalVes = rateVes ? roundMoney(refToVes(totalRef, rateVes)) : 0;
-  const isSubmitting = createSale.isPending || createPayment.isPending;
+  const isSubmitting =
+    createSale.isPending || createPayment.isPending || cancelSale.isPending;
 
   useEffect(() => {
     if (!customerId && defaultCustomerId) {
@@ -285,6 +295,7 @@ function SaleCreatePosWorkspace() {
 
   async function handleProcessSale() {
     setFormError(undefined);
+    setOrphanSale(null);
 
     if (!customerId) {
       setFormError("Selecciona un cliente antes de procesar la venta.");
@@ -331,53 +342,59 @@ function SaleCreatePosWorkspace() {
       refRateVes: rateVes || undefined,
     };
 
+    // Doble clic o Enter repetido mientras la primera peticion viaja: sin este
+    // candado se creaban dos ventas (y dos descuentos de stock) del mismo carrito.
+    if (submitLockRef.current) {
+      return;
+    }
+    submitLockRef.current = true;
+
+    let sale: Awaited<ReturnType<typeof createSale.mutateAsync>> | null = null;
+
     try {
-      const sale = await createSale.mutateAsync(input);
+      sale = await createSale.mutateAsync(input);
+    } catch (error) {
+      submitLockRef.current = false;
+      setFormError(error instanceof Error ? error.message : "No pudimos procesar la venta.");
+      return;
+    }
 
+    try {
       if (checkout) {
-        try {
-          for (const line of checkout.lines) {
-            // El vuelto viaja en la linea que genero el excedente: es la fila
-            // `payments` que lleva las columnas `change_*`.
-            const carriesChange =
-              checkout.change != null && checkout.changeCarrierLineId === line.id;
-            const changeMethod = checkout.change?.method;
+        for (const line of checkout.lines) {
+          // El vuelto viaja en la linea que genero el excedente: es la fila
+          // `payments` que lleva las columnas `change_*`.
+          const carriesChange =
+            checkout.change != null && checkout.changeCarrierLineId === line.id;
+          const changeMethod = checkout.change?.method;
 
-            await createPayment.mutateAsync({
-              amount: line.amount,
-              bankName: line.bankName?.trim() || undefined,
-              change:
-                carriesChange && checkout.change
-                  ? {
-                      amount: checkout.change.amount,
-                      method: checkout.change.method,
-                    }
-                  : undefined,
-              changeDenominations:
-                carriesChange && changeMethod
-                  ? toDenominationsPayload(
-                      getPaymentCurrency(changeMethod),
-                      checkout.change?.denominations,
-                    )
-                  : undefined,
-              currency: getPaymentCurrency(line.method),
-              method: line.method,
-              phone: line.phone?.trim() || undefined,
-              receivedDenominations: toDenominationsPayload(
-                getPaymentCurrency(line.method),
-                line.denominations,
-              ),
-              referenceCode: line.referenceCode?.trim() || undefined,
-              saleId: sale.id,
-            });
-          }
-        } catch (paymentError) {
-          setFormError(
-            paymentError instanceof Error
-              ? `Venta ${sale.invoiceNumber} creada, pero un pago fallo: ${paymentError.message}`
-              : `Venta ${sale.invoiceNumber} creada, pero no se completaron todos los pagos.`,
-          );
-          return;
+          await createPayment.mutateAsync({
+            amount: line.amount,
+            bankName: line.bankName?.trim() || undefined,
+            change:
+              carriesChange && checkout.change
+                ? {
+                    amount: checkout.change.amount,
+                    method: checkout.change.method,
+                  }
+                : undefined,
+            changeDenominations:
+              carriesChange && changeMethod
+                ? toDenominationsPayload(
+                    getPaymentCurrency(changeMethod),
+                    checkout.change?.denominations,
+                  )
+                : undefined,
+            currency: getPaymentCurrency(line.method),
+            method: line.method,
+            phone: line.phone?.trim() || undefined,
+            receivedDenominations: toDenominationsPayload(
+              getPaymentCurrency(line.method),
+              line.denominations,
+            ),
+            referenceCode: line.referenceCode?.trim() || undefined,
+            saleId: sale.id,
+          });
         }
       } else if (paymentMethod) {
         const paysInUsd = paymentMethod === "efectivo_usd";
@@ -394,15 +411,47 @@ function SaleCreatePosWorkspace() {
           });
         }
       }
+    } catch (paymentError) {
+      await rollbackSaleAfterPaymentFailure(sale, paymentError);
+      submitLockRef.current = false;
+      return;
+    }
 
+    resetAfterSuccessfulSale();
+    setCompletedSale({
+      id: sale.id,
+      invoiceNumber: sale.invoiceNumber,
+    });
+    createSale.reset();
+    submitLockRef.current = false;
+  }
+
+  /**
+   * La venta ya existe y descargo inventario cuando el cobro falla. Antes se
+   * dejaba viva en `pendiente_pago` con el carrito intacto y el boton habilitado,
+   * asi que el cajero reintentaba y creaba otra venta (y otro descuento). Ahora se
+   * anula de inmediato para devolver el stock; si no se puede anular es porque
+   * algun pago si llego al servidor, y entonces se manda al detalle en vez de
+   * permitir un segundo intento a ciegas.
+   */
+  async function rollbackSaleAfterPaymentFailure(
+    sale: { id: string; invoiceNumber: string },
+    paymentError: unknown,
+  ) {
+    const reason =
+      paymentError instanceof Error ? paymentError.message : "no se completo el cobro";
+
+    try {
+      await cancelSale.mutateAsync(sale.id);
+      setFormError(
+        `No se pudo cobrar (${reason}). La venta ${sale.invoiceNumber} se anulo y el stock volvio al inventario; el carrito sigue cargado para volver a intentar.`,
+      );
+    } catch {
       resetAfterSuccessfulSale();
-      setCompletedSale({
-        id: sale.id,
-        invoiceNumber: sale.invoiceNumber,
-      });
-      createSale.reset();
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : "No pudimos procesar la venta.");
+      setOrphanSale(sale);
+      setFormError(
+        `No se pudo cobrar (${reason}), pero la venta ${sale.invoiceNumber} ya tiene al menos un pago registrado y no se puede anular desde aqui. Revisa o completa el cobro desde el detalle de la venta antes de vender de nuevo.`,
+      );
     }
   }
 
@@ -420,7 +469,12 @@ function SaleCreatePosWorkspace() {
 
       {formError ? (
         <div className="shrink-0 px-4 pt-4">
-          <ErrorState description={formError} title="Revisa la venta" />
+          <ErrorState
+            actionLabel="Ver venta"
+            description={formError}
+            onRetry={orphanSale ? () => router.push(`/sales/${orphanSale.id}`) : undefined}
+            title="Revisa la venta"
+          />
         </div>
       ) : null}
 

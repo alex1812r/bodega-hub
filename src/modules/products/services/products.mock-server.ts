@@ -253,7 +253,7 @@ export function updateProduct(id: string, input: ProductInput, storeId: string) 
   if (input.barcode !== undefined) product.barcode = normalizeBarcode(input.barcode);
   if (input.categoryId !== undefined) product.categoryId = input.categoryId;
   if (input.currentCostRef !== undefined) product.currentCostRef = input.currentCostRef;
-  if (input.currentStock !== undefined) product.currentStock = input.currentStock;
+  // El stock solo cambia por movimientos (ventas, ajustes, compras), nunca por PATCH.
   if (input.imageUrl !== undefined) product.imageUrl = input.imageUrl ?? undefined;
   if (input.isActive !== undefined) product.isActive = input.isActive;
   if (input.minStock !== undefined) product.minStock = input.minStock;
