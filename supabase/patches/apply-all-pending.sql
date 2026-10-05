@@ -150,8 +150,11 @@ notify pgrst, 'reload schema';
 -- -----------------------------------------------------------------------------
 -- 20260716 — multitienda (stores + store_id + superadmin)
 -- -----------------------------------------------------------------------------
--- Ejecutar por separado el archivo completo:
---   supabase/patches/20260716-multi-store.sql
+-- Ejecutar por separado, en este orden (cada uno en su propio Run):
+--   1) supabase/patches/20260716a-user-role-superadmin.sql  (enum; va ANTES
+--      aunque el sufijo "a" lo ordene despues por nombre)
+--   2) supabase/patches/20260716-multi-store.sql
+--   3) supabase/patches/20260716b-multi-store-views.sql
 -- (demasiado largo para incrustar aqui; el SQL Editor de Supabase no soporta \i)
 
 -- -----------------------------------------------------------------------------
