@@ -9,3 +9,5 @@ This version has breaking changes — APIs, conventions, and file structure may 
 Índice y catálogo maestro de módulos: [`docs/README.md`](docs/README.md) y [`docs/modules-catalog.md`](docs/modules-catalog.md).
 
 Antes de modificar caja, baúl, pagos o cierres, leer [`docs/cuadre-baul.md`](docs/cuadre-baul.md): contiene el diagnóstico vigente del descuadre de efectivo y el plan de arreglo. No añadir más parches one-shot de backfill al baúl sin revisarlo.
+
+Para ejecutar un plan de `docs/agent-prompts/*-gtm.md` en modo equipo (gerente + supervisor + coders + fixer + caos + QA), seguir [`docs/agent-prompts/equipo.md`](docs/agent-prompts/equipo.md); los roles están en `.claude/agents/`.
