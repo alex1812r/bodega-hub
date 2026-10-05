@@ -235,6 +235,87 @@ describe("sales.server", () => {
     expect(result.status).toBe("pagada");
   });
 
+  it("falls back to create_sale + register_payment when the atomic RPC is missing", async () => {
+    const rpc = jest
+      .fn()
+      .mockResolvedValueOnce({
+        data: null,
+        error: {
+          code: "PGRST202",
+          message:
+            "Could not find the function public.create_sale_with_payments(p_client_request_id, ...) in the schema cache",
+        },
+      })
+      .mockResolvedValueOnce({ data: saleRow, error: null })
+      .mockResolvedValueOnce({ data: { id: "pay-1", sale_id: saleRow.id }, error: null });
+    const from = jest.fn(() => ({
+      select: jest.fn(() => ({
+        eq: jest.fn(() => ({
+          maybeSingle: jest
+            .fn()
+            .mockResolvedValue({ data: { ...saleRow, status: "pagada" }, error: null }),
+        })),
+      })),
+    }));
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from, rpc });
+
+    const result = await createSale(
+      {
+        clientRequestId: "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7",
+        customerId: saleRow.customer_id,
+        items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+        payments: [{ amount: 15, currency: "USD", method: "efectivo_usd" }],
+        refRateVes: 510,
+      },
+      DEFAULT_STORE_ID,
+    );
+
+    expect(rpc.mock.calls.map((call) => call[0])).toEqual([
+      "create_sale_with_payments",
+      "create_sale",
+      "register_payment",
+    ]);
+    expect(rpc.mock.calls[2][1]).toMatchObject({ p_sale_id: saleRow.id, p_amount: 15 });
+    expect(result.status).toBe("pagada");
+  });
+
+  it("cancels the sale when a fallback payment fails", async () => {
+    const rpc = jest
+      .fn()
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: "42883", message: "function public.create_sale_with_payments does not exist" },
+      })
+      .mockResolvedValueOnce({ data: saleRow, error: null })
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: "PT400", message: "El pago excede el saldo pendiente de la venta" },
+      })
+      .mockResolvedValueOnce({ data: { ...saleRow, status: "cancelada" }, error: null });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+
+    await expect(
+      createSale(
+        {
+          customerId: saleRow.customer_id,
+          items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+          payments: [{ amount: 999, currency: "USD", method: "efectivo_usd" }],
+          refRateVes: 510,
+        },
+        DEFAULT_STORE_ID,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
+
+    expect(rpc.mock.calls.map((call) => call[0])).toEqual([
+      "create_sale_with_payments",
+      "create_sale",
+      "register_payment",
+      "cancel_sale",
+    ]);
+  });
+
   it("keeps plain create_sale for callers without payments or client request id", async () => {
     const rpc = jest.fn().mockResolvedValue({ data: saleRow, error: null });
 

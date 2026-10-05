@@ -4,7 +4,7 @@ import { parsePagination, type PaginatedList } from "@/lib/api/pagination";
 import { getSupabaseErrorMessage, mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { mapBaseEntity, mapNullableString } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
-import { buildPaymentNotes } from "@/modules/payments/services/payments.server";
+import { buildPaymentNotes, createPayment } from "@/modules/payments/services/payments.server";
 
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
@@ -407,6 +407,13 @@ export async function createSale(input: SaleInput, _storeId: string) {
       })
     : await supabase.rpc("create_sale", baseArgs);
 
+  if (atomic && isMissingRpcError(error, "create_sale_with_payments")) {
+    // La base todavia no tiene el patch 20260909. Se cobra en dos pasos como
+    // antes para no tumbar el POS, deshaciendo la venta si un cobro falla.
+    // Sin clave de idempotencia en este camino: es el comportamiento previo.
+    return createSaleThenPayments(supabase, baseArgs, payments, _storeId);
+  }
+
   throwIfRpcError(error);
 
   if (!data) {
@@ -414,6 +421,57 @@ export async function createSale(input: SaleInput, _storeId: string) {
   }
 
   return mapSaleRow(data as SaleRow);
+}
+
+/** `42883 undefined_function`: PostgREST responde asi cuando el RPC no existe. */
+function isMissingRpcError(error: unknown, rpcName: string) {
+  if (!error) {
+    return false;
+  }
+
+  const message = getSupabaseErrorMessage(error).toLowerCase();
+  const code = (error as { code?: unknown }).code;
+
+  return (
+    (code === "42883" || code === "PGRST202" || message.includes("does not exist")) &&
+    message.includes(rpcName)
+  );
+}
+
+async function createSaleThenPayments(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  baseArgs: Record<string, unknown>,
+  payments: NonNullable<SaleInput["payments"]>,
+  storeId: string,
+) {
+  const { data, error } = await supabase.rpc("create_sale", baseArgs);
+
+  throwIfRpcError(error);
+
+  if (!data) {
+    throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear la venta.");
+  }
+
+  const sale = data as SaleRow;
+
+  try {
+    for (const payment of payments) {
+      await createPayment({ ...payment, saleId: sale.id }, storeId);
+    }
+  } catch (paymentError) {
+    // La venta ya descargo inventario: se anula para devolverlo. Si la anulacion
+    // tambien falla (algun cobro si entro), se propaga el error original igual.
+    await supabase.rpc("cancel_sale", { p_sale_id: sale.id });
+    throw paymentError;
+  }
+
+  const { data: fresh } = await supabase
+    .from("sales")
+    .select("*")
+    .eq("id", sale.id)
+    .maybeSingle<SaleRow>();
+
+  return mapSaleRow(fresh ?? sale);
 }
 
 export async function updateSale(id: string, input: SaleUpdateInput, storeId: string) {
