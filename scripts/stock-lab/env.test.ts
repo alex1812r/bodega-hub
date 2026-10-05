@@ -9,6 +9,13 @@ import {
   loadStockLabEnv,
   parseEnvFile,
 } from "./env";
+import { STOCK_LAB_PORTS } from "./pipeline";
+
+function stockLabPort(section: string, key: string): number {
+  const entry = STOCK_LAB_PORTS.find(([s, k]) => s === section && k === key);
+  if (!entry) throw new Error(`STOCK_LAB_PORTS no define ${section}.${key}`);
+  return entry[2];
+}
 
 describe("parseEnvFile", () => {
   it("ignora comentarios y líneas vacías", () => {
@@ -69,7 +76,8 @@ describe("loadStockLabEnv", () => {
 
   it("sin rootDir usa la raíz del repo y carga el example versionado", () => {
     const env = loadStockLabEnv();
-    expect(env.NEXT_PUBLIC_SUPABASE_URL).toBe("http://127.0.0.1:54321");
+    expect(env.NEXT_PUBLIC_SUPABASE_URL).toBe(`http://127.0.0.1:${stockLabPort("api", "port")}`);
+    expect(env.STOCK_LAB_DB_URL).toContain(`127.0.0.1:${stockLabPort("db", "port")}`);
     expect(env.STOCK_TEST_ALLOW_WRITES_HOST).toBe("127.0.0.1");
     expect(env.API_DATA_SOURCE).toBe("supabase");
     expect(env.ALLOW_DEMO_AUTH).toBe("false");
