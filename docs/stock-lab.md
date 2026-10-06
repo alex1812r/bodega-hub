@@ -230,6 +230,52 @@ Con el culpable localizado, busca en `events.jsonl` por `response_id` o `ts`
 y en `agents/<agente>.log` el contexto de esa operación. Si la tabla está
 vacía, la suma esperada coincide con los movimientos y la cadena es válida.
 
+## Esperados de los runners de escenarios y caos
+
+`npm run stock-lab:scenarios -- --suite hypotheses|oneshots|serial --run <id>`
+y `npm run stock-lab:chaos -- --all --run <id>` (sin `--all` ni `--case` el
+runner de caos solo imprime la ayuda). Veredictos: `pass`, `fail` (bug
+reproducido), `finding` (el stock queda bien, pero hay una carencia), `error`
+(no se ejecutó), `skip`. Esperados que no son evidentes:
+
+- **Devoluciones por ajuste** (`POST /api/inventory/adjustments` con
+  `devolucion_cliente` / `devolucion_proveedor`): sin `saleId` / `purchaseId`
+  es 400 y cero movimientos. Las celdas `*.sale_return_partial` y
+  `*.purchase_return_partial` de la suite serial y
+  `os.20260830b_remove.fix_by_api` comprueban ese rechazo y después devuelven
+  por el camino ligado, verificando el tope (vendido/recibido − ya devuelto:
+  pasarse es 409, el resto exacto pasa, una unidad más es 409).
+- **Doble envío de compra, ajuste y conversión**: `h08.dg5_double_submit` manda
+  la MISMA `clientRequestId` en los dos POST y exige una sola operación (mismo
+  id, un movimiento). `h08.dg5_double_submit_no_key` repite el envío sin clave:
+  la clave es opcional por contrato en esos tres endpoints, así que el
+  duplicado sale como `finding` documentado, no como `fail`.
+- **Réplicas de one-shots con residuo** (`os.20260821.sql_replica`,
+  `os.20260830c.sql_replica`): el parche deja residuo por construcción. El
+  esperado es `stock_reconciliation` = 0 y que las vistas v2 detecten
+  exactamente ese residuo (821: 3 filas de `stock_chain_breaks`; 830c: una
+  `missing_document_line` y una `reversal_on_live_document`). Eso es `pass`
+  («el oráculo v2 detecta el residuo del one-shot»); cualquier otra fila en
+  cualquier vista es `fail`. El resto de réplicas sigue exigiendo las 9 vistas
+  en 0.
+- **`h06.dg7_deadlock`**: 20 pares de ventas cruzadas [A,B] / [B,A] por HTTP en
+  paralelo. Cada respuesta debe ser 2xx o un rechazo de negocio; un 40P01
+  (también como el 409 reintentable al que lo traduce el BFF) o un 5xx es
+  `fail`. No se encadenan dos `create_sale` en una transacción SQL: el producto
+  ejecuta una RPC por transacción.
+- **Caos 9.8** (respuesta perdida tras el commit): en las dos variantes
+  `GET /api/sales/by-request/<clave original>` debe devolver la venta
+  confirmada (es lo que consulta el POS antes de dejar reintentar).
+  `9.8.same_key_retry` exige además que el reintento con esa clave devuelva la
+  misma venta. `9.8.new_key_retry` es informativo: un reintento a ciegas con
+  clave nueva está fuera de contrato (el servidor no puede distinguirlo de una
+  venta nueva); el duplicado coherente se anota en el detalle y no cuenta como
+  `finding`.
+- **Reloj del contenedor lab**: retrocede ~0,7 s cada ~29 s, así que
+  `created_at` puede invertir dos movimientos seguidos. Los runners ordenan
+  por `stock_movements.seq`; las ventanas por tiempo de `summary.ts` llevan
+  2 s de tolerancia. No ordenes por `created_at` en un caso nuevo.
+
 ## BFF en modo producción
 
 `npm run stock-lab:start` (= `npx tsx scripts/stock-lab/dev.ts --start`) hace
