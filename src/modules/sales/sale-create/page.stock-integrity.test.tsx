@@ -16,6 +16,7 @@ import {
 } from "@/shared/payments/paymentMethods";
 
 import { SaleCreatePage } from "./page";
+import { saleAttemptStorageKey } from "./utils/saleAttempt";
 
 type SalePostBody = {
   clientRequestId?: string;
@@ -116,6 +117,8 @@ function networkDown(): Promise<Response> {
 
 /** BFF simulado por URL. Los cobros y las búsquedas por código los decide cada test. */
 function mountBackend(handlers: {
+  /** Quien abre el POS; por defecto el vendedor de la tienda `store-1`. */
+  identity?: { storeId: string; userId: string };
   /** Consulta por clave; por defecto el servidor responde 404 (no hay venta). */
   onLookup?: (attempt: number) => Promise<Response>;
   onSalePost: (attempt: number) => Promise<Response>;
@@ -125,6 +128,7 @@ function mountBackend(handlers: {
   const salePosts: SalePostBody[] = [];
   const scanRequests: string[] = [];
   const unknownRequests: string[] = [];
+  const identity = handlers.identity ?? { storeId: "store-1", userId: REGISTER.assignedUserId };
 
   const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), "http://localhost");
@@ -174,8 +178,8 @@ function mountBackend(handlers: {
             permissions: [],
             role: "vendedor",
             roles: ["vendedor"],
-            storeId: "store-1",
-            user: { email: "vendedor@example.com", id: "user-stk413", name: "Vendedor" },
+            storeId: identity.storeId,
+            user: { email: "vendedor@example.com", id: identity.userId, name: "Vendedor" },
           },
         });
       case "GET /api/contacts":
@@ -514,6 +518,299 @@ describe("C3 · respuesta perdida al cobrar en el POS", () => {
     expect(third?.clientRequestId).not.toBe(first?.clientRequestId);
     expect(backend.lookupRequests).toEqual([]);
     expect(backend.unknownRequests).toEqual([]);
+  });
+});
+
+/**
+ * STK-605 · hueco de C3: el intento sin confirmar vivia solo en `sessionStorage`
+ * (por pestaña). «Pestaña B» = montaje nuevo con `sessionStorage` vacio y el
+ * `localStorage` (compartido entre pestañas del mismo navegador) conservado.
+ */
+describe("C3 · cobro sin confirmar visto desde otra pestaña", () => {
+  const SHARED_KEY = saleAttemptStorageKey({
+    registerId: REGISTER.id,
+    storeId: "store-1",
+    userId: REGISTER.assignedUserId,
+  });
+
+  /** Pestaña A: cobra, la respuesta se pierde y la consulta por clave tampoco responde. */
+  async function loseResponseInTabA(backend: ReturnType<typeof mountBackend>) {
+    const tabA = mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+    await waitFor(() => expect(visibleAlerts()).toMatch(/pudo haberse registrado/i));
+    expect(backend.salePosts).toHaveLength(1);
+    tabA.unmount();
+  }
+
+  function openOtherTab() {
+    window.sessionStorage.clear();
+    return mountPos();
+  }
+
+  // Causa: `saleAttempt.ts` leia y escribia solo `window.sessionStorage`; otra pestaña
+  // no veia el intento, no consultaba por clave y estrenaba clave → 2 ventas identicas.
+  it("otra pestaña avisa del cobro sin confirmar y, si la venta existe, no envia otro POST", async () => {
+    const backend = mountBackend({
+      onLookup: async (attempt) => (attempt === 1 ? networkDown() : lookupFound()),
+      onSalePost: async (attempt) => (attempt === 1 ? networkDown() : saleResponse(attempt)),
+    });
+    await loseResponseInTabA(backend);
+
+    openOtherTab();
+    const chargeButton = await prepareCartReadyToCharge();
+    // Mismo aviso que tras una recarga, nada mas entrar.
+    expect(visibleAlerts()).toMatch(/pudo haberse registrado/i);
+    expect(screen.getByRole("button", { name: "Verificar" })).toBeEnabled();
+
+    fireEvent.click(chargeButton);
+    await waitFor(() => expect(visibleAlerts()).toMatch(/si quedo registrado como venta V-STK509-1/));
+    await flush();
+
+    // Causa: un solo POST; la segunda consulta fue por la clave del intento de la pestaña A.
+    expect(backend.salePosts).toHaveLength(1);
+    expect(backend.lookupRequests).toEqual([
+      backend.salePosts[0]?.clientRequestId,
+      backend.salePosts[0]?.clientRequestId,
+    ]);
+    expect(backend.unknownRequests).toEqual([]);
+  });
+
+  it("otra pestaña sin poder consultar no cobra a ciegas; con 404 reutiliza la misma clave", async () => {
+    let lookupMode: "absent" | "down" = "down";
+    const backend = mountBackend({
+      onLookup: async () => (lookupMode === "down" ? networkDown() : lookupNotFound()),
+      onSalePost: async (attempt) => (attempt === 1 ? networkDown() : saleResponse(attempt)),
+    });
+    await loseResponseInTabA(backend);
+
+    openOtherTab();
+    const chargeButton = await prepareCartReadyToCharge();
+    fireEvent.click(chargeButton);
+    await waitFor(() => expect(backend.lookupRequests).toHaveLength(2));
+    await flush();
+    expect(visibleAlerts()).toMatch(/pudo haberse registrado/i);
+    expect(backend.salePosts).toHaveLength(1);
+
+    lookupMode = "absent";
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+    expect(backend.salePosts).toHaveLength(2);
+    expect(backend.salePosts[1]?.clientRequestId).toBe(backend.salePosts[0]?.clientRequestId);
+    expect(backend.unknownRequests).toEqual([]);
+  });
+
+  // Dos pestañas pueden dejar cada una su cobro sin confirmar: se resuelven todos.
+  it("con dos cobros sin confirmar de otras pestañas consulta ambos antes de enviar", async () => {
+    const pending = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"];
+    window.localStorage.setItem(
+      SHARED_KEY,
+      JSON.stringify(pending.map((clientRequestId) => ({ clientRequestId, sent: ["x"], unresolved: true }))),
+    );
+    const backend = mountBackend({
+      onLookup: async (attempt) => (attempt === 1 ? lookupNotFound() : lookupFound()),
+      onSalePost: async (attempt) => saleResponse(attempt),
+    });
+
+    mountPos();
+    const chargeButton = await prepareCartReadyToCharge();
+    expect(visibleAlerts()).toMatch(/pudo haberse registrado/i);
+    fireEvent.click(chargeButton);
+    await waitFor(() => expect(visibleAlerts()).toMatch(/V-STK509-1/));
+    await flush();
+
+    expect(backend.lookupRequests).toEqual(pending);
+    expect(backend.salePosts).toEqual([]);
+    expect(window.localStorage.getItem(SHARED_KEY)).toBeNull();
+  });
+
+  // Cuidado 1: lo compartido es el intento ENVIADO y sin confirmar, no el carrito en
+  // edicion ni un intento ya resuelto (aqui, rechazado con un 4xx definitivo).
+  it("un intento ya resuelto en una pestaña no afecta al carrito de otra", async () => {
+    const tabABackend = mountBackend({
+      onSalePost: async () =>
+        jsonResponse({ error: { code: "BAD_REQUEST", message: "Stock insuficiente." } }, 400),
+    });
+    const tabA = mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+    await waitFor(() => expect(visibleAlerts()).toMatch(/stock insuficiente/i));
+    tabA.unmount();
+
+    const tabBBackend = mountBackend({ onSalePost: async (attempt) => saleResponse(attempt) });
+    openOtherTab();
+    const chargeButton = await prepareCartReadyToCharge();
+    expect(visibleAlerts()).toBe("");
+    expect(screen.queryByRole("button", { name: "Verificar" })).toBeNull();
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+
+    expect(tabBBackend.salePosts).toHaveLength(1);
+    expect(tabBBackend.salePosts[0]?.clientRequestId).toEqual(expect.any(String));
+    expect(tabBBackend.salePosts[0]?.clientRequestId).not.toBe(
+      tabABackend.salePosts[0]?.clientRequestId,
+    );
+    expect(tabABackend.lookupRequests).toEqual([]);
+    expect(tabBBackend.lookupRequests).toEqual([]);
+  });
+
+  // Cuidado 1: el intento propio de la pestaña (resuelto) no se pierde por compartir.
+  it("la misma pestaña conserva su clave tras un rechazo aunque exista almacenamiento compartido", async () => {
+    const backend = mountBackend({
+      onSalePost: async (attempt) =>
+        attempt === 1
+          ? jsonResponse({ error: { code: "BAD_REQUEST", message: "Stock insuficiente." } }, 400)
+          : saleResponse(attempt),
+    });
+
+    const firstLoad = mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+    await waitFor(() => expect(visibleAlerts()).toMatch(/stock insuficiente/i));
+    expect(window.localStorage.getItem(SHARED_KEY)).toBeNull();
+    firstLoad.unmount();
+
+    mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+    await screen.findByText("Venta registrada");
+    expect(backend.salePosts[1]?.clientRequestId).toBe(backend.salePosts[0]?.clientRequestId);
+    expect(backend.lookupRequests).toEqual([]);
+  });
+
+  // Cuidado 2: confirmado el intento (exito o recuperacion), ninguna pestaña lo vuelve a ver.
+  it("tras un cobro confirmado no queda intento compartido para las demas pestañas", async () => {
+    const backend = mountBackend({ onSalePost: async (attempt) => saleResponse(attempt) });
+
+    const tabA = mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+    await screen.findByText("Venta registrada");
+    expect(window.localStorage.getItem(SHARED_KEY)).toBeNull();
+    tabA.unmount();
+
+    openOtherTab();
+    const chargeButton = await prepareCartReadyToCharge();
+    expect(visibleAlerts()).toBe("");
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+
+    expect(backend.salePosts).toHaveLength(2);
+    expect(backend.salePosts[1]?.clientRequestId).not.toBe(backend.salePosts[0]?.clientRequestId);
+    expect(backend.lookupRequests).toEqual([]);
+  });
+
+  it("recuperado el intento en una pestaña, una tercera ya no lo ve", async () => {
+    const backend = mountBackend({
+      onLookup: async (attempt) => (attempt === 1 ? networkDown() : lookupFound()),
+      onSalePost: async (attempt) => (attempt === 1 ? networkDown() : saleResponse(attempt)),
+    });
+    await loseResponseInTabA(backend);
+    // Montaje: el intento sin confirmar esta en el almacenamiento compartido.
+    expect(window.localStorage.getItem(SHARED_KEY)).toContain(
+      String(backend.salePosts[0]?.clientRequestId),
+    );
+
+    const tabB = openOtherTab();
+    fireEvent.click(await screen.findByRole("button", { name: "Verificar" }));
+    await waitFor(() => expect(visibleAlerts()).toMatch(/V-STK509-1/));
+    expect(window.localStorage.getItem(SHARED_KEY)).toBeNull();
+    tabB.unmount();
+
+    openOtherTab();
+    const chargeButton = await prepareCartReadyToCharge();
+    expect(visibleAlerts()).toBe("");
+    expect(screen.queryByRole("button", { name: "Verificar" })).toBeNull();
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+
+    expect(backend.salePosts).toHaveLength(2);
+    expect(backend.salePosts[1]?.clientRequestId).not.toBe(backend.salePosts[0]?.clientRequestId);
+    expect(backend.lookupRequests).toHaveLength(2);
+  });
+
+  // Cuidado 3.
+  it.each([
+    ["otro usuario", { storeId: "store-1", userId: "user-otro" }],
+    ["otra tienda", { storeId: "store-2", userId: REGISTER.assignedUserId }],
+  ])("el intento sin confirmar no se muestra a %s", async (_label, identity) => {
+    const backend = mountBackend({ onLookup: networkDown, onSalePost: networkDown });
+    await loseResponseInTabA(backend);
+
+    const other = mountBackend({ identity, onSalePost: async (attempt) => saleResponse(attempt) });
+    openOtherTab();
+    const chargeButton = await prepareCartReadyToCharge();
+    expect(visibleAlerts()).toBe("");
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+
+    expect(other.salePosts).toHaveLength(1);
+    expect(other.salePosts[0]?.clientRequestId).not.toBe(backend.salePosts[0]?.clientRequestId);
+    expect(other.lookupRequests).toEqual([]);
+    // El intento del primer usuario sigue esperando a su dueño.
+    expect(window.localStorage.getItem(SHARED_KEY)).toContain(
+      String(backend.salePosts[0]?.clientRequestId),
+    );
+  });
+
+  // Cuidado 4.
+  it.each([
+    ["JSON corrupto", "{no-es-json"],
+    ["forma inesperada", JSON.stringify({ clientRequestId: 7 })],
+    ["lista con basura", JSON.stringify([null, { clientRequestId: "", sent: [], unresolved: true }])],
+  ])("ignora un almacenamiento compartido con %s", async (_label, raw) => {
+    window.localStorage.setItem(SHARED_KEY, raw);
+    const backend = mountBackend({ onSalePost: async (attempt) => saleResponse(attempt) });
+
+    mountPos();
+    const chargeButton = await prepareCartReadyToCharge();
+    expect(visibleAlerts()).toBe("");
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+
+    expect(backend.salePosts).toHaveLength(1);
+    expect(backend.lookupRequests).toEqual([]);
+    expect(backend.unknownRequests).toEqual([]);
+  });
+
+  it("sin localStorage disponible conserva la recuperacion por pestaña (recarga)", async () => {
+    const realGetItem = Storage.prototype.getItem;
+    const realSetItem = Storage.prototype.setItem;
+    const realRemoveItem = Storage.prototype.removeItem;
+    const denied = () => new DOMException("denegado", "SecurityError");
+    jest.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, key) {
+      if (this === window.localStorage) throw denied();
+      return realGetItem.call(this, key);
+    });
+    jest.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (this === window.localStorage) throw denied();
+      realSetItem.call(this, key, value);
+    });
+    jest.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key) {
+      if (this === window.localStorage) throw denied();
+      realRemoveItem.call(this, key);
+    });
+
+    try {
+      const backend = mountBackend({
+        onLookup: async (attempt) => (attempt === 1 ? networkDown() : lookupNotFound()),
+        onSalePost: async (attempt) => (attempt === 1 ? networkDown() : saleResponse(attempt)),
+      });
+
+      const firstLoad = mountPos();
+      fireEvent.click(await prepareCartReadyToCharge());
+      await waitFor(() => expect(visibleAlerts()).toMatch(/pudo haberse registrado/i));
+      firstLoad.unmount();
+
+      // Misma pestaña (sessionStorage conservado): sigue el flujo de siempre.
+      mountPos();
+      const chargeButton = await prepareCartReadyToCharge();
+      expect(visibleAlerts()).toMatch(/pudo haberse registrado/i);
+      fireEvent.click(chargeButton);
+      await screen.findByText("Venta registrada");
+
+      expect(backend.salePosts).toHaveLength(2);
+      expect(backend.salePosts[1]?.clientRequestId).toBe(backend.salePosts[0]?.clientRequestId);
+      expect(backend.unknownRequests).toEqual([]);
+    } finally {
+      jest.restoreAllMocks();
+    }
   });
 });
 
