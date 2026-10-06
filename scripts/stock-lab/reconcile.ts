@@ -10,9 +10,11 @@
  *   lee las primeras N filas de cada vista ya creada por el parche 20261005.
  *
  * target production: exige --read-only. Lee el `.env` de la raiz, resuelve los
- *   hosts como scripts/db-sql.mjs y CONTRA PRODUCCION NUNCA SE CREA NADA: los
- *   SELECT de las vistas van inline (extraidos del parche) en una transaccion
- *   `read only` que termina siempre en `rollback`.
+ *   hosts como scripts/db-sql.mjs y CONTRA PRODUCCION NUNCA SE CREA NADA: todo
+ *   pasa por `reconcile-readonly.ts` (SELECT inline de las comprobaciones v2,
+ *   segun las columnas que la base tenga, en una transaccion `read only` que
+ *   termina siempre en `rollback`). Ademas de `reconcile.json` deja el informe
+ *   legible `reconcile.md` (plan seccion 8.4).
  *
  * Salida: tabla vista | count | estado, filas de las vistas con descuadres y
  * `scripts/stock-lab/runs/<run-id>/reconcile.json`.
@@ -29,22 +31,24 @@ import {
   type IntegrityViewName,
   type ReconcileArgs,
   assertProductionReadOnly,
-  buildReportFromCounts,
   defaultRunId,
-  extractViewQueries,
   formatReportTable,
   parseReconcileArgs,
   parseRootEnv,
   productionCandidates,
   reportFromJson,
   totalIssues,
-  wrapWithStoreCount,
-  wrapWithStoreFilter,
 } from "./integrity-views";
+import {
+  type ProductionConnection,
+  type ReadOnlyReport,
+  formatReadOnlyMarkdown,
+  integrityReportOf,
+  runProductionReadOnly,
+} from "./reconcile-readonly";
 
 const ROOT = resolve(__dirname, "../..");
 const RUNS_DIR = resolve(__dirname, "runs");
-const INTEGRITY_PATCH = resolve(ROOT, "supabase/patches/20261005-stock-integrity-views.sql");
 const UNDEFINED_FUNCTION = "42883";
 const UNDEFINED_TABLE = "42P01";
 
@@ -62,6 +66,9 @@ interface ReconcileFile extends ReconcileResult {
   storeId: string | null;
   generatedAt: string;
   totalIssues: number;
+  /** Solo en --target production: host e informe completo del modo solo lectura. */
+  host?: string;
+  readOnly?: ReadOnlyReport;
 }
 
 function emptyRows(): RowsByView {
@@ -131,7 +138,8 @@ async function reconcileLocal(args: ReconcileArgs): Promise<ReconcileResult> {
 
 // ----------------------------------------------------------- production
 
-async function connectProduction(): Promise<Client> {
+/** Unico punto que abre la conexion de produccion; no ejecuta ninguna sentencia. */
+async function connectProduction(): Promise<ProductionConnection> {
   const envPath = resolve(ROOT, ".env");
   if (!existsSync(envPath)) throw new Error(`No existe ${envPath} (necesario para --target production)`);
   const env = parseRootEnv(readFileSync(envPath, "utf8"));
@@ -151,43 +159,12 @@ async function connectProduction(): Promise<Client> {
     try {
       await client.connect();
       console.log(`target=production host=${host} (read only, rollback al final)`);
-      return client;
+      return { client, host };
     } catch (error) {
       errors.push(`${host}: ${(error instanceof Error ? error.message : String(error)).slice(0, 120)}`);
     }
   }
   throw new Error(`No pude conectar a produccion.\n${errors.join("\n")}`);
-}
-
-async function reconcileProduction(args: ReconcileArgs): Promise<ReconcileResult> {
-  // Contra produccion nunca se crea nada: los SELECT van inline en una
-  // transaccion read only con rollback.
-  if (!existsSync(INTEGRITY_PATCH)) throw new Error(`No existe ${INTEGRITY_PATCH}`);
-  const queries = extractViewQueries(readFileSync(INTEGRITY_PATCH, "utf8"));
-  const client = await connectProduction();
-  try {
-    await client.query("begin");
-    await client.query("set transaction read only");
-    const counts: Partial<Record<IntegrityViewName, number>> = {};
-    const rows = emptyRows();
-    for (const name of INTEGRITY_VIEW_NAMES) {
-      const count = await client.query<{ n: number }>(wrapWithStoreCount(queries[name]), [args.storeId]);
-      counts[name] = count.rows[0]?.n ?? 0;
-      if (counts[name] === 0 || args.limit === 0) continue;
-      const sample = await client.query<Row>(
-        `${wrapWithStoreFilter(queries[name], args.storeId)} limit ${args.limit}`,
-        [args.storeId],
-      );
-      rows[name] = sample.rows;
-    }
-    return { report: buildReportFromCounts(counts), rows };
-  } finally {
-    try {
-      await client.query("rollback");
-    } finally {
-      await client.end();
-    }
-  }
 }
 
 // ---------------------------------------------------------------- main
@@ -201,7 +178,12 @@ function printRows(result: ReconcileResult): void {
   }
 }
 
-function writeRunFile(args: ReconcileArgs, runId: string, result: ReconcileResult): string {
+function writeRunFile(
+  args: ReconcileArgs,
+  runId: string,
+  result: ReconcileResult,
+  production?: { host: string; readOnly: ReadOnlyReport },
+): string {
   const dir = resolve(RUNS_DIR, runId);
   mkdirSync(dir, { recursive: true });
   const file: ReconcileFile = {
@@ -212,17 +194,38 @@ function writeRunFile(args: ReconcileArgs, runId: string, result: ReconcileResul
     report: result.report,
     totalIssues: totalIssues(result.report),
     rows: result.rows,
+    ...production,
   };
   const path = resolve(dir, "reconcile.json");
   writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`);
+  if (production) {
+    const meta = { runId, host: production.host, storeId: args.storeId, generatedAt: file.generatedAt, limit: args.limit };
+    const mdPath = resolve(dir, "reconcile.md");
+    writeFileSync(mdPath, formatReadOnlyMarkdown(meta, production.readOnly));
+    console.log(`\ninforme: ${mdPath}`);
+  }
   return path;
+}
+
+/** Produccion: informe de solo lectura. Nada se escribe en la base; los archivos van al directorio local del run. */
+async function mainProduction(args: ReconcileArgs, runId: string): Promise<number> {
+  const { host, report: readOnly } = await runProductionReadOnly(args, connectProduction);
+  const result: ReconcileResult = { report: integrityReportOf(readOnly), rows: readOnly.rows };
+  console.log(`\nrun=${runId} store=${args.storeId ?? "todas"}\n`);
+  console.log(formatReportTable(result.report));
+  for (const warning of readOnly.warnings) console.log(`AVISO ${warning}`);
+  printRows(result);
+  const path = writeRunFile(args, runId, result, { host, readOnly });
+  console.log(`json: ${path}`);
+  return totalIssues(result.report) === 0 ? 0 : 2;
 }
 
 async function main(): Promise<number> {
   const args = parseReconcileArgs(process.argv.slice(2));
   assertProductionReadOnly(args);
   const runId = args.runId ?? defaultRunId(new Date());
-  const result = args.target === "production" ? await reconcileProduction(args) : await reconcileLocal(args);
+  if (args.target === "production") return mainProduction(args, runId);
+  const result = await reconcileLocal(args);
   console.log(`\nrun=${runId} store=${args.storeId ?? "todas"}\n`);
   console.log(formatReportTable(result.report));
   printRows(result);
