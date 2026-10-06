@@ -47,7 +47,8 @@ function resolveEnv(): { dbUrl: string; allowedHost: string | undefined } {
   const get = (key: string) => process.env[key] ?? file[key];
   const dbUrl = get("STOCK_LAB_DB_URL");
   if (!dbUrl) throw new Error("STOCK_LAB_DB_URL no esta definida (process.env o .env.stock-lab)");
-  return { dbUrl, allowedHost: get("STOCK_TEST_ALLOW_WRITES_HOST") };
+  // El host permitido sale solo del archivo lab, nunca del entorno heredado (C21).
+  return { dbUrl, allowedHost: file.STOCK_TEST_ALLOW_WRITES_HOST };
 }
 
 function ensureConfig(): void {
