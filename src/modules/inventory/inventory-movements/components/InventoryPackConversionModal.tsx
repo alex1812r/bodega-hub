@@ -14,6 +14,8 @@ import {
   usePackConversions,
 } from "../../hooks/useInventory";
 
+import { useRequestAttempt } from "../../utils/requestAttempt";
+
 const formId = "inventory-pack-conversion-form";
 
 type InventoryPackConversionModalProps = {
@@ -31,6 +33,7 @@ export function InventoryPackConversionModal({
   const [reason, setReason] = useState("");
   const packConversionsQuery = usePackConversions();
   const convert = useConvertPackToUnits();
+  const requestAttempt = useRequestAttempt();
 
   const packOptions = useMemo(
     () =>
@@ -69,16 +72,25 @@ export function InventoryPackConversionModal({
       return;
     }
 
+    const input = {
+      packProductId,
+      packQuantity: quantityNumber,
+      reason: reason.trim() || undefined,
+    };
+    // Clave de idempotencia del intento; null = ya hay un envio en vuelo (doble clic).
+    const clientRequestId = requestAttempt.begin(input);
+
+    if (!clientRequestId) {
+      return;
+    }
+
     try {
-      await convert.mutateAsync({
-        packProductId,
-        packQuantity: quantityNumber,
-        reason: reason.trim() || undefined,
-      });
+      await convert.mutateAsync({ ...input, clientRequestId });
+      requestAttempt.succeed();
       resetForm();
       setOpen(false);
-    } catch {
-      return;
+    } catch (error) {
+      requestAttempt.fail(error);
     }
   }
 

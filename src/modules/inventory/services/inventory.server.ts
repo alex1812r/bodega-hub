@@ -25,6 +25,8 @@ import {
 import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
+import { rpcWithClientRequestId } from "./rpcWithClientRequestId";
+
 const productSummarySelect =
   "id, category_id, sku, barcode, name, sale_price_ref, current_cost_ref, current_stock, min_stock, image_url, is_active";
 
@@ -181,6 +183,7 @@ export async function getStockCard(searchParams: URLSearchParams, storeId: strin
 
 export async function createStockAdjustment(
   input: {
+    clientRequestId?: string;
     productId: string;
     quantityDelta: number;
     reason?: string;
@@ -190,12 +193,17 @@ export async function createStockAdjustment(
 ) {
   await assertSupabaseStoreResource("products", input.productId, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase.rpc("adjust_stock", {
-    p_product_id: input.productId,
-    p_quantity_delta: input.quantityDelta,
-    p_reason: input.reason ?? null,
-    p_type: input.type ?? null,
-  });
+  const { data, error } = await rpcWithClientRequestId(
+    supabase,
+    "adjust_stock",
+    {
+      p_product_id: input.productId,
+      p_quantity_delta: input.quantityDelta,
+      p_reason: input.reason ?? null,
+      p_type: input.type ?? null,
+    },
+    input.clientRequestId,
+  );
 
   throwIfSupabaseError(error);
 
@@ -204,6 +212,7 @@ export async function createStockAdjustment(
 
 export async function convertPackToUnits(
   input: {
+    clientRequestId?: string;
     packProductId: string;
     packQuantity: number;
     reason?: string;
@@ -217,11 +226,16 @@ export async function convertPackToUnits(
     "Producto de empaque no encontrado.",
   );
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase.rpc("convert_pack_to_units", {
-    p_pack_product_id: input.packProductId,
-    p_pack_quantity: input.packQuantity,
-    p_reason: input.reason ?? null,
-  });
+  const { data, error } = await rpcWithClientRequestId(
+    supabase,
+    "convert_pack_to_units",
+    {
+      p_pack_product_id: input.packProductId,
+      p_pack_quantity: input.packQuantity,
+      p_reason: input.reason ?? null,
+    },
+    input.clientRequestId,
+  );
 
   throwIfSupabaseError(error);
 

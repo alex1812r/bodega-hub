@@ -17,6 +17,7 @@ import {
   useInventory,
   type InventoryAdjustmentType,
 } from "../../hooks/useInventory";
+import { useRequestAttempt } from "../../utils/requestAttempt";
 import {
   getInventoryAdjustmentDelta,
   inventoryAdjustmentTypeOptions,
@@ -41,6 +42,7 @@ export function InventoryAdjustmentModal({
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const productsQuery = useInventory({ limit: 100 });
   const adjustment = useAdjustInventory();
+  const requestAttempt = useRequestAttempt();
   const products = useMemo(
     () => getPaginatedItems(productsQuery.data),
     [productsQuery.data],
@@ -82,16 +84,27 @@ export function InventoryAdjustmentModal({
       return;
     }
 
-    try {
-      await adjustment.mutateAsync({
-        productId,
-        quantityDelta,
-        reason: reason.trim() || undefined,
-        type,
-      });
-    } catch {
+    const input = {
+      productId,
+      quantityDelta,
+      reason: reason.trim() || undefined,
+      type,
+    };
+    // Clave de idempotencia del intento; null = ya hay un envio en vuelo (doble clic).
+    const clientRequestId = requestAttempt.begin(input);
+
+    if (!clientRequestId) {
       return;
     }
+
+    try {
+      await adjustment.mutateAsync({ ...input, clientRequestId });
+    } catch (error) {
+      requestAttempt.fail(error);
+      return;
+    }
+
+    requestAttempt.succeed();
 
     resetForm();
     setOpen(false);

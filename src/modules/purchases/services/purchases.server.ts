@@ -15,6 +15,7 @@ import {
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { rpcWithClientRequestId } from "@/modules/inventory/services/rpcWithClientRequestId";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
@@ -265,21 +266,26 @@ export async function getPurchaseById(id: string, storeId: string) {
 export async function createPurchase(input: PurchaseInput, _storeId: string) {
   const supabase = await createRouteSupabaseClient();
 
-  const { data, error } = await supabase.rpc("create_purchase", {
-    p_discount_ref: input.discountRef ?? 0,
-    p_discount_ves: input.discountVes ?? null,
-    p_exchange_rate_id: input.exchangeRateId ?? null,
-    p_items: toRpcItems(input.items ?? []),
-    p_notes: input.notes ?? null,
-    p_purchase_number: input.purchaseNumber ?? null,
-    p_ref_rate_ves: input.refRateVes ?? null,
-    p_status: (input.status ?? "recibido") as PurchaseStatus,
-    p_subtotal_ref: input.subtotalRef ?? null,
-    p_subtotal_ves: input.subtotalVes ?? null,
-    p_supplier_id: input.supplierId,
-    p_tax_ref: input.taxRef ?? 0,
-    p_tax_ves: input.taxVes ?? null,
-  });
+  const { data, error } = await rpcWithClientRequestId(
+    supabase,
+    "create_purchase",
+    {
+      p_discount_ref: input.discountRef ?? 0,
+      p_discount_ves: input.discountVes ?? null,
+      p_exchange_rate_id: input.exchangeRateId ?? null,
+      p_items: toRpcItems(input.items ?? []),
+      p_notes: input.notes ?? null,
+      p_purchase_number: input.purchaseNumber ?? null,
+      p_ref_rate_ves: input.refRateVes ?? null,
+      p_status: (input.status ?? "recibido") as PurchaseStatus,
+      p_subtotal_ref: input.subtotalRef ?? null,
+      p_subtotal_ves: input.subtotalVes ?? null,
+      p_supplier_id: input.supplierId,
+      p_tax_ref: input.taxRef ?? 0,
+      p_tax_ves: input.taxVes ?? null,
+    },
+    input.clientRequestId,
+  );
 
   throwIfSupabaseError(error);
 

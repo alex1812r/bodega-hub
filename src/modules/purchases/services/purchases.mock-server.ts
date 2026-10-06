@@ -30,6 +30,8 @@ export type PurchaseInput = Partial<
     | "taxVes"
   >
 > & {
+  /** Clave de idempotencia del intento (C6). */
+  clientRequestId?: string;
   exchangeRateId?: string;
   items?: PurchaseItemInput[];
   notes?: string;
@@ -104,7 +106,20 @@ export function getPurchaseById(id: string, storeId: string) {
   };
 }
 
+/**
+ * Compras ya creadas por clave de idempotencia (`storeId:clientRequestId`), como
+ * hace `create_purchase` en la base: la misma clave devuelve la compra original.
+ */
+const purchasesByClientRequest = new Map<string, PurchaseMock>();
+
 export function createPurchase(input: PurchaseInput, storeId: string) {
+  const requestKey = input.clientRequestId ? `${storeId}:${input.clientRequestId}` : null;
+  const previous = requestKey ? purchasesByClientRequest.get(requestKey) : undefined;
+
+  if (previous) {
+    return previous;
+  }
+
   const refRateVes = input.refRateVes ?? 510;
   const subtotalRef = roundMoney(
     input.subtotalRef ??
@@ -125,7 +140,7 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
 
   const status = input.status ?? "recibido";
 
-  return {
+  const purchase = {
     createdAt: new Date().toISOString(),
     discountRef,
     discountVes,
@@ -145,6 +160,12 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
     totalVes: Math.round((subtotalVes - discountVes + taxVes) * 100) / 100,
     userId: "user-demo",
   } satisfies PurchaseMock;
+
+  if (requestKey) {
+    purchasesByClientRequest.set(requestKey, purchase);
+  }
+
+  return purchase;
 }
 
 export function receivePurchase(id: string, storeId: string) {
