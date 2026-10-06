@@ -126,11 +126,37 @@ describe("inventory.mock-server · devolucion ligada a su documento (R4)", () =>
     ).toThrow(expect.objectContaining({ code: "CONFLICT", status: 409 }));
   });
 
-  it("sin vinculo el ajuste de devolucion se comporta como hasta ahora", () => {
+  it.each([
+    [
+      "devolucion_cliente sin saleId",
+      { productId: "prod-drill", quantityDelta: 3, type: "devolucion_cliente" as const },
+      /debe indicar la venta/i,
+    ],
+    [
+      "devolucion_proveedor sin purchaseId",
+      { productId: "prod-drill", quantityDelta: -1, type: "devolucion_proveedor" as const },
+      /debe indicar la compra/i,
+    ],
+  ])("%s responde 400 y no mueve stock", (_caso, input, message) => {
+    const before = stockOf("prod-drill");
+    const movementsBefore = mockStockMovements.length;
+
+    expect(() => createStockAdjustment(input, DEFAULT_STORE_ID)).toThrow(
+      expect.objectContaining({
+        code: "BAD_REQUEST",
+        message: expect.stringMatching(message),
+        status: 400,
+      }),
+    );
+    expect(stockOf("prod-drill")).toBe(before);
+    expect(mockStockMovements).toHaveLength(movementsBefore);
+  });
+
+  it("un ajuste que no es devolucion sigue sin exigir documento", () => {
     const before = stockOf("prod-drill");
 
     const movement = createStockAdjustment(
-      { productId: "prod-drill", quantityDelta: 3, type: "devolucion_cliente" },
+      { productId: "prod-drill", quantityDelta: 3, type: "ajuste_entrada" },
       DEFAULT_STORE_ID,
     );
 

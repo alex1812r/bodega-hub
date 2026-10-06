@@ -7,6 +7,7 @@ import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as inventoryMockServer from "@/modules/inventory/services/inventory.mock-server";
 import * as inventoryServer from "@/modules/inventory/services/inventory.server";
+import { assertReturnAdjustmentHasDocument } from "@/modules/inventory/services/returnAdjustmentDocument";
 
 const stockAdjustmentSchema = z
   .object({
@@ -15,8 +16,8 @@ const stockAdjustmentSchema = z
     // Opcional para no romper clientes que aun no la envian.
     clientRequestId: z.string().uuid().optional(),
     productId: z.string().min(1),
-    // R4: compra a la que se liga una `devolucion_proveedor`. Con el vinculo la
-    // base aplica el tope "recibido − ya devuelto"; sin el no hay tope.
+    // R4: compra a la que se liga una `devolucion_proveedor` (obligatoria para ese
+    // tipo). Con el vinculo la base aplica el tope "recibido − ya devuelto".
     purchaseId: z.string().uuid().optional(),
     quantityDelta: z.number().int().refine((value) => value !== 0, {
       message: "El ajuste no puede ser cero.",
@@ -60,6 +61,8 @@ export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "inventory.manage");
     const input = stockAdjustmentSchema.parse(await readJsonBody(request));
+    // R4: fuera del schema para que el 400 lleve su mensaje, no el generico de zod.
+    assertReturnAdjustmentHasDocument(input);
     const service = getInventoryService();
     return jsonCreated(await service.createStockAdjustment(input, auth.storeId));
   } catch (error) {

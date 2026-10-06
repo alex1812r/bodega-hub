@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { createQueryWrapper, installFetchStub } from "../../utils/requestAttempt.testUtils";
 import { InventoryAdjustmentModal } from "./InventoryAdjustmentModal";
@@ -26,6 +26,25 @@ function getForm() {
 
   return form;
 }
+
+describe("InventoryAdjustmentModal · tipos del ajuste libre (R4)", () => {
+  it("no ofrece devolucion de cliente ni a proveedor", async () => {
+    installFetchStub(() => products);
+
+    render(<InventoryAdjustmentModal defaultProductId="prod-cable" />, {
+      wrapper: createQueryWrapper(),
+    });
+    await openAndFill();
+
+    const typeOptions = within(screen.getByLabelText("Tipo de movimiento"))
+      .getAllByRole<HTMLOptionElement>("option")
+      .map((option) => option.value)
+      .filter(Boolean);
+
+    expect(typeOptions).toEqual(["ajuste_entrada", "ajuste_salida", "inventario_inicial"]);
+    expect(screen.queryByRole("option", { name: /devoluci/i })).toBeNull();
+  });
+});
 
 describe("InventoryAdjustmentModal · idempotencia (C6)", () => {
   it("doble envio = un solo POST, con clave, y el boton queda deshabilitado", async () => {

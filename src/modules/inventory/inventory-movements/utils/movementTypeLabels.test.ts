@@ -3,6 +3,8 @@ import { describe, expect, it } from "@jest/globals";
 import {
   getInventoryAdjustmentDelta,
   getMovementTypeLabel,
+  inventoryAdjustmentTypeOptions,
+  movementTypeOptions,
 } from "./movementTypeLabels";
 
 describe("movementTypeLabels", () => {
@@ -11,6 +13,22 @@ describe("movementTypeLabels", () => {
     expect(getMovementTypeLabel("ajuste_entrada")).toBe("Ajuste entrada");
     expect(getMovementTypeLabel("conversion_salida")).toBe("Conversion salida");
     expect(getMovementTypeLabel("conversion_entrada")).toBe("Conversion entrada");
+  });
+
+  it("el ajuste libre no ofrece devoluciones, que exigen venta o compra (R4)", () => {
+    expect(inventoryAdjustmentTypeOptions.map((option) => option.value)).toEqual([
+      "ajuste_entrada",
+      "ajuste_salida",
+      "inventario_inicial",
+    ]);
+  });
+
+  it("conserva las etiquetas de devolucion para mostrar y filtrar movimientos existentes", () => {
+    expect(getMovementTypeLabel("devolucion_cliente")).toBe("Devolución cliente");
+    expect(getMovementTypeLabel("devolucion_proveedor")).toBe("Devolución proveedor");
+    expect(movementTypeOptions.map((option) => option.value)).toEqual(
+      expect.arrayContaining(["devolucion_cliente", "devolucion_proveedor"]),
+    );
   });
 
   it("computes signed adjustment deltas", () => {
