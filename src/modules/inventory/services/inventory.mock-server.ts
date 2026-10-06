@@ -58,7 +58,44 @@ export function getStockCard(searchParams: URLSearchParams, storeId: string) {
   return listStockMovements(searchParams, storeId);
 }
 
+/**
+ * Resultados ya devueltos por clave de idempotencia (`operacion:storeId:clave`),
+ * como hacen `adjust_stock` y `convert_pack_to_units` en la base: la misma clave
+ * devuelve el resultado original sin mover stock otra vez (C6).
+ */
+const resultsByClientRequest = new Map<string, unknown>();
+
+function requestKeyFor(operation: string, storeId: string, clientRequestId?: string) {
+  return clientRequestId ? `${operation}:${storeId}:${clientRequestId}` : null;
+}
+
 export function createStockAdjustment(
+  input: {
+    clientRequestId?: string;
+    productId: string;
+    quantityDelta: number;
+    reason?: string;
+    type?: StockMovementType;
+  },
+  storeId: string,
+) {
+  const requestKey = requestKeyFor("adjustment", storeId, input.clientRequestId);
+  const previous = requestKey ? resultsByClientRequest.get(requestKey) : undefined;
+
+  if (previous) {
+    return previous as ReturnType<typeof applyStockAdjustment>;
+  }
+
+  const movement = applyStockAdjustment(input, storeId);
+
+  if (requestKey) {
+    resultsByClientRequest.set(requestKey, movement);
+  }
+
+  return movement;
+}
+
+function applyStockAdjustment(
   input: {
     productId: string;
     quantityDelta: number;
@@ -94,6 +131,31 @@ export function createStockAdjustment(
 }
 
 export function convertPackToUnits(
+  input: {
+    clientRequestId?: string;
+    packProductId: string;
+    packQuantity: number;
+    reason?: string;
+  },
+  storeId: string,
+) {
+  const requestKey = requestKeyFor("conversion", storeId, input.clientRequestId);
+  const previous = requestKey ? resultsByClientRequest.get(requestKey) : undefined;
+
+  if (previous) {
+    return previous as ReturnType<typeof applyPackConversion>;
+  }
+
+  const result = applyPackConversion(input, storeId);
+
+  if (requestKey) {
+    resultsByClientRequest.set(requestKey, result);
+  }
+
+  return result;
+}
+
+function applyPackConversion(
   input: {
     packProductId: string;
     packQuantity: number;
