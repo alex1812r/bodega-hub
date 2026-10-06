@@ -7,7 +7,7 @@ import {
   type ProductPriceHistoryRow,
   type ProductRow,
 } from "@/lib/supabase/mappers";
-import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { getSupabaseUrl } from "@/lib/supabase/env";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
@@ -72,7 +72,9 @@ function toProductInsert(input: ProductInput, storeId: string) {
     barcode: normalizeBarcode(input.barcode),
     category_id: input.categoryId ?? null,
     current_cost_ref: input.currentCostRef ?? 0,
-    current_stock: input.currentStock ?? 0,
+    // Siempre 0: el stock inicial entra por `adjust_stock` (movimiento
+    // `inventario_inicial`), nunca como valor crudo de la fila (C1).
+    current_stock: 0,
     image_url: input.imageUrl ?? null,
     min_stock: input.minStock ?? 5,
     name: input.name ?? "Producto",
@@ -170,6 +172,49 @@ export async function getProductById(id: string, storeId: string) {
   return attachPackConversionToProduct(mapProduct(data), storeId);
 }
 
+const INITIAL_STOCK_REASON = "Inventario inicial al crear el producto";
+
+/**
+ * Registra el stock inicial de un producto recien creado como movimiento
+ * `inventario_inicial` (RPC `adjust_stock`, con la sesion del usuario). Si el
+ * ajuste falla, borra el producto para no dejar un alta a medias.
+ */
+async function registerInitialStock(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  productId: string,
+  quantity: number,
+  storeId: string,
+) {
+  const { error } = await supabase.rpc("adjust_stock", {
+    p_product_id: productId,
+    p_quantity_delta: quantity,
+    p_reason: INITIAL_STOCK_REASON,
+    p_type: "inventario_inicial",
+  });
+
+  if (!error) {
+    return;
+  }
+
+  const adjustError = mapSupabaseError(error);
+  const { data: deleted, error: deleteError } = await supabase
+    .from("products")
+    .delete()
+    .eq("id", productId)
+    .eq("store_id", storeId)
+    .select("id");
+
+  if (deleteError || !deleted?.length) {
+    throw new ApiError(
+      adjustError.status,
+      adjustError.code,
+      `${adjustError.message} Ademas no se pudo deshacer el alta: el producto quedo creado con stock 0 (id ${productId}). Registra su stock con un ajuste de inventario.`,
+    );
+  }
+
+  throw adjustError;
+}
+
 export async function createProduct(input: ProductInputWithPackConversion, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { packConversion, ...productInput } = input;
@@ -183,6 +228,12 @@ export async function createProduct(input: ProductInputWithPackConversion, store
 
   if (!data) {
     throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear el producto.");
+  }
+
+  const initialStock = productInput.currentStock ?? 0;
+
+  if (initialStock > 0) {
+    await registerInitialStock(supabase, data.id, initialStock, storeId);
   }
 
   if (packConversion) {

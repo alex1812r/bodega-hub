@@ -5,8 +5,7 @@
  * STK-413 · regresión de C1 (alta de producto con stock inicial sin movimiento
  * `inventario_inicial`).
  *
- * Los `it.failing` describen el comportamiento SANO y hoy fallan: al corregir
- * `createProduct` (fase 5) hay que convertirlos en `it`.
+ * Nacieron como `it.failing` (STK-413); STK-508 corrigió `createProduct` y son `it`.
  */
 
 jest.mock("../../../lib/supabase/route-client");
@@ -131,7 +130,7 @@ describe("C1 · alta de producto con stock inicial", () => {
   // diff permanente en `stock_reconciliation`.
   // Evento: qa/STK-406/verdict.md C1 (H9); `w1-matrix` `iva.new_product_stock_form`; `w4-hyp` `h09.*`.
   // Código: src/modules/products/services/products.server.ts:70-75 y :173-180.
-  it.failing(
+  it(
     "createProduct con stock N deja un movimiento inventario_inicial por N (server)",
     async () => {
       const { client, recorder } = createSupabaseRecorder();
@@ -169,10 +168,92 @@ describe("C1 · alta de producto con stock inicial", () => {
     ).toBe(false);
   });
 
+  // STK-508: el alta son dos pasos (insert + adjust_stock). Si el ajuste falla, el
+  // producto recién creado se borra; si el borrado tampoco sale, el error lo dice.
+  describe("compensación cuando adjust_stock falla (server)", () => {
+    function createFailingAdjustClient(deleteResult: { data: Row[] | null; error: Row | null }) {
+      const deletes: Array<{ filters: Row; table: string }> = [];
+      const rpcs: Array<{ args: unknown; name: string }> = [];
+
+      const client = {
+        from: (table: string) => {
+          let deleting: { filters: Row; table: string } | null = null;
+          const chain = {
+            delete: () => {
+              deleting = { filters: {}, table };
+              deletes.push(deleting);
+              return chain;
+            },
+            eq: (column: string, value: unknown) => {
+              if (deleting) {
+                deleting.filters[column] = value;
+              }
+              return chain;
+            },
+            insert: () => chain,
+            select: () => chain,
+            single: async () => ({ data: { id: PRODUCT_ID }, error: null }),
+            then: (resolve: (value: typeof deleteResult) => unknown) => resolve(deleteResult),
+          };
+
+          return chain;
+        },
+        rpc: async (name: string, args: unknown) => {
+          rpcs.push({ args, name });
+          return { data: null, error: { code: "P0001", message: "No autorizado para ajustar stock" } };
+        },
+      };
+
+      return { client, deletes, rpcs };
+    }
+
+    const input = { currentStock: 7, name: "Harina PAN", salePriceRef: 1.5, sku: "stk508-harina" };
+
+    it("borra el producto recién creado y devuelve el error del ajuste", async () => {
+      const { client, deletes, rpcs } = createFailingAdjustClient({
+        data: [{ id: PRODUCT_ID }],
+        error: null,
+      });
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue(client);
+
+      await expect(createProduct(input, DEFAULT_STORE_ID)).rejects.toMatchObject({
+        message: "No autorizado para ajustar stock",
+      });
+
+      expect(rpcs).toEqual([
+        {
+          args: expect.objectContaining({
+            p_product_id: PRODUCT_ID,
+            p_quantity_delta: 7,
+            p_type: "inventario_inicial",
+          }),
+          name: "adjust_stock",
+        },
+      ]);
+      expect(deletes).toEqual([
+        { filters: { id: PRODUCT_ID, store_id: DEFAULT_STORE_ID }, table: "products" },
+      ]);
+    });
+
+    it.each([
+      ["el borrado devuelve error", { data: null, error: { message: "permission denied" } }],
+      ["el borrado no afecta ninguna fila", { data: [], error: null }],
+    ])("si %s, el error avisa de que el producto quedó creado con stock 0", async (_, result) => {
+      const { client } = createFailingAdjustClient(result);
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue(client);
+
+      await expect(createProduct(input, DEFAULT_STORE_ID)).rejects.toMatchObject({
+        message: expect.stringMatching(
+          new RegExp(`^No autorizado para ajustar stock.*no se pudo deshacer el alta.*${PRODUCT_ID}`),
+        ),
+      });
+    });
+  });
+
   // Paridad server/mock: el mock-server tiene libro de movimientos
   // (`mockStockMovements`, lo usa inventory.mock-server) y tampoco registra el alta.
   // Evento: mismo que el server (H9). Código: src/modules/products/services/products.mock-server.ts:210-239.
-  it.failing(
+  it(
     "createProduct con stock N deja un movimiento inventario_inicial por N (mock-server)",
     () => {
       const created = createProductMock(

@@ -6,8 +6,7 @@
  * `stock_inicial` acaba en el mismo `POST /api/products` → `createProduct` que el
  * formulario, y hereda el mismo hueco (stock sin movimiento `inventario_inicial`).
  *
- * El `it.failing` describe el comportamiento SANO y hoy falla: al corregir
- * `createProduct` (fase 5) hay que convertirlo en `it`.
+ * Nació como `it.failing` (STK-413); STK-508 corrigió `createProduct` y es `it`.
  */
 
 jest.mock("../../../../lib/supabase/route-client");
@@ -190,7 +189,7 @@ describe("C1 · import Excel con stock_inicial", () => {
   // Evento: qa/STK-406/verdict.md C1 (H9); `w3-ui` f10 (import).
   // Código: runProductImportJob.ts:49 → src/app/api/products/route.ts:25-34 →
   // src/modules/products/services/products.server.ts:70-75, :173-180.
-  it.failing(
+  it(
     "una fila importada con stock_inicial N deja un movimiento inventario_inicial por N",
     async () => {
       const { client, recorder } = createSupabaseRecorder();
