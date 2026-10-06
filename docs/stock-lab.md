@@ -176,18 +176,23 @@ solo se registran); exit 1 si algún agente salió ≠ 0 o reconcile reventó.
 ### Cómo leer la bisección
 
 `findFirstBreak` toma los eventos 2xx con `expected_delta[producto] ≠ 0`
-ordenados por `ts`, acumula el delta esperado y, en cada evento, lo compara con
-la suma de `quantity_delta` de los movimientos del producto con
-`created_at ≤ ts + 2 s` (también acepta la ventana estricta `≤ ts`, para no
-culpar a un evento por una operación concurrente todavía en vuelo). En paralelo
-valida la cadena `stock_after[i] = stock_after[i-1] + quantity_delta[i]`
-(movimientos ordenados por `created_at, id`). Devuelve lo primero que ocurra en
-el tiempo:
+ordenados por `ts` y los movimientos del producto en la ventana del run.
+Primero el atajo: si Σ esperado == Σ `quantity_delta` y la cadena
+`stock_after[i] = stock_after[i-1] + quantity_delta[i]` (ordenada por
+`created_at, id`) es válida, no hay rotura. Si no, atribuye cada movimiento a
+su evento **por referencia** (`sale_id` / `purchase_id` / `conversion_id` /
+`id` == `response_id` del evento); solo los movimientos sin referencia
+conocida (p. ej. `sale_return`, que hoy responde sin id) se atribuyen por
+tiempo (`created_at ≤ ts + 2 s`). El `ts` del evento es la hora de la
+respuesta en el cliente, por eso la ventana temporal sola daba falsos positivos
+en corridas paralelas (STK-308). Devuelve lo primero que ocurra en el tiempo:
 
 | motivo | significado | columna "evento" |
 | --- | --- | --- |
-| `expected_mismatch` | tras ese evento 2xx la suma esperada deja de coincidir con los movimientos (p. ej. una venta 2xx sin `stock_movement`, o un movimiento sin evento) | `ts · agent · op · response_id` del evento culpable |
+| `missing_movement` | el evento 2xx no tiene ningún movimiento atribuible (venta/compra que no dejó `stock_movement`) | `ts · agent · op · response_id` del evento culpable |
+| `delta_mismatch` | los movimientos atribuidos al evento no suman su `expected_delta` (cantidad mal, línea faltante, doble descuento) | ídem |
 | `chain_break` | un movimiento tiene un `stock_after` que no es el anterior + su delta (dos escrituras pisándose) | `created_at · mov <id> · type · referencia` del movimiento que rompe |
+| `unattributed_movements` | quedan movimientos del producto sin ningún evento que los explique (movimiento huérfano) | último evento del producto + movimiento sobrante |
 
 Con el culpable localizado, busca en `events.jsonl` por `response_id` o `ts`
 y en `agents/<agente>.log` el contexto de esa operación. Si la tabla está
