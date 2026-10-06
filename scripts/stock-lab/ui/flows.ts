@@ -105,7 +105,7 @@ export async function snapshot(db: Client, productIds: readonly string[]): Promi
   );
   const movements = await db.query(
     `select id, product_id, type::text as type, quantity_delta, stock_after, sale_id, purchase_id, conversion_id
-       from public.stock_movements where product_id = any($1::uuid[]) order by created_at, id`,
+       from public.stock_movements where product_id = any($1::uuid[]) order by seq, id`,
     [ids],
   );
   const saleItems = await db.query(

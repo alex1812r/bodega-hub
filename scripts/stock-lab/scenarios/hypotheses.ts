@@ -261,10 +261,11 @@ async function h02Dg8UnitsPerPackUnchecked(lab: Lab, t: CaseCtx): Promise<CaseOu
   } else {
     c.rejected("modo empaque sobre el SKU empaque", onPack.status, errorOf(onPack));
   }
-  // Sobre la unidad con units_per_pack distinto al del par (24 vs 12): el bulto del proveedor puede diferir; solo se anota.
+  // Sobre la unidad con units_per_pack distinto al del par (24 vs 12): C13 lo rechaza con 400 (las unidades las fija el par).
   const onUnit = await t.purchase("almacen", "recibido", [{ productId: unit.id, packCount: 1, unitsPerPack: 24 }]);
   const unitStock = await lab.stock(unit.id);
-  c.note(`compra 1x24 sobre la unidad (par dice 12): ${onUnit.status}, stock unidad ${unitStock} (no se contrasta con el par; aceptable si el bulto del proveedor difiere)`);
+  c.rejected("compra 1x24 sobre la unidad de un par x12", onUnit.status, errorOf(onUnit));
+  c.eq("stock de la unidad tras el rechazo", unitStock, 0);
   const scoped = await t.scoped();
   c.note(`vistas tras G8: reconciliation=${scoped.stock_reconciliation} conversion_mismatches=${scoped.conversion_mismatches} (el libro cuadra; lo inflado es el físico)`);
   if (c.failures.length > 0) {
@@ -272,7 +273,7 @@ async function h02Dg8UnitsPerPackUnchecked(lab: Lab, t: CaseCtx): Promise<CaseOu
   }
   return outcome(c, {
     hypothesis_verdict: literalHolds ? "descartada" : "confirmada",
-    expected: { pack_stock: "7 (5 + 2 cajas) o rechazo 4xx" },
+    expected: { pack_stock: "7 (5 + 2 cajas) o rechazo 4xx", unit: "400 y stock 0 (units_per_pack distinto al del par)" },
     actual: { pack_stock: packStock, pack_status: onPack.status, unit_stock: unitStock, unit_status: onUnit.status },
     evidence: [`empaque ${pack.id}`, `unidad ${unit.id}`, ...(await lab.movements(pack.id)).map(fmtMove)],
   });
@@ -808,20 +809,31 @@ async function h07DirectUpdatePostgres(lab: Lab, t: CaseCtx): Promise<CaseOutcom
   const write = await t.trySql("ESCRITURA DIRECTA: products.current_stock = 17 (sin movimiento)", "update public.products set current_stock = 17 where id = $1", [p.id]);
   const stockAfterWrite = await lab.stock(p.id);
   const scopedAfterWrite = await t.scoped();
+  // Fase 5 (20261006a/e): la conexión directa `postgres` es la vía de escape documentada (migraciones, one-shots,
+  // setup de tests), así que lo sano ya no es solo bloquearla: vale el rechazo O que quede detectada al instante.
+  // El bloqueo para los roles de tienda (PostgREST) lo prueba h07.dg1_direct_update_postgrest.
   const blocked = write.error !== null || stockAfterWrite === 10;
-  c.ok("una guarda impide (o compensa) el update directo de current_stock", blocked, `UPDATE ${write.rowCount}; current_stock=${stockAfterWrite} con Σ movimientos=10`);
-  // El siguiente movimiento legítimo hereda el salto.
+  const detected = stockAfterWrite === 17 && scopedAfterWrite.stock_reconciliation === 1;
+  c.ok(
+    "el update directo de current_stock como postgres se rechaza o stock_reconciliation lo detecta al instante",
+    blocked || detected,
+    `UPDATE ${write.rowCount}; current_stock=${stockAfterWrite} con Σ movimientos=10 y stock_reconciliation=${scopedAfterWrite.stock_reconciliation}`,
+  );
+  // El siguiente movimiento legítimo hereda el salto: el trigger parte de current_stock (17 → 18), no del libro.
   const adjust = await t.adjust("almacen", p.id, 1);
   const moves = await lab.movements(p.id);
   const scopedAfterMove = await t.scoped();
   const reconciliation = await lab.viewRows("stock_reconciliation", [p.id]);
   const breaks = await lab.viewRows("stock_chain_breaks", [p.id]);
+  if (!blocked) {
+    c.eq("el salto sigue a la vista tras el siguiente ajuste (stock_reconciliation, stock_chain_breaks)", [scopedAfterMove.stock_reconciliation, scopedAfterMove.stock_chain_breaks], [1, 1]);
+  }
   c.note(
     `detección: stock_reconciliation ${scopedAfterWrite.stock_reconciliation} fila(s) al instante (diff=${String(reconciliation[0]?.diff)}); ` +
       `stock_chain_breaks ${scopedAfterWrite.stock_chain_breaks} → ${scopedAfterMove.stock_chain_breaks} tras el siguiente ajuste (${adjust.status})`,
   );
   return outcome(c, {
-    expected: { update_directo: "rechazado, o compensado con un movimiento", stock_reconciliation: 0 },
+    expected: { update_directo: "rechazado; o aceptado solo por conexión directa postgres y detectado", stock_reconciliation: "0 si se rechaza; 1 si pasa" },
     actual: {
       update: { rowCount: write.rowCount, error: write.error },
       current_stock: [10, stockAfterWrite, await lab.stock(p.id)],
@@ -879,8 +891,8 @@ async function h07MovementWithoutStock(lab: Lab, t: CaseCtx): Promise<CaseOutcom
   const p = await t.product("p", 10);
   const insert = await t.trySql(
     "ESCRITURA DIRECTA: stock_movements +5 sin tocar current_stock",
-    `insert into public.stock_movements (product_id, type, quantity_delta, stock_after, reason, store_id)
-     values ($1, 'ajuste_entrada', 5, 15, 'S403 movimiento suelto', $2) returning id`,
+    `insert into public.stock_movements (product_id, type, quantity_delta, reason, store_id)
+     values ($1, 'ajuste_entrada', 5, 'S403 movimiento suelto', $2) returning id`,
     [p.id, lab.storeId],
   );
   const stock = await lab.stock(p.id);
@@ -897,15 +909,15 @@ async function h07MovementWithoutStock(lab: Lab, t: CaseCtx): Promise<CaseOutcom
   });
 }
 
-/** Patrón de los one-shots: `stock_after := current_stock ± q` leído de products, insert + update en pareja. */
+/**
+ * Patrón de los one-shots: `stock_after := current_stock ± q` leído de products + update en pareja.
+ * Desde 20261006e eso es exactamente lo que hace el trigger al insertar el movimiento (y repetir el update
+ * a mano lo duplicaría), así que el one-shot equivalente hoy es SOLO el insert.
+ */
 const ONESHOT_PATTERN_SQL = `
-  with src as (select id, store_id, current_stock from public.products where id = $1 for update),
-  moved as (
-    insert into public.stock_movements (product_id, type, quantity_delta, stock_after, reason, store_id)
-    select id, 'ajuste_salida'::public.stock_movement_type, -$2::int, current_stock - $2::int, 'S403 one-shot a mano', store_id from src
-    returning product_id, stock_after
-  )
-  update public.products p set current_stock = moved.stock_after from moved where p.id = moved.product_id`;
+  insert into public.stock_movements (product_id, type, quantity_delta, reason, store_id)
+  select id, 'ajuste_salida'::public.stock_movement_type, -$2::int, 'S403 one-shot a mano', store_id
+  from public.products where id = $1`;
 
 async function h07OneshotPattern(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const c = new Checks();
@@ -921,13 +933,15 @@ async function h07OneshotPattern(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const driftedViews = await lab.scoped([drifted.id]);
   const driftedMoves = await lab.movements(drifted.id);
   const breaks = await lab.viewRows("stock_chain_breaks", [drifted.id]);
+  c.eq("producto sano: stock tras el one-shot (10 + 2 − 3)", await lab.stock(healthy.id), 9);
   c.eq("producto sano: vistas tras el one-shot", [healthyViews.stock_reconciliation, healthyViews.stock_chain_breaks], [0, 0]);
-  c.eq("producto con deriva: vistas tras el one-shot (reconciliation, chain_breaks)", [driftedViews.stock_reconciliation, driftedViews.stock_chain_breaks], [0, 0]);
-  if (c.failures.length > 0) {
-    c.note("el one-shot no corrige la deriva previa (reconciliation sigue ≠ 0) y además fija un stock_after que no sale de la cadena (chain_break nuevo).");
-  }
+  // La deriva la metió a propósito la línea de arriba (update directo como postgres). Lo sano es que el one-shot
+  // no la tape: el movimiento parte de current_stock (17 → 14) y las dos vistas la siguen señalando.
+  c.eq("producto con deriva: stock tras el one-shot (17 − 3)", await lab.stock(drifted.id), 14);
+  c.eq("producto con deriva: la deriva sigue detectada (reconciliation, chain_breaks)", [driftedViews.stock_reconciliation, driftedViews.stock_chain_breaks], [1, 1]);
+  c.note("el one-shot no corrige la deriva previa: reconciliation sigue en 1 y el salto 10 → 14 con delta −3 queda como chain_break.");
   return outcome(c, {
-    expected: { sano: { stock_reconciliation: 0, stock_chain_breaks: 0 }, deriva: { stock_reconciliation: 0, stock_chain_breaks: 0 } },
+    expected: { sano: { stock: 9, stock_reconciliation: 0, stock_chain_breaks: 0 }, deriva: { stock: 14, stock_reconciliation: 1, stock_chain_breaks: 1 } },
     actual: {
       sano: { stock: await lab.stock(healthy.id), vistas: healthyViews },
       deriva: { stock: await lab.stock(drifted.id), vistas: driftedViews, breaks, chain: analyzeChain(driftedMoves, await lab.stock(drifted.id)) },

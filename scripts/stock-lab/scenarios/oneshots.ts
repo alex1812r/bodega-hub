@@ -19,6 +19,13 @@
  * Las réplicas copian solo las escrituras de stock (`stock_movements`,
  * `products.current_stock`, `sale_items` / `purchase_items`); los ajustes de
  * pagos, caja y baúl de los parches quedan fuera (no afectan a las vistas).
+ *
+ * Desde 20261006e insertar un movimiento YA mueve el stock y el trigger fija
+ * `stock_after = current_stock + delta`. Los parches hacían eso mismo a mano
+ * (`stock_after := current_stock ± q` + `update products`), así que la réplica
+ * que deja el MISMO estado es solo el insert (repetir el update lo duplicaría).
+ * Los parches que reescribían filas existentes (821, 830b-remove) se replican
+ * tal cual con `update` como `postgres`.
  */
 import { randomUUID } from "node:crypto";
 
@@ -176,36 +183,34 @@ async function os813dReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   try {
     for (let i = 1; i <= 3; i += 1) {
       const sku = lab.nextSku(`${t.key}-var${i}`);
-      // l.51-59: la variante nace con current_stock = 24; l.81-96: ajuste_entrada con stock_after = 24 fijo.
+      // l.51-59: la variante nacía con current_stock = 24; l.81-96: ajuste_entrada con stock_after = 24 fijo.
+      // Mismo estado por el libro: alta en 0 + ajuste_entrada +24 (el trigger deja stock 24 y stock_after 24).
       const rows = await t.sql<{ id: string }>(
-        `réplica 813d: variante ${i} con current_stock=24`,
+        `réplica 813d: variante ${i}`,
         `insert into public.products (store_id, sku, name, sale_price_ref, current_cost_ref, current_stock, min_stock, is_active)
-         values ($1, $2, $3, 1, 1, 24, 0, true) returning id`,
+         values ($1, $2, $3, 1, 1, 0, 0, true) returning id`,
         [lab.storeId, sku, `S403 ${sku}`],
         client,
       );
       const id = rows[0]?.id ?? "";
       t.track(id);
       await t.sql(
-        `réplica 813d: ajuste_entrada stock_after=24 de la variante ${i}`,
-        `insert into public.stock_movements (product_id, type, quantity_delta, stock_after, reason, store_id)
-         values ($1, 'ajuste_entrada', 24, 24, 'S403 réplica 813d', $2)`,
+        `réplica 813d: ajuste_entrada +24 de la variante ${i}`,
+        `insert into public.stock_movements (product_id, type, quantity_delta, reason, store_id)
+         values ($1, 'ajuste_entrada', 24, 'S403 réplica 813d', $2)`,
         [id, lab.storeId],
         client,
       );
     }
-    // l.138-153: ajuste_salida −current_stock con stock_after = 0 fijo; l.156-160: current_stock = 0, inactivo.
+    // l.138-153: ajuste_salida −current_stock (el trigger deja stock y stock_after en 0); l.156-160: inactivo.
     await t.sql(
-      "réplica 813d: ajuste_salida −72 stock_after=0 + current_stock=0, is_active=false",
-      `with moved as (
-         insert into public.stock_movements (product_id, type, quantity_delta, stock_after, reason, store_id)
-         select id, 'ajuste_salida'::public.stock_movement_type, -current_stock, 0, 'S403 réplica 813d', store_id from public.products where id = $1
-         returning product_id
-       )
-       update public.products set current_stock = 0, is_active = false where id = (select product_id from moved)`,
+      "réplica 813d: ajuste_salida −72",
+      `insert into public.stock_movements (product_id, type, quantity_delta, reason, store_id)
+       select id, 'ajuste_salida'::public.stock_movement_type, -current_stock, 'S403 réplica 813d', store_id from public.products where id = $1`,
       [source.id],
       client,
     );
+    await t.sql("réplica 813d: is_active=false", "update public.products set is_active = false where id = $1", [source.id], client);
     await client.query("commit");
   } catch (error) {
     await client.query("rollback").catch(() => undefined);
@@ -264,22 +269,17 @@ function transferFix(bought: number, transfer: number) {
   };
 }
 
-/** l.53-90 de 813f / l.64-95 de 815c: dos SM con `stock_after := current_stock ± q` + update de ambos productos. */
+/**
+ * l.53-90 de 813f / l.64-95 de 815c: dos SM con `stock_after := current_stock ± q` + update de ambos productos.
+ * Hoy: los dos movimientos (salida del genérico $1, entrada de la variante $2); el trigger hace el resto.
+ */
 const TRANSFER_REPLICA_SQL = `
-  with src as (select id, store_id, current_stock from public.products where id = $1 for update),
-  dst as (select id, store_id, current_stock from public.products where id = $2 for update),
-  out_move as (
-    insert into public.stock_movements (product_id, type, quantity_delta, stock_after, reason, store_id)
-    select id, 'ajuste_salida'::public.stock_movement_type, -$3::int, current_stock - $3::int, 'S403 réplica transferencia', store_id from src
-    returning product_id, stock_after
-  ),
-  in_move as (
-    insert into public.stock_movements (product_id, type, quantity_delta, stock_after, reason, store_id)
-    select id, 'ajuste_entrada'::public.stock_movement_type, $3::int, current_stock + $3::int, 'S403 réplica transferencia', store_id from dst
-    returning product_id, stock_after
-  )
-  update public.products p set current_stock = m.stock_after
-  from (select * from out_move union all select * from in_move) m where p.id = m.product_id`;
+  insert into public.stock_movements (product_id, type, quantity_delta, reason, store_id)
+  select id,
+         (case when id = $1 then 'ajuste_salida' else 'ajuste_entrada' end)::public.stock_movement_type,
+         case when id = $1 then -$3::int else $3::int end,
+         'S403 réplica transferencia', store_id
+  from public.products where id in ($1, $2)`;
 
 function transferReplica(patch: string, bought: number, transfer: number) {
   return async (lab: Lab, t: CaseCtx): Promise<CaseOutcome> => {
@@ -287,7 +287,7 @@ function transferReplica(patch: string, bought: number, transfer: number) {
     const generic = await t.product("generico", 2);
     const variant = await t.product("variante", 3);
     mustId(await t.purchase("almacen", "recibido", [{ productId: generic.id, quantity: bought }]), "compra al SKU genérico");
-    await t.sql(`réplica ${patch}: transferencia de ${transfer} u con stock_after a mano`, TRANSFER_REPLICA_SQL, [generic.id, variant.id, transfer]);
+    await t.sql(`réplica ${patch}: transferencia de ${transfer} u (dos movimientos espejo)`, TRANSFER_REPLICA_SQL, [generic.id, variant.id, transfer]);
     c.eq("stocks tras la réplica", await lab.stocks([generic.id, variant.id]), { [generic.id]: 2 + bought - transfer, [variant.id]: 3 + transfer });
     return replicaOutcome(lab, t, c, patch);
   };
@@ -427,16 +427,15 @@ async function os830Replica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const p = await t.product("p", 20);
   const saleId = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 3 }], { clientRequestId: randomUUID() }), "venta pendiente");
   // l.112-141: por ítem current_stock += qty, SM ajuste_entrada con stock_after = current_stock nuevo, venta → cancelada.
+  // Hoy el restock lo hace el trigger al insertar el ajuste_entrada ligado a la venta.
   await t.sql(
-    "réplica 830: restock a mano + sales.status = cancelada",
-    `with item as (select product_id, quantity from public.sale_items where sale_id = $1::uuid),
-     bumped as (
-       update public.products p set current_stock = p.current_stock + item.quantity from item where p.id = item.product_id
-       returning p.id, p.current_stock, p.store_id, item.quantity
-     ),
-     moved as (
-       insert into public.stock_movements (product_id, type, quantity_delta, stock_after, sale_id, reason, store_id)
-       select id, 'ajuste_entrada'::public.stock_movement_type, quantity, current_stock, $1::uuid, 'S403 réplica 830', store_id from bumped returning 1
+    "réplica 830: restock por movimiento + sales.status = cancelada",
+    `with moved as (
+       insert into public.stock_movements (product_id, type, quantity_delta, sale_id, reason, store_id)
+       select si.product_id, 'ajuste_entrada'::public.stock_movement_type, si.quantity, si.sale_id, 'S403 réplica 830', p.store_id
+       from public.sale_items si join public.products p on p.id = si.product_id
+       where si.sale_id = $1::uuid
+       returning 1
      )
      update public.sales set status = 'cancelada' where id = $1::uuid and exists (select 1 from moved)`,
     [saleId],
@@ -466,15 +465,14 @@ async function secondSaleFix(lab: Lab, t: CaseCtx, original: number, sameProduct
   return fixOutcome(lab, t, c, expected);
 }
 
-/** l.117-118 + 200-218 de 830b-add (y l.120-121 + 216-234 de 830d): SM venta −1 con stock_after = current_stock − 1 ligado a la venta vieja. */
+/**
+ * l.117-118 + 200-218 de 830b-add (y l.120-121 + 216-234 de 830d): SM venta −1 con stock_after = current_stock − 1
+ * ligado a la venta vieja. Hoy: el mismo movimiento; el trigger fija ese stock_after y descuenta el producto.
+ */
 const LATE_SALE_MOVE_SQL = `
-  with src as (select id, store_id, current_stock from public.products where id = $1 for update),
-  moved as (
-    insert into public.stock_movements (product_id, type, quantity_delta, stock_after, sale_id, reason, store_id)
-    select id, 'venta'::public.stock_movement_type, -1, current_stock - 1, $2::uuid, 'S403 réplica venta tardía', store_id from src
-    returning product_id, stock_after
-  )
-  update public.products p set current_stock = moved.stock_after from moved where p.id = moved.product_id`;
+  insert into public.stock_movements (product_id, type, quantity_delta, sale_id, reason, store_id)
+  select id, 'venta'::public.stock_movement_type, -1, $2::uuid, 'S403 réplica venta tardía', store_id
+  from public.products where id = $1`;
 
 async function os830bAddReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const c = new Checks();
@@ -484,7 +482,7 @@ async function os830bAddReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }], { clientRequestId: randomUUID() }), "venta intermedia");
   // l.120: sale_items.quantity 8 → 9.
   await t.sql("réplica 830b-add: sale_items.quantity = 9", "update public.sale_items set quantity = 9 where sale_id = $1 and product_id = $2", [saleId, p.id]);
-  await t.sql("réplica 830b-add: SM venta −1 con stock_after a mano + current_stock", LATE_SALE_MOVE_SQL, [p.id, saleId]);
+  await t.sql("réplica 830b-add: SM venta −1 tardío ligado a la venta", LATE_SALE_MOVE_SQL, [p.id, saleId]);
   c.eq("stock tras la réplica (20 − 8 − 2 − 1)", await lab.stock(p.id), 9);
   return replicaOutcome(lab, t, c, "20260830b-add", { venta: saleId });
 }
@@ -503,7 +501,7 @@ async function os830dReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
      select $1::uuid, $2::uuid, 1, 1, 1, s.ref_rate_ves from public.sales s where s.id = $1`,
     [saleId, b.id],
   );
-  await t.sql("réplica 830d: SM venta −1 con stock_after a mano + current_stock", LATE_SALE_MOVE_SQL, [b.id, saleId]);
+  await t.sql("réplica 830d: SM venta −1 tardío ligado a la venta", LATE_SALE_MOVE_SQL, [b.id, saleId]);
   c.eq("stocks tras la réplica", await lab.stocks([a.id, b.id]), { [a.id]: 19, [b.id]: 17 });
   return replicaOutcome(lab, t, c, "20260830d", { venta: saleId });
 }
@@ -608,21 +606,17 @@ async function os830cReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   try {
     // l.141
     await t.sql("réplica 830c: sale_items.product_id → manz", "update public.sale_items set product_id = $3 where sale_id = $1 and product_id = $2", [saleId, dura.id, manz.id], client);
-    // l.232-250: restock de dura con ajuste_entrada ligado a la venta, stock_after = current_stock + 1.
+    // l.232-250: restock de dura con ajuste_entrada ligado a la venta (stock_after = current_stock + 1: lo fija el trigger).
     await t.sql(
-      "réplica 830c: SM ajuste_entrada +1 dura (stock_after a mano) + current_stock",
-      `with src as (select id, store_id, current_stock from public.products where id = $1 for update),
-       moved as (
-         insert into public.stock_movements (product_id, type, quantity_delta, stock_after, sale_id, reason, store_id)
-         select id, 'ajuste_entrada'::public.stock_movement_type, 1, current_stock + 1, $2::uuid, 'S403 réplica 830c', store_id from src
-         returning product_id, stock_after
-       )
-       update public.products p set current_stock = moved.stock_after from moved where p.id = moved.product_id`,
+      "réplica 830c: SM ajuste_entrada +1 dura ligado a la venta",
+      `insert into public.stock_movements (product_id, type, quantity_delta, sale_id, reason, store_id)
+       select id, 'ajuste_entrada'::public.stock_movement_type, 1, $2::uuid, 'S403 réplica 830c', store_id
+       from public.products where id = $1`,
       [dura.id, saleId],
       client,
     );
     // l.253-271
-    await t.sql("réplica 830c: SM venta −1 manz (stock_after a mano) + current_stock", LATE_SALE_MOVE_SQL, [manz.id, saleId], client);
+    await t.sql("réplica 830c: SM venta −1 manz tardío ligado a la venta", LATE_SALE_MOVE_SQL, [manz.id, saleId], client);
     await client.query("commit");
   } catch (error) {
     await client.query("rollback").catch(() => undefined);

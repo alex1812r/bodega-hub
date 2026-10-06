@@ -302,7 +302,7 @@ export type ChainMove = { id: string; quantity_delta: number; stock_after: numbe
 export type ChainClass = "sana" | "artefacto_orden" | "rotura_real";
 
 export type ChainAnalysis = {
-  /** Roturas en el orden recibido (el de la vista: created_at, id). */
+  /** Roturas en el orden recibido (el de la vista: seq). */
   orderBreaks: number;
   ledger: number;
   /** Existe algún orden de los mismos movimientos en el que la cadena cierra. */
@@ -723,12 +723,12 @@ export class Lab {
     return out;
   }
 
-  /** Movimientos del producto en el orden de `stock_chain_breaks` (created_at, id). */
+  /** Movimientos del producto en el orden de `stock_chain_breaks` (`seq` = orden real de la cadena). */
   async movements(productId: string): Promise<Movement[]> {
     return this.rows<Movement>(
       `select id, product_id, type::text as type, quantity_delta, stock_after, created_at::text as created_at,
               sale_id, purchase_id, conversion_id, store_id
-       from public.stock_movements where product_id = $1 order by created_at, id`,
+       from public.stock_movements where product_id = $1 order by seq, id`,
       [productId],
     );
   }
@@ -862,7 +862,8 @@ export class CaseCtx {
   /**
    * Producto propio del caso. Se inserta con stock 0 y el stock inicial entra por
    * el camino real: RPC `adjust_stock(inventario_inicial)` como lab-admin.
-   * Con `store: "default"` se crea en la otra tienda (stock + movimiento por SQL).
+   * Con `store: "default"` se crea en la otra tienda: el movimiento
+   * `inventario_inicial` se inserta por SQL y el trigger del libro mueve el stock.
    */
   async product(
     name: string,
@@ -884,11 +885,8 @@ export class CaseCtx {
     if (stock > 0 && options.store === "default") {
       await this.sql(
         `fixture stock inicial ${sku} (tienda default)`,
-        `with moved as (
-           insert into public.stock_movements (product_id, type, quantity_delta, stock_after, reason, store_id)
-           values ($1, 'inventario_inicial', $2, $2, 'S403 fixture', $3) returning product_id
-         )
-         update public.products set current_stock = $2 where id = (select product_id from moved)`,
+        `insert into public.stock_movements (product_id, type, quantity_delta, reason, store_id)
+         values ($1, 'inventario_inicial', $2, 'S403 fixture', $3)`,
         [id, stock, storeId],
       );
     } else if (stock > 0) {

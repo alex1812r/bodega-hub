@@ -76,6 +76,18 @@ describe("expectedDelta", () => {
     ).toEqual({ u: 16, p: 36 });
   });
 
+  it("STK-519 (C13): modo empaque sobre el SKU EMPAQUE de un par ingresa packCount empaques, no packCount×unitsPerPack", () => {
+    const items = [
+      { productId: "caja", packCount: 3, unitsPerPack: 12, stockInPacks: true },
+      { productId: "unidad", packCount: 2, unitsPerPack: 12 },
+    ];
+    expect(expectedDelta("purchase_create", { status: "recibido", items })).toEqual({ caja: 3, unidad: 24 });
+    expect(expectedDelta("purchase_receive", { items })).toEqual({ caja: 3, unidad: 24 });
+    expect(expectedDelta("purchase_cancel", { status: "recibido", items })).toEqual({ caja: -3, unidad: -24 });
+    expect(expectedDelta("purchase_return", { status: "recibido", items })).toEqual({ caja: -3, unidad: -24 });
+    expect(expectedDelta("purchase_create", { status: "pedido", items })).toEqual({});
+  });
+
   it("purchase_create pedido: {} aunque tenga líneas", () => {
     expect(
       expectedDelta("purchase_create", {

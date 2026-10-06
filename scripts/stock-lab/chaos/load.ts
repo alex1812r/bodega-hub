@@ -30,9 +30,11 @@ import {
   type SaleLineInput,
   type ScopedIntegrity,
   type Verdict,
+  cleanupOwnProducts,
   closeLab,
   currentRate,
   defaultRunId,
+  formatCleanup,
   globalIntegrity,
   integrityProblems,
   is2xx,
@@ -549,6 +551,7 @@ async function runLoad(args: LoadArgs, runId: string): Promise<LoadReport> {
       detail: judgement.detail,
     };
   } finally {
+    console.log(formatCleanup(await cleanupOwnProducts(lab)));
     await closeLab(lab);
   }
 }
