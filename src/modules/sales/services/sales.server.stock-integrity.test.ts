@@ -6,8 +6,7 @@
  * camino que se activa cuando la base no tiene `create_sale_with_payments`
  * (patch 20260909 sin aplicar).
  *
- * Los `it.failing` describen el comportamiento SANO y hoy fallan: al corregir
- * `createSale` (fase 5) hay que convertirlos en `it`.
+ * Nacieron como `it.failing` (STK-413) y pasaron a `it` con el arreglo de STK-507.
  */
 
 jest.mock("../../../lib/supabase/route-client");
@@ -66,6 +65,9 @@ function mountDatabaseWithoutAtomicRpc(handlers: {
   registerPayment?: (callNumber: number) => RpcResult | undefined;
 }) {
   const createdSales: SaleRowFixture[] = [];
+  // Doble honesto (STK-507): una clave solo "existe" en la base si `create_sale`
+  // la recibió y la guardó; una búsqueda por clave que nadie guarda no encuentra nada.
+  const salesByStoredKey = new Map<unknown, SaleRowFixture>();
   let paymentCalls = 0;
 
   const rpc = jest.fn(async (name: string, args?: Record<string, unknown>): Promise<RpcResult> => {
@@ -75,6 +77,9 @@ function mountDatabaseWithoutAtomicRpc(handlers: {
       case "create_sale": {
         const sale = saleRow(createdSales.length + 1);
         createdSales.push(sale);
+        if (args?.p_client_request_id) {
+          salesByStoredKey.set(args.p_client_request_id, sale);
+        }
         return { data: sale, error: null };
       }
       case "register_payment":
@@ -93,13 +98,13 @@ function mountDatabaseWithoutAtomicRpc(handlers: {
   });
 
   // Lecturas de `sales`: por id (refresco tras cobrar) o por `client_request_id`
-  // (un arreglo razonable buscaría la venta previa antes de crear otra).
+  // (solo devuelve la venta que se creó guardando esa misma clave).
   const from = jest.fn(() => {
     const filters: Record<string, unknown> = {};
     const lookup = () => {
       const byKey = filters.client_request_id !== undefined;
       const found = byKey
-        ? createdSales[0]
+        ? salesByStoredKey.get(filters.client_request_id)
         : (createdSales.find((sale) => sale.id === filters.id) ?? createdSales[0]);
       return found ? { ...found, status: "pagada" as const } : null;
     };
@@ -126,7 +131,7 @@ function mountDatabaseWithoutAtomicRpc(handlers: {
 
   const callsTo = (name: string) => rpc.mock.calls.filter((call) => call[0] === name).length;
 
-  return { callsTo, createdSales };
+  return { callsTo, createdSales, rpc };
 }
 
 function describeRejection(error: unknown) {
@@ -193,7 +198,7 @@ describe("C5 · cobro en dos pasos cuando falta create_sale_with_payments", () =
   // "pago excede" y reintenta → otra venta. Síntoma de producción del 29-ago.
   // Evento: qa/STK-408/verdict.md §H8 (fallback en dos pasos); `w4-os` `os.20260830.symptom`.
   // Código: src/modules/sales/services/sales.server.ts:461-470 (catch de createSaleThenPayments).
-  it.failing(
+  it(
     "si la anulación de la venta falla, el error dice que la venta quedó viva (no se traga el fallo de cancel_sale)",
     async () => {
       mountDatabaseWithoutAtomicRpc({ registerPayment: secondPaymentFails });
@@ -220,6 +225,17 @@ describe("C5 · cobro en dos pasos cuando falta create_sale_with_payments", () =
       expect({ ventaVivaSinAviso: saleLeftAlive && sameErrorAsCompensated }).toEqual({
         ventaVivaSinAviso: false,
       });
+      // El aviso nombra la venta que quedó viva (número e id) para que no se repita.
+      const aliveSale = uncompensated.createdSales[0];
+      expect(errorWhenUncompensated).toMatchObject({
+        code: "CONFLICT",
+        details: { invoiceNumber: aliveSale.invoice_number, saleId: aliveSale.id, saleLeftAlive: true },
+        status: 409,
+      });
+      expect(String(errorWhenUncompensated?.message)).toContain(aliveSale.invoice_number);
+      expect(String(errorWhenUncompensated?.message)).toContain(aliveSale.id);
+      // Con la venta ya anulada se conserva el error del cobro tal cual.
+      expect(errorWhenCompensated).toMatchObject({ code: "BAD_REQUEST", status: 400 });
     },
   );
 
@@ -228,7 +244,7 @@ describe("C5 · cobro en dos pasos cuando falta create_sale_with_payments", () =
   // el reintento tras una respuesta perdida crea otra venta y descuenta stock otra vez.
   // Evento: qa/STK-408/verdict.md §5–6; causes.md C5(b) (4 ventas idénticas el 29-ago).
   // Código: src/modules/sales/services/sales.server.ts:411-416 y :447-448.
-  it.failing(
+  it(
     "un reintento con la misma clave por el camino en dos pasos no crea otra venta",
     async () => {
       const database = mountDatabaseWithoutAtomicRpc({});
@@ -252,6 +268,10 @@ describe("C5 · cobro en dos pasos cuando falta create_sale_with_payments", () =
 
       expect(database.callsTo("create_sale_with_payments")).toBeGreaterThanOrEqual(1);
       expect(database.callsTo("create_sale")).toBeLessThanOrEqual(1);
+      // Y la única venta se creó guardando la clave (si no, el reintento no la vería).
+      expect(database.rpc.mock.calls.find((call) => call[0] === "create_sale")?.[1]).toMatchObject({
+        p_client_request_id: CLIENT_REQUEST_ID,
+      });
     },
   );
 });

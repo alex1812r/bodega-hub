@@ -21,6 +21,7 @@ describe("/api/sales", () => {
     const response = await POST(
       new Request("http://localhost/api/sales", {
         body: JSON.stringify({
+          clientRequestId: "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d",
           customerId: "cont-customer",
           items: [{ productId: "prod-drill", quantity: 1 }],
         }),
@@ -44,6 +45,7 @@ describe("/api/sales", () => {
     const quote = await POST(
       new Request("http://localhost/api/sales", {
         body: JSON.stringify({
+          clientRequestId: "1b2c3d4e-5f6a-4b7c-9d8e-9f0a1b2c3d4e",
           customerId: "cont-customer",
           items: [{ productId: "prod-drill", quantity: 1 }],
           refRateVes: 510,
@@ -84,6 +86,46 @@ describe("/api/sales", () => {
     expect(replay.status).toBe(201);
     expect(replayBody.data.id).toBe(firstBody.data.id);
     expect(replayBody.data.invoiceNumber).toBe(firstBody.data.invoiceNumber);
+  });
+
+  it("rejects a sale without client request id", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/sales", {
+        body: JSON.stringify({
+          customerId: "cont-customer",
+          items: [{ productId: "prod-drill", quantity: 1 }],
+        }),
+        headers: { "content-type": "application/json", "x-demo-role": "vendedor" },
+        method: "POST",
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(body.error.issues)).toContain("clientRequestId");
+  });
+
+  it("answers 409 when a client request id is reused with another cart", async () => {
+    const post = (quantity: number) =>
+      POST(
+        new Request("http://localhost/api/sales", {
+          body: JSON.stringify({
+            clientRequestId: "2c3d4e5f-6a7b-4c8d-8e9f-0a1b2c3d4e5f",
+            customerId: "cont-customer",
+            items: [{ productId: "prod-drill", quantity }],
+          }),
+          headers: { "content-type": "application/json", "x-demo-role": "vendedor" },
+          method: "POST",
+        }),
+      );
+
+    const first = await post(2);
+    const reused = await post(3);
+    const body = await reused.json();
+
+    expect(first.status).toBe(201);
+    expect(reused.status).toBe(409);
+    expect(body.error.code).toBe("CONFLICT");
   });
 
   it("rejects a sale whose payment line breaks the method rules before touching the store", async () => {

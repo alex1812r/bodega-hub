@@ -101,12 +101,101 @@ export function getSaleById(id: string, storeId: string) {
   };
 }
 
+/** Quien pide la venta (mismo contrato que `SaleViewer` del server real). */
+export type SaleMockViewer = {
+  role?: string;
+  userId?: string;
+};
+
+type SaleByClientRequest = {
+  /** Huella del contenido (cliente, lineas, descuento, impuesto, pagos), como `sales.client_request_hash`. */
+  contentHash: string;
+  items: NonNullable<SaleInput["items"]>;
+  sale: SaleMock;
+};
+
 /**
  * Ventas ya creadas por clave de idempotencia (`storeId:clientRequestId`), como
- * el indice unico `sales_store_client_request_unique` en la base: reintentar
- * devuelve la misma venta en vez de crear otra.
+ * el indice unico `sales_store_client_request_unique` en la base: reintentar con
+ * el mismo contenido devuelve la misma venta en vez de crear otra.
  */
-const salesByClientRequest = new Map<string, SaleMock>();
+const salesByClientRequest = new Map<string, SaleByClientRequest>();
+
+const IDEMPOTENCY_KEY_CONFLICT_MESSAGE =
+  "La clave de idempotencia ya se uso en otra venta. Revisa la venta registrada antes de reintentar.";
+
+function saleContentHash(input: SaleInput) {
+  return JSON.stringify({
+    customerId: input.customerId ?? null,
+    discountRef: input.discountRef ?? 0,
+    items: (input.items ?? [])
+      .map((item) => [item.productId, item.quantity, item.unitPriceRef ?? null])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+    payments: (input.payments ?? []).map((payment) => [
+      payment.method,
+      payment.amount,
+      payment.currency ?? null,
+      payment.change?.method ?? null,
+      payment.change?.amount ?? 0,
+    ]),
+    taxRef: input.taxRef ?? 0,
+  });
+}
+
+function toCreatedSaleDetail(entry: SaleByClientRequest) {
+  return {
+    ...entry.sale,
+    customer: mockContacts.find((contact) => contact.id === entry.sale.customerId),
+    items: entry.items.map((item) => {
+      const product = mockProducts.find((candidate) => candidate.id === item.productId);
+      const unitPriceRef = item.unitPriceRef ?? product?.salePriceRef ?? 0;
+      const subtotalRef = unitPriceRef * item.quantity;
+
+      return {
+        product,
+        productId: item.productId,
+        quantity: item.quantity,
+        saleId: entry.sale.id,
+        subtotalRef,
+        subtotalVes: Math.round(subtotalRef * entry.sale.refRateVes * 100) / 100,
+        unitCostRefSnapshot: 0,
+        unitPriceRef,
+      };
+    }),
+    payments: mockPayments.filter((payment) => payment.saleId === entry.sale.id),
+  };
+}
+
+/** Venta creada con clave en esta sesion del mock (no vive en `mockSales`). */
+function findCreatedSale(id: string, storeId: string) {
+  for (const entry of salesByClientRequest.values()) {
+    if (entry.sale.id === id && (entry.sale.storeId ?? DEFAULT_STORE_ID) === storeId) {
+      return entry;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Venta por clave de idempotencia, en la misma forma que `getSaleById`. 404 si
+ * no existe en la tienda o si es de otro usuario (salvo admin).
+ */
+export function getSaleByClientRequestId(
+  clientRequestId: string,
+  storeId: string,
+  viewer: SaleMockViewer = {},
+) {
+  const entry = salesByClientRequest.get(`${storeId}:${clientRequestId}`);
+  const visible =
+    viewer.role === "admin" || (Boolean(viewer.userId) && entry?.sale.userId === viewer.userId);
+
+  if (!entry || !visible) {
+    throw new ApiError(404, "NOT_FOUND", "Venta no encontrada.");
+  }
+
+  return toCreatedSaleDetail(entry);
+}
 
 /** Neto en Bs. que aporta una linea de cobro (recibido menos vuelto), como `register_payment`. */
 function paymentNetVes(payment: SalePaymentInput, refRateVes: number) {
@@ -125,11 +214,29 @@ function paymentNetVes(payment: SalePaymentInput, refRateVes: number) {
   return Math.round((receivedVes - changeVes) * 100) / 100;
 }
 
-export function createSale(input: SaleInput, storeId: string) {
-  const requestKey = input.clientRequestId ? `${storeId}:${input.clientRequestId}` : null;
-  const existing = requestKey ? salesByClientRequest.get(requestKey) : undefined;
+export function createSale(input: SaleInput, storeId: string, viewer: SaleMockViewer = {}) {
+  if (!input.clientRequestId) {
+    throw new ApiError(400, "BAD_REQUEST", "La venta requiere clientRequestId (clave de idempotencia).");
+  }
+
+  const userId = viewer.userId ?? "user-demo";
+  const requestKey = `${storeId}:${input.clientRequestId}`;
+  const contentHash = saleContentHash(input);
+  const existing = salesByClientRequest.get(requestKey);
   if (existing) {
-    return existing;
+    // Misma regla que el RPC (C4): solo se devuelve la venta previa si es el mismo
+    // contenido, del mismo usuario y sigue viva; cualquier otro caso es 409.
+    const reusable =
+      existing.contentHash === contentHash &&
+      existing.sale.userId === userId &&
+      existing.sale.status !== "cancelada" &&
+      existing.sale.status !== "devuelta";
+
+    if (!reusable) {
+      throw new ApiError(409, "CONFLICT", IDEMPOTENCY_KEY_CONFLICT_MESSAGE);
+    }
+
+    return existing.sale;
   }
 
   const refRateVes = input.refRateVes ?? 510;
@@ -163,7 +270,8 @@ export function createSale(input: SaleInput, storeId: string) {
     createdAt: new Date().toISOString(),
     customerId: input.customerId ?? "cont-customer",
     discountRef: input.discountRef ?? 0,
-    id: `sale-mock-${Date.now()}`,
+    // El contador evita ids repetidos entre ventas creadas en el mismo milisegundo.
+    id: `sale-mock-${Date.now()}-${salesByClientRequest.size + 1}`,
     invoiceNumber: `V-MOCK-${Date.now()}`,
     paidVes,
     refRateVes,
@@ -173,12 +281,10 @@ export function createSale(input: SaleInput, storeId: string) {
     taxRef: input.taxRef ?? 0,
     totalRef,
     totalVes,
-    userId: "user-demo",
+    userId,
   } satisfies SaleMock;
 
-  if (requestKey) {
-    salesByClientRequest.set(requestKey, sale);
-  }
+  salesByClientRequest.set(requestKey, { contentHash, items: input.items ?? [], sale });
 
   return sale;
 }
@@ -193,6 +299,12 @@ export function updateSale(id: string, input: SaleUpdateInput, storeId: string) 
 }
 
 export function cancelSale(id: string, storeId: string) {
+  const created = findCreatedSale(id, storeId);
+  if (created) {
+    created.sale = { ...created.sale, status: "cancelada" };
+    return toCreatedSaleDetail(created);
+  }
+
   return {
     ...getSaleById(id, storeId),
     status: "cancelada",
