@@ -27,7 +27,13 @@
     "stock-lab:dev": "npx tsx scripts/stock-lab/dev.ts",
     "stock-lab:seed": "npx tsx scripts/stock-lab/seed-lab.ts",
     "stock-lab:reconcile": "npx tsx scripts/stock-lab/reconcile.ts",
-    "stock-lab:run": "npx tsx scripts/stock-lab/run.ts"
+    "stock-lab:run": "npx tsx scripts/stock-lab/run.ts",
+    "stock-lab:start": "npx tsx scripts/stock-lab/dev.ts --start",
+    "stock-lab:scenarios": "npx tsx scripts/stock-lab/scenarios/run.ts",
+    "stock-lab:ui": "npx tsx scripts/stock-lab/ui/run.ts",
+    "stock-lab:chaos": "npx tsx scripts/stock-lab/chaos/run.ts",
+    "stock-lab:load": "npx tsx scripts/stock-lab/chaos/load.ts",
+    "stock-lab:test": "jest --config jest.stock-lab.config.ts --runInBand"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.49",
