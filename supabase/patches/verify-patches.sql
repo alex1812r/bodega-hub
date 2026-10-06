@@ -388,4 +388,12 @@ select
         'customer_purchase_summary', 'supplier_purchase_summary', 'low_stock_products')
       and has_table_privilege('anon', c.oid, 'select')
   )
+union all
+select
+  'anon sin execute en funciones de public',
+  not exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and has_function_privilege('anon', p.oid, 'execute')
+  )
 order by 1;

@@ -283,6 +283,42 @@ begin
 end;
 $$;
 
+-- -----------------------------------------------------------------------------
+-- 7. Red de seguridad — ninguna funcion de public es ejecutable por anon/public
+--    authenticated y service_role conservan exactamente lo que ya tenian.
+-- -----------------------------------------------------------------------------
+
+do $$
+declare
+  v_fn record;
+begin
+  for v_fn in
+    select
+      p.oid::regprocedure as signature,
+      has_function_privilege('authenticated', p.oid, 'execute') as auth_exec,
+      has_function_privilege('service_role', p.oid, 'execute') as service_exec
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and not exists (
+        select 1 from pg_depend d
+        where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e'
+      )
+  loop
+    execute format('revoke all on routine %s from public, anon', v_fn.signature);
+    if v_fn.auth_exec then
+      execute format('grant execute on routine %s to authenticated', v_fn.signature);
+    end if;
+    if v_fn.service_exec then
+      execute format('grant execute on routine %s to service_role', v_fn.signature);
+    end if;
+  end loop;
+end;
+$$;
+
+-- El trigger se dispara sin privilegio de EXECUTE; nadie debe llamarlo a mano.
+revoke all on function public.stock_movements_apply() from public, anon, authenticated;
+revoke all on function public.products_stock_guard() from public, anon, authenticated;
+
 commit;
 
 notify pgrst, 'reload schema';
