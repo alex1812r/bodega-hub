@@ -17,6 +17,7 @@
  * El `;` de cierre va solo en su propia linea y cada SELECT es autonomo (no
  * referencia otras vistas del parche), asi que puede ejecutarse inline.
  */
+import { assertRunId } from "./agents/cli";
 
 export const INTEGRITY_VIEW_NAMES = [
   "stock_reconciliation",
@@ -193,7 +194,7 @@ export function parseReconcileArgs(argv: readonly string[]): ReconcileArgs {
       i += 1;
       return value;
     };
-    if (arg === "--run") args.runId = next();
+    if (arg === "--run") args.runId = assertRunId(next());
     else if (arg === "--store") {
       const value = next();
       if (!UUID_RE.test(value)) throw new Error(`--store debe ser un uuid, recibido "${value}"`);

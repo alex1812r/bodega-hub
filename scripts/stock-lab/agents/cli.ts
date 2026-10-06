@@ -23,6 +23,19 @@ export type ParseAgentArgsOptions = {
 export const AGENT_ARGS_USAGE =
   "--run <id> --seed <n> [--minutes <m> | --ops <n>] [--agent <nombre>]";
 
+const RUN_ID_RE = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * El run id es el nombre de una carpeta bajo `runs/`, nunca una ruta: sin
+ * separadores y sin `..` (ni `.`), para que `resolve(RUNS_DIR, runId)` no salga de `runs/`.
+ */
+export function assertRunId(runId: string): string {
+  if (!RUN_ID_RE.test(runId) || runId.includes("..") || runId === ".") {
+    throw new Error(`--run solo admite letras, números, punto, guion y guion bajo, sin ".." (recibido "${runId}").`);
+  }
+  return runId;
+}
+
 const KNOWN_FLAGS = new Set(["run", "seed", "minutes", "ops", "agent"]);
 
 function parsePositiveNumber(flag: string, raw: string, integer: boolean): number {
@@ -93,7 +106,7 @@ export function parseAgentArgs(argv: string[], options?: ParseAgentArgsOptions):
   }
 
   const args: AgentArgs = {
-    run,
+    run: assertRunId(run),
     seed,
     agent: flags.get("agent") ?? options?.defaultAgent ?? "agent",
   };
