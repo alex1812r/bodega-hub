@@ -798,4 +798,39 @@ select
       and p.proname in ('cancel_sale', 'register_payment')
       and p.prosrc ilike '%v_sale.status not in (''pagada'', ''pendiente_pago'')%'
   )
+union all
+select
+  'lineas de venta / compra, historiales de precio y empaques solo se leen desde su tienda (20261006h, N1)',
+  (
+    select count(*) = 5 from pg_policies pol
+    where pol.schemaname = 'public'
+      and pol.cmd = 'SELECT'
+      and pol.tablename in ('sale_items', 'purchase_items', 'product_price_history',
+                            'supplier_product_price_history', 'supplier_product_pack_units')
+      and pol.qual ilike '%exists%store_id = current_user_store_id()%'
+  ) and not exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'public'
+      and pol.tablename in ('sale_items', 'purchase_items', 'product_price_history',
+                            'supplier_product_price_history', 'supplier_product_pack_units')
+      and (pol.qual = 'true' or pol.with_check = 'true')
+  )
+union all
+select
+  'empaques e historiales de precio solo se escriben desde su tienda (20261006h, N2)',
+  (
+    select count(*) = 3 from pg_policies pol
+    where pol.schemaname = 'public'
+      and pol.policyname in ('Admins and warehouse manage supplier product pack units',
+                             'Admins and warehouse insert price history',
+                             'Admins and warehouse insert supplier product price history')
+      and pol.with_check ilike '%current_user_role()%exists%store_id = current_user_store_id()%'
+      and (pol.cmd = 'INSERT' or pol.qual ilike '%current_user_role()%exists%store_id = current_user_store_id()%')
+  ) and not exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'public'
+      and pol.tablename in ('product_price_history', 'supplier_product_price_history', 'supplier_product_pack_units')
+      and pol.cmd <> 'SELECT'
+      and coalesce(pol.with_check, pol.qual) not ilike '%current_user_store_id()%'
+  )
 order by 1;
