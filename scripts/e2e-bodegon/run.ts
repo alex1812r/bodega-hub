@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { ApiClient, loadDotEnv } from "./client";
+import { assertLocalWriteTarget } from "./guard";
 import { createEmptyManifest } from "./manifest";
 import {
   phase10Sales,
@@ -22,9 +23,12 @@ import {
 } from "./phases";
 
 async function main() {
-  loadDotEnv();
+  const fileEnv = loadDotEnv();
 
-  const baseUrl = process.env.SMOKE_API_BASE_URL ?? "http://localhost:3000";
+  // Antes de cualquier petición: solo entornos locales (ver ./guard.ts).
+  const { baseUrl, apiHost, supabaseHost } = assertLocalWriteTarget(process.env, fileEnv);
+  console.log(`Destino local verificado: BFF ${apiHost}, Supabase ${supabaseHost}`);
+
   const email = process.env.SMOKE_API_EMAIL ?? "admin@example.com";
   const password = process.env.SMOKE_API_PASSWORD ?? "Admin123!";
 
