@@ -18,11 +18,13 @@ import { unwrapList, type ApiClient, type ApiResponse, type JsonRecord } from ".
 import { LAB_PASSWORD, LAB_USERS, describeError, fetchRegisters, type LabRoleKey } from "../agents/base";
 import {
   IMPORT_SHEET_NAME,
+  adjustmentTypeProblems,
   buildImportRows,
   buildImportSheetAoa,
   diffNumberMaps,
   diffSnapshots,
   flowId,
+  judgeLostResponse,
   judgeUiVsDb,
   packUnits,
   parseStockInt,
@@ -30,8 +32,10 @@ import {
   sumMovements,
   sumSaleItems,
   summarizeSalePosts,
+  type CaseScope,
   type DbDiff,
   type DbSnapshot,
+  type PosView,
   type UiClaim,
   type UiResult,
   type UiStep,
@@ -115,7 +119,7 @@ export async function snapshot(db: Client, productIds: readonly string[]): Promi
   const saleIds = [...new Set(saleItems.rows.map((row) => String(row.sale_id)))];
   const sales = await db.query(
     `select id, invoice_number, status::text as status, client_request_id::text as client_request_id
-       from public.sales where id = any($1::uuid[]) order by created_at, id`,
+       from public.sales where id = any($1::uuid[]) order by invoice_number, id`,
     [saleIds],
   );
   const purchases = await db.query(
@@ -127,7 +131,7 @@ export async function snapshot(db: Client, productIds: readonly string[]): Promi
   const purchaseIds = purchases.rows.map((row) => String(row.id));
   const payments = await db.query(
     `select id, sale_id, purchase_id, status::text as status from public.payments
-      where sale_id = any($1::uuid[]) or purchase_id = any($2::uuid[]) order by created_at, id`,
+      where sale_id = any($1::uuid[]) or purchase_id = any($2::uuid[]) order by id`,
     [saleIds, purchaseIds],
   );
   const stock: Record<string, number> = {};
@@ -435,7 +439,8 @@ class CaseRec {
   }
 }
 
-type CaseMeta = { n: number; sub?: string; title: string; hypothesis: string[] };
+/** `scope` por defecto `plan`: el caso decide el veredicto de su flujo (ver CaseScope). */
+type CaseMeta = { n: number; sub?: string; title: string; hypothesis: string[]; scope?: CaseScope };
 
 /** Ejecuta un caso aislado: su error no detiene los demás (`error` ≠ `fail`). */
 async function runCase(lab: Lab, meta: CaseMeta, body: (rec: CaseRec) => Promise<void>): Promise<void> {
@@ -477,6 +482,7 @@ async function runCase(lab: Lab, meta: CaseMeta, body: (rec: CaseRec) => Promise
     ts: new Date().toISOString(),
     suite: "ui",
     id,
+    scope: meta.scope ?? "plan",
     title: meta.title,
     hypothesis: meta.hypothesis,
     steps: rec.steps,
@@ -718,7 +724,17 @@ type PosOutcome = {
   button: string;
   buttonDisabled: boolean;
   cartLines: number;
+  /** El aviso trae el botón «Verificar» (cobro de resultado desconocido). */
+  verifyOffered: boolean;
 };
+
+function verifyButton(page: Page): Locator {
+  return page.getByRole("button", { name: "Verificar", exact: true });
+}
+
+function toView(outcome: PosOutcome): PosView {
+  return { claim: outcome.claim, text: outcome.text, invoice: outcome.invoice, verifyOffered: outcome.verifyOffered };
+}
 
 /** Qué afirma el POS tras pulsar: «Venta registrada», un error, o nada dentro del plazo. */
 async function posOutcome(page: Page, timeoutMs: number): Promise<PosOutcome> {
@@ -752,13 +768,25 @@ async function posOutcome(page: Page, timeoutMs: number): Promise<PosOutcome> {
     button: hasButton ? (await button.innerText()).trim() : "(sin botón: pantalla de éxito)",
     buttonDisabled: hasButton ? await button.isDisabled() : false,
     cartLines: await posCartCount(page),
+    verifyOffered: claim !== "success" && (await verifyButton(page).isVisible().catch(() => false)),
   };
+}
+
+/**
+ * Como posOutcome, pero espera antes a que el POS termine lo que tenga en curso
+ * (cobro o consulta por clave: el botón dice «Procesando...»), para no leer el
+ * aviso de la acción anterior.
+ */
+async function posSettled(page: Page, timeoutMs: number): Promise<PosOutcome> {
+  await page.waitForTimeout(250);
+  await page.getByRole("button", { name: /Procesando/ }).waitFor({ state: "hidden", timeout: timeoutMs }).catch(() => undefined);
+  return posOutcome(page, timeoutMs);
 }
 
 function sayOutcome(rec: CaseRec, where: string, outcome: PosOutcome): void {
   rec.say(
     where,
-    `UI=${outcome.claim}; texto="${outcome.text}"; botón="${outcome.button}"${outcome.buttonDisabled ? " (deshabilitado)" : ""}; líneas en carrito=${outcome.cartLines}`,
+    `UI=${outcome.claim}; texto="${outcome.text}"; botón="${outcome.button}"${outcome.buttonDisabled ? " (deshabilitado)" : ""}; «Verificar»=${outcome.verifyOffered ? "sí" : "no"}; líneas en carrito=${outcome.cartLines}`,
   );
 }
 
@@ -925,16 +953,37 @@ async function flow01(lab: Lab): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function flow02(lab: Lab): Promise<void> {
-  const variants: { sub: string; title: string; act: (page: Page) => Promise<void> }[] = [
+  const variants: { sub: string; key: string; scope: CaseScope; title: string; act: (page: Page) => Promise<void> }[] = [
     {
       sub: "double_click",
+      key: "F2-DOBLE",
+      scope: "plan",
       title: "POS 3G lento: doble clic en Procesar venta → una sola venta",
       act: async (page) => {
         await processButton(page).dblclick();
       },
     },
     {
+      // Con entrada real React deshabilita el botón dentro del primer clic y el
+      // segundo ya no llega al manejador (STK-408 §2.1). Tres click() en la misma
+      // tarea JS sí entran con el botón aún habilitado: ejercitan el candado.
+      sub: "same_tick_clicks",
+      key: "F2-TICK",
+      scope: "extra",
+      title: "POS 3G lento: 3 clics en la misma tarea JS (botón aún habilitado) → una sola venta",
+      act: async (page) => {
+        await processButton(page).evaluate((element) => {
+          const button = element as HTMLButtonElement;
+          button.click();
+          button.click();
+          button.click();
+        });
+      },
+    },
+    {
       sub: "triple_click_enter",
+      key: "F2-TRIPLE",
+      scope: "extra",
       title: "POS 3G lento: triple clic + Enter en Procesar venta → una sola venta",
       act: async (page) => {
         await processButton(page).click({ clickCount: 3, delay: 20 });
@@ -946,9 +995,9 @@ async function flow02(lab: Lab): Promise<void> {
     },
   ];
   for (const variant of variants) {
-    await runCase(lab, { n: 2, sub: variant.sub, title: variant.title, hypothesis: ["H8"] }, async (rec) => {
+    await runCase(lab, { n: 2, sub: variant.sub, scope: variant.scope, title: variant.title, hypothesis: ["H8"] }, async (rec) => {
       const quantity = 2;
-      const product = await createProduct(lab, `F2-${variant.sub === "double_click" ? "DOBLE" : "TRIPLE"}`, { stock: 20 });
+      const product = await createProduct(lab, variant.key, { stock: 20 });
       rec.track(product);
       const before = await snapshot(lab.db, [product.id]);
       const page = await rec.open(lab.sellerKey);
@@ -981,6 +1030,9 @@ async function flow02(lab: Lab): Promise<void> {
         const problems = singleSaleProblems(diff, product, quantity);
         const judged = judgeUiVsDb({ what: "venta(s)", uiClaim: outcome.claim, expectedDocs: 1, createdDocs: diff.sales.length });
         if (judged.verdict === "fail") problems.unshift(judged.detail);
+        if (outcome.claim === "success" && diff.sales[0] && outcome.invoice !== diff.sales[0].invoice_number) {
+          problems.push(`la UI anuncia la factura ${outcome.invoice} y la base tiene ${diff.sales[0].invoice_number}`);
+        }
         const info = `POST /api/sales enviados: ${posts.requests} (clientRequestId distintos: ${posts.distinctClientRequestIds}); ventas en base: ${diff.sales.length}.`;
         if (problems.length > 0) rec.set("fail", `${problems.join(" · ")} · ${info}`);
         else if (posts.requests > 1) rec.set("finding", `Una sola venta gracias a la idempotencia del servidor, pero el navegador envió ${posts.requests} POST: el candado del cliente no frenó el doble envío. ${info}`);
@@ -998,20 +1050,40 @@ async function flow02(lab: Lab): Promise<void> {
 // ---------------------------------------------------------------------------
 
 const SALES_ROUTE = "**/api/sales";
+/** `GET /api/sales/by-request/<clave>`: lo que el POS consulta cuando no sabe si el cobro quedó. */
+const SALE_LOOKUP_ROUTE = "**/api/sales/by-request/**";
+
+/** Qué hace el cajero con un cobro cuya respuesta se perdió. */
+type CashierAction = "none" | "verify" | "reload" | "clear_order" | "leave_and_return";
+
+const CASHIER_ACTION_LABEL: Record<CashierAction, string> = {
+  none: "no hace nada (el POS consulta por la clave)",
+  verify: "pulsa «Verificar»",
+  reload: "recarga, rehace el carrito y pulsa «Procesar venta»",
+  clear_order: "pulsa «Limpiar orden»",
+  leave_and_return: "sale a /sales, vuelve al POS, rehace el carrito y pulsa «Procesar venta»",
+};
+
+async function posReady(page: Page): Promise<void> {
+  await page.getByRole("searchbox", { name: "Buscar productos" }).waitFor({ state: "visible", timeout: NAV_TIMEOUT });
+  await page.waitForLoadState("networkidle", { timeout: NAV_TIMEOUT }).catch(() => undefined);
+}
 
 async function flow03(lab: Lab): Promise<void> {
   const quantity = 2;
 
-  type CutSetup = (page: Page, rec: CaseRec) => Promise<void>;
-  const cutCase = async (
-    sub: string,
-    title: string,
-    key: string,
-    install: CutSetup,
-    opts: { committedByFirst: boolean; afterCut: "retry" | "reload" },
-  ) => {
-    await runCase(lab, { n: 3, sub, title, hypothesis: ["H8"] }, async (rec) => {
-      const product = await createProduct(lab, key, { stock: 20 });
+  // (i) La petición no llega al servidor: no hay venta; el reintento crea UNA.
+  await runCase(
+    lab,
+    {
+      n: 3,
+      sub: "i_abort_before_server",
+      scope: "extra",
+      title: "POS: la petición se corta ANTES de llegar al servidor → reintento → una venta",
+      hypothesis: ["H8"],
+    },
+    async (rec) => {
+      const product = await createProduct(lab, "F3-ANTES", { stock: 20 });
       rec.track(product);
       const before = await snapshot(lab.db, [product.id]);
       const page = await rec.open(lab.sellerKey);
@@ -1019,11 +1091,14 @@ async function flow03(lab: Lab): Promise<void> {
       await openPos(rec, page);
       await posAdd(page, product, quantity);
       await posPickCash(page);
-      await install(page, rec);
+      await page.route(SALES_ROUTE, (route) =>
+        route.request().method() === "POST" ? route.abort("internetdisconnected") : route.continue(),
+      );
+      rec.step("page.route POST /api/sales → abort(internetdisconnected)");
       await rec.shot(page, "carrito");
 
       await processButton(page).click();
-      const cut = await posOutcome(page, 20_000);
+      const cut = await posSettled(page, 20_000);
       await rec.shot(page, "tras-corte");
       sayOutcome(rec, "POS con la red cortada", cut);
       await sleep(3_000); // ¿reintenta sola?
@@ -1033,22 +1108,11 @@ async function flow03(lab: Lab): Promise<void> {
         note: `POST enviados=${postsAfterCut}; fallos de red=${net.failures.join(",") || "ninguno"}; ventas en base=${midDiff.sales.length}`,
       });
 
-      // Se restaura la red.
       await page.unroute(SALES_ROUTE).catch(() => undefined);
-      let reloadedWarning = "";
-      if (opts.afterCut === "reload") {
-        // El cajero, ante el error, recarga y vuelve a armar el mismo carrito.
-        await openPos(rec, page);
-        reloadedWarning = (await screenTexts(page)).join(" · ");
-        rec.say("POS tras recargar (¿avisa de la venta ya registrada?)", reloadedWarning || "(ningún aviso)");
-        await posAdd(page, product, quantity);
-        await posPickCash(page);
-        await rec.shot(page, "tras-recargar");
-      }
       let retry: PosOutcome | null = null;
       if (cut.claim !== "success" && (await processButton(page).count()) > 0) {
         await processButton(page).click({ timeout: 10_000 });
-        retry = await posOutcome(page, 30_000);
+        retry = await posSettled(page, 30_000);
         await rec.shot(page, "tras-reintento");
         sayOutcome(rec, "POS al pulsar Procesar venta OTRA VEZ con red", retry);
       }
@@ -1075,75 +1139,228 @@ async function flow03(lab: Lab): Promise<void> {
         ui_after_retry: retry ? { claim: retry.claim, text: retry.text, invoice: retry.invoice } : null,
       };
 
-      const info = `Con la red cortada la UI dijo ${cut.claim} («${cut.text}»), carrito con ${cut.cartLines} línea(s), ${postsAfterCut} POST (sin reintento automático: ${postsAfterCut === 1 ? "sí" : "NO"}), ${midDiff.sales.length} venta(s) en base; tras ${opts.afterCut === "reload" ? "recargar y repetir el carrito" : "reintentar"}: UI ${retry?.claim ?? "—"}, ${posts.requests} POST con ${posts.distinctClientRequestIds} clientRequestId distinto(s), ${diff.sales.length} venta(s) en base.`;
+      const info = `Con la red cortada la UI dijo ${cut.claim} («${cut.text}»), carrito con ${cut.cartLines} línea(s), ${postsAfterCut} POST, ${midDiff.sales.length} venta(s) en base; tras reintentar: UI ${retry?.claim ?? "—"}, ${posts.requests} POST con ${posts.distinctClientRequestIds} clientRequestId distinto(s), ${diff.sales.length} venta(s) en base.`;
       const problems = singleSaleProblems(diff, product, quantity);
-      if (cut.claim === "success" && midDiff.sales.length === 0) problems.unshift("Éxito falso: la UI afirmó «Venta registrada» sin venta en la base.");
+      if (cut.claim === "success") problems.unshift("Éxito falso: la UI afirmó «Venta registrada» sin que la petición llegara al servidor.");
+      if (midDiff.sales.length > 0) problems.push(`la base tiene ${midDiff.sales.length} venta(s) con la petición abortada antes del servidor`);
       if (cut.claim !== "success" && cut.cartLines === 0) problems.push("la UI vació el carrito sin haber confirmado la venta");
       if (postsAfterCut > 1) problems.push(`el cliente reintentó solo (${postsAfterCut} POST antes del segundo clic)`);
-      if (retry && retry.claim !== "success" && diff.sales.length > 0) problems.push("la venta está en la base y la UI sigue sin confirmarla tras reintentar");
-      if (opts.afterCut === "reload" && diff.sales.length > 1) {
-        rec.set(
-          "fail",
-          `Venta duplicada: la respuesta se perdió con la venta ya confirmada, la UI solo dijo «${cut.text}» y, tras recargar, no avisó de la venta registrada (${reloadedWarning || "ningún aviso"}); el cajero repitió el carrito y nació otra venta (la clave de idempotencia vive solo en memoria). ${info}`,
-        );
-        return;
-      }
-      if (problems.length > 0) {
-        rec.set("fail", `${problems.join(" · ")} · ${info}`);
-        return;
-      }
-      const hintsUnknown = /verific|puede que|no sabemos|no se sabe|revisa (el listado|las ventas)|ya (fue|se) registr/i.test(cut.text);
-      if (opts.committedByFirst && !hintsUnknown) {
-        rec.set(
-          "finding",
-          `La venta ya estaba en la base cuando la UI mostró «${cut.text}»: el mensaje no avisa de que la venta pudo registrarse ni invita a verificar; solo el reintento con el mismo carrito (misma clave) lo resuelve. ${info}`,
-        );
-        return;
-      }
-      rec.set("pass", info);
-    });
-  };
-
-  await cutCase(
-    "i_abort_before_server",
-    "POS: la petición se corta ANTES de llegar al servidor → reintento → una venta",
-    "F3-ANTES",
-    async (page, rec) => {
-      await page.route(SALES_ROUTE, (route) =>
-        route.request().method() === "POST" ? route.abort("internetdisconnected") : route.continue(),
-      );
-      rec.step("page.route POST /api/sales → abort(internetdisconnected)");
+      if (retry?.claim !== "success") problems.push(`el reintento con red no acabó en «Venta registrada» (${retry?.claim ?? "sin reintento"}: «${retry?.text ?? ""}»)`);
+      else if (diff.sales[0] && retry.invoice !== diff.sales[0].invoice_number) problems.push(`la UI anuncia la factura ${retry.invoice} y la base tiene ${diff.sales[0].invoice_number}`);
+      if (problems.length > 0) rec.set("fail", `${problems.join(" · ")} · ${info}`);
+      else if (posts.distinctClientRequestIds > 1) rec.set("finding", `Una sola venta, pero el reintento estrenó clave de idempotencia. ${info}`);
+      else rec.set("pass", info);
     },
-    { committedByFirst: false, afterCut: "retry" },
   );
 
-  const cutResponse: CutSetup = async (page, rec) => {
-    await page.route(SALES_ROUTE, async (route) => {
-      if (route.request().method() !== "POST") return route.continue();
-      const response = await route.fetch();
-      rec.step("servidor respondió (respuesta descartada)", { status: response.status() });
-      return route.abort("connectionreset");
+  // La venta se confirma en el servidor y la RESPUESTA se pierde. Con `lookupDown`
+  // tampoco responde la consulta por clave: el POS no puede saber si cobró.
+  const lostResponseCase = async (spec: {
+    sub: string;
+    key: string;
+    title: string;
+    lookupDown: boolean;
+    action: CashierAction;
+  }) => {
+    await runCase(lab, { n: 3, sub: spec.sub, title: spec.title, hypothesis: ["H8"] }, async (rec) => {
+      const product = await createProduct(lab, spec.key, { stock: 20 });
+      rec.track(product);
+      const before = await snapshot(lab.db, [product.id]);
+      const page = await rec.open(lab.sellerKey);
+      const net = watchSalePosts(page);
+      const lookups: string[] = [];
+      page.on("requestfinished", (request) => {
+        if (/\/api\/sales\/by-request\//.test(request.url())) void request.response().then((response) => lookups.push(String(response?.status() ?? "sin respuesta")));
+      });
+      page.on("requestfailed", (request) => {
+        if (/\/api\/sales\/by-request\//.test(request.url())) lookups.push(request.failure()?.errorText ?? "failed");
+      });
+      await openPos(rec, page);
+      await posAdd(page, product, quantity);
+      await posPickCash(page);
+      await page.route(SALES_ROUTE, async (route) => {
+        if (route.request().method() !== "POST") return route.continue();
+        const response = await route.fetch();
+        rec.step("servidor respondió (respuesta descartada)", { status: response.status() });
+        return route.abort("connectionreset");
+      });
+      rec.step("page.route POST /api/sales → route.fetch() y abort(connectionreset)");
+      if (spec.lookupDown) {
+        await page.route(SALE_LOOKUP_ROUTE, (route) => route.abort("internetdisconnected"));
+        rec.step("page.route GET /api/sales/by-request/* → abort(internetdisconnected)");
+      }
+      const restoreNetwork = async () => {
+        await page.unroute(SALES_ROUTE).catch(() => undefined);
+        await page.unroute(SALE_LOOKUP_ROUTE).catch(() => undefined);
+        rec.step("red restaurada (page.unroute)");
+      };
+      await rec.shot(page, "carrito");
+
+      await processButton(page).click();
+      const atCut = await posSettled(page, 20_000);
+      await rec.shot(page, "tras-corte");
+      sayOutcome(rec, "POS justo tras perderse la respuesta", atCut);
+      await sleep(3_000); // ¿reintenta sola?
+      const postsAtCut = net.bodies.length;
+      const mid = diffSnapshots(before, await snapshot(lab.db, [product.id]));
+      rec.step("UI clic Procesar venta (respuesta perdida)", {
+        note: `POST enviados=${postsAtCut}; fallos de red=${net.failures.join(",") || "ninguno"}; consultas por clave=${lookups.join(",") || "ninguna"}; ventas en base=${mid.sales.length}`,
+      });
+
+      const extra: string[] = [];
+      let onReturn: PosOutcome | null = null;
+      let whileDown: PosOutcome | null = null;
+      let final: PosOutcome = atCut;
+
+      /** Con la consulta aún caída, la acción no puede dar el cobro por no hecho. */
+      const mustStayUnresolved = (what: string, view: PosOutcome) => {
+        whileDown = view;
+        if (view.claim === "success") extra.push(`${what} sin red afirmó «Venta registrada» sin poder consultarlo`);
+        else if (!view.verifyOffered) extra.push(`${what} sin red quitó el aviso y «Verificar» («${view.text}»)`);
+        if (view.cartLines === 0 && view.claim !== "success") extra.push(`${what} sin red vació el carrito con el cobro sin resolver`);
+      };
+      /** El cajero rehace el mismo carrito y vuelve a cobrar: la acción que duplicaba en fase 4. */
+      const rebuildAndCharge = async () => {
+        await posAdd(page, product, quantity);
+        await posPickCash(page);
+        await rec.shot(page, "carrito-rehecho");
+        await processButton(page).click({ timeout: 10_000 });
+        final = await posSettled(page, 30_000);
+      };
+
+      if (spec.action === "verify") {
+        await verifyButton(page).click({ timeout: 10_000 });
+        const down = await posSettled(page, 15_000);
+        sayOutcome(rec, "POS tras «Verificar» con la consulta aún caída", down);
+        await rec.shot(page, "verificar-sin-red");
+        mustStayUnresolved("«Verificar»", down);
+        await restoreNetwork();
+        if (await verifyButton(page).isVisible().catch(() => false)) await verifyButton(page).click({ timeout: 10_000 });
+        final = await posSettled(page, 30_000);
+      } else if (spec.action === "clear_order") {
+        const clear = page.getByRole("button", { name: "Limpiar orden" });
+        await clear.click({ timeout: 10_000 });
+        const down = await posSettled(page, 15_000);
+        sayOutcome(rec, "POS tras «Limpiar orden» con la consulta aún caída", down);
+        await rec.shot(page, "limpiar-sin-red");
+        mustStayUnresolved("«Limpiar orden»", down);
+        await restoreNetwork();
+        if (await clear.isEnabled().catch(() => false)) await clear.click({ timeout: 10_000 });
+        final = await posSettled(page, 30_000);
+        // Si la UI no cerró la venta y dejó el carrito limpio, el cajero lo rehace y cobra.
+        if (final.claim !== "success" && final.cartLines === 0) await rebuildAndCharge();
+      } else if (spec.action === "reload") {
+        await page.reload();
+        await posReady(page);
+        onReturn = await posOutcome(page, 10_000);
+        sayOutcome(rec, "POS tras recargar (antes de tocar nada)", onReturn);
+        await rec.shot(page, "tras-recargar");
+        await restoreNetwork();
+        await rebuildAndCharge();
+      } else if (spec.action === "leave_and_return") {
+        await page.getByRole("link", { name: "Volver a ventas" }).or(page.getByRole("button", { name: "Volver a ventas" })).first().click();
+        await page.waitForURL((url) => url.pathname === "/sales", { timeout: NAV_TIMEOUT });
+        await page.waitForLoadState("networkidle", { timeout: NAV_TIMEOUT }).catch(() => undefined);
+        await rec.shot(page, "fuera-del-pos");
+        // Vuelta por navegación de cliente (sin recargar): el POS se remonta.
+        const link = page.locator('main a[href="/sales/create"]').first();
+        const how = (await link.count()) > 0 ? "enlace a /sales/create" : "atrás del navegador";
+        if ((await link.count()) > 0) await link.click();
+        else await page.goBack();
+        await page.waitForURL((url) => url.pathname === "/sales/create", { timeout: NAV_TIMEOUT });
+        await posReady(page);
+        rec.step("UI salir a /sales y volver al POS", { note: how });
+        onReturn = await posOutcome(page, 10_000);
+        sayOutcome(rec, "POS al volver (antes de tocar nada)", onReturn);
+        await rec.shot(page, "al-volver");
+        await restoreNetwork();
+        await rebuildAndCharge();
+      }
+      await rec.shot(page, "final");
+      sayOutcome(rec, "POS al final, con la red de vuelta", final);
+      await sleep(1_500); // margen para un posible POST tardío
+
+      // La base manda: una venta y un juego de movimientos para este carrito.
+      const diff = diffSnapshots(before, await snapshot(lab.db, [product.id]));
+      const posts = summarizeSalePosts(net.bodies);
+      const dbInvoice = diff.sales.length === 1 ? (diff.sales[0]?.invoice_number ?? null) : null;
+      rec.step(`UI el cajero ${CASHIER_ACTION_LABEL[spec.action]}`, {
+        note: `POST totales=${posts.requests}; clientRequestId distintos=${posts.distinctClientRequestIds}; consultas por clave=${lookups.join(",") || "ninguna"}`,
+      });
+      rec.expected = {
+        ...saleExpectations(product, quantity),
+        ui_at_cut: spec.lookupDown
+          ? "aviso «La venta pudo haberse registrado…» + botón «Verificar»; el carrito no se da por cobrado"
+          : "la UI consulta por la clave y muestra la venta registrada",
+        ui_final: "la UI nombra la venta de la base (overlay «Venta registrada» o aviso con su factura); ningún segundo cobro",
+        auto_retry: 0,
+      };
+      rec.actual = {
+        ...saleActual(diff, product),
+        sales_in_db_at_cut: mid.sales.length,
+        posts_at_cut: postsAtCut,
+        post_sales: posts,
+        lookups,
+        ui_at_cut: toView(atCut),
+        ui_while_lookup_down: whileDown ? toView(whileDown) : null,
+        ui_on_return: onReturn ? toView(onReturn) : null,
+        ui_final: toView(final),
+      };
+      const judged = judgeLostResponse({
+        dbProblems: [...singleSaleProblems(diff, product, quantity), ...extra],
+        dbInvoice,
+        salesAtCut: mid.sales.length,
+        postsAtCut,
+        atCut: toView(atCut),
+        onReturn: onReturn ? toView(onReturn) : null,
+        final: toView(final),
+      });
+      const info = `Tras el corte la UI dijo ${atCut.claim} («${atCut.text}»${atCut.verifyOffered ? " + Verificar" : ""}) con ${mid.sales.length} venta(s) en base y ${postsAtCut} POST; el cajero ${CASHIER_ACTION_LABEL[spec.action]}; al final UI ${final.claim} («${final.text}»), ${posts.requests} POST con ${posts.distinctClientRequestIds} clave(s), ${diff.sales.length} venta(s) y ${diff.movements.length} movimiento(s) en base.`;
+      if (judged.verdict === "fail") rec.set("fail", `${judged.detail} · ${info}`);
+      else if (posts.requests > 1) rec.set("finding", `Una sola venta gracias a la idempotencia del servidor, pero el POS envió ${posts.requests} POST: no consultó por la clave antes de reenviar. ${info}`);
+      else rec.set("pass", info);
     });
-    rec.step("page.route POST /api/sales → route.fetch() y abort(connectionreset)");
   };
-  await cutCase(
-    "ii_cut_response_after_commit",
-    "POS: el servidor confirma la venta y la RESPUESTA se pierde → reintento → una venta",
-    "F3-DESPUES",
-    cutResponse,
-    { committedByFirst: true, afterCut: "retry" },
-  );
-  await cutCase(
-    "iv_cut_response_then_reload",
-    "POS (extra): respuesta perdida, el cajero recarga y repite el carrito → ¿venta duplicada?",
-    "F3-RECARGA",
-    cutResponse,
-    { committedByFirst: true, afterCut: "reload" },
-  );
+
+  await lostResponseCase({
+    sub: "ii_cut_response_after_commit",
+    key: "F3-DESPUES",
+    title: "POS: respuesta perdida tras el commit → la UI consulta por la clave y muestra la venta",
+    lookupDown: false,
+    action: "none",
+  });
+  await lostResponseCase({
+    sub: "ii_unknown_then_verify",
+    key: "F3-VERIF",
+    title: "POS: respuesta perdida y consulta caída → aviso «pudo haberse registrado» + «Verificar» → una venta",
+    lookupDown: true,
+    action: "verify",
+  });
+  await lostResponseCase({
+    sub: "ii_unknown_then_clear_order",
+    key: "F3-LIMPIA",
+    title: "POS: respuesta perdida y consulta caída → «Limpiar orden» no da el cobro por no hecho → una venta",
+    lookupDown: true,
+    action: "clear_order",
+  });
+  await lostResponseCase({
+    sub: "iv_unknown_then_reload",
+    key: "F3-RECARGA",
+    title: "POS: respuesta perdida y consulta caída → recargar y repetir el carrito → una venta",
+    lookupDown: true,
+    action: "reload",
+  });
+  await lostResponseCase({
+    sub: "v_unknown_then_leave_and_return",
+    key: "F3-SALIR",
+    title: "POS: respuesta perdida y consulta caída → salir a /sales, volver y repetir el carrito → una venta",
+    lookupDown: true,
+    action: "leave_and_return",
+  });
 
   await runCase(
     lab,
-    { n: 3, sub: "iii_very_slow_response", title: "POS: respuesta lentísima (35 s) con la venta ya confirmada", hypothesis: ["H8"] },
+    { n: 3, sub: "iii_very_slow_response", scope: "extra", title: "POS: respuesta lentísima (35 s) con la venta ya confirmada", hypothesis: ["H8"] },
     async (rec) => {
       const delayMs = 35_000;
       const product = await createProduct(lab, "F3-LENTA", { stock: 20 });
@@ -1272,10 +1489,10 @@ async function flow04(lab: Lab): Promise<void> {
   const unitsPerPack = 12;
   const units = packUnits(packCount, unitsPerPack);
   for (const variant of [
-    { sub: "receive", key: "F4-BULTO", title: "Compra en modo empaque (3 × 12) como pedido → recibir por UI → +36 unidades", double: false },
-    { sub: "receive_double_click", key: "F4-DOBLE", title: "Compra en modo empaque → doble clic en «Confirmar recepción» → una sola entrada", double: true },
+    { sub: "receive", key: "F4-BULTO", scope: "plan" as CaseScope, title: "Compra en modo empaque (3 × 12) como pedido → recibir por UI → +36 unidades", double: false },
+    { sub: "receive_double_click", key: "F4-DOBLE", scope: "extra" as CaseScope, title: "Compra en modo empaque → doble clic en «Confirmar recepción» → una sola entrada", double: true },
   ]) {
-    await runCase(lab, { n: 4, sub: variant.sub, title: variant.title, hypothesis: ["H2", "H8", "H11"] }, async (rec) => {
+    await runCase(lab, { n: 4, sub: variant.sub, scope: variant.scope, title: variant.title, hypothesis: ["H2", "H8", "H11"] }, async (rec) => {
       const product = await createProduct(lab, variant.key, { stock: 0, price: 2, supplier: variant.double ? "linked_with_pack_x12" : "linked" });
       rec.track(product);
       const before = await snapshot(lab.db, [product.id]);
@@ -1435,7 +1652,7 @@ async function flow05(lab: Lab): Promise<void> {
 // F6 · Ajuste desde inventario
 // ---------------------------------------------------------------------------
 
-type AdjustOutcome = { claim: UiClaim; text: string; projected: string; status: number | null; productListed: boolean };
+type AdjustOutcome = { claim: UiClaim; text: string; projected: string; status: number | null; productListed: boolean; typeOptions: string[] };
 
 async function uiAdjust(
   rec: CaseRec,
@@ -1480,7 +1697,10 @@ async function uiAdjust(
       await select.selectOption({ label: (await option.first().innerText()).trim() });
     }
   }
-  await dialog.getByLabel("Tipo de movimiento").selectOption({ label: typeLabel });
+  const typeSelect = dialog.getByLabel("Tipo de movimiento");
+  const typeOptions = (await typeSelect.locator("option").allInnerTexts()).map((text) => text.trim());
+  rec.say("Ajuste de stock · opciones de «Tipo de movimiento»", typeOptions.join(" / "));
+  await typeSelect.selectOption({ label: typeLabel });
   await dialog.getByLabel("Cantidad").fill(String(quantity));
   await dialog.getByLabel("Motivo").fill(`STK-404 ${rec.lab.run}`);
   const projected = await dialogText(dialog);
@@ -1510,7 +1730,7 @@ async function uiAdjust(
   await rec.shot(page, `${shotName}-resultado`);
   rec.step(`UI Ajuste de stock: ${typeLabel} ${quantity}`, { as: "admin", status: response?.status(), note: response ? "" : "no salió ningún POST" });
   if (stillOpen) await page.keyboard.press("Escape");
-  return { claim: stillOpen ? "error" : "success", text, projected: projection, status: response?.status() ?? null, productListed };
+  return { claim: stillOpen ? "error" : "success", text, projected: projection, status: response?.status() ?? null, productListed, typeOptions };
 }
 
 async function flow06(lab: Lab): Promise<void> {
@@ -1520,7 +1740,7 @@ async function flow06(lab: Lab): Promise<void> {
     { sub: "salida_mayor_que_stock", title: "Ajuste de salida mayor que el stock → mensaje y sin movimiento", type: "ajuste_salida", label: "Ajuste salida", qty: 999, delta: 0 },
   ];
   for (const step of steps) {
-    await runCase(lab, { n: 6, sub: step.sub, title: step.title, hypothesis: ["H3", "H8"] }, async (rec) => {
+    await runCase(lab, { n: 6, sub: step.sub, scope: step.delta === 0 ? "extra" : "plan", title: step.title, hypothesis: ["H3", "H8"] }, async (rec) => {
       const product = await createProduct(lab, `F6-${step.sub.toUpperCase().replace(/_/g, "-")}`, { stock: 10 });
       rec.track(product);
       const before = await snapshot(lab.db, [product.id]);
@@ -1532,6 +1752,7 @@ async function flow06(lab: Lab): Promise<void> {
         stock_delta: { [product.sku]: step.delta },
         movements: expectMove ? [{ type: step.type, quantity_delta: step.delta }] : [],
         ui: expectMove ? "cierra el diálogo y la fila aparece en movimientos" : "mensaje de stock insuficiente, sin movimiento",
+        type_options: "solo Ajuste entrada, Ajuste salida e Inventario inicial (ninguna devolución)",
       };
       if (!outcome.productListed) {
         rec.note("el selector «Producto» del diálogo «Ajuste de stock» solo carga 100 productos y no muestra el producto elegido desde su fila (el ajuste se envía igualmente con el producto de la URL)");
@@ -1544,6 +1765,7 @@ async function flow06(lab: Lab): Promise<void> {
         ui_claim: outcome.claim,
         ui_text: outcome.text,
         http_status: outcome.status,
+        type_options: outcome.typeOptions,
         stock_delta: { [product.sku]: diff.stockDelta[product.id] ?? 0 },
         movements: diff.movements.map((m) => ({ type: m.type, quantity_delta: m.quantity_delta, stock_after: m.stock_after })),
         ui_movements: uiMatch.map((row) => row.raw),
@@ -1552,6 +1774,7 @@ async function flow06(lab: Lab): Promise<void> {
       const problems: string[] = [];
       const judged = judgeUiVsDb({ what: "movimiento(s)", uiClaim: outcome.claim, expectedDocs: expectMove ? 1 : 0, createdDocs: diff.movements.length });
       if (judged.verdict === "fail") problems.push(judged.detail);
+      problems.push(...adjustmentTypeProblems(outcome.typeOptions));
       if ((diff.stockDelta[product.id] ?? 0) !== step.delta) problems.push(`stock: esperado ${step.delta}, real ${diff.stockDelta[product.id] ?? 0}`);
       if (expectMove && (diff.movements[0]?.type !== step.type || diff.movements[0]?.quantity_delta !== step.delta)) problems.push(`movimiento en base: ${JSON.stringify(diff.movements.map((m) => [m.type, m.quantity_delta]))}`);
       if (uiMatch.length !== (expectMove ? 1 : 0) || (expectMove && uiMatch[0]?.quantity !== step.delta)) problems.push(`la UI muestra ${uiMatch.length} fila(s) «${step.label}» (${uiMatch.map((r) => r.quantity).join(",")})`);
@@ -1574,7 +1797,7 @@ async function flow07(lab: Lab): Promise<void> {
     { sub: "normal", title: "Abrir 2 empaques (x12) desde el detalle → −2 empaque / +24 unidad", key: "F7-CAJA", unitKey: "F7-UNID", stock: 3, packs: 2, ok: true },
     { sub: "sin_stock", title: "Abrir empaque sin stock desde el detalle → mensaje y sin movimientos", key: "F7-VACIA", unitKey: "F7-UVAC", stock: 0, packs: 1, ok: false },
   ]) {
-    await runCase(lab, { n: 7, sub: variant.sub, title: variant.title, hypothesis: ["H5", "H8"] }, async (rec) => {
+    await runCase(lab, { n: 7, sub: variant.sub, scope: variant.ok ? "plan" : "extra", title: variant.title, hypothesis: ["H5", "H8"] }, async (rec) => {
       const pack = await createProduct(lab, variant.key, { stock: variant.stock, price: 3, pack: { unitsPerPack, unitKey: variant.unitKey } });
       const unit = pack.unit;
       if (!unit) throw new Error("par empaque sin unidad");
@@ -1784,7 +2007,7 @@ async function flow08(lab: Lab): Promise<void> {
 
   await runCase(
     lab,
-    { n: 8, sub: "paid", title: "Anular venta pagada desde su detalle → ¿qué ofrece la UI y qué pasa en la base?", hypothesis: ["H7", "H8"] },
+    { n: 8, sub: "paid", scope: "extra", title: "Anular venta pagada desde su detalle → rechazo explicado y base intacta", hypothesis: ["H7", "H8"] },
     async (rec) => {
       const product = await createProduct(lab, "F8-PAGADA", { stock: 10 });
       rec.track(product);
@@ -1911,7 +2134,7 @@ async function judgeInitialStock(
 async function flow09(lab: Lab): Promise<void> {
   await runCase(
     lab,
-    { n: 9, title: "Crear producto con stock inicial por el formulario → ¿movimiento inventario_inicial?", hypothesis: ["H9", "H8"] },
+    { n: 9, title: "Crear producto con stock inicial por el formulario → movimiento inventario_inicial", hypothesis: ["H9", "H8"] },
     async (rec) => {
       const sku = `u404-${lab.tag}-f9-form`.toLowerCase();
       const name = `U404 ${lab.tag} F9-FORM`;
@@ -1950,7 +2173,7 @@ async function flow09(lab: Lab): Promise<void> {
 async function flow10(lab: Lab): Promise<void> {
   await runCase(
     lab,
-    { n: 10, title: "Import Excel con stock_inicial > 0 en 3 filas → ¿movimiento inventario_inicial?", hypothesis: ["H9", "H8"] },
+    { n: 10, title: "Import Excel con stock_inicial > 0 en 3 filas → un movimiento inventario_inicial por producto", hypothesis: ["H9", "H8"] },
     async (rec) => {
       const rows = buildImportRows(`u404-${lab.tag}-f10-`, `U404 ${lab.tag} F10`, lab.categoryName, 3);
       const file = join(lab.shotsDir, `f10-import-${lab.tag}.xlsx`);
@@ -2017,11 +2240,11 @@ export type FlowDef = { n: number; title: string; run: (lab: Lab) => Promise<voi
 
 export const FLOWS: readonly FlowDef[] = [
   { n: 1, title: "POS: vender → movimiento y stock exactos", run: flow01 },
-  { n: 2, title: "POS con 3G lento: doble/triple clic → una sola venta", run: flow02 },
-  { n: 3, title: "POS: cortar la red antes/después del commit y respuesta lentísima", run: flow03 },
+  { n: 2, title: "POS con 3G lento: doble clic (y triple, y 3 en la misma tarea) → una sola venta", run: flow02 },
+  { n: 3, title: "POS: respuesta perdida tras confirmar (Verificar, Limpiar orden, recarga, salir y volver) → una venta", run: flow03 },
   { n: 4, title: "Compra en modo empaque por UI → recibir → unidades correctas", run: flow04 },
   { n: 5, title: "Compra pedido: ¿la UI deja claro que el stock no entró?", run: flow05 },
-  { n: 6, title: "Ajuste desde inventario (entrada, salida, salida > stock)", run: flow06 },
+  { n: 6, title: "Ajuste desde inventario (entrada, salida, salida > stock; sin devoluciones en el modal)", run: flow06 },
   { n: 7, title: "Conversión desde el detalle del producto empaque", run: flow07 },
   { n: 8, title: "Cancelar venta desde su detalle → movimiento inverso", run: flow08 },
   { n: 9, title: "Crear producto con stock inicial → movimiento inventario_inicial", run: flow09 },
@@ -2037,6 +2260,7 @@ export async function runFlow(lab: Lab, flow: FlowDef): Promise<void> {
       ts: new Date().toISOString(),
       suite: "ui",
       id: flowId(flow.n),
+      scope: "plan",
       title: flow.title,
       hypothesis: [],
       steps: [],

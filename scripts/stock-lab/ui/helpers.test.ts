@@ -2,14 +2,21 @@
 import {
   IMPORT_HEADERS,
   MD_HEADER,
+  UI_USAGE,
+  adjustmentTypeProblems,
   buildImportRows,
   buildImportSheetAoa,
   countVerdicts,
   defaultRunId,
   diffNumberMaps,
   diffSnapshots,
+  flowCoverageProblems,
   flowId,
+  flowOfCase,
+  flowsMarkdown,
   formatVerdictSummary,
+  isUnknownOutcomeNotice,
+  judgeLostResponse,
   judgeUiVsDb,
   packUnits,
   parseEsNumber,
@@ -19,11 +26,14 @@ import {
   shotFileName,
   sumMovements,
   sumSaleItems,
+  summarizeFlows,
   summarizeSalePosts,
   toMarkdownRow,
   worstVerdict,
   type DbSnapshot,
+  type LostResponseInput,
   type MovementRow,
+  type PosView,
   type UiResult,
 } from "./helpers";
 
@@ -98,10 +108,19 @@ describe("argumentos", () => {
       only: null,
       headed: false,
       list: false,
+      help: false,
       out: null,
       shots: null,
       seller: "vendedor1",
     });
+  });
+
+  it("--help y -h piden la ayuda, que nombra todos los flags", () => {
+    expect(parseUiArgs(["--help"], now).help).toBe(true);
+    expect(parseUiArgs(["-h"], now).help).toBe(true);
+    for (const flag of ["--run", "--only", "--headed", "--list", "--seller", "--out", "--shots", "--help"]) {
+      expect(UI_USAGE).toContain(flag);
+    }
   });
 
   it("lee --run, --only, --headed, --list, --seller, --out y --shots", () => {
@@ -114,6 +133,7 @@ describe("argumentos", () => {
       only: [1, 2, 5],
       headed: true,
       list: true,
+      help: false,
       out: "o",
       shots: "s",
       seller: "vendedor2",
@@ -323,6 +343,7 @@ describe("formato de resultados", () => {
     ts: "2026-10-06T04:00:00.000Z",
     suite: "ui",
     id: "f03.ii",
+    scope: "plan",
     title: "Corte | tras commit",
     hypothesis: ["H8"],
     steps: [],
@@ -356,5 +377,184 @@ describe("formato de resultados", () => {
     expect(row).toContain("otra línea");
     expect(row.startsWith("| f03.ii | finding |")).toBe(true);
     expect(MD_HEADER.split("\n")[0]?.split("|").length).toBe(row.split(/(?<!\\)\|/).length);
+  });
+});
+
+describe("judgeLostResponse (respuesta perdida tras el commit, plan §8.3 flujo 3)", () => {
+  const NOTICE = "La venta pudo haberse registrado; verifica antes de volver a cobrar.";
+  const view = (partial: Partial<PosView> = {}): PosView => ({
+    claim: "error",
+    text: NOTICE,
+    invoice: null,
+    verifyOffered: true,
+    ...partial,
+  });
+  const success = (invoice = "V-1"): PosView => ({
+    claim: "success",
+    text: `Venta registrada Factura ${invoice}.`,
+    invoice,
+    verifyOffered: false,
+  });
+  const base = (partial: Partial<LostResponseInput> = {}): LostResponseInput => ({
+    dbProblems: [],
+    dbInvoice: "V-1",
+    salesAtCut: 1,
+    postsAtCut: 1,
+    atCut: view(),
+    final: success(),
+    ...partial,
+  });
+
+  it("reconoce el aviso de resultado desconocido", () => {
+    expect(isUnknownOutcomeNotice(NOTICE)).toBe(true);
+    expect(isUnknownOutcomeNotice("Failed to fetch")).toBe(false);
+    expect(isUnknownOutcomeNotice("")).toBe(false);
+  });
+
+  it("pass: la UI recupera sola la venta y la muestra (era `finding` con el esperado de fase 4)", () => {
+    expect(judgeLostResponse(base({ atCut: success(), final: success() }))).toEqual({ verdict: "pass", detail: "" });
+  });
+
+  it("pass: aviso «pudo haberse registrado» + Verificar, y al verificar muestra la venta", () => {
+    expect(judgeLostResponse(base()).verdict).toBe("pass");
+  });
+
+  it("pass: tras recargar el aviso sigue y la UI nombra la venta ya registrada en vez de cobrar otra", () => {
+    const final = view({
+      text: "El cobro anterior si quedo registrado como venta V-1. Si este carrito es esa misma venta, limpia la orden: no la cobres otra vez.",
+      verifyOffered: false,
+    });
+    expect(judgeLostResponse(base({ onReturn: view(), final })).verdict).toBe("pass");
+  });
+
+  it("fail: cualquier descuadre de la base manda (venta duplicada)", () => {
+    const judged = judgeLostResponse(base({ dbProblems: ["ventas: esperado 1, real 2"] }));
+    expect(judged.verdict).toBe("fail");
+    expect(judged.detail).toMatch(/esperado 1, real 2/);
+  });
+
+  it("fail: éxito falso (la UI afirma la venta y la base no la tiene)", () => {
+    const judged = judgeLostResponse(base({ salesAtCut: 0, atCut: success(), dbInvoice: null }));
+    expect(judged.verdict).toBe("fail");
+    expect(judged.detail).toMatch(/Éxito falso/);
+  });
+
+  it("fail: la venta está en la base y la UI solo dice «Failed to fetch»", () => {
+    const judged = judgeLostResponse(base({ atCut: view({ text: "Failed to fetch", verifyOffered: false }) }));
+    expect(judged.verdict).toBe("fail");
+    expect(judged.detail).toMatch(/Failed to fetch/);
+    expect(judged.detail).toMatch(/Verificar/);
+  });
+
+  it("fail: avisa pero no ofrece «Verificar»", () => {
+    expect(judgeLostResponse(base({ atCut: view({ verifyOffered: false }) })).verdict).toBe("fail");
+  });
+
+  it("fail: el cliente reintentó solo antes de que el cajero hiciera nada", () => {
+    expect(judgeLostResponse(base({ postsAtCut: 2 })).detail).toMatch(/reintentó solo/);
+  });
+
+  it("fail: al volver (recarga / salir y volver) el aviso desapareció", () => {
+    const judged = judgeLostResponse(base({ onReturn: view({ claim: "none", text: "", verifyOffered: false }) }));
+    expect(judged.verdict).toBe("fail");
+    expect(judged.detail).toMatch(/al volver/i);
+  });
+
+  it("fail: con la red de vuelta la UI no llega a mostrar la venta registrada", () => {
+    expect(judgeLostResponse(base({ final: view() })).detail).toMatch(/V-1/);
+    expect(judgeLostResponse(base({ final: success("V-2") })).verdict).toBe("fail");
+    expect(judgeLostResponse(base({ atCut: success("V-9"), final: success("V-1") })).verdict).toBe("fail");
+  });
+});
+
+describe("adjustmentTypeProblems (flujo 6: tipos que ofrece el ajuste libre)", () => {
+  it("vacío con exactamente los tres tipos (ignora el placeholder, acentos y mayúsculas)", () => {
+    expect(adjustmentTypeProblems(["Selecciona tipo", "Ajuste entrada", "Ajuste salida", "Inventario inicial"])).toEqual([]);
+    expect(adjustmentTypeProblems([" AJUSTE ENTRADA ", "ajuste salida", "Inventario Inicial"])).toEqual([]);
+  });
+
+  it("denuncia las devoluciones, con o sin acento", () => {
+    const problems = adjustmentTypeProblems([
+      "Ajuste entrada",
+      "Ajuste salida",
+      "Devolución cliente",
+      "Devolucion proveedor",
+      "Inventario inicial",
+    ]);
+    expect(problems).toHaveLength(2);
+    expect(problems.join(" ")).toMatch(/Devolución cliente/);
+    expect(problems.join(" ")).toMatch(/Devolucion proveedor/);
+  });
+
+  it("denuncia un tipo que falta y uno inesperado", () => {
+    const problems = adjustmentTypeProblems(["Ajuste entrada", "Venta"]).join(" · ");
+    expect(problems).toMatch(/falta «Ajuste salida»/);
+    expect(problems).toMatch(/falta «Inventario inicial»/);
+    expect(problems).toMatch(/inesperado «Venta»/);
+  });
+});
+
+describe("resumen por flujo y capturas", () => {
+  const result = (
+    id: string,
+    verdict: UiResult["verdict"],
+    scope: UiResult["scope"],
+    evidence: string[],
+  ): UiResult => ({
+    ts: "t",
+    suite: "ui",
+    id,
+    scope,
+    title: id,
+    hypothesis: [],
+    steps: [],
+    ui_says: [],
+    expected: {},
+    actual: {},
+    reconcile_scoped: {},
+    reconcile_global: {},
+    verdict,
+    detail: "",
+    evidence,
+  });
+  const results = [
+    result("f01", "pass", "plan", ["d/f01-01-carrito.png"]),
+    result("f07.normal", "pass", "plan", ["d/f07-normal-01.png", "d/f07-normal-02.png"]),
+    result("f07.sin_stock", "finding", "extra", ["d/f07-sin-stock-01.png"]),
+    result("f10", "error", "plan", ["d/f10-import.xlsx", "d/f10-error.aria.txt"]),
+  ];
+
+  it("flowOfCase lee el número del id", () => {
+    expect(flowOfCase("f03.ii_cut")).toBe(3);
+    expect(flowOfCase("f10")).toBe(10);
+    expect(flowOfCase("otro")).toBeNull();
+  });
+
+  it("el veredicto del flujo sale de los casos del plan; los extra van aparte; solo cuentan los PNG", () => {
+    const flows = summarizeFlows(results, [1, 2, 7, 10]);
+    expect(flows.map((f) => [f.id, f.verdict, f.extras, f.cases, f.shots.length])).toEqual([
+      ["f01", "pass", null, 1, 1],
+      ["f02", "error", null, 0, 0],
+      ["f07", "pass", "finding", 2, 3],
+      ["f10", "error", null, 1, 0],
+    ]);
+    expect(flows[2]?.shots).toEqual(["d/f07-normal-01.png", "d/f07-normal-02.png", "d/f07-sin-stock-01.png"]);
+  });
+
+  it("flowCoverageProblems: flujo sin ejecutar y flujo sin captura", () => {
+    expect(flowCoverageProblems(summarizeFlows(results, [1, 2, 7, 10]))).toEqual([
+      "f02: no se ejecutó ningún caso",
+      "f10: no dejó ninguna captura",
+    ]);
+    expect(flowCoverageProblems(summarizeFlows(results, [1, 7]))).toEqual([]);
+  });
+
+  it("flowsMarkdown: una fila por flujo y la lista completa de capturas por flujo", () => {
+    const md = flowsMarkdown(summarizeFlows(results, [1, 7]));
+    expect(md).toContain("| f01 | pass | — | 1 | 1 |");
+    expect(md).toContain("| f07 | pass | finding | 2 | 3 |");
+    expect(md).toContain("## Capturas por flujo");
+    expect(md).toContain("### f07");
+    expect(md).toContain("- d/f07-sin-stock-01.png");
   });
 });

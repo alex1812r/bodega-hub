@@ -24,10 +24,18 @@ export type UiStep = {
   note?: string;
 };
 
+/**
+ * `plan`: el caso verifica el esperado literal del flujo en el plan §8.3 y decide
+ * el veredicto del flujo. `extra`: variante añadida por la ola (doble clic al
+ * recibir, salida mayor que el stock…); se informa aparte y no lo decide.
+ */
+export type CaseScope = "plan" | "extra";
+
 export type UiResult = {
   ts: string;
   suite: "ui";
   id: string;
+  scope: CaseScope;
   title: string;
   hypothesis: string[];
   steps: UiStep[];
@@ -79,6 +87,69 @@ export function toMarkdownRow(result: UiResult): string {
 }
 
 // ---------------------------------------------------------------------------
+// Resumen por flujo (plan §8.3: 10 flujos) y capturas
+// ---------------------------------------------------------------------------
+
+export type FlowSummary = {
+  n: number;
+  id: string;
+  /** Peor veredicto de los casos `plan`; `error` si el flujo no ejecutó ninguno. */
+  verdict: Verdict;
+  /** Peor veredicto de los casos `extra`; `null` si no hay. */
+  extras: Verdict | null;
+  cases: number;
+  /** Rutas de las capturas PNG de todos los casos del flujo, en orden. */
+  shots: string[];
+};
+
+/** `f03.ii_cut` → 3; `null` si el id no es de un flujo. */
+export function flowOfCase(id: string): number | null {
+  const match = /^f(\d{2})(?:\.|$)/.exec(id);
+  return match ? Number(match[1]) : null;
+}
+
+export function summarizeFlows(results: readonly UiResult[], flows: readonly number[]): FlowSummary[] {
+  return flows.map((n) => {
+    const own = results.filter((result) => flowOfCase(result.id) === n);
+    const plan = own.filter((result) => result.scope === "plan").map((result) => result.verdict);
+    const extra = own.filter((result) => result.scope === "extra").map((result) => result.verdict);
+    return {
+      n,
+      id: `f${String(n).padStart(2, "0")}`,
+      verdict: plan.length > 0 ? worstVerdict(plan) : "error",
+      extras: extra.length > 0 ? worstVerdict(extra) : null,
+      cases: own.length,
+      shots: own.flatMap((result) => result.evidence.filter((file) => /\.png$/i.test(file))),
+    };
+  });
+}
+
+/** Lo que impide dar el flujo por probado: no corrió, o no dejó captura. Vacío = cobertura completa. */
+export function flowCoverageProblems(flows: readonly FlowSummary[]): string[] {
+  const problems: string[] = [];
+  for (const flow of flows) {
+    if (flow.cases === 0) problems.push(`${flow.id}: no se ejecutó ningún caso`);
+    else if (flow.shots.length === 0) problems.push(`${flow.id}: no dejó ninguna captura`);
+  }
+  return problems;
+}
+
+/** Tabla flujo → veredicto y, debajo, la lista completa de capturas de cada flujo. */
+export function flowsMarkdown(flows: readonly FlowSummary[]): string {
+  return [
+    "## Flujos (plan §8.3)",
+    "",
+    "| flujo | veredicto (plan) | extras | casos | capturas |",
+    "| --- | --- | --- | --- | --- |",
+    ...flows.map((flow) => `| ${flow.id} | ${flow.verdict} | ${flow.extras ?? "—"} | ${flow.cases} | ${flow.shots.length} |`),
+    "",
+    "## Capturas por flujo",
+    ...flows.flatMap((flow) => ["", `### ${flow.id}`, "", ...(flow.shots.length > 0 ? flow.shots.map((file) => `- ${file}`) : ["- (ninguna)"])]),
+    "",
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -87,10 +158,27 @@ export type UiArgs = {
   only: number[] | null;
   headed: boolean;
   list: boolean;
+  help: boolean;
   out: string | null;
   shots: string | null;
   seller: "vendedor1" | "vendedor2";
 };
+
+export const UI_USAGE = [
+  "npm run stock-lab:ui -- [opciones]",
+  "",
+  "  --run <id>       id del run (por defecto YYYYMMDD-HHmmss-ui)",
+  "  --only <lista>   solo esos flujos: 1,2,5 o f01,f02 (por defecto los 10)",
+  "  --seller <u>     vendedor1 (por defecto) o vendedor2",
+  "  --headed         navegador visible",
+  "  --out <dir>      raíz de ui.jsonl / ui.md (por defecto scripts/stock-lab/runs)",
+  "  --shots <dir>    raíz de las capturas (por defecto .notes/stock-integrity-gtm/qa/ui)",
+  "  --list           lista los flujos y sale",
+  "  --help, -h       esta ayuda",
+  "",
+  "Veredictos: pass (el producto cumple el esperado del plan §8.3), fail (bug de",
+  "producto), finding (stock bien, carencia de UX), error (el caso no se ejecutó).",
+].join("\n");
 
 function pad2(value: number): string {
   return String(value).padStart(2, "0");
@@ -126,6 +214,7 @@ export function parseUiArgs(argv: readonly string[], now: Date = new Date()): Ui
     only: null,
     headed: false,
     list: false,
+    help: false,
     out: null,
     shots: null,
     seller: "vendedor1",
@@ -140,6 +229,7 @@ export function parseUiArgs(argv: readonly string[], now: Date = new Date()): Ui
     };
     if (flag === "--headed") args.headed = true;
     else if (flag === "--list") args.list = true;
+    else if (flag === "--help" || flag === "-h") args.help = true;
     else if (flag === "--run") {
       const run = next().trim();
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(run)) {
@@ -384,6 +474,105 @@ export function judgeUiVsDb(input: {
     };
   }
   return { verdict: "pass", detail: "" };
+}
+
+// ---------------------------------------------------------------------------
+// Respuesta perdida tras el commit (flujo 3)
+// ---------------------------------------------------------------------------
+
+/** Lo que el POS muestra en un momento dado. */
+export type PosView = {
+  claim: UiClaim;
+  text: string;
+  /** Factura que anuncia el overlay «Venta registrada», si lo hay. */
+  invoice: string | null;
+  /** El aviso trae el botón «Verificar». */
+  verifyOffered: boolean;
+};
+
+/** El aviso de cobro de resultado desconocido: «La venta pudo haberse registrado…». */
+export function isUnknownOutcomeNotice(text: string): boolean {
+  return /(pudo|puede) haberse registrado/i.test(text);
+}
+
+export type LostResponseInput = {
+  /** Diferencias de la base contra «una venta y un juego de movimientos» (vacío = sana). */
+  dbProblems: readonly string[];
+  /** Factura de la única venta del carrito en la base. */
+  dbInvoice: string | null;
+  salesAtCut: number;
+  /** POST /api/sales que salieron antes de que el cajero hiciera nada. */
+  postsAtCut: number;
+  /** El POS justo después del corte. */
+  atCut: PosView;
+  /** El POS al volver (recarga / salir y volver), antes de tocar nada. */
+  onReturn?: PosView | null;
+  /** El POS al final, con la red de vuelta y la acción del cajero hecha. */
+  final: PosView;
+};
+
+/**
+ * Esperado del plan §8.3 flujo 3: una sola venta, y la UI o bien la muestra o
+ * bien avisa de que no se sabe y deja verificar; con la red de vuelta acaba
+ * nombrando la venta registrada (overlay de éxito o aviso con su factura).
+ */
+export function judgeLostResponse(input: LostResponseInput): UiDbJudgement {
+  const { atCut, final, onReturn, dbInvoice } = input;
+  const problems: string[] = [...input.dbProblems];
+  const warned = (view: PosView) => view.claim !== "success" && isUnknownOutcomeNotice(view.text) && view.verifyOffered;
+
+  if (atCut.claim === "success") {
+    if (input.salesAtCut === 0) problems.unshift("Éxito falso: la UI afirmó «Venta registrada» sin venta en la base.");
+    else if (atCut.invoice !== dbInvoice) problems.push(`la UI anunció la factura ${atCut.invoice} y la base tiene ${dbInvoice}`);
+  } else if (input.salesAtCut > 0 && !warned(atCut)) {
+    problems.push(
+      `la venta ya estaba en la base y la UI solo dijo «${atCut.text}»${atCut.verifyOffered ? "" : " sin ofrecer «Verificar»"}: no avisa de que pudo registrarse`,
+    );
+  }
+  if (input.postsAtCut > 1) problems.push(`el cliente reintentó solo (${input.postsAtCut} POST antes de la acción del cajero)`);
+  // Sin aviso en el corte (ya denunciado arriba) no hay aviso que conservar.
+  if (onReturn && warned(atCut) && !warned(onReturn)) {
+    problems.push(`al volver al POS el aviso desapareció (la UI mostró «${onReturn.text || "nada"}»)`);
+  }
+  const namesSale =
+    dbInvoice !== null && (final.claim === "success" ? final.invoice === dbInvoice : final.text.includes(dbInvoice));
+  if (dbInvoice !== null && !namesSale) {
+    problems.push(
+      `con la red de vuelta la UI no muestra la venta ${dbInvoice} (${final.claim}: «${final.claim === "success" ? final.invoice : final.text}»)`,
+    );
+  }
+  return problems.length > 0 ? { verdict: "fail", detail: problems.join(" · ") } : { verdict: "pass", detail: "" };
+}
+
+// ---------------------------------------------------------------------------
+// Ajuste libre de stock (flujo 6)
+// ---------------------------------------------------------------------------
+
+const FREE_ADJUSTMENT_TYPES = ["Ajuste entrada", "Ajuste salida", "Inventario inicial"] as const;
+
+function foldLabel(text: string): string {
+  return text.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * El modal «Ajuste de stock» solo puede ofrecer entrada, salida e inventario
+ * inicial: una devolución sin venta/compra ligada no tiene tope (R4 / C15).
+ * Recibe las etiquetas del selector «Tipo de movimiento»; vacío = correcto.
+ */
+export function adjustmentTypeProblems(labels: readonly string[]): string[] {
+  const offered = labels.map((label) => label.trim()).filter((label) => label && !/^selecciona/i.test(label));
+  const folded = offered.map(foldLabel);
+  const allowed = FREE_ADJUSTMENT_TYPES.map(foldLabel);
+  const problems: string[] = [];
+  offered.forEach((label, index) => {
+    const key = folded[index] ?? "";
+    if (/devoluci/.test(key)) problems.push(`el ajuste libre ofrece «${label}» (devolución sin documento ligado)`);
+    else if (!allowed.includes(key)) problems.push(`tipo inesperado «${label}»`);
+  });
+  for (const label of FREE_ADJUSTMENT_TYPES) {
+    if (!folded.includes(foldLabel(label))) problems.push(`falta «${label}»`);
+  }
+  return problems;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,14 +1,16 @@
 /**
  * Suite UI del laboratorio de stock (STK-404, plan stock-integrity §8.3).
  *
- *   npm run stock-lab:ui -- [--run <id>] [--only 1,2,5] [--headed] [--list]
+ *   npm run stock-lab:ui -- [--run <id>] [--only 1,2,5] [--headed] [--list] [--help]
  *                           [--seller vendedor1|vendedor2] [--out <dir>] [--shots <dir>]
  *
  * Maneja la app real (BFF lab en http://localhost:3100, build de producción)
- * con Playwright y compara lo que la UI dice con la base lab local.
+ * con Playwright y VERIFICA que el producto cumple el esperado de cada flujo
+ * del plan, comparando lo que la UI dice con la base lab local.
  *
  * Salidas:
- *   <out o scripts/stock-lab/runs>/<run>/ui.jsonl | ui.md
+ *   <out o scripts/stock-lab/runs>/<run>/ui.jsonl  un caso por línea (`evidence` = sus capturas)
+ *   <out o scripts/stock-lab/runs>/<run>/ui.md     tabla por flujo, capturas por flujo y tabla por caso
  *   <shots o .notes/stock-integrity-gtm/qa/ui>/<run>/fNN-*.png + ui-results.json
  *
  * Exit 0 si recorrió todos los casos (aunque haya `fail`); 1 si no pudo arrancar.
@@ -26,10 +28,14 @@ import { assertAllowedWriteHost, loadStockLabEnv } from "../env";
 import { FLOWS, prepareLab, runFlow } from "./flows";
 import {
   MD_HEADER,
+  UI_USAGE,
   countVerdicts,
+  flowCoverageProblems,
   flowId,
+  flowsMarkdown,
   formatVerdictSummary,
   parseUiArgs,
+  summarizeFlows,
   toMarkdownRow,
   type UiResult,
 } from "./helpers";
@@ -60,6 +66,10 @@ async function launchBrowser(headed: boolean): Promise<{ browser: Browser; name:
 
 async function main(): Promise<number> {
   const args = parseUiArgs(process.argv.slice(2));
+  if (args.help) {
+    console.log(UI_USAGE);
+    return 0;
+  }
   if (args.list) {
     for (const flow of FLOWS) console.log(`${flowId(flow.n)}  ${flow.title}`);
     return 0;
@@ -87,6 +97,7 @@ async function main(): Promise<number> {
   const { browser, name: browserName } = await launchBrowser(args.headed);
 
   const results: UiResult[] = [];
+  const selected = FLOWS.filter((flow) => !args.only || args.only.includes(flow.n));
   const startedAt = Date.now();
   try {
     const lab = await prepareLab({
@@ -105,7 +116,6 @@ async function main(): Promise<number> {
         console.log(`${result.id} ${result.verdict}`);
       },
     });
-    const selected = FLOWS.filter((flow) => !args.only || args.only.includes(flow.n));
     for (const flow of selected) await runFlow(lab, flow);
   } finally {
     await browser.close().catch(() => undefined);
@@ -114,12 +124,18 @@ async function main(): Promise<number> {
 
   const counts = countVerdicts(results);
   const seconds = Math.round((Date.now() - startedAt) / 1000);
+  const flows = summarizeFlows(results, selected.map((flow) => flow.n));
+  const coverage = flowCoverageProblems(flows);
   const md = [
     `# stock-lab UI · run ${args.run}`,
     "",
     `- BFF: ${baseUrl} · navegador: ${browserName} (${args.headed ? "headed" : "headless"}) · vendedor: ${args.seller}`,
     `- Duración: ${seconds} s · ${formatVerdictSummary(counts)}`,
     `- Capturas: ${shotsDir}`,
+    `- Cobertura: ${flows.length - coverage.length}/${flows.length} flujos ejecutados con captura${coverage.length > 0 ? ` · FALTA: ${coverage.join("; ")}` : ""}`,
+    "",
+    flowsMarkdown(flows),
+    "## Casos",
     "",
     MD_HEADER,
     ...results.map(toMarkdownRow),
@@ -128,10 +144,12 @@ async function main(): Promise<number> {
   writeFileSync(join(outDir, "ui.md"), md, "utf8");
   writeFileSync(
     join(shotsDir, "ui-results.json"),
-    JSON.stringify({ run: args.run, baseUrl, browser: browserName, seconds, counts, results }, null, 2),
+    JSON.stringify({ run: args.run, baseUrl, browser: browserName, seconds, counts, flows, coverage, results }, null, 2),
     "utf8",
   );
-  console.log(`ui ${args.run}: ${formatVerdictSummary(counts)} (${seconds} s)`);
+  for (const flow of flows) console.log(`${flow.id} → ${flow.verdict}${flow.extras ? ` (extras: ${flow.extras})` : ""} · ${flow.shots.length} capturas`);
+  for (const problem of coverage) console.log(`COBERTURA ${problem}`);
+  console.log(`ui ${args.run}: ${formatVerdictSummary(counts)} (${seconds} s) · md: ${join(outDir, "ui.md")}`);
   return 0;
 }
 
