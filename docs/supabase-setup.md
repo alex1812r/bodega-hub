@@ -255,11 +255,25 @@ Cada archivo se ejecuta como una sola `query` multi-statement con `pg`:
 5. `supabase/patches/verify-patches.sql`: imprime `ok=N fail=M` y lista las
    filas en `false`; si hay alguna termina con exit 1 **después** del resumen.
 
-Parches aplicados (33): 20260705, 20260706, 20260707, 20260716a, 20260716,
+Parches aplicados (34): 20260705, 20260706, 20260707, 20260716a, 20260716,
 20260716b, 20260717, 20260809, 20260810, 20260810b, 20260810c, 20260810d,
 20260811a, 20260811, 20260811b, 20260811c, 20260811d, 20260812c, 20260812d,
 20260813, 20260813b, 20260813h, 20260819, 20260903, 20260904, 20260904b,
-20260904c, 20260905, 20260906, 20260906b, 20260906c, 20260907, 20260909.
+20260904c, 20260905, 20260906, 20260906b, 20260906c, 20260907, 20260909,
+20261005.
+
+### Invariantes de inventario
+
+`20261005-stock-integrity-views.sql` crea nueve vistas (`stock_reconciliation`,
+`stock_chain_breaks`, `sales_without_movements`, `purchases_without_movements`,
+`movements_without_document`, `reversal_mismatches`, `conversion_mismatches`,
+`negative_stock`, `cross_store_movements`), todas con `store_id` y una fila por
+descuadre, y el oráculo `select public.stock_integrity_report()` (o
+`stock_integrity_report('<store uuid>')`), que devuelve un jsonb con el conteo
+de cada vista: si las nueve claves están en 0 el inventario cuadra. Para ver el
+detalle: `select * from public.stock_reconciliation where store_id = '<uuid>'`.
+Las vistas usan `security_invoker` (aplican las RLS); la función es
+`security definer` y fuerza la tienda del usuario si no es superadmin.
 
 ### Parches excluidos y por qué
 

@@ -301,4 +301,24 @@ select
       and p.proname = 'add_product_barcode'
       and pg_get_function_identity_arguments(p.oid) = 'p_product_id uuid, p_barcode text'
   )
+union all
+select
+  'rpc stock_integrity_report',
+  exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'stock_integrity_report'
+      and pg_get_function_identity_arguments(p.oid) = 'p_store_id uuid'
+  )
+union all
+select
+  'view stock_reconciliation',
+  exists (
+    select 1
+    from information_schema.views
+    where table_schema = 'public'
+      and table_name = 'stock_reconciliation'
+  )
 order by 1;

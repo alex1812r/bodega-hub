@@ -23,6 +23,7 @@ const PATCHES = [
   "20260811-pack-unit-conversion.sql",
   "20260906b-assistant-queries.sql",
   "20260819b-fix-cash-close-cab7b096.sql",
+  "20261005-stock-integrity-views.sql",
   "README.md",
 ];
 
@@ -39,11 +40,13 @@ describe("selectStructuralPatches", () => {
       "20260811-pack-unit-conversion.sql",
       "20260906b-assistant-queries.sql",
       "20260909-create-sale-with-payments.sql",
+      "20261005-stock-integrity-views.sql",
     ]);
   });
 
-  it("incluye el RPC atomico de venta y excluye el seed de superadmin", () => {
+  it("incluye el RPC atomico de venta, las vistas de integridad y excluye el seed de superadmin", () => {
     expect(selected).toContain("20260909-create-sale-with-payments.sql");
+    expect(selected).toContain("20261005-stock-integrity-views.sql");
     expect(selected).not.toContain("20260716c-seed-superadmin.sql");
   });
 

@@ -295,3 +295,8 @@ notify pgrst, 'reload schema';
 -- -----------------------------------------------------------------------------
 -- Ejecutar (opcional; ya aplicado en prod si corriste el script): supabase/patches/20260830d-one-shot-add-plat-tom-sale-V-20260830152541402.sql
 -- Inserta linea Platanitos Tom ×1; ajusta pago_movil + vault. Marker FIX_ADD_PLAT_TOM:V-20260830152541402.
+-- -----------------------------------------------------------------------------
+-- 20261005 — stock integrity views: 9 vistas de invariantes de inventario + rpc stock_integrity_report
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261005-stock-integrity-views.sql
+-- Idempotente. Oraculo: select public.stock_integrity_report() debe devolver las 9 claves en 0.
