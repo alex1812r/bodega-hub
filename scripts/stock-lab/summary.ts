@@ -13,12 +13,21 @@
  * - `current_stock` vs `último stock_after`: el stock vivo del producto frente
  *   al `stock_after` del último movimiento (deben coincidir siempre).
  *
- * Bisección (`findFirstBreak`): sobre los eventos 2xx del producto ordenados
- * por `ts`, acumula el delta esperado y lo compara con Σ `quantity_delta` de
- * los movimientos con `created_at ≤ ts + 2 s` (también se acepta la ventana
- * estricta `≤ ts` para no culpar a un evento por una operación concurrente en
- * vuelo). Además valida la cadena `stock_after[i] = stock_after[i-1] +
- * quantity_delta[i]`. Devuelve lo que ocurra primero en el tiempo.
+ * Bisección (`findFirstBreak`): si Σ esperado == Σ movimientos del run y la
+ * cadena `stock_after[i] = stock_after[i-1] + quantity_delta[i]` es válida, el
+ * producto no rompió. Si no, atribuye cada movimiento a su evento por
+ * referencia (`sale_id`/`purchase_id`/`conversion_id`/`id` == `response_id`;
+ * un evento puede tener varios movimientos, p. ej. varias líneas de una venta,
+ * y una venta y su cancelación comparten `sale_id`: cada evento consume, en
+ * orden de `created_at`, los movimientos con el signo de su delta hasta
+ * cuadrar). Los movimientos sin referencia a ningún evento se atribuyen por
+ * tiempo (`created_at ≤ ts + 2 s`) a los eventos sin referencia (STK-308: el
+ * `ts` del evento es la hora de la respuesta en el cliente, así que en
+ * paralelo el orden por `ts` no es el orden de la base y la ventana temporal
+ * sola atribuye mal). El culpable es el primer evento, por `ts`, sin movimiento
+ * (`missing_movement`) o cuya suma no cuadra (`delta_mismatch`); si sobran
+ * movimientos sin evento, `unattributed_movements`. Un `chain_break` anterior
+ * en el tiempo tiene prioridad.
  */
 import { isSuccessStatus, type LabEvent } from "./agents/logger";
 
@@ -82,16 +91,24 @@ export type ProductStockRow = {
   stockOk: boolean;
 };
 
-export type BreakReason = "expected_mismatch" | "chain_break";
+export type BreakReason = "missing_movement" | "delta_mismatch" | "chain_break" | "unattributed_movements";
 
 export type FirstBreak = {
   productId: string;
   reason: BreakReason;
-  /** Evento tras el cual deja de cuadrar (null en `chain_break`). */
+  /**
+   * Evento culpable (`missing_movement`/`delta_mismatch`), último evento del
+   * producto (`unattributed_movements`, puede ser null) o null (`chain_break`).
+   */
   event: LabEvent | null;
-  /** Movimiento que rompe la cadena (null en `expected_mismatch`). */
+  /**
+   * Movimiento que rompe la cadena (`chain_break`), primer movimiento sobrante
+   * (`unattributed_movements`) o null.
+   */
   movement: SummaryMovement | null;
+  /** Delta esperado del evento (o Σ esperado del producto en `unattributed_movements`). */
   expected: number;
+  /** Σ de los movimientos atribuidos al evento (o Σ movimientos del run). */
   actual: number;
 };
 
@@ -282,6 +299,33 @@ export function findChainBreak(sortedMovements: readonly SummaryMovement[]): Sum
   return null;
 }
 
+/** Referencia del movimiento comparable con `event.response_id`. */
+function movementRef(movement: SummaryMovement): string {
+  return movement.sale_id ?? movement.purchase_id ?? movement.conversion_id ?? movement.id;
+}
+
+/**
+ * Consume de `pool` (ordenado por `created_at`), en orden, los movimientos aún
+ * libres que acepte `eligible` y tengan el signo de `expected`, hasta que la
+ * suma cuadre. Devuelve la suma consumida (cuadre o no).
+ */
+function consumeMovements(
+  pool: readonly SummaryMovement[],
+  consumed: Set<SummaryMovement>,
+  expected: number,
+  eligible: (movement: SummaryMovement) => boolean,
+): number {
+  let sum = 0;
+  for (const movement of pool) {
+    if (sum === expected) break;
+    if (consumed.has(movement) || !eligible(movement)) continue;
+    if (Math.sign(movement.quantity_delta) !== Math.sign(expected) && movement.quantity_delta !== 0) continue;
+    consumed.add(movement);
+    sum += movement.quantity_delta;
+  }
+  return sum;
+}
+
 /**
  * Localiza el primer evento (o movimiento) tras el cual el producto deja de
  * cuadrar. `events` pueden ser todos los del run (se filtran por producto);
@@ -315,38 +359,52 @@ export function findFirstBreak(
     };
   };
 
-  let expected = 0;
-  let cursorStrict = 0;
-  let cursorLoose = 0;
-  let sumStrict = 0;
-  let sumLoose = 0;
+  const totalExpected = productEvents.reduce((acc, event) => acc + (event.expected_delta[productId] ?? 0), 0);
+  const totalActual = sumDeltas(movements);
+  if (!chainBreak && totalExpected === totalActual) return null;
+
+  // Atribución por referencia: response_id → movimientos con esa referencia.
+  const refs = new Set(productEvents.map((event) => event.response_id).filter((id): id is string => id !== null));
+  const byRef = new Map<string, SummaryMovement[]>();
+  const unattributed: SummaryMovement[] = [];
+  for (const movement of movements) {
+    const ref = movementRef(movement);
+    if (!refs.has(ref)) {
+      unattributed.push(movement);
+      continue;
+    }
+    const list = byRef.get(ref) ?? [];
+    list.push(movement);
+    byRef.set(ref, list);
+  }
+
+  const consumed = new Set<SummaryMovement>();
   for (const event of productEvents) {
     const ts = toMillis(event.ts);
-    expected += event.expected_delta[productId] ?? 0;
-    for (let m = movements[cursorStrict]; m && toMillis(m.created_at) <= ts; m = movements[cursorStrict]) {
-      sumStrict += m.quantity_delta;
-      cursorStrict += 1;
-    }
-    for (
-      let m = movements[cursorLoose];
-      m && toMillis(m.created_at) <= ts + WINDOW_TOLERANCE_MS;
-      m = movements[cursorLoose]
-    ) {
-      sumLoose += m.quantity_delta;
-      cursorLoose += 1;
-    }
-    if (sumLoose !== expected && sumStrict !== expected) {
-      if (chainBreakAt <= ts + WINDOW_TOLERANCE_MS) return chainResult();
-      return { productId, reason: "expected_mismatch", event, movement: null, expected, actual: sumLoose };
-    }
+    const expected = event.expected_delta[productId] ?? 0;
+    const pool = event.response_id !== null ? byRef.get(event.response_id) : undefined;
+    const actual = pool
+      ? consumeMovements(pool, consumed, expected, () => true)
+      : consumeMovements(unattributed, consumed, expected, (m) => toMillis(m.created_at) <= ts + WINDOW_TOLERANCE_MS);
+    if (actual === expected) continue;
+    if (chainBreakAt <= ts + WINDOW_TOLERANCE_MS) return chainResult();
+    const reason: BreakReason = actual === 0 ? "missing_movement" : "delta_mismatch";
+    return { productId, reason, event, movement: null, expected, actual };
   }
 
   if (chainBreak) return chainResult();
 
-  const total = sumDeltas(movements);
-  if (total !== expected) {
+  const leftover = movements.find((m) => !consumed.has(m));
+  if (leftover) {
     const lastEvent = productEvents[productEvents.length - 1] ?? null;
-    return { productId, reason: "expected_mismatch", event: lastEvent, movement: null, expected, actual: total };
+    return {
+      productId,
+      reason: "unattributed_movements",
+      event: lastEvent,
+      movement: leftover,
+      expected: totalExpected,
+      actual: totalActual,
+    };
   }
   return null;
 }
@@ -383,10 +441,16 @@ function describeMovement(movement: SummaryMovement | null): string {
 }
 
 function describeBreak(found: FirstBreak): string {
-  if (found.reason === "chain_break") {
-    return `chain_break: stock_after=${found.actual}, esperado ${found.expected} (anterior + delta)`;
+  switch (found.reason) {
+    case "chain_break":
+      return `chain_break: stock_after=${found.actual}, esperado ${found.expected} (anterior + delta)`;
+    case "missing_movement":
+      return `missing_movement: el evento esperaba ${found.expected} y no tiene movimiento atribuible`;
+    case "delta_mismatch":
+      return `delta_mismatch: el evento esperaba ${found.expected} y sus movimientos suman ${found.actual}`;
+    case "unattributed_movements":
+      return `unattributed_movements: movimientos sin evento (Σ esperado ${found.expected} vs Σ movimientos ${found.actual})`;
   }
-  return `expected_mismatch: Σ esperado ${found.expected} vs Σ movimientos ${found.actual}`;
 }
 
 function describeReconcile(reconcile: SummaryReconcile | undefined): string {
@@ -496,7 +560,9 @@ export function buildSummary(input: SummaryInput): string {
           return [
             product?.name ?? b.productId,
             product?.sku ?? "?",
-            b.reason === "chain_break" ? describeMovement(b.movement) : describeEvent(b.event),
+            b.reason === "chain_break" || b.reason === "unattributed_movements"
+              ? describeMovement(b.movement)
+              : describeEvent(b.event),
             describeBreak(b),
           ];
         }),
