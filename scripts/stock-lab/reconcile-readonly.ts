@@ -12,6 +12,9 @@
  *   - Detecta por `information_schema` que columnas existen: sin
  *     `stock_movements.seq` la cadena se ordena por created_at,id; si falta otra
  *     columna la comprobacion se degrada o queda como "no evaluable".
+ *   - Informa que objetos de los parches de stock estan desplegados (STK-701):
+ *     funciones y triggers por `pg_catalog`, columnas y vistas por
+ *     `information_schema`. Solo lee el catalogo; nunca llama a esos objetos.
  *
  * Sin I/O propio: recibe el cliente (inyectable en tests) y devuelve el informe.
  */
@@ -201,10 +204,14 @@ function sqlList(values: readonly string[]): string {
   return values.map((value) => `'${value}'`).join(", ");
 }
 
+/** Vista cuya columna `seq` solo existe en su version v2 (parche 20261006d). */
+const V2_MARKER_VIEW = "stock_chain_breaks";
+const V2_MARKER_COLUMN = `${V2_MARKER_VIEW}.seq`;
+
 export const CAPABILITY_COLUMNS_SQL = `select c.table_name, c.column_name
 from information_schema.columns c
 where c.table_schema = 'public'
-  and c.table_name in (${sqlList(SCHEMA_TABLES)})`;
+  and c.table_name in (${sqlList([...SCHEMA_TABLES, V2_MARKER_VIEW])})`;
 
 export const CAPABILITY_VIEWS_SQL = `select v.table_name
 from information_schema.views v
@@ -216,6 +223,117 @@ export async function detectCapabilities(query: ReadOnlyQuery): Promise<Capabili
   for (const row of await query(CAPABILITY_COLUMNS_SQL)) columns.add(`${String(row.table_name)}.${String(row.column_name)}`);
   const present = new Set((await query(CAPABILITY_VIEWS_SQL)).map((row) => String(row.table_name)));
   return { columns, integrityViews: INTEGRITY_VIEW_NAMES.filter((name) => present.has(name)) };
+}
+
+// ------------------------------------------------------- parches presentes
+
+const SALE_RPC = "create_sale_with_payments";
+const LEDGER_FUNCTION = "stock_movements_apply";
+const GUARD_FUNCTION = "products_stock_guard";
+
+/** Triggers que instala 20261006a: [tabla, trigger, funcion]. */
+const PATCH_TRIGGERS = [
+  ["stock_movements", "trg_stock_movements_apply", LEDGER_FUNCTION],
+  ["products", "trg_products_stock_guard_update", GUARD_FUNCTION],
+  ["products", "trg_products_stock_guard_insert", GUARD_FUNCTION],
+] as const;
+
+/**
+ * Funciones de los parches y los dos pases transitorios de 20261006a que el
+ * parche 20261006e elimina del cuerpo: el modo legado de stock_movements_apply
+ * (respeta un stock_after no nulo) y el pase a `current_user = 'postgres'` de
+ * products_stock_guard.
+ */
+export const PATCH_FUNCTIONS_SQL = `select
+  p.proname as function_name,
+  (p.prosrc like '%if new.stock_after is null then%') as legacy_stock_after,
+  (p.prosrc like '%if current_user = ''postgres'' then%') as legacy_definer_pass
+from pg_catalog.pg_proc p
+join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in (${sqlList([SALE_RPC, LEDGER_FUNCTION, GUARD_FUNCTION])})`;
+
+export const PATCH_TRIGGERS_SQL = `select
+  c.relname as table_name,
+  t.tgname as trigger_name,
+  p.proname as function_name,
+  (t.tgenabled <> 'D') as enabled
+from pg_catalog.pg_trigger t
+join pg_catalog.pg_class c on c.oid = t.tgrelid
+join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+join pg_catalog.pg_proc p on p.oid = t.tgfoid
+where n.nspname = 'public'
+  and not t.tgisinternal
+  and t.tgname in (${sqlList(PATCH_TRIGGERS.map(([, trigger]) => trigger))})`;
+
+export interface PatchCheck {
+  /** Objeto comprobado, legible. */
+  object: string;
+  /** Parche de `supabase/patches/` que lo instala. */
+  patch: string;
+  present: boolean;
+  /** Por que esta ausente o con que indicador se dio por presente. */
+  detail: string | null;
+}
+
+const STRICT_LEDGER = { object: "modo estricto del libro", patch: "20261006e" } as const;
+
+async function detectPatches(query: ReadOnlyQuery, caps: Capabilities): Promise<PatchCheck[]> {
+  const functions = new Map<string, Row[]>();
+  for (const row of await query(PATCH_FUNCTIONS_SQL)) {
+    const name = String(row.function_name);
+    functions.set(name, [...(functions.get(name) ?? []), row]);
+  }
+  const triggers = new Map<string, Row>();
+  for (const row of await query(PATCH_TRIGGERS_SQL)) triggers.set(`${String(row.table_name)}.${String(row.trigger_name)}`, row);
+
+  const column = (name: string, patch: string): PatchCheck => ({
+    object: `columna ${name}`,
+    patch,
+    present: caps.columns.has(name),
+    detail: null,
+  });
+  const trigger = ([table, name, fn]: (typeof PATCH_TRIGGERS)[number], label: string): PatchCheck => {
+    const row = triggers.get(`${table}.${name}`);
+    const base = { object: `${label}: trigger ${name} sobre ${table} -> ${fn}()`, patch: "20261006a" };
+    if (row === undefined) return { ...base, present: false, detail: null };
+    if (row.function_name !== fn) return { ...base, present: false, detail: `el trigger ejecuta ${String(row.function_name)}()` };
+    if (row.enabled !== true) return { ...base, present: false, detail: "el trigger existe pero esta deshabilitado" };
+    return { ...base, present: true, detail: null };
+  };
+
+  const ledger = functions.get(LEDGER_FUNCTION) ?? [];
+  const guard = functions.get(GUARD_FUNCTION) ?? [];
+  const legacy: string[] = [];
+  if (ledger.some((row) => row.legacy_stock_after === true)) legacy.push(`${LEDGER_FUNCTION}() conserva el modo legado de stock_after`);
+  if (guard.some((row) => row.legacy_definer_pass === true)) legacy.push(`${GUARD_FUNCTION}() deja pasar a current_user postgres`);
+  let strict: PatchCheck;
+  if (ledger.length === 0 || guard.length === 0) {
+    strict = { ...STRICT_LEDGER, present: false, detail: `no existen ${LEDGER_FUNCTION}() y ${GUARD_FUNCTION}()` };
+  } else if (legacy.length > 0) {
+    strict = { ...STRICT_LEDGER, present: false, detail: legacy.join("; ") };
+  } else {
+    strict = { ...STRICT_LEDGER, present: true, detail: "ambas funciones sin los pases transitorios de 20261006a" };
+  }
+
+  return [
+    { object: `funcion ${SALE_RPC}`, patch: "20260909", present: functions.has(SALE_RPC), detail: null },
+    column("sales.client_request_id", "20260909"),
+    column("stock_movements.seq", "20261006a"),
+    trigger(PATCH_TRIGGERS[0], "libro de stock"),
+    trigger(PATCH_TRIGGERS[1], "guard de products.current_stock (update)"),
+    trigger(PATCH_TRIGGERS[2], "guard de products.current_stock (insert)"),
+    strict,
+    ...INTEGRITY_VIEW_NAMES.map(
+      (name): PatchCheck => ({ object: `vista ${name}`, patch: "20261005", present: caps.integrityViews.includes(name), detail: null }),
+    ),
+    {
+      object: "vistas de integridad v2 (cadena por seq)",
+      patch: "20261006d",
+      present: caps.columns.has(V2_MARKER_COLUMN),
+      detail: `indicador: columna ${V2_MARKER_COLUMN} de la vista`,
+    },
+  ];
 }
 
 // ---------------------------------------------------------- comprobaciones
@@ -793,6 +911,12 @@ ${tail}left join first_break f on f.product_id = v.product_id
 ${end}`;
 }
 
+/** Total de productos por tienda: el M de "N de M con diff". */
+const PRODUCT_TOTALS_SQL = `select v.store_id, count(*)::int as n
+from public.products v
+where ${STORE_FILTER}
+group by v.store_id`;
+
 const STORES_SQL = "select v.id as store_id, v.name from public.stores v where ($1::uuid is null or v.id = $1) order by v.name";
 const READ_ONLY_PROBE_SQL = "select current_setting('transaction_read_only') as read_only";
 
@@ -836,6 +960,8 @@ export interface ScopeSummary {
   storeId: string | null;
   storeName: string;
   counts: Record<IntegrityViewName, number | null>;
+  /** Productos del alcance (con o sin diff); null si faltan products.id / products.store_id. */
+  productCount: number | null;
   /** Suma de |diff| de los productos con diff <> 0; null si stock_reconciliation no es evaluable. */
   absDiffSum: number | null;
   /** Los WORST_LIMIT productos con mayor |diff|. */
@@ -848,6 +974,8 @@ export interface ReadOnlyReport {
   chainOrder: ChainOrder;
   warnings: string[];
   integrityViewsPresent: IntegrityViewName[];
+  /** Objetos de los parches de stock: que esta desplegado y que falta. */
+  patches: PatchCheck[];
   checks: Record<IntegrityViewName, CheckStatus>;
   total: ScopeSummary;
   stores: ScopeSummary[];
@@ -931,12 +1059,14 @@ function summarize(
   storeId: string | null,
   storeName: string,
   counts: Record<IntegrityViewName, number | null>,
+  productCount: number | null,
   products: readonly DiffProduct[],
 ): ScopeSummary {
   return {
     storeId,
     storeName,
     counts,
+    productCount,
     absDiffSum: counts.stock_reconciliation === null ? null : products.reduce((acc, p) => acc + Math.abs(p.diff), 0),
     worst: products.slice(0, WORST_LIMIT),
   };
@@ -948,6 +1078,7 @@ function summarize(
  */
 export async function collectReadOnlyReport(query: ReadOnlyQuery, options: ReadOnlyOptions): Promise<ReadOnlyReport> {
   const caps = await detectCapabilities(query);
+  const patches = await detectPatches(query, caps);
   const plans = planChecks(caps);
   const order = chainOrderOf(caps);
   const storeParam = [options.storeId];
@@ -967,6 +1098,18 @@ export async function collectReadOnlyReport(query: ReadOnlyQuery, options: ReadO
     perStore.set(key, entry);
   };
   for (const id of storeNames.keys()) perStore.set(id, {});
+
+  const productTotals =
+    caps.columns.has("products.id") && caps.columns.has("products.store_id") ? new Map<string, number>() : null;
+  if (productTotals !== null) {
+    for (const row of await query(PRODUCT_TOTALS_SQL, storeParam)) {
+      const key = toId(row.store_id) ?? NO_STORE_KEY;
+      productTotals.set(key, toNumber(row.n));
+      if (!perStore.has(key)) perStore.set(key, {});
+    }
+  }
+  const productCountOf = (key: string) => (productTotals === null ? null : (productTotals.get(key) ?? 0));
+  const productCountTotal = productTotals === null ? null : [...productTotals.values()].reduce((acc, n) => acc + n, 0);
 
   let diffProducts: DiffProduct[] = [];
   for (const name of INTEGRITY_VIEW_NAMES) {
@@ -1012,7 +1155,8 @@ export async function collectReadOnlyReport(query: ReadOnlyQuery, options: ReadO
     .map(([key, entry]) => {
       const storeId = key === NO_STORE_KEY ? null : key;
       const storeName = storeId === null ? "(sin tienda)" : (storeNames.get(storeId) ?? storeId);
-      return summarize(storeId, storeName, countsFor(entry), diffProducts.filter((p) => p.storeId === storeId));
+      const products = diffProducts.filter((p) => p.storeId === storeId);
+      return summarize(storeId, storeName, countsFor(entry), productCountOf(key), products);
     })
     .sort((a, b) => a.storeName.localeCompare(b.storeName));
 
@@ -1030,8 +1174,9 @@ export async function collectReadOnlyReport(query: ReadOnlyQuery, options: ReadO
     chainOrder: order,
     warnings,
     integrityViewsPresent: caps.integrityViews,
+    patches,
     checks,
-    total: summarize(options.storeId, "total", countsFor(null), diffProducts),
+    total: summarize(options.storeId, "total", countsFor(null), productCountTotal, diffProducts),
     stores,
     diffProducts,
     rows,
@@ -1120,7 +1265,7 @@ function scopeSection(scope: ScopeSummary, title: string, report: ReadOnlyReport
   }
   lines.push(
     "",
-    `- Productos con diff != 0: ${cell(scope.counts.stock_reconciliation)}`,
+    `- Productos con diff != 0: ${cell(scope.counts.stock_reconciliation)} de ${cell(scope.productCount)}`,
     `- Suma absoluta del diff: ${cell(scope.absDiffSum)}`,
     `- Cadenas rotas (movimientos): ${cell(scope.counts.stock_chain_breaks)}`,
     `- Ventas sin movimiento (lineas): ${cell(scope.counts.sales_without_movements)}`,
@@ -1173,7 +1318,11 @@ export function formatReadOnlyMarkdown(meta: ReadOnlyReportMeta, report: ReadOnl
   if (report.warnings.length > 0) {
     lines.push("## Avisos", "", ...report.warnings.map((warning) => `- ${warning}`), "");
   }
-  lines.push(...scopeSection(report.total, "Total", report, false));
+  lines.push("## Parches presentes", "", "| objeto | parche | estado | detalle |", "|---|---|---|---|");
+  for (const patch of report.patches) {
+    lines.push(`| ${cell(patch.object)} | ${patch.patch} | ${patch.present ? "presente" : "AUSENTE"} | ${cell(patch.detail)} |`);
+  }
+  lines.push("", ...scopeSection(report.total, "Total", report, false));
   for (const store of report.stores) {
     lines.push(...scopeSection(store, `Tienda: ${store.storeName} (${store.storeId ?? "sin id"})`, report, true));
   }

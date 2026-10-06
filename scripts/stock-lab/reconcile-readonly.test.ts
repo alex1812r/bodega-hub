@@ -12,6 +12,8 @@ import {
   CHAIN_ORDER_WARNING,
   type Capabilities,
   NO_CHAIN_BREAK_LABEL,
+  PATCH_FUNCTIONS_SQL,
+  PATCH_TRIGGERS_SQL,
   type QueryClient,
   ROLLBACK,
   type Row,
@@ -379,7 +381,9 @@ describe("informe (plan 8.4)", () => {
       first_break_movement_id: null,
     })),
   ];
+  const productTotals: Answer = [/from public\.products v\b/, [{ store_id: STORE_A, n: 40 }, { store_id: STORE_B, n: 5 }]];
   const ANSWERS: Answer[] = [
+    productTotals,
     [/from public\.stores/, [{ store_id: STORE_A, name: "Bodega A" }, { store_id: STORE_B, name: "Bodega B" }]],
     [/with recon as/, DETAIL],
     [/group by v\.store_id[\s\S]*$/, []],
@@ -411,11 +415,13 @@ describe("informe (plan 8.4)", () => {
       ["B-1", 1, 8, -7],
     ]);
     expect(report.diffProducts).toHaveLength(23);
+    expect(report.total.productCount).toBe(45);
 
     const [a, b] = report.stores;
     expect([a.storeName, b.storeName]).toEqual(["Bodega A", "Bodega B"]);
     expect(a.counts).toMatchObject({ stock_reconciliation: 22, stock_chain_breaks: 3, sales_without_movements: 0 });
     expect(a.absDiffSum).toBe(31);
+    expect([a.productCount, b.productCount]).toEqual([40, 5]);
     expect(b.counts).toMatchObject({ stock_reconciliation: 1, stock_chain_breaks: 0, sales_without_movements: 4 });
     expect(b.absDiffSum).toBe(7);
     expect(b.worst.map((p) => p.sku)).toEqual(["B-1"]);
@@ -458,7 +464,9 @@ describe("informe (plan 8.4)", () => {
     expect(md).toContain("- Orden de la cadena: created_at,id");
     expect(md).toContain(`- stock_chain_breaks: falta stock_movements.seq: ${CHAIN_ORDER_WARNING}`);
     expect(md).toContain("## Total");
-    expect(md).toContain("- Productos con diff != 0: 23");
+    expect(md).toContain("- Productos con diff != 0: 23 de 45");
+    expect(md).toContain("- Productos con diff != 0: 22 de 40");
+    expect(md).toContain("- Productos con diff != 0: 1 de 5");
     expect(md).toContain("- Suma absoluta del diff: 38");
     expect(md).toContain("### Los 20 peores (por |diff|)");
     expect(md).toContain("| A-1 | Harina \\| 1kg | 12 | 2 | 10 | 2026-03-02T10:00:00.000Z: mov m-9 dejo stock_after 99, esperado 9 (orden created_at,id) |");
@@ -467,5 +475,156 @@ describe("informe (plan 8.4)", () => {
     expect(md).toContain(`## Tienda: Bodega B (${STORE_B})`);
     expect(md).toContain("### Muestra de stock_chain_breaks (3 filas, mostrando 1)");
     expect(md).toContain("- Ventas sin movimiento (lineas): 4");
+  });
+});
+
+describe("total de productos y parches presentes (STK-701)", () => {
+  const META = { runId: "r1", host: "db.example.invalid", storeId: null, generatedAt: "2026-10-06T00:00:00.000Z", limit: 2 };
+  const fn = (function_name: string, legacy_stock_after = false, legacy_definer_pass = false): Row => ({
+    function_name,
+    legacy_stock_after,
+    legacy_definer_pass,
+  });
+  const trg = (table_name: string, trigger_name: string, function_name: string, enabled = true): Row => ({
+    table_name,
+    trigger_name,
+    function_name,
+    enabled,
+  });
+
+  async function collect(columns: string[], views: IntegrityViewName[], answers: Answer[]) {
+    const fake = new FakePg(columns, views, answers);
+    const report = await collectReadOnlyReport(createReadOnlyQuery(fake), { storeId: null, limit: 2 });
+    return { fake, report };
+  }
+
+  const state = (report: { patches: Array<{ object: string; patch: string; present: boolean }> }) =>
+    report.patches.map((p) => `${p.present ? "+" : "-"} ${p.patch} ${p.object}`);
+
+  it("las SQL nuevas son SELECT para la unica puerta y salen por ella", async () => {
+    expect(assertReadOnlyStatement(PATCH_FUNCTIONS_SQL)).toBe("select");
+    expect(assertReadOnlyStatement(PATCH_TRIGGERS_SQL)).toBe("select");
+    const { fake } = await collect(schemaWithout(), [], []);
+    const totals = fake.statements.filter((sql) => /from public\.products v\b/.test(sql));
+    expect(totals).toHaveLength(1);
+    expect(assertReadOnlyStatement(totals[0])).toBe("select");
+    expect(fake.statements).toEqual(expect.arrayContaining([PATCH_FUNCTIONS_SQL, PATCH_TRIGGERS_SQL]));
+    for (const sql of fake.statements) expect(assertReadOnlyStatement(sql)).toBe("select");
+    // Solo se lee el catalogo: ninguna sentencia llama a las funciones de los parches.
+    const calls = /\b(create_sale_with_payments|stock_movements_apply|products_stock_guard)\s*\(/;
+    expect(fake.statements.map((sql) => sql.replace(/'(?:[^']|'')*'/g, "?")).filter((sql) => calls.test(sql))).toEqual([]);
+  });
+
+  it("sin products.store_id no hay total de productos y el markdown lo deja en blanco", async () => {
+    const { report } = await collect(schemaWithout("products.store_id"), [], []);
+    expect(report.total.productCount).toBeNull();
+    expect(formatReadOnlyMarkdown(META, report)).toContain("- Productos con diff != 0: - de -");
+  });
+
+  it("una tienda sin descuadres tambien trae su total de productos", async () => {
+    const { report } = await collect(schemaWithout(), [], [
+      [/from public\.products v\b/, [{ store_id: STORE_A, n: 310 }]],
+      [/from public\.stores/, [{ store_id: STORE_A, name: "Bodega A" }, { store_id: STORE_B, name: "Bodega B" }]],
+    ]);
+    expect(report.stores.map((store) => [store.storeName, store.counts.stock_reconciliation, store.productCount])).toEqual([
+      ["Bodega A", 0, 310],
+      ["Bodega B", 0, 0],
+    ]);
+    expect(report.total.productCount).toBe(310);
+    expect(formatReadOnlyMarkdown(META, report)).toContain("- Productos con diff != 0: 0 de 310");
+  });
+
+  it("base sin ningun parche de stock: todo ausente", async () => {
+    const { report } = await collect(schemaWithout("stock_movements.seq"), [], []);
+    expect(report.patches).toHaveLength(17);
+    expect(report.patches.filter((p) => p.present)).toEqual([]);
+    expect(report.patches.find((p) => p.patch === "20261006e")?.detail).toBe(
+      "no existen stock_movements_apply() y products_stock_guard()",
+    );
+  });
+
+  it("mezcla de presentes y ausentes, con el parche de cada objeto", async () => {
+    const { report } = await collect(
+      [...schemaWithout("stock_movements.seq"), "sales.client_request_id"],
+      ["stock_reconciliation", "negative_stock"],
+      [
+        [
+          /pg_catalog\.pg_trigger/,
+          [
+            trg("stock_movements", "trg_stock_movements_apply", "stock_movements_apply"),
+            trg("products", "trg_products_stock_guard_update", "products_stock_guard", false),
+            trg("products", "trg_products_stock_guard_insert", "otra_funcion"),
+          ],
+        ],
+        [/pg_catalog\.pg_proc/, [fn("create_sale_with_payments"), fn("stock_movements_apply", true), fn("products_stock_guard", false, true)]],
+      ],
+    );
+    expect(state(report)).toEqual([
+      "+ 20260909 funcion create_sale_with_payments",
+      "+ 20260909 columna sales.client_request_id",
+      "- 20261006a columna stock_movements.seq",
+      "+ 20261006a libro de stock: trigger trg_stock_movements_apply sobre stock_movements -> stock_movements_apply()",
+      "- 20261006a guard de products.current_stock (update): trigger trg_products_stock_guard_update sobre products -> products_stock_guard()",
+      "- 20261006a guard de products.current_stock (insert): trigger trg_products_stock_guard_insert sobre products -> products_stock_guard()",
+      "- 20261006e modo estricto del libro",
+      "+ 20261005 vista stock_reconciliation",
+      "- 20261005 vista stock_chain_breaks",
+      "- 20261005 vista sales_without_movements",
+      "- 20261005 vista purchases_without_movements",
+      "- 20261005 vista movements_without_document",
+      "- 20261005 vista reversal_mismatches",
+      "- 20261005 vista conversion_mismatches",
+      "+ 20261005 vista negative_stock",
+      "- 20261005 vista cross_store_movements",
+      "- 20261006d vistas de integridad v2 (cadena por seq)",
+    ]);
+    const detail = (needle: string) => report.patches.find((p) => p.object.includes(needle))?.detail;
+    expect(detail("(update)")).toBe("el trigger existe pero esta deshabilitado");
+    expect(detail("(insert)")).toBe("el trigger ejecuta otra_funcion()");
+    expect(detail("modo estricto")).toBe(
+      "stock_movements_apply() conserva el modo legado de stock_after; products_stock_guard() deja pasar a current_user postgres",
+    );
+
+    const md = formatReadOnlyMarkdown(META, report);
+    expect(md).toContain("## Parches presentes\n\n| objeto | parche | estado | detalle |");
+    expect(md).toContain("| funcion create_sale_with_payments | 20260909 | presente | - |");
+    expect(md).toContain("| columna stock_movements.seq | 20261006a | AUSENTE | - |");
+    expect(md).toContain(
+      "| guard de products.current_stock (update): trigger trg_products_stock_guard_update sobre products -> products_stock_guard() | 20261006a | AUSENTE | el trigger existe pero esta deshabilitado |",
+    );
+    expect(md).toContain("| vista negative_stock | 20261005 | presente | - |");
+    expect(md).toContain("| vista stock_chain_breaks | 20261005 | AUSENTE | - |");
+    expect(md.indexOf("## Parches presentes")).toBeLessThan(md.indexOf("## Total"));
+  });
+
+  it("con todo desplegado (incluidos 20261006d y 20261006e) no queda nada ausente", async () => {
+    const { report } = await collect(
+      [...schemaWithout(), "sales.client_request_id", "stock_chain_breaks.seq"],
+      [...INTEGRITY_VIEW_NAMES],
+      [
+        [
+          /pg_catalog\.pg_trigger/,
+          [
+            trg("stock_movements", "trg_stock_movements_apply", "stock_movements_apply"),
+            trg("products", "trg_products_stock_guard_update", "products_stock_guard"),
+            trg("products", "trg_products_stock_guard_insert", "products_stock_guard"),
+          ],
+        ],
+        [/pg_catalog\.pg_proc/, [fn("create_sale_with_payments"), fn("stock_movements_apply"), fn("products_stock_guard")]],
+      ],
+    );
+    expect(report.patches.filter((p) => !p.present)).toEqual([]);
+    expect(report.patches.find((p) => p.patch === "20261006e")?.detail).toBe("ambas funciones sin los pases transitorios de 20261006a");
+    expect(formatReadOnlyMarkdown(META, report)).not.toContain("AUSENTE");
+  });
+
+  it("los marcadores del modo legado son los del parche 20261006a y el 20261006e los quita", () => {
+    const patch = (name: string) => readFileSync(resolve(PATCHES, name), "utf8");
+    const markers = [...PATCH_FUNCTIONS_SQL.matchAll(/like '%((?:[^']|'')*)%'/g)].map((m) => m[1].replace(/''/g, "'"));
+    expect(markers).toHaveLength(2);
+    for (const marker of markers) {
+      expect(patch("20261006a-stock-ledger-guards.sql")).toContain(marker);
+      expect(patch("20261006e-stock-ledger-strict.sql")).not.toContain(marker);
+    }
   });
 });
