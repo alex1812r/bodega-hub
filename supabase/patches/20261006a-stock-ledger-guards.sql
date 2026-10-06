@@ -224,6 +224,37 @@ begin
 end;
 $$;
 
+-- -----------------------------------------------------------------------------
+-- 5. C17 — ventas, compras, pagos y sus lineas solo se escriben por RPC
+--    Excepcion deliberada: el BFF edita metadatos por PostgREST
+--    (sales.server.ts updateSale: notes, updated_at; payments.server.ts
+--    updatePayment: bank_name, notes, phone, reference_code). Se conservan con
+--    privilegio de UPDATE por columnas; estado e importes quedan fuera.
+-- -----------------------------------------------------------------------------
+
+revoke insert, update, delete, truncate, references, trigger
+  on public.sales, public.sale_items, public.purchases, public.purchase_items, public.payments
+  from public, anon, authenticated;
+
+grant update (notes, updated_at) on public.sales to authenticated;
+grant update (bank_name, notes, phone, reference_code) on public.payments to authenticated;
+
+drop policy if exists "Admins update sales" on public.sales;
+create policy "Admins update sales"
+on public.sales for update
+to authenticated
+using (store_id = public.current_user_store_id() and public.current_user_role() = 'admin')
+with check (store_id = public.current_user_store_id() and public.current_user_role() = 'admin');
+
+drop policy if exists "Admins update purchases" on public.purchases;
+
+drop policy if exists "Admins and accountants update payment metadata" on public.payments;
+create policy "Admins and accountants update payment metadata"
+on public.payments for update
+to authenticated
+using (store_id = public.current_user_store_id() and public.current_user_role() in ('admin', 'contador'))
+with check (store_id = public.current_user_store_id() and public.current_user_role() in ('admin', 'contador'));
+
 commit;
 
 notify pgrst, 'reload schema';

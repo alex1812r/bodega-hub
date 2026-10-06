@@ -359,4 +359,13 @@ select
     where p.pronamespace = 'public'::regnamespace
       and p.proname = 'assert_store_context' and p.prosrc ilike '%is_active = true%'
   )
+union all
+select
+  'sales/purchases/payments sin update de tabla para authenticated',
+  not has_table_privilege('authenticated', 'public.sales', 'update')
+    and not has_table_privilege('authenticated', 'public.purchases', 'update')
+    and not has_table_privilege('authenticated', 'public.payments', 'update')
+    and not has_any_column_privilege('authenticated', 'public.purchases', 'update')
+    and not has_column_privilege('authenticated', 'public.sales', 'status', 'update')
+    and not has_column_privilege('authenticated', 'public.payments', 'amount_ves', 'update')
 order by 1;
