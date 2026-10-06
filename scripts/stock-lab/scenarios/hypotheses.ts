@@ -122,6 +122,87 @@ export function d0Problems(
   return problems;
 }
 
+export type DoubleSubmitObservation = {
+  /** Nombre de la operación (compra, ajuste, conversión) para los mensajes. */
+  op: string;
+  /** Los dos POST llevaban la MISMA `clientRequestId`. */
+  keyed: boolean;
+  statuses: number[];
+  /** Id de la operación que devolvió cada POST (null si no hubo). */
+  ids: Array<string | null>;
+  /** Movimientos nuevos del producto tras los dos POST. */
+  movements: number;
+  /** Movimientos que deja UNA sola operación. */
+  expectedMovements: number;
+};
+
+/**
+ * Doble POST idéntico de compra / ajuste / conversión (G5).
+ * Con la misma clave el contrato es duro: una sola operación (mismo id, un
+ * movimiento). Sin clave el servidor no puede deduplicar: la clave es opcional
+ * por contrato en esos tres endpoints (decisión de la fase 5), así que el
+ * duplicado se documenta como hallazgo, no como fallo.
+ */
+export function judgeDoubleSubmit(o: DoubleSubmitObservation): { failures: string[]; findings: string[] } {
+  const failures: string[] = [];
+  const findings: string[] = [];
+  const statuses = o.statuses.join(",");
+  if (o.keyed) {
+    if (!o.statuses.every(is2xx)) failures.push(`${o.op}: los dos POST con la misma clientRequestId debían responder 2xx y respondieron ${statuses}`);
+    const first = o.ids[0] ?? null;
+    if (first === null || !o.ids.every((id) => id === first)) {
+      failures.push(`${o.op}: los dos POST con la misma clientRequestId devolvieron ids distintos o nulos (${o.ids.map(String).join(", ")})`);
+    }
+    if (o.movements !== o.expectedMovements) {
+      failures.push(`${o.op}: con la misma clientRequestId quedaron ${o.movements} movimiento(s) y se esperaba ${o.expectedMovements} (una sola operación)`);
+    }
+    return { failures, findings };
+  }
+  if (o.statuses.some((status) => status >= 500 || status === 0)) failures.push(`${o.op}: el doble POST sin clave respondió ${statuses}`);
+  if (o.movements === o.expectedMovements * 2) {
+    findings.push(
+      `${o.op}: sin clientRequestId el doble POST se aplica dos veces (${o.movements} movimientos; el libro cuadra, el físico no). ` +
+        "La clave es opcional por contrato en compras, ajustes y conversiones (decisión de la fase 5): solo protege al cliente que la envía",
+    );
+  } else if (o.movements !== o.expectedMovements && failures.length === 0) {
+    failures.push(`${o.op}: el doble POST sin clave dejó ${o.movements} movimiento(s); ni una operación (${o.expectedMovements}) ni dos (${o.expectedMovements * 2})`);
+  }
+  return { failures, findings };
+}
+
+const DEADLOCK_RE = /deadlock|40P01|choc[oó] con otra|intenta de nuevo/i;
+
+/**
+ * N pares de ventas cruzadas [A,B] / [B,A] por HTTP (G7): cada respuesta debe
+ * ser 2xx o un rechazo de negocio (4xx con mensaje). Un 40P01 no puede asomar
+ * ni como 5xx ni como el 409 reintentable al que lo traduce el BFF.
+ */
+export function judgeCrossedSales(responses: ReadonlyArray<{ status: number; error: string }>): {
+  failures: string[];
+  accepted: number;
+  rejected: number;
+} {
+  const failures: string[] = [];
+  let accepted = 0;
+  let rejected = 0;
+  responses.forEach((res, index) => {
+    if (is2xx(res.status)) {
+      accepted += 1;
+      return;
+    }
+    if (DEADLOCK_RE.test(res.error)) {
+      failures.push(`venta #${index + 1}: deadlock (40P01) → ${res.status} ${res.error}`);
+    } else if (!is4xx(res.status)) {
+      failures.push(`venta #${index + 1}: respondió ${res.status} ${res.error || "(sin respuesta)"} en vez de 2xx o rechazo de negocio`);
+    } else if (!res.error.trim()) {
+      failures.push(`venta #${index + 1}: rechazo ${res.status} sin mensaje de negocio`);
+    } else {
+      rejected += 1;
+    }
+  });
+  return { failures, accepted, rejected };
+}
+
 /** Filas afectadas según PostgREST (`return=representation`). */
 export function restRowCount(res: RestResult): number {
   return Array.isArray(res.data) ? res.data.length : 0;
@@ -708,72 +789,55 @@ async function h06ConcurrentSales(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   });
 }
 
+const CROSSED_PAIRS = 20;
+
+/**
+ * El producto ejecuta cada venta en UNA transacción (una RPC), así que la única
+ * forma real de cruzar bloqueos es que dos ventas simultáneas traigan las líneas
+ * en orden inverso. Se lanzan `CROSSED_PAIRS` pares [A,B] / [B,A] a la vez desde
+ * 4 sesiones (2 vendedores). No se encadenan dos `create_sale` en una misma
+ * transacción SQL: eso no lo hace ningún camino del producto y ningún orden de
+ * bloqueo dentro de la RPC lo evitaría (STK-520).
+ */
 async function h06Dg7Deadlock(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const c = new Checks();
-  const a = await t.product("a", 20);
-  const b = await t.product("b", 20);
-  const rate = (await lab.rate()).rateVes;
-
-  // Determinista: dos transacciones que bloquean A y B en orden inverso (lo que hacen una venta [A,B] y otra [B,A]).
-  const s1 = await lab.pg();
-  const s2 = await lab.pg();
-  const sell = (session: typeof s1, productId: string) =>
-    session.query(CREATE_SALE_SQL, [lab.customerId, saleItemsJson([{ productId, quantity: 1 }]), rate]).then(
-      () => "ok",
-      (error: { code?: string; message?: string }) => `${error.code ?? ""} ${error.message ?? ""}`.trim(),
-    );
-  let sqlOutcomes: string[] = [];
-  try {
-    await s1.query("begin");
-    await actAs(s1, lab.uids.vendedor1);
-    await s2.query("begin");
-    await actAs(s2, lab.uids.vendedor2);
-    const first = [await sell(s1, a.id), await sell(s2, b.id)];
-    const blocked = sell(s1, b.id);
-    await sleep(300);
-    const second = await sell(s2, a.id);
-    sqlOutcomes = [...first, await blocked, second];
-  } finally {
-    await s1.query("rollback").catch(() => undefined);
-    await s2.query("rollback").catch(() => undefined);
-  }
-  t.steps.push({ op: "SQL 2 sesiones: create_sale A→B vs B→A (rollback)", as: "vendedor1+vendedor2", status: 0, response_id: null, ms: 0 });
-  const sqlDeadlock = sqlOutcomes.some((text) => text.startsWith("40P01"));
-  c.eq("stock tras el rollback de la prueba SQL", [await lab.stock(a.id), await lab.stock(b.id)], [20, 20]);
-
-  // HTTP: 10 ventas simultáneas alternando el orden de las líneas.
+  const total = CROSSED_PAIRS * 2;
+  const initial = total + 20;
+  const a = await t.product("a", initial);
+  const b = await t.product("b", initial);
   const clients = [
     { as: "vendedor1" as Seller, client: await lab.api("vendedor1") },
     { as: "vendedor2" as Seller, client: await lab.api("vendedor2") },
+    { as: "vendedor1" as Seller, client: await lab.newApi("vendedor1") },
+    { as: "vendedor2" as Seller, client: await lab.newApi("vendedor2") },
   ];
   await lab.rate();
   const responses = await Promise.all(
-    Array.from({ length: 10 }, (_, index) => {
-      const session = clients[index % 2] as (typeof clients)[number];
+    Array.from({ length: total }, (_, index) => {
+      const session = clients[index % clients.length] as (typeof clients)[number];
       const lines = index % 2 === 0 ? [a, b] : [b, a];
       return t.sale(session.as, lines.map((product) => ({ productId: product.id, quantity: 1 })), { client: session.client, clientRequestId: randomUUID() });
     }),
   );
   const summary = summarizeStatuses(responses.map((res) => res.status));
-  const deadlocks = responses.filter((res) => /deadlock/i.test(errorOf(res))).length;
+  const judged = judgeCrossedSales(responses.map((res) => ({ status: res.status, error: errorOf(res) })));
+  c.eq(`${total} ventas cruzadas [A,B]/[B,A]: ninguna responde 40P01 / 5xx (2xx o rechazo de negocio)`, judged.failures, []);
+  // Hay stock de sobra: un rechazo de negocio aquí no rompe el stock, pero tampoco es lo esperado.
+  c.finding("con stock de sobra las ventas cruzadas pasan todas", judged.rejected === 0, `statuses ${summary.statuses.join(",")}: ${responses.filter((res) => !res.ok).map(errorOf).join(" / ")}`);
   const stocks = [await lab.stock(a.id), await lab.stock(b.id)];
-  c.eq("stock de A y B = 20 − ventas aceptadas (rollback limpio de las fallidas)", stocks, [20 - summary.ok, 20 - summary.ok]);
-  const notRetryable = responses.filter((res) => !res.ok && !(res.status === 409 && /choc[oó] con otra|intenta de nuevo/i.test(errorOf(res))));
-  c.ok("ninguna venta responde 5xx (un deadlock sale como 409 reintentable)", summary.errors5xx === 0, `statuses ${summary.statuses.join(",")}; deadlock detected en ${deadlocks}`);
-  c.finding(
-    "las ventas con stock de sobra pasan o reciben 409 reintentable",
-    notRetryable.length === 0,
-    `statuses ${summary.statuses.join(",")}: ${notRetryable.map(errorOf).join(" / ")}`,
-  );
-  c.finding("el orden de bloqueo no permite deadlock (prueba SQL determinista)", !sqlDeadlock, sqlOutcomes.join(" · "));
+  c.eq("stock de A y B = inicial − ventas aceptadas (rollback limpio de las rechazadas)", stocks, [initial - summary.ok, initial - summary.ok]);
+  const movesA = await lab.movements(a.id);
+  const movesB = await lab.movements(b.id);
+  c.eq("un movimiento venta por venta aceptada en A y en B", [movesA, movesB].map((moves) => moves.filter((move) => move.type === "venta").length), [summary.ok, summary.ok]);
   const scoped = await t.scoped();
   c.eq("stock_reconciliation", scoped.stock_reconciliation, 0);
   c.eq("sales_without_movements", scoped.sales_without_movements, 0);
-  const chains = [analyzeChain(await lab.movements(a.id), stocks[0] ?? 0), analyzeChain(await lab.movements(b.id), stocks[1] ?? 0)];
+  c.eq("stock_chain_breaks (orden por seq)", scoped.stock_chain_breaks, 0);
+  const chains = [analyzeChain(movesA, stocks[0] ?? 0), analyzeChain(movesB, stocks[1] ?? 0)];
   c.ok("sin roturas reales de cadena", chains.every((chain) => chain.classification !== "rotura_real"), JSON.stringify(chains));
   return outcome(c, {
-    expected: { http: "10 ventas 2xx", sql: "sin 40P01", stock: "20 − aceptadas en ambos" },
-    actual: { http: summary, http_deadlocks: deadlocks, http_errors: responses.filter((res) => !res.ok).map(errorOf), sql: sqlOutcomes, stocks, chains, stock_chain_breaks: scoped.stock_chain_breaks },
+    expected: { http: `${total} ventas 2xx (o rechazo de negocio); 0 × 40P01 / 5xx`, stock: "inicial − aceptadas en ambos" },
+    actual: { pares: CROSSED_PAIRS, http: summary, rechazos: responses.filter((res) => !res.ok).map(errorOf), deadlocks: judged.failures, stocks, chains },
     evidence: [`productos ${a.id} ${b.id}`],
   });
 }
@@ -1227,39 +1291,79 @@ async function h08Dg4TwoStepFallback(lab: Lab, t: CaseCtx): Promise<CaseOutcome>
   });
 }
 
-async function h08Dg5DoubleSubmit(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
-  const c = new Checks();
-  const p = await t.product("p", 10);
-  const { pack, unit } = await makePair(t, 5, 12);
-  await lab.rate();
-  const purchases = await Promise.all([
-    t.purchase("almacen", "recibido", [{ productId: p.id, quantity: 4 }]),
-    t.purchase("almacen", "recibido", [{ productId: p.id, quantity: 4 }]),
-  ]);
-  const afterPurchases = await lab.stock(p.id);
-  const adjustments = await Promise.all([t.adjust("almacen", p.id, 3), t.adjust("almacen", p.id, 3)]);
-  const afterAdjustments = await lab.stock(p.id);
-  const conversion = { packProductId: pack.id, packQuantity: 1, reason: "S403 doble" };
-  const conversions = await Promise.all([
-    t.http("almacen", "POST", "/api/inventory/conversions", conversion),
-    t.http("almacen", "POST", "/api/inventory/conversions", conversion),
-  ]);
-  const stocks = [await lab.stock(pack.id), await lab.stock(unit.id)];
-  c.eq("stock tras el doble POST idéntico de compra recibida +4 (sano: una)", afterPurchases, 14);
-  c.eq("stock tras el doble POST idéntico de ajuste +3 (sano: uno)", afterAdjustments - afterPurchases, 3);
-  c.eq("empaque/unidad tras el doble POST idéntico de conversión de 1 (sano: una)", stocks, [4, 12]);
-  if (c.failures.length > 0) c.note("G5: compras, ajustes y conversiones no tienen clave de idempotencia; un doble clic o un reintento de red duplica el movimiento (el libro cuadra, el físico no).");
-  const scoped = await t.scoped();
-  c.eq("stock_reconciliation", scoped.stock_reconciliation, 0);
-  return outcome(c, {
-    expected: { compra: "+4", ajuste: "+3", conversion: "-1 / +12" },
-    actual: {
-      compra: { statuses: purchases.map((res) => res.status), delta: afterPurchases - 10 },
-      ajuste: { statuses: adjustments.map((res) => res.status), delta: afterAdjustments - afterPurchases },
-      conversion: { statuses: conversions.map((res) => res.status), stocks },
-    },
-    evidence: [`producto ${p.id}`, `empaque ${pack.id}`, `unidad ${unit.id}`],
-  });
+/**
+ * Doble POST idéntico en paralelo de compra, ajuste y conversión.
+ * `keyed`: los dos POST de cada operación llevan la MISMA `clientRequestId`
+ * (lo que hace el cliente del producto) → una sola operación. Sin clave se
+ * duplica: queda como hallazgo (ver `judgeDoubleSubmit`).
+ */
+function h08Dg5DoubleSubmit(keyed: boolean) {
+  return async (lab: Lab, t: CaseCtx): Promise<CaseOutcome> => {
+    const c = new Checks();
+    const p = await t.product("p", 10);
+    const { pack, unit } = await makePair(t, 5, 12);
+    await lab.rate();
+    const key = (): string | undefined => (keyed ? randomUUID() : undefined);
+    const countMoves = async (productId: string, type: string) => (await lab.movements(productId)).filter((move) => move.type === type).length;
+    const apply = (observation: DoubleSubmitObservation) => {
+      const judged = judgeDoubleSubmit(observation);
+      c.failures.push(...judged.failures);
+      c.findings.push(...judged.findings);
+    };
+
+    const purchaseKey = key();
+    const purchases = await Promise.all([
+      t.purchase("almacen", "recibido", [{ productId: p.id, quantity: 4 }], { clientRequestId: purchaseKey }),
+      t.purchase("almacen", "recibido", [{ productId: p.id, quantity: 4 }], { clientRequestId: purchaseKey }),
+    ]);
+    const purchaseMoves = await countMoves(p.id, "compra");
+    const afterPurchases = await lab.stock(p.id);
+    apply({ op: "compra recibida +4", keyed, statuses: purchases.map((res) => res.status), ids: purchases.map(idOf), movements: purchaseMoves, expectedMovements: 1 });
+    c.eq("stock tras las compras = 10 + 4 × movimientos compra", afterPurchases, 10 + 4 * purchaseMoves);
+
+    const adjustKey = key();
+    const adjustments = await Promise.all([
+      t.adjust("almacen", p.id, 3, undefined, { clientRequestId: adjustKey }),
+      t.adjust("almacen", p.id, 3, undefined, { clientRequestId: adjustKey }),
+    ]);
+    const adjustMoves = await countMoves(p.id, "ajuste_entrada");
+    const afterAdjustments = await lab.stock(p.id);
+    apply({ op: "ajuste +3", keyed, statuses: adjustments.map((res) => res.status), ids: adjustments.map(idOf), movements: adjustMoves, expectedMovements: 1 });
+    c.eq("stock tras los ajustes = anterior + 3 × movimientos ajuste_entrada", afterAdjustments - afterPurchases, 3 * adjustMoves);
+
+    const conversionKey = key();
+    const conversion = { packProductId: pack.id, packQuantity: 1, reason: "S403 doble", ...(conversionKey ? { clientRequestId: conversionKey } : {}) };
+    const conversions = await Promise.all([
+      t.http("almacen", "POST", "/api/inventory/conversions", conversion),
+      t.http("almacen", "POST", "/api/inventory/conversions", conversion),
+    ]);
+    const conversionIds = conversions.map((res) => {
+      const id = dataOf(res).conversionId;
+      return typeof id === "string" ? id : null;
+    });
+    const conversionMoves = await countMoves(pack.id, "conversion_salida");
+    const stocks = [await lab.stock(pack.id), await lab.stock(unit.id)];
+    apply({ op: "conversión de 1 empaque", keyed, statuses: conversions.map((res) => res.status), ids: conversionIds, movements: conversionMoves, expectedMovements: 1 });
+    c.eq("empaque/unidad = 5 − conversiones / 12 × conversiones", stocks, [5 - conversionMoves, 12 * conversionMoves]);
+    c.eq("movimientos conversion_entrada de la unidad = conversiones", await countMoves(unit.id, "conversion_entrada"), conversionMoves);
+
+    const scoped = await t.scoped();
+    c.eq("stock_reconciliation", scoped.stock_reconciliation, 0);
+    c.eq("conversion_mismatches", scoped.conversion_mismatches, 0);
+    if (keyed) c.note("C6: con la misma clientRequestId los dos envíos devuelven la misma operación.");
+    return outcome(c, {
+      expected: keyed
+        ? { compra: "+4 (1 movimiento, mismo id)", ajuste: "+3 (1 movimiento, mismo id)", conversion: "-1 / +12 (mismo conversionId)" }
+        : { nota: "sin clave no hay deduplicación (clave opcional por contrato): el duplicado se documenta como finding" },
+      actual: {
+        con_clave: keyed,
+        compra: { statuses: purchases.map((res) => res.status), ids: purchases.map(idOf), movimientos: purchaseMoves, delta: afterPurchases - 10 },
+        ajuste: { statuses: adjustments.map((res) => res.status), ids: adjustments.map(idOf), movimientos: adjustMoves, delta: afterAdjustments - afterPurchases },
+        conversion: { statuses: conversions.map((res) => res.status), ids: conversionIds, movimientos: conversionMoves, stocks },
+      },
+      evidence: [`producto ${p.id}`, `empaque ${pack.id}`, `unidad ${unit.id}`],
+    });
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1685,7 +1789,7 @@ export const HYPOTHESIS_CASES: readonly CaseDef[] = [
   { id: "h04.dg3_return_with_live_payments", title: "D-G3 · devolver venta con pagos activos: ¿dinero atrapado?", hypothesis: ["H4"], run: h04Dg3ReturnWithLivePayments },
   { id: "h05.convert_balanced", title: "Conversión empaque→unidad balanceada (serie, exceso y paralelo)", hypothesis: ["H5"], run: h05ConvertBalanced },
   { id: "h06.concurrent_sales", title: "8 ventas simultáneas (2 vendedores, 4 sesiones) con stock 5", hypothesis: ["H6"], run: h06ConcurrentSales },
-  { id: "h06.dg7_deadlock", title: "D-G7 · deadlock por orden de líneas [A,B] vs [B,A]", hypothesis: ["H6"], run: h06Dg7Deadlock },
+  { id: "h06.dg7_deadlock", title: `D-G7 · ${CROSSED_PAIRS} pares de ventas cruzadas [A,B] / [B,A] por HTTP en paralelo: sin deadlock`, hypothesis: ["H6"], run: h06Dg7Deadlock },
   { id: "h07.no_trigger", title: "No hay trigger que mantenga current_stock ↔ stock_movements", hypothesis: ["H7"], run: h07NoTrigger },
   { id: "h07.direct_update_postgres", title: "(i) update directo de current_stock como postgres", hypothesis: ["H7"], run: h07DirectUpdatePostgres },
   { id: "h07.dg1_direct_update_postgrest", title: "(ii) D-G1 · PATCH directo de current_stock por PostgREST como usuarios lab", hypothesis: ["H7"], run: h07Dg1DirectUpdatePostgrest },
@@ -1697,7 +1801,8 @@ export const HYPOTHESIS_CASES: readonly CaseDef[] = [
   { id: "h08.same_client_request_id", title: "BFF · mismo clientRequestId dos veces (serie y simultáneo) y con otro carrito", hypothesis: ["H8"], run: h08SameClientRequestId },
   { id: "h08.no_client_request_id", title: "BFF · mismo POST de venta dos veces sin clientRequestId → 400, sin venta", hypothesis: ["H8"], run: h08NoClientRequestId },
   { id: "h08.dg4_two_step_fallback", title: "D-G4 · cobro que falla a mitad: ¿venta viva con stock descontado?", hypothesis: ["H8"], run: h08Dg4TwoStepFallback },
-  { id: "h08.dg5_double_submit", title: "D-G5 · doble POST idéntico en 50 ms: compra, ajuste y conversión", hypothesis: ["H8"], run: h08Dg5DoubleSubmit },
+  { id: "h08.dg5_double_submit", title: "D-G5 · doble POST idéntico con la MISMA clientRequestId: compra, ajuste y conversión", hypothesis: ["H8"], run: h08Dg5DoubleSubmit(true) },
+  { id: "h08.dg5_double_submit_no_key", title: "D-G5 · doble POST idéntico SIN clientRequestId (opcional por contrato): compra, ajuste y conversión", hypothesis: ["H8"], run: h08Dg5DoubleSubmit(false) },
   { id: "h09.create_product_with_stock", title: "POST /api/products con currentStock > 0 (formulario)", hypothesis: ["H9"], run: h09CreateProductWithStock },
   { id: "h09.import_payload", title: "Import Excel: mismo endpoint y payload con stock_inicial", hypothesis: ["H9"], run: h09ImportPayload },
   { id: "h10.pending_sales", title: "Ventas pendiente_pago: stock coherente con su estado final", hypothesis: ["H10"], run: h10PendingSales },

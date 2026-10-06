@@ -438,6 +438,8 @@ export type PurchaseBodyOptions = {
   exchangeRateId: string | null;
   rateVes: number;
   notes?: string;
+  /** Clave de idempotencia (opcional por contrato en `POST /api/purchases`). */
+  clientRequestId?: string;
 };
 
 /** Unidades que un sistema sano debe ingresar por una línea de compra. */
@@ -479,6 +481,7 @@ export function buildPurchaseBody(lines: readonly PurchaseLineInput[], options: 
   });
   const subtotalRef = round2(items.reduce((sum, item) => sum + item.subtotalRef, 0));
   return {
+    ...(options.clientRequestId ? { clientRequestId: options.clientRequestId } : {}),
     supplierId: options.supplierId,
     status: options.status,
     ...(options.exchangeRateId ? { exchangeRateId: options.exchangeRateId } : {}),
@@ -491,6 +494,32 @@ export function buildPurchaseBody(lines: readonly PurchaseLineInput[], options: 
     discountRef: 0,
     discountVes: 0,
     items,
+  };
+}
+
+export type AdjustBodyInput = {
+  productId: string;
+  quantityDelta: number;
+  type?: string;
+  reason: string;
+  /** Clave de idempotencia (opcional por contrato en `POST /api/inventory/adjustments`). */
+  clientRequestId?: string;
+  /** Venta a la que se liga una `devolucion_cliente` (obligatoria para ese tipo desde 20261006g). */
+  saleId?: string;
+  /** Compra a la que se liga una `devolucion_proveedor` (obligatoria para ese tipo desde 20261006g). */
+  purchaseId?: string;
+};
+
+/** Cuerpo de `POST /api/inventory/adjustments`: los campos opcionales solo viajan si se pasan. */
+export function buildAdjustBody(input: AdjustBodyInput): JsonRecord {
+  return {
+    productId: input.productId,
+    quantityDelta: input.quantityDelta,
+    ...(input.type ? { type: input.type } : {}),
+    reason: input.reason,
+    ...(input.clientRequestId ? { clientRequestId: input.clientRequestId } : {}),
+    ...(input.saleId ? { saleId: input.saleId } : {}),
+    ...(input.purchaseId ? { purchaseId: input.purchaseId } : {}),
   };
 }
 
@@ -937,12 +966,12 @@ export class CaseCtx {
     return this.http(as, "POST", "/api/sales", body, options.client);
   }
 
-  /** Compra por el BFF (admin o almacén). */
+  /** Compra por el BFF (admin o almacén). `clientRequestId` solo viaja si se pasa (es opcional por contrato). */
   async purchase(
     as: "admin" | "almacen",
     status: "pedido" | "recibido",
     lines: readonly PurchaseLineInput[],
-    client?: ApiClient,
+    options: { client?: ApiClient; clientRequestId?: string } = {},
   ): Promise<ApiResponse> {
     const rate = await this.lab.rate();
     const body = buildPurchaseBody(lines, {
@@ -951,17 +980,25 @@ export class CaseCtx {
       exchangeRateId: rate.id,
       rateVes: rate.rateVes,
       notes: `S403 ${this.key}`,
+      ...(options.clientRequestId ? { clientRequestId: options.clientRequestId } : {}),
     });
-    return this.http(as, "POST", "/api/purchases", body, client);
+    return this.http(as, "POST", "/api/purchases", body, options.client);
   }
 
-  adjust(as: "admin" | "almacen", productId: string, quantityDelta: number, type?: string): Promise<ApiResponse> {
-    return this.http(as, "POST", "/api/inventory/adjustments", {
-      productId,
-      quantityDelta,
-      ...(type ? { type } : {}),
-      reason: `S403 ${this.key}`,
-    });
+  /** Ajuste por el BFF. `extra`: clave de idempotencia y documento de una devolución ligada. */
+  adjust(
+    as: "admin" | "almacen",
+    productId: string,
+    quantityDelta: number,
+    type?: string,
+    extra: Pick<AdjustBodyInput, "clientRequestId" | "saleId" | "purchaseId"> = {},
+  ): Promise<ApiResponse> {
+    return this.http(
+      as,
+      "POST",
+      "/api/inventory/adjustments",
+      buildAdjustBody({ productId, quantityDelta, type, reason: `S403 ${this.key}`, ...extra }),
+    );
   }
 
   /** Vistas de integridad filtradas a los productos del caso. */
