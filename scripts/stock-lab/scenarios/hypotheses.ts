@@ -320,7 +320,7 @@ async function h03D1StoreIsolation(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
 
   // Mismo cruce por el BFF con usuarios lab (la tienda default existe y tiene el producto).
   const adjust = await t.adjust("almacen", foreign.id, 1);
-  const sale = await t.sale("vendedor1", [{ productId: foreign.id, quantity: 1 }]);
+  const sale = await t.sale("vendedor1", [{ productId: foreign.id, quantity: 1 }], { clientRequestId: randomUUID() });
   const purchase = await t.purchase("almacen", "recibido", [{ productId: foreign.id, quantity: 2 }]);
   c.rejected("ajuste de producto de otra tienda", adjust.status, errorOf(adjust));
   c.rejected("venta de producto de otra tienda", sale.status, errorOf(sale));
@@ -359,7 +359,7 @@ async function h03MovedProductOps(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
     lab.defaultStoreId,
   ]);
   const crossWhileMoved = await lab.viewRows("cross_store_movements", [p.id]);
-  const sale = await t.sale("vendedor1", [{ productId: p.id, quantity: 1 }]);
+  const sale = await t.sale("vendedor1", [{ productId: p.id, quantity: 1 }], { clientRequestId: randomUUID() });
   const adjust = await t.adjust("almacen", p.id, 1);
   const purchase = await t.purchase("almacen", "recibido", [{ productId: p.id, quantity: 2 }]);
   const rpc = await t.rpc("admin", "adjust_stock", { p_product_id: p.id, p_quantity_delta: 1, p_reason: "S403 movido", p_type: null });
@@ -386,8 +386,8 @@ async function h03MovedProductOps(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
 async function h03Dg6ReversalOutOfStore(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const c = new Checks();
   const p = await t.product("p", 10);
-  const saleToCancel = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }]), "venta a cancelar");
-  const saleToReturn = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 1 }]), "venta a devolver");
+  const saleToCancel = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }], { clientRequestId: randomUUID() }), "venta a cancelar");
+  const saleToReturn = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 1 }], { clientRequestId: randomUUID() }), "venta a devolver");
   const buyToCancel = mustId(await t.purchase("almacen", "recibido", [{ productId: p.id, quantity: 3 }]), "compra a cancelar");
   const buyToReturn = mustId(await t.purchase("almacen", "recibido", [{ productId: p.id, quantity: 4 }]), "compra a devolver");
   const before = await snapshot(lab, p.id);
@@ -405,8 +405,8 @@ async function h03Dg6ReversalOutOfStore(lab: Lab, t: CaseCtx): Promise<CaseOutco
     ["return_purchase", await t.http("almacen", "POST", `/api/purchases/${buyToReturn}/return`)],
   ];
   for (const [name, res] of reversals) {
-    c.rejected(`${name} con el producto fuera de la tienda (G6)`, res.status, errorOf(res));
-    c.finding(`${name}: el rechazo trae un mensaje de negocio`, !/null value|violates/i.test(errorOf(res)), `error crudo de Postgres: "${errorOf(res)}"`);
+    c.ok(`${name} con el producto fuera de la tienda responde 4xx (G6)`, is4xx(res.status), `${res.status} ${errorOf(res)}`);
+    c.ok(`${name}: el rechazo trae un mensaje de negocio`, !/null value|violates/i.test(errorOf(res)), `error crudo de Postgres: "${errorOf(res)}"`);
   }
   const moved = await snapshot(lab, p.id);
   c.eq("stock y movimientos del producto en la otra tienda tras las 4 reversiones", [moved.stock, moved.moves], [before.stock, before.moves]);
@@ -452,7 +452,7 @@ async function h04SaleCancelReturn(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   await t.ensureCash("vendedor1");
   const p = await t.product("p", 10);
 
-  const unpaid = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }]), "venta sin cobrar");
+  const unpaid = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }], { clientRequestId: randomUUID() }), "venta sin cobrar");
   c.eq("stock tras vender 2", await lab.stock(p.id), 8);
   const cancel = await t.http("vendedor1", "PATCH", `/api/sales/${unpaid}/cancel`);
   c.ok("cancelar venta sin cobrar", cancel.ok, `${cancel.status} ${errorOf(cancel)}`);
@@ -534,7 +534,7 @@ async function h04PurchaseCancelReturn(lab: Lab, t: CaseCtx): Promise<CaseOutcom
   // Compra cuyo stock ya se vendió: la reversión debe rechazarse limpia y no dejar stock negativo.
   const q = await t.product("q", 0);
   const sold = mustId(await t.purchase("almacen", "recibido", [{ productId: q.id, quantity: 5 }]), "compra que luego se vende");
-  mustId(await t.sale("vendedor1", [{ productId: q.id, quantity: 3 }]), "venta del stock comprado");
+  mustId(await t.sale("vendedor1", [{ productId: q.id, quantity: 3 }], { clientRequestId: randomUUID() }), "venta del stock comprado");
   const cancelSold = await t.http("almacen", "PATCH", `/api/purchases/${sold}/cancel`);
   const returnSold = await t.http("almacen", "POST", `/api/purchases/${sold}/return`);
   c.rejected("cancelar compra con stock ya vendido", cancelSold.status, errorOf(cancelSold));
@@ -584,8 +584,10 @@ async function h04Dg3ReturnWithLivePayments(lab: Lab, t: CaseCtx): Promise<CaseO
   const afterReturn = await readMoney();
   let cancelStatus: number | null = null;
   let cancelError = "";
+  c.ok("return_sale acepta una venta pagada", ret.ok, `${ret.status} ${errorOf(ret)}`);
   if (ret.ok) {
     c.eq("stock tras devolver", stockAfter, 5);
+    c.eq("pagos activos justo después de devolver (return_sale los anula, C7)", afterReturn.payments.filter((payment) => payment.status === "activo").length, 0);
     const live = afterReturn.payments.find((payment) => payment.status === "activo");
     if (live) {
       const cancel = await t.http("contador", "PATCH", `/api/payments/${live.id}/cancel`);
@@ -599,7 +601,7 @@ async function h04Dg3ReturnWithLivePayments(lab: Lab, t: CaseCtx): Promise<CaseO
   const final = await readMoney();
   const trapped = final.sale?.status === "devuelta" && final.payments.some((payment) => payment.status === "activo");
   c.ok(
-    "G3: tras devolver, el cobro se puede anular (o la devolución exige anularlo antes)",
+    "G3: la venta devuelta no conserva ningún pago activo",
     !trapped,
     `venta devuelta con paid_ves=${final.sale?.paid_ves ?? "?"} y pago activo; anular pago → ${String(cancelStatus)} ${cancelError}`,
   );
@@ -608,7 +610,7 @@ async function h04Dg3ReturnWithLivePayments(lab: Lab, t: CaseCtx): Promise<CaseO
   c.eq("reversal_mismatches", scoped.reversal_mismatches, 0);
   return outcome(c, {
     hypothesis_verdict: stockAfter === (ret.ok ? 5 : 4) && scoped.reversal_mismatches === 0 ? "descartada" : "confirmada",
-    expected: { stock: 5, dinero: "pago anulable tras la devolución, o devolución rechazada con pagos activos" },
+    expected: { return_status: "2xx", stock: 5, dinero: "0 pagos activos tras la devolución (return_sale los anula)" },
     actual: { return_status: ret.status, stock: stockAfter, tras_devolver: afterReturn, cancel_payment: cancelStatus, final },
     evidence: [`producto ${p.id}`, `venta ${saleId}`, ...final.payments.map((payment) => `pago ${payment.id} ${payment.status}`)],
   });
@@ -666,11 +668,11 @@ async function h06ConcurrentSales(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
     { as: "vendedor2", client: await lab.newApi("vendedor2") },
   ];
   await lab.rate();
-  // 8 ventas de 1 unidad a la vez con stock 5: mitad por el RPC atómico con cobro, mitad por create_sale.
+  // 8 ventas de 1 unidad a la vez con stock 5: mitad con cobro, mitad pendiente_pago (cada una con su clave).
   const responses = await Promise.all(
     Array.from({ length: 8 }, (_, index) => {
       const session = sessions[index % sessions.length] as (typeof sessions)[number];
-      return t.sale(session.as, [{ productId: p.id, quantity: 1 }], { pay: index % 2 === 0, client: session.client });
+      return t.sale(session.as, [{ productId: p.id, quantity: 1 }], { pay: index % 2 === 0, client: session.client, clientRequestId: randomUUID() });
     }),
   );
   const summary = summarizeStatuses(responses.map((res) => res.status));
@@ -748,14 +750,20 @@ async function h06Dg7Deadlock(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
     Array.from({ length: 10 }, (_, index) => {
       const session = clients[index % 2] as (typeof clients)[number];
       const lines = index % 2 === 0 ? [a, b] : [b, a];
-      return t.sale(session.as, lines.map((product) => ({ productId: product.id, quantity: 1 })), { client: session.client });
+      return t.sale(session.as, lines.map((product) => ({ productId: product.id, quantity: 1 })), { client: session.client, clientRequestId: randomUUID() });
     }),
   );
   const summary = summarizeStatuses(responses.map((res) => res.status));
   const deadlocks = responses.filter((res) => /deadlock/i.test(errorOf(res))).length;
   const stocks = [await lab.stock(a.id), await lab.stock(b.id)];
   c.eq("stock de A y B = 20 − ventas aceptadas (rollback limpio de las fallidas)", stocks, [20 - summary.ok, 20 - summary.ok]);
-  c.finding("ninguna venta con stock de sobra falla", summary.ok === 10, `statuses ${summary.statuses.join(",")}; deadlock detected en ${deadlocks}`);
+  const notRetryable = responses.filter((res) => !res.ok && !(res.status === 409 && /choc[oó] con otra|intenta de nuevo/i.test(errorOf(res))));
+  c.ok("ninguna venta responde 5xx (un deadlock sale como 409 reintentable)", summary.errors5xx === 0, `statuses ${summary.statuses.join(",")}; deadlock detected en ${deadlocks}`);
+  c.finding(
+    "las ventas con stock de sobra pasan o reciben 409 reintentable",
+    notRetryable.length === 0,
+    `statuses ${summary.statuses.join(",")}: ${notRetryable.map(errorOf).join(" / ")}`,
+  );
   c.finding("el orden de bloqueo no permite deadlock (prueba SQL determinista)", !sqlDeadlock, sqlOutcomes.join(" · "));
   const scoped = await t.scoped();
   c.eq("stock_reconciliation", scoped.stock_reconciliation, 0);
@@ -998,7 +1006,7 @@ async function h07Dg9RepeatedLine(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   ];
   // El mismo producto en dos líneas del mismo documento, 6 veces, EN SERIE (sin concurrencia).
   let via = "POST /api/sales";
-  const probe = await t.sale("vendedor1", lines);
+  const probe = await t.sale("vendedor1", lines, { clientRequestId: randomUUID() });
   let done = probe.ok ? 1 : 0;
   if (!probe.ok) {
     via = `create_sale por SQL como vendedor-1 (el BFF rechaza líneas repetidas: ${probe.status} ${errorOf(probe)})`;
@@ -1016,7 +1024,7 @@ async function h07Dg9RepeatedLine(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
         throw error;
       }
     } else {
-      mustId(await t.sale("vendedor1", lines), "venta con línea repetida");
+      mustId(await t.sale("vendedor1", lines, { clientRequestId: randomUUID() }), "venta con línea repetida");
     }
     done += 1;
   }
@@ -1088,6 +1096,10 @@ async function h08SameClientRequestId(lab: Lab, t: CaseCtx): Promise<CaseOutcome
   c.ok("el reintento en serie responde 2xx", second.ok, `${second.status} ${errorOf(second)}`);
   c.eq("el reintento devuelve la misma venta", idOf(second), firstId);
   c.eq("stock tras venta + reintento", await lab.stock(p.id), 8);
+  // La misma clave con OTRO carrito (C4): 409, sin vender ni devolver la venta vieja.
+  const otherCart = await t.sale("vendedor1", [{ productId: p.id, quantity: 3 }], { pay: true, clientRequestId: serialKey });
+  c.eq("misma clave con otro carrito", otherCart.status, 409);
+  c.eq("stock tras reutilizar la clave con otro carrito", await lab.stock(p.id), 8);
 
   const parallelKey = randomUUID();
   await lab.rate();
@@ -1108,14 +1120,22 @@ async function h08SameClientRequestId(lab: Lab, t: CaseCtx): Promise<CaseOutcome
     ["venta", -2, 8],
     ["venta", -2, 6],
   ]);
-  c.finding(
+  c.ok(
     "el envío simultáneo perdedor recibe la venta existente (G15)",
     summary.ok === 2,
     `statuses ${summary.statuses.join(",")}: ${parallel.filter((res) => !res.ok).map(errorOf).join(" / ")}`,
   );
+  c.eq("el envío simultáneo devuelve una sola venta", [...new Set(parallel.map(idOf))].length, 1);
   return outcome(c, {
-    expected: { stock: 6, ventas: 2, reintento: "misma venta, 2xx" },
-    actual: { stock, ventas: sales.length, serial: [first.status, second.status], parallel: summary, parallel_errors: parallel.map(errorOf) },
+    expected: { stock: 6, ventas: 2, reintento: "misma venta, 2xx (en serie y simultáneo)", otro_carrito: 409 },
+    actual: {
+      stock,
+      ventas: sales.length,
+      serial: [first.status, second.status],
+      otro_carrito: `${otherCart.status} ${errorOf(otherCart)}`,
+      parallel: summary,
+      parallel_errors: parallel.map(errorOf),
+    },
     evidence: [`producto ${p.id}`, ...sales.map((sale) => `venta ${sale.id} client_request_id=${sale.client_request_id}`)],
   });
 }
@@ -1126,9 +1146,11 @@ async function h08NoClientRequestId(lab: Lab, t: CaseCtx): Promise<CaseOutcome> 
   const p = await t.product("p", 10);
   const lines = [{ productId: p.id, quantity: 1 }];
   await lab.rate();
-  // Mismo POST dos veces en < 50 ms, sin clave y sin pagos (camino create_sale, p. ej. app móvil).
-  const parallel = await Promise.all([t.sale("vendedor1", lines), t.sale("vendedor1", lines)]);
-  const stockAfterParallel = await lab.stock(p.id);
+  // Mismo POST dos veces en < 50 ms, sin clave y sin pagos (p. ej. un cliente que no la manda).
+  const parallel = await Promise.all([
+    t.sale("vendedor1", lines, { clientRequestId: null }),
+    t.sale("vendedor1", lines, { clientRequestId: null }),
+  ]);
   // Mismo POST dos veces en serie con cobro pero sin clave (reintento tras timeout).
   const serial = [
     await t.sale("vendedor1", lines, { pay: true, clientRequestId: null }),
@@ -1139,14 +1161,16 @@ async function h08NoClientRequestId(lab: Lab, t: CaseCtx): Promise<CaseOutcome> 
     "select distinct s.id, s.status::text as status from public.sales s join public.sale_items i on i.sale_id = s.id where i.product_id = $1",
     [p.id],
   );
-  c.eq("stock tras el doble POST simultáneo sin clave (sano: una sola venta)", stockAfterParallel, 9);
-  c.eq("stock tras repetir además el POST cobrado sin clave", stock, 8);
-  c.eq("ventas creadas", sales.length, 2);
+  const moves = (await lab.movements(p.id)).filter((move) => move.type === "venta");
+  c.eq("los 4 POST sin clientRequestId responden 400", [...parallel, ...serial].map((res) => res.status), [400, 400, 400, 400]);
+  c.eq("stock intacto", stock, 10);
+  c.eq("ventas creadas", sales.length, 0);
+  c.eq("movimientos venta", moves.length, 0);
   if (c.failures.length > 0) {
-    c.note("sin clientRequestId el BFF no deduplica: cada reintento es otra venta y otro descuento. El POS web sí envía la clave (ver h08.same_client_request_id); el hueco queda para clientes que no la mandan.");
+    c.note("POST /api/sales debe exigir clientRequestId (400 si falta): sin clave el BFF no puede deduplicar y cada reintento sería otra venta y otro descuento (ver h08.same_client_request_id para el camino con clave).");
   }
   return outcome(c, {
-    expected: { stock: 8, ventas: 2 },
+    expected: { statuses: [400, 400, 400, 400], stock: 10, ventas: 0, movimientos_venta: 0 },
     actual: { stock, ventas: sales, parallel: parallel.map((res) => res.status), serial: serial.map((res) => res.status) },
     evidence: [`producto ${p.id}`, ...sales.map((sale) => `venta ${sale.id} ${sale.status}`)],
   });
@@ -1247,7 +1271,7 @@ async function h09CreateProductWithStock(lab: Lab, t: CaseCtx): Promise<CaseOutc
   c.eq("movimiento inventario_inicial", brief(moves), [["inventario_inicial", 7, 7]]);
   c.eq("stock_reconciliation del producto", reconciliation.length, 0);
   // La diferencia no se cura sola: una venta posterior la arrastra.
-  const sale = await t.sale("vendedor1", [{ productId: id, quantity: 2 }]);
+  const sale = await t.sale("vendedor1", [{ productId: id, quantity: 2 }], { clientRequestId: randomUUID() });
   const after = await t.scoped();
   c.note(`tras vender 2 (${sale.status}): reconciliation=${after.stock_reconciliation} diff=${String((await lab.viewRows("stock_reconciliation", [id]))[0]?.diff)}, chain_breaks=${after.stock_chain_breaks} (el primer movimiento no se evalúa)`);
   return outcome(c, {
@@ -1282,7 +1306,7 @@ async function h10PendingSales(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
     t.http("vendedor1", "POST", "/api/payments", { saleId, method: "efectivo_ves", currency: "VES", amount });
 
   // A: pendiente → pagada.
-  const a = await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }]);
+  const a = await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }], { clientRequestId: randomUUID() });
   const aId = mustId(a, "venta A");
   c.eq("A nace pendiente_pago", await docStatus(lab, "sales", aId), "pendiente_pago");
   c.eq("A descuenta al crearse", await lab.stock(p.id), 8);
@@ -1291,13 +1315,13 @@ async function h10PendingSales(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   c.eq("A pasa a pagada sin tocar stock", [await docStatus(lab, "sales", aId), await lab.stock(p.id)], ["pagada", 8]);
 
   // B: pendiente → cancelada.
-  const bId = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 3 }]), "venta B");
+  const bId = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 3 }], { clientRequestId: randomUUID() }), "venta B");
   const bCancel = await t.http("vendedor1", "PATCH", `/api/sales/${bId}/cancel`);
   c.ok("cancelar B", bCancel.ok, `${bCancel.status} ${errorOf(bCancel)}`);
   c.eq("B cancelada repone", [await docStatus(lab, "sales", bId), await lab.stock(p.id)], ["cancelada", 8]);
 
   // C: pendiente con abono parcial → no se puede cancelar hasta anular el abono.
-  const cSale = await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }]);
+  const cSale = await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }], { clientRequestId: randomUUID() });
   const cId = mustId(cSale, "venta C");
   const partial = await pay(cId, Math.round((Number(dataOf(cSale).totalVes) / 2) * 100) / 100);
   c.ok("abono parcial de C", partial.ok, `${partial.status} ${errorOf(partial)}`);
@@ -1311,7 +1335,7 @@ async function h10PendingSales(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   c.eq("C cancelada repone", [await docStatus(lab, "sales", cId), await lab.stock(p.id)], ["cancelada", 8]);
 
   // D: pendiente abandonada.
-  const dId = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 1 }]), "venta D");
+  const dId = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 1 }], { clientRequestId: randomUUID() }), "venta D");
   const final = await lab.stock(p.id);
   c.eq("stock final = 10 − A(2, pagada) − D(1, pendiente)", final, 7);
   const scoped = await t.scoped();
@@ -1386,9 +1410,14 @@ async function h11ReceiveTwice(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   c.eq("paralelo ×5: recepciones aceptadas", five.ok, 1);
   c.eq("paralelo ×5: stock", stock, 15);
   c.eq("movimientos compra (uno por compra)", brief(moves.filter((move) => move.type === "compra")).map((row) => row[1]), [5, 5, 5]);
-  c.finding(
-    "la recepción repetida responde 409/400",
+  c.ok(
+    "la recepción repetida no responde 5xx",
     serial.errors5xx + pair.errors5xx + five.errors5xx === 0,
+    `perdedores: ${[...new Set(losers)].join(" / ")}`,
+  );
+  c.finding(
+    "la recepción repetida responde 409",
+    [...serial.statuses, ...pair.statuses, ...five.statuses].every((status) => is2xx(status) || status === 409),
     `perdedores: ${[...new Set(losers)].join(" / ")}`,
   );
   const scoped = await t.scoped();
@@ -1397,7 +1426,7 @@ async function h11ReceiveTwice(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const chain = analyzeChain(moves, stock);
   c.ok("sin roturas reales de cadena", chain.classification !== "rotura_real", JSON.stringify(chain));
   return outcome(c, {
-    expected: { stock: 15, compras: 3, aceptadas_por_compra: 1, perdedor: "409 o 400" },
+    expected: { stock: 15, compras: 3, aceptadas_por_compra: 1, perdedor: "409 (PT409); nunca 5xx" },
     actual: { stock, serial, pair, five, perdedores: losers, chain },
     evidence: [`producto ${p.id}`, `compras ${serialId} ${pairId} ${fiveId}`, ...moves.map(fmtMove)],
   });
@@ -1491,7 +1520,7 @@ async function h12RpcRowcounts(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   // --- vendedor (sin política RLS de escritura sobre products) ---
   let saleId = "";
   await probe("vendedor · create_sale (BFF)", p.id, -2, true, async () => {
-    const res = await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }]);
+    const res = await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }], { clientRequestId: randomUUID() });
     saleId = idOf(res) ?? "";
     return viaHttp(res);
   });
@@ -1651,8 +1680,8 @@ export const HYPOTHESIS_CASES: readonly CaseDef[] = [
   { id: "h07.dg9_interleaved_transactions", title: "D-G9 (i) · stock_chain_breaks con dos transacciones cuyo created_at va al revés que el commit", hypothesis: ["H7"], run: h07Dg9Interleaved },
   { id: "h07.dg9_repeated_line", title: "D-G9 (ii) · stock_chain_breaks con el mismo producto en dos líneas de un documento", hypothesis: ["H7"], run: h07Dg9RepeatedLine },
   { id: "h07.dg9_classify_global", title: "D-G9 · clasificar las filas actuales de stock_chain_breaks (artefacto de orden vs rotura real)", hypothesis: ["H7"], run: h07Dg9ClassifyGlobal },
-  { id: "h08.same_client_request_id", title: "BFF · mismo clientRequestId dos veces (serie y simultáneo)", hypothesis: ["H8"], run: h08SameClientRequestId },
-  { id: "h08.no_client_request_id", title: "BFF · mismo POST de venta dos veces sin clientRequestId", hypothesis: ["H8"], run: h08NoClientRequestId },
+  { id: "h08.same_client_request_id", title: "BFF · mismo clientRequestId dos veces (serie y simultáneo) y con otro carrito", hypothesis: ["H8"], run: h08SameClientRequestId },
+  { id: "h08.no_client_request_id", title: "BFF · mismo POST de venta dos veces sin clientRequestId → 400, sin venta", hypothesis: ["H8"], run: h08NoClientRequestId },
   { id: "h08.dg4_two_step_fallback", title: "D-G4 · cobro que falla a mitad: ¿venta viva con stock descontado?", hypothesis: ["H8"], run: h08Dg4TwoStepFallback },
   { id: "h08.dg5_double_submit", title: "D-G5 · doble POST idéntico en 50 ms: compra, ajuste y conversión", hypothesis: ["H8"], run: h08Dg5DoubleSubmit },
   { id: "h09.create_product_with_stock", title: "POST /api/products con currentStock > 0 (formulario)", hypothesis: ["H9"], run: h09CreateProductWithStock },

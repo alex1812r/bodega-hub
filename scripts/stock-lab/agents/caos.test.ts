@@ -21,7 +21,7 @@ import {
   setup,
   step,
 } from "./caos";
-import { EventLogger, readEvents } from "./logger";
+import { EventLogger, readEvents, type LabEvent } from "./logger";
 import { createRng } from "./rng";
 
 type RequestFn = (path: string, init?: RequestInit) => Promise<ApiResponse>;
@@ -132,7 +132,7 @@ describe("caos agent", () => {
   });
 
   it("step: la secuencia de ops con la misma semilla es idéntica entre dos runs", async () => {
-    async function run(runId: string): Promise<string[]> {
+    async function run(runId: string): Promise<LabEvent[]> {
       calls = [];
       saleCounter = 0;
       const ctx = makeCtx(99, {
@@ -152,9 +152,9 @@ describe("caos agent", () => {
     }
     const keyOf = (payload: unknown) => (payload as { clientRequestId?: string } | null)?.clientRequestId;
     // La clave de idempotencia depende de (semilla, run id): se compara aparte.
-    const shape = (events: Awaited<ReturnType<typeof run>>) =>
+    const shape = (events: LabEvent[]) =>
       events.map((e) => `${e.op}:${JSON.stringify({ ...(e.payload as object), clientRequestId: undefined })}`);
-    const keys = (events: Awaited<ReturnType<typeof run>>) => events.map((e) => keyOf(e.payload)).filter((key) => key !== undefined);
+    const keys = (events: LabEvent[]) => events.map((e) => keyOf(e.payload)).filter((key) => key !== undefined);
     const first = await run("det-a");
     const second = await run("det-b");
     expect(shape(first)).toEqual(shape(second));
