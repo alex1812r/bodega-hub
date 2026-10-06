@@ -316,3 +316,15 @@ notify pgrst, 'reload schema';
 -- sales_invoice_seq (las facturas nuevas salen como V-YYYYMMDD-NNNNNN).
 -- OJO: return_sale ahora anula los pagos activos de la venta; si el cierre de caja de un cobro ya fue transferido
 -- al baul la devolucion se rechaza (PT409) igual que cancel_payment.
+-- -----------------------------------------------------------------------------
+-- 20261006c — purchases + inventory rpc hardening: create_purchase (14 args, drop de la de 13), receive_purchase,
+--             cancel_purchase, return_purchase, adjust_stock (7 args, drop de la de 4), convert_pack_to_units (4 args,
+--             drop de la de 3) en modo estricto del libro y register_payment (C6, C8 compras, C11, C12, C13, C14, C15)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261006c-purchases-inventory-rpc-hardening.sql
+-- Requiere 20261006a y 20261006b. Idempotente, una transaccion. Anade purchases.client_request_id/_hash, la tabla
+-- stock_request_keys (claves de ajustes y conversiones) y la secuencia purchases_number_seq (las compras nuevas salen
+-- como C-YYYYMMDD-NNNNNN).
+-- OJO: las tres firmas nuevas solo anaden parametros opcionales al final; el BFF vigente las sigue llamando igual.
+-- return_purchase ya no acepta compras en pedido (PT409) y una linea en modo empaque sobre el SKU empaque de un par
+-- ingresa pack_count empaques (se guarda como linea en modo unidad al costo del empaque).

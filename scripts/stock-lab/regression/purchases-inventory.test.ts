@@ -379,3 +379,260 @@ describe("C15 · devolución parcial sin vínculo con la venta", () => {
     expect(restocked).toBeLessThanOrEqual(sold);
   });
 });
+
+// ---------------------------------------------------------------------------
+// STK-503 (fase 5) · huecos de cobertura de causes.md cerrados junto con el parche
+// 20261006c-purchases-inventory-rpc-hardening.sql. Rojos sobre el parche b.
+// ---------------------------------------------------------------------------
+
+/** Compra propia de una línea en modo unidad; devuelve su id. */
+async function purchase(name: string, status: "pedido" | "recibido", productId: string, quantity: number): Promise<string> {
+  const created = await mustRpc(`compra ${name}`, "almacen", "create_purchase", purchaseArgs(nextTag(name), status, { productId, quantity }));
+  return String(created.id);
+}
+
+async function purchaseStatus(purchaseId: string): Promise<string | undefined> {
+  const rows = await lab.rows<{ status: string }>("select status::text as status from public.purchases where id = $1", [purchaseId]);
+  return rows[0]?.status;
+}
+
+// C6 (borde): la clave identifica UNA operación; reutilizarla con otro contenido no puede devolver "éxito".
+describe("C6 · clave de idempotencia reutilizada con otro contenido", () => {
+  it("adjust_stock: la misma clave con otra cantidad responde PT409 y no mueve stock", async () => {
+    const p = await product("c6-conflicto", 10);
+    const reason = nextTag("c6-conflicto-motivo");
+    const key = randomUUID();
+
+    const first = await rpc("almacen", "adjust_stock", { p_product_id: p, p_quantity_delta: 3, p_reason: reason, p_client_request_id: key });
+    const second = await rpc("almacen", "adjust_stock", { p_product_id: p, p_quantity_delta: 4, p_reason: reason, p_client_request_id: key });
+
+    // Hoy: PGRST202 en los dos envíos (la RPC no acepta la clave).
+    expect({ primero: first.error?.code ?? "ok", segundo: second.error?.code ?? "ok", stock: await lab.stock(p) }).toEqual({
+      primero: "ok",
+      segundo: "PT409",
+      stock: 13,
+    });
+  });
+});
+
+// C11 lado compras (hueco de cobertura de causes.md): `purchase_number` = 'C-' + reloj a 1 ms con
+// índice único `purchases_store_number_unique` (20260905-purchase-line-subtotal-ref.sql:214).
+// Misma técnica que el C11 de ventas: conexiones `pg` con rol authenticated liberadas por una barrera.
+describe("C11 · purchase_number sin colisiones", () => {
+  it("compras simultáneas de la misma tienda no chocan por purchase_number (0 errores 23505)", async () => {
+    const WORKERS = 20;
+    const DENSE_ROUNDS = 3;
+    const MAX_ROUNDS = 8;
+    const barrier = 415_000_000 + Math.floor(Math.random() * 1_000_000);
+    const p = await product("c11", 0);
+    const uid = lab.uids.almacen;
+    const holder = await setup("conexión de la barrera", () => lab.pg());
+    const workers = await setup("conexiones", async () => {
+      const out: Array<{ client: Awaited<ReturnType<Lab["pg"]>>; pid: number; block: string }> = [];
+      for (let index = 0; index < WORKERS; index += 1) {
+        const client = await lab.pg();
+        const pid = Number((await client.query<{ pid: number }>("select pg_backend_pid() as pid")).rows[0]?.pid);
+        await client.query("select set_config('request.jwt.claims', $1, false)", [JSON.stringify({ sub: uid, role: "authenticated" })]);
+        await client.query("set role authenticated");
+        const item = JSON.stringify([
+          {
+            product_id: p,
+            entry_mode: "unit",
+            quantity: 1,
+            cost_currency: "ref",
+            unit_cost_ref: 1,
+            unit_cost_ves: rateVes,
+            subtotal_ref: 1,
+            subtotal_ves: rateVes,
+            tax_rate: 0,
+            tax_ref: 0,
+            tax_ves: 0,
+          },
+        ]);
+        // Sin `p_purchase_number`: el número lo genera la RPC. `pedido`: no mueve stock, solo numera.
+        const block = `do $r415$
+          declare v_start float8; v_res text := 'ok';
+          begin
+            perform pg_advisory_xact_lock_shared(${barrier});
+            v_start := extract(epoch from clock_timestamp()) * 1000;
+            begin
+              perform public.create_purchase(
+                p_supplier_id => '${lab.supplierId}'::uuid, p_items => '${item}'::jsonb, p_ref_rate_ves => ${rateVes}::numeric,
+                p_notes => '${PREFIX}-c11-doc', p_status => 'pedido', p_discount_ves => 0, p_tax_ves => 0,
+                p_subtotal_ves => ${rateVes}::numeric, p_subtotal_ref => 1);
+            exception when others then
+              v_res := sqlstate || ' ' || sqlerrm;
+            end;
+            perform set_config('r415.res', v_start::text || '|' || v_res, false);
+          end $r415$`;
+        out.push({ client, pid, block });
+      }
+      return out;
+    });
+
+    const rounds: Array<{ spreadMs: number; codes: string[] }> = [];
+    try {
+      for (let round = 0; round < MAX_ROUNDS && rounds.length < DENSE_ROUNDS; round += 1) {
+        const outcome = await setup(`ronda ${round + 1}`, async () => {
+          await holder.query("select pg_advisory_lock($1)", [barrier]);
+          let pending: Array<Promise<unknown>> = [];
+          try {
+            pending = workers.map(({ client, block }) => client.query(block));
+            for (let attempt = 0; ; attempt += 1) {
+              const waiting = await lab.rows("select pid from pg_stat_activity where pid = any($1::int[]) and wait_event_type = 'Lock'", [
+                workers.map((worker) => worker.pid),
+              ]);
+              if (waiting.length === WORKERS) break;
+              if (attempt >= 100) throw new Error("las compras no llegaron a la barrera en 10 s");
+              await sleep(100);
+            }
+          } finally {
+            await holder.query("select pg_advisory_unlock($1)", [barrier]);
+          }
+          await Promise.all(pending);
+          const marks = await Promise.all(
+            workers.map(async ({ client }) =>
+              String((await client.query<{ res: string }>("select current_setting('r415.res') as res")).rows[0]?.res).split("|"),
+            ),
+          );
+          const starts = marks.map((mark) => Number(mark[0]));
+          return { spreadMs: Math.max(...starts) - Math.min(...starts), codes: marks.map((mark) => mark.slice(1).join("|")) };
+        });
+        const others = outcome.codes.filter((code) => code !== "ok" && !code.startsWith("23505"));
+        if (others.length > 0) throw new Error(`SETUP · errores ajenos a la colisión: ${others.slice(0, 3).join(" | ")}`);
+        // Ronda válida si chocó (la causa, sin más) o si fue densa: más compras que milisegundos.
+        if (outcome.codes.some((code) => code !== "ok") || outcome.spreadMs < WORKERS - 2) rounds.push(outcome);
+      }
+    } finally {
+      for (const { client } of workers) await client.query("reset role").catch(() => undefined);
+    }
+
+    if (rounds.length < DENSE_ROUNDS) {
+      throw new Error(`SETUP · densidad insuficiente: solo ${rounds.length} de ${MAX_ROUNDS} rondas con ${WORKERS} compras en menos de ${WORKERS - 2} ms`);
+    }
+    const codes = rounds.flatMap((round) => round.codes);
+    // Sano: todas las compras válidas se registran aunque caigan en el mismo milisegundo.
+    expect({
+      registradas: codes.filter((code) => code === "ok").length,
+      duplicadas23505: codes.filter((code) => code.startsWith("23505")).length,
+    }).toEqual({ registradas: WORKERS * DENSE_ROUNDS, duplicadas23505: 0 });
+  });
+});
+
+// C12 lado RPC (caos 9.2 y w1-matrix `*.purchase_*`): los rechazos de negocio de compras salían como
+// P0001 sin SQLSTATE PT4xx y el BFF los convertía en 500.
+describe("C12 · rechazos de negocio de compras con SQLSTATE PT409", () => {
+  it("recibir dos veces la misma compra: el segundo receive_purchase responde PT409 y el stock entra una vez", async () => {
+    const p = await product("c12-recibir", 0);
+    const purchaseId = await purchase("c12-recibir", "pedido", p, 4);
+
+    await mustRpc("primera recepción", "almacen", "receive_purchase", { p_purchase_id: purchaseId });
+    const second = await rpc("almacen", "receive_purchase", { p_purchase_id: purchaseId });
+
+    // Hoy: P0001.
+    expect({ codigo: second.error?.code ?? "ok", stock: await lab.stock(p) }).toEqual({ codigo: "PT409", stock: 4 });
+  });
+
+  it("cancelar dos veces y devolver una compra cancelada responden PT409", async () => {
+    const p = await product("c12-cancelar", 0);
+    const purchaseId = await purchase("c12-cancelar", "recibido", p, 4);
+
+    await mustRpc("primera cancelación", "almacen", "cancel_purchase", { p_purchase_id: purchaseId });
+    const again = await rpc("almacen", "cancel_purchase", { p_purchase_id: purchaseId });
+    const returned = await rpc("almacen", "return_purchase", { p_purchase_id: purchaseId });
+
+    // Hoy: P0001 en los dos.
+    expect({ cancelar: again.error?.code ?? "ok", devolver: returned.error?.code ?? "ok", stock: await lab.stock(p) }).toEqual({
+      cancelar: "PT409",
+      devolver: "PT409",
+      stock: 0,
+    });
+  });
+
+  it("revertir una compra cuyo stock ya salió responde PT409 con el texto de siempre y no cambia nada", async () => {
+    const p = await product("c12-sin-stock", 0);
+    const purchaseId = await purchase("c12-sin-stock", "recibido", p, 4);
+    await mustRpc("salida de 3", "almacen", "adjust_stock", {
+      p_product_id: p,
+      p_quantity_delta: -3,
+      p_reason: `${PREFIX} merma`,
+      p_type: "ajuste_salida",
+    });
+
+    const res = await rpc("almacen", "cancel_purchase", { p_purchase_id: purchaseId });
+
+    // Hoy: P0001.
+    expect({
+      codigo: res.error?.code ?? "ok",
+      mensaje: res.error?.message,
+      estado: await purchaseStatus(purchaseId),
+      stock: await lab.stock(p),
+    }).toEqual({
+      codigo: "PT409",
+      mensaje: "No hay stock suficiente para revertir la compra",
+      estado: "recibido",
+      stock: 1,
+    });
+  });
+});
+
+// C15 lado compras y tope del ajuste ligado (causes.md: "sale_id/purchase_id en el ajuste y tope por lo ya devuelto").
+describe("C15 · devolución parcial ligada al documento", () => {
+  it("Σ unidades retiradas por una compra ≤ unidades recibidas: tras devolver 4 de 10, la devolución total retira como mucho 6", async () => {
+    const received = 10;
+    const p = await product("c15-compra", 20);
+    const purchaseId = await purchase("c15-compra", "recibido", p, received);
+    const afterPurchase = await lab.stock(p);
+
+    const partial = {
+      p_product_id: p,
+      p_quantity_delta: -4,
+      p_reason: `${PREFIX} devolución parcial a proveedor`,
+      p_type: "devolucion_proveedor",
+    };
+    const linked = await rpc("admin", "adjust_stock", { ...partial, p_purchase_id: purchaseId });
+    if (linked.error?.code === UNKNOWN_SIGNATURE) await rpc("admin", "adjust_stock", partial);
+    await rpc("almacen", "return_purchase", { p_purchase_id: purchaseId });
+
+    // Hoy: 14 unidades retiradas de 10 recibidas.
+    expect(afterPurchase - (await lab.stock(p))).toBeLessThanOrEqual(received);
+  });
+
+  it("un ajuste devolucion_cliente ligado a la venta no repone más de lo vendido (PT409)", async () => {
+    const p = await product("c15-tope", 20);
+    const sale = await mustRpc("venta de 3", "vendedor1", "create_sale", {
+      p_customer_id: lab.customerId,
+      p_items: [{ product_id: p, quantity: 3, unit_price_ref: 1 }],
+      p_ref_rate_ves: rateVes,
+      p_notes: nextTag("c15-tope"),
+      p_invoice_number: nextTag("c15-tope-fact"),
+    });
+
+    const res = await rpc("admin", "adjust_stock", {
+      p_product_id: p,
+      p_quantity_delta: 4,
+      p_reason: `${PREFIX} devolución de más`,
+      p_type: "devolucion_cliente",
+      p_sale_id: String(sale.id),
+    });
+
+    // Hoy: PGRST202 (la RPC no acepta p_sale_id).
+    expect({ codigo: res.error?.code ?? "ok", stock: await lab.stock(p) }).toEqual({ codigo: "PT409", stock: 17 });
+  });
+});
+
+// C8 rama de compras (hueco "No probado" de causes.md): register_payment aceptaba pagos a proveedor
+// sobre compras `cancelado`/`devuelto` (20261006b-sales-rpc-hardening.sql, rama `else` de register_payment).
+describe("C8 · register_payment sobre una compra cancelada", () => {
+  it("pagar una compra cancelada responde PT409 y no cambia paid_ves", async () => {
+    const p = await product("c8-compra", 0);
+    const purchaseId = await purchase("c8-compra", "pedido", p, 2);
+    await mustRpc("cancelar la compra", "almacen", "cancel_purchase", { p_purchase_id: purchaseId });
+
+    const res = await rpc("admin", "register_payment", { p_purchase_id: purchaseId, p_method: "efectivo_ves", p_amount: 1 });
+
+    const rows = await lab.rows<{ paid: number }>("select paid_ves::float8 as paid from public.purchases where id = $1", [purchaseId]);
+    // Hoy: PT402 (solo lo frena que el baúl del lab no tiene saldo; con saldo, el pago entra).
+    expect({ codigo: res.error?.code ?? "ok", pagado: rows[0]?.paid }).toEqual({ codigo: "PT409", pagado: 0 });
+  });
+});

@@ -270,7 +270,7 @@ select
     where n.nspname = 'public'
       and p.proname = 'convert_pack_to_units'
       and pg_get_function_identity_arguments(p.oid)
-        = 'p_pack_product_id uuid, p_pack_quantity integer, p_reason text'
+        = 'p_pack_product_id uuid, p_pack_quantity integer, p_reason text, p_client_request_id uuid'
   )
 union all
 select
@@ -456,6 +456,124 @@ select
     select count(*) = 3 from pg_proc p
     where p.pronamespace = 'public'::regnamespace
       and p.proname in ('cancel_payment_apply', 'sale_idempotent_replay', 'sale_request_hash')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+  )
+union all
+select
+  'purchases.client_request_id + indice + secuencia purchases_number_seq (20261006c)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'purchases' and column_name = 'client_request_id'
+  ) and exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'purchases' and column_name = 'client_request_hash'
+  ) and exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and indexname = 'purchases_store_client_request_unique'
+  ) and to_regclass('public.purchases_number_seq') is not null
+union all
+select
+  'table stock_request_keys con RLS y sin acceso para anon/authenticated (20261006c)',
+  exists (
+    select 1 from pg_class c
+    where c.oid = to_regclass('public.stock_request_keys') and c.relrowsecurity
+  )
+    and not has_table_privilege('authenticated', 'public.stock_request_keys', 'select')
+    and not has_table_privilege('authenticated', 'public.stock_request_keys', 'insert')
+    and not has_table_privilege('anon', 'public.stock_request_keys', 'select')
+union all
+select
+  'rpc create_purchase: una sola firma, con p_client_request_id (20261006c)',
+  (
+    select count(*) = 1
+      and bool_and(pg_get_function_identity_arguments(p.oid) like '%p_subtotal_ref numeric, p_client_request_id uuid')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'create_purchase'
+  )
+union all
+select
+  'rpc adjust_stock: una sola firma, con clave y documento (20261006c)',
+  (
+    select count(*) = 1
+      and bool_and(pg_get_function_identity_arguments(p.oid)
+        = 'p_product_id uuid, p_quantity_delta integer, p_reason text, p_type stock_movement_type, p_client_request_id uuid, p_sale_id uuid, p_purchase_id uuid')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'adjust_stock'
+  )
+union all
+select
+  'rpc convert_pack_to_units: una sola firma (20261006c)',
+  (
+    select count(*) = 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'convert_pack_to_units'
+  )
+union all
+select
+  'rpc de compras e inventario en modo estricto (stock por movimiento, bloqueo ordenado)',
+  (
+    select count(*) = 5 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('create_purchase', 'receive_purchase', 'cancel_purchase', 'return_purchase', 'convert_pack_to_units')
+      and p.prosrc ilike '%insert into public.stock_movements%'
+      and p.prosrc ilike '%order by id%for update%'
+  ) and exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'adjust_stock' and p.prosrc ilike '%insert into public.stock_movements%'
+  )
+union all
+select
+  'solo stock_movements_apply escribe products.current_stock',
+  -- products_stock_guard (20261006a) solo lo menciona en un comentario del pase TRANSITORIO.
+  not exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.prosrc ilike '%set current_stock%'
+      and p.proname not in ('stock_movements_apply', 'products_stock_guard')
+  )
+union all
+select
+  'create_purchase, adjust_stock y convert_pack_to_units validan la clave de idempotencia (C6)',
+  (
+    select count(*) = 3 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and (
+        (p.proname = 'create_purchase' and p.prosrc ilike '%purchase_idempotent_replay%')
+        or (p.proname in ('adjust_stock', 'convert_pack_to_units') and p.prosrc ilike '%stock_request_replay%')
+      )
+  )
+union all
+select
+  'create_purchase contrasta el modo empaque con product_pack_conversions (C13)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'create_purchase' and p.prosrc ilike '%product_pack_conversions%'
+  )
+union all
+select
+  'return_purchase exige recibido (C14)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'return_purchase' and p.prosrc ilike '%Solo se pueden devolver compras recibidas%'
+  )
+union all
+select
+  'register_payment rechaza compras cancelado/devuelto (C8 compras)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'register_payment'
+      and p.prosrc ilike '%No se puede registrar un pago en una compra cancelada o devuelta%'
+  )
+union all
+select
+  'funciones internas de compras e inventario sin execute para authenticated',
+  (
+    select count(*) = 3 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('stock_request_hash', 'purchase_idempotent_replay', 'stock_request_replay')
       and not has_function_privilege('authenticated', p.oid, 'execute')
   )
 order by 1;
