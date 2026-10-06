@@ -656,4 +656,64 @@ select
         )
       )
   )
+union all
+select
+  'cancel_sale repone lo vendido menos lo ya devuelto (20261006f, R1)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'cancel_sale'
+      and p.prosrc ilike '%type = ''devolucion_cliente''%'
+      and p.prosrc ilike '%v_line.sold - v_already_returned%'
+  )
+union all
+select
+  'funciones internas de caja y baul sin execute para authenticated (20261006f, R2)',
+  (
+    select count(*) = 3 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('record_cash_close_difference', 'auto_close_stale_cash_sessions', 'ensure_store_vault')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+  )
+union all
+select
+  'record_cash_close_difference valida tienda, sesion abierta y quien cierra (20261006f, R2)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'record_cash_close_difference'
+      and p.prosrc ilike '%assert_store_context()%'
+      and p.prosrc ilike '%store_id = p_store_id%'
+      and p.prosrc ilike '%v_session.opened_by is distinct from auth.uid()%'
+  )
+union all
+select
+  'cancel_purchase y return_purchase rechazan la compra con pagos activos (20261006f, R3)',
+  (
+    select count(*) = 2 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('cancel_purchase', 'return_purchase')
+      and p.prosrc ilike '%pago(s) activo(s)%'
+  )
+union all
+select
+  'register_payment bloquea la sesion de caja antes de escribir el cobro (20261006f, R5)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'register_payment'
+      and p.prosrc ilike '%status = ''open'' for share%'
+      and p.prosrc not ilike '%public.current_user_role() not in%'
+  )
+union all
+select
+  'create_sale, create_sale_with_payments y create_purchase validan la entrada (20261006f, R6)',
+  (
+    select count(*) = 3 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('create_sale', 'create_sale_with_payments', 'create_purchase')
+      and p.prosrc ilike '%numeric_value_out_of_range%'
+      and p.prosrc ilike '%jsonb_typeof(v_%) is distinct from ''object''%'
+  )
 order by 1;

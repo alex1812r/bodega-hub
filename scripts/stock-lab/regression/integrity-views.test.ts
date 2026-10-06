@@ -473,11 +473,10 @@ describe("C16 · los flujos legítimos no dejan filas en las vistas", () => {
     expect({ stock: await lab.stock(p), views: await dirtyViews([p]) }).toEqual({ stock: 10, views: {} });
   });
 
-  // HALLAZGO STK-504 (sin corregir: la RPC es de STK-502, parche 20261006b): cancel_sale repone `sale_items.quantity`
-  // completo sin descontar lo ya devuelto con `devolucion_cliente` ligado → stock 11 (1 unidad duplicada); la vista v2
-  // lo delata (`reversal_mismatches` 1). `it.failing` hasta que cancel_sale reponga "vendido − ya devuelto" como
-  // return_sale / cancel_purchase; entonces pasa a `it`.
-  it.failing("devolución parcial ligada a la venta y luego cancel_sale del resto", async () => {
+  // rpc-review R1 (STK-516, parche 20261006f): cancel_sale reponía `sale_items.quantity` completo sin descontar lo ya
+  // devuelto con `devolucion_cliente` ligado → stock 11 (1 unidad duplicada) y `reversal_mismatches` 1. Ahora repone
+  // "vendido − ya devuelto" como return_sale / cancel_purchase.
+  it("devolución parcial ligada a la venta y luego cancel_sale del resto", async () => {
     const p = await product("ok-venta-canc", 10);
     const saleId = await sale("ok-venta-canc", [{ productId: p, quantity: 3 }]);
     await linkedReturn("devolución parcial de cliente", p, 1, { p_sale_id: saleId });

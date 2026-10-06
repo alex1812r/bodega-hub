@@ -346,3 +346,16 @@ notify pgrst, 'reload schema';
 -- Idempotente, una transaccion. Reaplicar 20261006a reinstala el modo legado: volver a aplicar este parche despues.
 -- OJO one-shots por SQL Editor: insertar en stock_movements YA mueve products.current_stock (no hacer ademas el update
 -- a mano) y el stock_after escrito a mano se descarta.
+-- -----------------------------------------------------------------------------
+-- 20261006f — rpc review fixes (STK-516): cancel_sale repone vendido - ya devuelto (R1), record_cash_close_difference
+--             con guardas y sin execute por /rpc (R2), cancel_purchase / return_purchase rechazan pagos activos (R3),
+--             register_payment bloquea la sesion de caja (R5) y create_sale / create_sale_with_payments /
+--             create_purchase validan la entrada (R6)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261006f-rpc-review-fixes.sql
+-- Requiere 20261006a, b, c y e, y 20260904b. Idempotente, una transaccion. Ninguna firma cambia.
+-- Reaplicar 20261006b o 20261006c reinstala las versiones anteriores de esas RPC: volver a aplicar este parche despues.
+-- OJO: cancelar o devolver una compra con pagos activos ahora responde PT409 ("Anula primero los pagos…"), igual que
+-- cancel_sale. Las compras que YA quedaron cancelado / devuelto con un pago activo no se tocan (revisarlas a mano).
+-- auto_close_stale_cash_sessions, ensure_store_vault y record_cash_close_difference dejan de ser ejecutables por
+-- authenticated (el cron del BFF usa service_role; las RPC de caja las llaman como propietario).
