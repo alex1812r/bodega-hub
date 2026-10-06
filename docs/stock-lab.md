@@ -288,7 +288,7 @@ plan §8.3: en cada caso lee por SQL el estado antes y después (ventas, líneas
 pagos, movimientos por `seq`, stock) y lo compara con lo que la pantalla dice.
 `pass` = el producto cumple el esperado; `fail` = bug de producto; `finding` =
 stock correcto pero carencia de UX; `error` = el caso no se ejecutó. La ola
-completa tarda ~6-7 min y se puede repetir sin reset: cada run crea productos
+completa (23 casos) tarda ~5-6 min y se puede repetir sin reset: cada run crea productos
 propios `U404-<run>-<nonce>-…`, con stock por `inventario_inicial`, que no
 dejan filas en las vistas de `reconcile`.
 
