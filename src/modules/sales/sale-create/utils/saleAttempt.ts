@@ -2,7 +2,9 @@ import type { SaleCreateInput } from "@/modules/sales/hooks/useSales";
 import { ClientApiError } from "@/shared/api/apiFetch";
 
 /**
- * Intento de cobro del POS, persistido en `sessionStorage` por tienda/usuario/caja.
+ * Intento de cobro del POS, persistido en `sessionStorage` por tienda/usuario/caja;
+ * mientras su resultado no se conoce se publica ademas en `localStorage`, para que
+ * abrir el POS en otra pestaña (o cerrar y reabrir) no estrene clave (STK-605).
  *
  * La clave de idempotencia NO puede vivir en memoria del componente: si la
  * respuesta del cobro se pierde tras el commit y el cajero recarga o sale y
@@ -52,7 +54,8 @@ function isSaleAttempt(value: unknown): value is SaleAttempt {
   );
 }
 
-export function readSaleAttempt(storageKey: string): SaleAttempt | null {
+/** Intento de ESTA pestaña (sessionStorage, o el respaldo en memoria). */
+function readTabAttempt(storageKey: string): SaleAttempt | null {
   let raw: string | null | undefined;
 
   try {
@@ -74,7 +77,7 @@ export function readSaleAttempt(storageKey: string): SaleAttempt | null {
   }
 }
 
-export function writeSaleAttempt(storageKey: string, attempt: SaleAttempt) {
+function writeTabAttempt(storageKey: string, attempt: SaleAttempt) {
   const raw = JSON.stringify(attempt);
 
   try {
@@ -85,13 +88,77 @@ export function writeSaleAttempt(storageKey: string, attempt: SaleAttempt) {
   }
 }
 
+/**
+ * Cobros ENVIADOS y sin confirmar de esta tienda/usuario/caja, en `localStorage`:
+ * lo unico que comparten las pestañas. El carrito en edicion y los intentos ya
+ * resueltos siguen siendo de cada pestaña. Sin `localStorage`, o con contenido
+ * ilegible, no hay nada compartido y cada pestaña se comporta como antes.
+ */
+function readSharedUnresolved(storageKey: string): SaleAttempt[] {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is SaleAttempt => isSaleAttempt(entry) && entry.unresolved)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Publica (`unresolved`) o retira (cualquier otro estado) un intento para las demas pestañas. */
+function shareUnresolved(storageKey: string, clientRequestId: string, attempt: SaleAttempt | null) {
+  const others = readSharedUnresolved(storageKey).filter(
+    (entry) => entry.clientRequestId !== clientRequestId,
+  );
+  const next = attempt?.unresolved ? [...others, attempt] : others;
+
+  try {
+    if (next.length === 0) {
+      window.localStorage.removeItem(storageKey);
+    } else {
+      window.localStorage.setItem(storageKey, JSON.stringify(next));
+    }
+  } catch {
+    // Sin localStorage el intento queda solo en esta pestaña (comportamiento previo).
+  }
+}
+
+export function readSaleAttempt(storageKey: string): SaleAttempt | null {
+  const own = readTabAttempt(storageKey);
+  if (own?.unresolved) {
+    return own;
+  }
+
+  // Un cobro sin confirmar enviado desde OTRA pestaña (o desde una que se cerro) se
+  // resuelve antes que nada: esta pestaña lo adopta y sigue el flujo de una recarga.
+  const foreign = readSharedUnresolved(storageKey).find(
+    (entry) => entry.clientRequestId !== own?.clientRequestId,
+  );
+  if (!foreign) {
+    return own;
+  }
+
+  writeTabAttempt(storageKey, foreign);
+  return foreign;
+}
+
+export function writeSaleAttempt(storageKey: string, attempt: SaleAttempt) {
+  writeTabAttempt(storageKey, attempt);
+  shareUnresolved(storageKey, attempt.clientRequestId, attempt);
+}
+
 export function clearSaleAttempt(storageKey: string) {
+  const own = readTabAttempt(storageKey);
   memoryFallback.delete(storageKey);
 
   try {
     window.sessionStorage.removeItem(storageKey);
   } catch {
     // Sin sessionStorage solo existia el respaldo en memoria, ya borrado.
+  }
+
+  if (own) {
+    shareUnresolved(storageKey, own.clientRequestId, null);
   }
 }
 

@@ -127,8 +127,9 @@ function SaleCreatePosWorkspace() {
   // Candado sincrono contra el doble envio: `isPending` tarda un render en
   // reflejarse y en ese hueco un segundo clic ya habia disparado otra venta.
   const submitLockRef = useRef(false);
-  // La clave de idempotencia vive en sessionStorage (ver utils/saleAttempt.ts): asi
-  // recargar, salir y volver o remontar no estrenan clave para un cobro pendiente.
+  // La clave de idempotencia vive en sessionStorage y, sin confirmar, tambien en
+  // localStorage (ver utils/saleAttempt.ts): asi recargar, salir y volver, remontar
+  // o abrir otra pestaña no estrenan clave para un cobro pendiente.
   const attemptStorageKey = saleAttemptStorageKey({
     registerId: cashSession.data?.registerId,
     storeId: currentUser.data?.storeId,
@@ -662,8 +663,9 @@ function SaleCreatePosWorkspace() {
       const fingerprint = saleFingerprint(content);
 
       let attempt = readSaleAttempt(attemptStorageKey);
-      if (attempt?.unresolved) {
-        // Hay un cobro anterior de resultado desconocido: se resuelve antes de enviar otro.
+      while (attempt?.unresolved) {
+        // Hay un cobro anterior de resultado desconocido (de esta pestaña o de otra,
+        // y pueden ser varios): se resuelven todos antes de enviar otro.
         if ((await resolveUnresolvedAttempt(attempt)) === "stop") {
           return;
         }
