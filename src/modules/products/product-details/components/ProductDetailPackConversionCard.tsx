@@ -43,6 +43,13 @@ export function ProductDetailPackConversionCard({
       : 0;
   const canSubmit =
     isPack && quantityNumber > 0 && quantityNumber <= productStock && Boolean(packConversion);
+  // Aviso propio: con `max` en el input el navegador pinta su burbuja nativa.
+  const stockError =
+    productStock <= 0
+      ? "No hay empaques en stock para abrir."
+      : quantityNumber > productStock
+        ? `Solo hay ${productStock} empaque(s) en stock.`
+        : undefined;
 
   const linkedHref = useMemo(
     () =>
@@ -145,8 +152,8 @@ export function ProductDetailPackConversionCard({
             >
               <form className="grid gap-4" id="open-pack-form" onSubmit={handleSubmit}>
                 <Input
+                  error={stockError}
                   label="Cantidad de empaques"
-                  max={productStock}
                   min={1}
                   onChange={(event) => setPackQuantity(event.target.value)}
                   required

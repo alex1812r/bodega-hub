@@ -23,14 +23,14 @@ const packConversion = {
 
 const conversionResult = { data: { conversionId: "conv-1", unitQuantity: 10 } };
 
-function renderCard(onConverted = jest.fn()) {
+function renderCard(onConverted = jest.fn(), productStock = 5) {
   render(
     <ProductDetailPackConversionCard
       onConverted={onConverted}
       packConversion={packConversion}
       productId="prod-cigar-pack"
       productName="Caja cigarros (x10)"
-      productStock={5}
+      productStock={productStock}
     />,
     { wrapper: createQueryWrapper() },
   );
@@ -97,5 +97,45 @@ describe("ProductDetailPackConversionCard · idempotencia (C6)", () => {
 
     expect(api.posts).toHaveLength(2);
     expect(api.posts[1]?.body.clientRequestId).toBe(api.posts[0]?.body.clientRequestId);
+  });
+});
+
+describe("ProductDetailPackConversionCard · stock insuficiente (STK-607)", () => {
+  function getQuantityInput() {
+    return screen.getByLabelText<HTMLInputElement>("Cantidad de empaques");
+  }
+
+  it("sin stock: aviso propio en español, sin validacion nativa y sin POST", async () => {
+    const api = installFetchStub(() => null);
+    const onConverted = renderCard(jest.fn(), 0);
+
+    await openDialog();
+
+    expect(screen.getByText("No hay empaques en stock para abrir.")).toBeVisible();
+    expect(getQuantityInput()).toHaveAttribute("aria-invalid", "true");
+    // Sin `max`: el navegador no pinta su burbuja («Minimum value (1) must be less than…»).
+    expect(getQuantityInput().validity.valid).toBe(true);
+
+    fireEvent.submit(getForm());
+
+    expect(api.posts).toHaveLength(0);
+    expect(onConverted).not.toHaveBeenCalled();
+  });
+
+  it("cantidad mayor que el stock: dice cuantos empaques hay y no envia", async () => {
+    const api = installFetchStub(() => null);
+
+    renderCard();
+    await openDialog();
+    expect(getQuantityInput()).not.toHaveAttribute("aria-invalid");
+
+    fireEvent.change(getQuantityInput(), { target: { value: "6" } });
+
+    expect(screen.getByText("Solo hay 5 empaque(s) en stock.")).toBeVisible();
+    expect(getQuantityInput().validity.valid).toBe(true);
+
+    fireEvent.submit(getForm());
+
+    expect(api.posts).toHaveLength(0);
   });
 });
