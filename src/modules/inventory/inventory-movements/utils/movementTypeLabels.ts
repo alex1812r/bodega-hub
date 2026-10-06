@@ -9,6 +9,15 @@ export type InventoryAdjustmentType = Extract<
   | "inventario_inicial"
 >;
 
+/**
+ * Tipos que ofrece el ajuste libre. Las devoluciones quedan fuera (R4 / C15):
+ * sin venta o compra ligada no tienen tope y duplican unidades.
+ */
+export type FreeInventoryAdjustmentType = Exclude<
+  InventoryAdjustmentType,
+  "devolucion_cliente" | "devolucion_proveedor"
+>;
+
 export const movementTypeOptions: Array<{ label: string; value: StockMovementType }> = [
   { label: "Ajuste entrada", value: "ajuste_entrada" },
   { label: "Ajuste salida", value: "ajuste_salida" },
@@ -22,16 +31,10 @@ export const movementTypeOptions: Array<{ label: string; value: StockMovementTyp
 ];
 
 export const inventoryAdjustmentTypeOptions = movementTypeOptions.filter(
-  (option): option is { label: string; value: InventoryAdjustmentType } =>
-    (
-      [
-        "ajuste_entrada",
-        "ajuste_salida",
-        "devolucion_cliente",
-        "devolucion_proveedor",
-        "inventario_inicial",
-      ] as StockMovementType[]
-    ).includes(option.value),
+  (option): option is { label: string; value: FreeInventoryAdjustmentType } =>
+    (["ajuste_entrada", "ajuste_salida", "inventario_inicial"] as StockMovementType[]).includes(
+      option.value,
+    ),
 );
 
 const movementTypeLabelMap = Object.fromEntries(

@@ -12,15 +12,12 @@ import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 import { cn } from "@/shared/utils/cn";
 
-import {
-  useAdjustInventory,
-  useInventory,
-  type InventoryAdjustmentType,
-} from "../../hooks/useInventory";
+import { useAdjustInventory, useInventory } from "../../hooks/useInventory";
 import { useRequestAttempt } from "../../utils/requestAttempt";
 import {
   getInventoryAdjustmentDelta,
   inventoryAdjustmentTypeOptions,
+  type FreeInventoryAdjustmentType,
 } from "../utils/movementTypeLabels";
 
 const formId = "inventory-adjustment-form";
@@ -36,7 +33,7 @@ export function InventoryAdjustmentModal({
 }: InventoryAdjustmentModalProps = {}) {
   const [open, setOpen] = useState(false);
   const [productId, setProductId] = useState("");
-  const [type, setType] = useState<InventoryAdjustmentType>("ajuste_entrada");
+  const [type, setType] = useState<FreeInventoryAdjustmentType>("ajuste_entrada");
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState("");
   const [hasSubmitted, setHasSubmitted] = useState(false);
@@ -197,7 +194,7 @@ export function InventoryAdjustmentModal({
           <SelectField
             label="Tipo de movimiento"
             onChange={(event) =>
-              setType(event.target.value as InventoryAdjustmentType)
+              setType(event.target.value as FreeInventoryAdjustmentType)
             }
             options={inventoryAdjustmentTypeOptions}
             placeholder="Selecciona tipo"
