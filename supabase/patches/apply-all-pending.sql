@@ -374,3 +374,19 @@ notify pgrst, 'reload schema';
 -- OJO one-shots: update / delete / truncate sobre stock_movements solo pasan en conexion directa (SQL Editor: postgres);
 -- desde una funcion llamada por PostgREST responden PT409. get_open_cash_session_for_user y
 -- append_supplier_product_price_history dejan de ser ejecutables por authenticated (assert_contact_type no: el BFF la usa).
+-- -----------------------------------------------------------------------------
+-- 20261006h — rls store scope + finite guards (STK-615): lineas de venta / compra, historiales de precio y empaques
+--             solo se leen y escriben desde su tienda (N1, N2), caja y baul sin escritura por PostgREST (N3), las RPC
+--             con numeric de entrada rechazan NaN / Infinity (N4), PT403 en las RPC de precios (N6) y
+--             cancel_payment_apply bloquea la sesion de caja abierta antes de F4 (R5c)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261006h-rls-store-scope-and-finite-guards.sql
+-- Requiere 20261006a, b, c, e, f y g, 20260716, 20260811b, 20260812c y 20260904b. Idempotente, una transaccion. Ninguna
+-- firma cambia. Reaplicar 20261006b, c, f o g, 20260904b o 20260812c (o la copia de register_supplier_product_price de
+-- este mismo archivo) reinstala las versiones anteriores de esas RPC: volver a aplicar este parche despues.
+-- OJO: store_vaults, vault_movements, cash_movements y cash_sessions dejan de aceptar insert / update / delete por
+-- PostgREST con la sesion de un usuario (42501): todo cambio de caja o baul pasa por las RPC. Los one-shots por SQL
+-- Editor (postgres) no cambian. Un NaN / Infinity en un parametro numeric responde PT400 ("Valor numerico invalido en
+-- <campo>: debe ser un numero finito"); el rol no autorizado en update_product_price, register_supplier_product_price y
+-- deactivate_supplier_product responde PT403 (antes 400). NO se tocan los datos: una fila que ya tenga NaN (ventas,
+-- compras, precios) hay que corregirla a mano.

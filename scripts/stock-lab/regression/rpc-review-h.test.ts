@@ -874,3 +874,169 @@ describe("N6 · las RPC de precios responden PT403 a un rol no autorizado", () =
     });
   });
 });
+
+// 13-rpc-review R5(c): `cancel_payment_apply` evaluaba F4 (`vault_transferred_at`) y borraba `cash_movements` sin
+// bloquear la sesión (20261006g:590-601, :640, :642). Con un cierre + transferencia al baúl en curso (ya sumó el
+// `sale_in` del pago y aún no confirmó) la anulación veía la sesión abierta, borraba el asiento y confirmaba: el
+// baúl recibía ese efectivo y el pago quedaba anulado.
+describe("R5(c) · anular un cobro en efectivo no se cruza con el cierre de su sesión de caja", () => {
+  async function commitAs(client: Client, role: LabRoleKey, what: string, text: string, params: unknown[]): Promise<Row> {
+    await client.query("begin");
+    try {
+      await actAs(client, lab.uids[role]);
+      const res = await client.query<Row>(text, params);
+      await client.query("commit");
+      if (!res.rows[0]) throw new Error("sin filas");
+      return res.rows[0];
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      const { code, message } = failure(error);
+      throw new Error(`SETUP · ${what}: ${code} ${message}`);
+    }
+  }
+
+  /** Sesión propia CONFIRMADA con un cobro en efectivo de una venta propia: devuelve sesión, pago y monto. */
+  async function paidCashSale(name: string): Promise<{ sessionId: string; paymentId: string; totalVes: number }> {
+    const c = lab.db;
+    const register = await one(c, "caja propia", "insert into public.cash_registers (store_id, name, is_active) values ($1, $2, true) returning id", [
+      lab.storeId,
+      nextTag(name),
+    ]);
+    committed.registers.push(String(register.id));
+    const session = await commitAs(c, "admin", "abrir la caja", "select id from public.open_cash_session($1::uuid, 0, 0)", [register.id]);
+    const sessionId = String(session.id);
+    // Un admin sin caja asignada cobra en «la última sesión abierta de la tienda» (`order by opened_at desc`) y
+    // `opened_at` es reloj de pared: se fija por SQL como estrictamente posterior a cualquier otra (STK-518).
+    await one(
+      c,
+      "fijar la sesión como última abierta",
+      `update public.cash_sessions s
+       set opened_at = greatest(
+         clock_timestamp(),
+         (select max(o.opened_at) from public.cash_sessions o where o.store_id = s.store_id and o.id <> s.id) + interval '1 millisecond'
+       )
+       where s.id = $1 and s.status = 'open' returning s.id`,
+      [sessionId],
+    );
+    const p = await product(c, name, 5);
+    committed.products.push(p);
+    const created = await commitAs(
+      c,
+      "admin",
+      "venta",
+      `select id, total_ves::float8 as total_ves from public.create_sale(
+         p_customer_id => $1::uuid, p_items => $2::jsonb, p_ref_rate_ves => $3::numeric, p_invoice_number => $4)`,
+      [lab.customerId, JSON.stringify([{ product_id: p, quantity: 1, unit_price_ref: 1 }]), rateVes, nextTag("fact")],
+    );
+    const totalVes = Number(created.total_ves);
+    const payment = await commitAs(c, "admin", "cobro en efectivo", CASH_PAYMENT, [created.id, totalVes]);
+    const entry = await one(c, "asiento del cobro", "select session_id from public.cash_movements where payment_id = $1 and type = 'sale_in'", [payment.id]);
+    if (entry.session_id !== sessionId) throw new Error("SETUP · el cobro no cayó en la sesión del test");
+    return { sessionId, paymentId: String(payment.id), totalVes };
+  }
+
+  async function finalState(sessionId: string, paymentId: string): Promise<Row> {
+    return one(
+      lab.db,
+      "estado final",
+      `select (select status::text from public.payments where id = $2) as pago,
+              (select count(*)::int from public.cash_movements where payment_id = $2 and type = 'sale_in') as asientos,
+              (select status from public.cash_sessions where id = $1) as sesion,
+              (select vault_transferred_at is not null from public.cash_sessions where id = $1) as transferida,
+              (select coalesce(sum(amount_ves), 0)::float8 from public.vault_movements where from_session_id = $1 and type = 'transfer_in') as al_baul`,
+      [sessionId, paymentId],
+    );
+  }
+
+  it("R5(c) · cierre + transferencia sin confirmar → la anulación espera → al confirmar responde PT409 y no borra el asiento", async () => {
+    const { sessionId, paymentId, totalVes } = await paidCashSale("r5c");
+    const closer = await lab.pg();
+    const canceller = await lab.pg();
+    const cancellerPid = Number((await one(canceller, "pid", "select pg_backend_pid() as pid")).pid);
+
+    let waited: boolean | null = null;
+    let outcome = "";
+    try {
+      // La transferencia mantiene bloqueada la sesión: cierre manual + paso al baúl en una sola transacción,
+      // que es lo que hace el autocierre nocturno (auto_close_stale_cash_sessions) sin depender del reloj.
+      await closer.query("begin");
+      await actAs(closer, lab.uids.admin);
+      try {
+        await closer.query("select id from public.close_cash_session($1::uuid, $2::numeric, 0)", [sessionId, totalVes]);
+        await closer.query("select id from public.transfer_cash_closures_to_vault(array[$1::uuid])", [sessionId]);
+      } catch (error) {
+        throw new Error(`SETUP · cierre + transferencia: ${failure(error).code} ${failure(error).message}`);
+      }
+
+      await canceller.query("begin");
+      await actAs(canceller, lab.uids.admin);
+      const state: { done: boolean } = { done: false };
+      const pending = canceller
+        .query("select id from public.cancel_payment($1::uuid)", [paymentId])
+        .then(async () => {
+          await canceller.query("commit");
+          return "aceptada";
+        })
+        .catch(async (error: unknown) => {
+          await canceller.query("rollback").catch(() => undefined);
+          return `rechazada ${failure(error).code} ${failure(error).message}`;
+        })
+        .finally(() => {
+          state.done = true;
+        });
+
+      for (let attempt = 0; attempt < 100 && waited === null; attempt += 1) {
+        const waiting = await sql(lab.db, "espera", "select 1 from pg_stat_activity where pid = $1 and wait_event_type = 'Lock'", [cancellerPid]);
+        if (waiting.length === 1) waited = true;
+        else if (state.done) waited = false;
+        else await new Promise((done) => setTimeout(done, 100));
+      }
+      if (waited === null) throw new Error("SETUP · la anulación ni terminó ni quedó esperando en 10 s");
+
+      await closer.query("commit");
+      outcome = await pending;
+    } finally {
+      await closer.query("rollback").catch(() => undefined);
+      await canceller.query("rollback").catch(() => undefined);
+    }
+
+    expect({ espero: waited, anulacion: outcome, estado: await finalState(sessionId, paymentId) }).toEqual({
+      espero: true,
+      anulacion: `rechazada PT409 ${MSG_F4}`,
+      estado: { pago: "activo", asientos: 1, sesion: "closed", transferida: true, al_baul: totalVes },
+    });
+  });
+
+  it("R5(c) · sin cierre en curso el cobro en efectivo se sigue anulando (sesión abierta, y cerrada sin transferir)", async () => {
+    await withRollback(db, async () => {
+      const { sessionId } = await openSession(db, "r5c-sano");
+      await sql(
+        db,
+        "fijar la sesión como última abierta",
+        `update public.cash_sessions s
+         set opened_at = greatest(
+           clock_timestamp(),
+           (select max(o.opened_at) from public.cash_sessions o where o.store_id = s.store_id and o.id <> s.id) + interval '1 millisecond'
+         )
+         where s.id = $1`,
+        [sessionId],
+      );
+      const p = await product(db, "r5c-sano", 5);
+      const first = await sale(db, p, 1);
+      const second = await sale(db, p, 1);
+      const openPayment = String((await must(db, "cobro 1", "admin", CASH_PAYMENT, [first.id, first.totalVes])).id);
+      const closedPayment = String((await must(db, "cobro 2", "admin", CASH_PAYMENT, [second.id, second.totalVes])).id);
+
+      const whileOpen = await as(db, "admin", "select status::text as status from public.cancel_payment($1::uuid)", [openPayment]);
+      await must(db, "cierre manual", "admin", "select id from public.close_cash_session($1::uuid, $2::numeric, 0)", [sessionId, second.totalVes]);
+      const afterClose = await as(db, "admin", "select status::text as status from public.cancel_payment($1::uuid)", [closedPayment]);
+
+      const entries = await one(db, "asientos", "select count(*)::int as n from public.cash_movements where payment_id = any($1::uuid[])", [[openPayment, closedPayment]]);
+      expect({ abierta: [whileOpen.code, whileOpen.rows[0]?.status], cerrada: [afterClose.code, afterClose.rows[0]?.status], asientos: entries.n }).toEqual({
+        abierta: [null, "anulado"],
+        cerrada: [null, "anulado"],
+        asientos: 0,
+      });
+    });
+  });
+});

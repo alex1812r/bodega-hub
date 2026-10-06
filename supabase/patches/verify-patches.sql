@@ -886,4 +886,15 @@ select
       and p.prosrc ilike '%coalesce(public.current_user_role()::text, '''') not in (''admin'', ''almacen'')%errcode = ''PT403''%'
       and p.prosrc not ilike '%if public.current_user_role() not in%'
   )
+union all
+select
+  'cancel_payment_apply bloquea la sesion de caja abierta antes de evaluar F4 (20261006h, R5c)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'cancel_payment_apply'
+      and p.prosrc ilike '%from public.cash_sessions s%s.status = ''open''%for share;%s.vault_transferred_at is not null%'
+      and p.prosrc ilike '%no encontrado para revertir el cobro en cuenta%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+  )
 order by 1;

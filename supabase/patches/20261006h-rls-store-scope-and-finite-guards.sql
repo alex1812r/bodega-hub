@@ -39,11 +39,20 @@
 --   N6   update_product_price, register_supplier_product_price y
 --        deactivate_supplier_product comparan el rol con coalesce y responden
 --        PT403 (antes P0001: el BFF contestaba 400).
+--   R5c  cancel_payment_apply bloquea (for share) la sesion de caja abierta del
+--        pago antes de evaluar F4 y de borrar cash_movements, con el patron de
+--        R5 en register_payment: close_cash_session y el autocierre la toman for
+--        update, asi que la anulacion espera al cierre y F4 se evalua despues,
+--        con el cierre y su transferencia al baul ya confirmados (PT409). Orden
+--        de bloqueo: documento -> pago -> sesion de caja -> baul, el mismo de
+--        register_payment. Solo se bloquea la sesion ABIERTA: bloquear tambien
+--        los cierres cruzaria con transfer_cash_closures_to_vault, que toma baul
+--        -> sesion (13-rpc-review N8, abierto).
 --
 -- Redefine completas, partiendo de su version vigente y con el cambio minimo:
 --   create_sale, create_sale_with_payments y create_purchase (20261006f),
---   register_payment, update_product_price, register_supplier_product_price
---   y deactivate_supplier_product (20261006g),
+--   register_payment, update_product_price, register_supplier_product_price,
+--   deactivate_supplier_product y cancel_payment_apply (20261006g),
 --   close_cash_session (20260904b) y register_vault_deposit (20260812c).
 --   Ninguna firma cambia.
 --
@@ -1915,6 +1924,170 @@ $$;
 
 revoke all on function public.deactivate_supplier_product(uuid) from public, anon;
 grant execute on function public.deactivate_supplier_product(uuid) to authenticated, service_role;
+
+-- -----------------------------------------------------------------------------
+-- 12. cancel_payment_apply — copia de 20261006g + R5c (bloqueo de la sesion de caja
+--    abierta antes de F4). Sigue sin execute por /rpc.
+-- -----------------------------------------------------------------------------
+
+create or replace function public.cancel_payment_apply(p_payment_id uuid)
+returns public.payments language plpgsql security definer set search_path = public as $$
+declare
+  v_store_id uuid; v_payment public.payments; v_sale public.sales; v_purchase public.purchases;
+  v_vault public.store_vaults; v_vault_movement public.vault_movements;
+  v_change_movement public.vault_movements;
+  v_new_paid_ves numeric(14,2); v_new_paid_ref numeric(14,2);
+  v_is_bank boolean; v_change_ves numeric(14,2); v_net_ves numeric(14,2);
+begin
+  v_store_id := public.assert_store_context();
+  -- Orden de bloqueo venta -> pago, el mismo de register_payment y return_sale.
+  perform 1 from public.sales s
+  where s.store_id = v_store_id
+    and s.id = (select p.sale_id from public.payments p where p.id = p_payment_id and p.store_id = v_store_id)
+  for update;
+  select * into v_payment from public.payments where id = p_payment_id and store_id = v_store_id for update;
+  if not found then raise exception 'Pago no encontrado' using errcode = 'PT404'; end if;
+  if v_payment.status = 'anulado' then
+    raise exception 'El pago ya fue anulado' using errcode = 'PT409';
+  end if;
+
+  -- R5c — antes de evaluar F4 y de borrar cash_movements se bloquea la sesion
+  -- abierta del pago, como hace register_payment (R5): close_cash_session y el
+  -- autocierre la toman for update, asi que la anulacion espera al cierre y F4
+  -- se evalua despues, con el cierre y su transferencia al baul ya confirmados.
+  -- Orden: documento -> pago -> sesion -> baul.
+  perform 1 from public.cash_sessions s
+  where s.store_id = v_store_id
+    and s.status = 'open'
+    and s.id in (
+      select m.session_id from public.cash_movements m
+      where m.payment_id = v_payment.id and m.store_id = v_store_id
+    )
+  order by s.id
+  for share;
+
+  -- F4 — si el cierre de esa sesión ya viajó al baúl, borrar sus movimientos
+  -- dejaría el `theoretical_closing_*` guardado sin respaldo mientras el baúl
+  -- conserva el dinero: el descuadre saldría en el próximo arqueo.
+  if exists (
+    select 1
+    from public.cash_movements m
+    join public.cash_sessions s on s.id = m.session_id
+    where m.payment_id = v_payment.id
+      and m.store_id = v_store_id
+      and s.status = 'closed'
+      and s.vault_transferred_at is not null
+  ) then
+    raise exception 'No se puede anular este pago: su cierre de caja ya fue transferido al baúl. Registre un ajuste explícito de caja o baúl para corregirlo'
+      using errcode = 'PT409';
+  end if;
+
+  v_is_bank := v_payment.method in ('pago_movil', 'transferencia', 'punto_venta');
+  v_change_ves := round(coalesce(v_payment.change_ves, 0), 2);
+  -- A la venta se le aplicó el neto, así que se le devuelve el neto.
+  v_net_ves := round(v_payment.amount_ves - v_change_ves, 2);
+
+  if v_payment.sale_id is not null then
+    select * into v_sale from public.sales where id = v_payment.sale_id and store_id = v_store_id for update;
+    if not found then raise exception 'Venta no encontrada' using errcode = 'PT404'; end if;
+    if v_sale.status in ('cancelada', 'devuelta') then
+      raise exception 'No se puede anular un pago de una venta cancelada o devuelta' using errcode = 'PT409';
+    end if;
+    if v_sale.paid_ves < v_net_ves then
+      raise exception 'El monto del pago excede lo registrado en la venta' using errcode = 'PT400';
+    end if;
+    v_new_paid_ves := v_sale.paid_ves - v_net_ves;
+    update public.sales set paid_ves = v_new_paid_ves, status = case
+      when v_sale.status = 'borrador' then v_sale.status
+      when v_new_paid_ves >= v_sale.total_ves then 'pagada'::public.sale_status
+      else 'pendiente_pago'::public.sale_status end where id = v_payment.sale_id;
+
+    -- Vuelto entregado por cuenta bancaria: devolver el saldo al baúl (cubeta cuenta).
+    if v_change_ves > 0 and v_payment.change_method in ('pago_movil', 'transferencia', 'punto_venta') then
+      select * into v_change_movement from public.vault_movements
+      where payment_id = v_payment.id and store_id = v_store_id and type = 'withdrawal' for update;
+      if found then
+        select * into v_vault from public.store_vaults
+        where id = v_change_movement.vault_id and store_id = v_store_id for update;
+        if not found then raise exception 'Baúl no encontrado para revertir el vuelto' using errcode = 'PT404'; end if;
+        update public.store_vaults
+        set balance_ves = balance_ves + v_change_movement.amount_ves
+        where id = v_vault.id;
+        delete from public.vault_movements where id = v_change_movement.id;
+      end if;
+    end if;
+
+    -- Borra el sale_in / account_in y, si lo hubo, el change_out / account_out del vuelto.
+    if v_payment.method in ('efectivo_ves', 'efectivo_usd') then
+      delete from public.cash_movements where payment_id = v_payment.id and store_id = v_store_id;
+    elsif v_is_bank then
+      delete from public.cash_movements where payment_id = v_payment.id and store_id = v_store_id;
+      select * into v_vault_movement from public.vault_movements
+      where payment_id = v_payment.id and store_id = v_store_id and type = 'sale_in' for update;
+      if found then
+        select * into v_vault from public.store_vaults
+        where id = v_vault_movement.vault_id and store_id = v_store_id for update;
+        -- R7 — sin baul el update no tocaba nada y el asiento se borraba igual.
+        if not found then raise exception 'Baúl no encontrado para revertir el cobro en cuenta' using errcode = 'PT404'; end if;
+        update public.store_vaults
+        set balance_ves = greatest(balance_ves - v_vault_movement.amount_ves, 0)
+        where id = v_vault.id;
+        delete from public.vault_movements where id = v_vault_movement.id;
+      end if;
+    end if;
+  else
+    select * into v_purchase from public.purchases where id = v_payment.purchase_id and store_id = v_store_id for update;
+    if not found then raise exception 'Compra no encontrada' using errcode = 'PT404'; end if;
+    if v_purchase.status in ('cancelado', 'devuelto') then
+      raise exception 'No se puede anular un pago de una compra cancelada o devuelta' using errcode = 'PT409';
+    end if;
+    if v_purchase.paid_ves < v_payment.amount_ves then
+      raise exception 'El monto del pago excede lo registrado en la compra' using errcode = 'PT400';
+    end if;
+    if coalesce(v_purchase.paid_ref, 0) < v_payment.amount_ref then
+      raise exception 'El monto REF del pago excede lo registrado en la compra' using errcode = 'PT400';
+    end if;
+    v_new_paid_ves := v_purchase.paid_ves - v_payment.amount_ves;
+    v_new_paid_ref := greatest(round(coalesce(v_purchase.paid_ref, 0) - v_payment.amount_ref, 2), 0);
+    update public.purchases set paid_ves = v_new_paid_ves, paid_ref = v_new_paid_ref where id = v_payment.purchase_id;
+
+    if v_payment.method in ('efectivo_ves', 'efectivo_usd') then
+      select * into v_vault_movement from public.vault_movements
+      where payment_id = v_payment.id and store_id = v_store_id and type = 'purchase_out' for update;
+      if found then
+        select * into v_vault from public.store_vaults
+        where id = v_vault_movement.vault_id and store_id = v_store_id for update;
+        if not found then raise exception 'Baúl no encontrado para revertir el pago en efectivo' using errcode = 'PT404'; end if;
+        update public.store_vaults
+        set balance_efectivo_ves = balance_efectivo_ves + v_vault_movement.amount_ves,
+            balance_ref = balance_ref + v_vault_movement.amount_ref
+        where id = v_vault.id;
+        delete from public.vault_movements where id = v_vault_movement.id;
+      end if;
+    elsif v_is_bank then
+      select * into v_vault_movement from public.vault_movements
+      where payment_id = v_payment.id and store_id = v_store_id and type = 'purchase_out' for update;
+      if found then
+        select * into v_vault from public.store_vaults
+        where id = v_vault_movement.vault_id and store_id = v_store_id for update;
+        -- R7 — sin baul el update no tocaba nada y el asiento se borraba igual.
+        if not found then raise exception 'Baúl no encontrado para revertir el pago desde cuenta' using errcode = 'PT404'; end if;
+        update public.store_vaults
+        set balance_ves = balance_ves + v_vault_movement.amount_ves
+        where id = v_vault.id;
+        delete from public.vault_movements where id = v_vault_movement.id;
+      end if;
+    end if;
+  end if;
+
+  update public.payments set status = 'anulado', cancelled_at = now(), cancelled_by = auth.uid()
+  where id = p_payment_id returning * into v_payment;
+  return v_payment;
+end;
+$$;
+
+revoke all on function public.cancel_payment_apply(uuid) from public, anon, authenticated;
+grant execute on function public.cancel_payment_apply(uuid) to service_role;
 
 -- -----------------------------------------------------------------------------
 -- 13. close_cash_session — copia de 20260904b + N4 (unica linea nueva: la guarda)
