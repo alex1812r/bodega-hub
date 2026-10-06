@@ -120,7 +120,7 @@ export function PosCartPanel({
           <button
             aria-label="Limpiar orden"
             className="cursor-pointer rounded-lg p-2 text-muted-foreground transition-colors hover:bg-surface-container hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={items.length === 0}
+            disabled={items.length === 0 || isSubmitting}
             onClick={onClearOrder}
             type="button"
           >
