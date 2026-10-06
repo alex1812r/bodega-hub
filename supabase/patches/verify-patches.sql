@@ -897,4 +897,56 @@ select
       and p.prosrc ilike '%no encontrado para revertir el cobro en cuenta%'
       and not has_function_privilege('authenticated', p.oid, 'execute')
   )
+union all
+select
+  'reject_non_finite_numeric responde PT400, no usa literales de Infinity y no es ejecutable por PostgREST (20261006i, M1)',
+  exists (
+    select 1 from pg_proc p
+    where p.oid = to_regprocedure('public.reject_non_finite_numeric()')
+      and p.prorettype = 'trigger'::regtype
+      and not p.prosecdef
+      and p.prosrc ilike '%errcode = ''PT400''%Valor numerico invalido en %s: debe ser un numero finito%'
+      and p.prosrc not ilike '%::numeric%'
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+  )
+union all
+select
+  'toda tabla de public con columnas numeric rechaza NaN / Infinity en insert y update, con todas sus columnas (20261006i, M1)',
+  (
+    select count(*) >= 16
+       and count(*) filter (where c.relname in ('products', 'exchange_rates', 'supplier_products', 'sales', 'payments')) = 5
+       and bool_and(
+         (
+           select count(*) = 2
+           from pg_trigger t
+           where t.tgrelid = c.oid
+             and not t.tgisinternal
+             and t.tgenabled = 'O'
+             and t.tgqual is not null
+             and t.tgfoid = to_regprocedure('public.reject_non_finite_numeric()')
+             and (t.tgname, t.tgtype::int) in (
+               ('trg_zz_reject_non_finite_numeric_ins', 7),   -- row + before + insert
+               ('trg_zz_reject_non_finite_numeric_upd', 19)   -- row + before + update
+             )
+             and t.tgnargs = (
+               select count(*) from pg_attribute a
+               where a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+                 and a.attgenerated = '' and a.atttypid = 'numeric'::regtype
+             )
+         )
+       )
+    from pg_class c
+    where c.relnamespace = 'public'::regnamespace
+      and c.relkind = 'r'
+      and exists (
+        select 1 from pg_attribute a
+        where a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+          and a.attgenerated = '' and a.atttypid = 'numeric'::regtype
+      )
+      and not exists (
+        select 1 from pg_depend d
+        where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e'
+      )
+  )
 order by 1;

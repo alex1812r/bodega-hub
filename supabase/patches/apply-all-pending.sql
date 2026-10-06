@@ -390,3 +390,16 @@ notify pgrst, 'reload schema';
 -- <campo>: debe ser un numero finito"); el rol no autorizado en update_product_price, register_supplier_product_price y
 -- deactivate_supplier_product responde PT403 (antes 400). NO se tocan los datos: una fila que ya tenga NaN (ventas,
 -- compras, precios) hay que corregirla a mano.
+-- -----------------------------------------------------------------------------
+-- 20261006i — reject non-finite numeric columns (STK-625): las columnas numeric de public rechazan NaN / Infinity
+--             escritos directamente en la tabla (M1, residuo de N4), con dos triggers por tabla y una funcion comun
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261006i-reject-non-finite-numeric-columns.sql
+-- Requiere 20261006h (mismo texto de error). Idempotente, una transaccion. No redefine ninguna RPC, no anade
+-- constraints y no toca filas. Funciona igual en PostgreSQL 13 (no usa 'Infinity'::numeric).
+-- OJO: un insert / update que deje NaN o Infinity en una columna numeric responde PT400 ("Valor numerico invalido en
+-- <columna>: debe ser un numero finito"), tambien por SQL Editor (postgres) y dentro de las RPC. Una fila que YA tenga
+-- NaN sigue siendo editable y hay que corregirla a mano (solo se rechaza la columna que cambia a un valor no finito).
+-- OJO: para borrar o cambiar de tipo una columna numeric hay que soltar antes los triggers
+-- trg_zz_reject_non_finite_numeric_ins / _upd de su tabla; despues de eso, o de anadir una columna numeric nueva,
+-- volver a aplicar este parche (regenera los triggers desde el catalogo; verify-patches lo detecta si falta).
