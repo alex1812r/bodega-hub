@@ -18,6 +18,12 @@
 --        e historial ajenos. Mismo filtro de tienda en using y with check. El BFF
 --        escribe los empaques con la sesion del usuario
 --        (supplierProducts.server.ts) y sigue funcionando para su tienda.
+--   N3   store_vaults, vault_movements, cash_movements y cash_sessions dejan de
+--        ser escribibles por PostgREST (como C17 en 20261006a): sin privilegios
+--        de insert / update / delete / truncate para anon y authenticated y sin
+--        las politicas "Admins manage …". El BFF no las escribe con la sesion del
+--        usuario (solo las lee y llama a las RPC, que escriben como propietario).
+--        Ninguna funcion de caja cambia por este punto.
 --
 -- Idempotente, una sola transaccion. Ejecutar en SQL Editor o via db-up.
 -- =============================================================================
@@ -144,6 +150,23 @@ with check (
       and sp.store_id = public.current_user_store_id()
   )
 );
+
+-- -----------------------------------------------------------------------------
+-- 3. N3 — caja y baul solo se escriben por las RPC security definer (escriben
+--    como propietario). Quedan las politicas de lectura de 20260811b. El BFF no
+--    hace insert / update / delete sobre estas cuatro tablas con la sesion del
+--    usuario (src/modules/cash y src/modules/vault solo las leen), asi que no se
+--    conserva ningun privilegio de escritura por columnas.
+-- -----------------------------------------------------------------------------
+
+revoke insert, update, delete, truncate, references, trigger
+  on public.store_vaults, public.vault_movements, public.cash_movements, public.cash_sessions
+  from public, anon, authenticated;
+
+drop policy if exists "Admins manage store vault" on public.store_vaults;
+drop policy if exists "Admins manage vault movements" on public.vault_movements;
+drop policy if exists "Admins manage cash movements" on public.cash_movements;
+drop policy if exists "Admins manage cash sessions" on public.cash_sessions;
 
 commit;
 

@@ -556,3 +556,134 @@ describe("N2 · empaques e historiales de precio solo se escriben desde su tiend
     });
   });
 });
+
+// 13-rpc-review N3: las políticas «Admins manage …» (`for all`) de 20260811b-cash-registers-vault.sql:127-164 y el
+// grant de tabla dejaban al admin escribir caja y baúl por PostgREST sin pasar por las RPC ni por sus guardas
+// (12-own-b-rpc-review-2.log §N3: baúl a 987 654 321, asientos inventados, apertura a 999 999). El BFF no escribe
+// esas cuatro tablas con la sesión del usuario: solo las lee y llama a las RPC.
+describe("N3 · caja y baúl solo se escriben por las RPC", () => {
+  const TABLES = ["store_vaults", "vault_movements", "cash_movements", "cash_sessions"] as const;
+
+  async function moneyState(sessionId: string): Promise<Row> {
+    return one(
+      db,
+      "estado de caja y baúl",
+      `select (select balance_ves::text || '/' || balance_efectivo_ves::text || '/' || balance_ref::text from public.store_vaults where store_id = $1) as baul,
+              (select count(*)::int from public.vault_movements where store_id = $1) as asientos_baul,
+              (select count(*)::int from public.cash_movements where store_id = $1) as asientos_caja,
+              (select count(*)::int from public.cash_sessions where store_id = $1) as sesiones,
+              (select status || '/' || opening_ves::text from public.cash_sessions where id = $2) as sesion`,
+      [lab.storeId, sessionId],
+    );
+  }
+
+  it("N3 · el admin de la tienda no escribe store_vaults, vault_movements, cash_movements ni cash_sessions por PostgREST (42501)", async () => {
+    await withRollback(db, async () => {
+      const { sessionId } = await openSession(db, "n3");
+      const spare = await one(db, "segunda caja", "insert into public.cash_registers (store_id, name, is_active) values ($1, $2, true) returning id", [
+        lab.storeId,
+        nextTag("n3-libre"),
+      ]);
+      const s = await sale(db, await product(db, "n3", 5), 1);
+      await must(db, "cobro en cuenta", "admin", BANK_PAYMENT, [s.id, null, s.totalVes]);
+      const vault = String((await one(db, "baúl", "select id from public.store_vaults where store_id = $1", [lab.storeId])).id);
+      const before = await moneyState(sessionId);
+
+      const attempts: Array<[string, string, unknown[]]> = [
+        ["store_vaults update", "update public.store_vaults set balance_ves = 987654321, balance_efectivo_ves = 123456789 where store_id = $1", [lab.storeId]],
+        ["store_vaults insert", "insert into public.store_vaults (store_id, balance_ves) values ($1, 123456789)", [lab.storeId]],
+        ["store_vaults delete", "delete from public.store_vaults where store_id = $1", [lab.storeId]],
+        [
+          "vault_movements insert",
+          "insert into public.vault_movements (store_id, vault_id, type, bucket, amount_ves, amount_ref, notes) values ($1, $2, 'deposit', 'efectivo', 5000, 0, 'CAOS N3')",
+          [lab.storeId, vault],
+        ],
+        ["vault_movements update", "update public.vault_movements set amount_ves = 1 where store_id = $1", [lab.storeId]],
+        ["vault_movements delete", "delete from public.vault_movements where store_id = $1", [lab.storeId]],
+        [
+          "cash_movements insert",
+          "insert into public.cash_movements (store_id, session_id, type, amount_ves, amount_ref, notes) values ($1, $2, 'transfer_out', 5000, 0, 'CAOS N3')",
+          [lab.storeId, sessionId],
+        ],
+        ["cash_movements update", "update public.cash_movements set amount_ves = 1 where session_id = $1", [sessionId]],
+        ["cash_movements delete", "delete from public.cash_movements where session_id = $1", [sessionId]],
+        ["cash_sessions update", "update public.cash_sessions set opening_ves = 999999, vault_transferred_at = clock_timestamp() where id = $1", [sessionId]],
+        ["cash_sessions insert", "insert into public.cash_sessions (store_id, register_id, opened_by) values ($1, $2, $3)", [lab.storeId, spare.id, lab.uids.admin]],
+        ["cash_sessions delete", "delete from public.cash_sessions where id = $1", [sessionId]],
+      ];
+      const codes: Record<string, string | null> = {};
+      for (const [name, text, params] of attempts) codes[name] = (await as(db, "admin", text, params)).code;
+
+      expect({ codes, estado: await moneyState(sessionId) }).toEqual({
+        codes: Object.fromEntries(attempts.map(([name]) => [name, "42501"])),
+        estado: before,
+      });
+    });
+  });
+
+  it("N3 · authenticated y anon no tienen privilegios de escritura ni políticas de escritura en las cuatro tablas", async () => {
+    const privileges = await sql(
+      db,
+      "privilegios",
+      `select t.name as tabla, r.name as rol,
+              has_table_privilege(r.name, 'public.' || t.name, 'INSERT') or has_table_privilege(r.name, 'public.' || t.name, 'UPDATE')
+                or has_table_privilege(r.name, 'public.' || t.name, 'DELETE') or has_table_privilege(r.name, 'public.' || t.name, 'TRUNCATE')
+                or has_any_column_privilege(r.name, 'public.' || t.name, 'INSERT') or has_any_column_privilege(r.name, 'public.' || t.name, 'UPDATE') as escribe,
+              has_table_privilege(r.name, 'public.' || t.name, 'SELECT') as lee
+       from unnest($1::text[]) as t(name) cross join unnest(array['anon', 'authenticated']) as r(name)
+       order by 1, 2`,
+      [[...TABLES]],
+    );
+    const policies = await sql(
+      db,
+      "políticas",
+      "select tablename, policyname, cmd from pg_policies where schemaname = 'public' and tablename = any($1::text[]) and cmd <> 'SELECT' order by 1, 2",
+      [[...TABLES]],
+    );
+
+    expect({ escriben: privileges.filter((p) => p.escribe), lecturas: privileges.filter((p) => p.rol === "authenticated" && p.lee).length, politicas: policies }).toEqual({
+      escriben: [],
+      lecturas: 4,
+      politicas: [],
+    });
+  });
+
+  it("N3 · las RPC de caja y baúl siguen funcionando para el admin y las lecturas de la tienda no cambian", async () => {
+    await withRollback(db, async () => {
+      const { sessionId } = await openSession(db, "n3-rpc");
+      const s = await sale(db, await product(db, "n3-rpc", 5), 2);
+      const bank = await as(db, "admin", BANK_PAYMENT, [s.id, null, s.totalVes]);
+      const deposit = await as(db, "admin", "select id from public.register_vault_deposit(100, 0, $1)", [`${TAG} depósito`]);
+      const withdrawal = await as(db, "admin", "select id from public.register_vault_withdrawal(40, 0, $1)", [`${TAG} retiro`]);
+      const cancelled = await as(db, "admin", "select status::text as status from public.cancel_payment($1::uuid)", [bank.rows[0]?.id]);
+      const closed = await as(db, "admin", "select status from public.close_cash_session($1::uuid, 25, 0)", [sessionId]);
+      const transferred = await as(db, "admin", "select id from public.transfer_cash_closures_to_vault(array[$1::uuid])", [sessionId]);
+
+      const reads: Record<string, unknown> = {};
+      for (const table of TABLES) {
+        const column = table === "cash_sessions" ? "id" : table === "cash_movements" ? "session_id" : "store_id";
+        const value = table === "cash_sessions" || table === "cash_movements" ? sessionId : lab.storeId;
+        const res = await as(db, "admin", `select count(*)::int > 0 as hay from public.${table} where ${column} = $1`, [value]);
+        reads[table] = res.code ?? res.rows[0]?.hay;
+      }
+      const sellerVault = await as(db, "vendedor1", "select count(*)::int as n from public.store_vaults where store_id = $1", [lab.storeId]);
+      const outsider = await asUser(db, otherAdmin, "select count(*)::int as n from public.cash_sessions where id = $1", [sessionId]);
+
+      expect({
+        rpc: [bank.code, deposit.code, withdrawal.code, cancelled.code, closed.code, transferred.code],
+        pago: cancelled.rows[0]?.status,
+        cierre: closed.rows[0]?.status,
+        lecturas: reads,
+        vendedor: sellerVault.rows[0]?.n,
+        otraTienda: outsider.rows[0]?.n,
+      }).toEqual({
+        rpc: [null, null, null, null, null, null],
+        pago: "anulado",
+        cierre: "closed",
+        lecturas: { store_vaults: true, vault_movements: true, cash_movements: true, cash_sessions: true },
+        vendedor: 1,
+        otraTienda: 0,
+      });
+    });
+  });
+});

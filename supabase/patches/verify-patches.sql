@@ -833,4 +833,29 @@ select
       and pol.cmd <> 'SELECT'
       and coalesce(pol.with_check, pol.qual) not ilike '%current_user_store_id()%'
   )
+union all
+select
+  'caja y baul sin escritura por PostgREST: ni privilegios ni politicas de escritura (20261006h, N3)',
+  not exists (
+    select 1
+    from unnest(array['store_vaults', 'vault_movements', 'cash_movements', 'cash_sessions']) as t(name)
+    cross join unnest(array['anon', 'authenticated']) as r(name)
+    where has_table_privilege(r.name, 'public.' || t.name, 'INSERT')
+       or has_table_privilege(r.name, 'public.' || t.name, 'UPDATE')
+       or has_table_privilege(r.name, 'public.' || t.name, 'DELETE')
+       or has_table_privilege(r.name, 'public.' || t.name, 'TRUNCATE')
+       or has_any_column_privilege(r.name, 'public.' || t.name, 'INSERT')
+       or has_any_column_privilege(r.name, 'public.' || t.name, 'UPDATE')
+  ) and not exists (
+    select 1 from pg_policies pol
+    where pol.schemaname = 'public'
+      and pol.tablename in ('store_vaults', 'vault_movements', 'cash_movements', 'cash_sessions')
+      and pol.cmd <> 'SELECT'
+  ) and (
+    select count(*) = 4 from pg_class c
+    where c.relnamespace = 'public'::regnamespace
+      and c.relname in ('store_vaults', 'vault_movements', 'cash_movements', 'cash_sessions')
+      and c.relrowsecurity
+      and has_table_privilege('authenticated', c.oid, 'SELECT')
+  )
 order by 1;
