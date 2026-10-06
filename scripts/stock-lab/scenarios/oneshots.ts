@@ -13,8 +13,12 @@
  *                    deje las vistas de integridad en 0? (`pass`; `finding` si
  *                    corrige el stock pero deja el documento o el dinero mal).
  *   - `.sql_replica` réplica, sobre productos propios, de la escritura SQL del
- *                    parche. `fail` = el one-shot deja vistas ≠ 0: ese descuadre
- *                    de producción es herencia del propio parche (evidencia de H7).
+ *                    parche. `stock_reconciliation` debe quedar SIEMPRE en 0.
+ *                    Dos parches (821, 830c) dejan residuo por construcción; en
+ *                    esos el esperado es que las vistas v2 (20261006d) detecten
+ *                    exactamente ese residuo (`pass` = «el oráculo v2 detecta el
+ *                    residuo del one-shot»). Cualquier otra fila en cualquier
+ *                    vista es `fail` (ver `residueProblems`).
  *
  * Las réplicas copian solo las escrituras de stock (`stock_movements`,
  * `products.current_stock`, `sale_items` / `purchase_items`); los ajustes de
@@ -31,6 +35,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   Checks,
+  INTEGRITY_VIEWS,
   analyzeChain,
   errorOf,
   fmtMove,
@@ -42,6 +47,7 @@ import {
   type CaseCtx,
   type CaseDef,
   type CaseOutcome,
+  type IntegrityView,
   type Lab,
   type ViewCounts,
 } from "./db";
@@ -87,15 +93,83 @@ export function nonZeroViews(counts: Partial<ViewCounts>): string[] {
     .map(([name, value]) => `${name}=${String(value)}`);
 }
 
+/** Una fila que el one-shot deja, por construcción, en una vista de integridad. */
+export type ResidueSpec = {
+  view: IntegrityView;
+  /** Qué es (para los mensajes y el detalle del caso). */
+  label: string;
+  /** Columnas de la fila de la vista que deben coincidir exactamente. */
+  where: Record<string, unknown>;
+};
+
+type ViewRow = Record<string, unknown>;
+
+function matchesSpec(row: ViewRow, spec: ResidueSpec): boolean {
+  return Object.entries(spec.where).every(([column, value]) => row[column] === value);
+}
+
+/**
+ * Compara las filas de las vistas (ya filtradas a los productos del caso) con
+ * el residuo que el one-shot deja por construcción. Sin problemas solo si cada
+ * fila casa con UNA especificación y cada especificación con UNA fila.
+ * `stock_reconciliation` nunca se acepta como residuo: stock ≠ libro es
+ * siempre un fallo.
+ */
+export function residueProblems(rows: Partial<Record<IntegrityView, readonly ViewRow[]>>, expected: readonly ResidueSpec[]): string[] {
+  const problems: string[] = [];
+  const pending = expected.filter((spec) => {
+    if (spec.view !== "stock_reconciliation") return true;
+    problems.push(`stock_reconciliation no puede ser residuo aceptado (${spec.label})`);
+    return false;
+  });
+  const used = new Set<ResidueSpec>();
+  for (const view of INTEGRITY_VIEWS) {
+    for (const row of rows[view] ?? []) {
+      const spec = pending.find((candidate) => candidate.view === view && !used.has(candidate) && matchesSpec(row, candidate));
+      if (spec) used.add(spec);
+      else problems.push(`${view}: fila no esperada ${JSON.stringify(row)}`);
+    }
+  }
+  for (const spec of pending) {
+    if (!used.has(spec)) problems.push(`${spec.view}: falta la fila esperada «${spec.label}» ${JSON.stringify(spec.where)}`);
+  }
+  return problems;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Cierra una réplica: todas las vistas de mis productos deben quedar en 0. */
-async function replicaOutcome(lab: Lab, t: CaseCtx, c: Checks, patch: string, extra: Record<string, unknown> = {}): Promise<CaseOutcome> {
+/**
+ * Cierra una réplica. Sin `residue`: todas las vistas de mis productos en 0.
+ * Con `residue`: las vistas deben contener exactamente esas filas y ninguna más.
+ */
+async function replicaOutcome(
+  lab: Lab,
+  t: CaseCtx,
+  c: Checks,
+  patch: string,
+  extra: Record<string, unknown> = {},
+  residue: readonly ResidueSpec[] = [],
+): Promise<CaseOutcome> {
   const scoped = await t.scoped();
   const dirty = nonZeroViews(scoped);
-  c.eq(`vistas ≠ 0 tras replicar ${patch}`, dirty, []);
+  const viewRows: Partial<Record<IntegrityView, ViewRow[]>> = {};
+  for (const view of INTEGRITY_VIEWS) {
+    const rows = await lab.viewRows(view, [...t.products]);
+    if (rows.length > 0) viewRows[view] = rows;
+  }
+  c.eq("stock_reconciliation tras la réplica (stock = libro)", scoped.stock_reconciliation, 0);
+  c.eq(
+    residue.length > 0
+      ? `las vistas v2 detectan exactamente el residuo de ${patch} (${residue.map((spec) => `${spec.view}: ${spec.label}`).join("; ")}) y nada más`
+      : `vistas ≠ 0 tras replicar ${patch}`,
+    residueProblems(viewRows, residue),
+    [],
+  );
+  if (residue.length > 0 && c.failures.length === 0) {
+    c.note(`el oráculo v2 detecta el residuo del one-shot: ${dirty.join(" ")} (${residue.map((spec) => spec.label).join("; ")})`);
+  }
   const chains: Record<string, unknown> = {};
   const evidence: string[] = [];
   for (const id of t.products) {
@@ -103,10 +177,13 @@ async function replicaOutcome(lab: Lab, t: CaseCtx, c: Checks, patch: string, ex
     chains[id] = { stock: await lab.stock(id), ...analyzeChain(moves, await lab.stock(id)) };
     evidence.push(`producto ${id}`, ...moves.map(fmtMove));
   }
-  if (dirty.length > 0) c.note("descuadre heredado del propio one-shot: el parche deja estas vistas ≠ 0 sin que exista bug de RPC.");
+  if (dirty.length > 0 && c.failures.length > 0) c.note("descuadre heredado del propio one-shot: el parche deja estas vistas ≠ 0 sin que exista bug de RPC.");
   return outcome(c, {
-    expected: { vistas: "todas 0 sobre los productos tocados" },
-    actual: { vistas: scoped, chain_breaks: await lab.viewRows("stock_chain_breaks", [...t.products]), chains, ...extra },
+    expected:
+      residue.length > 0
+        ? { stock_reconciliation: 0, residuo: residue.map((spec) => ({ view: spec.view, ...spec.where })), resto: "ninguna otra fila en ninguna vista" }
+        : { vistas: "todas 0 sobre los productos tocados" },
+    actual: { vistas: scoped, filas: viewRows, chains, ...extra },
     evidence,
   });
 }
@@ -365,7 +442,14 @@ async function os821Replica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
     throw error;
   }
   c.eq("stocks tras la réplica (equivocado 5−2, correcto 3+4+10)", await lab.stocks([wrong.id, right.id]), { [wrong.id]: 3, [right.id]: 17 });
-  return replicaOutcome(lab, t, c, "20260821", { movimiento_reasignado: movementId, compra: purchase });
+  // El parche reescribe un movimiento viejo sin recalcular los posteriores: la cadena queda rota en 3 puntos.
+  //   equivocado: inicial(5) · venta −2 (stock_after 13, y ya no la precede la compra → se esperaba 3)
+  //   correcto:   inicial(3) · compra +10 reasignada (stock_after 17, se esperaba 13) · ajuste +4 (stock_after 7, se esperaba 21)
+  return replicaOutcome(lab, t, c, "20260821", { movimiento_reasignado: movementId, compra: purchase }, [
+    { view: "stock_chain_breaks", label: "venta posterior del producto equivocado", where: { product_id: wrong.id, type: "venta", stock_after: 13, expected_stock_after: 3 } },
+    { view: "stock_chain_breaks", label: "compra reasignada con stock_after fijado a mano", where: { product_id: right.id, movement_id: movementId, type: "compra", stock_after: 17, expected_stock_after: 13 } },
+    { view: "stock_chain_breaks", label: "ajuste intermedio del producto correcto", where: { product_id: right.id, type: "ajuste_entrada", stock_after: 7, expected_stock_after: 21 } },
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -519,15 +603,25 @@ async function os830bRemoveFix(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
     await t.sale("vendedor1", [{ productId: polar.id, quantity: 2 }, { productId: light.id, quantity: 1 }], { pay: true }),
     "venta con la línea de más",
   );
-  // No hay devolución parcial: ajuste `devolucion_cliente` suelto por la unidad que nunca salió.
-  const back = await t.adjust("almacen", light.id, 1, "devolucion_cliente");
-  c.ok("ajuste devolucion_cliente +1", back.ok, `${back.status} ${errorOf(back)}`);
+  // R4 (20261006g): la devolución suelta ya no existe; sin `saleId` es 400 y no mueve nada.
+  const loose = await t.adjust("almacen", light.id, 1, "devolucion_cliente");
+  c.eq("ajuste devolucion_cliente SIN saleId", loose.status, 400);
+  c.eq("stock tras el rechazo del ajuste suelto", await lab.stock(light.id), 9);
+  // Camino real: devolución parcial ligada a la venta por la unidad que nunca salió, con tope «vendido − ya devuelto».
+  const back = await t.adjust("almacen", light.id, 1, "devolucion_cliente", { saleId });
+  c.ok("devolucion_cliente +1 ligada a la venta", back.ok, `${back.status} ${errorOf(back)}`);
+  const linked = (await lab.movements(light.id)).filter((move) => move.type === "devolucion_cliente");
+  c.eq("movimiento de la devolución (delta, stock_after, sale_id)", linked.map((move) => [move.quantity_delta, move.stock_after, move.sale_id]), [[1, 10, saleId]]);
+  const over = await t.adjust("almacen", light.id, 1, "devolucion_cliente", { saleId });
+  c.rejected("segunda devolución de la misma unidad (tope: vendido 1, ya devuelto 1)", over.status, errorOf(over));
+  const money = await moneyOf(lab, saleId);
+  const line = await lab.rows<{ quantity: number }>("select quantity from public.sale_items where sale_id = $1 and product_id = $2", [saleId, light.id]);
   c.finding(
-    "existe devolución parcial de una venta",
+    "la devolución parcial ligada también corrige el documento y el cobro",
     false,
-    `el stock se repone con un ajuste sin vínculo a la venta ${saleId}; la línea y su cobro siguen en el documento`,
+    `el stock vuelve ligado a la venta ${saleId} y con tope, pero la venta sigue "${String(money.status)}" con ${money.pagos_activos} pago(s) activo(s) (paid_ves=${String(money.paid_ves)}) y la línea con cantidad ${String(line[0]?.quantity)}: el reembolso de esa unidad no tiene camino por API`,
   );
-  return fixOutcome(lab, t, c, { [polar.id]: 8, [light.id]: 10 });
+  return fixOutcome(lab, t, c, { [polar.id]: 8, [light.id]: 10 }, { tope: `${over.status} ${errorOf(over)}`, venta: money });
 }
 
 async function os830bRemoveReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
@@ -545,12 +639,15 @@ async function os830bRemoveReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   await client.query("begin");
   try {
     // l.107-115: borrar la línea y su movimiento; l.117-127: running; l.129-141: current_stock = Σ.
+    // El parche ordena el running por `created_at, id`. Aquí va por `seq` (el orden real del libro): el reloj
+    // del contenedor lab retrocede ~0,7 s cada ~29 s y, si cae entre dos movimientos del caso, `created_at`
+    // los invierte y la réplica rompería la cadena por un artefacto del laboratorio, no del parche.
     await t.sql("réplica 830b-remove: delete sale_items", "delete from public.sale_items where sale_id = $1 and product_id = $2", [saleId, light.id], client);
     await t.sql("réplica 830b-remove: delete stock_movements", "delete from public.stock_movements where id = $1", [movementId], client);
     await t.sql(
       "réplica 830b-remove: recalcular stock_after (running)",
       `update public.stock_movements sm set stock_after = sub.running
-       from (select id, sum(quantity_delta) over (order by created_at asc, id asc) as running
+       from (select id, sum(quantity_delta) over (order by seq asc) as running
              from public.stock_movements where product_id = $1) sub
        where sm.id = sub.id and sm.product_id = $1`,
       [light.id],
@@ -623,7 +720,12 @@ async function os830cReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
     throw error;
   }
   c.eq("stocks tras la réplica", await lab.stocks([dura.id, manz.id]), { [dura.id]: 8, [manz.id]: 7 });
-  return replicaOutcome(lab, t, c, "20260830c", { venta: saleId });
+  // Residuo documental del parche: el movimiento `venta` original de «dura» sigue ligado a una venta que ya no
+  // tiene esa línea, y su restock es un `ajuste_entrada` (tipo de cancelación) sobre una venta que sigue viva.
+  return replicaOutcome(lab, t, c, "20260830c", { venta: saleId }, [
+    { view: "movements_without_document", label: "venta original de dura sin línea en el documento", where: { issue: "missing_document_line", product_id: dura.id, sale_id: saleId, type: "venta" } },
+    { view: "reversal_mismatches", label: "ajuste_entrada ligado a una venta viva", where: { issue: "reversal_on_live_document", document_type: "sale", document_id: saleId, product_id: dura.id, original_delta: -1, reversal_delta: 1 } },
+  ]);
 }
 
 // ---------------------------------------------------------------------------
