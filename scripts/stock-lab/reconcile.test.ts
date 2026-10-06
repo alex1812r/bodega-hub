@@ -251,6 +251,31 @@ describe("stock_integrity_report + vistas de integridad (base local stock-lab)",
     });
   });
 
+  // STK-205: la funcion es security definer; sin revoke from public, anon (PostgREST
+  // solo con apikey) la ejecuta y obtiene los conteos globales de todas las tiendas.
+  maybe("anon no puede ejecutar stock_integrity_report (42501); authenticated si", async () => {
+    if (!client) throw new Error("sin cliente pg pese al sondeo ok");
+    await withRollback(client, async (tx) => {
+      // El error aborta la transaccion: savepoint para poder seguir con authenticated.
+      const anonError = await withSavepoint(tx, async (): Promise<{ code?: string } | null> => {
+        await tx.query("set local role anon");
+        try {
+          await tx.query("select public.stock_integrity_report()");
+          return null;
+        } catch (error) {
+          return error as { code?: string };
+        }
+      });
+      expect(anonError).not.toBeNull();
+      expect(anonError?.code).toBe("42501");
+
+      await tx.query("reset role");
+      await tx.query("set local role authenticated");
+      const asAuthenticated = await report(tx);
+      expect(Object.keys(asAuthenticated).sort()).toEqual([...INTEGRITY_KEYS].sort());
+    });
+  });
+
   maybe("no persiste nada: el reporte global y el conteo de tiendas son los de antes", async () => {
     if (!client) throw new Error("sin cliente pg pese al sondeo ok");
     expect(await report(client)).toEqual(globalReportBefore);

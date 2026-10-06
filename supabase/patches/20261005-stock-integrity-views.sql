@@ -465,6 +465,9 @@ begin
 end;
 $$;
 
+-- Security definer: PostgreSQL da EXECUTE a public por defecto, y anon (PostgREST solo con apikey) veria los conteos globales.
+revoke all on function public.stock_integrity_report(uuid) from public;
+revoke all on function public.stock_integrity_report(uuid) from anon;
 grant execute on function public.stock_integrity_report(uuid) to authenticated, service_role;
 
 notify pgrst, 'reload schema';
