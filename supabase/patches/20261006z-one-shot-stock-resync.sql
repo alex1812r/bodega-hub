@@ -46,7 +46,12 @@
 --
 -- Orden de aplicacion
 --   1. Aplicar 20260909-create-sale-with-payments.sql y 20261006a ... 20261006i
---      (este parche aborta si falta el trigger stock_movements_apply o seq).
+--      (este parche aborta, sin tocar nada y diciendo que parche falta, si:
+--      el trigger stock_movements_apply no existe o esta deshabilitado, o
+--      falta seq [a]; el libro no esta en modo estricto o los triggers de
+--      guarda de products no estan habilitados [e]; o faltan las vistas de
+--      integridad v2 [d]. Los demas parches de la serie NO se comprueban aqui:
+--      correr verify-patches.sql antes).
 --   2. Volver a correr
 --        npm run stock-lab:reconcile -- --target production --read-only
 --      Si current_stock, la suma del libro o el numero de movimientos de alguno
@@ -140,6 +145,7 @@ declare
   v_movement_id uuid;
   v_final_stock integer;
   v_pending integer;
+  v_missing text;
 begin
   -- 0. Solo por conexion directa: es el pase que dan products_stock_guard
   --    (20261006e) y stock_movements_append_only (20261006g).
@@ -156,7 +162,7 @@ begin
        join pg_proc f on f.oid = t.tgfoid
        where t.tgrelid = 'public.stock_movements'::regclass
          and not t.tgisinternal
-         and t.tgenabled <> 'D'
+         and t.tgenabled in ('O', 'A')
          and f.proname = 'stock_movements_apply'
      )
      or not exists (
@@ -168,6 +174,89 @@ begin
      ) then
     raise exception
       'One-shot 20261006z: faltan prerrequisitos (trigger stock_movements_apply activo y columna stock_movements.seq). Aplicar antes 20260909-create-sale-with-payments.sql y 20261006a ... 20261006i';
+  end if;
+
+  -- 1b. Modo estricto del libro (20261006e): sin el, el trigger sigue en modo
+  --     legado y este parche no se comporta como esta documentado.
+  v_missing := concat_ws('; ',
+    case when not exists (
+      select 1
+      from pg_proc p
+      where p.pronamespace = 'public'::regnamespace
+        and p.proname = 'stock_movements_apply'
+        and p.prosrc not ilike '%stock_after is null%'
+        and p.prosrc not ilike '%stock_after is not null%'
+        and p.prosrc ilike '%new.stock_after := v_current_stock + new.quantity_delta%'
+    ) then 'stock_movements_apply() conserva la rama legada (se fia del stock_after recibido)' end,
+    case when not exists (
+      select 1
+      from pg_proc p
+      where p.pronamespace = 'public'::regnamespace
+        and p.proname = 'products_stock_guard'
+        and p.prosrc not ilike '%current_user%'
+        and p.prosrc ilike '%app.stock_writer%'
+    ) then 'products_stock_guard() conserva el pase transitorio por current_user' end,
+    case when not exists (
+      select 1
+      from pg_trigger t
+      join pg_proc f on f.oid = t.tgfoid
+      where t.tgrelid = 'public.products'::regclass
+        and not t.tgisinternal
+        and t.tgenabled in ('O', 'A')
+        and f.proname = 'products_stock_guard'
+        and (t.tgtype & 16) <> 0
+    ) then 'el trigger de guarda de UPDATE de products (products_stock_guard) no existe o esta deshabilitado' end,
+    case when not exists (
+      select 1
+      from pg_trigger t
+      join pg_proc f on f.oid = t.tgfoid
+      where t.tgrelid = 'public.products'::regclass
+        and not t.tgisinternal
+        and t.tgenabled in ('O', 'A')
+        and f.proname = 'products_stock_guard'
+        and (t.tgtype & 4) <> 0
+    ) then 'el trigger de guarda de INSERT de products (products_stock_guard) no existe o esta deshabilitado' end
+  );
+
+  if v_missing <> '' then
+    raise exception
+      'One-shot 20261006z: falta el modo estricto del libro mayor: %. Aplicar antes 20261006e-stock-ledger-strict.sql (y habilitar los triggers si estan deshabilitados). No se toca nada.',
+      v_missing;
+  end if;
+
+  -- 1c. Vistas de integridad v2 (20261006d): son el oraculo para verificar el
+  --     resultado (stock_chain_breaks ordenada por seq).
+  v_missing := concat_ws('; ',
+    case when not exists (
+           select 1
+           from information_schema.columns
+           where table_schema = 'public'
+             and table_name = 'stock_chain_breaks'
+             and column_name = 'seq'
+         )
+         or not coalesce(
+           pg_get_viewdef(to_regclass('public.stock_chain_breaks')) ilike '%order by m.seq%', false)
+      then 'stock_chain_breaks no existe o no ordena la cadena por seq' end,
+    case when not coalesce(
+           pg_get_viewdef(to_regclass('public.movements_without_document')) ilike '%missing_document_line%', false)
+      then 'movements_without_document no existe o no detecta missing_document_line' end,
+    case when not coalesce(
+           pg_get_viewdef(to_regclass('public.reversal_mismatches')) ilike '%reversal_on_live_document%', false)
+      then 'reversal_mismatches no existe o no detecta reversal_on_live_document' end,
+    case when not exists (
+           select 1
+           from information_schema.columns
+           where table_schema = 'public'
+             and table_name = 'conversion_mismatches'
+             and column_name = 'current_units_per_pack'
+         )
+      then 'conversion_mismatches no existe o no tiene current_units_per_pack' end
+  );
+
+  if v_missing <> '' then
+    raise exception
+      'One-shot 20261006z: faltan las vistas de integridad v2: %. Aplicar antes 20261006d-stock-integrity-views-v2.sql. No se toca nada.',
+      v_missing;
   end if;
 
   -- 2. Marcador de idempotencia (antes de las guardas).
