@@ -7,7 +7,9 @@
  * Reglas (según los RPC vigentes, ver .notes/stock-integrity-gtm/rpc-versions.md):
  * - sale_create: −q por línea. sale_cancel / sale_return: +q (devolución total).
  * - purchase_create `recibido`: +q (o +packCount×unitsPerPack si la línea va en
- *   modo empaque); `pedido`: {} (no mueve stock hasta recibir).
+ *   modo empaque); `pedido`: {} (no mueve stock hasta recibir). Excepción C13
+ *   (20261006c/f): si el producto ES el empaque de un par empaque→unidad, su
+ *   stock se cuenta en empaques y entran `packCount` (línea `stockInPacks`).
  * - purchase_receive: +q (×upp) de las líneas de la compra.
  * - purchase_cancel / purchase_return sobre compra `recibido`: −q (×upp); sobre
  *   `pedido`: {}.
@@ -44,13 +46,17 @@ export type SaleLine = { productId: string; quantity: number };
 
 /**
  * Línea de compra. Modo unidad: `quantity`. Modo empaque: `packCount` ×
- * `unitsPerPack` (tiene prioridad si ambos vienen informados).
+ * `unitsPerPack` (tiene prioridad si ambos vienen informados), salvo que el
+ * producto sea el SKU EMPAQUE de un par (`stockInPacks`): ahí la RPC guarda la
+ * línea como `packCount` unidades de stock (empaques), y eso es lo que mueven
+ * crear, recibir, cancelar y devolver.
  */
 export type PurchaseLine = {
   productId: string;
   quantity?: number;
   packCount?: number;
   unitsPerPack?: number;
+  stockInPacks?: boolean;
 };
 
 export type ExpectedDeltaInputs = {
@@ -88,6 +94,9 @@ function addDelta(acc: Record<string, number>, productId: string, delta: number)
 }
 
 function purchaseLineUnits(line: PurchaseLine): number {
+  if (line.packCount !== undefined && line.stockInPacks === true) {
+    return line.packCount;
+  }
   if (line.packCount !== undefined && line.unitsPerPack !== undefined) {
     return line.packCount * line.unitsPerPack;
   }

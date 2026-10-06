@@ -211,9 +211,29 @@ function unitCostFor(product: LabProduct | undefined, rng: Rng): number {
   return Math.max(0.01, round2(base));
 }
 
+export type PairRole = { role: "unit" | "pack"; unitsPerPack: number };
+
+/**
+ * Papel del producto en un par empaque→unidad del catálogo (C13). Mismo orden
+ * que `create_purchase` (20261006f): primero se mira si es la UNIDAD de un par
+ * y solo después si es el EMPAQUE.
+ */
+export function pairRoleOf(catalog: readonly LabProduct[], productId: string): PairRole | null {
+  const asUnit = catalog.find((p) => p.packUnitProductId === productId && p.packUnitsPerPack !== null);
+  if (asUnit && asUnit.packUnitsPerPack !== null) return { role: "unit", unitsPerPack: asUnit.packUnitsPerPack };
+  const self = catalog.find((p) => p.id === productId);
+  if (self && self.packUnitProductId !== null && self.packUnitsPerPack !== null) {
+    return { role: "pack", unitsPerPack: self.packUnitsPerPack };
+  }
+  return null;
+}
+
 /**
  * Una línea de compra: 50 % unidades (5-50), 50 % empaques (1-5 ×
- * {6,12,24}, o el empaque por defecto del proveedor si lo tiene).
+ * {6,12,24}, o el empaque por defecto del proveedor si lo tiene). Si el
+ * producto pertenece a un par, las unidades por empaque las fija el par (otro
+ * valor → 400) y, si es el SKU empaque, el stock esperado son `packCount`
+ * empaques.
  */
 export function buildPurchaseLine(
   rng: Rng,
@@ -231,13 +251,14 @@ export function buildPurchaseLine(
   let line: PurchaseLine;
   if (usePack) {
     const packCount = rng.int(1, 5);
-    const unitsPerPack = item.unitsPerPack ?? rng.pick(PACK_SIZES);
+    const pair = pairRoleOf(catalog, item.productId);
+    const unitsPerPack = pair?.unitsPerPack ?? item.unitsPerPack ?? rng.pick(PACK_SIZES);
     const packCostRef = round2(unitCostRef * unitsPerPack);
     subtotalRef = round2(packCount * packCostRef);
     body = {
       entryMode: "pack",
       productId: item.productId,
-      packLabel: item.packLabel ?? `Bulto x${unitsPerPack}`,
+      packLabel: (pair ? null : item.packLabel) ?? `Bulto x${unitsPerPack}`,
       packCount,
       unitsPerPack,
       packCostRef,
@@ -251,7 +272,7 @@ export function buildPurchaseLine(
       subtotalRef,
       subtotalVes: 0,
     };
-    line = { productId: item.productId, packCount, unitsPerPack };
+    line = { productId: item.productId, packCount, unitsPerPack, ...(pair?.role === "pack" ? { stockInPacks: true } : {}) };
   } else {
     const quantity = rng.int(5, 50);
     subtotalRef = round2(quantity * unitCostRef);

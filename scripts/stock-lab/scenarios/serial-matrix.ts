@@ -504,13 +504,15 @@ type BuyOptions = {
   findingIfAccepted?: string;
   /** Fuerza `either` aunque el producto esté activo (variantes de empaque). */
   observe?: boolean;
+  /** Unidades de stock esperadas cuando no son `purchaseUnits(line)` (C13: empaques sobre el SKU empaque). */
+  units?: number;
 };
 
 async function buy(c: Ctx, subject: Subject, line: PurchaseLineSpec, options: BuyOptions): Promise<Purchase | null> {
   const rate = await currentRate(c);
   const productId = options.productId ?? subject.id;
   const status = options.status ?? "recibido";
-  const units = purchaseUnits(line);
+  const units = options.units ?? purchaseUnits(line);
   const received = status === "recibido";
   const http: HttpExpectation = subject.active && !options.observe ? "accept" : "either";
   const result = await c.h.op({
@@ -874,13 +876,8 @@ export const OPS: OpDef[] = [
         c,
         subject,
         { mode: "pack", packCount: 2, unitsPerPack: 12 },
-        {
-          productId: subject.id,
-          label: "compra 2×12 sobre el SKU empaque",
-          observe: true,
-          findingIfAccepted:
-            "modo empaque sobre el SKU empaque: 2 bultos x12 suman +24 EMPAQUES (288 unidades equivalentes) y 0 al SKU unidad; el sistema no avisa ni redirige a la unidad",
-        },
+        // C13 (20261006c/f): el SKU empaque se cuenta en empaques → entran 2, no 24.
+        { productId: subject.id, label: "compra 2×12 sobre el SKU empaque (+2 empaques)", units: 2 },
       );
     },
   },

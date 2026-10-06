@@ -15,6 +15,8 @@ type HarnessOptions = {
   /** Respuesta de la segunda recepción (y siguientes) de una misma compra. */
   repeatedReceiveStatus?: number;
   supplierCatalog?: JsonRecord[];
+  /** Respuesta de `GET /api/inventory/pack-conversions`. */
+  packConversions?: JsonRecord[];
 };
 
 function json(status: number, body: JsonRecord | null): ApiResponse {
@@ -60,7 +62,7 @@ function createHarness(dir: string, options: HarnessOptions = {}) {
         return json(200, { data: { items, total: items.length, limit: 100, skip: 0 } });
       }
       if (path === "/api/inventory/pack-conversions") {
-        return json(200, { data: { items: [] } });
+        return json(200, { data: { items: options.packConversions ?? [] } });
       }
       if (path.startsWith("/api/contacts")) {
         return json(200, {
@@ -259,6 +261,56 @@ describe("comprador agent", () => {
       expect(payload.taxVes).toBeCloseTo(items.reduce((sum, item) => sum + item.taxVes, 0), 2);
       expect(items.every((item) => (item as JsonRecord).costCurrency === "ref")).toBe(true);
     }
+  });
+
+  // STK-519 / F3a: evidencia en .notes/stock-integrity-gtm/qa/STK-513/verdict.md (4 SKU LAB-PACK-* «DESCUADRE»
+  // y 40 × 400 «Las unidades por empaque enviadas (N) no coinciden…»). prod-1 es el EMPAQUE y prod-2 la UNIDAD
+  // de un par x12 (parche 20261006f, create_purchase, bloque C13).
+  it("STK-519: en un par, modo empaque sobre el EMPAQUE espera +packCount y sobre la UNIDAD +packCount×upp del par, enviando siempre el upp del par", async () => {
+    const harness = createHarness(join(dir, "pair"), {
+      seed: 5,
+      packConversions: [{ id: "conv-1", packProduct: { id: "prod-1" }, unitProduct: { id: "prod-2" }, unitsPerPack: 12, isActive: true }],
+      supplierCatalog: [
+        // El empaque por defecto del proveedor (x24 / x6) NO coincide con el par (x12): manda el par.
+        { id: "sp-1", productId: "prod-1", product: { id: "prod-1", taxRate: 0 }, packUnits: [{ id: "pu-1", label: "Bulto x24", unitsPerPack: 24, isDefault: true, isActive: true }] },
+        { id: "sp-2", productId: "prod-2", product: { id: "prod-2", taxRate: 0 }, packUnits: [{ id: "pu-2", label: "Bulto x6", unitsPerPack: 6, isDefault: true, isActive: true }] },
+      ],
+    });
+    await setup(harness.ctx);
+    await runSteps(harness.ctx, 200);
+    const all = events(harness.ctx);
+    const state = compradorState(harness.ctx);
+    const packLines = { "prod-1": 0, "prod-2": 0 };
+    for (const event of all.filter((e) => e.op === "purchase_create" && (e.payload as JsonRecord).supplierId === "sup-1")) {
+      const expected: Record<string, number> = {};
+      for (const item of purchaseItems(event)) {
+        let units = item.quantity ?? 0;
+        if (item.entryMode === "pack") {
+          expect(item.unitsPerPack).toBe(12);
+          packLines[item.productId as "prod-1" | "prod-2"] += 1;
+          units = item.productId === "prod-1" ? (item.packCount ?? 0) : (item.packCount ?? 0) * 12;
+        }
+        expected[item.productId] = (expected[item.productId] ?? 0) + units;
+      }
+      expect(event.expected_delta).toEqual((event.payload as JsonRecord).status === "recibido" ? expected : {});
+    }
+    expect(packLines["prod-1"]).toBeGreaterThan(0);
+    expect(packLines["prod-2"]).toBeGreaterThan(0);
+
+    // Recibir / devolver usan la misma regla (la línea del empaque se guarda como packCount unidades de stock).
+    const packOnly = state.purchases.filter((p) => p.items.length === 1 && p.items[0]?.productId === "prod-1" && p.items[0]?.packCount !== undefined);
+    expect(packOnly.length).toBeGreaterThan(0);
+    let moved = 0;
+    for (const purchase of packOnly) {
+      const moves = all.filter(
+        (e) => ["purchase_receive", "purchase_return"].includes(e.op) && e.status === 200 && (e.payload as JsonRecord).purchaseId === purchase.id,
+      );
+      for (const event of moves) {
+        moved += 1;
+        expect(Math.abs(event.expected_delta["prod-1"] ?? 0)).toBe(purchase.items[0]?.packCount);
+      }
+    }
+    expect(moved).toBeGreaterThan(0);
   });
 
   it("recibe pedidos propios, a veces dos veces seguidas (2 eventos, el segundo 400 con {})", async () => {
