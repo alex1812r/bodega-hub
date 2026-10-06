@@ -302,3 +302,58 @@ en ambos modos.
 Los demás tests de `scripts/stock-lab/*.test.ts` (unitarios, sin base) siguen
 en `npm test`. Para un solo archivo:
 `npm run stock-lab:test -- scripts/stock-lab/regression/<archivo>.test.ts`.
+
+## Informe de producción (solo lectura)
+
+```bash
+npx tsx scripts/stock-lab/reconcile.ts --target production --read-only --run <id> [--store <uuid>] [--limit 20]
+```
+
+Único comando del laboratorio que toca producción, y solo para leer. La
+conexión sale del `.env` de la raíz (`NEXT_PUBLIC_SUPABASE_URL` → project ref y
+hosts candidatos, `SUPABASE_DB_PASS`), igual que `scripts/db-sql.mjs`; no usa
+`.env.stock-lab` ni `STOCK_LAB_DB_URL`. Exit 0 = sin descuadres, 2 = hay
+descuadres, 1 = error.
+
+Qué garantiza (`scripts/stock-lab/reconcile-readonly.ts`):
+
+- Sin `--read-only` aborta antes de abrir ninguna conexión.
+- Toda la sesión va en `begin transaction isolation level repeatable read,
+  read only` … `rollback`: Postgres rechaza cualquier escritura y todos los
+  conteos salen de la misma foto.
+- Todas las sentencias pasan por una única función (`createReadOnlyQuery`) que
+  solo deja salir `SELECT` / `WITH … SELECT`, ese `BEGIN` y `ROLLBACK`; rechaza
+  `INTO`, `FOR UPDATE`, CTE con escritura, varias sentencias y cualquier función
+  fuera de una lista corta (`nextval`, `set_config`, RPC del esquema…).
+- No crea ni usa objetos de los parches: las 9 comprobaciones de las vistas de
+  integridad v2 van como `SELECT` inline, y antes mira en `information_schema`
+  qué columnas existen.
+- El informe se escribe solo en `scripts/stock-lab/runs/<id>/` (gitignored):
+  `reconcile.json` (mismo formato que en lab más `host` y `readOnly`) y
+  `reconcile.md`.
+
+Cómo leer `reconcile.md`:
+
+- **Cabecera y Avisos**: «Orden de la cadena» dice `seq` o `created_at,id`. Sin
+  `stock_movements.seq` aparece el aviso «cadena ordenada por created_at,id:
+  puede haber falsos positivos bajo concurrencia»: las filas de
+  `stock_chain_breaks` (y la fecha del primer descuadre) son indicios, no
+  pruebas. Una comprobación con «no evaluable: falta <columna>» no se ejecutó:
+  su conteo es `-`, no 0 (en `report` del JSON cuenta 0; el estado real está en
+  `readOnly.checks`).
+- **Total** y una sección por **Tienda**: tabla de las 9 comprobaciones,
+  productos con diff ≠ 0, suma absoluta del diff, cadenas rotas, ventas y
+  compras recibidas sin movimiento.
+- **Los 20 peores**: sku, nombre, `current_stock`, Σ movimientos, diff y el
+  primer descuadre del producto: el primer movimiento cuyo `stock_after` no es
+  el anterior + su delta (fecha, id, valor esperado), o «diff sin rotura de
+  cadena: stock escrito fuera del libro» con la fecha de alta del producto y la
+  del último movimiento. `readOnly.diffProducts` del JSON trae lo mismo para
+  todos los productos con diff.
+- **Muestras**: hasta `--limit` filas por comprobación y tienda (contienen ids
+  y cantidades de producción: no sacar el directorio del run de la máquina).
+
+`scripts/stock-lab/regression/reconcile-readonly.test.ts` comprueba contra la
+base lab que el resultado inline coincide con las vistas v2 y que, tras quitar
+`seq` y las vistas dentro de una transacción con rollback, sigue detectando los
+descuadres inyectados.
