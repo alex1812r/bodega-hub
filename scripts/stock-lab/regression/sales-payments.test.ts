@@ -258,6 +258,62 @@ describe("C4 · la clave de idempotencia no devuelve una venta que no correspond
     }
     expect(resultado).toMatch(/^(rechazada|venta viva)$/);
   });
+
+  // Hallazgo G15 (`causes.md`, sin test propio en fase 4): dos peticiones simultáneas con la misma clave y el
+  // mismo carrito chocaban en `sales_store_client_request_unique` y la perdedora recibía 23505 → 409.
+  it("C4 · dos peticiones simultáneas con la misma clave y el mismo carrito devuelven la MISMA venta (sin 23505)", async () => {
+    const productId = await setup("producto", () => mkProduct("c4-carrera", 20));
+    const key = randomUUID();
+    const r = await setup("tasa", rate);
+    const [t1, t2] = await setup("conexiones", async () => [await lab.pg(), await lab.pg()]);
+    const pid2 = Number((await t2.query<{ pid: number }>("select pg_backend_pid() as pid")).rows[0]?.pid);
+
+    // Sin `p_invoice_number`, como el POS. Determinista: T1 registra la venta y NO confirma; T2 envía lo mismo y queda en espera; T1 confirma.
+    const call = async (client: Client): Promise<string> => {
+      await client.query("begin");
+      await actAs(client, lab.uids.vendedor1);
+      const res = await client.query<{ id: string }>(
+        `select (public.create_sale_with_payments(
+           p_customer_id => $1::uuid, p_items => $2::jsonb, p_payments => '[]'::jsonb,
+           p_ref_rate_ves => $3::numeric, p_client_request_id => $4::uuid)).id`,
+        [lab.customerId, JSON.stringify([{ product_id: productId, quantity: 2, unit_price_ref: 1 }]), r, key],
+      );
+      return String(res.rows[0]?.id);
+    };
+
+    let first = "";
+    let second = "";
+    try {
+      first = await setup("primera petición (sin confirmar)", () => call(t1));
+      const pending = call(t2)
+        .then(async (id) => {
+          await t2.query("commit");
+          return id;
+        })
+        .catch((error: unknown) => `${(error as { code?: string }).code ?? "error"} ${messageOf(error)}`);
+      await setup("la segunda petición en espera", async () => {
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          const waiting = await lab.rows("select pid from pg_stat_activity where pid = $1 and wait_event_type = 'Lock'", [pid2]);
+          if (waiting.length === 1) return;
+          await new Promise((done) => setTimeout(done, 100));
+        }
+        throw new Error("la segunda petición no llegó a esperar a la primera en 10 s");
+      });
+      await t1.query("commit");
+      second = await pending;
+    } finally {
+      await t1.query("rollback").catch(() => undefined);
+      await t2.query("rollback").catch(() => undefined);
+    }
+
+    const sales = await lab.rows("select id from public.sales where store_id = $1 and client_request_id = $2", [lab.storeId, key]);
+    // Sano: la segunda recibe la venta de la primera; una sola venta y el stock descontado una vez.
+    expect({ segunda: second === first ? "la misma venta" : second, ventas: sales.length, stock: await lab.stock(productId) }).toEqual({
+      segunda: "la misma venta",
+      ventas: 1,
+      stock: 18,
+    });
+  });
 });
 
 // Hipótesis H4 · hueco G3 · caso 9.4. Evento reproductor: ola `w5-chaos` caso `9.4.paid` (30/30), `w4-hyp`

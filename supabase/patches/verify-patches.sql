@@ -396,4 +396,66 @@ select
     where p.pronamespace = 'public'::regnamespace
       and has_function_privilege('anon', p.oid, 'execute')
   )
+union all
+select
+  'sales.client_request_hash + secuencia sales_invoice_seq (20261006b)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'sales' and column_name = 'client_request_hash'
+  ) and to_regclass('public.sales_invoice_seq') is not null
+union all
+select
+  'rpc create_sale: una sola firma, con p_client_request_id (20261006b)',
+  (
+    select count(*) = 1
+      and bool_and(pg_get_function_identity_arguments(p.oid) like '%p_invoice_number text, p_client_request_id uuid')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'create_sale'
+  )
+union all
+select
+  'rpc de ventas en modo estricto (sin set current_stock, stock por movimiento)',
+  (
+    select count(*) = 3 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('create_sale', 'cancel_sale', 'return_sale')
+      and p.prosrc not ilike '%set current_stock%'
+      and p.prosrc ilike '%insert into public.stock_movements%'
+      and p.prosrc ilike '%order by id%for update%'
+  )
+union all
+select
+  'create_sale y create_sale_with_payments validan la clave con sale_idempotent_replay (C4)',
+  (
+    select count(*) = 2 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('create_sale', 'create_sale_with_payments')
+      and p.prosrc ilike '%sale_idempotent_replay%'
+  )
+union all
+select
+  'return_sale anula pagos con cancel_payment_apply (C7)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'return_sale' and p.prosrc ilike '%cancel_payment_apply%'
+  )
+union all
+select
+  'register_payment rechaza ventas cancelada/devuelta (C8)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'register_payment'
+      and p.prosrc ilike '%No se puede registrar un pago en una venta cancelada o devuelta%'
+  )
+union all
+select
+  'funciones internas de ventas sin execute para authenticated',
+  (
+    select count(*) = 3 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('cancel_payment_apply', 'sale_idempotent_replay', 'sale_request_hash')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+  )
 order by 1;

@@ -307,3 +307,12 @@ notify pgrst, 'reload schema';
 -- Ejecutar: supabase/patches/20261006a-stock-ledger-guards.sql
 -- Idempotente, una transaccion. Las RPC de stock vigentes siguen funcionando (modo legado) hasta los parches b/c.
 -- OJO: desde este parche un INSERT de products con current_stock > 0 por PostgREST devuelve PT400 (ver STK-508).
+-- -----------------------------------------------------------------------------
+-- 20261006b — sales rpc hardening: create_sale (9 args, drop de la de 8), create_sale_with_payments, cancel_sale,
+--             return_sale, register_payment y cancel_payment en modo estricto del libro (C4, C7, C8, C10, C11, C15, C19)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261006b-sales-rpc-hardening.sql
+-- Requiere 20261006a y 20260909. Idempotente, una transaccion. Anade sales.client_request_hash y la secuencia
+-- sales_invoice_seq (las facturas nuevas salen como V-YYYYMMDD-NNNNNN).
+-- OJO: return_sale ahora anula los pagos activos de la venta; si el cierre de caja de un cobro ya fue transferido
+-- al baul la devolucion se rechaza (PT409) igual que cancel_payment.
