@@ -243,7 +243,49 @@ Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alerta
 
 **Conversion empaque→unidad (dual SKU):** vínculo en `product_pack_conversions`; movimiento emparejado `conversion_salida` + `conversion_entrada` con `conversion_id`. UI en detalle de producto e Inventario/movimientos.
 
-**Tabla:** `stock_movements`; stock actual en `products.current_stock`.
+**Campos opcionales (parche `20261006c`):** `clientRequestId` en ajustes y conversiones (misma clave por tienda → devuelve el resultado original sin mover nada); `saleId` / `purchaseId` en ajustes. Los tipos `devolucion_cliente` / `devolucion_proveedor` exigen el documento (400 sin él, parche `20261006g`) y el modal de ajuste ya no los ofrece.
+
+**Tabla:** `stock_movements` es el libro mayor y la fuente de verdad; `products.current_stock` es un derivado que solo escribe el trigger `stock_movements_apply` al insertar un movimiento (no se actualiza a mano ni desde una RPC). `stock_movements` es solo-append. Detalle, causas y despliegue: [`stock-integrity.md`](stock-integrity.md).
+
+### Vistas de integridad
+
+Nueve vistas en `public` (parches `20261005` y `20261006d`), con `store_id`, una fila por descuadre, y el oráculo `stock_integrity_report(p_store_id)`. Se consultan con `npm run stock-lab:reconcile`. Cómo leer cada fila: [`stock-integrity.md`](stock-integrity.md) §4.
+
+| Vista | Detecta |
+|-------|---------|
+| `stock_reconciliation` | `current_stock` ≠ Σ `quantity_delta` |
+| `stock_chain_breaks` | `stock_after` que no encadena con el movimiento anterior (orden por `seq`) |
+| `sales_without_movements` | Línea de venta viva sin movimiento o con delta distinto |
+| `purchases_without_movements` | Línea de compra recibida sin movimiento o con delta distinto |
+| `movements_without_document` | Movimiento de venta/compra sin documento, sin línea o con estado incoherente |
+| `reversal_mismatches` | Reversiones que no suman el opuesto, o reversión sobre un documento vivo |
+| `conversion_mismatches` | Par de conversión empaque→unidad incompleto o con razón inválida |
+| `negative_stock` | Stock o `stock_after` negativo |
+| `cross_store_movements` | Movimiento, producto y documento de tiendas distintas |
+
+### RPC modificadas por el plan de integridad
+
+Versión vigente = último parche de la columna. Ninguna escribe `products.current_stock`: insertan el movimiento con `stock_after` NULL.
+
+| RPC / objeto | Vigente en | Cambio |
+|--------------|-----------|--------|
+| `stock_movements_apply()` (trigger), `products_stock_guard()` | `20261006e` (creados en `20261006a`) | Único escritor de `current_stock`; guard por GUC `app.stock_writer` |
+| `stock_movements_append_only` | `20261006g` | update/delete/truncate del libro → `PT409` |
+| `assert_store_context` | `20261006a` | Rechaza perfiles inactivos o inexistentes |
+| `create_sale`, `create_sale_with_payments` | `20261006h` | `p_client_request_id` + huella del contenido, numeración por secuencia, bloqueo ordenado, precio y descuento del vendedor, guarda de finitud |
+| `cancel_sale` | `20261006g` | Repone vendido − ya devuelto; rechaza `borrador` |
+| `return_sale`, `cancel_payment` | `20261006b` | Estados `pagada`/`pendiente_pago`; anula los pagos activos en la misma transacción |
+| `cancel_payment_apply` | `20261006h` | Interna; bloquea la sesión de caja abierta |
+| `register_payment` | `20261006h` | Rechaza documentos en estado terminal y `borrador`; guarda de finitud |
+| `create_purchase` | `20261006h` | `p_client_request_id`, `units_per_pack` validado contra el par, numeración por secuencia, guarda de finitud |
+| `receive_purchase` | `20261006c` | Solo `pedido` (`PT409`) |
+| `cancel_purchase`, `return_purchase` | `20261006f` | `return_purchase` exige `recibido`; ambas exigen anular antes los pagos |
+| `adjust_stock` | `20261006g` | Firma `(p_product_id, p_quantity_delta, p_reason, p_type, p_client_request_id, p_sale_id, p_purchase_id)`; devoluciones solo ligadas a documento y con tope |
+| `convert_pack_to_units` | `20261006c` | `p_client_request_id`; par y productos bloqueados en orden |
+| `update_product_price`, `register_supplier_product_price`, `deactivate_supplier_product` | `20261006h` | Filtro de tienda, `PT403`, guarda de finitud |
+| `record_cash_close_difference` | `20261006f` | Ya no ejecutable por cualquier usuario autenticado |
+
+Errores de negocio: SQLSTATE `PT400` / `PT403` / `PT404` / `PT409` (PostgREST responde con ese HTTP).
 
 **Pendiente:** anular movimiento (filtros de movimiento en API opcionales).
 

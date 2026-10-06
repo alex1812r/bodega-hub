@@ -75,6 +75,24 @@ Orden individual (si prefieres uno por uno):
 | 28 | `20260815b-one-shot-backfill-vault-delilicor-purchase.sql` | One-shot: depósito efectivo + pago + `purchase_out` baúl para `C-20260815204121850` (Delilicor) |
 | 29 | `20260815c-one-shot-transfer-malta-manz-verd.sql` | One-shot: transfiere 6 u `mal-port-175-lt` → `mal-port-manz-verd-1-75lt` (mismo precio/costo) |
 
+La tabla anterior cubre los primeros parches. El orden completo y vigente (43 parches estructurales, hasta `20261006i`) es el que aplica `npm run stock-lab:db-up`: ver la sección 13, "Orden real aplicado". Bloque de integridad de inventario, que se aplica al final, en este orden y junto (despliegue y riesgos en [`stock-integrity.md`](stock-integrity.md) §7):
+
+| Orden | Archivo | Que agrega |
+|-------|---------|------------|
+| 1 | `20260909-create-sale-with-payments.sql` | RPC `create_sale_with_payments` (venta + pagos atomicos) y `sales.client_request_id` |
+| 2 | `20261005-stock-integrity-views.sql` | 9 vistas de integridad + `stock_integrity_report` |
+| 3 | `20261006a-stock-ledger-guards.sql` | `stock_movements.seq`, trigger `stock_movements_apply`, guard de `products.current_stock`, RLS/grants de documentos |
+| 4 | `20261006b-sales-rpc-hardening.sql` | RPC de ventas y pagos: idempotencia con huella, numeracion por secuencia, bloqueo ordenado |
+| 5 | `20261006c-purchases-inventory-rpc-hardening.sql` | RPC de compras, ajustes y conversiones: idempotencia, `stock_request_keys` |
+| 6 | `20261006d-stock-integrity-views-v2.sql` | Vistas v2 (cadena por `seq`, documentos mutados) |
+| 7 | `20261006e-stock-ledger-strict.sql` | Libro en modo estricto (elimina el modo legado de `a`) |
+| 8 | `20261006f-rpc-review-fixes.sql` | Correcciones del revisor de RPC (R1, R2, R3, R5, R6, R9) |
+| 9 | `20261006g-rpc-review-fixes-2.sql` | Devoluciones solo ligadas a documento, libro solo-append por trigger |
+| 10 | `20261006h-rls-store-scope-and-finite-guards.sql` | RLS por tienda en lineas e historiales, caja y baul solo por RPC, guarda de NaN/Infinity en RPC |
+| 11 | `20261006i-reject-non-finite-numeric-columns.sql` | Triggers que rechazan NaN/Infinity en columnas `numeric` (21 tablas) |
+
+De `20261006a` a `20261006e` no se admite aplicar solo una parte. Reaplicar `a` exige reaplicar `e`; reaplicar `b`, `c` o `f` exige reaplicar `g` y `h`.
+
 **Importante:** el patch 4b/4c **no** están embebidos en `apply-all-pending.sql`. Ejecuta **4a → 4b → 4c** en Runs separados del SQL Editor (PostgreSQL no permite usar un enum nuevo en la misma transacción donde se agregó).
 
 Los patches son **idempotentes** (se pueden re-ejecutar). Requieren que el schema base y RPCs auxiliares (`append_supplier_product_price_history`, `current_user_role`) ya existan.
@@ -198,9 +216,13 @@ Ver guía: [`cash-auto-close-github-actions.md`](cash-auto-close-github-actions.
 
 ## 13. Base de prueba local (stock-lab: db-up)
 
-Receta reproducible para levantar, en Docker, una base **igual a producción**
-(schema + todos los parches estructurales + seed) sin tocar ningún proyecto
-remoto. Es la base que usa `docs/agent-prompts/stock-integrity-gtm.md`.
+`npm run stock-lab:db-up` es la forma **oficial** de levantar una base **igual a
+producción**: receta reproducible que construye en Docker el esquema base +
+todos los parches estructurales en orden + seed + superadmin y termina con
+`verify-patches.sql`, sin tocar ningún proyecto remoto. Resuelve además que
+`supabase-schema.sql` por sí solo está desactualizado. Es la base que usa
+`docs/agent-prompts/stock-integrity-gtm.md`; el resto de comandos del
+laboratorio está en [`stock-integrity.md`](stock-integrity.md) §5.
 
 ### Requisitos
 
@@ -243,8 +265,9 @@ Cada archivo se ejecuta como una sola `query` multi-statement con `pg`:
    (`to_regclass('public.profiles') is null`). Sobre una base ya parcheada no es
    re-aplicable (las vistas con `store_id` no se pueden "replace" sin
    `store_id`); para partir de cero usa `db-reset`.
-2. `supabase/patches/*.sql` estructurales, ordenados por nombre, con dos
-   overrides porque el sufijo `a` ordena DESPUÉS del archivo base pero esos
+2. `supabase/patches/*.sql` estructurales (`selectStructuralPatches` en
+   `pipeline.ts`; exclusiones más abajo), ordenados por nombre, con dos
+   overrides (`PATCH_ORDER_OVERRIDES`) porque el sufijo `a` ordena DESPUÉS del archivo base pero esos
    parches agregan valores de enum que el principal usa (PostgreSQL 55P04):
    - `20260716a-user-role-superadmin.sql` antes de `20260716-multi-store.sql`
      (y luego `20260716b-multi-store-views.sql`).
@@ -255,12 +278,16 @@ Cada archivo se ejecuta como una sola `query` multi-statement con `pg`:
 5. `supabase/patches/verify-patches.sql`: imprime `ok=N fail=M` y lista las
    filas en `false`; si hay alguna termina con exit 1 **después** del resumen.
 
-Parches aplicados (34): 20260705, 20260706, 20260707, 20260716a, 20260716,
+Parches aplicados (43): 20260705, 20260706, 20260707, 20260716a, 20260716,
 20260716b, 20260717, 20260809, 20260810, 20260810b, 20260810c, 20260810d,
 20260811a, 20260811, 20260811b, 20260811c, 20260811d, 20260812c, 20260812d,
 20260813, 20260813b, 20260813h, 20260819, 20260903, 20260904, 20260904b,
 20260904c, 20260905, 20260906, 20260906b, 20260906c, 20260907, 20260909,
-20261005.
+20261005, 20261006a, 20261006b, 20261006c, 20261006d, 20261006e, 20261006f,
+20261006g, 20261006h, 20261006i.
+
+Un parche nuevo entra solo, por nombre, al final de esa lista; debe añadir
+sus checks a `verify-patches.sql`.
 
 ### Invariantes de inventario
 
@@ -274,6 +301,9 @@ de cada vista: si las nueve claves están en 0 el inventario cuadra. Para ver el
 detalle: `select * from public.stock_reconciliation where store_id = '<uuid>'`.
 Las vistas usan `security_invoker` (aplican las RLS); la función es
 `security definer` y fuerza la tienda del usuario si no es superadmin.
+`20261006d-stock-integrity-views-v2.sql` reemplaza cuatro de las nueve (cadena
+ordenada por `stock_movements.seq`, documentos mutados fuera de las RPC). Cómo
+leer cada fila: [`stock-integrity.md`](stock-integrity.md) §4.
 
 Test de inyección de descuadres (`scripts/stock-lab/reconcile.test.ts`): con la
 base arriba (`npm run stock-lab:db-up`) correr `npx jest scripts/stock-lab/reconcile.test.ts`;
@@ -285,7 +315,8 @@ Sin base, o sin el parche aplicado, los tests quedan `skipped` con un aviso en c
 
 - Por nombre: `*one-shot*`, `*query*`, `*diagnostic*`, `apply-all-pending.sql`
   (agregador), `verify-patches.sql` (se corre al final), `20260716c` (va tras
-  el seed).
+  el seed). El one-shot `20261006z-one-shot-stock-resync.sql` (escrito y no
+  aplicado) queda fuera por esta regla.
 - Por contenido (`DATA_ONLY_PATCHES` en `pipeline.ts`): parecen estructurales
   por nombre pero corrigen filas concretas de producción (ids hardcoded):
   `20260810d-fix-existing-purchase-payment`, `20260819b-fix-cash-close-cab7b096`,
@@ -311,5 +342,7 @@ Sin base, o sin el parche aplicado, los tests quedan `skipped` con un aviso en c
 - `db-reset` completo: **66–127 s** (`supabase db reset` reinicia los servicios
   dependientes). Objetivo < 3 min cumplido.
 
-Resultado: `verify-patches.sql ok=33 fail=0`, `stores=1`, `products=0` (el seed
+Resultado al 2026-10-06 (43 parches): `verify-patches.sql ok=92 fail=0`,
+`db-reset` en 51–81 s. Resultado original del 2026-10-05 (34 parches):
+`verify-patches.sql ok=33 fail=0`, `stores=1`, `products=0` (el seed
 base no trae productos; los crea `seed-lab`), `create_sale_with_payments=yes`.
