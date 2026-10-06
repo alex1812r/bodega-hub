@@ -23,6 +23,7 @@ import {
   matchesInventoryMovementFilters,
   parseInventoryMovementFilters,
 } from "../utils/inventoryMovementFilters";
+import { assertReturnAdjustmentHasDocument } from "./returnAdjustmentDocument";
 
 export function listInventory(searchParams: URLSearchParams, storeId: string) {
   const filters = parseInventoryListFilters(searchParams);
@@ -109,6 +110,8 @@ type StockAdjustmentInput = {
  * ligados al mismo documento.
  */
 function assertLinkedReturnAllowed(input: StockAdjustmentInput, storeId: string) {
+  assertReturnAdjustmentHasDocument(input);
+
   if (input.saleId && input.type !== "devolucion_cliente") {
     throw new ApiError(400, "BAD_REQUEST", "Solo una devolucion de cliente puede ligarse a una venta");
   }

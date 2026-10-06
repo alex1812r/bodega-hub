@@ -26,6 +26,7 @@ import {
 import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
+import { assertReturnAdjustmentHasDocument } from "./returnAdjustmentDocument";
 import { isMissingRpcSignatureError, rpcWithClientRequestId } from "./rpcWithClientRequestId";
 
 const productSummarySelect =
@@ -196,9 +197,10 @@ export async function createStockAdjustment(
   },
   storeId: string,
 ) {
+  assertReturnAdjustmentHasDocument(input);
   await assertSupabaseStoreResource("products", input.productId, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
-  // Solo viajan si el cliente los envio: sin ellos la llamada es la de siempre.
+  // Solo viajan en una devolucion ligada: el resto de ajustes llama como siempre.
   const documentLink = {
     ...(input.saleId ? { p_sale_id: input.saleId } : {}),
     ...(input.purchaseId ? { p_purchase_id: input.purchaseId } : {}),

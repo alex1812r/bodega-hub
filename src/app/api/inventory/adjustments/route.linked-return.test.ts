@@ -65,6 +65,27 @@ describe("/api/inventory/adjustments · devolucion ligada a su documento (R4)", 
   });
 
   it.each([
+    [
+      "devolucion_cliente sin saleId",
+      { quantityDelta: 1, type: "devolucion_cliente" },
+      /debe indicar la venta/i,
+    ],
+    [
+      "devolucion_proveedor sin purchaseId",
+      { quantityDelta: -1, type: "devolucion_proveedor" },
+      /debe indicar la compra/i,
+    ],
+  ])("responde 400 con %s, con mensaje claro, y no llama al servicio", async (_caso, extra, message) => {
+    const response = await post({ productId: "prod-cable", ...extra });
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error.code).toBe("BAD_REQUEST");
+    expect(payload.error.message).toMatch(message);
+    expect(createStockAdjustment).not.toHaveBeenCalled();
+  });
+
+  it.each([
     ["saleId que no es uuid", { saleId: "sale-001", type: "devolucion_cliente" }],
     ["purchaseId que no es uuid", { purchaseId: "purchase-001", type: "devolucion_proveedor" }],
     ["saleId con ajuste_entrada", { saleId: SALE_ID, type: "ajuste_entrada" }],

@@ -125,16 +125,44 @@ describe("inventory.server · devolucion ligada a su documento (R4)", () => {
     ]);
   });
 
-  it("sin vinculo la llamada no lleva p_sale_id ni p_purchase_id", async () => {
+  it.each([
+    [
+      "devolucion_cliente sin saleId",
+      { productId: PRODUCT_ID, quantityDelta: 2, type: "devolucion_cliente" as const },
+      /debe indicar la venta/i,
+    ],
+    [
+      "devolucion_proveedor sin purchaseId",
+      { productId: PRODUCT_ID, quantityDelta: -2, type: "devolucion_proveedor" as const },
+      /debe indicar la compra/i,
+    ],
+  ])("%s responde 400 y no llama a la RPC ni consulta la base", async (_caso, input, message) => {
+    const rpc = jest.fn().mockResolvedValue({ data: movementRow, error: null });
+    mountRpc(rpc);
+
+    const error = await createStockAdjustment(input, DEFAULT_STORE_ID).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toMatchObject({ code: "BAD_REQUEST", status: 400 });
+    expect((error as Error).message).toMatch(message);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(createRouteSupabaseClient).not.toHaveBeenCalled();
+    expect(createAdminSupabaseClient).not.toHaveBeenCalled();
+  });
+
+  it("un ajuste que no es devolucion no lleva p_sale_id ni p_purchase_id", async () => {
     const rpc = jest.fn().mockResolvedValue({ data: movementRow, error: null });
     mountRpc(rpc);
 
     await createStockAdjustment(
-      { productId: PRODUCT_ID, quantityDelta: 2, type: "devolucion_cliente" },
+      { productId: PRODUCT_ID, quantityDelta: 2, type: "ajuste_entrada" },
       DEFAULT_STORE_ID,
     );
 
-    expect(rpc.mock.calls).toEqual([["adjust_stock", customerReturnArgs]]);
+    expect(rpc.mock.calls).toEqual([
+      ["adjust_stock", { ...customerReturnArgs, p_type: "ajuste_entrada" }],
+    ]);
   });
 
   it.each([
