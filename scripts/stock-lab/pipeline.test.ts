@@ -1,9 +1,13 @@
+import { readdirSync } from "node:fs";
+import { resolve } from "node:path";
+
 import {
   DATA_ONLY_PATCHES,
   PATCH_ORDER_OVERRIDES,
   STOCK_LAB_PROJECT_ID,
   applyStockLabConfig,
   failedChecks,
+  isStructuralPatch,
   selectStructuralPatches,
 } from "./pipeline";
 
@@ -70,6 +74,24 @@ describe("selectStructuralPatches", () => {
     for (const [patch, after] of PATCH_ORDER_OVERRIDES) {
       expect(selected.indexOf(patch)).toBeGreaterThan(selected.indexOf(after));
     }
+  });
+});
+
+describe("one-shot de resincronizacion de stock (STK-702)", () => {
+  const ONE_SHOT = "20261006z-one-shot-stock-resync.sql";
+  const realPatches = readdirSync(resolve(__dirname, "..", "..", "supabase", "patches"));
+
+  it("existe en supabase/patches y no es un parche estructural", () => {
+    expect(realPatches).toContain(ONE_SHOT);
+    expect(isStructuralPatch(ONE_SHOT)).toBe(false);
+  });
+
+  it("no entra en el pipeline del laboratorio sobre el listado real de parches", () => {
+    const selected = selectStructuralPatches(realPatches);
+    expect(selected).not.toContain(ONE_SHOT);
+    expect(selected.filter((name) => /one-shot/.test(name))).toEqual([]);
+    // El resto de la serie 20261006 si se aplica: el filtro no se la lleva por delante.
+    expect(selected).toContain("20261006e-stock-ledger-strict.sql");
   });
 });
 
