@@ -1,0 +1,20 @@
+{
+  "products": [
+    { "id": "prod-a", "sku": "LAB-HOT-01", "name": "Producto A", "current_stock": 107, "is_active": true },
+    { "id": "prod-b", "sku": "LAB-HOT-02", "name": "Producto B", "current_stock": 51, "is_active": true },
+    { "id": "prod-c", "sku": "LAB-HOT-03", "name": "Producto C", "current_stock": 30, "is_active": true },
+    { "id": "prod-d", "sku": "LAB-004", "name": "Producto D (sin tocar)", "current_stock": 9, "is_active": false }
+  ],
+  "movements": [
+    { "id": "m-a0", "product_id": "prod-a", "type": "ajuste", "quantity_delta": 100, "stock_after": 100, "sale_id": null, "purchase_id": null, "conversion_id": null, "created_at": "2026-10-05T09:00:00.000Z" },
+    { "id": "m-a1", "product_id": "prod-a", "type": "venta", "quantity_delta": -2, "stock_after": 98, "sale_id": "sale-1", "purchase_id": null, "conversion_id": null, "created_at": "2026-10-05T10:00:00.400Z" },
+    { "id": "m-a2", "product_id": "prod-a", "type": "compra", "quantity_delta": 10, "stock_after": 108, "sale_id": null, "purchase_id": "pur-1", "conversion_id": null, "created_at": "2026-10-05T10:00:01.400Z" },
+    { "id": "m-a3", "product_id": "prod-a", "type": "devolucion", "quantity_delta": 2, "stock_after": 110, "sale_id": "sale-1", "purchase_id": null, "conversion_id": null, "created_at": "2026-10-05T10:00:10.400Z" },
+    { "id": "m-a4", "product_id": "prod-a", "type": "venta", "quantity_delta": -3, "stock_after": 107, "sale_id": "sale-6", "purchase_id": null, "conversion_id": null, "created_at": "2026-10-05T10:00:12.400Z" },
+    { "id": "m-b1", "product_id": "prod-b", "type": "venta", "quantity_delta": -3, "stock_after": 47, "sale_id": "sale-2", "purchase_id": null, "conversion_id": null, "created_at": "2026-10-05T10:00:02.400Z" },
+    { "id": "m-b2", "product_id": "prod-b", "type": "ajuste", "quantity_delta": 4, "stock_after": 51, "sale_id": null, "purchase_id": null, "conversion_id": null, "created_at": "2026-10-05T10:00:11.400Z" },
+    { "id": "m-c1", "product_id": "prod-c", "type": "ajuste", "quantity_delta": 5, "stock_after": 35, "sale_id": null, "purchase_id": null, "conversion_id": null, "created_at": "2026-10-05T10:00:03.400Z" },
+    { "id": "m-c2", "product_id": "prod-c", "type": "venta", "quantity_delta": -2, "stock_after": 33, "sale_id": "sale-4", "purchase_id": null, "conversion_id": null, "created_at": "2026-10-05T10:00:07.400Z" },
+    { "id": "m-c3", "product_id": "prod-c", "type": "venta", "quantity_delta": -1, "stock_after": 30, "sale_id": "sale-5", "purchase_id": null, "conversion_id": null, "created_at": "2026-10-05T10:00:09.400Z" }
+  ]
+}

@@ -24,7 +24,8 @@
     "stock-lab:db-up": "npx tsx scripts/stock-lab/db-up.ts up",
     "stock-lab:db-down": "npx tsx scripts/stock-lab/db-up.ts down",
     "stock-lab:db-reset": "npx tsx scripts/stock-lab/db-up.ts reset",
-    "stock-lab:dev": "npx tsx scripts/stock-lab/dev.ts"
+    "stock-lab:dev": "npx tsx scripts/stock-lab/dev.ts",
+    "stock-lab:run": "npx tsx scripts/stock-lab/run.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.49",
