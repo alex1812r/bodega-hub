@@ -5,8 +5,7 @@
  * STK-413 · regresión de C5(a) (POST /api/sales sin clave de idempotencia) y del
  * caso de C12 que vive en la ruta (cuerpo JSON inválido → 500).
  *
- * Los `it.failing` describen el comportamiento SANO y hoy fallan: al corregir la
- * ruta/servicio (fase 5) hay que convertirlos en `it`.
+ * Nacieron como `it.failing` (STK-413) y pasaron a `it` con el arreglo de STK-507.
  */
 
 jest.mock("../../../lib/supabase/route-client", () => ({
@@ -100,7 +99,7 @@ describe("C5 · POST /api/sales sin clave de idempotencia", () => {
   // Evento: caos/9.1.md (`9.1.no_key_x2`: 201+201, 60 ventas / stock 16 en vez de 18, 30/30).
   // Código: src/app/api/sales/route.ts:21 (`.optional()`) y
   // src/modules/sales/services/sales.server.ts:396-408 (`atomic`).
-  it.failing.each([
+  it.each([
     [
       "sin cobros (create_sale)",
       { customerId: CUSTOMER_ID, items: [{ productId: PRODUCT_ID, quantity: 2 }], refRateVes: 510 },
@@ -128,6 +127,43 @@ describe("C5 · POST /api/sales sin clave de idempotencia", () => {
       serverErrors: [first.status, second.status].filter((status) => status >= 500),
     }).toEqual({ distinctSaleCreations: expect.any(Number), serverErrors: [] });
     expect(sales.distinctSaleCreations()).toBeLessThanOrEqual(1);
+  });
+
+  // La ruta rechaza con 400 antes de tocar la base: sin clave no hay creacion.
+  it("responde 400 y no llama a la base si falta clientRequestId", async () => {
+    const sales = mountSalesRpc();
+
+    const response = await postSale(
+      JSON.stringify({
+        customerId: CUSTOMER_ID,
+        items: [{ productId: PRODUCT_ID, quantity: 2 }],
+        refRateVes: 510,
+      }),
+    );
+    const payload = (await response.json()) as { error?: { issues?: unknown } };
+
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(payload.error?.issues)).toContain("clientRequestId");
+    expect(sales.rpc).not.toHaveBeenCalled();
+  });
+
+  // Sin cobros tambien va por el RPC atomico (con `p_payments = []`) y con la clave.
+  it("una venta sin cobros usa create_sale_with_payments con la clave y p_payments vacio", async () => {
+    const sales = mountSalesRpc();
+
+    const response = await postSale(
+      JSON.stringify({
+        clientRequestId: CLIENT_REQUEST_ID,
+        customerId: CUSTOMER_ID,
+        items: [{ productId: PRODUCT_ID, quantity: 2 }],
+        refRateVes: 510,
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(sales.rpc.mock.calls.map(([name, args]) => [name, args?.p_client_request_id, args?.p_payments])).toEqual([
+      ["create_sale_with_payments", CLIENT_REQUEST_ID, []],
+    ]);
   });
 
   // Control (sano hoy): con la clave del POS las dos peticiones llegan al RPC
