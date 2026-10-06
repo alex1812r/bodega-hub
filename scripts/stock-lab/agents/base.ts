@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 
 import { ApiClient, unwrapList, type ApiResponse, type JsonRecord } from "../../e2e-bodegon/client";
-import { assertAllowedWriteHost, loadStockLabEnv } from "../env";
+import { labApiUrl } from "../env";
 import type { AgentArgs } from "./cli";
 import type { EventLogger } from "./logger";
 import type { Rng } from "./rng";
@@ -25,7 +25,6 @@ export const LAB_USERS: Record<LabRoleKey, { email: string; role: string }> = {
   contador: { email: "lab-contador@lab.local", role: "contador" },
 };
 
-export const DEFAULT_LAB_API_URL = "http://localhost:3100";
 export const HOT_SKU_PREFIX = "LAB-HOT-";
 
 export type LabProduct = {
@@ -54,49 +53,12 @@ export type AgentContext = {
 // Host guard
 // ---------------------------------------------------------------------------
 
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+// La guarda vive en ../env.ts, junto al archivo lab que es su raíz de confianza.
+export { assertLabApiHost, isLoopbackEquivalent, labApiUrl } from "../env";
 
-/**
- * `localhost` y `127.0.0.1` (y `::1`) son el mismo loopback, pero
- * `assertAllowedWriteHost` compara literal. Devuelve true si ambos hosts son
- * loopback o si son iguales (case-insensitive).
- */
-export function isLoopbackEquivalent(hostA: string, hostB: string | undefined): boolean {
-  const a = hostA.trim().toLowerCase();
-  const b = hostB?.trim().toLowerCase() ?? "";
-  if (!a || !b) return false;
-  if (a === b) return true;
-  return LOOPBACK_HOSTS.has(a) && LOOPBACK_HOSTS.has(b);
-}
-
-/**
- * Valida que `url` apunte al host permitido para escrituras del laboratorio,
- * aceptando equivalencias de loopback. Devuelve el hostname.
- */
-export function assertLabApiHost(url: string, allowedHost: string | undefined): string {
-  let hostname = "";
-  try {
-    hostname = new URL(url.trim()).hostname;
-  } catch {
-    hostname = "";
-  }
-  if (hostname && isLoopbackEquivalent(hostname, allowedHost)) {
-    return hostname;
-  }
-  // Mismo mensaje/regla que el resto del laboratorio (regla 1.4).
-  return assertAllowedWriteHost(url, allowedHost);
-}
-
-export function labApiUrl(): string {
-  return process.env.STOCK_LAB_API_URL ?? DEFAULT_LAB_API_URL;
-}
-
-/** Cliente HTTP contra el BFF del laboratorio; lanza si el host no es el permitido. */
+/** Cliente HTTP contra el BFF del laboratorio; lanza si la URL no es la del BFF lab. */
 export function createLabClient(): ApiClient {
-  const url = labApiUrl();
-  const env = loadStockLabEnv();
-  assertLabApiHost(url, env.STOCK_TEST_ALLOW_WRITES_HOST);
-  return new ApiClient(url);
+  return new ApiClient(labApiUrl());
 }
 
 // ---------------------------------------------------------------------------

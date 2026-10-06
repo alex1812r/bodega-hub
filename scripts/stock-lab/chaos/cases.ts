@@ -987,7 +987,8 @@ export async function openLab(runId: string): Promise<Lab> {
     if (!value) throw new Error(`${key} no está definida (process.env o .env.stock-lab)`);
     return value;
   };
-  const allowedHost = process.env.STOCK_TEST_ALLOW_WRITES_HOST ?? file.STOCK_TEST_ALLOW_WRITES_HOST;
+  // El host permitido sale solo del archivo lab, nunca del entorno heredado (C21).
+  const allowedHost = file.STOCK_TEST_ALLOW_WRITES_HOST;
   const dbUrl = get("STOCK_LAB_DB_URL");
   const supabaseUrl = get("NEXT_PUBLIC_SUPABASE_URL");
   assertAllowedWriteHost(dbUrl, allowedHost);

@@ -17,7 +17,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { assertAllowedWriteHost, loadStockLabEnv } from "./env";
+import { DEFAULT_LAB_PORT, assertAllowedWriteHost, loadStockLabEnv } from "./env";
 
 export const REQUIRED_KEYS = [
   "NEXT_PUBLIC_SUPABASE_URL",
@@ -29,7 +29,6 @@ export const REQUIRED_KEYS = [
   "NEXT_PUBLIC_ALLOW_DEMO_AUTH",
 ] as const;
 
-export const DEFAULT_LAB_PORT = "3100";
 
 export type LabServerMode = "dev" | "start";
 

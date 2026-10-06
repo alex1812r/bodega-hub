@@ -9,6 +9,8 @@ import { resolve } from "node:path";
 
 export const STOCK_LAB_ENV_FILE = ".env.stock-lab";
 export const STOCK_LAB_ENV_EXAMPLE = ".env.stock-lab.example";
+/** Puerto del BFF del laboratorio cuando el archivo lab no declara `PORT`. */
+export const DEFAULT_LAB_PORT = "3100";
 
 function repoRootDir(): string {
   // scripts/stock-lab/env.ts -> raíz del repo = dos niveles arriba.
@@ -155,20 +157,7 @@ export function assertAllowedWriteHost(
   allowedHost: string | undefined,
   labEnv: Record<string, string | undefined> = loadStockLabEnv(),
 ): string {
-  const declared = allowedHost?.trim();
-  const expected = labEnv.STOCK_TEST_ALLOW_WRITES_HOST?.trim();
-  if (!declared || !expected) {
-    throw new Error(
-      `STOCK_TEST_ALLOW_WRITES_HOST no está definido${declared ? ` en ${STOCK_LAB_ENV_FILE}` : ""}: ` +
-        `me niego a escribir contra una base sin host permitido explícito ${RULE}.`,
-    );
-  }
-  if (declared.toLowerCase() !== expected.toLowerCase()) {
-    throw new Error(
-      `El host permitido declarado ("${declared}") no es el de ${STOCK_LAB_ENV_FILE} ("${expected}"). ` +
-        `El host permitido sale solo del archivo del laboratorio, no del entorno heredado ${RULE}.`,
-    );
-  }
+  const expected = assertDeclaredAllowedHost(allowedHost, labEnv);
   const target = parseTarget(urlOrConn);
   if (target.hostname.toLowerCase() !== expected.toLowerCase()) {
     throw new Error(
@@ -185,4 +174,121 @@ export function assertAllowedWriteHost(
     );
   }
   return target.hostname;
+}
+
+/** El host permitido declarado tiene que ser el del archivo lab; devuelve el del archivo. */
+function assertDeclaredAllowedHost(
+  allowedHost: string | undefined,
+  labEnv: Record<string, string | undefined>,
+): string {
+  const declared = allowedHost?.trim();
+  const expected = labEnv.STOCK_TEST_ALLOW_WRITES_HOST?.trim();
+  if (!declared || !expected) {
+    throw new Error(
+      `STOCK_TEST_ALLOW_WRITES_HOST no está definido${declared ? ` en ${STOCK_LAB_ENV_FILE}` : ""}: ` +
+        `me niego a escribir contra una base sin host permitido explícito ${RULE}.`,
+    );
+  }
+  if (declared.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error(
+      `El host permitido declarado ("${declared}") no es el de ${STOCK_LAB_ENV_FILE} ("${expected}"). ` +
+        `El host permitido sale solo del archivo del laboratorio, no del entorno heredado ${RULE}.`,
+    );
+  }
+  return expected;
+}
+
+// ---------------------------------------------------------------------------
+// BFF del laboratorio
+// ---------------------------------------------------------------------------
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+/**
+ * `localhost` y `127.0.0.1` (y `::1`) son el mismo loopback. Devuelve true si
+ * ambos hosts son loopback o si son iguales (case-insensitive).
+ */
+export function isLoopbackEquivalent(hostA: string, hostB: string | undefined): boolean {
+  const a = hostA.trim().toLowerCase();
+  const b = hostB?.trim().toLowerCase() ?? "";
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return LOOPBACK_HOSTS.has(a) && LOOPBACK_HOSTS.has(b);
+}
+
+function labApiPort(labEnv: Record<string, string | undefined>): string {
+  return labEnv.PORT?.trim() || DEFAULT_LAB_PORT;
+}
+
+/**
+ * Única puerta de la URL del BFF: `http`, host loopback, sin usuario/contraseña y
+ * con el puerto del BFF del laboratorio (`PORT` del archivo lab, o 3100). Un
+ * `next dev` normal del repo escucha en loopback con el entorno de producción, así
+ * que «es loopback» no basta. Los mensajes nombran solo el host, nunca la URL.
+ */
+function parseLabApiUrl(url: string, labEnv: Record<string, string | undefined>): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+    if (!parsed.hostname) throw new Error("sin hostname");
+  } catch {
+    throw new Error(`La URL del BFF del laboratorio no es válida: no se pudo extraer el host ${RULE}.`);
+  }
+  if (!isLoopbackEquivalent(parsed.hostname, "localhost")) {
+    throw new Error(
+      `El host "${parsed.hostname}" no es el host permitido para el BFF del laboratorio (solo loopback) ${RULE}.`,
+    );
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error(`La URL del BFF del laboratorio no puede llevar usuario ni contraseña ${RULE}.`);
+  }
+  if (parsed.protocol !== "http:") {
+    throw new Error(
+      `El esquema "${parsed.protocol}" no es el del BFF del laboratorio (solo http en loopback) ${RULE}.`,
+    );
+  }
+  const port = parsed.port || "80";
+  const expectedPort = labApiPort(labEnv);
+  if (port !== expectedPort) {
+    throw new Error(
+      `El puerto ${port} de "${parsed.hostname}" no es el del BFF del laboratorio ` +
+        `(${expectedPort} según ${STOCK_LAB_ENV_FILE}): ahí puede escuchar una app con otro entorno ${RULE}.`,
+    );
+  }
+  return parsed;
+}
+
+/**
+ * Valida que `url` sea el BFF del laboratorio (ver `parseLabApiUrl`) y que
+ * `allowedHost` sea el del archivo lab. Devuelve el hostname.
+ */
+export function assertLabApiHost(
+  url: string,
+  allowedHost: string | undefined,
+  labEnv: Record<string, string | undefined> = loadStockLabEnv(),
+): string {
+  assertDeclaredAllowedHost(allowedHost, labEnv);
+  return parseLabApiUrl(url, labEnv).hostname;
+}
+
+/**
+ * URL (origen) del BFF del laboratorio, ya validada. Sale SOLO del archivo lab:
+ * `STOCK_LAB_API_URL` si lo declara, si no `http://localhost:<PORT>`. Un
+ * `STOCK_LAB_API_URL` heredado del entorno no la cambia: si no coincide con la del
+ * archivo, se aborta en vez de ignorarlo en silencio.
+ */
+export function labApiUrl(
+  labEnv: Record<string, string | undefined> = loadStockLabEnv(),
+  processEnv: Record<string, string | undefined> = process.env,
+): string {
+  const declared = labEnv.STOCK_LAB_API_URL?.trim() || `http://localhost:${labApiPort(labEnv)}`;
+  const origin = parseLabApiUrl(declared, labEnv).origin;
+  const inherited = processEnv.STOCK_LAB_API_URL?.trim();
+  if (inherited && parseLabApiUrl(inherited, labEnv).origin !== origin) {
+    throw new Error(
+      `STOCK_LAB_API_URL del entorno heredado no es la URL del BFF de ${STOCK_LAB_ENV_FILE} (${origin}). ` +
+        `La URL del BFF sale solo del archivo del laboratorio ${RULE}.`,
+    );
+  }
+  return origin;
 }
