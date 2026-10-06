@@ -337,3 +337,12 @@ notify pgrst, 'reload schema';
 -- solo al final) y stock_integrity_report no cambia. Quita a anon el acceso a las 9 vistas.
 -- OJO: en una base con historia pueden aparecer filas nuevas (documentos editados a mano por one-shots): revisar
 -- movements_without_document.issue y reversal_mismatches.issue antes de darlas por descuadre de stock.
+-- -----------------------------------------------------------------------------
+-- 20261006e — stock ledger strict: stock_movements_apply sin modo legado (ignora el stock_after del llamador) y
+--             products_stock_guard sin el pase de funciones security definer
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261006e-stock-ledger-strict.sql
+-- Requiere 20261006a, b y c APLICADOS ANTES (con una RPC de stock antigua viva, sus ventas/compras fallarian con PT409).
+-- Idempotente, una transaccion. Reaplicar 20261006a reinstala el modo legado: volver a aplicar este parche despues.
+-- OJO one-shots por SQL Editor: insertar en stock_movements YA mueve products.current_stock (no hacer ademas el update
+-- a mano) y el stock_after escrito a mano se descarta.

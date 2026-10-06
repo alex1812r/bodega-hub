@@ -193,13 +193,14 @@ describe("stock_integrity_report + vistas de integridad (base local stock-lab)",
         expect(await report(tx, fx.storeId)).toEqual({ ...ZERO_REPORT, stock_reconciliation: 1 });
       });
 
-      // 3. Movimiento con stock_after incoherente (cadena rota).
+      // 3. Movimiento con stock_after incoherente (cadena rota). Desde 20261006e el trigger fija el saldo
+      // (y mueve el producto a 9) al insertar: el valor incoherente se inyecta con un UPDATE posterior.
       await withSavepoint(tx, async () => {
         const inserted = await tx.query<IdRow>(
-          "insert into public.stock_movements (product_id, store_id, type, quantity_delta, stock_after, created_at) values ($1, $2, 'ajuste_entrada', 1, 99, now() + interval '1 minute') returning id",
+          "insert into public.stock_movements (product_id, store_id, type, quantity_delta, created_at) values ($1, $2, 'ajuste_entrada', 1, now() + interval '1 minute') returning id",
           [fx.productId, fx.storeId],
         );
-        await tx.query("update public.products set current_stock = 9 where id = $1", [fx.productId]);
+        await tx.query("update public.stock_movements set stock_after = 99 where id = $1", [inserted.rows[0].id]);
         const rows = await tx.query<ChainBreakRow>(
           "select movement_id, expected_stock_after, stock_after from public.stock_chain_breaks where store_id = $1",
           [fx.storeId],
@@ -229,12 +230,16 @@ describe("stock_integrity_report + vistas de integridad (base local stock-lab)",
         expect(await report(tx, fx.storeId)).toEqual({ ...ZERO_REPORT, sales_without_movements: 1 });
       });
 
-      // 5. stock_after negativo en un movimiento (products.current_stock tiene check >= 0).
+      // 5. stock_after negativo en un movimiento (products.current_stock tiene check >= 0). Desde 20261006e
+      // el trigger rechaza la salida sin stock: entra una salida de 1 (stock 7) y se reescribe a -9 / -1.
       await withSavepoint(tx, async () => {
         const inserted = await tx.query<IdRow>(
-          "insert into public.stock_movements (product_id, store_id, type, quantity_delta, stock_after, created_at) values ($1, $2, 'ajuste_salida', -9, -1, now() + interval '1 minute') returning id",
+          "insert into public.stock_movements (product_id, store_id, type, quantity_delta, created_at) values ($1, $2, 'ajuste_salida', -1, now() + interval '1 minute') returning id",
           [fx.productId, fx.storeId],
         );
+        await tx.query("update public.stock_movements set quantity_delta = -9, stock_after = -1 where id = $1", [
+          inserted.rows[0].id,
+        ]);
         const rows = await tx.query<NegativeStockRow>(
           "select source, product_id, movement_id, value from public.negative_stock where store_id = $1",
           [fx.storeId],
@@ -242,7 +247,7 @@ describe("stock_integrity_report + vistas de integridad (base local stock-lab)",
         expect(rows.rows).toEqual([
           { source: "movement", product_id: fx.productId, movement_id: inserted.rows[0].id, value: -1 },
         ]);
-        // El libro queda en -1 frente a current_stock 8: tambien descuadra la conciliacion.
+        // El libro queda en -1 frente a current_stock 7: tambien descuadra la conciliacion.
         expect(await report(tx, fx.storeId)).toEqual({ ...ZERO_REPORT, negative_stock: 1, stock_reconciliation: 1 });
       });
 

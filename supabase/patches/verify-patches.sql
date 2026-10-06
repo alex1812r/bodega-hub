@@ -524,12 +524,12 @@ select
 union all
 select
   'solo stock_movements_apply escribe products.current_stock',
-  -- products_stock_guard (20261006a) solo lo menciona en un comentario del pase TRANSITORIO.
-  not exists (
-    select 1 from pg_proc p
+  -- 20261006e: ninguna otra funcion de public contiene el texto, ni siquiera en un comentario.
+  (
+    select coalesce(array_agg(p.proname::text order by p.proname), '{}') = array['stock_movements_apply']
+    from pg_proc p
     where p.pronamespace = 'public'::regnamespace
       and p.prosrc ilike '%set current_stock%'
-      and p.proname not in ('stock_movements_apply', 'products_stock_guard')
   )
 union all
 select
@@ -606,6 +606,54 @@ select
       and not has_table_privilege('authenticated', c.oid, 'insert, update, delete')
       and not exists (
         select 1 from aclexplode(c.relacl) a where a.grantee = 0
+      )
+  )
+union all
+select
+  'stock_movements_apply en modo estricto: sin rama legada, siempre calcula stock_after (20261006e)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'stock_movements_apply'
+      and p.prosecdef
+      and p.prosrc not ilike '%stock_after is null%'
+      and p.prosrc not ilike '%stock_after is not null%'
+      and p.prosrc ilike '%new.stock_after := v_current_stock + new.quantity_delta%'
+      and p.prosrc ilike '%get diagnostics v_rows = row_count%'
+  )
+union all
+select
+  'products_stock_guard sin pase current_user: solo GUC app.stock_writer o sesion directa (20261006e)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'products_stock_guard'
+      and not p.prosecdef
+      and p.prosrc not ilike '%current_user%'
+      and p.prosrc ilike '%app.stock_writer%'
+      and p.prosrc ilike '%session_user in (''postgres'', ''supabase_admin'')%'
+  )
+union all
+select
+  'ninguna funcion de public inserta movimientos indicando stock_after (20261006e)',
+  not exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.prosrc ~* 'insert[[:space:]]+into[[:space:]]+(public[.])?stock_movements[[:space:]]*[(][^)]*stock_after'
+  )
+union all
+select
+  'toda funcion de public sin execute para anon ni public (20261006e)',
+  not exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and (
+        has_function_privilege('anon', p.oid, 'execute')
+        or exists (
+          select 1
+          from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+          where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+        )
       )
   )
 order by 1;
