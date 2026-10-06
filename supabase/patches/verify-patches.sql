@@ -716,4 +716,86 @@ select
       and p.prosrc ilike '%numeric_value_out_of_range%'
       and p.prosrc ilike '%jsonb_typeof(v_%) is distinct from ''object''%'
   )
+union all
+select
+  'adjust_stock exige la venta / compra en las devoluciones (20261006g, R4)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'adjust_stock'
+      and p.prosrc ilike '%v_type = ''devolucion_cliente'' and p_sale_id is null%'
+      and p.prosrc ilike '%v_type = ''devolucion_proveedor'' and p_purchase_id is null%'
+  )
+union all
+select
+  'update_product_price, register_supplier_product_price y deactivate_supplier_product filtran por la tienda del contexto (20261006g)',
+  (
+    select count(*) = 3 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('update_product_price', 'register_supplier_product_price', 'deactivate_supplier_product')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=public']
+      and p.prosrc ilike '%v_store_id := public.assert_store_context()%'
+      and p.prosrc ilike '%and store_id = v_store_id%'
+      and p.prosrc ilike '%errcode = ''PT404''%'
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+  )
+union all
+select
+  'funciones internas de caja y de historial de costos sin execute para authenticated (20261006g, R12)',
+  (
+    select count(*) = 2 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('get_open_cash_session_for_user', 'append_supplier_product_price_history')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and has_function_privilege('service_role', p.oid, 'execute')
+  )
+union all
+select
+  'cancel_payment_apply comprueba el baul antes de borrar el asiento bancario (20261006g, R7)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'cancel_payment_apply'
+      and p.prosrc ilike '%no encontrado para revertir el cobro en cuenta%'
+      and p.prosrc ilike '%no encontrado para revertir el pago desde cuenta%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+  )
+union all
+select
+  'stock_movements solo-append por trigger: update, delete y truncate (20261006g, R11)',
+  (
+    select count(*) = 2
+      and bool_or(t.tgname = 'trg_stock_movements_append_only' and (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2
+                  and (t.tgtype & 8) = 8 and (t.tgtype & 16) = 16)
+      and bool_or(t.tgname = 'trg_stock_movements_no_truncate' and (t.tgtype & 2) = 2 and (t.tgtype & 32) = 32)
+    from pg_trigger t
+    where t.tgrelid = 'public.stock_movements'::regclass
+      and not t.tgisinternal
+      and t.tgenabled <> 'D'
+      and t.tgfoid = to_regprocedure('public.stock_movements_append_only()')
+  ) and exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'stock_movements_append_only'
+      and p.prosrc ilike '%session_user in (''postgres'', ''supabase_admin'')%'
+  )
+union all
+select
+  'ninguna funcion de public modifica ni borra stock_movements (20261006g, R11)',
+  not exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.prosrc ~* '(update|delete[[:space:]]+from|truncate)[[:space:]]+(table[[:space:]]+)?(only[[:space:]]+)?(public[.])?stock_movements([^_a-z0-9]|$)'
+  )
+union all
+select
+  'cancel_sale y register_payment rechazan la venta en borrador (20261006g, R17)',
+  (
+    select count(*) = 2 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('cancel_sale', 'register_payment')
+      and p.prosrc ilike '%v_sale.status not in (''pagada'', ''pendiente_pago'')%'
+  )
 order by 1;

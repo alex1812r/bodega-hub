@@ -359,3 +359,18 @@ notify pgrst, 'reload schema';
 -- cancel_sale. Las compras que YA quedaron cancelado / devuelto con un pago activo no se tocan (revisarlas a mano).
 -- auto_close_stale_cash_sessions, ensure_store_vault y record_cash_close_difference dejan de ser ejecutables por
 -- authenticated (el cron del BFF usa service_role; las RPC de caja las llaman como propietario).
+-- -----------------------------------------------------------------------------
+-- 20261006g — rpc review fixes 2 (STK-601): adjust_stock exige el documento en las devoluciones (R4),
+--             update_product_price / register_supplier_product_price / deactivate_supplier_product con contexto de
+--             tienda, funciones internas sin execute por /rpc (R12), cancel_payment_apply comprueba el baul (R7),
+--             stock_movements solo-append por trigger (R11) y cancel_sale / register_payment rechazan borradores (R17)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261006g-rpc-review-fixes-2.sql
+-- Requiere 20261006a, b, c, e y f, 20260705 y 20260811b. Idempotente, una transaccion. Ninguna firma cambia.
+-- Reaplicar 20261006b, c o f reinstala las versiones anteriores de esas RPC: volver a aplicar este parche despues.
+-- OJO: un ajuste devolucion_cliente / devolucion_proveedor SIN venta / compra ahora responde PT400 ("Una devolucion de
+-- cliente debe indicar la venta a la que corresponde" / "Una devolucion a proveedor debe indicar la compra a la que
+-- corresponde"): la UI y el BFF deben enviar saleId / purchaseId o dejar de ofrecer esos tipos como ajuste libre.
+-- OJO one-shots: update / delete / truncate sobre stock_movements solo pasan en conexion directa (SQL Editor: postgres);
+-- desde una funcion llamada por PostgREST responden PT409. get_open_cash_session_for_user y
+-- append_supplier_product_price_history dejan de ser ejecutables por authenticated (assert_contact_type no: el BFF la usa).
