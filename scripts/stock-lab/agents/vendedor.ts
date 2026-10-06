@@ -9,6 +9,7 @@ import { unwrapList, type ApiClient, type ApiResponse, type JsonRecord } from ".
 import {
   LAB_PASSWORD,
   LAB_USERS,
+  agentNote,
   createLabClient,
   describeError,
   fetchCatalog,
@@ -336,6 +337,13 @@ function pickCustomer(rng: Rng, state: VendedorState): string {
 }
 
 async function createSale(ctx: AgentContext, state: VendedorState): Promise<void> {
+  // Catálogo con activos pero todos agotados en la caché: condición transitoria
+  // de la ola (STK-626). Se anota y la iteración no envía nada; se comprueba
+  // antes de tocar el rng. Sin ningún activo sigue lanzando (error real).
+  if (ctx.catalog.some((p) => p.isActive) && sellable(ctx.catalog, new Set()).length === 0) {
+    agentNote(ctx, "venta omitida: todos los productos activos están sin stock en el catálogo en caché");
+    return;
+  }
   const lines = buildSaleLines(ctx.rng, ctx.catalog);
   const totalRef = round2(lines.reduce((sum, line) => sum + line.quantity * line.unitPriceRef, 0));
   const customerId = pickCustomer(ctx.rng, state);

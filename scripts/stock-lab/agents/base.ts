@@ -280,6 +280,29 @@ export async function runLoop(
 }
 
 // ---------------------------------------------------------------------------
+// Precondiciones transitorias
+// ---------------------------------------------------------------------------
+
+/**
+ * La operación elegida no se puede intentar AHORA con el catálogo en caché
+ * (sin inactivos, sin stock…) por lo que otros agentes están haciendo en la
+ * ola. No es un fallo del agente: quien la lanza no ha consumido rng ni ha
+ * enviado nada, y el `step` la sustituye o la omite con `agentNote` en vez
+ * de dejarla llegar a `runLoop` como `agent_error` (STK-626).
+ */
+export class PreconditionUnavailable extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PreconditionUnavailable";
+  }
+}
+
+/** Línea en el log del agente (stdout → `agents/<nombre>.log`); NO escribe en events.jsonl. */
+export function agentNote(ctx: AgentContext, message: string): void {
+  console.log(`[${ctx.logger.agent}] ${message}`);
+}
+
+// ---------------------------------------------------------------------------
 // Idempotencia
 // ---------------------------------------------------------------------------
 
