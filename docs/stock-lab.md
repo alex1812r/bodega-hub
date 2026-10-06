@@ -92,6 +92,12 @@ que exporta `setup(ctx)`, `step(ctx)` y `teardown(ctx)` (`AgentContext` de
 Los cuatro agentes comparten la semilla de `--seed` (determinista: `createRng`),
 los productos calientes `LAB-HOT-*` y el mismo archivo de eventos del run.
 
+Cada venta de los operadores (`vendedor`, `caos`) lleva un `clientRequestId`
+derivado de (semilla, run) con `idempotencyKey(rng, runId)` de `base.ts`: la
+misma semilla en el mismo run repite las claves y en otro run da claves
+distintas. `POST /api/sales` exige la clave, así que los casos de caos que la
+omiten a propósito (`9.1.no_key_*`) esperan 400 y cero ventas.
+
 ### Formato de `events.jsonl`
 
 Todos los agentes de un run hacen append a
@@ -116,6 +122,12 @@ request HTTP (un doble envío = dos líneas):
 Regla `expected_delta`: solo se rellena cuando la respuesta fue 2xx; en
 cualquier otro status el logger lo fuerza a `{}` (una operación rechazada no
 debe mover stock, y si lo mueve es justamente lo que queremos detectar).
+
+Reintentos idempotentes: dos eventos 2xx con el mismo `payload.clientRequestId`
+y el mismo `response_id` son una sola operación; `dedupeIdempotentReplays`
+(`expected-delta.ts`, lo aplica `summary.ts`) cuenta su `expected_delta` una
+sola vez. Misma clave con `response_id` distinto no se deduplica: es un doble
+descuento real.
 
 ## Corridas (run.ts)
 
