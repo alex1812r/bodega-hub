@@ -1,7 +1,12 @@
 import { ApiError, type ApiErrorCode } from "@/lib/api/apiError";
 import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { parsePagination, type PaginatedList } from "@/lib/api/pagination";
-import { getSupabaseErrorMessage, mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
+import {
+  getSupabaseErrorMessage,
+  mapSupabaseError,
+  mapSupabaseErrorByCode,
+  throwIfSupabaseError,
+} from "@/lib/supabase/errors";
 import { mapBaseEntity, mapNullableString } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { buildPaymentNotes, createPayment } from "@/modules/payments/services/payments.server";
@@ -226,6 +231,14 @@ function throwIfRpcError(error: unknown): void {
 
   if (mapped) {
     throw new ApiError(mapped.status, mapped.code, message);
+  }
+
+  // Antes que las reglas por mensaje: un 22P02 ("invalid input syntax…") o un
+  // 42501 ("permission denied for…") no deben salir con el texto de Postgres.
+  const mappedByCode = mapSupabaseErrorByCode(error);
+
+  if (mappedByCode) {
+    throw mappedByCode;
   }
 
   // Sin acentos: los mensajes de `register_payment` vienen acentuados.

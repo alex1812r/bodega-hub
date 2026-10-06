@@ -1118,8 +1118,20 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/IdempotencyConflict"
+          description: >-
+            Conflicto. La clave `clientRequestId` ya se uso con otro contenido, la
+            operacion choco con otra en curso (`error.details.retryable` = `true`),
+            la devolucion ligada (`saleId` / `purchaseId`) supera lo vendido o
+            recibido menos lo ya devuelto, el documento no esta en un estado
+            devolvible, o la base aun no admite devoluciones ligadas (en ese caso
+            no se registra nada: el servidor no repite la operacion sin el vinculo).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/inventory/conversions:
     post:
       tags: [Inventory]
@@ -4308,10 +4320,28 @@ components:
             misma clave devuelve el movimiento original sin mover stock.
         productId:
           type: string
+        purchaseId:
+          type: string
+          format: uuid
+          description: >-
+            Compra a la que se liga la devolucion. Solo valido con
+            `type: devolucion_proveedor` (400 con cualquier otro tipo). Con el vinculo
+            el servidor exige que la compra sea de la tienda, este recibida e incluya
+            el producto, y rechaza con 409 lo que supere lo recibido menos lo ya
+            devuelto. Sin el, la devolucion no tiene tope.
         quantityDelta:
           type: integer
         reason:
           type: string
+        saleId:
+          type: string
+          format: uuid
+          description: >-
+            Venta a la que se liga la devolucion. Solo valido con
+            `type: devolucion_cliente` (400 con cualquier otro tipo). Con el vinculo
+            el servidor exige que la venta sea de la tienda, este pagada o pendiente
+            de pago e incluya el producto, y rechaza con 409 lo que supere lo vendido
+            menos lo ya devuelto. Sin el, la devolucion no tiene tope.
         type:
           $ref: "#/components/schemas/StockMovementType"
     DashboardSummary:

@@ -5,6 +5,10 @@ import {
   mockCategories,
   mockProductPackConversions,
   mockProducts,
+  mockPurchaseItems,
+  mockPurchases,
+  mockSaleItems,
+  mockSales,
   mockStockMovements,
   type StockMovementType,
 } from "@/shared/mocks/erp-data";
@@ -70,13 +74,7 @@ function requestKeyFor(operation: string, storeId: string, clientRequestId?: str
 }
 
 export function createStockAdjustment(
-  input: {
-    clientRequestId?: string;
-    productId: string;
-    quantityDelta: number;
-    reason?: string;
-    type?: StockMovementType;
-  },
+  input: StockAdjustmentInput & { clientRequestId?: string },
   storeId: string,
 ) {
   const requestKey = requestKeyFor("adjustment", storeId, input.clientRequestId);
@@ -95,17 +93,134 @@ export function createStockAdjustment(
   return movement;
 }
 
-function applyStockAdjustment(
-  input: {
-    productId: string;
-    quantityDelta: number;
-    reason?: string;
-    type?: StockMovementType;
-  },
-  storeId: string,
-) {
+type StockAdjustmentInput = {
+  productId: string;
+  purchaseId?: string;
+  quantityDelta: number;
+  reason?: string;
+  saleId?: string;
+  type?: StockMovementType;
+};
+
+/**
+ * R4 / C15, como `adjust_stock`: una devolucion ligada a su venta o compra exige
+ * el documento en la tienda, en un estado devolvible, con ese producto, y no
+ * puede superar lo vendido (o recibido) menos lo ya devuelto con movimientos
+ * ligados al mismo documento.
+ */
+function assertLinkedReturnAllowed(input: StockAdjustmentInput, storeId: string) {
+  if (input.saleId && input.type !== "devolucion_cliente") {
+    throw new ApiError(400, "BAD_REQUEST", "Solo una devolucion de cliente puede ligarse a una venta");
+  }
+
+  if (input.purchaseId && input.type !== "devolucion_proveedor") {
+    throw new ApiError(400, "BAD_REQUEST", "Solo una devolucion a proveedor puede ligarse a una compra");
+  }
+
+  if (input.saleId) {
+    // Como la RPC: la venta de otra tienda "no existe" (404), no es un 403.
+    const sale = mockSales.find(
+      (item) => item.id === input.saleId && (item.storeId ?? DEFAULT_STORE_ID) === storeId,
+    );
+
+    if (!sale) {
+      throw new ApiError(404, "NOT_FOUND", "Venta no encontrada");
+    }
+
+    if (input.quantityDelta < 0) {
+      throw new ApiError(400, "BAD_REQUEST", "Este tipo de ajuste requiere quantity_delta positivo");
+    }
+
+    if (sale.status === "cancelada" || sale.status === "devuelta") {
+      throw new ApiError(409, "CONFLICT", "La venta ya fue cancelada o devuelta");
+    }
+
+    if (sale.status !== "pagada" && sale.status !== "pendiente_pago") {
+      throw new ApiError(409, "CONFLICT", "Solo se pueden devolver ventas pagadas o pendientes de pago");
+    }
+
+    const sold = mockSaleItems
+      .filter((item) => item.saleId === input.saleId && item.productId === input.productId)
+      .reduce((total, item) => total + item.quantity, 0);
+
+    if (sold === 0) {
+      throw new ApiError(400, "BAD_REQUEST", "El producto no pertenece a la venta indicada");
+    }
+
+    const alreadyReturned = mockStockMovements
+      .filter(
+        (movement) =>
+          movement.saleId === input.saleId &&
+          movement.productId === input.productId &&
+          movement.type === "devolucion_cliente",
+      )
+      .reduce((total, movement) => total + movement.quantityDelta, 0);
+
+    if (input.quantityDelta > sold - alreadyReturned) {
+      throw new ApiError(
+        409,
+        "CONFLICT",
+        `La devolucion supera lo vendido en la venta ${sale.invoiceNumber}: vendido ${sold}, ya devuelto ${alreadyReturned}`,
+      );
+    }
+  }
+
+  if (input.purchaseId) {
+    const purchase = mockPurchases.find(
+      (item) => item.id === input.purchaseId && (item.storeId ?? DEFAULT_STORE_ID) === storeId,
+    );
+
+    if (!purchase) {
+      throw new ApiError(404, "NOT_FOUND", "Compra no encontrada");
+    }
+
+    if (input.quantityDelta > 0) {
+      throw new ApiError(
+        400,
+        "BAD_REQUEST",
+        "ajuste_salida / devolucion_proveedor requiere quantity_delta negativo",
+      );
+    }
+
+    if (purchase.status === "cancelado" || purchase.status === "devuelto") {
+      throw new ApiError(409, "CONFLICT", "La compra ya fue cancelada o devuelta");
+    }
+
+    if (purchase.status !== "recibido") {
+      throw new ApiError(409, "CONFLICT", "Solo se pueden devolver compras recibidas");
+    }
+
+    const received = mockPurchaseItems
+      .filter((item) => item.purchaseId === input.purchaseId && item.productId === input.productId)
+      .reduce((total, item) => total + item.quantity, 0);
+
+    if (received === 0) {
+      throw new ApiError(400, "BAD_REQUEST", "El producto no pertenece a la compra indicada");
+    }
+
+    const alreadyReturned = mockStockMovements
+      .filter(
+        (movement) =>
+          movement.purchaseId === input.purchaseId &&
+          movement.productId === input.productId &&
+          movement.type === "devolucion_proveedor",
+      )
+      .reduce((total, movement) => total - movement.quantityDelta, 0);
+
+    if (-input.quantityDelta > received - alreadyReturned) {
+      throw new ApiError(
+        409,
+        "CONFLICT",
+        `La devolucion supera lo recibido en la compra ${purchase.purchaseNumber}: recibido ${received}, ya devuelto ${alreadyReturned}`,
+      );
+    }
+  }
+}
+
+function applyStockAdjustment(input: StockAdjustmentInput, storeId: string) {
   const product = mockProducts.find((item) => item.id === input.productId);
   assertMockStoreResource(product, storeId, "Producto no encontrado.");
+  assertLinkedReturnAllowed(input, storeId);
 
   const stockAfter = product.currentStock + input.quantityDelta;
 
@@ -119,8 +234,10 @@ function applyStockAdjustment(
     createdAt: new Date().toISOString(),
     id: `mov-mock-${Date.now()}`,
     productId: input.productId,
+    ...(input.purchaseId ? { purchaseId: input.purchaseId } : {}),
     quantityDelta: input.quantityDelta,
     reason: input.reason,
+    ...(input.saleId ? { saleId: input.saleId } : {}),
     stockAfter,
     storeId,
     type: input.type ?? "ajuste_entrada",

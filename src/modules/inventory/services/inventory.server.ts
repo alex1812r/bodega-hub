@@ -1,3 +1,4 @@
+import { ApiError } from "@/lib/api/apiError";
 import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList, parsePagination } from "@/lib/api/pagination";
 import {
@@ -25,7 +26,7 @@ import {
 import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
-import { rpcWithClientRequestId } from "./rpcWithClientRequestId";
+import { isMissingRpcSignatureError, rpcWithClientRequestId } from "./rpcWithClientRequestId";
 
 const productSummarySelect =
   "id, category_id, sku, barcode, name, sale_price_ref, current_cost_ref, current_stock, min_stock, image_url, is_active";
@@ -185,14 +186,23 @@ export async function createStockAdjustment(
   input: {
     clientRequestId?: string;
     productId: string;
+    /** Compra a la que se liga una `devolucion_proveedor` (tope recibido − ya devuelto). */
+    purchaseId?: string;
     quantityDelta: number;
     reason?: string;
+    /** Venta a la que se liga una `devolucion_cliente` (tope vendido − ya devuelto). */
+    saleId?: string;
     type?: StockMovementType;
   },
   storeId: string,
 ) {
   await assertSupabaseStoreResource("products", input.productId, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
+  // Solo viajan si el cliente los envio: sin ellos la llamada es la de siempre.
+  const documentLink = {
+    ...(input.saleId ? { p_sale_id: input.saleId } : {}),
+    ...(input.purchaseId ? { p_purchase_id: input.purchaseId } : {}),
+  };
   const { data, error } = await rpcWithClientRequestId(
     supabase,
     "adjust_stock",
@@ -203,7 +213,18 @@ export async function createStockAdjustment(
       p_type: input.type ?? null,
     },
     input.clientRequestId,
+    documentLink,
   );
+
+  // R4: la base no conoce el vinculo (faltan los parches 20261006). No se repite
+  // sin el: una devolucion sin documento no tiene tope y reabre el duplicado (C15).
+  if (Object.keys(documentLink).length > 0 && isMissingRpcSignatureError(error)) {
+    throw new ApiError(
+      409,
+      "CONFLICT",
+      "Esta base aun no admite devoluciones ligadas a una venta o compra. No se registro el movimiento.",
+    );
+  }
 
   throwIfSupabaseError(error);
 

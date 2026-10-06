@@ -128,6 +128,30 @@ describe("C12 · mapSupabaseError no convierte rechazos en 500", () => {
     expect(mapSupabaseError(error).status).toBe(400);
   });
 
+  // STK-517 · R6: 22P02 y 23514 reenviaban el texto de Postgres (tipo, valor,
+  // relación y nombre del constraint). Contrato de fase 5: nunca el texto crudo.
+  it.each<[string, PostgresErrorCase]>([
+    ["uuid inválido", { code: "22P02", message: 'invalid input syntax for type uuid: "no-es-uuid"' }],
+    ["entero inválido", { code: "22P02", message: 'invalid input syntax for type integer: "1.5"' }],
+    [
+      "enum inválido",
+      { code: "22P02", message: 'invalid input value for enum payment_method: "bitcoin"' },
+    ],
+    [
+      "check de descuento",
+      {
+        code: "23514",
+        message: 'new row for relation "sales" violates check constraint "sales_discount_ref_check"',
+      },
+    ],
+  ])("no reenvía al cliente el texto crudo de %s", (_caso, error) => {
+    const mapped = mapSupabaseError(error);
+
+    expect(mapped.status).toBe(400);
+    expect(mapped.code).toBe("BAD_REQUEST");
+    expect(mapped.message).toBe("Los datos enviados no son validos.");
+  });
+
   it("mantiene en 500 un error desconocido sin código", () => {
     const mapped = mapSupabaseError({ message: "connection terminated unexpectedly" });
 
