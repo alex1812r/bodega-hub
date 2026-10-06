@@ -187,6 +187,27 @@ export function buildImportRowBody(input: { sku: string; name: string; categoryI
   };
 }
 
+/** Documento al que se liga una devolución por ajuste (R4: sin él, `devolucion_*` es 400). */
+export type AdjustLink = { saleId?: string; purchaseId?: string };
+
+export function buildAdjustBody(input: { productId: string; quantityDelta: number; type: string; reason: string; link?: AdjustLink }): JsonRecord {
+  return {
+    productId: input.productId,
+    quantityDelta: input.quantityDelta,
+    type: input.type,
+    reason: input.reason,
+    ...(input.link?.saleId ? { saleId: input.link.saleId } : {}),
+    ...(input.link?.purchaseId ? { purchaseId: input.link.purchaseId } : {}),
+  };
+}
+
+/** Referencia que debe llevar el movimiento del ajuste: su documento si es una devolución ligada. */
+export function adjustRef(link: AdjustLink | undefined): MovementRef | null {
+  if (link?.saleId) return { kind: "sale", id: link.saleId };
+  if (link?.purchaseId) return { kind: "purchase", id: link.purchaseId };
+  return null;
+}
+
 /** Una venta solo debe aceptarse si el producto está activo y hay stock suficiente. */
 export function saleHttp(subject: { active: boolean; stock: number }, quantity: number): HttpExpectation {
   return subject.active && quantity <= subject.stock ? "accept" : "reject";
@@ -389,18 +410,19 @@ async function adjust(
   http: HttpExpectation,
   label: string,
   findingIfAccepted?: string,
+  link?: AdjustLink,
 ): Promise<OpResult> {
   const result = await c.h.op({
     as: STOCKER,
     method: "POST",
     path: "/api/inventory/adjustments",
-    body: { productId: subject.id, quantityDelta, type, reason: `S402 ${c.h.caseId}` },
+    body: buildAdjustBody({ productId: subject.id, quantityDelta, type, reason: `S402 ${c.h.caseId}`, link }),
     label,
     expect: {
       http,
       stockDelta: { [subject.id]: quantityDelta },
       movements: [{ productId: subject.id, type, quantityDelta }],
-      ref: null,
+      ref: adjustRef(link),
       ...(findingIfAccepted ? { findingIfAccepted } : {}),
     },
   });
@@ -795,7 +817,7 @@ export const OPS: OpDef[] = [
   },
   {
     key: "sale_return_partial",
-    title: "Devolución parcial de venta (hoy: ajuste devolucion_cliente; el API de ventas solo devuelve el total)",
+    title: "Devolución parcial de venta por ajuste devolucion_cliente: sin documento → 400; ligada a la venta (saleId) con tope vendido − ya devuelto",
     hypothesis: ["H4"],
     skip: skipZero,
     run: async (c) => {
@@ -803,14 +825,17 @@ export const OPS: OpDef[] = [
       const sale = await sell(c, subject, 3, "paid", "venta pagada de 3");
       if (!sale) return;
       await deactivateIfInactiveKind(c, subject);
-      const result = await adjust(c, subject, 1, "devolucion_cliente", flowHttp(subject), "devolución parcial de 1 por ajuste");
-      if (!result.accepted) return;
-      const linked = result.evaluation.actual.movements.some((movement) => movement.saleId === sale.id);
-      if (!linked) {
-        c.h.finding(
-          `no hay forma de ligar una devolución parcial a la venta: el ajuste devolucion_cliente +1 queda con sale_id null y la venta ${sale.id} sigue "${await saleStatus(c, sale.id)}" con cantidad 3`,
-        );
-      }
+      // R4 (20261006g): la devolución suelta ya no existe; 400 y ni un movimiento.
+      await adjust(c, subject, 1, "devolucion_cliente", "reject", "devolución de 1 SIN saleId (ajuste suelto)");
+      const link = { saleId: sale.id };
+      const first = await adjust(c, subject, 1, "devolucion_cliente", flowHttp(subject), "devolución parcial de 1 ligada a la venta", undefined, link);
+      if (!first.accepted) return;
+      // Tope: vendido 3, ya devuelto 1 → caben 2, no 3.
+      await adjust(c, subject, 3, "devolucion_cliente", "reject", "devolución de 3 ligada (supera el tope: quedan 2)", undefined, link);
+      const rest = await adjust(c, subject, 2, "devolucion_cliente", flowHttp(subject), "devolución de las 2 restantes ligada", undefined, link);
+      if (!rest.accepted) return;
+      await adjust(c, subject, 1, "devolucion_cliente", "reject", "devolución de 1 más (tope agotado)", undefined, link);
+      c.h.note(`la venta ${sale.id} queda "${await saleStatus(c, sale.id)}": la devolución ligada mueve stock, no el documento ni el cobro`);
     },
   },
   {
@@ -938,20 +963,22 @@ export const OPS: OpDef[] = [
   },
   {
     key: "purchase_return_partial",
-    title: "Devolver compra parcial (hoy: ajuste devolucion_proveedor; el API de compras solo devuelve el total)",
+    title: "Devolución parcial de compra por ajuste devolucion_proveedor: sin documento → 400; ligada a la compra (purchaseId) con tope recibido − ya devuelto",
     hypothesis: ["H4"],
     run: async (c) => {
       const subject = await createSubject(c);
       const purchase = await buy(c, subject, { mode: "unit", quantity: 10 }, { label: "compra 10 uds" });
       if (!purchase) return;
-      const result = await adjust(c, subject, -3, "devolucion_proveedor", flowHttp(subject), "devolución parcial de 3 por ajuste");
-      if (!result.accepted) return;
-      const linked = result.evaluation.actual.movements.some((movement) => movement.purchaseId === purchase.id);
-      if (!linked) {
-        c.h.finding(
-          `no hay forma de ligar una devolución parcial a la compra: el ajuste devolucion_proveedor -3 queda con purchase_id null y la compra ${purchase.id} sigue recibida por 10`,
-        );
-      }
+      // R4 (20261006g): la devolución suelta ya no existe; 400 y ni un movimiento.
+      await adjust(c, subject, -3, "devolucion_proveedor", "reject", "devolución de 3 SIN purchaseId (ajuste suelto)");
+      const link = { purchaseId: purchase.id };
+      const first = await adjust(c, subject, -3, "devolucion_proveedor", flowHttp(subject), "devolución parcial de 3 ligada a la compra", undefined, link);
+      if (!first.accepted) return;
+      // Tope: recibido 10, ya devuelto 3 → caben 7, no 8.
+      await adjust(c, subject, -8, "devolucion_proveedor", "reject", "devolución de 8 ligada (supera el tope: quedan 7)", undefined, link);
+      const rest = await adjust(c, subject, -7, "devolucion_proveedor", flowHttp(subject), "devolución de las 7 restantes ligada", undefined, link);
+      if (!rest.accepted) return;
+      await adjust(c, subject, -1, "devolucion_proveedor", "reject", "devolución de 1 más (tope agotado)", undefined, link);
     },
   },
   {

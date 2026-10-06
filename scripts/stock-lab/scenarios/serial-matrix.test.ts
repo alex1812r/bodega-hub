@@ -5,6 +5,8 @@ import {
   OPS,
   PACK_SIZES,
   adjustHttp,
+  adjustRef,
+  buildAdjustBody,
   buildImportRowBody,
   buildPurchaseBody,
   buildSaleBody,
@@ -198,5 +200,36 @@ describe("cálculo de esperados y payloads", () => {
   it("SKU con el prefijo del ticket, el run y un sufijo único", () => {
     expect(skuFor("stk402-smoke", "abc", "pack.purchase_received_pack_12")).toBe("S402-stk402-smoke-abc-pack-purchase-received-pack-12");
     expect(skuFor("r", "n", "iva.sale_paid", "u")).toBe("S402-r-n-iva-sale-paid-u");
+  });
+});
+
+describe("devoluciones por ajuste: solo ligadas a su documento (STK-603)", () => {
+  it("buildAdjustBody solo envía saleId / purchaseId cuando se liga la devolución", () => {
+    expect(buildAdjustBody({ productId: "p", quantityDelta: 1, type: "devolucion_cliente", reason: "r" })).toEqual({
+      productId: "p",
+      quantityDelta: 1,
+      type: "devolucion_cliente",
+      reason: "r",
+    });
+    expect(buildAdjustBody({ productId: "p", quantityDelta: 1, type: "devolucion_cliente", reason: "r", link: { saleId: "v" } })).toMatchObject({ saleId: "v" });
+    const purchase = buildAdjustBody({ productId: "p", quantityDelta: -3, type: "devolucion_proveedor", reason: "r", link: { purchaseId: "c" } });
+    expect(purchase).toMatchObject({ purchaseId: "c" });
+    expect(purchase).not.toHaveProperty("saleId");
+  });
+
+  it("el movimiento de una devolución ligada debe apuntar a su documento; el ajuste libre a ninguno", () => {
+    expect(adjustRef(undefined)).toBeNull();
+    expect(adjustRef({})).toBeNull();
+    expect(adjustRef({ saleId: "v" })).toEqual({ kind: "sale", id: "v" });
+    expect(adjustRef({ purchaseId: "c" })).toEqual({ kind: "purchase", id: "c" });
+  });
+
+  it("las celdas de devolución parcial ya no describen el ajuste suelto como camino vigente", () => {
+    for (const key of ["sale_return_partial", "purchase_return_partial"]) {
+      const op = OPS.find((item) => item.key === key);
+      expect(op?.title).toMatch(/sin documento → 400/);
+      expect(op?.title).toMatch(/ligada/);
+      expect(op?.title).not.toMatch(/hoy: ajuste/);
+    }
   });
 });
