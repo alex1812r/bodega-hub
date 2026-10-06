@@ -6,7 +6,10 @@ Supabase LOCAL. Nada de aquí toca producción: todo lee `.env.stock-lab`
 | Script | Qué hace |
 |---|---|
 | `npm run stock-lab:db-up` / `db-reset` / `db-down` | Levanta, reinicia o apaga el Supabase local y aplica schema + parches. |
-| `npm run stock-lab:dev` | Arranca el BFF en `http://localhost:3100` contra la base local. |
+| `npm run stock-lab:dev` | Arranca el BFF (`next dev --webpack`) en `http://localhost:3100` contra la base local. |
+| `npm run stock-lab:start` | Igual, pero en modo producción (`next build` + `next start`). Ver "BFF en modo producción". |
+| `npm run stock-lab:test` | Suite de regresión `scripts/stock-lab/regression/**` contra la base lab. Ver "Suite de regresión". |
+| `npm run stock-lab:scenarios` / `:ui` / `:chaos` / `:load` | Runners de la fase 4 (`scenarios/run.ts`, `ui/run.ts`, `chaos/run.ts`, `chaos/load.ts`). |
 | `npm run stock-lab:seed` | Crea (o recrea) la tienda `lab` con usuarios, catálogo y stock inicial. |
 | `npm run stock-lab:run` | Lanza los agentes operadores (paralelo o serial), reconcile y `summary.md`. |
 
@@ -197,3 +200,76 @@ en corridas paralelas (STK-308). Devuelve lo primero que ocurra en el tiempo:
 Con el culpable localizado, busca en `events.jsonl` por `response_id` o `ts`
 y en `agents/<agente>.log` el contexto de esa operación. Si la tabla está
 vacía, la suma esperada coincide con los movimientos y la cadena es válida.
+
+## BFF en modo producción
+
+`npm run stock-lab:start` (= `npx tsx scripts/stock-lab/dev.ts --start`) hace
+`next build` y después `next start -p 3100`, ambos con el entorno lab ya puesto
+en `process.env`. Mismas guardas que el modo dev (claves obligatorias y
+`assertAllowedWriteHost` sobre `NEXT_PUBLIC_SUPABASE_URL`).
+
+| Usa | Cuándo |
+|---|---|
+| `stock-lab:dev` | Iterar sobre el código del BFF (recarga en caliente) y corridas seriales cortas. |
+| `stock-lab:start` | Olas concurrentes, caos y carga: sin compilación bajo demanda, ~2,5× más operaciones por minuto en la misma máquina y sin el 500 "sin cuerpo". |
+
+- **Build**: ~90-100 s (Turbopack, el mismo `next build` del script `build`).
+  Sale a `.next/`; `next dev` usa `.next/dev/`, así que no se pisan.
+- **`--no-build`**: `npm run stock-lab:start -- --no-build` arranca en ~5 s
+  sobre el build existente. Úsalo para reiniciar el BFF tras cada
+  `stock-lab:db-reset` (el BFF hay que reiniciarlo siempre tras un reset).
+  Recompila sin el flag si cambió algo en `src/**` o en `.env.stock-lab`.
+- **Por qué el build es seguro**: `next build` inlinea las `NEXT_PUBLIC_*` en el
+  bundle y Next carga `.env.local` (producción), pero no pisa variables ya
+  presentes en el entorno, y el script pone antes las del lab. Además, antes de
+  cada `next start` (con o sin build) `assertBuildTargetsLab` revisa
+  `.next/static` y `.next/server` y se niega a servir si aparece un host
+  `<ref>.supabase.co` o si falta la URL lab. No uses `npx next build` ni
+  `npx next start` a mano sobre ese `.next`: te saltas el entorno y la guarda.
+- **Límite de la guarda**: las variables de `.env.local` que el archivo
+  stock-lab NO define (claves de IA, secretos de cron…) sí llegan al proceso,
+  igual que en modo dev.
+- **Parar el BFF en Windows** (Ctrl+C no siempre mata el árbol `npx` → `node`):
+
+  ```powershell
+  Get-NetTCPConnection -LocalPort 3100 -State Listen |
+    ForEach-Object { taskkill /PID $_.OwningProcess /T /F }
+  ```
+
+  o `netstat -ano | findstr :3100` y `taskkill /PID <pid> /T /F`. Con `/T` caen
+  también los hijos; el `npx`/`tsx` padre termina solo al morir el servidor.
+
+### Medición del 500 "sin cuerpo" (STK-401)
+
+Misma máquina y misma base (sin `db-reset` entre ambas),
+`stock-lab:run -- --agents 5 --minutes 2`:
+
+| modo | eventos | 500 total | 500 "sin cuerpo" | % | `Unexpected end of JSON input` en el log |
+|---|---|---|---|---|---|
+| `next dev --webpack` (seed 143) | 1296 | 36 | 2 | 0,15 % | 2 |
+| `next build` + `next start` (seed 42) | 3263 | 103 | 0 | 0 % | 0 |
+
+En dev los dos casos fueron `POST /api/sales/<id>/return` atendidos mientras
+Next compilaba esa ruta por primera vez (`next.js: 12.0s` de los 12,8 s de la
+respuesta). En producción no hay compilación bajo demanda y no apareció ni
+una vez en 3263 eventos: se trata como artefacto de `next dev`, no como bug de
+producto. Los demás 500 (`Solo se pueden recibir compras en estado pedido`,
+`No hay stock suficiente para revertir la compra`, `deadlock detected`) salen
+en ambos modos.
+
+## Suite de regresión (`stock-lab:test`)
+
+`npm run stock-lab:test` (= `jest --config jest.stock-lab.config.ts
+--runInBand`) corre SOLO `scripts/stock-lab/regression/**/*.test.ts`:
+
+- entorno `node` (sin jsdom ni `jest.setup.ts`), `testTimeout` de 120 s y en
+  serie (`maxWorkers: 1`), porque todos los tests comparten la base lab local
+  (`pg` + `STOCK_LAB_DB_URL` vía `loadStockLabEnv`, con `assertAllowedWriteHost`);
+- esos tests pueden FALLAR a propósito: reproducen bugs todavía sin corregir.
+  Por eso `npm test` (`jest.config.ts`) ignora la carpeta
+  (`testPathIgnorePatterns`) y sigue verde;
+- si la carpeta está vacía o no existe, termina con exit 0 (`passWithNoTests`).
+
+Los demás tests de `scripts/stock-lab/*.test.ts` (unitarios, sin base) siguen
+en `npm test`. Para un solo archivo:
+`npm run stock-lab:test -- scripts/stock-lab/regression/<archivo>.test.ts`.
