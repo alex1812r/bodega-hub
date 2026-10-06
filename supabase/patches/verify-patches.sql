@@ -368,4 +368,24 @@ select
     and not has_any_column_privilege('authenticated', 'public.purchases', 'update')
     and not has_column_privilege('authenticated', 'public.sales', 'status', 'update')
     and not has_column_privilege('authenticated', 'public.payments', 'amount_ves', 'update')
+union all
+select
+  '7 vistas de reportes con security_invoker',
+  (
+    select count(*) = 7 from pg_class c
+    where c.relnamespace = 'public'::regnamespace and c.relkind = 'v'
+      and c.relname in ('stock_card', 'daily_sales_summary', 'gross_profit_summary', 'product_profitability',
+        'customer_purchase_summary', 'supplier_purchase_summary', 'low_stock_products')
+      and c.reloptions @> array['security_invoker=true']
+  )
+union all
+select
+  'anon sin select en las 7 vistas de reportes',
+  not exists (
+    select 1 from pg_class c
+    where c.relnamespace = 'public'::regnamespace and c.relkind = 'v'
+      and c.relname in ('stock_card', 'daily_sales_summary', 'gross_profit_summary', 'product_profitability',
+        'customer_purchase_summary', 'supplier_purchase_summary', 'low_stock_products')
+      and has_table_privilege('anon', c.oid, 'select')
+  )
 order by 1;

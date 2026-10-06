@@ -255,6 +255,34 @@ to authenticated
 using (store_id = public.current_user_store_id() and public.current_user_role() in ('admin', 'contador'))
 with check (store_id = public.current_user_store_id() and public.current_user_role() in ('admin', 'contador'));
 
+-- -----------------------------------------------------------------------------
+-- 6. C18 — vistas de reportes: RLS del que consulta y sin acceso anonimo
+-- -----------------------------------------------------------------------------
+
+do $$
+declare
+  v_view text;
+begin
+  foreach v_view in array array[
+    'stock_card',
+    'daily_sales_summary',
+    'gross_profit_summary',
+    'product_profitability',
+    'customer_purchase_summary',
+    'supplier_purchase_summary',
+    'low_stock_products'
+  ]
+  loop
+    if to_regclass(format('public.%I', v_view)) is null then
+      continue;
+    end if;
+    execute format('alter view public.%I set (security_invoker = true)', v_view);
+    execute format('revoke all on public.%I from public, anon, authenticated', v_view);
+    execute format('grant select on public.%I to authenticated, service_role', v_view);
+  end loop;
+end;
+$$;
+
 commit;
 
 notify pgrst, 'reload schema';
