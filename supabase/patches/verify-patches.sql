@@ -858,4 +858,32 @@ select
       and c.relrowsecurity
       and has_table_privilege('authenticated', c.oid, 'SELECT')
   )
+union all
+select
+  'las RPC con numeric de entrada rechazan NaN / Infinity con assert_finite_numeric (20261006h, N4)',
+  (
+    select count(*) = 8 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('create_sale', 'create_sale_with_payments', 'create_purchase', 'register_payment',
+                        'update_product_price', 'register_supplier_product_price',
+                        'close_cash_session', 'register_vault_deposit')
+      and p.prosrc ilike '%v_store_id := public.assert_store_context();%perform public.assert_finite_numeric(%'
+  ) and exists (
+    select 1 from pg_proc p
+    where p.oid = to_regprocedure('public.assert_finite_numeric(numeric, text)')
+      and p.prosrc ilike '%''NaN''::numeric%''Infinity''::numeric%''-Infinity''::numeric%'
+      and p.prosrc ilike '%errcode = ''PT400''%'
+      and not has_function_privilege('anon', p.oid, 'execute')
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+  )
+union all
+select
+  'update_product_price, register_supplier_product_price y deactivate_supplier_product responden PT403 al rol no autorizado (20261006h, N6)',
+  (
+    select count(*) = 3 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('update_product_price', 'register_supplier_product_price', 'deactivate_supplier_product')
+      and p.prosrc ilike '%coalesce(public.current_user_role()::text, '''') not in (''admin'', ''almacen'')%errcode = ''PT403''%'
+      and p.prosrc not ilike '%if public.current_user_role() not in%'
+  )
 order by 1;

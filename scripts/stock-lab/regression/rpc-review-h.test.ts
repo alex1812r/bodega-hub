@@ -687,3 +687,190 @@ describe("N3 · caja y baúl solo se escriben por las RPC", () => {
     });
   });
 });
+
+// 13-rpc-review N4: `'NaN'::numeric < 0` es falso, cumple los CHECK `>= 0` y cabe en numeric(14,2). Con
+// `p_tax_ref = 'NaN'` por /rpc un vendedor dejaba ventas con total NaN (F2 no rechaza ningún cobro y
+// `daily_sales_summary` da NaN), las compras quedaban con total NaN (F3 saltable) y `update_product_price` /
+// `register_supplier_product_price` guardaban NaN (12-own-b-rpc-review.log, -2.log y -3.log). El barrido encontró
+// lo mismo en `close_cash_session` (cierre y asientos NaN) y `register_vault_deposit` (saldo del baúl NaN).
+describe("N4 · un parámetro numeric NaN / Infinity se rechaza con PT400 y no escribe nada", () => {
+  type Ctx = { product: string; sp: string; sessionId: string; saleId: string };
+  type Case = { rpc: string; param: string; value: string; campo: string; role: LabRoleKey; call: (ctx: Ctx) => { text: string; params: unknown[] } };
+
+  const saleCases = (fn: "create_sale" | "create_sale_with_payments"): Case[] =>
+    (
+      [
+        ["p_tax_ref", "NaN", "el impuesto"],
+        ["p_tax_ref", "Infinity", "el impuesto"],
+        ["p_discount_ref", "NaN", "el descuento"],
+        ["p_discount_ref", "-Infinity", "el descuento"],
+        ["p_ref_rate_ves", "NaN", "la tasa ref/VES"],
+      ] as const
+    ).map(([param, value, campo]) => ({ rpc: fn, param, value, campo, role: "vendedor1", call: (ctx) => saleCall(fn, ctx.product, { [param]: value }) }));
+
+  const purchaseCases: Case[] = (
+    [
+      ["p_tax_ref", "NaN", "el impuesto"],
+      ["p_tax_ves", "NaN", "el impuesto en Bs"],
+      ["p_discount_ref", "NaN", "el descuento"],
+      ["p_discount_ves", "NaN", "el descuento en Bs"],
+      ["p_subtotal_ref", "NaN", "el subtotal"],
+      ["p_subtotal_ves", "NaN", "el subtotal en Bs"],
+      ["p_subtotal_ves", "Infinity", "el subtotal en Bs"],
+      ["p_ref_rate_ves", "NaN", "la tasa ref/VES"],
+    ] as const
+  ).map(([param, value, campo]) => ({ rpc: "create_purchase", param, value, campo, role: "almacen", call: (ctx) => purchaseCall(ctx.product, 1, { [param]: value }) }));
+
+  const SP_PRICE = "select public.register_supplier_product_price($1::uuid, $2::numeric, $3::numeric, 'ajuste', null, $4::numeric, $5) as out";
+  const PAYMENT = `select id from public.register_payment(p_sale_id => $1::uuid, p_method => 'efectivo_ves', p_amount => $2::numeric,
+    p_change_method => $3::public.payment_method, p_change_amount => $4::numeric)`;
+
+  const CASES: Case[] = [
+    ...saleCases("create_sale"),
+    ...saleCases("create_sale_with_payments"),
+    ...purchaseCases,
+    ...["NaN", "Infinity"].map(
+      (value): Case => ({
+        rpc: "update_product_price",
+        param: "p_new_sale_price_ref",
+        value,
+        campo: "el precio de venta",
+        role: "almacen",
+        call: (ctx) => ({ text: "select id from public.update_product_price($1::uuid, $2::numeric, $3)", params: [ctx.product, value, TAG] }),
+      }),
+    ),
+    { rpc: "register_supplier_product_price", param: "p_new_cost_ref", value: "NaN", campo: "el costo", role: "almacen", call: (ctx) => ({ text: SP_PRICE, params: [ctx.sp, "NaN", 300, null, null] }) },
+    { rpc: "register_supplier_product_price", param: "p_new_cost_ves", value: "NaN", campo: "el costo en Bs", role: "almacen", call: (ctx) => ({ text: SP_PRICE, params: [ctx.sp, 3, "NaN", null, null] }) },
+    { rpc: "register_supplier_product_price", param: "p_new_pack_cost_ref", value: "NaN", campo: "el costo del empaque", role: "almacen", call: (ctx) => ({ text: SP_PRICE, params: [ctx.sp, 3, 300, "NaN", "pack"] }) },
+    { rpc: "register_payment", param: "p_amount", value: "NaN", campo: "el monto del pago", role: "vendedor1", call: (ctx) => ({ text: PAYMENT, params: [ctx.saleId, "NaN", null, 0] }) },
+    { rpc: "register_payment", param: "p_amount", value: "Infinity", campo: "el monto del pago", role: "vendedor1", call: (ctx) => ({ text: PAYMENT, params: [ctx.saleId, "Infinity", null, 0] }) },
+    { rpc: "register_payment", param: "p_change_amount", value: "NaN", campo: "el monto del vuelto", role: "vendedor1", call: (ctx) => ({ text: PAYMENT, params: [ctx.saleId, 999999, "efectivo_ves", "NaN"] }) },
+    { rpc: "close_cash_session", param: "p_closing_ves", value: "NaN", campo: "el monto de cierre en Bs", role: "admin", call: (ctx) => ({ text: "select id from public.close_cash_session($1::uuid, 'NaN', 0)", params: [ctx.sessionId] }) },
+    { rpc: "close_cash_session", param: "p_closing_ref", value: "NaN", campo: "el monto de cierre en REF", role: "admin", call: (ctx) => ({ text: "select id from public.close_cash_session($1::uuid, 0, 'NaN')", params: [ctx.sessionId] }) },
+    { rpc: "register_vault_deposit", param: "p_amount_ves", value: "NaN", campo: "el monto en Bs", role: "admin", call: () => ({ text: "select id from public.register_vault_deposit('NaN', 0, $1)", params: [TAG] }) },
+    { rpc: "register_vault_deposit", param: "p_amount_ref", value: "NaN", campo: "el monto en REF", role: "admin", call: () => ({ text: "select id from public.register_vault_deposit(0, 'NaN', $1)", params: [TAG] }) },
+  ];
+
+  async function context(): Promise<Ctx> {
+    const p = await product(db, "n4", 10);
+    const sp = await supplierProduct(db, "n4-rel");
+    const { sessionId } = await openSession(db, "n4");
+    await sql(db, "baúl de la tienda", "select public.ensure_store_vault($1::uuid)", [lab.storeId]);
+    return { product: p, sp, sessionId, saleId: (await sale(db, p, 1)).id };
+  }
+
+  /** Todo lo que estas RPC pueden escribir en la tienda, como texto (un NaN guardado se vería aquí). */
+  async function state(ctx: Ctx): Promise<Row> {
+    return one(
+      db,
+      "estado",
+      `select (select count(*)::int from public.sales where store_id = $1) as ventas,
+              (select count(*)::int from public.purchases where store_id = $1) as compras,
+              (select count(*)::int from public.payments where store_id = $1) as pagos,
+              (select count(*)::int from public.stock_movements where store_id = $1) as movimientos,
+              (select count(*)::int from public.cash_movements where store_id = $1) as asientos_caja,
+              (select count(*)::int from public.vault_movements where store_id = $1) as asientos_baul,
+              (select balance_ves::text || '/' || balance_efectivo_ves::text || '/' || balance_ref::text from public.store_vaults where store_id = $1) as baul,
+              (select sale_price_ref::text || '/' || current_stock::text from public.products where id = $2) as producto,
+              (select count(*)::int from public.product_price_history where product_id = $2) as historial_precio,
+              (select last_cost_ref::text || '/' || last_cost_ves::text from public.supplier_products where id = $3) as relacion,
+              (select count(*)::int from public.supplier_product_price_history where supplier_product_id = $3) as historial_costo,
+              (select status || '/' || coalesce(closing_ves::text, '-') from public.cash_sessions where id = $4) as sesion,
+              (select status::text || '/' || paid_ves::text || '/' || total_ves::text from public.sales where id = $5) as venta`,
+      [lab.storeId, ctx.product, ctx.sp, ctx.sessionId, ctx.saleId],
+    );
+  }
+
+  it.each(CASES)("N4 · $rpc($param => $value) responde PT400 y no cambia nada", async (c) => {
+    await withRollback(db, async () => {
+      const ctx = await context();
+      const before = await state(ctx);
+      const call = c.call(ctx);
+
+      const res = await as(db, c.role, call.text, call.params);
+
+      expect({ code: res.code, mensaje: res.message, estado: await state(ctx) }).toEqual({
+        code: "PT400",
+        mensaje: notFinite(c.campo),
+        estado: before,
+      });
+    });
+  });
+
+  it("N4 · los valores numéricos normales siguen pasando en las ocho RPC", async () => {
+    await withRollback(db, async () => {
+      const ctx = await context();
+      const saleOk = saleCall("create_sale", ctx.product, { p_discount_ref: 0.1, p_tax_ref: 0.16 });
+      const comboOk = saleCall("create_sale_with_payments", ctx.product, { p_discount_ref: null, p_tax_ref: 0 });
+      const purchaseOk = purchaseCall(ctx.product, 2);
+
+      const created = await as(db, "admin", saleOk.text, saleOk.params);
+      const combo = await as(db, "vendedor1", comboOk.text, comboOk.params);
+      const bought = await as(db, "almacen", purchaseOk.text, purchaseOk.params);
+      const priced = await as(db, "almacen", "select sale_price_ref::float8 as precio from public.update_product_price($1::uuid, 7.25, $2)", [ctx.product, TAG]);
+      const cost = await as(db, "almacen", SP_PRICE, [ctx.sp, 3, 300, 36, "pack"]);
+      const paid = await as(db, "admin", BANK_PAYMENT, [ctx.saleId, null, rateVes]);
+      const deposit = await as(db, "admin", "select balance_efectivo_ves::float8 >= 50.5 as ok from public.register_vault_deposit(50.5, 0, $1)", [TAG]);
+      const closed = await as(db, "admin", "select status, closing_ves::float8 as contado from public.close_cash_session($1::uuid, 0, 0)", [ctx.sessionId]);
+
+      const total = created.rows[0] ? Number(created.rows[0].total_ves) : null;
+      expect({
+        codes: [created.code, combo.code, bought.code, priced.code, cost.code, paid.code, deposit.code, closed.code],
+        totalVenta: total !== null && Math.abs(total - Math.round(1.06 * rateVes * 100) / 100) < 0.011,
+        precio: priced.rows[0]?.precio,
+        deposito: deposit.rows[0]?.ok,
+        cierre: closed.rows[0],
+      }).toEqual({
+        codes: [null, null, null, null, null, null, null, null],
+        totalVenta: true,
+        precio: 7.25,
+        deposito: true,
+        cierre: { status: "closed", contado: 0 },
+      });
+    });
+  });
+
+  it("N4 · assert_finite_numeric no es ejecutable por los roles de PostgREST", async () => {
+    await withRollback(db, async () => {
+      const seller = await as(db, "vendedor1", "select public.assert_finite_numeric(1, 'x')");
+      const privileges = await one(
+        db,
+        "privilegios",
+        `select has_function_privilege('anon', 'public.assert_finite_numeric(numeric, text)', 'execute') as anon,
+                has_function_privilege('authenticated', 'public.assert_finite_numeric(numeric, text)', 'execute') as authenticated`,
+      );
+
+      expect({ vendedor: seller.code, privilegios: privileges }).toEqual({ vendedor: "42501", privilegios: { anon: false, authenticated: false } });
+    });
+  });
+});
+
+// 13-rpc-review N6: las guardas de rol de las tres RPC de precios (20261006g:337-339, :418-420, :518-520)
+// comparaban el rol sin coalesce y lanzaban `raise exception '…'` sin errcode: P0001 → el BFF respondía 400.
+describe("N6 · las RPC de precios responden PT403 a un rol no autorizado", () => {
+  it("N6 · un vendedor recibe PT403 en update_product_price, register_supplier_product_price y deactivate_supplier_product", async () => {
+    await withRollback(db, async () => {
+      const sp = await supplierProduct(db, "n6");
+      const p = String((await one(db, "producto", "select product_id from public.supplier_products where id = $1", [sp])).product_id);
+
+      const price = await as(db, "vendedor1", "select id from public.update_product_price($1::uuid, 7.5, $2)", [p, TAG]);
+      const cost = await as(db, "vendedor1", "select public.register_supplier_product_price($1::uuid, 3, 300, 'ajuste') as out", [sp]);
+      const off = await as(db, "vendedor1", "select id from public.deactivate_supplier_product($1::uuid)", [sp]);
+
+      const after = await one(
+        db,
+        "estado",
+        `select (select sale_price_ref::float8 from public.products where id = $1) as precio,
+                (select last_cost_ref::float8 from public.supplier_products where id = $2) as costo,
+                (select is_active from public.supplier_products where id = $2) as activa`,
+        [p, sp],
+      );
+      expect({ precio: [price.code, price.message], costo: [cost.code, cost.message], baja: [off.code, off.message], estado: after }).toEqual({
+        precio: ["PT403", "No autorizado para cambiar precios"],
+        costo: ["PT403", "No autorizado para registrar precios de proveedor"],
+        baja: ["PT403", "No autorizado para desactivar relaciones proveedor-producto"],
+        estado: { precio: 1, costo: 2, activa: true },
+      });
+    });
+  });
+});
