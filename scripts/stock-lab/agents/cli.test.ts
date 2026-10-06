@@ -177,6 +177,13 @@ describe("base.ts: mapeo de catálogo y cajas", () => {
     });
   });
 
+  it("mapLabProduct marca isHot aunque el BFF normalice el SKU a minúsculas (STK-307)", () => {
+    const base = { name: "Hot", isActive: true, currentStock: 1, salePriceRef: 1 };
+    expect(mapLabProduct({ id: "h1", sku: "lab-hot-01", ...base })?.isHot).toBe(true);
+    expect(mapLabProduct({ id: "h2", sku: "LAB-HOT-01", ...base })?.isHot).toBe(true);
+    expect(mapLabProduct({ id: "p1", sku: "lab-001", ...base })?.isHot).toBe(false);
+  });
+
   it("mapLabProduct devuelve null sin id/sku y tolera campos ausentes", () => {
     expect(mapLabProduct(null)).toBeNull();
     expect(mapLabProduct({ sku: "X" })).toBeNull();

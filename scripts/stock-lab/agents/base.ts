@@ -158,7 +158,8 @@ export function mapLabProduct(
     isActive: rec.isActive !== false,
     currentStock: asNumber(rec.currentStock),
     salePrice: asNumber(rec.salePriceRef ?? rec.salePrice),
-    isHot: sku.startsWith(HOT_SKU_PREFIX),
+    // El BFF normaliza los SKU a minúsculas (normalizeSku): comparar sin distinguir mayúsculas.
+    isHot: sku.toUpperCase().startsWith(HOT_SKU_PREFIX),
     packUnitsPerPack: pack?.unitsPerPack ?? null,
     packUnitProductId: pack?.unitProductId ?? null,
   };
