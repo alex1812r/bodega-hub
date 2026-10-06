@@ -1,6 +1,11 @@
 import { ApiError, type ApiErrorCode } from "@/lib/api/apiError";
 import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
-import { getSupabaseErrorMessage, mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
+import {
+  getSupabaseErrorMessage,
+  mapSupabaseError,
+  mapSupabaseErrorByCode,
+  throwIfSupabaseError,
+} from "@/lib/supabase/errors";
 import { mapContact, type DbContactRow } from "@/lib/supabase/mappers/contacts";
 import { mapPayment, type DbPaymentRow } from "@/lib/supabase/mappers/transactions";
 import { getPaginationRange, toPaginatedList } from "@/lib/supabase/pagination";
@@ -135,6 +140,14 @@ function throwIfRpcError(error: unknown): void {
 
   if (mapped) {
     throw new ApiError(mapped.status, mapped.code, message);
+  }
+
+  // Antes que los marcadores por mensaje: un 22P02 ("invalid input syntax…") o un
+  // 42501 ("permission denied for…") no deben salir con el texto de Postgres.
+  const mappedByCode = mapSupabaseErrorByCode(error);
+
+  if (mappedByCode) {
+    throw mappedByCode;
   }
 
   const normalized = normalizeRpcMessage(message);

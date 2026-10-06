@@ -36,44 +36,64 @@ export function getSupabaseErrorMessage(error: unknown) {
   return "Unexpected Supabase error.";
 }
 
+/**
+ * Mapeo por SQLSTATE / codigo de PostgREST, sin mirar el mensaje. Devuelve `null`
+ * si el codigo no decide nada (sin codigo, `P0001`, desconocido).
+ *
+ * Los mapeadores propios de un modulo (`throwIfRpcError` de pagos y ventas) lo
+ * llaman ANTES de sus reglas por mensaje: asi un error crudo de Postgres nunca
+ * llega al cliente por coincidir con un marcador ("invalid", "permission denied").
+ */
+export function mapSupabaseErrorByCode(error: unknown): ApiError | null {
+  if (!isSupabaseLikeError(error) || typeof error.code !== "string") {
+    return null;
+  }
+
+  const rejection = BUSINESS_REJECTIONS[error.code];
+
+  if (rejection) {
+    return new ApiError(rejection.status, rejection.code, error.message || rejection.fallback);
+  }
+
+  switch (error.code) {
+    case "23505":
+      return new ApiError(409, "CONFLICT", "El recurso ya existe.");
+    case "PGRST116":
+      return new ApiError(404, "NOT_FOUND", "Recurso no encontrado.");
+    case "23503":
+      return new ApiError(400, "BAD_REQUEST", "Referencia invalida.");
+    // El texto de estos errores es de Postgres (columnas, relaciones, tipos, nombres
+    // de constraint, el valor enviado): no se reenvia.
+    case "23514":
+    case "22P02":
+    case "23502":
+    case "22003":
+    case "22007":
+    case "22008":
+      return new ApiError(400, "BAD_REQUEST", INVALID_DATA_MESSAGE);
+    // Deadlock y fallo de serializacion: la transaccion se deshizo entera, basta reintentar.
+    case "40P01":
+    case "40001":
+      return new ApiError(409, "CONFLICT", RETRYABLE_CONFLICT_MESSAGE, { retryable: true });
+    case "42501":
+      return new ApiError(403, "FORBIDDEN", "No autorizado para esta operacion.");
+    default:
+      return null;
+  }
+}
+
 export function mapSupabaseError(error: unknown): ApiError {
   if (error instanceof ApiError) {
     return error;
   }
 
+  const mappedByCode = mapSupabaseErrorByCode(error);
+
+  if (mappedByCode) {
+    return mappedByCode;
+  }
+
   if (isSupabaseLikeError(error)) {
-    const rejection = error.code ? BUSINESS_REJECTIONS[error.code] : undefined;
-
-    if (rejection) {
-      return new ApiError(rejection.status, rejection.code, error.message || rejection.fallback);
-    }
-
-    switch (error.code) {
-      case "23505":
-        return new ApiError(409, "CONFLICT", "El recurso ya existe.");
-      case "PGRST116":
-        return new ApiError(404, "NOT_FOUND", "Recurso no encontrado.");
-      case "23503":
-        return new ApiError(400, "BAD_REQUEST", "Referencia invalida.");
-      case "23514":
-      case "22P02":
-        return new ApiError(400, "BAD_REQUEST", error.message ?? INVALID_DATA_MESSAGE);
-      // El texto de estos errores es de Postgres (columnas, relaciones, tipos): no se reenvia.
-      case "23502":
-      case "22003":
-      case "22007":
-      case "22008":
-        return new ApiError(400, "BAD_REQUEST", INVALID_DATA_MESSAGE);
-      // Deadlock y fallo de serializacion: la transaccion se deshizo entera, basta reintentar.
-      case "40P01":
-      case "40001":
-        return new ApiError(409, "CONFLICT", RETRYABLE_CONFLICT_MESSAGE, { retryable: true });
-      case "42501":
-        return new ApiError(403, "FORBIDDEN", "No autorizado para esta operacion.");
-      default:
-        break;
-    }
-
     const message = error.message?.toLowerCase() ?? "";
 
     if (message.includes("invalid login credentials")) {

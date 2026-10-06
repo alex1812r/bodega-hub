@@ -555,6 +555,41 @@ describe("sales.server", () => {
     ).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
   });
 
+  // STK-517 · R6: los errores crudos de Postgres pasan por `mapSupabaseError`
+  // ANTES que los marcadores por mensaje ("invalid", "permission denied"…), que
+  // los reenviaban con el texto de Postgres.
+  it.each([
+    ["22P02", 'invalid input syntax for type uuid: "no-es-uuid"', 400, "BAD_REQUEST"],
+    ["22P02", 'invalid input value for enum payment_method: "bitcoin"', 400, "BAD_REQUEST"],
+    [
+      "23514",
+      'new row for relation "sales" violates check constraint "sales_discount_ref_check"',
+      400,
+      "BAD_REQUEST",
+    ],
+    ["42501", "permission denied for table sales", 403, "FORBIDDEN"],
+    ["40P01", "deadlock detected", 409, "CONFLICT"],
+    ["40001", "could not serialize access due to concurrent update", 409, "CONFLICT"],
+  ])("does not forward raw Postgres text from the sale RPC (%s: %s)", async (sqlState, message, status, code) => {
+    const rpc = jest.fn().mockResolvedValue({ data: null, error: { code: sqlState, message } });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+
+    const error = await createSale(
+      {
+        customerId: saleRow.customer_id,
+        items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+        refRateVes: 510,
+      },
+      DEFAULT_STORE_ID,
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ code, status });
+    expect((error as Error).message).not.toMatch(
+      /invalid input|constraint|relation "|permission denied|deadlock|serialize/i,
+    );
+  });
+
   it("maps an accented cash-session rule without SQLSTATE to 400", async () => {
     const rpc = jest.fn().mockResolvedValue({
       data: null,

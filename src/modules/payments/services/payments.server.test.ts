@@ -338,6 +338,48 @@ describe("payments.server", () => {
       );
     });
 
+    // STK-517 · R6: los errores crudos de Postgres pasan por `mapSupabaseError`
+    // ANTES que los marcadores por mensaje ("invalid", "permission denied"…), que
+    // los reenviaban con el texto de Postgres.
+    it.each([
+      ["22P02", 'invalid input syntax for type uuid: "no-es-uuid"', 400, "BAD_REQUEST"],
+      ["22P02", 'invalid input value for enum payment_method: "bitcoin"', 400, "BAD_REQUEST"],
+      ["22007", 'invalid input syntax for type date: "ayer"', 400, "BAD_REQUEST"],
+      [
+        "23514",
+        'new row for relation "payments" violates check constraint "payments_amount_check"',
+        400,
+        "BAD_REQUEST",
+      ],
+      ["42501", "permission denied for table payments", 403, "FORBIDDEN"],
+      ["40P01", "deadlock detected", 409, "CONFLICT"],
+      ["40001", "could not serialize access due to concurrent update", 409, "CONFLICT"],
+    ])("no reenvía el texto crudo de Postgres (%s: %s)", async (sqlState, message, status, code) => {
+      mockRpcError({ code: sqlState, message });
+
+      const error = await createPayment(
+        { amount: 1000, method: "efectivo_ves", saleId: paymentRow.sale_id! },
+        DEFAULT_STORE_ID,
+      ).catch((caught: unknown) => caught);
+
+      expect(error).toMatchObject({ code, status });
+      expect((error as Error).message).not.toBe(message);
+      expect((error as Error).message).not.toMatch(
+        /invalid input|constraint|relation "|permission denied|deadlock|serialize/i,
+      );
+    });
+
+    it("marca como reintentable el deadlock de un RPC de pagos", async () => {
+      mockRpcError({ code: "40P01", message: "deadlock detected" });
+
+      await expect(
+        createPayment(
+          { amount: 1000, method: "efectivo_ves", saleId: paymentRow.sale_id! },
+          DEFAULT_STORE_ID,
+        ),
+      ).rejects.toMatchObject({ details: { retryable: true }, status: 409 });
+    });
+
     it("mapea el SQLSTATE también al anular un pago", async () => {
       mockRpcError({
         code: "PT409",
