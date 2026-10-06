@@ -3,6 +3,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import {
+  invalidateAfterSaleRegistered,
   useCancelSale,
   useCreateSale,
   useReturnSale,
@@ -138,6 +139,40 @@ describe("sales hooks", () => {
       "/api/sales/sale-002/return",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("never retries a failed sale on its own, even if the client retries mutations by default", async () => {
+    // C3: la respuesta pudo perderse tras el commit; reenviar a ciegas duplica la venta.
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: 2, retryDelay: 0 }, queries: { retry: false } },
+    });
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    }
+
+    const createSale = renderHook(() => useCreateSale(), { wrapper: Wrapper });
+    createSale.result.current.mutate({
+      clientRequestId: "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7",
+      customerId: "cont-customer",
+      items: [{ productId: "prod-drill", quantity: 1 }],
+    });
+
+    await waitFor(() => expect(createSale.result.current.isError).toBe(true));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates sales, stock and movements when a sale is confirmed outside the mutation", () => {
+    const queryClient = new QueryClient();
+    const invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
+
+    invalidateAfterSaleRegistered(queryClient);
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["sales"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["products"] });
+    // `inventory` es el prefijo de existencias, movimientos y kardex.
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["inventory"] });
   });
 
   it("invalidates the products catalog after selling, cancelling and returning", async () => {

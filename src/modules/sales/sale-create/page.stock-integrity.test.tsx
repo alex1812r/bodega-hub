@@ -4,8 +4,8 @@
  *
  * Se monta la pantalla REAL (`SaleCreatePage`) con QueryClient y `fetch` simulado
  * por URL; lo observable son los cuerpos de `POST /api/sales` y lo que ve el cajero.
- * Los `it.failing` describen el comportamiento SANO y hoy fallan: al corregir el
- * POS (fase 5) hay que convertirlos en `it`.
+ * STK-509: los `it.failing` de STK-413 pasan a `it`. El BFF simulado conoce ahora
+ * `GET /api/sales/by-request/:clave` (la consulta que resuelve un cobro incierto).
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -97,11 +97,31 @@ function saleResponse(sequence: number) {
   );
 }
 
+const BY_REQUEST_PATH = "/api/sales/by-request/";
+
+/** Respuestas de `GET /api/sales/by-request/:clave`. */
+function lookupNotFound() {
+  return jsonResponse({ error: { code: "NOT_FOUND", message: "Venta no encontrada." } }, 404);
+}
+
+function lookupFound(status = "pagada") {
+  return jsonResponse({
+    data: { id: "sale-stk509", invoiceNumber: "V-STK509-1", items: [], payments: [], status },
+  });
+}
+
+function networkDown(): Promise<Response> {
+  return Promise.reject(new TypeError("Failed to fetch"));
+}
+
 /** BFF simulado por URL. Los cobros y las búsquedas por código los decide cada test. */
 function mountBackend(handlers: {
+  /** Consulta por clave; por defecto el servidor responde 404 (no hay venta). */
+  onLookup?: (attempt: number) => Promise<Response>;
   onSalePost: (attempt: number) => Promise<Response>;
   onScan?: (code: string) => Promise<Response>;
 }) {
+  const lookupRequests: string[] = [];
   const salePosts: SalePostBody[] = [];
   const scanRequests: string[] = [];
   const unknownRequests: string[] = [];
@@ -110,6 +130,11 @@ function mountBackend(handlers: {
     const url = new URL(String(input), "http://localhost");
     const method = init?.method ?? "GET";
     const route = `${method} ${url.pathname}`;
+
+    if (method === "GET" && url.pathname.startsWith(BY_REQUEST_PATH)) {
+      lookupRequests.push(decodeURIComponent(url.pathname.slice(BY_REQUEST_PATH.length)));
+      return handlers.onLookup ? handlers.onLookup(lookupRequests.length) : lookupNotFound();
+    }
 
     switch (route) {
       case "POST /api/sales":
@@ -171,7 +196,7 @@ function mountBackend(handlers: {
 
   global.fetch = fetchMock as typeof fetch;
 
-  return { salePosts, scanRequests, unknownRequests };
+  return { lookupRequests, salePosts, scanRequests, unknownRequests };
 }
 
 /** Monta el POS como una carga de página nueva (QueryClient y estado de React nuevos). */
@@ -262,69 +287,234 @@ afterEach(() => {
 });
 
 describe("C3 · respuesta perdida al cobrar en el POS", () => {
-  // Causa: la clave vive en `clientRequestIdRef` (memoria del componente). Si la
+  // Causa: la clave vivia en `clientRequestIdRef` (memoria del componente). Si la
   // respuesta se pierde tras el commit y el cajero recarga o sale y vuelve, el
-  // mismo carrito viaja con una clave nueva → 2 ventas `pagada` idénticas.
+  // mismo carrito viajaba con una clave nueva → 2 ventas `pagada` identicas.
   // Evento: `w3-ui` `f03.iv_cut_response_then_reload`; qa/STK-408/verdict.md §H8 C2.
-  // Código: src/modules/sales/sale-create/page.tsx:77, :227-233 y :394-397.
-  it.failing(
-    "tras un error de red, recargar y cobrar el mismo carrito reutiliza el mismo clientRequestId",
-    async () => {
-      const backend = mountBackend({
-        onSalePost: async (attempt) => {
-          if (attempt === 1) {
-            // El servidor ya confirmó la venta; lo que se pierde es la respuesta.
-            throw new TypeError("Failed to fetch");
-          }
-          return saleResponse(attempt);
-        },
-      });
+  // STK-509: el escenario necesita que la consulta por clave tampoco responda en el
+  // primer intento y diga 404 tras recargar; si dijera que la venta existe, lo sano
+  // es NO enviar un segundo POST (test «recargar con la venta ya registrada»).
+  it("tras un error de red, recargar y cobrar el mismo carrito reutiliza el mismo clientRequestId", async () => {
+    const backend = mountBackend({
+      onLookup: async (attempt) => (attempt === 1 ? networkDown() : lookupNotFound()),
+      onSalePost: async (attempt) => (attempt === 1 ? networkDown() : saleResponse(attempt)),
+    });
 
-      const firstLoad = mountPos();
-      fireEvent.click(await prepareCartReadyToCharge());
-      await waitFor(() => expect(backend.salePosts).toHaveLength(1));
-      await waitFor(() => expect(visibleAlerts()).not.toBe(""));
-      firstLoad.unmount();
+    const firstLoad = mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+    await waitFor(() => expect(backend.salePosts).toHaveLength(1));
+    await waitFor(() => expect(visibleAlerts()).not.toBe(""));
+    firstLoad.unmount();
 
-      // Recarga: estado de React nuevo; el cajero rearma el mismo carrito.
-      mountPos();
-      fireEvent.click(await prepareCartReadyToCharge());
-      await waitFor(() => expect(backend.salePosts).toHaveLength(2));
+    // Recarga / salir y volver: estado de React nuevo; el cajero rearma el mismo carrito.
+    mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+    await waitFor(() => expect(backend.salePosts).toHaveLength(2));
 
-      const [first, second] = backend.salePosts;
-      // Montaje: los dos intentos son el mismo carrito y ambos llevan clave.
-      expect(backend.unknownRequests).toEqual([]);
-      expect(second?.items).toEqual(first?.items);
-      expect(second?.customerId).toBe(first?.customerId);
-      expect(first?.clientRequestId).toEqual(expect.any(String));
-      // Causa:
-      expect(second?.clientRequestId).toBe(first?.clientRequestId);
-    },
-  );
+    const [first, second] = backend.salePosts;
+    // Montaje: los dos intentos son el mismo carrito y ambos llevan clave.
+    expect(backend.unknownRequests).toEqual([]);
+    expect(second?.items).toEqual(first?.items);
+    expect(second?.customerId).toBe(first?.customerId);
+    expect(first?.clientRequestId).toEqual(expect.any(String));
+    // Causa:
+    expect(second?.clientRequestId).toBe(first?.clientRequestId);
+    // Antes de reenviar se consulto por esa misma clave.
+    expect(backend.lookupRequests).toEqual([first?.clientRequestId, first?.clientRequestId]);
+  });
 
-  // Causa: el `catch` de `handleProcessSale` muestra `error.message` tal cual; ante un
-  // `TypeError: Failed to fetch` el cajero no sabe que la venta pudo registrarse y la repite.
+  // Causa: el `catch` de `handleProcessSale` mostraba `error.message` tal cual; ante un
+  // `TypeError: Failed to fetch` el cajero no sabia que la venta pudo registrarse y la repetia.
   // Evento: `w3-ui` `f03.ii`; qa/STK-408/verdict.md §H8 C1/C2.
-  // Código: src/modules/sales/sale-create/page.tsx:424-426.
-  it.failing(
-    "ante un error de red el mensaje advierte que la venta pudo haberse registrado",
-    async () => {
-      const backend = mountBackend({
-        onSalePost: async () => {
-          throw new TypeError("Failed to fetch");
-        },
-      });
+  // STK-509: `/registr/i` tambien aceptaba «No se pudo registrar la venta», que es lo
+  // contrario del aviso; ahora se exige el texto de que PUDO registrarse y la accion «Verificar».
+  it("ante un error de red el mensaje advierte que la venta pudo haberse registrado", async () => {
+    const backend = mountBackend({
+      onLookup: networkDown,
+      onSalePost: networkDown,
+    });
 
-      mountPos();
-      fireEvent.click(await prepareCartReadyToCharge());
-      await waitFor(() => expect(backend.salePosts).toHaveLength(1));
-      await waitFor(() => expect(visibleAlerts()).not.toBe(""));
+    mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+    await waitFor(() => expect(backend.salePosts).toHaveLength(1));
+    await waitFor(() => expect(visibleAlerts()).not.toBe(""));
 
-      // No basta con el texto del navegador: debe hablar de que la venta pudo
-      // quedar registrada (cualquier redacción con «registr…»).
-      expect(visibleAlerts()).toMatch(/registr/i);
-    },
-  );
+    expect(visibleAlerts()).toMatch(/pudo haberse registrado/i);
+    expect(visibleAlerts()).toMatch(/verifica antes de volver a cobrar/i);
+    expect(visibleAlerts()).not.toMatch(/no (se )?(pudo|pudimos) (registrar|procesar)/i);
+    expect(visibleAlerts()).not.toMatch(/failed to fetch/i);
+    expect(screen.getByRole("button", { name: "Verificar" })).toBeEnabled();
+    // Sin reintento a ciegas: un solo POST y una consulta por la clave enviada.
+    await flush();
+    expect(backend.salePosts).toHaveLength(1);
+    expect(backend.lookupRequests).toEqual([backend.salePosts[0]?.clientRequestId]);
+    expect(backend.unknownRequests).toEqual([]);
+  });
+
+  it("si la respuesta se pierde pero la venta existe por clave, la da por registrada sin reenviar", async () => {
+    const backend = mountBackend({
+      onLookup: async () => lookupFound(),
+      onSalePost: async (attempt) => (attempt === 1 ? networkDown() : saleResponse(attempt)),
+    });
+
+    mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+
+    await screen.findByText("Venta registrada");
+    // Los datos son los del servidor, no los del carrito.
+    expect(screen.getByText("V-STK509-1")).toBeInTheDocument();
+    expect(backend.salePosts).toHaveLength(1);
+
+    // La venta siguiente es otro carrito: clave nueva.
+    fireEvent.click(screen.getByRole("button", { name: "Nueva venta" }));
+    fireEvent.click(await prepareCartReadyToCharge());
+    await waitFor(() => expect(backend.salePosts).toHaveLength(2));
+    expect(backend.salePosts[1]?.clientRequestId).toEqual(expect.any(String));
+    expect(backend.salePosts[1]?.clientRequestId).not.toBe(backend.salePosts[0]?.clientRequestId);
+    expect(backend.unknownRequests).toEqual([]);
+  });
+
+  it("una venta recuperada en pendiente_pago no se anuncia como cobrada", async () => {
+    mountBackend({
+      onLookup: async () => lookupFound("pendiente_pago"),
+      onSalePost: networkDown,
+    });
+
+    mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+
+    await screen.findByText("Venta registrada sin cobro");
+    expect(screen.queryByText("Venta registrada")).toBeNull();
+    expect(screen.getByText(/pendiente de pago/i)).toBeInTheDocument();
+  });
+
+  it("si el servidor confirma que no hay venta (404), permite reintentar con la misma clave", async () => {
+    const backend = mountBackend({
+      onSalePost: async (attempt) => (attempt === 1 ? networkDown() : saleResponse(attempt)),
+    });
+
+    mountPos();
+    const chargeButton = await prepareCartReadyToCharge();
+    fireEvent.click(chargeButton);
+    await waitFor(() => expect(visibleAlerts()).not.toBe(""));
+
+    expect(visibleAlerts()).not.toMatch(/pudo haberse registrado/i);
+    expect(screen.queryByRole("button", { name: "Verificar" })).toBeNull();
+    // No hubo reintento automatico.
+    expect(backend.salePosts).toHaveLength(1);
+
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+    expect(backend.salePosts).toHaveLength(2);
+    expect(backend.salePosts[1]?.clientRequestId).toBe(backend.salePosts[0]?.clientRequestId);
+    expect(backend.unknownRequests).toEqual([]);
+  });
+
+  it("recargar con la venta ya registrada: avisa con la factura y no envia otro POST", async () => {
+    const backend = mountBackend({
+      onLookup: async (attempt) => (attempt === 1 ? networkDown() : lookupFound()),
+      onSalePost: async (attempt) => (attempt === 1 ? networkDown() : saleResponse(attempt)),
+    });
+
+    const firstLoad = mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+    await waitFor(() => expect(visibleAlerts()).toMatch(/pudo haberse registrado/i));
+    firstLoad.unmount();
+
+    mountPos();
+    // Al volver, el POS recuerda que hay un cobro sin confirmar.
+    const chargeButton = await prepareCartReadyToCharge();
+    expect(visibleAlerts()).toMatch(/pudo haberse registrado/i);
+    fireEvent.click(chargeButton);
+
+    await waitFor(() => expect(visibleAlerts()).toMatch(/V-STK509-1/));
+    await flush();
+    expect(screen.queryByText("Venta registrada")).toBeNull();
+    expect(backend.salePosts).toHaveLength(1);
+    expect(backend.unknownRequests).toEqual([]);
+  });
+
+  it("«Limpiar orden» con un cobro de resultado desconocido primero lo resuelve", async () => {
+    let lookupMode: "down" | "found" = "down";
+    const backend = mountBackend({
+      onLookup: async () => (lookupMode === "down" ? networkDown() : lookupFound()),
+      onSalePost: networkDown,
+    });
+
+    mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+    await waitFor(() => expect(visibleAlerts()).toMatch(/pudo haberse registrado/i));
+
+    // Sin poder verificar no se limpia: el carrito sigue ahi y se avisa.
+    const clearButton = screen.getByRole("button", { name: "Limpiar orden" });
+    await waitFor(() => expect(clearButton).toBeEnabled());
+    fireEvent.click(clearButton);
+    await waitFor(() => expect(backend.lookupRequests).toHaveLength(2));
+    await flush();
+    expect(screen.getByRole("button", { name: "Procesar venta" })).toBeInTheDocument();
+    expect(visibleAlerts()).toMatch(/pudo haberse registrado/i);
+    expect(screen.getByRole("button", { name: "Limpiar orden" })).toBeEnabled();
+
+    // Cuando la consulta responde que la venta existe, se cierra como registrada.
+    lookupMode = "found";
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar orden" }));
+    await screen.findByText("Venta registrada");
+    expect(backend.salePosts).toHaveLength(1);
+    expect(backend.unknownRequests).toEqual([]);
+  });
+
+  // C4 visto desde la UI: la clave ya tiene una venta con otro contenido.
+  it("un 409 por clave reutilizada se muestra como error, nunca como «Venta registrada»", async () => {
+    const backend = mountBackend({
+      onLookup: async () => lookupFound(),
+      onSalePost: async () =>
+        jsonResponse(
+          { error: { code: "CONFLICT", message: "La clave de idempotencia ya se uso con otra venta." } },
+          409,
+        ),
+    });
+
+    mountPos();
+    fireEvent.click(await prepareCartReadyToCharge());
+    await waitFor(() => expect(visibleAlerts()).toMatch(/clave de idempotencia ya se uso/i));
+    await flush();
+
+    expect(screen.queryByText("Venta registrada")).toBeNull();
+    expect(screen.getByRole("button", { name: "Procesar venta" })).toBeInTheDocument();
+    expect(backend.salePosts).toHaveLength(1);
+    expect(backend.unknownRequests).toEqual([]);
+  });
+
+  it("un 4xx definitivo no consulta por clave; la clave solo cambia si cambia el carrito", async () => {
+    const backend = mountBackend({
+      onSalePost: async () =>
+        jsonResponse({ error: { code: "BAD_REQUEST", message: "Stock insuficiente." } }, 400),
+    });
+
+    mountPos();
+    const chargeButton = await prepareCartReadyToCharge();
+    fireEvent.click(chargeButton);
+    await waitFor(() => expect(visibleAlerts()).toMatch(/stock insuficiente/i));
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+
+    // Mismo carrito → misma clave.
+    fireEvent.click(chargeButton);
+    await waitFor(() => expect(backend.salePosts).toHaveLength(2));
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+
+    // Carrito distinto tras el rechazo → clave nueva.
+    await addCatalogProductToCart();
+    fireEvent.click(chargeButton);
+    await waitFor(() => expect(backend.salePosts).toHaveLength(3));
+
+    const [first, second, third] = backend.salePosts;
+    expect(second?.clientRequestId).toBe(first?.clientRequestId);
+    expect(third?.items).toEqual([{ productId: CATALOG_PRODUCT.id, quantity: 2 }]);
+    expect(third?.clientRequestId).not.toBe(first?.clientRequestId);
+    expect(backend.lookupRequests).toEqual([]);
+    expect(backend.unknownRequests).toEqual([]);
+  });
 });
 
 describe("C20 · escaneo lento cruzado con el cobro", () => {
@@ -334,7 +524,7 @@ describe("C20 · escaneo lento cruzado con el cobro", () => {
   // Evento: qa/STK-408/verdict.md C6 (one-shots 830b/830d).
   // Código: src/modules/sales/sale-create/page.tsx:155, :197-209 y :485;
   // src/modules/sales/sale-create/components/PosCartPanel.tsx:272.
-  it.failing(
+  it(
     "no envía el cobro mientras la búsqueda del código escaneado sigue en vuelo",
     async () => {
       const lookup = deferred<Response>();
@@ -366,7 +556,7 @@ describe("C20 · escaneo lento cruzado con el cobro", () => {
   // aparece en el carrito del cliente siguiente.
   // Evento: qa/STK-408/verdict.md C6 (one-shots 830b/830d).
   // Código: src/modules/sales/sale-create/page.tsx:197-209 y :219-225.
-  it.failing(
+  it(
     "una respuesta de escaneo que llega con la venta ya cerrada no entra al carrito siguiente",
     async () => {
       const lookup = deferred<Response>();

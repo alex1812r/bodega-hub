@@ -1,26 +1,35 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
+import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
 import { useMyCashSession } from "@/modules/cash/hooks/useCash";
 import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useProductBarcodeScan } from "@/modules/products/hooks/useProductBarcodeScan";
 import { useAllProducts, useCategories } from "@/modules/products/hooks/useProducts";
 import { matchesProductSearch } from "@/modules/products/services/productSearch";
 import { sortPosCatalogProducts } from "@/modules/sales/sale-create/utils/sortPosCatalogProducts";
+import { getSaleByClientRequestId } from "@/modules/sales/services/sales.client";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
+import { ClientApiError } from "@/shared/api/apiFetch";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { PageBackButton } from "@/shared/components/PageBackButton";
-import type { PaymentMethod } from "@/shared/mocks/erp-data";
+import type { PaymentMethod, SaleMock } from "@/shared/mocks/erp-data";
 import {
   DEFAULT_ENABLED_PAYMENT_METHODS,
   isPaymentMethodEnabled,
 } from "@/shared/payments/paymentMethods";
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
-import { type SaleCreateInput, useCreateSale } from "../hooks/useSales";
+import {
+  invalidateAfterSaleRegistered,
+  type SaleCreateInput,
+  type SaleDetail,
+  useCreateSale,
+} from "../hooks/useSales";
 import { PosCartPanel } from "./components/PosCartPanel";
 import { PosCashSessionGate } from "./components/PosCashSessionGate";
 import { PosCatalogToolbar } from "./components/PosCatalogToolbar";
@@ -41,6 +50,47 @@ import {
   type PosCheckout,
   type PosSinglePaymentDetails,
 } from "./utils/mixedPayments";
+import {
+  clearSaleAttempt,
+  isDefinitiveRejection,
+  readSaleAttempt,
+  type SaleAttempt,
+  saleAttemptStorageKey,
+  saleFingerprint,
+  writeSaleAttempt,
+} from "./utils/saleAttempt";
+
+const UNRESOLVED_SALE_MESSAGE =
+  "La venta pudo haberse registrado; verifica antes de volver a cobrar.";
+const SALE_NOT_REGISTERED_MESSAGE =
+  "El servidor confirmo que ese cobro no quedo guardado. Puedes volver a pulsar «Procesar venta».";
+
+type AttemptLookup =
+  | { kind: "absent" }
+  | { kind: "registered"; sale: SaleDetail }
+  | { kind: "unknown" }
+  | { kind: "voided"; sale: SaleDetail };
+
+/** Que sabe el servidor de un intento de cobro, consultando por su clave. */
+async function lookupSaleAttempt(clientRequestId: string): Promise<AttemptLookup> {
+  let sale: SaleDetail | null;
+
+  try {
+    sale = await getSaleByClientRequestId(clientRequestId);
+  } catch {
+    // La consulta tampoco respondio: la venta puede existir o no.
+    return { kind: "unknown" };
+  }
+
+  if (!sale) {
+    return { kind: "absent" };
+  }
+
+  // Una venta anulada no es una venta registrada, y su clave ya no sirve.
+  return sale.status === "cancelada" || sale.status === "devuelta"
+    ? { kind: "voided", sale }
+    : { kind: "registered", sale };
+}
 
 type PaymentSelectionSnapshot = {
   details: PosSinglePaymentDetails | null;
@@ -50,6 +100,8 @@ type PaymentSelectionSnapshot = {
 type CompletedSaleSummary = {
   id: string;
   invoiceNumber: string;
+  /** Se enviaron cobros pero el servidor dejo la venta en `pendiente_pago`. */
+  pendingPayment: boolean;
 };
 
 export function SaleCreatePage() {
@@ -68,13 +120,29 @@ function SaleCreatePosWorkspace() {
   const products = useAllProducts({ isActive: true }, posCatalogQueryOptions);
   const currentRate = useCurrentExchangeRate();
   const cashSession = useMyCashSession();
+  const currentUser = useCurrentUser();
+  const queryClient = useQueryClient();
   const createSale = useCreateSale();
   const cart = usePosCart();
   // Candado sincrono contra el doble envio: `isPending` tarda un render en
   // reflejarse y en ese hueco un segundo clic ya habia disparado otra venta.
   const submitLockRef = useRef(false);
-  // Clave de idempotencia del intento de cobro en curso (ver handleProcessSale).
-  const clientRequestIdRef = useRef<string | null>(null);
+  // La clave de idempotencia vive en sessionStorage (ver utils/saleAttempt.ts): asi
+  // recargar, salir y volver o remontar no estrenan clave para un cobro pendiente.
+  const attemptStorageKey = saleAttemptStorageKey({
+    registerId: cashSession.data?.registerId,
+    storeId: currentUser.data?.storeId,
+    userId: currentUser.data?.user.id,
+  });
+  // Ultimo cobro enviado desde ESTE carrito. Tras recargar o vaciar el carrito ya
+  // no se puede afirmar que lo que hay en pantalla sea aquella venta.
+  const lastAttemptRef = useRef<{ clientRequestId: string; fingerprint: string } | null>(null);
+  // Generacion del carrito: cambia al cerrar la venta o limpiar la orden. Una respuesta
+  // de escaneo que vuelve con otra generacion pertenece a un carrito que ya no existe.
+  const cartGenerationRef = useRef(0);
+  // Busquedas por codigo en vuelo. Es un ref (y no solo `isLookingUp`) porque el
+  // estado tarda un render y en ese hueco «Cobrar» salia sin la linea escaneada.
+  const scanInFlightRef = useRef(0);
   const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
   const enabledPaymentMethods =
     enabledPaymentMethodsQuery.data ?? DEFAULT_ENABLED_PAYMENT_METHODS;
@@ -93,7 +161,17 @@ function SaleCreatePosWorkspace() {
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [scanOpen, setScanOpen] = useState(false);
-  const [formError, setFormError] = useState<string>();
+  // Recarga o salir y volver con un cobro sin confirmar: se avisa nada mas entrar
+  // (la caja y el usuario ya estan cargados: PosCashSessionGate espera por ambos).
+  const [formError, setFormError] = useState<string | undefined>(() =>
+    readSaleAttempt(attemptStorageKey)?.unresolved ? UNRESOLVED_SALE_MESSAGE : undefined,
+  );
+  // Hay un cobro de resultado desconocido: se ofrece «Verificar» junto al aviso.
+  const [needsVerification, setNeedsVerification] = useState(
+    () => readSaleAttempt(attemptStorageKey)?.unresolved ?? false,
+  );
+  // Consulta por clave en curso (antes o despues del POST): tambien bloquea «Cobrar».
+  const [isResolvingAttempt, setIsResolvingAttempt] = useState(false);
   const [completedSale, setCompletedSale] = useState<CompletedSaleSummary | null>(null);
 
   useEffect(() => {
@@ -152,7 +230,7 @@ function SaleCreatePosWorkspace() {
   const drawerRef = cashSession.data?.liveTotals?.cashRef ?? 0;
   const totalRef = cart.subtotalRef;
   const totalVes = rateVes ? roundMoney(refToVes(totalRef, rateVes)) : 0;
-  const isSubmitting = createSale.isPending;
+  const isSubmitting = createSale.isPending || isResolvingAttempt;
 
   useEffect(() => {
     if (!customerId && defaultCustomerId) {
@@ -193,18 +271,42 @@ function SaleCreatePosWorkspace() {
     setSearch(value);
   }
 
-  function handleBarcodeScanSubmit(code: string) {
-    void barcodeScan
-      .handleScanSubmit(code, {
+  /**
+   * Busca el codigo y agrega la linea SOLO si el carrito sigue siendo el mismo.
+   * Con un cobro viajando no se escanea: la linea llegaria a una venta ya enviada.
+   */
+  async function scanIntoCart(code: string, onAdded?: () => void) {
+    if (submitLockRef.current) {
+      barcodeScan.setScanError("Espera a que termine el cobro antes de escanear.");
+      return;
+    }
+
+    const generation = cartGenerationRef.current;
+    scanInFlightRef.current += 1;
+
+    try {
+      await barcodeScan.handleScanSubmit(code, {
         onResolved: (product) => {
+          if (generation !== cartGenerationRef.current) {
+            // La venta se cerro (o la orden se limpio) mientras se buscaba: se descarta.
+            return;
+          }
+
           cart.addProduct(product);
           setSearch("");
           barcodeScan.clearScanError();
+          onAdded?.();
         },
-      })
-      .finally(() => {
-        focusSearchInput();
       });
+    } finally {
+      scanInFlightRef.current -= 1;
+    }
+  }
+
+  function handleBarcodeScanSubmit(code: string) {
+    void scanIntoCart(code).finally(() => {
+      focusSearchInput();
+    });
   }
 
   function resetPaymentSelection() {
@@ -222,16 +324,222 @@ function SaleCreatePosWorkspace() {
     setCustomerId(defaultCustomerId);
     setCheckout(null);
     resetPaymentSelection();
-    clientRequestIdRef.current = null;
+    lastAttemptRef.current = null;
+    cartGenerationRef.current += 1;
   }
 
   useEffect(() => {
-    // Un carrito vacio es un intento nuevo: la clave anterior ya no representa
-    // esta venta y no debe devolver una venta vieja si se reutilizara.
+    // Un carrito vaciado ya no es el del ultimo cobro enviado. La clave guardada
+    // NO se toca aqui: solo la renueva una respuesta del servidor.
     if (cart.items.length === 0) {
-      clientRequestIdRef.current = null;
+      lastAttemptRef.current = null;
     }
   }, [cart.items.length]);
+
+  function buildPayments(): NonNullable<SaleCreateInput["payments"]> {
+    // Venta y cobro viajan juntos: `create_sale_with_payments` los registra en
+    // una sola transaccion, asi que si un cobro falla no queda venta ni descuento
+    // de stock que anular. Antes eran dos peticiones y el hueco entre ambas
+    // dejaba ventas huerfanas en `pendiente_pago` que el cajero volvia a crear.
+    if (checkout) {
+      return checkout.lines.map((line) => {
+        // El vuelto viaja en la linea que genero el excedente: es la fila
+        // `payments` que lleva las columnas `change_*`.
+        const carriesChange =
+          checkout.change != null && checkout.changeCarrierLineId === line.id;
+        const changeMethod = checkout.change?.method;
+
+        return {
+          amount: line.amount,
+          bankName: line.bankName?.trim() || undefined,
+          change:
+            carriesChange && checkout.change
+              ? {
+                  amount: checkout.change.amount,
+                  method: checkout.change.method,
+                }
+              : undefined,
+          changeDenominations:
+            carriesChange && changeMethod
+              ? toDenominationsPayload(
+                  getPaymentCurrency(changeMethod),
+                  checkout.change?.denominations,
+                )
+              : undefined,
+          currency: getPaymentCurrency(line.method),
+          method: line.method,
+          phone: line.phone?.trim() || undefined,
+          receivedDenominations: toDenominationsPayload(
+            getPaymentCurrency(line.method),
+            line.denominations,
+          ),
+          referenceCode: line.referenceCode?.trim() || undefined,
+        };
+      });
+    }
+
+    if (
+      paymentMethod &&
+      ((paymentMethod === "efectivo_usd" && totalRef > 0) ||
+        (paymentMethod !== "efectivo_usd" && totalVes > 0))
+    ) {
+      return [
+        {
+          amount: paymentMethod === "efectivo_usd" ? totalRef : totalVes,
+          bankName: paymentDetails?.bankName.trim() || undefined,
+          currency: paymentMethod === "efectivo_usd" ? "USD" : "VES",
+          method: paymentMethod,
+          phone: paymentDetails?.phone.trim() || undefined,
+          referenceCode: paymentDetails?.referenceCode.trim() || undefined,
+        },
+      ];
+    }
+
+    return [];
+  }
+
+  function buildSaleContent() {
+    return {
+      customerId,
+      items: cart.items.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+      })),
+      payments: buildPayments(),
+    };
+  }
+
+  /** Cierra la venta con los datos que devolvio el SERVIDOR (respuesta o consulta por clave). */
+  function completeSale(
+    sale: Pick<SaleMock, "id" | "invoiceNumber" | "status">,
+    paymentsSent: boolean,
+  ) {
+    clearSaleAttempt(attemptStorageKey);
+    resetAfterSuccessfulSale();
+    setFormError(undefined);
+    setNeedsVerification(false);
+    setCompletedSale({
+      id: sale.id,
+      invoiceNumber: sale.invoiceNumber,
+      // Un fallback sin cobro atomico puede devolver la venta sin pagar: no es "cobrada".
+      pendingPayment: paymentsSent && sale.status === "pendiente_pago",
+    });
+    createSale.reset();
+  }
+
+  function showUnresolvedAttempt() {
+    setFormError(UNRESOLVED_SALE_MESSAGE);
+    setNeedsVerification(true);
+  }
+
+  /** El servidor confirmo que la clave tiene venta: decide si es la de este carrito. */
+  function settleRegisteredAttempt(sale: SaleDetail, attempt: SaleAttempt) {
+    const content = buildSaleContent();
+    const fingerprint = saleFingerprint(content);
+    const last = lastAttemptRef.current;
+    const isThisCart =
+      content.items.length > 0 &&
+      last?.clientRequestId === attempt.clientRequestId &&
+      last.fingerprint === fingerprint &&
+      attempt.sent.every((sentFingerprint) => sentFingerprint === fingerprint);
+
+    // La respuesta perdida no paso por `onSuccess` de la mutacion.
+    invalidateAfterSaleRegistered(queryClient);
+
+    if (isThisCart) {
+      completeSale(sale, content.payments.length > 0);
+      return;
+    }
+
+    // Tras recargar, o con el carrito cambiado, no se puede afirmar que lo que hay
+    // en pantalla sea esa venta: se informa y la clave (ya usada) se suelta.
+    clearSaleAttempt(attemptStorageKey);
+    setNeedsVerification(false);
+    setFormError(
+      `El cobro anterior si quedo registrado como venta ${sale.invoiceNumber}${
+        sale.status === "pendiente_pago" ? " (pendiente de pago)" : ""
+      }. Si este carrito es esa misma venta, limpia la orden: no la cobres otra vez.`,
+    );
+  }
+
+  /**
+   * Resuelve un cobro de resultado desconocido consultando por su clave.
+   * "stop": no se puede seguir (sigue sin saberse, o la venta ya existe).
+   * "continue": el servidor confirmo que no hay venta viva con esa clave.
+   */
+  async function resolveUnresolvedAttempt(attempt: SaleAttempt): Promise<"continue" | "stop"> {
+    const outcome = await lookupSaleAttempt(attempt.clientRequestId);
+
+    switch (outcome.kind) {
+      case "unknown":
+        showUnresolvedAttempt();
+        return "stop";
+      case "registered":
+        settleRegisteredAttempt(outcome.sale, attempt);
+        return "stop";
+      case "voided":
+        clearSaleAttempt(attemptStorageKey);
+        setNeedsVerification(false);
+        return "continue";
+      case "absent":
+        // Se conserva la clave: si aquel envio llegara tarde, el servidor la reconoce.
+        writeSaleAttempt(attemptStorageKey, { ...attempt, unresolved: false });
+        setNeedsVerification(false);
+        return "continue";
+    }
+  }
+
+  async function handleVerifyAttempt() {
+    if (submitLockRef.current) {
+      return;
+    }
+
+    const attempt = readSaleAttempt(attemptStorageKey);
+    if (!attempt?.unresolved) {
+      setNeedsVerification(false);
+      setFormError(undefined);
+      return;
+    }
+
+    submitLockRef.current = true;
+    setIsResolvingAttempt(true);
+    try {
+      if ((await resolveUnresolvedAttempt(attempt)) === "continue") {
+        setFormError(SALE_NOT_REGISTERED_MESSAGE);
+      }
+    } finally {
+      submitLockRef.current = false;
+      setIsResolvingAttempt(false);
+    }
+  }
+
+  async function handleClearOrder() {
+    if (submitLockRef.current) {
+      return;
+    }
+
+    // Limpiar con un cobro de resultado desconocido lo daria por no hecho: antes
+    // se pregunta al servidor, y si no responde se avisa y no se limpia.
+    const attempt = readSaleAttempt(attemptStorageKey);
+    if (attempt?.unresolved) {
+      submitLockRef.current = true;
+      setIsResolvingAttempt(true);
+      try {
+        if ((await resolveUnresolvedAttempt(attempt)) === "stop") {
+          return;
+        }
+        setFormError(undefined);
+      } finally {
+        submitLockRef.current = false;
+        setIsResolvingAttempt(false);
+      }
+    }
+
+    cart.clearCart();
+    setCheckout(null);
+    resetPaymentSelection();
+    cartGenerationRef.current += 1;
+  }
 
   function handleStartNewSale() {
     setCompletedSale(null);
@@ -297,6 +605,7 @@ function SaleCreatePosWorkspace() {
 
   async function handleProcessSale() {
     setFormError(undefined);
+    setNeedsVerification(false);
 
     if (!customerId) {
       setFormError("Selecciona un cliente antes de procesar la venta.");
@@ -334,75 +643,11 @@ function SaleCreatePosWorkspace() {
       }
     }
 
-    // Venta y cobro viajan juntos: `create_sale_with_payments` los registra en
-    // una sola transaccion, asi que si un cobro falla no queda venta ni descuento
-    // de stock que anular. Antes eran dos peticiones y el hueco entre ambas
-    // dejaba ventas huerfanas en `pendiente_pago` que el cajero volvia a crear.
-    const payments: SaleCreateInput["payments"] = checkout
-      ? checkout.lines.map((line) => {
-          // El vuelto viaja en la linea que genero el excedente: es la fila
-          // `payments` que lleva las columnas `change_*`.
-          const carriesChange =
-            checkout.change != null && checkout.changeCarrierLineId === line.id;
-          const changeMethod = checkout.change?.method;
-
-          return {
-            amount: line.amount,
-            bankName: line.bankName?.trim() || undefined,
-            change:
-              carriesChange && checkout.change
-                ? {
-                    amount: checkout.change.amount,
-                    method: checkout.change.method,
-                  }
-                : undefined,
-            changeDenominations:
-              carriesChange && changeMethod
-                ? toDenominationsPayload(
-                    getPaymentCurrency(changeMethod),
-                    checkout.change?.denominations,
-                  )
-                : undefined,
-            currency: getPaymentCurrency(line.method),
-            method: line.method,
-            phone: line.phone?.trim() || undefined,
-            receivedDenominations: toDenominationsPayload(
-              getPaymentCurrency(line.method),
-              line.denominations,
-            ),
-            referenceCode: line.referenceCode?.trim() || undefined,
-          };
-        })
-      : paymentMethod &&
-          ((paymentMethod === "efectivo_usd" && totalRef > 0) ||
-            (paymentMethod !== "efectivo_usd" && totalVes > 0))
-        ? [
-            {
-              amount: paymentMethod === "efectivo_usd" ? totalRef : totalVes,
-              bankName: paymentDetails?.bankName.trim() || undefined,
-              currency: paymentMethod === "efectivo_usd" ? "USD" : "VES",
-              method: paymentMethod,
-              phone: paymentDetails?.phone.trim() || undefined,
-              referenceCode: paymentDetails?.referenceCode.trim() || undefined,
-            },
-          ]
-        : [];
-
-    // Clave de idempotencia por intento de cobro. Se conserva mientras el carrito
-    // siga cargado: si el servidor registro la venta pero la respuesta se perdio,
-    // el reintento devuelve esa misma venta en vez de crear otra.
-    clientRequestIdRef.current ??= crypto.randomUUID();
-
-    const input: SaleCreateInput = {
-      clientRequestId: clientRequestIdRef.current,
-      customerId,
-      items: cart.items.map((item) => ({
-        productId: item.productId,
-        quantity: item.quantity,
-      })),
-      payments,
-      refRateVes: rateVes || undefined,
-    };
+    // Un escaneo en vuelo todavia puede agregar una linea: cobrar ahora venderia sin ella.
+    if (scanInFlightRef.current > 0) {
+      setFormError("Espera a que termine la busqueda del producto escaneado.");
+      return;
+    }
 
     // Doble clic o Enter repetido mientras la peticion viaja: sin este candado se
     // disparaban dos ventas del mismo carrito antes de que `isPending` se reflejara.
@@ -410,20 +655,101 @@ function SaleCreatePosWorkspace() {
       return;
     }
     submitLockRef.current = true;
+    setIsResolvingAttempt(true);
 
     try {
-      const sale = await createSale.mutateAsync(input);
+      const content = buildSaleContent();
+      const fingerprint = saleFingerprint(content);
 
-      resetAfterSuccessfulSale();
-      setCompletedSale({
-        id: sale.id,
-        invoiceNumber: sale.invoiceNumber,
-      });
-      createSale.reset();
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : "No pudimos procesar la venta.");
+      let attempt = readSaleAttempt(attemptStorageKey);
+      if (attempt?.unresolved) {
+        // Hay un cobro anterior de resultado desconocido: se resuelve antes de enviar otro.
+        if ((await resolveUnresolvedAttempt(attempt)) === "stop") {
+          return;
+        }
+        attempt = readSaleAttempt(attemptStorageKey);
+      }
+
+      // Clave nueva solo si el carrito cambio tras un rechazo definitivo del servidor
+      // y ningun envio anterior con esa clave quedo en duda.
+      if (
+        attempt?.rejected !== undefined &&
+        attempt.rejected !== fingerprint &&
+        attempt.sent.length === 0
+      ) {
+        attempt = null;
+      }
+
+      const clientRequestId = attempt?.clientRequestId ?? crypto.randomUUID();
+      const sentBefore = attempt?.sent ?? [];
+      const sent = sentBefore.includes(fingerprint) ? sentBefore : [...sentBefore, fingerprint];
+
+      // Se guarda ANTES de enviar y como "sin resolver": si la pagina se recarga con
+      // el cobro viajando, al volver se consulta por esta clave en vez de estrenar otra.
+      writeSaleAttempt(attemptStorageKey, { clientRequestId, sent, unresolved: true });
+      lastAttemptRef.current = { clientRequestId, fingerprint };
+
+      let sale: SaleMock;
+      try {
+        sale = await createSale.mutateAsync({
+          ...content,
+          clientRequestId,
+          refRateVes: rateVes || undefined,
+        });
+      } catch (error) {
+        if (isDefinitiveRejection(error)) {
+          // 4xx definitivo: el servidor dijo que NO registro la venta.
+          writeSaleAttempt(attemptStorageKey, {
+            clientRequestId,
+            rejected: fingerprint,
+            sent: sentBefore,
+            unresolved: false,
+          });
+          setFormError(error instanceof Error ? error.message : "No pudimos procesar la venta.");
+          return;
+        }
+
+        // Red caida, respuesta perdida, 5xx o 409: el resultado no se conoce. Nada de
+        // reintentar a ciegas; se pregunta al servidor por la clave enviada.
+        const conflictMessage =
+          error instanceof ClientApiError && error.status === 409 ? error.message : null;
+        const outcome = await lookupSaleAttempt(clientRequestId);
+
+        switch (outcome.kind) {
+          case "unknown":
+            showUnresolvedAttempt();
+            return;
+          case "registered":
+            if (conflictMessage) {
+              // 409 con venta en esa clave (C4): la venta existente NO es este cobro.
+              // Se muestra como error, nunca como «Venta registrada».
+              clearSaleAttempt(attemptStorageKey);
+              lastAttemptRef.current = null;
+              setFormError(
+                `${conflictMessage} Ya existe la venta ${outcome.sale.invoiceNumber} con ese intento de cobro: verificala en Ventas antes de volver a cobrar.`,
+              );
+              return;
+            }
+            settleRegisteredAttempt(outcome.sale, { clientRequestId, sent, unresolved: true });
+            return;
+          case "voided":
+            clearSaleAttempt(attemptStorageKey);
+            setFormError(
+              conflictMessage ??
+                `El cobro no se completo y la venta ${outcome.sale.invoiceNumber} quedo anulada. Puedes volver a cobrar.`,
+            );
+            return;
+          case "absent":
+            writeSaleAttempt(attemptStorageKey, { clientRequestId, sent, unresolved: false });
+            setFormError(conflictMessage ?? SALE_NOT_REGISTERED_MESSAGE);
+            return;
+        }
+      }
+
+      completeSale(sale, content.payments.length > 0);
     } finally {
       submitLockRef.current = false;
+      setIsResolvingAttempt(false);
     }
   }
 
@@ -441,7 +767,14 @@ function SaleCreatePosWorkspace() {
 
       {formError ? (
         <div className="shrink-0 px-4 pt-4">
-          <ErrorState description={formError} title="Revisa la venta" />
+          <ErrorState
+            actionLabel="Verificar"
+            description={formError}
+            onRetry={
+              needsVerification && !isSubmitting ? () => void handleVerifyAttempt() : undefined
+            }
+            title="Revisa la venta"
+          />
         </div>
       ) : null}
 
@@ -467,6 +800,7 @@ function SaleCreatePosWorkspace() {
         <PosSaleSuccessOverlay
           invoiceNumber={completedSale.invoiceNumber}
           onNewSale={handleStartNewSale}
+          pendingPayment={completedSale.pendingPayment}
         />
       ) : (
         <PosWorkspace
@@ -481,6 +815,7 @@ function SaleCreatePosWorkspace() {
               drawerVes={drawerVes}
               enabledPaymentMethods={enabledPaymentMethods}
               error={formError}
+              isScanPending={barcodeScan.isLookingUp}
               isSubmitting={isSubmitting}
               items={cart.items}
               itemsCount={cart.itemsCount}
@@ -490,11 +825,7 @@ function SaleCreatePosWorkspace() {
                 setPaymentDetailsModalOpen(false);
               }}
               onClearCheckout={() => setCheckout(null)}
-              onClearOrder={() => {
-                cart.clearCart();
-                setCheckout(null);
-                resetPaymentSelection();
-              }}
+              onClearOrder={() => void handleClearOrder()}
               onCustomerChange={setCustomerId}
               onEditPaymentDetails={handleOpenPaymentDetailsModal}
               onPaymentMethodChange={handlePaymentMethodChange}
@@ -547,19 +878,11 @@ function SaleCreatePosWorkspace() {
       <PosScanModal
         isLookingUp={barcodeScan.isLookingUp}
         onDetected={(code) => {
-          void barcodeScan
-            .handleScanSubmit(code, {
-              onResolved: (product) => {
-                cart.addProduct(product);
-                setSearch("");
-                barcodeScan.clearScanError();
-                setScanOpen(false);
-                focusSearchInput();
-              },
-            })
-            .finally(() => {
-              // Keep modal open on errors so the user can retry immediately.
-            });
+          // Keep modal open on errors so the user can retry immediately.
+          void scanIntoCart(code, () => {
+            setScanOpen(false);
+            focusSearchInput();
+          });
         }}
         onFocusSearch={() => {
           setScanOpen(false);

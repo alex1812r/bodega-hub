@@ -35,6 +35,8 @@ type PosCartPanelProps = {
   error?: string;
   drawerVes?: number;
   enabledPaymentMethods: PaymentMethod[];
+  /** Busqueda por codigo en vuelo: aun puede entrar una linea, no se cobra. */
+  isScanPending?: boolean;
   isSubmitting?: boolean;
   items: PosCartItem[];
   itemsCount: number;
@@ -65,6 +67,7 @@ export function PosCartPanel({
   error,
   drawerVes = 0,
   enabledPaymentMethods,
+  isScanPending = false,
   isSubmitting = false,
   items,
   itemsCount,
@@ -120,7 +123,7 @@ export function PosCartPanel({
           <button
             aria-label="Limpiar orden"
             className="cursor-pointer rounded-lg p-2 text-muted-foreground transition-colors hover:bg-surface-container hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={items.length === 0}
+            disabled={items.length === 0 || isSubmitting}
             onClick={onClearOrder}
             type="button"
           >
@@ -269,7 +272,7 @@ export function PosCartPanel({
 
         <Button
           className="w-full gap-2 border-transparent bg-[var(--secondary)] text-white hover:bg-[color-mix(in_srgb,var(--secondary)_85%,black)] hover:text-white"
-          disabled={isSubmitting || !canProcessSale}
+          disabled={isSubmitting || isScanPending || !canProcessSale}
           onClick={onProcessSale}
           type="button"
           variant="primary"
