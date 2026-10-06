@@ -6,6 +6,7 @@
  * Aquí viven la fontanería (login por formulario, instantáneas SQL, alta de
  * datos por API) y los 10 flujos. La lógica pura está en helpers.ts.
  */
+import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -294,10 +295,11 @@ async function currentRate(lab: Lab): Promise<{ id: string; rateVes: number }> {
   return { id: String(rate.id), rateVes: Number(rate.rateVes) };
 }
 
-/** Venta `pendiente_pago` por API (sin pagos ni clientRequestId → RPC `create_sale`). */
+/** Venta `pendiente_pago` por API: sin pagos, con su `clientRequestId` (obligatoria en `POST /api/sales`). */
 async function apiUnpaidSale(lab: Lab, product: LabProduct, quantity: number): Promise<{ id: string; invoice: string }> {
   const rate = await currentRate(lab);
   const sale = await apiOk(lab.seller, "POST", "/api/sales", {
+    clientRequestId: randomUUID(),
     customerId: lab.customerId,
     exchangeRateId: rate.id,
     refRateVes: rate.rateVes,
