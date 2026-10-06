@@ -276,6 +276,66 @@ reproducido), `finding` (el stock queda bien, pero hay una carencia), `error`
   por `stock_movements.seq`; las ventanas por tiempo de `summary.ts` llevan
   2 s de tolerancia. No ordenes por `created_at` en un caso nuevo.
 
+## Ola UI (`stock-lab:ui`)
+
+```bash
+npm run stock-lab:ui -- --run <id> [--only 1,2,5] [--seller vendedor1|vendedor2] [--headed] [--list] [--help]
+```
+
+Maneja la app real con Playwright (login por el formulario, BFF lab en
+`http://localhost:3100` en modo producción) y **verifica** los 10 flujos del
+plan §8.3: en cada caso lee por SQL el estado antes y después (ventas, líneas,
+pagos, movimientos por `seq`, stock) y lo compara con lo que la pantalla dice.
+`pass` = el producto cumple el esperado; `fail` = bug de producto; `finding` =
+stock correcto pero carencia de UX; `error` = el caso no se ejecutó. La ola
+completa tarda ~6-7 min y se puede repetir sin reset: cada run crea productos
+propios `U404-<run>-<nonce>-…`, con stock por `inventario_inicial`, que no
+dejan filas en las vistas de `reconcile`.
+
+Requisitos: base sembrada, BFF arriba (`stock-lab:start`) y nadie más usando la
+caja de `lab-vendedor-1` (la ola abre su sesión de caja si no lo está y no la
+cierra).
+
+| flujo | esperado (caso `plan`) | casos `extra` |
+|---|---|---|
+| f01 | POS, venta de 3 líneas: una venta, una fila «Venta» por producto en `/inventory/movements` y el stock exacto en el detalle | — |
+| f02 | 3G lento (CDP, 2 s de latencia) + doble clic en «Procesar venta»: UNA venta, un juego de movimientos, un POST | triple clic + Enter; 3 `click()` en la misma tarea JS (único que llega con el botón aún habilitado y ejercita el candado) |
+| f03 | La respuesta del cobro se pierde con la venta ya confirmada. Si la consulta por clave responde, la UI muestra «Venta registrada». Si tampoco responde: aviso «La venta pudo haberse registrado…» + botón «Verificar», y con el aviso a la vista (a) «Verificar», (b) «Limpiar orden», (c) recargar, rehacer el carrito y cobrar, (d) salir a `/sales`, volver, rehacer y cobrar. En todos: exactamente 1 venta, 1 línea, 1 pago y 1 movimiento `venta` para ese carrito, 1 solo POST, y la UI termina nombrando la factura de la base | corte antes de llegar al servidor + reintento; respuesta retenida 35 s |
+| f04 | Compra en modo empaque (3 × 12) como `pedido` → 0 movimientos; «Recibir pedido» → un movimiento `compra` +36 | doble clic en «Confirmar recepción» |
+| f05 | Compra `pedido`: 0 movimientos y la UI dice de forma explícita que la mercancía no ha entrado | — |
+| f06 | Ajuste de entrada y de salida desde `/inventory` → un movimiento cada uno. El selector «Tipo de movimiento» ofrece solo `Ajuste entrada`, `Ajuste salida` e `Inventario inicial`: una devolución en la lista es `fail` | salida mayor que el stock → mensaje y sin movimiento |
+| f07 | «Abrir empaque» ×2 (x12) desde el detalle: `conversion_salida` −2 y `conversion_entrada` +24 con el mismo `conversion_id` | abrir empaque sin stock |
+| f08 | Anular una venta `pendiente_pago` desde su detalle (doble clic): un movimiento inverso ligado a la venta, visible en movimientos | anular una venta pagada → rechazo explicado, base intacta |
+| f09 | «Nuevo producto» con stock inicial 15: `current_stock` 15 y un movimiento `inventario_inicial` +15 visible | — |
+| f10 | Import Excel de 3 filas con `stock_inicial` 7/14/21: un `inventario_inicial` por producto | — |
+
+Cómo se simula la respuesta perdida (f03): `page.route` deja pasar el
+`POST /api/sales`, espera el 201 del servidor y descarta la respuesta
+(`connectionreset`); para el caso «no se sabe» aborta además
+`GET /api/sales/by-request/*`, que es lo que el POS consulta antes de dejar
+cobrar otra vez. La red se restaura con `page.unroute`.
+
+Salidas:
+
+| archivo | contenido |
+|---|---|
+| `scripts/stock-lab/runs/<run>/ui.jsonl` | un caso por línea: `scope` (`plan`/`extra`), `steps`, `ui_says` (texto literal de la pantalla), `expected`, `actual` (filas de la base), `verdict`, `detail` y `evidence` (rutas de sus capturas) |
+| `scripts/stock-lab/runs/<run>/ui.md` | cobertura (flujos ejecutados con captura), tabla flujo → veredicto, **capturas por flujo** y tabla por caso |
+| `.notes/stock-integrity-gtm/qa/ui/<run>/` | `fNN-<caso>-<nn>-<paso>.png`, `ui-results.json` (lo mismo que el `.md`, en JSON) y, si un caso revienta, `…-error.aria.txt` |
+
+El veredicto de un flujo es el peor de sus casos `plan`; los `extra` se
+informan en su propia columna y no lo deciden. Un flujo sin casos o sin
+ninguna captura aparece como `COBERTURA …` en la consola y en la línea
+«Cobertura» del `.md`: no cuenta como probado. `--shots` y `--out` cambian las
+dos raíces. La lógica pura (juez de la respuesta perdida, tipos del ajuste,
+resumen por flujo) está en `scripts/stock-lab/ui/helpers.ts` y se prueba con
+`npx jest scripts/stock-lab/ui`.
+
+Hallazgos de UX que la ola deja como `finding` (conocidos, sin efecto en el
+stock): `f07.sin_stock` (con stock 0 el único aviso es la burbuja de validación
+nativa del navegador) y `f08.paid` (el error del rechazo se pinta bajo el
+pliegue, a ~990 px con ventana de 900).
+
 ## BFF en modo producción
 
 `npm run stock-lab:start` (= `npx tsx scripts/stock-lab/dev.ts --start`) hace
