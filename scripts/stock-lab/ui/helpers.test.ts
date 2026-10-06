@@ -17,6 +17,7 @@ import {
   formatVerdictSummary,
   isUnknownOutcomeNotice,
   judgeLostResponse,
+  judgeRejectionMessage,
   judgeUiVsDb,
   packUnits,
   parseEsNumber,
@@ -34,6 +35,7 @@ import {
   type LostResponseInput,
   type MovementRow,
   type PosView,
+  type RejectionMessageInput,
   type UiResult,
 } from "./helpers";
 
@@ -556,5 +558,59 @@ describe("resumen por flujo y capturas", () => {
     expect(md).toContain("## Capturas por flujo");
     expect(md).toContain("### f07");
     expect(md).toContain("- d/f07-sin-stock-01.png");
+  });
+});
+
+describe("judgeRejectionMessage (rechazo a la vista y en español · STK-607)", () => {
+  const viewport = { width: 1440, height: 900 };
+  const base: RejectionMessageInput = {
+    what: "el rechazo de la anulación",
+    text: "No pudimos actualizar la venta La venta V-1 tiene 1 pago(s) activo(s). Anula primero los pagos y luego cancela la venta.",
+    box: { x: 300, y: 180, width: 800, height: 170 },
+    viewport,
+    explains: /pago|devoluci/i,
+    nativeValidation: "",
+  };
+
+  it("pass: mensaje dentro de la ventana, explica el motivo y sin burbuja nativa", () => {
+    expect(judgeRejectionMessage(base)).toEqual({ verdict: "pass", detail: "" });
+    expect(judgeRejectionMessage({ ...base, box: { x: 0, y: 0, width: 1440, height: 900 } }).verdict).toBe("pass");
+  });
+
+  it("fail: no hay mensaje (ni en el DOM ni pintado)", () => {
+    expect(judgeRejectionMessage({ ...base, text: null, box: null }).detail).toMatch(/no muestra ningún mensaje/);
+    expect(judgeRejectionMessage({ ...base, text: "   ", box: base.box }).verdict).toBe("fail");
+    expect(judgeRejectionMessage({ ...base, box: null }).detail).toMatch(/no está pintado/);
+    expect(judgeRejectionMessage({ ...base, box: { x: 300, y: 180, width: 0, height: 0 } }).detail).toMatch(/no está pintado/);
+  });
+
+  it("fail: el mensaje está en el DOM pero bajo el pliegue (caso s606-ui-1: 991 px con ventana de 900)", () => {
+    const judged = judgeRejectionMessage({ ...base, box: { x: 300, y: 991, width: 800, height: 170 } });
+    expect(judged.verdict).toBe("fail");
+    expect(judged.detail).toMatch(/fuera de la ventana.*991.*900/);
+  });
+
+  it("fail: el mensaje asoma pero queda cortado por cualquier borde", () => {
+    expect(judgeRejectionMessage({ ...base, box: { x: 300, y: 800, width: 800, height: 170 } }).verdict).toBe("fail");
+    expect(judgeRejectionMessage({ ...base, box: { x: 300, y: -20, width: 800, height: 170 } }).verdict).toBe("fail");
+    expect(judgeRejectionMessage({ ...base, box: { x: 1000, y: 180, width: 800, height: 170 } }).verdict).toBe("fail");
+    expect(judgeRejectionMessage({ ...base, box: { x: -5, y: 180, width: 800, height: 170 } }).verdict).toBe("fail");
+  });
+
+  it("fail: visible pero no explica el motivo en español", () => {
+    const judged = judgeRejectionMessage({ ...base, text: "Something went wrong" });
+    expect(judged.verdict).toBe("fail");
+    expect(judged.detail).toMatch(/no explica.*Something went wrong/);
+  });
+
+  it("fail: el navegador pinta su burbuja de validación nativa, aunque haya mensaje propio", () => {
+    const judged = judgeRejectionMessage({
+      ...base,
+      explains: /no hay/i,
+      text: "No hay empaques en stock para abrir.",
+      nativeValidation: "Minimum value (1) must be less than the maximum value (0).",
+    });
+    expect(judged.verdict).toBe("fail");
+    expect(judged.detail).toMatch(/burbuja.*Minimum value/);
   });
 });

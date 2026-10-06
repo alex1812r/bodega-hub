@@ -476,6 +476,58 @@ export function judgeUiVsDb(input: {
   return { verdict: "pass", detail: "" };
 }
 
+/** Caja de un elemento en coordenadas de la ventana (`locator.boundingBox()`). */
+export type ViewportBox = { x: number; y: number; width: number; height: number };
+
+export type RejectionMessageInput = {
+  /** Qué rechazo se juzga, para el detalle («el rechazo de la anulación»). */
+  what: string;
+  /** Texto del mensaje; `null` si no está en el DOM. */
+  text: string | null;
+  /** Caja del mensaje SIN hacer scroll; `null` si no está pintado. */
+  box: ViewportBox | null;
+  viewport: { width: number; height: number };
+  /** Lo que el mensaje debe decir, en español, para explicar el rechazo. */
+  explains: RegExp;
+  /** `validationMessage` del campo: la burbuja nativa del navegador, si la hay. */
+  nativeValidation?: string;
+};
+
+/**
+ * Un rechazo solo vale si quien lo provocó lo puede LEER en ese momento: el
+ * mensaje está entero dentro de la ventana sin desplazarse, explica el motivo
+ * en español y no es (ni va acompañado de) la burbuja nativa del navegador.
+ * Estar en el DOM no basta: en `s606-ui-1` el error existía, a 991 px.
+ */
+export function judgeRejectionMessage(input: RejectionMessageInput): UiDbJudgement {
+  const { what, box, viewport, explains } = input;
+  const text = input.text?.replace(/\s+/g, " ").trim() ?? "";
+  const native = input.nativeValidation?.trim() ?? "";
+  if (native) {
+    return { verdict: "fail", detail: `${what}: el navegador pinta su burbuja de validación nativa («${native}»).` };
+  }
+  if (!text) {
+    return { verdict: "fail", detail: `${what}: la pantalla no muestra ningún mensaje.` };
+  }
+  if (!box || box.width <= 0 || box.height <= 0) {
+    return { verdict: "fail", detail: `${what}: el mensaje «${text}» está en el DOM pero no está pintado.` };
+  }
+  const top = Math.round(box.y);
+  const left = Math.round(box.x);
+  const bottom = Math.round(box.y + box.height);
+  const right = Math.round(box.x + box.width);
+  if (top < 0 || left < 0 || bottom > viewport.height || right > viewport.width) {
+    return {
+      verdict: "fail",
+      detail: `${what}: el mensaje queda fuera de la ventana sin hacer scroll (ocupa de ${top} a ${bottom} px en vertical y de ${left} a ${right} px en horizontal; la ventana mide ${viewport.width}×${viewport.height}): «${text}».`,
+    };
+  }
+  if (!explains.test(text)) {
+    return { verdict: "fail", detail: `${what}: el mensaje a la vista no explica el motivo en español: «${text}».` };
+  }
+  return { verdict: "pass", detail: "" };
+}
+
 // ---------------------------------------------------------------------------
 // Respuesta perdida tras el commit (flujo 3)
 // ---------------------------------------------------------------------------

@@ -304,8 +304,8 @@ cierra).
 | f04 | Compra en modo empaque (3 × 12) como `pedido` → 0 movimientos; «Recibir pedido» → un movimiento `compra` +36 | doble clic en «Confirmar recepción» |
 | f05 | Compra `pedido`: 0 movimientos y la UI dice de forma explícita que la mercancía no ha entrado | — |
 | f06 | Ajuste de entrada y de salida desde `/inventory` → un movimiento cada uno. El selector «Tipo de movimiento» ofrece solo `Ajuste entrada`, `Ajuste salida` e `Inventario inicial`: una devolución en la lista es `fail` | salida mayor que el stock → mensaje y sin movimiento |
-| f07 | «Abrir empaque» ×2 (x12) desde el detalle: `conversion_salida` −2 y `conversion_entrada` +24 con el mismo `conversion_id` | abrir empaque sin stock |
-| f08 | Anular una venta `pendiente_pago` desde su detalle (doble clic): un movimiento inverso ligado a la venta, visible en movimientos | anular una venta pagada → rechazo explicado, base intacta |
+| f07 | «Abrir empaque» ×2 (x12) desde el detalle: `conversion_salida` −2 y `conversion_entrada` +24 con el mismo `conversion_id` | abrir empaque sin stock → mensaje propio a la vista, sin POST ni movimientos |
+| f08 | Anular una venta `pendiente_pago` desde su detalle (doble clic): un movimiento inverso ligado a la venta, visible en movimientos | anular una venta pagada → rechazo explicado a la vista sin scroll, base intacta |
 | f09 | «Nuevo producto» con stock inicial 15: `current_stock` 15 y un movimiento `inventario_inicial` +15 visible | — |
 | f10 | Import Excel de 3 filas con `stock_inicial` 7/14/21: un `inventario_inicial` por producto | — |
 
@@ -331,10 +331,12 @@ dos raíces. La lógica pura (juez de la respuesta perdida, tipos del ajuste,
 resumen por flujo) está en `scripts/stock-lab/ui/helpers.ts` y se prueba con
 `npx jest scripts/stock-lab/ui`.
 
-Hallazgos de UX que la ola deja como `finding` (conocidos, sin efecto en el
-stock): `f07.sin_stock` (con stock 0 el único aviso es la burbuja de validación
-nativa del navegador) y `f08.paid` (el error del rechazo se pinta bajo el
-pliegue, a ~990 px con ventana de 900).
+Los rechazos de `f07.sin_stock` y `f08.paid` se juzgan con
+`judgeRejectionMessage` (STK-607): `pass` solo si el mensaje está entero dentro
+de la ventana SIN hacer scroll (`boundingBox`, no presencia en el DOM), explica
+el motivo en español, no hay burbuja de validación nativa del navegador y la
+base no cambia; cualquier otra cosa es `fail`. Hasta `s606-ui-1` eran `finding`
+(burbuja nativa en inglés; error bajo el pliegue, a ~990 px con ventana de 900).
 
 ## BFF en modo producción
 

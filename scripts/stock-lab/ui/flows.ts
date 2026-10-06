@@ -25,6 +25,7 @@ import {
   diffSnapshots,
   flowId,
   judgeLostResponse,
+  judgeRejectionMessage,
   judgeUiVsDb,
   packUnits,
   parseStockInt,
@@ -36,6 +37,7 @@ import {
   type DbDiff,
   type DbSnapshot,
   type PosView,
+  type RejectionMessageInput,
   type UiClaim,
   type UiResult,
   type UiStep,
@@ -540,6 +542,16 @@ async function dialogText(dialog: Locator): Promise<string> {
     });
     return chosen.length > 0 ? `${text} [selectores: ${chosen.join(" | ")}]` : text;
   });
+}
+
+/** Texto y caja de un mensaje TAL COMO ESTÁ: `boundingBox` no desplaza la página. */
+type SeenMessage = Pick<RejectionMessageInput, "text" | "box" | "viewport">;
+
+async function measureMessage(page: Page, message: Locator): Promise<SeenMessage> {
+  const viewport = page.viewportSize() ?? { width: 1440, height: 900 };
+  if ((await message.count()) === 0) return { text: null, box: null, viewport };
+  const target = message.first();
+  return { text: (await target.innerText()).replace(/\s+/g, " ").trim(), box: await target.boundingBox(), viewport };
 }
 
 async function sayScreen(rec: CaseRec, page: Page, where: string): Promise<string[]> {
@@ -1791,6 +1803,9 @@ async function flow06(lab: Lab): Promise<void> {
 // F7 · Conversión desde el detalle del producto empaque
 // ---------------------------------------------------------------------------
 
+/** Lo que la UI debe decir cuando no hay empaques que abrir. */
+const NO_STOCK_MESSAGE = /insuficiente|no hay|sin stock|solo hay|supera|no alcanza/i;
+
 async function flow07(lab: Lab): Promise<void> {
   const unitsPerPack = 12;
   for (const variant of [
@@ -1815,6 +1830,8 @@ async function flow07(lab: Lab): Promise<void> {
       let text = "";
       let status: number | null = null;
       let nativeMessage = "";
+      // null = la acción no se ofreció (botón deshabilitado): no hay mensaje que medir.
+      let seen: SeenMessage | null = null;
       if (await trigger.isDisabled()) {
         claim = "error";
         text = "botón «Abrir empaque» deshabilitado";
@@ -1842,6 +1859,8 @@ async function flow07(lab: Lab): Promise<void> {
           claim = "error";
           text = await dialogText(dialog);
           rec.say("Diálogo Abrir empaque tras enviar", text);
+          seen = await measureMessage(page, dialog.getByText(NO_STOCK_MESSAGE));
+          rec.say("Diálogo Abrir empaque · mensaje de stock", seen.text ? `«${seen.text}» en ${JSON.stringify(seen.box)}` : "(ninguno)");
         } else {
           claim = "success";
           rec.say("Diálogo Abrir empaque tras enviar", "(se cerró sin mensaje)");
@@ -1868,6 +1887,8 @@ async function flow07(lab: Lab): Promise<void> {
         ui_claim: claim,
         ui_text: text,
         http_status: status,
+        ui_message: seen,
+        native_validation: nativeMessage,
         stock_delta: { [pack.sku]: diff.stockDelta[pack.id] ?? 0, [unit.sku]: diff.stockDelta[unit.id] ?? 0 },
         movements: diff.movements.map((m) => ({ product: labels[m.product_id], type: m.type, quantity_delta: m.quantity_delta, conversion_id: m.conversion_id })),
         ui_pack_rows: uiPackRows.map((r) => r.raw),
@@ -1889,11 +1910,14 @@ async function flow07(lab: Lab): Promise<void> {
       const dbPack = (before.stock[pack.id] ?? 0) + (diff.stockDelta[pack.id] ?? 0);
       const dbUnit = (before.stock[unit.id] ?? 0) + (diff.stockDelta[unit.id] ?? 0);
       if (uiPackStock !== dbPack || uiUnitStock !== dbUnit) problems.push(`detalle: empaque ${uiPackStock}/${dbPack}, unidad ${uiUnitStock}/${dbUnit} (UI/base)`);
+      // STK-607: el motivo se lee en el diálogo, en español y sin la burbuja nativa.
+      if (!variant.ok && seen) {
+        const message = judgeRejectionMessage({ what: "Abrir empaque sin stock", ...seen, explains: NO_STOCK_MESSAGE, nativeValidation: nativeMessage });
+        if (message.verdict === "fail") problems.push(message.detail);
+      }
       if (problems.length > 0) rec.set("fail", problems.join(" · "));
       else if (!variant.ok && status !== null && status >= 500) rec.set("finding", `Sin movimientos, pero el servidor respondió ${status} (tocaba 400). UI: «${text}».`);
-      else if (!variant.ok && status === null && !/insuficiente|no hay|sin stock|deshabilitado|supera|no alcanza/i.test(text)) rec.set("finding", `UX: con stock de empaque 0 el diálogo se abre con el botón «Abrir empaque» habilitado; al pulsarlo no sale ninguna petición y el único aviso es ${nativeMessage ? `la burbuja de validación nativa del navegador («${nativeMessage}»), sin mensaje propio que hable de stock` : "ninguno"}. Diálogo: «${text}».`);
-      else if (!variant.ok && !/insuficiente|no hay|sin stock|deshabilitado|supera|no alcanza/i.test(text)) rec.set("finding", `Sin movimientos, pero el mensaje no explica la falta de stock: «${text}».`);
-      else rec.set("pass", variant.ok ? "" : `UI: «${text.slice(0, 200)}» · HTTP ${status ?? "sin petición"}.`);
+      else rec.set("pass", variant.ok ? "" : `UI: «${seen?.text ?? text}»${seen?.box ? ` a la vista (y=${Math.round(seen.box.y)} px de ${seen.viewport.height})` : ""} · HTTP ${status ?? "sin petición"}.`);
     });
   }
 }
@@ -1902,7 +1926,12 @@ async function flow07(lab: Lab): Promise<void> {
 // F8 · Cancelar venta desde su detalle
 // ---------------------------------------------------------------------------
 
-async function uiCancelSale(rec: CaseRec, page: Page, saleId: string, double: boolean): Promise<{ claim: UiClaim; text: string; statuses: number[]; errorOffscreen: string }> {
+/** El ErrorState de las acciones del detalle de venta: título + motivo del servidor. */
+function saleActionError(page: Page): Locator {
+  return page.getByText("No pudimos actualizar la venta", { exact: true }).locator("xpath=..");
+}
+
+async function uiCancelSale(rec: CaseRec, page: Page, saleId: string, double: boolean): Promise<{ claim: UiClaim; text: string; statuses: number[]; rejection: SeenMessage }> {
   const statuses: number[] = [];
   page.on("response", (response) => {
     if (response.request().method() === "PATCH" && /\/api\/sales\/[^/]+\/cancel$/.test(new URL(response.url()).pathname)) {
@@ -1919,7 +1948,7 @@ async function uiCancelSale(rec: CaseRec, page: Page, saleId: string, double: bo
   const item = page.getByRole("menuitem", { name: "Anular venta" });
   if ((await item.count()) === 0 || (await item.isDisabled().catch(() => false)) || (await item.getAttribute("aria-disabled")) === "true") {
     await rec.shot(page, "menu-sin-anular");
-    return { claim: "error", text: "la opción «Anular venta» no está disponible", statuses, errorOffscreen: "" };
+    return { claim: "error", text: "la opción «Anular venta» no está disponible", statuses, rejection: await measureMessage(page, saleActionError(page)) };
   }
   await item.click();
   const dialog = page.getByRole("dialog");
@@ -1935,23 +1964,20 @@ async function uiCancelSale(rec: CaseRec, page: Page, saleId: string, double: bo
   const main = (await page.locator("main").innerText()).replace(/\s+/g, " ");
   rec.say("Detalle de venta tras anular · cabecera", main.slice(0, 300));
   await rec.shot(page, "tras-anular");
-  // El ErrorState de la pantalla va al final del contenido: ¿queda a la vista?
-  let errorOffscreen = "";
-  const errorBox = page.getByText("No pudimos actualizar la venta", { exact: true });
-  if ((await errorBox.count()) > 0) {
-    const top = await errorBox.first().evaluate((element) => Math.round(element.getBoundingClientRect().top));
-    const viewport = page.viewportSize()?.height ?? 900;
-    if (top >= viewport || top < 0) {
-      errorOffscreen = `el mensaje queda a ${top} px del borde superior con una ventana de ${viewport} px de alto`;
-      rec.say("Detalle de venta · posición del error", errorOffscreen);
-      await errorBox.first().scrollIntoViewIfNeeded();
-      await rec.shot(page, "error-al-final-de-la-pagina");
+  // El aviso (título + motivo) se mide ANTES de cualquier scroll: es lo que ve el cajero.
+  const rejection = await measureMessage(page, saleActionError(page));
+  if (rejection.text) {
+    rec.say("Detalle de venta · aviso del rechazo", `«${rejection.text}» en ${JSON.stringify(rejection.box)} con ventana ${rejection.viewport.width}×${rejection.viewport.height}`);
+    const top = rejection.box?.y ?? -1;
+    if (top < 0 || top >= rejection.viewport.height) {
+      await saleActionError(page).first().scrollIntoViewIfNeeded();
+      await rec.shot(page, "error-fuera-de-la-vista");
     }
   }
   const errorShown = /No pudimos actualizar la venta/i.test(main) || texts.some((t) => /no pudimos|error|no se puede|pagos/i.test(t));
   const cancelledShown = /cancelada|anulada/i.test(main.slice(0, 400));
   const shownError = /No pudimos actualizar la venta.{0,260}/i.exec(main)?.[0]?.trim() ?? texts.join(" · ");
-  return { claim: errorShown ? "error" : cancelledShown ? "success" : "none", text: errorShown ? shownError : cancelledShown ? "estado Cancelada" : "", statuses, errorOffscreen };
+  return { claim: errorShown ? "error" : cancelledShown ? "success" : "none", text: errorShown ? shownError : cancelledShown ? "estado Cancelada" : "", statuses, rejection };
 }
 
 async function flow08(lab: Lab): Promise<void> {
@@ -2035,13 +2061,14 @@ async function flow08(lab: Lab): Promise<void> {
       const cancelled = diff.statusChanges[sale.id]?.endsWith("cancelada") ?? false;
       rec.expected = {
         either: [
-          "la UI rechaza con un mensaje que explica qué hacer (anular pagos / devolución) y la base no cambia",
+          "la UI rechaza con un mensaje a la vista sin hacer scroll que explica qué hacer (anular pagos / devolución) y la base no cambia",
           `la venta queda cancelada con un único movimiento inverso +${quantity} y los pagos anulados`,
         ],
       };
       rec.actual = {
         ui_claim: outcome.claim,
         ui_text: outcome.text,
+        ui_message: outcome.rejection,
         cancel_requests: outcome.statuses,
         sale_status: diff.statusChanges[sale.id] ?? `(sin cambio: ${sale.status})`,
         payment_status_changes: before.payments.map((p) => diff.statusChanges[p.id] ?? "(sin cambio)"),
@@ -2059,12 +2086,14 @@ async function flow08(lab: Lab): Promise<void> {
       } else {
         if (outcome.claim === "success") problems.push("la UI muestra la venta como cancelada y en la base no lo está");
         if (diff.movements.length > 0 || (diff.stockDelta[product.id] ?? 0) !== 0) problems.push(`la anulación rechazada movió stock (${diff.stockDelta[product.id] ?? 0})`);
+        if (diff.statusChanges[sale.id]) problems.push(`la anulación rechazada cambió el estado de la venta: ${diff.statusChanges[sale.id]}`);
+        // STK-607: el rechazo se lee sin desplazarse y dice qué hacer.
+        const message = judgeRejectionMessage({ what: "Anular venta pagada", ...outcome.rejection, explains: /pago|devoluci/i });
+        if (message.verdict === "fail") problems.push(message.detail);
       }
       const info = `UI: ${outcome.claim} «${outcome.text}»; PATCH cancel: ${outcome.statuses.join(",") || "ninguno"}; venta ${diff.statusChanges[sale.id] ?? sale.status}; movimientos nuevos ${diff.movements.length}.`;
       if (problems.length > 0) rec.set("fail", `${problems.join(" · ")} · ${info}`);
       else if (outcome.statuses.some((s) => s >= 500)) rec.set("finding", `La anulación de una venta pagada respondió 5xx. ${info}`);
-      else if (!cancelled && outcome.errorOffscreen) rec.set("finding", `UX: al anular una venta pagada el error se pinta al final de la página, fuera de la vista (${outcome.errorOffscreen}): tras confirmar, el cajero sigue viendo la factura «Pagada» sin ningún mensaje y debe desplazarse para leer «${outcome.text}». ${info}`);
-      else if (!cancelled && !/pago|devoluci/i.test(outcome.text)) rec.set("finding", `La UI rechaza anular una venta pagada sin explicar el camino (anular pagos o devolución). ${info}`);
       else rec.set("pass", info);
     },
   );
