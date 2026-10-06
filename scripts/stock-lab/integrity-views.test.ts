@@ -180,6 +180,18 @@ describe("parseReconcileArgs / assertProductionReadOnly", () => {
     expect(() => parseReconcileArgs(["--foo"])).toThrow(/desconocido/);
   });
 
+  // STK-616 (B4): `--run ../x` llegaba a resolve(RUNS_DIR, runId) y escribía fuera de runs/.
+  it.each(["../x", "..", "../../etc", "a/../b", "a/b", "a\b", "run..1", ".", "C:x", "con espacio"])(
+    "rechaza el run id %p",
+    (runId) => {
+      expect(() => parseReconcileArgs(["--run", runId])).toThrow(/--run solo admite/);
+    },
+  );
+
+  it("acepta run ids con letras, números, punto, guion y guion bajo", () => {
+    expect(parseReconcileArgs(["--run", "2026-10-06_stk.616"]).runId).toBe("2026-10-06_stk.616");
+  });
+
   it("production sin --read-only aborta; con --read-only pasa; local no lo exige", () => {
     expect(() => assertProductionReadOnly(parseReconcileArgs(["--target", "production"]))).toThrow(/--read-only/);
     expect(() => assertProductionReadOnly(parseReconcileArgs(["--target", "production", "--read-only"]))).not.toThrow();

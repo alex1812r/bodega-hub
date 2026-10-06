@@ -268,6 +268,37 @@ describe("C21 · guardas de host del laboratorio", () => {
       expect(attemptedConnectionStrings()).toEqual([LAB_FILE_ENV.STOCK_LAB_DB_URL]);
     });
 
+    // STK-616 (M1): la puerta BFF devolvía en cuanto el host era loopback, sin mirar el
+    // puerto, y la URL salía de `process.env`: un `next dev` normal en :3000 pasaba.
+    it.each([
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      "http://localhost:3100@evil.example",
+      "http://evil.example:3100",
+      "https://localhost:3100",
+    ])("scenarios/db.ts (Lab.open) aborta sin conectar con STOCK_LAB_API_URL=%s", async (apiUrl) => {
+      clearHostileEnv();
+      process.env.STOCK_LAB_API_URL = apiUrl;
+
+      await expect(Lab.open("stk-616")).rejects.toThrow(/regla 1.4/);
+
+      expect(attemptedConnectionStrings()).toEqual([]);
+    });
+
+    // STK-616 (B3): el host permitido de estos dos puntos sale del archivo lab; uno
+    // heredado del entorno no interviene ni para abortar.
+    it.each(entryPoints.slice(1, 2).concat([["scenarios/lib.ts (openLabSession)", () => openLabSession("stk-616", [])]]))(
+      "%s ignora el host permitido del entorno y usa el del archivo lab",
+      async (_nombre, open) => {
+        clearHostileEnv();
+        process.env.STOCK_TEST_ALLOW_WRITES_HOST = "evil.example";
+
+        await open().catch(() => undefined);
+
+        expect(attemptedConnectionStrings()).toEqual([LAB_FILE_ENV.STOCK_LAB_DB_URL]);
+      },
+    );
+
     it("db-test-utils.ts devuelve la URL del archivo lab con el entorno limpio", () => {
       clearHostileEnv();
       expect(resolveStockLabDbUrl()).toBe(LAB_FILE_ENV.STOCK_LAB_DB_URL);

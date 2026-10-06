@@ -809,7 +809,8 @@ export type LabSession = {
 export async function openLabSession(runId: string, roles: readonly LabRoleKey[]): Promise<LabSession> {
   const env = loadStockLabEnv();
   const dbUrl = resolveStockLabDbUrl();
-  assertAllowedWriteHost(dbUrl, process.env.STOCK_TEST_ALLOW_WRITES_HOST ?? env.STOCK_TEST_ALLOW_WRITES_HOST);
+  // El host permitido sale solo del archivo lab, nunca del entorno heredado (C21).
+  assertAllowedWriteHost(dbUrl, env.STOCK_TEST_ALLOW_WRITES_HOST);
   const db = new Client({ connectionString: dbUrl, connectionTimeoutMillis: 10_000 });
   await db.connect();
   try {

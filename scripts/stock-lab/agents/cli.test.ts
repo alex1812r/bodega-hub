@@ -65,6 +65,11 @@ describe("parseAgentArgs", () => {
     expect(() => parseAgentArgs(["--seed", "1", "--ops", "1"])).toThrow("Falta --run");
   });
 
+  // STK-616 (B4): el run id es un nombre de carpeta bajo runs/, nunca una ruta.
+  it.each(["../x", "..", "a/../b", "a/b", "a\b", "run..1", "."])("lanza si --run es %p", (run) => {
+    expect(() => parseAgentArgs(["--run", run, "--seed", "1", "--ops", "1"])).toThrow("--run solo admite");
+  });
+
   it("lanza si falta --seed o no es entero", () => {
     expect(() => parseAgentArgs(["--run", "r", "--ops", "1"])).toThrow("Falta --seed");
     expect(() => parseAgentArgs(["--run", "r", "--seed", "abc", "--ops", "1"])).toThrow("--seed debe ser un entero");

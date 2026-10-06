@@ -75,6 +75,17 @@ pares, usuarios, cajas, proveedores, clientes, categorías, movimientos
   `STOCK_TEST_ALLOW_WRITES_HOST`.
 - El plan del catálogo es puro (`buildLabCatalog()`) y está cubierto por
   `scripts/stock-lab/seed-lab.test.ts`.
+- Guarda del BFF (STK-616): agentes, escenarios, caos y ola UI toman la URL del BFF
+  solo de `.env.stock-lab` (`STOCK_LAB_API_URL`; si falta, `http://localhost:<PORT>`,
+  3100 por defecto) a través de `labApiUrl()` en `scripts/stock-lab/env.ts`. Tiene que
+  ser `http`, host loopback, sin usuario/contraseña y con el puerto `PORT` del archivo:
+  un `npm run dev` normal en `:3000` (entorno `.env.local`) no pasa. Un
+  `STOCK_LAB_API_URL` distinto en el entorno del shell no se usa: aborta antes de la
+  primera petición. El host permitido (`STOCK_TEST_ALLOW_WRITES_HOST`) también sale
+  solo del archivo, y `--run` es un nombre de carpeta (`[A-Za-z0-9._-]+`, sin `..`).
+- `npm run e2e:bodegon` (script de escritura anterior al laboratorio) solo corre si
+  `NEXT_PUBLIC_SUPABASE_URL` (la del entorno y la de `.env.local`/`.env`) y
+  `SMOKE_API_BASE_URL` son loopback; si no, aborta con exit 1. No hay variable de escape.
 ## Agentes
 
 Cada agente es un proceso independiente en `scripts/stock-lab/agents/<nombre>.ts`
