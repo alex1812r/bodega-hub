@@ -143,9 +143,9 @@ describe("findFirstBreak", () => {
     const found = findFirstBreak(events, ofProduct("prod-b"), "prod-b");
     expect(found).toMatchObject({
       productId: "prod-b",
-      reason: "expected_mismatch",
-      expected: -4,
-      actual: -3,
+      reason: "missing_movement",
+      expected: -1,
+      actual: 0,
       movement: null,
     });
     expect(found?.event?.response_id).toBe("sale-3");
@@ -190,7 +190,7 @@ describe("findFirstBreak", () => {
     expect(findFirstBreak(evs, movs, "p")).toBeNull();
   });
 
-  it("culpa al último evento si aparecen movimientos sin evento después de él", () => {
+  it("señala los movimientos sin evento que aparecen después del último evento", () => {
     const evs: LabEvent[] = [
       { ts: "2026-10-05T11:00:00.900Z", agent: "v1", op: "sale_create", payload: {}, status: 201, response_id: "s1", expected_delta: { p: -1 } },
     ];
@@ -198,12 +198,73 @@ describe("findFirstBreak", () => {
       { id: "x1", product_id: "p", type: "venta", quantity_delta: -1, stock_after: 9, sale_id: "s1", purchase_id: null, conversion_id: null, created_at: "2026-10-05T11:00:00.400Z" },
       { id: "x2", product_id: "p", type: "ajuste", quantity_delta: -5, stock_after: 4, sale_id: null, purchase_id: null, conversion_id: null, created_at: "2026-10-05T11:00:30.000Z" },
     ];
-    expect(findFirstBreak(evs, movs, "p")).toMatchObject({ reason: "expected_mismatch", expected: -1, actual: -6 });
+    const found = findFirstBreak(evs, movs, "p");
+    expect(found).toMatchObject({ reason: "unattributed_movements", expected: -1, actual: -6 });
+    expect(found?.movement?.id).toBe("x2");
+    expect(found?.event?.response_id).toBe("s1");
+  });
+
+  describe("STK-308: corridas paralelas (ts del evento = hora de respuesta en el cliente)", () => {
+    const mov = (over: Partial<SummaryMovement> & Pick<SummaryMovement, "id" | "quantity_delta" | "stock_after" | "created_at">): SummaryMovement => ({
+      product_id: "p",
+      type: over.quantity_delta < 0 ? "venta" : "compra",
+      sale_id: null,
+      purchase_id: null,
+      conversion_id: null,
+      ...over,
+    });
+    const ev = (over: Partial<LabEvent> & Pick<LabEvent, "ts" | "op" | "response_id">, delta: number): LabEvent => ({
+      agent: "v1",
+      payload: {},
+      status: 201,
+      expected_delta: { p: delta },
+      ...over,
+    });
+    // A: venta −5 (ts 10.200). B: compra +120 de otro agente (ts 10.735) cuyo
+    // movimiento se creó en 10.060, antes del ts de A.
+    const saleA = ev({ ts: "2026-10-06T01:41:10.200Z", op: "sale_create", response_id: "s-a" }, -5);
+    const purchaseB = ev({ ts: "2026-10-06T01:41:10.735Z", agent: "comprador", op: "purchase_create", response_id: "p-b" }, 120);
+    const movA = mov({ id: "m-a", quantity_delta: -5, stock_after: 95, sale_id: "s-a", created_at: "2026-10-06T01:41:09.980Z" });
+    const movB = mov({ id: "m-b", quantity_delta: 120, stock_after: 215, purchase_id: "p-b", created_at: "2026-10-06T01:41:10.060Z" });
+
+    it("no culpa a nadie si Σ esperado == Σ movimientos y la cadena es válida", () => {
+      expect(findFirstBreak([saleA, purchaseB], [movA, movB], "p")).toBeNull();
+    });
+
+    it("al bisecar atribuye por referencia (sale_id/purchase_id) y culpa al evento sin movimiento, no al primero por tiempo", () => {
+      const saleC = ev({ ts: "2026-10-06T01:41:11.500Z", agent: "v2", op: "sale_create", response_id: "s-c" }, -1);
+      const found = findFirstBreak([saleA, purchaseB, saleC], [movA, movB], "p");
+      expect(found).toMatchObject({ reason: "missing_movement", expected: -1, actual: 0, movement: null });
+      expect(found?.event?.response_id).toBe("s-c");
+    });
+
+    it("un evento con varias líneas del mismo producto suma todos sus movimientos; una cancelación consume los suyos", () => {
+      const sale = ev({ ts: "2026-10-06T01:41:10.200Z", op: "sale_create", response_id: "s-1" }, -5);
+      const cancel = ev({ ts: "2026-10-06T01:41:12.000Z", op: "sale_cancel", response_id: "s-1", status: 200 }, 5);
+      const movs = [
+        mov({ id: "m-1", quantity_delta: -2, stock_after: 98, sale_id: "s-1", created_at: "2026-10-06T01:41:10.000Z" }),
+        mov({ id: "m-2", quantity_delta: -3, stock_after: 95, sale_id: "s-1", created_at: "2026-10-06T01:41:10.001Z" }),
+        mov({ id: "m-3", quantity_delta: 5, stock_after: 100, sale_id: "s-1", type: "devolucion", created_at: "2026-10-06T01:41:11.900Z" }),
+      ];
+      expect(findFirstBreak([sale, cancel], movs, "p")).toBeNull();
+      // Si la cancelación devuelve 4 en vez de 5: delta_mismatch en la cancelación.
+      const short = movs.map((m) => (m.id === "m-3" ? { ...m, quantity_delta: 4, stock_after: 99 } : m));
+      const found = findFirstBreak([sale, cancel], short, "p");
+      expect(found).toMatchObject({ reason: "delta_mismatch", expected: 5, actual: 4 });
+      expect(found?.event?.op).toBe("sale_cancel");
+    });
+
+    it("movimientos sin evento atribuible → unattributed_movements", () => {
+      const extra = mov({ id: "m-x", quantity_delta: -7, stock_after: 208, created_at: "2026-10-06T01:41:30.000Z", type: "ajuste" });
+      const found = findFirstBreak([saleA, purchaseB], [movA, movB, extra], "p");
+      expect(found).toMatchObject({ reason: "unattributed_movements", expected: 115, actual: 108 });
+      expect(found?.movement?.id).toBe("m-x");
+    });
   });
 
   it("findAllBreaks reúne B y C", () => {
     expect(findAllBreaks(events, movements).map((b) => `${b.productId}:${b.reason}`).sort()).toEqual([
-      "prod-b:expected_mismatch",
+      "prod-b:missing_movement",
       "prod-c:chain_break",
     ]);
   });
@@ -239,7 +300,7 @@ describe("buildSummary", () => {
     expect(md).toContain("| 0 (agent_error) | agent_error | 1 |");
     expect(md).toContain("| 400 | sale_create | 1 |");
     expect(md).toContain("| Producto B | LAB-HOT-02 | 0 | 1 | 1 | 51 | 51 | DESCUADRE | ok |");
-    expect(md).toContain("| Producto B | LAB-HOT-02 | 2026-10-05T10:00:04.900Z · vendedor-2 · sale_create · sale-3 | expected_mismatch");
+    expect(md).toContain("| Producto B | LAB-HOT-02 | 2026-10-05T10:00:04.900Z · vendedor-2 · sale_create · sale-3 | missing_movement");
     expect(md).toContain("| Producto C | LAB-HOT-03 | 2026-10-05T10:00:09.400Z · mov m-c3 · venta · sale-5 | chain_break");
     expect(md).not.toContain("Producto D");
   });
