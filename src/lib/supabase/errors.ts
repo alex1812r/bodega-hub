@@ -1,4 +1,4 @@
-import { ApiError } from "@/lib/api/apiError";
+import { ApiError, type ApiErrorCode } from "@/lib/api/apiError";
 
 type SupabaseLikeError = {
   code?: string;
@@ -10,6 +10,19 @@ type SupabaseLikeError = {
 function isSupabaseLikeError(error: unknown): error is SupabaseLikeError {
   return typeof error === "object" && error !== null && "message" in error;
 }
+
+const INVALID_DATA_MESSAGE = "Los datos enviados no son validos.";
+const RETRYABLE_CONFLICT_MESSAGE =
+  "La operacion choco con otra en curso y no se aplico. Intenta de nuevo.";
+
+// SQLSTATE que lanzan las RPC para rechazos de negocio (`errcode = 'PT4xx'`):
+// PostgREST responde con ese HTTP y el mensaje ya viene redactado para el usuario.
+const BUSINESS_REJECTIONS: Record<string, { code: ApiErrorCode; fallback: string; status: number }> = {
+  PT400: { code: "BAD_REQUEST", fallback: INVALID_DATA_MESSAGE, status: 400 },
+  PT403: { code: "FORBIDDEN", fallback: "No autorizado para esta operacion.", status: 403 },
+  PT404: { code: "NOT_FOUND", fallback: "Recurso no encontrado.", status: 404 },
+  PT409: { code: "CONFLICT", fallback: "La operacion no es valida en el estado actual.", status: 409 },
+};
 
 export function getSupabaseErrorMessage(error: unknown) {
   if (isSupabaseLikeError(error) && error.message) {
@@ -29,6 +42,12 @@ export function mapSupabaseError(error: unknown): ApiError {
   }
 
   if (isSupabaseLikeError(error)) {
+    const rejection = error.code ? BUSINESS_REJECTIONS[error.code] : undefined;
+
+    if (rejection) {
+      return new ApiError(rejection.status, rejection.code, error.message || rejection.fallback);
+    }
+
     switch (error.code) {
       case "23505":
         return new ApiError(409, "CONFLICT", "El recurso ya existe.");
@@ -37,13 +56,18 @@ export function mapSupabaseError(error: unknown): ApiError {
       case "23503":
         return new ApiError(400, "BAD_REQUEST", "Referencia invalida.");
       case "23514":
-      case "23502":
       case "22P02":
-        return new ApiError(
-          400,
-          "BAD_REQUEST",
-          error.message ?? "Los datos enviados no son validos.",
-        );
+        return new ApiError(400, "BAD_REQUEST", error.message ?? INVALID_DATA_MESSAGE);
+      // El texto de estos errores es de Postgres (columnas, relaciones, tipos): no se reenvia.
+      case "23502":
+      case "22003":
+      case "22007":
+      case "22008":
+        return new ApiError(400, "BAD_REQUEST", INVALID_DATA_MESSAGE);
+      // Deadlock y fallo de serializacion: la transaccion se deshizo entera, basta reintentar.
+      case "40P01":
+      case "40001":
+        return new ApiError(409, "CONFLICT", RETRYABLE_CONFLICT_MESSAGE, { retryable: true });
       case "42501":
         return new ApiError(403, "FORBIDDEN", "No autorizado para esta operacion.");
       default:
@@ -90,6 +114,11 @@ export function mapSupabaseError(error: unknown): ApiError {
 
     if (message.includes("ajuste de stock no puede ser cero")) {
       return new ApiError(400, "BAD_REQUEST", "El ajuste no puede ser cero.");
+    }
+
+    // `raise exception` sin errcode: regla de negocio de una RPC, redactada para el usuario.
+    if (error.code === "P0001" && error.message) {
+      return new ApiError(400, "BAD_REQUEST", error.message);
     }
   }
 

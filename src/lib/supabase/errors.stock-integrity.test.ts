@@ -2,8 +2,8 @@
  * STK-413 · regresión de C12 (rechazos de negocio y de entrada que salen como
  * 500 `INTERNAL_ERROR` o con el texto crudo de Postgres).
  *
- * Los `it.failing` describen el comportamiento SANO y hoy fallan: al corregir
- * `mapSupabaseError` (fase 5) hay que convertirlos en `it`.
+ * Nacieron como `it.failing`; STK-506 (fase 5) corrigió `mapSupabaseError` y
+ * pasaron a `it`.
  */
 import { mapSupabaseError } from "./errors";
 
@@ -19,7 +19,7 @@ describe("C12 · mapSupabaseError no convierte rechazos en 500", () => {
   // Evento: caos/9.2.md (recibir x2: `200` + `500 INTERNAL_ERROR Solo se pueden recibir
   // compras en estado pedido`, 60/60) y caos/propios.md N5.
   // Código: src/lib/supabase/errors.ts:26-49 (switch sin P0001) y :93 (default 500).
-  it.failing.each<[string, PostgresErrorCase]>([
+  it.each<[string, PostgresErrorCase]>([
     ["recibir una compra ya recibida", { code: "P0001", message: "Solo se pueden recibir compras en estado pedido" }],
     ["revertir una compra sin stock", { code: "P0001", message: "No hay stock suficiente para revertir la compra" }],
     ["cancelar o devolver dos veces una compra", { code: "P0001", message: "La compra ya fue cancelada o devuelta" }],
@@ -37,7 +37,7 @@ describe("C12 · mapSupabaseError no convierte rechazos en 500", () => {
   // el cliente no sabe que basta reintentar.
   // Evento: causes.md C12 (fix propuesto: 40P01 → 409/reintento); caos/9.2.md (ráfagas x20).
   // Código: src/lib/supabase/errors.ts:31-49.
-  it.failing("mapea el deadlock 40P01 a un estado reintentable (409 o 503), no a 500", () => {
+  it("mapea el deadlock 40P01 a un estado reintentable (409 o 503), no a 500", () => {
     const mapped = mapSupabaseError({ code: "40P01", message: "deadlock detected" });
 
     expect([409, 503]).toContain(mapped.status);
@@ -48,7 +48,7 @@ describe("C12 · mapSupabaseError no convierte rechazos en 500", () => {
   // Evento: caos/9.7.md (cancelar/devolver con el producto fuera de tienda:
   // `400 BAD_REQUEST null value in column "current_stock" of relation "products" …`).
   // Código: src/lib/supabase/errors.ts:39-46 (`error.message` tal cual).
-  it.failing("no reenvía al cliente el texto crudo del 23502 de una reversión", () => {
+  it("no reenvía al cliente el texto crudo del 23502 de una reversión", () => {
     const mapped = mapSupabaseError({
       code: "23502",
       message:
@@ -63,7 +63,7 @@ describe("C12 · mapSupabaseError no convierte rechazos en 500", () => {
   // Evento: caos/propios.md N5 (cantidad 1e12 / 2147483648, precio 1e15,
   // `from=2026-13-45` → 500 en ventas, compras, ajustes y listados).
   // Código: src/lib/supabase/errors.ts:31-49 (solo 22P02 de la clase 22).
-  it.failing.each<[string, PostgresErrorCase]>([
+  it.each<[string, PostgresErrorCase]>([
     ["numeric overflow", { code: "22003", message: "numeric field overflow" }],
     ["entero fuera de rango", { code: "22003", message: "integer out of range" }],
     [
@@ -83,6 +83,39 @@ describe("C12 · mapSupabaseError no convierte rechazos en 500", () => {
 
     expect(mapped.status).toBe(400);
     expect(mapped.code).toBe("BAD_REQUEST");
+  });
+
+  // STK-506 · contrato de fase 5: las RPC nuevas lanzan `errcode = 'PT4xx'` con el
+  // texto ya redactado para el usuario; el BFF conserva ese HTTP y ese mensaje.
+  it.each<[string, number, string, string]>([
+    ["PT400", 400, "BAD_REQUEST", "El stock inicial se registra con un movimiento inventario_inicial"],
+    ["PT403", 403, "FORBIDDEN", "No autorizado para ajustar stock"],
+    ["PT404", 404, "NOT_FOUND", "La compra no existe en esta tienda"],
+    ["PT409", 409, "CONFLICT", "Solo se pueden recibir compras en estado pedido"],
+    // Gana el SQLSTATE sobre el mapeo por mensaje ("stock insuficiente" → 400 genérico).
+    ["PT409", 409, "CONFLICT", "Stock insuficiente"],
+  ])("mapea %s a %i %s con el mensaje de la RPC", (code, status, apiCode, message) => {
+    const mapped = mapSupabaseError({ code, message });
+
+    expect(mapped.status).toBe(status);
+    expect(mapped.code).toBe(apiCode);
+    expect(mapped.message).toBe(message);
+  });
+
+  it.each(["40P01", "40001"])("mapea %s a 409 reintentable sin el texto de Postgres", (code) => {
+    const mapped = mapSupabaseError({ code, message: "could not serialize access / deadlock detected" });
+
+    expect(mapped.status).toBe(409);
+    expect(mapped.code).toBe("CONFLICT");
+    expect(mapped.details).toEqual({ retryable: true });
+    expect(mapped.message).not.toMatch(/serialize|deadlock/i);
+  });
+
+  it("un P0001 respeta los mapeos por mensaje existentes", () => {
+    const mapped = mapSupabaseError({ code: "P0001", message: "Producto no encontrado" });
+
+    expect(mapped.status).toBe(404);
+    expect(mapped.code).toBe("NOT_FOUND");
   });
 
   // Ya sanos hoy (van como `it` normal): sirven de control para que un arreglo
