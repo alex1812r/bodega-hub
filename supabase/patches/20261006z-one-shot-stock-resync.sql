@@ -11,13 +11,22 @@
 --
 -- Que hace
 --   Corrige SOLO los productos listados en _stock_resync_targets (por id). No
---   barre "todo lo que tenga diff". Fuente de verdad: el libro mayor.
+--   barre "todo lo que tenga diff". Al terminar, en cada producto listado
+--   current_stock = suma(quantity_delta) del libro.
 --
---   Regla codificada por producto listado:
---     * Libro >= 0  -> current_stock := suma(quantity_delta). No inserta nada.
---     * Libro <  0  -> NUNCA se escribe stock negativo. Falta un movimiento en
---                      el libro: se asienta (inventario_inicial) por la
---                      diferencia y current_stock queda como estaba.
+--   Cada fila de la lista DECLARA su accion (columna action). El script ejecuta
+--   la accion declarada; NO la deduce de los numeros ni del signo del libro. La
+--   accion sale de la CAUSA diagnosticada del descuadre, y solo hay dos:
+--
+--     * stock_from_ledger  El libro manda. Los movimientos estan completos y lo
+--                          que quedo mal es products.current_stock (se escribio
+--                          fuera del libro). current_stock := suma del libro.
+--                          No se inserta ningun movimiento. Solo SUBE el stock.
+--     * ledger_from_stock  El stock manda. current_stock es el correcto (la
+--                          mercancia esta contada) y al libro le falta un
+--                          asiento. Se asienta UN movimiento inventario_inicial
+--                          por la diferencia (current_stock - libro, siempre
+--                          > 0) y current_stock queda como estaba.
 --
 -- Productos (informe read-only de produccion del 2026-10-06,
 -- scripts/stock-lab/runs/prod-20261006/reconcile.json; tienda Bodega Las Luces
@@ -25,18 +34,21 @@
 --
 --   1. 17a73919-bfa7-4f69-8a27-710b2c4805f5  caja-ciga-luck-stri-ecli
 --      "Caja Cigarro Lucky Strike Eclipse" — 9 movimientos
+--      accion: stock_from_ledger
 --        antes:   current_stock  2 | libro 12 | diff -10
 --        despues: current_stock 12 | libro 12 | diff   0   (sin movimiento nuevo)
 --      Origen: el 2026-09-19 un ajuste_entrada +10 (movimiento
 --      ac30eb3c-4269-4c90-85fc-c5fd5b0e181a) dejo stock_after 10 cuando la
---      cadena esperaba 20.
+--      cadena esperaba 20. El libro tiene el +10; el stock no lo recibio.
 --
 --   2. 52f7ea71-9ddc-4f5d-890f-33b1f96dd3b2  glup-uva-400-ml
 --      "Glup Uva 400 ml" — 1 movimiento
+--      accion: ledger_from_stock
 --        antes:   current_stock 0 | libro -1 | diff +1
 --        despues: current_stock 0 | libro  0 | diff  0   (+1 inventario_inicial)
 --      Origen: alta del 2026-10-04 con stock escrito fuera del libro (sin
---      inventario_inicial) y una venta de 1.
+--      inventario_inicial) y una venta de 1. La unidad existio y se vendio; lo
+--      que falta es su asiento de entrada.
 --
 -- ADVERTENCIA (producto 1, diff -10): antes de aplicar, CONTAR FISICAMENTE las
 -- cajas de Lucky Strike Eclipse. El libro dice 12 y el sistema 2. Este parche
@@ -45,7 +57,8 @@
 -- desplegar (o quitar el producto de la lista y ajustar por la app).
 --
 -- Orden de aplicacion
---   1. Aplicar 20260909-create-sale-with-payments.sql y 20261006a ... 20261006i
+--   1. Aplicar 20260909-create-sale-with-payments.sql,
+--      20261005-stock-integrity-views.sql y 20261006a ... 20261006i
 --      (este parche aborta, sin tocar nada y diciendo que parche falta, si:
 --      el trigger stock_movements_apply no existe o esta deshabilitado, o
 --      falta seq [a]; el libro no esta en modo estricto o los triggers de
@@ -54,12 +67,41 @@
 --      correr verify-patches.sql antes).
 --   2. Volver a correr
 --        npm run stock-lab:reconcile -- --target production --read-only
---      Si current_stock, la suma del libro o el numero de movimientos de alguno
---      de los dos productos cambio (o aparecio otro producto con diff),
---      ACTUALIZAR la lista de abajo antes de aplicar. Las guardas abortan sin
---      tocar nada si los numeros no coinciden exactamente con la lista.
+--      Las guardas abortan sin tocar nada si current_stock, la suma del libro
+--      o el numero de movimientos de un producto listado no coinciden
+--      EXACTAMENTE con la lista. Ver "Si los numeros cambiaron".
 --   3. Conteo fisico del producto 1 (ver ADVERTENCIA).
 --   4. Ejecutar este archivo completo, una vez, como postgres.
+--
+-- Si los numeros cambiaron desde el informe (o el parche aborto por ellos)
+--   * Actualizar en la fila SOLO expected_current_stock, expected_ledger_stock
+--     y expected_movements. La columna action NO se cambia para que "pase": la
+--     causa del descuadre es la misma aunque el producto se haya movido.
+--     Ejemplo: Glup Uva recibe una compra de 5 antes de aplicar -> stock 5,
+--     libro 4, 2 movimientos. La fila pasa a (..., 'ledger_from_stock', 5, 4, 2)
+--     y el parche asienta +1 (libro 5) dejando current_stock en 5. Declararla
+--     stock_from_ledger "porque el libro ya no es negativo" descontaria una
+--     unidad que existe: el parche lo rechaza (ver guardas).
+--   * Si la diferencia (current_stock - libro) de un producto ya no es la del
+--     informe (Lucky -10, Glup +1), el diagnostico de arriba ya no explica ese
+--     producto: quitarlo de la lista y revisarlo (ajuste por la app), no
+--     reutilizar la fila.
+--   * Si un producto ya cuadra (alguien lo ajusto), quitarlo de la lista.
+--   * Si aparecio OTRO producto con diff, no se anade aqui sin diagnosticar su
+--     causa y elegir su accion.
+--
+-- Guardas de la lista (abortan sin tocar nada)
+--   * action distinta de stock_from_ledger / ledger_from_stock;
+--   * el sku declarado no es products.sku del id (id mal copiado);
+--   * store_id, current_stock, suma del libro o numero de movimientos distintos
+--     de los declarados;
+--   * current_stock = libro en un producto listado (no hay nada que corregir);
+--   * stock_from_ledger con libro < 0 (nunca se escribe stock negativo);
+--   * stock_from_ledger con current_stock > libro (BAJARIA el stock sin
+--     movimiento: si el stock es el correcto la accion es ledger_from_stock; si
+--     de verdad sobra stock, es un ajuste de salida por la app);
+--   * ledger_from_stock con current_stock < libro (habria que asentar un
+--     movimiento negativo "de arreglo": eso es un ajuste por la app).
 --
 -- Compatibilidad con el modo estricto (20261006e) y R11 (20261006g)
 --   No deshabilita ningun trigger. Usa el pase previsto para one-shots:
@@ -67,7 +109,7 @@
 --   session_user postgres / supabase_admin. El parche aborta al empezar si se
 --   ejecuta con otro session_user (p. ej. por PostgREST).
 --
--- Rama "libro < 0" (Glup Uva): secuencia exacta y por que
+-- Accion ledger_from_stock (Glup Uva): secuencia exacta y por que
 --   El trigger BEFORE INSERT stock_movements_apply() SIEMPRE suma el delta a
 --   current_stock y fija stock_after = stock + delta. Aqui la unidad ya esta
 --   contada en current_stock (lo que falta es el asiento, no la mercancia), asi
@@ -83,18 +125,50 @@
 --   Por que (c): si se dejara stock_after = 1, la vista no marcaria nada hoy,
 --   pero el PROXIMO movimiento real del producto (calculado desde
 --   current_stock = 0) apareceria como cadena rota. Se prefiere dejar la marca
---   en el propio asiento del parche, que se explica solo por su reason.
+--   en el propio asiento del parche, que se explica solo por su reason. El
+--   unico movimiento que este parche actualiza es el que el mismo inserta.
 --   Alternativa descartada: reescribir seq para colocar el asiento antes de la
 --   venta (cadena perfecta): seq es el orden real de insercion que usa C16 y no
 --   se falsea a mano.
 --
+-- Accion stock_from_ledger (Lucky Strike): la cadena NO queda coherente
+--   El parche solo escribe products.current_stock. No toca ningun stock_after:
+--   los movimientos de Lucky son historia y no se reescriben. Desde el salto
+--   del 2026-09-19 todos sus stock_after van 10 por debajo del libro, asi que
+--   tras el parche current_stock = 12 y el ultimo stock_after por seq sigue en
+--   su valor historico: 2, igual al current_stock de antes, si ese salto es el
+--   unico de la cadena (es lo que dice el informe; el valor exacto no se
+--   consulto en produccion. Con otro valor L, donde abajo pone 2 lease L y
+--   donde pone +10, 12 - L).
+--   No hay forma de cerrar esa distancia dentro de las reglas del libro:
+--     - un asiento "marcador" con delta 0 (como el de Glup) no existe: check
+--       stock_movements.quantity_delta <> 0;
+--     - un ajuste con delta <> 0 cambiaria la suma del libro, que es justo lo
+--       que este producto tiene bien;
+--     - corregir los stock_after posteriores al salto es reescribir historia.
+--   Consecuencia (ver "Vistas de integridad"): la marca aparece DIFERIDA, en el
+--   siguiente movimiento real del producto.
+--
 -- Vistas de integridad despues de aplicarlo
 --   * stock_reconciliation: los dos productos dejan de aparecer.
---   * stock_chain_breaks: aparece UNA fila nueva, permanente y esperada: el
+--   * stock_chain_breaks, fila 1 (inmediata, permanente, esperada): el
 --     inventario_inicial de Glup Uva asentado aqui (reason
 --     'ONE_SHOT:20261006z-stock-resync ...'), con expected_stock_after 1 y
 --     stock_after 0. Conceptualmente es el movimiento inicial, pero por seq
 --     queda al final de la cadena (detras de la venta, cuyo stock_after es 0).
+--   * stock_chain_breaks, fila 2 (DIFERIDA, permanente, esperada): el PRIMER
+--     movimiento real de Lucky Strike posterior al parche, sea cual sea (venta,
+--     compra, ajuste). El trigger lo calcula desde current_stock (12) y la
+--     vista lo compara con el stock_after anterior (2): con delta d sale
+--     stock_after = 12 + d frente a expected_stock_after = 2 + d (una venta de
+--     1: 11 frente a 1). La diferencia stock_after - expected_stock_after es
+--     siempre +10, lo que corrigio el parche: es la compensacion del salto de
+--     -10 del movimiento ac30eb3c... No es un fallo del trigger ni de esa venta
+--     o compra. Solo ese primer movimiento: desde el siguiente la cadena de
+--     Lucky vuelve a ser coherente.
+--     Entre la aplicacion y ese movimiento, una comprobacion del tipo
+--     "current_stock <> ultimo stock_after por seq" marca a Lucky (12 frente a
+--     2): tambien esperado.
 --   * NO corrige (siguen apareciendo igual que en el informe): las 3 cadenas
 --     rotas historicas de stock_chain_breaks — incluida la de Lucky Strike,
 --     movimiento ac30eb3c..., porque no se reescribe ningun stock_after
@@ -108,10 +182,15 @@
 --   marcador es el reason del movimiento asentado:
 --   'ONE_SHOT:20261006z-stock-resync'. Si ya existe un movimiento con ese
 --   marcador para un producto listado, la segunda ejecucion es un no-op con
---   notice (se evalua ANTES que las guardas, porque tras la primera ejecucion
---   los numeros ya no coinciden con el informe). Si la lista se editara y no
---   quedara ningun producto de la rama "libro < 0" (sin movimiento que marque),
+--   notice (se evalua ANTES que las guardas de numeros, porque tras la primera
+--   ejecucion ya no coinciden con el informe). Si la lista se editara y no
+--   quedara ningun producto con ledger_from_stock (sin movimiento que marque),
 --   tambien es no-op cuando todos los listados ya cuadran.
+--
+-- Ensayo: scripts/stock-lab/regression/one-shot-resync-guard.test.ts ejecuta
+--   ESTE archivo en el laboratorio dentro de una transaccion con rollback,
+--   sustituyendo por texto solo las filas de la lista y el begin; / commit;.
+--   Si se cambia la forma de la lista hay que mantener ese test.
 --
 -- Una sola transaccion: cualquier excepcion deja la base como estaba.
 -- =============================================================================
@@ -119,20 +198,23 @@
 begin;
 
 -- Lista explicita de productos a corregir (numeros del informe del 2026-10-06).
+-- action: 'stock_from_ledger' | 'ledger_from_stock' (ver cabecera). Se declara
+-- por la causa del descuadre; no se cambia para acomodar numeros nuevos.
 create temporary table _stock_resync_targets (
   product_id uuid primary key,
   store_id uuid not null,
   sku text not null,
+  action text not null,
   expected_current_stock integer not null,
   expected_ledger_stock integer not null,
   expected_movements bigint not null
 ) on commit drop;
 
 insert into _stock_resync_targets
-  (product_id, store_id, sku, expected_current_stock, expected_ledger_stock, expected_movements)
+  (product_id, store_id, sku, action, expected_current_stock, expected_ledger_stock, expected_movements)
 values
-  ('17a73919-bfa7-4f69-8a27-710b2c4805f5', '7c11edd5-a569-435e-9c4f-6f0e9e84cace', 'caja-ciga-luck-stri-ecli', 2, 12, 9),
-  ('52f7ea71-9ddc-4f5d-890f-33b1f96dd3b2', '7c11edd5-a569-435e-9c4f-6f0e9e84cace', 'glup-uva-400-ml', 0, -1, 1);
+  ('17a73919-bfa7-4f69-8a27-710b2c4805f5', '7c11edd5-a569-435e-9c4f-6f0e9e84cace', 'caja-ciga-luck-stri-ecli', 'stock_from_ledger', 2, 12, 9),
+  ('52f7ea71-9ddc-4f5d-890f-33b1f96dd3b2', '7c11edd5-a569-435e-9c4f-6f0e9e84cace', 'glup-uva-400-ml', 'ledger_from_stock', 0, -1, 1);
 
 do $$
 declare
@@ -259,7 +341,19 @@ begin
       v_missing;
   end if;
 
-  -- 2. Marcador de idempotencia (antes de las guardas).
+  -- 1d. Forma de la lista: la accion de cada fila es una de las dos previstas.
+  --     No depende de los datos, asi que va antes que todo lo demas.
+  for v_target in
+    select * from _stock_resync_targets
+    where action not in ('stock_from_ledger', 'ledger_from_stock')
+    order by product_id
+  loop
+    raise exception
+      'One-shot 20261006z: producto % (%): accion "%" desconocida. Acciones validas: stock_from_ledger, ledger_from_stock. No se toca nada.',
+      v_target.product_id, v_target.sku, v_target.action;
+  end loop;
+
+  -- 2. Marcador de idempotencia (antes de las guardas de datos).
   if exists (
     select 1
     from public.stock_movements m
@@ -277,7 +371,7 @@ begin
   order by p.id
   for update of p;
 
-  -- Sin movimiento que marque (lista sin rama "libro < 0"): no-op si todo cuadra ya.
+  -- Sin movimiento que marque (lista sin ledger_from_stock): no-op si todo cuadra ya.
   select count(*) into v_pending
   from _stock_resync_targets t
   left join public.products p on p.id = t.product_id
@@ -291,7 +385,7 @@ begin
   end if;
 
   for v_target in select * from _stock_resync_targets order by product_id loop
-    select p.id, p.store_id, p.current_stock
+    select p.id, p.store_id, p.sku, p.current_stock
     into v_product
     from public.products p
     where p.id = v_target.product_id;
@@ -299,6 +393,11 @@ begin
     if not found then
       raise exception 'One-shot 20261006z: producto % (%) no encontrado',
         v_target.product_id, v_target.sku;
+    end if;
+
+    if v_product.sku is distinct from v_target.sku then
+      raise exception 'One-shot 20261006z: producto %: sku declarado "%", sku en products "%". No se toca nada: revisar el id y el sku de la lista.',
+        v_target.product_id, v_target.sku, v_product.sku;
     end if;
 
     select coalesce(sum(m.quantity_delta), 0)::integer, count(*)
@@ -312,35 +411,61 @@ begin
     end if;
 
     if v_product.current_stock <> v_target.expected_current_stock then
-      raise exception 'One-shot 20261006z: producto % (%): current_stock esperado %, encontrado %. No se toca nada: volver a correr el reconcile y actualizar la lista.',
+      raise exception 'One-shot 20261006z: producto % (%): current_stock esperado %, encontrado %. No se toca nada: volver a correr el reconcile y actualizar los numeros de la lista (no la accion; ver cabecera).',
         v_target.product_id, v_target.sku, v_target.expected_current_stock, v_product.current_stock;
     end if;
 
     if v_ledger <> v_target.expected_ledger_stock then
-      raise exception 'One-shot 20261006z: producto % (%): suma del libro esperada %, encontrada %. No se toca nada: volver a correr el reconcile y actualizar la lista.',
+      raise exception 'One-shot 20261006z: producto % (%): suma del libro esperada %, encontrada %. No se toca nada: volver a correr el reconcile y actualizar los numeros de la lista (no la accion; ver cabecera).',
         v_target.product_id, v_target.sku, v_target.expected_ledger_stock, v_ledger;
     end if;
 
     if v_movements <> v_target.expected_movements then
-      raise exception 'One-shot 20261006z: producto % (%): movimientos esperados %, encontrados %. No se toca nada: volver a correr el reconcile y actualizar la lista.',
+      raise exception 'One-shot 20261006z: producto % (%): movimientos esperados %, encontrados %. No se toca nada: volver a correr el reconcile y actualizar los numeros de la lista (no la accion; ver cabecera).',
         v_target.product_id, v_target.sku, v_target.expected_movements, v_movements;
+    end if;
+
+    -- La accion declarada tiene que ser aplicable al estado real (que, pasadas
+    -- las guardas de arriba, es exactamente el declarado).
+    if v_product.current_stock = v_ledger then
+      raise exception 'One-shot 20261006z: producto % (%): ya cuadra (current_stock = libro = %). No se toca nada: quitarlo de la lista.',
+        v_target.product_id, v_target.sku, v_ledger;
+    end if;
+
+    if v_target.action = 'stock_from_ledger' then
+      if v_ledger < 0 then
+        raise exception 'One-shot 20261006z: producto % (%): accion stock_from_ledger con libro negativo (%): nunca se escribe stock negativo. No se toca nada: si al libro le falta un asiento la accion es ledger_from_stock.',
+          v_target.product_id, v_target.sku, v_ledger;
+      end if;
+
+      if v_product.current_stock > v_ledger then
+        raise exception 'One-shot 20261006z: producto % (%): accion stock_from_ledger bajaria current_stock de % a % sin movimiento (descontaria unidades que el sistema cuenta). No se toca nada: si el stock es el correcto la accion es ledger_from_stock; si sobra stock, es un ajuste de salida por la app.',
+          v_target.product_id, v_target.sku, v_product.current_stock, v_ledger;
+      end if;
+    else
+      -- ledger_from_stock (1d ya descarto cualquier otra accion).
+      if v_product.current_stock < v_ledger then
+        raise exception 'One-shot 20261006z: producto % (%): accion ledger_from_stock exige current_stock > libro; la diferencia a asentar seria % (current_stock %, libro %). No se asientan movimientos negativos de arreglo: eso es un ajuste por la app. No se toca nada.',
+          v_target.product_id, v_target.sku, v_product.current_stock - v_ledger, v_product.current_stock, v_ledger;
+      end if;
     end if;
   end loop;
 
-  -- 4. Correccion (todas las guardas pasaron).
+  -- 4. Correccion (todas las guardas pasaron): se ejecuta la accion DECLARADA.
   for v_target in select * from _stock_resync_targets order by product_id loop
-    if v_target.expected_ledger_stock >= 0 then
-      -- Rama "libro >= 0": el stock toma el valor del libro. Sin movimiento.
+    if v_target.action = 'stock_from_ledger' then
+      -- El libro manda: el stock toma el valor del libro. Sin movimiento.
+      -- Guardas: libro >= 0 y current_stock < libro (solo sube).
       update public.products
       set current_stock = v_target.expected_ledger_stock
       where id = v_target.product_id;
 
-      raise notice 'One-shot 20261006z: % current_stock % -> % (libro %), sin movimiento',
+      raise notice 'One-shot 20261006z: % [stock_from_ledger] current_stock % -> % (libro %), sin movimiento',
         v_target.sku, v_target.expected_current_stock, v_target.expected_ledger_stock,
         v_target.expected_ledger_stock;
-    else
-      -- Rama "libro < 0": asentar el movimiento que falta; el stock no cambia.
-      -- current_stock >= 0 (check de products) y libro < 0 => v_delta > 0.
+    elsif v_target.action = 'ledger_from_stock' then
+      -- El stock manda: asentar el movimiento que falta; el stock no cambia.
+      -- Guarda: current_stock > libro => v_delta > 0.
       v_delta := v_target.expected_current_stock - v_target.expected_ledger_stock;
 
       -- a) El trigger asigna seq, pone stock_after = stock + delta y sube el stock.
@@ -356,19 +481,23 @@ begin
       )
       returning id into v_movement_id;
 
-      -- b) La unidad ya estaba en current_stock: se devuelve al valor previo
+      -- b) Las unidades ya estaban en current_stock: se devuelve al valor previo
       --    para no aplicar el delta dos veces.
       update public.products
       set current_stock = v_target.expected_current_stock
       where id = v_target.product_id;
 
       -- c) El ultimo stock_after de la cadena = stock real tras el asiento.
+      --    Es el movimiento que este parche acaba de insertar; ningun otro se toca.
       update public.stock_movements
       set stock_after = v_target.expected_current_stock
       where id = v_movement_id;
 
-      raise notice 'One-shot 20261006z: % asentado inventario_inicial +% (movimiento %); current_stock sigue en %',
+      raise notice 'One-shot 20261006z: % [ledger_from_stock] asentado inventario_inicial +% (movimiento %); current_stock sigue en %',
         v_target.sku, v_delta, v_movement_id, v_target.expected_current_stock;
+    else
+      raise exception 'One-shot 20261006z: producto % (%): accion "%" sin implementar. Se revierte todo.',
+        v_target.product_id, v_target.sku, v_target.action;
     end if;
   end loop;
 
