@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import { apiFetch } from "@/shared/api/apiFetch";
+import { inventoryQueryKeys } from "@/modules/inventory/hooks/useInventory";
 import {
   useSupplierProducts as useContactSupplierProducts,
   type SupplierProductsFilters,
@@ -28,6 +29,8 @@ export type PurchasesFilters = PaginationParams & {
 };
 
 export type PurchaseInput = {
+  /** Clave de idempotencia del intento: el servidor no duplica la compra (C6). */
+  clientRequestId?: string;
   discountRef: number;
   discountVes: number;
   items: PurchaseItemInput[];
@@ -116,8 +119,14 @@ export function useCreatePurchase() {
         body: input,
         method: "POST",
       }),
+    // Sin reintento automatico: el reintento lo decide el usuario y viaja con la
+    // misma clave de idempotencia.
+    retry: false,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: purchasesQueryKeys.all });
+      // Una compra recibida mueve stock y costo: productos, inventario y movimientos.
+      void queryClient.invalidateQueries({ queryKey: ["products"] });
+      void queryClient.invalidateQueries({ queryKey: inventoryQueryKeys.all });
     },
   });
 }
