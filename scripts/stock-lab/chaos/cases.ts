@@ -527,6 +527,10 @@ export type AbortRetryObservation = {
   /** La venta original quedó confirmada en base aunque el cliente no recibió respuesta. */
   committedWithoutResponse: boolean;
   originalId: string | null;
+  /** `GET /api/sales/by-request/<clave original>` tras el commit sin respuesta. */
+  lookupStatus: number;
+  lookupId: string | null;
+  lookupError?: string;
   retryStatus: number;
   retryId: string | null;
   retryError?: string;
@@ -537,23 +541,42 @@ export type AbortRetryObservation = {
   quantity: number;
 };
 
-/** 9.8: transacción confirmada sin respuesta; reintento con la misma clave o con una nueva. */
+export const OUT_OF_CONTRACT = "fuera de contrato: el servidor no puede distinguirlo";
+
+/**
+ * 9.8: transacción confirmada sin respuesta al cliente.
+ *
+ * Contrato real (POS desde bd43474): la clave se conserva y, antes de dejar
+ * reintentar, se consulta `GET /api/sales/by-request/<clave>`. Por eso en los
+ * dos modos la consulta por la clave ORIGINAL debe devolver la venta confirmada.
+ * - `same_key`: el reintento con esa clave devuelve la misma venta (1 venta, 1 movimiento).
+ * - `new_key`: reintento a ciegas con otra clave. Es un cliente fuera de
+ *   contrato: el servidor no puede saber que es la misma venta, así que el
+ *   duplicado (coherente) se informa y NO cuenta como hallazgo.
+ */
 export function judgeAbortRetry(o: AbortRetryObservation): Judgement {
   if (!o.committedWithoutResponse) {
     return { verdict: "error", detail: "Precondición no alcanzada: la venta no quedó confirmada tras cortar la respuesta." };
   }
   const facts = `${o.sales} venta(s), ${o.saleMovements} movimiento(s), ${o.activePayments} pago(s), stock ${o.stockDelta}`;
   const retry = describeResponses([o.retryStatus], [o.retryError]);
+  if (!is2xx(o.lookupStatus) || o.lookupId === null || o.lookupId !== o.originalId) {
+    return fail(
+      `GET /api/sales/by-request/<clave original> debía devolver la venta confirmada ${o.originalId ?? "null"} y respondió ${describeResponses([o.lookupStatus], [o.lookupError])} con id ${o.lookupId ?? "null"}: el POS no podría recuperar la respuesta perdida.`,
+    );
+  }
   if (o.mode === "same_key") {
     if (o.sales !== 1 || o.saleMovements !== 1 || o.activePayments !== 1 || o.stockDelta !== -o.quantity) {
       return fail(`El reintento con el MISMO clientRequestId debía dejar 1 venta y quedaron ${facts} (reintento ${retry}).`);
     }
-    if (is2xx(o.retryStatus) && o.retryId !== null && o.retryId === o.originalId) return ok("El reintento con la misma clave devuelve la misma venta, sin segundo movimiento.");
+    if (is2xx(o.retryStatus) && o.retryId !== null && o.retryId === o.originalId) {
+      return ok("by-request devuelve la venta confirmada y el reintento con la misma clave devuelve esa misma venta, sin segundo movimiento.");
+    }
     return finding(`Una sola venta, pero el reintento con la misma clave no devolvió la venta original (${retry}; id ${o.retryId ?? "null"} vs ${o.originalId ?? "null"}).`);
   }
-  if (o.sales === 2 && o.saleMovements === 2 && o.stockDelta === -2 * o.quantity) {
-    return finding(
-      `Reintento a ciegas con clave NUEVA duplica: ${facts}. El servidor no puede distinguirlo; la protección depende de que la UI reutilice el clientRequestId.`,
+  if (o.sales === 2 && o.saleMovements === 2 && o.activePayments === 2 && o.stockDelta === -2 * o.quantity) {
+    return ok(
+      `INFORMATIVO · ${OUT_OF_CONTRACT}. by-request devuelve la venta original (el POS no reintentaría); un cliente que aun así reintenta a ciegas con clave NUEVA crea otra venta completa y coherente: ${facts}.`,
     );
   }
   if (o.sales === 1 && o.saleMovements === 1 && o.stockDelta === -o.quantity && !is2xx(o.retryStatus)) {
@@ -1992,10 +2015,18 @@ function abortedThenRetry(mode: "same_key" | "new_key") {
       await releaseDb(lab, locker);
     }
     const afterCommit = await observe(lab.db, [product.id]);
+    let lookupStatus = 0;
+    let lookupId: string | null = null;
+    let lookupError: string | undefined;
     let retryStatus = 0;
     let retryId: string | null = null;
     let retryError: string | undefined;
     if (committedId) {
+      // Lo que hace el POS antes de dejar reintentar: preguntar por la clave que envió.
+      const lookup = await call(ctx, "vendedor1", vendedor, "GET", `/api/sales/by-request/${key}`);
+      lookupStatus = lookup.status;
+      lookupId = responseId(lookup);
+      lookupError = lookup.ok ? undefined : describeError(lookup);
       const retryBody = mode === "same_key" ? body : { ...body, clientRequestId: randomUUID() };
       const retry = await call(ctx, "vendedor1", vendedor, "POST", "/api/sales", retryBody);
       retryStatus = retry.status;
@@ -2007,6 +2038,9 @@ function abortedThenRetry(mode: "same_key" | "new_key") {
       mode,
       committedWithoutResponse: committedId !== null,
       originalId: committedId,
+      lookupStatus,
+      lookupId,
+      lookupError,
       retryStatus,
       retryId,
       retryError,
@@ -2022,7 +2056,8 @@ function abortedThenRetry(mode: "same_key" | "new_key") {
         method: `lock de fila (select … for update) desde otra sesión pg + AbortSignal.timeout(${ABORT_AFTER_MS}) en el cliente; lock soltado a los ${RELEASE_LOCK_AFTER_MS} ms`,
         committed_sale_id: committedId,
         commit_seen_after_release_ms: waitedMs,
-        retry: { mode, status: retryStatus, id: retryId, error: retryError ?? null },
+        lookup_by_request: { status: lookupStatus, id: lookupId, error: lookupError ?? null },
+        retry: { mode, status: retryStatus, id: retryId, error: retryError ?? null, ...(mode === "new_key" ? { contract: OUT_OF_CONTRACT } : {}) },
         before,
         after_commit_without_response: afterCommit,
         after,
@@ -2303,9 +2338,9 @@ export const VARIANTS: VariantDef[] = [
   variant("9.7.return_sale", "Venta previa; producto movido a la tienda default: devolver la venta", ["H3", "G6"], { status: "4xx con mensaje de negocio (nunca 23502 crudo ni 5xx)", new_movements: 0, stock_delta: 0 }, corruptStore("return_sale")),
   variant("9.7.cancel_purchase", "Compra recibida previa; producto movido a la tienda default: cancelar la compra", ["H3", "G6"], { status: "4xx con mensaje de negocio (nunca 23502 crudo ni 5xx)", new_movements: 0, stock_delta: 0 }, corruptStore("cancel_purchase")),
   variant("9.7.return_purchase", "Compra recibida previa; producto movido a la tienda default: devolver la compra", ["H3", "G6"], { status: "4xx con mensaje de negocio (nunca 23502 crudo ni 5xx)", new_movements: 0, stock_delta: 0 }, corruptStore("return_purchase")),
-  variant("9.8.same_key_retry", "Venta confirmada sin respuesta al cliente; reintento con el MISMO clientRequestId", [], { sales: 1, sale_movements: 1, retry: "2xx con el id de la venta original" }, abortedThenRetry("same_key"), { repeat: 1, repeatable: true }),
+  variant("9.8.same_key_retry", "Venta confirmada sin respuesta al cliente; consulta por clave y reintento con el MISMO clientRequestId", [], { lookup: "GET /api/sales/by-request/<clave> devuelve la venta confirmada", sales: 1, sale_movements: 1, retry: "2xx con el id de la venta original" }, abortedThenRetry("same_key"), { repeat: 1, repeatable: true }),
   variant("9.8.same_key_other_cart", "La MISMA clientRequestId con otro carrito (5 unidades en vez de 1)", [], { sales: 1, sale_movements: 1, stock_delta: -1, retry: 409 }, sameKeyOtherCart),
-  variant("9.8.new_key_retry", "Venta confirmada sin respuesta al cliente; reintento a ciegas con clientRequestId NUEVO", ["G5"], { sales: 1, note: "una UI que reintenta a ciegas genera otra clave; se documenta el duplicado" }, abortedThenRetry("new_key"), { repeat: 1, repeatable: true }),
+  variant("9.8.new_key_retry", "Informativo, fuera de contrato · venta confirmada sin respuesta; reintento a ciegas con clientRequestId NUEVO", ["G5"], { lookup: "GET /api/sales/by-request/<clave original> devuelve la venta confirmada", contract: `${OUT_OF_CONTRACT}; el duplicado coherente se informa y no cuenta como finding` }, abortedThenRetry("new_key"), { repeat: 1, repeatable: true }),
   variant("9.9.bff", "vendedor → POST /api/inventory/adjustments", [], { status: 403, new_movements: 0, stock_delta: 0 }, forbiddenAdjust("bff")),
   variant("9.9.rpc_direct", "vendedor → RPC adjust_stock directa por PostgREST (anon key + su JWT)", ["G2"], { status: "401/403", new_movements: 0, stock_delta: 0 }, forbiddenAdjust("rpc_direct")),
   variant("9.9.table_update_direct", "vendedor → UPDATE directo de products.current_stock por PostgREST", ["G1"], { rows_updated: 0, new_movements: 0, stock_delta: 0 }, forbiddenAdjust("table_update_direct")),

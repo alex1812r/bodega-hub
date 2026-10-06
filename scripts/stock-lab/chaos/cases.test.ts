@@ -428,25 +428,56 @@ describe("judgeReverseOrder (9.10)", () => {
 });
 
 describe("judgeAbortRetry (9.8)", () => {
-  const base = { committedWithoutResponse: true, originalId: "s1", quantity: 1 };
+  // Contrato real del POS (bd43474): tras una respuesta perdida conserva la clave y consulta
+  // GET /api/sales/by-request/<clave> antes de dejar reintentar.
+  const base = { committedWithoutResponse: true, originalId: "s1", quantity: 1, lookupStatus: 200, lookupId: "s1" as string | null };
+  const one = { sales: 1, saleMovements: 1, activePayments: 1, stockDelta: -1 };
+  const two = { sales: 2, saleMovements: 2, activePayments: 2, stockDelta: -2 };
 
   it("error si la venta no quedó confirmada (precondición)", () => {
-    expect(judgeAbortRetry({ ...base, mode: "same_key", committedWithoutResponse: false, retryStatus: 0, retryId: null, sales: 0, saleMovements: 0, activePayments: 0, stockDelta: 0 }).verdict).toBe("error");
+    expect(judgeAbortRetry({ ...base, mode: "same_key", committedWithoutResponse: false, lookupStatus: 0, lookupId: null, retryStatus: 0, retryId: null, sales: 0, saleMovements: 0, activePayments: 0, stockDelta: 0 }).verdict).toBe("error");
   });
 
-  it("misma clave: pass si devuelve la misma venta; finding si responde otra cosa; fail si duplica", () => {
-    const one = { sales: 1, saleMovements: 1, activePayments: 1, stockDelta: -1 };
-    expect(judgeAbortRetry({ ...base, mode: "same_key", retryStatus: 201, retryId: "s1", ...one }).verdict).toBe("pass");
+  it("misma clave: pass si la consulta por clave y el reintento devuelven la venta original (1 venta, 1 movimiento)", () => {
+    const j = judgeAbortRetry({ ...base, mode: "same_key", retryStatus: 201, retryId: "s1", ...one });
+    expect(j.verdict).toBe("pass");
+    expect(j.detail).toContain("by-request");
+  });
+
+  it("misma clave: finding si el reintento responde otra cosa; fail si duplica", () => {
     expect(judgeAbortRetry({ ...base, mode: "same_key", retryStatus: 409, retryId: null, retryError: "CONFLICT", ...one }).verdict).toBe("finding");
-    expect(judgeAbortRetry({ ...base, mode: "same_key", retryStatus: 201, retryId: "s2", sales: 2, saleMovements: 2, activePayments: 2, stockDelta: -2 }).verdict).toBe("fail");
+    expect(judgeAbortRetry({ ...base, mode: "same_key", retryStatus: 201, retryId: "s2", ...two }).verdict).toBe("fail");
   });
 
-  it("clave nueva: el duplicado se documenta como finding; rechazo = pass; resto fail", () => {
-    const dup = judgeAbortRetry({ ...base, mode: "new_key", retryStatus: 201, retryId: "s2", sales: 2, saleMovements: 2, activePayments: 2, stockDelta: -2 });
-    expect(dup.verdict).toBe("finding");
-    expect(dup.detail).toContain("clave NUEVA duplica");
-    expect(judgeAbortRetry({ ...base, mode: "new_key", retryStatus: 409, retryId: null, sales: 1, saleMovements: 1, activePayments: 1, stockDelta: -1 }).verdict).toBe("pass");
+  it("fail en cualquier modo si la consulta por la clave original no devuelve la venta confirmada", () => {
+    for (const mode of ["same_key", "new_key"] as const) {
+      const absent = judgeAbortRetry({ ...base, mode, lookupStatus: 200, lookupId: null, retryStatus: 201, retryId: "s1", ...one });
+      expect(absent.verdict).toBe("fail");
+      expect(absent.detail).toContain("by-request");
+      expect(judgeAbortRetry({ ...base, mode, lookupStatus: 500, lookupId: null, retryStatus: 201, retryId: "s1", ...one }).verdict).toBe("fail");
+      expect(judgeAbortRetry({ ...base, mode, lookupStatus: 200, lookupId: "otra", retryStatus: 201, retryId: "s1", ...one }).verdict).toBe("fail");
+    }
+  });
+
+  it("clave nueva: el duplicado es informativo (fuera de contrato) y NO cuenta como finding", () => {
+    const dup = judgeAbortRetry({ ...base, mode: "new_key", retryStatus: 201, retryId: "s2", ...two });
+    expect(dup.verdict).toBe("pass");
+    expect(dup.detail).toContain("fuera de contrato: el servidor no puede distinguirlo");
+    expect(dup.detail).toContain("INFORMATIVO");
+  });
+
+  it("clave nueva: rechazo = pass; un duplicado incoherente sigue siendo fail", () => {
+    expect(judgeAbortRetry({ ...base, mode: "new_key", retryStatus: 409, retryId: null, ...one }).verdict).toBe("pass");
     expect(judgeAbortRetry({ ...base, mode: "new_key", retryStatus: 201, retryId: "s2", sales: 2, saleMovements: 1, activePayments: 2, stockDelta: -1 }).verdict).toBe("fail");
+    expect(judgeAbortRetry({ ...base, mode: "new_key", retryStatus: 201, retryId: "s2", sales: 2, saleMovements: 2, activePayments: 1, stockDelta: -2 }).verdict).toBe("fail");
+  });
+
+  it("el catálogo describe 9.8.new_key_retry como sub-caso informativo fuera de contrato", () => {
+    const same = VARIANTS.find((v) => v.id === "9.8.same_key_retry");
+    const blind = VARIANTS.find((v) => v.id === "9.8.new_key_retry");
+    expect(same?.expected).toMatchObject({ lookup: expect.stringContaining("by-request") });
+    expect(blind?.title).toContain("fuera de contrato");
+    expect(blind?.expected).toMatchObject({ contract: expect.stringContaining("fuera de contrato: el servidor no puede distinguirlo") });
   });
 });
 
