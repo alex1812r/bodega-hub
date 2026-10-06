@@ -5,6 +5,7 @@
  *
  * Escribe `<out>/<run>/chaos.jsonl` (una línea por caso/variante, se añade) y
  * regenera `<out>/<run>/chaos.md`. `<out>` por defecto = `scripts/stock-lab/runs`.
+ * Al terminar limpia sus productos `C411-<run>-…` (ver `cleanupOwnProducts`).
  * Exit 0 si recorrió todos los casos (aunque haya `fail`); 1 si no pudo arrancar.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -14,9 +15,11 @@ import {
   type ChaosLine,
   PLAN_CASES,
   VARIANTS,
+  cleanupOwnProducts,
   closeLab,
   countVerdicts,
   defaultRunId,
+  formatCleanup,
   formatVerdictCounts,
   openLab,
   parseChaosArgs,
@@ -73,6 +76,7 @@ async function main(): Promise<number> {
       console.log(`${line.id} ${line.verdict}`);
     }
   } finally {
+    console.log(formatCleanup(await cleanupOwnProducts(lab)));
     await closeLab(lab);
   }
   console.log(`run=${runId} ${formatVerdictCounts(countVerdicts(produced))} → ${jsonlPath}`);

@@ -9,7 +9,7 @@ Supabase LOCAL. Nada de aquí toca producción: todo lee `.env.stock-lab`
 | `npm run stock-lab:dev` | Arranca el BFF (`next dev --webpack`) en `http://localhost:3100` contra la base local. |
 | `npm run stock-lab:start` | Igual, pero en modo producción (`next build` + `next start`). Ver "BFF en modo producción". |
 | `npm run stock-lab:test` | Suite de regresión `scripts/stock-lab/regression/**` contra la base lab. Ver "Suite de regresión". |
-| `npm run stock-lab:scenarios` / `:ui` / `:chaos` / `:load` | Runners de la fase 4 (`scenarios/run.ts`, `ui/run.ts`, `chaos/run.ts`, `chaos/load.ts`). |
+| `npm run stock-lab:scenarios` / `:ui` / `:chaos` / `:load` | Runners de la fase 4 (`scenarios/run.ts`, `ui/run.ts`, `chaos/run.ts`, `chaos/load.ts`). `:chaos` y `:load` siembran productos propios `C411-<run>-<nonce>-…` y al terminar los limpian: borran los que quedaron intactos y desactivan (sin borrar documentos) los que tienen historia. |
 | `npm run stock-lab:seed` | Crea (o recrea) la tienda `lab` con usuarios, catálogo y stock inicial. |
 | `npm run stock-lab:run` | Lanza los agentes operadores (paralelo o serial), reconcile y `summary.md`. |
 
@@ -123,6 +123,20 @@ Regla `expected_delta`: solo se rellena cuando la respuesta fue 2xx; en
 cualquier otro status el logger lo fuerza a `{}` (una operación rechazada no
 debe mover stock, y si lo mueve es justamente lo que queremos detectar).
 
+Compras en modo empaque (`comprador.ts`): el esperado es
+`packCount × unitsPerPack`, salvo que el producto sea el SKU EMPAQUE de un par
+empaque→unidad: su stock se cuenta en empaques y entran `packCount`. Si el
+producto pertenece a un par (como empaque o como unidad) el agente envía el
+`unitsPerPack` del par; otro valor lo rechaza la RPC con 400.
+
+Fixtures por SQL (scripts del lab con conexión `pg`): un producto se inserta
+con `current_stock = 0` y el stock entra con UN movimiento (`inventario_inicial`
+u otro) SIN columna `stock_after`; el trigger del libro fija el saldo y mueve
+`products.current_stock`. Acompañarlo de stock en el alta o de un `update` lo
+duplica. Para simular una corrupción: `update` directo como `postgres` sobre
+`products.current_stock` o sobre el movimiento ya insertado.
+`scripts/stock-lab/ledger-fixtures.test.ts` vigila ese patrón en todo el lab.
+
 Reintentos idempotentes: dos eventos 2xx con el mismo `payload.clientRequestId`
 y el mismo `response_id` son una sola operación; `dedupeIdempotentReplays`
 (`expected-delta.ts`, lo aplica `summary.ts`) cuenta su `expected_delta` una
@@ -182,7 +196,8 @@ solo se registran); exit 1 si algún agente salió ≠ 0 o reconcile reventó.
   - `Σmov(total)` = Σ `quantity_delta` de todos los movimientos del producto
     (incluye el stock inicial si se creó por movimiento);
   - `current_stock` vs `último stock_after`: el stock vivo frente al
-    `stock_after` del último movimiento; deben coincidir siempre.
+    `stock_after` del último movimiento (el de mayor `seq`); deben coincidir
+    siempre.
   - `delta` = ok si `esperado(eventos) == Σmov(run)`; `stock` = ok si
     `current_stock == último stock_after`.
 - **Primer evento que rompió cada producto**: la bisección (ver abajo).
@@ -194,7 +209,9 @@ solo se registran); exit 1 si algún agente salió ≠ 0 o reconcile reventó.
 ordenados por `ts` y los movimientos del producto en la ventana del run.
 Primero el atajo: si Σ esperado == Σ `quantity_delta` y la cadena
 `stock_after[i] = stock_after[i-1] + quantity_delta[i]` (ordenada por
-`created_at, id`) es válida, no hay rotura. Si no, atribuye cada movimiento a
+`stock_movements.seq`, el orden real de la cadena por producto; solo si la
+columna no viene cae a `created_at, id`, que bajo concurrencia inventa roturas)
+es válida, no hay rotura. Si no, atribuye cada movimiento a
 su evento **por referencia** (`sale_id` / `purchase_id` / `conversion_id` /
 `id` == `response_id` del evento); solo los movimientos sin referencia
 conocida (p. ej. `sale_return`, que hoy responde sin id) se atribuyen por

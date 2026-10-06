@@ -708,7 +708,7 @@ export const SNAPSHOT_STOCK_SQL = "select id, current_stock from public.products
 
 export const SNAPSHOT_MOVEMENTS_SQL =
   "select id, product_id, type::text as type, quantity_delta, stock_after, sale_id, purchase_id, conversion_id, created_at " +
-  "from public.stock_movements where product_id = any($1::uuid[]) order by created_at, id";
+  "from public.stock_movements where product_id = any($1::uuid[]) order by seq, id";
 
 export const SNAPSHOT_DOCS_SQL = `
 with s as (select distinct si.sale_id as id from public.sale_items si where si.product_id = any($1::uuid[])),

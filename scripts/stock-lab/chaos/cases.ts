@@ -630,8 +630,9 @@ export type ChainMovement = { quantity_delta: number; stock_after: number };
 /**
  * ¿Existe ALGÚN orden de los movimientos que encadene 0 → … → `finalStock`
  * (cada uno parte del `stock_after` del anterior)? Es la versión exacta e
- * independiente del orden de `stock_chain_breaks`, que ordena por `created_at`
- * (= inicio de transacción) y da falsos positivos bajo concurrencia (G9).
+ * independiente del orden: no depende de que `stock_chain_breaks` ordene bien
+ * (hasta 20261006d ordenaba por `created_at` = inicio de transacción y daba
+ * falsos positivos bajo concurrencia, G9; hoy ordena por `seq`).
  *
  * Cada movimiento es una arista `stock_after − delta → stock_after`; hay orden
  * válido si y solo si el multigrafo dirigido tiene un camino euleriano de 0 a
@@ -1055,9 +1056,12 @@ export async function currentRate(lab: Lab): Promise<Rate> {
 export type SeedOptions = { stock: number; price?: number; cost?: number; categoryId?: string | null };
 
 /**
- * Siembra productos propios por SQL (producto + `inventario_inicial`, igual que
- * deja `adjust_stock`) en una transacción. El setup no pasa por el BFF para no
- * cargarlo: lo que se prueba son las operaciones posteriores.
+ * Siembra productos propios por SQL en una transacción, por el camino válido
+ * del libro mayor (20261006a/e): el producto nace con stock 0 y el stock entra
+ * con UN movimiento `inventario_inicial` +N. El trigger `stock_movements_apply`
+ * fija `stock_after` y mueve `products.current_stock`; mandar además el stock
+ * en el alta lo duplicaría (2N). El setup no pasa por el BFF para no cargarlo:
+ * lo que se prueba son las operaciones posteriores.
  */
 export async function seedProducts(lab: Lab, tag: string, count: number, options: SeedOptions): Promise<SeededProduct[]> {
   const price = options.price ?? 1;
@@ -1067,14 +1071,14 @@ export async function seedProducts(lab: Lab, tag: string, count: number, options
   try {
     const inserted = await lab.db.query<{ id: string; sku: string }>(
       `insert into public.products (store_id, sku, name, sale_price_ref, current_cost_ref, current_stock, min_stock, is_active, category_id)
-       select $1::uuid, s, 'Caos ' || s, $3::numeric, $4::numeric, $5::int, 0, true, $6::uuid from unnest($2::text[]) s
+       select $1::uuid, s, 'Caos ' || s, $3::numeric, $4::numeric, 0, 0, true, $5::uuid from unnest($2::text[]) s
        returning id, sku`,
-      [lab.storeId, skus, price, cost, options.stock, options.categoryId ?? null],
+      [lab.storeId, skus, price, cost, options.categoryId ?? null],
     );
     if (options.stock > 0) {
       await lab.db.query(
-        `insert into public.stock_movements (product_id, type, quantity_delta, stock_after, reason, created_by, store_id)
-         select p, 'inventario_inicial', $2::int, $2::int, $3, $4::uuid, $5::uuid from unnest($1::uuid[]) p`,
+        `insert into public.stock_movements (product_id, type, quantity_delta, reason, created_by, store_id)
+         select p, 'inventario_inicial', $2::int, $3, $4::uuid, $5::uuid from unnest($1::uuid[]) p`,
         [inserted.rows.map((r) => r.id), options.stock, `Inventario inicial ${SKU_PREFIX} ${tag}`, lab.userIds.admin, lab.storeId],
       );
     }
@@ -1085,6 +1089,62 @@ export async function seedProducts(lab: Lab, tag: string, count: number, options
     await lab.db.query("rollback").catch(() => undefined);
     throw error;
   }
+}
+
+/** Patrón LIKE (con `escape '\'`) de los SKU sembrados por ESTE proceso: `C411-<run>-<nonce>-…`. */
+export function ownSkuPattern(lab: Pick<Lab, "runId" | "nonce">): string {
+  const literal = `${SKU_PREFIX}-${lab.runId}-${lab.nonce}-`.replace(/[\\%_]/g, (char) => `\\${char}`);
+  return `${literal}%`;
+}
+
+export type CleanupResult = { deleted: number; deactivated: number; error: string | null };
+
+const OWN_PRODUCTS_SQL = "p.store_id = $1::uuid and p.sku like $2 escape '\\'";
+
+/**
+ * Limpia los productos que sembró este proceso, al terminar el run:
+ *  - los INTACTOS (solo su `inventario_inicial`, sin líneas de venta/compra y
+ *    con `current_stock` = libro) se borran con su movimiento;
+ *  - el resto se desactiva y se conserva con sus documentos: son la evidencia
+ *    que citan `chaos.jsonl` / `load.json` (no se borran ventas, compras ni
+ *    pagos: descuadraría la caja del lab).
+ * No lanza: un fallo hace rollback y vuelve en `error`, sin tocar veredictos.
+ * Solo toca `C411-<run>-<nonce>-…` de la tienda lab, así que no pisa otro
+ * runner que esté corriendo a la vez.
+ */
+export async function cleanupOwnProducts(lab: Pick<Lab, "db" | "storeId" | "runId" | "nonce">): Promise<CleanupResult> {
+  const params = [lab.storeId, ownSkuPattern(lab)];
+  try {
+    await lab.db.query("begin");
+    const intact = await lab.db.query<{ id: string }>(
+      `select p.id from public.products p
+        where ${OWN_PRODUCTS_SQL}
+          and not exists (select 1 from public.stock_movements m where m.product_id = p.id and m.type <> 'inventario_inicial')
+          and not exists (select 1 from public.sale_items si where si.product_id = p.id)
+          and not exists (select 1 from public.purchase_items pi where pi.product_id = p.id)
+          and p.current_stock = (select coalesce(sum(m.quantity_delta), 0) from public.stock_movements m where m.product_id = p.id)
+        for update of p`,
+      params,
+    );
+    const ids = intact.rows.map((row) => row.id);
+    let deleted = 0;
+    if (ids.length > 0) {
+      await lab.db.query("delete from public.stock_movements where product_id = any($1::uuid[])", [ids]);
+      const gone = await lab.db.query("delete from public.products where id = any($1::uuid[])", [ids]);
+      deleted = gone.rowCount ?? 0;
+    }
+    const off = await lab.db.query(`update public.products p set is_active = false where ${OWN_PRODUCTS_SQL} and p.is_active`, params);
+    await lab.db.query("commit");
+    return { deleted, deactivated: off.rowCount ?? 0, error: null };
+  } catch (error) {
+    await lab.db.query("rollback").catch(() => undefined);
+    return { deleted: 0, deactivated: 0, error: errorText(error) };
+  }
+}
+
+export function formatCleanup(result: CleanupResult): string {
+  if (result.error !== null) return `limpieza de productos ${SKU_PREFIX} FALLÓ (quedan en la base): ${result.error}`;
+  return `limpieza de productos ${SKU_PREFIX}: ${result.deleted} intacto(s) borrado(s), ${result.deactivated} con historia desactivado(s)`;
 }
 
 async function seed(ctx: AttemptContext, count: number, options: SeedOptions, suffix = ""): Promise<SeededProduct[]> {
@@ -1236,7 +1296,7 @@ export async function observe(db: Client, productIds: readonly string[]): Promis
   );
   const movements = await db.query<MovementRow>(
     `select id, product_id, type::text as type, quantity_delta, stock_after, sale_id, purchase_id, conversion_id, created_at::text as created_at
-     from public.stock_movements where product_id = any($1::uuid[]) order by created_at, id`,
+     from public.stock_movements where product_id = any($1::uuid[]) order by seq, id`,
     [ids],
   );
   const sales = await db.query<SaleRow>(
