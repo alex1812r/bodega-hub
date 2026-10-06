@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { resolveDataSource } from "@/lib/api/dataSource";
-import { toErrorResponse } from "@/lib/api/apiError";
+import { ApiError, toErrorResponse } from "@/lib/api/apiError";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { salePaymentLineSchema } from "@/modules/payments/services/paymentSchemas";
@@ -45,6 +45,23 @@ const createSaleSchema = z.object({
   taxRef: z.number().min(0).default(0),
 });
 
+/**
+ * Cuerpo JSON de la peticion. Un cuerpo vacio o malformado es culpa del cliente
+ * (400), no un 500. Se mira `error.name` y no `instanceof SyntaxError`: el error
+ * de `request.json()` puede venir de otro realm.
+ */
+async function readJsonBody(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch (error) {
+    if ((error as { name?: unknown } | null)?.name === "SyntaxError") {
+      throw new ApiError(400, "BAD_REQUEST", "El cuerpo de la solicitud no es un JSON valido.");
+    }
+
+    throw error;
+  }
+}
+
 export async function GET(request: Request) {
   try {
     const auth = await requireStorePermission(request, "sales.view");
@@ -63,7 +80,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "sales.create");
-    const input = createSaleSchema.parse(await request.json());
+    const input = createSaleSchema.parse(await readJsonBody(request));
     const data =
       resolveDataSource() === "supabase"
         ? await createSaleServer(input, auth.storeId)

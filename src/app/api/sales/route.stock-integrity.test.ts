@@ -170,7 +170,7 @@ describe("C12 · POST /api/sales con cuerpo que no es JSON", () => {
   // y cae al 500 genérico de `toErrorResponse`.
   // Evento: caos/propios.md N5 (JSON malformado o cuerpo vacío → `500 Ocurrio un error inesperado.`).
   // Código: src/app/api/sales/route.ts:66 y src/lib/api/apiError.ts:53-61.
-  it.failing.each([
+  it.each([
     ["JSON malformado", '{"customerId": "cont-customer", "items": ['],
     ["cuerpo vacío", ""],
   ])("responde 400 y no 500: %s", async (_caso, body) => {
