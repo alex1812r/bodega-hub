@@ -682,3 +682,140 @@ describe("STK-656 · one-shot 20261006z: la acción se declara por producto, no 
     expect(seen.lucky).toEqual(LUCKY_BROKEN);
   });
 });
+
+// ---------------------------------------------------------------------------
+// STK-701F · idempotencia POR PRODUCTO (hallazgo M-1 de la revisión del one-shot)
+// ---------------------------------------------------------------------------
+
+const MSG_REPLICA = /session_replication_role = replica/;
+const MSG_LUCKY_STALE = /current_stock esperado 1, encontrado 2/;
+
+const LUCKY_FIXED: ProductState = { current_stock: 12, ledger: 12, movements: 3, reconciliation: 0 };
+const GLUP_FIXED: ProductState = { current_stock: 0, ledger: 0, movements: 2, reconciliation: 0 };
+
+describe("STK-701F · one-shot 20261006z: idempotencia por producto", () => {
+  // La cabecera y docs/stock-integrity.md §6 permiten quitar a Lucky de la lista a la espera
+  // del conteo físico. Con el marcador de todo o nada, la pasada completa posterior decía
+  // "ya aplicado" y Lucky seguía en 2 con el libro en 12.
+  it("lista parcial (solo ledger_from_stock) y después la lista completa: corrige el producto que faltaba y no repite el asiento", async () => {
+    const seen = await scenario(async (tx, fx) => {
+      const first = await apply(tx, [targetRow(fx, fx.glup, LEDGER_FROM_STOCK, GLUP_NUMBERS)]);
+      const luckyAfterFirst = await stateOf(tx, fx.lucky);
+      const second = await apply(tx, productionLikeTargets(fx));
+      return {
+        first,
+        luckyAfterFirst,
+        second,
+        lucky: await stateOf(tx, fx.lucky),
+        glup: await stateOf(tx, fx.glup),
+        markers: shape(await markerMovements(tx, fx.glup)),
+      };
+    });
+
+    expect(seen.first).toBeNull();
+    expect(seen.luckyAfterFirst).toEqual(LUCKY_BROKEN);
+    expect(seen.second).toBeNull();
+    expect(seen.lucky).toEqual(LUCKY_FIXED);
+    expect(seen.glup).toEqual(GLUP_FIXED);
+    expect(seen.markers).toEqual([{ type: "inventario_inicial", quantity_delta: 1, stock_after: 0 }]);
+  });
+
+  it("lista parcial (solo stock_from_ledger) y después la lista completa: el que ya cuadra se salta y se asienta el movimiento que faltaba", async () => {
+    const seen = await scenario(async (tx, fx) => {
+      const first = await apply(tx, [targetRow(fx, fx.lucky, STOCK_FROM_LEDGER, LUCKY_NUMBERS)]);
+      const second = await apply(tx, productionLikeTargets(fx));
+      return {
+        first,
+        second,
+        lucky: await stateOf(tx, fx.lucky),
+        glup: await stateOf(tx, fx.glup),
+        markers: shape(await markerMovements(tx, fx.glup)),
+      };
+    });
+
+    expect(seen.first).toBeNull();
+    expect(seen.second).toBeNull();
+    expect(seen.lucky).toEqual(LUCKY_FIXED);
+    expect(seen.glup).toEqual(GLUP_FIXED);
+    expect(seen.markers).toEqual([{ type: "inventario_inicial", quantity_delta: 1, stock_after: 0 }]);
+  });
+
+  it("tras las dos pasadas parciales, la lista completa es un no-op aunque los productos se hayan movido después", async () => {
+    const seen = await scenario(async (tx, fx) => {
+      const first = await apply(tx, [targetRow(fx, fx.glup, LEDGER_FROM_STOCK, GLUP_NUMBERS)]);
+      const second = await apply(tx, productionLikeTargets(fx));
+      await move(tx, fx.storeId, fx.lucky, "venta", -1);
+      await move(tx, fx.storeId, fx.glup, "compra", 3);
+      const before = await snapshot(tx);
+      const third = await apply(tx, productionLikeTargets(fx));
+      return {
+        first,
+        second,
+        third,
+        unchanged: same(await snapshot(tx), before),
+        lucky: await stateOf(tx, fx.lucky),
+        markers: (await markerMovements(tx, fx.glup)).length,
+      };
+    });
+
+    expect(seen.first).toBeNull();
+    expect(seen.second).toBeNull();
+    expect(seen.third).toBeNull();
+    expect(seen.unchanged).toBe(true);
+    expect(seen.lucky).toEqual({ current_stock: 11, ledger: 11, movements: 4, reconciliation: 0 });
+    expect(seen.markers).toBe(1);
+  });
+
+  it("un producto ya marcado no exime al resto de sus guardas: el pendiente con números que no coinciden aborta sin tocar nada", async () => {
+    const seen = await scenario(async (tx, fx) => {
+      const first = await apply(tx, [targetRow(fx, fx.glup, LEDGER_FROM_STOCK, GLUP_NUMBERS)]);
+      const before = await snapshot(tx);
+      const second = await apply(tx, [
+        targetRow(fx, fx.lucky, STOCK_FROM_LEDGER, { stock: 1, ledger: 12, movements: 3 }),
+        targetRow(fx, fx.glup, LEDGER_FROM_STOCK, GLUP_NUMBERS),
+      ]);
+      return { first, second, unchanged: same(await snapshot(tx), before), lucky: await stateOf(tx, fx.lucky) };
+    });
+
+    expect(seen.first).toBeNull();
+    expect(seen.second).toMatch(MSG_LUCKY_STALE);
+    expect(seen.unchanged).toBe(true);
+    expect(seen.lucky).toEqual(LUCKY_BROKEN);
+  });
+
+  it("ledger_from_stock que ya cuadra SIN marcador (lo arregló otro) junto a un pendiente: aborta, no se da por aplicado", async () => {
+    const seen = await scenario(async (tx, fx) => {
+      await writeStockOffLedger(tx, fx.glup, 1);
+      await move(tx, fx.storeId, fx.glup, "ajuste_entrada", 1);
+      await writeStockOffLedger(tx, fx.glup, 0);
+      const glupBefore = await stateOf(tx, fx.glup);
+      const error = await apply(tx, productionLikeTargets(fx));
+      return { glupBefore, error, lucky: await stateOf(tx, fx.lucky), markers: (await markerMovements(tx, fx.glup)).length };
+    });
+
+    expect(seen.glupBefore).toEqual(GLUP_FIXED);
+    expect(seen.error).toMatch(/One-shot 20261006z: producto .*No se toca nada/);
+    expect(seen.lucky).toEqual(LUCKY_BROKEN);
+    expect(seen.markers).toBe(0);
+  });
+});
+
+describe("STK-701F · one-shot 20261006z: session_replication_role", () => {
+  // B-1: en replica los triggers 'O' no disparan aunque tgenabled diga que están habilitados.
+  it("con session_replication_role = replica aborta en la guarda de prerrequisitos con mensaje propio", async () => {
+    const seen = await scenario(async (tx, fx) => {
+      // `set local`, no set_config(): en Supabase el permiso lo concede el hook de la sentencia SET.
+      try {
+        await tx.query("set local session_replication_role = replica");
+      } catch (error) {
+        throw new Error(`SETUP · session_replication_role: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const error = await apply(tx, productionLikeTargets(fx));
+      return { error, lucky: await stateOf(tx, fx.lucky), glup: await stateOf(tx, fx.glup) };
+    });
+
+    expect(seen.error).toMatch(MSG_REPLICA);
+    expect(seen.lucky).toEqual(LUCKY_BROKEN);
+    expect(seen.glup).toEqual(GLUP_BROKEN);
+  });
+});

@@ -86,7 +86,9 @@
 --     informe (Lucky -10, Glup +1), el diagnostico de arriba ya no explica ese
 --     producto: quitarlo de la lista y revisarlo (ajuste por la app), no
 --     reutilizar la fila.
---   * Si un producto ya cuadra (alguien lo ajusto), quitarlo de la lista.
+--   * Si un producto ledger_from_stock ya cuadra sin el marcador de este
+--     parche (alguien lo ajusto), quitarlo de la lista. Uno stock_from_ledger
+--     que ya cuadra no hace falta quitarlo: se salta solo (ver Idempotencia).
 --   * Si aparecio OTRO producto con diff, no se anade aqui sin diagnosticar su
 --     causa y elegir su accion.
 --
@@ -95,7 +97,8 @@
 --   * el sku declarado no es products.sku del id (id mal copiado);
 --   * store_id, current_stock, suma del libro o numero de movimientos distintos
 --     de los declarados;
---   * current_stock = libro en un producto listado (no hay nada que corregir);
+--   * ledger_from_stock con current_stock = libro y sin marcador (ya cuadra y
+--     no lo asento este parche: no hay nada que corregir);
 --   * stock_from_ledger con libro < 0 (nunca se escribe stock negativo);
 --   * stock_from_ledger con current_stock > libro (BAJARIA el stock sin
 --     movimiento: si el stock es el correcto la accion es ledger_from_stock; si
@@ -107,7 +110,9 @@
 --   No deshabilita ningun trigger. Usa el pase previsto para one-shots:
 --   products_stock_guard y stock_movements_append_only dejan pasar a
 --   session_user postgres / supabase_admin. El parche aborta al empezar si se
---   ejecuta con otro session_user (p. ej. por PostgREST).
+--   ejecuta con otro session_user (p. ej. por PostgREST) o con
+--   session_replication_role = replica (en ese modo los triggers normales no
+--   disparan aunque figuren habilitados: ni el del libro ni las guardas).
 --
 -- Accion ledger_from_stock (Glup Uva): secuencia exacta y por que
 --   El trigger BEFORE INSERT stock_movements_apply() SIEMPRE suma el delta a
@@ -177,15 +182,36 @@
 --     (reversal_mismatches).
 --
 -- Idempotencia
---   El repo no tiene tabla de marcadores: los one-shots dejan un marcador de
---   texto en una fila que crean (p. ej. 20260812 'BACKFILL_VAULT:...'). Aqui el
---   marcador es el reason del movimiento asentado:
---   'ONE_SHOT:20261006z-stock-resync'. Si ya existe un movimiento con ese
---   marcador para un producto listado, la segunda ejecucion es un no-op con
---   notice (se evalua ANTES que las guardas de numeros, porque tras la primera
---   ejecucion ya no coinciden con el informe). Si la lista se editara y no
---   quedara ningun producto con ledger_from_stock (sin movimiento que marque),
---   tambien es no-op cuando todos los listados ya cuadran.
+--   Es POR PRODUCTO. Cada producto listado se salta por separado si ya esta
+--   aplicado; los demas se procesan con todas sus guardas. Asi se puede aplicar
+--   primero la lista con un solo producto (p. ej. sin Lucky, a la espera del
+--   conteo) y despues el archivo completo. El parche solo es un no-op total
+--   cuando todos los listados se saltan. "Ya aplicado" se evalua ANTES que las
+--   guardas de numeros (tras la primera ejecucion ya no coinciden con el
+--   informe) y depende de la accion:
+--     * ledger_from_stock: marcador de texto en la fila que el parche crea, como
+--       los demas one-shots del repo (no hay tabla de marcadores; p. ej.
+--       20260812 'BACKFILL_VAULT:...'). Es el reason del movimiento asentado:
+--       'ONE_SHOT:20261006z-stock-resync'. Si el producto ya tiene un movimiento
+--       con ese marcador, se salta, aunque despues se haya movido.
+--     * stock_from_ledger: NO deja marca; su propia condicion hace de marca. Si
+--       current_stock = suma del libro, la accion (current_stock := libro) no
+--       tiene nada que escribir y el producto se salta, valga lo que valga hoy
+--       (pudo venderse despues de aplicarlo).
+--       Por que no se marca: esta accion no crea ninguna fila. Marcarla en el
+--       libro exigiria un movimiento, y con delta 0 no existe
+--       (quantity_delta <> 0), con delta <> 0 cambiaria la suma del libro (lo
+--       que este producto tiene bien) y moveria el stock por el trigger, y
+--       escribir el marcador en el reason de un movimiento historico es
+--       reescribir historia (append-only, 20261006g). Fuera del libro no hay
+--       donde: el repo no tiene tabla de marcadores y crear una para un
+--       one-shot es esquema nuevo. La condicion, ademas, no puede mentir: se
+--       lee con el producto bloqueado y es exactamente lo que la accion deja.
+--       Lo que NO distingue es "lo aplico este parche" de "lo ajusto otro":
+--       en los dos casos no queda nada que hacer.
+--   Un producto ledger_from_stock que ya cuadra SIN marcador no se da por
+--   aplicado (no lo asento este parche): aborta por sus guardas, salvo que
+--   todos los listados cuadren ya, que es un no-op.
 --
 -- Ensayo: scripts/stock-lab/regression/one-shot-resync-guard.test.ts ejecuta
 --   ESTE archivo en el laboratorio dentro de una transaccion con rollback,
@@ -228,6 +254,8 @@ declare
   v_final_stock integer;
   v_pending integer;
   v_missing text;
+  v_skipped uuid[] := '{}';
+  v_processed integer := 0;
 begin
   -- 0. Solo por conexion directa: es el pase que dan products_stock_guard
   --    (20261006e) y stock_movements_append_only (20261006g).
@@ -235,6 +263,13 @@ begin
     raise exception
       'One-shot 20261006z: debe ejecutarse en una conexion directa como postgres (session_user actual: %)',
       session_user;
+  end if;
+
+  -- 0b. En replica los triggers normales (tgenabled 'O') no disparan aunque
+  --     figuren habilitados: ni el del libro ni las guardas de products.
+  if current_setting('session_replication_role') = 'replica' then
+    raise exception
+      'One-shot 20261006z: la sesion esta en session_replication_role = replica: los triggers del libro mayor no disparan. Ejecutar en una sesion normal (set session_replication_role = origin). No se toca nada.';
   end if;
 
   -- 1. Prerrequisitos: libro mayor con trigger y seq.
@@ -353,38 +388,66 @@ begin
       v_target.product_id, v_target.sku, v_target.action;
   end loop;
 
-  -- 2. Marcador de idempotencia (antes de las guardas de datos).
-  if exists (
-    select 1
-    from public.stock_movements m
-    join _stock_resync_targets t on t.product_id = m.product_id
-    where m.reason like v_marker || '%'
-  ) then
-    raise notice 'One-shot 20261006z ya aplicado (marcador % en stock_movements). Nada que hacer.', v_marker;
-    return;
-  end if;
-
-  -- 3. Bloqueo de los productos listados (orden estable) y guardas.
+  -- 2. Bloqueo de los productos listados (orden estable). Va antes de la
+  --    idempotencia porque la de stock_from_ledger lee current_stock y el libro.
   perform 1
   from public.products p
   join _stock_resync_targets t on t.product_id = p.id
   order by p.id
   for update of p;
 
-  -- Sin movimiento que marque (lista sin ledger_from_stock): no-op si todo cuadra ya.
-  select count(*) into v_pending
-  from _stock_resync_targets t
-  left join public.products p on p.id = t.product_id
-  where p.id is null
-     or p.current_stock <> coalesce(
-          (select sum(m.quantity_delta) from public.stock_movements m where m.product_id = t.product_id), 0);
+  -- 3. Idempotencia POR PRODUCTO (antes de las guardas de datos; ver cabecera).
+  --    Los que entran en v_skipped no se tocan ni se comprueban mas.
+  for v_target in select * from _stock_resync_targets order by product_id loop
+    if exists (
+      select 1
+      from public.stock_movements m
+      where m.product_id = v_target.product_id
+        and m.reason like v_marker || '%'
+    ) then
+      v_skipped := v_skipped || v_target.product_id;
+      raise notice 'One-shot 20261006z: % ya aplicado (marcador % en stock_movements). Se salta.',
+        v_target.sku, v_marker;
+    elsif v_target.action = 'stock_from_ledger'
+      and exists (
+        select 1
+        from public.products p
+        where p.id = v_target.product_id
+          and p.sku = v_target.sku
+          and p.store_id = v_target.store_id
+          and p.current_stock = coalesce(
+                (select sum(m.quantity_delta) from public.stock_movements m where m.product_id = p.id), 0)
+      ) then
+      v_skipped := v_skipped || v_target.product_id;
+      raise notice 'One-shot 20261006z: % [stock_from_ledger] ya aplicado (current_stock = libro). Se salta.',
+        v_target.sku;
+    end if;
+  end loop;
 
-  if v_pending = 0 then
-    raise notice 'One-shot 20261006z: los productos listados ya cuadran con el libro. Nada que hacer.';
+  if not exists (select 1 from _stock_resync_targets t where t.product_id <> all(v_skipped)) then
+    raise notice 'One-shot 20261006z ya aplicado en todos los productos listados. Nada que hacer.';
     return;
   end if;
 
-  for v_target in select * from _stock_resync_targets order by product_id loop
+  -- 4. Guardas de los productos pendientes.
+
+  -- Ningun pendiente descuadrado (solo quedan ledger_from_stock que cuadran sin marcador): no-op.
+  select count(*) into v_pending
+  from _stock_resync_targets t
+  left join public.products p on p.id = t.product_id
+  where t.product_id <> all(v_skipped)
+    and (p.id is null
+     or p.current_stock <> coalesce(
+          (select sum(m.quantity_delta) from public.stock_movements m where m.product_id = t.product_id), 0));
+
+  if v_pending = 0 then
+    raise notice 'One-shot 20261006z: los productos listados pendientes ya cuadran con el libro. Nada que hacer.';
+    return;
+  end if;
+
+  for v_target in
+    select * from _stock_resync_targets where product_id <> all(v_skipped) order by product_id
+  loop
     select p.id, p.store_id, p.sku, p.current_stock
     into v_product
     from public.products p
@@ -451,8 +514,12 @@ begin
     end if;
   end loop;
 
-  -- 4. Correccion (todas las guardas pasaron): se ejecuta la accion DECLARADA.
-  for v_target in select * from _stock_resync_targets order by product_id loop
+  -- 5. Correccion (todas las guardas pasaron): se ejecuta la accion DECLARADA.
+  for v_target in
+    select * from _stock_resync_targets where product_id <> all(v_skipped) order by product_id
+  loop
+    v_processed := v_processed + 1;
+
     if v_target.action = 'stock_from_ledger' then
       -- El libro manda: el stock toma el valor del libro. Sin movimiento.
       -- Guardas: libro >= 0 y current_stock < libro (solo sube).
@@ -501,8 +568,10 @@ begin
     end if;
   end loop;
 
-  -- 5. Verificacion final: stock = libro y >= 0 en cada producto listado.
-  for v_target in select * from _stock_resync_targets order by product_id loop
+  -- 6. Verificacion final: stock = libro y >= 0 en cada producto corregido.
+  for v_target in
+    select * from _stock_resync_targets where product_id <> all(v_skipped) order by product_id
+  loop
     select p.current_stock into v_final_stock
     from public.products p
     where p.id = v_target.product_id;
@@ -517,8 +586,8 @@ begin
     end if;
   end loop;
 
-  raise notice 'One-shot 20261006z aplicado: % productos cuadran con el libro.',
-    (select count(*) from _stock_resync_targets);
+  raise notice 'One-shot 20261006z aplicado: % productos corregidos, % saltados por estar ya aplicados.',
+    v_processed, coalesce(cardinality(v_skipped), 0);
 end;
 $$;
 
