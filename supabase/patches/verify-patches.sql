@@ -351,4 +351,12 @@ select
   not has_table_privilege('authenticated', 'public.stock_movements', 'insert')
     and not has_table_privilege('authenticated', 'public.stock_movements', 'update')
     and not has_table_privilege('authenticated', 'public.stock_movements', 'delete')
+union all
+select
+  'assert_store_context rechaza perfiles inactivos',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'assert_store_context' and p.prosrc ilike '%is_active = true%'
+  )
 order by 1;

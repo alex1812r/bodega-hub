@@ -194,6 +194,36 @@ revoke insert, update, delete, truncate, references, trigger
   on public.stock_movements from public, anon, authenticated, service_role;
 revoke all on sequence public.stock_movements_seq from public, anon, authenticated;
 
+-- -----------------------------------------------------------------------------
+-- 4. C9 — un perfil inactivo (o inexistente) no tiene contexto de tienda
+--    Todas las RPC de stock, pagos y caja llaman a assert_store_context().
+-- -----------------------------------------------------------------------------
+
+create or replace function public.assert_store_context()
+returns uuid
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_store_id uuid;
+begin
+  select p.store_id
+  into v_store_id
+  from public.profiles p
+  where p.id = auth.uid()
+    and p.is_active = true;
+
+  if v_store_id is null then
+    raise exception 'No tienes permisos para realizar esta operacion en este recurso'
+      using errcode = '42501';
+  end if;
+
+  return v_store_id;
+end;
+$$;
+
 commit;
 
 notify pgrst, 'reload schema';
