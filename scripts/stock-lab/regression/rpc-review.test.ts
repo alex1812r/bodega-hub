@@ -167,13 +167,50 @@ async function sessionCash(sessionId: string): Promise<{ status: string; closing
   return { status: String(row.status), closing: row.closing === null ? null : Number(row.closing), movimientos: Number(row.movimientos) };
 }
 
-async function waitForLock(pid: number, what: string): Promise<void> {
+/**
+ * Espera a que la operación `pending` (ya lanzada en el backend `pid`) quede bloqueada por un lock. Si termina
+ * sin haber esperado, la carrera no se montó: falla en el acto diciendo qué devolvió, no a los 10 s a ciegas.
+ */
+async function waitForLock(pid: number, what: string, pending: Promise<string>): Promise<void> {
+  const state: { outcome: string | null } = { outcome: null };
+  void pending.then((outcome) => {
+    state.outcome = outcome;
+  });
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const waiting = await lab.rows("select pid from pg_stat_activity where pid = $1 and wait_event_type = 'Lock'", [pid]);
     if (waiting.length === 1) return;
+    if (state.outcome !== null) {
+      const latest = await lab.rows(
+        `select r.name from public.cash_sessions s join public.cash_registers r on r.id = s.register_id
+         where s.store_id = $1 and s.status = 'open' order by s.opened_at desc limit 1`,
+        [lab.storeId],
+      );
+      throw new Error(
+        `SETUP · ${what} no esperó: terminó con "${state.outcome}" (última caja abierta de la tienda: ${String(latest[0]?.name ?? "ninguna")})`,
+      );
+    }
     await new Promise((done) => setTimeout(done, 100));
   }
   throw new Error(`SETUP · ${what} no llegó a esperar en 10 s`);
+}
+
+/**
+ * Hace de `sessionId` la sesión que `register_payment` resuelve para un admin sin caja asignada («la última
+ * abierta de la tienda»). Abrirla la última no basta: `opened_at` es reloj de pared y puede retroceder (STK-518).
+ * Fixture por SQL: su `opened_at` pasa a ser estrictamente posterior al de cualquier otra sesión de la tienda.
+ */
+async function asLatestOpenSession(sessionId: string): Promise<void> {
+  await setup("fijar la sesión del test como última abierta de la tienda", () =>
+    one(
+      `update public.cash_sessions s
+       set opened_at = greatest(
+         clock_timestamp(),
+         (select max(o.opened_at) from public.cash_sessions o where o.store_id = s.store_id and o.id <> s.id) + interval '1 millisecond'
+       )
+       where s.id = $1 and s.status = 'open' returning s.id`,
+      [sessionId],
+    ),
+  );
 }
 
 async function backendPid(client: Client): Promise<number> {
@@ -334,7 +371,30 @@ describe("R3 · una compra con pagos activos no se cancela ni se devuelve", () =
 // rpc-review R5(a): `register_payment` leía la sesión de caja sin bloquearla. Con `close_cash_session` en
 // curso el cobro veía la sesión `open`, esperaba en el FK de `cash_movements` y entraba tras el commit en una
 // sesión ya cerrada: el cierre guardado no incluía ese efectivo (20261006c:1813-1826 y :1857-1868).
-describe("R5 · un cobro concurrente con el cierre de caja no queda fuera del cierre", () => {
+//
+// STK-518: un admin no tiene caja asignada y `register_payment` le resuelve «la última sesión abierta de la
+// tienda» (`order by opened_at desc`, 20261006f:823-825). El test daba por hecho que esa era la suya por haberla
+// abierto la última, pero `opened_at` es reloj de pared y el del contenedor lab retrocede ~0,7 s cada ~29 s:
+// una caja abierta justo antes (las de R2, la del test anterior) quedaba con fecha posterior, el cobro caía en
+// ella, nadie esperaba a nadie y el SETUP reventaba a los 10 s. `asLatestOpenSession` fija la premisa en vez de
+// suponerla, y el caso «otra caja con opened_at posterior» reproduce el salto de reloj sin depender de él.
+describe.each([
+  { caso: "única caja abierta por el test", intrusa: false },
+  { caso: "otra caja de la tienda con opened_at posterior", intrusa: true },
+])("R5 · un cobro concurrente con el cierre de caja no queda fuera del cierre ($caso)", ({ intrusa }) => {
+  /** Sesión propia que es la que resuelve el cobro de un admin, haya o no otra caja «más reciente» en la tienda. */
+  async function targetSession(name: string): Promise<string> {
+    const sessionId = await ownOpenSession(name);
+    if (intrusa) {
+      const other = await ownOpenSession(`${name}-intrusa`);
+      await setup("caja intrusa con opened_at posterior", () =>
+        one("update public.cash_sessions set opened_at = clock_timestamp() + interval '2 seconds' where id = $1 returning id", [other]),
+      );
+    }
+    await asLatestOpenSession(sessionId);
+    return sessionId;
+  }
+
   async function pendingSale(name: string): Promise<{ id: string; totalVes: number }> {
     const p = await product(name, 5);
     const sale = await mustRpc("venta", "admin", "create_sale", saleArgs({ product_id: p, quantity: 1, unit_price_ref: 1 }));
@@ -350,7 +410,7 @@ describe("R5 · un cobro concurrente con el cierre de caja no queda fuera del ci
   const CLOSE_SQL = "select (public.close_cash_session($1::uuid, $2::numeric, 0)).id";
 
   it("R5 · cierre sin confirmar → cobro en espera → el cierre confirma: el efectivo de la sesión cerrada cuadra con su cierre", async () => {
-    const sessionId = await ownOpenSession("r5-cierre-primero");
+    const sessionId = await targetSession("r5-cierre-primero");
     const sale = await setup("venta pendiente", () => pendingSale("r5a"));
     const [closer, payer] = await setup("conexiones", async () => [await lab.pg(), await lab.pg()]);
     const payerPid = await backendPid(payer);
@@ -372,7 +432,7 @@ describe("R5 · un cobro concurrente con el cierre de caja no queda fuera del ci
           await payer.query("rollback").catch(() => undefined);
           return `cobro rechazado ${(error as { code?: string }).code ?? ""}`;
         });
-      await waitForLock(payerPid, "el cobro");
+      await waitForLock(payerPid, "el cobro", pending);
       await closer.query("commit");
       outcome = await pending;
     } finally {
@@ -388,7 +448,7 @@ describe("R5 · un cobro concurrente con el cierre de caja no queda fuera del ci
   });
 
   it("R5 · cobro sin confirmar → cierre en espera → el cobro confirma: el cierre incluye ese efectivo", async () => {
-    const sessionId = await ownOpenSession("r5-cobro-primero");
+    const sessionId = await targetSession("r5-cobro-primero");
     const sale = await setup("venta pendiente", () => pendingSale("r5b"));
     const [closer, payer] = await setup("conexiones", async () => [await lab.pg(), await lab.pg()]);
     const closerPid = await backendPid(closer);
@@ -410,7 +470,7 @@ describe("R5 · un cobro concurrente con el cierre de caja no queda fuera del ci
           await closer.query("rollback").catch(() => undefined);
           return `cierre rechazado ${(error as { code?: string }).code ?? ""} ${messageOf(error)}`;
         });
-      await waitForLock(closerPid, "el cierre");
+      await waitForLock(closerPid, "el cierre", pending);
       await payer.query("commit");
       outcome = await pending;
     } finally {
