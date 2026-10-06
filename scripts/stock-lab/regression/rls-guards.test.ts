@@ -245,6 +245,79 @@ describe("C2 · current_stock no se escribe fuera de las RPC", () => {
       }
     },
   );
+
+  // M3 (auditoría de la fase 6) · el otro hueco de C2, «INSERT directo con stock»: la política `for all` de
+  // products deja insertar a admin / almacén y un producto que nace con `current_stock > 0` no tiene movimiento.
+  // Lo cierra `trg_products_stock_guard_insert` (20261006a-stock-ledger-guards.sql:182-187); faltaba el test.
+  const MSG_INITIAL_STOCK = "El stock inicial se registra con un movimiento inventario_inicial";
+
+  function directProduct(sku: string, stock: number): Row {
+    return {
+      store_id: lab.storeId,
+      sku,
+      name: `Producto ${sku}`,
+      sale_price_ref: 1,
+      current_cost_ref: 0.5,
+      current_stock: stock,
+      min_stock: 0,
+      is_active: true,
+    };
+  }
+
+  /** Productos con ese SKU (y sus movimientos); los que existan se apuntan para el `cleanup`. */
+  async function bySku(sku: string): Promise<{ productos: number; movimientos: number }> {
+    const rows = await lab.rows(
+      `select p.id, (select count(*)::int from public.stock_movements m where m.product_id = p.id) as moves
+       from public.products p where p.store_id = $1 and p.sku = $2`,
+      [lab.storeId, sku],
+    );
+    for (const row of rows) if (!productIds.includes(String(row.id))) productIds.push(String(row.id));
+    return { productos: rows.length, movimientos: rows.reduce((sum, row) => sum + Number(row.moves), 0) };
+  }
+
+  it.each(["admin", "almacen"] as const)(
+    "C2 · un INSERT directo de products con current_stock > 0 por PostgREST como %s se rechaza (PT400) y no crea el producto",
+    async (role) => {
+      const client = await setup("sesión", () => lab.supa(role));
+      seq += 1;
+      const sku = `${TAG}-c2-insert-${role}-${seq}`;
+
+      const { error } = await client.from("products").insert(directProduct(sku, 7)).select("id");
+
+      expect({ code: error?.code ?? null, mensaje: error?.message ?? null, ...(await bySku(sku)) }).toEqual({
+        code: "PT400",
+        mensaje: MSG_INITIAL_STOCK,
+        productos: 0,
+        movimientos: 0,
+      });
+    },
+  );
+
+  it.each(["admin", "almacen"] as const)(
+    "C2 · un upsert de products con current_stock > 0 por PostgREST como %s se rechaza (PT400): ni crea el producto ni pisa el stock del existente",
+    async (role) => {
+      const client = await setup("sesión", () => lab.supa(role));
+      const existing = await setup("producto existente", () => mkProduct(`c2-upsert-${role}`, 10));
+      const existingSku = String((await one("select sku from public.products where id = $1", [existing])).sku);
+      seq += 1;
+      const freshSku = `${TAG}-c2-upsert-nuevo-${role}-${seq}`;
+
+      const created = await client.from("products").upsert(directProduct(freshSku, 7), { onConflict: "store_id,sku" }).select("id");
+      const overwritten = await client.from("products").upsert(directProduct(existingSku, 999), { onConflict: "store_id,sku" }).select("id");
+
+      expect({
+        nuevo: [created.error?.code ?? null, created.error?.message ?? null],
+        existente: [overwritten.error?.code ?? null, overwritten.error?.message ?? null],
+        creados: (await bySku(freshSku)).productos,
+        stock: await lab.stock(existing),
+      }).toEqual({
+        nuevo: ["PT400", MSG_INITIAL_STOCK],
+        existente: ["PT400", MSG_INITIAL_STOCK],
+        creados: 0,
+        stock: 10,
+      });
+    },
+  );
 });
 
 // Hipótesis H12 · hueco G2 · caso 9.9. Evento reproductor: ola `w4-hyp` caso `h12.dg2_inactive_user`
