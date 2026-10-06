@@ -13,6 +13,12 @@
  * - `current_stock` vs `último stock_after`: el stock vivo del producto frente
  *   al `stock_after` del último movimiento (deben coincidir siempre).
  *
+ * Orden de la cadena: `stock_movements.seq` cuando la columna viene (20261006a:
+ * se asigna con el producto bloqueado, es el orden real por producto); si no,
+ * `created_at, id`. `created_at` es el inicio de la transacción y bajo
+ * concurrencia puede ir al revés que el commit (C16): ordenar por él inventa
+ * roturas y un «último stock_after» que no es el último.
+ *
  * Bisección (`findFirstBreak`): si Σ esperado == Σ movimientos del run y la
  * cadena `stock_after[i] = stock_after[i-1] + quantity_delta[i]` es válida, el
  * producto no rompió. Si no, atribuye cada movimiento a su evento por
@@ -51,6 +57,8 @@ export type SummaryMovement = {
   conversion_id: string | null;
   /** ISO 8601. */
   created_at: string;
+  /** `stock_movements.seq`: orden real de la cadena del producto. Ausente en bases sin el parche 20261006a. */
+  seq?: number | null;
 };
 
 export type ReconcileStatus = "ok" | "missing" | "failed";
@@ -127,7 +135,17 @@ function toMillis(iso: string): number {
   return Number.isFinite(value) ? value : Number.NaN;
 }
 
+function seqOf(movement: SummaryMovement): number | null {
+  if (movement.seq === null || movement.seq === undefined) return null;
+  const value = Number(movement.seq);
+  return Number.isFinite(value) ? value : null;
+}
+
+/** Por `seq` si ambos lo traen; si no, `created_at, id`. */
 function compareMovements(a: SummaryMovement, b: SummaryMovement): number {
+  const seqA = seqOf(a);
+  const seqB = seqOf(b);
+  if (seqA !== null && seqB !== null && seqA !== seqB) return seqA - seqB;
   const byTime = toMillis(a.created_at) - toMillis(b.created_at);
   if (byTime !== 0 && Number.isFinite(byTime)) return byTime;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
@@ -292,7 +310,7 @@ export function expectedStockByProduct(
 // Bisección
 // ---------------------------------------------------------------------------
 
-/** Primer movimiento cuyo stock_after no es el anterior + su delta, o null. */
+/** Primer movimiento cuyo stock_after no es el anterior + su delta, o null. Espera el orden de `sortMovements`. */
 export function findChainBreak(sortedMovements: readonly SummaryMovement[]): SummaryMovement | null {
   for (let i = 1; i < sortedMovements.length; i += 1) {
     const prev = sortedMovements[i - 1];
@@ -309,7 +327,7 @@ function movementRef(movement: SummaryMovement): string {
 }
 
 /**
- * Consume de `pool` (ordenado por `created_at`), en orden, los movimientos aún
+ * Consume de `pool` (en el orden de `sortMovements`), en orden, los movimientos aún
  * libres que acepte `eligible` y tengan el signo de `expected`, hasta que la
  * suma cuadre. Devuelve la suma consumida (cuadre o no).
  */

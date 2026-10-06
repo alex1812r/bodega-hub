@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { readEvents, type LabEvent } from "./agents/logger";
-import { agentArgv, agentFileFor, assignAgents, defaultRunId, parseRunArgs } from "./run";
+import { LAB_MOVEMENTS_SQL, agentArgv, agentFileFor, assignAgents, defaultRunId, parseRunArgs } from "./run";
 import {
   RECONCILE_PENDING_TEXT,
   buildSummary,
@@ -15,6 +15,7 @@ import {
   findFirstBreak,
   movementsInRun,
   shortSummary,
+  sortMovements,
   type SummaryMovement,
   type SummaryProduct,
 } from "./summary";
@@ -364,6 +365,67 @@ describe("buildSummary", () => {
     expect(lines).toHaveLength(3);
     expect(lines[0]).toContain("fallidos: caos");
     expect(lines[2]).toContain("2 producto(s)");
+  });
+});
+
+// STK-519 / F3b: .notes/stock-integrity-gtm/qa/STK-513/verdict.md — `lab-new-45-47` «DESCUADRE» 8 vs 13 y 6
+// chain_break falsos: el orden real de la cadena es `stock_movements.seq` (se asigna con el producto bloqueado);
+// `created_at` es el inicio de la transacción y puede ir al revés que el commit (C16).
+describe("STK-519: la cadena se ordena por seq cuando la columna viene", () => {
+  const ev = (ts: string, id: string, delta: number): LabEvent => ({
+    ts,
+    agent: "vendedor",
+    op: delta < 0 ? "sale_create" : "adjustment",
+    payload: {},
+    status: 201,
+    response_id: id,
+    expected_delta: { p: delta },
+  });
+  const mv = (id: string, seq: number | undefined, created: string, delta: number, after: number, sale: string | null): SummaryMovement => ({
+    id,
+    product_id: "p",
+    type: delta < 0 ? "venta" : "ajuste_entrada",
+    quantity_delta: delta,
+    stock_after: after,
+    sale_id: sale,
+    purchase_id: null,
+    conversion_id: null,
+    created_at: created,
+    ...(seq === undefined ? {} : { seq }),
+  });
+  // Orden real (seq): +13 → 13, −2 → 11, −3 → 8. La venta de −3 abrió su transacción ANTES que la de −2.
+  const chain = (withSeq: boolean): SummaryMovement[] => [
+    mv("m3", withSeq ? 5523 : undefined, "2026-10-06T10:00:01.000Z", -3, 8, "s-b"),
+    mv("m1", withSeq ? 5510 : undefined, "2026-10-06T10:00:00.000Z", 13, 13, null),
+    mv("m2", withSeq ? 5520 : undefined, "2026-10-06T10:00:02.000Z", -2, 11, "s-a"),
+  ];
+  const runEvents = [ev("2026-10-06T10:00:00.500Z", "m1", 13), ev("2026-10-06T10:00:02.500Z", "s-a", -2), ev("2026-10-06T10:00:02.600Z", "s-b", -3)];
+  const product: SummaryProduct = { id: "p", sku: "lab-new-45-47", name: "P", current_stock: 8, is_active: true };
+
+  it("sortMovements ordena por seq y cae a created_at, id si falta", () => {
+    expect(sortMovements(chain(true)).map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
+    expect(sortMovements(chain(false)).map((m) => m.id)).toEqual(["m1", "m3", "m2"]);
+  });
+
+  it("current_stock se compara con el stock_after del último movimiento POR SEQ", () => {
+    const [row] = expectedStockByProduct(runEvents, [product], chain(true));
+    expect(row).toMatchObject({ lastStockAfter: 8, currentStock: 8, stockOk: true, deltaOk: true });
+  });
+
+  it("no inventa un chain_break cuando created_at va al revés que seq", () => {
+    expect(findChainBreak(sortMovements(chain(true)))).toBeNull();
+    expect(findFirstBreak(runEvents, chain(true), "p")).toBeNull();
+    expect(findAllBreaks(runEvents, chain(true))).toEqual([]);
+  });
+
+  it("una rotura real por seq se sigue detectando", () => {
+    const broken = chain(true).map((m) => (m.id === "m3" ? { ...m, stock_after: 9 } : m));
+    expect(findFirstBreak(runEvents, broken, "p")).toMatchObject({ reason: "chain_break", expected: 8, actual: 9 });
+  });
+
+  it("la consulta de movimientos del run trae seq y ordena por él", () => {
+    expect(LAB_MOVEMENTS_SQL).toMatch(/\bseq\b[^]*from public\.stock_movements/);
+    expect(LAB_MOVEMENTS_SQL).toMatch(/order by seq/);
   });
 });
 

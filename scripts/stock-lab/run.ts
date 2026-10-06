@@ -261,7 +261,15 @@ type MovementRow = {
   purchase_id: string | null;
   conversion_id: string | null;
   created_at: Date | string;
+  /** bigint: pg lo entrega como texto. */
+  seq: string | number | null;
 };
+
+/** Movimientos de la tienda lab en el orden real de la cadena (`seq`, C16). */
+export const LAB_MOVEMENTS_SQL = `select id, product_id, type::text as type, quantity_delta, stock_after, sale_id, purchase_id, conversion_id, created_at, seq
+         from public.stock_movements
+        where store_id = $1
+        order by seq, id`;
 
 function isoString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -288,13 +296,7 @@ export async function readLabData(): Promise<{ products: SummaryProduct[]; movem
       "select id, sku, name, current_stock, is_active from public.products where store_id = $1 order by sku",
       [storeId],
     );
-    const movements = await client.query<MovementRow>(
-      `select id, product_id, type::text as type, quantity_delta, stock_after, sale_id, purchase_id, conversion_id, created_at
-         from public.stock_movements
-        where store_id = $1
-        order by created_at, id`,
-      [storeId],
-    );
+    const movements = await client.query<MovementRow>(LAB_MOVEMENTS_SQL, [storeId]);
     return {
       products: products.rows.map((row) => ({ ...row, current_stock: Number(row.current_stock) })),
       movements: movements.rows.map((row) => ({
@@ -302,6 +304,7 @@ export async function readLabData(): Promise<{ products: SummaryProduct[]; movem
         quantity_delta: Number(row.quantity_delta),
         stock_after: Number(row.stock_after),
         created_at: isoString(row.created_at),
+        seq: row.seq === null || row.seq === undefined ? null : Number(row.seq),
       })),
       notes: [],
     };
