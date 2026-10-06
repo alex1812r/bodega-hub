@@ -137,6 +137,12 @@ function SaleCreatePosWorkspace() {
   // Ultimo cobro enviado desde ESTE carrito. Tras recargar o vaciar el carrito ya
   // no se puede afirmar que lo que hay en pantalla sea aquella venta.
   const lastAttemptRef = useRef<{ clientRequestId: string; fingerprint: string } | null>(null);
+  // Generacion del carrito: cambia al cerrar la venta o limpiar la orden. Una respuesta
+  // de escaneo que vuelve con otra generacion pertenece a un carrito que ya no existe.
+  const cartGenerationRef = useRef(0);
+  // Busquedas por codigo en vuelo. Es un ref (y no solo `isLookingUp`) porque el
+  // estado tarda un render y en ese hueco «Cobrar» salia sin la linea escaneada.
+  const scanInFlightRef = useRef(0);
   const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
   const enabledPaymentMethods =
     enabledPaymentMethodsQuery.data ?? DEFAULT_ENABLED_PAYMENT_METHODS;
@@ -265,18 +271,42 @@ function SaleCreatePosWorkspace() {
     setSearch(value);
   }
 
-  function handleBarcodeScanSubmit(code: string) {
-    void barcodeScan
-      .handleScanSubmit(code, {
+  /**
+   * Busca el codigo y agrega la linea SOLO si el carrito sigue siendo el mismo.
+   * Con un cobro viajando no se escanea: la linea llegaria a una venta ya enviada.
+   */
+  async function scanIntoCart(code: string, onAdded?: () => void) {
+    if (submitLockRef.current) {
+      barcodeScan.setScanError("Espera a que termine el cobro antes de escanear.");
+      return;
+    }
+
+    const generation = cartGenerationRef.current;
+    scanInFlightRef.current += 1;
+
+    try {
+      await barcodeScan.handleScanSubmit(code, {
         onResolved: (product) => {
+          if (generation !== cartGenerationRef.current) {
+            // La venta se cerro (o la orden se limpio) mientras se buscaba: se descarta.
+            return;
+          }
+
           cart.addProduct(product);
           setSearch("");
           barcodeScan.clearScanError();
+          onAdded?.();
         },
-      })
-      .finally(() => {
-        focusSearchInput();
       });
+    } finally {
+      scanInFlightRef.current -= 1;
+    }
+  }
+
+  function handleBarcodeScanSubmit(code: string) {
+    void scanIntoCart(code).finally(() => {
+      focusSearchInput();
+    });
   }
 
   function resetPaymentSelection() {
@@ -295,6 +325,7 @@ function SaleCreatePosWorkspace() {
     setCheckout(null);
     resetPaymentSelection();
     lastAttemptRef.current = null;
+    cartGenerationRef.current += 1;
   }
 
   useEffect(() => {
@@ -507,6 +538,7 @@ function SaleCreatePosWorkspace() {
     cart.clearCart();
     setCheckout(null);
     resetPaymentSelection();
+    cartGenerationRef.current += 1;
   }
 
   function handleStartNewSale() {
@@ -609,6 +641,12 @@ function SaleCreatePosWorkspace() {
         setPaymentDetailsModalOpen(true);
         return;
       }
+    }
+
+    // Un escaneo en vuelo todavia puede agregar una linea: cobrar ahora venderia sin ella.
+    if (scanInFlightRef.current > 0) {
+      setFormError("Espera a que termine la busqueda del producto escaneado.");
+      return;
     }
 
     // Doble clic o Enter repetido mientras la peticion viaja: sin este candado se
@@ -777,6 +815,7 @@ function SaleCreatePosWorkspace() {
               drawerVes={drawerVes}
               enabledPaymentMethods={enabledPaymentMethods}
               error={formError}
+              isScanPending={barcodeScan.isLookingUp}
               isSubmitting={isSubmitting}
               items={cart.items}
               itemsCount={cart.itemsCount}
@@ -839,19 +878,11 @@ function SaleCreatePosWorkspace() {
       <PosScanModal
         isLookingUp={barcodeScan.isLookingUp}
         onDetected={(code) => {
-          void barcodeScan
-            .handleScanSubmit(code, {
-              onResolved: (product) => {
-                cart.addProduct(product);
-                setSearch("");
-                barcodeScan.clearScanError();
-                setScanOpen(false);
-                focusSearchInput();
-              },
-            })
-            .finally(() => {
-              // Keep modal open on errors so the user can retry immediately.
-            });
+          // Keep modal open on errors so the user can retry immediately.
+          void scanIntoCart(code, () => {
+            setScanOpen(false);
+            focusSearchInput();
+          });
         }}
         onFocusSearch={() => {
           setScanOpen(false);

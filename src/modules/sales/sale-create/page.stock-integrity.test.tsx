@@ -524,7 +524,7 @@ describe("C20 · escaneo lento cruzado con el cobro", () => {
   // Evento: qa/STK-408/verdict.md C6 (one-shots 830b/830d).
   // Código: src/modules/sales/sale-create/page.tsx:155, :197-209 y :485;
   // src/modules/sales/sale-create/components/PosCartPanel.tsx:272.
-  it.failing(
+  it(
     "no envía el cobro mientras la búsqueda del código escaneado sigue en vuelo",
     async () => {
       const lookup = deferred<Response>();
@@ -556,7 +556,7 @@ describe("C20 · escaneo lento cruzado con el cobro", () => {
   // aparece en el carrito del cliente siguiente.
   // Evento: qa/STK-408/verdict.md C6 (one-shots 830b/830d).
   // Código: src/modules/sales/sale-create/page.tsx:197-209 y :219-225.
-  it.failing(
+  it(
     "una respuesta de escaneo que llega con la venta ya cerrada no entra al carrito siguiente",
     async () => {
       const lookup = deferred<Response>();
