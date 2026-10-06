@@ -275,6 +275,12 @@ detalle: `select * from public.stock_reconciliation where store_id = '<uuid>'`.
 Las vistas usan `security_invoker` (aplican las RLS); la función es
 `security definer` y fuerza la tienda del usuario si no es superadmin.
 
+Test de inyección de descuadres (`scripts/stock-lab/reconcile.test.ts`): con la
+base arriba (`npm run stock-lab:db-up`) correr `npx jest scripts/stock-lab/reconcile.test.ts`;
+crea una tienda `lab-test-<random>` dentro de una transacción con rollback (nada
+persiste), inyecta descuadres y afirma el oráculo y las vistas con valores exactos.
+Sin base, o sin el parche aplicado, los tests quedan `skipped` con un aviso en consola.
+
 ### Parches excluidos y por qué
 
 - Por nombre: `*one-shot*`, `*query*`, `*diagnostic*`, `apply-all-pending.sql`
