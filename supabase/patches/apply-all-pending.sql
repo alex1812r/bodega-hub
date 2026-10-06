@@ -300,3 +300,10 @@ notify pgrst, 'reload schema';
 -- -----------------------------------------------------------------------------
 -- Ejecutar: supabase/patches/20261005-stock-integrity-views.sql
 -- Idempotente. Oraculo: select public.stock_integrity_report() debe devolver las 9 claves en 0.
+-- -----------------------------------------------------------------------------
+-- 20261006a — stock ledger guards: stock_movements.seq + trigger stock_movements_apply, guardas de current_stock (C2),
+--             perfiles inactivos (C9), escrituras solo por RPC (C17), vistas security_invoker (C18), anon sin execute
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261006a-stock-ledger-guards.sql
+-- Idempotente, una transaccion. Las RPC de stock vigentes siguen funcionando (modo legado) hasta los parches b/c.
+-- OJO: desde este parche un INSERT de products con current_stock > 0 por PostgREST devuelve PT400 (ver STK-508).

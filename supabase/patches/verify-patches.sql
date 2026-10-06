@@ -321,4 +321,34 @@ select
     where table_schema = 'public'
       and table_name = 'stock_reconciliation'
   )
+union all
+select
+  'stock_movements.seq not null',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'stock_movements'
+      and column_name = 'seq' and is_nullable = 'NO'
+  )
+union all
+select
+  'trigger trg_stock_movements_apply',
+  exists (
+    select 1 from pg_trigger
+    where tgrelid = 'public.stock_movements'::regclass
+      and tgname = 'trg_stock_movements_apply' and not tgisinternal
+  )
+union all
+select
+  'triggers products stock guard (insert + update)',
+  (
+    select count(*) = 2 from pg_trigger
+    where tgrelid = 'public.products'::regclass and not tgisinternal
+      and tgname in ('trg_products_stock_guard_update', 'trg_products_stock_guard_insert')
+  )
+union all
+select
+  'stock_movements append-only (authenticated sin insert/update/delete)',
+  not has_table_privilege('authenticated', 'public.stock_movements', 'insert')
+    and not has_table_privilege('authenticated', 'public.stock_movements', 'update')
+    and not has_table_privilege('authenticated', 'public.stock_movements', 'delete')
 order by 1;
