@@ -588,7 +588,8 @@ export class Lab {
       if (!value) throw new Error(`${key} no está definida (process.env o .env.stock-lab).`);
       return value;
     };
-    const allowed = process.env.STOCK_TEST_ALLOW_WRITES_HOST ?? file.STOCK_TEST_ALLOW_WRITES_HOST;
+    // El host permitido sale solo del archivo lab, nunca del entorno heredado (C21).
+    const allowed = file.STOCK_TEST_ALLOW_WRITES_HOST;
     this.dbUrl = get("STOCK_LAB_DB_URL");
     this.supabaseUrl = file.NEXT_PUBLIC_SUPABASE_URL ?? "";
     this.anonKey = file.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";

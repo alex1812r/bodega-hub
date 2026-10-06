@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { Client } from "pg";
 
-import { loadStockLabEnv } from "./env";
+import { assertAllowedWriteHost, loadStockLabEnv } from "./env";
 
 const ROOT = resolve(__dirname, "../..");
 
@@ -16,11 +16,12 @@ export const STOCK_LAB_DB_URL_KEY = "STOCK_LAB_DB_URL";
 
 /** Misma precedencia que db-up.ts: process.env > .env.stock-lab > .env.stock-lab.example. */
 export function resolveStockLabDbUrl(): string {
-  const fromEnv = process.env[STOCK_LAB_DB_URL_KEY];
-  if (fromEnv) return fromEnv;
   const file = loadStockLabEnv(ROOT);
-  const dbUrl = file[STOCK_LAB_DB_URL_KEY];
+  const dbUrl = process.env[STOCK_LAB_DB_URL_KEY] || file[STOCK_LAB_DB_URL_KEY];
   if (!dbUrl) throw new Error(`${STOCK_LAB_DB_URL_KEY} no esta definida (process.env o .env.stock-lab)`);
+  // Quien recibe esta URL conecta sin mas (tryConnect, probe): la guarda va aqui, y
+  // el host permitido sale solo del archivo lab, nunca del entorno heredado (C21).
+  assertAllowedWriteHost(dbUrl, file.STOCK_TEST_ALLOW_WRITES_HOST);
   return dbUrl;
 }
 

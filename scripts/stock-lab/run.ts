@@ -267,11 +267,12 @@ function isoString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-async function readLabData(): Promise<{ products: SummaryProduct[]; movements: SummaryMovement[]; notes: string[] }> {
+export async function readLabData(): Promise<{ products: SummaryProduct[]; movements: SummaryMovement[]; notes: string[] }> {
   const env = loadStockLabEnv(ROOT);
   const dbUrl = process.env.STOCK_LAB_DB_URL ?? env.STOCK_LAB_DB_URL;
   if (!dbUrl) throw new Error("STOCK_LAB_DB_URL no está definida (process.env o .env.stock-lab)");
-  assertAllowedWriteHost(dbUrl, process.env.STOCK_TEST_ALLOW_WRITES_HOST ?? env.STOCK_TEST_ALLOW_WRITES_HOST);
+  // El host permitido sale solo del archivo lab, nunca del entorno heredado (C21).
+  assertAllowedWriteHost(dbUrl, env.STOCK_TEST_ALLOW_WRITES_HOST);
 
   const client = new Client({ connectionString: dbUrl, connectionTimeoutMillis: 10_000 });
   await client.connect();
