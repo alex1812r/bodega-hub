@@ -5,6 +5,8 @@
  *
  * Reutiliza `ApiClient` de scripts/e2e-bodegon/client.ts (no se copia).
  */
+import { createHash } from "node:crypto";
+
 import { ApiClient, unwrapList, type ApiResponse, type JsonRecord } from "../../e2e-bodegon/client";
 import { assertAllowedWriteHost, loadStockLabEnv } from "../env";
 import type { AgentArgs } from "./cli";
@@ -319,8 +321,15 @@ export async function runLoop(
 // Idempotencia
 // ---------------------------------------------------------------------------
 
-/** UUID v4 válido derivado de 4 llamadas a `rng.next()` (determinista por semilla). */
-export function idempotencyKey(rng: Rng): string {
+/**
+ * UUID v4 válido derivado de 4 llamadas a `rng.next()` (determinista por semilla).
+ *
+ * `scope` (el run id) se mezcla con la clave: la misma semilla en OTRO run da
+ * claves distintas. Sin eso, repetir una semilla sobre una base no reseteada
+ * reenvía claves ya usadas y el servidor responde la venta vieja (o 409 si el
+ * carrito cambió) en vez de vender (caos 9.8, run w5-f3-seed-b).
+ */
+export function idempotencyKey(rng: Rng, scope = ""): string {
   const bytes = new Uint8Array(16);
   for (let word = 0; word < 4; word += 1) {
     const value = Math.floor(rng.next() * 0x1_0000_0000) >>> 0;
@@ -328,6 +337,10 @@ export function idempotencyKey(rng: Rng): string {
     bytes[word * 4 + 1] = (value >>> 16) & 0xff;
     bytes[word * 4 + 2] = (value >>> 8) & 0xff;
     bytes[word * 4 + 3] = value & 0xff;
+  }
+  if (scope) {
+    const mask = createHash("sha256").update(scope).digest();
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = (bytes[i] ?? 0) ^ (mask[i] ?? 0);
   }
   bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40; // versión 4
   bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80; // variante RFC 4122

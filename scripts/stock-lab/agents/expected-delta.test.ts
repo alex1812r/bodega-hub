@@ -1,4 +1,45 @@
-import { expectedDelta, expectedDeltaFor } from "./expected-delta";
+import { dedupeIdempotentReplays, expectedDelta, expectedDeltaFor } from "./expected-delta";
+import type { LabEvent } from "./logger";
+
+describe("dedupeIdempotentReplays (STK-514)", () => {
+  const ev = (over: Partial<LabEvent>): LabEvent => ({
+    ts: "2026-10-06T10:00:00.000Z",
+    agent: "vendedor-1",
+    op: "sale_create",
+    payload: { clientRequestId: "k1" },
+    status: 201,
+    response_id: "sale-1",
+    expected_delta: { p: -2 },
+    ...over,
+  });
+
+  it("dos 2xx con la misma clave y el mismo response_id cuentan el descuento una sola vez", () => {
+    const events = [ev({}), ev({ ts: "2026-10-06T10:00:01.000Z" }), ev({ agent: "caos", op: "chaos_double_sale", status: 200 })];
+    const out = dedupeIdempotentReplays(events);
+    expect(out.map((e) => e.expected_delta)).toEqual([{ p: -2 }, {}, {}]);
+    expect(out.map((e) => e.status)).toEqual([201, 201, 200]);
+    // No muta la entrada.
+    expect(events[1]?.expected_delta).toEqual({ p: -2 });
+  });
+
+  it("misma clave con ids distintos (venta duplicada) conserva ambos esperados: es el bug a detectar", () => {
+    const out = dedupeIdempotentReplays([ev({}), ev({ response_id: "sale-2" })]);
+    expect(out.map((e) => e.expected_delta)).toEqual([{ p: -2 }, { p: -2 }]);
+  });
+
+  it("no toca cancelaciones/devoluciones (mismo response_id, sin clave) ni eventos sin id o no-2xx", () => {
+    const cancel = ev({ op: "sale_cancel", payload: { saleId: "sale-1" }, status: 200, expected_delta: { p: 2 } });
+    const rejected = ev({ status: 409, expected_delta: {} });
+    const noId = ev({ response_id: null });
+    const out = dedupeIdempotentReplays([ev({}), cancel, cancel, rejected, noId, noId]);
+    expect(out.map((e) => e.expected_delta)).toEqual([{ p: -2 }, { p: 2 }, { p: 2 }, {}, { p: -2 }, { p: -2 }]);
+  });
+
+  it("claves distintas no se mezclan aunque el payload no sea un objeto", () => {
+    const out = dedupeIdempotentReplays([ev({ payload: null }), ev({ payload: "x" }), ev({ payload: { clientRequestId: " " } })]);
+    expect(out.every((e) => e.expected_delta.p === -2)).toBe(true);
+  });
+});
 
 describe("expectedDelta", () => {
   it("sale_create: −q por línea y suma líneas repetidas", () => {

@@ -67,6 +67,25 @@ describe("expectedDeltaByProduct / movementsInRun", () => {
     expect(expectedDeltaByProduct(events)).toEqual({ "prod-a": 7, "prod-b": 0, "prod-c": 2 });
   });
 
+  it("STK-514: dos 2xx con la misma clave y el mismo response_id no duplican el esperado", () => {
+    const sale = (ts: string, agent: string, responseId: string): LabEvent => ({
+      ts,
+      agent,
+      op: "sale_create",
+      payload: { clientRequestId: "k1" },
+      status: 201,
+      response_id: responseId,
+      expected_delta: { p: -2 },
+    });
+    const first = sale("2026-10-06T10:00:00.000Z", "vendedor-1", "s-1");
+    const replay = sale("2026-10-06T10:00:01.000Z", "vendedor-2", "s-1");
+    expect(expectedDeltaByProduct([first, replay])).toEqual({ p: -2 });
+    // El orden del archivo no importa (varios procesos escriben el mismo events.jsonl).
+    expect(expectedDeltaByProduct([replay, first])).toEqual({ p: -2 });
+    // Misma clave, otra venta: doble descuento esperado → el descuadre queda a la vista.
+    expect(expectedDeltaByProduct([first, sale("2026-10-06T10:00:01.000Z", "vendedor-2", "s-2")])).toEqual({ p: -4 });
+  });
+
   it("deja fuera los movimientos anteriores al run (stock inicial)", () => {
     const inRun = movementsInRun(events, movements);
     expect(inRun.map((m) => m.id)).not.toContain("m-a0");
@@ -252,6 +271,15 @@ describe("findFirstBreak", () => {
       const found = findFirstBreak([sale, cancel], short, "p");
       expect(found).toMatchObject({ reason: "delta_mismatch", expected: 5, actual: 4 });
       expect(found?.event?.op).toBe("sale_cancel");
+    });
+
+    it("STK-514: un reintento idempotente (misma clave, misma venta) no pide un segundo movimiento", () => {
+      const keyed = { ...saleA, payload: { clientRequestId: "k-a" } };
+      const replay = { ...keyed, ts: "2026-10-06T01:41:10.900Z", agent: "v2" };
+      expect(findFirstBreak([keyed, replay, purchaseB], [movA, movB], "p")).toBeNull();
+      // Si el servidor descontó dos veces, sobra un movimiento y se señala.
+      const twice = mov({ id: "m-a2", quantity_delta: -5, stock_after: 210, sale_id: "s-a", created_at: "2026-10-06T01:41:10.800Z" });
+      expect(findFirstBreak([keyed, replay, purchaseB], [movA, movB, twice], "p")).toMatchObject({ reason: "unattributed_movements" });
     });
 
     it("movimientos sin evento atribuible → unattributed_movements", () => {

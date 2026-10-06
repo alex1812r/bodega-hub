@@ -239,6 +239,19 @@ describe("base.ts: idempotencyKey", () => {
     expect(probe.next()).toBe(reference.next());
   });
 
+  it("con scope (run id): misma semilla en otro run → otra clave; mismo run → la misma", () => {
+    const key = (scope?: string) => idempotencyKey(createRng(42), scope);
+    expect(key("run-a")).toMatch(UUID_V4);
+    expect(key("run-a")).toBe(key("run-a"));
+    expect(key("run-a")).not.toBe(key("run-b"));
+    expect(key("run-a")).not.toBe(key());
+    const probe = createRng(9);
+    idempotencyKey(probe, "run-a");
+    const reference = createRng(9);
+    for (let i = 0; i < 4; i += 1) reference.next();
+    expect(probe.next()).toBe(reference.next());
+  });
+
   it("semillas distintas dan claves distintas", () => {
     expect(idempotencyKey(createRng(1))).not.toBe(idempotencyKey(createRng(2)));
   });

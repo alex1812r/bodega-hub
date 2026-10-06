@@ -200,7 +200,7 @@ function buildSaleBody(
 ): SaleBody {
   const state = readState(ctx);
   const body: SaleBody = {
-    clientRequestId: idempotencyKey(ctx.rng),
+    clientRequestId: idempotencyKey(ctx.rng, ctx.logger.runId),
     customerId: state.customerId,
     exchangeRateId: state.exchangeRateId,
     refRateVes: state.refRateVes,
