@@ -328,3 +328,12 @@ notify pgrst, 'reload schema';
 -- OJO: las tres firmas nuevas solo anaden parametros opcionales al final; el BFF vigente las sigue llamando igual.
 -- return_purchase ya no acepta compras en pedido (PT409) y una linea en modo empaque sobre el SKU empaque de un par
 -- ingresa pack_count empaques (se guarda como linea en modo unidad al costo del empaque).
+-- -----------------------------------------------------------------------------
+-- 20261006d — stock integrity views v2 (C16): stock_chain_breaks por seq, documentos mutados en
+--             movements_without_document / reversal_mismatches, conversion_mismatches contra la propia conversion
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261006d-stock-integrity-views-v2.sql
+-- Requiere 20261005 y 20261006a. Idempotente, una transaccion. Siguen siendo 9 vistas (mismos nombres, columnas nuevas
+-- solo al final) y stock_integrity_report no cambia. Quita a anon el acceso a las 9 vistas.
+-- OJO: en una base con historia pueden aparecer filas nuevas (documentos editados a mano por one-shots): revisar
+-- movements_without_document.issue y reversal_mismatches.issue antes de darlas por descuadre de stock.

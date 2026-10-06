@@ -576,4 +576,36 @@ select
       and p.proname in ('stock_request_hash', 'purchase_idempotent_replay', 'stock_request_replay')
       and not has_function_privilege('authenticated', p.oid, 'execute')
   )
+union all
+select
+  'stock_chain_breaks ordena la cadena por seq, no por created_at (20261006d, C16)',
+  pg_get_viewdef('public.stock_chain_breaks'::regclass) ilike '%order by m.seq%'
+    and pg_get_viewdef('public.stock_chain_breaks'::regclass) not ilike '%order by m.created_at%'
+union all
+select
+  'vistas de integridad detectan documentos mutados (20261006d, C16)',
+  pg_get_viewdef('public.movements_without_document'::regclass) ilike '%missing_document_line%'
+    and pg_get_viewdef('public.movements_without_document'::regclass) ilike '%document_status_mismatch%'
+    and pg_get_viewdef('public.reversal_mismatches'::regclass) ilike '%reversal_on_live_document%'
+union all
+select
+  'conversion_mismatches compara contra lo registrado en la conversion (20261006d, C16)',
+  pg_get_viewdef('public.conversion_mismatches'::regclass) ilike '%recorded_units_per_pack%'
+union all
+select
+  '9 vistas de integridad con security_invoker, sin acceso anon/public y solo lectura',
+  (
+    select count(*) = 9 from pg_class c
+    where c.relnamespace = 'public'::regnamespace and c.relkind = 'v'
+      and c.relname in ('stock_reconciliation', 'stock_chain_breaks', 'sales_without_movements',
+        'purchases_without_movements', 'movements_without_document', 'reversal_mismatches',
+        'conversion_mismatches', 'negative_stock', 'cross_store_movements')
+      and c.reloptions @> array['security_invoker=true']
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'select')
+      and not has_table_privilege('authenticated', c.oid, 'insert, update, delete')
+      and not exists (
+        select 1 from aclexplode(c.relacl) a where a.grantee = 0
+      )
+  )
 order by 1;

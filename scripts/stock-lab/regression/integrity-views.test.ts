@@ -3,8 +3,8 @@
  * STK-415 · regresión del oráculo de integridad (causa C16): falsos positivos y
  * descuadres no detectados por las vistas del parche 20261005.
  *
- * Cada test enuncia el comportamiento SANO y hoy está ROJO (la corrección es de
- * la fase 5). Los documentos se crean por el camino real (RPC por PostgREST con
+ * Cada test enuncia el comportamiento SANO (rojos hasta STK-504, parche
+ * 20261006d-stock-integrity-views-v2.sql). Los documentos se crean por el camino real (RPC por PostgREST con
  * la anon key y la sesión de un usuario lab); `pg` (rol postgres) solo prepara
  * datos, inyecta las corrupciones dentro de una transacción que SIEMPRE hace
  * rollback y lee las vistas.
@@ -176,12 +176,30 @@ async function reportIncrements(what: string, inject: (db: Client) => Promise<nu
   }
 }
 
+/** Las 9 vistas filtradas a los productos dados: solo las que tienen filas (vacío = todo cuadra). */
+async function dirtyViews(productIds: readonly string[]): Promise<Report> {
+  const counts = await lab.scoped(productIds);
+  return Object.fromEntries(Object.entries(counts).filter(([, count]) => count !== 0));
+}
+
+/** Ajuste de devolución ligado a su documento (STK-503): parte de lo vendido / recibido vuelve por `adjust_stock`. */
+async function linkedReturn(what: string, productId: string, delta: number, document: Record<string, string>): Promise<void> {
+  await mustRpc(what, "admin", "adjust_stock", {
+    p_product_id: productId,
+    p_quantity_delta: delta,
+    p_reason: `${PREFIX} ${what}`,
+    p_type: delta > 0 ? "devolucion_cliente" : "devolucion_proveedor",
+    ...document,
+  });
+}
+
 async function cleanup(): Promise<void> {
   const db = lab.db;
   const found = await db.query<{ id: string }>("select id from public.products where sku like $1", [`${PREFIX}-%`]);
   const ids = found.rows.map((row) => row.id);
   await db.query("begin");
   try {
+    await db.query("delete from public.product_pack_conversions where pack_product_id = any($1::uuid[])", [ids]);
     await db.query("delete from public.purchases where notes like $1", [`${PREFIX}-%`]);
     await db.query("delete from public.sales where notes like $1", [`${PREFIX}-%`]);
     await db.query("delete from public.stock_movements where product_id = any($1::uuid[])", [ids]);
@@ -276,6 +294,33 @@ describe("C16 · stock_chain_breaks da falsos positivos por ordenar con created_
 
     expect(await chainBreaksOfHealthyProduct(p, 4)).toEqual([]);
   });
+
+  // Hueco de cobertura "C16 falso positivo #27" (caos/fases-1-3.md §2): misma raíz, sin test hasta STK-504.
+  it("corregir a mano el created_at de un movimiento legítimo no produce filas", async () => {
+    const p = await product("c16-27", 10);
+    await sale("c16-27", [{ productId: p, quantity: 1 }]);
+    await sale("c16-27", [{ productId: p, quantity: 2 }]);
+
+    const db = await lab.pg();
+    let rows: unknown[];
+    await db.query("begin");
+    try {
+      // El último movimiento (venta −2) pasa a ser el más antiguo por fecha.
+      const moved = await setup("mover created_at al pasado", () =>
+        db.query(
+          `update public.stock_movements set created_at = created_at - interval '30 days'
+           where id = (select id from public.stock_movements where product_id = $1 order by seq desc limit 1)`,
+          [p],
+        ),
+      );
+      if (moved.rowCount !== 1) throw new Error(`SETUP · mover created_at debía tocar 1 fila y tocó ${moved.rowCount}`);
+      rows = (await db.query("select movement_id from public.stock_chain_breaks where product_id = $1", [p])).rows;
+    } finally {
+      await db.query("rollback").catch(() => undefined);
+    }
+
+    expect(rows).toEqual([]);
+  });
 });
 
 // Plan H7 (oráculo) / G14: descuadres reales que ninguna de las 9 vistas ve.
@@ -341,6 +386,22 @@ describe("C16 · descuadres de documentos mutados que stock_integrity_report no 
 
     expect(Object.keys(increments).length).toBeGreaterThanOrEqual(1);
   });
+
+  // Simétrico de la venta resucitada (STK-504): mismo hueco en compras.
+  it("una compra cancelada (stock ya retirado) resucitada a `recibido` aparece en alguna vista del informe", async () => {
+    const p = await product("c16c-compra-resucitada", 0);
+    const purchaseId = await receivedPurchase("c16c-compra-resucitada", p, 10);
+    await mustRpc("cancelar la compra", "almacen", "cancel_purchase", { p_purchase_id: purchaseId });
+    const stock = await lab.stock(p);
+    if (stock !== 0) throw new Error(`SETUP · la cancelación debía dejar el stock en 0 y quedó en ${stock}`);
+
+    const increments = await reportIncrements("compra cancelado → recibido", async (db) => {
+      const res = await db.query("update public.purchases set status = 'recibido' where id = $1 and status = 'cancelado'", [purchaseId]);
+      return res.rowCount;
+    });
+
+    expect(Object.keys(increments).length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 // Plan H7 (oráculo) / G14: la vista compara cada conversión histórica con el `units_per_pack` VIGENTE del par.
@@ -391,5 +452,109 @@ describe("C16 · conversion_mismatches marca conversiones antiguas al cambiar el
 
     // Hoy: [{ issue: "ratio_mismatch", pack_delta: -1, unit_delta: 6, units_per_pack: 12 }].
     expect(rows).toEqual([]);
+  });
+});
+
+// STK-504: las vistas v2 miran también los documentos vivos; los flujos legítimos de STK-502/503
+// (devolución parcial ligada al documento, reversión de "lo movido − ya devuelto", modo empaque
+// sobre el SKU empaque) no deben dejar filas.
+describe("C16 · los flujos legítimos no dejan filas en las vistas", () => {
+  it("devolución parcial ligada a la venta y luego return_sale del resto", async () => {
+    const p = await product("ok-venta-dev", 10);
+    const saleId = await sale("ok-venta-dev", [
+      { productId: p, quantity: 1 },
+      { productId: p, quantity: 2 },
+    ]);
+    await linkedReturn("devolución parcial de cliente", p, 1, { p_sale_id: saleId });
+    // Venta viva con devolución parcial ligada: 10 − 3 + 1.
+    expect({ stock: await lab.stock(p), views: await dirtyViews([p]) }).toEqual({ stock: 8, views: {} });
+
+    await mustRpc("devolver la venta", "vendedor1", "return_sale", { p_sale_id: saleId });
+    expect({ stock: await lab.stock(p), views: await dirtyViews([p]) }).toEqual({ stock: 10, views: {} });
+  });
+
+  // HALLAZGO STK-504 (sin corregir: la RPC es de STK-502, parche 20261006b): cancel_sale repone `sale_items.quantity`
+  // completo sin descontar lo ya devuelto con `devolucion_cliente` ligado → stock 11 (1 unidad duplicada); la vista v2
+  // lo delata (`reversal_mismatches` 1). `it.failing` hasta que cancel_sale reponga "vendido − ya devuelto" como
+  // return_sale / cancel_purchase; entonces pasa a `it`.
+  it.failing("devolución parcial ligada a la venta y luego cancel_sale del resto", async () => {
+    const p = await product("ok-venta-canc", 10);
+    const saleId = await sale("ok-venta-canc", [{ productId: p, quantity: 3 }]);
+    await linkedReturn("devolución parcial de cliente", p, 1, { p_sale_id: saleId });
+    await mustRpc("cancelar la venta", "vendedor1", "cancel_sale", { p_sale_id: saleId });
+
+    expect({ stock: await lab.stock(p), views: await dirtyViews([p]) }).toEqual({ stock: 10, views: {} });
+  });
+
+  it("devolución parcial ligada a la compra y luego return_purchase del resto", async () => {
+    const p = await product("ok-compra-dev", 0);
+    const purchaseId = await receivedPurchase("ok-compra-dev", p, 10);
+    await linkedReturn("devolución parcial a proveedor", p, -4, { p_purchase_id: purchaseId });
+    expect({ stock: await lab.stock(p), views: await dirtyViews([p]) }).toEqual({ stock: 6, views: {} });
+
+    await mustRpc("devolver la compra", "almacen", "return_purchase", { p_purchase_id: purchaseId });
+    expect({ stock: await lab.stock(p), views: await dirtyViews([p]) }).toEqual({ stock: 0, views: {} });
+  });
+
+  it("devolución parcial ligada a la compra y luego cancel_purchase del resto", async () => {
+    const p = await product("ok-compra-canc", 0);
+    const purchaseId = await receivedPurchase("ok-compra-canc", p, 10);
+    await linkedReturn("devolución parcial a proveedor", p, -4, { p_purchase_id: purchaseId });
+    await mustRpc("cancelar la compra", "almacen", "cancel_purchase", { p_purchase_id: purchaseId });
+
+    expect({ stock: await lab.stock(p), views: await dirtyViews([p]) }).toEqual({ stock: 0, views: {} });
+  });
+
+  it("compra en modo empaque sobre el SKU empaque y sobre el SKU unidad de un par", async () => {
+    const pack = await product("ok-pack", 0);
+    const unit = await product("ok-unit", 0);
+    await setup("par x6", () =>
+      lab.rows(
+        `insert into public.product_pack_conversions (store_id, pack_product_id, unit_product_id, units_per_pack)
+         values ($1, $2, $3, 6)`,
+        [lab.storeId, pack, unit],
+      ),
+    );
+    for (const productId of [pack, unit]) {
+      await mustRpc("compra en modo empaque", "almacen", "create_purchase", {
+        p_supplier_id: lab.supplierId,
+        p_items: [
+          {
+            product_id: productId,
+            entry_mode: "pack",
+            pack_label: "Bulto x6",
+            pack_count: 2,
+            units_per_pack: 6,
+            pack_cost_ref: 6,
+            pack_cost_ves: 6 * rateVes,
+            cost_currency: "ref",
+            unit_cost_ref: 1,
+            unit_cost_ves: rateVes,
+            subtotal_ref: 12,
+            subtotal_ves: 12 * rateVes,
+            tax_rate: 0,
+            tax_ref: 0,
+            tax_ves: 0,
+          },
+        ],
+        p_ref_rate_ves: rateVes,
+        p_discount_ref: 0,
+        p_tax_ref: 0,
+        p_notes: nextTag("ok-pack"),
+        p_purchase_number: nextTag("ok-pack-num"),
+        p_status: "recibido",
+        p_discount_ves: 0,
+        p_tax_ves: 0,
+        p_subtotal_ves: 12 * rateVes,
+        p_subtotal_ref: 12,
+      });
+    }
+
+    // Sobre el empaque entran 2 empaques; sobre la unidad, 2 × 6 unidades.
+    expect({ pack: await lab.stock(pack), unit: await lab.stock(unit), views: await dirtyViews([pack, unit]) }).toEqual({
+      pack: 2,
+      unit: 12,
+      views: {},
+    });
   });
 });
