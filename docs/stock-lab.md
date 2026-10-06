@@ -97,11 +97,23 @@ que exporta `setup(ctx)`, `step(ctx)` y `teardown(ctx)` (`AgentContext` de
 | `vendedor` (`vendedor-1`, `vendedor-2`) | `lab-vendedor-1@lab.local` / `lab-vendedor-2@lab.local` (si `--agent` termina en `-2`) | abre su caja, vende por el POS, cancela/devuelve ventas, cierra su caja en el teardown | `sale_create`, `sale_cancel`, `sale_return` |
 | `comprador` | `lab-admin@lab.local` | crea compras (`pedido`/`recibido`), las recibe, cancela o devuelve; paga por transferencia | `purchase_create`, `purchase_receive`, `purchase_cancel`, `purchase_return` |
 | `almacen` | `lab-almacen@lab.local` | ajustes de stock, conversiones empaque↔unidad, altas de producto con stock inicial | `adjustment`, `conversion`, `product_create` |
-| `caos` | `lab-admin@lab.local` (compras/ajustes/productos) + `lab-vendedor-1/2@lab.local` (ventas/caja) | dobles envíos, operaciones prohibidas, vender inactivos o sin stock, carreras entre dos vendedores | `chaos_double_sale`, `chaos_double_receive`, `chaos_forbidden_adjust`, `chaos_sell_inactive`, `chaos_over_stock`, … |
+| `caos` | `lab-admin@lab.local` (compras/ajustes/productos) + `lab-vendedor-1/2@lab.local` (ventas/caja) | dobles envíos, operaciones prohibidas, vender inactivos o sin stock, carreras entre dos vendedores; si al caso elegido le falta una precondición transitoria (sin inactivos, sin stock) corre el siguiente caso y lo anota en `agents/caos.log` | `chaos_double_sale`, `chaos_double_receive`, `chaos_forbidden_adjust`, `chaos_sell_inactive`, `chaos_over_stock`, … |
 | `mixto` (solo serial) | los cuatro anteriores, cada uno con su cliente y login | un único proceso que elige en cada iteración vendedor 45 %, comprador 25 %, almacen 20 %, caos 10 % y llama su `step` | los de arriba, con `agent` = `mixto-<nombre>` |
 
 Los cuatro agentes comparten la semilla de `--seed` (determinista: `createRng`),
 los productos calientes `LAB-HOT-*` y el mismo archivo de eventos del run.
+
+Precondición transitoria ausente (STK-626): cada agente trabaja con un catálogo
+en caché que refresca cada 25 iteraciones, y otro agente puede dejarlo sin lo
+que la operación elegida necesita (p. ej. `almacen` reactiva los `LAB-INACT`
+y `caos` se queda sin inactivos para `sell_inactive`). Eso no es un
+`agent_error`: `caos` corre el siguiente caso de `CHAOS_CASES` (orden cíclico,
+sin consumir números del rng para elegirlo) y `vendedor`, si todos los activos
+están agotados, deja la iteración sin petición. En ambos casos queda una línea
+`[<agente>] … omitido/omitida …` en `agents/<agente>.log` y nada en
+`events.jsonl`. Con la misma semilla, la secuencia solo cambia a partir de la
+primera sustitución. Un fallo real (login, catálogo vacío, sin proveedor)
+sigue siendo `agent_error` con status 0.
 
 Cada venta de los operadores (`vendedor`, `caos`) lleva un `clientRequestId`
 derivado de (semilla, run) con `idempotencyKey(rng, runId)` de `base.ts`: la

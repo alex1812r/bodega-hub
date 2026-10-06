@@ -16,6 +16,8 @@ import {
   HOT_SKU_PREFIX,
   type LabProduct,
   type LabRoleKey,
+  PreconditionUnavailable,
+  agentNote,
   createLabClient,
   describeError,
   fetchCatalog,
@@ -183,7 +185,7 @@ function pickHot(ctx: AgentContext): LabProduct {
   const hot = activeProducts(ctx).filter((p) => p.isHot && p.currentStock > 0);
   const pool = hot.length > 0 ? hot : activeProducts(ctx).filter((p) => p.currentStock > 0);
   if (pool.length === 0) {
-    throw new Error("caos: no hay productos activos con stock.");
+    throw new PreconditionUnavailable("no hay productos activos con stock");
   }
   return ctx.rng.pick(pool);
 }
@@ -355,7 +357,7 @@ export async function chaos_double_receive(ctx: AgentContext): Promise<void> {
 export async function chaos_race_stock(ctx: AgentContext): Promise<void> {
   const product = pickColdWithStock(ctx, 2);
   if (!product) {
-    throw new Error("caos: no hay producto no-hot con stock ≥ 2 para 9.3.");
+    throw new PreconditionUnavailable("no hay producto no-hot con stock ≥ 2");
   }
   const quantity = product.currentStock;
   const bodyV1 = buildSaleBody(ctx, [{ product, quantity }], true);
@@ -425,7 +427,7 @@ export async function chaos_forbidden_adjust(ctx: AgentContext): Promise<void> {
 export async function chaos_sell_inactive(ctx: AgentContext): Promise<void> {
   const inactive = ctx.catalog.filter((p) => !p.isActive);
   if (inactive.length === 0) {
-    throw new Error("caos: no hay productos inactivos para sell_inactive.");
+    throw new PreconditionUnavailable("no hay productos inactivos en el catálogo en caché");
   }
   const product = ctx.rng.pick(inactive);
   const body = buildSaleBody(ctx, [{ product, quantity: 1 }], true);
@@ -457,7 +459,7 @@ export async function chaos_big_sale_reverse(ctx: AgentContext): Promise<void> {
   const state = readState(ctx);
   const pool = activeProducts(ctx).filter((p) => p.currentStock >= 2);
   if (pool.length < 2) {
-    throw new Error("caos: hacen falta ≥ 2 productos con stock ≥ 2 para 9.10.");
+    throw new PreconditionUnavailable("hacen falta ≥ 2 productos con stock ≥ 2");
   }
   const chosen = ctx.rng
     .shuffle(pool)
@@ -610,7 +612,36 @@ export async function step(ctx: AgentContext): Promise<void> {
     state.opsSinceRefresh = 0;
   }
   state.opsSinceRefresh += 1;
-  await CASE_RUNNERS[pickCase(ctx.rng)](ctx);
+  await runCaseOrNext(ctx, pickCase(ctx.rng));
+}
+
+/**
+ * Corre el caso elegido; si le falta una precondición TRANSITORIA
+ * (`PreconditionUnavailable`: sin inactivos porque almacén los reactivó, sin
+ * stock…) corre el siguiente de `CHAOS_CASES` (orden cíclico) y lo anota en el
+ * log del agente, no en events.jsonl (STK-626). Cualquier otro error sigue
+ * subiendo a `runLoop` como `agent_error`.
+ *
+ * Efecto sobre el rng: la sustitución no consume ningún número (un caso lanza
+ * `PreconditionUnavailable` antes de tocar el rng) y el sustituto consume los
+ * suyos. Mientras ninguna precondición falte, la secuencia es la de siempre; a
+ * partir de la primera sustitución se desplaza respecto a un run donde no
+ * faltó, igual que ya pasa en cuanto dos runs ven catálogos distintos.
+ */
+async function runCaseOrNext(ctx: AgentContext, picked: ChaosCase): Promise<void> {
+  const start = CHAOS_CASES.indexOf(picked);
+  for (let offset = 0; offset < CHAOS_CASES.length; offset += 1) {
+    const current = CHAOS_CASES[(start + offset) % CHAOS_CASES.length] as ChaosCase;
+    try {
+      await CASE_RUNNERS[current](ctx);
+      return;
+    } catch (error) {
+      if (!(error instanceof PreconditionUnavailable)) throw error;
+      const next = CHAOS_CASES[(start + offset + 1) % CHAOS_CASES.length] as ChaosCase;
+      const last = offset === CHAOS_CASES.length - 1;
+      agentNote(ctx, `${current} omitido (${error.message}) → ${last ? "iteración sin caso disponible" : next}`);
+    }
+  }
 }
 
 // Las sesiones de caja NUNCA se cierran desde el caos (las cierra el vendedor); la firma la fija el contrato.

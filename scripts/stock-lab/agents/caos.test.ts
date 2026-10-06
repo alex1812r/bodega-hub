@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ApiClient, type ApiResponse } from "../../e2e-bodegon/client";
-import type { AgentContext, LabProduct } from "./base";
+import { type AgentContext, type LabProduct, runLoop } from "./base";
 import {
   CHAOS_CASES,
   chaos_big_sale_reverse,
@@ -365,5 +365,98 @@ describe("caos agent", () => {
     expect(events[0]?.expected_delta).toEqual(Object.fromEntries(v1.map((i) => [i.productId, -1])));
     expect(events[1]?.expected_delta).toEqual(events[0]?.expected_delta);
     expect(events[1]?.payload).toMatchObject({ case: "9.10", actor: "vendedor2", order: "desc" });
+  });
+
+  // STK-626: precondición transitoria ausente → otro caso, sin `agent_error`.
+  describe("precondición transitoria ausente (STK-626)", () => {
+    let logSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      logSpy = jest.spyOn(console, "log").mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      logSpy.mockRestore();
+    });
+
+    function seedWhoseFirstCaseIs(target: (typeof CHAOS_CASES)[number]): number {
+      for (let seed = 1; seed < 500; seed += 1) {
+        if (pickCase(createRng(seed)) === target) return seed;
+      }
+      throw new Error(`sin semilla para ${target}`);
+    }
+
+    const rejectSales: Record<string, Handler> = {
+      "POST /api/sales": () => errorResponse(400, "BAD_REQUEST", "stock insuficiente"),
+    };
+    const notes = () => logSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    const loopArgs = (ops: number) => ({ run: "run-caos", seed: 0, ops, agent: "caos" });
+
+    it("sell_inactive sin inactivos en el catálogo: no hay agent_error, corre el caso siguiente y queda anotado en el log del agente", async () => {
+      const catalog = sampleCatalog().filter((p) => p.isActive);
+      const ctx = makeCtx(seedWhoseFirstCaseIs("sell_inactive"), { v1: rejectSales }, catalog);
+      const iterations = await runLoop(loopArgs(1), () => step(ctx), { logger: ctx.logger, errorDelayMs: 0 });
+      expect(iterations).toBe(1);
+      const events = readEvents(ctx.logger.filePath);
+      expect(events.filter((e) => e.op === "agent_error")).toEqual([]);
+      expect(events.map((e) => e.op)).toEqual(["chaos_over_stock_sale"]);
+      expect(calls).toHaveLength(1);
+      expect(notes()).toEqual([expect.stringMatching(/^\[caos\] sell_inactive omitido \(.*inactivos.*\) → over_stock_sale$/)]);
+    });
+
+    it("la sustitución no consume números aleatorios: el caso sustituto ve el rng tal como quedó tras pickCase", async () => {
+      const seed = seedWhoseFirstCaseIs("sell_inactive");
+      const catalog = () => sampleCatalog().filter((p) => p.isActive);
+      const viaStep = makeCtx(seed, { v1: rejectSales }, catalog());
+      await step(viaStep);
+      const viaStepBody = calls[0]?.body;
+
+      calls = [];
+      const direct = makeCtx(seed, { v1: rejectSales }, catalog());
+      pickCase(direct.rng);
+      await chaos_over_stock_sale(direct);
+      expect(viaStepBody).toBeDefined();
+      expect(viaStepBody).toEqual(calls[0]?.body);
+      expect(viaStep.rng.next()).toBe(direct.rng.next());
+    });
+
+    it("60 iteraciones sin inactivos ni stock frío ≥ 2: ningún agent_error y los casos sin precondición no se envían", async () => {
+      const catalog = sampleCatalog()
+        .filter((p) => p.isActive)
+        .map((p) => (p.isHot ? p : { ...p, currentStock: 1 }));
+      const ctx = makeCtx(
+        42,
+        {
+          v1: { ...rejectSales, "POST /api/inventory/adjustments": () => errorResponse(403, "FORBIDDEN", "sin permiso") },
+          v2: rejectSales,
+          admin: {
+            "POST /api/purchases": () => errorResponse(400, "BAD_REQUEST", "no"),
+            "POST /api/inventory/adjustments": () => errorResponse(400, "BAD_REQUEST", "stock insuficiente"),
+            // El refresco del catálogo (cada 25) devuelve el mismo catálogo, sin inactivos.
+            "GET /api/products": () =>
+              okResponse({ items: catalog.map((p) => ({ ...p, salePriceRef: p.salePrice })), total: catalog.length }, 200),
+            "GET /api/inventory/pack-conversions": () => okResponse({ items: [] }, 200),
+          },
+        },
+        catalog,
+      );
+      await runLoop(loopArgs(60), () => step(ctx), { logger: ctx.logger, errorDelayMs: 0 });
+      const ops = readEvents(ctx.logger.filePath).map((e) => e.op);
+      expect(ops.filter((op) => op === "agent_error")).toEqual([]);
+      expect(ops).not.toContain("chaos_sell_inactive");
+      expect(ops).not.toContain("chaos_race_stock");
+      expect(notes().some((line) => line.includes("sell_inactive omitido"))).toBe(true);
+      expect(notes().some((line) => line.includes("race_stock omitido"))).toBe(true);
+    });
+
+    it("un error real del caso (compra 9.2 sin proveedor) sigue siendo agent_error", async () => {
+      const ctx = makeCtx(seedWhoseFirstCaseIs("double_receive"), {});
+      (ctx.state as { supplierId: string | null }).supplierId = null;
+      await runLoop(loopArgs(1), () => step(ctx), { logger: ctx.logger, errorDelayMs: 0 });
+      const events = readEvents(ctx.logger.filePath);
+      expect(events.map((e) => e.op)).toEqual(["agent_error"]);
+      expect(events[0]).toMatchObject({ status: 0, error: "caos: no hay proveedor para la compra de 9.2." });
+      expect(notes()).toEqual([]);
+    });
   });
 });

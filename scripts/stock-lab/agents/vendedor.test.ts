@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ApiClient, ApiResponse, JsonRecord } from "../../e2e-bodegon/client";
-import type { AgentContext } from "./base";
+import { type AgentContext, runLoop } from "./base";
 import { EventLogger, readEvents, type LabEvent } from "./logger";
 import { createRng } from "./rng";
 import { setup, step, teardown, vendedorRoleFor, vendedorState } from "./vendedor";
@@ -309,5 +309,44 @@ describe("vendedor agent", () => {
     await teardown(harness.ctx);
     expect(harness.calls.some((call) => call.path === "/api/cash/session/close")).toBe(false);
     expect(events(harness.ctx)).toEqual([]);
+  });
+
+  describe("sin stock vendible (STK-626)", () => {
+    let logSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      logSpy = jest.spyOn(console, "log").mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      logSpy.mockRestore();
+    });
+
+    it("catálogo activo pero agotado: la iteración se anota en el log del agente, sin agent_error ni petición", async () => {
+      const harness = createHarness(dir, { seed: 5, sessionOpen: true });
+      await setup(harness.ctx);
+      for (const item of harness.ctx.catalog) item.currentStock = 0;
+      const before = harness.calls.length;
+      await runLoop({ run: "run-test", seed: 5, ops: 3, agent: "vendedor" }, () => step(harness.ctx), {
+        logger: harness.ctx.logger,
+        errorDelayMs: 0,
+      });
+      expect(events(harness.ctx)).toEqual([]);
+      expect(harness.calls).toHaveLength(before);
+      const notes = logSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+      expect(notes).toHaveLength(3);
+      expect(notes[0]).toMatch(/^\[vendedor\] venta omitida: .*sin stock/);
+    });
+
+    it("catálogo sin ningún producto activo: sigue siendo agent_error (error real)", async () => {
+      const harness = createHarness(dir, { seed: 5, sessionOpen: true });
+      await setup(harness.ctx);
+      harness.ctx.catalog = [];
+      await runLoop({ run: "run-test", seed: 5, ops: 1, agent: "vendedor" }, () => step(harness.ctx), {
+        logger: harness.ctx.logger,
+        errorDelayMs: 0,
+      });
+      expect(events(harness.ctx).map((event) => event.op)).toEqual(["agent_error"]);
+    });
   });
 });
