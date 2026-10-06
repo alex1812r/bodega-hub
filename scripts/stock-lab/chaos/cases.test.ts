@@ -1,7 +1,6 @@
 /** @jest-environment node */
 import {
   type ChaosLine,
-  INVOICE_COLLISION_NOTE,
   PLAN_CASES,
   VARIANTS,
   addScoped,
@@ -20,6 +19,8 @@ import {
   judgeDeactivatedSale,
   judgeDoubleReceive,
   judgeDuplicateSale,
+  judgeKeyReuse,
+  judgeMissingKey,
   judgeRejection,
   judgeReverseOrder,
   judgeSoftCategory,
@@ -144,8 +145,62 @@ describe("judgeDuplicateSale (9.1)", () => {
     expect(judgeDuplicateSale({ ...none, saleMovements: 1, stockDelta: -2 }).verdict).toBe("fail");
   });
 
-  it("la nota de choque de factura nombra el índice", () => {
-    expect(INVOICE_COLLISION_NOTE).toContain("sales_store_invoice_unique");
+});
+
+describe("judgeMissingKey (9.1 sin clientRequestId, STK-514)", () => {
+  const none = { errors: ["BAD_REQUEST clientRequestId requerido", "BAD_REQUEST clientRequestId requerido"], sales: 0, saleMovements: 0, activePayments: 0, stockDelta: 0 };
+
+  it("pass: 400 en ambas, 0 ventas, 0 movimientos", () => {
+    const j = judgeMissingKey({ ...none, statuses: [400, 400] });
+    expect(j.verdict).toBe("pass");
+    expect(j.detail).toContain("0 ventas, 0 movimientos");
+  });
+
+  it("fail: alguna crea venta, movimiento o pago, o responde 2xx", () => {
+    expect(judgeMissingKey({ ...none, statuses: [201, 400], sales: 1, saleMovements: 1, stockDelta: -2 }).verdict).toBe("fail");
+    expect(judgeMissingKey({ ...none, statuses: [201, 201], sales: 2, saleMovements: 2, stockDelta: -4 }).verdict).toBe("fail");
+    expect(judgeMissingKey({ ...none, statuses: [400, 400], saleMovements: 1, stockDelta: -2 }).verdict).toBe("fail");
+    expect(judgeMissingKey({ ...none, statuses: [400, 400], activePayments: 1 }).verdict).toBe("fail");
+    expect(judgeMissingKey({ ...none, statuses: [201, 400] }).verdict).toBe("fail");
+  });
+
+  it("finding: sin efecto pero con un código distinto de 400", () => {
+    const j = judgeMissingKey({ ...none, statuses: [400, 500], errors: ["BAD_REQUEST x", "INTERNAL_ERROR y"] });
+    expect(j.verdict).toBe("finding");
+    expect(j.detail).toContain("500 INTERNAL_ERROR y");
+  });
+
+  it("las variantes 9.1.no_key_* siguen en el catálogo con el esperado nuevo", () => {
+    for (const id of ["9.1.no_key_x2", "9.1.no_key_gap50"]) {
+      const def = VARIANTS.find((v) => v.id === id);
+      expect(def?.expected).toMatchObject({ sales: 0, sale_movements: 0 });
+      expect(def?.defaultRepeat).toBe(10);
+    }
+  });
+});
+
+describe("judgeKeyReuse (9.8 misma clave, otro carrito)", () => {
+  const one = { firstStatus: 201, firstId: "s1", retryId: null, sales: 1, saleMovements: 1, activePayments: 1, stockDelta: -1, quantity: 1 };
+
+  it("pass: el segundo envío responde 409 y solo existe la primera venta", () => {
+    expect(judgeKeyReuse({ ...one, retryStatus: 409, retryError: "CONFLICT La clave de idempotencia ya se usó" }).verdict).toBe("pass");
+  });
+
+  it("fail: 2xx con la venta vieja, segunda venta o 5xx", () => {
+    const stale = judgeKeyReuse({ ...one, retryStatus: 201, retryId: "s1" });
+    expect(stale.verdict).toBe("fail");
+    expect(stale.detail).toContain("OTRO carrito respondió 201");
+    expect(judgeKeyReuse({ ...one, retryStatus: 201, retryId: "s2", sales: 2, saleMovements: 2, activePayments: 2, stockDelta: -6 }).verdict).toBe("fail");
+    expect(judgeKeyReuse({ ...one, retryStatus: 500, retryError: "INTERNAL_ERROR x" }).verdict).toBe("fail");
+  });
+
+  it("finding: rechazo 4xx que no es 409; error si la primera venta no entró", () => {
+    expect(judgeKeyReuse({ ...one, retryStatus: 400, retryError: "BAD_REQUEST x" }).verdict).toBe("finding");
+    expect(judgeKeyReuse({ ...one, firstStatus: 400, firstId: null, retryStatus: 400, sales: 0, saleMovements: 0, activePayments: 0, stockDelta: 0 }).verdict).toBe("error");
+  });
+
+  it("la variante está en el catálogo bajo el caso 9.8", () => {
+    expect(VARIANTS.find((v) => v.id === "9.8.same_key_other_cart")?.expected).toMatchObject({ sales: 1, retry: 409 });
   });
 });
 
@@ -156,10 +211,14 @@ describe("judgeDoubleReceive (9.2)", () => {
     expect(judgeDoubleReceive({ ...base, statuses: [200, 409, 400], purchaseMovements: 1, stockDelta: 7, purchaseStatus: "recibido" }).verdict).toBe("pass");
   });
 
-  it("finding: un ingreso pero la perdedora responde 500", () => {
+  it("fail: un ingreso pero la perdedora responde 500 (el rechazo de negocio debe ser 409)", () => {
     const j = judgeDoubleReceive({ statuses: [500, 200], errors: ["INTERNAL_ERROR Solo se pueden recibir compras en estado pedido", undefined], quantity: 7, purchaseMovements: 1, stockDelta: 7, purchaseStatus: "recibido" });
-    expect(j.verdict).toBe("finding");
+    expect(j.verdict).toBe("fail");
     expect(j.detail).toContain("500 INTERNAL_ERROR");
+  });
+
+  it("finding: un ingreso y la perdedora 4xx que no es 409/400", () => {
+    expect(judgeDoubleReceive({ ...base, statuses: [200, 403], purchaseMovements: 1, stockDelta: 7, purchaseStatus: "recibido" }).verdict).toBe("finding");
   });
 
   it("finding: dos 2xx con un solo ingreso; o ninguna recepción", () => {
@@ -181,8 +240,17 @@ describe("judgeStockRace (9.3)", () => {
     expect(judgeStockRace({ ...base, statuses: [201, 400], stock: 0, minStockAfter: 0, sales: 1, saleMovements: 1, activePayments: 1 }).verdict).toBe("pass");
   });
 
-  it("finding: la perdedora no es 400 por stock (409 de factura o 500)", () => {
+  it("pass: la perdedora recibe el 409 «Stock insuficiente» del libro mayor (PT409)", () => {
+    expect(
+      judgeStockRace({ ...base, statuses: [201, 409], errors: [undefined, "CONFLICT Stock insuficiente"], stock: 0, minStockAfter: 0, sales: 1, saleMovements: 1, activePayments: 1 }).verdict,
+    ).toBe("pass");
+  });
+
+  it("finding: la perdedora no es 400/409 por stock (409 de otra cosa o 500)", () => {
     expect(judgeStockRace({ ...base, statuses: [201, 409], stock: 0, minStockAfter: 0, sales: 1, saleMovements: 1, activePayments: 1 }).verdict).toBe("finding");
+    expect(
+      judgeStockRace({ ...base, statuses: [201, 409], errors: [undefined, "CONFLICT El recurso ya existe."], stock: 0, minStockAfter: 0, sales: 1, saleMovements: 1, activePayments: 1 }).verdict,
+    ).toBe("finding");
     expect(judgeStockRace({ ...base, statuses: [201, 500], stock: 0, minStockAfter: 0, sales: 1, saleMovements: 1, activePayments: 1 }).verdict).toBe("finding");
   });
 
@@ -216,15 +284,21 @@ describe("judgeCancelVsReturn (9.4)", () => {
     expect(judgeCancelVsReturn({ ...base, paid: false, cancelStatus: 500, returnStatus: 200, reversalMovements: 1, stock: 10, saleStatus: "devuelta" }).verdict).toBe("finding");
   });
 
-  it("finding G3: venta pagada devuelta con el pago vivo", () => {
+  it("fail G3: venta pagada devuelta con el pago vivo (return_sale debe anularlo)", () => {
     const j = judgeCancelVsReturn({ ...base, paid: true, cancelStatus: 400, returnStatus: 200, reversalMovements: 1, stock: 10, saleStatus: "devuelta", activePayments: 1, paidVes: 104 });
-    expect(j.verdict).toBe("finding");
+    expect(j.verdict).toBe("fail");
     expect(j.detail).toContain("G3");
     expect(j.detail).toContain("paid_ves=104");
   });
 
-  it("pagada: pass si ambas se rechazan limpiamente (G3 arreglado)", () => {
-    expect(judgeCancelVsReturn({ ...base, paid: true, cancelStatus: 400, returnStatus: 400, reversalMovements: 0, stock: 8, saleStatus: "pagada", activePayments: 1, paidVes: 104 }).verdict).toBe("pass");
+  it("pagada: pass si return revierte y no queda ningún pago activo", () => {
+    expect(judgeCancelVsReturn({ ...base, paid: true, cancelStatus: 409, returnStatus: 200, reversalMovements: 1, stock: 10, saleStatus: "devuelta", activePayments: 0, paidVes: 0 }).verdict).toBe("pass");
+  });
+
+  it("pagada: finding si ambas se rechazan (return_sale debe aceptar la venta pagada)", () => {
+    const j = judgeCancelVsReturn({ ...base, paid: true, cancelStatus: 400, returnStatus: 400, reversalMovements: 0, stock: 8, saleStatus: "pagada", activePayments: 1, paidVes: 104 });
+    expect(j.verdict).toBe("finding");
+    expect(j.detail).toContain("return_sale debe aceptar");
   });
 
   it("sin reversión: finding sin pagar; fail si el stock se movió o la reversión es parcial", () => {
@@ -248,6 +322,21 @@ describe("judgeRejection (9.5 / 9.7 / 9.9) e isRawDbError", () => {
     const raw = judgeRejection({ ...base, status: 400, error: 'BAD_REQUEST null value in column "current_stock" of relation "products" violates not-null constraint' });
     expect(raw.verdict).toBe("finding");
     expect(raw.detail).toContain("error crudo de Postgres");
+  });
+
+  it("9.7 (requireBusinessMessage): crudo de Postgres o no-4xx = fail; genérico del BFF = finding; mensaje de negocio = pass", () => {
+    const strict = { ...base, expectedStatuses: [400, 403, 404, 409], requireBusinessMessage: true };
+    expect(judgeRejection({ ...strict, status: 409, error: "CONFLICT El producto pertenece a otra tienda." }).verdict).toBe("pass");
+    expect(judgeRejection({ ...strict, status: 404, error: "NOT_FOUND Producto no encontrado." }).verdict).toBe("pass");
+    const raw = judgeRejection({ ...strict, status: 400, error: 'BAD_REQUEST null value in column "current_stock" of relation "products" violates not-null constraint' });
+    expect(raw.verdict).toBe("fail");
+    expect(raw.detail).toContain("error crudo de Postgres");
+    expect(judgeRejection({ ...strict, status: 500, error: "INTERNAL_ERROR x" }).verdict).toBe("fail");
+    expect(judgeRejection({ ...strict, status: 200 }).verdict).toBe("fail");
+    const generic = judgeRejection({ ...strict, status: 400, error: "BAD_REQUEST Los datos enviados no son validos." });
+    expect(generic.verdict).toBe("finding");
+    expect(generic.detail).toContain("mensaje genérico");
+    expect(judgeRejection({ ...strict, status: 409, error: "CONFLICT x", newMovements: 1 }).verdict).toBe("fail");
   });
 
   it("pass: 200 sin filas cuando RLS filtra (allow2xxWithoutEffect)", () => {
@@ -311,6 +400,26 @@ describe("judgeReverseOrder (9.10)", () => {
     const j = judgeReverseOrder({ statuses: [500, 201], errors: ["INTERNAL_ERROR deadlock detected", undefined], lines, stockDeltas: [-2, -1, -1], sales: 1, saleMovements: 4, activePayments: 1 });
     expect(j.verdict).toBe("fail");
     expect(j.detail).toContain("Rollback parcial");
+  });
+
+  it("pass: la perdedora recibe el 409 reintentable del BFF (40P01) con rollback limpio", () => {
+    const j = judgeReverseOrder({
+      statuses: [409, 201],
+      errors: ["CONFLICT La operacion choco con otra en curso y no se aplico. Intenta de nuevo.", undefined],
+      lines,
+      stockDeltas: [-1, -1, -1],
+      sales: 1,
+      saleMovements: 3,
+      activePayments: 1,
+    });
+    expect(j.verdict).toBe("pass");
+    expect(j.detail).toContain("409 reintentable");
+  });
+
+  it("fail: 5xx aunque no mencione deadlock (nunca 500)", () => {
+    const j = judgeReverseOrder({ statuses: [500, 201], errors: ["INTERNAL_ERROR x", undefined], lines, stockDeltas: [-1, -1, -1], sales: 1, saleMovements: 3, activePayments: 1 });
+    expect(j.verdict).toBe("fail");
+    expect(j.detail).toContain("error no controlado");
   });
 
   it("finding: rechazo que no es deadlock, con rollback limpio", () => {
@@ -478,8 +587,19 @@ describe("integridad y agregación", () => {
 describe("payloads", () => {
   const rate = { id: "rate-1", rateVes: 50 };
 
-  it("saleBody sin clave ni pagos va por create_sale (sin clientRequestId ni payments)", () => {
-    const body = saleBody("c1", rate, [{ productId: "p1", quantity: 2, price: 1.5 }]);
+  it("saleBody sin opciones lleva una clientRequestId nueva (uuid) en cada llamada y ningún pago", () => {
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    const lines = [{ productId: "p1", quantity: 2, price: 1.5 }];
+    const a = saleBody("c1", rate, lines);
+    const b = saleBody("c1", rate, lines, { notes: "x" });
+    expect(a.clientRequestId).toMatch(UUID);
+    expect(b.clientRequestId).toMatch(UUID);
+    expect(a.clientRequestId).not.toBe(b.clientRequestId);
+    expect(a).not.toHaveProperty("payments");
+  });
+
+  it("saleBody con key null es el envío SIN clave (9.1.no_key_*): ni clientRequestId ni payments", () => {
+    const body = saleBody("c1", rate, [{ productId: "p1", quantity: 2, price: 1.5 }], { key: null });
     expect(body).toEqual({
       customerId: "c1",
       exchangeRateId: "rate-1",

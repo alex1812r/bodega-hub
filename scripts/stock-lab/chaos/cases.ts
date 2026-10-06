@@ -168,6 +168,16 @@ export function isRawDbError(error: string | undefined | null): boolean {
   return typeof error === "string" && /violates|null value in column|of relation "|constraint|syntax error|invalid input/i.test(error);
 }
 
+/** Mensaje genérico del BFF para errores de Postgres que no reenvía (23502, 22003…). */
+export function isGenericDataError(error: string | undefined | null): boolean {
+  return typeof error === "string" && /los datos enviados no son v[aá]lidos/i.test(error);
+}
+
+/** 409 reintentable del BFF (40P01/40001): la transacción se deshizo entera y basta reintentar. */
+export function isRetryableConflict(status: number, error: string | undefined | null): boolean {
+  return status === 409 && typeof error === "string" && /choc[oó] con otra|intenta de nuevo/i.test(error);
+}
+
 function describeResponses(statuses: readonly number[], errors: readonly (string | undefined)[]): string {
   return statuses.map((status, i) => (is2xx(status) ? String(status) : `${status} ${errors[i] ?? ""}`.trim())).join(" | ");
 }
@@ -211,6 +221,63 @@ export function judgeDuplicateSale(o: DuplicateSaleObservation): Judgement {
   return finding(`Ninguna venta: los ${n} envíos fueron rechazados (${describeResponses(o.statuses, o.errors)}); stock intacto.`);
 }
 
+export type MissingKeyObservation = {
+  statuses: number[];
+  errors: (string | undefined)[];
+  sales: number;
+  saleMovements: number;
+  activePayments: number;
+  stockDelta: number;
+};
+
+/**
+ * 9.1 SIN clave (STK-514): `POST /api/sales` exige `clientRequestId`. Todos
+ * los envíos deben responder 400 sin crear venta, movimiento ni pago.
+ */
+export function judgeMissingKey(o: MissingKeyObservation): Judgement {
+  const n = o.statuses.length;
+  const facts = `${o.sales} venta(s), ${o.saleMovements} movimiento(s) venta, ${o.activePayments} pago(s) activo(s), stock ${o.stockDelta}`;
+  const responses = describeResponses(o.statuses, o.errors);
+  if (o.sales > 0 || o.saleMovements > 0 || o.activePayments > 0 || o.stockDelta !== 0) {
+    return fail(`Un POST sin clientRequestId debía rechazarse con 400 y dejó ${facts} tras ${n} envíos (${responses}).`);
+  }
+  if (o.statuses.some(is2xx)) return fail(`Un POST sin clientRequestId respondió 2xx (${responses}) aunque no dejó venta en base.`);
+  if (o.statuses.every((status) => status === 400)) return ok(`Los ${n} envíos sin clientRequestId responden 400; 0 ventas, 0 movimientos.`);
+  return finding(`Sin venta ni movimiento, pero no todas las respuestas son 400: ${responses}.`);
+}
+
+export type KeyReuseObservation = {
+  firstStatus: number;
+  firstId: string | null;
+  retryStatus: number;
+  retryId: string | null;
+  retryError?: string;
+  sales: number;
+  saleMovements: number;
+  activePayments: number;
+  stockDelta: number;
+  /** Cantidad del primer carrito (el único que debe descontarse). */
+  quantity: number;
+};
+
+/** 9.8 (C4): la misma clave con OTRO carrito → 409; solo existe la primera venta. */
+export function judgeKeyReuse(o: KeyReuseObservation): Judgement {
+  if (!is2xx(o.firstStatus) || o.firstId === null) {
+    return { verdict: "error", detail: `Precondición no alcanzada: la primera venta respondió ${o.firstStatus}.` };
+  }
+  const facts = `${o.sales} venta(s), ${o.saleMovements} movimiento(s), ${o.activePayments} pago(s), stock ${o.stockDelta}`;
+  const retry = describeResponses([o.retryStatus], [o.retryError]);
+  if (o.sales !== 1 || o.saleMovements !== 1 || o.activePayments !== 1 || o.stockDelta !== -o.quantity) {
+    return fail(`La misma clave con otro carrito debía dejar solo la primera venta y quedaron ${facts} (segundo envío ${retry}).`);
+  }
+  if (is2xx(o.retryStatus)) {
+    return fail(`La misma clave con OTRO carrito respondió ${o.retryStatus} (venta ${o.retryId ?? "null"}): el cajero ve éxito y el sistema no descontó ese carrito.`);
+  }
+  if (o.retryStatus === 409) return ok(`La misma clave con otro carrito se rechaza con ${retry}; una sola venta.`);
+  if (is4xx(o.retryStatus)) return finding(`Una sola venta, pero la clave reutilizada con otro carrito respondió ${retry}; se esperaba 409.`);
+  return fail(`La clave reutilizada con otro carrito respondió ${retry}; se esperaba 409.`);
+}
+
 export type DoubleReceiveObservation = {
   statuses: number[];
   errors: (string | undefined)[];
@@ -220,7 +287,7 @@ export type DoubleReceiveObservation = {
   purchaseStatus: string | null;
 };
 
-/** 9.2: N `receive` paralelos → un solo ingreso; los demás 409/400. */
+/** 9.2: N `receive` paralelos → un solo ingreso; los demás 409/400 (PT409 de la RPC). Un 5xx es `fail`. */
 export function judgeDoubleReceive(o: DoubleReceiveObservation): Judgement {
   const n = o.statuses.length;
   const facts = `${o.purchaseMovements} movimiento(s) compra, stock +${o.stockDelta}, compra ${o.purchaseStatus ?? "?"}`;
@@ -231,6 +298,9 @@ export function judgeDoubleReceive(o: DoubleReceiveObservation): Judgement {
     const okCount = o.statuses.filter(is2xx).length;
     const losers = o.statuses.filter((s) => !is2xx(s));
     if (okCount === 1 && losers.every((s) => s === 400 || s === 409)) return ok(`Un ingreso; ${losers.length} rechazo(s) 400/409.`);
+    if (losers.some((s) => !is4xx(s))) {
+      return fail(`Un solo ingreso de stock, pero la recepción repetida responde con error no controlado en vez de 409: ${describeResponses(o.statuses, o.errors)}.`);
+    }
     return finding(
       `Un solo ingreso de stock, pero los códigos no son "una 2xx y el resto 409/400": ${describeResponses(o.statuses, o.errors)}.`,
     );
@@ -260,9 +330,11 @@ export function judgeStockRace(o: StockRaceObservation): Judgement {
   if (o.sales === 1) {
     if (o.saleMovements !== 1 || o.stock !== 0 || o.activePayments !== 1) return fail(`Venta ganadora incoherente: ${facts}.`);
     const okCount = o.statuses.filter(is2xx).length;
-    const losers = o.statuses.filter((s) => !is2xx(s));
-    if (okCount === 1 && losers.every((s) => s === 400)) return ok(`Una venta pasa; ${losers.length} rechazo(s) 400 por stock; stock 0.`);
-    return finding(`Una sola venta y stock 0, pero los códigos no son "una 2xx y el resto 400 por stock":${describeResponses(o.statuses, o.errors)}.`);
+    const losers = o.statuses.map((status, i) => ({ status, error: o.errors[i] })).filter((r) => !is2xx(r.status));
+    // 400 del BFF o 409 "Stock insuficiente" del libro mayor (PT409, parche 20261006a).
+    const byStock = (r: { status: number; error?: string }) => r.status === 400 || (r.status === 409 && /stock/i.test(r.error ?? ""));
+    if (okCount === 1 && losers.every(byStock)) return ok(`Una venta pasa; ${losers.length} rechazo(s) 400/409 por stock; stock 0.`);
+    return finding(`Una sola venta y stock 0, pero los códigos no son "una 2xx y el resto 400/409 por stock": ${describeResponses(o.statuses, o.errors)}.`);
   }
   if (o.stock === o.initialStock && o.saleMovements === 0 && o.activePayments === 0) {
     return finding(`Ninguna venta pasó (${describeResponses(o.statuses, o.errors)}); stock intacto.`);
@@ -286,7 +358,11 @@ export type CancelVsReturnObservation = {
   paidVes: number;
 };
 
-/** 9.4: cancel y return simultáneos → una sola reversión (y qué pasa con el dinero, G3). */
+/**
+ * 9.4: cancel y return simultáneos → una sola reversión. Con la venta pagada
+ * (C7, STK-5xx) `return_sale` anula los pagos en la misma transacción: una
+ * venta revertida con un pago activo colgando es `fail`.
+ */
 export function judgeCancelVsReturn(o: CancelVsReturnObservation): Judgement {
   const statuses = [o.cancelStatus, o.returnStatus];
   const responses = `cancel ${describeResponses([o.cancelStatus], [o.errors[0]])} · return ${describeResponses([o.returnStatus], [o.errors[1]])}`;
@@ -300,7 +376,7 @@ export function judgeCancelVsReturn(o: CancelVsReturnObservation): Judgement {
       return fail(`Reversión incoherente: ${facts} (esperado stock ${o.initialStock}).`);
     }
     if (o.paid && o.activePayments > 0) {
-      return finding(
+      return fail(
         `Una sola reversión de stock, pero la venta quedó ${o.saleStatus} con ${o.activePayments} pago(s) activo(s) y paid_ves=${o.paidVes}: el dinero no se revierte (G3). ${responses}.`,
       );
     }
@@ -310,7 +386,9 @@ export function judgeCancelVsReturn(o: CancelVsReturnObservation): Judgement {
   }
   if (o.reversalMovements === 0) {
     if (o.stock !== sold) return fail(`Sin movimientos de reversión pero el stock es ${o.stock} (esperado ${sold}).`);
-    if (o.paid && statuses.every(is4xx)) return ok(`Ambas rechazadas limpiamente con pagos activos; stock y venta intactos (${responses}).`);
+    if (o.paid && statuses.every(is4xx)) {
+      return finding(`Ambas rechazadas con la venta pagada (${responses}); stock y venta intactos, pero return_sale debe aceptar una venta pagada y anular sus pagos.`);
+    }
     return finding(`Ninguna reversión entró (${responses}); la venta sigue ${o.saleStatus ?? "?"}.`);
   }
   return fail(`Reversión parcial: ${facts} con ${o.lines} línea(s).`);
@@ -324,6 +402,12 @@ export type RejectionObservation = {
   stockDelta: number;
   /** PostgREST responde 200 con `[]` cuando RLS filtra todas las filas: sin efecto = correcto. */
   allow2xxWithoutEffect?: boolean;
+  /**
+   * 9.7 (STK-514): se exige un 4xx con mensaje de negocio. Un error crudo de
+   * Postgres o una respuesta que no sea 4xx es `fail`; el mensaje genérico del
+   * BFF ("Los datos enviados no son validos") es `finding`.
+   */
+  requireBusinessMessage?: boolean;
   what: string;
 };
 
@@ -335,9 +419,16 @@ export function judgeRejection(o: RejectionObservation): Judgement {
   }
   if (o.expectedStatuses.includes(o.status)) {
     if (isRawDbError(o.error)) {
-      return finding(`${o.what}: sin efecto en stock, pero el mensaje es un error crudo de Postgres en vez de uno de negocio: ${response}.`);
+      const raw = `${o.what}: sin efecto en stock, pero el mensaje es un error crudo de Postgres en vez de uno de negocio: ${response}.`;
+      return o.requireBusinessMessage ? fail(raw) : finding(raw);
+    }
+    if (o.requireBusinessMessage && isGenericDataError(o.error)) {
+      return finding(`${o.what}: rechazado sin efecto, pero con el mensaje genérico del BFF en vez de uno que explique el rechazo: ${response}.`);
     }
     return ok(`${o.what}: rechazado con ${response}, sin movimiento.`);
+  }
+  if (o.requireBusinessMessage) {
+    return fail(`${o.what}: sin efecto en stock, pero respondió ${response}; se esperaba ${o.expectedStatuses.join("/")} con mensaje claro.`);
   }
   if (is2xx(o.status)) {
     return o.allow2xxWithoutEffect
@@ -397,7 +488,10 @@ export type ReverseOrderObservation = {
   activePayments: number;
 };
 
-/** 9.10: ventas cruzadas en orden inverso → sin deadlock y, si falla una, rollback completo. */
+/**
+ * 9.10: ventas cruzadas en orden inverso → las dos 2xx, o la perdedora 409
+ * reintentable (40P01 mapeado por el BFF) con rollback completo. Nunca 5xx.
+ */
 export function judgeReverseOrder(o: ReverseOrderObservation): Judgement {
   const n = o.statuses.length;
   const okCount = o.statuses.filter(is2xx).length;
@@ -411,14 +505,21 @@ export function judgeReverseOrder(o: ReverseOrderObservation): Judgement {
       `Rollback parcial: ${okCount} respuesta(s) 2xx pero ${o.sales} venta(s), ${o.saleMovements} movimiento(s) (esperado ${okCount * o.lines}), ${o.activePayments} pago(s), deltas distintos de −${okCount}: ${o.stockDeltas.filter((d) => d !== -okCount).length}.`,
     );
   }
-  const deadlocks = o.errors.filter((e, i) => !is2xx(o.statuses[i] ?? 0) && isDeadlock(e)).length;
+  const responses = describeResponses(o.statuses, o.errors);
+  const losers = o.statuses.map((status, i) => ({ status, error: o.errors[i] })).filter((r) => !is2xx(r.status));
+  const deadlocks = losers.filter((r) => isDeadlock(r.error) && !isRetryableConflict(r.status, r.error)).length;
   if (deadlocks > 0) {
     return fail(
-      `Deadlock sin reintento: ${deadlocks} de ${n} ventas de ${o.lines} líneas respondieron ${describeResponses(o.statuses, o.errors)}; rollback limpio (ni venta ni movimientos parciales).`,
+      `Deadlock sin reintento: ${deadlocks} de ${n} ventas de ${o.lines} líneas respondieron ${responses}; rollback limpio (ni venta ni movimientos parciales).`,
     );
   }
-  if (okCount < n) return finding(`Sin deadlock, pero ${n - okCount} venta(s) rechazada(s): ${describeResponses(o.statuses, o.errors)}; rollback limpio.`);
-  return ok(`Las ${n} ventas de ${o.lines} líneas pasaron sin deadlock.`);
+  const serverErrors = losers.filter((r) => !is4xx(r.status)).length;
+  if (serverErrors > 0) return fail(`${serverErrors} de ${n} ventas de ${o.lines} líneas respondieron con error no controlado: ${responses}; rollback limpio.`);
+  if (losers.length === 0) return ok(`Las ${n} ventas de ${o.lines} líneas pasaron sin deadlock.`);
+  if (losers.every((r) => isRetryableConflict(r.status, r.error))) {
+    return ok(`${okCount} de ${n} ventas pasaron y ${losers.length} recibió 409 reintentable (${responses}); rollback limpio.`);
+  }
+  return finding(`Sin deadlock, pero ${losers.length} venta(s) rechazada(s): ${responses}; rollback limpio.`);
 }
 
 export type AbortRetryObservation = {
@@ -1201,8 +1302,11 @@ export async function globalIntegrity(db: Client, storeId: string): Promise<Inte
 export type SaleLineInput = { productId: string; quantity: number; price: number };
 
 /**
- * Body de `POST /api/sales`. Con `key` o `paid` el BFF usa
- * `create_sale_with_payments`; sin ninguno, `create_sale` (venta `pendiente_pago`).
+ * Body de `POST /api/sales`. El BFF exige `clientRequestId` (400 si falta) y
+ * llama siempre a `create_sale_with_payments`: sin `paid` la venta queda
+ * `pendiente_pago`. Cada llamada lleva una clave nueva salvo que se pase
+ * `key` (reintentos con la misma clave) o `key: null` (los casos que prueban
+ * a propósito el envío SIN clave).
  */
 export function saleBody(
   customerId: string,
@@ -1219,7 +1323,7 @@ export function saleBody(
     discountRef: 0,
     notes: options.notes ?? `Lab ${SKU_PREFIX}`,
   };
-  if (options.key) body.clientRequestId = options.key;
+  if (options.key !== null) body.clientRequestId = options.key || randomUUID();
   if (options.paid) {
     const totalRef = round2(lines.reduce((sum, line) => sum + line.price * line.quantity, 0));
     body.payments = [{ method: "efectivo_usd", currency: "USD", amount: totalRef }];
@@ -1312,15 +1416,6 @@ export type VariantDef = {
 
 // ------------------------------------------------------------------- 9.1
 
-/**
- * Sin clientRequestId los únicos índices únicos de `sales` son la pk y
- * `sales_store_invoice_unique`; `create_sale` genera `invoice_number` como
- * 'V-' + clock_timestamp() al milisegundo, así que un 409 aquí es un choque de
- * número de factura entre dos ventas del mismo milisegundo, no idempotencia.
- */
-export const INVOICE_COLLISION_NOTE =
-  "Sin clientRequestId el 409 solo puede venir de sales_store_invoice_unique (invoice_number = 'V-' + clock_timestamp al ms): es un choque de número de factura entre ventas del mismo milisegundo, no idempotencia.";
-
 function duplicateSale(copies: number, withKey: boolean, gapMs = 0) {
   return async (ctx: AttemptContext): Promise<VariantOutcome> => {
     const { lab } = ctx;
@@ -1330,29 +1425,27 @@ function duplicateSale(copies: number, withKey: boolean, gapMs = 0) {
     const rate = await currentRate(lab);
     const before = await observe(lab.db, [product.id]);
     const vendedor = await session(lab, "vendedor1");
-    const body = saleBody(lab.customerId, rate, [line(product, quantity)], withKey ? { key: randomUUID(), paid: true } : {});
+    // Sin clave: mismo body que antes (sin pagos), ahora rechazado por el schema del BFF.
+    const body = saleBody(lab.customerId, rate, [line(product, quantity)], withKey ? { key: randomUUID(), paid: true } : { key: null });
     const from = ctx.steps.length;
     const responses = await Promise.all(
       Array.from({ length: copies }, (_, i) => sleep(i * gapMs).then(() => call(ctx, "vendedor1", vendedor, "POST", "/api/sales", body))),
     );
     const after = await observe(lab.db, [product.id]);
-    let judgement = judgeDuplicateSale({
+    const observed = {
       statuses: ctx.steps.slice(from).map((s) => s.status),
-      ids: ctx.steps.slice(from).map((s) => s.response_id),
       errors: errorsOf(ctx, from),
       sales: after.sales.length,
       saleMovements: countMovements(after, product.id, ["venta"]),
       activePayments: activePayments(after),
       stockDelta: stockOf(after, product.id) - product.stock,
-      quantity,
-      paid: withKey,
-    });
-    if (!withKey && judgement.verdict === "finding" && ctx.steps.slice(from).some((s) => s.status === 409)) {
-      judgement = { verdict: "finding", detail: `${judgement.detail} ${INVOICE_COLLISION_NOTE}` };
-    }
+    };
+    const judgement = withKey
+      ? judgeDuplicateSale({ ...observed, ids: ctx.steps.slice(from).map((s) => s.response_id), quantity, paid: true })
+      : judgeMissingKey(observed);
     return {
       judgement,
-      actual: { rpc: withKey ? "create_sale_with_payments" : "create_sale", copies, gap_ms: gapMs, responses: responses.map((r) => r.status), before, after },
+      actual: { client_request_id: withKey ? "misma clave en todos los envíos" : "ausente", copies, gap_ms: gapMs, responses: responses.map((r) => r.status), before, after },
       evidence: [`product:${product.id}`, ...after.sales.map((s) => `sale:${s.id}`)],
     };
   };
@@ -1770,6 +1863,7 @@ function corruptStore(action: CorruptAction) {
       expectedStatuses: [400, 403, 404, 409],
       newMovements: during.movements.length - before.movements.length,
       stockDelta: stockOf(during, product.id) - stockBefore,
+      requireBusinessMessage: true,
       what: `${action} con el producto movido por SQL a la tienda default`,
     });
     return {
@@ -1875,6 +1969,38 @@ function abortedThenRetry(mode: "same_key" | "new_key") {
       },
       evidence: [`product:${product.id}`, `clientRequestId:${key}`, ...after.sales.map((s) => `sale:${s.id}`)],
     };
+  };
+}
+
+/** C4: misma clave, otro carrito (5 unidades en vez de 1) → 409 y solo la primera venta. */
+async function sameKeyOtherCart(ctx: AttemptContext): Promise<VariantOutcome> {
+  const { lab } = ctx;
+  const quantity = 1;
+  const [product] = await seed(ctx, 1, { stock: 20 });
+  if (!product) throw new Error("seed vacío");
+  const rate = await currentRate(lab);
+  const vendedor = await session(lab, "vendedor1");
+  const key = randomUUID();
+  const before = await observe(lab.db, [product.id]);
+  const first = await call(ctx, "vendedor1", vendedor, "POST", "/api/sales", saleBody(lab.customerId, rate, [line(product, quantity)], { key, paid: true }));
+  const retry = await call(ctx, "vendedor1", vendedor, "POST", "/api/sales", saleBody(lab.customerId, rate, [line(product, 5)], { key, paid: true }));
+  const after = await observe(lab.db, [product.id]);
+  const judgement = judgeKeyReuse({
+    firstStatus: first.status,
+    firstId: responseId(first),
+    retryStatus: retry.status,
+    retryId: responseId(retry),
+    retryError: retry.ok ? undefined : describeError(retry),
+    sales: after.sales.length,
+    saleMovements: countMovements(after, product.id, ["venta"]),
+    activePayments: activePayments(after),
+    stockDelta: stockOf(after, product.id) - product.stock,
+    quantity,
+  });
+  return {
+    judgement,
+    actual: { first: { status: first.status, id: responseId(first) }, retry: { status: retry.status, id: responseId(retry), error: retry.ok ? null : describeError(retry) }, before, after },
+    evidence: [`product:${product.id}`, `clientRequestId:${key}`, ...after.sales.map((s) => `sale:${s.id}`)],
   };
 }
 
@@ -2098,31 +2224,32 @@ const race = { repeat: RACE_REPEAT };
 
 export const VARIANTS: VariantDef[] = [
   variant("9.1.same_key_x2", "Mismo body con el mismo clientRequestId ×2 en paralelo", ["G15"], { sales: 1, sale_movements: 1, payments: 1, responses: "ambas 2xx con el mismo id" }, duplicateSale(2, true), race),
-  variant("9.1.no_key_x2", "Mismo body SIN clientRequestId ni payments ×2 en paralelo (create_sale)", ["G5"], { sales: 1, sale_movements: 1 }, duplicateSale(2, false), race),
-  variant("9.1.no_key_gap50", "Mismo body SIN clientRequestId ni payments ×2 separados 50 ms (create_sale)", ["G5"], { sales: 1, sale_movements: 1 }, duplicateSale(2, false, 50), race),
+  variant("9.1.no_key_x2", "Mismo body SIN clientRequestId ni payments ×2 en paralelo", ["G5"], { sales: 0, sale_movements: 0, responses: "ambas 400 (clientRequestId obligatorio)" }, duplicateSale(2, false), race),
+  variant("9.1.no_key_gap50", "Mismo body SIN clientRequestId ni payments ×2 separados 50 ms", ["G5"], { sales: 0, sale_movements: 0, responses: "ambas 400 (clientRequestId obligatorio)" }, duplicateSale(2, false, 50), race),
   variant("9.1.same_key_x5", "Mismo body con el mismo clientRequestId ×5 en paralelo", ["G15"], { sales: 1, sale_movements: 1, payments: 1, responses: "las 5 2xx con el mismo id" }, duplicateSale(5, true), race),
-  variant("9.2.x2", "receive ×2 en paralelo (admin y almacén, sesiones distintas)", [], { purchase_movements: 1, stock_delta: 7, responses: "una 2xx y una 409/400" }, parallelReceive(2), race),
-  variant("9.2.x5", "receive ×5 en paralelo (5 sesiones distintas)", [], { purchase_movements: 1, stock_delta: 7, responses: "una 2xx y cuatro 409/400" }, parallelReceive(5), race),
-  variant("9.3.two_sellers", "lab-vendedor-1 y -2 venden a la vez cantidad = stock", [], { sales: 1, stock: 0, never_negative: true, loser: "4xx sin venta, movimiento ni pago" }, stockRace(2), race),
-  variant("9.3.five_requests", "5 peticiones repartidas entre los dos vendedores, cantidad = stock", [], { sales: 1, stock: 0, never_negative: true, losers: "4xx sin venta, movimiento ni pago" }, stockRace(5), race),
+  variant("9.2.x2", "receive ×2 en paralelo (admin y almacén, sesiones distintas)", [], { purchase_movements: 1, stock_delta: 7, responses: "una 2xx y una 409 (PT409); nunca 500" }, parallelReceive(2), race),
+  variant("9.2.x5", "receive ×5 en paralelo (5 sesiones distintas)", [], { purchase_movements: 1, stock_delta: 7, responses: "una 2xx y cuatro 409 (PT409); nunca 500" }, parallelReceive(5), race),
+  variant("9.3.two_sellers", "lab-vendedor-1 y -2 venden a la vez cantidad = stock", [], { sales: 1, stock: 0, never_negative: true, loser: "400/409 por stock, sin venta, movimiento ni pago" }, stockRace(2), race),
+  variant("9.3.five_requests", "5 peticiones repartidas entre los dos vendedores, cantidad = stock", [], { sales: 1, stock: 0, never_negative: true, losers: "400/409 por stock, sin venta, movimiento ni pago" }, stockRace(5), race),
   variant("9.4.unpaid", "cancel (vendedor-1) vs return (vendedor-2) sobre una venta sin pagar", [], { reversal_movements: 1, stock: "vuelve al inicial", loser: "4xx" }, cancelVsReturn(false), race),
-  variant("9.4.paid", "cancel (vendedor-1) vs return (vendedor-2) sobre una venta pagada", ["G3"], { reversal_movements: "0 o 1", money: "sin pago activo sobre una venta revertida" }, cancelVsReturn(true), race),
+  variant("9.4.paid", "cancel (vendedor-1) vs return (vendedor-2) sobre una venta pagada", ["G3"], { reversal_movements: 1, sale_status: "devuelta", active_payments: 0, money: "return_sale anula los pagos en la misma transacción; cancel 4xx" }, cancelVsReturn(true), race),
   variant("9.5", "Ajuste de salida mayor al stock", [], { status: "400/409", new_movements: 0, stock_delta: 0 }, overAdjust),
   variant("9.6.race", "UPDATE de units_per_pack 12→24 por SQL concurrente con POST /api/inventory/conversions", ["G14"], { conversion_movements: 2, unit_delta: "pack_quantity × un solo valor (12 o 24)" }, conversionRace((ctx) => attemptIndex.get(ctx) ?? 0), race),
   variant("9.6.between_read_write", "units_per_pack cambiado mientras la RPC espera el lock del empaque (entre lectura y escritura)", ["G14"], { conversion_movements: 2, unit_delta: "pack_quantity × el valor leído en la transacción" }, conversionBetweenReadAndWrite, { repeat: 1, repeatable: true }),
-  variant("9.7.sell", "Producto movido a la tienda default: vender", ["H3"], { status: "4xx con mensaje claro", new_movements: 0, stock_delta: 0 }, corruptStore("sell")),
-  variant("9.7.adjust", "Producto movido a la tienda default: ajustar", ["H3"], { status: "4xx con mensaje claro", new_movements: 0, stock_delta: 0 }, corruptStore("adjust")),
-  variant("9.7.purchase", "Producto movido a la tienda default: comprar (recibido)", ["H3"], { status: "4xx con mensaje claro", new_movements: 0, stock_delta: 0 }, corruptStore("purchase")),
-  variant("9.7.cancel_sale", "Venta previa; producto movido a la tienda default: cancelar la venta", ["H3", "G6"], { status: "4xx con mensaje claro", new_movements: 0, stock_delta: 0 }, corruptStore("cancel_sale")),
-  variant("9.7.return_sale", "Venta previa; producto movido a la tienda default: devolver la venta", ["H3", "G6"], { status: "4xx con mensaje claro", new_movements: 0, stock_delta: 0 }, corruptStore("return_sale")),
-  variant("9.7.cancel_purchase", "Compra recibida previa; producto movido a la tienda default: cancelar la compra", ["H3", "G6"], { status: "4xx con mensaje claro", new_movements: 0, stock_delta: 0 }, corruptStore("cancel_purchase")),
-  variant("9.7.return_purchase", "Compra recibida previa; producto movido a la tienda default: devolver la compra", ["H3", "G6"], { status: "4xx con mensaje claro", new_movements: 0, stock_delta: 0 }, corruptStore("return_purchase")),
+  variant("9.7.sell", "Producto movido a la tienda default: vender", ["H3"], { status: "4xx con mensaje de negocio (nunca 23502 crudo ni 5xx)", new_movements: 0, stock_delta: 0 }, corruptStore("sell")),
+  variant("9.7.adjust", "Producto movido a la tienda default: ajustar", ["H3"], { status: "4xx con mensaje de negocio (nunca 23502 crudo ni 5xx)", new_movements: 0, stock_delta: 0 }, corruptStore("adjust")),
+  variant("9.7.purchase", "Producto movido a la tienda default: comprar (recibido)", ["H3"], { status: "4xx con mensaje de negocio (nunca 23502 crudo ni 5xx)", new_movements: 0, stock_delta: 0 }, corruptStore("purchase")),
+  variant("9.7.cancel_sale", "Venta previa; producto movido a la tienda default: cancelar la venta", ["H3", "G6"], { status: "4xx con mensaje de negocio (nunca 23502 crudo ni 5xx)", new_movements: 0, stock_delta: 0 }, corruptStore("cancel_sale")),
+  variant("9.7.return_sale", "Venta previa; producto movido a la tienda default: devolver la venta", ["H3", "G6"], { status: "4xx con mensaje de negocio (nunca 23502 crudo ni 5xx)", new_movements: 0, stock_delta: 0 }, corruptStore("return_sale")),
+  variant("9.7.cancel_purchase", "Compra recibida previa; producto movido a la tienda default: cancelar la compra", ["H3", "G6"], { status: "4xx con mensaje de negocio (nunca 23502 crudo ni 5xx)", new_movements: 0, stock_delta: 0 }, corruptStore("cancel_purchase")),
+  variant("9.7.return_purchase", "Compra recibida previa; producto movido a la tienda default: devolver la compra", ["H3", "G6"], { status: "4xx con mensaje de negocio (nunca 23502 crudo ni 5xx)", new_movements: 0, stock_delta: 0 }, corruptStore("return_purchase")),
   variant("9.8.same_key_retry", "Venta confirmada sin respuesta al cliente; reintento con el MISMO clientRequestId", [], { sales: 1, sale_movements: 1, retry: "2xx con el id de la venta original" }, abortedThenRetry("same_key"), { repeat: 1, repeatable: true }),
+  variant("9.8.same_key_other_cart", "La MISMA clientRequestId con otro carrito (5 unidades en vez de 1)", [], { sales: 1, sale_movements: 1, stock_delta: -1, retry: 409 }, sameKeyOtherCart),
   variant("9.8.new_key_retry", "Venta confirmada sin respuesta al cliente; reintento a ciegas con clientRequestId NUEVO", ["G5"], { sales: 1, note: "una UI que reintenta a ciegas genera otra clave; se documenta el duplicado" }, abortedThenRetry("new_key"), { repeat: 1, repeatable: true }),
   variant("9.9.bff", "vendedor → POST /api/inventory/adjustments", [], { status: 403, new_movements: 0, stock_delta: 0 }, forbiddenAdjust("bff")),
   variant("9.9.rpc_direct", "vendedor → RPC adjust_stock directa por PostgREST (anon key + su JWT)", ["G2"], { status: "401/403", new_movements: 0, stock_delta: 0 }, forbiddenAdjust("rpc_direct")),
   variant("9.9.table_update_direct", "vendedor → UPDATE directo de products.current_stock por PostgREST", ["G1"], { rows_updated: 0, new_movements: 0, stock_delta: 0 }, forbiddenAdjust("table_update_direct")),
-  variant("9.10", `Dos vendedores venden los mismos ${REVERSE_ORDER_LINES} productos en orden directo e inverso a la vez`, ["G7"], { deadlocks: 0, rollback: "ni venta ni movimientos parciales" }, reverseOrderSales, race),
+  variant("9.10", `Dos vendedores venden los mismos ${REVERSE_ORDER_LINES} productos en orden directo e inverso a la vez`, ["G7"], { responses: "ambas 2xx, o la perdedora 409 reintentable; nunca 5xx", rollback: "ni venta ni movimientos parciales" }, reverseOrderSales, race),
   variant("9.11.pay", "Producto desactivado con venta pendiente_pago: pagarla", ["G12"], { status: "2xx", sale_status: "pagada", stock_delta: -2 }, deactivatedProduct("pay")),
   variant("9.11.cancel", "Producto desactivado con venta pendiente_pago: cancelarla", ["G12"], { status: "2xx", sale_status: "cancelada", stock_delta: 0 }, deactivatedProduct("cancel")),
   variant("9.12", "Categoría borrada (soft) con un producto: venderlo", [], { outcome: "venta 2xx con un movimiento, o 4xx sin movimiento" }, softDeletedCategory),
