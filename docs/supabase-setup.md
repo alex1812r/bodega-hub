@@ -91,7 +91,9 @@ La tabla anterior cubre los primeros parches. El orden completo y vigente (43 pa
 | 10 | `20261006h-rls-store-scope-and-finite-guards.sql` | RLS por tienda en lineas e historiales, caja y baul solo por RPC, guarda de NaN/Infinity en RPC |
 | 11 | `20261006i-reject-non-finite-numeric-columns.sql` | Triggers que rechazan NaN/Infinity en columnas `numeric` (21 tablas) |
 
-De `20261006a` a `20261006e` no se admite aplicar solo una parte. Reaplicar `a` exige reaplicar `e`; reaplicar `b`, `c` o `f` exige reaplicar `g` y `h`.
+De `20261006a` a `20261006e` no se admite aplicar solo una parte.
+
+Reaplicar un parche de este bloque reinstala su versión de las funciones que define y pisa la de los parches posteriores. Regla única: **tras reaplicar cualquiera de `20261006a`…`h`, reaplicar en orden todos los posteriores hasta `20261006i` y correr `verify-patches.sql`**. Motivo: `a` reinstala el modo legado que quita `e`; `b` y `c` reinstalan RPC que redefinen `f`, `g` y `h`; `f`, las que redefinen `g` y `h`; `g`, las que redefine `h`. Reaplicar `b` o `c` y después solo `g` y `h` deja `cancel_purchase` / `return_purchase` sin el rechazo de pagos activos de `f` (R3).
 
 **Importante:** el patch 4b/4c **no** están embebidos en `apply-all-pending.sql`. Ejecuta **4a → 4b → 4c** en Runs separados del SQL Editor (PostgreSQL no permite usar un enum nuevo en la misma transacción donde se agregó).
 

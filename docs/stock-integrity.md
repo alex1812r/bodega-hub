@@ -200,11 +200,25 @@ Las demás tiendas (Bodega Las Luces QA 0 de 130, Bodega QA Caos 0 de 130, Bodeg
 
 - Corrige solo los 2 productos del informe, listados por id y con guardas.
 - Se aplica solo después de desplegar los parches de la sección 7 y de volver a correr el informe.
-- El producto con diff −10 se confirma antes con un conteo físico: el parche lo lleva de 2 a 12 (valor del libro) y solo es correcto si el conteo da 12.
-- El producto con libro negativo (Glup Uva, libro −1) no recibe stock negativo: el parche asienta el `inventario_inicial +1` que falta y deja `current_stock` en 0. Ese asiento queda como una fila esperada y permanente en `stock_chain_breaks`.
-- Idempotente (marcador `ONE_SHOT:20261006z-stock-resync` en `stock_movements.reason`); aborta sin tocar nada si `current_stock`, la suma del libro o el número de movimientos ya no coinciden con el informe, si falla la guarda de prerrequisitos o si no se ejecuta como `postgres`.
-- La guarda de prerrequisitos solo comprueba que el trigger `stock_movements_apply` esté activo y que exista la columna `stock_movements.seq` (parche `20261006a`). Que `e`…`i` estén aplicados lo garantiza el orden de despliegue de la sección 7, no el parche.
-- No corrige las 3 cadenas rotas históricas ni las dos filas documentales de la venta corregida por `20260830c`.
+- Cada fila de la lista declara su acción; el parche ejecuta la declarada y no la deduce de los números ni del signo del libro:
+
+  | Acción | Qué significa | Qué escribe | Producto |
+  |---|---|---|---|
+  | `stock_from_ledger` | El libro manda: los movimientos están completos y lo que quedó mal es `current_stock` | `current_stock := Σ libro`, sin movimiento. Solo sube el stock | Lucky Strike Eclipse: 2 → 12 |
+  | `ledger_from_stock` | El stock manda: la mercancía está contada y al libro le falta un asiento | Un `inventario_inicial` por `current_stock − libro` (siempre > 0); `current_stock` queda como estaba | Glup Uva: `+1`, stock sigue en 0 |
+
+- Lucky Strike (diff −10) se confirma antes con un conteo físico: el parche solo es correcto si el conteo da 12. Si da otra cosa, se quita de la lista y se ajusta por la app.
+- Si los números de un producto cambiaron desde el informe, en su fila se actualizan solo `current_stock`, suma del libro y número de movimientos; **la acción no se cambia**. Ejemplo: Glup Uva recibe una compra de 5 antes de aplicar (stock 5, libro 4, 2 movimientos) → sigue siendo `ledger_from_stock`, el parche asienta `+1` y el stock queda en 5. Si la diferencia `current_stock − libro` ya no es la del informe (−10 y +1), el producto se quita de la lista y se revisa.
+- Aborta sin tocar nada si: no se ejecuta como `postgres`; falla una guarda de prerrequisitos; la acción no es una de las dos; el `sku` declarado no es `products.sku` del id; tienda, `current_stock`, suma del libro o número de movimientos no coinciden exactamente con la lista; el producto ya cuadra; `stock_from_ledger` con libro negativo (nunca stock negativo) o con `current_stock` por encima del libro (bajaría el stock sin movimiento: eso es `ledger_from_stock` o un ajuste de salida por la app); `ledger_from_stock` con `current_stock` por debajo del libro (no se asientan movimientos negativos de arreglo: ajuste por la app).
+- Guardas de prerrequisitos: comprueba `20261006a` (trigger `stock_movements_apply` activo y columna `stock_movements.seq`), `20261006e` (trigger y guard sin el modo legado, y los dos triggers de guarda de `products` habilitados) y `20261006d` (vistas v2), y dice cuál falta. `b`, `c`, `f`, `g`, `h` e `i` no los comprueba: eso lo cubre `verify-patches.sql`, que se corre antes.
+- Idempotente: marcador `ONE_SHOT:20261006z-stock-resync` en el `reason` del movimiento asentado; la segunda ejecución es un no-op.
+- Filas esperadas en `stock_chain_breaks` después de aplicarlo, las dos permanentes:
+  1. **Inmediata**: el `inventario_inicial` de Glup Uva asentado por el parche (`expected_stock_after` 1, `stock_after` 0). Se reconoce por su `reason`.
+  2. **Diferida**: el primer movimiento real de Lucky Strike posterior al parche, sea venta, compra o ajuste. `stock_from_ledger` no toca ningún `stock_after` (no se reescribe historia), así que el último de la cadena sigue en su valor histórico (2 si el salto del 2026-09-19 es el único) mientras `current_stock` pasa a 12. El trigger calcula ese movimiento desde 12 y la vista lo compara con 2: con una venta de 1, `stock_after` 11 frente a `expected_stock_after` 1. La diferencia es siempre +10, lo que corrigió el parche; no es un fallo del trigger ni de esa venta. Solo ocurre una vez: desde el movimiento siguiente la cadena vuelve a ser coherente. Hasta entonces, `current_stock` (12) ≠ último `stock_after` (2) en ese producto, también esperado.
+
+  No se puede evitar la segunda sin salir de las reglas del libro: un asiento marcador con delta 0 no existe (`quantity_delta <> 0`), un ajuste con delta cambiaría la suma del libro (que en este producto está bien) y corregir los `stock_after` posteriores al salto es reescribir historia.
+- No corrige las 3 cadenas rotas históricas (incluida la de Lucky Strike del 2026-09-19) ni las dos filas documentales de la venta corregida por `20260830c`.
+- Ensayo versionado: `scripts/stock-lab/regression/one-shot-resync-guard.test.ts` ejecuta el archivo real en el lab, dentro de una transacción con rollback, sobre productos de prueba que reproducen los dos casos (camino que escribe, segunda ejecución, guardas y la fila diferida).
 
 ---
 
@@ -214,9 +228,11 @@ Orden obligatorio:
 
 1. `20260909-create-sale-with-payments.sql`
 2. `20261005-stock-integrity-views.sql`
-3. `20261006a` → `b` → `c` → `d` → `e` → `f` → `g` → `h` → `i`, en ese orden y en la misma ventana. De `a` a `e` no se admite despliegue parcial: entre `a` y `e` el trigger acepta un modo legado transitorio que solo existe para verificar cada parche, y `e` falla ventas y compras si queda viva una RPC antigua. Reaplicar `a` exige reaplicar `e`; reaplicar `b`, `c` o `f` exige reaplicar `g` y `h`.
+3. `20261006a` → `b` → `c` → `d` → `e` → `f` → `g` → `h` → `i`, en ese orden y en la misma ventana. De `a` a `e` no se admite despliegue parcial: entre `a` y `e` el trigger acepta un modo legado transitorio que solo existe para verificar cada parche, y `e` falla ventas y compras si queda viva una RPC antigua.
 4. `verify-patches.sql` con todas las filas en `ok = true` (en el lab: `ok=92 fail=0`).
 5. Deploy del BFF.
+
+Reaplicar un parche de la serie: cada parche reinstala su propia versión de las funciones que define y pisa la de los parches posteriores. Regla única: **tras reaplicar cualquiera de `a`…`h`, reaplicar en orden todos los posteriores hasta `i` y correr `verify-patches.sql`** (son idempotentes). Por qué: `a` reinstala el modo legado que quita `e`; `b` y `c` reinstalan RPC que redefinen `f`, `g` y `h`; `f`, las que redefinen `g` y `h`; `g`, las que redefine `h`. Ejemplo de lo que pasa si se salta uno: reaplicar `c` y después solo `g` y `h` deja `cancel_purchase` y `return_purchase` en la versión de `c`, sin el rechazo de compras con pagos activos (R3), porque su última definición está en `f`.
 
 El BFF desplegado sin parches sigue cobrando (cae al camino en dos pasos), pero sin idempotencia real ni las garantías nuevas.
 
