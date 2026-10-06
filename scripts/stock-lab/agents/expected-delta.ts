@@ -16,7 +16,13 @@
  * - product_create: +initialStock (0 → {}).
  * - noop: {}.
  * Cuando un producto se repite en varias líneas, se suman los deltas.
+ *
+ * Idempotencia (STK-514): `POST /api/sales` exige `clientRequestId` y reenviar
+ * la misma clave devuelve LA MISMA venta con 2xx. Ese segundo 2xx no descuenta
+ * nada: `dedupeIdempotentReplays` deja su esperado en {} para que el run
+ * cuente el descuento una sola vez.
  */
+import type { LabEvent } from "./logger";
 
 export type OpKind =
   | "sale_create"
@@ -151,6 +157,42 @@ export function expectedDelta<K extends OpKind>(
       throw new Error(`expectedDelta: op desconocida ${String(exhaustive)}`);
     }
   }
+}
+
+function isSuccess(status: number): boolean {
+  return status >= 200 && status <= 299;
+}
+
+function requestKeyOf(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const key = (payload as { clientRequestId?: unknown }).clientRequestId;
+  return typeof key === "string" && key.trim() ? key : null;
+}
+
+/**
+ * Reintentos idempotentes: dos eventos 2xx con la misma `clientRequestId` y el
+ * mismo `response_id` son UNA operación (el servidor devolvió el documento ya
+ * creado). Devuelve los eventos en el mismo orden; las repeticiones salen con
+ * `expected_delta: {}` (el primero conserva el suyo). No muta la entrada.
+ *
+ * Se exige la clave además del id a propósito: `sale_cancel`/`sale_return`
+ * comparten `response_id` con su venta y sí mueven stock. Si la misma clave
+ * devuelve ids distintos no se deduplica nada: ese doble descuento es el bug
+ * que el run debe detectar.
+ */
+export function dedupeIdempotentReplays(events: readonly LabEvent[]): LabEvent[] {
+  const seen = new Set<string>();
+  return events.map((event) => {
+    if (!isSuccess(event.status) || event.response_id === null) return event;
+    const key = requestKeyOf(event.payload);
+    if (key === null) return event;
+    const id = `${key}|${event.response_id}`;
+    if (!seen.has(id)) {
+      seen.add(id);
+      return event;
+    }
+    return { ...event, expected_delta: {} };
+  });
 }
 
 /** Variante con la unión discriminada: `expectedDeltaFor({ op, input })`. */

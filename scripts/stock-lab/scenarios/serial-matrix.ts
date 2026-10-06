@@ -84,8 +84,9 @@ export function pagoMovil(amountVes: number): JsonRecord {
 export type SaleMode = "paid" | "pending";
 
 /**
- * `paid`: venta atómica (`clientRequestId` + `payments` → create_sale_with_payments).
- * `pending`: sin ninguno de los dos → create_sale, queda `pendiente_pago`.
+ * `paid`: `clientRequestId` + `payments` → venta `pagada`.
+ * `pending`: `clientRequestId` sin `payments` → queda `pendiente_pago`.
+ * La clave es obligatoria en `POST /api/sales` (400 si falta): una nueva por venta.
  */
 export function buildSaleBody(input: {
   mode: SaleMode;
@@ -99,7 +100,7 @@ export function buildSaleBody(input: {
 }): JsonRecord {
   const totals = saleTotals(input.quantity, input.unitPriceRef, input.taxRate, input.rate.rateVes);
   return {
-    ...(input.mode === "paid" ? { clientRequestId: input.clientRequestId ?? randomUUID() } : {}),
+    clientRequestId: input.clientRequestId ?? randomUUID(),
     customerId: input.customerId,
     ...(input.rate.id ? { exchangeRateId: input.rate.id } : {}),
     refRateVes: input.rate.rateVes,
@@ -823,6 +824,9 @@ export const OPS: OpDef[] = [
       const flow = afterDeactivation(subject, "devolver la venta");
       const first = await returnSale(c, subject, sale, flow.http, "devolver", flow.findingIfRejected);
       if (!first.accepted) return;
+      // C7: return_sale anula los pagos de la venta en la misma transacción.
+      const live = await c.h.oracle.query<{ id: string }>("select id from public.payments where sale_id = $1 and status = 'activo'", [sale.id]);
+      if (live.length > 0) c.h.fail(`devolver: la venta ${sale.id} quedó devuelta con ${live.length} pago(s) activo(s)`);
       await returnSale(c, subject, sale, "reject", "devolver por segunda vez");
     },
   },

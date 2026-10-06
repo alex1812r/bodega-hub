@@ -21,7 +21,7 @@ import {
   setup,
   step,
 } from "./caos";
-import { EventLogger, readEvents } from "./logger";
+import { EventLogger, readEvents, type LabEvent } from "./logger";
 import { createRng } from "./rng";
 
 type RequestFn = (path: string, init?: RequestInit) => Promise<ApiResponse>;
@@ -132,7 +132,7 @@ describe("caos agent", () => {
   });
 
   it("step: la secuencia de ops con la misma semilla es idéntica entre dos runs", async () => {
-    async function run(runId: string): Promise<string[]> {
+    async function run(runId: string): Promise<LabEvent[]> {
       calls = [];
       saleCounter = 0;
       const ctx = makeCtx(99, {
@@ -148,12 +148,20 @@ describe("caos agent", () => {
       for (let i = 0; i < 15; i += 1) {
         await step(ctx);
       }
-      return readEvents(ctx.logger.filePath).map((e) => `${e.op}:${JSON.stringify(e.payload)}`);
+      return readEvents(ctx.logger.filePath);
     }
+    const keyOf = (payload: unknown) => (payload as { clientRequestId?: string } | null)?.clientRequestId;
+    // La clave de idempotencia depende de (semilla, run id): se compara aparte.
+    const shape = (events: LabEvent[]) =>
+      events.map((e) => `${e.op}:${JSON.stringify({ ...(e.payload as object), clientRequestId: undefined })}`);
+    const keys = (events: LabEvent[]) => events.map((e) => keyOf(e.payload)).filter((key) => key !== undefined);
     const first = await run("det-a");
     const second = await run("det-b");
-    expect(first).toEqual(second);
+    expect(shape(first)).toEqual(shape(second));
     expect(first.length).toBeGreaterThanOrEqual(15);
+    // Misma semilla en otro run → ninguna clave repetida (no choca con ventas de la corrida anterior).
+    expect(keys(first).length).toBeGreaterThan(0);
+    expect(keys(first).filter((key) => keys(second).includes(key))).toEqual([]);
   });
 
   it("setup: tres logins, abre solo las cajas sin sesión, tasa, consumidor final, proveedor y catálogo con admin", async () => {

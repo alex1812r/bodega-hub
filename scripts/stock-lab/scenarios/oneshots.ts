@@ -231,7 +231,7 @@ async function os813eFix(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   // Camino B: parte del stock ya se vendió (lo normal cuando se detecta días después).
   const b = await t.product("b", 0);
   const wrongB = mustId(await t.purchase("almacen", "recibido", [{ productId: b.id, packCount: 1, unitsPerPack: 12 }]), "compra 1x12 (mal)");
-  mustId(await t.sale("vendedor1", [{ productId: b.id, quantity: 5 }]), "venta de 5");
+  mustId(await t.sale("vendedor1", [{ productId: b.id, quantity: 5 }], { clientRequestId: randomUUID() }), "venta de 5");
   const cancelSold = await t.http("almacen", "PATCH", `/api/purchases/${wrongB}/cancel`);
   c.rejected("cancelar la compra con stock ya vendido", cancelSold.status, errorOf(cancelSold));
   const topUp = await t.adjust("almacen", b.id, 24, "ajuste_entrada");
@@ -308,7 +308,7 @@ async function os818Fix(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   c.ok("devolver la venta equivocada", ret.ok, `${ret.status} ${errorOf(ret)}`);
   c.ok("vender de nuevo la cantidad correcta", resale.ok, `${resale.status} ${errorOf(resale)}`);
   const money = await moneyOf(lab, wrong);
-  c.finding(
+  c.ok(
     "la devolución deja el dinero cuadrado",
     money.pagos_activos === 0,
     `la venta devuelta ${wrong} conserva paid_ves=${String(money.paid_ves)} con ${money.pagos_activos} pago(s) activo(s) (G3): el stock queda bien, la caja queda con el cobro de 2 + el de 1`,
@@ -339,7 +339,7 @@ async function os821Replica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const right = await t.product("azul", 3);
   const purchase = mustId(await t.purchase("almacen", "recibido", [{ productId: wrong.id, quantity: 10 }]), "compra al producto equivocado");
   // Entre la compra y la corrección hubo operación normal en ambos productos (en producción pasaron horas).
-  mustId(await t.sale("vendedor1", [{ productId: wrong.id, quantity: 2 }]), "venta intermedia del equivocado");
+  mustId(await t.sale("vendedor1", [{ productId: wrong.id, quantity: 2 }], { clientRequestId: randomUUID() }), "venta intermedia del equivocado");
   const mid = await t.adjust("almacen", right.id, 4, "ajuste_entrada");
   if (!mid.ok) throw new Error(`ajuste intermedio: ${mid.status} ${errorOf(mid)}`);
   const movementId = await movementOf(lab, wrong.id, "purchase_id", purchase, "compra");
@@ -378,8 +378,9 @@ async function os830Symptom(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const p = await t.product("p", 20);
   const lines = [{ productId: p.id, quantity: 3 }];
   // Lo que hizo producción: 4 veces la misma venta en minutos, sin clave y sin cobro.
+  // Hoy el BFF exige clientRequestId: las 4 deben responder 400 sin crear nada.
   const retries = [];
-  for (let i = 0; i < 4; i += 1) retries.push(await t.sale("vendedor1", lines));
+  for (let i = 0; i < 4; i += 1) retries.push(await t.sale("vendedor1", lines, { clientRequestId: null }));
   const afterRetries = await lab.stock(p.id);
   const pending = await lab.rows<{ id: string }>(
     "select distinct s.id from public.sales s join public.sale_items i on i.sale_id = s.id where i.product_id = $1 and s.status = 'pendiente_pago'",
@@ -390,15 +391,16 @@ async function os830Symptom(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const pos = [];
   for (let i = 0; i < 3; i += 1) pos.push(await t.sale("vendedor1", lines, { pay: true, clientRequestId: key }));
   const final = await lab.stock(p.id);
-  c.eq("stock tras reintentar 4 veces la misma venta sin clave (sano: una venta)", afterRetries, 17);
-  c.eq("ventas pendiente_pago creadas por los reintentos", pending.length, 1);
+  c.eq("los 4 reintentos sin clave responden 400", retries.map((res) => res.status), [400, 400, 400, 400]);
+  c.eq("stock tras reintentar 4 veces la misma venta sin clave (sano: ninguna venta)", afterRetries, 20);
+  c.eq("ventas pendiente_pago creadas por los reintentos", pending.length, 0);
   c.eq("POS con clientRequestId: 3 reintentos descuentan una sola vez", afterRetries - final, 3);
   c.eq("POS con clientRequestId: misma venta en los 3", [...new Set(pos.map(idOf))].length, 1);
   if (c.failures.length > 0) {
-    c.note("síntoma reproducible por API: sin clientRequestId cada reintento crea otra venta pendiente_pago que ya descontó stock. Si el POS llega a reintentar sin clave (éxito falso / timeout) requiere UI → ola 8.3, flujos 2 y 3.");
+    c.note("síntoma del 29-ago: sin clientRequestId cada reintento creaba otra venta pendiente_pago que ya descontó stock. El BFF debe rechazar el POST sin clave (400) y, con clave, devolver siempre la misma venta.");
   }
   return outcome(c, {
-    expected: { sin_clave: { stock: 17, pendientes: 1 }, con_clave: { descuento: 3, ventas: 1 } },
+    expected: { sin_clave: { statuses: [400, 400, 400, 400], stock: 20, pendientes: 0 }, con_clave: { descuento: 3, ventas: 1 } },
     actual: {
       sin_clave: { stock: afterRetries, pendientes: pending.length, statuses: retries.map((res) => res.status) },
       con_clave: { descuento: afterRetries - final, ventas: [...new Set(pos.map(idOf))], statuses: pos.map((res) => res.status) },
@@ -411,8 +413,8 @@ async function os830Fix(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const c = new Checks();
   const p = await t.product("p", 20);
   const lines = [{ productId: p.id, quantity: 3 }];
-  const first = mustId(await t.sale("vendedor1", lines), "pendiente 1");
-  const second = mustId(await t.sale("vendedor1", lines), "pendiente 2");
+  const first = mustId(await t.sale("vendedor1", lines, { clientRequestId: randomUUID() }), "pendiente 1");
+  const second = mustId(await t.sale("vendedor1", lines, { clientRequestId: randomUUID() }), "pendiente 2");
   for (const id of [first, second]) {
     const cancel = await t.http("vendedor1", "PATCH", `/api/sales/${id}/cancel`);
     c.ok(`cancelar la pendiente ${id}`, cancel.ok, `${cancel.status} ${errorOf(cancel)}`);
@@ -423,7 +425,7 @@ async function os830Fix(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
 async function os830Replica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const c = new Checks();
   const p = await t.product("p", 20);
-  const saleId = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 3 }]), "venta pendiente");
+  const saleId = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 3 }], { clientRequestId: randomUUID() }), "venta pendiente");
   // l.112-141: por ítem current_stock += qty, SM ajuste_entrada con stock_after = current_stock nuevo, venta → cancelada.
   await t.sql(
     "réplica 830: restock a mano + sales.status = cancelada",
@@ -479,7 +481,7 @@ async function os830bAddReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   await t.ensureCash("vendedor1");
   const p = await t.product("p", 20);
   const saleId = mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 8 }], { pay: true }), "venta x8");
-  mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }]), "venta intermedia");
+  mustId(await t.sale("vendedor1", [{ productId: p.id, quantity: 2 }], { clientRequestId: randomUUID() }), "venta intermedia");
   // l.120: sale_items.quantity 8 → 9.
   await t.sql("réplica 830b-add: sale_items.quantity = 9", "update public.sale_items set quantity = 9 where sale_id = $1 and product_id = $2", [saleId, p.id]);
   await t.sql("réplica 830b-add: SM venta −1 con stock_after a mano + current_stock", LATE_SALE_MOVE_SQL, [p.id, saleId]);
@@ -493,7 +495,7 @@ async function os830dReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const a = await t.product("a", 20);
   const b = await t.product("b", 20);
   const saleId = mustId(await t.sale("vendedor1", [{ productId: a.id, quantity: 1 }], { pay: true }), "venta sin la línea que faltó");
-  mustId(await t.sale("vendedor1", [{ productId: b.id, quantity: 2 }]), "venta intermedia");
+  mustId(await t.sale("vendedor1", [{ productId: b.id, quantity: 2 }], { clientRequestId: randomUUID() }), "venta intermedia");
   // l.124-139: insertar la línea que faltaba.
   await t.sql(
     "réplica 830d: insert sale_items de la línea que faltaba",
@@ -539,7 +541,7 @@ async function os830bRemoveReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
     await t.sale("vendedor1", [{ productId: polar.id, quantity: 2 }, { productId: light.id, quantity: 1 }], { pay: true }),
     "venta con la línea de más",
   );
-  mustId(await t.sale("vendedor1", [{ productId: light.id, quantity: 3 }]), "venta posterior");
+  mustId(await t.sale("vendedor1", [{ productId: light.id, quantity: 3 }], { clientRequestId: randomUUID() }), "venta posterior");
   const movementId = await movementOf(lab, light.id, "sale_id", saleId, "venta");
   const client = await lab.pg();
   await client.query("begin");
@@ -586,7 +588,7 @@ async function os830cFix(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   c.ok("devolver la venta equivocada", ret.ok, `${ret.status} ${errorOf(ret)}`);
   c.ok("vender el producto correcto", resale.ok, `${resale.status} ${errorOf(resale)}`);
   const money = await moneyOf(lab, wrong);
-  c.finding(
+  c.ok(
     "la devolución deja el dinero cuadrado",
     money.pagos_activos === 0,
     `la venta devuelta ${wrong} conserva paid_ves=${String(money.paid_ves)} con ${money.pagos_activos} pago(s) activo(s) (G3): cobro duplicado en caja`,
@@ -600,7 +602,7 @@ async function os830cReplica(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   const dura = await t.product("dura", 10);
   const manz = await t.product("manz", 10);
   const saleId = mustId(await t.sale("vendedor1", [{ productId: dura.id, quantity: 1 }], { pay: true }), "venta con el producto equivocado");
-  mustId(await t.sale("vendedor1", [{ productId: dura.id, quantity: 2 }, { productId: manz.id, quantity: 2 }]), "venta intermedia");
+  mustId(await t.sale("vendedor1", [{ productId: dura.id, quantity: 2 }, { productId: manz.id, quantity: 2 }], { clientRequestId: randomUUID() }), "venta intermedia");
   const client = await lab.pg();
   await client.query("begin");
   try {

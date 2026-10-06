@@ -134,7 +134,7 @@ describe("cálculo de esperados y payloads", () => {
     expect(saleTotals(3, 2, 0, 52)).toEqual({ subtotalRef: 6, taxRef: 0, totalRef: 6, totalVes: 312 });
   });
 
-  it("venta pagada usa la ruta atómica; la pendiente va sin payments ni clientRequestId", () => {
+  it("venta pagada y pendiente llevan clientRequestId (obligatoria); la pendiente va sin payments", () => {
     const paid = buildSaleBody({ mode: "paid", customerId: "c", rate, productId: "p", quantity: 2, unitPriceRef: 2, taxRate: 16, clientRequestId: "req" });
     expect(paid).toMatchObject({
       clientRequestId: "req",
@@ -147,7 +147,9 @@ describe("cálculo de esperados y payloads", () => {
     });
     const pending = buildSaleBody({ mode: "pending", customerId: "c", rate, productId: "p", quantity: 2, unitPriceRef: 2, taxRate: 0 });
     expect(pending).not.toHaveProperty("payments");
-    expect(pending).not.toHaveProperty("clientRequestId");
+    expect(pending.clientRequestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    const again = buildSaleBody({ mode: "pending", customerId: "c", rate, productId: "p", quantity: 2, unitPriceRef: 2, taxRate: 0 });
+    expect(again.clientRequestId).not.toBe(pending.clientRequestId);
     expect(pending.taxRef).toBe(0);
   });
 

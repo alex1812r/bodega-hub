@@ -29,6 +29,7 @@
  * movimientos sin evento, `unattributed_movements`. Un `chain_break` anterior
  * en el tiempo tiene prioridad.
  */
+import { dedupeIdempotentReplays } from "./agents/expected-delta";
 import { isSuccessStatus, type LabEvent } from "./agents/logger";
 
 export type SummaryProduct = {
@@ -219,10 +220,13 @@ export function countErrorsByStatus(events: readonly LabEvent[]): Record<string,
 // Descuadres por producto
 // ---------------------------------------------------------------------------
 
-/** productId → Σ expected_delta de los eventos 2xx. */
+/**
+ * productId → Σ expected_delta de los eventos 2xx. Un reintento idempotente
+ * (misma clientRequestId, mismo response_id) cuenta una sola vez.
+ */
 export function expectedDeltaByProduct(events: readonly LabEvent[]): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const event of events) {
+  for (const event of dedupeIdempotentReplays(sortEvents(events))) {
     if (!isSuccessStatus(event.status)) continue;
     for (const [productId, delta] of Object.entries(event.expected_delta ?? {})) {
       if (typeof delta !== "number" || !Number.isFinite(delta)) continue;
@@ -337,7 +341,7 @@ export function findFirstBreak(
   productId: string,
 ): FirstBreak | null {
   const movements = movementsInRun(events, movementsOfProduct).filter((m) => m.product_id === productId);
-  const productEvents = sortEvents(events).filter((event) => {
+  const productEvents = dedupeIdempotentReplays(sortEvents(events)).filter((event) => {
     if (!isSuccessStatus(event.status)) return false;
     const delta = event.expected_delta?.[productId];
     return typeof delta === "number" && delta !== 0;

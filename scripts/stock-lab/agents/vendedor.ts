@@ -340,7 +340,7 @@ async function createSale(ctx: AgentContext, state: VendedorState): Promise<void
   const totalRef = round2(lines.reduce((sum, line) => sum + line.quantity * line.unitPriceRef, 0));
   const customerId = pickCustomer(ctx.rng, state);
   const withPayments = ctx.rng.chance(0.8);
-  const clientRequestId = idempotencyKey(ctx.rng);
+  const clientRequestId = idempotencyKey(ctx.rng, ctx.logger.runId);
   const body: JsonRecord = {
     clientRequestId,
     customerId,
