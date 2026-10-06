@@ -1,0 +1,360 @@
+/** @jest-environment node */
+import {
+  IMPORT_HEADERS,
+  MD_HEADER,
+  buildImportRows,
+  buildImportSheetAoa,
+  countVerdicts,
+  defaultRunId,
+  diffNumberMaps,
+  diffSnapshots,
+  flowId,
+  formatVerdictSummary,
+  judgeUiVsDb,
+  packUnits,
+  parseEsNumber,
+  parseOnly,
+  parseStockInt,
+  parseUiArgs,
+  shotFileName,
+  sumMovements,
+  sumSaleItems,
+  summarizeSalePosts,
+  toMarkdownRow,
+  worstVerdict,
+  type DbSnapshot,
+  type MovementRow,
+  type UiResult,
+} from "./helpers";
+
+function movement(partial: Partial<MovementRow> & Pick<MovementRow, "id" | "product_id">): MovementRow {
+  return {
+    type: "venta",
+    quantity_delta: -1,
+    stock_after: 0,
+    sale_id: null,
+    purchase_id: null,
+    conversion_id: null,
+    ...partial,
+  };
+}
+
+function emptySnapshot(): DbSnapshot {
+  return { stock: {}, movements: [], sales: [], saleItems: [], payments: [], purchases: [] };
+}
+
+describe("parseEsNumber", () => {
+  it.each([
+    ["Bs. 1.437,76", 1437.76],
+    ["Bs.S 2.614,11", 2614.11],
+    ["ref 2.75", 2.75],
+    ["ref 36.00", 36],
+    ["45 un", 45],
+    ["+36", 36],
+    ["-3", -3],
+    ["−2", -2],
+    ["- 4", -4],
+    ["1.000", 1000],
+    ["12.345.678", 12345678],
+    ["1,5", 1.5],
+    ["1,234,567", 1234567],
+    ["1,234.50", 1234.5],
+    ["Stock: 17", 17],
+    ["0", 0],
+    ["50 unidades.", 50],
+  ])("%s → %s", (text, expected) => {
+    expect(parseEsNumber(text)).toBe(expected);
+  });
+
+  it("devuelve null sin número", () => {
+    expect(parseEsNumber("—")).toBeNull();
+    expect(parseEsNumber("")).toBeNull();
+    expect(parseEsNumber(null)).toBeNull();
+    expect(parseEsNumber(undefined)).toBeNull();
+  });
+
+  it("no confunde un guion separador con el signo", () => {
+    expect(parseEsNumber("lab-pack 12")).toBe(12);
+  });
+});
+
+describe("parseStockInt", () => {
+  it("acepta enteros con signo y rechaza decimales", () => {
+    expect(parseStockInt("+24")).toBe(24);
+    expect(parseStockInt("−2")).toBe(-2);
+    expect(parseStockInt("1.000")).toBe(1000);
+    expect(parseStockInt("2,5")).toBeNull();
+    expect(parseStockInt("—")).toBeNull();
+  });
+});
+
+describe("argumentos", () => {
+  const now = new Date(2026, 9, 6, 4, 5, 9);
+
+  it("genera el run id por defecto YYYYMMDD-HHmmss-ui", () => {
+    expect(defaultRunId(now)).toBe("20261006-040509-ui");
+    expect(parseUiArgs([], now)).toEqual({
+      run: "20261006-040509-ui",
+      only: null,
+      headed: false,
+      list: false,
+      out: null,
+      shots: null,
+      seller: "vendedor1",
+    });
+  });
+
+  it("lee --run, --only, --headed, --list, --seller, --out y --shots", () => {
+    const args = parseUiArgs(
+      ["--run", "stk404-smoke", "--only", "1,2,5", "--headed", "--list", "--seller", "vendedor2", "--out", "o", "--shots", "s"],
+      now,
+    );
+    expect(args).toEqual({
+      run: "stk404-smoke",
+      only: [1, 2, 5],
+      headed: true,
+      list: true,
+      out: "o",
+      shots: "s",
+      seller: "vendedor2",
+    });
+  });
+
+  it("parseOnly normaliza, ordena y quita duplicados", () => {
+    expect(parseOnly("5, f02,10,2,F01")).toEqual([1, 2, 5, 10]);
+  });
+
+  it.each(["0", "11", "abc", "1,,x", ""])("parseOnly rechaza %p", (value) => {
+    expect(() => parseOnly(value)).toThrow(/--only/);
+  });
+
+  it("rechaza argumentos desconocidos, valores ausentes y run ids peligrosos", () => {
+    expect(() => parseUiArgs(["--nope"], now)).toThrow(/desconocido/);
+    expect(() => parseUiArgs(["--run"], now)).toThrow(/necesita un valor/);
+    expect(() => parseUiArgs(["--run", "--headed"], now)).toThrow(/necesita un valor/);
+    expect(() => parseUiArgs(["--run", "../x"], now)).toThrow(/--run/);
+    expect(() => parseUiArgs(["--seller", "admin"], now)).toThrow(/--seller/);
+  });
+
+  it("flowId y shotFileName dan nombres estables", () => {
+    expect(flowId(3)).toBe("f03");
+    expect(flowId(10)).toBe("f10");
+    expect(shotFileName("f03-ii_cut", 2, "Tras corte ¡ya!")).toBe("f03-ii-cut-02-tras-corte-ya.png");
+    expect(shotFileName("f01", 11, "")).toBe("f01-11-paso.png");
+  });
+});
+
+describe("diffSnapshots", () => {
+  it("devuelve solo lo nuevo, el delta de stock y los cambios de estado", () => {
+    const before: DbSnapshot = {
+      ...emptySnapshot(),
+      stock: { a: 20, b: 5 },
+      movements: [movement({ id: "m0", product_id: "a", type: "inventario_inicial", quantity_delta: 20 })],
+      sales: [{ id: "s0", invoice_number: "V-0", status: "pendiente_pago", client_request_id: null }],
+      payments: [{ id: "p0", sale_id: "s0", purchase_id: null, status: "activo" }],
+      purchases: [{ id: "c0", purchase_number: "C-0", status: "pedido" }],
+    };
+    const after: DbSnapshot = {
+      stock: { a: 17, b: 5 },
+      movements: [...before.movements, movement({ id: "m1", product_id: "a", quantity_delta: -3, sale_id: "s1" })],
+      sales: [
+        { id: "s0", invoice_number: "V-0", status: "cancelada", client_request_id: null },
+        { id: "s1", invoice_number: "V-1", status: "pagada", client_request_id: "k1" },
+      ],
+      saleItems: [{ id: "i1", sale_id: "s1", product_id: "a", quantity: 3 }],
+      payments: [
+        { id: "p0", sale_id: "s0", purchase_id: null, status: "anulado" },
+        { id: "p1", sale_id: "s1", purchase_id: null, status: "activo" },
+      ],
+      purchases: [{ id: "c0", purchase_number: "C-0", status: "recibido" }],
+    };
+    const diff = diffSnapshots(before, after);
+    expect(diff.stockDelta).toEqual({ a: -3, b: 0 });
+    expect(diff.movements.map((m) => m.id)).toEqual(["m1"]);
+    expect(diff.sales.map((s) => s.id)).toEqual(["s1"]);
+    expect(diff.saleItems).toHaveLength(1);
+    expect(diff.payments.map((p) => p.id)).toEqual(["p1"]);
+    expect(diff.purchases).toEqual([]);
+    expect(diff.statusChanges).toEqual({
+      s0: "pendiente_pago→cancelada",
+      p0: "activo→anulado",
+      c0: "pedido→recibido",
+    });
+  });
+
+  it("un producto que aparece después cuenta desde 0", () => {
+    const diff = diffSnapshots(emptySnapshot(), { ...emptySnapshot(), stock: { nuevo: 15 } });
+    expect(diff.stockDelta).toEqual({ nuevo: 15 });
+    expect(diff.statusChanges).toEqual({});
+  });
+});
+
+describe("sumas y comparación de mapas", () => {
+  const rows = [
+    movement({ id: "1", product_id: "a", quantity_delta: -3 }),
+    movement({ id: "2", product_id: "a", quantity_delta: -1 }),
+    movement({ id: "3", product_id: "b", type: "compra", quantity_delta: 36 }),
+  ];
+
+  it("sumMovements agrupa por producto y filtra por tipo", () => {
+    expect(sumMovements(rows)).toEqual({ a: -4, b: 36 });
+    expect(sumMovements(rows, ["venta"])).toEqual({ a: -4 });
+    expect(sumMovements(rows, ["conversion_salida"])).toEqual({});
+  });
+
+  it("sumSaleItems agrupa cantidades por producto", () => {
+    expect(
+      sumSaleItems([
+        { id: "1", sale_id: "s", product_id: "a", quantity: 2 },
+        { id: "2", sale_id: "t", product_id: "a", quantity: 2 },
+        { id: "3", sale_id: "s", product_id: "b", quantity: 1 },
+      ]),
+    ).toEqual({ a: 4, b: 1 });
+  });
+
+  it("diffNumberMaps: vacío si coinciden, una frase por diferencia, ausente = 0", () => {
+    expect(diffNumberMaps({ a: 3, b: 0 }, { a: 3 })).toEqual([]);
+    expect(diffNumberMaps({ a: 3, b: 2 }, { a: 6, c: 1 }, { a: "sku-a" })).toEqual([
+      "sku-a: esperado 3, real 6",
+      "b: esperado 2, real 0",
+      "c: esperado 0, real 1",
+    ]);
+  });
+
+  it("packUnits multiplica y valida", () => {
+    expect(packUnits(3, 12)).toBe(36);
+    expect(() => packUnits(0, 12)).toThrow();
+    expect(() => packUnits(2, 1.5)).toThrow();
+  });
+});
+
+describe("judgeUiVsDb (comparador UI ↔ base)", () => {
+  const what = "venta(s)";
+
+  it("pass: éxito con exactamente lo esperado", () => {
+    expect(judgeUiVsDb({ what, uiClaim: "success", expectedDocs: 1, createdDocs: 1 })).toEqual({ verdict: "pass", detail: "" });
+    expect(judgeUiVsDb({ what, uiClaim: "success", expectedDocs: 2, createdDocs: 2 }).verdict).toBe("pass");
+  });
+
+  it("pass: error con nada esperado y nada creado", () => {
+    expect(judgeUiVsDb({ what, uiClaim: "error", expectedDocs: 0, createdDocs: 0 }).verdict).toBe("pass");
+    expect(judgeUiVsDb({ what, uiClaim: "none", expectedDocs: 0, createdDocs: 0 }).verdict).toBe("pass");
+  });
+
+  it("fail: éxito falso (UI dice éxito, base vacía)", () => {
+    const judged = judgeUiVsDb({ what, uiClaim: "success", expectedDocs: 1, createdDocs: 0 });
+    expect(judged.verdict).toBe("fail");
+    expect(judged.detail).toMatch(/Éxito falso/);
+  });
+
+  it("fail: duplicado aunque la UI diga éxito", () => {
+    const judged = judgeUiVsDb({ what, uiClaim: "success", expectedDocs: 1, createdDocs: 2 });
+    expect(judged.verdict).toBe("fail");
+    expect(judged.detail).toMatch(/Duplicado.*2/);
+  });
+
+  it("fail: la base registró y la UI dijo error o calló", () => {
+    expect(judgeUiVsDb({ what, uiClaim: "error", expectedDocs: 1, createdDocs: 1 }).detail).toMatch(/Error falso/);
+    expect(judgeUiVsDb({ what, uiClaim: "none", expectedDocs: 1, createdDocs: 1 }).detail).toMatch(/Operación muda/);
+    expect(judgeUiVsDb({ what, uiClaim: "error", expectedDocs: 0, createdDocs: 1 }).verdict).toBe("fail");
+  });
+
+  it("fail: se esperaba un documento y no nació (la UI no afirmó éxito)", () => {
+    expect(judgeUiVsDb({ what, uiClaim: "error", expectedDocs: 1, createdDocs: 0 }).detail).toMatch(/mostró error/);
+    expect(judgeUiVsDb({ what, uiClaim: "none", expectedDocs: 1, createdDocs: 0 }).detail).toMatch(/no dijo nada/);
+  });
+
+  it("fail: éxito con menos documentos de los esperados", () => {
+    const judged = judgeUiVsDb({ what: "producto(s)", uiClaim: "success", expectedDocs: 3, createdDocs: 2 });
+    expect(judged.verdict).toBe("fail");
+    expect(judged.detail).toMatch(/esperaban 3.*hay 2/);
+  });
+
+  it("fail: se creó algo cuando no se esperaba nada y la UI dijo éxito", () => {
+    expect(judgeUiVsDb({ what, uiClaim: "success", expectedDocs: 0, createdDocs: 1 }).verdict).toBe("fail");
+    expect(judgeUiVsDb({ what, uiClaim: "success", expectedDocs: 0, createdDocs: 2 }).detail).toMatch(/Duplicado/);
+  });
+});
+
+describe("summarizeSalePosts", () => {
+  it("cuenta peticiones y claves de idempotencia distintas", () => {
+    const body = (id?: string) => JSON.stringify({ clientRequestId: id, items: [] });
+    expect(summarizeSalePosts([body("k1"), body("k1"), body("k2"), body(), null, "{no json"])).toEqual({
+      requests: 6,
+      clientRequestIds: ["k1", "k1", "k2"],
+      distinctClientRequestIds: 2,
+      withoutClientRequestId: 3,
+    });
+    expect(summarizeSalePosts([])).toEqual({
+      requests: 0,
+      clientRequestIds: [],
+      distinctClientRequestIds: 0,
+      withoutClientRequestId: 0,
+    });
+  });
+});
+
+describe("Excel de importación", () => {
+  it("genera filas con SKU único en minúsculas y stock inicial > 0", () => {
+    const rows = buildImportRows("U404-Run-F10-", "U404 run F10", "Snacks Lab", 3);
+    expect(rows.map((row) => row.sku)).toEqual(["u404-run-f10-x1", "u404-run-f10-x2", "u404-run-f10-x3"]);
+    expect(rows.map((row) => row.stock_inicial)).toEqual([7, 14, 21]);
+    expect(new Set(rows.map((row) => row.nombre)).size).toBe(3);
+    expect(rows.every((row) => row.categoria === "Snacks Lab" && row.precio_ref > row.costo_ref)).toBe(true);
+    expect(() => buildImportRows("p", "n", "c", 0)).toThrow();
+  });
+
+  it("arma la hoja: encabezados exactos, fila 2 de ejemplo y datos desde la fila 3", () => {
+    const rows = buildImportRows("p-", "N", "Cat", 2);
+    const aoa = buildImportSheetAoa(rows);
+    expect(aoa).toHaveLength(4);
+    expect(aoa[0]).toEqual([...IMPORT_HEADERS]);
+    expect(aoa[0]).toEqual(["sku", "codigo_barras", "nombre", "categoria", "precio_ref", "costo_ref", "stock_inicial", "stock_minimo"]);
+    expect(aoa[1]?.[0]).toBe("bod-ej-001");
+    expect(aoa[1]?.[6]).toBe(0);
+    expect(aoa[2]).toEqual(["p-x1", "", "N Import 1", "Cat", 1.25, 0.6, 7, 1]);
+    expect(aoa[3]).toEqual(["p-x2", "", "N Import 2", "Cat", 1.5, 0.7, 14, 1]);
+    expect(aoa.every((row) => row.length === IMPORT_HEADERS.length)).toBe(true);
+  });
+});
+
+describe("formato de resultados", () => {
+  const result: UiResult = {
+    ts: "2026-10-06T04:00:00.000Z",
+    suite: "ui",
+    id: "f03.ii",
+    title: "Corte | tras commit",
+    hypothesis: ["H8"],
+    steps: [],
+    ui_says: ["POS: «Failed to fetch»", "otra\nlínea"],
+    expected: {},
+    actual: {},
+    reconcile_scoped: {},
+    reconcile_global: {},
+    verdict: "finding",
+    detail: "detalle",
+    evidence: ["a.png"],
+  };
+
+  it("cuenta y resume veredictos", () => {
+    const counts = countVerdicts([result, { verdict: "pass" }, { verdict: "pass" }, { verdict: "error" }]);
+    expect(counts).toEqual({ pass: 2, fail: 0, finding: 1, error: 1, skip: 0 });
+    expect(formatVerdictSummary(counts)).toBe("pass=2 fail=0 finding=1 error=1 skip=0");
+  });
+
+  it("worstVerdict ordena error > fail > finding > pass > skip", () => {
+    expect(worstVerdict([])).toBe("skip");
+    expect(worstVerdict(["pass", "finding", "pass"])).toBe("finding");
+    expect(worstVerdict(["finding", "fail"])).toBe("fail");
+    expect(worstVerdict(["fail", "error", "pass"])).toBe("error");
+  });
+
+  it("la fila markdown escapa barras y saltos de línea", () => {
+    const row = toMarkdownRow(result);
+    expect(row.split("\n")).toHaveLength(1);
+    expect(row).toContain("Corte \\| tras commit");
+    expect(row).toContain("otra línea");
+    expect(row.startsWith("| f03.ii | finding |")).toBe(true);
+    expect(MD_HEADER.split("\n")[0]?.split("|").length).toBe(row.split(/(?<!\\)\|/).length);
+  });
+});
