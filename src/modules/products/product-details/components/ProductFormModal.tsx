@@ -1,17 +1,14 @@
 "use client";
 
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
 import { Can } from "@/shared/auth/Can";
-import { GenerateSkuIconButton } from "@/shared/components/GenerateSkuIconButton";
 import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
-import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
-import { getNumberInputError, NumberInput } from "@/shared/components/NumberInput";
-import { SelectField } from "@/shared/components/SelectField";
-import { Textarea } from "@/shared/components/Textarea";
+import { getNumberInputError } from "@/shared/components/NumberInput";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 import { generateProductSkuFromName } from "@/shared/utils/skuGeneration";
 
@@ -21,12 +18,13 @@ import {
   removeProductImage,
   uploadProductImageBlob,
 } from "../../services/uploadProductImage";
+import { ProductFormBasicFields } from "./ProductFormBasicFields";
+import { ProductFormMoreOptions, SKU_FIELD_NAME } from "./ProductFormMoreOptions";
 import { ProductImageUploadField } from "./ProductImageUploadField";
 import {
   createDefaultPackConversionFormState,
   getUnitsPerPackError,
   packConversionStateToInput,
-  ProductPackConversionFields,
   UNITS_PER_PACK_FIELD_NAME,
   type PackConversionFormState,
 } from "./ProductPackConversionFields";
@@ -35,15 +33,56 @@ export type ProductFormSubmitContext = {
   pendingImageBlob?: Blob | null;
 };
 
-type ProductFormModalProps = {
+/**
+ * Valores con los que abre un alta (p. ej. el texto buscado o el código
+ * escaneado en una compra). En edición se ignoran: manda `product`.
+ */
+export type ProductFormInitialValues = Partial<
+  Pick<ProductInput, "barcode" | "categoryId" | "currentCostRef" | "name" | "salePriceRef">
+>;
+
+/**
+ * Contrato del formulario de producto. Estable: lo consumen Productos (lista y
+ * detalle) y, en modo `compact`, Compras (COM-03) y el surtido (PRO-13).
+ */
+export type ProductFormModalProps = {
+  /** Opciones del selector de Categoría. */
   categories?: CategoryMock[];
+  /**
+   * Alta rápida: solo el nivel básico (Nombre, Categoría, Código de barras,
+   * Precio REF, Costo REF), sin imagen y sin "Más opciones". Siempre es un alta:
+   * `mode` y `product` se ignoran. Lo que no se muestra viaja como en un alta
+   * con esos campos vacíos (sin stock inicial, sin stock mínimo, sin empaque) y
+   * el SKU, que el BFF exige, se genera con `generateProductSkuFromName(name)`.
+   */
+  compact?: boolean;
+  /** Error del servidor (p. ej. `mutation.error?.message`); se muestra al pie del formulario. */
   errorMessage?: string;
+  /** Precarga del alta; se lee cada vez que el modal se abre. */
+  initialValues?: ProductFormInitialValues;
   isSubmitting?: boolean;
+  /** `"edit"` exige `product`. Por defecto `"create"`. */
   mode?: "create" | "edit";
+  /**
+   * Alta terminada: recibe el producto que devolvió `onSubmit`, justo antes de
+   * cerrar. No se llama en edición ni si `onSubmit` no devuelve el producto.
+   */
+  onCreated?: (product: ProductWithCategory) => void;
+  /** Edición: la imagen se subió o se quitó; el consumidor refresca el producto. */
   onImageUpdated?: () => void | Promise<void>;
   onOpenChange?: (open: boolean) => void;
-  onSubmit?: (input: ProductInput, context?: ProductFormSubmitContext) => Promise<void> | void;
+  /**
+   * Guarda. Si lanza o rechaza, el modal queda abierto (el consumidor muestra el
+   * motivo con `errorMessage`). Puede devolver el producto creado para que
+   * llegue a `onCreated`; no devolver nada sigue siendo válido.
+   */
+  onSubmit?: (
+    input: ProductInput,
+    context?: ProductFormSubmitContext,
+  ) => Promise<ProductWithCategory | void> | ProductWithCategory | void;
+  /** Modo controlado. Sin `open`, el modal se abre con `trigger` (o su botón por defecto). */
   open?: boolean;
+  /** Producto en edición. */
   product?: ProductWithCategory;
   trigger?: ReactNode;
 };
@@ -56,30 +95,36 @@ function numberFromFormData(formData: FormData, key: string) {
 
 export function ProductFormModal({
   categories = [],
+  compact = false,
   errorMessage,
+  initialValues,
   isSubmitting = false,
   mode = "create",
+  onCreated,
   onImageUpdated,
   onOpenChange,
   onSubmit,
   open,
-  product,
+  product: productProp,
   trigger,
 }: ProductFormModalProps) {
+  const isEdit = !compact && mode === "edit";
+  const product = compact ? undefined : productProp;
+  const createDefaults = isEdit ? undefined : initialValues;
   const formId = useId();
   const isControlled = open !== undefined;
   const [internalOpen, setInternalOpen] = useState(false);
   const isOpen = isControlled ? open : internalOpen;
-  const [name, setName] = useState("");
-  const [sku, setSku] = useState("");
+  const [name, setName] = useState(product?.name ?? createDefaults?.name ?? "");
+  const [sku, setSku] = useState(product?.sku ?? "");
+  const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
   const [pendingImageBlob, setPendingImageBlob] = useState<Blob | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [packConversionState, setPackConversionState] = useState<PackConversionFormState>(
     createDefaultPackConversionFormState(product?.packConversion),
   );
-  const [showPackConversionErrors, setShowPackConversionErrors] = useState(false);
-  const isEdit = mode === "edit";
+  const [showSubmitErrors, setShowSubmitErrors] = useState(false);
   const isUnitRole = product?.packConversion?.role === "unit";
 
   useEffect(() => {
@@ -91,12 +136,13 @@ export function ProductFormModal({
   }, [isOpen, product?.id, product?.packConversion?.id]);
 
   function resetFormFields() {
-    setName(product?.name ?? "");
+    setName(product?.name ?? createDefaults?.name ?? "");
     setSku(product?.sku ?? "");
+    setMoreOptionsOpen(false);
     setPendingImageBlob(null);
     setImageError(null);
     setPackConversionState(createDefaultPackConversionFormState(product?.packConversion));
-    setShowPackConversionErrors(false);
+    setShowSubmitErrors(false);
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -109,17 +155,54 @@ export function ProductFormModal({
     }
   }
 
+  // Un campo de "Más opciones" con la sección cerrada no puede recibir el foco:
+  // se abre en el mismo tick, se muestran los avisos y se enfoca.
+  function revealAndFocus(field: Element | RadioNodeList | null) {
+    flushSync(() => {
+      setMoreOptionsOpen(true);
+      setShowSubmitErrors(true);
+    });
+
+    if (field instanceof HTMLElement) {
+      field.focus();
+    }
+  }
+
+  // Red para los `required` nativos de la sección cerrada (los del empaque): el
+  // navegador no puede señalar un campo oculto y bloquearía el envío en silencio.
+  function handleInvalidCapture(event: FormEvent<HTMLFormElement>) {
+    const field = event.target;
+    const firstInvalid = Array.from(event.currentTarget.elements).find(
+      (element) =>
+        (element instanceof HTMLInputElement ||
+          element instanceof HTMLSelectElement ||
+          element instanceof HTMLTextAreaElement) &&
+        element.willValidate &&
+        !element.validity.valid,
+    );
+
+    if (field instanceof HTMLElement && field === firstInvalid && field.closest("[hidden]")) {
+      revealAndFocus(field);
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>, close: () => void) {
     event.preventDefault();
 
-    const formData = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
     const categoryId = String(formData.get("categoryId") ?? "");
+    // En `compact` el SKU no se muestra y el BFF lo exige: sale del nombre.
+    const submittedSku =
+      sku.trim().toLowerCase() || (compact ? generateProductSkuFromName(name) : "");
     const shouldSendPackConversion =
       !isUnitRole &&
       (Boolean(product?.packConversion) || packConversionState.enabled);
-    // Sin `step`/`min` nativos: un stock con decimales o un empaque de menos de 2
-    // unidades no se envia. El campo muestra su aviso y recibe el foco.
+    // Sin `required`/`step`/`min` nativos: un SKU vacío, un stock con decimales o
+    // un empaque de menos de 2 unidades no se envía. El campo muestra su aviso y
+    // recibe el foco. Se revisan en el orden en que aparecen en "Más opciones".
     const invalidFieldName =
+      (submittedSku ? undefined : SKU_FIELD_NAME) ??
       ["currentStock", "minStock"].find((fieldName) =>
         getNumberInputError(String(formData.get(fieldName) ?? ""), { decimals: 0 }),
       ) ??
@@ -130,13 +213,7 @@ export function ProductFormModal({
         : undefined);
 
     if (invalidFieldName) {
-      const field = event.currentTarget.elements.namedItem(invalidFieldName);
-
-      setShowPackConversionErrors(true);
-
-      if (field instanceof HTMLElement) {
-        field.focus();
-      }
+      revealAndFocus(form.elements.namedItem(invalidFieldName));
 
       return;
     }
@@ -155,10 +232,16 @@ export function ProductFormModal({
         ? packConversionStateToInput(packConversionState)
         : undefined,
       salePriceRef: Number(formData.get("salePriceRef") ?? 0),
-      sku: sku.trim().toLowerCase(),
+      sku: submittedSku,
     };
 
-    await onSubmit?.(input, { pendingImageBlob });
+    // Si `onSubmit` rechaza, no se llega a `close()`: el modal queda abierto.
+    const created = await onSubmit?.(input, { pendingImageBlob });
+
+    if (!isEdit && created) {
+      onCreated?.(created);
+    }
+
     close();
   }
 
@@ -216,7 +299,7 @@ export function ProductFormModal({
       )}
       onOpenChange={handleOpenChange}
       open={isOpen}
-      title={isEdit ? "Editar producto" : "Crear producto"}
+      title={isEdit ? "Editar producto" : compact ? "Nuevo producto" : "Crear producto"}
       trigger={
         isControlled
           ? trigger
@@ -230,108 +313,51 @@ export function ProductFormModal({
       <form
         className="grid gap-4"
         id={formId}
+        onInvalidCapture={handleInvalidCapture}
         onSubmit={(event) => handleSubmit(event, () => handleOpenChange(false))}
       >
-        <Can permission="products.manage">
-          <ProductImageUploadField
-            disabled={isSubmitting}
-            imageUrl={product?.imageUrl}
-            isUploading={isUploadingImage}
-            onPendingBlobChange={isEdit ? undefined : setPendingImageBlob}
-            onRemove={isEdit && product?.imageUrl ? handleRemoveImage : undefined}
-            onUpload={isEdit && product?.id ? handleUploadImage : undefined}
-          />
-        </Can>
-        <Input
-          label="Nombre"
-          name="name"
-          onChange={(event) => setName(event.target.value)}
-          required
-          value={name}
-        />
-        <div className="grid gap-4 md:grid-cols-2">
-          <Input
-            label="SKU"
-            name="sku"
-            onChange={(event) => setSku(event.target.value.toLowerCase())}
-            required
-            trailing={
-              <GenerateSkuIconButton
-                disabled={!name.trim()}
-                onGenerate={() => setSku(generateProductSkuFromName(name))}
-              />
-            }
-            value={sku}
-          />
-          <Input
-            defaultValue={product?.barcode ?? ""}
-            label="Codigo de barras"
-            name="barcode"
-            placeholder="Opcional"
-          />
-        </div>
-        <SelectField
-          defaultValue={product?.categoryId ?? ""}
-          label="Categoria"
-          name="categoryId"
-          options={categories.map((category) => ({
-            label: category.name,
-            value: category.id,
-          }))}
-          placeholder="Selecciona"
-        />
-        <div className="grid gap-4 md:grid-cols-2">
-          <NumberInput
-            decimals={2}
-            defaultValue={product?.currentCostRef}
-            label="Costo ref"
-            name="currentCostRef"
-          />
-          <NumberInput
-            decimals={2}
-            defaultValue={product?.salePriceRef}
-            label="Precio ref"
-            name="salePriceRef"
-            required
-          />
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          {isEdit ? (
-            <NumberInput
-              decimals={0}
-              defaultValue={product?.currentStock}
-              disabled
-              helperText="Se corrige desde Inventario con un ajuste, para que quede registrado el movimiento."
-              label="Stock actual"
-              readOnly
-            />
-          ) : (
-            <NumberInput
-              decimals={0}
-              defaultValue={product?.currentStock}
-              label="Stock inicial"
-              name="currentStock"
-            />
-          )}
-          <NumberInput
-            decimals={0}
-            defaultValue={product?.minStock}
-            label="Stock minimo"
-            name="minStock"
-          />
-        </div>
-        <ProductPackConversionFields
-          excludeProductId={product?.id}
-          isUnitRole={isUnitRole}
-          packConversion={product?.packConversion}
-          productName={name}
-          showErrors={showPackConversionErrors}
-          state={packConversionState}
-          onChange={(patch) =>
-            setPackConversionState((current) => ({ ...current, ...patch }))
+        <ProductFormBasicFields
+          categories={categories}
+          defaults={product ?? createDefaults ?? {}}
+          image={
+            compact ? undefined : (
+              <Can permission="products.manage">
+                <ProductImageUploadField
+                  disabled={isSubmitting}
+                  imageUrl={product?.imageUrl}
+                  isUploading={isUploadingImage}
+                  onPendingBlobChange={isEdit ? undefined : setPendingImageBlob}
+                  onRemove={isEdit && product?.imageUrl ? handleRemoveImage : undefined}
+                  onUpload={isEdit && product?.id ? handleUploadImage : undefined}
+                />
+              </Can>
+            )
           }
+          name={name}
+          onNameChange={setName}
         />
-        <Textarea label="Descripcion" placeholder="Detalles del producto" />
+        {compact ? (
+          <p className="text-sm text-on-surface-variant">
+            Se crea con lo básico y el SKU sale del nombre. El stock, el empaque y la imagen se
+            completan después desde Productos.
+          </p>
+        ) : (
+          <ProductFormMoreOptions
+            isEdit={isEdit}
+            isUnitRole={isUnitRole}
+            onOpenChange={setMoreOptionsOpen}
+            onPackConversionChange={(patch) =>
+              setPackConversionState((current) => ({ ...current, ...patch }))
+            }
+            onSkuChange={setSku}
+            open={moreOptionsOpen}
+            packConversionState={packConversionState}
+            product={product}
+            productName={name}
+            showErrors={showSubmitErrors}
+            sku={sku}
+          />
+        )}
         {imageError ? (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
             {imageError}

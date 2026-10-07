@@ -2,6 +2,7 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { generateProductSkuFromName } from "../../../../shared/utils/skuGeneration";
 import { ProductFormModal } from "./ProductFormModal";
 
 jest.mock("../../../../shared/auth/Can", () => ({
@@ -17,15 +18,43 @@ jest.mock("../../services/uploadProductImage", () => ({
   uploadProductImageBlob: jest.fn(),
 }));
 
+type UserSession = ReturnType<typeof userEvent.setup>;
+type ProductProp = NonNullable<Parameters<typeof ProductFormModal>[0]["product"]>;
+
+function moreOptionsToggle() {
+  return screen.getByRole("button", { name: /Más opciones/ });
+}
+
+async function openMoreOptions(user: UserSession) {
+  await user.click(moreOptionsToggle());
+  expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "true");
+}
+
+/** Etiquetas de los campos que el usuario ve, en orden (sin los de una sección cerrada). */
+function visibleFieldLabels() {
+  const form = document.querySelector("form") as HTMLFormElement;
+
+  return Array.from(form.elements)
+    .filter(
+      (element): element is HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement =>
+        (element instanceof HTMLInputElement ||
+          element instanceof HTMLSelectElement ||
+          element instanceof HTMLTextAreaElement) &&
+        !element.closest("[hidden]"),
+    )
+    .map((element) => element.labels?.[0]?.textContent?.trim());
+}
+
 describe("ProductFormModal · NumberInput (SHR-09)", () => {
   it("al enviar con Enter los precios con 3 decimales viajan redondeados a 2 y los stocks como enteros", async () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
     render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    await openMoreOptions(user);
 
-    const cost = screen.getByLabelText("Costo ref");
-    const price = screen.getByLabelText("Precio ref");
+    const cost = screen.getByLabelText("Costo REF");
+    const price = screen.getByLabelText("Precio REF");
     const stock = screen.getByLabelText("Stock inicial");
 
     expect(cost).toHaveAttribute("type", "text");
@@ -40,7 +69,7 @@ describe("ProductFormModal · NumberInput (SHR-09)", () => {
     await user.paste("harina");
     await user.type(cost, "1.004");
     await user.type(stock, "12");
-    await user.type(screen.getByLabelText("Stock minimo"), "3");
+    await user.type(screen.getByLabelText("Stock mínimo"), "3");
     await user.type(price, "2,345{Enter}");
 
     // Enter normaliza antes del submit; user-event no dispara el submit implicito
@@ -84,8 +113,8 @@ describe("ProductFormModal · NumberInput (SHR-09)", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Costo ref")).toHaveValue("1.25");
-    expect(screen.getByLabelText("Precio ref")).toHaveValue("2.5");
+    expect(screen.getByLabelText("Costo REF")).toHaveValue("1.25");
+    expect(screen.getByLabelText("Precio REF")).toHaveValue("2.5");
     expect(screen.getByLabelText("Stock actual")).toHaveValue("7");
     expect(screen.getByLabelText("Stock actual")).toBeDisabled();
 
@@ -107,12 +136,13 @@ describe("ProductFormModal · enteros y limites (SHR-09J)", () => {
     const onSubmit = jest.fn();
 
     render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    await openMoreOptions(user);
 
     await user.click(screen.getByLabelText("Nombre"));
     await user.paste("Harina");
     await user.click(screen.getByLabelText("SKU"));
     await user.paste("harina");
-    await user.click(screen.getByLabelText("Precio ref"));
+    await user.click(screen.getByLabelText("Precio REF"));
     await user.paste("2");
 
     return { onSubmit, user };
@@ -121,7 +151,7 @@ describe("ProductFormModal · enteros y limites (SHR-09J)", () => {
   it.each([
     ["Stock inicial", "2.5"],
     ["Stock inicial", "2,5"],
-    ["Stock minimo", "2.5"],
+    ["Stock mínimo", "2.5"],
   ])("%s = %s: se ve 2.5, avisa y no envia (ni con Enter ni con el boton)", async (label, typed) => {
     const { onSubmit, user } = await renderFilled();
     const field = screen.getByLabelText(label);
@@ -146,7 +176,7 @@ describe("ProductFormModal · enteros y limites (SHR-09J)", () => {
     const { onSubmit, user } = await renderFilled();
 
     await user.type(screen.getByLabelText("Stock inicial"), "3");
-    await user.type(screen.getByLabelText("Stock minimo"), "2.0{Enter}");
+    await user.type(screen.getByLabelText("Stock mínimo"), "2.0{Enter}");
     await user.click(screen.getByRole("button", { name: "Crear producto" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -216,5 +246,395 @@ describe("ProductFormModal · enteros y limites (SHR-09J)", () => {
       unitProduct: { barcode: null, name: undefined, salePriceRef: 1, sku: undefined },
       unitsPerPack: 2,
     });
+  });
+});
+
+describe("ProductFormModal · dos niveles (PRO-01)", () => {
+  const BASIC_FIELDS = ["Nombre", "Categoría", "Código de barras", "Precio REF", "Costo REF"];
+  const packProduct = {
+    barcode: "7591234567890",
+    categoryId: "cat-1",
+    currentCostRef: 10,
+    currentStock: 7,
+    id: "prod-1",
+    minStock: 2,
+    name: "Caja Cola x6",
+    packConversion: {
+      id: "conv-1",
+      linkedProduct: { id: "prod-2", name: "Cola", salePriceRef: 2.5, sku: "cola" },
+      role: "pack",
+      unitsPerPack: 6,
+    },
+    salePriceRef: 12.5,
+    sku: "caja-cola",
+  } as ProductProp;
+  const categories = [{ id: "cat-1", name: "Bebidas" }] as NonNullable<
+    Parameters<typeof ProductFormModal>[0]["categories"]
+  >;
+
+  async function fillBasics(user: UserSession) {
+    await user.click(screen.getByLabelText("Nombre"));
+    await user.paste("Harina");
+    await user.click(screen.getByLabelText("Precio REF"));
+    await user.paste("2");
+  }
+
+  it("al abrir un alta solo se ven los 5 campos basicos y Mas opciones esta cerrada", () => {
+    render(<ProductFormModal onOpenChange={jest.fn()} open />);
+
+    expect(visibleFieldLabels()).toEqual(BASIC_FIELDS);
+    expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("SKU, descripción, stock y empaque")).toBeVisible();
+    expect(screen.getByLabelText("SKU")).not.toBeVisible();
+    expect(screen.getByLabelText("Stock inicial")).not.toBeVisible();
+  });
+
+  it("al abrir Mas opciones aparecen SKU, Descripcion, Stock inicial, Stock minimo y el empaque", async () => {
+    const user = userEvent.setup({ delay: null });
+
+    render(<ProductFormModal onOpenChange={jest.fn()} open />);
+    await openMoreOptions(user);
+
+    expect(visibleFieldLabels()).toEqual([
+      ...BASIC_FIELDS,
+      "SKU",
+      "Descripción",
+      "Stock inicial",
+      "Stock mínimo",
+      "Se puede vender por unidad",
+    ]);
+    expect(screen.getByLabelText("SKU")).toBeVisible();
+    expect(screen.getByLabelText("SKU")).toHaveAttribute("aria-required", "true");
+  });
+
+  it("edicion sin abrir Mas opciones: envia el mismo payload, con los campos de la seccion cerrada y sin stock", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn().mockResolvedValue(packProduct);
+    const onCreated = jest.fn();
+
+    render(
+      <ProductFormModal
+        categories={categories}
+        mode="edit"
+        onCreated={onCreated}
+        onOpenChange={jest.fn()}
+        onSubmit={onSubmit}
+        open
+        product={packProduct}
+      />,
+    );
+
+    expect(visibleFieldLabels()).toEqual(BASIC_FIELDS);
+    expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("SKU caja-cola · Stock actual 7")).toBeVisible();
+
+    const stock = screen.getByLabelText("Stock actual");
+
+    expect(stock).toHaveValue("7");
+    expect(stock).toBeDisabled();
+    expect(stock).toHaveAttribute("readonly");
+    expect(stock).not.toHaveAttribute("name");
+    expect(stock).toHaveAccessibleDescription(
+      "Se corrige desde Inventario con un ajuste, para que quede registrado el movimiento.",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toEqual({
+      barcode: "7591234567890",
+      categoryId: "cat-1",
+      currentCostRef: 10,
+      minStock: 2,
+      name: "Caja Cola x6",
+      packConversion: {
+        enabled: true,
+        mode: "link_existing",
+        unitProductId: "prod-2",
+        unitsPerPack: 6,
+      },
+      salePriceRef: 12.5,
+      sku: "caja-cola",
+    });
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("currentStock");
+    expect(onSubmit.mock.calls[0][1]).toEqual({ pendingImageBlob: null });
+    // `onCreated` es solo del alta.
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it("SKU vacio con la seccion cerrada: no envia, abre Mas opciones, enfoca SKU y avisa", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+
+    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    await fillBasics(user);
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+    const sku = screen.getByLabelText("SKU");
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "true");
+    expect(sku).toBeVisible();
+    expect(sku).toHaveFocus();
+    expect(sku).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("Indica el SKU o genéralo desde el nombre con el botón.")).toBeVisible();
+
+    await user.paste("harina");
+
+    expect(sku).not.toHaveAttribute("aria-invalid");
+
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toEqual({
+      barcode: null,
+      categoryId: undefined,
+      currentCostRef: undefined,
+      currentStock: undefined,
+      minStock: undefined,
+      name: "Harina",
+      packConversion: undefined,
+      salePriceRef: 2,
+      sku: "harina",
+    });
+  });
+
+  it("stock minimo con decimales y la seccion cerrada: no envia, la abre y enfoca el campo", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+
+    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    await fillBasics(user);
+    await openMoreOptions(user);
+    await user.click(screen.getByLabelText("SKU"));
+    await user.paste("harina");
+    await user.type(screen.getByLabelText("Stock mínimo"), "2.5");
+    await user.click(moreOptionsToggle());
+
+    const minStock = screen.getByLabelText("Stock mínimo");
+
+    expect(minStock).not.toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "true");
+    expect(minStock).toBeVisible();
+    expect(minStock).toHaveFocus();
+    expect(screen.getByText("Debe ser un número entero.")).toBeVisible();
+  });
+
+  it("unidades por empaque invalidas con la seccion cerrada: no envia, la abre, enfoca y avisa", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+
+    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    await fillBasics(user);
+    await openMoreOptions(user);
+    await user.click(screen.getByLabelText("SKU"));
+    await user.paste("harina");
+    await user.click(screen.getByLabelText("Se puede vender por unidad"));
+    await user.click(screen.getByLabelText("Precio venta unidad (ref)"));
+    await user.paste("1");
+    await user.clear(screen.getByLabelText("Unidades por empaque"));
+    await user.type(screen.getByLabelText("Unidades por empaque"), "1");
+    await user.click(moreOptionsToggle());
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+    const units = screen.getByLabelText("Unidades por empaque");
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "true");
+    expect(units).toHaveFocus();
+    expect(screen.getByText("Indica unidades por empaque (minimo 2).")).toBeVisible();
+  });
+
+  it("un required nativo vacio dentro de la seccion cerrada la abre y enfoca el campo en vez de bloquear en silencio", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+
+    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    await fillBasics(user);
+    await openMoreOptions(user);
+    await user.click(screen.getByLabelText("SKU"));
+    await user.paste("harina");
+    await user.click(screen.getByLabelText("Se puede vender por unidad"));
+    await user.click(moreOptionsToggle());
+
+    const unitPrice = screen.getByLabelText("Precio venta unidad (ref)");
+
+    expect(unitPrice).toBeRequired();
+    expect(unitPrice).not.toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "true");
+    expect(unitPrice).toBeVisible();
+    expect(unitPrice).toHaveFocus();
+  });
+
+  it("un basico vacio manda sobre la seccion cerrada: no se abre ni se roba el foco", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+
+    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("SKU")).not.toHaveFocus();
+  });
+
+  it("si onSubmit rechaza el modal no se cierra ni avisa del alta", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onOpenChange = jest.fn();
+    const onCreated = jest.fn();
+    const onSubmit = jest.fn().mockRejectedValue(new Error("SKU duplicado"));
+    const unhandled = jest.fn();
+
+    // El formulario no se traga el rechazo: sube sin atender, como hoy el de
+    // `mutateAsync`. Se aparta el aviso global de jest para poder observarlo.
+    const jestListeners = process.listeners("unhandledRejection");
+
+    process.removeAllListeners("unhandledRejection");
+    process.on("unhandledRejection", unhandled);
+
+    try {
+      render(
+        <ProductFormModal
+          compact
+          onCreated={onCreated}
+          onOpenChange={onOpenChange}
+          onSubmit={onSubmit}
+          open
+        />,
+      );
+      await fillBasics(user);
+      await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(unhandled).toHaveBeenCalledTimes(1));
+    } finally {
+      process.removeAllListeners("unhandledRejection");
+      jestListeners.forEach((listener) => process.on("unhandledRejection", listener));
+    }
+
+    expect(unhandled.mock.calls[0][0]).toEqual(new Error("SKU duplicado"));
+
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText("Nombre")).toHaveValue("Harina");
+  });
+});
+
+describe("ProductFormModal · modo compact (PRO-01)", () => {
+  const categories = [{ id: "cat-1", name: "Bebidas" }] as NonNullable<
+    Parameters<typeof ProductFormModal>[0]["categories"]
+  >;
+
+  it("solo muestra el nivel basico: sin Mas opciones, sin SKU, sin stock ni empaque", () => {
+    render(<ProductFormModal compact onOpenChange={jest.fn()} open />);
+
+    expect(screen.getByRole("dialog", { name: "Nuevo producto" })).toBeInTheDocument();
+    expect(visibleFieldLabels()).toEqual([
+      "Nombre",
+      "Categoría",
+      "Código de barras",
+      "Precio REF",
+      "Costo REF",
+    ]);
+    expect(screen.queryByRole("button", { name: /Más opciones/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("SKU")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Stock inicial")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Se puede vender por unidad")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Crear producto" })).toBeInTheDocument();
+  });
+
+  it("precarga initialValues, envia el alta con SKU generado y entrega el producto creado antes de cerrar", async () => {
+    const user = userEvent.setup({ delay: null });
+    const created = { id: "prod-9", name: "Harina PAN 1kg", sku: "hari-pan-1kg" } as ProductProp;
+    const calls: string[] = [];
+    const onSubmit = jest.fn().mockResolvedValue(created);
+    const onCreated = jest.fn(() => calls.push("created"));
+    const onOpenChange = jest.fn((open: boolean) => calls.push(`open:${open}`));
+
+    render(
+      <ProductFormModal
+        categories={categories}
+        compact
+        initialValues={{
+          barcode: " 7591234567890 ",
+          categoryId: "cat-1",
+          currentCostRef: 1.5,
+          name: "Harina PAN 1kg",
+        }}
+        onCreated={onCreated}
+        onOpenChange={onOpenChange}
+        onSubmit={onSubmit}
+        open
+      />,
+    );
+
+    expect(screen.getByLabelText("Nombre")).toHaveValue("Harina PAN 1kg");
+    expect(screen.getByLabelText("Categoría")).toHaveValue("cat-1");
+    expect(screen.getByLabelText("Código de barras")).toHaveValue(" 7591234567890 ");
+    expect(screen.getByLabelText("Costo REF")).toHaveValue("1.5");
+    expect(screen.getByLabelText("Precio REF")).toHaveValue("");
+
+    await user.click(screen.getByLabelText("Precio REF"));
+    await user.paste("2");
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0]).toEqual({
+      barcode: "7591234567890",
+      categoryId: "cat-1",
+      currentCostRef: 1.5,
+      currentStock: undefined,
+      minStock: undefined,
+      name: "Harina PAN 1kg",
+      packConversion: undefined,
+      salePriceRef: 2,
+      sku: generateProductSkuFromName("Harina PAN 1kg"),
+    });
+    expect(onSubmit.mock.calls[0][0].sku).not.toBe("");
+    expect(onSubmit.mock.calls[0][1]).toEqual({ pendingImageBlob: null });
+    expect(onCreated).toHaveBeenCalledWith(created);
+    expect(calls).toEqual(["created", "open:false"]);
+  });
+
+  it("es siempre un alta: ignora mode=edit y product, y sin producto devuelto no llama a onCreated", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+    const onCreated = jest.fn();
+    const onOpenChange = jest.fn();
+
+    render(
+      <ProductFormModal
+        compact
+        mode="edit"
+        onCreated={onCreated}
+        onOpenChange={onOpenChange}
+        onSubmit={onSubmit}
+        open
+        product={{ id: "prod-1", name: "Viejo", salePriceRef: 9, sku: "viejo" } as ProductProp}
+      />,
+    );
+
+    expect(screen.getByLabelText("Nombre")).toHaveValue("");
+
+    await user.click(screen.getByLabelText("Nombre"));
+    await user.paste("Azúcar");
+    await user.click(screen.getByLabelText("Precio REF"));
+    await user.paste("3");
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ name: "Azúcar", salePriceRef: 3 });
+    expect(onSubmit.mock.calls[0][0]).toHaveProperty("currentStock", undefined);
+    expect(onCreated).not.toHaveBeenCalled();
   });
 });
