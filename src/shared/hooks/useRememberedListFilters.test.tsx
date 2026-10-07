@@ -2,6 +2,8 @@ import "@testing-library/jest-dom";
 import { act, render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { z } from "zod";
 
 import { RememberedFiltersChip } from "@/shared/components/RememberedFiltersChip";
@@ -298,6 +300,59 @@ describe("useRememberedListFilters", () => {
       act(() => result.current.list.setField("sort", "price"));
 
       expect(remembered()).toEqual({ status: "active" });
+    });
+
+    describe("desactivada, en una carga completa (HTML del servidor + hidratación)", () => {
+      /** Como F5 o una URL directa: el servidor no conoce la preferencia y pinta con el valor por defecto. */
+      async function loadPage(query: string) {
+        mockUrl.query = query;
+
+        const container = document.createElement("div");
+
+        document.body.appendChild(container);
+        container.innerHTML = renderToString(<ListScreen />);
+
+        const root = await act(async () => hydrateRoot(container, <ListScreen />));
+
+        return {
+          container,
+          unload: async () => {
+            await act(async () => root.unmount());
+            container.remove();
+          },
+        };
+      }
+
+      it("no guarda los filtros con los que se carga la página", async () => {
+        window.localStorage.setItem(REMEMBER_FILTERS_PREFERENCE_KEY, "0");
+
+        const page = await loadPage("status=active");
+
+        expect(page.container.querySelector('[data-testid="status"]')).toHaveTextContent("active");
+        expect(remembered()).toBeNull();
+
+        await page.unload();
+      });
+
+      it("no borra lo guardado al cargar la lista sin filtros", async () => {
+        window.localStorage.setItem(REMEMBER_FILTERS_PREFERENCE_KEY, "0");
+        remember({ status: "active" });
+
+        const page = await loadPage("");
+
+        expect(page.container.querySelector('[data-testid="status"]')).toHaveTextContent("all");
+        expect(remembered()).toEqual({ status: "active" });
+
+        await page.unload();
+      });
+
+      it("activada, la misma carga sí guarda", async () => {
+        const page = await loadPage("status=active");
+
+        expect(remembered()).toEqual({ status: "active" });
+
+        await page.unload();
+      });
     });
 
     it("se guarda en localStorage y al desactivarla se olvida lo recordado", () => {

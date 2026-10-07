@@ -244,7 +244,9 @@ export function useRememberedListFilters<TState extends Record<string, unknown>>
       return;
     }
 
-    if (enabled) {
+    // `enabled` vale `true` mientras se hidrata (el servidor no conoce la
+    // preferencia): antes de tocar el storage se lee su valor real.
+    if (enabled && readRememberFiltersPreference()) {
       writeRemembered(listKey, serialized);
     }
   }, [enabled, listKey, serialized]);
