@@ -63,6 +63,9 @@ type NormalizeOptions = TextOptions & {
 
 type TypedSeparator = "," | ".";
 
+/** Una tecla anunciada por `beforeinput`: el carácter y la selección que va a sustituir. */
+type TypedKey = { char: string; end: number; start: number };
+
 const DIGIT = /\d/;
 const SEPARATOR = /[.,]/g;
 const INTEGER_REQUIRED_MESSAGE = "Debe ser un número entero.";
@@ -191,7 +194,7 @@ function exceedsDigits(next: string, previous: string) {
   return countDigits(next) > MAX_DIGITS && countDigits(next) > countDigits(previous);
 }
 
-/** Dónde empieza y cuánto mide lo que `raw` tiene de nuevo respecto a `previous`. */
+/** Dónde empieza y cuánto mide lo que `raw` tiene de nuevo respecto a `previous`, y cuánto de `previous` ya no está. */
 function findInsertion(previous: string, raw: string) {
   const shortest = Math.min(previous.length, raw.length);
   let start = 0;
@@ -205,7 +208,24 @@ function findInsertion(previous: string, raw: string) {
     tail += 1;
   }
 
-  return { length: raw.length - start - tail, start };
+  return { length: raw.length - start - tail, removed: previous.length - start - tail, start };
+}
+
+/**
+ * `true` si el cambio es de una sola tecla: borrar, añadir un carácter sin quitar
+ * ninguno o la tecla que anunció el navegador sobre su selección. Solo entonces
+ * se puede limpiar el texto carácter a carácter. Que la diferencia con el valor
+ * anterior mida un carácter no basta: "103" sustituido entero por "1e3" también
+ * la mide, y limpiarlo dejaría 13.
+ */
+function isSingleKeyEdit(previous: string, raw: string, key: TypedKey | null) {
+  const insertion = findInsertion(previous, raw);
+
+  return (
+    insertion.length === 0 ||
+    (insertion.length === 1 && insertion.removed === 0) ||
+    (key !== null && raw === previous.slice(0, key.start) + key.char + previous.slice(key.end))
+  );
 }
 
 function incrementDigits(digits: string) {
@@ -425,6 +445,8 @@ export function NumberInput({
   const lastValue = useRef("");
   const isComposing = useRef(false);
   const isWriting = useRef(false);
+  // Tecla que el navegador anunció para la edición en curso; `null` si el texto llega de otra forma.
+  const typedKey = useRef<TypedKey | null>(null);
   // Texto a medio componer (teclado IME): se muestra tal cual hasta que la composición termina.
   const [composition, setComposition] = useState<string | null>(null);
   const minLimit = toLimit(min);
@@ -490,10 +512,20 @@ export function NumberInput({
       }
     };
 
-    remember();
-    element.addEventListener("beforeinput", remember);
+    const rememberEdit = (event: InputEvent) => {
+      const start = element.selectionStart ?? element.value.length;
 
-    return () => element.removeEventListener("beforeinput", remember);
+      remember();
+      typedKey.current =
+        event.inputType === "insertText" && event.data?.length === 1
+          ? { char: event.data, end: element.selectionEnd ?? start, start }
+          : null;
+    };
+
+    remember();
+    element.addEventListener("beforeinput", rememberEdit);
+
+    return () => element.removeEventListener("beforeinput", rememberEdit);
   });
 
   // Lo que escribe el propio campo (formato al salir, pegado, flechas) lleva siempre punto.
@@ -507,6 +539,9 @@ export function NumberInput({
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
     const element = event.currentTarget;
     const raw = element.value;
+    const key = typedKey.current;
+
+    typedKey.current = null;
 
     // Reescribir el campo a media composición hace que el teclado vuelva a insertar todo (12,5 → 1212512.5).
     if (isComposing.current) {
@@ -515,18 +550,18 @@ export function NumberInput({
     }
 
     const previous = lastValue.current;
-    const insertion = findInsertion(previous, raw);
     const rawCaret = element.selectionStart ?? raw.length;
     const decimalIndex = findTypedDecimalIndex(raw, rawCaret, typedSeparator.current);
     const next = sanitizeNumberText(dropSeparatorsExcept(raw, decimalIndex), options);
 
-    // Varios caracteres de golpe sin ser pegado (arrastre, autocompletado, dictado, composición):
-    // misma regla que al pegar. Lo que escribe el propio campo ya viene limpio.
+    // Texto que no llega de una sola tecla ni es pegado (arrastre, autocompletado, dictado, composición,
+    // una selección sustituida): misma regla que al pegar, sobre el texto entero. Lo que escribe el
+    // propio campo ya viene limpio.
     if (
       !isWriting.current &&
-      ((insertion.length > 1 && isNotPlainNumber(raw)) || exceedsDigits(next, previous))
+      ((!isSingleKeyEdit(previous, raw, key) && isNotPlainNumber(raw)) || exceedsDigits(next, previous))
     ) {
-      const caret = Math.min(insertion.start, previous.length);
+      const caret = Math.min(findInsertion(previous, raw).start, previous.length);
 
       element.value = previous;
       element.setSelectionRange(caret, caret);

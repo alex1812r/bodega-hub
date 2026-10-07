@@ -1647,4 +1647,179 @@ describe("NumberInput text that arrives without typing or pasting (SHR-18)", () 
       expect(getField()).toHaveValue("12345678901234.00");
     });
   });
+
+  // SHR-23: el texto nuevo comparte principio y final con el valor, así que la diferencia mide un solo carácter.
+  describe("a value replaced by text that shares its start and its end (SHR-23)", () => {
+    const REPLACEMENTS = [
+      [103, "1e3"],
+      [304, "3-4"],
+      [10520, "10 20"],
+      [1293, "12e3"],
+    ] as const;
+
+    /** Lo que hace el navegador con una selección: avisa con `beforeinput` (el valor aún es el anterior) y después cambia el texto. */
+    function replaceSelection(text: string, inputType: string, start = 0, end = getField().value.length) {
+      const field = getField();
+      const next = field.value.slice(0, start) + text + field.value.slice(end);
+
+      field.setSelectionRange(start, end);
+      fireEvent(field, new InputEvent("beforeinput", { bubbles: true, data: text, inputType }));
+      insert(next, inputType);
+    }
+
+    describe.each(REPLACEMENTS)("%s replaced by %s", (initial, text) => {
+      it("keeps the value when the field is filled without a beforeinput (fill, autofill)", () => {
+        const onChange = jest.fn();
+        const onValueChange = jest.fn();
+
+        render(<NumberInput defaultValue={initial} label="Monto" onChange={onChange} onValueChange={onValueChange} />);
+
+        insert(text, "insertReplacementText");
+
+        expect(getField()).toHaveValue(String(initial));
+        expect(onChange).not.toHaveBeenCalled();
+        expect(onValueChange).not.toHaveBeenCalled();
+      });
+
+      it.each(["insertText", "insertFromDrop", "insertReplacementText"])(
+        "keeps the value when the whole selection is replaced (%s)",
+        (inputType) => {
+          const onValueChange = jest.fn();
+
+          render(<NumberInput defaultValue={initial} label="Monto" onValueChange={onValueChange} />);
+
+          replaceSelection(text, inputType);
+
+          expect(getField()).toHaveValue(String(initial));
+          expect(onValueChange).not.toHaveBeenCalled();
+        },
+      );
+
+      it("keeps the value when the text is composed over the whole selection", () => {
+        const onValueChange = jest.fn();
+
+        render(<NumberInput defaultValue={initial} label="Monto" onValueChange={onValueChange} />);
+
+        compose(Array.from(text, (_, index) => text.slice(0, index + 1)));
+        endComposition(text);
+
+        expect(getField()).toHaveValue(String(initial));
+        expect(onValueChange).not.toHaveBeenCalled();
+      });
+
+      it("keeps the value of a controlled field", () => {
+        const onValueChange = jest.fn();
+
+        render(<ControlledAmount initial={initial} onValueChange={onValueChange} />);
+
+        insert(text, "insertReplacementText");
+
+        expect(getField()).toHaveValue(String(initial));
+        expect(onValueChange).not.toHaveBeenCalled();
+      });
+    });
+
+    it("keeps the value react-hook-form will submit", async () => {
+      const user = userEvent.setup();
+      const onSubmit = jest.fn();
+
+      render(<AmountForm defaultAmount={103} onSubmit={onSubmit} />);
+
+      insert("1e3", "insertReplacementText");
+
+      expect(getField()).toHaveValue("103");
+      expect(screen.getByRole("status")).toHaveTextContent("103");
+
+      await user.click(screen.getByRole("button", { name: /guardar/i }));
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(onSubmit).toHaveBeenLastCalledWith({ amount: 103 });
+    });
+
+    it("rejects one foreign character dropped on a selected digit", () => {
+      render(<NumberInput defaultValue={103} label="Monto" />);
+
+      replaceSelection("e", "insertFromDrop", 1, 2);
+
+      expect(getField()).toHaveValue("103");
+    });
+
+    it("rejects a replacement that leaves separators no one can read", () => {
+      render(<NumberInput defaultValue={10203} label="Monto" />);
+
+      insert("1.2.3", "insertReplacementText");
+
+      expect(getField()).toHaveValue("10203");
+    });
+
+    it.each([
+      [103, "1.250,75", "1250.75"],
+      [103, "113", "113"],
+      [10520, "10 520", "10520"],
+      [1293, "12,3", "12.3"],
+    ])("still replaces %s by %s", (initial, text, expected) => {
+      const onValueChange = jest.fn();
+
+      render(<NumberInput defaultValue={initial} label="Monto" onValueChange={onValueChange} />);
+
+      replaceSelection(text, "insertText");
+
+      expect(getField()).toHaveValue(expected);
+      expect(onValueChange).toHaveBeenLastCalledWith(Number(expected));
+    });
+
+    it("still replaces a selection with a typed digit", async () => {
+      const user = userEvent.setup();
+      const onValueChange = jest.fn();
+
+      render(<NumberInput defaultValue={103} label="Monto" onValueChange={onValueChange} />);
+
+      await user.type(getField(), "7", { initialSelectionEnd: 2, initialSelectionStart: 1 });
+
+      expect(getField()).toHaveValue("173");
+      expect(onValueChange).toHaveBeenLastCalledWith(173);
+    });
+
+    it("still replaces the whole value by typing over it", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput defaultValue={103} label="Monto" />);
+
+      await user.type(getField(), "4,5", { initialSelectionEnd: 3, initialSelectionStart: 0 });
+
+      expect(getField()).toHaveValue("4.5");
+    });
+
+    it("still rejects a second equal separator typed over a selection, without rejecting the edit", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput label="Monto" />);
+
+      await user.type(getField(), "1.25");
+      await user.type(getField(), ".", { initialSelectionEnd: 3, initialSelectionStart: 2 });
+
+      expect(getField()).toHaveValue("1.5");
+    });
+
+    it("still ignores a key that is not numeric typed over a selection, as when it is typed anywhere else", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput defaultValue={103} label="Monto" />);
+
+      // Como Supr sobre la selección: el gesto es de una tecla y la quita quien escribe.
+      await user.type(getField(), "e", { initialSelectionEnd: 2, initialSelectionStart: 1 });
+
+      expect(getField()).toHaveValue("13");
+    });
+
+    it("still deletes characters, joining what is left", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput defaultValue={10520} label="Monto" />);
+
+      await user.type(getField(), "{Backspace}", { initialSelectionEnd: 3, initialSelectionStart: 2 });
+
+      expect(getField()).toHaveValue("1020");
+    });
+  });
 });
