@@ -3,8 +3,8 @@
 import { useState } from "react";
 
 import { Button } from "@/shared/components/Button";
-import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { Textarea } from "@/shared/components/Textarea";
 
 import { useVaultWithdrawal } from "../../hooks/useVault";
@@ -87,20 +87,16 @@ export function VaultWithdrawalModal({ onOpenChange, open }: VaultWithdrawalModa
       title="Retirar efectivo"
     >
       <div className="grid gap-3">
-        <Input
+        <NumberInput
+          decimals={2}
           label="Monto Bs."
-          min="0"
           onChange={(event) => setAmountVes(event.target.value)}
-          step="0.01"
-          type="number"
           value={amountVes}
         />
-        <Input
+        <NumberInput
+          decimals={2}
           label="Monto REF"
-          min="0"
           onChange={(event) => setAmountRef(event.target.value)}
-          step="0.01"
-          type="number"
           value={amountRef}
         />
         <Textarea

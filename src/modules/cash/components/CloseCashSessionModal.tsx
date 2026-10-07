@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { useCloseCashSession } from "@/modules/cash/hooks/useCash";
 import { Button } from "@/shared/components/Button";
-import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 type CloseCashSessionModalProps = {
@@ -177,20 +177,16 @@ export function CloseCashSessionModal({
           (paso 3), no solo con las ventas del dia.
         </p>
 
-        <Input
+        <NumberInput
+          decimals={2}
           label="Efectivo contado Bs. (cajon completo)"
-          min="0"
           onChange={(event) => setClosingVes(event.target.value)}
-          step="0.01"
-          type="number"
           value={closingVes}
         />
-        <Input
+        <NumberInput
+          decimals={2}
           label="Efectivo contado REF (cajon completo)"
-          min="0"
           onChange={(event) => setClosingRef(event.target.value)}
-          step="0.01"
-          type="number"
           value={closingRef}
         />
         {errorMessage ? <p className="text-sm text-destructive">{errorMessage}</p> : null}

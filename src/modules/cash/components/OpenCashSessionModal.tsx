@@ -7,8 +7,8 @@ import {
   useOpenCashSession,
 } from "@/modules/cash/hooks/useCash";
 import { Button } from "@/shared/components/Button";
-import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { NumberInput } from "@/shared/components/NumberInput";
 
 type OpenCashSessionModalProps = {
   onOpenChange: (open: boolean) => void;
@@ -134,20 +134,16 @@ export function OpenCashSessionModal({
             por esta sesion (no se transferira aparte al baul).
           </p>
         ) : null}
-        <Input
+        <NumberInput
+          decimals={2}
           label="Apertura Bs."
-          min="0"
           onChange={(event) => setOpeningVes(event.target.value)}
-          step="0.01"
-          type="number"
           value={openingVes}
         />
-        <Input
+        <NumberInput
+          decimals={2}
           label="Apertura REF"
-          min="0"
           onChange={(event) => setOpeningRef(event.target.value)}
-          step="0.01"
-          type="number"
           value={openingRef}
         />
         {errorMessage ? <p className="text-sm text-destructive">{errorMessage}</p> : null}
