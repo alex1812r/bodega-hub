@@ -75,6 +75,56 @@ describe("/api/products", () => {
     expect(body.data.total).toBe(1);
   });
 
+  it("filters products by exact sku, normalizing case and spaces", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/products?sku=%20HER-TAL-001%20&search=no-coincide"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.items).toEqual([
+      expect.objectContaining({ id: "prod-drill", sku: "her-tal-001" }),
+    ]);
+    expect(body.data.total).toBe(1);
+  });
+
+  it("does not match a partial sku with the exact filter", async () => {
+    const response = await GET(new Request("http://localhost/api/products?sku=her-tal"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.items).toEqual([]);
+    expect(body.data.total).toBe(0);
+  });
+
+  it("ignores an empty sku parameter", async () => {
+    const withEmptySku = await GET(new Request("http://localhost/api/products?sku=%20&limit=100"));
+    const withoutSku = await GET(new Request("http://localhost/api/products?limit=100"));
+    const emptyBody = await withEmptySku.json();
+    const plainBody = await withoutSku.json();
+
+    expect(withEmptySku.status).toBe(200);
+    expect(emptyBody.data.total).toBeGreaterThan(1);
+    expect(emptyBody.data.total).toBe(plainBody.data.total);
+  });
+
+  it("does not return a product of another store by exact sku", async () => {
+    const otherStore = { headers: { "x-demo-store-id": "00000000-0000-4000-8000-000000000002" } };
+    const fromDefaultStore = await GET(new Request("http://localhost/api/products?sku=sur-arr-001"));
+    const fromOtherStore = await GET(
+      new Request("http://localhost/api/products?sku=her-tal-001", otherStore),
+    );
+    const ownInOtherStore = await GET(
+      new Request("http://localhost/api/products?sku=sur-arr-001", otherStore),
+    );
+
+    expect((await fromDefaultStore.json()).data.items).toEqual([]);
+    expect((await fromOtherStore.json()).data.items).toEqual([]);
+    expect((await ownInOtherStore.json()).data.items).toEqual([
+      expect.objectContaining({ id: "prod-sur-arroz" }),
+    ]);
+  });
+
   it("paginates products with skip and limit", async () => {
     const response = await GET(new Request("http://localhost/api/products?skip=1&limit=10"));
     const body = await response.json();
@@ -158,10 +208,12 @@ describe("/api/products", () => {
   describe("supabase data source", () => {
     const mockRange = jest.fn();
     const mockOrder = jest.fn().mockReturnThis();
+    const mockEq = jest.fn().mockReturnThis();
+    const mockOr = jest.fn().mockReturnThis();
     const mockSelect = jest.fn(() => ({
-      eq: jest.fn().mockReturnThis(),
+      eq: mockEq,
       ilike: jest.fn().mockReturnThis(),
-      or: jest.fn().mockReturnThis(),
+      or: mockOr,
       order: mockOrder,
       range: mockRange,
     }));
@@ -208,6 +260,28 @@ describe("/api/products", () => {
       ]);
       expect(body.data.total).toBe(1);
       expect(mockRange).toHaveBeenCalledWith(0, 9);
+    });
+
+    it("filters by exact sku within the server-resolved store", async () => {
+      const response = await GET(
+        new Request(
+          "http://localhost/api/products?sku=%20SKU-001%20&search=taladro&store_id=otra-tienda&storeId=otra-tienda",
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockEq).toHaveBeenCalledWith("sku", "sku-001");
+      expect(mockEq).toHaveBeenCalledWith("store_id", "00000000-0000-4000-8000-000000000001");
+      expect(mockEq).not.toHaveBeenCalledWith("store_id", "otra-tienda");
+      expect(mockOr).not.toHaveBeenCalled();
+    });
+
+    it("ignores an empty sku parameter in supabase", async () => {
+      const response = await GET(new Request("http://localhost/api/products?sku=&search=taladro"));
+
+      expect(response.status).toBe(200);
+      expect(mockEq).not.toHaveBeenCalledWith("sku", expect.anything());
+      expect(mockOr).toHaveBeenCalledTimes(1);
     });
 
     it("applies sort params when listing products from supabase", async () => {

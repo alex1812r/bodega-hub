@@ -119,12 +119,16 @@ describe("fetchers por defecto de EntityAutocomplete", () => {
     expect(requestedUrl(1).searchParams.get("limit")).toBe("100");
   });
 
-  it("en búsqueda exacta consulta además el código de barras y lo pone primero sin duplicar", async () => {
-    fetchMock.mockImplementation(async (url: string) =>
-      new URL(url, "http://localhost").searchParams.has("barcode")
-        ? page([apiProduct(2)])
-        : page([apiProduct(1), apiProduct(2)]),
-    );
+  it("en búsqueda exacta consulta además código de barras y SKU exactos y los pone primero sin duplicar", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      const params = new URL(url, "http://localhost").searchParams;
+
+      if (params.has("barcode")) {
+        return page([apiProduct(2)]);
+      }
+
+      return params.has("sku") ? page([]) : page([apiProduct(1), apiProduct(2)]);
+    });
 
     const options = await fetchProductEntityOptions({
       exact: true,
@@ -141,10 +145,74 @@ describe("fetchers por defecto de EntityAutocomplete", () => {
     expect(queries).toEqual(
       expect.arrayContaining([
         { barcode: "7592", limit: "8", skip: "0" },
+        { limit: "8", sku: "7592", skip: "0" },
         { limit: "8", search: "7592", skip: "0" },
       ]),
     );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(options.map((option) => option.id)).toEqual(["p-2", "p-1"]);
+  });
+
+  it("trae el SKU exacto aunque la búsqueda parcial llene la página sin él", async () => {
+    const partialMatches = Array.from({ length: 10 }, (_, index) => apiProduct(index + 1));
+    const exactBySku = apiProduct(99, { sku: "arr-1" });
+
+    fetchMock.mockImplementation(async (url: string) => {
+      const params = new URL(url, "http://localhost").searchParams;
+
+      if (params.has("barcode")) {
+        return page([]);
+      }
+
+      return params.has("sku") ? page([exactBySku]) : page(partialMatches);
+    });
+
+    const options = await fetchProductEntityOptions({
+      exact: true,
+      filters: { active: true, categoryId: "cat-1" },
+      limit: 8,
+      query: "ARR-1",
+      signal,
+    });
+
+    const skuCall = fetchMock.mock.calls
+      .map(([url]) => Object.fromEntries(new URL(url as string, "http://localhost").searchParams))
+      .find((params) => "sku" in params);
+
+    expect(skuCall).toEqual({
+      categoryId: "cat-1",
+      isActive: "true",
+      limit: "8",
+      sku: "ARR-1",
+      skip: "0",
+    });
+    expect(options[0]).toEqual(expect.objectContaining({ id: "p-99", sku: "arr-1" }));
+    expect(options).toHaveLength(11);
+  });
+
+  it("no consulta barcode ni sku fuera del Enter", async () => {
+    fetchMock.mockResolvedValue(page([]));
+
+    await fetchProductEntityOptions({ exact: false, filters: {}, limit: 8, query: "arr", signal });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(requestedUrl().searchParams.has("sku")).toBe(false);
+    expect(requestedUrl().searchParams.has("barcode")).toBe(false);
+  });
+
+  it("pide al servidor el estado de contacto del filtro active", async () => {
+    fetchMock.mockResolvedValueOnce(page([{ ...apiContact(1), isActive: false }]));
+
+    const options = await fetchContactEntityOptions({
+      exact: false,
+      filters: { active: false },
+      limit: 8,
+      query: "lago",
+      signal,
+    });
+
+    expect(requestedUrl().searchParams.get("isActive")).toBe("false");
+    expect(options).toEqual([expect.objectContaining({ id: "c-1", isActive: false })]);
   });
 
   it("busca contactos con el tipo que entiende el BFF", async () => {

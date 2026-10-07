@@ -84,18 +84,22 @@ export const fetchProductEntityOptions: EntityFetcher<"product"> = async ({
     return (await searchRequest).items.map(toProductEntityOption);
   }
 
-  // Lector de barras: el filtro `barcode` es igualdad exacta en servidor, así
+  // Lector de barras: `barcode` y `sku` son igualdad exacta en servidor, así
   // la coincidencia llega aunque la búsqueda parcial devuelva más de una página.
-  const [byBarcode, bySearch] = await Promise.all([
+  const [byBarcode, bySku, bySearch] = await Promise.all([
     apiFetch<PaginatedList<ProductMock>>("/api/products", {
       query: { ...baseQuery, barcode: query },
+      signal,
+    }),
+    apiFetch<PaginatedList<ProductMock>>("/api/products", {
+      query: { ...baseQuery, sku: query },
       signal,
     }),
     searchRequest,
   ]);
   const seen = new Set<string>();
 
-  return [...byBarcode.items, ...bySearch.items]
+  return [...byBarcode.items, ...bySku.items, ...bySearch.items]
     .filter((product) => {
       if (seen.has(product.id)) {
         return false;
@@ -107,7 +111,10 @@ export const fetchProductEntityOptions: EntityFetcher<"product"> = async ({
     .map(toProductEntityOption);
 };
 
-/** Busca contactos en `GET /api/contacts` por nombre, RIF o teléfono. */
+/**
+ * Busca contactos en `GET /api/contacts` por nombre, RIF o teléfono. El BFF
+ * aplica `isActive`, así que la página llega ya filtrada por estado.
+ */
 export const fetchContactEntityOptions: EntityFetcher<"contact"> = async ({
   filters,
   limit,

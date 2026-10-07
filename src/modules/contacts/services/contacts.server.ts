@@ -69,11 +69,23 @@ export async function listContacts(
   const supabase = await createRouteSupabaseClient();
   const type = searchParams.get("type");
   const search = searchParams.get("search")?.trim();
+  const isActive = searchParams.get("isActive");
+  const filtersByActive = isActive !== null && isActive !== "";
+
+  // Paridad con el mock: solo "true"/"false" coinciden con algun contacto.
+  if (filtersByActive && isActive !== "true" && isActive !== "false") {
+    return paginateList<ReturnType<typeof mapContact>>([], searchParams);
+  }
+
   const { skip, to } = getPaginationRange(searchParams);
 
   let query = supabase.from("contacts").select("*", { count: "exact" }).eq("store_id", storeId);
 
   query = applyContactTypeFilter(query, type, options.customersOnly);
+
+  if (filtersByActive) {
+    query = query.eq("is_active", isActive === "true");
+  }
 
   if (search) {
     const term = escapeIlike(search);

@@ -163,10 +163,12 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
   const categoryId = searchParams.get("categoryId");
   const isActive = searchParams.get("isActive");
   const search = searchParams.get("search")?.toLowerCase();
+  const sku = normalizeSku(searchParams.get("sku") ?? "");
 
   const products = mockProducts.filter((product) => {
     const matchesBarcode = !barcode || matchesExactBarcode(product, barcode);
-    const matchesSearch = barcode || !search || matchesProductSearch(product, search);
+    const matchesSku = !sku || product.sku === sku;
+    const matchesSearch = barcode || sku || !search || matchesProductSearch(product, search);
     const matchesCategory = !categoryId || product.categoryId === categoryId;
     const matchesActive =
       isActive === null || product.isActive === (isActive.toLowerCase() === "true");
@@ -174,6 +176,7 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
     return (
       (product.storeId ?? DEFAULT_STORE_ID) === storeId &&
       matchesBarcode &&
+      matchesSku &&
       matchesSearch &&
       matchesCategory &&
       matchesActive

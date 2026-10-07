@@ -286,6 +286,8 @@ Invalidar `["dashboard"]` tras ventas, pagos, inventario.
 
 Invalidar `productsQueryKeys.all` tras crear/editar/precio. Crear producto con `currentStock: 0` y cargar stock vía inventario o compra.
 
+- `sku` (`GET /api/products`): coincidencia exacta de SKU (trim + minúsculas, como al crear); igual que `barcode`, si se envía se ignora `search`; vacío no filtra.
+
 **Importación masiva Excel:** ruta `/products/import`, hook `useProductBulkImport`. Ver [`frontend-product-bulk-import.md`](frontend-product-bulk-import.md).
 
 ### Inventario
@@ -305,7 +307,7 @@ Invalidar `inventoryQueryKeys.all` y `["products"]` si cambia stock visible en p
 
 | Hook | Método | Endpoint | Permiso |
 |------|--------|----------|---------|
-| `useContacts` | GET | `/api/contacts?type=&search=` | `contacts.view` |
+| `useContacts` | GET | `/api/contacts?type=&search=&isActive=` | `contacts.view` |
 | `useContact` | GET | `/api/contacts/[id]` | `contacts.view` |
 | `useCreateContact` | POST | `/api/contacts` | `contacts.manage` |
 | `useUpdateContact` | PATCH | `/api/contacts/[id]` | `contacts.manage` |
@@ -315,6 +317,8 @@ Invalidar `inventoryQueryKeys.all` y `["products"]` si cambia stock visible en p
 | `useContactPayments` | GET | `/api/contacts/[id]/payments` | `contacts.view` |
 
 Tipos: `cliente`, `proveedor`, `ambos`. `taxId` duplicado → 409. **No hay DELETE** de contactos.
+
+- `isActive` (`GET /api/contacts`): `true` solo activos, `false` solo inactivos; sin el parámetro devuelve ambos (igual en mock y Supabase).
 
 ### Proveedor–producto
 

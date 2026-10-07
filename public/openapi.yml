@@ -679,6 +679,18 @@ paths:
           schema:
             type: string
           description: Filtra productos por categoria.
+        - name: barcode
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Codigo de barras exacto. Si se envia, `search` se ignora.
+        - name: sku
+          in: query
+          required: false
+          schema:
+            type: string
+          description: SKU exacto (se normaliza con trim y minusculas, igual que al crear). Si se envia, `search` se ignora; vacio no filtra.
       responses:
         "200":
           description: Lista paginada de productos
@@ -1516,6 +1528,12 @@ paths:
           required: false
           schema:
             $ref: "#/components/schemas/ContactType"
+        - name: isActive
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Filtra contactos activos (`true`) o inactivos (`false`). Sin el parametro devuelve ambos.
         - $ref: "#/components/parameters/Search"
         - $ref: "#/components/parameters/Skip"
         - $ref: "#/components/parameters/Limit"

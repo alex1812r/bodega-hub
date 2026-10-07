@@ -108,6 +108,7 @@ function applyProductFilters<TQuery extends {
   const categoryId = searchParams.get("categoryId");
   const isActive = searchParams.get("isActive");
   const search = searchParams.get("search")?.trim();
+  const sku = normalizeSku(searchParams.get("sku") ?? "");
 
   let filteredQuery = query;
 
@@ -120,7 +121,16 @@ function applyProductFilters<TQuery extends {
   }
 
   if (barcode) {
-    return filteredQuery.eq("barcode", barcode);
+    filteredQuery = filteredQuery.eq("barcode", barcode);
+  }
+
+  if (sku) {
+    filteredQuery = filteredQuery.eq("sku", sku);
+  }
+
+  // Los filtros exactos mandan sobre la busqueda parcial.
+  if (barcode || sku) {
+    return filteredQuery;
   }
 
   if (search) {
