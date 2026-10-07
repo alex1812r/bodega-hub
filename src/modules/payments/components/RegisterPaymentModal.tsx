@@ -2,6 +2,7 @@
 
 import { type FormEvent, type ReactNode, useId, useMemo, useRef, useState } from "react";
 
+import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { usePurchase } from "@/modules/purchases/hooks/usePurchases";
 import { useSale } from "@/modules/sales/hooks/useSales";
 import { Button } from "@/shared/components/Button";
@@ -19,21 +20,81 @@ import {
 } from "@/shared/payments/PaymentFormFields";
 import { formatVes, roundMoney } from "@/shared/utils/currency";
 
-import { useCreatePayment } from "../hooks/usePayments";
+import { type PaymentDetail, useCreatePayment } from "../hooks/usePayments";
 import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import {
   DEFAULT_ENABLED_PAYMENT_METHODS,
   filterEnabledPaymentMethods,
 } from "@/shared/payments/paymentMethods";
 
-type RegisterPaymentModalProps = {
+/**
+ * Modal para pagar una compra o cobrar una venta sin salir de la pantalla.
+ *
+ * El documento se fija con `purchaseId` o `saleId` (uno solo): el modal carga su
+ * saldo pendiente, ofrece "Completar saldo" y registra el pago con una clave de
+ * idempotencia por intento.
+ *
+ * @example Botón dentro del detalle de una venta
+ * <RegisterPaymentModal saleId={sale.id} trigger={<Button>Cobrar saldo</Button>} />
+ *
+ * @example "Pagar ahora" tras crear la compra (apertura por código, sin `trigger`)
+ * const [payingPurchaseId, setPayingPurchaseId] = useState<string>();
+ *
+ * <RegisterPaymentModal
+ *   onOpenChange={(open) => {
+ *     if (!open) setPayingPurchaseId(undefined);
+ *   }}
+ *   onRegistered={(payment) => router.push(`/purchases/${payment.purchaseId}`)}
+ *   open={payingPurchaseId !== undefined}
+ *   purchaseId={payingPurchaseId}
+ * />
+ */
+export type RegisterPaymentModalProps = {
+  /**
+   * @deprecated Solo para el modo genérico (sin `purchaseId` ni `saleId`), donde el
+   * usuario teclea el ID del documento; `false` lo limita a ventas e ignora
+   * `purchaseId`. Ese modo lo usa `/payments` y lo elimina PAG-03b: no usarlo en
+   * código nuevo, pasar siempre `purchaseId` o `saleId`.
+   */
   allowPurchaseContext?: boolean;
+  /**
+   * Se llama al abrirse y al cerrarse el modal por una acción del usuario. Con el
+   * pago en vuelo el cierre se ignora y no se llama. Necesaria si se pasa `open`.
+   */
+  onOpenChange?: (open: boolean) => void;
+  /**
+   * Se llama una vez por pago registrado con éxito, con el pago que devolvió el
+   * servidor (`pendingBalanceVes` trae el saldo que queda). El modal no se cierra
+   * solo: muestra el saldo restante y permite otro abono; quien quiera cerrarlo lo
+   * hace aquí.
+   */
+  onRegistered?: (payment: PaymentDetail) => void;
+  /**
+   * Apertura controlada: con un booleano el modal se abre y se cierra por código y no
+   * pinta botón propio. Sin esta prop se abre con `trigger`.
+   */
+  open?: boolean;
+  /** Compra a pagar (salida de dinero). No combinar con `saleId`. */
   purchaseId?: string;
+  /** Venta a cobrar (entrada de dinero). No combinar con `purchaseId`. */
   saleId?: string;
+  /** Texto del botón de envío. Por defecto "Registrar pago" (compra) o "Registrar cobro" (venta). */
+  submitLabel?: string;
+  /** Título del modal. Por defecto "Pagar compra" o "Cobrar saldo" (venta). */
+  title?: string;
+  /**
+   * Elemento que abre el modal al hacer clic. Sin `trigger` ni `open` se pinta un
+   * botón con el título.
+   */
   trigger?: ReactNode;
 };
 
 type ContextType = "purchase" | "sale";
+
+const DOCUMENT_TEXTS = {
+  purchase: { submitLabel: "Registrar pago", title: "Pagar compra" },
+  sale: { submitLabel: "Registrar cobro", title: "Cobrar saldo" },
+} as const;
 
 /**
  * Bs por encima del saldo que `register_payment` todavía acepta (guardas F2/F3 de
@@ -63,14 +124,24 @@ function serverOverpayToleranceVes(
 
 export function RegisterPaymentModal({
   allowPurchaseContext = true,
+  onOpenChange,
+  onRegistered,
+  open: controlledOpen,
   purchaseId,
   saleId,
+  submitLabel,
+  title,
   trigger,
 }: RegisterPaymentModalProps) {
   const formId = useId();
   const resolvedPurchaseId = allowPurchaseContext ? purchaseId : undefined;
   const hasFixedContext = Boolean(saleId || resolvedPurchaseId);
-  const [open, setOpen] = useState(false);
+  const fixedDocument: ContextType | undefined =
+    resolvedPurchaseId && !saleId ? "purchase" : saleId && !resolvedPurchaseId ? "sale" : undefined;
+  const isControlled = controlledOpen !== undefined;
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = isControlled ? controlledOpen : internalOpen;
+  const [renderedOpen, setRenderedOpen] = useState(open);
   const [contextType, setContextType] = useState<ContextType>(
     resolvedPurchaseId ? "purchase" : "sale",
   );
@@ -80,10 +151,15 @@ export function RegisterPaymentModal({
   );
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [successBalanceVes, setSuccessBalanceVes] = useState<number | undefined>();
+  const [submitError, setSubmitError] = useState<Error | null>(null);
   const createPayment = useCreatePayment();
   // Candado contra reentrada: `isPending` no cambia hasta el siguiente render, y dos
-  // envíos en el mismo tick registrarían el pago dos veces (no hay idempotencia).
+  // envíos en el mismo tick saldrían como dos peticiones. La clave de idempotencia
+  // haría que el servidor registre una sola, pero la segunda no debe ni salir.
   const submitLockRef = useRef(false);
+  // Clave de idempotencia (PAG-06): la misma en el reintento tras un resultado
+  // incierto (red, 5xx, 409); nueva tras el éxito o tras un 4xx con otro contenido.
+  const requestAttempt = useRequestAttempt();
   const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
   const enabledMethods = useMemo(
     () =>
@@ -158,10 +234,13 @@ export function RegisterPaymentModal({
     setHasSubmitted(false);
   }
 
-  function resetForm() {
+  // Cada apertura y cada cierre dejan el formulario limpio, también cuando quien
+  // abre o cierra es el padre con `open`.
+  if (renderedOpen !== open) {
+    setRenderedOpen(open);
     clearFields();
     setSuccessBalanceVes(undefined);
-    createPayment.reset();
+    setSubmitError(null);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -173,32 +252,75 @@ export function RegisterPaymentModal({
       return;
     }
 
+    // La huella del intento es el pago completo: documento y valores del formulario.
+    const input = {
+      ...buildPaymentFormPayload(values),
+      purchaseId: selectedPurchaseId,
+      saleId: selectedSaleId,
+    };
+    const clientRequestId = requestAttempt.begin(input);
+
+    if (!clientRequestId) {
+      return;
+    }
+
     submitLockRef.current = true;
+    setSubmitError(null);
+
+    let payment: PaymentDetail;
 
     try {
-      const payment = await createPayment.mutateAsync({
-        ...buildPaymentFormPayload(values),
-        purchaseId: selectedPurchaseId,
-        saleId: selectedSaleId,
-      });
-
-      setSuccessBalanceVes(payment.pendingBalanceVes);
-      clearFields();
-    } catch {
-      // El mensaje lo pinta `createPayment.error` dentro del formulario.
+      payment = await createPayment.mutateAsync({ ...input, clientRequestId });
+      requestAttempt.succeed();
+    } catch (error) {
+      requestAttempt.fail(error);
+      setSubmitError(error instanceof Error ? error : new Error(String(error)));
       return;
     } finally {
       submitLockRef.current = false;
     }
+
+    setSuccessBalanceVes(payment.pendingBalanceVes);
+    clearFields();
+    onRegistered?.(payment);
   }
+
+  /** Nombra el documento por su número y su contacto; nunca por el id interno. */
+  function describeDocument() {
+    if (fixedDocument === "purchase") {
+      const number = purchase.data?.purchaseNumber;
+      const supplier = purchase.data?.supplier?.name;
+
+      if (!number) {
+        return "Registra un pago de esta compra.";
+      }
+
+      return supplier ? `Compra ${number} a ${supplier}.` : `Compra ${number}.`;
+    }
+
+    if (fixedDocument === "sale") {
+      const number = sale.data?.invoiceNumber;
+      const customer = sale.data?.customer?.name;
+
+      if (!number) {
+        return "Registra un cobro de esta venta.";
+      }
+
+      return customer ? `Venta ${number} de ${customer}.` : `Venta ${number}.`;
+    }
+
+    return allowPurchaseContext
+      ? "Registra un abono asociado a una venta o compra existente."
+      : "Registra un abono asociado a una venta existente.";
+  }
+
+  const documentTexts = fixedDocument ? DOCUMENT_TEXTS[fixedDocument] : undefined;
+  const resolvedTitle = title ?? documentTexts?.title ?? "Registrar pago";
+  const resolvedSubmitLabel = submitLabel ?? documentTexts?.submitLabel ?? "Registrar pago";
 
   return (
     <Modal
-      description={
-        allowPurchaseContext
-          ? "Registra un abono asociado a una venta o compra existente."
-          : "Registra un abono asociado a una venta existente."
-      }
+      description={describeDocument()}
       footer={({ close }) => (
         <>
           <Button
@@ -214,7 +336,7 @@ export function RegisterPaymentModal({
             form={formId}
             type="submit"
           >
-            {createPayment.isPending ? "Registrando..." : "Registrar pago"}
+            {createPayment.isPending ? "Registrando..." : resolvedSubmitLabel}
           </Button>
         </>
       )}
@@ -225,17 +347,15 @@ export function RegisterPaymentModal({
           return;
         }
 
-        setOpen(nextOpen);
-        if (nextOpen) {
-          createPayment.reset();
-          setSuccessBalanceVes(undefined);
-        } else {
-          resetForm();
+        if (!isControlled) {
+          setInternalOpen(nextOpen);
         }
+
+        onOpenChange?.(nextOpen);
       }}
       open={open}
-      title="Registrar pago"
-      trigger={trigger ?? <Button size="sm">Registrar pago</Button>}
+      title={resolvedTitle}
+      trigger={trigger ?? (isControlled ? undefined : <Button size="sm">{resolvedTitle}</Button>)}
     >
       <form className="grid gap-4" id={formId} onSubmit={handleSubmit}>
         {!hasFixedContext ? (
@@ -324,9 +444,9 @@ export function RegisterPaymentModal({
           </p>
         ) : null}
 
-        {createPayment.error ? (
+        {submitError ? (
           <p className="min-w-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 [overflow-wrap:anywhere] dark:bg-red-950 dark:text-red-300">
-            {createPayment.error.message}
+            {submitError.message}
           </p>
         ) : null}
       </form>

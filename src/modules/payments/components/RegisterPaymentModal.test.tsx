@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 
 import { VENEZUELAN_BANKS } from "@/shared/venezuela/banks";
 
@@ -10,6 +10,9 @@ import { RegisterPaymentModal } from "./RegisterPaymentModal";
 const BANK = VENEZUELAN_BANKS[0];
 // SHR-34: 220 caracteres sin un solo punto de corte, como el mensaje hostil del caos.
 const UNBROKEN_MESSAGE = "ERR_UPSTREAM_".padEnd(220, "X");
+// El boton que abre el modal lleva su titulo y el de envio depende del documento.
+const OPEN_BUTTON = /^(Cobrar saldo|Pagar compra|Registrar pago)$/;
+const SUBMIT_BUTTON = /^Registrar (cobro|pago)$/;
 
 function jsonResponse(payload: unknown, status = 200) {
   return {
@@ -58,13 +61,27 @@ describe("RegisterPaymentModal", () => {
 
       if (String(url).includes("/api/sales/")) {
         return jsonResponse({
-          data: { id: "sale-002", paidVes: 3000, refRateVes: 510, totalVes: 11475 },
+          data: {
+            customer: { id: "cont-customer", name: "Maria Perez" },
+            id: "sale-002",
+            invoiceNumber: "F-0002",
+            paidVes: 3000,
+            refRateVes: 510,
+            totalVes: 11475,
+          },
         });
       }
 
       if (String(url).includes("/api/purchases/")) {
         return jsonResponse({
-          data: { id: "purchase-002", paidVes: 0, refRateVes: 500, totalVes: 20200 },
+          data: {
+            id: "purchase-002",
+            paidVes: 0,
+            purchaseNumber: "C-0002",
+            refRateVes: 500,
+            supplier: { id: "cont-supplier", name: "Distribuidora Polar" },
+            totalVes: 20200,
+          },
         });
       }
 
@@ -76,7 +93,7 @@ describe("RegisterPaymentModal", () => {
   async function openModal() {
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+    await user.click(screen.getByRole("button", { name: OPEN_BUTTON }));
 
     const dialog = await screen.findByRole("dialog");
 
@@ -86,7 +103,7 @@ describe("RegisterPaymentModal", () => {
   }
 
   async function submit(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+    await user.click(screen.getByRole("button", { name: SUBMIT_BUTTON }));
   }
 
   function postedBodies() {
@@ -118,6 +135,7 @@ describe("RegisterPaymentModal", () => {
     expect(post.url).toContain("/api/payments");
     expect(post.body).toEqual({
       amount: 12.5,
+      clientRequestId: expect.any(String),
       currency: "USD",
       method: "efectivo_usd",
       notes: "Abono en caja",
@@ -145,6 +163,7 @@ describe("RegisterPaymentModal", () => {
     expect(post.body).toEqual({
       amount: 1500.75,
       bankName: BANK.label,
+      clientRequestId: expect.any(String),
       currency: "VES",
       method: "pago_movil",
       phone: "04125551234",
@@ -169,6 +188,7 @@ describe("RegisterPaymentModal", () => {
     expect(post.body).toEqual({
       amount: 20200,
       bankName: BANK.label,
+      clientRequestId: expect.any(String),
       currency: "VES",
       method: "transferencia",
       purchaseId: "purchase-002",
@@ -188,6 +208,7 @@ describe("RegisterPaymentModal", () => {
 
     expect(post.body).toEqual({
       amount: 12.35,
+      clientRequestId: expect.any(String),
       currency: "VES",
       method: "efectivo_ves",
       saleId: "sale-002",
@@ -204,6 +225,7 @@ describe("RegisterPaymentModal", () => {
 
     expect(post.body).toEqual({
       amount: 1.01,
+      clientRequestId: expect.any(String),
       currency: "VES",
       method: "efectivo_ves",
       saleId: "sale-002",
@@ -235,6 +257,7 @@ describe("RegisterPaymentModal", () => {
 
     expect(post.body).toEqual({
       amount: 8475,
+      clientRequestId: expect.any(String),
       currency: "VES",
       method: "efectivo_ves",
       saleId: "sale-002",
@@ -245,7 +268,7 @@ describe("RegisterPaymentModal", () => {
     const user = userEvent.setup();
 
     renderModal(<RegisterPaymentModal />);
-    await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+    await user.click(screen.getByRole("button", { name: OPEN_BUTTON }));
 
     const dialog = within(await screen.findByRole("dialog"));
 
@@ -266,6 +289,7 @@ describe("RegisterPaymentModal", () => {
 
     expect(post.body).toEqual({
       amount: 3,
+      clientRequestId: expect.any(String),
       currency: "USD",
       method: "efectivo_usd",
       saleId: "sale-002",
@@ -399,6 +423,7 @@ describe("RegisterPaymentModal", () => {
       // 8475 / 510 = 16.62 (Bs 8.476,20: dentro de la holgura de 1 USD).
       expect(post.body).toEqual({
         amount: 16.62,
+        clientRequestId: expect.any(String),
         currency: "USD",
         method: "efectivo_usd",
         saleId: "sale-002",
@@ -473,7 +498,7 @@ describe("RegisterPaymentModal", () => {
     async function openModalWithoutBalance() {
       const user = userEvent.setup();
 
-      await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+      await user.click(screen.getByRole("button", { name: OPEN_BUTTON }));
 
       return { dialog: within(await screen.findByRole("dialog")), user };
     }
@@ -504,7 +529,7 @@ describe("RegisterPaymentModal", () => {
 
         expect(postedBodies()).toHaveLength(0);
         expect(dialog.getByText("Cargando saldo pendiente...")).toBeInTheDocument();
-        expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeDisabled();
+        expect(dialog.getByRole("button", { name: SUBMIT_BUTTON })).toBeDisabled();
 
         await act(async () => {
           resolveDocument(loaded as Response);
@@ -512,7 +537,7 @@ describe("RegisterPaymentModal", () => {
 
         expect(await dialog.findByText(/Saldo pendiente actual/)).toBeInTheDocument();
         expect(dialog.queryByText("Cargando saldo pendiente...")).not.toBeInTheDocument();
-        expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeEnabled();
+        expect(dialog.getByRole("button", { name: SUBMIT_BUTTON })).toBeEnabled();
 
         // Con el saldo ya cargado vuelve la guarda de sobrepago de SHR-19.
         await submit(user);
@@ -537,13 +562,14 @@ describe("RegisterPaymentModal", () => {
       expect(alert).toHaveTextContent("No se pudo comprobar el saldo pendiente");
       expect(alert).toHaveTextContent("No se pudo consultar la venta.");
       expect(dialog.queryByText("Cargando saldo pendiente...")).not.toBeInTheDocument();
-      expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeEnabled();
+      expect(dialog.getByRole("button", { name: SUBMIT_BUTTON })).toBeEnabled();
 
       await user.type(dialog.getByLabelText("Monto"), "100");
       await submit(user);
 
       expect((await expectSinglePost()).body).toEqual({
         amount: 100,
+        clientRequestId: expect.any(String),
         currency: "VES",
         method: "efectivo_ves",
         saleId: "sale-002",
@@ -574,7 +600,7 @@ describe("RegisterPaymentModal", () => {
       expect(alert).toHaveTextContent("No se pudo comprobar el saldo pendiente");
       expect(alert).toHaveTextContent("Failed to fetch");
       expect(dialog.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
-      expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeEnabled();
+      expect(dialog.getByRole("button", { name: SUBMIT_BUTTON })).toBeEnabled();
     });
 
     // Caos pasada 3, B5: jsdom no calcula layout; se comprueban las clases de corte.
@@ -657,6 +683,7 @@ describe("RegisterPaymentModal", () => {
 
       expect((await expectSinglePost()).body).toEqual({
         amount: 0.1,
+        clientRequestId: expect.any(String),
         currency: "USD",
         method: "efectivo_usd",
         saleId: "sale-002",
@@ -668,7 +695,7 @@ describe("RegisterPaymentModal", () => {
       const user = userEvent.setup();
 
       renderModal(<RegisterPaymentModal />);
-      await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+      await user.click(screen.getByRole("button", { name: OPEN_BUTTON }));
 
       const dialog = within(await screen.findByRole("dialog"));
 
@@ -703,9 +730,350 @@ describe("RegisterPaymentModal", () => {
 
       expect((await expectSinglePost()).body).toEqual({
         amount: 50,
+        clientRequestId: expect.any(String),
         currency: "VES",
         method: "efectivo_ves",
         saleId: "sale-002",
+      });
+    });
+  });
+
+  describe("PAG-01a: contrato del modal", () => {
+    function requestIds() {
+      return postedBodies().map((post) => post.body.clientRequestId);
+    }
+
+    it("con una compra se titula Pagar compra, envia con Registrar pago y nombra la compra y el proveedor", async () => {
+      renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("button", { name: "Pagar compra" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "Pagar compra" });
+
+      expect(
+        await within(dialog).findByText("Compra C-0002 a Distribuidora Polar."),
+      ).toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: "Registrar pago" })).toBeInTheDocument();
+      expect(dialog).not.toHaveTextContent("purchase-002");
+    });
+
+    it("con una venta se titula Cobrar saldo, envia con Registrar cobro y nombra la venta y el cliente", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("button", { name: "Cobrar saldo" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "Cobrar saldo" });
+
+      expect(await within(dialog).findByText("Venta F-0002 de Maria Perez.")).toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: "Registrar cobro" })).toBeInTheDocument();
+      expect(dialog).not.toHaveTextContent("sale-002");
+    });
+
+    it("mientras el documento carga la descripcion no muestra ningun id", async () => {
+      const defaultFetch = fetchMock.getMockImplementation() as (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<Response>;
+
+      fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+        String(url).includes("/api/sales/")
+          ? new Promise<Response>(() => undefined)
+          : defaultFetch(url, init),
+      );
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("button", { name: "Cobrar saldo" }));
+
+      const dialog = await screen.findByRole("dialog");
+
+      expect(within(dialog).getByText("Registra un cobro de esta venta.")).toBeInTheDocument();
+      expect(dialog).not.toHaveTextContent("sale-002");
+    });
+
+    it("title y submitLabel sustituyen los textos por defecto", async () => {
+      renderModal(
+        <RegisterPaymentModal purchaseId="purchase-002" submitLabel="Pagar" title="Pagar ahora" />,
+      );
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("button", { name: "Pagar ahora" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "Pagar ahora" });
+
+      expect(within(dialog).getByRole("button", { name: "Pagar" })).toBeInTheDocument();
+    });
+
+    it("con contexto fijo basta abrir, Completar saldo y registrar", async () => {
+      renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
+      const { dialog, user } = await openModal();
+
+      expect(dialog.queryByLabelText(/^ID /)).not.toBeInTheDocument();
+      await user.click(dialog.getByRole("button", { name: "Completar saldo" }));
+      await user.click(dialog.getByRole("button", { name: "Registrar pago" }));
+
+      expect((await expectSinglePost()).body).toEqual({
+        amount: 20200,
+        clientRequestId: expect.any(String),
+        currency: "VES",
+        method: "efectivo_ves",
+        purchaseId: "purchase-002",
+      });
+    });
+
+    describe("apertura controlada", () => {
+      function Harness({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
+        const [open, setOpen] = useState(false);
+
+        return (
+          <>
+            <button onClick={() => setOpen(true)} type="button">
+              Pagar ahora
+            </button>
+            <button onClick={() => setOpen(false)} type="button">
+              Cerrar por codigo
+            </button>
+            <RegisterPaymentModal
+              onOpenChange={(nextOpen) => {
+                onOpenChange?.(nextOpen);
+                setOpen(nextOpen);
+              }}
+              open={open}
+              purchaseId="purchase-002"
+            />
+          </>
+        );
+      }
+
+      it("no pinta boton propio y se abre y se cierra con open", async () => {
+        const onOpenChange = jest.fn();
+        const user = userEvent.setup();
+
+        renderModal(<Harness onOpenChange={onOpenChange} />);
+
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Pagar compra" })).not.toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: "Pagar ahora" }));
+
+        const dialog = within(await screen.findByRole("dialog", { name: "Pagar compra" }));
+
+        await dialog.findByText(/Saldo pendiente actual/);
+        await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(onOpenChange).toHaveBeenCalledTimes(1);
+        expect(onOpenChange).toHaveBeenCalledWith(false);
+      });
+
+      it("al reabrirlo por codigo el formulario vuelve limpio, sin el error anterior", async () => {
+        paymentResponse = jsonResponse(
+          { error: { code: "BAD_REQUEST", message: "La caja esta cerrada." } },
+          400,
+        );
+        const user = userEvent.setup();
+
+        renderModal(<Harness />);
+        await user.click(screen.getByRole("button", { name: "Pagar ahora" }));
+
+        let dialog = within(await screen.findByRole("dialog"));
+
+        await dialog.findByText(/Saldo pendiente actual/);
+        await user.type(dialog.getByLabelText("Monto"), "100");
+        await submit(user);
+        expect(await dialog.findByText("La caja esta cerrada.")).toBeInTheDocument();
+
+        // El padre cierra sin pasar por el modal (p. ej. al navegar).
+        fireEvent.click(screen.getByRole("button", { hidden: true, name: "Cerrar por codigo" }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+        await user.click(screen.getByRole("button", { name: "Pagar ahora" }));
+        dialog = within(await screen.findByRole("dialog"));
+
+        expect(dialog.getByLabelText("Monto")).toHaveValue("");
+        expect(dialog.queryByText("La caja esta cerrada.")).not.toBeInTheDocument();
+      });
+
+      it("con el pago en vuelo no pide cerrarse", async () => {
+        const defaultFetch = fetchMock.getMockImplementation() as (
+          url: string,
+          init?: RequestInit,
+        ) => Promise<Response>;
+        let resolvePost: (response: Response) => void = () => undefined;
+
+        fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+          init?.method === "POST"
+            ? new Promise<Response>((resolve) => {
+                resolvePost = resolve;
+              })
+            : defaultFetch(url, init),
+        );
+        const onOpenChange = jest.fn();
+        const user = userEvent.setup();
+
+        renderModal(<Harness onOpenChange={onOpenChange} />);
+        await user.click(screen.getByRole("button", { name: "Pagar ahora" }));
+
+        const dialog = within(await screen.findByRole("dialog"));
+
+        await dialog.findByText(/Saldo pendiente actual/);
+        await user.type(dialog.getByLabelText("Monto"), "100");
+        await submit(user);
+        await waitFor(() => expect(postedBodies()).toHaveLength(1));
+
+        await user.keyboard("{Escape}");
+        await user.click(dialog.getByRole("button", { name: "Cerrar modal" }));
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+
+        expect(onOpenChange).not.toHaveBeenCalled();
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+        await act(async () => {
+          resolvePost(paymentResponse);
+        });
+        expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+      });
+    });
+
+    it("onRegistered recibe el pago registrado, una vez, y el modal sigue abierto", async () => {
+      const onRegistered = jest.fn();
+
+      renderModal(<RegisterPaymentModal onRegistered={onRegistered} saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+
+      await waitFor(() => expect(onRegistered).toHaveBeenCalledTimes(1));
+      expect(onRegistered).toHaveBeenCalledWith({ id: "pay-new", pendingBalanceVes: 1000 });
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    it("onRegistered no se llama si el servidor rechaza el pago", async () => {
+      const onRegistered = jest.fn();
+
+      paymentResponse = jsonResponse(
+        { error: { code: "BAD_REQUEST", message: "La caja esta cerrada." } },
+        400,
+      );
+      renderModal(<RegisterPaymentModal onRegistered={onRegistered} saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+
+      expect(await dialog.findByText("La caja esta cerrada.")).toBeInTheDocument();
+      expect(onRegistered).not.toHaveBeenCalled();
+    });
+
+    describe("PAG-06: clave de idempotencia", () => {
+      it("cada POST lleva un clientRequestId", async () => {
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog, user } = await openModal();
+
+        await user.type(dialog.getByLabelText("Monto"), "100");
+        await submit(user);
+
+        const post = await expectSinglePost();
+
+        expect(post.body.clientRequestId).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/));
+      });
+
+      it.each([
+        ["un 500", () => jsonResponse({ error: { code: "INTERNAL", message: "Fallo." } }, 500)],
+        ["un 409", () => jsonResponse({ error: { code: "CONFLICT", message: "Fallo." } }, 409)],
+      ])("el reintento tras %s reutiliza la clave", async (_name, failure) => {
+        paymentResponse = failure();
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog, user } = await openModal();
+
+        await user.type(dialog.getByLabelText("Monto"), "100");
+        await submit(user);
+        expect(await dialog.findByText("Fallo.")).toBeInTheDocument();
+
+        paymentResponse = jsonResponse({ data: { id: "pay-new", pendingBalanceVes: 1000 } });
+        await submit(user);
+        expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+
+        const [first, second] = requestIds();
+
+        expect(postedBodies()).toHaveLength(2);
+        expect(second).toBe(first);
+      });
+
+      it("el reintento tras un corte de red reutiliza la clave", async () => {
+        const defaultFetch = fetchMock.getMockImplementation() as (
+          url: string,
+          init?: RequestInit,
+        ) => Promise<Response>;
+        let failNext = true;
+
+        fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+          if (init?.method === "POST" && failNext) {
+            failNext = false;
+            throw new TypeError("Failed to fetch");
+          }
+
+          return defaultFetch(url, init);
+        });
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog, user } = await openModal();
+
+        await user.type(dialog.getByLabelText("Monto"), "100");
+        await submit(user);
+        expect(await dialog.findByText("Failed to fetch")).toBeInTheDocument();
+
+        await submit(user);
+        expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+
+        const [first, second] = requestIds();
+
+        expect(second).toBe(first);
+      });
+
+      it("tras un pago registrado el siguiente lleva una clave nueva", async () => {
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog, user } = await openModal();
+
+        await user.type(dialog.getByLabelText("Monto"), "100");
+        await submit(user);
+        expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+
+        await user.type(dialog.getByLabelText("Monto"), "100");
+        await submit(user);
+        await waitFor(() => expect(postedBodies()).toHaveLength(2));
+
+        const [first, second] = requestIds();
+
+        expect(second).toEqual(expect.any(String));
+        expect(second).not.toBe(first);
+      });
+
+      it("tras un 400 definitivo, cambiar el monto estrena clave", async () => {
+        paymentResponse = jsonResponse(
+          { error: { code: "BAD_REQUEST", message: "Monto rechazado." } },
+          400,
+        );
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog, user } = await openModal();
+
+        await user.type(dialog.getByLabelText("Monto"), "100");
+        await submit(user);
+        expect(await dialog.findByText("Monto rechazado.")).toBeInTheDocument();
+
+        await user.clear(dialog.getByLabelText("Monto"));
+        await user.type(dialog.getByLabelText("Monto"), "90");
+        await submit(user);
+        await waitFor(() => expect(postedBodies()).toHaveLength(2));
+
+        const [first, second] = requestIds();
+
+        expect(second).toEqual(expect.any(String));
+        expect(second).not.toBe(first);
       });
     });
   });

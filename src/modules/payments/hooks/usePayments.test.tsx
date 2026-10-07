@@ -120,4 +120,90 @@ describe("payments hooks", () => {
       expect.objectContaining({ method: "PATCH" }),
     );
   });
+
+  describe("PAG-01a: idempotencia e invalidacion de caja y baul", () => {
+    function createClientWrapper() {
+      const queryClient = new QueryClient({
+        defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+      });
+      const invalidate = jest.spyOn(queryClient, "invalidateQueries");
+
+      function Wrapper({ children }: { children: ReactNode }) {
+        return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+      }
+
+      return {
+        invalidatedKeys: () => invalidate.mock.calls.map(([filters]) => filters?.queryKey),
+        Wrapper,
+      };
+    }
+
+    it("envia el clientRequestId en el cuerpo del POST", async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ data: { id: "pay-new" } }, 201));
+
+      const { Wrapper } = createClientWrapper();
+      const { result } = renderHook(() => useCreatePayment(), { wrapper: Wrapper });
+
+      result.current.mutate({
+        amount: 100,
+        clientRequestId: "attempt-1",
+        currency: "VES",
+        method: "efectivo_ves",
+        purchaseId: "purchase-002",
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({
+        amount: 100,
+        clientRequestId: "attempt-1",
+        currency: "VES",
+        method: "efectivo_ves",
+        purchaseId: "purchase-002",
+      });
+    });
+
+    it("al registrar un pago invalida caja y baul ademas de los documentos", async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ data: { id: "pay-new" } }, 201));
+
+      const { invalidatedKeys, Wrapper } = createClientWrapper();
+      const { result } = renderHook(() => useCreatePayment(), { wrapper: Wrapper });
+
+      result.current.mutate({ amount: 100, method: "efectivo_ves", saleId: "sale-002" });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(invalidatedKeys()).toEqual(
+        expect.arrayContaining([["sales"], ["purchases"], ["contacts"], ["cash"], ["vault"]]),
+      );
+    });
+
+    it("si el servidor rechaza el pago no invalida nada", async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ error: { code: "BAD_REQUEST", message: "Rechazado." } }, 400),
+      );
+
+      const { invalidatedKeys, Wrapper } = createClientWrapper();
+      const { result } = renderHook(() => useCreatePayment(), { wrapper: Wrapper });
+
+      result.current.mutate({ amount: 100, method: "efectivo_ves", saleId: "sale-002" });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(invalidatedKeys()).toEqual([]);
+    });
+
+    it("al anular un pago invalida caja y baul", async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ data: { id: "pay-001", status: "anulado" } }),
+      );
+
+      const { invalidatedKeys, Wrapper } = createClientWrapper();
+      const { result } = renderHook(() => useCancelPayment("pay-001"), { wrapper: Wrapper });
+
+      result.current.mutate("pay-001");
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(invalidatedKeys()).toEqual(
+        expect.arrayContaining([["payments"], ["sales"], ["purchases"], ["cash"], ["vault"]]),
+      );
+    });
+  });
 });

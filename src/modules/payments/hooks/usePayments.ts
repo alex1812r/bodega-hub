@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
+import { cashKeys } from "@/modules/cash/hooks/useCash";
+import { vaultKeys } from "@/modules/vault/hooks/useVault";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
   ContactMock,
@@ -56,6 +58,11 @@ export type PaymentCreateInput = {
   bankName?: string;
   change?: PaymentChangeInput | null;
   changeDenominations?: PaymentDenominations | null;
+  /**
+   * Clave de idempotencia del intento (PAG-06): el reintento tras un error de
+   * resultado incierto viaja con la misma y el servidor no registra el pago dos veces.
+   */
+  clientRequestId?: string;
   currency?: "USD" | "VES";
   method: PaymentMethod;
   notes?: string;
@@ -141,6 +148,9 @@ export function useCreatePayment() {
       void queryClient.invalidateQueries({ queryKey: ["contacts"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
+      // Un pago mueve efectivo: la sesion de caja y el baul muestran saldos que cambian.
+      void queryClient.invalidateQueries({ queryKey: cashKeys.all });
+      void queryClient.invalidateQueries({ queryKey: vaultKeys.all });
     },
   });
 }
@@ -162,6 +172,9 @@ export function useCancelPayment(id?: string) {
       void queryClient.invalidateQueries({ queryKey: ["contacts"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
+      // Un pago mueve efectivo: la sesion de caja y el baul muestran saldos que cambian.
+      void queryClient.invalidateQueries({ queryKey: cashKeys.all });
+      void queryClient.invalidateQueries({ queryKey: vaultKeys.all });
     },
   });
 }
