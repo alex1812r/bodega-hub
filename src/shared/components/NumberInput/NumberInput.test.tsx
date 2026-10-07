@@ -1182,3 +1182,469 @@ describe("NumberInput helpers", () => {
     expect(getNumberInputError("2.5")).toBeUndefined();
   });
 });
+
+describe("NumberInput text that arrives without typing or pasting (SHR-18)", () => {
+  const COMPOSITION_STEPS = ["1", "12", "12,", "12,5"];
+
+  /** Lo que hace el navegador al soltar texto, autocompletar o dictar: cambia el valor y avisa con un solo `input`. */
+  function insert(value: string, inputType: string) {
+    fireEvent.input(getField(), { inputType, target: { value } });
+  }
+
+  /** Composición de un teclado IME: un `input` por paso con el texto compuesto hasta ese momento. */
+  function compose(steps: string[], before = "", after = "") {
+    fireEvent.compositionStart(getField());
+
+    for (const step of steps) {
+      fireEvent.compositionUpdate(getField(), { data: step });
+      fireEvent.input(getField(), {
+        inputType: "insertCompositionText",
+        isComposing: true,
+        target: { value: `${before}${step}${after}` },
+      });
+    }
+  }
+
+  function endComposition(data: string) {
+    fireEvent.compositionEnd(getField(), { data });
+  }
+
+  function AmountForm({ defaultAmount, onSubmit }: { defaultAmount?: number; onSubmit?: (values: unknown) => void }) {
+    const { control, handleSubmit, register } = useForm<{ amount: number }>({
+      defaultValues: { amount: defaultAmount },
+    });
+    const amount = useWatch({ control, name: "amount" });
+
+    return (
+      <form onSubmit={handleSubmit((values) => onSubmit?.(values))}>
+        <NumberInput decimals={2} label="Monto" {...register("amount", { valueAsNumber: true })} />
+        <output>{String(amount)}</output>
+        <button type="submit">Guardar</button>
+      </form>
+    );
+  }
+
+  function ControlledAmount({
+    decimals,
+    initial,
+    onValueChange,
+  }: {
+    decimals?: number;
+    initial: number | null;
+    onValueChange: jest.Mock;
+  }) {
+    const [amount, setAmount] = useState<number | null>(initial);
+
+    return (
+      <NumberInput
+        decimals={decimals}
+        label="Monto"
+        onValueChange={(next) => {
+          onValueChange(next);
+          setAmount(next);
+        }}
+        value={amount}
+      />
+    );
+  }
+
+  describe("IME composition", () => {
+    it("does not rewrite the field nor report a value while the text is being composed", () => {
+      const onChange = jest.fn();
+      const onValueChange = jest.fn();
+
+      render(<NumberInput label="Monto" onChange={onChange} onValueChange={onValueChange} />);
+
+      fireEvent.compositionStart(getField());
+
+      for (const step of COMPOSITION_STEPS) {
+        fireEvent.input(getField(), {
+          inputType: "insertCompositionText",
+          isComposing: true,
+          target: { value: step },
+        });
+
+        // Antes "12," se reescribia a "12." a media composicion y el teclado volvia a insertar todo: 1212512.5.
+        expect(getField()).toHaveValue(step);
+      }
+
+      expect(onChange).not.toHaveBeenCalled();
+      expect(onValueChange).not.toHaveBeenCalled();
+    });
+
+    it("reads the composed text once, when the composition ends", () => {
+      const onChange = jest.fn();
+      const onValueChange = jest.fn();
+
+      render(<NumberInput label="Monto" onChange={onChange} onValueChange={onValueChange} />);
+
+      compose(COMPOSITION_STEPS);
+      endComposition("12,5");
+
+      expect(getField()).toHaveValue("12.5");
+      expect(onChange).toHaveBeenCalledTimes(1);
+      expect(onChange.mock.lastCall?.[0].target.value).toBe("12.5");
+      expect(onValueChange).toHaveBeenCalledTimes(1);
+      expect(onValueChange).toHaveBeenLastCalledWith(12.5);
+    });
+
+    it("reports composed text that needs no cleaning too", () => {
+      const onValueChange = jest.fn();
+
+      render(<NumberInput label="Monto" onValueChange={onValueChange} />);
+
+      compose(["1", "12", "125"]);
+      endComposition("125");
+
+      expect(getField()).toHaveValue("125");
+      expect(onValueChange).toHaveBeenCalledTimes(1);
+      expect(onValueChange).toHaveBeenLastCalledWith(125);
+    });
+
+    it("keeps the composed text in a controlled field until the composition ends", () => {
+      const onValueChange = jest.fn();
+
+      render(<ControlledAmount decimals={2} initial={null} onValueChange={onValueChange} />);
+
+      fireEvent.compositionStart(getField());
+
+      for (const step of COMPOSITION_STEPS) {
+        fireEvent.input(getField(), {
+          inputType: "insertCompositionText",
+          isComposing: true,
+          target: { value: step },
+        });
+        expect(getField()).toHaveValue(step);
+      }
+
+      expect(onValueChange).not.toHaveBeenCalled();
+
+      endComposition("12,5");
+
+      expect(getField()).toHaveValue("12.5");
+      expect(onValueChange).toHaveBeenCalledTimes(1);
+      expect(onValueChange).toHaveBeenLastCalledWith(12.5);
+    });
+
+    it("hands react-hook-form the composed number, not the steps joined", () => {
+      render(<AmountForm />);
+
+      compose(COMPOSITION_STEPS);
+      expect(screen.getByRole("status")).toHaveTextContent("undefined");
+
+      endComposition("12,5");
+
+      expect(getField()).toHaveValue("12.5");
+      expect(screen.getByRole("status")).toHaveTextContent("12.5");
+    });
+
+    it("composes inside an existing value and leaves the caret after the composed text", () => {
+      const onValueChange = jest.fn();
+
+      render(<NumberInput defaultValue={1005} label="Monto" onValueChange={onValueChange} />);
+
+      compose(["2", "25"], "1", "005");
+      getField().setSelectionRange(3, 3);
+      endComposition("25");
+
+      expect(getField()).toHaveValue("125005");
+      expect(getField().selectionStart).toBe(3);
+      expect(onValueChange).toHaveBeenLastCalledWith(125005);
+    });
+
+    it("reads thousands composed with a space", () => {
+      render(<NumberInput label="Monto" />);
+
+      compose(["1", "1 ", "1 2", "1 25", "1 250"]);
+      endComposition("1 250");
+
+      expect(getField()).toHaveValue("1250");
+    });
+
+    it("goes back to the previous value when the composed text is not a number", () => {
+      const onValueChange = jest.fn();
+
+      render(<NumberInput defaultValue={7} label="Monto" onValueChange={onValueChange} />);
+
+      compose(["1", "12", "12e", "12e3"], "7");
+      endComposition("12e3");
+
+      expect(getField()).toHaveValue("7");
+      expect(onValueChange).not.toHaveBeenCalled();
+    });
+
+    it("goes back to the previous value of a controlled field when the composed text is not a number", () => {
+      const onValueChange = jest.fn();
+
+      render(<ControlledAmount initial={7} onValueChange={onValueChange} />);
+
+      compose(["1", "12", "12e", "12e3"], "7");
+      endComposition("12e3");
+
+      expect(getField()).toHaveValue("7");
+      expect(onValueChange).not.toHaveBeenCalled();
+    });
+
+    it("keeps typing normally after a composition", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput label="Monto" />);
+
+      compose(COMPOSITION_STEPS);
+      endComposition("12,5");
+      await user.type(getField(), "7", { initialSelectionStart: 4 });
+
+      expect(getField()).toHaveValue("12.57");
+    });
+  });
+
+  describe.each(["insertFromDrop", "insertReplacementText", "insertText", "insertFromYank"])(
+    "several characters inserted at once (%s)",
+    (inputType) => {
+      // Antes solo el pegado se comprobaba: soltar 1e3 dejaba 13 y se enviaba.
+      it.each(["1e3", "3-4", "10 20", "12abc3", "0x10"])("rejects %s instead of joining its digits", (text) => {
+        const onChange = jest.fn();
+        const onValueChange = jest.fn();
+
+        render(<NumberInput defaultValue={99} label="Monto" onChange={onChange} onValueChange={onValueChange} />);
+
+        insert(text, inputType);
+
+        expect(getField()).toHaveValue("99");
+        expect(onChange).not.toHaveBeenCalled();
+        expect(onValueChange).not.toHaveBeenCalled();
+        expect(getField()).not.toHaveAttribute("aria-invalid");
+      });
+
+      it("rejects text that only becomes another number next to what was already there", () => {
+        const onValueChange = jest.fn();
+
+        render(<NumberInput defaultValue={1} label="Monto" onValueChange={onValueChange} />);
+
+        insert("1e3", inputType);
+
+        expect(getField()).toHaveValue("1");
+        expect(onValueChange).not.toHaveBeenCalled();
+      });
+
+      it("leaves an empty field empty", () => {
+        render(<NumberInput label="Monto" />);
+
+        insert("3-4", inputType);
+
+        expect(getField()).toHaveValue("");
+      });
+
+      it("keeps the value of a controlled field", () => {
+        const onValueChange = jest.fn();
+
+        render(<ControlledAmount initial={99} onValueChange={onValueChange} />);
+
+        insert("10 20", inputType);
+
+        expect(getField()).toHaveValue("99");
+        expect(onValueChange).not.toHaveBeenCalled();
+      });
+
+      it("keeps the value react-hook-form will submit", async () => {
+        const user = userEvent.setup();
+        const onSubmit = jest.fn();
+
+        render(<AmountForm defaultAmount={99} onSubmit={onSubmit} />);
+
+        insert("1e3", inputType);
+
+        expect(getField()).toHaveValue("99");
+        expect(screen.getByRole("status")).toHaveTextContent("99");
+
+        await user.click(screen.getByRole("button", { name: /guardar/i }));
+
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+        expect(onSubmit).toHaveBeenLastCalledWith({ amount: 99 });
+      });
+
+      it.each([
+        ["1.250,75", "1250.75"],
+        ["1 000", "1000"],
+        [" 7 ", "7"],
+        ["Bs 12", "12"],
+        ["12,5", "12.5"],
+        ["1.234.567", "1234567"],
+      ])("still reads %s as %s", (text, expected) => {
+        const onValueChange = jest.fn();
+
+        render(<NumberInput defaultValue={99} label="Monto" onValueChange={onValueChange} />);
+
+        insert(text, inputType);
+
+        expect(getField()).toHaveValue(expected);
+        expect(onValueChange).toHaveBeenLastCalledWith(Number(expected));
+      });
+
+      it("restores the caret where the text was inserted", () => {
+        render(<NumberInput defaultValue={1005} label="Monto" />);
+
+        insert("1e3005", inputType);
+
+        expect(getField()).toHaveValue("1005");
+        expect(getField().selectionStart).toBe(1);
+      });
+    },
+  );
+
+  it("still ignores a single invalid character inserted at once, as when it is typed", () => {
+    render(<NumberInput defaultValue={12} label="Monto" />);
+
+    insert("1e2", "insertText");
+
+    expect(getField()).toHaveValue("12");
+  });
+
+  it("goes back to a value set from outside, not to the last one it saw, when a drop is rejected", async () => {
+    const user = userEvent.setup();
+
+    function ResettableForm() {
+      const { register, setValue } = useForm<{ amount: number }>({ defaultValues: { amount: 1 } });
+
+      return (
+        <>
+          <NumberInput label="Monto" {...register("amount", { valueAsNumber: true })} />
+          <button onClick={() => setValue("amount", 500)} type="button">
+            Poner 500
+          </button>
+        </>
+      );
+    }
+
+    render(<ResettableForm />);
+
+    await user.click(screen.getByRole("button", { name: /poner 500/i }));
+    expect(getField()).toHaveValue("500");
+
+    // El navegador avisa antes de insertar; react-hook-form cambió el valor sin que el campo se enterase.
+    fireEvent(getField(), new InputEvent("beforeinput", { bubbles: true, inputType: "insertFromDrop" }));
+    insert("1e3500", "insertFromDrop");
+
+    expect(getField()).toHaveValue("500");
+  });
+
+  describe("ambiguous separators", () => {
+    // Antes un separador repetido se tomaba siempre por miles: 1.2.3 quedaba en 123.
+    it.each(["1.2.3", "12,,5", "1,2,3", "1.23.456", "1.234.56"])("rejects pasting %s", async (pasted) => {
+      const user = userEvent.setup();
+      const onValueChange = jest.fn();
+
+      render(<NumberInput defaultValue={99} label="Monto" onValueChange={onValueChange} />);
+
+      await user.click(getField());
+      await user.paste(pasted);
+
+      expect(getField()).toHaveValue("99");
+      expect(onValueChange).not.toHaveBeenCalled();
+    });
+
+    it("rejects 1.2.3 dropped on the field", () => {
+      render(<NumberInput defaultValue={99} label="Monto" />);
+
+      insert("1.2.3", "insertFromDrop");
+
+      expect(getField()).toHaveValue("99");
+    });
+
+    it.each([
+      ["1.234.567", "1234567"],
+      ["1,234,567", "1234567"],
+      ["1.234.567,5", "1234567.5"],
+      ["Bs. 12,5", "12.5"],
+    ])("still pastes %s as %s", async (pasted, expected) => {
+      const user = userEvent.setup();
+
+      render(<NumberInput label="Monto" />);
+
+      await user.click(getField());
+      await user.paste(pasted);
+
+      expect(getField()).toHaveValue(expected);
+    });
+  });
+
+  describe("more digits than a number can hold exactly", () => {
+    const FIFTEEN = "123456789012345";
+
+    // Antes 22 digitos llegaban al formulario como 1e+21 y 500 como Infinity.
+    it("ignores the keys typed after the fifteenth digit", async () => {
+      const user = userEvent.setup();
+      const onValueChange = jest.fn();
+
+      render(<NumberInput label="Monto" onValueChange={onValueChange} />);
+
+      await user.type(getField(), "1000000000000000000000");
+
+      expect(getField()).toHaveValue("100000000000000");
+      expect(onValueChange).toHaveBeenLastCalledWith(100000000000000);
+      expect(onValueChange).toHaveBeenCalledTimes(15);
+    });
+
+    it("counts the decimals too", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput label="Monto" />);
+
+      await user.type(getField(), "1234567890.123456789");
+
+      expect(getField()).toHaveValue("1234567890.12345");
+    });
+
+    it.each(["9".repeat(22), "9".repeat(500), `${FIFTEEN}6`])("rejects pasting %s", async (pasted) => {
+      const user = userEvent.setup();
+      const onValueChange = jest.fn();
+
+      render(<NumberInput defaultValue={99} label="Monto" onValueChange={onValueChange} />);
+
+      await user.click(getField());
+      await user.paste(pasted);
+
+      expect(getField()).toHaveValue("99");
+      expect(onValueChange).not.toHaveBeenCalled();
+    });
+
+    it("accepts fifteen digits pasted or dropped", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput label="Monto" />);
+
+      await user.click(getField());
+      await user.paste(FIFTEEN);
+      expect(getField()).toHaveValue(FIFTEEN);
+
+      insert("999999999999.999", "insertFromDrop");
+      expect(getField()).toHaveValue("999999999999.999");
+    });
+
+    it("lets a longer value that came from the parent be shortened", async () => {
+      const user = userEvent.setup();
+      const onValueChange = jest.fn();
+
+      render(<ControlledAmount initial={0.1 + 0.2} onValueChange={onValueChange} />);
+
+      expect(getField()).toHaveValue("0.30000000000000004");
+
+      await user.click(getField());
+      getField().setSelectionRange(19, 19);
+      await user.keyboard("{Backspace}");
+
+      expect(getField()).toHaveValue("0.3000000000000000");
+    });
+
+    it("still formats on blur a value that pads beyond fifteen digits", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput decimals={2} label="Monto" padDecimals />);
+
+      await user.type(getField(), "12345678901234");
+      await user.tab();
+
+      expect(getField()).toHaveValue("12345678901234.00");
+    });
+  });
+});

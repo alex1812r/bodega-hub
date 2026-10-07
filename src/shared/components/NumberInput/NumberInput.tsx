@@ -4,9 +4,12 @@ import {
   type ChangeEvent,
   type ClipboardEvent,
   type ComponentProps,
+  type CompositionEvent,
   type FocusEvent,
   type KeyboardEvent,
   type Ref,
+  useCallback,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -63,6 +66,8 @@ type TypedSeparator = "," | ".";
 const DIGIT = /\d/;
 const SEPARATOR = /[.,]/g;
 const INTEGER_REQUIRED_MESSAGE = "Debe ser un número entero.";
+// Con más dígitos el número deja de ser exacto y acaba saliendo como 1e+21 o Infinity.
+const MAX_DIGITS = 15;
 
 /**
  * Interpreta el texto del campo. Sirve como `setValueAs` de `register`:
@@ -153,6 +158,54 @@ function hasForeignTextBetweenDigits(text: string) {
   const body = /\d(?:[^]*\d)?/.exec(text)?.[0] ?? "";
 
   return /[^\d.,]/.test(body.replace(/(\d)[   ](?=\d{3}(?!\d))/g, "$1"));
+}
+
+function countDigits(text: string) {
+  return text.replace(/\D/g, "").length;
+}
+
+/**
+ * `true` si un mismo separador se repite y no puede ser de miles porque algún
+ * grupo no tiene tres dígitos ("1.2.3", "12,,5"). No hay forma de saber qué
+ * número es: leerlo como miles daría 123. "1.234.567" sí son miles. Como en
+ * `hasForeignTextBetweenDigits`, lo que rodea al número ("Bs. 12") no cuenta.
+ */
+function hasAmbiguousSeparators(text: string) {
+  const body = /\d(?:[^]*\d)?/.exec(text)?.[0] ?? "";
+  const groups = body.split(SEPARATOR).slice(1);
+
+  return (
+    groups.length > 1 &&
+    !(body.includes(",") && body.includes(".")) &&
+    groups.some((group) => countDigits(group) !== 3)
+  );
+}
+
+/** Texto que llega de golpe (pegado, arrastre, dictado) y que no se puede leer como un solo número. */
+function isNotPlainNumber(text: string) {
+  return hasForeignTextBetweenDigits(text) || hasAmbiguousSeparators(text);
+}
+
+/** `true` si `next` añade dígitos por encima de los que un número guarda exactos. Acortar un valor largo sí se deja. */
+function exceedsDigits(next: string, previous: string) {
+  return countDigits(next) > MAX_DIGITS && countDigits(next) > countDigits(previous);
+}
+
+/** Dónde empieza y cuánto mide lo que `raw` tiene de nuevo respecto a `previous`. */
+function findInsertion(previous: string, raw: string) {
+  const shortest = Math.min(previous.length, raw.length);
+  let start = 0;
+  let tail = 0;
+
+  while (start < shortest && previous[start] === raw[start]) {
+    start += 1;
+  }
+
+  while (tail < shortest - start && previous[previous.length - 1 - tail] === raw[raw.length - 1 - tail]) {
+    tail += 1;
+  }
+
+  return { length: raw.length - start - tail, start };
 }
 
 function incrementDigits(digits: string) {
@@ -325,7 +378,7 @@ function fractionLength(text: string) {
 }
 
 /** Escribe en el campo y avisa a React (y a react-hook-form) con un evento nativo. */
-function commitValue(element: HTMLInputElement, next: string) {
+function commitValue(element: HTMLInputElement, next: string, caret?: number) {
   if (element.value === next) {
     return;
   }
@@ -333,6 +386,11 @@ function commitValue(element: HTMLInputElement, next: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
 
   setter?.call(element, next);
+
+  if (caret !== undefined) {
+    element.setSelectionRange(caret, caret);
+  }
+
   element.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
@@ -347,6 +405,8 @@ export function NumberInput({
   min,
   onBlur,
   onChange,
+  onCompositionEnd,
+  onCompositionStart,
   onFocus,
   onKeyDown,
   onPaste,
@@ -360,6 +420,13 @@ export function NumberInput({
 }: NumberInputProps) {
   // El DOM siempre lleva punto: aquí se recuerda con qué tecla se escribió el separador actual.
   const typedSeparator = useRef<TypedSeparator>(".");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Texto del campo justo antes de la edición en curso: a él se vuelve si la edición se rechaza.
+  const lastValue = useRef("");
+  const isComposing = useRef(false);
+  const isWriting = useRef(false);
+  // Texto a medio componer (teclado IME): se muestra tal cual hasta que la composición termina.
+  const [composition, setComposition] = useState<string | null>(null);
   const minLimit = toLimit(min);
   const options: NormalizeOptions = {
     allowNegative,
@@ -393,18 +460,79 @@ export function NumberInput({
   // El aviso del llamador manda sobre el del propio campo.
   const shownError = error ?? getNumberInputError(isControlled ? displayValue : draft, { decimals });
 
+  const setRefs = useCallback(
+    (node: HTMLInputElement | null) => {
+      inputRef.current = node;
+
+      if (typeof ref === "function") {
+        return ref(node);
+      }
+
+      if (ref) {
+        ref.current = node;
+      }
+    },
+    [ref],
+  );
+
+  // El valor también cambia sin pasar por `handleChange` (valor inicial o `reset` de react-hook-form,
+  // el padre): se anota tras cada render y justo antes de cada edición del usuario.
+  useEffect(() => {
+    const element = inputRef.current;
+
+    if (!element) {
+      return;
+    }
+
+    const remember = () => {
+      if (!isComposing.current) {
+        lastValue.current = element.value;
+      }
+    };
+
+    remember();
+    element.addEventListener("beforeinput", remember);
+
+    return () => element.removeEventListener("beforeinput", remember);
+  });
+
   // Lo que escribe el propio campo (formato al salir, pegado, flechas) lleva siempre punto.
   function writeValue(element: HTMLInputElement, next: string) {
     typedSeparator.current = ".";
+    isWriting.current = true;
     commitValue(element, next);
+    isWriting.current = false;
   }
 
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
     const element = event.currentTarget;
     const raw = element.value;
+
+    // Reescribir el campo a media composición hace que el teclado vuelva a insertar todo (12,5 → 1212512.5).
+    if (isComposing.current) {
+      setComposition(raw);
+      return;
+    }
+
+    const previous = lastValue.current;
+    const insertion = findInsertion(previous, raw);
     const rawCaret = element.selectionStart ?? raw.length;
     const decimalIndex = findTypedDecimalIndex(raw, rawCaret, typedSeparator.current);
     const next = sanitizeNumberText(dropSeparatorsExcept(raw, decimalIndex), options);
+
+    // Varios caracteres de golpe sin ser pegado (arrastre, autocompletado, dictado, composición):
+    // misma regla que al pegar. Lo que escribe el propio campo ya viene limpio.
+    if (
+      !isWriting.current &&
+      ((insertion.length > 1 && isNotPlainNumber(raw)) || exceedsDigits(next, previous))
+    ) {
+      const caret = Math.min(insertion.start, previous.length);
+
+      element.value = previous;
+      element.setSelectionRange(caret, caret);
+      lastValue.current = previous;
+      return;
+    }
 
     if (decimalIndex < 0) {
       typedSeparator.current = ".";
@@ -420,9 +548,31 @@ export function NumberInput({
       element.setSelectionRange(caret, caret);
     }
 
+    lastValue.current = next;
     setDraft(next);
     onChange?.(event);
     onValueChange?.(parseNumberInput(next));
+  }
+
+  function handleCompositionStart(event: CompositionEvent<HTMLInputElement>) {
+    isComposing.current = true;
+    lastValue.current = event.currentTarget.value;
+    onCompositionStart?.(event);
+  }
+
+  function handleCompositionEnd(event: CompositionEvent<HTMLInputElement>) {
+    onCompositionEnd?.(event);
+
+    const element = event.currentTarget;
+    const composed = element.value;
+    const caret = element.selectionStart ?? composed.length;
+
+    isComposing.current = false;
+    setComposition(null);
+    // React ya vio el texto compuesto: se vuelve al valor de partida para que lo
+    // reciba como un único cambio, una sustitución y no inserciones acumuladas.
+    element.value = lastValue.current;
+    commitValue(element, composed, caret);
   }
 
   function handleFocus(event: FocusEvent<HTMLInputElement>) {
@@ -454,12 +604,16 @@ export function NumberInput({
     const pasted = event.clipboardData.getData("text");
 
     // Se mira junto a lo que ya había: pegar "e3" detrás de "1" también daría 13. El campo se queda como estaba.
-    if (hasForeignTextBetweenDigits(current.slice(0, start) + pasted + current.slice(end))) {
+    if (isNotPlainNumber(current.slice(0, start) + pasted + current.slice(end))) {
       return;
     }
 
     const head =current.slice(0, start) + normalizePastedNumber(pasted);
     const next = sanitizeNumberText(head + current.slice(end), options);
+
+    if (exceedsDigits(next, current)) {
+      return;
+    }
     const caret = Math.min(sanitizeNumberText(head, options).length, next.length);
 
     writeValue(element, next);
@@ -502,14 +656,16 @@ export function NumberInput({
     inputMode: allowNegative ? ("text" as const) : decimals === 0 ? ("numeric" as const) : ("decimal" as const),
     onBlur: handleBlur,
     onChange: handleChange,
+    onCompositionEnd: handleCompositionEnd,
+    onCompositionStart: handleCompositionStart,
     onFocus: handleFocus,
     onKeyDown: handleKeyDown,
     onPaste: handlePaste,
     readOnly,
-    ref,
+    ref: setRefs,
     type: "text" as const,
     ...(isControlled
-      ? { value: displayValue }
+      ? { value: composition ?? displayValue }
       : { defaultValue: defaultValue === undefined ? undefined : toText(defaultValue) }),
   };
 
