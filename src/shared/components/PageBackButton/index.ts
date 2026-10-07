@@ -1,1 +1,1 @@
-export { PageBackButton } from "./PageBackButton";
+export { PageBackButton, type PageBackButtonProps } from "./PageBackButton";
