@@ -68,7 +68,8 @@ export type EntityAutocompleteProps<K extends EntityKind> = {
    * Enter sin ningún resultado para el texto escrito o leído. También recibe
    * el código de un escaneo que no terminó en una elección (sin coincidencia
    * exacta o con error de búsqueda) cuando el campo ya está en otro escaneo y
-   * no puede mostrarlo.
+   * no puede mostrarlo, o cuando lo estaba mostrando y el siguiente escaneo lo
+   * reemplaza sin que el usuario haya elegido, limpiado ni editado el texto.
    */
   onNotFound?: (text: string) => void;
   placeholder?: string;
@@ -140,6 +141,10 @@ export function EntityAutocomplete<K extends EntityKind>({
   // Valor de `fieldEpochRef` cuando llegaron los resultados a la vista: si el
   // texto cambió después, el usuario no ha podido verlos para ese texto.
   const resultsEpochRef = useRef(0);
+  // Código de un escaneo devuelto al campo sin avisar (con su lista o su
+  // error) mientras el usuario no haya hecho nada con él: si el siguiente
+  // escaneo lo reemplaza, se avisa con `onNotFound`.
+  const shownScanRef = useRef<string | null>(null);
   const scanQueueRef = useRef<Promise<void>>(Promise.resolve());
   const scanControllersRef = useRef(new Set<AbortController>());
   const callbacksRef = useRef({ onChange, onNotFound });
@@ -242,11 +247,13 @@ export function EntityAutocomplete<K extends EntityKind>({
         setSearch({ items: visibleItems, key, status: "success" });
         setActiveIndex(null);
         resultsEpochRef.current = fieldEpochRef.current;
+        shownScanRef.current = null;
         return visibleItems;
       },
       (searchError: unknown) => {
         if (requestId === requestIdRef.current) {
           setSearch({ error: searchError, key, status: "error" });
+          shownScanRef.current = null;
         }
 
         return null;
@@ -447,6 +454,7 @@ export function EntityAutocomplete<K extends EntityKind>({
       cancelPendingScans();
     }
 
+    shownScanRef.current = null;
     rememberEntityRecent(entity, option, recentsKey);
     resetTypedText();
     setIsOpen(false);
@@ -492,7 +500,8 @@ export function EntityAutocomplete<K extends EntityKind>({
   /**
    * Cierra un escaneo: elige la coincidencia exacta de código o, sin ella,
    * devuelve el texto al campo con sus resultados (o su error). Si el campo ya
-   * está en otro escaneo, avisa con `onNotFound` y el código de este.
+   * está en otro escaneo, avisa con `onNotFound` y el código de este; si vuelve
+   * al campo sin avisar, queda anotado por si el siguiente escaneo lo reemplaza.
    */
   function settleScan(code: string, outcome: ScanOutcome<K>, isFieldUnchanged: boolean) {
     const callbacks = callbacksRef.current;
@@ -511,6 +520,7 @@ export function EntityAutocomplete<K extends EntityKind>({
     }
 
     const canShowInField = isFieldUnchanged && document.activeElement === inputRef.current;
+    const hasNoResults = "items" in outcome && outcome.items.length === 0;
 
     if (canShowInField) {
       const key = getSearchKey(code);
@@ -529,9 +539,10 @@ export function EntityAutocomplete<K extends EntityKind>({
       resultsEpochRef.current = fieldEpochRef.current;
       showPopup();
       setRestoredScans((count) => count + 1);
+      shownScanRef.current = hasNoResults ? null : code;
     }
 
-    if (!canShowInField || ("items" in outcome && outcome.items.length === 0)) {
+    if (!canShowInField || hasNoResults) {
       callbacks.onNotFound?.(code);
     }
   }
@@ -541,10 +552,21 @@ export function EntityAutocomplete<K extends EntityKind>({
    * su texto, libera el campo para el siguiente escaneo y busca ya, con su
    * propia petición; las respuestas se atienden en el orden de los Enter.
    * Teclear o borrar después no lo cancela; elegir una opción o limpiar, sí.
+   *
+   * Si reemplaza a un escaneo anterior que seguía a la vista en el campo sin
+   * que el usuario decidiera nada, ese código se avisa con `onNotFound`; repetir
+   * el mismo código no avisa: este escaneo decide por los dos.
    */
   function startScan(code: string) {
     const controller = new AbortController();
     const fetchOptions = fetcher ?? config.defaultFetcher;
+    const replacedScan = shownScanRef.current;
+
+    shownScanRef.current = null;
+
+    if (replacedScan !== null && replacedScan !== code) {
+      onNotFound?.(replacedScan);
+    }
 
     resetTypedText();
     showPopup();
@@ -651,6 +673,19 @@ export function EntityAutocomplete<K extends EntityKind>({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    const { selectionEnd, selectionStart, value: fieldText } = event.currentTarget;
+
+    // El lector escribe sobre el texto seleccionado de un escaneo devuelto al
+    // campo y lo reemplaza entero. Una tecla con la selección deshecha es el
+    // usuario corrigiéndolo a mano: ya lo vio y no se avisará por él.
+    if (
+      event.key !== "Enter" &&
+      shownScanRef.current === fieldText &&
+      (selectionStart !== 0 || selectionEnd !== fieldText.length)
+    ) {
+      shownScanRef.current = null;
+    }
+
     switch (event.key) {
       case "ArrowDown":
       case "ArrowUp":
@@ -679,6 +714,10 @@ export function EntityAutocomplete<K extends EntityKind>({
   }
 
   function handleTextChange(nextText: string) {
+    if (nextText === "") {
+      shownScanRef.current = null;
+    }
+
     fieldEpochRef.current += 1;
     setText(nextText);
     setIsDirty(true);
@@ -706,6 +745,7 @@ export function EntityAutocomplete<K extends EntityKind>({
   }
 
   function handleClear() {
+    shownScanRef.current = null;
     cancelPendingScans();
     resetTypedText();
     openPopup();

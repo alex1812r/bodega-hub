@@ -1328,6 +1328,199 @@ describe("EntityAutocomplete: escaneos seguidos", () => {
       expect(onChange.mock.calls.map(([option]) => option?.id)).toEqual(["p-1"]);
     });
   });
+
+  describe("escaneo devuelto al campo y desplazado por el siguiente (SHR-25)", () => {
+    const partialCode = "75900000";
+    const otherPartialCode = "759000000";
+    const failingCode = "7590000000999";
+
+    /** A 100 ms: código exacto si `exact`; si no, por trozo de código o de nombre. */
+    function partialFetcher() {
+      return jest.fn<ReturnType<EntityFetcher<"product">>, Parameters<EntityFetcher<"product">>>(
+        ({ query }) =>
+          new Promise((resolve, reject) => {
+            setTimeout(() => {
+              if (query === failingCode) {
+                reject(new Error("Sin conexión con el servidor."));
+              } else {
+                resolve(
+                  catalog.filter(
+                    (item) => item.barcode?.includes(query) || item.label.includes(query),
+                  ),
+                );
+              }
+            }, 100);
+          }),
+      );
+    }
+
+    /** El lector reemplaza el texto seleccionado del campo tecla a tecla y pulsa Enter. */
+    function scanOver(code: string) {
+      for (let length = 1; length <= code.length; length += 1) {
+        type(code.slice(0, length));
+      }
+
+      pressKey("Enter");
+    }
+
+    /** Escaneo sin coincidencia exacta: vuelve al campo, seleccionado, con su lista. */
+    async function scanShownInField(code: string, optionCount: number) {
+      scanOver(code);
+      await advance(200);
+
+      expect(getInput()).toHaveValue(code);
+      expect(screen.getAllByRole("option")).toHaveLength(optionCount);
+    }
+
+    it("el siguiente escaneo avisa con el código parcial que pisa, una sola vez", async () => {
+      const { onChange, onNotFound } = renderScanner(partialFetcher());
+
+      await scanShownInField(partialCode, 2);
+
+      expect(onNotFound).not.toHaveBeenCalled();
+
+      scanOver(codeB);
+
+      expect(onNotFound.mock.calls).toEqual([[partialCode]]);
+
+      await advance(200);
+      scanOver(codeA);
+      await advance(200);
+
+      expect(onNotFound.mock.calls).toEqual([[partialCode]]);
+      expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2", "p-1"]);
+    });
+
+    it("dos parciales seguidos y un tercero: cada parcial se avisa al ser pisado", async () => {
+      const { onChange, onNotFound } = renderScanner(partialFetcher());
+
+      await scanShownInField(partialCode, 2);
+      await scanShownInField(otherPartialCode, 2);
+
+      expect(onNotFound.mock.calls).toEqual([[partialCode]]);
+
+      scanOver(codeB);
+      await advance(200);
+
+      expect(onNotFound.mock.calls).toEqual([[partialCode], [otherPartialCode]]);
+      expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+    });
+
+    it("el siguiente escaneo avisa con el código que volvió al campo con un error", async () => {
+      const { onChange, onNotFound } = renderScanner(partialFetcher());
+
+      scanOver(failingCode);
+      await advance(200);
+
+      expect(screen.getByRole("alert")).toHaveTextContent("Sin conexión con el servidor.");
+      expect(onNotFound).not.toHaveBeenCalled();
+
+      scanOver(codeB);
+      await advance(200);
+
+      expect(onNotFound.mock.calls).toEqual([[failingCode]]);
+      expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+    });
+
+    it("repetir el escaneo del mismo código no avisa: sigue a la vista", async () => {
+      const { onChange, onNotFound } = renderScanner(partialFetcher());
+
+      await scanShownInField(partialCode, 2);
+      await scanShownInField(partialCode, 2);
+
+      scanOver(failingCode);
+      await advance(200);
+      scanOver(failingCode);
+      await advance(200);
+
+      expect(onNotFound.mock.calls).toEqual([[partialCode]]);
+      expect(onChange).not.toHaveBeenCalled();
+      expect(getInput()).toHaveValue(failingCode);
+    });
+
+    it("un código sin resultados ya se avisó al responder: el siguiente escaneo no lo repite", async () => {
+      const { onNotFound } = renderScanner(partialFetcher());
+
+      scanOver("0000000000000");
+      await advance(200);
+      scanOver(codeB);
+      await advance(200);
+
+      expect(onNotFound.mock.calls).toEqual([["0000000000000"]]);
+    });
+
+    it("si el usuario elige una opción de la lista, el siguiente escaneo no avisa", async () => {
+      const { onChange, onNotFound } = renderScanner(partialFetcher());
+
+      await scanShownInField(partialCode, 2);
+      fireEvent.click(screen.getByRole("option", { name: /Producto A/ }));
+      scanOver(codeB);
+      await advance(200);
+
+      expect(onNotFound).not.toHaveBeenCalled();
+      expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-1", "p-2"]);
+    });
+
+    it("si el usuario limpia el campo con el botón, el siguiente escaneo no avisa", async () => {
+      const { onNotFound } = renderScanner(partialFetcher());
+
+      await scanShownInField(partialCode, 2);
+      fireEvent.click(screen.getByRole("button", { name: "Limpiar Producto" }));
+      scanOver(codeB);
+      await advance(200);
+
+      expect(onNotFound).not.toHaveBeenCalled();
+    });
+
+    it("si el usuario borra el texto a mano, el siguiente escaneo no avisa", async () => {
+      const { onNotFound } = renderScanner(partialFetcher());
+
+      await scanShownInField(partialCode, 2);
+      type("");
+      scanOver(codeB);
+      await advance(200);
+
+      expect(onNotFound).not.toHaveBeenCalled();
+    });
+
+    it("si el usuario corrige el texto a mano y pulsa Enter, no avisa con el código anterior", async () => {
+      const { onChange, onNotFound } = renderScanner(partialFetcher());
+
+      await scanShownInField(partialCode, 2);
+
+      // Quita la selección (clic al final) y completa el código tecla a tecla.
+      const input = getInput() as HTMLInputElement;
+      const missingDigits = codeB.slice(partialCode.length);
+
+      input.setSelectionRange(partialCode.length, partialCode.length);
+
+      for (let length = 1; length <= missingDigits.length; length += 1) {
+        pressKey(missingDigits[length - 1]);
+        type(partialCode + missingDigits.slice(0, length));
+      }
+
+      pressKey("Enter");
+      await advance(200);
+
+      expect(onNotFound).not.toHaveBeenCalled();
+      expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+    });
+
+    it("si el usuario escribe otra búsqueda y ve sus resultados, el siguiente escaneo no avisa", async () => {
+      const { onNotFound } = renderScanner(partialFetcher());
+
+      await scanShownInField(partialCode, 2);
+      await search("Producto B");
+      await advance(200);
+
+      expect(screen.getAllByRole("option")).toHaveLength(1);
+
+      scanOver(codeA);
+      await advance(200);
+
+      expect(onNotFound).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("EntityAutocomplete: teclado y ARIA", () => {

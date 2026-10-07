@@ -33,7 +33,9 @@ import { getEntityRecentsStorageKey } from "./entityRecents";
  *   coincidencia exacta el texto vuelve al campo con la lista abierta; sin
  *   resultados, o si el campo ya está en otro escaneo, llama a `onNotFound`.
  *   Repetir el mismo escaneo tampoco elige; elegir una opción o limpiar
- *   descarta los escaneos que aún no respondieron.
+ *   descarta los escaneos que aún no respondieron. Si el siguiente escaneo
+ *   reemplaza un texto devuelto al campo sin que el usuario haya elegido,
+ *   limpiado ni editado nada, ese código también llega a `onNotFound`.
  *
  * Estas historias usan fetchers falsos y no tocan la red; «Lector de barras» usa
  * el fetcher real contra un `/api/products` simulado con MSW.
