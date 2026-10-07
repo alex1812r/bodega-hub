@@ -1,0 +1,311 @@
+/**
+ * PAG-01 · pagar una compra desde su detalle: la accion primaria «Pagar» abre el
+ * modal de pago sin navegar, en tres clics queda registrado y el saldo y el
+ * historial se refrescan sin recargar.
+ */
+import "@testing-library/jest-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+const mockRouterPush = jest.fn();
+
+jest.mock("next/navigation", () => ({
+  usePathname: () => "/purchases/purchase-pag01",
+  useRouter: () => ({ back: jest.fn(), push: mockRouterPush, replace: jest.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+// jspdf necesita TextEncoder, que jsdom no trae; el PDF no interviene aqui.
+jest.mock("./services/exportPurchaseDetailPdf", () => ({
+  exportPurchaseDetailPdf: jest.fn(),
+}));
+
+import { authQueryKeys } from "@/modules/auth/hooks/useCurrentUser";
+import { jsonResponse } from "@/modules/inventory/utils/requestAttempt.testUtils";
+import { type Permission, type UserRole, getRolePermissions } from "@/shared/auth/permissions";
+import type { PaymentMock } from "@/shared/mocks/erp-data";
+import { formatVes } from "@/shared/utils/currency";
+
+import type { PurchaseDetails } from "../hooks/usePurchases";
+import { PurchaseDetailsPage } from "./page";
+
+const RATE_VES = 500;
+const PURCHASE: PurchaseDetails = {
+  createdAt: "2026-10-06T13:32:00.000Z",
+  discountRef: 0,
+  id: "purchase-pag01",
+  items: [],
+  paidRef: 0,
+  paidVes: 0,
+  payments: [],
+  purchaseNumber: "C-20261006-000007",
+  refRateVes: RATE_VES,
+  status: "recibido",
+  subtotalRef: 40,
+  supplier: {
+    id: "cont-supplier",
+    name: "Distribuidora Polar",
+  } as PurchaseDetails["supplier"],
+  supplierId: "cont-supplier",
+  taxRef: 0,
+  totalRef: 40,
+  totalVes: 20000,
+  userId: "user-admin",
+};
+
+type Session = { permissions?: readonly Permission[]; role: UserRole };
+
+/**
+ * API de prueba con estado: POST /api/payments abona la compra, de modo que el
+ * GET que dispara la invalidacion devuelve ya el saldo y el historial nuevos.
+ */
+function installApi(initial: Partial<PurchaseDetails>, session: Session) {
+  let purchase: PurchaseDetails = { ...PURCHASE, ...initial };
+  const posts: Array<{ body: Record<string, unknown>; url: string }> = [];
+  let purchaseGets = 0;
+
+  global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+
+    if (init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      const amountVes = Number(body.amount);
+      const payment: PaymentMock = {
+        amount: amountVes,
+        amountRef: amountVes / RATE_VES,
+        amountVes,
+        contactId: purchase.supplierId,
+        createdAt: "2026-10-07T15:00:00.000Z",
+        currency: "VES",
+        direction: "salida",
+        id: `pay-${posts.length + 1}`,
+        method: "efectivo_ves",
+        purchaseId: purchase.id,
+        refRateVes: RATE_VES,
+      };
+
+      posts.push({ body, url });
+      purchase = {
+        ...purchase,
+        paidRef: (purchase.paidRef ?? 0) + payment.amountRef,
+        paidVes: purchase.paidVes + amountVes,
+        payments: [...purchase.payments, payment],
+      };
+
+      return Promise.resolve(
+        jsonResponse(
+          { data: { ...payment, pendingBalanceVes: purchase.totalVes - purchase.paidVes } },
+          201,
+        ),
+      );
+    }
+
+    if (url === `/api/purchases/${PURCHASE.id}`) {
+      purchaseGets += 1;
+
+      return Promise.resolve(jsonResponse({ data: purchase }));
+    }
+
+    if (url.includes("/api/auth/me")) {
+      return Promise.resolve(
+        jsonResponse({
+          data: {
+            permissions: session.permissions ?? getRolePermissions(session.role),
+            role: session.role,
+          },
+        }),
+      );
+    }
+
+    if (url.includes("/api/settings/payment-methods")) {
+      return Promise.resolve(
+        jsonResponse({ data: { enabledPaymentMethods: ["efectivo_ves", "pago_movil"] } }),
+      );
+    }
+
+    return Promise.resolve(jsonResponse({ data: null }));
+  }) as unknown as typeof fetch;
+
+  return { posts, purchaseGets: () => purchaseGets };
+}
+
+/** Pinta el detalle y espera a la compra y a los permisos: sin ellos no hay boton. */
+async function renderPage(initial: Partial<PurchaseDetails> = {}, session: Session = { role: "admin" }) {
+  const api = installApi(initial, session);
+  const queryClient = new QueryClient({
+    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+  });
+
+  render(
+    <QueryClientProvider client={queryClient}>
+      <PurchaseDetailsPage purchaseId={PURCHASE.id} />
+    </QueryClientProvider>,
+  );
+
+  await screen.findByRole("heading", { name: /C-20261006-000007/ });
+  await waitFor(() =>
+    expect(queryClient.getQueryState(authQueryKeys.me())?.status).toBe("success"),
+  );
+
+  return { ...api, user: userEvent.setup() };
+}
+
+/** El importe lleva espacios duros: se compara con los espacios normalizados. */
+function modalBalance(amountVes: number) {
+  const expected = `Saldo pendiente actual: ${formatVes(amountVes)}`.replace(/s+/g, " ");
+
+  return (_content: string, element: Element | null) =>
+    element?.tagName === "P" && element.textContent?.replace(/s+/g, " ").trim() === expected;
+}
+
+function payButton() {
+  return screen.queryByRole("button", { name: "Pagar" });
+}
+
+beforeEach(() => {
+  mockRouterPush.mockReset();
+});
+
+describe("PurchaseDetailsPage · Pagar (PAG-01)", () => {
+  describe("visibilidad de «Pagar»", () => {
+    it.each<UserRole>(["admin", "contador"])("%s con saldo pendiente lo ve", async (role) => {
+      await renderPage({}, { role });
+
+      expect(payButton()).toBeInTheDocument();
+    });
+
+    it("va en la cabecera, antes del menu de acciones", async () => {
+      await renderPage();
+
+      const header = screen.getByRole("heading", { name: /C-20261006-000007/ }).closest("header");
+      const pay = within(header as HTMLElement).getByRole("button", { name: "Pagar" });
+      const menu = within(header as HTMLElement).getByRole("button", { name: /^Acciones de/ });
+
+      expect(pay.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("sin saldo pendiente no aparece", async () => {
+      await renderPage({ paidRef: 40, paidVes: 20000 });
+
+      expect(payButton()).not.toBeInTheDocument();
+    });
+
+    it.each(["cancelado", "devuelto"] as const)(
+      "compra en estado %s: no aparece aunque quede saldo",
+      async (status) => {
+        await renderPage({ status });
+
+        expect(payButton()).not.toBeInTheDocument();
+      },
+    );
+
+    it("vendedor no lo ve", async () => {
+      await renderPage({}, { role: "vendedor" });
+
+      expect(payButton()).not.toBeInTheDocument();
+    });
+
+    it("vendedor con payments.manage concedido tampoco: el BFF le niega pagos de compra", async () => {
+      await renderPage(
+        {},
+        { permissions: [...getRolePermissions("vendedor"), "payments.manage"], role: "vendedor" },
+      );
+
+      expect(payButton()).not.toBeInTheDocument();
+    });
+
+    it("sin payments.manage no aparece", async () => {
+      await renderPage(
+        {},
+        {
+          permissions: getRolePermissions("admin").filter(
+            (permission) => permission !== "payments.manage",
+          ),
+          role: "admin",
+        },
+      );
+
+      expect(payButton()).not.toBeInTheDocument();
+    });
+  });
+
+  it("abre el modal de la compra con su saldo, sin navegar", async () => {
+    const { posts, user } = await renderPage({ paidRef: 10, paidVes: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Pagar" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Pagar compra" });
+
+    expect(
+      await within(dialog).findByText(modalBalance(15000)),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Compra C-20261006-000007 a Distribuidora Polar."),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/^ID /)).not.toBeInTheDocument();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    expect(posts).toHaveLength(0);
+  });
+
+  it("tres clics saldan la compra: se cierra el modal, se refresca el detalle y «Pagar» desaparece", async () => {
+    const { posts, purchaseGets, user } = await renderPage();
+    const getsBefore = purchaseGets();
+
+    expect(screen.getByText("Pendiente")).toBeInTheDocument();
+    expect(screen.getByText("No hay pagos registrados para esta compra.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Pagar" }));
+    await user.click(await screen.findByRole("button", { name: "Completar saldo" }));
+    await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    expect(posts).toEqual([
+      {
+        body: {
+          amount: 20000,
+          clientRequestId: expect.any(String),
+          currency: "VES",
+          method: "efectivo_ves",
+          purchaseId: PURCHASE.id,
+        },
+        url: "/api/payments",
+      },
+    ]);
+
+    // Estado de pago e historial salen del GET que dispara la invalidacion.
+    expect(await screen.findByText("Pagado")).toBeInTheDocument();
+    expect(screen.queryByText("Pendiente")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("No hay pagos registrados para esta compra."),
+    ).not.toBeInTheDocument();
+    expect(purchaseGets()).toBeGreaterThan(getsBefore);
+    expect(payButton()).not.toBeInTheDocument();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
+  it("abono parcial: el modal sigue abierto con el saldo que resta y el detalle se refresca", async () => {
+    const { posts, user } = await renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Pagar" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Pagar compra" });
+
+    await within(dialog).findByText(modalBalance(20000));
+    await user.type(within(dialog).getByLabelText("Monto"), "5000");
+    await user.click(within(dialog).getByRole("button", { name: "Registrar pago" }));
+
+    expect(
+      await within(dialog).findByText(modalBalance(15000)),
+    ).toBeInTheDocument();
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toMatchObject({ amount: 5000, purchaseId: PURCHASE.id });
+    expect(await screen.findByText("Pago parcial")).toBeInTheDocument();
+    expect(
+      screen.queryByText("No hay pagos registrados para esta compra."),
+    ).not.toBeInTheDocument();
+    // Con el modal abierto la pagina queda fuera del arbol accesible.
+    expect(screen.getByRole("button", { hidden: true, name: "Pagar" })).toBeInTheDocument();
+  });
+});

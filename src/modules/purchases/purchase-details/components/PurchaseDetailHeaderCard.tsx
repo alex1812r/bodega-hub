@@ -2,6 +2,10 @@
 
 
 
+import type { ReactNode } from "react";
+
+
+
 import { PurchasesStatusBadge } from "@/modules/purchases/purchases-list/components/PurchasesStatusBadge";
 
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
@@ -32,6 +36,10 @@ type PurchaseDetailHeaderCardProps = {
 
   onReturn: () => void | Promise<void>;
 
+  /** Acción principal de la compra (p. ej. "Pagar"); va antes del menú de acciones. */
+
+  primaryAction?: ReactNode;
+
   purchaseId: string;
 
   purchaseNumber: string;
@@ -59,6 +67,8 @@ export function PurchaseDetailHeaderCard({
   onReceive,
 
   onReturn,
+
+  primaryAction,
 
   purchaseId,
 
@@ -96,31 +106,37 @@ export function PurchaseDetailHeaderCard({
 
 
 
-      <PurchaseDetailActionsMenu
+      <div className="flex items-center gap-2">
 
-        isCancelling={isCancelling}
+        {primaryAction}
 
-        isExportingPdf={isExportingPdf}
+        <PurchaseDetailActionsMenu
 
-        isReceiving={isReceiving}
+          isCancelling={isCancelling}
 
-        isReturning={isReturning}
+          isExportingPdf={isExportingPdf}
 
-        onCancel={onCancel}
+          isReceiving={isReceiving}
 
-        onExportPdf={onExportPdf}
+          isReturning={isReturning}
 
-        onReceive={onReceive}
+          onCancel={onCancel}
 
-        onReturn={onReturn}
+          onExportPdf={onExportPdf}
 
-        purchaseId={purchaseId}
+          onReceive={onReceive}
 
-        purchaseNumber={purchaseNumber}
+          onReturn={onReturn}
 
-        status={status}
+          purchaseId={purchaseId}
 
-      />
+          purchaseNumber={purchaseNumber}
+
+          status={status}
+
+        />
+
+      </div>
 
     </header>
 

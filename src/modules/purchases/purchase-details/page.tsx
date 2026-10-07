@@ -2,9 +2,14 @@
 
 import { useState } from "react";
 
+import { RegisterPaymentModal } from "@/modules/payments/components/RegisterPaymentModal";
+import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
+import { usePermission } from "@/shared/auth/usePermission";
+import { Button } from "@/shared/components/Button";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
+import { roundMoney } from "@/shared/utils/currency";
 
 import {
   useCancelPurchase,
@@ -35,7 +40,9 @@ export function PurchaseDetailsPage({
   const cancelPurchase = useCancelPurchase(purchaseId);
   const receivePurchase = useReceivePurchase(purchaseId);
   const returnPurchase = useReturnPurchase(purchaseId);
+  const { can, role } = usePermission();
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isPaying, setIsPaying] = useState(false);
 
   async function handleExportPdf() {
     setIsExportingPdf(true);
@@ -73,6 +80,17 @@ export function PurchaseDetailsPage({
   const paidRef = data.paidRef ?? 0;
   const pendingRef = Math.max(0, Math.round((data.totalRef - paidRef) * 100) / 100);
   const currentRateVes = exchangeRate.data?.rateVes ?? 0;
+  // "Pagar" sigue las reglas de `register_payment` y de POST /api/payments: el saldo
+  // es el de bolívares (total − pagado), una compra cancelada o devuelta no admite
+  // pagos, y solo paga quien tiene `payments.manage` y no es vendedor.
+  const pendingVes = roundMoney(data.totalVes - data.paidVes);
+  const canPay =
+    pendingVes > 0 &&
+    data.status !== "cancelado" &&
+    data.status !== "devuelto" &&
+    can("payments.manage") &&
+    role !== undefined &&
+    canViewPurchasePayments(role);
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">
@@ -93,6 +111,13 @@ export function PurchaseDetailsPage({
         onReturn={() => {
           void returnPurchase.mutateAsync(purchaseId);
         }}
+        primaryAction={
+          canPay ? (
+            <Button className="flex-1 md:flex-none" onClick={() => setIsPaying(true)} type="button">
+              Pagar
+            </Button>
+          ) : null
+        }
         purchaseId={data.id}
         purchaseNumber={data.purchaseNumber}
         status={data.status}
@@ -143,6 +168,21 @@ export function PurchaseDetailsPage({
         totalVes={data.totalVes}
       />
       <PurchaseDetailPaymentsTable payments={data.payments} />
+
+      {canPay ? (
+        <RegisterPaymentModal
+          onOpenChange={setIsPaying}
+          // Con la compra saldada no queda nada que abonar: el modal se cierra solo.
+          // Tras un abono parcial sigue abierto, con el saldo que resta.
+          onRegistered={(payment) => {
+            if (payment.pendingBalanceVes !== undefined && payment.pendingBalanceVes <= 0) {
+              setIsPaying(false);
+            }
+          }}
+          open={isPaying}
+          purchaseId={data.id}
+        />
+      ) : null}
     </div>
   );
 }
