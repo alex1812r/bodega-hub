@@ -9,6 +9,9 @@ import type {
 } from "./entityAutocomplete.types";
 import { fetchContactEntityOptions, fetchProductEntityOptions } from "./entityFetchers";
 
+/** De dónde sale una opción: del servidor o de los recientes del navegador. */
+export type EntityOptionSource = "recents" | "results";
+
 export type EntitySecondaryContext = {
   /** La opción viene de los recientes guardados, no de una búsqueda en servidor. */
   isRecent: boolean;
@@ -20,7 +23,11 @@ type EntityConfig<K extends EntityKind> = {
   /** Coincidencia exacta de código para el Enter del lector de barras. */
   findExact: (options: EntityOption<K>[], text: string) => EntityOption<K> | undefined;
   getSecondary: (option: EntityOption<K>, context: EntitySecondaryContext) => string;
-  matchesFilters: (option: EntityOption<K>, filters: EntityFilters<K>) => boolean;
+  matchesFilters: (
+    option: EntityOption<K>,
+    filters: EntityFilters<K>,
+    source: EntityOptionSource,
+  ) => boolean;
 };
 
 const contactTypeLabels: Record<ContactType, string> = {
@@ -29,15 +36,12 @@ const contactTypeLabels: Record<ContactType, string> = {
   proveedor: "Proveedor",
 };
 
-function matchesCommonFilters(
-  option: { id: string; isActive: boolean },
-  filters: { active?: boolean; excludeIds?: string[] },
-) {
-  if (filters.active !== undefined && option.isActive !== filters.active) {
-    return false;
-  }
+function matchesActiveFilter(option: { isActive: boolean }, filters: { active?: boolean }) {
+  return filters.active === undefined || option.isActive === filters.active;
+}
 
-  return !filters.excludeIds?.includes(option.id);
+function isExcluded(option: { id: string }, filters: { excludeIds?: string[] }) {
+  return filters.excludeIds?.includes(option.id) ?? false;
 }
 
 function joinSecondary(parts: string[]) {
@@ -50,8 +54,11 @@ export const entityConfig: { [K in EntityKind]: EntityConfig<K> } = {
     defaultPlaceholder: "Buscar por nombre o RIF",
     findExact: () => undefined,
     getSecondary: (option) => joinSecondary([contactTypeLabels[option.type], option.phone]),
-    matchesFilters: (option, filters) =>
-      matchesCommonFilters(option, filters) &&
+    // `isActive` de los resultados lo aplica el BFF; un reciente es una copia
+    // guardada en el navegador y hay que filtrarla aquí.
+    matchesFilters: (option, filters, source) =>
+      (source === "results" || matchesActiveFilter(option, filters)) &&
+      !isExcluded(option, filters) &&
       (!filters.type || filters.type.length === 0 || filters.type.includes(option.type)),
   },
   product: {
@@ -76,7 +83,8 @@ export const entityConfig: { [K in EntityKind]: EntityConfig<K> } = {
             formatRefUsd(option.salePriceRef),
           ]),
     matchesFilters: (option, filters) =>
-      matchesCommonFilters(option, filters) &&
+      matchesActiveFilter(option, filters) &&
+      !isExcluded(option, filters) &&
       (!filters.categoryId || option.categoryId === filters.categoryId),
   },
 };

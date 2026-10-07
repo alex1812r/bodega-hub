@@ -295,6 +295,19 @@ describe("EntityAutocomplete: búsqueda en servidor", () => {
     expect(screen.getByRole("option")).toHaveTextContent("Contacto 3");
   });
 
+  it("no vuelve a filtrar por isActive los resultados de contactos: ya lo aplica el BFF", async () => {
+    const fetcher = jest.fn(async () => [contact(1), contact(2, { isActive: false })]);
+    render(<Harness entity="contact" fetcher={fetcher} filters={{ active: true }} />);
+
+    await search("cont");
+
+    expect(fetcher).toHaveBeenCalledWith(expect.objectContaining({ filters: { active: true } }));
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Contacto 1Proveedor · 0414-0000001",
+      "Contacto 2Proveedor · 0414-0000002",
+    ]);
+  });
+
   it("no repite la búsqueda cuando los filtros llegan como objeto nuevo con el mismo contenido", async () => {
     const fetcher = jest.fn(async () => [product(1)]);
     const { rerender } = render(
@@ -531,6 +544,20 @@ describe("EntityAutocomplete: recientes", () => {
     ]);
   });
 
+  it("sigue filtrando por isActive los contactos recientes guardados en el navegador", () => {
+    window.localStorage.setItem(
+      getEntityRecentsStorageKey("contact"),
+      JSON.stringify([contact(1, { isActive: false }), contact(2)]),
+    );
+    render(<Harness entity="contact" fetcher={async () => []} filters={{ active: true }} />);
+
+    focusInput();
+
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Contacto 2Proveedor · 0414-0000002",
+    ]);
+  });
+
   it("guarda como máximo 8 recientes, el último primero y sin duplicados", async () => {
     const all = Array.from({ length: 10 }, (_, index) => product(index));
     window.localStorage.setItem(getEntityRecentsStorageKey("product"), JSON.stringify(all.slice(0, 8)));
@@ -639,6 +666,75 @@ describe("EntityAutocomplete: lector de barras y Enter", () => {
     type("produ");
     pressKey("Enter");
     await flushPromises();
+
+    expect(onChange).toHaveBeenCalledWith(product(1));
+  });
+
+  it("Enter inmediato con varias coincidencias parciales y ninguna exacta no elige: abre la lista", async () => {
+    const onChange = jest.fn();
+    const onNotFound = jest.fn();
+    const partial = Array.from({ length: 8 }, (_, index) =>
+      product(index, { barcode: `759100000000${index}` }),
+    );
+    const fetcher = jest.fn(async () => partial);
+    render(
+      <Harness entity="product" fetcher={fetcher} onChange={onChange} onNotFound={onNotFound} />,
+    );
+
+    type("75910000000");
+    pressKey("Enter");
+    await flushPromises();
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onNotFound).not.toHaveBeenCalled();
+    expect(getInput()).toHaveValue("75910000000");
+    expect(screen.getAllByRole("option")).toHaveLength(8);
+
+    // Con la lista ya a la vista, un segundo Enter sí elige la resaltada.
+    pressKey("Enter");
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(partial[0]);
+  });
+
+  it("Enter con la lista cerrada (Esc) y varias coincidencias sin exacta la reabre sin elegir", async () => {
+    const onChange = jest.fn();
+    const onNotFound = jest.fn();
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [product(1), product(2)]}
+        onChange={onChange}
+        onNotFound={onNotFound}
+      />,
+    );
+
+    await search("prod");
+    pressKey("Escape");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    pressKey("Enter");
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onNotFound).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+  });
+
+  it("Enter con la lista ya visible elige la opción resaltada por defecto", async () => {
+    const onChange = jest.fn();
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [product(1), product(2), product(3)]}
+        onChange={onChange}
+      />,
+    );
+
+    await search("prod");
+    expect(activeOptionText()).toContain("Producto 1");
+
+    pressKey("Enter");
 
     expect(onChange).toHaveBeenCalledWith(product(1));
   });
@@ -816,7 +912,18 @@ describe("EntityAutocomplete: teclado y ARIA", () => {
 });
 
 describe("EntityAutocomplete dentro de un Modal", () => {
-  it("monta el desplegable en un portal y Escape lo cierra sin cerrar el modal", async () => {
+  it("fuera de un diálogo monta el desplegable en body", async () => {
+    render(<Harness entity="product" fetcher={async () => [product(1)]} />);
+
+    await search("prod");
+
+    const popup = screen.getByTestId("entity-autocomplete-popup");
+
+    expect(popup.parentElement).toBe(document.body);
+    expect(popup).toContainElement(screen.getByRole("listbox"));
+  });
+
+  it("monta el desplegable dentro del diálogo y Escape lo cierra sin cerrar el modal", async () => {
     const onOpenChange = jest.fn();
     render(
       <Modal onOpenChange={onOpenChange} description="Busca el producto." open title="Vincular producto">
@@ -829,8 +936,10 @@ describe("EntityAutocomplete dentro de un Modal", () => {
     const dialog = screen.getByRole("dialog");
     const popup = screen.getByTestId("entity-autocomplete-popup");
 
-    expect(dialog).not.toContainElement(popup);
-    expect(popup.parentElement).toBe(document.body);
+    // Fuera de Dialog.Content el bloqueo de scroll de Radix cancela rueda y
+    // arrastre táctil sobre la lista (SHR-05 F1).
+    expect(dialog).toContainElement(screen.getByRole("listbox"));
+    expect(popup.parentElement).toBe(dialog);
     expect(popup).toHaveClass("fixed", "z-50", "pointer-events-auto");
 
     pressKey("Escape");

@@ -30,7 +30,11 @@ import type {
   EntityKind,
   EntityOption,
 } from "./entityAutocomplete.types";
-import { entityConfig, type EntitySecondaryContext } from "./entityConfig";
+import {
+  entityConfig,
+  type EntityOptionSource,
+  type EntitySecondaryContext,
+} from "./entityConfig";
 import { readEntityRecents, rememberEntityRecent } from "./entityRecents";
 
 export const ENTITY_AUTOCOMPLETE_LIMIT = 8;
@@ -43,8 +47,9 @@ const POPUP_MAX_HEIGHT_PX = 320;
 const POPUP_MIN_SPACE_BELOW_PX = 180;
 const VIEWPORT_MARGIN_PX = 8;
 
+// `right-auto m-0 p-0` anulan los estilos de navegador de `[popover]`.
 const popupClassName =
-  "pointer-events-auto fixed z-50 overflow-y-auto rounded-lg border border-border bg-surface-container-lowest text-sm shadow-lg";
+  "pointer-events-auto fixed right-auto z-50 m-0 overflow-y-auto rounded-lg border border-border bg-surface-container-lowest p-0 text-sm shadow-lg";
 
 export type EntityAutocompleteProps<K extends EntityKind> = {
   autoFocus?: boolean;
@@ -127,6 +132,7 @@ export function EntityAutocomplete<K extends EntityKind>({
   const [text, setText] = useState("");
   const [isDirty, setIsDirty] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null);
   const [recents, setRecents] = useState<EntityOption<K>[]>([]);
   const [search, setSearch] = useState<SearchState<K>>({ key: "", status: "idle" });
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -145,9 +151,9 @@ export function EntityAutocomplete<K extends EntityKind>({
     return `${filtersKey}\u0000${searchQuery}`;
   }
 
-  function toVisibleOptions(options: EntityOption<K>[]) {
+  function toVisibleOptions(options: EntityOption<K>[], source: EntityOptionSource) {
     return options
-      .filter((option) => config.matchesFilters(option, activeFilters))
+      .filter((option) => config.matchesFilters(option, activeFilters, source))
       .slice(0, ENTITY_AUTOCOMPLETE_LIMIT);
   }
 
@@ -157,7 +163,7 @@ export function EntityAutocomplete<K extends EntityKind>({
 
   const currentKey = getSearchKey(query);
   const isSearchCurrent = search.key === currentKey;
-  const visibleRecents = toVisibleOptions(recents);
+  const visibleRecents = toVisibleOptions(recents, "recents");
 
   let view: PopupView = "none";
   let options: EntityOption<K>[] = [];
@@ -212,7 +218,7 @@ export function EntityAutocomplete<K extends EntityKind>({
           return null;
         }
 
-        const visibleItems = toVisibleOptions(items);
+        const visibleItems = toVisibleOptions(items, "results");
 
         setSearch({ items: visibleItems, key, status: "success" });
         setActiveIndex(null);
@@ -277,13 +283,47 @@ export function EntityAutocomplete<K extends EntityKind>({
       const opensAbove = spaceBelow < POPUP_MIN_SPACE_BELOW_PX && spaceAbove > spaceBelow;
       const availableSpace = Math.max(opensAbove ? spaceAbove : spaceBelow, 0);
 
-      popup.style.left = `${rect.left}px`;
+      // Dentro de un diálogo se sube a la capa superior del navegador: sigue
+      // siendo descendiente del diálogo, pero ni su `overflow` lo recorta ni
+      // su `translate` cambia el origen de `position: fixed`.
+      if (
+        popup.parentElement !== document.body &&
+        typeof popup.showPopover === "function" &&
+        !popup.matches(":popover-open")
+      ) {
+        popup.setAttribute("popover", "manual");
+        popup.showPopover();
+      }
+
+      const left = rect.left;
+      const top = rect.bottom + POPUP_GAP_PX;
+      const bottom = window.innerHeight - rect.top + POPUP_GAP_PX;
+
+      popup.style.left = `${left}px`;
       popup.style.width = `${rect.width}px`;
       popup.style.maxHeight = `${Math.min(POPUP_MAX_HEIGHT_PX, availableSpace)}px`;
-      popup.style.top = opensAbove ? "" : `${rect.bottom + POPUP_GAP_PX}px`;
-      popup.style.bottom = opensAbove
-        ? `${window.innerHeight - rect.top + POPUP_GAP_PX}px`
-        : "";
+      // `auto` explícito: `[popover]` trae `inset: 0` del navegador.
+      popup.style.top = opensAbove ? "auto" : `${top}px`;
+      popup.style.bottom = opensAbove ? `${bottom}px` : "auto";
+
+      // Sin capa superior (navegador sin Popover API), un diálogo con
+      // `translate` o `transform` es el bloque contenedor de `fixed`: se mide
+      // el desfase real y se compensa.
+      const placed = popup.getBoundingClientRect();
+      const shiftLeft = placed.left - left;
+      const shiftY = opensAbove ? placed.bottom - (rect.top - POPUP_GAP_PX) : placed.top - top;
+
+      if (Math.abs(shiftLeft) >= 1) {
+        popup.style.left = `${left - shiftLeft}px`;
+      }
+
+      if (Math.abs(shiftY) >= 1) {
+        if (opensAbove) {
+          popup.style.bottom = `${bottom + shiftY}px`;
+        } else {
+          popup.style.top = `${top - shiftY}px`;
+        }
+      }
     }
 
     updatePosition();
@@ -309,9 +349,19 @@ export function EntityAutocomplete<K extends EntityKind>({
     pendingEnterRef.current = null;
   }
 
+  function showPopup() {
+    // Montado en `body`, el bloqueo de scroll del Modal (Radix) cancela la
+    // rueda y el arrastre táctil sobre la lista: dentro de un diálogo el
+    // desplegable se monta en él.
+    setPortalContainer(
+      inputRef.current?.closest<HTMLElement>('[role="dialog"]') ?? document.body,
+    );
+    setIsOpen(true);
+  }
+
   function openPopup() {
     setRecents(readEntityRecents(entity, recentsKey));
-    setIsOpen(true);
+    showPopup();
   }
 
   const closeWithEscape = useEffectEvent(() => {
@@ -352,8 +402,17 @@ export function EntityAutocomplete<K extends EntityKind>({
     onChange(option);
   }
 
-  /** Enter sobre los resultados de `enteredText`: exacto, único o resaltado. */
-  function resolveEnter(items: EntityOption<K>[], enteredText: string) {
+  /**
+   * Enter sobre los resultados de `enteredText`: exacto o único. La opción
+   * resaltada solo se elige si el usuario ya tenía la lista a la vista: un
+   * escaneo mal leído que coincide a medias con varios productos no elige
+   * ninguno y deja la lista abierta para que el usuario decida.
+   */
+  function resolveEnter(
+    items: EntityOption<K>[],
+    enteredText: string,
+    wasListVisible: boolean,
+  ) {
     const exactMatch = config.findExact(items, enteredText);
 
     if (exactMatch) {
@@ -363,6 +422,11 @@ export function EntityAutocomplete<K extends EntityKind>({
 
     if (items.length === 0) {
       onNotFound?.(enteredText);
+      return;
+    }
+
+    if (!wasListVisible && items.length > 1) {
+      showPopup();
       return;
     }
 
@@ -428,19 +492,19 @@ export function EntityAutocomplete<K extends EntityKind>({
     }
 
     if (isSearchCurrent && search.status === "success") {
-      resolveEnter(search.items, query);
+      resolveEnter(search.items, query, view === "results");
       return;
     }
 
     // Lector de barras: la ráfaga termina antes del debounce; se busca ya.
-    setIsOpen(true);
+    showPopup();
     setSearch({ key: currentKey, status: "loading" });
     pendingEnterRef.current = query;
     void runSearch(query, true).then((items) => {
       // Si el usuario siguió escribiendo, ese Enter ya no aplica.
       if (items && pendingEnterRef.current === query) {
         pendingEnterRef.current = null;
-        resolveEnter(items, query);
+        resolveEnter(items, query, false);
       }
     });
   }
@@ -478,7 +542,7 @@ export function EntityAutocomplete<K extends EntityKind>({
     setText(nextText);
     setIsDirty(true);
     setActiveIndex(null);
-    setIsOpen(true);
+    showPopup();
   }
 
   function handleFocus() {
@@ -668,7 +732,7 @@ export function EntityAutocomplete<K extends EntityKind>({
         </p>
       ) : null}
 
-      {popup ? createPortal(popup, document.body) : null}
+      {popup && portalContainer ? createPortal(popup, portalContainer) : null}
     </div>
   );
 }
