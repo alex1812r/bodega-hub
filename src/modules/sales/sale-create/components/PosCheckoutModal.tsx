@@ -6,6 +6,7 @@ import { useId, useMemo, useState } from "react";
 import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { VenezuelanBankField } from "@/shared/components/VenezuelanBankField";
 import { VenezuelanPhoneField } from "@/shared/components/VenezuelanPhoneField";
 import type { PaymentMethod } from "@/shared/mocks/erp-data";
@@ -415,21 +416,20 @@ export function PosCheckoutModal({
                   </>
                 ) : null}
 
-                <Input
+                <NumberInput
+                  decimals={2}
                   helperText={
                     isCash
                       ? "Escribe el monto si prefieres no contar billetes."
                       : `Restante: ${formatVes(lineRemainingVes)}`
                   }
                   label="Monto"
-                  min="0"
                   onChange={(event) =>
                     updateLine(line.id, {
                       amount: Number(event.target.value) || 0,
                       denominations: null,
                     })
                   }
-                  step="0.01"
                   trailing={
                     <button
                       aria-label="Completar restante"
@@ -449,7 +449,6 @@ export function PosCheckoutModal({
                       <Calculator aria-hidden className="size-4" />
                     </button>
                   }
-                  type="number"
                   value={line.amount || ""}
                 />
 
@@ -596,18 +595,16 @@ export function PosCheckoutModal({
                 />
               </>
             ) : (
-              <Input
+              <NumberInput
+                decimals={2}
                 helperText="Se descuenta del baul en la cuenta de la tienda."
                 label="Vuelto entregado"
-                min="0"
                 onChange={(event) =>
                   setChangeDraft({
                     amount: Number(event.target.value) || 0,
                     counts: {},
                   })
                 }
-                step="0.01"
-                type="number"
                 value={changeAmount || ""}
               />
             )}
