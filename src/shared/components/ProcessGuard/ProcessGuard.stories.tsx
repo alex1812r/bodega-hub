@@ -15,10 +15,13 @@ import { GuardedLink, ProcessGuard, ProcessGuardModal } from "./ProcessGuard";
  *   devuelve `guardedNavigate`, `requestLeave`, `bypass`, `runUnguarded` y
  *   `dialog`; el modal se pinta con `<ProcessGuardModal guard={guard} />`.
  * - `<ProcessGuard ... />` hace las dos cosas cuando no hacen falta las funciones.
- * - Con `active` en `false` no hay listeners ni intercepción.
- * - Con `active` en `true`: clic en enlaces internos, atrás/adelante del
- *   navegador y `guardedNavigate` abren el modal; cerrar o recargar la pestaña
- *   muestra el aviso nativo del navegador (`beforeunload`).
+ * - Con `active` en `false` no se intercepta nada ni se toca el historial.
+ * - Con `active` en `true`: clic en enlaces internos, atrás del navegador y
+ *   `guardedNavigate` abren el modal; cerrar o recargar la pestaña muestra el
+ *   aviso nativo del navegador (`beforeunload`).
+ * - La navegación programática (`router.push/replace`, `window.location`) NO se
+ *   intercepta: dentro de un proceso se navega con `guardedNavigate` o, al
+ *   terminarlo, con `runUnguarded`.
  * - `GuardedLink` es `next/link` bloqueado con `onNavigate`; los demás enlaces
  *   se interceptan con un listener global mientras hay un guardia activo.
  *
@@ -27,7 +30,14 @@ import { GuardedLink, ProcessGuard, ProcessGuardModal } from "./ProcessGuard";
  */
 const meta = {
   component: ProcessGuard,
-  parameters: { layout: "padded" },
+  parameters: {
+    layout: "padded",
+    // `useProcessGuard` usa `useRouter` de `next/navigation`: necesita el App Router simulado.
+    nextjs: {
+      appDirectory: true,
+      navigation: { pathname: "/purchases/create" },
+    },
+  },
   tags: ["ai-generated"],
 } satisfies Meta<typeof ProcessGuard>;
 

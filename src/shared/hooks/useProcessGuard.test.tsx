@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { type ReactElement, StrictMode } from "react";
 
 import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
 
@@ -16,9 +17,10 @@ jest.mock("next/navigation", () => ({
 type HarnessProps = Partial<UseProcessGuardOptions> & {
   name?: string;
   onClosed?: () => void;
+  sameRouteHref?: string;
 };
 
-function Harness({ name = "proceso", onClosed, ...options }: HarnessProps) {
+function Harness({ name = "proceso", onClosed, sameRouteHref, ...options }: HarnessProps) {
   const guard = useProcessGuard({
     active: true,
     label: "Compra a Distribuidora X · 12 líneas · REF 240,00",
@@ -37,6 +39,11 @@ function Harness({ name = "proceso", onClosed, ...options }: HarnessProps) {
       >
         {`${name}: reemplazar por ventas`}
       </button>
+      {sameRouteHref ? (
+        <button onClick={() => guard.guardedNavigate(sameRouteHref)} type="button">
+          {`${name}: cambiar de pestaña`}
+        </button>
+      ) : null}
       <button onClick={() => guard.requestLeave(() => onClosed?.())} type="button">
         {`${name}: cerrar formulario`}
       </button>
@@ -151,109 +158,253 @@ describe("useProcessGuard", () => {
     });
   });
 
-  describe("botón atrás del navegador (popstate)", () => {
-    function setUpHistory() {
-      window.history.pushState({}, "", "/inventory");
-      window.history.pushState({}, "", "/purchases/create");
+  describe("atrás del navegador con el orden real de listeners (Next antes que el guardia)", () => {
+    const PROCESS_PATH = "/purchases/create";
+    let routerPopState: jest.Mock;
+    let unmountScreen: () => void;
+    let lengthBeforeGuard: number;
+
+    /** Entradas que el guardia ha añadido al historial. */
+    function sentinelEntries() {
+      return window.history.length - lengthBeforeGuard;
     }
 
-    it("activo: abre el modal, restaura la URL y el router no ve el popstate", async () => {
-      const routerPopState = jest.fn();
-
-      setUpHistory();
+    /**
+     * Reproduce el router real: su `popstate` se registró antes que el del
+     * guardia y, si la URL ya no es la del proceso, React desmonta la pantalla
+     * de forma síncrona dentro de ese mismo evento.
+     */
+    function renderUnderRouter(ui: ReactElement, wrapper?: typeof StrictMode) {
+      window.history.pushState({ __NA: true }, "", "/inventory");
+      window.history.pushState({ __NA: true }, "", PROCESS_PATH);
+      lengthBeforeGuard = window.history.length;
+      routerPopState = jest.fn(() => {
+        if (window.location.pathname !== PROCESS_PATH) {
+          unmountScreen();
+        }
+      });
       window.addEventListener("popstate", routerPopState);
-      render(<Harness />);
+
+      const view = render(ui, { wrapper });
+
+      unmountScreen = view.unmount;
+
+      return view;
+    }
+
+    async function browserBack() {
+      const seen = routerPopState.mock.calls.length;
 
       act(() => {
         window.history.back();
       });
+      await waitFor(() => expect(routerPopState.mock.calls.length).toBeGreaterThan(seen));
+    }
+
+    afterEach(() => {
+      window.removeEventListener("popstate", routerPopState);
+    });
+
+    it("activo: duplica la entrada actual una sola vez, con la misma URL y el estado del router", () => {
+      renderUnderRouter(<Harness />);
+
+      expect(sentinelEntries()).toBe(1);
+      expect(window.history.state).toMatchObject({ __NA: true });
+      expect(window.location.pathname).toBe(PROCESS_PATH);
+    });
+
+    it("StrictMode (doble montaje) no empuja dos centinelas", () => {
+      renderUnderRouter(<Harness />, StrictMode);
+
+      expect(sentinelEntries()).toBe(1);
+    });
+
+    it("varios guardias apilados comparten un solo centinela", () => {
+      renderUnderRouter(
+        <>
+          <Harness name="pagina" />
+          <Harness name="modal" onLeave="discard" />
+        </>,
+      );
+
+      expect(sentinelEntries()).toBe(1);
+    });
+
+    it("inactivo: no toca el historial y atrás sale sin preguntar", async () => {
+      renderUnderRouter(<Harness active={false} />);
+
+      expect(sentinelEntries()).toBe(0);
+
+      await browserBack();
+
+      expect(window.location.pathname).toBe("/inventory");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("atrás con guardia activo: abre el modal y la pantalla del proceso sigue montada en su URL", async () => {
+      const onSaveDraft = jest.fn();
+
+      renderUnderRouter(<Harness onSaveDraft={onSaveDraft} />);
+
+      await browserBack();
 
       expect(await screen.findByRole("dialog")).toHaveTextContent(
         "Compra a Distribuidora X · 12 líneas · REF 240,00",
       );
-      await waitFor(() => expect(window.location.pathname).toBe("/purchases/create"));
-      expect(routerPopState).not.toHaveBeenCalled();
-
-      window.removeEventListener("popstate", routerPopState);
+      expect(window.location.pathname).toBe(PROCESS_PATH);
+      expect(screen.getByText(/ir a ventas/)).toBeInTheDocument();
+      expect(onSaveDraft).not.toHaveBeenCalled();
     });
 
-    it("'Seguir aquí' deja la URL del proceso y no ejecuta nada", async () => {
+    it("'Seguir aquí' deja el centinela repuesto: el siguiente atrás vuelve a preguntar", async () => {
       const user = userEvent.setup();
       const onSaveDraft = jest.fn();
 
-      setUpHistory();
-      render(<Harness onSaveDraft={onSaveDraft} />);
+      renderUnderRouter(<Harness onSaveDraft={onSaveDraft} />);
+
+      await browserBack();
+      await user.click(await screen.findByRole("button", { name: "Seguir aquí" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+      expect(sentinelEntries()).toBe(1);
+      expect(window.location.pathname).toBe(PROCESS_PATH);
+      expect(onSaveDraft).not.toHaveBeenCalled();
+
+      await browserBack();
+
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      expect(window.location.pathname).toBe(PROCESS_PATH);
+      expect(sentinelEntries()).toBe(1);
+    });
+
+    it("dos atrás seguidos: un solo modal y la URL del proceso", async () => {
+      renderUnderRouter(<Harness />);
 
       act(() => {
         window.history.back();
-      });
-      await user.click(await screen.findByRole("button", { name: "Seguir aquí" }));
-
-      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-      expect(window.location.pathname).toBe("/purchases/create");
-      expect(onSaveDraft).not.toHaveBeenCalled();
-      expect(fireBeforeUnload().defaultPrevented).toBe(true);
-    });
-
-    it("'Salir' guarda el borrador y completa el atrás, que el router sí ve", async () => {
-      const user = userEvent.setup();
-      const onSaveDraft = jest.fn();
-      const routerPopState = jest.fn();
-
-      setUpHistory();
-      window.addEventListener("popstate", routerPopState);
-      render(<Harness onSaveDraft={onSaveDraft} />);
-
-      act(() => {
         window.history.back();
       });
       await screen.findByRole("dialog");
-      await waitFor(() => expect(window.location.pathname).toBe("/purchases/create"));
-      await user.click(screen.getByRole("button", { name: "Salir" }));
+      await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+
+      expect(screen.getAllByRole("dialog")).toHaveLength(1);
+      expect(window.location.pathname).toBe(PROCESS_PATH);
+      expect(sentinelEntries()).toBe(1);
+    });
+
+    it("'Salir' guarda el borrador una vez y retrocede de una vez a la ruta anterior", async () => {
+      const user = userEvent.setup();
+      const onSaveDraft = jest.fn();
+
+      renderUnderRouter(<Harness onSaveDraft={onSaveDraft} />);
+
+      await browserBack();
+
+      const go = jest.spyOn(window.history, "go");
+      const leaveButton = await screen.findByRole("button", { name: "Salir" });
+
+      await user.dblClick(leaveButton);
+      await waitFor(() => expect(window.location.pathname).toBe("/inventory"));
+
+      expect(onSaveDraft).toHaveBeenCalledTimes(1);
+      expect(go.mock.calls).toEqual([[-2]]);
+      expect(mockPush).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+      go.mockRestore();
+    });
+
+    it("proceso terminado (guardia desactivado): un solo atrás sale de la pantalla, sin modal", async () => {
+      const { rerender } = renderUnderRouter(<Harness />);
+
+      rerender(<Harness active={false} />);
+
+      act(() => {
+        window.history.back();
+      });
 
       await waitFor(() => expect(window.location.pathname).toBe("/inventory"));
-      expect(onSaveDraft).toHaveBeenCalledTimes(1);
-      expect(routerPopState).toHaveBeenCalledTimes(1);
-      expect(mockPush).not.toHaveBeenCalled();
-
-      window.removeEventListener("popstate", routerPopState);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
-    it("inactivo: el popstate pasa de largo", async () => {
-      const routerPopState = jest.fn();
+    it("desactivar y reactivar reutiliza el centinela", () => {
+      const { rerender } = renderUnderRouter(<Harness />);
 
-      setUpHistory();
-      window.addEventListener("popstate", routerPopState);
-      render(<Harness active={false} />);
+      rerender(<Harness active={false} />);
+      rerender(<Harness />);
+
+      expect(sentinelEntries()).toBe(1);
+    });
+
+    it("si el router reescribe el estado de la entrada (refresh, query) el centinela se sigue reconociendo", async () => {
+      const { rerender } = renderUnderRouter(<Harness />);
+
+      // Next hace `replaceState` solo con su estado, sin claves ajenas.
+      window.history.replaceState({ __NA: true }, "", `${PROCESS_PATH}?tab=notas`);
+      rerender(<Harness active={false} />);
+      rerender(<Harness />);
+
+      expect(sentinelEntries()).toBe(1);
+
+      await browserBack();
+
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      expect(sentinelEntries()).toBe(1);
+    });
+
+    it("tras salir por un enlace, volver atrás recorre el par gemela/centinela sin atrás muerto", async () => {
+      const user = userEvent.setup();
+
+      mockPush.mockImplementation((href: string) => {
+        unmountScreen();
+        window.history.pushState({ __NA: true }, "", href);
+      });
+      renderUnderRouter(<Harness />);
+
+      await user.click(button(/ir a ventas/));
+      await user.click(await screen.findByRole("button", { name: "Salir" }));
+      await waitFor(() => expect(window.location.pathname).toBe("/sales"));
+
+      await browserBack();
+      expect(window.location.pathname).toBe(PROCESS_PATH);
 
       act(() => {
         window.history.back();
       });
+      await waitFor(() => expect(window.location.pathname).toBe("/inventory"));
 
-      await waitFor(() => expect(routerPopState).toHaveBeenCalledTimes(1));
-      expect(window.location.pathname).toBe("/inventory");
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-
-      window.removeEventListener("popstate", routerPopState);
+      mockPush.mockReset();
     });
 
-    it("no intercepta un atrás que se queda en la misma ruta (solo cambia la query)", async () => {
-      const routerPopState = jest.fn();
+    it("adelante hasta la gemela de un proceso cerrado no rebota hacia atrás", async () => {
+      const user = userEvent.setup();
 
-      window.history.pushState({}, "", "/purchases/create?tab=lineas");
-      window.history.pushState({}, "", "/purchases/create?tab=notas");
-      window.addEventListener("popstate", routerPopState);
-      render(<Harness />);
+      renderUnderRouter(<Harness />);
+
+      await browserBack();
+      await user.click(await screen.findByRole("button", { name: "Salir" }));
+      await waitFor(() => expect(window.location.pathname).toBe("/inventory"));
+
+      const seen = routerPopState.mock.calls.length;
 
       act(() => {
-        window.history.back();
+        window.history.forward();
       });
+      await waitFor(() => expect(routerPopState.mock.calls.length).toBeGreaterThan(seen));
+      await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
 
-      await waitFor(() => expect(routerPopState).toHaveBeenCalledTimes(1));
-      expect(window.location.search).toBe("?tab=lineas");
+      expect(window.location.pathname).toBe(PROCESS_PATH);
+    });
+
+    it("un atrás dentro de la misma ruta (solo cambia la query) no pregunta", async () => {
+      renderUnderRouter(<Harness />);
+      window.history.pushState({ __NA: true }, "", `${PROCESS_PATH}?tab=notas`);
+
+      await browserBack();
+
+      expect(window.location.pathname).toBe(PROCESS_PATH);
+      expect(window.location.search).toBe("");
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-
-      window.removeEventListener("popstate", routerPopState);
     });
   });
 
@@ -286,6 +437,17 @@ describe("useProcessGuard", () => {
 
       await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/sales"));
       expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it("destino en la misma ruta (solo query): navega sin preguntar, igual que los enlaces", async () => {
+      const user = userEvent.setup();
+
+      render(<Harness sameRouteHref="/purchases/create?tab=notas" />);
+
+      await user.click(button(/cambiar de pestaña/));
+
+      expect(mockPush).toHaveBeenCalledWith("/purchases/create?tab=notas");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
     it("inactivo: navega directo", async () => {

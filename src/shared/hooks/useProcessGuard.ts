@@ -8,7 +8,7 @@ export type ProcessGuardLeaveMode = "draft" | "discard";
 type LeaveHandler = () => void | Promise<void>;
 
 export type UseProcessGuardOptions = {
-  /** `false` desmonta el guardia por completo: ni listeners ni intercepción. */
+  /** `false`: no se intercepta nada ni se toca el historial. */
   active: boolean;
   /** Texto adicional bajo el nombre del proceso. */
   description?: string;
@@ -40,7 +40,11 @@ export type ProcessGuardController = {
   bypass: () => void;
   /** Estado del modal; se pinta con `<ProcessGuardModal guard={...} />`. */
   dialog: ProcessGuardDialogState;
-  /** `router.push`/`replace` que pregunta antes si hay algún guardia activo. */
+  /**
+   * `router.push`/`replace` que pregunta antes si hay algún guardia activo y el
+   * destino sale de la ruta (misma regla que los enlaces: query y `#` de la
+   * misma página no preguntan).
+   */
   guardedNavigate: (href: string, options?: GuardedNavigateOptions) => void;
   /** Pide la misma confirmación sin navegación (cerrar un modal con cambios). */
   requestLeave: (run: () => void) => void;
@@ -50,7 +54,7 @@ export type ProcessGuardController = {
 
 type PendingLeave =
   | { href: string; kind: "href"; replace: boolean }
-  | { delta: number; kind: "traversal" }
+  | { kind: "traversal" }
   | { kind: "action"; run: () => void };
 
 type GuardEntry = {
@@ -60,32 +64,199 @@ type GuardEntry = {
   saveDraftSync: () => void;
 };
 
-type NavigationEntryLike = { index: number };
-type NavigationLike = {
-  addEventListener: (type: "currententrychange", listener: (event: Event) => void) => void;
-  currentEntry: NavigationEntryLike | null;
-  removeEventListener: (type: "currententrychange", listener: (event: Event) => void) => void;
-};
-type EntryChangeEventLike = Event & {
-  from?: NavigationEntryLike;
-  navigationType?: string | null;
-};
-
 /** Marca de `GuardedLink`: esos enlaces se bloquean con `onNavigate`, no con el listener global. */
 export const PROCESS_GUARD_LINK_ATTRIBUTE = "data-process-guard-link";
 
 // Pila global de guardias activos: el último registrado es el que pregunta.
 const entries: GuardEntry[] = [];
-let guardedPathname = "";
-let restoringTraversal = false;
-let lastTraverseDelta: number | null = null;
+
+/*
+ * ATRÁS / ADELANTE del navegador: entrada centinela.
+ *
+ * El `popstate` de Next se registra antes que cualquier listener nuestro y React
+ * pinta la ruta anterior de forma síncrona dentro de ese evento, así que un
+ * "atrás" que cambia de ruta desmonta el guardia antes de que pueda reaccionar.
+ * Por eso, al activarse el primer guardia se duplica la entrada actual:
+ *
+ *   [anterior, proceso]  →  [anterior, proceso (gemela), proceso (centinela)]
+ *
+ * Las dos tienen la misma URL y el mismo estado de Next: para el router no hay
+ * navegación. ATRÁS aterriza en la gemela (misma pantalla, nada se desmonta),
+ * el guardia repone el centinela y abre el modal. "Salir" retrocede de una vez
+ * hasta la entrada anterior al proceso. ADELANTE no puede salir del proceso:
+ * empujar el centinela descarta las entradas que hubiera por delante.
+ *
+ * El par no se retira al terminar el proceso (un `history.back()` espontáneo
+ * haría que Next descartase la navegación que tuviera en curso). En su lugar,
+ * un `popstate` que retrocede del centinela a la gemela sin guardia activo
+ * sigue retrocediendo solo: el usuario pulsa ATRÁS una vez y sale a la primera.
+ */
+const HISTORY_MARKER_KEY = "__processGuard";
+const HISTORY_LISTENER_KEY = "__processGuardPopStateListener";
+const HISTORY_PATCH_KEY = "__processGuardKeepsMarker";
+
+type HistoryMarker = "sentinel" | "twin";
+type HistoryListenerHost = {
+  [HISTORY_LISTENER_KEY]?: (event: PopStateEvent) => void;
+  [HISTORY_PATCH_KEY]?: boolean;
+};
+
+/** Marca de la entrada en la que estábamos antes del último `popstate`. */
+let previousMarker: HistoryMarker | null = null;
+/** Hay un "Salir" retrocediendo: las gemelas que encuentre se atraviesan. */
+let leavingBack = false;
+/** Modo de scroll que tenía la entrada del proceso antes de convertirla en gemela. */
+let sentinelScrollRestoration: ScrollRestoration = "auto";
 
 function topEntry(): GuardEntry | undefined {
   return entries[entries.length - 1];
 }
 
-function getNavigationApi(): NavigationLike | undefined {
-  return (window as unknown as { navigation?: NavigationLike }).navigation;
+function readHistoryMarker(state: unknown): HistoryMarker | null {
+  const marker =
+    typeof state === "object" && state !== null
+      ? (state as Record<string, unknown>)[HISTORY_MARKER_KEY]
+      : null;
+
+  return marker === "sentinel" || marker === "twin" ? marker : null;
+}
+
+function withHistoryMarker(marker: HistoryMarker): Record<string, unknown> {
+  const state: unknown = window.history.state;
+
+  // Se conserva el estado de Next (`__NA`, árbol): su parche de `pushState` lo deja pasar tal cual.
+  return {
+    ...(typeof state === "object" && state !== null ? state : {}),
+    [HISTORY_MARKER_KEY]: marker,
+  };
+}
+
+function pushSentinel() {
+  window.history.pushState(withHistoryMarker("sentinel"), "", window.location.href);
+  // La entrada nueva hereda el modo "manual" de la gemela; el centinela recupera el original.
+  window.history.scrollRestoration = sentinelScrollRestoration;
+  previousMarker = "sentinel";
+}
+
+function handlePopState(event: PopStateEvent) {
+  const marker = readHistoryMarker(event.state);
+  const steppedBackFromSentinel = previousMarker === "sentinel";
+
+  previousMarker = marker;
+
+  if (marker !== "twin") {
+    leavingBack = false;
+    return;
+  }
+
+  const top = topEntry();
+
+  if (top) {
+    // ATRÁS desde el proceso: seguimos en su pantalla. Se repone el centinela y se pregunta.
+    pushSentinel();
+    top.ask({ kind: "traversal" });
+    return;
+  }
+
+  if (leavingBack || steppedBackFromSentinel) {
+    // Gemela de un proceso ya cerrado: es la misma pantalla, se atraviesa.
+    leavingBack = true;
+    window.history.back();
+  }
+}
+
+/**
+ * Next reescribe el estado de la entrada actual (`replaceState`) cada vez que
+ * cambia el estado del router (refresh, query, prefetch en dev) y solo conserva
+ * las claves ajenas tras un atrás/adelante. Sin esto la marca del centinela se
+ * pierde y el par ya no se reconoce al volver a él o al recargar.
+ */
+function keepMarkerOnReplace() {
+  const host = window as unknown as HistoryListenerHost;
+
+  if (host[HISTORY_PATCH_KEY]) {
+    return;
+  }
+
+  host[HISTORY_PATCH_KEY] = true;
+
+  const replaceState = window.history.replaceState;
+
+  window.history.replaceState = function replaceStateKeepingMarker(
+    this: History,
+    data: unknown,
+    unused: string,
+    url?: string | URL | null,
+  ) {
+    const marker = readHistoryMarker(window.history.state);
+    const staysOnRoute =
+      !url || new URL(url, window.location.href).pathname === window.location.pathname;
+    const keepsMarker =
+      marker !== null &&
+      staysOnRoute &&
+      typeof data === "object" &&
+      data !== null &&
+      !(HISTORY_MARKER_KEY in data);
+
+    return replaceState.call(
+      this,
+      keepsMarker ? { ...data, [HISTORY_MARKER_KEY]: marker } : data,
+      unused,
+      url,
+    );
+  };
+}
+
+/**
+ * El listener vive mientras exista la página: es lo que evita el "atrás muerto"
+ * del par gemela/centinela cuando el proceso ya terminó. Solo reacciona a
+ * entradas marcadas por el guardia.
+ */
+function listenToHistory() {
+  const host = window as unknown as HistoryListenerHost;
+  const current = host[HISTORY_LISTENER_KEY];
+
+  keepMarkerOnReplace();
+
+  if (current === handlePopState) {
+    return;
+  }
+
+  // Fast Refresh reevalúa el módulo: se retira el listener de la copia anterior.
+  if (current) {
+    window.removeEventListener("popstate", current);
+  }
+
+  host[HISTORY_LISTENER_KEY] = handlePopState;
+  previousMarker = readHistoryMarker(window.history.state);
+  leavingBack = false;
+  window.addEventListener("popstate", handlePopState);
+}
+
+/** Deja el historial como [..., gemela, centinela (actual)]. No hace nada si ya lo está. */
+function armSentinel() {
+  listenToHistory();
+
+  const marker = readHistoryMarker(window.history.state);
+
+  if (marker === "sentinel") {
+    return;
+  }
+
+  if (marker !== "twin") {
+    // "manual": al volver a la gemela el navegador no recoloca el scroll del formulario.
+    sentinelScrollRestoration = window.history.scrollRestoration;
+    window.history.scrollRestoration = "manual";
+    window.history.replaceState(withHistoryMarker("twin"), "", window.location.href);
+  }
+
+  pushSentinel();
+}
+
+/** Completa el "Salir" de un ATRÁS: retrocede hasta la entrada anterior al proceso. */
+function leaveBack() {
+  leavingBack = true;
+  window.history.go(readHistoryMarker(window.history.state) === "sentinel" ? -2 : -1);
 }
 
 /** Sale de la ruta protegida: otro `pathname` del mismo origen. Query y `#` de la misma página no cuentan. */
@@ -115,7 +286,7 @@ function handleBeforeUnload(event: BeforeUnloadEvent) {
   }
 }
 
-function handleDocumentClick(event: MouseEvent) {
+function interceptAnchorClick(event: MouseEvent, guardedLinks: boolean) {
   const top = topEntry();
 
   if (
@@ -136,7 +307,7 @@ function handleDocumentClick(event: MouseEvent) {
   if (
     !(anchor instanceof HTMLAnchorElement) ||
     anchor.hasAttribute("download") ||
-    anchor.hasAttribute(PROCESS_GUARD_LINK_ATTRIBUTE)
+    anchor.hasAttribute(PROCESS_GUARD_LINK_ATTRIBUTE) !== guardedLinks
   ) {
     return;
   }
@@ -158,53 +329,26 @@ function handleDocumentClick(event: MouseEvent) {
   top.ask({ href, kind: "href", replace: false });
 }
 
-function handleEntryChange(event: EntryChangeEventLike) {
-  const current = getNavigationApi()?.currentEntry;
-
-  lastTraverseDelta =
-    event.navigationType === "traverse" && event.from && current
-      ? current.index - event.from.index
-      : null;
+/** Enlaces normales: en captura, antes de que `next/link` gestione el clic. */
+function handleDocumentClick(event: MouseEvent) {
+  interceptAnchorClick(event, false);
 }
 
-function handlePopState(event: PopStateEvent) {
-  if (restoringTraversal) {
-    // Es la vuelta de nuestra propia restauración (u otro "atrás" mientras llega).
-    if (window.location.pathname === guardedPathname) {
-      restoringTraversal = false;
-    }
-
-    event.stopImmediatePropagation();
-    return;
-  }
-
-  const top = topEntry();
-
-  if (!top || window.location.pathname === guardedPathname) {
-    return;
-  }
-
-  // El router de Next no llega a ver este popstate: la pantalla se queda como está.
-  event.stopImmediatePropagation();
-
-  // Sin Navigation API no se sabe el sentido: se asume "atrás".
-  const delta = lastTraverseDelta || -1;
-
-  lastTraverseDelta = null;
-  restoringTraversal = true;
-  window.history.go(-delta);
-  top.ask({ delta, kind: "traversal" });
+/**
+ * Red de `GuardedLink`: `next/link` cancela el clic antes de llamar a
+ * `onNavigate`. Si llega aquí sin cancelar es que no lo gestionó (no hay App
+ * Router, p. ej. Storybook) y el navegador saldría de la página sin preguntar.
+ */
+function handleUnhandledGuardedLinkClick(event: MouseEvent) {
+  interceptAnchorClick(event, true);
 }
 
 function registerEntry(entry: GuardEntry) {
   if (entries.length === 0) {
-    guardedPathname = window.location.pathname;
-    restoringTraversal = false;
-    lastTraverseDelta = null;
     window.addEventListener("beforeunload", handleBeforeUnload);
-    window.addEventListener("popstate", handlePopState, true);
     document.addEventListener("click", handleDocumentClick, true);
-    getNavigationApi()?.addEventListener("currententrychange", handleEntryChange);
+    document.addEventListener("click", handleUnhandledGuardedLinkClick);
+    armSentinel();
   }
 
   entries.push(entry);
@@ -221,9 +365,8 @@ function unregisterEntry(entry: GuardEntry) {
 
   if (entries.length === 0) {
     window.removeEventListener("beforeunload", handleBeforeUnload);
-    window.removeEventListener("popstate", handlePopState, true);
     document.removeEventListener("click", handleDocumentClick, true);
-    getNavigationApi()?.removeEventListener("currententrychange", handleEntryChange);
+    document.removeEventListener("click", handleUnhandledGuardedLinkClick);
   }
 }
 
@@ -244,6 +387,29 @@ export function interceptProcessGuardNavigation(href: string, replace = false): 
   return true;
 }
 
+/**
+ * Guardia de un proceso sin terminar. Mientras `active` es `true` pregunta con
+ * el modal del tema antes de salir de la ruta por:
+ * - clic en un enlace interno (`<a>`, `next/link`, `GuardedLink`);
+ * - ATRÁS del navegador (entrada centinela, ver arriba);
+ * - `guardedNavigate` y `requestLeave`.
+ * Cerrar o recargar la pestaña y los enlaces externos muestran el aviso nativo
+ * (`beforeunload`).
+ *
+ * NO se intercepta la navegación programática: `router.push`, `router.replace`,
+ * `redirect` ni `window.location` salen de la pantalla sin preguntar. Dentro de
+ * una pantalla protegida hay que navegar con `guardedNavigate(href)` y, cuando
+ * es el propio proceso el que termina (guardar, confirmar), con
+ * `runUnguarded(() => router.push(href))`. `router.back()` sí pregunta, porque
+ * retrocede a la entrada gemela igual que el botón ATRÁS.
+ *
+ * Límites del centinela:
+ * - Chromium salta, al pulsar ATRÁS, las entradas que una página añade sin que
+ *   el usuario haya interactuado con ella: ATRÁS queda protegido desde la
+ *   primera interacción (la misma condición que pone a `beforeunload`).
+ * - Un salto de varias entradas de golpe (menú del historial, `history.go(-2)`)
+ *   pasa por encima de la gemela y sale sin preguntar.
+ */
 export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardController {
   const { active, description, label, onLeave } = options;
   const router = useRouter();
@@ -279,6 +445,13 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
 
     closeDialog();
   }, [closeDialog]);
+
+  useEffect(() => {
+    // Tras recargar, el par gemela/centinela sigue en el historial aunque el guardia arranque inactivo.
+    if (readHistoryMarker(window.history.state)) {
+      listenToHistory();
+    }
+  }, []);
 
   useEffect(() => {
     if (!active) {
@@ -383,7 +556,7 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
       if (pending.kind === "href") {
         routerRef.current[pending.replace ? "replace" : "push"](pending.href);
       } else if (pending.kind === "traversal") {
-        window.history.go(pending.delta);
+        leaveBack();
       } else {
         pending.run();
       }
@@ -393,9 +566,10 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
   const guardedNavigate = useCallback((href: string, navigateOptions?: GuardedNavigateOptions) => {
     const replace = navigateOptions?.replace ?? false;
     const top = topEntry();
+    const guardedHref = top ? resolveGuardedHref(href) : null;
 
-    if (top) {
-      top.ask({ href, kind: "href", replace });
+    if (top && guardedHref !== null) {
+      top.ask({ href: guardedHref, kind: "href", replace });
       return;
     }
 

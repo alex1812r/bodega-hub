@@ -419,6 +419,31 @@ describe("ProcessGuard", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
+    it("si next/link no gestiona el clic (sin App Router, p. ej. Storybook) pregunta igualmente en vez de salir", async () => {
+      const user = userEvent.setup();
+
+      // Lo que pinta `next/link` cuando no hay router: un `<a>` cuyo clic nadie cancela.
+      render(
+        <>
+          <a data-process-guard-link="" href="/sales">
+            Menú ventas
+          </a>
+          <ProcessGuard active label={LABEL} onLeave="draft" />
+        </>,
+      );
+
+      const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+
+      fireEvent(link("Menú ventas"), click);
+
+      expect(click.defaultPrevented).toBe(true);
+      expect(await screen.findAllByRole("dialog")).toHaveLength(1);
+
+      await user.click(screen.getByRole("button", { name: "Salir" }));
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/sales"));
+    });
+
     it("no intercepta un GuardedLink a la misma página", async () => {
       const user = userEvent.setup();
 
