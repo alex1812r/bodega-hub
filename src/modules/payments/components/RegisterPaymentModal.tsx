@@ -13,9 +13,10 @@ import {
   type PaymentFormValues,
   buildPaymentFormPayload,
   createEmptyPaymentFormValues,
+  getPaymentCurrency,
   isPaymentFormValid,
 } from "@/shared/payments/PaymentFormFields";
-import { formatVes } from "@/shared/utils/currency";
+import { formatVes, roundMoney } from "@/shared/utils/currency";
 
 import { useCreatePayment } from "../hooks/usePayments";
 import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
@@ -32,6 +33,32 @@ type RegisterPaymentModalProps = {
 };
 
 type ContextType = "purchase" | "sale";
+
+/**
+ * Bs por encima del saldo que `register_payment` todavía acepta (guardas F2/F3 de
+ * `20260904-payment-guards.sql`); más allá responde 400, así que no se envía.
+ * - Venta: el "redondeo a favor", Bs 10 (o 1 % de la tasa) y 1 USD en efectivo USD.
+ * - Compra en Bs: el céntimo de la conversión.
+ * - Compra en USD: el servidor convierte con la tasa del día, que aquí no se conoce
+ *   → `undefined`: superar el saldo solo se avisa y decide el servidor.
+ */
+function serverOverpayToleranceVes(
+  document: "purchase" | "sale" | undefined,
+  currency: "USD" | "VES",
+  rateVes: number | undefined,
+): number | undefined {
+  if (document === "purchase") {
+    return currency === "VES" ? 0.01 : undefined;
+  }
+
+  if (document !== "sale" || !rateVes || rateVes <= 0) {
+    return undefined;
+  }
+
+  const roundingVes = Math.max(10, roundMoney(0.01 * rateVes));
+
+  return currency === "USD" ? Math.max(roundingVes, roundMoney(rateVes)) : roundingVes;
+}
 
 export function RegisterPaymentModal({
   allowPurchaseContext = true,
@@ -91,9 +118,20 @@ export function RegisterPaymentModal({
     return undefined;
   }, [purchase.data, sale.data]);
   const rateVes = sale.data?.refRateVes ?? purchase.data?.refRateVes;
+  const overpayToleranceVes = serverOverpayToleranceVes(
+    sale.data ? "sale" : purchase.data ? "purchase" : undefined,
+    getPaymentCurrency(method),
+    rateVes,
+  );
   const contextIsValid = Boolean(selectedSaleId) !== Boolean(selectedPurchaseId);
   const canSubmit =
-    contextIsValid && isPaymentFormValid(values) && enabledMethods.includes(method);
+    contextIsValid &&
+    isPaymentFormValid(values, {
+      overpayToleranceVes,
+      pendingBalance: pendingBalanceVes,
+      rateVes,
+    }) &&
+    enabledMethods.includes(method);
 
   function clearFields() {
     setValues(createEmptyPaymentFormValues(method));
@@ -223,6 +261,7 @@ export function RegisterPaymentModal({
         <PaymentFormFields
           methods={enabledMethods}
           onChange={setValues}
+          overpayToleranceVes={overpayToleranceVes}
           pendingBalance={pendingBalanceVes}
           rateVes={rateVes}
           showErrors={hasSubmitted}

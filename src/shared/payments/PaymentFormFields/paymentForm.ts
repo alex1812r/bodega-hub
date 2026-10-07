@@ -1,4 +1,4 @@
-import { roundMoney } from "@/shared/utils/currency";
+import { formatVesBs, roundMoney } from "@/shared/utils/currency";
 import type { PaymentMethod } from "@/shared/mocks/erp-data";
 
 import { isKnownBankLabel } from "@/shared/venezuela/banks";
@@ -34,6 +34,25 @@ export type PaymentFormPayload = {
   referenceCode: string | undefined;
 };
 
+/** Saldo del documento contra el que se compara el monto. */
+export type PaymentBalanceContext = {
+  /**
+   * Bs por encima del saldo que el servidor todavía acepta. Con él, un monto que lo
+   * rebasa invalida el formulario; sin él, superar el saldo solo se avisa.
+   */
+  overpayToleranceVes?: number;
+  /** Saldo pendiente del documento en Bs. */
+  pendingBalance?: number;
+  /** Tasa Bs por REF del documento. */
+  rateVes?: number;
+};
+
+export type PaymentOverpayment = {
+  /** `true` si el servidor lo rechazaría: el formulario no debe enviarse. */
+  blocking: boolean;
+  message: string;
+};
+
 export const PENDING_BALANCE_SHARES = [25, 50, 100] as const;
 
 export function createEmptyPaymentFormValues(
@@ -65,13 +84,60 @@ export function paymentNeedsReference(method: PaymentMethod) {
   return method === "pago_movil" || method === "punto_venta" || method === "transferencia";
 }
 
-/** Mismas reglas y textos que tenía `RegisterPaymentModal`. */
-export function validatePaymentForm(values: PaymentFormValues): PaymentFormErrors {
+/**
+ * Aviso cuando el monto, llevado a Bs, supera el saldo pendiente. `null` si no lo
+ * supera o no se puede saber (sin saldo, o método en USD sin tasa).
+ */
+export function paymentOverpayment(
+  values: PaymentFormValues,
+  { overpayToleranceVes, pendingBalance, rateVes }: PaymentBalanceContext = {},
+): PaymentOverpayment | null {
+  const parsed = Number(values.amount);
+
+  if (pendingBalance === undefined || !Number.isFinite(pendingBalance) || !(parsed > 0)) {
+    return null;
+  }
+
+  let amountVes = parsed;
+
+  if (getPaymentCurrency(values.method) === "USD") {
+    if (!rateVes || rateVes <= 0) {
+      return null;
+    }
+
+    amountVes = roundMoney(parsed * rateVes);
+  }
+
+  const balanceVes = Math.max(roundMoney(pendingBalance), 0);
+
+  if (!(amountVes > balanceVes)) {
+    return null;
+  }
+
+  return {
+    blocking:
+      overpayToleranceVes !== undefined &&
+      amountVes > roundMoney(balanceVes + overpayToleranceVes),
+    message: `El monto supera el saldo pendiente (${formatVesBs(balanceVes)}).`,
+  };
+}
+
+/**
+ * Mismas reglas y textos que tenía `RegisterPaymentModal`. Con `balance` añade el
+ * sobrepago que el servidor rechazaría (ver `PaymentBalanceContext`).
+ */
+export function validatePaymentForm(
+  values: PaymentFormValues,
+  balance?: PaymentBalanceContext,
+): PaymentFormErrors {
   const { amount, bankName, method, phone, referenceCode } = values;
   const errors: PaymentFormErrors = {};
+  const overpayment = paymentOverpayment(values, balance);
 
   if (!(Number(amount) > 0)) {
     errors.amount = "Indica un monto mayor a cero.";
+  } else if (overpayment?.blocking) {
+    errors.amount = overpayment.message;
   }
 
   if (paymentNeedsBank(method) && !isKnownBankLabel(bankName)) {
@@ -93,8 +159,28 @@ export function validatePaymentForm(values: PaymentFormValues): PaymentFormError
   return errors;
 }
 
-export function isPaymentFormValid(values: PaymentFormValues) {
-  return Object.keys(validatePaymentForm(values)).length === 0;
+export function isPaymentFormValid(values: PaymentFormValues, balance?: PaymentBalanceContext) {
+  return Object.keys(validatePaymentForm(values, balance)).length === 0;
+}
+
+/**
+ * Monto al pasar de `from` a `to`. Entre métodos de la misma moneda no cambia; a otra
+ * moneda se convierte con la tasa (mismo redondeo que la equivalencia en vivo) o se
+ * vacía si no hay tasa: la misma cifra nunca se reinterpreta en otra moneda.
+ */
+export function amountForMethodChange(
+  from: PaymentMethod,
+  to: PaymentMethod,
+  amount: string,
+  rateVes?: number,
+): string {
+  if (getPaymentCurrency(from) === getPaymentCurrency(to)) {
+    return amount;
+  }
+
+  const converted = paymentAmountEquivalent(from, amount, rateVes);
+
+  return converted ? String(converted.value) : "";
 }
 
 export function buildPaymentFormPayload(values: PaymentFormValues): PaymentFormPayload {

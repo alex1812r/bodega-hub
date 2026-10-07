@@ -15,21 +15,34 @@ import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import {
   PENDING_BALANCE_SHARES,
   type PaymentFormValues,
+  amountForMethodChange,
   amountForPendingShare,
   getPaymentCurrency,
   paymentAmountEquivalent,
   paymentNeedsBank,
   paymentNeedsPhone,
   paymentNeedsReference,
+  paymentOverpayment,
   validatePaymentForm,
 } from "./paymentForm";
 
 export type PaymentFormFieldsProps = {
   /** Métodos que se ofrecen en el selector, en el orden recibido. */
   methods: readonly PaymentMethod[];
-  /** Recibe el estado completo siguiente. Cambiar de método limpia banco, teléfono y referencia. */
+  /**
+   * Recibe el estado completo siguiente. Cambiar de método limpia banco, teléfono y
+   * referencia; si además cambia la moneda, el monto se convierte con `rateVes` (o se vacía).
+   */
   onChange: (values: PaymentFormValues) => void;
-  /** Saldo pendiente del documento en Bs. Sin él no hay "Completar saldo" ni chips. */
+  /**
+   * Bs por encima del saldo que el servidor aún acepta. Con él, pasarse marca el monto
+   * como inválido; sin él, superar el saldo solo se avisa.
+   */
+  overpayToleranceVes?: number;
+  /**
+   * Saldo pendiente del documento en Bs. Sin él no hay "Completar saldo", chips ni
+   * aviso de monto mayor que el saldo.
+   */
   pendingBalance?: number;
   /** Tasa Bs por REF del documento. Sin ella no hay equivalencia ni atajos en REF. */
   rateVes?: number;
@@ -47,6 +60,7 @@ const completeClassName =
 export function PaymentFormFields({
   methods,
   onChange,
+  overpayToleranceVes,
   pendingBalance,
   rateVes,
   showErrors = false,
@@ -57,7 +71,10 @@ export function PaymentFormFields({
     () => methods.map((value) => ({ label: paymentMethodLabels[value], value })),
     [methods],
   );
-  const errors = showErrors ? validatePaymentForm(values) : {};
+  const balance = { overpayToleranceVes, pendingBalance, rateVes };
+  const errors = showErrors ? validatePaymentForm(values, balance) : {};
+  // El sobrepago se avisa mientras se escribe, sin esperar al intento de envío.
+  const overpayment = paymentOverpayment(values, balance);
   const equivalent = paymentAmountEquivalent(method, amount, rateVes);
   const currencyHelper =
     getPaymentCurrency(method) === "USD" ? "Monto en USD." : "Monto en VES.";
@@ -84,20 +101,23 @@ export function PaymentFormFields({
       <div className="grid gap-4 md:grid-cols-2">
         <SelectField
           label="Metodo"
-          onChange={(event) =>
+          onChange={(event) => {
+            const nextMethod = event.target.value as PaymentMethod;
+
             update({
+              amount: amountForMethodChange(method, nextMethod, amount, rateVes),
               bankName: "",
-              method: event.target.value as PaymentMethod,
+              method: nextMethod,
               phone: "",
               referenceCode: "",
-            })
-          }
+            });
+          }}
           options={methodOptions}
           value={method}
         />
         <NumberInput
           decimals={2}
-          error={errors.amount}
+          error={errors.amount ?? (overpayment?.blocking ? overpayment.message : undefined)}
           helperText={
             equivalent
               ? `${currencyHelper} Equivale a ${
@@ -112,6 +132,15 @@ export function PaymentFormFields({
           value={amount}
         />
       </div>
+
+      {overpayment && !overpayment.blocking ? (
+        <p
+          className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200"
+          role="status"
+        >
+          {overpayment.message}
+        </p>
+      ) : null}
 
       {hasPendingBalance ? (
         <div

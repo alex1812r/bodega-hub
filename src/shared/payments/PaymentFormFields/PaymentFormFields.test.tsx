@@ -341,6 +341,140 @@ describe("PaymentFormFields", () => {
     });
   });
 
+  describe("SHR-19 M3: cambio de moneda", () => {
+    it("de Bs a USD convierte el monto con la tasa en vez de reinterpretar la cifra", async () => {
+      const user = userEvent.setup();
+
+      render(<Harness pendingBalance={30600} rateVes={510} />);
+      await user.click(screen.getByRole("button", { name: "Completar saldo" }));
+      expect(amountField()).toHaveValue("30600");
+
+      await user.selectOptions(screen.getByLabelText("Metodo"), "efectivo_usd");
+
+      expect(amountField()).toHaveValue("60");
+      expect(screen.queryByText(/supera el saldo pendiente/)).not.toBeInTheDocument();
+    });
+
+    it("de USD a Bs convierte el monto con la tasa", async () => {
+      const user = userEvent.setup();
+
+      render(<Harness initial={{ amount: "12.5", method: "efectivo_usd" }} rateVes={510} />);
+      await user.selectOptions(screen.getByLabelText("Metodo"), "pago_movil");
+
+      expect(amountField()).toHaveValue("6375");
+    });
+
+    it("usa el mismo redondeo que la equivalencia en vivo", async () => {
+      const user = userEvent.setup();
+
+      render(<Harness initial={{ amount: "1000", method: "efectivo_ves" }} rateVes={510} />);
+      await user.selectOptions(screen.getByLabelText("Metodo"), "efectivo_usd");
+
+      expect(amountField()).toHaveValue(String(roundMoney(1000 / 510)));
+    });
+
+    it("sin tasa vacia el monto al cambiar de moneda", async () => {
+      const user = userEvent.setup();
+      const onValues = jest.fn();
+
+      render(<Harness initial={{ amount: "30600" }} onValues={onValues} />);
+      await user.selectOptions(screen.getByLabelText("Metodo"), "efectivo_usd");
+
+      expect(amountField()).toHaveValue("");
+      expect(onValues).toHaveBeenLastCalledWith(
+        expect.objectContaining({ amount: "", method: "efectivo_usd" }),
+      );
+    });
+
+    it("entre metodos de la misma moneda el monto no cambia", async () => {
+      const user = userEvent.setup();
+
+      render(<Harness initial={{ amount: "100.5", method: "efectivo_ves" }} rateVes={510} />);
+      await user.selectOptions(screen.getByLabelText("Metodo"), "punto_venta");
+
+      expect(amountField()).toHaveValue("100.5");
+    });
+  });
+
+  describe("SHR-19 M3: monto mayor que el saldo", () => {
+    const overpayMessage = `El monto supera el saldo pendiente (${formatVesBs(30600)}).`;
+
+    it("avisa junto al campo sin esperar al envio y sin bloquear si no hay holgura definida", async () => {
+      const user = userEvent.setup();
+
+      render(<Harness pendingBalance={30600} rateVes={510} />);
+      await user.type(amountField(), "30600");
+      expect(screen.queryByText(overpayMessage)).not.toBeInTheDocument();
+
+      await user.type(amountField(), ".01");
+
+      expect(screen.getByRole("status")).toHaveTextContent(overpayMessage);
+      expect(amountField()).not.toHaveAttribute("aria-invalid", "true");
+      expect(
+        isPaymentFormValid(
+          { ...createEmptyPaymentFormValues(), amount: "30600.01" },
+          { pendingBalance: 30600, rateVes: 510 },
+        ),
+      ).toBe(true);
+    });
+
+    it("compara en Bs un monto en USD", async () => {
+      const user = userEvent.setup();
+
+      render(<Harness initial={{ method: "efectivo_usd" }} pendingBalance={30600} rateVes={510} />);
+      await user.type(amountField(), "60");
+      expect(screen.queryByText(overpayMessage)).not.toBeInTheDocument();
+
+      await user.type(amountField(), ".01");
+
+      expect(screen.getByRole("status")).toHaveTextContent(overpayMessage);
+    });
+
+    it("dentro de la holgura del servidor avisa y deja enviar; por encima marca el campo y bloquea", async () => {
+      const user = userEvent.setup();
+      const balance = { overpayToleranceVes: 10, pendingBalance: 30600, rateVes: 510 };
+
+      render(<Harness {...balance} />);
+      await user.type(amountField(), "30610");
+
+      expect(screen.getByRole("status")).toHaveTextContent(overpayMessage);
+      expect(amountField()).not.toHaveAttribute("aria-invalid", "true");
+      expect(
+        isPaymentFormValid({ ...createEmptyPaymentFormValues(), amount: "30610" }, balance),
+      ).toBe(true);
+
+      await user.type(amountField(), ".01");
+
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.getByText(overpayMessage)).toBeInTheDocument();
+      expect(amountField()).toHaveAttribute("aria-invalid", "true");
+      expect(
+        validatePaymentForm({ ...createEmptyPaymentFormValues(), amount: "30610.01" }, balance),
+      ).toEqual({ amount: overpayMessage });
+    });
+
+    it("sin saldo conocido, o en USD sin tasa, no avisa ni bloquea", async () => {
+      const user = userEvent.setup();
+
+      render(<Harness initial={{ method: "efectivo_usd" }} pendingBalance={30600} />);
+      await user.type(amountField(), "99999");
+
+      expect(screen.queryByText(/supera el saldo pendiente/)).not.toBeInTheDocument();
+      expect(
+        isPaymentFormValid(
+          { ...createEmptyPaymentFormValues("efectivo_usd"), amount: "99999" },
+          { overpayToleranceVes: 10, pendingBalance: 30600 },
+        ),
+      ).toBe(true);
+      expect(
+        isPaymentFormValid(
+          { ...createEmptyPaymentFormValues(), amount: "99999" },
+          { overpayToleranceVes: 10 },
+        ),
+      ).toBe(true);
+    });
+  });
+
   describe("validaciones", () => {
     it("no muestra errores hasta que se piden", () => {
       render(<Harness initial={{ method: "pago_movil" }} />);

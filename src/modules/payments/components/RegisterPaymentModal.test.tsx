@@ -369,6 +369,88 @@ describe("RegisterPaymentModal", () => {
     });
   });
 
+  // Saldo de sale-002: Bs 8.475 a tasa 510. Holgura de `register_payment` para una venta:
+  // Bs 10 con metodos en Bs y 1 USD (Bs 510) con efectivo USD.
+  describe("SHR-19 M3: monto mayor que el saldo", () => {
+    it("no envia un monto que el servidor rechazaria por exceder el saldo de la venta", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "8485.01");
+      await submit(user);
+
+      expect(await dialog.findByText(/El monto supera el saldo pendiente/)).toBeInTheDocument();
+      expect(dialog.getByLabelText("Monto")).toHaveAttribute("aria-invalid", "true");
+      expect(postedBodies()).toHaveLength(0);
+    });
+
+    it("Completar saldo en Bs y pasar a efectivo USD no envia la misma cifra en USD", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.click(dialog.getByRole("button", { name: "Completar saldo" }));
+      await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+      await submit(user);
+
+      const post = await expectSinglePost();
+
+      // 8475 / 510 = 16.62 (Bs 8.476,20: dentro de la holgura de 1 USD).
+      expect(post.body).toEqual({
+        amount: 16.62,
+        currency: "USD",
+        method: "efectivo_usd",
+        saleId: "sale-002",
+      });
+    });
+
+    it("dentro de la holgura de redondeo de la venta avisa pero envia", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "8485");
+      expect(dialog.getByRole("status")).toHaveTextContent(/El monto supera el saldo pendiente/);
+      await submit(user);
+
+      expect((await expectSinglePost()).body).toMatchObject({ amount: 8485, currency: "VES" });
+    });
+
+    it("en efectivo USD la holgura de la venta es de 1 USD", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+      // 17.62 USD = Bs 8.986,20 > 8.475 + 510.
+      await user.type(dialog.getByLabelText("Monto"), "17.62");
+      await submit(user);
+
+      expect(await dialog.findByText(/El monto supera el saldo pendiente/)).toBeInTheDocument();
+      expect(postedBodies()).toHaveLength(0);
+    });
+
+    it("una compra en Bs no admite pasar del saldo", async () => {
+      renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "20200.02");
+      await submit(user);
+
+      expect(await dialog.findByText(/El monto supera el saldo pendiente/)).toBeInTheDocument();
+      expect(postedBodies()).toHaveLength(0);
+    });
+
+    it("una compra en USD solo avisa: el servidor convierte con la tasa del dia, no la de la compra", async () => {
+      renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+      await user.type(dialog.getByLabelText("Monto"), "45");
+      expect(dialog.getByRole("status")).toHaveTextContent(/El monto supera el saldo pendiente/);
+      await submit(user);
+
+      expect((await expectSinglePost()).body).toMatchObject({ amount: 45, currency: "USD" });
+    });
+  });
+
   it("muestra el mensaje de error de la API tal cual", async () => {
     paymentResponse = jsonResponse(
       {
@@ -382,7 +464,9 @@ describe("RegisterPaymentModal", () => {
     renderModal(<RegisterPaymentModal saleId="sale-002" />);
     const { dialog, user } = await openModal();
 
-    await user.type(dialog.getByLabelText("Monto"), "999999");
+    // SHR-19: un monto muy por encima del saldo ya no sale del cliente; dentro de la
+    // holgura (Bs 10) decide el servidor, p. ej. si el saldo en pantalla quedo viejo.
+    await user.type(dialog.getByLabelText("Monto"), "8480");
     await submit(user);
 
     expect(

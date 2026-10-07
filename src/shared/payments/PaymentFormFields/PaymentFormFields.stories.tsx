@@ -16,6 +16,10 @@ tasa recibida), banco, teléfono, referencia y notas. Es controlado y no hace pe
 - Payload: \`{ ...buildPaymentFormPayload(values), saleId }\` (o \`purchaseId\`).
 - \`pendingBalance\` va en Bs y \`rateVes\` es la tasa del documento. Con saldo aparecen
   "Completar saldo" y los chips 25 / 50 / 100 %, que nunca superan el saldo.
+- Un monto mayor que el saldo se avisa junto al campo. Si además se pasa \`overpayToleranceVes\`
+  (lo que el servidor aún acepta por encima del saldo), rebasarlo invalida el formulario:
+  \`isPaymentFormValid(values, { pendingBalance, rateVes, overpayToleranceVes })\`.
+- Cambiar a un método de otra moneda convierte el monto con \`rateVes\`; sin tasa lo vacía.
 - El error de la API lo muestra quien usa el componente, con \`error.message\` tal cual.
 `;
 
@@ -112,6 +116,34 @@ export const WithPendingBalance: Story = {
 
     await userEvent.click(canvas.getByRole("button", { name: "Completar saldo" }));
     await expect(canvas.getByLabelText("Monto")).toHaveValue("8475");
+  },
+};
+
+/** Supera el saldo dentro de la holgura que el servidor acepta: aviso, se puede enviar. */
+export const OverBalanceWarning: Story = {
+  args: {
+    initial: { amount: "8480", method: "efectivo_ves" },
+    overpayToleranceVes: 10,
+    pendingBalance: 8475,
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole("status")).toHaveTextContent(
+      /El monto supera el saldo pendiente/,
+    );
+    await expect(canvas.getByLabelText("Monto")).not.toHaveAttribute("aria-invalid", "true");
+  },
+};
+
+/** Supera el saldo más allá de la holgura: el servidor lo rechazaría, el campo queda inválido. */
+export const OverBalanceBlocked: Story = {
+  args: {
+    initial: { amount: "84750", method: "efectivo_ves" },
+    overpayToleranceVes: 10,
+    pendingBalance: 8475,
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/El monto supera el saldo pendiente/)).toBeVisible();
+    await expect(canvas.getByLabelText("Monto")).toHaveAttribute("aria-invalid", "true");
   },
 };
 
