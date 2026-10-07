@@ -21,7 +21,6 @@ type SaleDetailActionsMenuProps = {
   onDownloadPdf: () => void | Promise<void>;
   onPrint: () => void;
   onReturn: () => void | Promise<void>;
-  saleId: string;
   status: SaleStatus;
 };
 
@@ -72,7 +71,6 @@ export function SaleDetailActionsMenu({
   onDownloadPdf,
   onPrint,
   onReturn,
-  saleId,
   status,
 }: SaleDetailActionsMenuProps) {
   const { can } = usePermission();
@@ -107,15 +105,8 @@ export function SaleDetailActionsMenu({
       );
     }
 
-    if (can("payments.manage") || can("sales.create")) {
-      items.push({
-        href: `/payments?saleId=${saleId}`,
-        label: "Registrar pago",
-      });
-    }
-
     return items;
-  }, [can, isCancelling, isReturning, saleId, status]);
+  }, [can, isCancelling, isReturning, status]);
 
   async function handleConfirm() {
     if (!pendingAction) {

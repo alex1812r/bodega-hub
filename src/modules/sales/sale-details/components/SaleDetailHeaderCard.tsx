@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import { PageBackButton } from "@/shared/components/PageBackButton";
 import type { SaleStatus } from "@/shared/mocks/erp-data";
 import { formatDateTimeShort } from "@/shared/utils/date";
@@ -18,7 +20,8 @@ type SaleDetailHeaderCardProps = {
   onDownloadPdf?: () => void | Promise<void>;
   onPrint?: () => void;
   onReturn?: () => void | Promise<void>;
-  saleId: string;
+  /** Acción principal de la venta (p. ej. "Cobrar saldo"); va antes del menú "Acciones". */
+  primaryAction?: ReactNode;
   status: SaleStatus;
 };
 
@@ -32,7 +35,7 @@ export function SaleDetailHeaderCard({
   onDownloadPdf,
   onPrint,
   onReturn,
-  saleId,
+  primaryAction,
   status,
 }: SaleDetailHeaderCardProps) {
   return (
@@ -50,8 +53,9 @@ export function SaleDetailHeaderCard({
         </p>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <PageBackButton href="/sales" size="sm" />
+        {primaryAction}
         <SaleDetailActionsMenu
           invoiceNumber={invoiceNumber}
           isCancelling={isCancelling}
@@ -61,7 +65,6 @@ export function SaleDetailHeaderCard({
           onDownloadPdf={() => void onDownloadPdf?.()}
           onPrint={() => onPrint?.()}
           onReturn={() => void onReturn?.()}
-          saleId={saleId}
           status={status}
         />
       </div>
