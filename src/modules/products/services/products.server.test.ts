@@ -105,3 +105,71 @@ describe("products.server listProducts: exact sku filter", () => {
     expect(searchChain.or).toHaveBeenCalledWith(expect.stringContaining("sku.ilike.%taladro%"));
   });
 });
+
+describe("products.server listProducts: packLink=none", () => {
+  type LinkRow = { pack_product_id: string; unit_product_id: string };
+
+  function setup(links: LinkRow[]) {
+    const products = createMockSupabase().chain;
+    products.not = jest.fn().mockReturnValue(products);
+
+    const linksEq = jest.fn();
+    const linksQuery = {
+      eq: linksEq,
+      select: jest.fn(),
+      then: (resolve: (value: { data: LinkRow[]; error: null }) => void) =>
+        resolve({ data: links, error: null }),
+    };
+
+    linksEq.mockReturnValue(linksQuery);
+    linksQuery.select.mockReturnValue(linksQuery);
+
+    const from = jest.fn((table: string) =>
+      table === "product_pack_conversions" ? linksQuery : products,
+    );
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from });
+
+    return { from, linksEq, products };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("leaves out every product with an active pack link, as pack or as unit", async () => {
+    const { linksEq, products } = setup([
+      { pack_product_id: "pack-1", unit_product_id: "unit-1" },
+      { pack_product_id: "pack-2", unit_product_id: "unit-1" },
+    ]);
+
+    await listProducts(new URLSearchParams("packLink=none&isActive=true"), OTHER_STORE_ID);
+
+    expect(linksEq).toHaveBeenCalledWith("store_id", OTHER_STORE_ID);
+    expect(linksEq).toHaveBeenCalledWith("is_active", true);
+    expect(products.not).toHaveBeenCalledTimes(1);
+    expect(products.not).toHaveBeenCalledWith("id", "in", "(pack-1,unit-1,pack-2)");
+    expect(products.eq).toHaveBeenCalledWith("store_id", OTHER_STORE_ID);
+    expect(products.eq).toHaveBeenCalledWith("is_active", true);
+  });
+
+  it("does not add an empty exclusion when the store has no pack links", async () => {
+    const { products } = setup([]);
+
+    await listProducts(new URLSearchParams("packLink=none"), DEFAULT_STORE_ID);
+
+    expect(products.not).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "packLink=", "packLink=pack", "packLink=NONE"])(
+    "keeps the default listing for query [%s]",
+    async (queryString) => {
+      const { from, products } = setup([{ pack_product_id: "pack-1", unit_product_id: "unit-1" }]);
+
+      await listProducts(new URLSearchParams(queryString), DEFAULT_STORE_ID);
+
+      expect(from).not.toHaveBeenCalledWith("product_pack_conversions");
+      expect(products.not).not.toHaveBeenCalled();
+    },
+  );
+});

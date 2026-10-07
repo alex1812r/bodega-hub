@@ -164,6 +164,14 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
   const isActive = searchParams.get("isActive");
   const search = searchParams.get("search")?.toLowerCase();
   const sku = normalizeSku(searchParams.get("sku") ?? "");
+  // `packLink=none`: sin vínculo de empaque activo, ni como empaque ni como unidad.
+  const packLinkedIds = new Set(
+    searchParams.get("packLink") === "none"
+      ? mockProductPackConversions
+          .filter((link) => link.isActive && link.storeId === storeId)
+          .flatMap((link) => [link.packProductId, link.unitProductId])
+      : [],
+  );
 
   const products = mockProducts.filter((product) => {
     const matchesBarcode = !barcode || matchesExactBarcode(product, barcode);
@@ -179,7 +187,8 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
       matchesSku &&
       matchesSearch &&
       matchesCategory &&
-      matchesActive
+      matchesActive &&
+      !packLinkedIds.has(product.id)
     );
   });
 

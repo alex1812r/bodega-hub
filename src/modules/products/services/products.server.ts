@@ -140,9 +140,34 @@ function applyProductFilters<TQuery extends {
   return filteredQuery;
 }
 
+/**
+ * Ids de los productos con un vínculo de empaque activo en la tienda, sea como
+ * empaque o como unidad: los que `packLink=none` deja fuera del listado.
+ */
+async function listPackLinkedProductIds(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  storeId: string,
+) {
+  const { data, error } = await supabase
+    .from("product_pack_conversions")
+    .select("pack_product_id, unit_product_id")
+    .eq("store_id", storeId)
+    .eq("is_active", true);
+
+  throwIfSupabaseError(error);
+
+  const links = (data ?? []) as { pack_product_id: string; unit_product_id: string }[];
+
+  return [...new Set(links.flatMap((link) => [link.pack_product_id, link.unit_product_id]))];
+}
+
 export async function listProducts(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
+  const packLinkedIds =
+    searchParams.get("packLink") === "none"
+      ? await listPackLinkedProductIds(supabase, storeId)
+      : [];
 
   let query = supabase
     .from("products")
@@ -150,6 +175,11 @@ export async function listProducts(searchParams: URLSearchParams, storeId: strin
     .eq("store_id", storeId);
 
   query = applyProductFilters(query, searchParams);
+
+  if (packLinkedIds.length > 0) {
+    query = query.not("id", "in", `(${packLinkedIds.join(",")})`);
+  }
+
   query = applyProductSort(query, searchParams);
 
   const { count, data, error } = await query.range(skip, skip + limit - 1);

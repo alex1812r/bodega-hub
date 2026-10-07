@@ -1,14 +1,20 @@
 "use client";
 
-import { useMemo } from "react";
+import { useState } from "react";
 
-import { getPaginatedItems } from "@/lib/api/pagination";
+import { MAX_PAGE_LIMIT, type PaginatedList } from "@/lib/api/pagination";
+import { apiFetch } from "@/shared/api/apiFetch";
+import {
+  EntityAutocomplete,
+  type EntityAutocompleteValue,
+  type EntityFetcher,
+  type ProductEntityOption,
+  toProductEntityOption,
+} from "@/shared/components/EntityAutocomplete";
 import { Input } from "@/shared/components/Input";
 import { getNumberInputError, NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
-import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
-
-import { useProducts } from "../../hooks/useProducts";
+import type { ProductMock, ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 
 export type PackConversionFormState = {
   enabled: boolean;
@@ -45,6 +51,74 @@ export function getUnitsPerPackError(text: string) {
     getNumberInputError(text, { decimals: 0 }) ??
     (Number(text) >= 2 ? undefined : "Indica unidades por empaque (minimo 2).")
   );
+}
+
+const PACK_LINKED_REASON = "Ya tiene un vínculo de empaque.";
+const UNIT_RECENTS_KEY = "pack-unit";
+const UNKNOWN_UNIT_LABEL = "Producto seleccionado";
+
+type UnitCandidateOption = ProductEntityOption & { hasPackLink: boolean };
+
+type ProductSearchCriteria = { barcode: string } | { search: string } | { sku: string };
+
+/**
+ * Candidatos a producto unidad desde `GET /api/products`. Cada búsqueda se pide
+ * dos veces, con y sin `packLink=none`: los que solo vienen sin el filtro ya
+ * tienen un vínculo de empaque (como empaque o como unidad) y van al final,
+ * marcados para mostrarse deshabilitados con su motivo.
+ */
+const fetchUnitCandidates: EntityFetcher<"product"> = async ({
+  exact,
+  filters,
+  limit,
+  query,
+  signal,
+}): Promise<UnitCandidateOption[]> => {
+  // Lector de barras: `barcode` y `sku` son igualdad exacta en servidor.
+  const criteria: ProductSearchCriteria[] = exact
+    ? [{ barcode: query }, { sku: query }, { search: query }]
+    : [{ search: query }];
+
+  async function requestProducts(packLink?: "none") {
+    const pages = await Promise.all(
+      criteria.map((criterion) =>
+        apiFetch<PaginatedList<ProductMock>>("/api/products", {
+          query: {
+            ...criterion,
+            isActive: filters.active,
+            limit: Math.min(MAX_PAGE_LIMIT, limit + (filters.excludeIds?.length ?? 0)),
+            packLink,
+            skip: 0,
+          },
+          signal,
+        }),
+      ),
+    );
+
+    return pages.flatMap((page) => page.items);
+  }
+
+  const [withoutLink, all] = await Promise.all([requestProducts("none"), requestProducts()]);
+  const freeIds = new Set(withoutLink.map((product) => product.id));
+  const seen = new Set<string>();
+
+  return [...withoutLink, ...all]
+    .filter((product) => {
+      if (seen.has(product.id)) {
+        return false;
+      }
+
+      seen.add(product.id);
+      return true;
+    })
+    .map((product) => ({
+      ...toProductEntityOption(product),
+      hasPackLink: !freeIds.has(product.id),
+    }));
+};
+
+function hasPackLink(option: ProductEntityOption) {
+  return "hasPackLink" in option && option.hasPackLink === true;
 }
 
 export function createDefaultPackConversionFormState(
@@ -84,17 +158,24 @@ export function ProductPackConversionFields({
   state,
   onChange,
 }: ProductPackConversionFieldsProps) {
-  const productsQuery = useProducts({ isActive: true, limit: 100 });
-  const productOptions = useMemo(
-    () =>
-      getPaginatedItems(productsQuery.data)
-        .filter((product) => product.id !== excludeProductId)
-        .map((product) => ({
-          label: `${product.name} (${product.sku})`,
-          value: product.id,
-        })),
-    [excludeProductId, productsQuery.data],
-  );
+  const [pickedUnit, setPickedUnit] = useState<EntityAutocompleteValue | null>(null);
+  // La unidad ya vinculada a este empaque sigue siendo elegible para él.
+  const linkedUnit = packConversion?.role === "pack" ? packConversion.linkedProduct : undefined;
+
+  function getUnitValue(): EntityAutocompleteValue | null {
+    if (!state.unitProductId) {
+      return null;
+    }
+
+    if (pickedUnit?.id === state.unitProductId) {
+      return pickedUnit;
+    }
+
+    return {
+      id: state.unitProductId,
+      label: linkedUnit?.id === state.unitProductId ? linkedUnit.name : UNKNOWN_UNIT_LABEL,
+    };
+  }
 
   if (isUnitRole && packConversion) {
     return (
@@ -144,12 +225,21 @@ export function ProductPackConversionFields({
             value={state.mode}
           />
           {state.mode === "link_existing" ? (
-            <SelectField
+            <EntityAutocomplete
+              entity="product"
+              fetcher={fetchUnitCandidates}
+              filters={{ active: true, excludeIds: excludeProductId ? [excludeProductId] : [] }}
+              getOptionDisabled={(option) =>
+                option.id !== linkedUnit?.id && hasPackLink(option) && PACK_LINKED_REASON
+              }
+              helperText="Solo productos activos sin vínculo de empaque."
               label="Producto unidad"
-              onChange={(event) => onChange({ unitProductId: event.target.value })}
-              options={productOptions}
-              placeholder="Selecciona"
-              value={state.unitProductId}
+              onChange={(option) => {
+                setPickedUnit(option ? { id: option.id, label: option.label } : null);
+                onChange({ unitProductId: option?.id ?? "" });
+              }}
+              recentsKey={UNIT_RECENTS_KEY}
+              value={getUnitValue()}
             />
           ) : (
             <div className="grid gap-3 md:grid-cols-2">

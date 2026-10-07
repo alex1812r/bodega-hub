@@ -97,6 +97,23 @@ describe("/api/products", () => {
     expect(body.data.total).toBe(0);
   });
 
+  it("leaves out products with an active pack link only when packLink=none is sent", async () => {
+    const linked = await GET(new Request("http://localhost/api/products?search=cig&isActive=true"));
+    const free = await GET(
+      new Request("http://localhost/api/products?search=cig&isActive=true&packLink=none"),
+    );
+    const linkedBody = await linked.json();
+    const freeBody = await free.json();
+
+    expect(free.status).toBe(200);
+    expect(linkedBody.data.items.map((product: { id: string }) => product.id).sort()).toEqual([
+      "prod-cigar-pack",
+      "prod-cigar-unit",
+    ]);
+    expect(freeBody.data.items).toEqual([]);
+    expect(freeBody.data.total).toBe(0);
+  });
+
   it("ignores an empty sku parameter", async () => {
     const withEmptySku = await GET(new Request("http://localhost/api/products?sku=%20&limit=100"));
     const withoutSku = await GET(new Request("http://localhost/api/products?limit=100"));

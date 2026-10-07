@@ -60,3 +60,44 @@ describe("products.mock-server listProducts: exact sku filter", () => {
     ]);
   });
 });
+
+describe("products.mock-server listProducts: packLink=none", () => {
+  function ids(queryString: string, storeId = DEFAULT_STORE_ID) {
+    return list(`${queryString}&limit=100`, storeId).items.map((product) => product.id);
+  }
+
+  it("leaves out the pack and the unit of every active link", () => {
+    expect(ids("search=cig")).toEqual(
+      expect.arrayContaining(["prod-cigar-pack", "prod-cigar-unit"]),
+    );
+    expect(ids("search=cig&packLink=none")).toEqual([]);
+    expect(ids("packLink=none")).toEqual(expect.arrayContaining(["prod-drill", "prod-latex"]));
+  });
+
+  it("combines with the other filters", () => {
+    const active = ids("packLink=none&isActive=true");
+
+    expect(active).toContain("prod-drill");
+    expect(active).not.toContain("prod-latex");
+    expect(active).not.toContain("prod-cigar-unit");
+    expect(ids("packLink=none&sku=cig-und-001")).toEqual([]);
+    expect(ids("packLink=none&sku=her-tal-001")).toEqual(["prod-drill"]);
+  });
+
+  it("only removes the linked products from the listing", () => {
+    expect(ids("packLink=none")).toEqual(
+      ids("").filter((id) => id !== "prod-cigar-pack" && id !== "prod-cigar-unit"),
+    );
+  });
+
+  it.each(["packLink=", "packLink=pack", "packLink=NONE"])(
+    "keeps the default listing for [%s]",
+    (queryString) => {
+      expect(ids(queryString)).toEqual(ids(""));
+    },
+  );
+
+  it("ignores the links of another store", () => {
+    expect(ids("packLink=none", OTHER_STORE_ID)).toEqual(ids("", OTHER_STORE_ID));
+  });
+});
