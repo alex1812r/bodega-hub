@@ -52,14 +52,6 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
     }
   }, [saleId, settings.data?.businessName]);
 
-  async function handleCancelSale() {
-    await cancelSale.mutateAsync(saleId);
-  }
-
-  async function handleReturnSale() {
-    await returnSale.mutateAsync(saleId);
-  }
-
   if (sale.isLoading) {
     return <DetailSkeleton />;
   }
@@ -91,13 +83,24 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
         isCancelling={cancelSale.isPending}
         isExportingPdf={isExportingPdf}
         isReturning={returnSale.isPending}
-        onCancel={() => void handleCancelSale()}
+        onCancel={() => cancelSale.mutate(saleId)}
         onDownloadPdf={() => void handleDownloadPdf()}
         onPrint={handlePrint}
-        onReturn={() => void handleReturnSale()}
+        onReturn={() => returnSale.mutate(saleId)}
         saleId={data.id}
         status={data.status}
       />
+
+      {cancelSale.error || returnSale.error ? (
+        <ErrorState
+          description={
+            (cancelSale.error ?? returnSale.error) instanceof Error
+              ? (cancelSale.error ?? returnSale.error)?.message
+              : "No se pudo completar la acción."
+          }
+          title="No pudimos actualizar la venta"
+        />
+      ) : null}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="flex flex-col gap-6 xl:col-span-2">
@@ -141,17 +144,6 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
           />
         </aside>
       </div>
-
-      {cancelSale.error || returnSale.error ? (
-        <ErrorState
-          description={
-            (cancelSale.error ?? returnSale.error) instanceof Error
-              ? (cancelSale.error ?? returnSale.error)?.message
-              : "No se pudo completar la acción."
-          }
-          title="No pudimos actualizar la venta"
-        />
-      ) : null}
     </div>
   );
 }

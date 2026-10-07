@@ -1118,6 +1118,20 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            Conflicto. La clave `clientRequestId` ya se uso con otro contenido, la
+            operacion choco con otra en curso (`error.details.retryable` = `true`),
+            la devolucion ligada (`saleId` / `purchaseId`) supera lo vendido o
+            recibido menos lo ya devuelto, el documento no esta en un estado
+            devolvible, o la base aun no admite devoluciones ligadas (en ese caso
+            no se registra nada: el servidor no repite la operacion sin el vinculo).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/inventory/conversions:
     post:
       tags: [Inventory]
@@ -1138,6 +1152,12 @@ paths:
                   minimum: 1
                 reason:
                   type: string
+                clientRequestId:
+                  type: string
+                  format: uuid
+                  description: >-
+                    Clave de idempotencia opcional por intento: repetir la peticion con la
+                    misma clave devuelve la conversion original sin mover stock.
       responses:
         "201":
           description: Conversion creada (par de movimientos)
@@ -1177,6 +1197,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
   /api/inventory/pack-conversions:
     get:
       tags: [Inventory]
@@ -1261,6 +1283,39 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+  /api/sales/by-request/{clientRequestId}:
+    parameters:
+      - name: clientRequestId
+        in: path
+        required: true
+        description: Clave de idempotencia enviada en `POST /api/sales`.
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Sales]
+      summary: Obtener venta por clave de idempotencia
+      description: >-
+        Venta registrada con ese `clientRequestId`. El POS la consulta cuando se
+        pierde la respuesta de `POST /api/sales` para saber si la venta llego a
+        crearse antes de reintentar. Mismos permisos, filtro de tienda y forma que
+        `GET /api/sales/{id}`; solo ventas del propio usuario salvo admin.
+      x-permission: sales.view
+      responses:
+        "200":
+          description: Venta
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/sales/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -1383,6 +1438,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
   /api/purchases/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -2784,7 +2841,7 @@ components:
         default: 10
   responses:
     BadRequest:
-      description: Solicitud invalida
+      description: Solicitud invalida (cuerpo que no es JSON valido, campos que no cumplen el schema o rechazo de negocio)
       content:
         application/json:
           schema:
@@ -2803,6 +2860,15 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     Conflict:
       description: Conflicto de negocio, por ejemplo SKU duplicado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    IdempotencyConflict:
+      description: >-
+        Conflicto. La clave `clientRequestId` ya se uso con otro contenido (o no se
+        puede repetir), o la operacion choco con otra en curso y no se aplico: en
+        ese caso `error.details.retryable` es `true` y basta reintentar.
       content:
         application/json:
           schema:
@@ -2971,6 +3037,12 @@ components:
               type: array
               items:
                 type: object
+            details:
+              type: object
+              description: Datos adicionales del error, por ejemplo `retryable` en un 409 reintentable.
+              properties:
+                retryable:
+                  type: boolean
     ContactType:
       type: string
       enum: [cliente, proveedor, ambos]
@@ -3488,13 +3560,14 @@ components:
           $ref: "#/components/schemas/Sale"
     SaleCreateInput:
       type: object
-      required: [customerId, items]
+      required: [clientRequestId, customerId, items]
       description: >-
         Con `payments` la venta y sus cobros se registran en una sola transaccion
         (RPC `create_sale_with_payments`): si un cobro falla no queda venta ni
         descuento de stock. `clientRequestId` es la clave de idempotencia por
-        intento de cobro: repetir la peticion con la misma clave devuelve la venta
-        ya creada en vez de duplicarla.
+        intento de cobro y es obligatoria (400 si falta o no es uuid): repetir la
+        peticion con la misma clave devuelve la venta ya creada en vez de
+        duplicarla; la misma clave con otro contenido responde 409.
       properties:
         clientRequestId:
           type: string
@@ -3596,6 +3669,12 @@ components:
       type: object
       required: [supplierId, items]
       properties:
+        clientRequestId:
+          type: string
+          format: uuid
+          description: >-
+            Clave de idempotencia opcional por intento: repetir la peticion con la
+            misma clave devuelve la compra original sin mover stock.
         supplierId:
           type: string
         items:
@@ -4233,12 +4312,36 @@ components:
       type: object
       required: [productId, quantityDelta]
       properties:
+        clientRequestId:
+          type: string
+          format: uuid
+          description: >-
+            Clave de idempotencia opcional por intento: repetir la peticion con la
+            misma clave devuelve el movimiento original sin mover stock.
         productId:
           type: string
+        purchaseId:
+          type: string
+          format: uuid
+          description: >-
+            Compra a la que se liga la devolucion. Solo valido con
+            `type: devolucion_proveedor` (400 con cualquier otro tipo). Con el vinculo
+            el servidor exige que la compra sea de la tienda, este recibida e incluya
+            el producto, y rechaza con 409 lo que supere lo recibido menos lo ya
+            devuelto. Sin el, la devolucion no tiene tope.
         quantityDelta:
           type: integer
         reason:
           type: string
+        saleId:
+          type: string
+          format: uuid
+          description: >-
+            Venta a la que se liga la devolucion. Solo valido con
+            `type: devolucion_cliente` (400 con cualquier otro tipo). Con el vinculo
+            el servidor exige que la venta sea de la tienda, este pagada o pendiente
+            de pago e incluya el producto, y rechaza con 409 lo que supere lo vendido
+            menos lo ya devuelto. Sin el, la devolucion no tiene tope.
         type:
           $ref: "#/components/schemas/StockMovementType"
     DashboardSummary:

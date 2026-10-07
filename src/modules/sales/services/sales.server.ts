@@ -1,7 +1,12 @@
 import { ApiError, type ApiErrorCode } from "@/lib/api/apiError";
 import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { parsePagination, type PaginatedList } from "@/lib/api/pagination";
-import { getSupabaseErrorMessage, mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
+import {
+  getSupabaseErrorMessage,
+  mapSupabaseError,
+  mapSupabaseErrorByCode,
+  throwIfSupabaseError,
+} from "@/lib/supabase/errors";
 import { mapBaseEntity, mapNullableString } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { buildPaymentNotes, createPayment } from "@/modules/payments/services/payments.server";
@@ -228,6 +233,14 @@ function throwIfRpcError(error: unknown): void {
     throw new ApiError(mapped.status, mapped.code, message);
   }
 
+  // Antes que las reglas por mensaje: un 22P02 ("invalid input syntax…") o un
+  // 42501 ("permission denied for…") no deben salir con el texto de Postgres.
+  const mappedByCode = mapSupabaseErrorByCode(error);
+
+  if (mappedByCode) {
+    throw mappedByCode;
+  }
+
   // Sin acentos: los mensajes de `register_payment` vienen acentuados.
   const normalized = message
     .normalize("NFD")
@@ -381,7 +394,15 @@ function mapCreateSalePayments(payments: NonNullable<SaleInput["payments"]>) {
   });
 }
 
-export async function createSale(input: SaleInput, _storeId: string) {
+/** Quien pide la venta: sirve para no devolver por clave la venta de otro usuario. */
+export type SaleViewer = {
+  role?: string;
+  userId?: string;
+};
+
+type RouteSupabaseClient = Awaited<ReturnType<typeof createRouteSupabaseClient>>;
+
+export async function createSale(input: SaleInput, storeId: string, viewer: SaleViewer = {}) {
   const supabase = await createRouteSupabaseClient();
   const baseArgs = {
     p_customer_id: input.customerId,
@@ -393,25 +414,19 @@ export async function createSale(input: SaleInput, _storeId: string) {
     p_ref_rate_ves: input.refRateVes ?? null,
     p_tax_ref: input.taxRef ?? 0,
   };
-  const payments = input.payments ?? [];
-  const atomic = payments.length > 0 || Boolean(input.clientRequestId);
+  // Siempre el RPC atomico (patch 20260909), tambien sin cobros: venta, stock,
+  // pagos y clave de idempotencia quedan en una sola transaccion. `create_sale`
+  // a secas no deduplica: dos POST eran dos ventas (C5a).
+  const { data, error } = await supabase.rpc("create_sale_with_payments", {
+    ...baseArgs,
+    p_client_request_id: input.clientRequestId ?? null,
+    p_payments: mapCreateSalePayments(input.payments ?? []),
+  });
 
-  // Con cobros o clave de idempotencia se usa el RPC atomico: venta, stock y
-  // pagos quedan en una sola transaccion (patch 20260909). Sin ninguno de los dos
-  // se conserva `create_sale` tal cual para clientes que cobran aparte (app movil).
-  const { data, error } = atomic
-    ? await supabase.rpc("create_sale_with_payments", {
-        ...baseArgs,
-        p_client_request_id: input.clientRequestId ?? null,
-        p_payments: mapCreateSalePayments(payments),
-      })
-    : await supabase.rpc("create_sale", baseArgs);
-
-  if (atomic && isMissingRpcError(error, "create_sale_with_payments")) {
-    // La base todavia no tiene el patch 20260909. Se cobra en dos pasos como
-    // antes para no tumbar el POS, deshaciendo la venta si un cobro falla.
-    // Sin clave de idempotencia en este camino: es el comportamiento previo.
-    return createSaleThenPayments(supabase, baseArgs, payments, _storeId);
+  if (isMissingRpcError(error, "create_sale_with_payments")) {
+    // La base todavia no tiene el patch 20260909 (produccion): se cobra en dos
+    // pasos para no tumbar el POS, conservando la clave hasta donde la base deje.
+    return createSaleThenPayments(supabase, baseArgs, input, storeId, viewer);
   }
 
   throwIfRpcError(error);
@@ -438,13 +453,104 @@ function isMissingRpcError(error: unknown, rpcName: string) {
   );
 }
 
-async function createSaleThenPayments(
-  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
-  baseArgs: Record<string, unknown>,
-  payments: NonNullable<SaleInput["payments"]>,
+/** `42703 undefined_column`: la base no tiene `sales.client_request_id`. */
+function isMissingClientRequestColumnError(error: unknown) {
+  if (!error) {
+    return false;
+  }
+
+  const code = getSupabaseErrorSqlState(error);
+  const message = getSupabaseErrorMessage(error).toLowerCase();
+
+  return (
+    code === "42703" ||
+    ((code === "PGRST204" || message.includes("does not exist")) &&
+      message.includes("client_request_id"))
+  );
+}
+
+/**
+ * Venta de la tienda guardada con esa clave. `columnMissing` cuando la base no
+ * tiene la columna: quien llama decide si sigue sin idempotencia o responde 404.
+ */
+async function findSaleRowByClientRequestId(
+  supabase: RouteSupabaseClient,
+  clientRequestId: string,
   storeId: string,
+): Promise<{ columnMissing: boolean; sale: SaleRow | null }> {
+  const { data, error } = await supabase
+    .from("sales")
+    .select("*")
+    .eq("store_id", storeId)
+    .eq("client_request_id", clientRequestId)
+    .maybeSingle<SaleRow>();
+
+  if (isMissingClientRequestColumnError(error)) {
+    return { columnMissing: true, sale: null };
+  }
+
+  throwIfSupabaseError(error);
+
+  return { columnMissing: false, sale: data ?? null };
+}
+
+/**
+ * Misma regla que el RPC (C4) hasta donde alcanza sin el hash del contenido:
+ * la venta previa solo se devuelve si es del mismo usuario, del mismo cliente y
+ * sigue viva; si no, 409.
+ */
+function assertReusableSale(sale: SaleRow, input: SaleInput, viewer: SaleViewer) {
+  const reusable =
+    sale.status !== "cancelada" &&
+    sale.status !== "devuelta" &&
+    (!viewer.userId || !sale.user_id || sale.user_id === viewer.userId) &&
+    (!input.customerId || sale.customer_id === input.customerId);
+
+  if (!reusable) {
+    throw new ApiError(
+      409,
+      "CONFLICT",
+      "La clave de idempotencia ya se uso en otra venta. Revisa la venta registrada antes de reintentar.",
+      { invoiceNumber: sale.invoice_number, saleId: sale.id },
+    );
+  }
+}
+
+async function createSaleThenPayments(
+  supabase: RouteSupabaseClient,
+  baseArgs: Record<string, unknown>,
+  input: SaleInput,
+  storeId: string,
+  viewer: SaleViewer,
 ) {
-  const { data, error } = await supabase.rpc("create_sale", baseArgs);
+  const clientRequestId = input.clientRequestId ?? null;
+  const payments = input.payments ?? [];
+
+  if (clientRequestId) {
+    // Reintento tras una respuesta perdida: si la clave ya tiene venta, es esa.
+    const previous = await findSaleRowByClientRequestId(supabase, clientRequestId, storeId);
+
+    if (previous.columnMissing) {
+      console.warn(
+        "[sales] sales.client_request_id no existe en la base: la venta se crea sin idempotencia (faltan los parches 20260909/20261006).",
+      );
+    } else if (previous.sale) {
+      assertReusableSale(previous.sale, input, viewer);
+      return mapSaleRow(previous.sale);
+    }
+  }
+
+  let { data, error } = clientRequestId
+    ? await supabase.rpc("create_sale", { ...baseArgs, p_client_request_id: clientRequestId })
+    : await supabase.rpc("create_sale", baseArgs);
+
+  if (clientRequestId && isMissingRpcError(error, "create_sale")) {
+    // `create_sale` todavia con la firma de 8 argumentos: no puede guardar la clave.
+    console.warn(
+      "[sales] create_sale no acepta p_client_request_id: la venta se crea sin idempotencia (faltan los parches 20261006).",
+    );
+    ({ data, error } = await supabase.rpc("create_sale", baseArgs));
+  }
 
   throwIfRpcError(error);
 
@@ -459,9 +565,33 @@ async function createSaleThenPayments(
       await createPayment({ ...payment, saleId: sale.id }, storeId);
     }
   } catch (paymentError) {
-    // La venta ya descargo inventario: se anula para devolverlo. Si la anulacion
-    // tambien falla (algun cobro si entro), se propaga el error original igual.
-    await supabase.rpc("cancel_sale", { p_sale_id: sale.id });
+    // La venta ya descargo inventario: se anula para devolverlo.
+    const { error: cancelError } = await supabase.rpc("cancel_sale", { p_sale_id: sale.id });
+
+    if (cancelError) {
+      // La anulacion tambien fallo (algun cobro si entro): la venta sigue viva
+      // con el stock descontado. Decirlo evita que el cajero la repita (C5b).
+      const paymentMessage = getSupabaseErrorMessage(paymentError);
+      const cancelMessage = getSupabaseErrorMessage(cancelError);
+
+      console.error(
+        `[sales] la venta ${sale.invoice_number} (${sale.id}) quedo viva: fallo el cobro (${paymentMessage}) y no se pudo anular (${cancelMessage}).`,
+      );
+
+      throw new ApiError(
+        409,
+        "CONFLICT",
+        `El cobro fallo (${paymentMessage}) y la venta ${sale.invoice_number} NO se pudo anular: quedo registrada con el stock descontado. No la repitas; revisala en Ventas (id ${sale.id}).`,
+        {
+          cancelError: cancelMessage,
+          invoiceNumber: sale.invoice_number,
+          paymentError: paymentMessage,
+          saleId: sale.id,
+          saleLeftAlive: true,
+        },
+      );
+    }
+
     throw paymentError;
   }
 
@@ -472,6 +602,29 @@ async function createSaleThenPayments(
     .maybeSingle<SaleRow>();
 
   return mapSaleRow(fresh ?? sale);
+}
+
+/**
+ * Venta por clave de idempotencia, en la misma forma que `getSaleById`. La usa
+ * el POS para saber si una venta cuya respuesta se perdio llego a registrarse.
+ * 404 si no existe, si la base no tiene la columna, o si es de otro usuario
+ * (salvo admin).
+ */
+export async function getSaleByClientRequestId(
+  clientRequestId: string,
+  storeId: string,
+  viewer: SaleViewer = {},
+) {
+  const supabase = await createRouteSupabaseClient();
+  const { sale } = await findSaleRowByClientRequestId(supabase, clientRequestId, storeId);
+  const visible =
+    viewer.role === "admin" || (Boolean(viewer.userId) && sale?.user_id === viewer.userId);
+
+  if (!sale || !visible) {
+    throw new ApiError(404, "NOT_FOUND", "Venta no encontrada.");
+  }
+
+  return getSaleById(sale.id, storeId);
 }
 
 export async function updateSale(id: string, input: SaleUpdateInput, storeId: string) {

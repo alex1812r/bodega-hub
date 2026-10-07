@@ -41,6 +41,8 @@ export type InventoryMovement = StockMovementMock & {
 export type { InventoryAdjustmentType };
 
 export type InventoryAdjustmentInput = {
+  /** Clave de idempotencia del intento: el servidor no duplica el ajuste (C6). */
+  clientRequestId?: string;
   productId: string;
   quantityDelta: number;
   reason?: string;
@@ -52,6 +54,8 @@ export type PackConversionListItem = ProductPackConversionSummary & {
 };
 
 export type ConvertPackToUnitsInput = {
+  /** Clave de idempotencia del intento: el servidor no duplica la conversion (C6). */
+  clientRequestId?: string;
   packProductId: string;
   packQuantity: number;
   reason?: string;
@@ -121,8 +125,12 @@ export function useAdjustInventory() {
         body: input,
         method: "POST",
       }),
+    // Sin reintento automatico: el reintento lo decide el usuario y viaja con la
+    // misma clave de idempotencia.
+    retry: false,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: inventoryQueryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["products"] });
     },
   });
 }
@@ -143,6 +151,7 @@ export function useConvertPackToUnits() {
         body: input,
         method: "POST",
       }),
+    retry: false,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: inventoryQueryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["products"] });

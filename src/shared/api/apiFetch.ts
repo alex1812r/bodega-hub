@@ -10,6 +10,7 @@ function isDemoAuthEnabledOnClient() {
 
 export type ApiErrorPayload = {
   code: string;
+  details?: unknown;
   issues?: unknown;
   message: string;
 };
@@ -35,6 +36,7 @@ export class ClientApiError extends Error {
     public readonly code: string,
     message: string,
     public readonly issues?: unknown,
+    public readonly details?: unknown,
   ) {
     super(message);
     this.name = "ClientApiError";
@@ -161,6 +163,7 @@ export async function apiFetch<TData>(
           ? `El endpoint ${path} no esta disponible (HTML 404). Para Turbopack: para el dev server, borra la carpeta .next y vuelve a ejecutar npm run dev.`
           : "No se pudo completar la solicitud."),
       error?.issues,
+      error?.details,
     );
   }
 

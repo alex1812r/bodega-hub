@@ -103,4 +103,54 @@ describe("apiFetch", () => {
       status: 403,
     } satisfies Partial<ClientApiError>);
   });
+
+  it("exposes the details of the BFF error body", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: {
+            code: "CONFLICT",
+            details: { retryable: true },
+            message: "La operacion choco con otra en curso y no se aplico. Intenta de nuevo.",
+          },
+        },
+        409,
+      ),
+    );
+
+    const error = await apiFetch("/api/sales", { body: {}, method: "POST" }).catch(
+      (reason: unknown) => reason,
+    );
+
+    expect(error).toBeInstanceOf(ClientApiError);
+    expect(error).toMatchObject({
+      code: "CONFLICT",
+      details: { retryable: true },
+      status: 409,
+    } satisfies Partial<ClientApiError>);
+    expect((error as ClientApiError).issues).toBeUndefined();
+  });
+
+  it("keeps issues and leaves details undefined when the body has none", async () => {
+    const issues = [{ message: "Required", path: ["clientRequestId"] }];
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: {
+            code: "BAD_REQUEST",
+            issues,
+            message: "La solicitud no tiene un formato valido.",
+          },
+        },
+        400,
+      ),
+    );
+
+    const error = await apiFetch("/api/sales", { body: {}, method: "POST" }).catch(
+      (reason: unknown) => reason,
+    );
+
+    expect((error as ClientApiError).issues).toEqual(issues);
+    expect((error as ClientApiError).details).toBeUndefined();
+  });
 });

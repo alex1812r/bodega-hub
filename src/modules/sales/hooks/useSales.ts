@@ -1,6 +1,11 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import { productsQueryKeys } from "@/modules/products/hooks/useProducts";
@@ -143,6 +148,23 @@ export function useSaleReceipt(id?: string) {
   });
 }
 
+/**
+ * Todo lo que una venta registrada deja obsoleto. Se exporta porque una venta
+ * tambien puede confirmarse fuera de la mutacion: cuando la respuesta del cobro
+ * se pierde y el POS la recupera consultando por `clientRequestId`.
+ */
+export function invalidateAfterSaleRegistered(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: salesQueryKeys.all });
+  void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  // `inventory` cubre existencias, movimientos y kardex (`inventoryQueryKeys`).
+  void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+  // El catalogo del POS se cachea 5 min: sin esto el cajero seguia viendo el
+  // stock previo a la venta y el carrito le dejaba pedir unidades que ya no habia.
+  void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+  void queryClient.invalidateQueries({ queryKey: ["contacts"] });
+  void queryClient.invalidateQueries({ queryKey: ["reports"] });
+}
+
 export function useCreateSale() {
   const queryClient = useQueryClient();
 
@@ -153,15 +175,11 @@ export function useCreateSale() {
         method: "POST",
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: salesQueryKeys.all });
-      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      void queryClient.invalidateQueries({ queryKey: ["inventory"] });
-      // El catalogo del POS se cachea 5 min: sin esto el cajero seguia viendo el
-      // stock previo a la venta y el carrito le dejaba pedir unidades que ya no habia.
-      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
-      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
-      void queryClient.invalidateQueries({ queryKey: ["reports"] });
+      invalidateAfterSaleRegistered(queryClient);
     },
+    // Nunca reintentar a ciegas un cobro: si la respuesta se perdio tras el commit,
+    // quien llama consulta por `clientRequestId` antes de volver a enviar (C3).
+    retry: false,
   });
 }
 

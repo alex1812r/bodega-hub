@@ -9,6 +9,7 @@ import {
   mockProducts,
   mockSaleItems,
   mockSales,
+  mockStockMovements,
   type ProductPriceHistoryMock,
   type ProductMock,
 } from "@/shared/mocks/erp-data";
@@ -218,7 +219,7 @@ export function createProduct(input: ProductInput, storeId: string) {
     barcode: normalizeBarcode(input.barcode),
     categoryId: input.categoryId ?? "cat-tools",
     currentCostRef: input.currentCostRef ?? 0,
-    currentStock: input.currentStock ?? 0,
+    currentStock: 0,
     id: `prod-mock-${Date.now()}`,
     imageUrl: input.imageUrl ?? undefined,
     isActive: true,
@@ -230,6 +231,23 @@ export function createProduct(input: ProductInput, storeId: string) {
   };
 
   mockProducts.push(product);
+
+  // Igual que el server: el stock inicial entra como movimiento `inventario_inicial`.
+  const initialStock = input.currentStock ?? 0;
+
+  if (initialStock > 0) {
+    product.currentStock = initialStock;
+    mockStockMovements.unshift({
+      createdAt: new Date().toISOString(),
+      id: `mov-mock-${Date.now()}`,
+      productId: product.id,
+      quantityDelta: initialStock,
+      reason: "Inventario inicial al crear el producto",
+      stockAfter: initialStock,
+      storeId,
+      type: "inventario_inicial",
+    });
+  }
 
   if (input.packConversion) {
     upsertMockPackConversion(product.id, storeId, input.packConversion, product);

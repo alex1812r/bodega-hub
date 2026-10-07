@@ -3,6 +3,7 @@ import { z } from "zod";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { salePaymentLineSchema } from "@/modules/payments/services/paymentSchemas";
 import {
@@ -17,8 +18,9 @@ import {
 const createSaleSchema = z.object({
   // Clave de idempotencia por intento de cobro: con la misma clave el servidor
   // devuelve la venta ya registrada en vez de crear otra (respuesta perdida,
-  // doble envio). Unica por tienda; opcional para clientes que no la manden.
-  clientRequestId: z.string().uuid().optional(),
+  // doble envio). Unica por tienda y OBLIGATORIA: sin clave dos POST identicos
+  // eran dos ventas con el stock descontado dos veces (C5a).
+  clientRequestId: z.string().uuid(),
   customerId: z.string().min(1),
   discountRef: z.number().min(0).default(0),
   exchangeRateId: z.string().uuid().optional(),
@@ -63,11 +65,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "sales.create");
-    const input = createSaleSchema.parse(await request.json());
+    const input = createSaleSchema.parse(await readJsonBody(request));
+    const viewer = { role: auth.role, userId: auth.userId };
     const data =
       resolveDataSource() === "supabase"
-        ? await createSaleServer(input, auth.storeId)
-        : createSaleMock(input, auth.storeId);
+        ? await createSaleServer(input, auth.storeId, viewer)
+        : createSaleMock(input, auth.storeId, viewer);
 
     return jsonCreated(data);
   } catch (error) {

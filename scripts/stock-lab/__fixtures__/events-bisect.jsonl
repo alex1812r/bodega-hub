@@ -1,0 +1,14 @@
+{"ts":"2026-10-05T10:00:00.900Z","agent":"vendedor-1","op":"sale_create","payload":{"items":[{"productId":"prod-a","quantity":2}]},"status":201,"response_id":"sale-1","expected_delta":{"prod-a":-2}}
+{"ts":"2026-10-05T10:00:01.900Z","agent":"comprador","op":"purchase_create","payload":{"status":"recibido","items":[{"productId":"prod-a","quantity":10}]},"status":201,"response_id":"pur-1","expected_delta":{"prod-a":10}}
+{"ts":"2026-10-05T10:00:02.900Z","agent":"vendedor-1","op":"sale_create","payload":{"items":[{"productId":"prod-b","quantity":3}]},"status":201,"response_id":"sale-2","expected_delta":{"prod-b":-3}}
+{"ts":"2026-10-05T10:00:03.900Z","agent":"almacen","op":"adjustment","payload":{"productId":"prod-c","quantityDelta":5},"status":200,"response_id":"adj-1","expected_delta":{"prod-c":5}}
+{"ts":"2026-10-05T10:00:04.900Z","agent":"vendedor-2","op":"sale_create","payload":{"items":[{"productId":"prod-b","quantity":1}]},"status":201,"response_id":"sale-3","expected_delta":{"prod-b":-1}}
+{"ts":"2026-10-05T10:00:05.900Z","agent":"vendedor-2","op":"sale_create","payload":{"items":[{"productId":"prod-a","quantity":999}]},"status":400,"response_id":null,"expected_delta":{},"error":"INSUFFICIENT_STOCK stock insuficiente"}
+{"ts":"2026-10-05T10:00:06.900Z","agent":"almacen","op":"agent_error","payload":{"iteration":3},"status":0,"response_id":null,"expected_delta":{},"error":"fetch failed"}
+{"ts":"2026-10-05T10:00:07.900Z","agent":"vendedor-1","op":"sale_create","payload":{"items":[{"productId":"prod-c","quantity":2}]},"status":201,"response_id":"sale-4","expected_delta":{"prod-c":-2}}
+{"ts":"2026-10-05T10:00:08.900Z","agent":"comprador","op":"purchase_create","payload":{"status":"pedido","items":[{"productId":"prod-b","quantity":50}]},"status":201,"response_id":"pur-2","expected_delta":{}}
+{"ts":"2026-10-05T10:00:09.900Z","agent":"vendedor-2","op":"sale_create","payload":{"items":[{"productId":"prod-c","quantity":1}]},"status":201,"response_id":"sale-5","expected_delta":{"prod-c":-1}}
+{"ts":"2026-10-05T10:00:10.900Z","agent":"vendedor-1","op":"sale_cancel","payload":{"saleId":"sale-1","items":[{"productId":"prod-a","quantity":2}]},"status":200,"response_id":"sale-1","expected_delta":{"prod-a":2}}
+{"ts":"2026-10-05T10:00:11.900Z","agent":"almacen","op":"adjustment","payload":{"productId":"prod-b","quantityDelta":4},"status":200,"response_id":"adj-2","expected_delta":{"prod-b":4}}
+{"ts":"2026-10-05T10:00:12.900Z","agent":"vendedor-1","op":"sale_create","payload":{"items":[{"productId":"prod-a","quantity":3}]},"status":201,"response_id":"sale-6","expected_delta":{"prod-a":-3}}
+{"ts":"2026-10-05T10:00:13.900Z","agent":"comprador","op":"noop","payload":{},"status":200,"response_id":null,"expected_delta":{}}

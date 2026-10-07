@@ -1,3 +1,4 @@
+import { ApiError } from "@/lib/api/apiError";
 import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList, parsePagination } from "@/lib/api/pagination";
 import {
@@ -24,6 +25,9 @@ import {
 } from "../utils/inventoryMovementFilters";
 import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
+
+import { assertReturnAdjustmentHasDocument } from "./returnAdjustmentDocument";
+import { isMissingRpcSignatureError, rpcWithClientRequestId } from "./rpcWithClientRequestId";
 
 const productSummarySelect =
   "id, category_id, sku, barcode, name, sale_price_ref, current_cost_ref, current_stock, min_stock, image_url, is_active";
@@ -181,21 +185,48 @@ export async function getStockCard(searchParams: URLSearchParams, storeId: strin
 
 export async function createStockAdjustment(
   input: {
+    clientRequestId?: string;
     productId: string;
+    /** Compra a la que se liga una `devolucion_proveedor` (tope recibido − ya devuelto). */
+    purchaseId?: string;
     quantityDelta: number;
     reason?: string;
+    /** Venta a la que se liga una `devolucion_cliente` (tope vendido − ya devuelto). */
+    saleId?: string;
     type?: StockMovementType;
   },
   storeId: string,
 ) {
+  assertReturnAdjustmentHasDocument(input);
   await assertSupabaseStoreResource("products", input.productId, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase.rpc("adjust_stock", {
-    p_product_id: input.productId,
-    p_quantity_delta: input.quantityDelta,
-    p_reason: input.reason ?? null,
-    p_type: input.type ?? null,
-  });
+  // Solo viajan en una devolucion ligada: el resto de ajustes llama como siempre.
+  const documentLink = {
+    ...(input.saleId ? { p_sale_id: input.saleId } : {}),
+    ...(input.purchaseId ? { p_purchase_id: input.purchaseId } : {}),
+  };
+  const { data, error } = await rpcWithClientRequestId(
+    supabase,
+    "adjust_stock",
+    {
+      p_product_id: input.productId,
+      p_quantity_delta: input.quantityDelta,
+      p_reason: input.reason ?? null,
+      p_type: input.type ?? null,
+    },
+    input.clientRequestId,
+    documentLink,
+  );
+
+  // R4: la base no conoce el vinculo (faltan los parches 20261006). No se repite
+  // sin el: una devolucion sin documento no tiene tope y reabre el duplicado (C15).
+  if (Object.keys(documentLink).length > 0 && isMissingRpcSignatureError(error)) {
+    throw new ApiError(
+      409,
+      "CONFLICT",
+      "Esta base aun no admite devoluciones ligadas a una venta o compra. No se registro el movimiento.",
+    );
+  }
 
   throwIfSupabaseError(error);
 
@@ -204,6 +235,7 @@ export async function createStockAdjustment(
 
 export async function convertPackToUnits(
   input: {
+    clientRequestId?: string;
     packProductId: string;
     packQuantity: number;
     reason?: string;
@@ -217,11 +249,16 @@ export async function convertPackToUnits(
     "Producto de empaque no encontrado.",
   );
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase.rpc("convert_pack_to_units", {
-    p_pack_product_id: input.packProductId,
-    p_pack_quantity: input.packQuantity,
-    p_reason: input.reason ?? null,
-  });
+  const { data, error } = await rpcWithClientRequestId(
+    supabase,
+    "convert_pack_to_units",
+    {
+      p_pack_product_id: input.packProductId,
+      p_pack_quantity: input.packQuantity,
+      p_reason: input.reason ?? null,
+    },
+    input.clientRequestId,
+  );
 
   throwIfSupabaseError(error);
 

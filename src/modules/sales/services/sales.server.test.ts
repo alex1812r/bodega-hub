@@ -12,6 +12,7 @@ import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import {
   cancelSale,
   createSale,
+  getSaleByClientRequestId,
   getSaleById,
   listSales,
   mapSaleRow,
@@ -132,13 +133,14 @@ describe("sales.server", () => {
     );
   });
 
-  it("creates a sale through create_sale RPC", async () => {
+  it("creates a sale without payments through the atomic RPC with an empty payment list", async () => {
     const rpc = jest.fn().mockResolvedValue({ data: saleRow, error: null });
 
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
 
     const result = await createSale(
       {
+        clientRequestId: "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7",
         customerId: saleRow.customer_id,
         items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
         refRateVes: 510,
@@ -146,13 +148,16 @@ describe("sales.server", () => {
       DEFAULT_STORE_ID,
     );
 
-    expect(rpc).toHaveBeenCalledWith("create_sale", {
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("create_sale_with_payments", {
+      p_client_request_id: "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7",
       p_customer_id: saleRow.customer_id,
       p_discount_ref: 0,
       p_exchange_rate_id: null,
       p_invoice_number: null,
       p_items: [{ product_id: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
       p_notes: null,
+      p_payments: [],
       p_ref_rate_ves: 510,
       p_tax_ref: 0,
     });
@@ -248,15 +253,23 @@ describe("sales.server", () => {
       })
       .mockResolvedValueOnce({ data: saleRow, error: null })
       .mockResolvedValueOnce({ data: { id: "pay-1", sale_id: saleRow.id }, error: null });
-    const from = jest.fn(() => ({
-      select: jest.fn(() => ({
-        eq: jest.fn(() => ({
-          maybeSingle: jest
-            .fn()
-            .mockResolvedValue({ data: { ...saleRow, status: "pagada" }, error: null }),
-        })),
-      })),
-    }));
+    // Busqueda previa por clave: nadie la guardo todavia. Refresco por id: la venta cobrada.
+    const from = jest.fn(() => {
+      const filters: Record<string, unknown> = {};
+      const chain = {
+        eq: (column: string, value: unknown) => {
+          filters[column] = value;
+          return chain;
+        },
+        maybeSingle: async () => ({
+          data: filters.client_request_id === undefined ? { ...saleRow, status: "pagada" } : null,
+          error: null,
+        }),
+        select: () => chain,
+      };
+
+      return chain;
+    });
 
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from, rpc });
 
@@ -276,6 +289,9 @@ describe("sales.server", () => {
       "create_sale",
       "register_payment",
     ]);
+    expect(rpc.mock.calls[1][1]).toMatchObject({
+      p_client_request_id: "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7",
+    });
     expect(rpc.mock.calls[2][1]).toMatchObject({ p_sale_id: saleRow.id, p_amount: 15 });
     expect(result.status).toBe("pagada");
   });
@@ -316,7 +332,7 @@ describe("sales.server", () => {
     ]);
   });
 
-  it("keeps plain create_sale for callers without payments or client request id", async () => {
+  it("never uses plain create_sale while the atomic RPC exists, even without payments", async () => {
     const rpc = jest.fn().mockResolvedValue({ data: saleRow, error: null });
 
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
@@ -331,7 +347,188 @@ describe("sales.server", () => {
       DEFAULT_STORE_ID,
     );
 
-    expect(rpc).toHaveBeenCalledWith("create_sale", expect.any(Object));
+    expect(rpc.mock.calls.map((call) => call[0])).toEqual(["create_sale_with_payments"]);
+  });
+
+  describe("production without patch 20260909 nor the idempotency patches", () => {
+    const KEY = "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7";
+    const missingRpc = (signature: string) => ({
+      data: null,
+      error: {
+        code: "PGRST202",
+        message: `Could not find the function public.${signature} in the schema cache`,
+      },
+    });
+    const input = {
+      clientRequestId: KEY,
+      customerId: saleRow.customer_id,
+      items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+      refRateVes: 510,
+    };
+
+    function mountSalesTable(lookupByKey: { data: unknown; error: unknown }) {
+      return jest.fn(() => {
+        const filters: Record<string, unknown> = {};
+        const chain = {
+          eq: (column: string, value: unknown) => {
+            filters[column] = value;
+            return chain;
+          },
+          maybeSingle: async () =>
+            filters.client_request_id === undefined ? { data: saleRow, error: null } : lookupByKey,
+          select: () => chain,
+        };
+
+        return chain;
+      });
+    }
+
+    it("creates the sale without idempotency (and logs it) when neither the column nor the new signature exist", async () => {
+      const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+      const rpc = jest
+        .fn()
+        .mockResolvedValueOnce(missingRpc("create_sale_with_payments(p_client_request_id, ...)"))
+        .mockResolvedValueOnce(missingRpc("create_sale(p_client_request_id, p_customer_id, ...)"))
+        .mockResolvedValueOnce({ data: saleRow, error: null });
+      const from = mountSalesTable({
+        data: null,
+        error: { code: "42703", message: "column sales.client_request_id does not exist" },
+      });
+
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from, rpc });
+
+      const result = await createSale(input, DEFAULT_STORE_ID);
+
+      expect(result.id).toBe(saleRow.id);
+      expect(rpc.mock.calls.map((call) => call[0])).toEqual([
+        "create_sale_with_payments",
+        "create_sale",
+        "create_sale",
+      ]);
+      expect(rpc.mock.calls[1][1]).toHaveProperty("p_client_request_id", KEY);
+      expect(rpc.mock.calls[2][1]).not.toHaveProperty("p_client_request_id");
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(String(warn.mock.calls[0][0])).toContain("client_request_id");
+
+      warn.mockRestore();
+    });
+
+    it("returns the sale already stored under the key instead of creating another", async () => {
+      const rpc = jest
+        .fn()
+        .mockResolvedValueOnce(missingRpc("create_sale_with_payments(p_client_request_id, ...)"));
+      const from = mountSalesTable({ data: saleRow, error: null });
+
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from, rpc });
+
+      const result = await createSale(input, DEFAULT_STORE_ID, { userId: saleRow.user_id });
+
+      expect(result.id).toBe(saleRow.id);
+      expect(rpc.mock.calls.map((call) => call[0])).toEqual(["create_sale_with_payments"]);
+    });
+
+    it.each([
+      ["a cancelled sale", { ...saleRow, status: "cancelada" }, { userId: saleRow.user_id }],
+      ["a sale of another user", saleRow, { userId: "99999999-9999-4999-8999-999999999999" }],
+      ["a sale of another customer", { ...saleRow, customer_id: "another-customer" }, { userId: saleRow.user_id }],
+    ])("answers 409 when the key belongs to %s", async (_case, stored, viewer) => {
+      const rpc = jest
+        .fn()
+        .mockResolvedValueOnce(missingRpc("create_sale_with_payments(p_client_request_id, ...)"));
+      const from = mountSalesTable({ data: stored, error: null });
+
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from, rpc });
+
+      await expect(createSale(input, DEFAULT_STORE_ID, viewer)).rejects.toMatchObject({
+        code: "CONFLICT",
+        status: 409,
+      });
+      expect(rpc).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("maps a reused idempotency key (PT409) from the RPC to 409", async () => {
+    const rpc = jest.fn().mockResolvedValue({
+      data: null,
+      error: { code: "PT409", message: "La clave de idempotencia ya se usó en otra venta" },
+    });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+
+    await expect(
+      createSale(
+        {
+          clientRequestId: "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7",
+          customerId: saleRow.customer_id,
+          items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+          refRateVes: 510,
+        },
+        DEFAULT_STORE_ID,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "La clave de idempotencia ya se usó en otra venta",
+      status: 409,
+    });
+  });
+
+  describe("getSaleByClientRequestId", () => {
+    const KEY = "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7";
+    const detailRow = { ...saleRow, customer: null, payments: [], sale_items: [] };
+
+    function mountLookup(lookupByKey: { data: unknown; error: unknown }) {
+      const from = jest.fn(() => {
+        const filters: Record<string, unknown> = {};
+        const chain = {
+          eq: (column: string, value: unknown) => {
+            filters[column] = value;
+            return chain;
+          },
+          maybeSingle: async () =>
+            filters.client_request_id === undefined ? { data: detailRow, error: null } : lookupByKey,
+          select: () => chain,
+        };
+
+        return chain;
+      });
+
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from });
+    }
+
+    it("returns the sale in the detail shape for its own user", async () => {
+      mountLookup({ data: saleRow, error: null });
+
+      const sale = await getSaleByClientRequestId(KEY, DEFAULT_STORE_ID, {
+        role: "vendedor",
+        userId: saleRow.user_id,
+      });
+
+      expect(sale).toEqual(expect.objectContaining({ id: saleRow.id, items: [], payments: [] }));
+    });
+
+    it("lets an admin read the sale of another user", async () => {
+      mountLookup({ data: saleRow, error: null });
+
+      await expect(
+        getSaleByClientRequestId(KEY, DEFAULT_STORE_ID, { role: "admin", userId: "another-user" }),
+      ).resolves.toEqual(expect.objectContaining({ id: saleRow.id }));
+    });
+
+    it.each([
+      ["no sale has that key", { data: null, error: null }, saleRow.user_id],
+      [
+        "the column does not exist yet",
+        { data: null, error: { code: "42703", message: "column sales.client_request_id does not exist" } },
+        saleRow.user_id,
+      ],
+      ["the sale belongs to another seller", { data: saleRow, error: null }, "another-user"],
+    ])("answers 404 when %s", async (_case, lookup, userId) => {
+      mountLookup(lookup);
+
+      await expect(
+        getSaleByClientRequestId(KEY, DEFAULT_STORE_ID, { role: "vendedor", userId }),
+      ).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
+    });
   });
 
   it("maps a payment rule raised inside create_sale_with_payments to 400", async () => {
@@ -356,6 +553,41 @@ describe("sales.server", () => {
         DEFAULT_STORE_ID,
       ),
     ).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
+  });
+
+  // STK-517 · R6: los errores crudos de Postgres pasan por `mapSupabaseError`
+  // ANTES que los marcadores por mensaje ("invalid", "permission denied"…), que
+  // los reenviaban con el texto de Postgres.
+  it.each([
+    ["22P02", 'invalid input syntax for type uuid: "no-es-uuid"', 400, "BAD_REQUEST"],
+    ["22P02", 'invalid input value for enum payment_method: "bitcoin"', 400, "BAD_REQUEST"],
+    [
+      "23514",
+      'new row for relation "sales" violates check constraint "sales_discount_ref_check"',
+      400,
+      "BAD_REQUEST",
+    ],
+    ["42501", "permission denied for table sales", 403, "FORBIDDEN"],
+    ["40P01", "deadlock detected", 409, "CONFLICT"],
+    ["40001", "could not serialize access due to concurrent update", 409, "CONFLICT"],
+  ])("does not forward raw Postgres text from the sale RPC (%s: %s)", async (sqlState, message, status, code) => {
+    const rpc = jest.fn().mockResolvedValue({ data: null, error: { code: sqlState, message } });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ rpc });
+
+    const error = await createSale(
+      {
+        customerId: saleRow.customer_id,
+        items: [{ productId: "44444444-4444-4444-4444-444444444444", quantity: 1 }],
+        refRateVes: 510,
+      },
+      DEFAULT_STORE_ID,
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ code, status });
+    expect((error as Error).message).not.toMatch(
+      /invalid input|constraint|relation "|permission denied|deadlock|serialize/i,
+    );
   });
 
   it("maps an accented cash-session rule without SQLSTATE to 400", async () => {

@@ -47,6 +47,8 @@
 | [agent-prompts/chat-ia-gtm.md](agent-prompts/chat-ia-gtm.md) | Plan de ejecucion del asistente IA hasta GTM |
 | [agent-prompts/mobile-app-gtm.md](agent-prompts/mobile-app-gtm.md) | Plan de ejecucion de la app movil (Expo) hasta GTM |
 | [agent-prompts/nomina-gtm.md](agent-prompts/nomina-gtm.md) | Plan de ejecucion de la nomina de cajeros hasta GTM |
+| [agent-prompts/stock-integrity-gtm.md](agent-prompts/stock-integrity-gtm.md) | Plan autonomo: reproducir y corregir el descuadre de stock con tienda de prueba y agentes en paralelo |
+| [agent-prompts/equipo.md](agent-prompts/equipo.md) | Modo equipo para Claude Code: gerente, supervisor, coders, fixer, caos y QA (roles en `.claude/agents/`) |
 | [mobile-app.md](mobile-app.md) | App movil BodegaHub: setup, arquitectura, auth Bearer, tabs por rol, E2E y exclusiones |
 
 ## Contrato machine-readable

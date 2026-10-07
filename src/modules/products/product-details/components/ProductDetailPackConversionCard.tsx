@@ -12,6 +12,7 @@ import { Textarea } from "@/shared/components/Textarea";
 import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 
 import { useConvertPackToUnits } from "@/modules/inventory/hooks/useInventory";
+import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 
 type ProductDetailPackConversionCardProps = {
   packConversion?: ProductPackConversionSummary;
@@ -32,6 +33,7 @@ export function ProductDetailPackConversionCard({
   const [packQuantity, setPackQuantity] = useState("1");
   const [reason, setReason] = useState("");
   const convert = useConvertPackToUnits();
+  const requestAttempt = useRequestAttempt();
 
   const isPack = packConversion?.role === "pack";
   const quantityNumber = Number(packQuantity);
@@ -41,6 +43,13 @@ export function ProductDetailPackConversionCard({
       : 0;
   const canSubmit =
     isPack && quantityNumber > 0 && quantityNumber <= productStock && Boolean(packConversion);
+  // Aviso propio: con `max` en el input el navegador pinta su burbuja nativa.
+  const stockError =
+    productStock <= 0
+      ? "No hay empaques en stock para abrir."
+      : quantityNumber > productStock
+        ? `Solo hay ${productStock} empaque(s) en stock.`
+        : undefined;
 
   const linkedHref = useMemo(
     () =>
@@ -58,18 +67,27 @@ export function ProductDetailPackConversionCard({
       return;
     }
 
+    const input = {
+      packProductId: productId,
+      packQuantity: quantityNumber,
+      reason: reason.trim() || undefined,
+    };
+    // Clave de idempotencia del intento; null = ya hay un envio en vuelo (doble clic).
+    const clientRequestId = requestAttempt.begin(input);
+
+    if (!clientRequestId) {
+      return;
+    }
+
     try {
-      await convert.mutateAsync({
-        packProductId: productId,
-        packQuantity: quantityNumber,
-        reason: reason.trim() || undefined,
-      });
+      await convert.mutateAsync({ ...input, clientRequestId });
+      requestAttempt.succeed();
       setOpen(false);
       setPackQuantity("1");
       setReason("");
       onConverted?.();
-    } catch {
-      return;
+    } catch (error) {
+      requestAttempt.fail(error);
     }
   }
 
@@ -134,8 +152,8 @@ export function ProductDetailPackConversionCard({
             >
               <form className="grid gap-4" id="open-pack-form" onSubmit={handleSubmit}>
                 <Input
+                  error={stockError}
                   label="Cantidad de empaques"
-                  max={productStock}
                   min={1}
                   onChange={(event) => setPackQuantity(event.target.value)}
                   required

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { ApiClient } from "./client";
 import { unwrapId } from "./client";
 import type { E2eManifest } from "./manifest";
@@ -784,6 +786,7 @@ export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
       client.request("/api/sales", {
         method: "POST",
         body: JSON.stringify({
+          clientRequestId: randomUUID(),
           customerId: mariaId,
           items: itemsSnack,
           taxRef: 0,
@@ -811,6 +814,7 @@ export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
       client.request("/api/sales", {
         method: "POST",
         body: JSON.stringify({
+          clientRequestId: randomUUID(),
           customerId: joseId,
           items: itemsDespensa,
           exchangeRateId,
@@ -827,6 +831,7 @@ export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
       client.request("/api/sales", {
         method: "POST",
         body: JSON.stringify({
+          clientRequestId: randomUUID(),
           customerId: mariaId,
           items: [{ productId: arrozId, quantity: 999999, unitPriceRef: 1.8 }],
           ...rateContext(manifest),
@@ -866,6 +871,7 @@ export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
     return client.request("/api/sales", {
       method: "POST",
       body: JSON.stringify({
+        clientRequestId: randomUUID(),
         customerId: mariaId,
         items: [{ productId: manifest.productIds.chicle, quantity: 1 }],
         ...rateContext(manifest),
@@ -892,6 +898,7 @@ export async function phase11SalePayments(client: ApiClient, manifest: E2eManife
     const res = await client.request("/api/sales", {
       method: "POST",
       body: JSON.stringify({
+        clientRequestId: randomUUID(),
         customerId,
         items,
         ...rateContext(manifest),
@@ -1011,6 +1018,7 @@ export async function phase12Exceptions(client: ApiClient, manifest: E2eManifest
     const res = await client.request("/api/sales", {
       method: "POST",
       body: JSON.stringify({
+        clientRequestId: randomUUID(),
         customerId: mariaId,
         items: [{ productId: chicleId, quantity: 5, unitPriceRef: 1.2 }],
         ...rateCtx,
@@ -1030,6 +1038,7 @@ export async function phase12Exceptions(client: ApiClient, manifest: E2eManifest
     const saleRes = await client.request("/api/sales", {
       method: "POST",
       body: JSON.stringify({
+        clientRequestId: randomUUID(),
         customerId: anaId,
         items: [{ productId: oreoId, quantity: 4, unitPriceRef: 3.5 }],
         ...rateCtx,
@@ -1082,6 +1091,7 @@ export async function phase13Prices(client: ApiClient, manifest: E2eManifest) {
       client.request("/api/sales", {
         method: "POST",
         body: JSON.stringify({
+          clientRequestId: randomUUID(),
           customerId: manifest.contactIds.cli_roberto,
           items: [{ productId: arrozId, quantity: 1, unitPriceRef: 1.9 }],
           ...rateCtx,

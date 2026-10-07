@@ -14,6 +14,8 @@
 /coverage
 scripts/e2e-bodegon/last-run.json
 scripts/smoke-post-patches-last-run.json
+# Stock-lab: eventos/logs de cada run de agentes (STK-302)
+scripts/stock-lab/runs/
 
 # next.js
 /.next/
@@ -51,6 +53,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# Versionado: solo apunta a Supabase local y sus claves demo son publicas.
+!.env.stock-lab.example
 
 # vercel
 .vercel

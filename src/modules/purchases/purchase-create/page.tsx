@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { useContacts } from "@/modules/contacts/hooks/useContacts";
+import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
@@ -42,6 +43,7 @@ export function PurchaseCreatePage() {
   const suppliersQuery = useContacts({ limit: 100, type: "proveedor" });
   const exchangeRate = useCurrentExchangeRate();
   const createPurchase = useCreatePurchase();
+  const requestAttempt = useRequestAttempt();
   const [supplierId, setSupplierId] = useState("");
   const [productSearch, setProductSearch] = useState("");
   const [status, setStatus] = useState<PurchaseStatus>("recibido");
@@ -264,33 +266,42 @@ export function PurchaseCreatePage() {
 
     setFormError(null);
 
+    const syncedValidItems = validItems.map((item) =>
+      syncLineCostFields(item, activeRateVes),
+    );
+    // Mismos helpers que pintan la tabla y el resumen: lo que se envia es
+    // exactamente lo que el usuario vio.
+    const submitTotals = sumDraftPurchaseTotals(syncedValidItems, activeRateVes);
+    const input = {
+      discountRef,
+      discountVes,
+      items: syncedValidItems.map((item) =>
+        draftToPurchaseItemInput(item, activeRateVes),
+      ),
+      notes: notes.trim() || undefined,
+      refRateVes: activeRateVes,
+      status,
+      subtotalRef: submitTotals.subtotalRef,
+      subtotalVes: submitTotals.subtotalVes,
+      supplierId,
+      taxRef: submitTotals.taxRef,
+      taxVes: submitTotals.taxVes,
+    };
+    // Clave de idempotencia del intento; null = ya hay un envio en vuelo (doble clic).
+    const clientRequestId = requestAttempt.begin(input);
+
+    if (!clientRequestId) {
+      return;
+    }
+
     try {
-      const syncedValidItems = validItems.map((item) =>
-        syncLineCostFields(item, activeRateVes),
-      );
-      // Mismos helpers que pintan la tabla y el resumen: lo que se envia es
-      // exactamente lo que el usuario vio.
-      const submitTotals = sumDraftPurchaseTotals(syncedValidItems, activeRateVes);
+      const purchase = await createPurchase.mutateAsync({ ...input, clientRequestId });
 
-      const purchase = await createPurchase.mutateAsync({
-        discountRef,
-        discountVes,
-        items: syncedValidItems.map((item) =>
-          draftToPurchaseItemInput(item, activeRateVes),
-        ),
-        notes: notes.trim() || undefined,
-        refRateVes: activeRateVes,
-        status,
-        subtotalRef: submitTotals.subtotalRef,
-        subtotalVes: submitTotals.subtotalVes,
-        supplierId,
-        taxRef: submitTotals.taxRef,
-        taxVes: submitTotals.taxVes,
-      });
-
+      requestAttempt.succeed();
       router.push(`/purchases/${purchase.id}`);
-    } catch {
+    } catch (error) {
       // Error surfaced via createPurchase.error
+      requestAttempt.fail(error);
     }
   }
 

@@ -19,7 +19,12 @@ export type StepLog = {
   at: string;
 };
 
-export function loadDotEnv() {
+/**
+ * Carga `.env.local` y `.env` en `process.env` (sin pisar lo ya definido) y
+ * devuelve lo que declaran los archivos, con la misma precedencia.
+ */
+export function loadDotEnv(): Record<string, string> {
+  const declared: Record<string, string> = {};
   for (const file of [".env.local", ".env"]) {
     const path = join(process.cwd(), file);
     if (!existsSync(path)) continue;
@@ -37,11 +42,15 @@ export function loadDotEnv() {
       ) {
         value = value.slice(1, -1);
       }
+      if (!(key in declared)) {
+        declared[key] = value;
+      }
       if (!process.env[key]) {
         process.env[key] = value;
       }
     }
   }
+  return declared;
 }
 
 function ingestSetCookie(jar: Map<string, string>, header: string) {
