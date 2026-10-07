@@ -108,6 +108,29 @@ describe("CollapsibleSection", () => {
     });
   });
 
+  describe("textos largos", () => {
+    const UNBROKEN_TITLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".repeat(3).slice(0, 88);
+
+    it("el título sin puntos de corte parte línea dentro de una columna que puede encogerse", () => {
+      renderSection({ title: UNBROKEN_TITLE });
+
+      const title = screen.getByText(UNBROKEN_TITLE);
+
+      expect(title).toHaveClass("min-w-0", "[overflow-wrap:anywhere]");
+      expect(title).not.toHaveClass("truncate");
+      expect(title.parentElement).toHaveClass("min-w-0", "flex-1");
+    });
+
+    it("el summary sigue truncándose en una sola línea", () => {
+      renderSection({ summary: UNBROKEN_TITLE });
+
+      const summary = screen.getByText(UNBROKEN_TITLE);
+
+      expect(summary).toHaveClass("block", "min-w-0", "truncate");
+      expect(summary).not.toHaveClass("[overflow-wrap:anywhere]");
+    });
+  });
+
   describe("modo controlado", () => {
     it("respeta open y avisa por onOpenChange sin cambiar por su cuenta", async () => {
       const user = userEvent.setup();

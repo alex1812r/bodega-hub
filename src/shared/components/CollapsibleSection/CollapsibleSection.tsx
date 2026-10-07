@@ -106,11 +106,11 @@ export function CollapsibleSection({
         type="button"
       >
         <span className="min-w-0 flex-1">
-          <span className="block text-base font-semibold tracking-tight text-slate-950 dark:text-slate-100">
+          <span className="block min-w-0 text-base font-semibold tracking-tight text-slate-950 [overflow-wrap:anywhere] dark:text-slate-100">
             {title}
           </span>
           {!isOpen && summary ? (
-            <span className="mt-0.5 block truncate text-sm text-slate-500 dark:text-slate-400">
+            <span className="mt-0.5 block min-w-0 truncate text-sm text-slate-500 dark:text-slate-400">
               {summary}
             </span>
           ) : null}

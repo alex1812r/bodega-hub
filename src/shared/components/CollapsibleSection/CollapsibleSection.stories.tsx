@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { expect } from "storybook/test";
+import { expect, waitFor } from "storybook/test";
 
 import { InfoGrid } from "@/shared/components/InfoGrid";
 
@@ -41,7 +41,8 @@ export const ClosedWithSummary: Story = {
     await userEvent.click(trigger);
 
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
-    await expect(canvas.getByText("Distribuidora El Sol")).toBeVisible();
+    // El contenido entra con un fundido de 200 ms: se espera a que termine.
+    await waitFor(() => expect(canvas.getByText("Distribuidora El Sol")).toBeVisible());
 
     await userEvent.click(trigger);
 
