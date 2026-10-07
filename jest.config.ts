@@ -12,7 +12,10 @@ const config: Config = {
   // puede fallar a propósito: va aparte (`npm run stock-lab:test`).
   // Sin `<rootDir>`: en Windows el patrón no casa dentro de un worktree
   // (`.claude/worktrees/…`), y así también cubre las copias anidadas.
-  testPathIgnorePatterns: ["/scripts/stock-lab/regression/"],
+  testPathIgnorePatterns: ["/scripts/stock-lab/regression/", "<rootDir>/.claude/"],
+  // Los worktrees de agentes (`.claude/worktrees/…`) son copias completas del
+  // repo: duplican suites y rompen el mapa de módulos de `@bodega/core`.
+  modulePathIgnorePatterns: ["<rootDir>/.claude/"],
   moduleNameMapper: {
     // Jest no resuelve el campo `exports` del workspace enlazado por symlink.
     "^@bodega/core$": "<rootDir>/packages/core/src/index.ts",

@@ -21,6 +21,8 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "public/mockServiceWorker.js",
+    // Worktrees de agentes: copias completas del repo que no se lintan.
+    ".claude/**",
   ]),
   ...storybook.configs["flat/recommended"],
   {
