@@ -1,0 +1,538 @@
+"use client";
+
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  Suspense,
+  createElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
+import { z } from "zod";
+
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MIN_PAGE_LIMIT } from "@/lib/api/pagination";
+import type { SortOrder } from "@/lib/api/sorting";
+
+/** Debounce de los campos de texto antes de escribir la URL. */
+export const URL_LIST_DEBOUNCE_MS = 300;
+/** Página más alta que se acepta desde la URL. */
+export const MAX_URL_PAGE = 100_000;
+/** Un valor de parámetro más largo que esto se considera corrupto. */
+export const MAX_URL_PARAM_LENGTH = 500;
+/** Máximo de valores repetidos que se leen para un campo de tipo lista. */
+export const MAX_URL_PARAM_VALUES = 50;
+
+const DEFAULT_TEXT_FIELD = "search";
+const DEFAULT_PAGE_FIELD = "page";
+const NUMERIC_PARAM = /^-?\d{1,15}(\.\d{1,6})?$/;
+const YMD_PARAM = /^(\d{4})-(\d{2})-(\d{2})$/;
+/** Carácter con el que `URLSearchParams` sustituye un `%` mal codificado. */
+const REPLACEMENT_CHARACTER = "�";
+
+export type UrlListShape = Readonly<Record<string, z.ZodType>>;
+
+type LooseState = Record<string, unknown>;
+
+function isValidYmd(value: string) {
+  const match = YMD_PARAM.exec(value);
+
+  if (!match) {
+    return false;
+  }
+
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+/**
+ * Piezas Zod para declarar el schema de una lista. Todas traen valor por
+ * defecto (obligatorio para `useUrlListState`) y validan lo que llega de la URL.
+ * No uses `z.coerce`: el hook ya convierte el texto de la URL a número/booleano.
+ */
+export const listParams = {
+  /** Texto libre (búsqueda). Decláralo en `textFields` para que lleve debounce. */
+  text: (maxLength = 200) => z.string().max(maxLength).default(""),
+  /** Filtro de valores cerrados, p. ej. `listParams.oneOf(["all", "active"], "all")`. */
+  oneOf: <const TValues extends readonly [string, ...string[]]>(
+    values: TValues,
+    defaultValue: TValues[number],
+  ) => z.enum(values).default(defaultValue),
+  /** Varios valores cerrados: `?estado=a&estado=b`. */
+  manyOf: <const TValues extends readonly [string, ...string[]]>(values: TValues) =>
+    z.array(z.enum(values)).max(values.length).default([]),
+  boolean: (defaultValue = false) => z.boolean().default(defaultValue),
+  number: (config: { min?: number; max?: number; defaultValue: number }) =>
+    z
+      .number()
+      .min(config.min ?? Number.MIN_SAFE_INTEGER)
+      .max(config.max ?? Number.MAX_SAFE_INTEGER)
+      .default(config.defaultValue),
+  /** Fecha `YYYY-MM-DD` real; cadena vacía = sin filtro. */
+  date: () =>
+    z
+      .string()
+      .refine((value) => value === "" || isValidYmd(value))
+      .default(""),
+  /** Columna de orden: solo las permitidas. */
+  sort: <const TColumns extends readonly [string, ...string[]]>(
+    columns: TColumns,
+    defaultColumn: TColumns[number],
+  ) => z.enum(columns).default(defaultColumn),
+  dir: (defaultOrder: SortOrder = "asc") => z.enum(["asc", "desc"]).default(defaultOrder),
+  /** Página base 1. */
+  page: () => z.number().int().min(1).max(MAX_URL_PAGE).default(1),
+  /** Tamaño de página: por debajo del mínimo → default; por encima del máximo → se acota. */
+  limit: (defaultLimit = DEFAULT_PAGE_LIMIT) =>
+    z
+      .number()
+      .int()
+      .min(MIN_PAGE_LIMIT)
+      .transform((value) => Math.min(value, MAX_PAGE_LIMIT))
+      .default(defaultLimit),
+};
+
+function sameValue(left: unknown, right: unknown) {
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((item, index) => Object.is(item, right[index]));
+  }
+
+  return Object.is(left, right);
+}
+
+/** Valor tipado → textos de la URL. `null`, `undefined` y lista vacía no se escriben. */
+function encodeValue(value: unknown): string[] {
+  if (typeof value === "string") {
+    return [value];
+  }
+
+  if (typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) {
+    return [String(value)];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap(encodeValue);
+  }
+
+  return [];
+}
+
+/**
+ * Textos de la URL → candidatos tipados, en orden de preferencia. El schema del
+ * campo decide cuál vale; si ninguno vale, el campo cae a su default.
+ */
+function decodeCandidates(raws: readonly string[]): unknown[] {
+  const isCorrupt =
+    raws.length > MAX_URL_PARAM_VALUES ||
+    raws.some((raw) => raw.length > MAX_URL_PARAM_LENGTH || raw.includes(REPLACEMENT_CHARACTER));
+
+  if (isCorrupt) {
+    return [];
+  }
+
+  const allNumeric = raws.every((raw) => NUMERIC_PARAM.test(raw));
+  const lists: unknown[] = allNumeric ? [[...raws], raws.map(Number)] : [[...raws]];
+
+  if (raws.length !== 1) {
+    return lists;
+  }
+
+  const [raw] = raws;
+  const scalars: unknown[] = [raw];
+
+  if (allNumeric) {
+    scalars.push(Number(raw));
+  }
+
+  if (raw === "true" || raw === "false") {
+    scalars.push(raw === "true");
+  }
+
+  return [...scalars, ...lists];
+}
+
+function safeParseField(field: z.ZodType, value: unknown): { ok: true; value: unknown } | { ok: false } {
+  try {
+    const result = field.safeParse(value);
+
+    return result.success ? { ok: true, value: result.data } : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function createListModel(shape: UrlListShape) {
+  const keys = Object.keys(shape);
+  const defaults: LooseState = {};
+
+  for (const key of keys) {
+    const parsed = safeParseField(shape[key], undefined);
+
+    if (!parsed.ok) {
+      throw new Error(
+        `useUrlListState: el campo "${key}" necesita un valor por defecto (.default(...)) o ser opcional.`,
+      );
+    }
+
+    defaults[key] = parsed.value;
+  }
+
+  function entries(state: LooseState): [string, string[]][] {
+    return keys.flatMap((key): [string, string[]][] =>
+      sameValue(state[key], defaults[key]) ? [] : [[key, encodeValue(state[key])]],
+    );
+  }
+
+  return {
+    defaults,
+    keys,
+    /** Lectura tolerante campo a campo: lo inválido cae a su default. */
+    parse(params: URLSearchParams): LooseState {
+      const state: LooseState = {};
+
+      for (const key of keys) {
+        state[key] = defaults[key];
+
+        const raws = params.getAll(key);
+
+        if (raws.length === 0) {
+          continue;
+        }
+
+        for (const candidate of decodeCandidates(raws)) {
+          const parsed = safeParseField(shape[key], candidate);
+
+          if (parsed.ok) {
+            state[key] = parsed.value;
+            break;
+          }
+        }
+      }
+
+      return state;
+    },
+    /** Huella de los parámetros propios, para reconocer la URL que escribió el hook. */
+    ownedKey(state: LooseState) {
+      return JSON.stringify(entries(state));
+    },
+    /** Query resultante: conserva los parámetros ajenos y reescribe solo los propios. */
+    buildQuery(currentQuery: string, state: LooseState) {
+      const params = new URLSearchParams(currentQuery);
+
+      for (const key of keys) {
+        params.delete(key);
+      }
+
+      for (const [key, values] of entries(state)) {
+        for (const value of values) {
+          params.append(key, value);
+        }
+      }
+
+      return params.toString();
+    },
+    /** Aplica un patch validado. Un patch con algún valor inválido se ignora entero. */
+    applyPatch(state: LooseState, patch: LooseState, pageKey: string) {
+      const next: LooseState = { ...state };
+      const changed: string[] = [];
+
+      for (const key of Object.keys(patch)) {
+        if (!keys.includes(key)) {
+          continue;
+        }
+
+        const parsed = safeParseField(shape[key], patch[key]);
+
+        if (!parsed.ok) {
+          return { changed: [], next: state };
+        }
+
+        if (!sameValue(parsed.value, state[key])) {
+          next[key] = parsed.value;
+          changed.push(key);
+        }
+      }
+
+      if (changed.length > 0 && keys.includes(pageKey) && !Object.hasOwn(patch, pageKey)) {
+        next[pageKey] = defaults[pageKey];
+      }
+
+      return { changed, next };
+    },
+    isDefault(state: LooseState) {
+      return keys.every((key) => sameValue(state[key], defaults[key]));
+    },
+  };
+}
+
+type ListModel = ReturnType<typeof createListModel>;
+
+export type UrlListStateOf<TShape extends UrlListShape> = z.output<z.ZodObject<TShape>>;
+
+export type UrlListStateOptions<TState> = {
+  /**
+   * Campos de texto con debounce: el estado cambia al instante y la URL se
+   * escribe tras `debounceMs`. Por defecto `["search"]` si el schema lo tiene.
+   */
+  textFields?: readonly (keyof TState & string)[];
+  /** Por defecto 300 ms. */
+  debounceMs?: number;
+  /** Campo de página (base 1) que vuelve a su default al cambiar cualquier otro. Por defecto `"page"`. */
+  pageField?: keyof TState & string;
+};
+
+export type UrlListState<TState> = {
+  /** Estado actual. Refleja lo tecleado al instante, aunque la URL aún no se haya escrito. */
+  state: TState;
+  /** Valores por defecto del schema (los que no aparecen en la URL). */
+  defaults: TState;
+  /**
+   * Cambia uno o varios campos. Si el patch no trae `page`, la página vuelve a 1.
+   * `undefined` devuelve el campo a su default. Un valor que el schema rechaza
+   * anula el patch entero.
+   */
+  setState: (patch: Partial<TState>) => void;
+  setField: <TKey extends keyof TState>(key: TKey, value: TState[TKey]) => void;
+  /** Vuelve a los defaults y quita de la URL solo los parámetros del schema. */
+  reset: () => void;
+  /** `true` si ningún campo difiere de su default. */
+  isDefault: boolean;
+  /** Query del estado actual con `?` (o `""`), incluidos los parámetros ajenos. */
+  searchString: string;
+  /** `pathname + searchString`: la URL exacta de la lista, para "Volver". */
+  href: string;
+};
+
+type SyncedState = {
+  state: LooseState;
+  /** Query de la URL con la que se sincronizó por última vez. */
+  urlKey: string;
+  /** Huella de la URL ya confirmada seguida de las escrituras propias aún en camino. */
+  known: string[];
+};
+
+/**
+ * Estado de una lista (búsqueda, filtros, orden, página, tamaño) guardado en
+ * los parámetros de la URL. Regla 15 del plan ux-mejoras.
+ *
+ * - El schema es un `z.object` cuyos campos tienen default (usa `listParams`).
+ *   Decláralo FUERA del componente: su identidad debe ser estable.
+ * - Los valores por defecto no se escriben en la URL.
+ * - Lectura tolerante: un parámetro inválido cae a su default sin afectar al
+ *   resto; los parámetros que no son del schema (`tab`, `from`, …) se conservan.
+ * - Escribe con `router.replace(url, { scroll: false })`. Los `textFields` se
+ *   escriben con debounce; el resto, al instante.
+ * - Si la URL cambia por fuera (atrás/adelante, enlace), el estado la sigue.
+ *
+ * Suspense: el hook usa `useSearchParams`, que en una ruta prerenderizada exige
+ * un límite de `<Suspense>` por encima del componente (si falta, falla el
+ * build). Envuelve la pantalla con `withUrlListBoundary(Pantalla)` o con
+ * `<UrlListBoundary>`; `useUrlListState` no puede llamarse en el mismo
+ * componente que pinta el límite.
+ *
+ * @example
+ * const productsListSchema = z.object({
+ *   search: listParams.text(),
+ *   status: listParams.oneOf(["all", "active", "inactive"], "all"),
+ *   sort: listParams.sort(["name", "price"], "name"),
+ *   dir: listParams.dir(),
+ *   page: listParams.page(),
+ *   limit: listParams.limit(),
+ * });
+ *
+ * function ProductsList() {
+ *   const list = useUrlListState(productsListSchema);
+ *   const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
+ *   const { handleSort, sortBy, sortOrder } = useUrlSortState(list);
+ *   return <Input value={list.state.search} onChange={(e) => list.setField("search", e.target.value)} />;
+ * }
+ *
+ * export const ProductsListPage = withUrlListBoundary(ProductsList);
+ */
+export function useUrlListState<TShape extends UrlListShape>(
+  schema: z.ZodObject<TShape>,
+  options: UrlListStateOptions<UrlListStateOf<TShape>> = {},
+): UrlListState<UrlListStateOf<TShape>> {
+  type TState = UrlListStateOf<TShape>;
+
+  const router = useRouter();
+  const pathname = usePathname();
+  const urlKey = useSearchParams().toString();
+  const model: ListModel = useMemo(() => createListModel(schema.shape), [schema]);
+  const urlState = useMemo(() => model.parse(new URLSearchParams(urlKey)), [model, urlKey]);
+  const urlOwnedKey = model.ownedKey(urlState);
+  const [synced, setSynced] = useState<SyncedState>(() => ({
+    known: [urlOwnedKey],
+    state: urlState,
+    urlKey,
+  }));
+
+  let current = synced;
+
+  if (synced.urlKey !== urlKey) {
+    const knownIndex = synced.known.indexOf(urlOwnedKey);
+
+    // URL conocida (eco de una escritura propia o cambio de un parámetro ajeno):
+    // se conserva el estado local para no pisar lo que se está tecleando.
+    // URL desconocida (atrás/adelante, enlace): manda la URL.
+    current =
+      knownIndex >= 0
+        ? { known: synced.known.slice(knownIndex), state: synced.state, urlKey }
+        : { known: [urlOwnedKey], state: urlState, urlKey };
+    setSynced(current);
+  }
+
+  const textFields: readonly string[] = options.textFields ?? [DEFAULT_TEXT_FIELD];
+  const environment = {
+    debounceMs: options.debounceMs ?? URL_LIST_DEBOUNCE_MS,
+    model,
+    pageField: options.pageField ?? DEFAULT_PAGE_FIELD,
+    pathname,
+    router,
+    textFields,
+    urlKey,
+  };
+  const environmentRef = useRef(environment);
+  const stateRef = useRef(current.state);
+  /** Última query pedida al router (o la de la URL si no hay escrituras en camino). */
+  const targetQueryRef = useRef(urlKey);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    environmentRef.current = environment;
+  });
+
+  useEffect(() => {
+    stateRef.current = current.state;
+  }, [current.state]);
+
+  const hasPendingWrites = current.known.length > 1;
+
+  useEffect(() => {
+    if (!hasPendingWrites) {
+      targetQueryRef.current = urlKey;
+    }
+  }, [hasPendingWrites, urlKey]);
+
+  const cancelTimer = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  // Al desmontar no se escribe lo pendiente: un `replace` tardío devolvería al
+  // usuario a la lista que acaba de abandonar.
+  useEffect(() => cancelTimer, [cancelTimer]);
+
+  const flush = useCallback(() => {
+    cancelTimer();
+
+    const env = environmentRef.current;
+    const state = stateRef.current;
+    const query = env.model.buildQuery(env.urlKey, state);
+
+    if (query === targetQueryRef.current) {
+      return;
+    }
+
+    const ownedKey = env.model.ownedKey(state);
+
+    targetQueryRef.current = query;
+    setSynced((previous) =>
+      previous.known[previous.known.length - 1] === ownedKey
+        ? previous
+        : { ...previous, known: [...previous.known, ownedKey] },
+    );
+    env.router.replace(query ? `${env.pathname}?${query}` : env.pathname, { scroll: false });
+  }, [cancelTimer]);
+
+  const setState = useCallback(
+    (patch: Partial<TState>) => {
+      const env = environmentRef.current;
+      const { changed, next } = env.model.applyPatch(stateRef.current, patch, env.pageField);
+
+      if (changed.length === 0) {
+        return;
+      }
+
+      stateRef.current = next;
+      setSynced((previous) => ({ ...previous, state: next }));
+
+      if (changed.every((key) => env.textFields.includes(key))) {
+        cancelTimer();
+        timerRef.current = window.setTimeout(flush, env.debounceMs);
+      } else {
+        flush();
+      }
+    },
+    [cancelTimer, flush],
+  );
+
+  const setField = useCallback(
+    <TKey extends keyof TState>(key: TKey, value: TState[TKey]) => {
+      const patch: Partial<TState> = {};
+
+      patch[key] = value;
+      setState(patch);
+    },
+    [setState],
+  );
+
+  const reset = useCallback(() => {
+    const { defaults } = environmentRef.current.model;
+
+    stateRef.current = defaults;
+    setSynced((previous) => ({ ...previous, state: defaults }));
+    flush();
+  }, [flush]);
+
+  const query = model.buildQuery(urlKey, current.state);
+  const searchString = query ? `?${query}` : "";
+
+  return {
+    defaults: model.defaults as TState,
+    href: `${pathname}${searchString}`,
+    isDefault: model.isDefault(current.state),
+    reset,
+    searchString,
+    setField,
+    setState,
+    state: current.state as TState,
+  };
+}
+
+type UrlListBoundaryProps = {
+  children: ReactNode;
+  /** Lo que se pinta mientras no se conoce la URL (prerender). Por defecto, nada. */
+  fallback?: ReactNode;
+};
+
+/** Límite de Suspense que exige `useSearchParams` por encima de quien usa `useUrlListState`. */
+export function UrlListBoundary({ children, fallback = null }: UrlListBoundaryProps) {
+  return createElement(Suspense, { fallback }, children);
+}
+
+/**
+ * Envuelve una pantalla que usa `useUrlListState` en su límite de Suspense:
+ * `export const ProductsListPage = withUrlListBoundary(ProductsList);`
+ */
+export function withUrlListBoundary<TProps extends object>(
+  Component: ComponentType<TProps>,
+  fallback: ReactNode = null,
+) {
+  function UrlListScreen(props: TProps) {
+    return createElement(Suspense, { fallback }, createElement(Component, props));
+  }
+
+  UrlListScreen.displayName = `withUrlListBoundary(${Component.displayName ?? Component.name ?? "Component"})`;
+
+  return UrlListScreen;
+}
