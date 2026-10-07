@@ -7,7 +7,7 @@ import { FormActions } from "@/shared/components/FormActions";
 import { GenerateSkuIconButton } from "@/shared/components/GenerateSkuIconButton";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
-import { NumberInput } from "@/shared/components/NumberInput";
+import { getNumberInputError, NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 
 import type { ProductImportRowDraft } from "../../services/validateProductImportRows";
@@ -48,6 +48,22 @@ export function ProductImportRowEditModal({
     if (!draft) {
       return;
     }
+
+    // Un stock con decimales no se guarda: el campo ya muestra su aviso y recibe el foco.
+    const invalidStock = (["stock_inicial", "stock_minimo"] as const).find((key) =>
+      getNumberInputError(draft[key], { decimals: 0 }),
+    );
+
+    if (invalidStock) {
+      const field = event.currentTarget.elements.namedItem(invalidStock);
+
+      if (field instanceof HTMLElement) {
+        field.focus();
+      }
+
+      return;
+    }
+
     onSave(draft);
     onOpenChange(false);
   }

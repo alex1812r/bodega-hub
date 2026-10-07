@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 
 jest.mock("../../../../shared/auth/Can", () => ({
@@ -190,5 +191,59 @@ describe("ProductDetailPackConversionCard · stock insuficiente (STK-607)", () =
     fireEvent.submit(getForm());
 
     expect(api.posts).toHaveLength(0);
+  });
+});
+
+describe("ProductDetailPackConversionCard · cantidad entera (SHR-09J)", () => {
+  it.each(["2.5", "2,5"])("cantidad %p: se ve 2.5, avisa y no envia (ni con Enter ni con el boton)", async (typed) => {
+    const user = userEvent.setup();
+    const api = installFetchStub(() => null);
+    const onConverted = renderCard();
+
+    await openDialog();
+    const quantity = screen.getByLabelText("Cantidad de empaques");
+
+    await user.clear(quantity);
+    await user.type(quantity, `${typed}{Enter}`);
+
+    expect(quantity).toHaveValue("2.5");
+    expect(quantity).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("Debe ser un número entero.")).toBeVisible();
+
+    fireEvent.submit(getForm());
+    await user.click(screen.getByRole("button", { name: "Abrir empaque" }));
+
+    expect(api.posts).toHaveLength(0);
+    expect(onConverted).not.toHaveBeenCalled();
+    expect(screen.getByText("Debe ser un número entero.")).toBeVisible();
+  });
+
+  it.each(["Enter", "boton"])("cantidad 3 enviada con %s: un solo POST con el payload de siempre", async (how) => {
+    const user = userEvent.setup();
+    const api = installFetchStub(() => null);
+    api.respondToNextPost(conversionResult);
+    const onConverted = renderCard();
+
+    await openDialog();
+    const quantity = screen.getByLabelText("Cantidad de empaques");
+
+    await user.clear(quantity);
+    await user.type(quantity, "3");
+
+    if (how === "Enter") {
+      await user.keyboard("{Enter}");
+    } else {
+      // El disparador del dialogo se llama igual: se pulsa el del pie.
+      await user.click(screen.getAllByRole("button", { name: "Abrir empaque" }).at(-1) as HTMLElement);
+    }
+
+    await waitFor(() => expect(onConverted).toHaveBeenCalledTimes(1));
+
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]?.body).toEqual({
+      clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      packProductId: "prod-cigar-pack",
+      packQuantity: 3,
+    });
   });
 });

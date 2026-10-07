@@ -14,8 +14,14 @@ lleva punto decimal. Al salir (o al pulsar Enter) redondea a \`decimals\`, aplic
 redondean a \`decimals\`, medio hacia arriba y sin errores de coma flotante (\`12.345\` → \`12.35\`,
 \`1.005\` → \`1.01\`, \`0.999\` → \`1\`), y \`onChange\`/\`onValueChange\`/\`register\` reciben el valor final.
 Hasta ese momento \`onChange\` puede traer más decimales: no construyas el payload antes del blur.
-Con \`decimals={0}\` el separador se rechaza al teclear y un valor pegado con decimales se redondea
-(\`12.7\` → \`13\`).
+
+**Enteros (\`decimals={0}\`)**: el campo nunca cambia la cantidad por su cuenta. Si se teclea o se pega
+\`2.5\` se ve \`2.5\` (no \`25\` ni \`3\`), el campo queda inválido (\`aria-invalid\` y el mensaje
+"Debe ser un número entero." bajo el campo, salvo que le pases tu propio \`error\`) y al salir o pulsar
+Enter se queda igual; \`2.0\` y \`2,\` sí se limpian a \`2\`. \`onChange\`/\`onValueChange\`/\`register\`
+reciben \`2.5\`: **el formulario debe negarse a enviar** (\`Number.isInteger\` sobre el número, o
+\`isIntegerText(texto)\` / \`getNumberInputError(texto, { decimals: 0 })\` sobre el texto, exportados
+junto al componente).
 
 **Qué modo usar**
 
@@ -43,8 +49,8 @@ separador repetido son miles (\`1.234.567\` → \`1234567\`); un único separado
 
 El campo recuerda con qué tecla se escribió el separador mientras se edita; al salir, pegar o usar las
 flechas cuenta como el punto que se ve. Lo que muestra el campo y lo que reciben
-\`onChange\`/\`onValueChange\`/\`register\` coinciden en cada pulsación. Con \`decimals={0}\` se rechaza
-cualquier separador, en cualquier posición.
+\`onChange\`/\`onValueChange\`/\`register\` coinciden en cada pulsación. Con \`decimals={0}\` valen las
+mismas reglas: el separador se conserva y el campo queda inválido.
 
 \`step\` solo actúa con \`allowArrowStep\`. Sin \`allowNegative\` el campo nunca baja de cero.
 `;
@@ -95,6 +101,24 @@ export const Integer: Story = {
     defaultValue: 24,
     helperText: "Sin decimales: abre el teclado numérico.",
     label: "Unidades por empaque",
+  },
+};
+
+export const IntegerWithDecimals: Story = {
+  args: {
+    decimals: 0,
+    helperText: "Sin decimales: abre el teclado numérico.",
+    label: "Cantidad a ajustar",
+  },
+  play: async ({ canvas, userEvent }) => {
+    const field = canvas.getByLabelText(/cantidad a ajustar/i);
+
+    await userEvent.type(field, "2.5");
+    await userEvent.tab();
+
+    await expect(field).toHaveValue("2.5");
+    await expect(field).toHaveAttribute("aria-invalid", "true");
+    await expect(canvas.getByText("Debe ser un número entero.")).toBeVisible();
   },
 };
 

@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { createQueryWrapper, installFetchStub } from "../../utils/requestAttempt.testUtils";
 import { InventoryPackConversionModal } from "./InventoryPackConversionModal";
@@ -166,5 +167,63 @@ describe("InventoryPackConversionModal · idempotencia (C6)", () => {
 
     expect(api.posts).toHaveLength(2);
     expect(api.posts[1]?.body.clientRequestId).toBe(api.posts[0]?.body.clientRequestId);
+  });
+});
+
+describe("InventoryPackConversionModal · cantidad entera (SHR-09J)", () => {
+  async function renderOpen() {
+    const api = installFetchStub(() => packConversions);
+
+    render(<InventoryPackConversionModal defaultPackProductId="prod-cigar-pack" />, {
+      wrapper: createQueryWrapper(),
+    });
+    await openDialog();
+
+    return api;
+  }
+
+  it.each(["2.5", "2,5"])("cantidad %p: se ve 2.5, avisa y no envia (ni con Enter ni con el boton)", async (typed) => {
+    const user = userEvent.setup();
+    const api = await renderOpen();
+    const quantity = screen.getByLabelText("Cantidad de empaques");
+
+    await user.clear(quantity);
+    await user.type(quantity, `${typed}{Enter}`);
+
+    expect(quantity).toHaveValue("2.5");
+    expect(quantity).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("Debe ser un número entero.")).toBeVisible();
+
+    fireEvent.submit(getForm());
+    await user.click(screen.getByRole("button", { name: "Convertir empaque" }));
+
+    expect(api.posts).toHaveLength(0);
+    expect(quantity).toHaveValue("2.5");
+    expect(screen.getByText("Debe ser un número entero.")).toBeVisible();
+  });
+
+  it.each(["Enter", "boton"])("cantidad 3 enviada con %s: un solo POST con el payload de siempre", async (how) => {
+    const user = userEvent.setup();
+    const api = await renderOpen();
+    api.respondToNextPost(conversionResult);
+    const quantity = screen.getByLabelText("Cantidad de empaques");
+
+    await user.clear(quantity);
+    await user.type(quantity, "3");
+
+    if (how === "Enter") {
+      await user.keyboard("{Enter}");
+    } else {
+      await user.click(screen.getByRole("button", { name: "Convertir empaque" }));
+    }
+
+    await waitFor(() => expect(document.getElementById("inventory-pack-conversion-form")).toBeNull());
+
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]?.body).toEqual({
+      clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      packProductId: "prod-cigar-pack",
+      packQuantity: 3,
+    });
   });
 });

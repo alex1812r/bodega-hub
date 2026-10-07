@@ -63,7 +63,9 @@ export function InventoryAdjustmentModal({
     selectedProduct != null && quantityNumber > 0
       ? selectedProduct.currentStock + quantityDelta
       : undefined;
-  const canSubmit = Boolean(productId) && quantityNumber > 0;
+  // Con decimales el propio campo avisa ("Debe ser un número entero."): aquí solo se bloquea el envío.
+  const canSubmit =
+    Boolean(productId) && quantityNumber > 0 && Number.isInteger(quantityNumber);
 
   function resetForm() {
     setProductId(defaultProductId ?? "");

@@ -5,12 +5,16 @@ import { useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 
 import {
+  getNumberInputError,
+  isIntegerText,
   normalizeNumberText,
   normalizePastedNumber,
   NumberInput,
   parseNumberInput,
   sanitizeNumberText,
 } from "./NumberInput";
+
+const INTEGER_ERROR = "Debe ser un número entero.";
 
 function getField() {
   return screen.getByLabelText<HTMLInputElement>(/monto/i);
@@ -210,7 +214,7 @@ describe("NumberInput", () => {
       expect(getFormValue()).toBe("1.25");
     });
 
-    it("rejects any separator typed in the middle of an integer", async () => {
+    it("keeps a separator typed in the middle of an integer and marks it invalid", async () => {
       const user = userEvent.setup();
       const onValueChange = jest.fn();
 
@@ -234,13 +238,13 @@ describe("NumberInput", () => {
 
       await placeCaret(user, 1);
       await user.keyboard(",");
-      expect(getField()).toHaveValue("125");
-      expect(getField().selectionStart).toBe(1);
 
-      await user.keyboard(".");
-      expect(getField()).toHaveValue("125");
-      expect(getField().selectionStart).toBe(1);
-      expect(onValueChange.mock.calls.every(([next]) => next === 125)).toBe(true);
+      // Antes el separador se descartaba y quedaba 125: ahora se ve y el campo queda invalido.
+      expect(getField()).toHaveValue("1.25");
+      expect(getField().selectionStart).toBe(2);
+      expect(onValueChange).toHaveBeenLastCalledWith(1.25);
+      expect(getField()).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByText(INTEGER_ERROR)).toBeVisible();
     });
   });
 
@@ -368,25 +372,189 @@ describe("NumberInput", () => {
     expect(getField()).toHaveValue("0.01");
   });
 
-  it("rejects the separator when typing an integer and rounds a pasted decimal", async () => {
-    const user = userEvent.setup();
-    const onValueChange = jest.fn();
+  describe("integer fields (decimals=0)", () => {
+    it.each([
+      ["2.5", 2.5],
+      ["2,5", 2.5],
+      ["12.7", 12.7],
+    ])("keeps %s as typed instead of joining the digits, and marks the field invalid", async (typed, value) => {
+      const user = userEvent.setup();
+      const onValueChange = jest.fn();
 
-    render(<NumberInput decimals={0} label="Monto" onValueChange={onValueChange} />);
+      render(<NumberInput decimals={0} label="Monto" onValueChange={onValueChange} />);
 
-    await user.type(getField(), "12.7");
-    expect(getField()).toHaveValue("127");
+      await user.type(getField(), typed);
 
-    await user.clear(getField());
-    await user.paste("12.7");
-    await user.tab();
-    expect(getField()).toHaveValue("13");
-    expect(onValueChange).toHaveBeenLastCalledWith(13);
+      expect(getField()).toHaveValue(String(value));
+      expect(onValueChange).toHaveBeenLastCalledWith(value);
+      expect(getField()).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByText(INTEGER_ERROR)).toBeVisible();
+      expect(getField()).toHaveAccessibleDescription(INTEGER_ERROR);
+    });
 
-    await user.click(getField());
-    await user.paste("12,4");
-    await user.tab();
-    expect(getField()).toHaveValue("12");
+    it("does not round or truncate on blur or Enter: the value stays and stays invalid", async () => {
+      const user = userEvent.setup();
+      const onChange = jest.fn();
+      const onValueChange = jest.fn();
+
+      render(<NumberInput decimals={0} label="Monto" onChange={onChange} onValueChange={onValueChange} />);
+
+      await user.type(getField(), "2.5");
+      await user.tab();
+
+      expect(getField()).toHaveValue("2.5");
+      expect(getField()).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByText(INTEGER_ERROR)).toBeVisible();
+      expect(onValueChange).toHaveBeenLastCalledWith(2.5);
+      expect(onChange.mock.lastCall?.[0].target.value).toBe("2.5");
+
+      await user.click(getField());
+      await user.keyboard("{Enter}");
+
+      expect(getField()).toHaveValue("2.5");
+      expect(getField()).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("does not clamp a non integer to min or max either", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput decimals={0} label="Monto" max={2} />);
+
+      await user.type(getField(), "2.5");
+      await user.tab();
+
+      expect(getField()).toHaveValue("2.5");
+      expect(getField()).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it.each(["2.0", "2,", "2.00"])("normalizes %s to 2 on blur without any error", async (typed) => {
+      const user = userEvent.setup();
+      const onValueChange = jest.fn();
+
+      render(<NumberInput decimals={0} label="Monto" onValueChange={onValueChange} />);
+
+      await user.type(getField(), typed);
+      expect(getField()).not.toHaveAttribute("aria-invalid");
+
+      await user.tab();
+
+      expect(getField()).toHaveValue("2");
+      expect(getField()).not.toHaveAttribute("aria-invalid");
+      expect(screen.queryByText(INTEGER_ERROR)).not.toBeInTheDocument();
+      expect(onValueChange).toHaveBeenLastCalledWith(2);
+    });
+
+    it("clears the error as soon as the decimals are removed", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput decimals={0} helperText="Unidades" label="Monto" />);
+
+      await user.type(getField(), "2.5");
+      expect(screen.getByText(INTEGER_ERROR)).toBeVisible();
+
+      await user.keyboard("{Backspace}{Backspace}");
+
+      expect(getField()).toHaveValue("2");
+      expect(getField()).not.toHaveAttribute("aria-invalid");
+      expect(screen.getByText("Unidades")).toBeVisible();
+    });
+
+    it("keeps a pasted decimal as pasted and invalid, without rounding it", async () => {
+      const user = userEvent.setup();
+      const onValueChange = jest.fn();
+
+      render(<NumberInput decimals={0} label="Monto" onValueChange={onValueChange} />);
+
+      await user.click(getField());
+      await user.paste("12.7");
+      expect(getField()).toHaveValue("12.7");
+
+      await user.tab();
+
+      // Antes se redondeaba a 13.
+      expect(getField()).toHaveValue("12.7");
+      expect(onValueChange).toHaveBeenLastCalledWith(12.7);
+      expect(getField()).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByText(INTEGER_ERROR)).toBeVisible();
+    });
+
+    it("shows the caller error instead of its own", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput decimals={0} error="Solo hay 2 empaque(s) en stock." label="Monto" />);
+
+      await user.type(getField(), "2.5");
+
+      expect(screen.getByText("Solo hay 2 empaque(s) en stock.")).toBeVisible();
+      expect(screen.queryByText(INTEGER_ERROR)).not.toBeInTheDocument();
+      expect(getField()).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("keeps the text and the error with a string kept in local state", async () => {
+      const user = userEvent.setup();
+
+      function StringState() {
+        const [quantity, setQuantity] = useState("");
+
+        return (
+          <>
+            <NumberInput
+              decimals={0}
+              label="Monto"
+              onChange={(event) => setQuantity(event.target.value)}
+              value={quantity}
+            />
+            <output>{quantity}</output>
+          </>
+        );
+      }
+
+      render(<StringState />);
+
+      await user.type(getField(), "2.5");
+
+      expect(getField()).toHaveValue("2.5");
+      expect(screen.getByRole("status")).toHaveTextContent("2.5");
+      expect(getField()).toHaveAttribute("aria-invalid", "true");
+
+      await user.tab();
+
+      expect(getField()).toHaveValue("2.5");
+      expect(screen.getByRole("status")).toHaveTextContent("2.5");
+      expect(getField()).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("hands the non integer to react-hook-form register so the form can reject it", async () => {
+      const user = userEvent.setup();
+      const onSubmit = jest.fn();
+
+      function RegisterForm() {
+        const { handleSubmit, register } = useForm<{ stock: number }>();
+
+        return (
+          <form onSubmit={handleSubmit((values) => onSubmit(values))}>
+            <NumberInput decimals={0} label="Monto" {...register("stock", { valueAsNumber: true })} />
+            <button type="submit">Guardar</button>
+          </form>
+        );
+      }
+
+      render(<RegisterForm />);
+
+      await user.type(getField(), "2.5");
+      await user.click(screen.getByRole("button", { name: /guardar/i }));
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(onSubmit).toHaveBeenLastCalledWith({ stock: 2.5 });
+      expect(getField()).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("does not show a non integer value coming from the parent as if it were an integer", () => {
+      render(<NumberInput decimals={0} label="Monto" onValueChange={jest.fn()} value={2.5} />);
+
+      expect(getField()).toHaveValue("2.5");
+      expect(getField()).toHaveAttribute("aria-invalid", "true");
+    });
   });
 
   it("rounds on Enter so a form submitted from the field gets the final value", async () => {
@@ -829,7 +997,9 @@ describe("NumberInput helpers", () => {
 
   it("sanitizes typed text", () => {
     expect(sanitizeNumberText("12,345", { decimals: 2 })).toBe("12.345");
-    expect(sanitizeNumberText("12,", { decimals: 0 })).toBe("12");
+    // Un entero conserva el separador: descartarlo uniria los digitos (2.5 -> 25).
+    expect(sanitizeNumberText("12,", { decimals: 0 })).toBe("12.");
+    expect(sanitizeNumberText("2.5", { decimals: 0 })).toBe("2.5");
     expect(sanitizeNumberText("-3", {})).toBe("3");
     expect(sanitizeNumberText("-3", { allowNegative: true })).toBe("-3");
     expect(sanitizeNumberText("3-4", { allowNegative: true })).toBe("34");
@@ -863,9 +1033,6 @@ describe("NumberInput helpers", () => {
     expect(normalizeNumberText("1.005", { decimals: 2 })).toBe("1.01");
     expect(normalizeNumberText("2.675", { decimals: 2 })).toBe("2.68");
     expect(normalizeNumberText("99.995", { decimals: 2 })).toBe("100");
-    expect(normalizeNumberText("12.7", { decimals: 0 })).toBe("13");
-    expect(normalizeNumberText("12.5", { decimals: 0 })).toBe("13");
-    expect(normalizeNumberText("12.4", { decimals: 0 })).toBe("12");
     expect(normalizeNumberText("1.2345", { decimals: 3 })).toBe("1.235");
     expect(normalizeNumberText("1.0005", { decimals: 3 })).toBe("1.001");
     expect(normalizeNumberText("12.50", { decimals: 2 })).toBe("12.50");
@@ -877,5 +1044,43 @@ describe("NumberInput helpers", () => {
     // El redondeo va antes de min/max.
     expect(normalizeNumberText("9.999", { decimals: 2, max: 10 })).toBe("10");
     expect(normalizeNumberText("0.004", { decimals: 2, min: 0.01 })).toBe("0.01");
+  });
+
+  it("never rounds, truncates or clamps a non integer in an integer field", () => {
+    expect(normalizeNumberText("12.7", { decimals: 0 })).toBe("12.7");
+    expect(normalizeNumberText("12.5", { decimals: 0 })).toBe("12.5");
+    expect(normalizeNumberText("12.4", { decimals: 0 })).toBe("12.4");
+    expect(normalizeNumberText("02,50", { decimals: 0 })).toBe("2.50");
+    expect(normalizeNumberText("2.5", { decimals: 0, max: 2 })).toBe("2.5");
+    expect(normalizeNumberText("0.5", { decimals: 0, min: 1 })).toBe("0.5");
+    expect(normalizeNumberText("2.0", { decimals: 0 })).toBe("2");
+    expect(normalizeNumberText("2.", { decimals: 0 })).toBe("2");
+    expect(normalizeNumberText("007", { decimals: 0 })).toBe("7");
+    expect(normalizeNumberText("9", { decimals: 0, max: 5 })).toBe("5");
+  });
+
+  it("tells whether a text is an integer", () => {
+    expect(isIntegerText("3")).toBe(true);
+    expect(isIntegerText("3.")).toBe(true);
+    expect(isIntegerText("3.00")).toBe(true);
+    expect(isIntegerText("3,0")).toBe(true);
+    expect(isIntegerText("-3")).toBe(true);
+    expect(isIntegerText("2.5")).toBe(false);
+    expect(isIntegerText("2,5")).toBe(false);
+    expect(isIntegerText("0.0000000000000000000001")).toBe(false);
+    expect(isIntegerText("")).toBe(false);
+    expect(isIntegerText(".")).toBe(false);
+    expect(isIntegerText("abc")).toBe(false);
+  });
+
+  it("returns the error of a field text", () => {
+    expect(getNumberInputError("2.5", { decimals: 0 })).toBe(INTEGER_ERROR);
+    expect(getNumberInputError("2,5", { decimals: 0 })).toBe(INTEGER_ERROR);
+    expect(getNumberInputError("3", { decimals: 0 })).toBeUndefined();
+    expect(getNumberInputError("3.0", { decimals: 0 })).toBeUndefined();
+    // Vacio no es un error de formato: si es obligatorio lo decide el formulario.
+    expect(getNumberInputError("", { decimals: 0 })).toBeUndefined();
+    expect(getNumberInputError("2.5", { decimals: 2 })).toBeUndefined();
+    expect(getNumberInputError("2.5")).toBeUndefined();
   });
 });

@@ -42,8 +42,13 @@ export function ProductDetailPackConversionCard({
     isPack && quantityNumber > 0 && packConversion
       ? quantityNumber * packConversion.unitsPerPack
       : 0;
+  // Con decimales el propio campo avisa ("Debe ser un número entero."): aquí solo se bloquea el envío.
   const canSubmit =
-    isPack && quantityNumber > 0 && quantityNumber <= productStock && Boolean(packConversion);
+    isPack &&
+    quantityNumber > 0 &&
+    Number.isInteger(quantityNumber) &&
+    quantityNumber <= productStock &&
+    Boolean(packConversion);
   // Aviso propio: con `max` en el input el navegador pinta su burbuja nativa.
   const stockError =
     productStock <= 0

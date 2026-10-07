@@ -24,7 +24,11 @@ export type NumberInputProps = Omit<
   allowArrowStep?: boolean;
   /** Permite el signo menos al inicio. Por defecto no. */
   allowNegative?: boolean;
-  /** Máximo de decimales; al salir del campo los sobrantes se redondean (medio hacia arriba). `0` = entero. */
+  /**
+   * Máximo de decimales; al salir del campo los sobrantes se redondean (medio hacia arriba).
+   * `0` = entero: un valor con decimales no se redondea, se deja escrito y el campo queda
+   * inválido con su mensaje (salvo que se pase `error`). El formulario debe negarse a enviarlo.
+   */
   decimals?: number;
   /** Modo no controlado (el de `register` de react-hook-form). */
   defaultValue?: NumberInputValue;
@@ -58,6 +62,7 @@ type TypedSeparator = "," | ".";
 
 const DIGIT = /\d/;
 const SEPARATOR = /[.,]/g;
+const INTEGER_REQUIRED_MESSAGE = "Debe ser un número entero.";
 
 /**
  * Interpreta el texto del campo. Sirve como `setValueAs` de `register`:
@@ -83,15 +88,40 @@ export function parseNumberInput(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function hasNonZeroFraction(text: string) {
+  return /[1-9]/.test(text.replace(",", ".").split(".")[1] ?? "");
+}
+
+/**
+ * `true` si el texto del campo es un número sin parte decimal distinta de cero
+ * ("3", "3." y "3,0" sí; "2.5", "2,5" y vacío no). Mira los dígitos, no el
+ * número, para no dar por entero un decimal que la coma flotante no distingue.
+ */
+export function isIntegerText(text: string) {
+  return parseNumberInput(text) !== null && !hasNonZeroFraction(text);
+}
+
+/**
+ * Mensaje que muestra el campo para ese texto, o `undefined` si no hay nada que
+ * decir. Hoy solo avisa de decimales en un campo entero; el vacío no es un error
+ * de formato (si es obligatorio lo decide el formulario).
+ */
+export function getNumberInputError(text: string, { decimals }: Pick<TextOptions, "decimals"> = {}) {
+  return decimals === 0 && parseNumberInput(text) !== null && !isIntegerText(text)
+    ? INTEGER_REQUIRED_MESSAGE
+    : undefined;
+}
+
 /**
  * Limpia lo que se escribe: solo dígitos, un separador decimal (coma o punto,
  * siempre devuelto como punto; los siguientes se ignoran) y, si se permite,
  * un menos inicial. Los decimales sobrantes se conservan (se redondean al salir
- * del campo); con `decimals: 0` el separador se rechaza.
+ * del campo). Con `decimals: 0` también: descartar el separador uniría los
+ * dígitos (2.5 → 25) y cambiaría la cantidad sin avisar.
  * Qué separador queda cuando se teclea un segundo lo decide antes
  * `findTypedDecimalIndex`; aquí llega ya uno solo.
  */
-export function sanitizeNumberText(raw: string, { allowNegative, decimals }: TextOptions = {}) {
+export function sanitizeNumberText(raw: string, { allowNegative }: TextOptions = {}) {
   const sign = allowNegative && raw.trimStart().startsWith("-") ? "-" : "";
   let integerPart = "";
   let fractionPart = "";
@@ -107,10 +137,6 @@ export function sanitizeNumberText(raw: string, { allowNegative, decimals }: Tex
     } else if (char === "." || char === ",") {
       hasSeparator = true;
     }
-  }
-
-  if (decimals === 0) {
-    return `${sign}${integerPart}`;
   }
 
   return `${sign}${integerPart}${hasSeparator ? `.${fractionPart}` : ""}`;
@@ -233,7 +259,8 @@ function numberToText(value: number, { decimals, padDecimals }: NormalizeOptions
     return "";
   }
 
-  if (decimals === undefined) {
+  // Un no entero en un campo entero se muestra tal cual: redondearlo enseñaría otro valor que el del padre.
+  if (decimals === undefined || (decimals === 0 && !Number.isInteger(value))) {
     return value.toLocaleString("en-US", { maximumFractionDigits: 20, useGrouping: false });
   }
 
@@ -246,22 +273,25 @@ function numberToText(value: number, { decimals, padDecimals }: NormalizeOptions
 /**
  * Formato al salir del campo: redondea a `decimals`, después aplica min/max y
  * limpia ceros a la izquierda o un separador suelto. Un valor ya válido se
- * devuelve igual.
+ * devuelve igual. En un campo entero (`decimals: 0`) un valor con decimales no
+ * nulos ni se redondea ni se ajusta a min/max: se queda escrito, inválido.
  */
 export function normalizeNumberText(text: string, options: NormalizeOptions = {}) {
   const { allowNegative, decimals, max, min, padDecimals } = options;
-  const clean = roundNumberText(sanitizeNumberText(text, { allowNegative }), decimals);
+  const sanitized = sanitizeNumberText(text, { allowNegative });
+  const keepsFraction = decimals === 0 && hasNonZeroFraction(sanitized);
+  const clean = keepsFraction ? sanitized : roundNumberText(sanitized, decimals);
   const parsed = parseNumberInput(clean);
 
   if (parsed === null) {
     return "";
   }
 
-  if (min !== undefined && parsed < min) {
+  if (!keepsFraction && min !== undefined && parsed < min) {
     return numberToText(min, options);
   }
 
-  if (max !== undefined && parsed > max) {
+  if (!keepsFraction && max !== undefined && parsed > max) {
     return numberToText(max, options);
   }
 
@@ -299,6 +329,7 @@ export function NumberInput({
   decimals,
   defaultValue,
   disabled,
+  error,
   max,
   min,
   onBlur,
@@ -314,7 +345,6 @@ export function NumberInput({
   value,
   ...props
 }: NumberInputProps) {
-  const [draft, setDraft] = useState("");
   // El DOM siempre lleva punto: aquí se recuerda con qué tecla se escribió el separador actual.
   const typedSeparator = useRef<TypedSeparator>(".");
   const minLimit = toLimit(min);
@@ -339,12 +369,16 @@ export function NumberInput({
   };
 
   const isControlled = value !== undefined;
+  // Último texto del campo. En modo no controlado arranca en el valor inicial, para validarlo también.
+  const [draft, setDraft] = useState(() => (isControlled ? "" : toText(defaultValue)));
   const valueText = toText(value);
   // Mientras lo escrito equivalga al valor del padre se muestra tal cual, para
   // no perder un "1." o un "1.0" a medio escribir cuando el padre guarda números.
   // Se compara con el valor sin formatear: lo tecleado puede llevar decimales de más hasta el blur.
   const valueNumber = typeof value === "number" ? parseNumberInput(value) : parseNumberInput(valueText);
   const displayValue = parseNumberInput(draft) === valueNumber ? draft : valueText;
+  // El aviso del llamador manda sobre el del propio campo.
+  const shownError = error ?? getNumberInputError(isControlled ? displayValue : draft, { decimals });
 
   // Lo que escribe el propio campo (formato al salir, pegado, flechas) lleva siempre punto.
   function writeValue(element: HTMLInputElement, next: string) {
@@ -356,9 +390,7 @@ export function NumberInput({
     const element = event.currentTarget;
     const raw = element.value;
     const rawCaret = element.selectionStart ?? raw.length;
-    // Un entero no admite separador en ninguna posición.
-    const decimalIndex =
-      decimals === 0 ? -1 : findTypedDecimalIndex(raw, rawCaret, typedSeparator.current);
+    const decimalIndex = findTypedDecimalIndex(raw, rawCaret, typedSeparator.current);
     const next = sanitizeNumberText(dropSeparatorsExcept(raw, decimalIndex), options);
 
     if (decimalIndex < 0) {
@@ -407,13 +439,8 @@ export function NumberInput({
     const start = element.selectionStart ?? current.length;
     const end = element.selectionEnd ?? start;
     const head = current.slice(0, start) + normalizePastedNumber(event.clipboardData.getData("text"));
-    // Un entero no puede mostrar decimales ni a medias: lo pegado se redondea ya.
-    const clean = (text: string) =>
-      decimals === 0
-        ? roundNumberText(sanitizeNumberText(text, { allowNegative }), 0)
-        : sanitizeNumberText(text, options);
-    const next = clean(head + current.slice(end));
-    const caret = Math.min(clean(head).length, next.length);
+    const next = sanitizeNumberText(head + current.slice(end), options);
+    const caret = Math.min(sanitizeNumberText(head, options).length, next.length);
 
     writeValue(element, next);
     element.setSelectionRange(caret, caret);
@@ -450,6 +477,7 @@ export function NumberInput({
   const inputProps = {
     ...props,
     disabled,
+    error: shownError,
     // Los teclados numéricos del móvil no traen el signo menos.
     inputMode: allowNegative ? ("text" as const) : decimals === 0 ? ("numeric" as const) : ("decimal" as const),
     onBlur: handleBlur,

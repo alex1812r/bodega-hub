@@ -60,6 +60,8 @@ export function InventoryPackConversionModal({
   const canSubmit =
     Boolean(selected) &&
     quantityNumber > 0 &&
+    // Con decimales el propio campo avisa ("Debe ser un número entero."): aquí solo se bloquea el envío.
+    Number.isInteger(quantityNumber) &&
     quantityNumber <= (selected?.packProduct.currentStock ?? 0);
   const packStock = selected?.packProduct.currentStock;
   // Sin `min`/`max` en el input no hay burbuja nativa: el motivo se dice aqui.
