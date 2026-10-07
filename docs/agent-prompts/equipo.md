@@ -1,6 +1,6 @@
 # Modo equipo — gerente, supervisor, coders, fixer, caos y QA
 
-Protocolo para que Claude Code ejecute cualquier plan de `docs/agent-prompts/*-gtm.md` como un equipo con roles, en vez de una sola sesión lineal. Los roles viven en `.claude/agents/` (supervisor, coder, fixer, caos, qa). El **gerente** es la sesión principal: este documento es su manual.
+Protocolo para que Claude Code ejecute cualquier plan de `docs/agent-prompts/*-gtm.md` como un equipo con roles, en vez de una sola sesión lineal. Los roles viven en `.claude/agents/` (supervisor, coder, fixer, caos, qa, qa-final). El **gerente** es la sesión principal: este documento es su manual.
 
 ---
 
@@ -24,6 +24,7 @@ GERENTE (sesión principal)
  ├─ SUPERVISOR (uno por fase; agente .claude/agents/supervisor.md)
  │    ├─ CODER ×N en paralelo (worktrees, archivos disjuntos)
  │    ├─ QA por ticket en review_ok
+ │    ├─ QA-FINAL del módulo antes de reportar "cerrado"
  │    └─ FIXER por fallo de QA / caos
  ├─ CAOS (al cerrar cada fase y en el ciclo de calidad)
  └─ QA de integración + auditoría final (ciclo de calidad del plan)

@@ -21,6 +21,7 @@
 | [supabase-setup.md](supabase-setup.md) | Levantar proyecto Supabase local |
 | [cash-auto-close-github-actions.md](cash-auto-close-github-actions.md) | Cron gratis con GitHub Actions para autocierre de caja |
 | [cuadre-baul.md](cuadre-baul.md) | **Diagnóstico caja → baúl:** fugas de efectivo, deudas y plan de arreglo (leer antes de tocar caja/baúl/pagos) |
+| [auditoria-producto-2026-10.md](auditoria-producto-2026-10.md) | **Auditoría de producto (UX/funcional):** fricciones en compras, pagos, stock y detalles, con 37 recomendaciones priorizadas |
 | [compras-montos-ref.md](compras-montos-ref.md) | **Compras REF vs Bs:** por qué los montos por ítem no cuadraban con el total (leer antes de tocar totales de compra) |
 | [supabase-schema-audit.md](supabase-schema-audit.md) | Auditoría SQL vs app |
 | [dev-seed-users.md](dev-seed-users.md) | Usuarios y credenciales de prueba |
@@ -49,6 +50,7 @@
 | [agent-prompts/nomina-gtm.md](agent-prompts/nomina-gtm.md) | Plan de ejecucion de la nomina de cajeros hasta GTM |
 | [agent-prompts/stock-integrity-gtm.md](agent-prompts/stock-integrity-gtm.md) | Plan autonomo: reproducir y corregir el descuadre de stock con tienda de prueba y agentes en paralelo |
 | [agent-prompts/equipo.md](agent-prompts/equipo.md) | Modo equipo para Claude Code: gerente, supervisor, coders, fixer, caos y QA (roles en `.claude/agents/`) |
+| [agent-prompts/ux-mejoras-gtm.md](agent-prompts/ux-mejoras-gtm.md) | Plan por módulos (gerente + 7 supervisores) para ejecutar las 37 recomendaciones de la auditoría de producto |
 | [mobile-app.md](mobile-app.md) | App movil BodegaHub: setup, arquitectura, auth Bearer, tabs por rol, E2E y exclusiones |
 
 ## Contrato machine-readable
