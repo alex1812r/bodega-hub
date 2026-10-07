@@ -32,6 +32,8 @@ import { getEntityRecentsStorageKey } from "./entityRecents";
  *   código de barras o SKU (RIF en contactos), en el orden de los escaneos. Sin
  *   coincidencia exacta el texto vuelve al campo con la lista abierta; sin
  *   resultados, o si el campo ya está en otro escaneo, llama a `onNotFound`.
+ *   Repetir el mismo escaneo tampoco elige; elegir una opción o limpiar
+ *   descarta los escaneos que aún no respondieron.
  *
  * Estas historias usan fetchers falsos y no tocan la red; «Lector de barras» usa
  * el fetcher real contra un `/api/products` simulado con MSW.

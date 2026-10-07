@@ -137,6 +137,9 @@ export function EntityAutocomplete<K extends EntityKind>({
   // Cambia cada vez que el campo pasa a otra cosa: un escaneo que responde
   // con otro valor ya no puede tocar el texto ni el desplegable.
   const fieldEpochRef = useRef(0);
+  // Valor de `fieldEpochRef` cuando llegaron los resultados a la vista: si el
+  // texto cambió después, el usuario no ha podido verlos para ese texto.
+  const resultsEpochRef = useRef(0);
   const scanQueueRef = useRef<Promise<void>>(Promise.resolve());
   const scanControllersRef = useRef(new Set<AbortController>());
   const callbacksRef = useRef({ onChange, onNotFound });
@@ -238,6 +241,7 @@ export function EntityAutocomplete<K extends EntityKind>({
 
         setSearch({ items: visibleItems, key, status: "success" });
         setActiveIndex(null);
+        resultsEpochRef.current = fieldEpochRef.current;
         return visibleItems;
       },
       (searchError: unknown) => {
@@ -283,8 +287,9 @@ export function EntityAutocomplete<K extends EntityKind>({
   });
 
   // El texto de un escaneo sin resolver vuelve seleccionado: el siguiente
-  // escaneo lo reemplaza en vez de escribirse a continuación.
-  useEffect(() => {
+  // escaneo lo reemplaza en vez de escribirse a continuación. En el mismo
+  // commit que el texto: entre ambos no cabe la primera tecla de ese escaneo.
+  useLayoutEffect(() => {
     if (restoredScans > 0) {
       inputRef.current?.select();
     }
@@ -423,9 +428,23 @@ export function EntityAutocomplete<K extends EntityKind>({
     return () => window.removeEventListener("keydown", handleEscape, true);
   }, [isPopupVisible]);
 
-  function selectOption(option: EntityOption<K>) {
+  /**
+   * Una elección explícita del usuario (opción resaltada, clic o limpiar) gana
+   * a los escaneos que aún no respondieron: se descartan sin avisar.
+   */
+  function cancelPendingScans() {
+    scanControllersRef.current.forEach((controller) => controller.abort());
+    scanControllersRef.current.clear();
+    setPendingScans(0);
+  }
+
+  function selectOption(option: EntityOption<K>, isUserChoice: boolean) {
     if (getDisabledReason(option)) {
       return;
+    }
+
+    if (isUserChoice) {
+      cancelPendingScans();
     }
 
     rememberEntityRecent(entity, option, recentsKey);
@@ -437,8 +456,9 @@ export function EntityAutocomplete<K extends EntityKind>({
   /**
    * Enter sobre los resultados ya cargados de `enteredText`: elige la
    * coincidencia exacta de código. La opción resaltada solo se elige si el
-   * usuario ya tenía la lista a la vista; si no, la lista se abre para que
-   * decida: un único resultado que coincide a medias no se elige a ciegas.
+   * usuario ya tenía la lista a la vista para ese texto; si no (lista cerrada,
+   * o texto reescrito por otro escaneo del mismo código), la lista se abre
+   * para que decida: una coincidencia a medias no se elige a ciegas.
    */
   function resolveEnter(
     items: EntityOption<K>[],
@@ -448,7 +468,7 @@ export function EntityAutocomplete<K extends EntityKind>({
     const exactMatch = config.findExact(items, enteredText);
 
     if (exactMatch) {
-      selectOption(exactMatch);
+      selectOption(exactMatch, false);
       return;
     }
 
@@ -465,7 +485,7 @@ export function EntityAutocomplete<K extends EntityKind>({
     const highlighted = items.find((option) => !getDisabledReason(option));
 
     if (highlighted) {
-      selectOption(highlighted);
+      selectOption(highlighted, true);
     }
   }
 
@@ -506,6 +526,7 @@ export function EntityAutocomplete<K extends EntityKind>({
       setText(code);
       setIsDirty(true);
       setActiveIndex(null);
+      resultsEpochRef.current = fieldEpochRef.current;
       showPopup();
       setRestoredScans((count) => count + 1);
     }
@@ -519,6 +540,7 @@ export function EntityAutocomplete<K extends EntityKind>({
    * Lector de barras: la ráfaga termina antes del debounce. Cada Enter captura
    * su texto, libera el campo para el siguiente escaneo y busca ya, con su
    * propia petición; las respuestas se atienden en el orden de los Enter.
+   * Teclear o borrar después no lo cancela; elegir una opción o limpiar, sí.
    */
   function startScan(code: string) {
     const controller = new AbortController();
@@ -547,7 +569,7 @@ export function EntityAutocomplete<K extends EntityKind>({
     void turn.then((outcome) => {
       scanControllersRef.current.delete(controller);
 
-      // Desmontado: no queda nadie a quien avisar.
+      // Desmontado o descartado por una elección del usuario: no se avisa.
       if (controller.signal.aborted) {
         return;
       }
@@ -598,7 +620,11 @@ export function EntityAutocomplete<K extends EntityKind>({
     if (query === "") {
       if (activeOption) {
         event.preventDefault();
-        selectOption(activeOption);
+        selectOption(activeOption, true);
+      } else if (pendingScans > 0) {
+        // El campo está vacío porque hay escaneos sin responder: un Enter
+        // repetido (sufijo CR LF del lector) tampoco envía el formulario.
+        event.preventDefault();
       }
 
       return;
@@ -608,12 +634,16 @@ export function EntityAutocomplete<K extends EntityKind>({
     event.preventDefault();
 
     if (view === "results" && activeIndex !== null && activeOption) {
-      selectOption(activeOption);
+      selectOption(activeOption, true);
       return;
     }
 
     if (isSearchCurrent && search.status === "success") {
-      resolveEnter(search.items, query, view === "results");
+      resolveEnter(
+        search.items,
+        query,
+        view === "results" && resultsEpochRef.current === fieldEpochRef.current,
+      );
       return;
     }
 
@@ -676,6 +706,7 @@ export function EntityAutocomplete<K extends EntityKind>({
   }
 
   function handleClear() {
+    cancelPendingScans();
     resetTypedText();
     openPopup();
     inputRef.current?.focus();
@@ -753,7 +784,7 @@ export function EntityAutocomplete<K extends EntityKind>({
                   )}
                   id={`${listId}-option-${index}`}
                   key={option.id}
-                  onClick={() => selectOption(option)}
+                  onClick={() => selectOption(option, true)}
                   onMouseMove={() => {
                     if (!disabledReason && index !== resolvedActiveIndex) {
                       setActiveIndex(index);

@@ -916,6 +916,119 @@ describe("EntityAutocomplete: lector de barras y Enter", () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(onNotFound).not.toHaveBeenCalled();
   });
+
+  /** El lector reemplaza el texto seleccionado tecla a tecla y pulsa Enter. */
+  function rescan(code: string) {
+    for (let length = 1; length <= code.length; length += 1) {
+      type(code.slice(0, length));
+    }
+
+    return pressKey("Enter");
+  }
+
+  it.each([
+    ["solo aparece en el nombre de un producto", "7599999999999", [
+      product(1, { barcode: "7591111111111", label: "Caja x12 ref 7599999999999" }),
+    ]],
+    ["es subcadena de un código", "0000001234", [product(1, { barcode: "7590000001234" })]],
+    ["coincide a medias con varios", "75910000000", [
+      product(1, { barcode: "7591000000001" }),
+      product(2, { barcode: "7591000000002" }),
+    ]],
+  ])(
+    "repetir el escaneo de un código que %s sigue sin elegir (SHR-21 N1)",
+    async (_name, code, items) => {
+      const onChange = jest.fn();
+      render(<Harness entity="product" fetcher={async () => items} onChange={onChange} />);
+
+      type(code);
+      pressKey("Enter");
+      await flushPromises();
+
+      expect(getInput()).toHaveValue(code);
+      expect(screen.getAllByRole("option")).toHaveLength(items.length);
+
+      rescan(code);
+      await flushPromises();
+      rescan(code);
+      await advance(500);
+
+      expect(onChange).not.toHaveBeenCalled();
+      expect(getInput()).toHaveValue(code);
+      expect(screen.getAllByRole("option")).toHaveLength(items.length);
+
+      // Resaltar una opción con las flechas sí es una elección.
+      pressKey("ArrowDown");
+      pressKey("Enter");
+
+      expect(onChange).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("repetir el escaneo de un código que ahora sí es exacto lo elige (SHR-21 N1)", async () => {
+    const onChange = jest.fn();
+    const scanned = product(2, { barcode: "0000001234" });
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [product(1, { barcode: "7590000001234" }), scanned]}
+        onChange={onChange}
+      />,
+    );
+
+    await search("00000012");
+    rescan("0000001234");
+    await flushPromises();
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(scanned);
+  });
+
+  it("un segundo Enter con el escaneo todavía buscando no envía el formulario (SHR-21 N2)", async () => {
+    const pending = deferred<ProductEntityOption[]>();
+    const onChange = jest.fn();
+    const scanned = product(1, { barcode: "7590000000100" });
+    render(<Harness entity="product" fetcher={() => pending.promise} onChange={onChange} />);
+
+    type("7590000000100");
+
+    expect(pressKey("Enter")).toBe(false);
+    expect(getInput()).toHaveValue("");
+    expect(screen.getByRole("status")).toHaveTextContent("Buscando...");
+
+    // Sufijo CR LF del lector, o el cajero que insiste.
+    expect(pressKey("Enter")).toBe(false);
+    expect(pressKey("Enter")).toBe(false);
+
+    pending.resolve([scanned]);
+    await flushPromises();
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(scanned);
+  });
+
+  it("Enter con el campo vacío y sin escaneos pendientes deja pasar el envío del formulario", async () => {
+    render(
+      <EntityAutocomplete
+        entity="product"
+        fetcher={async () => []}
+        label="Producto"
+        onChange={jest.fn()}
+        value={null}
+      />,
+    );
+
+    focusInput();
+    expect(pressKey("Enter")).toBe(true);
+
+    type("7599999999999");
+    pressKey("Enter");
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar Producto" }));
+
+    expect(getInput()).toHaveValue("");
+    expect(pressKey("Enter")).toBe(true);
+  });
 });
 
 describe("EntityAutocomplete: escaneos seguidos", () => {
@@ -1090,6 +1203,130 @@ describe("EntityAutocomplete: escaneos seguidos", () => {
     expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
     expect(onNotFound).not.toHaveBeenCalled();
+  });
+
+  describe("elección del usuario con un escaneo en vuelo (SHR-21 N3)", () => {
+    /** Escaneo (exacto) a 1500 ms; búsqueda por nombre a 50 ms. */
+    function scanSlowListFast() {
+      return jest.fn<ReturnType<EntityFetcher<"product">>, Parameters<EntityFetcher<"product">>>(
+        ({ exact, query, signal }) =>
+          new Promise((resolve, reject) => {
+            setTimeout(
+              () => {
+                if (signal.aborted) {
+                  reject(new DOMException("Aborted", "AbortError"));
+                } else {
+                  resolve(
+                    catalog.filter((item) =>
+                      exact ? item.barcode === query : item.label.includes(query),
+                    ),
+                  );
+                }
+              },
+              exact ? 1500 : 50,
+            );
+          }),
+      );
+    }
+
+    function renderSingleSelect(initialValue: EntityAutocompleteValue | null = null) {
+      const onChange = jest.fn();
+      const onNotFound = jest.fn();
+      const fetcher = scanSlowListFast();
+
+      render(
+        <Harness
+          entity="product"
+          fetcher={fetcher}
+          initialValue={initialValue}
+          onChange={onChange}
+          onNotFound={onNotFound}
+        />,
+      );
+
+      return { fetcher, onChange, onNotFound };
+    }
+
+    it("elegir otra opción con flecha + Enter cancela el escaneo lento: gana la elección", async () => {
+      const { fetcher, onChange, onNotFound } = renderSingleSelect();
+
+      scan(codeA);
+      await advance(100);
+      await search("Producto B");
+      await advance(100);
+      pressKey("ArrowDown");
+      pressKey("Enter");
+
+      expect(onChange.mock.calls.map(([option]) => option?.id)).toEqual(["p-2"]);
+
+      await advance(3000);
+
+      expect(onChange.mock.calls.map(([option]) => option?.id)).toEqual(["p-2"]);
+      expect(fetcher.mock.calls[0][0].signal.aborted).toBe(true);
+      expect(onNotFound).not.toHaveBeenCalled();
+      expect(getInput()).toHaveValue("Producto B");
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+
+    it("elegir otra opción con un clic cancela el escaneo lento", async () => {
+      const { onChange } = renderSingleSelect();
+
+      scan(codeA);
+      await advance(100);
+      await search("Producto B");
+      await advance(100);
+      fireEvent.click(screen.getByRole("option", { name: /Producto B/ }));
+      await advance(3000);
+
+      expect(onChange.mock.calls.map(([option]) => option?.id)).toEqual(["p-2"]);
+      expect(getInput()).toHaveValue("Producto B");
+    });
+
+    it("el botón de limpiar cancela el escaneo lento: el campo queda vacío", async () => {
+      const { onChange, onNotFound } = renderSingleSelect({ id: "p-2", label: "Producto B" });
+
+      type(codeA);
+      pressKey("Enter");
+      await advance(100);
+      fireEvent.click(screen.getByRole("button", { name: "Limpiar Producto" }));
+      await advance(3000);
+
+      expect(onChange.mock.calls).toEqual([[null]]);
+      expect(onNotFound).not.toHaveBeenCalled();
+      expect(getInput()).toHaveValue("");
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+
+    it("tras cancelar, el siguiente escaneo se resuelve con normalidad", async () => {
+      const { onChange } = renderScanner(scanSlowListFast());
+
+      scan(codeA);
+      await advance(100);
+      await search("Producto B");
+      await advance(100);
+      fireEvent.click(screen.getByRole("option", { name: /Producto B/ }));
+      scan(codeA);
+
+      expect(screen.getByRole("status")).toHaveTextContent("Buscando...");
+
+      await advance(1600);
+
+      expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2", "p-1"]);
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+
+    it("teclear o borrar sin elegir no cancela el escaneo ya enviado", async () => {
+      const { onChange } = renderSingleSelect();
+
+      scan(codeA);
+      await advance(100);
+      type("Prod");
+      type("");
+      pressKey("Escape");
+      await advance(3000);
+
+      expect(onChange.mock.calls.map(([option]) => option?.id)).toEqual(["p-1"]);
+    });
   });
 });
 
