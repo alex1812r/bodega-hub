@@ -2414,7 +2414,11 @@ paths:
       x-permission: settings.view
       responses:
         "200":
-          $ref: "#/components/responses/ReportObjectResponse"
+          description: Configuracion de la tienda, con su alicuota de IVA por defecto
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppSettingsResponse"
         "403":
           $ref: "#/components/responses/Forbidden"
     patch:
@@ -2429,7 +2433,11 @@ paths:
               $ref: "#/components/schemas/AppSettingsInput"
       responses:
         "200":
-          $ref: "#/components/responses/ReportObjectResponse"
+          description: Configuracion actualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppSettingsResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
@@ -2444,6 +2452,132 @@ paths:
           $ref: "#/components/responses/ReportObjectResponse"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/tax-rates:
+    get:
+      tags: [Settings]
+      summary: Listar alicuotas de IVA de la tienda
+      description: |
+        Catalogo de alicuotas vigente para la tienda de la sesion: las suyas mas las
+        globales (`isGlobal = true`) que no haya redefinido. Incluye las inactivas salvo
+        con `active=true`. Orden: `sortOrder` y despues `code`. No pagina.
+        Basta uno de los permisos indicados. Usa mock o Supabase segun `API_DATA_SOURCE`.
+      x-permission: products.view | purchases.view | settings.view
+      parameters:
+        - name: active
+          in: query
+          required: false
+          description: Con `true` devuelve solo las alicuotas activas.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Alicuotas de la tienda
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/TaxRate"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Settings]
+      summary: Crear alicuota de IVA de la tienda (admin)
+      description: |
+        Crea una alicuota propia de la tienda de la sesion (el `store_id` nunca viaja en
+        el cuerpo). Si no se envia `code` se genera desde `label` ("General 12 %" ->
+        `general-12`). Un `code` que la tienda ya ve, propio o global, responde 409:
+        para cambiar una global se usa `PATCH /api/tax-rates/{id}`.
+      x-permission: users.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxRateCreateInput"
+      responses:
+        "201":
+          description: Alicuota creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Ya existe una alicuota con ese `code` para la tienda (propia o global)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/tax-rates/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      tags: [Settings]
+      summary: Cambiar o desactivar una alicuota de IVA (admin)
+      description: |
+        Cambia nombre, porcentaje, orden o estado. `code` no se puede cambiar (400).
+        En Supabase todo el cambio lo hace la RPC `override_tax_rate_for_store` en una
+        sola transaccion:
+
+        - Alicuota propia de la tienda: se actualiza. Si cambia `pct`, se copia a las
+          categorias y a la configuracion que la usan (las lineas de compra ya guardadas
+          no cambian: su porcentaje es snapshot).
+        - Alicuota global: no se modifica. La tienda recibe su propia fila con el mismo
+          `code` (la respuesta trae un `id` NUEVO e `isGlobal = false`) y sus categorias
+          y su alicuota por defecto pasan a esa fila. Las demas tiendas no cambian. Desde
+          entonces el `id` de la global responde 404 para esta tienda: hay que usar el
+          `id` devuelto (o volver a listar).
+        - Un cambio que no cambia nada de una global la devuelve tal cual, sin crear fila.
+
+        No hay DELETE: las alicuotas se desactivan con `isActive: false`.
+      x-permission: users.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxRateUpdateInput"
+      responses:
+        "200":
+          description: Alicuota resultante (la fila de la tienda si se cambio una global)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: >-
+            La alicuota no existe para la tienda: id inexistente, de otra tienda, o
+            global que la tienda ya redefinio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            No se puede desactivar: la usan categorias activas de la tienda o es su
+            alicuota por defecto. `error.message` indica cuantas categorias y que hacer
+            (mostrar tal cual). Tambien 409 con `details.retryable = true` si el cambio
+            choco con otro en curso y no se aplico.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/platform/stores:
     get:
       tags: [Platform]
@@ -3107,6 +3241,12 @@ components:
           minimum: 0
           maximum: 100
           description: Impuesto de la categoria en porcentaje (ej. 16 = IVA 16%).
+        taxRateId:
+          type: string
+          description: >-
+            Alicuota de IVA de la categoria (`id` de /api/tax-rates). Solo lectura:
+            se deriva de `taxRate`, que debe ser el porcentaje de una alicuota de la
+            tienda (si no, 400 al guardar). `taxRate` siempre es el `pct` de esta alicuota.
         isActive:
           type: boolean
     CategoryResponse:
@@ -4250,6 +4390,109 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Permission"
+    TaxRate:
+      type: object
+      required: [id, code, label, pct, isActive, isDefault, isGlobal, sortOrder]
+      properties:
+        id:
+          type: string
+        code:
+          type: string
+          description: >-
+            Identificador estable de la alicuota (minusculas, numeros, guiones y puntos).
+            Es lo que guarda cada linea de compra (`taxRateCode`); no cambia nunca.
+        label:
+          type: string
+        pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Porcentaje con dos decimales (16 = IVA 16 %).
+        isActive:
+          type: boolean
+          description: Una alicuota inactiva no se puede usar en compras nuevas.
+        isDefault:
+          type: boolean
+          description: Es la alicuota por defecto de la tienda (`defaultTaxRateId` de /api/settings).
+        isGlobal:
+          type: boolean
+          description: >-
+            Semilla comun a todas las tiendas (exento 0, reducida 8, general 16). Al
+            cambiarla, la tienda recibe su propia copia con otro `id`.
+        sortOrder:
+          type: integer
+    TaxRateResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/TaxRate"
+    TaxRateCreateInput:
+      type: object
+      additionalProperties: false
+      required: [label, pct]
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 60
+        pct:
+          type: number
+          minimum: 0
+          maximum: 100
+        code:
+          type: string
+          maxLength: 40
+          pattern: "^[a-z0-9]+([.-][a-z0-9]+)*$"
+          description: Opcional. Si falta se genera desde `label`.
+    TaxRateUpdateInput:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: Al menos un campo. `code` y `storeId` no se aceptan (400).
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 60
+        pct:
+          type: number
+          minimum: 0
+          maximum: 100
+        isActive:
+          type: boolean
+        sortOrder:
+          type: integer
+          minimum: 0
+          maximum: 100000
+    AppSettings:
+      type: object
+      required: [businessName, defaultTaxRate, invoicePrefix, lowStockThreshold]
+      properties:
+        businessName:
+          type: string
+        defaultTaxRate:
+          type: number
+          description: Porcentaje de IVA por defecto. Igual al `pct` de `defaultTaxRateId` cuando existe.
+        defaultTaxRateId:
+          type: string
+          description: >-
+            Alicuota por defecto de la tienda (`id` de /api/tax-rates). Solo lectura.
+            Ausente si `defaultTaxRate` no corresponde a ninguna alicuota del catalogo.
+        invoicePrefix:
+          type: string
+        lowStockThreshold:
+          type: integer
+        enabledPaymentMethods:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentMethod"
+    AppSettingsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/AppSettings"
     AppSettingsInput:
       type: object
       properties:
@@ -4381,3 +4624,19 @@ components:
           minimum: 0
         supplierSku:
           type: string
+        taxRateCode:
+          type: string
+          minLength: 1
+          maxLength: 40
+          description: >-
+            `code` de la alicuota de IVA de la linea (/api/tax-rates). Opcional, pero cada
+            linea debe enviar `taxRateCode`, `taxRate` o ambos. Debe existir y estar activa
+            en la tienda (si no, 400); su `pct` es el porcentaje que se guarda en la linea.
+        taxRate:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: >-
+            Porcentaje de IVA de la linea. Opcional si se envia `taxRateCode`. Solo, debe
+            ser el `pct` de una alicuota activa de la tienda (400 si no); junto a
+            `taxRateCode`, debe coincidir con el `pct` de esa alicuota (400 si no).

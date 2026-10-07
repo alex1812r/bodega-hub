@@ -590,12 +590,15 @@ La tool devuelve **cada componente por separado** además del total y su equival
 | `useExchangeRates` | GET `/api/exchange-rates` |
 | `useCurrentExchangeRate` | GET `/api/exchange-rates/current` — tasa oficial vía servidor ([DolarAPI](https://ve.dolarapi.com/v1/dolares/oficial), campo `promedio`) |
 | `useCreateExchangeRate` | POST `/api/exchange-rates` — solo historial manual |
+| _(sin hook aún)_ | GET/POST `/api/tax-rates`, PATCH `/api/tax-rates/[id]` — catálogo de alícuotas de IVA por tienda (globales + propias); lectura `products.view` / `purchases.view` / `settings.view`, escritura `users.manage`; el PATCH es atómico (RPC `override_tax_rate_for_store`) |
 
 **UI:** tabs en `/settings` — General / sistema, Usuarios (crear + listar/editar), Tasas.
 
 **Tasa vigente (servidor):** [`src/lib/exchange-rates/dolarApi.ts`](../src/lib/exchange-rates/dolarApi.ts), cache [`officialRateCache.ts`](../src/lib/exchange-rates/officialRateCache.ts), persistencia en `exchange_rates` con `source = "DolarAPI oficial"` (admin client, 1x/día o al cambiar valor). Variables: `DOLAR_API_OFFICIAL_URL`, `DOLAR_API_CACHE_TTL_MS`, `DOLAR_API_FETCH_TIMEOUT_MS`.
 
-**`app_settings`:** `businessName`, `invoicePrefix`, `defaultTaxRate`, `lowStockThreshold`, `enabledPaymentMethods`.
+**`app_settings`:** `businessName`, `invoicePrefix`, `defaultTaxRate`, `defaultTaxRateId` (solo lectura, alícuota del catálogo), `lowStockThreshold`, `enabledPaymentMethods`.
+
+**`tax_rates`:** `code`, `label`, `pct`, `isActive`, `sortOrder`; `isGlobal` (semilla común: exento 0, reducida 8, general 16) e `isDefault`. Cambiar una global crea la fila propia de la tienda con el mismo `code`. Las categorías exponen `taxRateId` y las líneas de compra aceptan `taxRateCode`. Parches `20261007a` y `20261007b` (aplicarlos antes de desplegar el BFF).
 
 **`profiles`:** `role`, `isActive`, `grantedPermissions`, `deniedPermissions`.
 

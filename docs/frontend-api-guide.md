@@ -361,6 +361,7 @@ Body `POST /api/purchases`:
 ```
 
 - `status: "recibido"` — entra stock de inmediato (RPC `create_purchase`).
+- IVA de cada línea: `taxRateCode` (el `code` de una alícuota activa de `GET /api/tax-rates?active=true`), `taxRate` (su porcentaje) o ambos; al menos uno es obligatorio. Preferir `taxRateCode`: el porcentaje lo pone el servidor. Con solo `taxRate`, debe ser el `pct` de una alícuota activa; si se envían los dos y no coinciden, o la alícuota no existe o está inactiva → 400 con el motivo en `error.message`. Al leer la compra cada línea trae `taxRate` (porcentaje congelado) y `taxRateCode`.
 - `status: "pedido"` — sin stock; luego `PATCH .../receive`.
 
 Tras crear/recibir/cancelar/devolver: invalidar `purchases`, `inventory`, `products`, `contacts`, `dashboard`, `reports`.
@@ -463,6 +464,32 @@ En formularios de venta/compra: leer tasa vigente con `useCurrentExchangeRate` y
 | `useUpdateSettings` | PATCH | `/api/settings` | `users.manage` |
 | `useUsers` | GET | `/api/users` | `users.manage` |
 | `useUpdateUser` | PATCH | `/api/users/[id]` | `users.manage` |
+
+### Alícuotas de IVA (`/api/tax-rates`)
+
+El IVA es un catálogo, no un número libre. Servicio: `src/modules/settings/services/taxRates.*` (aún sin hooks de UI).
+
+| Método | Endpoint | Permiso |
+|--------|----------|---------|
+| GET | `/api/tax-rates` (`?active=true` solo activas) | uno de `products.view`, `purchases.view`, `settings.view` |
+| POST | `/api/tax-rates` | `users.manage` (admin) |
+| PATCH | `/api/tax-rates/[id]` | `users.manage` (admin) |
+
+`GET` responde `{ data: { items: TaxRate[] } }` (sin paginar, ordenado por `sortOrder`):
+
+```json
+{ "id": "uuid", "code": "general", "label": "General", "pct": 16, "isActive": true, "isDefault": false, "isGlobal": true, "sortOrder": 30 }
+```
+
+- `isGlobal`: semilla común a todas las tiendas (`exento` 0, `reducida` 8, `general` 16). `isDefault`: es la alícuota por defecto de la tienda.
+- `POST` body `{ "label": "Lujo", "pct": 31, "code": "lujo" }` (`code` opcional: se genera desde `label`). `code` repetido para la tienda, propio o global → 409. Nunca se envía `storeId`.
+- `PATCH` body con al menos uno de `label`, `pct`, `isActive`, `sortOrder` (`code` no se puede cambiar → 400). El cambio es atómico (RPC `override_tax_rate_for_store`).
+- **PATCH sobre una global:** la global no se toca; la tienda recibe su propia fila con el mismo `code` y la respuesta trae un **`id` nuevo** con `isGlobal: false`. Las categorías y la alícuota por defecto de la tienda pasan a esa fila. El `id` de la global responde 404 desde entonces: usar el `id` devuelto e invalidar la lista.
+- **Desactivar** (`isActive: false`) una alícuota que usan categorías activas o que es la por defecto → 409; `error.message` dice cuántas categorías la usan y qué hacer: mostrarlo tal cual. No hay DELETE.
+- Cambiar `pct` actualiza `taxRate` de las categorías que usan la alícuota y `defaultTaxRate` de la configuración; las compras ya guardadas no cambian.
+- Campos nuevos de solo lectura: `taxRateId` en cada categoría (`/api/categories`) y `defaultTaxRateId` en `GET /api/settings`. Guardar en una categoría un `taxRate` que no sea el `pct` de una alícuota de la tienda → 400.
+
+Tras crear o cambiar una alícuota: invalidar la lista de alícuotas, `categories` y `settings`.
 
 ### Reportes
 
