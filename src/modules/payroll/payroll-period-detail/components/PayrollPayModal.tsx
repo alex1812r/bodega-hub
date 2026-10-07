@@ -87,7 +87,13 @@ export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalPr
   }
 
   const suggestedTotal = isUsdMethod(method) ? totalRef : totalRef * rateVes;
-  const amount = amountOverride ?? (suggestedTotal > 0 ? suggestedTotal.toFixed(2) : "");
+  /**
+   * Los metodos pueden llegar con un monto ya tecleado: si el reemplazo es de otra
+   * moneda, la cifra se descarta (igual que en el cambio manual de metodo) para que
+   * no se lea ni se envie en una moneda distinta a la que penso el usuario.
+   */
+  const typedAmount = isUsdMethod(method) === isUsdMethod(selectedMethod) ? amountOverride : null;
+  const amount = typedAmount ?? (suggestedTotal > 0 ? suggestedTotal.toFixed(2) : "");
 
   function resetForm() {
     setAmountOverride(null);
@@ -204,7 +210,11 @@ export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalPr
               }
               helperText={isUsdMethod(method) ? "Monto en USD." : "Monto en Bs."}
               label="Monto"
-              onChange={(event) => setAmountOverride(event.target.value)}
+              onChange={(event) => {
+                // El monto se teclea en la moneda del metodo visible: se fija como elegido.
+                setSelectedMethod(method);
+                setAmountOverride(event.target.value);
+              }}
               value={amount}
             />
           )}
