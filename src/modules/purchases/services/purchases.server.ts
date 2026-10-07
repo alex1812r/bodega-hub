@@ -88,6 +88,7 @@ const purchaseDetailSelect = `
     pack_cost_ref,
     pack_cost_ves,
     tax_rate,
+    tax_rate_code,
     tax_ref,
     tax_ves,
     cost_currency,
@@ -118,10 +119,20 @@ type PurchaseListRow = DbPurchaseRow & {
   supplier?: DbContactRow | null;
 };
 
+type PurchaseDetailItemRow = DbPurchaseItemRow & { tax_rate_code?: string | null };
+
 type PurchaseDetailRow = DbPurchaseRow & {
-  purchase_items?: DbPurchaseItemRow[];
+  purchase_items?: PurchaseDetailItemRow[];
   supplier?: DbContactRow | null;
 };
+
+/** Linea con el `code` de su alicuota de IVA; `taxRate` es el porcentaje congelado. */
+function mapPurchaseDetailItem(row: PurchaseDetailItemRow) {
+  return {
+    ...mapPurchaseItem(row),
+    taxRateCode: row.tax_rate_code ?? undefined,
+  };
+}
 
 function toRpcItems(items: NonNullable<PurchaseInput["items"]>) {
   return items.map((item) => toRpcPurchaseItem(item as PurchaseItemInput));
@@ -257,7 +268,7 @@ export async function getPurchaseById(id: string, storeId: string) {
     // Prefer sums from payment history so the status card stays in sync with the table.
     paidRef: paidRefFromPayments,
     paidVes: paidVesFromPayments,
-    items: (data.purchase_items ?? []).map((item) => mapPurchaseItem(item)),
+    items: (data.purchase_items ?? []).map((item) => mapPurchaseDetailItem(item)),
     payments: mappedPayments,
     supplier: data.supplier ? mapContact(data.supplier) : undefined,
   };

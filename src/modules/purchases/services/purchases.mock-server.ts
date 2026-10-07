@@ -7,8 +7,14 @@ import {
   mockProducts,
   mockPurchaseItems,
   mockPurchases,
+  type PurchaseItemMock,
   type PurchaseMock,
 } from "@/shared/mocks/erp-data";
+import {
+  findActiveMockTaxRateByCode,
+  findMockTaxRateForPct,
+} from "@/modules/settings/services/taxRates.mock-server";
+import { normalizeTaxRatePct } from "@/modules/settings/services/taxRates.schemas";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 import { roundMoney } from "@/shared/utils/currency";
@@ -82,12 +88,110 @@ export function listPurchases(searchParams: URLSearchParams, storeId: string) {
   return paginateList(items, searchParams);
 }
 
+/**
+ * Compras creadas en esta ejecucion, con sus lineas ya resueltas (porcentaje y
+ * `code` de la alicuota de IVA). Solo alimentan el detalle: no entran en los
+ * listados ni en los agregados de la semilla (saldos, reportes, stock).
+ */
+const createdPurchases = new Map<string, { items: PurchaseItemMock[]; purchase: PurchaseMock }>();
+
+/** Postgres escribe un `numeric(5,2)` con sus dos decimales ("13.00"). */
+function formatPct(pct: number) {
+  return pct.toFixed(2);
+}
+
+/**
+ * IVA de una linea con las mismas reglas (y textos) que `create_purchase`:
+ * - con `taxRateCode`: debe existir y estar activa en la tienda; el porcentaje
+ *   es el de la alicuota y, si ademas llega `taxRate`, debe coincidir;
+ * - solo `taxRate`: debe ser el porcentaje de una alicuota activa; se guarda su code.
+ */
+function resolveLineTaxRate(item: PurchaseItemInput, storeId: string) {
+  const code = item.taxRateCode?.trim() || undefined;
+  const pct = item.taxRate === undefined ? undefined : normalizeTaxRatePct(item.taxRate);
+
+  if (code) {
+    const rate = findActiveMockTaxRateByCode(storeId, code);
+
+    if (!rate) {
+      throw new ApiError(
+        400,
+        "BAD_REQUEST",
+        `La alicuota de IVA "${code}" no existe o no esta activa en tu tienda`,
+      );
+    }
+
+    if (pct !== undefined && pct !== rate.pct) {
+      throw new ApiError(
+        400,
+        "BAD_REQUEST",
+        `El porcentaje de IVA enviado (${formatPct(pct)} %) no coincide con la alicuota "${code}" (${formatPct(rate.pct)} %)`,
+      );
+    }
+
+    return { taxRate: rate.pct, taxRateCode: rate.code };
+  }
+
+  if (pct === undefined) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      "Cada item debe enviar costos/subtotales/impuesto en REF y VES",
+    );
+  }
+
+  const rate = findMockTaxRateForPct(storeId, pct, true);
+
+  if (!rate) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      `El porcentaje de IVA ${formatPct(pct)} % no corresponde a ninguna alicuota activa`,
+    );
+  }
+
+  return { taxRate: pct, taxRateCode: rate.code };
+}
+
+function toPurchaseItemMock(
+  item: PurchaseItemInput,
+  purchaseId: string,
+  tax: { taxRate: number; taxRateCode: string },
+): PurchaseItemMock {
+  const line = normalizePurchaseLine(item);
+
+  return {
+    costCurrency: item.costCurrency,
+    entryMode: line.entryMode,
+    ...(item.entryMode === "pack"
+      ? {
+          packCostRef: item.packCostRef,
+          packCostVes: item.packCostVes,
+          packCount: item.packCount,
+          packLabel: item.packLabel,
+          unitsPerPack: item.unitsPerPack,
+        }
+      : {}),
+    productId: item.productId,
+    purchaseId,
+    quantity: line.quantity,
+    subtotalRef: item.subtotalRef,
+    subtotalVes: item.subtotalVes,
+    taxRate: tax.taxRate,
+    taxRateCode: tax.taxRateCode,
+    taxRef: item.taxRef,
+    taxVes: item.taxVes,
+    unitCostRef: item.unitCostRef,
+    unitCostVes: item.unitCostVes,
+  };
+}
+
 export function getPurchaseById(id: string, storeId: string) {
-  const purchase = mockPurchases.find((item) => item.id === id);
+  const created = createdPurchases.get(id);
+  const purchase = created?.purchase ?? mockPurchases.find((item) => item.id === id);
   assertMockStoreResource(purchase, storeId, "Compra no encontrada.");
 
-  const items = mockPurchaseItems
-    .filter((item) => item.purchaseId === id)
+  const items = (created?.items ?? mockPurchaseItems.filter((item) => item.purchaseId === id))
     .map((item) => ({
       ...item,
       product: mockProducts.find((product) => product.id === item.productId),
@@ -120,6 +224,12 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
     return previous;
   }
 
+  // Antes de crear nada: una linea con IVA invalido rechaza la compra entera.
+  const lines = (input.items ?? []).map((item) => ({
+    item,
+    tax: resolveLineTaxRate(item, storeId),
+  }));
+
   const refRateVes = input.refRateVes ?? 510;
   const subtotalRef = roundMoney(
     input.subtotalRef ??
@@ -144,7 +254,7 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
     createdAt: new Date().toISOString(),
     discountRef,
     discountVes,
-    id: `purchase-mock-${Date.now()}`,
+    id: `purchase-mock-${Date.now()}-${createdPurchases.size + 1}`,
     paidRef: 0,
     paidVes: 0,
     purchaseNumber: input.purchaseNumber ?? `C-MOCK-${Date.now()}`,
@@ -160,6 +270,11 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
     totalVes: Math.round((subtotalVes - discountVes + taxVes) * 100) / 100,
     userId: "user-demo",
   } satisfies PurchaseMock;
+
+  createdPurchases.set(purchase.id, {
+    items: lines.map(({ item, tax }) => toPurchaseItemMock(item, purchase.id, tax)),
+    purchase,
+  });
 
   if (requestKey) {
     purchasesByClientRequest.set(requestKey, purchase);
