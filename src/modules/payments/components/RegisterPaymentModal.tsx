@@ -11,6 +11,7 @@ import { SelectField } from "@/shared/components/SelectField";
 import {
   PaymentFormFields,
   type PaymentFormValues,
+  amountForMethodChange,
   buildPaymentFormPayload,
   createEmptyPaymentFormValues,
   getPaymentCurrency,
@@ -91,15 +92,6 @@ export function RegisterPaymentModal({
       ),
     [enabledPaymentMethodsQuery.data],
   );
-  // Si la tienda no tiene habilitado el método elegido, se usa el primero habilitado.
-  const values = useMemo<PaymentFormValues>(
-    () =>
-      enabledMethods.length === 0 || enabledMethods.includes(storedValues.method)
-        ? storedValues
-        : { ...storedValues, method: enabledMethods[0] },
-    [enabledMethods, storedValues],
-  );
-  const { method } = values;
   const selectedSaleId = saleId ?? (contextType === "sale" ? contextId : undefined);
   const selectedPurchaseId =
     resolvedPurchaseId ??
@@ -118,6 +110,28 @@ export function RegisterPaymentModal({
     return undefined;
   }, [purchase.data, sale.data]);
   const rateVes = sale.data?.refRateVes ?? purchase.data?.refRateVes;
+  // Si la tienda no tiene habilitado el método elegido, se usa el primero habilitado.
+  // Los métodos pueden llegar con un monto ya tecleado: se convierte igual que en el
+  // cambio manual de método, para que la cifra no se lea en otra moneda.
+  const values = useMemo<PaymentFormValues>(() => {
+    if (enabledMethods.length === 0 || enabledMethods.includes(storedValues.method)) {
+      return storedValues;
+    }
+
+    const [fallbackMethod] = enabledMethods;
+
+    return {
+      ...storedValues,
+      amount: amountForMethodChange(
+        storedValues.method,
+        fallbackMethod,
+        storedValues.amount,
+        rateVes,
+      ),
+      method: fallbackMethod,
+    };
+  }, [enabledMethods, rateVes, storedValues]);
+  const { method } = values;
   const overpayToleranceVes = serverOverpayToleranceVes(
     sale.data ? "sale" : purchase.data ? "purchase" : undefined,
     getPaymentCurrency(method),

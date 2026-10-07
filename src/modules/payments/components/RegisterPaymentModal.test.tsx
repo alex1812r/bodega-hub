@@ -576,6 +576,104 @@ describe("RegisterPaymentModal", () => {
     });
   });
 
+  // Caos pasada 2, N4: la tienda no tiene Efectivo Bs y sus metodos llegan con el monto
+  // ya tecleado; el selector pasa solo a Efectivo USD.
+  describe("SHR-24 N4: los metodos habilitados llegan tarde", () => {
+    function holdPaymentMethods() {
+      const defaultFetch = fetchMock.getMockImplementation() as (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<Response>;
+      let release: (response: Response) => void = () => undefined;
+
+      fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+        String(url).includes("/api/settings/payment-methods")
+          ? new Promise<Response>((resolve) => {
+              release = resolve;
+            })
+          : defaultFetch(url, init),
+      );
+
+      return (response: Response) => release(response);
+    }
+
+    const usdOnlyMethods = () =>
+      jsonResponse({ data: { enabledPaymentMethods: ["efectivo_usd", "transferencia"] } });
+
+    it("el monto tecleado en Bs no se envia como la misma cifra en USD", async () => {
+      const releaseMethods = holdPaymentMethods();
+
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_ves");
+      await user.type(dialog.getByLabelText("Monto"), "50");
+
+      await act(async () => {
+        releaseMethods(usdOnlyMethods());
+      });
+      await waitFor(() => expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_usd"));
+
+      // Bs 50 a tasa 510 = 0.10 USD: la misma conversion que el cambio manual de metodo.
+      expect(dialog.getByLabelText("Monto")).toHaveValue("0.1");
+
+      await user.type(dialog.getByLabelText("Monto"), "{Enter}");
+
+      expect((await expectSinglePost()).body).toEqual({
+        amount: 0.1,
+        currency: "USD",
+        method: "efectivo_usd",
+        saleId: "sale-002",
+      });
+    });
+
+    it("sin tasa para convertir, el monto tecleado en Bs se vacia", async () => {
+      const releaseMethods = holdPaymentMethods();
+      const user = userEvent.setup();
+
+      renderModal(<RegisterPaymentModal />);
+      await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+
+      const dialog = within(await screen.findByRole("dialog"));
+
+      await user.type(dialog.getByLabelText("Monto"), "50");
+      await act(async () => {
+        releaseMethods(usdOnlyMethods());
+      });
+      await waitFor(() => expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_usd"));
+
+      expect(dialog.getByLabelText("Monto")).toHaveValue("");
+    });
+
+    it("si los metodos fallan al cargar sigue ofreciendo todos y envia lo tecleado en Bs", async () => {
+      const releaseMethods = holdPaymentMethods();
+
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "50");
+      await act(async () => {
+        releaseMethods(
+          jsonResponse({ error: { code: "INTERNAL", message: "Sin ajustes." } }, 500),
+        );
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+
+      expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_ves");
+      expect(dialog.getByLabelText("Monto")).toHaveValue("50");
+      await submit(user);
+
+      expect((await expectSinglePost()).body).toEqual({
+        amount: 50,
+        currency: "VES",
+        method: "efectivo_ves",
+        saleId: "sale-002",
+      });
+    });
+  });
+
   it("muestra el mensaje de error de la API tal cual", async () => {
     paymentResponse = jsonResponse(
       {
