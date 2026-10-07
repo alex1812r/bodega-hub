@@ -150,6 +150,62 @@ describe("useLogin", () => {
     expect(pushMock).toHaveBeenCalledWith("/dashboard");
   });
 
+  describe("con localStorage bloqueado", () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it.each([
+      [
+        "el getter de localStorage lanza SecurityError",
+        () => {
+          jest.spyOn(window, "localStorage", "get").mockImplementation(() => {
+            throw new DOMException("denied", "SecurityError");
+          });
+        },
+      ],
+      [
+        "getItem, setItem y removeItem lanzan SecurityError",
+        () => {
+          for (const method of ["getItem", "setItem", "removeItem"] as const) {
+            jest.spyOn(Storage.prototype, method).mockImplementation(() => {
+              throw new DOMException("denied", "SecurityError");
+            });
+          }
+        },
+      ],
+    ])("un login correcto redirige igual cuando %s", async (_label, breakStorage) => {
+      breakStorage();
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({
+          data: {
+            role: "admin",
+            user: {
+              email: "admin@example.com",
+              id: "user-admin",
+              isActive: true,
+              name: "Administrador",
+            },
+          },
+        }),
+      );
+
+      const { queryClient, Wrapper } = createWrapper();
+      const invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
+      const { result } = renderHook(() => useLogin(), { wrapper: Wrapper });
+
+      result.current.mutate({ email: "admin@example.com", password: "secret" });
+
+      await waitFor(() => expect(result.current.isPending).toBe(false));
+
+      expect(result.current.error).toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: authQueryKeys.all });
+      expect(pushMock).toHaveBeenCalledTimes(1);
+      expect(pushMock).toHaveBeenCalledWith("/dashboard");
+    });
+  });
+
   async function loginWithNext(next: string) {
     window.history.pushState({}, "", `/login?next=${encodeURIComponent(next)}`);
     fetchMock.mockResolvedValueOnce(

@@ -4,34 +4,42 @@ export const demoRoleStorageKey = "bodega-hub:user-role";
 export const demoUserIdStorageKey = "bodega-hub:user-id";
 export const demoStoreIdStorageKey = "bodega-hub:demo-store-id";
 
-export function getStoredDemoRole(): UserRole | null {
+function readStoredValue(key: string) {
   if (typeof window === "undefined") {
     return null;
   }
 
-  const storedRole = window.localStorage.getItem(demoRoleStorageKey);
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    // Almacenamiento bloqueado (leer `window.localStorage` ya lanza `SecurityError`):
+    // equivale a no tener sesion demo guardada; las peticiones salen sin esas cabeceras.
+    return null;
+  }
+}
+
+export function getStoredDemoRole(): UserRole | null {
+  const storedRole = readStoredValue(demoRoleStorageKey);
 
   return isUserRole(storedRole) ? storedRole : null;
 }
 
 export function getStoredDemoUserId() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  return window.localStorage.getItem(demoUserIdStorageKey);
+  return readStoredValue(demoUserIdStorageKey);
 }
 
 export function getStoredDemoStoreId() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  return window.localStorage.getItem(demoStoreIdStorageKey);
+  return readStoredValue(demoStoreIdStorageKey);
 }
 
 export function setStoredDemoRole(role: UserRole) {
-  window.localStorage.setItem(demoRoleStorageKey, role);
+  try {
+    window.localStorage.setItem(demoRoleStorageKey, role);
+  } catch {
+    // `SecurityError` o `QuotaExceededError`: el rol no se guardo, asi que no se anuncia el cambio.
+    return;
+  }
+
   window.dispatchEvent(
     new StorageEvent("storage", {
       key: demoRoleStorageKey,
@@ -45,7 +53,11 @@ export function clearStoredDemoAuth() {
     return;
   }
 
-  window.localStorage.removeItem(demoRoleStorageKey);
-  window.localStorage.removeItem(demoUserIdStorageKey);
-  window.localStorage.removeItem(demoStoreIdStorageKey);
+  try {
+    window.localStorage.removeItem(demoRoleStorageKey);
+    window.localStorage.removeItem(demoUserIdStorageKey);
+    window.localStorage.removeItem(demoStoreIdStorageKey);
+  } catch {
+    // Almacenamiento bloqueado: no hay sesion demo que borrar y el login real debe seguir.
+  }
 }
