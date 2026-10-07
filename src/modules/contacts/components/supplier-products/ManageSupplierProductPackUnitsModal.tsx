@@ -11,6 +11,7 @@ import {
 import { Button } from "@/shared/components/Button";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { cn } from "@/shared/utils/cn";
 
 import type { SupplierProduct } from "../../types/supplierProducts";
@@ -203,13 +204,12 @@ export function ManageSupplierProductPackUnitsModal({
               placeholder="Bulto, Caja, Paquete..."
               value={draft.label}
             />
-            <Input
+            <NumberInput
+              decimals={0}
               label="Unidades por empaque"
-              min="1"
               onChange={(event) =>
                 setDraft((current) => ({ ...current, unitsPerPack: event.target.value }))
               }
-              type="number"
               value={draft.unitsPerPack}
             />
           </div>
