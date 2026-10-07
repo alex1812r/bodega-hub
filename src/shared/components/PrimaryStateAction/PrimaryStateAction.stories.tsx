@@ -183,12 +183,9 @@ export const ImportesLargosEnMovil: Story = {
     primaryAction: { label: "Pagar", onClick: fn() },
     secondaryActions: purchaseSecondaryActions,
   },
-  globals: {
-    viewport: { value: "mobile1", isRotated: false },
-  },
   decorators: [
     (Story) => (
-      <div style={{ maxWidth: 390 }}>
+      <div className="max-w-[390px]">
         <Story />
       </div>
     ),
