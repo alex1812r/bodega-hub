@@ -126,4 +126,52 @@ describe("useLogin", () => {
 
     window.history.pushState({}, "", "/");
   });
+
+  it("keeps the query of a safe internal next path", async () => {
+    await loginWithNext("/products?page=2");
+
+    expect(pushMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledWith("/products?page=2");
+  });
+
+  it.each([
+    ["backslash host", "/\\evil.example/robo"],
+    ["tab host", "/\t/evil.example/robo"],
+    ["protocol-relative", "//evil.example/robo"],
+    ["absolute URL", "https://evil.example/robo"],
+    ["javascript:", "javascript:alert(1)"],
+    ["encoded backslash", "/%5Cevil.example"],
+    ["API route", "/api/auth/logout"],
+    ["nested hostile next", "/login?next=%2F%5Cevil.example"],
+  ])("ignores an unsafe next (%s) and goes to the role home", async (_label, next) => {
+    await loginWithNext(next);
+
+    expect(pushMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledWith("/dashboard");
+  });
+
+  async function loginWithNext(next: string) {
+    window.history.pushState({}, "", `/login?next=${encodeURIComponent(next)}`);
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        data: {
+          role: "admin",
+          user: {
+            email: "admin@example.com",
+            id: "user-admin",
+            isActive: true,
+            name: "Administrador",
+          },
+        },
+      }),
+    );
+
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => useLogin(), { wrapper: Wrapper });
+
+    result.current.mutate({ email: "admin@example.com", password: "secret" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    window.history.pushState({}, "", "/");
+  }
 });

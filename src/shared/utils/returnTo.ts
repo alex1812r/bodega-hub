@@ -11,6 +11,21 @@ const PARSE_BASE = "http://return-to.invalid";
  * codificado (doble codificación) y caracteres de control.
  */
 const ENCODED_PATH_HAZARD = /%(?:2f|5c|2e|25|[01][0-9a-f]|7f)/i;
+/**
+ * Parámetros de la query (en minúsculas) que una pantalla puede usar como
+ * destino de una redirección, p. ej. `next` en `/login`. Su valor debe ser a su
+ * vez una ruta interna segura. `from` no está aquí: `resolveReturnTo` y
+ * `withReturnTo` lo eliminan en vez de rechazar la URL.
+ */
+const REDIRECT_PARAMS = new Set([
+  "next",
+  "redirect",
+  "redirectto",
+  "redirect_to",
+  "returnto",
+  "return_to",
+  "callbackurl",
+]);
 
 function hasControlCharacter(value: string) {
   for (let index = 0; index < value.length; index += 1) {
@@ -63,7 +78,8 @@ function stripReturnTo(url: string) {
  * `true` solo para una ruta interna de la app a la que es seguro navegar:
  * relativa, empieza por una única `/`, sin `\`, sin caracteres de control, sin
  * codificaciones peligrosas en la ruta, sin segmentos `.`/`..`, acotada en
- * longitud y que no apunta a `/api/`.
+ * longitud, que no apunta a `/api/` y cuyos parámetros de redirección
+ * (`next`, `redirect`…; ver `REDIRECT_PARAMS`) cumplen esta misma regla.
  */
 export function isSafeInternalPath(value: unknown): value is string {
   if (
@@ -97,7 +113,35 @@ export function isSafeInternalPath(value: unknown): value is string {
 
   const pathname = url.pathname.toLowerCase();
 
-  return url.origin === PARSE_BASE && pathname !== "/api" && !pathname.startsWith("/api/");
+  if (url.origin !== PARSE_BASE || pathname === "/api" || pathname.startsWith("/api/")) {
+    return false;
+  }
+
+  for (const [key, nested] of url.searchParams) {
+    if (REDIRECT_PARAMS.has(key.toLowerCase()) && !isSafeInternalPath(nested)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * `value` si es una ruta interna segura (ver `isSafeInternalPath`); si no,
+ * `fallback`. Para destinos que llegan en la URL y se navegan tal cual, p. ej.
+ * `next` tras iniciar sesión. A diferencia de `resolveReturnTo`, no quita `from`.
+ */
+export function safeInternalPath(value: unknown, fallback: string): string {
+  return isSafeInternalPath(value) ? value : fallback;
+}
+
+/** `encodeURIComponent` lanza `URIError` con un surrogate suelto; aquí es `null`. */
+function encodeComponentOrNull(value: string) {
+  try {
+    return encodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -105,7 +149,8 @@ export function isSafeInternalPath(value: unknown): value is string {
  * de la lista (`currentUrl`: ruta + query, relativa; p. ej. `list.href` de
  * `useUrlListState`). Conserva los parámetros y el `#` de `href`, sustituye un
  * `from` anterior y no encadena: el `from` que traiga la URL de la lista se
- * elimina. Si `currentUrl` no es una ruta interna segura, devuelve `href` igual.
+ * elimina. Si `currentUrl` no es una ruta interna segura o no se puede
+ * codificar (surrogate suelto), devuelve `href` igual.
  */
 export function withReturnTo(href: string, currentUrl: string | null | undefined): string {
   if (!currentUrl) {
@@ -117,15 +162,14 @@ export function withReturnTo(href: string, currentUrl: string | null | undefined
     current.query ? `${current.path}?${current.query}` : current.path,
   );
 
-  if (!isSafeInternalPath(listUrl)) {
+  const encodedListUrl = isSafeInternalPath(listUrl) ? encodeComponentOrNull(listUrl) : null;
+
+  if (encodedListUrl === null) {
     return href;
   }
 
   const { hash, path, query } = splitHref(href);
-  const pairs = [
-    ...pairsWithoutReturnTo(query),
-    `${RETURN_TO_PARAM}=${encodeURIComponent(listUrl)}`,
-  ];
+  const pairs = [...pairsWithoutReturnTo(query), `${RETURN_TO_PARAM}=${encodedListUrl}`];
 
   return `${path}?${pairs.join("&")}${hash}`;
 }

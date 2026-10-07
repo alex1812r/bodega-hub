@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { authQueryKeys } from "@/modules/auth/hooks/useCurrentUser";
 import { clearStoredDemoAuth } from "@/shared/auth/demoAuth";
 import { getDefaultHomePathForRole } from "@/shared/auth/defaultHomePath";
+import { safeInternalPath } from "@/shared/utils/returnTo";
 
 import { type LoginFormValues } from "../schemas/loginSchema";
 import { loginWithPassword } from "../services/loginWithPassword";
@@ -21,12 +22,8 @@ export function useLogin() {
       await queryClient.invalidateQueries({ queryKey: authQueryKeys.all });
 
       const nextPath = new URLSearchParams(window.location.search).get("next");
-      const safeNext =
-        nextPath && nextPath.startsWith("/") && !nextPath.startsWith("//")
-          ? nextPath
-          : null;
 
-      router.push(safeNext ?? getDefaultHomePathForRole(session.role));
+      router.push(safeInternalPath(nextPath, getDefaultHomePathForRole(session.role)));
     },
   });
 }

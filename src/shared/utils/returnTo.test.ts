@@ -2,6 +2,7 @@ import {
   MAX_RETURN_TO_LENGTH,
   isSafeInternalPath,
   resolveReturnTo,
+  safeInternalPath,
   withReturnTo,
 } from "./returnTo";
 
@@ -59,6 +60,26 @@ describe("withReturnTo", () => {
   ])("deja el enlace igual con %s", (_label, currentUrl) => {
     expect(withReturnTo("/products/p-1?tab=stock", currentUrl)).toBe("/products/p-1?tab=stock");
   });
+
+  // Los surrogates se construyen en ejecución: escritos como escape en el fuente,
+  // el compilador los sustituye por U+FFFD y el caso deja de reproducir el fallo.
+  const HIGH = String.fromCharCode(0xd83d);
+  const LOW = String.fromCharCode(0xde00);
+
+  it.each([
+    ["alto suelto", `/products?search=${HIGH}`],
+    ["bajo suelto", `/products?search=${LOW}x`],
+    ["suelto en la ruta", `/products/${HIGH}`],
+  ])("no lanza con un surrogate %s en la URL de la lista y deja el enlace igual", (_label, currentUrl) => {
+    expect(() => withReturnTo("/products/p-1?tab=stock", currentUrl)).not.toThrow();
+    expect(withReturnTo("/products/p-1?tab=stock", currentUrl)).toBe("/products/p-1?tab=stock");
+  });
+
+  it("sigue aceptando un par surrogate completo (emoji) en la URL de la lista", () => {
+    const listUrl = `/products?search=${HIGH}${LOW}`;
+
+    expect(fromOf(withReturnTo("/products/p-1", listUrl))).toBe(listUrl);
+  });
 });
 
 describe("resolveReturnTo", () => {
@@ -69,6 +90,11 @@ describe("resolveReturnTo", () => {
     "/products?search=a%2Fb%5Cc%25",
     "/contacts?search=jos%C3%A9#top",
     "/apiary",
+    "/login",
+    "/login?next=%2Fproducts%3Fpage%3D2",
+    "/login?next=%2Fsales%3Fnext%3D%252Fproducts",
+    "/sales?redirect=%2Fdashboard&page=2",
+    "/products?siguiente=%2F%5Cevil.example",
   ])("acepta la ruta interna %s", (from) => {
     expect(resolveReturnTo(from, FALLBACK)).toBe(from);
   });
@@ -119,6 +145,38 @@ describe("resolveReturnTo", () => {
     expect(resolveReturnTo(from, FALLBACK)).toBe(FALLBACK);
   });
 
+  it.each([
+    ["next con barra invertida", "/login?next=%2F%5Cevil.example%2Frobo"],
+    ["next con tabulador", "/login?next=%2F%09%2Fevil.example%2Frobo"],
+    ["next de protocolo relativo", "/login?next=%2F%2Fevil.example%2Frobo"],
+    ["next absoluto", "/login?next=https%3A%2F%2Fevil.example"],
+    ["next javascript:", "/login?next=javascript%3Aalert(1)"],
+    ["next a la API", "/login?next=%2Fapi%2Fusers"],
+    ["next vacío", "/login?next="],
+    ["next en mayúsculas", "/login?NEXT=%2F%5Cevil.example"],
+    ["clave next codificada", "/login?%6Eext=%2F%5Cevil.example"],
+    ["next repetido, el segundo hostil", "/login?next=%2Fproducts&next=%2F%5Cevil.example"],
+    ["next hostil tras otros parámetros", "/sales?page=2&next=%2F%5Cevil.example#top"],
+    ["next hostil anidado dos niveles", "/login?next=%2Flogin%3Fnext%3D%252F%255Cevil.example"],
+    ["redirect hostil", "/login?redirect=%2F%5Cevil.example"],
+    ["redirectTo hostil", "/login?redirectTo=%2F%2Fevil.example"],
+    ["redirect_to hostil", "/login?redirect_to=https%3A%2F%2Fevil.example"],
+    ["returnTo hostil", "/login?returnTo=%2F%5Cevil.example"],
+    ["return_to hostil", "/login?return_to=%2F%5Cevil.example"],
+    ["callbackUrl hostil", "/login?callbackUrl=%2F%5Cevil.example"],
+  ])("rechaza un parámetro de redirección inseguro en la query: %s", (_label, from) => {
+    expect(resolveReturnTo(from, FALLBACK)).toBe(FALLBACK);
+    expect(isSafeInternalPath(from)).toBe(false);
+  });
+
+  it("rechaza el from del reporte tal como llega de searchParams.get", () => {
+    const detailUrl = "/qa-caos-back?from=%2Flogin%3Fnext%3D%252F%255Cevil.example%252Frobo";
+    const from = new URLSearchParams(detailUrl.slice(detailUrl.indexOf("?") + 1)).get("from");
+
+    expect(from).toBe("/login?next=%2F%5Cevil.example%2Frobo");
+    expect(resolveReturnTo(from, FALLBACK)).toBe(FALLBACK);
+  });
+
   it("acepta justo el límite de longitud", () => {
     const from = `/p?s=${"a".repeat(MAX_RETURN_TO_LENGTH - 5)}`;
 
@@ -143,5 +201,34 @@ describe("isSafeInternalPath", () => {
 
   it("acepta la raíz", () => {
     expect(isSafeInternalPath("/")).toBe(true);
+  });
+});
+
+describe("safeInternalPath", () => {
+  it.each(["/products?page=2", "/dashboard", "/sales/s-1?tab=pagos#notas", "/"])(
+    "devuelve %s tal cual",
+    (value) => {
+      expect(safeInternalPath(value, FALLBACK)).toBe(value);
+    },
+  );
+
+  it("conserva el from de una ruta interna (no lo elimina como resolveReturnTo)", () => {
+    expect(safeInternalPath("/sales/s-1?from=%2Fsales%3Fpage%3D2", FALLBACK)).toBe(
+      "/sales/s-1?from=%2Fsales%3Fpage%3D2",
+    );
+  });
+
+  it.each([
+    ["null", null],
+    ["vacío", ""],
+    ["barra y barra invertida", "/\\evil.example/robo"],
+    ["tabulador", "/\t/evil.example/robo"],
+    ["protocolo relativo", "//evil.example/robo"],
+    ["URL absoluta", "https://evil.example/robo"],
+    ["javascript:", "javascript:alert(1)"],
+    ["ruta a la API", "/api/auth/logout"],
+    ["next hostil anidado", "/login?next=%2F%5Cevil.example"],
+  ])("devuelve el fallback con %s", (_label, value) => {
+    expect(safeInternalPath(value, FALLBACK)).toBe(FALLBACK);
   });
 });
