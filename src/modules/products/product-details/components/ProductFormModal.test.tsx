@@ -19,7 +19,7 @@ jest.mock("../../services/uploadProductImage", () => ({
 
 describe("ProductFormModal · NumberInput (SHR-09)", () => {
   it("al enviar con Enter los precios con 3 decimales viajan redondeados a 2 y los stocks como enteros", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
     render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
@@ -32,8 +32,12 @@ describe("ProductFormModal · NumberInput (SHR-09)", () => {
     expect(price).toHaveAttribute("type", "text");
     expect(stock).toHaveAttribute("inputmode", "numeric");
 
-    await user.type(screen.getByLabelText("Nombre"), "Harina");
-    await user.type(screen.getByLabelText("SKU"), "harina");
+    // Nombre y SKU son texto libre: se pegan de una vez. El tecleo caracter a
+    // caracter se reserva para los NumberInput, que es lo que se prueba aqui.
+    await user.click(screen.getByLabelText("Nombre"));
+    await user.paste("Harina");
+    await user.click(screen.getByLabelText("SKU"));
+    await user.paste("harina");
     await user.type(cost, "1.004");
     await user.type(stock, "12");
     await user.type(screen.getByLabelText("Stock minimo"), "3");
@@ -57,7 +61,7 @@ describe("ProductFormModal · NumberInput (SHR-09)", () => {
   });
 
   it("en edicion precarga los valores del producto y no envia el stock", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
     render(
