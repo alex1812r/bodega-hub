@@ -3,6 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Suspense,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -85,7 +86,30 @@ function TabsView<TValue extends string>({
 }: TabsViewProps<TValue>) {
   const baseId = useId();
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const enabledIndexes = items.flatMap((item, index) => (item.disabled ? [] : [index]));
+  const activeIndex = items.findIndex((item) => item.value === activeValue);
+
+  // Trae la pestaña activa a la vista dentro de la barra. Solo mueve el scroll
+  // horizontal de la barra: `scrollIntoView` también desplazaría la página en
+  // vertical al montar con la barra fuera de pantalla.
+  useEffect(() => {
+    const list = listRef.current;
+    const activeTab = tabRefs.current[activeIndex];
+
+    if (!list || !activeTab) {
+      return;
+    }
+
+    const listRect = list.getBoundingClientRect();
+    const tabRect = activeTab.getBoundingClientRect();
+
+    if (tabRect.left < listRect.left) {
+      list.scrollLeft -= listRect.left - tabRect.left;
+    } else if (tabRect.right > listRect.right) {
+      list.scrollLeft += tabRect.right - listRect.right;
+    }
+  }, [activeIndex]);
 
   function moveTo(index: number | undefined) {
     if (index === undefined) {
@@ -128,6 +152,7 @@ function TabsView<TValue extends string>({
         aria-label={ariaLabel}
         aria-orientation="horizontal"
         className="flex max-w-full overflow-x-auto border-b border-outline-variant"
+        ref={listRef}
         role="tablist"
       >
         {items.map((item, index) => {
@@ -138,10 +163,10 @@ function TabsView<TValue extends string>({
               aria-controls={`${baseId}-panel-${index}`}
               aria-selected={isActive}
               className={cn(
-                "inline-flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+                "inline-flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
                 isActive
-                  ? "border-primary font-semibold text-primary"
-                  : "border-transparent text-on-surface-variant enabled:hover:bg-surface-container-low",
+                  ? "border-primary font-semibold text-primary dark:text-indigo-300"
+                  : "border-transparent text-muted-foreground enabled:hover:bg-surface-container-low",
               )}
               disabled={item.disabled}
               id={`${baseId}-tab-${index}`}
@@ -161,8 +186,8 @@ function TabsView<TValue extends string>({
                   className={cn(
                     "inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-xs font-medium",
                     isActive
-                      ? "bg-primary-container text-on-primary-container"
-                      : "bg-surface-container-high text-on-surface-variant",
+                      ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                      : "bg-surface-container text-muted-foreground",
                   )}
                 >
                   {item.badge}

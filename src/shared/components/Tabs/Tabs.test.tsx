@@ -239,6 +239,154 @@ describe("Tabs", () => {
     });
   });
 
+  describe("tema oscuro", () => {
+    // Tokens sin valor en `.dark` o con contraste insuficiente en oscuro (SHR-02 F1).
+    const classesWithoutDarkContrast = [
+      "text-on-surface-variant",
+      "text-on-primary-container",
+      "bg-primary-container",
+      "bg-surface-container-high",
+      "disabled:opacity-50",
+    ];
+
+    it("no usa clases que pierden contraste en oscuro", () => {
+      render(<Tabs ariaLabel="Secciones" defaultValue="ventas" items={items} />);
+
+      const painted = [
+        screen.getByRole("tablist"),
+        ...screen.getAllByRole("tab"),
+        ...screen.getAllByRole("tab").flatMap((element) => [...element.querySelectorAll("span")]),
+      ];
+      const used = painted.flatMap((element) => [...element.classList]);
+
+      for (const forbidden of classesWithoutDarkContrast) {
+        expect(used).not.toContain(forbidden);
+      }
+    });
+
+    it("la pestaña activa y su badge llevan variante oscura; la inactiva usa un token con valor oscuro", () => {
+      render(
+        <Tabs
+          ariaLabel="Secciones"
+          items={[
+            { value: "a", label: "Alfa", badge: 12, content: <p>Panel alfa</p> },
+            { value: "b", label: "Beta", badge: 3, content: <p>Panel beta</p> },
+          ]}
+        />,
+      );
+
+      expect(tab(/alfa/i)).toHaveClass("text-primary", "dark:text-indigo-300");
+      expect(screen.getByText("12")).toHaveClass("dark:bg-indigo-950", "dark:text-indigo-300");
+      expect(tab(/beta/i)).toHaveClass("text-muted-foreground");
+      expect(screen.getByText("3")).toHaveClass("bg-surface-container", "text-muted-foreground");
+    });
+  });
+
+  describe("pestaña activa a la vista", () => {
+    const barRect = { left: 16, right: 374 };
+    const tabRects: Record<string, { left: number; right: number }> = {
+      Resumen: { left: 16, right: 116 },
+      Ventas: { left: 116, right: 216 },
+      Pagos: { left: 216, right: 316 },
+      Notas: { left: 316, right: 416 },
+    };
+    let scrollIntoView: jest.Mock;
+
+    function mockLayout(rects: Record<string, { left: number; right: number }> = tabRects) {
+      jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        const role = this.getAttribute("role");
+        const label = Object.keys(rects).find((key) => this.textContent?.startsWith(key));
+        const { left, right } =
+          role === "tablist" ? barRect : role === "tab" && label ? rects[label] : { left: 0, right: 0 };
+
+        return new DOMRect(left, 0, right - left, 44);
+      });
+    }
+
+    beforeEach(() => {
+      scrollIntoView = jest.fn();
+      HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it("desplaza la barra cuando la pestaña activada por teclado queda recortada a la derecha", async () => {
+      const user = userEvent.setup();
+      mockLayout();
+      render(<Tabs ariaLabel="Secciones" defaultValue="ventas" items={items} />);
+
+      expect(screen.getByRole("tablist").scrollLeft).toBe(0);
+
+      tab(/ventas/i).focus();
+      await user.keyboard("{ArrowRight}");
+
+      expect(tab(/notas/i)).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tablist").scrollLeft).toBe(42);
+    });
+
+    it("desplaza la barra cuando la pestaña activada con clic queda recortada a la izquierda", async () => {
+      const user = userEvent.setup();
+      mockLayout({ ...tabRects, Resumen: { left: -60, right: 40 } });
+      render(<Tabs ariaLabel="Secciones" defaultValue="ventas" items={items} />);
+      screen.getByRole("tablist").scrollLeft = 76;
+
+      await user.click(tab(/resumen/i));
+
+      expect(screen.getByRole("tablist").scrollLeft).toBe(0);
+    });
+
+    it("al montar con la pestaña de la URL fuera de vista la trae a la vista", () => {
+      mockLayout();
+      setUrl("tab=notas");
+      render(<Tabs ariaLabel="Secciones" items={items} urlParam="tab" />);
+
+      expect(screen.getByRole("tablist").scrollLeft).toBe(42);
+    });
+
+    it("no mueve la barra si la pestaña activa ya se ve entera", async () => {
+      const user = userEvent.setup();
+      mockLayout();
+      render(<Tabs ariaLabel="Secciones" items={items} />);
+
+      await user.click(tab(/ventas/i));
+
+      expect(screen.getByRole("tablist").scrollLeft).toBe(0);
+    });
+
+    it("nunca desplaza la página: no llama a scrollIntoView", async () => {
+      const user = userEvent.setup();
+      mockLayout();
+      render(<Tabs ariaLabel="Secciones" items={items} />);
+
+      await user.click(tab(/notas/i));
+
+      expect(screen.getByRole("tablist").scrollLeft).toBe(42);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("sin pestañas", () => {
+    it("items vacío renderiza la barra sin pestañas ni paneles y no rompe", () => {
+      render(<Tabs ariaLabel="Secciones" items={[]} />);
+
+      expect(screen.getByRole("tablist", { name: "Secciones" })).toBeInTheDocument();
+      expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+      expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
+    });
+
+    it("items vacío con urlParam no rompe ni escribe en la URL", () => {
+      setUrl("tab=ventas");
+      render(<Tabs ariaLabel="Secciones" items={[]} urlParam="tab" />);
+
+      expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+  });
+
   describe("urlParam", () => {
     it("lee la pestaña activa del parámetro al montar", () => {
       setUrl("tab=notas");

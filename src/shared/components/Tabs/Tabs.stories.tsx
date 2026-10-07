@@ -27,7 +27,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 function panel(text: string) {
-  return <p className="text-sm text-on-surface-variant">{text}</p>;
+  return <p className="text-sm text-muted-foreground">{text}</p>;
 }
 
 const baseItems: TabItem[] = [
@@ -110,6 +110,28 @@ export const ManyTabs: Story = {
       </div>
     ),
   ],
+};
+
+/** Sin pestañas: queda la barra vacía, sin paneles y sin error. */
+export const Empty: Story = {
+  args: {
+    ariaLabel: "Secciones del contacto",
+    items: [],
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole("tablist")).toBeInTheDocument();
+    await expect(canvas.queryByRole("tab")).not.toBeInTheDocument();
+    await expect(canvas.queryByRole("tabpanel")).not.toBeInTheDocument();
+  },
+};
+
+/** Monta con la última pestaña activa: la barra se desplaza sola para mostrarla. */
+export const ManyTabsLastActive: Story = {
+  ...ManyTabs,
+  args: {
+    ...ManyTabs.args,
+    defaultValue: "seccion-9",
+  },
 };
 
 export const WithUrlParam: Story = {
