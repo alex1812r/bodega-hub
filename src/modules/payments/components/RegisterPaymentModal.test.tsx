@@ -174,6 +174,40 @@ describe("RegisterPaymentModal", () => {
     });
   });
 
+  // SHR-09F: NumberInput redondea al salir del campo o al pulsar Enter, no al teclear.
+  it("SHR-09F: un monto con 3 decimales se envia redondeado a 2 al hacer clic en Registrar pago", async () => {
+    renderModal(<RegisterPaymentModal saleId="sale-002" />);
+    const { dialog, user } = await openModal();
+
+    await user.type(dialog.getByLabelText("Monto"), "12,345");
+    await submit(user);
+
+    const post = await expectSinglePost();
+
+    expect(post.body).toEqual({
+      amount: 12.35,
+      currency: "VES",
+      method: "efectivo_ves",
+      saleId: "sale-002",
+    });
+  });
+
+  it("SHR-09F: un monto con 3 decimales se envia redondeado a 2 al pulsar Enter en el monto", async () => {
+    renderModal(<RegisterPaymentModal saleId="sale-002" />);
+    const { dialog, user } = await openModal();
+
+    await user.type(dialog.getByLabelText("Monto"), "1.005{Enter}");
+
+    const post = await expectSinglePost();
+
+    expect(post.body).toEqual({
+      amount: 1.01,
+      currency: "VES",
+      method: "efectivo_ves",
+      saleId: "sale-002",
+    });
+  });
+
   it("no envia nada y muestra las validaciones del metodo si faltan datos", async () => {
     renderModal(<RegisterPaymentModal saleId="sale-002" />);
     const { dialog, user } = await openModal();

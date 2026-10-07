@@ -120,8 +120,41 @@ describe("PaymentFormFields", () => {
       await user.type(amountField(), "12,345");
 
       expect(amountField()).toHaveAttribute("type", "text");
-      expect(amountField()).toHaveValue("12.34");
-      expect(onValues).toHaveBeenLastCalledWith(expect.objectContaining({ amount: "12.34" }));
+      // Mientras se teclea se conservan los decimales de mas, ya con punto decimal.
+      expect(amountField()).toHaveValue("12.345");
+
+      await user.tab();
+
+      expect(amountField()).toHaveValue("12.35");
+      expect(onValues).toHaveBeenLastCalledWith(expect.objectContaining({ amount: "12.35" }));
+    });
+
+    it("Enter en el monto lo redondea antes de que se envie el formulario", async () => {
+      const user = userEvent.setup();
+      const onSubmit = jest.fn();
+
+      function FormHarness() {
+        const [values, setValues] = useState<PaymentFormValues>(createEmptyPaymentFormValues());
+
+        return (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              onSubmit(buildPaymentFormPayload(values));
+            }}
+          >
+            <PaymentFormFields methods={PAYMENT_METHODS} onChange={setValues} values={values} />
+            <button type="submit">Registrar</button>
+          </form>
+        );
+      }
+
+      render(<FormHarness />);
+      await user.type(amountField(), "12,345{Enter}");
+
+      expect(amountField()).toHaveValue("12.35");
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+      expect(onSubmit).toHaveBeenLastCalledWith(expect.objectContaining({ amount: 12.35 }));
     });
   });
 

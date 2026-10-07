@@ -23,7 +23,7 @@ export type NumberInputProps = Omit<
   allowArrowStep?: boolean;
   /** Permite el signo menos al inicio. Por defecto no. */
   allowNegative?: boolean;
-  /** Máximo de decimales (los sobrantes se recortan, no se redondean). `0` = entero. */
+  /** Máximo de decimales; al salir del campo los sobrantes se redondean (medio hacia arriba). `0` = entero. */
   decimals?: number;
   /** Modo no controlado (el de `register` de react-hook-form). */
   defaultValue?: NumberInputValue;
@@ -82,7 +82,8 @@ export function parseNumberInput(value: unknown): number | null {
 /**
  * Limpia lo que se escribe: solo dígitos, un separador decimal (coma o punto,
  * siempre devuelto como punto; los siguientes se ignoran) y, si se permite,
- * un menos inicial. Recorta los decimales sobrantes.
+ * un menos inicial. Los decimales sobrantes se conservan (se redondean al salir
+ * del campo); con `decimals: 0` el separador se rechaza.
  */
 export function sanitizeNumberText(raw: string, { allowNegative, decimals }: TextOptions = {}) {
   const sign = allowNegative && raw.trimStart().startsWith("-") ? "-" : "";
@@ -106,11 +107,50 @@ export function sanitizeNumberText(raw: string, { allowNegative, decimals }: Tex
     return `${sign}${integerPart}`;
   }
 
-  if (decimals !== undefined) {
-    fractionPart = fractionPart.slice(0, decimals);
+  return `${sign}${integerPart}${hasSeparator ? `.${fractionPart}` : ""}`;
+}
+
+function incrementDigits(digits: string) {
+  const chars = digits.split("");
+  let index = chars.length - 1;
+
+  while (index >= 0 && chars[index] === "9") {
+    chars[index] = "0";
+    index -= 1;
   }
 
-  return `${sign}${integerPart}${hasSeparator ? `.${fractionPart}` : ""}`;
+  if (index < 0) {
+    return `1${chars.join("")}`;
+  }
+
+  chars[index] = String(Number(chars[index]) + 1);
+
+  return chars.join("");
+}
+
+/**
+ * Redondea un texto ya limpio a `decimals`, medio hacia arriba (hacia +∞, como
+ * el `Math.round` de `roundMoney`). Opera sobre los dígitos para no arrastrar
+ * errores de coma flotante ("1.005" → "1.01"). Si no sobran decimales devuelve
+ * el texto igual.
+ */
+function roundNumberText(text: string, decimals: number | undefined) {
+  const negative = text.startsWith("-");
+  const [integerRaw = "", fractionRaw = ""] = text.replace("-", "").split(".");
+
+  if (decimals === undefined || fractionRaw.length <= decimals) {
+    return text;
+  }
+
+  const rest = fractionRaw.slice(decimals);
+  const overHalf = rest[0] > "5" || (rest[0] === "5" && /[1-9]/.test(rest.slice(1)));
+  const roundsUp = negative ? overHalf : rest[0] >= "5";
+  const kept = `${integerRaw || "0"}${fractionRaw.slice(0, decimals)}`;
+  const digits = roundsUp ? incrementDigits(kept) : kept;
+  const integerPart = digits.slice(0, digits.length - decimals);
+  const fractionPart = digits.slice(digits.length - decimals).replace(/0+$/, "");
+
+  return `${negative ? "-" : ""}${integerPart}${fractionPart ? `.${fractionPart}` : ""}`;
 }
 
 /**
@@ -166,12 +206,13 @@ function numberToText(value: number, { decimals, padDecimals }: NormalizeOptions
 }
 
 /**
- * Formato al salir del campo: aplica min/max, recorta decimales y limpia ceros
- * a la izquierda o un separador suelto. Un valor ya válido se devuelve igual.
+ * Formato al salir del campo: redondea a `decimals`, después aplica min/max y
+ * limpia ceros a la izquierda o un separador suelto. Un valor ya válido se
+ * devuelve igual.
  */
 export function normalizeNumberText(text: string, options: NormalizeOptions = {}) {
-  const { decimals, max, min, padDecimals } = options;
-  const clean = sanitizeNumberText(text, options);
+  const { allowNegative, decimals, max, min, padDecimals } = options;
+  const clean = roundNumberText(sanitizeNumberText(text, { allowNegative }), decimals);
   const parsed = parseNumberInput(clean);
 
   if (parsed === null) {
@@ -261,7 +302,9 @@ export function NumberInput({
   const valueText = toText(value);
   // Mientras lo escrito equivalga al valor del padre se muestra tal cual, para
   // no perder un "1." o un "1.0" a medio escribir cuando el padre guarda números.
-  const displayValue = parseNumberInput(draft) === parseNumberInput(valueText) ? draft : valueText;
+  // Se compara con el valor sin formatear: lo tecleado puede llevar decimales de más hasta el blur.
+  const valueNumber = typeof value === "number" ? parseNumberInput(value) : parseNumberInput(valueText);
+  const displayValue = parseNumberInput(draft) === valueNumber ? draft : valueText;
 
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
     const element = event.currentTarget;
@@ -308,8 +351,13 @@ export function NumberInput({
     const start = element.selectionStart ?? current.length;
     const end = element.selectionEnd ?? start;
     const head = current.slice(0, start) + normalizePastedNumber(event.clipboardData.getData("text"));
-    const next = sanitizeNumberText(head + current.slice(end), options);
-    const caret = Math.min(sanitizeNumberText(head, options).length, next.length);
+    // Un entero no puede mostrar decimales ni a medias: lo pegado se redondea ya.
+    const clean = (text: string) =>
+      decimals === 0
+        ? roundNumberText(sanitizeNumberText(text, { allowNegative }), 0)
+        : sanitizeNumberText(text, options);
+    const next = clean(head + current.slice(end));
+    const caret = Math.min(clean(head).length, next.length);
 
     commitValue(element, next);
     element.setSelectionRange(caret, caret);
@@ -317,6 +365,12 @@ export function NumberInput({
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     onKeyDown?.(event);
+
+    // Enter envía el formulario sin pasar por blur: se normaliza antes para no enviar sin redondear.
+    if (event.key === "Enter" && !event.defaultPrevented && !readOnly) {
+      commitValue(event.currentTarget, normalizeNumberText(event.currentTarget.value, options));
+      return;
+    }
 
     const isArrow = event.key === "ArrowUp" || event.key === "ArrowDown";
 

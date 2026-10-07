@@ -8,7 +8,14 @@ import { NumberInput } from "./NumberInput";
 const usageGuide = `
 Campo numérico de la app. Es un \`type="text"\` con teclado numérico: la rueda del ratón y las flechas
 no cambian el valor, se selecciona todo al enfocar, acepta coma o punto y el valor del DOM siempre
-lleva punto decimal. Al salir aplica \`min\`/\`max\` y limpia el formato.
+lleva punto decimal. Al salir (o al pulsar Enter) redondea a \`decimals\`, aplica \`min\`/\`max\` y limpia el formato.
+
+**Decimales**: mientras se teclea o se pega se conservan los decimales de más; al salir del campo se
+redondean a \`decimals\`, medio hacia arriba y sin errores de coma flotante (\`12.345\` → \`12.35\`,
+\`1.005\` → \`1.01\`, \`0.999\` → \`1\`), y \`onChange\`/\`onValueChange\`/\`register\` reciben el valor final.
+Hasta ese momento \`onChange\` puede traer más decimales: no construyas el payload antes del blur.
+Con \`decimals={0}\` el separador se rechaza al teclear y un valor pegado con decimales se redondea
+(\`12.7\` → \`13\`).
 
 **Qué modo usar**
 

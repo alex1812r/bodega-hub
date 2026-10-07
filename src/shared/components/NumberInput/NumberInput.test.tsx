@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
@@ -122,21 +122,186 @@ describe("NumberInput", () => {
     expect(onValueChange).toHaveBeenLastCalledWith(1);
   });
 
-  it("trims extra decimals", async () => {
+  it.each([
+    ["12.345", "12.35", 12.35],
+    ["0.999", "1", 1],
+    ["1.005", "1.01", 1.01],
+    ["2.675", "2.68", 2.68],
+  ])("keeps the extra decimals of %s while typing and rounds to %s on blur", async (typed, expected, value) => {
     const user = userEvent.setup();
-    const { unmount } = render(<NumberInput decimals={2} label="Monto" />);
+    const onChange = jest.fn();
+    const onValueChange = jest.fn();
 
-    await user.type(getField(), "1,239");
-    expect(getField()).toHaveValue("1.23");
-    unmount();
+    render(<NumberInput decimals={2} label="Monto" onChange={onChange} onValueChange={onValueChange} />);
 
-    // Entero: al escribir se rechaza el separador; al pegar se descartan los decimales.
-    render(<NumberInput decimals={0} label="Monto" />);
+    await user.type(getField(), typed);
+    expect(getField()).toHaveValue(typed);
+    expect(onValueChange).toHaveBeenLastCalledWith(Number(typed));
+
+    await user.tab();
+    expect(getField()).toHaveValue(expected);
+    expect(onValueChange).toHaveBeenLastCalledWith(value);
+    expect(onChange.mock.lastCall?.[0].target.value).toBe(expected);
+  });
+
+  it("rounds a pasted value with extra decimals on blur", async () => {
+    const user = userEvent.setup();
+
+    render(<NumberInput decimals={2} label="Monto" />);
+
+    await user.click(getField());
+    await user.paste("1.234,565");
+    expect(getField()).toHaveValue("1234.565");
+
+    await user.tab();
+    expect(getField()).toHaveValue("1234.57");
+  });
+
+  it("rounds before padding the decimals", async () => {
+    const user = userEvent.setup();
+
+    render(<NumberInput decimals={2} label="Monto" padDecimals />);
+
+    await user.type(getField(), "0.999");
+    await user.tab();
+
+    expect(getField()).toHaveValue("1.00");
+  });
+
+  it("rounds before applying min and max", async () => {
+    const user = userEvent.setup();
+
+    render(<NumberInput decimals={2} label="Monto" max={10} min={0.01} />);
+
+    await user.type(getField(), "9.999");
+    await user.tab();
+    expect(getField()).toHaveValue("10");
+
+    await user.clear(getField());
+    await user.type(getField(), "0.006");
+    await user.tab();
+    expect(getField()).toHaveValue("0.01");
+  });
+
+  it("rejects the separator when typing an integer and rounds a pasted decimal", async () => {
+    const user = userEvent.setup();
+    const onValueChange = jest.fn();
+
+    render(<NumberInput decimals={0} label="Monto" onValueChange={onValueChange} />);
+
     await user.type(getField(), "12.7");
     expect(getField()).toHaveValue("127");
+
     await user.clear(getField());
-    await user.paste("12,7");
+    await user.paste("12.7");
+    await user.tab();
+    expect(getField()).toHaveValue("13");
+    expect(onValueChange).toHaveBeenLastCalledWith(13);
+
+    await user.click(getField());
+    await user.paste("12,4");
+    await user.tab();
     expect(getField()).toHaveValue("12");
+  });
+
+  it("rounds on Enter so a form submitted from the field gets the final value", async () => {
+    const user = userEvent.setup();
+    const onSubmit = jest.fn();
+
+    function StringForm() {
+      const [amount, setAmount] = useState("");
+
+      return (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit(amount);
+          }}
+        >
+          <NumberInput
+            decimals={2}
+            label="Monto"
+            onChange={(event) => setAmount(event.target.value)}
+            value={amount}
+          />
+          <button type="submit">Guardar</button>
+        </form>
+      );
+    }
+
+    render(<StringForm />);
+
+    await user.type(getField(), "12.345{Enter}");
+
+    expect(getField()).toHaveValue("12.35");
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenLastCalledWith("12.35");
+  });
+
+  it("sends the value rounded on Enter to react-hook-form register", async () => {
+    const user = userEvent.setup();
+    const onSubmit = jest.fn();
+
+    function RegisterForm() {
+      const { handleSubmit, register } = useForm<{ amount: number }>();
+
+      return (
+        <form onSubmit={handleSubmit((values) => onSubmit(values))}>
+          <NumberInput decimals={2} label="Monto" {...register("amount", { valueAsNumber: true })} />
+          <button type="submit">Guardar</button>
+        </form>
+      );
+    }
+
+    render(<RegisterForm />);
+
+    await user.type(getField(), "1.005{Enter}");
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenLastCalledWith({ amount: 1.01 });
+  });
+
+  it("keeps the extra decimals while typing in a Controller and stores the rounded number on blur", async () => {
+    const user = userEvent.setup();
+    const onSubmit = jest.fn();
+
+    function ControllerForm() {
+      const { control, handleSubmit } = useForm<{ amount: number | null }>({
+        defaultValues: { amount: null },
+      });
+
+      return (
+        <form onSubmit={handleSubmit((values) => onSubmit(values))}>
+          <Controller
+            control={control}
+            name="amount"
+            render={({ field }) => (
+              <NumberInput
+                decimals={2}
+                label="Monto"
+                name={field.name}
+                onBlur={field.onBlur}
+                onValueChange={field.onChange}
+                ref={field.ref}
+                value={field.value}
+              />
+            )}
+          />
+          <button type="submit">Guardar</button>
+        </form>
+      );
+    }
+
+    render(<ControllerForm />);
+
+    await user.type(getField(), "1.005");
+    expect(getField()).toHaveValue("1.005");
+
+    await user.click(screen.getByRole("button", { name: /guardar/i }));
+
+    expect(getField()).toHaveValue("1.01");
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenLastCalledWith({ amount: 1.01 });
   });
 
   it("formats on blur without touching a value that was already valid", async () => {
@@ -478,7 +643,8 @@ describe("NumberInput helpers", () => {
   });
 
   it("sanitizes typed text", () => {
-    expect(sanitizeNumberText("12,345", { decimals: 2 })).toBe("12.34");
+    expect(sanitizeNumberText("12,345", { decimals: 2 })).toBe("12.345");
+    expect(sanitizeNumberText("12,", { decimals: 0 })).toBe("12");
     expect(sanitizeNumberText("-3", {})).toBe("3");
     expect(sanitizeNumberText("-3", { allowNegative: true })).toBe("-3");
     expect(sanitizeNumberText("3-4", { allowNegative: true })).toBe("34");
@@ -502,5 +668,29 @@ describe("NumberInput helpers", () => {
     expect(normalizeNumberText("-7.10", { allowNegative: true, min: -5 })).toBe("-5");
     expect(normalizeNumberText("3", { decimals: 2, padDecimals: true })).toBe("3.00");
     expect(normalizeNumberText("250", { decimals: 2, max: 99.5, padDecimals: true })).toBe("99.50");
+  });
+
+  it("rounds half up on blur without floating point errors", () => {
+    expect(normalizeNumberText("12.345", { decimals: 2 })).toBe("12.35");
+    expect(normalizeNumberText("12.344", { decimals: 2 })).toBe("12.34");
+    expect(normalizeNumberText("0.999", { decimals: 2 })).toBe("1");
+    expect(normalizeNumberText("0.999", { decimals: 2, padDecimals: true })).toBe("1.00");
+    expect(normalizeNumberText("1.005", { decimals: 2 })).toBe("1.01");
+    expect(normalizeNumberText("2.675", { decimals: 2 })).toBe("2.68");
+    expect(normalizeNumberText("99.995", { decimals: 2 })).toBe("100");
+    expect(normalizeNumberText("12.7", { decimals: 0 })).toBe("13");
+    expect(normalizeNumberText("12.5", { decimals: 0 })).toBe("13");
+    expect(normalizeNumberText("12.4", { decimals: 0 })).toBe("12");
+    expect(normalizeNumberText("1.2345", { decimals: 3 })).toBe("1.235");
+    expect(normalizeNumberText("1.0005", { decimals: 3 })).toBe("1.001");
+    expect(normalizeNumberText("12.50", { decimals: 2 })).toBe("12.50");
+    expect(normalizeNumberText("12.345", {})).toBe("12.345");
+    // Negativos: el medio va hacia +infinito, igual que el Math.round de roundMoney.
+    expect(normalizeNumberText("-12.345", { allowNegative: true, decimals: 2 })).toBe("-12.34");
+    expect(normalizeNumberText("-12.346", { allowNegative: true, decimals: 2 })).toBe("-12.35");
+    expect(normalizeNumberText("-0.001", { allowNegative: true, decimals: 2 })).toBe("0");
+    // El redondeo va antes de min/max.
+    expect(normalizeNumberText("9.999", { decimals: 2, max: 10 })).toBe("10");
+    expect(normalizeNumberText("0.004", { decimals: 2, min: 0.01 })).toBe("0.01");
   });
 });
