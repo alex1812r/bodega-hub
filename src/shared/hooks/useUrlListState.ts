@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   Suspense,
   createElement,
@@ -413,9 +413,14 @@ function reconcileWithUrl(
  * - Los valores por defecto no se escriben en la URL.
  * - Lectura tolerante: un parámetro inválido cae a su default sin afectar al
  *   resto; los parámetros que no son del schema (`tab`, `from`, …) se conservan.
- * - Escribe con `router.replace(url, { scroll: false })`. Los `textFields` se
- *   escriben con debounce; el resto, al instante. Un clic en un enlace con texto
- *   pendiente lo escribe en el acto con `history.replaceState`, sin esperar.
+ * - Escribe con `window.history.replaceState` nativo, que Next refleja en
+ *   `useSearchParams` sin ir al servidor ni mover el scroll. No usa
+ *   `router.replace`: es una navegación que queda pendiente, y el `push` de un
+ *   enlace pulsado mientras tanto sustituía la entrada de la lista (ATRÁS se la
+ *   saltaba). Por lo mismo, un Server Component que lea `searchParams` NO se
+ *   vuelve a ejecutar al cambiar un filtro: los datos se piden desde el cliente.
+ * - Los `textFields` se escriben con debounce; el resto, al instante. Un clic en
+ *   un enlace con texto pendiente lo escribe en el acto, sin esperar.
  * - Si la URL cambia por fuera (atrás/adelante, enlace), el estado la sigue.
  * - Mientras una escritura propia está en camino manda el estado local: la URL
  *   que llega se compara con el registro de escrituras propias
@@ -452,7 +457,6 @@ export function useUrlListState<TShape extends UrlListShape>(
 ): UrlListState<UrlListStateOf<TShape>> {
   type TState = UrlListStateOf<TShape>;
 
-  const router = useRouter();
   const pathname = usePathname();
   const urlKey = useSearchParams().toString();
   const model: ListModel = useMemo(() => createListModel(schema.shape), [schema]);
@@ -475,12 +479,11 @@ export function useUrlListState<TShape extends UrlListShape>(
     model,
     pageField: options.pageField ?? DEFAULT_PAGE_FIELD,
     pathname,
-    router,
     textFields,
     urlKey,
   };
   const environmentRef = useRef(environment);
-  /** Última query pedida al router (o la de la URL si no hay escrituras en camino). */
+  /** Última query escrita (o la de la URL si no hay escrituras en camino). */
   const targetQueryRef = useRef(urlKey);
   const timerRef = useRef<number | null>(null);
   const forgetTimerRef = useRef<number | null>(null);
@@ -507,8 +510,8 @@ export function useUrlListState<TShape extends UrlListShape>(
     }
   }, []);
 
-  // Al desmontar no se escribe lo pendiente: un `replace` tardío devolvería al
-  // usuario a la lista que acaba de abandonar.
+  // Al desmontar no se escribe lo pendiente: una escritura tardía pondría la URL
+  // de la lista en la pantalla a la que el usuario acaba de ir.
   useEffect(
     () => () => {
       cancelTimer();
@@ -522,11 +525,11 @@ export function useUrlListState<TShape extends UrlListShape>(
   );
 
   /**
-   * Escribe en la URL el estado local. `"history"` usa `history.replaceState`
-   * nativo (Next lo refleja en `useSearchParams`), que es síncrono: sirve para
-   * dejar la URL escrita ANTES de que arranque otra navegación.
+   * Escribe en la URL el estado local con `history.replaceState` nativo. Es
+   * síncrono: la URL queda escrita en la entrada de la lista antes de que pueda
+   * arrancar otra navegación, y no deja ninguna pendiente en el router.
    */
-  const flush = useCallback((via: "router" | "history" = "router") => {
+  const flush = useCallback(() => {
     cancelTimer();
 
     const env = environmentRef.current;
@@ -565,15 +568,14 @@ export function useUrlListState<TShape extends UrlListShape>(
 
     const url = query ? `${env.pathname}?${query}` : env.pathname;
 
-    if (via === "history") {
-      window.history.replaceState(window.history.state, "", url);
-    } else {
-      env.router.replace(url, { scroll: false });
-    }
+    // `null` y no `window.history.state`: Next copia él mismo su estado interno
+    // a la entrada, y si lo recibe con su marca (`__NA`) toma la llamada por
+    // suya y no actualiza `useSearchParams`.
+    window.history.replaceState(null, "", url);
   }, [cancelTimer, store]);
 
   // Un clic en un enlace con texto aún en debounce: la URL se escribe ya, antes
-  // de que el enlace navegue. Si el `replace` saliera después, con la navegación
+  // de que el enlace navegue. Si la escritura saliera después, con la navegación
   // en vuelo, Next la descartaría y el usuario se quedaría en la lista. Además,
   // lo tecleado queda en la entrada de historial de la lista para "atrás".
   // Fase de captura en `document`: corre antes que el `onClick` de `<Link>`.
@@ -584,7 +586,7 @@ export function useUrlListState<TShape extends UrlListShape>(
         event.target instanceof Element &&
         event.target.closest("a[href]") !== null
       ) {
-        flush("history");
+        flush();
       }
     }
 
@@ -607,7 +609,7 @@ export function useUrlListState<TShape extends UrlListShape>(
 
       if (changed.every((key) => env.textFields.includes(key))) {
         cancelTimer();
-        timerRef.current = window.setTimeout(() => flush(), env.debounceMs);
+        timerRef.current = window.setTimeout(flush, env.debounceMs);
       } else {
         flush();
       }

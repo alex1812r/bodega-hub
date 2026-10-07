@@ -10,7 +10,6 @@ const mockUrl = { query: "" };
 
 jest.mock("next/navigation", () => ({
   usePathname: () => "/productos",
-  useRouter: () => ({ replace: mockReplace }),
   useSearchParams: () => new URLSearchParams(mockUrl.query),
 }));
 
@@ -42,6 +41,16 @@ beforeEach(() => {
   mockReplace.mockImplementation((url: string) => {
     mockUrl.query = url.split("?")[1] ?? "";
   });
+  // La lista escribe con `history.replaceState`, que Next refleja en `useSearchParams`.
+  jest.spyOn(window.history, "replaceState").mockImplementation((_data, _unused, url) => {
+    if (url) {
+      mockReplace(String(url));
+    }
+  });
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 describe("useUrlPaginationState", () => {
@@ -68,7 +77,7 @@ describe("useUrlPaginationState", () => {
 
     expect(result.current.pagination.skip).toBe(30);
     expect(result.current.list.state.page).toBe(4);
-    expect(mockReplace).toHaveBeenCalledWith("/productos?status=active&page=4", { scroll: false });
+    expect(mockReplace).toHaveBeenCalledWith("/productos?status=active&page=4");
 
     act(() => result.current.pagination.setSkip(0));
 

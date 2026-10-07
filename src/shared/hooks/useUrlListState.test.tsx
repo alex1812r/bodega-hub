@@ -23,8 +23,14 @@ import {
   withUrlListBoundary,
 } from "./useUrlListState";
 
-const mockReplace = jest.fn();
-/** URL simulada. Con `auto`, `router.replace` la actualiza como haría Next. */
+/** Cada escritura de la lista en la URL, tal como la recibe Next: un `history.replaceState` que sincroniza. */
+const mockReplace = jest.fn<void, [string]>();
+/**
+ * `router.replace` / `router.push`. En Next son navegaciones con ida al servidor
+ * que quedan pendientes; aquí ninguna llega a terminar. El hook no debe usarlas.
+ */
+const mockRouterNavigate = jest.fn();
+/** URL simulada. Con `auto`, cada escritura la actualiza como haría Next. */
 const mockUrl = { auto: true, pathname: "/productos", query: "" };
 /**
  * Router con latencia: dentro de `LaggedRouter` la URL es estado de React, las
@@ -45,7 +51,7 @@ jest.mock("next/navigation", () => {
 
   return {
     usePathname: () => mockUrl.pathname,
-    useRouter: () => ({ replace: mockReplace }),
+    useRouter: () => ({ push: mockRouterNavigate, replace: mockRouterNavigate }),
     useSearchParams: () =>
       new URLSearchParams(react.useContext(mockLagged.context) ?? mockUrl.query),
   };
@@ -77,6 +83,47 @@ const DEFAULTS = {
   tags: [],
 };
 
+const nativeHistory = {
+  push: window.history.pushState.bind(window.history),
+  replace: window.history.replaceState.bind(window.history),
+};
+/** Claves con las que Next guarda su estado en cada entrada del historial. */
+const NEXT_HISTORY_KEYS = ["__NA", "__PRIVATE_NEXTJS_INTERNALS_TREE"] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Modelo del `history.replaceState` que parchea Next (`client/components/app-router.js`):
+ * copia su estado interno a la entrada y refleja la URL en `useSearchParams`.
+ * Si `data` ya trae `__NA` lo toma por una llamada suya y NO sincroniza nada.
+ */
+function nextReplaceState(data: unknown, unused: string, url?: string | URL | null) {
+  if (isRecord(data) && data.__NA) {
+    nativeHistory.replace(data, unused, url);
+
+    return;
+  }
+
+  const current: unknown = window.history.state;
+  const next: Record<string, unknown> = isRecord(data) ? { ...data } : {};
+
+  if (isRecord(current)) {
+    for (const key of NEXT_HISTORY_KEYS) {
+      if (current[key]) {
+        next[key] = current[key];
+      }
+    }
+  }
+
+  nativeHistory.replace(next, unused, url);
+
+  if (url) {
+    mockReplace(String(url));
+  }
+}
+
 function renderList(query = "") {
   mockUrl.query = query;
 
@@ -97,10 +144,15 @@ beforeEach(() => {
       mockUrl.query = url.split("?")[1] ?? "";
     }
   });
+  nativeHistory.replace(null, "", "/productos");
+  window.history.replaceState = nextReplaceState;
 });
 
 afterEach(() => {
   jest.useRealTimers();
+  window.history.replaceState = nativeHistory.replace;
+  // Ninguna escritura de la lista puede ser una navegación del router (SHR-27).
+  expect(mockRouterNavigate).not.toHaveBeenCalled();
 });
 
 describe("useUrlListState", () => {
@@ -116,20 +168,20 @@ describe("useUrlListState", () => {
       expect(mockReplace).not.toHaveBeenCalled();
     });
 
-    it("omite de la URL los valores por defecto y usa replace sin scroll", () => {
+    it("omite de la URL los valores por defecto y escribe con history.replaceState, sin navegar", () => {
       const { result } = renderList();
 
       act(() => result.current.setState({ onlyLow: true, status: "active" }));
 
       expect(mockReplace).toHaveBeenCalledTimes(1);
-      expect(mockReplace).toHaveBeenCalledWith("/productos?status=active&onlyLow=true", {
-        scroll: false,
-      });
+      expect(mockReplace).toHaveBeenCalledWith("/productos?status=active&onlyLow=true");
+      expect(window.location.search).toBe("?status=active&onlyLow=true");
       expect(result.current.isDefault).toBe(false);
 
       act(() => result.current.setState({ onlyLow: false, status: "all" }));
 
-      expect(mockReplace).toHaveBeenLastCalledWith("/productos", { scroll: false });
+      expect(mockReplace).toHaveBeenLastCalledWith("/productos");
+      expect(window.location.search).toBe("");
       expect(result.current.isDefault).toBe(true);
     });
 
@@ -365,7 +417,7 @@ describe("useUrlListState", () => {
         jest.advanceTimersByTime(1);
       });
       expect(mockReplace).toHaveBeenCalledTimes(1);
-      expect(mockReplace).toHaveBeenCalledWith("/productos?search=arroz", { scroll: false });
+      expect(mockReplace).toHaveBeenCalledWith("/productos?search=arroz");
       expect(screen.getByLabelText("Buscar")).toHaveValue("arroz");
     });
 
@@ -498,13 +550,12 @@ describe("useUrlListState", () => {
 
       beforeEach(() => {
         seenByLink.length = 0;
-        window.history.replaceState(null, "", "/productos?tab=stock");
+        nativeHistory.replace(null, "", "/productos?tab=stock");
         mockUrl.query = "tab=stock";
       });
 
       afterEach(() => {
         jest.restoreAllMocks();
-        window.history.replaceState(null, "", "/");
       });
 
       it("escribe la URL antes de que arranque la navegación y no la cancela con un replace tardío", () => {
@@ -522,6 +573,7 @@ describe("useUrlListState", () => {
         // El filtro tecleado queda en la entrada de historial de la lista ("atrás" lo restaura).
         expect(seenByLink).toEqual(["/productos?tab=stock&search=bet"]);
         expect(history.replace).toHaveBeenCalledTimes(1);
+        expect(mockReplace).toHaveBeenCalledTimes(1);
         expect(history.push).not.toHaveBeenCalled();
 
         // La navegación sigue en vuelo cuando habría vencido el debounce.
@@ -529,21 +581,25 @@ describe("useUrlListState", () => {
           jest.advanceTimersByTime(1000);
         });
 
-        expect(mockReplace).not.toHaveBeenCalled();
+        expect(mockReplace).toHaveBeenCalledTimes(1);
         expect(history.replace).toHaveBeenCalledTimes(1);
         expect(history.push).not.toHaveBeenCalled();
       });
 
       it("conserva el estado interno de Next de la entrada de historial", () => {
         jest.useFakeTimers();
-        window.history.replaceState({ __NA: true, tree: "lista" }, "", "/productos?tab=stock");
+        nativeHistory.replace(
+          { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: "lista" },
+          "",
+          "/productos?tab=stock",
+        );
         render(<ListWithLink />);
 
         fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "bet" } });
         fireEvent.click(screen.getByText("Detalle"));
 
         expect(window.location.search).toBe("?tab=stock&search=bet");
-        expect(window.history.state).toEqual({ __NA: true, tree: "lista" });
+        expect(window.history.state).toEqual({ __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: "lista" });
       });
 
       it("si la navegación no llega a ocurrir, la lista sigue funcionando con la URL ya escrita", () => {
@@ -555,7 +611,7 @@ describe("useUrlListState", () => {
         fireEvent.click(screen.getByText("Detalle"));
 
         // Next refleja el `replaceState` nativo en `useSearchParams`.
-        mockUrl.query = "tab=stock&search=bet";
+        expect(mockUrl.query).toBe("tab=stock&search=bet");
         rerender(<ListWithLink />);
         expect(screen.getByLabelText("Buscar")).toHaveValue("bet");
 
@@ -564,7 +620,7 @@ describe("useUrlListState", () => {
           jest.advanceTimersByTime(300);
         });
 
-        expect(mockReplace).toHaveBeenCalledTimes(1);
+        expect(mockReplace).toHaveBeenCalledTimes(2);
         expect(lastReplacedUrl()).toBe("/productos?tab=stock&search=beta");
       });
 
@@ -598,7 +654,7 @@ describe("useUrlListState", () => {
 
         expect(mockReplace).toHaveBeenCalledTimes(1);
         expect(lastReplacedUrl()).toBe("/productos?tab=stock&search=bet");
-        expect(history.replace).not.toHaveBeenCalled();
+        expect(history.replace).toHaveBeenCalledTimes(1);
       });
 
       it("al desmontar deja de escuchar los clics", () => {
@@ -617,6 +673,106 @@ describe("useUrlListState", () => {
 
         expect(history.replace).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  describe("enlace pulsado con una escritura recién hecha (SHR-27)", () => {
+    /** Lo que el enlace encuentra en la barra de direcciones al recibir el clic. */
+    const seenByLink: string[] = [];
+
+    function ListWithNextLink() {
+      const list = useUrlListState(schema);
+
+      return (
+        <>
+          <input
+            aria-label="Buscar"
+            onChange={(event) => list.setField("search", event.target.value)}
+            value={list.state.search}
+          />
+          <button onClick={() => list.setField("status", "active")} type="button">
+            Solo activos
+          </button>
+          <a
+            href="/productos/7"
+            onClick={(event) => {
+              event.preventDefault();
+              seenByLink.push(window.location.pathname + window.location.search);
+
+              // Como el router de Next: el `push` de un enlace que llega con otra
+              // navegación aún pendiente se confirma como `replaceState`.
+              if (mockRouterNavigate.mock.calls.length > 0) {
+                nativeHistory.replace(null, "", "/productos/7");
+              } else {
+                nativeHistory.push(null, "", "/productos/7");
+              }
+            }}
+          >
+            Detalle
+          </a>
+        </>
+      );
+    }
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      seenByLink.length = 0;
+      nativeHistory.replace(null, "", "/productos?tab=stock");
+      mockUrl.query = "tab=stock";
+    });
+
+    it("tras cambiar un filtro, el enlace añade su entrada y la lista queda detrás con el filtro", () => {
+      render(<ListWithNextLink />);
+
+      const entries = window.history.length;
+
+      fireEvent.click(screen.getByRole("button", { name: "Solo activos" }));
+      fireEvent.click(screen.getByText("Detalle"));
+
+      expect(window.location.pathname).toBe("/productos/7");
+      // La entrada de la lista sigue en el historial: ATRÁS vuelve a ella.
+      expect(window.history.length).toBe(entries + 1);
+      expect(seenByLink).toEqual(["/productos?tab=stock&status=active"]);
+      expect(mockRouterNavigate).not.toHaveBeenCalled();
+    });
+
+    it("con el debounce de texto ya vencido, el enlace añade su entrada y la lista conserva la búsqueda", () => {
+      render(<ListWithNextLink />);
+
+      const entries = window.history.length;
+
+      fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "bet" } });
+      act(() => {
+        jest.advanceTimersByTime(350);
+      });
+      fireEvent.click(screen.getByText("Detalle"));
+
+      expect(window.location.pathname).toBe("/productos/7");
+      expect(window.history.length).toBe(entries + 1);
+      expect(seenByLink).toEqual(["/productos?tab=stock&search=bet"]);
+      expect(mockRouterNavigate).not.toHaveBeenCalled();
+    });
+
+    it("la escritura conserva el estado interno de Next y se refleja en useSearchParams", () => {
+      nativeHistory.replace(
+        { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: "lista" },
+        "",
+        "/productos?tab=stock",
+      );
+
+      const { result, rerender } = renderHook(() => useUrlListState(schema));
+
+      act(() => result.current.setField("status", "active"));
+
+      // Sin la marca `__NA` en lo que se pasa, Next sincroniza la URL nueva...
+      expect(mockUrl.query).toBe("tab=stock&status=active");
+      // ...y copia su estado a la entrada.
+      expect(window.history.state).toEqual({ __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: "lista" });
+
+      rerender();
+
+      expect(result.current.state.status).toBe("active");
+      expect(mockReplace).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -677,7 +833,7 @@ describe("useUrlListState", () => {
 
       expect(result.current.state).toEqual(DEFAULTS);
       expect(result.current.isDefault).toBe(true);
-      expect(mockReplace).toHaveBeenCalledWith("/productos?tab=ventas", { scroll: false });
+      expect(mockReplace).toHaveBeenCalledWith("/productos?tab=ventas");
     });
 
     it("cancela el texto pendiente", () => {

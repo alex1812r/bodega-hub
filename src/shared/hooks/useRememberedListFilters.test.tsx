@@ -18,12 +18,11 @@ import {
 import { listParams, useUrlListState } from "./useUrlListState";
 
 const mockReplace = jest.fn();
-/** URL simulada: `router.replace` la actualiza como haría Next. */
+/** URL simulada: cada escritura de la lista la actualiza como haría Next. */
 const mockUrl = { pathname: "/products", query: "" };
 
 jest.mock("next/navigation", () => ({
   usePathname: () => mockUrl.pathname,
-  useRouter: () => ({ replace: mockReplace }),
   useSearchParams: () => new URLSearchParams(mockUrl.query),
 }));
 
@@ -91,6 +90,12 @@ beforeEach(() => {
   mockUrl.query = "";
   mockReplace.mockImplementation((url: string) => {
     mockUrl.query = url.split("?")[1] ?? "";
+  });
+  // La lista escribe con `history.replaceState`, que Next refleja en `useSearchParams`.
+  jest.spyOn(window.history, "replaceState").mockImplementation((_data, _unused, url) => {
+    if (url) {
+      mockReplace(String(url));
+    }
   });
 });
 
