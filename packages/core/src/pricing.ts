@@ -22,6 +22,9 @@ export const DEFAULT_MARKUP_CHIPS: readonly number[] = [12, 20, 30];
 
 const BAND_RANK: Record<MarginBand, number> = { low: 0, mid: 1, high: 2 };
 
+/** 100 % expresado en centésimas de punto: el factor `1 + pct / 100` como entero. */
+const PCT_SCALE = 10000;
+
 /** Quita el ruido binario (1.15 − 1 = 0.1499…) sin alterar un % real. */
 function cleanPct(value: number) {
   const cleaned = Math.round(value * 1e6) / 1e6;
@@ -46,13 +49,33 @@ export function markupPct(cost: number, price: number): number | null {
 /**
  * Precio que deja `pct` % de ganancia sobre el costo, redondeado a dinero.
  * Costo 0 (o cualquier valor no utilizable) da 0; nunca devuelve un precio negativo.
+ *
+ * Se calcula en enteros (céntimos × diezmilésimas del factor) para que un empate exacto de
+ * medio céntimo suba: en coma flotante 1.02 × 1.25 da 1.27499… y se redondearía hacia abajo.
+ * El costo se toma al céntimo y el % a dos decimales.
  */
 export function priceFromMarkup(cost: number, pct: number): number {
   if (!Number.isFinite(cost) || !Number.isFinite(pct) || cost <= 0) {
     return 0;
   }
 
-  return Math.max(0, roundMoney(cost * (1 + pct / 100)));
+  const costCents = Math.round(cost * 100);
+  const factor = PCT_SCALE + Math.round(pct * 100);
+  const scaled = costCents * factor;
+
+  if (!Number.isSafeInteger(scaled)) {
+    // Fuera del rango entero exacto (montos astronómicos) no hay empate que proteger.
+    return Math.max(0, roundMoney(cost * (1 + pct / 100)));
+  }
+
+  if (scaled <= 0) {
+    return 0;
+  }
+
+  const remainder = scaled % PCT_SCALE;
+  const priceCents = (scaled - remainder) / PCT_SCALE + (remainder * 2 >= PCT_SCALE ? 1 : 0);
+
+  return priceCents / 100;
 }
 
 /** Banda del semáforo. Sin % (`null`), negativo o no finito es `low`. */

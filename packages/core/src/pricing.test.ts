@@ -96,6 +96,46 @@ describe("priceFromMarkup", () => {
     expect(priceFromMarkup(0.1 + 0.2, 0)).toBe(0.3);
   });
 
+  it("rounds an exact half cent up instead of losing it to binary noise", () => {
+    // 1.02 × 1.25 = 1.275 exacto; en coma flotante queda 1.2749999999999999.
+    expect(priceFromMarkup(1.02, 25)).toBe(1.28);
+    // 0.35 × 1.30 = 0.455 exacto.
+    expect(priceFromMarkup(0.35, 30)).toBe(0.46);
+    expect(priceFromMarkup(0.18, 25)).toBe(0.23);
+    expect(priceFromMarkup(1.88, 12.5)).toBe(2.12);
+  });
+
+  it("matches exact integer half-up rounding across a sweep of costs and markups", () => {
+    // [pct, pct en centésimas]: el esperado se calcula solo con enteros (BigInt).
+    const pcts: Array<[number, number]> = [
+      [5, 500],
+      [12, 1200],
+      [12.5, 1250],
+      [20, 2000],
+      [25, 2500],
+      [30, 3000],
+      [33.33, 3333],
+    ];
+    const scale = BigInt(10000);
+    const half = BigInt(5000);
+    const mismatches: string[] = [];
+
+    for (let cents = 1; cents <= 5000; cents += 1) {
+      for (const [pct, pctHundredths] of pcts) {
+        const exactCents = Number(
+          (BigInt(cents) * (scale + BigInt(pctHundredths)) + half) / scale,
+        );
+        const got = priceFromMarkup(cents / 100, pct);
+
+        if (got !== exactCents / 100) {
+          mismatches.push(`${cents / 100} @ ${pct} % → ${got} (exacto ${exactCents / 100})`);
+        }
+      }
+    }
+
+    expect(mismatches).toEqual([]);
+  });
+
   it("round-trips with markupPct within the rounding error of one cent", () => {
     const costs = [0.05, 0.3, 1, 3.33, 8, 9.99, 12.5, 149.9, 1234.56];
     const pcts = [0, 12, 15, 20, 24.99, 25, 30, 33.33, 100];
@@ -149,6 +189,28 @@ describe("marginBand", () => {
   it("keeps a negative markup low even with a zero threshold", () => {
     expect(marginBand(-1, { low: 0, high: 10 })).toBe("low");
     expect(marginBand(0, { low: 0, high: 10 })).toBe("mid");
+  });
+
+  it("keeps an exact threshold markup in its band for any cost in cents", () => {
+    expect(markupPct(0.8, 1)).toBe(25);
+    expect(marginBand(markupPct(0.8, 1))).toBe("high");
+    expect(markupPct(1, 1.15)).toBe(15);
+    expect(marginBand(markupPct(1, 1.15))).toBe("mid");
+
+    const offBand: string[] = [];
+
+    // Costos donde el 15 % y el 25 % dan un precio exacto en céntimos (múltiplos de 0.20).
+    for (let cents = 20; cents <= 300000; cents += 20) {
+      const cost = cents / 100;
+      const at15 = marginBand(markupPct(cost, (cents * 115) / 100 / 100));
+      const at25 = marginBand(markupPct(cost, (cents * 125) / 100 / 100));
+
+      if (at15 !== "mid" || at25 !== "high") {
+        offBand.push(`${cost}: 15 % → ${at15}, 25 % → ${at25}`);
+      }
+    }
+
+    expect(offBand).toEqual([]);
   });
 
   it("classifies a price computed from the threshold markup in that band", () => {
