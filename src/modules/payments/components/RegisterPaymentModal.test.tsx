@@ -29,9 +29,17 @@ function renderModal(ui: ReactNode) {
 describe("RegisterPaymentModal", () => {
   const fetchMock = jest.fn();
   let paymentResponse: Response;
+  let enabledPaymentMethods: string[];
 
   beforeEach(() => {
     paymentResponse = jsonResponse({ data: { id: "pay-new", pendingBalanceVes: 1000 } });
+    enabledPaymentMethods = [
+      "efectivo_ves",
+      "efectivo_usd",
+      "pago_movil",
+      "punto_venta",
+      "transferencia",
+    ];
     fetchMock.mockReset();
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (init?.method === "POST") {
@@ -41,13 +49,7 @@ describe("RegisterPaymentModal", () => {
       if (String(url).includes("/api/settings/payment-methods")) {
         return jsonResponse({
           data: {
-            enabledPaymentMethods: [
-              "efectivo_ves",
-              "efectivo_usd",
-              "pago_movil",
-              "punto_venta",
-              "transferencia",
-            ],
+            enabledPaymentMethods,
           },
         });
       }
@@ -184,6 +186,54 @@ describe("RegisterPaymentModal", () => {
     expect(dialog.getByText("Indica el telefono.")).toBeInTheDocument();
     expect(dialog.getByText("Usa una referencia de 4 digitos.")).toBeInTheDocument();
     expect(postedBodies()).toHaveLength(0);
+  });
+
+  it("Completar saldo envia el saldo pendiente de la venta en Bs", async () => {
+    renderModal(<RegisterPaymentModal saleId="sale-002" />);
+    const { dialog, user } = await openModal();
+
+    await user.click(dialog.getByRole("button", { name: "Completar saldo" }));
+    await submit(user);
+
+    const post = await expectSinglePost();
+
+    expect(post.body).toEqual({
+      amount: 8475,
+      currency: "VES",
+      method: "efectivo_ves",
+      saleId: "sale-002",
+    });
+  });
+
+  it("sin documento elegido no ofrece atajos de saldo", async () => {
+    const user = userEvent.setup();
+
+    renderModal(<RegisterPaymentModal />);
+    await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+
+    const dialog = within(await screen.findByRole("dialog"));
+
+    expect(dialog.getByLabelText("ID venta")).toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Completar saldo" })).not.toBeInTheDocument();
+  });
+
+  it("si el metodo por defecto no esta habilitado usa el primero habilitado", async () => {
+    enabledPaymentMethods = ["efectivo_usd", "transferencia"];
+    renderModal(<RegisterPaymentModal saleId="sale-002" />);
+    const { dialog, user } = await openModal();
+
+    await waitFor(() => expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_usd"));
+    await user.type(dialog.getByLabelText("Monto"), "3");
+    await submit(user);
+
+    const post = await expectSinglePost();
+
+    expect(post.body).toEqual({
+      amount: 3,
+      currency: "USD",
+      method: "efectivo_usd",
+      saleId: "sale-002",
+    });
   });
 
   it("muestra el mensaje de error de la API tal cual", async () => {

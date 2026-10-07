@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useEffect, useId, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useMemo, useState } from "react";
 
 import { usePurchase } from "@/modules/purchases/hooks/usePurchases";
 import { useSale } from "@/modules/sales/hooks/useSales";
@@ -9,20 +9,20 @@ import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
 import { SelectField } from "@/shared/components/SelectField";
-import { Textarea } from "@/shared/components/Textarea";
-import { VenezuelanBankField } from "@/shared/components/VenezuelanBankField";
-import { VenezuelanPhoneField } from "@/shared/components/VenezuelanPhoneField";
-import type { PaymentMethod } from "@/shared/mocks/erp-data";
+import {
+  PaymentFormFields,
+  type PaymentFormValues,
+  buildPaymentFormPayload,
+  createEmptyPaymentFormValues,
+  isPaymentFormValid,
+} from "@/shared/payments/PaymentFormFields";
 import { formatVes } from "@/shared/utils/currency";
-import { isKnownBankLabel } from "@/shared/venezuela/banks";
-import { isValidVeMobilePhone } from "@/shared/venezuela/phone";
 
-import { useCreatePayment, type PaymentCreateInput } from "../hooks/usePayments";
+import { useCreatePayment } from "../hooks/usePayments";
 import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import {
   DEFAULT_ENABLED_PAYMENT_METHODS,
   filterEnabledPaymentMethods,
-  paymentMethodLabels,
 } from "@/shared/payments/paymentMethods";
 
 type RegisterPaymentModalProps = {
@@ -33,26 +33,6 @@ type RegisterPaymentModalProps = {
 };
 
 type ContextType = "purchase" | "sale";
-
-function getCurrency(method: PaymentMethod): PaymentCreateInput["currency"] {
-  if (method === "efectivo_usd") {
-    return "USD";
-  }
-
-  return "VES";
-}
-
-function needsBank(method: PaymentMethod) {
-  return method === "pago_movil" || method === "transferencia";
-}
-
-function needsPhone(method: PaymentMethod) {
-  return method === "pago_movil";
-}
-
-function needsReference(method: PaymentMethod) {
-  return method === "pago_movil" || method === "punto_venta" || method === "transferencia";
-}
 
 export function RegisterPaymentModal({
   allowPurchaseContext = true,
@@ -68,24 +48,29 @@ export function RegisterPaymentModal({
     resolvedPurchaseId ? "purchase" : "sale",
   );
   const [contextId, setContextId] = useState(saleId ?? resolvedPurchaseId ?? "");
-  const [method, setMethod] = useState<PaymentMethod>("efectivo_ves");
-  const [amount, setAmount] = useState("");
-  const [bankName, setBankName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [referenceCode, setReferenceCode] = useState("");
-  const [notes, setNotes] = useState("");
+  const [storedValues, setValues] = useState<PaymentFormValues>(() =>
+    createEmptyPaymentFormValues(),
+  );
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [successBalanceVes, setSuccessBalanceVes] = useState<number | undefined>();
   const createPayment = useCreatePayment();
   const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
-  const methodOptions = useMemo(() => {
-    const enabled =
-      enabledPaymentMethodsQuery.data ?? DEFAULT_ENABLED_PAYMENT_METHODS;
-    return filterEnabledPaymentMethods(enabled).map((value) => ({
-      label: paymentMethodLabels[value],
-      value,
-    }));
-  }, [enabledPaymentMethodsQuery.data]);
+  const enabledMethods = useMemo(
+    () =>
+      filterEnabledPaymentMethods(
+        enabledPaymentMethodsQuery.data ?? DEFAULT_ENABLED_PAYMENT_METHODS,
+      ),
+    [enabledPaymentMethodsQuery.data],
+  );
+  // Si la tienda no tiene habilitado el método elegido, se usa el primero habilitado.
+  const values = useMemo<PaymentFormValues>(
+    () =>
+      enabledMethods.length === 0 || enabledMethods.includes(storedValues.method)
+        ? storedValues
+        : { ...storedValues, method: enabledMethods[0] },
+    [enabledMethods, storedValues],
+  );
+  const { method } = values;
   const selectedSaleId = saleId ?? (contextType === "sale" ? contextId : undefined);
   const selectedPurchaseId =
     resolvedPurchaseId ??
@@ -103,40 +88,18 @@ export function RegisterPaymentModal({
 
     return undefined;
   }, [purchase.data, sale.data]);
-  const amountNumber = Number(amount);
+  const rateVes = sale.data?.refRateVes ?? purchase.data?.refRateVes;
   const contextIsValid = Boolean(selectedSaleId) !== Boolean(selectedPurchaseId);
-  const referenceIsValid =
-    !needsReference(method) ||
-    (method === "pago_movil"
-      ? /^\d{4}$/.test(referenceCode.trim())
-      : Boolean(referenceCode.trim()));
-  const bankIsValid = !needsBank(method) || isKnownBankLabel(bankName);
-  const phoneIsValid = !needsPhone(method) || isValidVeMobilePhone(phone);
   const canSubmit =
-    contextIsValid &&
-    amountNumber > 0 &&
-    bankIsValid &&
-    phoneIsValid &&
-    referenceIsValid &&
-    methodOptions.some((option) => option.value === method);
+    contextIsValid && isPaymentFormValid(values) && enabledMethods.includes(method);
 
-  useEffect(() => {
-    if (methodOptions.length === 0) {
-      return;
-    }
-
-    if (!methodOptions.some((option) => option.value === method)) {
-      setMethod(methodOptions[0].value);
-    }
-  }, [method, methodOptions]);
+  function clearFields() {
+    setValues(createEmptyPaymentFormValues(method));
+    setHasSubmitted(false);
+  }
 
   function resetForm() {
-    setAmount("");
-    setBankName("");
-    setPhone("");
-    setReferenceCode("");
-    setNotes("");
-    setHasSubmitted(false);
+    clearFields();
     setSuccessBalanceVes(undefined);
     createPayment.reset();
   }
@@ -152,24 +115,13 @@ export function RegisterPaymentModal({
 
     try {
       const payment = await createPayment.mutateAsync({
-        amount: amountNumber,
-        bankName: bankName.trim() || undefined,
-        currency: getCurrency(method),
-        method,
-        notes: notes.trim() || undefined,
-        phone: phone.trim() || undefined,
+        ...buildPaymentFormPayload(values),
         purchaseId: selectedPurchaseId,
-        referenceCode: referenceCode.trim() || undefined,
         saleId: selectedSaleId,
       });
 
       setSuccessBalanceVes(payment.pendingBalanceVes);
-      setAmount("");
-      setBankName("");
-      setPhone("");
-      setReferenceCode("");
-      setNotes("");
-      setHasSubmitted(false);
+      clearFields();
     } catch {
       return;
     }
@@ -249,83 +201,13 @@ export function RegisterPaymentModal({
           </p>
         ) : null}
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <SelectField
-            label="Metodo"
-            onChange={(event) => {
-              setMethod(event.target.value as PaymentMethod);
-              setBankName("");
-              setPhone("");
-              setReferenceCode("");
-            }}
-            options={methodOptions}
-            value={method}
-          />
-          <Input
-            error={
-              hasSubmitted && amountNumber <= 0
-                ? "Indica un monto mayor a cero."
-                : undefined
-            }
-            helperText={method === "efectivo_usd" ? "Monto en USD." : "Monto en VES."}
-            label="Monto"
-            min="0"
-            onChange={(event) => setAmount(event.target.value)}
-            step="0.01"
-            type="number"
-            value={amount}
-          />
-        </div>
-
-        {needsBank(method) ? (
-          <VenezuelanBankField
-            error={
-              hasSubmitted && !bankIsValid
-                ? bankName.trim()
-                  ? "Selecciona un banco de la lista."
-                  : "Indica el banco."
-                : undefined
-            }
-            onChange={setBankName}
-            value={bankName}
-          />
-        ) : null}
-
-        {needsPhone(method) ? (
-          <VenezuelanPhoneField
-            error={
-              hasSubmitted && !phoneIsValid
-                ? phone.trim()
-                  ? "Telefono invalido (ej. 0412 555-1234)."
-                  : "Indica el telefono."
-                : undefined
-            }
-            onChange={setPhone}
-            value={phone}
-          />
-        ) : null}
-
-        {needsReference(method) ? (
-          <Input
-            error={
-              hasSubmitted && !referenceIsValid
-                ? method === "pago_movil"
-                  ? "Usa una referencia de 4 digitos."
-                  : "Indica la referencia."
-                : undefined
-            }
-            label="Referencia"
-            onChange={(event) => setReferenceCode(event.target.value)}
-            placeholder={method === "pago_movil" ? "1234" : "TRX-001"}
-            value={referenceCode}
-          />
-        ) : null}
-
-        <Textarea
-          label="Notas"
-          onChange={(event) => setNotes(event.target.value)}
-          placeholder="Observaciones internas"
-          value={notes}
+        <PaymentFormFields
+          methods={enabledMethods}
+          onChange={setValues}
+          pendingBalance={pendingBalanceVes}
+          rateVes={rateVes}
+          showErrors={hasSubmitted}
+          values={values}
         />
 
         {successBalanceVes !== undefined ? (
