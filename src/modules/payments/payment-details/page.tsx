@@ -55,9 +55,20 @@ export function PaymentDetailsPage({
   const linkedDocument = data.relatedDocument ?? data.documentBalance;
   const isCancelled = data.status === "anulado";
 
-  async function handleCancelPayment() {
-    await cancelPayment.mutateAsync(paymentId);
-    setIsCancelModalOpen(false);
+  function handleCancelPayment() {
+    // `mutate` no rechaza: si falla, el modal sigue abierto y muestra `cancelPayment.error`.
+    cancelPayment.mutate(paymentId, {
+      onSuccess: () => setIsCancelModalOpen(false),
+    });
+  }
+
+  function handleCancelModalOpenChange(open: boolean) {
+    setIsCancelModalOpen(open);
+
+    if (!open) {
+      // Que el rechazo no reaparezca al volver a abrir el modal.
+      cancelPayment.reset();
+    }
   }
 
   return (
@@ -86,9 +97,10 @@ export function PaymentDetailsPage({
       />
 
       <PaymentCancelConfirmModal
+        error={cancelPayment.error?.message}
         isConfirming={cancelPayment.isPending}
         onConfirm={handleCancelPayment}
-        onOpenChange={setIsCancelModalOpen}
+        onOpenChange={handleCancelModalOpenChange}
         open={isCancelModalOpen}
         paymentId={data.id}
       />
@@ -117,17 +129,6 @@ export function PaymentDetailsPage({
           />
         </div>
       </div>
-
-      {cancelPayment.error ? (
-        <ErrorState
-          description={
-            cancelPayment.error instanceof Error
-              ? cancelPayment.error.message
-              : "No se pudo anular el pago."
-          }
-          title="No pudimos anular el pago"
-        />
-      ) : null}
     </div>
   );
 }
