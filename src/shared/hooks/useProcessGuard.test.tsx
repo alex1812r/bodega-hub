@@ -199,6 +199,8 @@ describe("useProcessGuard", () => {
         window.history.back();
       });
       await waitFor(() => expect(routerPopState.mock.calls.length).toBeGreaterThan(seen));
+      // Con guardia activo el atrás rebota: se espera también la vuelta al centinela.
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
     }
 
     afterEach(() => {
@@ -277,18 +279,38 @@ describe("useProcessGuard", () => {
       expect(sentinelEntries()).toBe(1);
     });
 
-    it("dos atrás seguidos: un solo modal y la URL del proceso", async () => {
+    it("atrás repetido: vuelve al centinela que ya existe, sin crear entradas, y hay un solo modal", async () => {
       renderUnderRouter(<Harness />);
 
-      act(() => {
-        window.history.back();
-        window.history.back();
-      });
-      await screen.findByRole("dialog");
-      await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+      const pushState = jest.spyOn(window.history, "pushState");
+
+      await browserBack();
+      await browserBack();
 
       expect(screen.getAllByRole("dialog")).toHaveLength(1);
       expect(window.location.pathname).toBe(PROCESS_PATH);
+      expect(window.history.state).toMatchObject({ __processGuard: "sentinel" });
+      expect(pushState).not.toHaveBeenCalled();
+      expect(sentinelEntries()).toBe(1);
+
+      pushState.mockRestore();
+    });
+
+    it("la URL escrita después de activar (replace de filtros) sigue vigente tras atrás y 'Seguir aquí'", async () => {
+      const user = userEvent.setup();
+
+      renderUnderRouter(<Harness />);
+      // Query superficial documentada por Next: `replaceState` con dato `null`.
+      window.history.replaceState(null, "", `${PROCESS_PATH}?estado=active`);
+
+      await browserBack();
+      await user.click(await screen.findByRole("button", { name: "Seguir aquí" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+      expect(`${window.location.pathname}${window.location.search}`).toBe(
+        `${PROCESS_PATH}?estado=active`,
+      );
+      expect(window.history.state).toMatchObject({ __processGuard: "sentinel" });
       expect(sentinelEntries()).toBe(1);
     });
 
@@ -394,6 +416,162 @@ describe("useProcessGuard", () => {
       await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
 
       expect(window.location.pathname).toBe(PROCESS_PATH);
+    });
+
+    describe("parche de history.replaceState", () => {
+      function Nested({ modal = true, page = true }: { modal?: boolean; page?: boolean }) {
+        return (
+          <>
+            <Harness active={page} name="pagina" />
+            <Harness active={modal} name="modal" onLeave="discard" />
+          </>
+        );
+      }
+
+      it("solo existe mientras hay algún guardia activo, contando los anidados", () => {
+        const unpatched = window.history.replaceState;
+        const { rerender, unmount } = renderUnderRouter(<Nested />);
+
+        expect(window.history.replaceState).not.toBe(unpatched);
+
+        rerender(<Nested modal={false} />);
+        expect(window.history.replaceState).not.toBe(unpatched);
+
+        rerender(<Nested modal={false} page={false} />);
+        expect(window.history.replaceState).toBe(unpatched);
+
+        rerender(<Nested />);
+        expect(window.history.replaceState).not.toBe(unpatched);
+
+        unmount();
+        expect(window.history.replaceState).toBe(unpatched);
+      });
+
+      it("conserva la marca del centinela aunque el dato sea null", () => {
+        renderUnderRouter(<Harness />);
+
+        window.history.replaceState(null, "", `${PROCESS_PATH}?tab=2`);
+
+        expect(window.history.state).toMatchObject({ __processGuard: "sentinel" });
+      });
+    });
+
+    describe("salto de varias entradas de golpe (Navigation API)", () => {
+      type NavigationHost = { navigation?: EventTarget & { currentEntry: { index: number } } };
+
+      const host = window as unknown as NavigationHost;
+
+      /** Evento `navigate` de un atrás/adelante hacia la entrada `index` del historial. */
+      function traverseTo(index: number, cancelable: boolean) {
+        const event = Object.assign(new Event("navigate", { cancelable }), {
+          destination: { index, sameDocument: true },
+          navigationType: "traverse",
+        });
+
+        act(() => {
+          host.navigation?.dispatchEvent(event);
+        });
+
+        return event;
+      }
+
+      /** Índice de la entrada gemela: la anterior al centinela, que es la última. */
+      function twinIndex() {
+        return window.history.length - 2;
+      }
+
+      beforeEach(() => {
+        // jsdom no tiene Navigation API. Al activarse el guardia se está en la última entrada.
+        host.navigation = Object.defineProperty(new EventTarget(), "currentEntry", {
+          get: () => ({ index: window.history.length - 1 }),
+        }) as NavigationHost["navigation"];
+      });
+
+      afterEach(() => {
+        delete host.navigation;
+      });
+
+      it("un atrás que pasaría por encima de la gemela se cancela y pregunta", async () => {
+        const user = userEvent.setup();
+        const onSaveDraft = jest.fn();
+
+        renderUnderRouter(<Harness onSaveDraft={onSaveDraft} />);
+
+        const back = jest.spyOn(window.history, "back");
+        const event = traverseTo(twinIndex() - 1, true);
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(await screen.findByRole("dialog")).toBeInTheDocument();
+        expect(onSaveDraft).not.toHaveBeenCalled();
+
+        // Chromium ignora el `history.go` de "Salir" al destino cancelado si no hay otro movimiento antes.
+        await waitFor(() => expect(back).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(routerPopState).toHaveBeenCalledTimes(2));
+        expect(window.history.state).toMatchObject({ __processGuard: "sentinel" });
+        back.mockRestore();
+
+        await user.click(screen.getByRole("button", { name: "Salir" }));
+        await waitFor(() => expect(window.location.pathname).toBe("/inventory"));
+
+        expect(onSaveDraft).toHaveBeenCalledTimes(1);
+      });
+
+      it("segundo atrás mientras el primero aún vuelve al centinela: se cancela y sigue en el proceso", async () => {
+        renderUnderRouter(<Harness />);
+
+        const beyondTwin = twinIndex() - 1;
+        // Chromium descarta el ADELANTE que estaba pendiente cuando se cancela el segundo atrás.
+        const forward = jest.spyOn(window.history, "forward").mockImplementationOnce(() => undefined);
+
+        act(() => {
+          window.history.back();
+        });
+        await waitFor(() => expect(routerPopState).toHaveBeenCalledTimes(1));
+
+        expect(traverseTo(beyondTwin, true).defaultPrevented).toBe(true);
+
+        await waitFor(() => expect(routerPopState).toHaveBeenCalledTimes(2));
+        forward.mockRestore();
+
+        expect(screen.getAllByRole("dialog")).toHaveLength(1);
+        expect(window.location.pathname).toBe(PROCESS_PATH);
+        expect(window.history.state).toMatchObject({ __processGuard: "sentinel" });
+      });
+
+      it("si el navegador no deja cancelarlo, guarda el borrador antes de salir", () => {
+        const onSaveDraft = jest.fn();
+
+        renderUnderRouter(<Harness onSaveDraft={onSaveDraft} />);
+
+        const event = traverseTo(twinIndex() - 1, false);
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(onSaveDraft).toHaveBeenCalledTimes(1);
+      });
+
+      it("no toca el atrás hasta la gemela ni las entradas posteriores", () => {
+        const onSaveDraft = jest.fn();
+
+        renderUnderRouter(<Harness onSaveDraft={onSaveDraft} />);
+
+        expect(traverseTo(twinIndex(), true).defaultPrevented).toBe(false);
+        expect(traverseTo(twinIndex() + 2, true).defaultPrevented).toBe(false);
+        traverseTo(twinIndex() + 2, false);
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(onSaveDraft).not.toHaveBeenCalled();
+      });
+
+      it("proceso terminado: deja de escuchar y el salto no se cancela", () => {
+        const onSaveDraft = jest.fn();
+        const { rerender } = renderUnderRouter(<Harness onSaveDraft={onSaveDraft} />);
+        const beyondTwin = twinIndex() - 1;
+
+        rerender(<Harness active={false} onSaveDraft={onSaveDraft} />);
+
+        expect(traverseTo(beyondTwin, true).defaultPrevented).toBe(false);
+        traverseTo(beyondTwin, false);
+        expect(onSaveDraft).not.toHaveBeenCalled();
+      });
     });
 
     it("un atrás dentro de la misma ruta (solo cambia la query) no pregunta", async () => {

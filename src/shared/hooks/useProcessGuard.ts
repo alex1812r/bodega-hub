@@ -80,11 +80,19 @@ const entries: GuardEntry[] = [];
  *
  *   [anterior, proceso]  →  [anterior, proceso (gemela), proceso (centinela)]
  *
- * Las dos tienen la misma URL y el mismo estado de Next: para el router no hay
- * navegación. ATRÁS aterriza en la gemela (misma pantalla, nada se desmonta),
- * el guardia repone el centinela y abre el modal. "Salir" retrocede de una vez
- * hasta la entrada anterior al proceso. ADELANTE no puede salir del proceso:
- * empujar el centinela descarta las entradas que hubiera por delante.
+ * Las dos son la misma pantalla: para el router no hay cambio de ruta. ATRÁS
+ * aterriza en la gemela (nada se desmonta) y el guardia vuelve con ADELANTE al
+ * centinela que ya existe y abre el modal. No se crea otra entrada: el centinela
+ * es el que recibe los `replace` de la pantalla (filtros, pestañas), así que al
+ * volver a él la URL es la vigente, y Chromium no tiene entradas nuevas sin
+ * gesto del usuario que saltarse. "Salir" retrocede de una vez hasta la entrada
+ * anterior al proceso. ADELANTE no puede salir del proceso: empujar el
+ * centinela descarta las entradas que hubiera por delante.
+ *
+ * Un salto que pasa por encima de la gemela (dos ATRÁS antes de que la página
+ * atienda el primero, `history.go(-2)`, menú del historial) no deja nada que
+ * atrapar con `popstate`. Se cancela antes de que ocurra con el evento
+ * `navigate` de la Navigation API; ver `handleNavigate`.
  *
  * El par no se retira al terminar el proceso (un `history.back()` espontáneo
  * haría que Next descartase la navegación que tuviera en curso). En su lugar,
@@ -93,12 +101,23 @@ const entries: GuardEntry[] = [];
  */
 const HISTORY_MARKER_KEY = "__processGuard";
 const HISTORY_LISTENER_KEY = "__processGuardPopStateListener";
-const HISTORY_PATCH_KEY = "__processGuardKeepsMarker";
 
 type HistoryMarker = "sentinel" | "twin";
 type HistoryListenerHost = {
   [HISTORY_LISTENER_KEY]?: (event: PopStateEvent) => void;
-  [HISTORY_PATCH_KEY]?: boolean;
+};
+
+/** Lo que se usa de la Navigation API (aún sin tipos en `lib.dom` de este TypeScript). */
+type TraversalEvent = Event & {
+  destination: { index: number; sameDocument: boolean };
+  navigationType: string;
+};
+type NavigationHost = {
+  navigation?: {
+    addEventListener: (type: "navigate", listener: (event: TraversalEvent) => void) => void;
+    currentEntry: { index: number } | null;
+    removeEventListener: (type: "navigate", listener: (event: TraversalEvent) => void) => void;
+  };
 };
 
 /** Marca de la entrada en la que estábamos antes del último `popstate`. */
@@ -107,6 +126,11 @@ let previousMarker: HistoryMarker | null = null;
 let leavingBack = false;
 /** Modo de scroll que tenía la entrada del proceso antes de convertirla en gemela. */
 let sentinelScrollRestoration: ScrollRestoration = "auto";
+/** Posición de la gemela en el historial; `null` sin Navigation API o sin guardia activo. */
+let twinIndex: number | null = null;
+/** Parche de `history.replaceState` y la función que sustituye; `null` si no está puesto. */
+let replaceStatePatch: { original: History["replaceState"]; patched: History["replaceState"] } | null =
+  null;
 
 function topEntry(): GuardEntry | undefined {
   return entries[entries.length - 1];
@@ -131,13 +155,6 @@ function withHistoryMarker(marker: HistoryMarker): Record<string, unknown> {
   };
 }
 
-function pushSentinel() {
-  window.history.pushState(withHistoryMarker("sentinel"), "", window.location.href);
-  // La entrada nueva hereda el modo "manual" de la gemela; el centinela recupera el original.
-  window.history.scrollRestoration = sentinelScrollRestoration;
-  previousMarker = "sentinel";
-}
-
 function handlePopState(event: PopStateEvent) {
   const marker = readHistoryMarker(event.state);
   const steppedBackFromSentinel = previousMarker === "sentinel";
@@ -152,8 +169,8 @@ function handlePopState(event: PopStateEvent) {
   const top = topEntry();
 
   if (top) {
-    // ATRÁS desde el proceso: seguimos en su pantalla. Se repone el centinela y se pregunta.
-    pushSentinel();
+    // ATRÁS desde el proceso: seguimos en su pantalla. Se vuelve al centinela y se pregunta.
+    window.history.forward();
     top.ask({ kind: "traversal" });
     return;
   }
@@ -166,23 +183,71 @@ function handlePopState(event: PopStateEvent) {
 }
 
 /**
- * Next reescribe el estado de la entrada actual (`replaceState`) cada vez que
- * cambia el estado del router (refresh, query, prefetch en dev) y solo conserva
- * las claves ajenas tras un atrás/adelante. Sin esto la marca del centinela se
- * pierde y el par ya no se reconoce al volver a él o al recargar.
+ * Salto que pasaría por encima de la gemela con un guardia activo. El evento
+ * llega antes de que el historial se mueva: si el navegador deja cancelarlo, se
+ * cancela y se pregunta. Si no (ATRÁS de la barra sin que el usuario haya
+ * tocado la página desde la última cancelación) se guarda el borrador, igual
+ * que en `beforeunload`. Salir a otro documento ya lo cubre `beforeunload`.
  */
-function keepMarkerOnReplace() {
-  const host = window as unknown as HistoryListenerHost;
+function handleNavigate(event: TraversalEvent) {
+  const top = topEntry();
 
-  if (host[HISTORY_PATCH_KEY]) {
+  if (
+    !top ||
+    twinIndex === null ||
+    event.navigationType !== "traverse" ||
+    !event.destination.sameDocument ||
+    event.destination.index < 0 ||
+    event.destination.index >= twinIndex
+  ) {
     return;
   }
 
-  host[HISTORY_PATCH_KEY] = true;
+  if (event.cancelable) {
+    event.preventDefault();
+    top.ask({ kind: "traversal" });
+    window.setTimeout(settleOnSentinel, 0);
+    return;
+  }
+
+  for (const entry of [...entries].reverse()) {
+    entry.saveDraftSync();
+  }
+}
+
+/**
+ * Tras cancelar un salto, un paso dentro del par que acaba en el centinela.
+ * Chromium descarta el ADELANTE que estuviera pendiente al cancelar (quedaríamos
+ * en la gemela) y, si el salto lo pidió la página, ignora después cualquier
+ * `history.go` al mismo destino, incluido el de "Salir", hasta que hay otro
+ * movimiento. Desde el centinela el paso es un ATRÁS a la gemela, que rebota.
+ */
+function settleOnSentinel() {
+  const marker = topEntry() ? readHistoryMarker(window.history.state) : null;
+
+  if (marker === "sentinel") {
+    window.history.back();
+  } else if (marker === "twin") {
+    window.history.forward();
+  }
+}
+
+/**
+ * Next reescribe el estado de la entrada actual (`replaceState`) cada vez que
+ * cambia el estado del router (refresh, query, prefetch en dev) y solo conserva
+ * las claves ajenas tras un atrás/adelante; la query superficial de la app
+ * (`replaceState(null, "", "?tab=2")`) tampoco las trae. Sin esto la marca del
+ * centinela se pierde y el par ya no se reconoce al volver a él o al recargar.
+ * El parche solo existe mientras hay algún guardia activo.
+ */
+function keepMarkerOnReplace() {
+  if (replaceStatePatch) {
+    return;
+  }
 
   const replaceState = window.history.replaceState;
 
-  window.history.replaceState = function replaceStateKeepingMarker(
+  function replaceStateKeepingMarker(
     this: History,
     data: unknown,
     unused: string,
@@ -194,9 +259,9 @@ function keepMarkerOnReplace() {
     const keepsMarker =
       marker !== null &&
       staysOnRoute &&
-      typeof data === "object" &&
-      data !== null &&
-      !(HISTORY_MARKER_KEY in data);
+      (data === null ||
+        data === undefined ||
+        (typeof data === "object" && !(HISTORY_MARKER_KEY in data)));
 
     return replaceState.call(
       this,
@@ -204,7 +269,20 @@ function keepMarkerOnReplace() {
       unused,
       url,
     );
-  };
+  }
+
+  replaceStatePatch = { original: replaceState, patched: replaceStateKeepingMarker };
+  window.history.replaceState = replaceStateKeepingMarker;
+}
+
+function stopKeepingMarkerOnReplace() {
+  // Si otro código parcheó encima del nuestro, retirarlo rompería su cadena: se deja.
+  if (!replaceStatePatch || window.history.replaceState !== replaceStatePatch.patched) {
+    return;
+  }
+
+  window.history.replaceState = replaceStatePatch.original;
+  replaceStatePatch = null;
 }
 
 /**
@@ -215,8 +293,6 @@ function keepMarkerOnReplace() {
 function listenToHistory() {
   const host = window as unknown as HistoryListenerHost;
   const current = host[HISTORY_LISTENER_KEY];
-
-  keepMarkerOnReplace();
 
   if (current === handlePopState) {
     return;
@@ -239,18 +315,33 @@ function armSentinel() {
 
   const marker = readHistoryMarker(window.history.state);
 
-  if (marker === "sentinel") {
-    return;
+  if (marker !== "sentinel") {
+    if (marker !== "twin") {
+      // "manual": al volver a la gemela el navegador no recoloca el scroll del formulario.
+      sentinelScrollRestoration = window.history.scrollRestoration;
+      window.history.scrollRestoration = "manual";
+      window.history.replaceState(withHistoryMarker("twin"), "", window.location.href);
+    }
+
+    window.history.pushState(withHistoryMarker("sentinel"), "", window.location.href);
+    // La entrada nueva hereda el modo "manual" de la gemela; el centinela recupera el original.
+    window.history.scrollRestoration = sentinelScrollRestoration;
+    previousMarker = "sentinel";
   }
 
-  if (marker !== "twin") {
-    // "manual": al volver a la gemela el navegador no recoloca el scroll del formulario.
-    sentinelScrollRestoration = window.history.scrollRestoration;
-    window.history.scrollRestoration = "manual";
-    window.history.replaceState(withHistoryMarker("twin"), "", window.location.href);
-  }
+  const navigation = (window as unknown as NavigationHost).navigation;
+  const sentinelIndex = navigation?.currentEntry?.index;
 
-  pushSentinel();
+  keepMarkerOnReplace();
+  twinIndex = sentinelIndex === undefined ? null : sentinelIndex - 1;
+  navigation?.addEventListener("navigate", handleNavigate);
+}
+
+/** Retira lo que solo hace falta con un guardia activo. El par y su `popstate` se quedan. */
+function disarmSentinel() {
+  stopKeepingMarkerOnReplace();
+  twinIndex = null;
+  (window as unknown as NavigationHost).navigation?.removeEventListener("navigate", handleNavigate);
 }
 
 /** Completa el "Salir" de un ATRÁS: retrocede hasta la entrada anterior al proceso. */
@@ -367,6 +458,7 @@ function unregisterEntry(entry: GuardEntry) {
     window.removeEventListener("beforeunload", handleBeforeUnload);
     document.removeEventListener("click", handleDocumentClick, true);
     document.removeEventListener("click", handleUnhandledGuardedLinkClick);
+    disarmSentinel();
   }
 }
 
@@ -403,12 +495,25 @@ export function interceptProcessGuardNavigation(href: string, replace = false): 
  * `runUnguarded(() => router.push(href))`. `router.back()` sí pregunta, porque
  * retrocede a la entrada gemela igual que el botón ATRÁS.
  *
- * Límites del centinela:
+ * Límites conocidos (los pone el navegador; la mitigación es `beforeunload` y
+ * el borrador de `onSaveDraft`):
  * - Chromium salta, al pulsar ATRÁS, las entradas que una página añade sin que
- *   el usuario haya interactuado con ella: ATRÁS queda protegido desde la
+ *   el usuario haya interactuado con ella. El par se crea al activarse el
+ *   guardia y después no se añade ninguna más: ATRÁS queda protegido desde la
  *   primera interacción (la misma condición que pone a `beforeunload`).
- * - Un salto de varias entradas de golpe (menú del historial, `history.go(-2)`)
- *   pasa por encima de la gemela y sale sin preguntar.
+ * - Un salto de varias entradas de golpe (dos ATRÁS antes de que la página
+ *   atienda el primero, menú del historial, `history.go(-2)`) pasa por encima
+ *   de la gemela. Se cancela y pregunta solo donde hay Navigation API
+ *   (Chromium; Firefox y Safari recientes). El navegador deja cancelar un
+ *   ATRÁS de su barra una vez por cada interacción del usuario con la página:
+ *   si no lo permite, con `onLeave: "draft"` se llama a `onSaveDraft` (sin
+ *   esperar, como en `beforeunload`) y se sale sin modal; con `"discard"` los
+ *   cambios se pierden. Sin Navigation API el salto sale sin preguntar ni
+ *   guardar.
+ * - Si el ATRÁS acaba fuera de la app (otro documento) solo hay aviso nativo.
+ * - Terminado el proceso, el par sigue en el historial. Si la pantalla
+ *   reescribe después su entrada (refresh, filtros) y se recarga, el par ya no
+ *   se reconoce y salir cuesta un ATRÁS más.
  */
 export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardController {
   const { active, description, label, onLeave } = options;
