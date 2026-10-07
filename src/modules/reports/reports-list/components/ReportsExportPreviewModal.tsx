@@ -1,7 +1,7 @@
 "use client";
 
 import { FileSpreadsheet, FileText, Loader2 } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
@@ -141,19 +141,15 @@ export function ReportsExportPreviewModal({
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open || sections.length === 0) {
-      return;
-    }
-
-    setActiveSectionId((current) => {
-      if (current && sections.some((section) => section.id === current)) {
-        return current;
-      }
-
-      return sections[0]?.id ?? null;
-    });
-  }, [open, sections]);
+  // Con el modal abierto, si la hoja elegida ya no existe se vuelve a la primera
+  // (ajuste de estado durante el render en lugar de un efecto).
+  if (
+    open &&
+    sections.length > 0 &&
+    !sections.some((section) => section.id === activeSectionId)
+  ) {
+    setActiveSectionId(sections[0].id);
+  }
 
   const activeSection =
     sections.find((section) => section.id === activeSectionId) ?? sections[0] ?? null;

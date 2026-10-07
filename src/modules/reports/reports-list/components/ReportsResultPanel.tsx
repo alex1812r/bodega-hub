@@ -216,6 +216,7 @@ function PaginatedReportTable<TData>({
   getRowId,
   report,
   resetDeps = [],
+  scope,
   useReport,
 }: {
   columns: DataTableColumn<TData>[];
@@ -223,14 +224,22 @@ function PaginatedReportTable<TData>({
   getRowId: (row: TData) => string;
   report: ReportDefinition;
   resetDeps?: readonly unknown[];
-  useReport: (filters: PaginationParams) => UseQueryResult<PaginatedList<TData>, Error>;
+  scope?: ReportRequestScope;
+  // Hook del reporte: se llama siempre, en el nivel superior de este componente.
+  useReport: (
+    filters: PaginationParams,
+    scope?: ReportRequestScope,
+  ) => UseQueryResult<PaginatedList<TData>, Error>;
 }) {
   const pagination = useReportPagination(resetDeps);
-  const query = useReport({
-    ...filters,
-    limit: pagination.limit,
-    skip: pagination.skip,
-  });
+  const query = useReport(
+    {
+      ...filters,
+      limit: pagination.limit,
+      skip: pagination.skip,
+    },
+    scope,
+  );
 
   return (
     <ReportTable
@@ -271,7 +280,8 @@ export function ReportsResultPanel({
           getRowId={(row) => `${row.saleDate}-${row.totalVes}-${row.paidVes}-${row.storeId ?? ""}`}
           report={report}
           resetDeps={scopeResetDeps}
-          useReport={(filters) => useDailySalesReport(filters, scope)}
+          scope={scope}
+          useReport={useDailySalesReport}
         />
       );
     case "gross-profit":
@@ -281,7 +291,8 @@ export function ReportsResultPanel({
           getRowId={(row) => `${row.saleDate}-${row.revenueRef}-${row.costRef}-${row.storeId ?? ""}`}
           report={report}
           resetDeps={scopeResetDeps}
-          useReport={(filters) => useGrossProfitReport(filters, scope)}
+          scope={scope}
+          useReport={useGrossProfitReport}
         />
       );
     case "fx-depreciation":
@@ -297,7 +308,8 @@ export function ReportsResultPanel({
           getRowId={(row) => row.productId}
           report={report}
           resetDeps={scopeResetDeps}
-          useReport={(filters) => useProductProfitabilityReport(filters, scope)}
+          scope={scope}
+          useReport={useProductProfitabilityReport}
         />
       );
     case "low-stock":
@@ -307,7 +319,8 @@ export function ReportsResultPanel({
           getRowId={(row) => row.id}
           report={report}
           resetDeps={scopeResetDeps}
-          useReport={(filters) => useLowStockReport(filters, scope)}
+          scope={scope}
+          useReport={useLowStockReport}
         />
       );
     case "customer-purchases":
@@ -317,7 +330,8 @@ export function ReportsResultPanel({
           getRowId={(row) => row.customerId}
           report={report}
           resetDeps={scopeResetDeps}
-          useReport={(filters) => useCustomerPurchasesReport(filters, scope)}
+          scope={scope}
+          useReport={useCustomerPurchasesReport}
         />
       );
     case "supplier-purchases":
@@ -327,7 +341,8 @@ export function ReportsResultPanel({
           getRowId={(row) => row.supplierId}
           report={report}
           resetDeps={scopeResetDeps}
-          useReport={(filters) => useSupplierPurchasesReport(filters, scope)}
+          scope={scope}
+          useReport={useSupplierPurchasesReport}
         />
       );
     case "stock-card":
@@ -338,7 +353,8 @@ export function ReportsResultPanel({
           getRowId={(row) => row.id}
           report={report}
           resetDeps={[...scopeResetDeps, stockCardFilters.productId]}
-          useReport={(filters) => useStockCardReport(filters, scope)}
+          scope={scope}
+          useReport={useStockCardReport}
         />
       );
     case "top-products":
@@ -349,7 +365,8 @@ export function ReportsResultPanel({
           getRowId={(row) => row.productId}
           report={report}
           resetDeps={[...scopeResetDeps, dateFilters.from, dateFilters.to]}
-          useReport={(filters) => useTopProductsReport(filters, scope)}
+          scope={scope}
+          useReport={useTopProductsReport}
         />
       );
     case "top-customers":
@@ -360,7 +377,8 @@ export function ReportsResultPanel({
           getRowId={(row) => row.customerId}
           report={report}
           resetDeps={[...scopeResetDeps, dateFilters.from, dateFilters.to]}
-          useReport={(filters) => useTopCustomersReport(filters, scope)}
+          scope={scope}
+          useReport={useTopCustomersReport}
         />
       );
     case "purchases":
@@ -376,7 +394,8 @@ export function ReportsResultPanel({
             purchasesFilters.to,
             purchasesFilters.supplierId,
           ]}
-          useReport={(filters) => usePurchasesReport(filters, scope)}
+          scope={scope}
+          useReport={usePurchasesReport}
         />
       );
     default:
