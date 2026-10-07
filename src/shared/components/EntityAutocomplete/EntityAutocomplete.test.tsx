@@ -1,0 +1,869 @@
+import "@testing-library/jest-dom";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
+
+import { ClientApiError } from "@/shared/api/apiFetch";
+
+import { Modal } from "../Modal";
+import { EntityAutocomplete, type EntityAutocompleteProps } from "./EntityAutocomplete";
+import type {
+  ContactEntityOption,
+  EntityAutocompleteValue,
+  EntityFetcher,
+  EntityKind,
+  EntityOption,
+  ProductEntityOption,
+} from "./entityAutocomplete.types";
+import { getEntityRecentsStorageKey } from "./entityRecents";
+
+function product(index: number, overrides: Partial<ProductEntityOption> = {}): ProductEntityOption {
+  return {
+    barcode: `75900000000${index}`,
+    categoryId: "cat-1",
+    currentCostRef: 1,
+    currentStock: 10 + index,
+    id: `p-${index}`,
+    isActive: true,
+    label: `Producto ${index}`,
+    salePriceRef: 1.5 + index,
+    sku: `SKU-${index}`,
+    ...overrides,
+  };
+}
+
+function contact(index: number, overrides: Partial<ContactEntityOption> = {}): ContactEntityOption {
+  return {
+    id: `c-${index}`,
+    isActive: true,
+    label: `Contacto ${index}`,
+    phone: `0414-000000${index}`,
+    taxId: `J-1234567${index}`,
+    type: "proveedor",
+    ...overrides,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return { promise, reject, resolve };
+}
+
+type HarnessProps<K extends EntityKind> = Omit<
+  EntityAutocompleteProps<K>,
+  "label" | "onChange" | "value"
+> & {
+  initialValue?: EntityAutocompleteValue | null;
+  label?: string;
+  onChange?: (option: EntityOption<K> | null) => void;
+};
+
+function Harness<K extends EntityKind>({
+  initialValue = null,
+  label = "Producto",
+  onChange,
+  ...props
+}: HarnessProps<K>) {
+  const [value, setValue] = useState<EntityAutocompleteValue | null>(initialValue);
+
+  return (
+    <EntityAutocomplete
+      {...props}
+      label={label}
+      onChange={(option) => {
+        setValue(option);
+        onChange?.(option);
+      }}
+      value={value}
+    />
+  );
+}
+
+async function settleMicrotasks() {
+  for (let tick = 0; tick < 6; tick += 1) {
+    await Promise.resolve();
+  }
+}
+
+async function flushPromises() {
+  await act(settleMicrotasks);
+}
+
+async function advance(ms: number) {
+  await act(async () => {
+    jest.advanceTimersByTime(ms);
+    await settleMicrotasks();
+  });
+}
+
+function getInput() {
+  return screen.getByRole("combobox");
+}
+
+function focusInput() {
+  act(() => getInput().focus());
+}
+
+function type(text: string) {
+  focusInput();
+  fireEvent.change(getInput(), { target: { value: text } });
+}
+
+async function search(text: string) {
+  type(text);
+  await advance(250);
+}
+
+function pressKey(key: string) {
+  return fireEvent.keyDown(getInput(), { key });
+}
+
+function activeOptionText() {
+  const id = getInput().getAttribute("aria-activedescendant");
+
+  return id ? document.getElementById(id)?.textContent : null;
+}
+
+beforeEach(() => {
+  jest.useFakeTimers();
+  window.localStorage.clear();
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
+
+describe("EntityAutocomplete: búsqueda en servidor", () => {
+  it("espera el debounce y hace una sola llamada por ráfaga con limit=8", async () => {
+    const fetcher = jest.fn<ReturnType<EntityFetcher<"product">>, Parameters<EntityFetcher<"product">>>(
+      async () => [product(1)],
+    );
+    render(<Harness entity="product" fetcher={fetcher} />);
+
+    type("a");
+    await advance(100);
+    type("ar");
+    await advance(100);
+    type("arr");
+    await advance(249);
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent("Buscando...");
+
+    await advance(1);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.objectContaining({ exact: false, filters: {}, limit: 8, query: "arr" }),
+    );
+    expect(screen.getByRole("option", { name: /Producto 1/ })).toBeInTheDocument();
+  });
+
+  it("no busca con menos de dos caracteres", async () => {
+    const fetcher = jest.fn(async () => [product(1)]);
+    render(<Harness entity="product" fetcher={fetcher} />);
+
+    await search("a");
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("entity-autocomplete-popup")).not.toBeInTheDocument();
+  });
+
+  it("ignora la respuesta obsoleta: la de «ab» no pisa la de «abc»", async () => {
+    const first = deferred<ProductEntityOption[]>();
+    const second = deferred<ProductEntityOption[]>();
+    const signals: AbortSignal[] = [];
+    const fetcher: EntityFetcher<"product"> = jest.fn(({ query, signal }) => {
+      signals.push(signal);
+      return query === "ab" ? first.promise : second.promise;
+    });
+    render(<Harness entity="product" fetcher={fetcher} />);
+
+    await search("ab");
+    await search("abc");
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(signals[0].aborted).toBe(true);
+    expect(signals[1].aborted).toBe(false);
+
+    second.resolve([product(2, { label: "Resultado abc" })]);
+    await flushPromises();
+    first.resolve([product(1, { label: "Resultado ab" })]);
+    await flushPromises();
+
+    expect(screen.getByRole("option", { name: /Resultado abc/ })).toBeInTheDocument();
+    expect(screen.queryByText("Resultado ab")).not.toBeInTheDocument();
+  });
+
+  it("vuelve a buscar cuando el texto regresa a un valor que otra búsqueda pisó", async () => {
+    const fetcher = jest.fn(async ({ query }: { query: string }) =>
+      query === "ab" ? [product(1, { label: "Resultado ab" })] : [],
+    );
+    render(<Harness entity="product" fetcher={fetcher} />);
+
+    await search("ab");
+    type("abc");
+    pressKey("Enter");
+    await flushPromises();
+    type("ab");
+    await flushPromises();
+
+    expect(fetcher.mock.calls.map(([params]) => params.query)).toEqual(["ab", "abc", "ab"]);
+    expect(screen.getByRole("option", { name: /Resultado ab/ })).toBeInTheDocument();
+  });
+
+  it("muestra como máximo 8 resultados con SKU · stock · precio REF", async () => {
+    const fetcher = jest.fn(async () => Array.from({ length: 12 }, (_, index) => product(index)));
+    render(<Harness entity="product" fetcher={fetcher} />);
+
+    await search("prod");
+
+    const options = screen.getAllByRole("option");
+
+    expect(options).toHaveLength(8);
+    expect(options[0]).toHaveTextContent("Producto 0");
+    expect(options[0]).toHaveTextContent("SKU-0 · Stock 10 · ref 1.50");
+  });
+
+  it("muestra tipo · teléfono en contactos", async () => {
+    const fetcher = jest.fn(async () => [
+      contact(1),
+      contact(2, { phone: "", type: "ambos" }),
+    ]);
+    render(<Harness entity="contact" fetcher={fetcher} label="Proveedor" />);
+
+    await search("cont");
+
+    const options = screen.getAllByRole("option");
+
+    expect(options[0]).toHaveTextContent("Proveedor · 0414-0000001");
+    expect(options[1]).toHaveTextContent("Contacto 2Ambos");
+  });
+
+  it("admite renderSecondary", async () => {
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [product(1)]}
+        renderSecondary={(option) => `Habitual · ${option.sku}`}
+      />,
+    );
+
+    await search("prod");
+
+    expect(screen.getByRole("option")).toHaveTextContent("Habitual · SKU-1");
+    expect(screen.getByRole("option")).not.toHaveTextContent("Stock");
+  });
+
+  it("pasa los filtros al fetcher, oculta los excluidos y vuelve a buscar si cambian", async () => {
+    const fetcher = jest.fn(async () => [contact(1), contact(2), contact(3, { type: "cliente" })]);
+    const { rerender } = render(
+      <Harness
+        entity="contact"
+        fetcher={fetcher}
+        filters={{ active: true, excludeIds: ["c-2"], type: ["proveedor", "ambos"] }}
+      />,
+    );
+
+    await search("cont");
+
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filters: { active: true, excludeIds: ["c-2"], type: ["proveedor", "ambos"] },
+        limit: 8,
+        query: "cont",
+      }),
+    );
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Contacto 1Proveedor · 0414-0000001",
+    ]);
+
+    rerender(<Harness entity="contact" fetcher={fetcher} filters={{ type: ["cliente"] }} />);
+    await flushPromises();
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filters: { type: ["cliente"] } }),
+    );
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByRole("option")).toHaveTextContent("Contacto 3");
+  });
+
+  it("no repite la búsqueda cuando los filtros llegan como objeto nuevo con el mismo contenido", async () => {
+    const fetcher = jest.fn(async () => [product(1)]);
+    const { rerender } = render(
+      <Harness entity="product" fetcher={fetcher} filters={{ active: true }} />,
+    );
+
+    await search("prod");
+    rerender(<Harness entity="product" fetcher={fetcher} filters={{ active: true }} />);
+    await advance(300);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("EntityAutocomplete: estados", () => {
+  it("muestra «Sin resultados para …»", async () => {
+    render(<Harness entity="product" fetcher={async () => []} />);
+
+    await search("zzz");
+
+    expect(screen.getByRole("status")).toHaveTextContent("Sin resultados para “zzz”");
+    expect(getInput()).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("muestra error.message y reintenta", async () => {
+    const fetcher = jest
+      .fn<Promise<ProductEntityOption[]>, []>()
+      .mockRejectedValueOnce(new Error("Sin conexión con el servidor."))
+      .mockResolvedValueOnce([product(1)]);
+    render(<Harness entity="product" fetcher={fetcher} />);
+
+    await search("prod");
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Sin conexión con el servidor.");
+
+    await advance(1000);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Buscando...");
+    await flushPromises();
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("option", { name: /Producto 1/ })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("en un 403 muestra el mensaje del servidor sin ofrecer reintento", async () => {
+    const fetcher = jest.fn(async () => {
+      throw new ClientApiError(403, "FORBIDDEN", "No tienes permiso para ver proveedores.");
+    });
+    render(<Harness entity="contact" fetcher={fetcher} />);
+
+    await search("cont");
+
+    expect(screen.getByRole("alert")).toHaveTextContent("No tienes permiso para ver proveedores.");
+    expect(screen.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+  });
+
+  it("deshabilitado no busca, no abre y no ofrece limpiar", async () => {
+    const fetcher = jest.fn(async () => [product(1)]);
+    window.localStorage.setItem(
+      getEntityRecentsStorageKey("product"),
+      JSON.stringify([product(1)]),
+    );
+    render(
+      <Harness
+        disabled
+        entity="product"
+        fetcher={fetcher}
+        initialValue={{ id: "p-9", label: "Harina PAN" }}
+      />,
+    );
+
+    expect(getInput()).toBeDisabled();
+    expect(getInput()).toHaveValue("Harina PAN");
+    expect(screen.queryByRole("button", { name: /Limpiar/ })).not.toBeInTheDocument();
+
+    fireEvent.click(getInput());
+    await advance(300);
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("muestra label, obligatorio, placeholder, error y autoFocus", () => {
+    render(
+      <Harness
+        autoFocus
+        entity="contact"
+        error="Elige un proveedor."
+        label="Proveedor"
+        placeholder="Buscar proveedor"
+        required
+      />,
+    );
+
+    const input = screen.getByLabelText("Proveedor *");
+
+    expect(input).toHaveFocus();
+    expect(input).toHaveAttribute("placeholder", "Buscar proveedor");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveAccessibleDescription("Elige un proveedor.");
+  });
+});
+
+describe("EntityAutocomplete: valor controlado y limpiar", () => {
+  it("muestra la etiqueta del valor y la restaura si se escribe sin elegir", async () => {
+    const onChange = jest.fn();
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [product(1)]}
+        initialValue={{ id: "p-9", label: "Harina PAN" }}
+        onChange={onChange}
+      />,
+    );
+
+    expect(getInput()).toHaveValue("Harina PAN");
+
+    await search("prod");
+    expect(getInput()).toHaveValue("prod");
+
+    fireEvent.blur(getInput());
+
+    expect(getInput()).toHaveValue("Harina PAN");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("permite cambiar el valor eligiendo otra opción", async () => {
+    const onChange = jest.fn();
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [product(1)]}
+        initialValue={{ id: "p-9", label: "Harina PAN" }}
+        onChange={onChange}
+      />,
+    );
+
+    await search("prod");
+    fireEvent.click(screen.getByRole("option", { name: /Producto 1/ }));
+
+    expect(onChange).toHaveBeenCalledWith(product(1));
+    expect(getInput()).toHaveValue("Producto 1");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("el botón de limpiar quita el valor y deja el foco en el campo", () => {
+    const onChange = jest.fn();
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => []}
+        initialValue={{ id: "p-9", label: "Harina PAN" }}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar Producto" }));
+
+    expect(onChange).toHaveBeenCalledWith(null);
+    expect(getInput()).toHaveValue("");
+    expect(getInput()).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Limpiar Producto" })).not.toBeInTheDocument();
+  });
+
+  it("limpiar borra el texto escrito sin avisar cuando no había valor", async () => {
+    const onChange = jest.fn();
+    render(<Harness entity="product" fetcher={async () => [product(1)]} onChange={onChange} />);
+
+    await search("prod");
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar Producto" }));
+
+    expect(getInput()).toHaveValue("");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+});
+
+describe("EntityAutocomplete: recientes", () => {
+  it("ofrece los últimos seleccionados al enfocar con el campo vacío", async () => {
+    const onChange = jest.fn();
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [product(1), product(2)]}
+        onChange={onChange}
+      />,
+    );
+
+    focusInput();
+    expect(screen.queryByText("Recientes")).not.toBeInTheDocument();
+
+    await search("prod");
+    fireEvent.click(screen.getByRole("option", { name: /Producto 2/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar Producto" }));
+
+    expect(screen.getByText("Recientes")).toBeInTheDocument();
+
+    const recent = screen.getByRole("option", { name: /Producto 2/ });
+
+    // El stock y el precio guardados pueden estar viejos: solo se muestra el SKU.
+    expect(recent).toHaveTextContent("Producto 2SKU-2");
+    expect(recent).not.toHaveTextContent("Stock");
+    expect(getInput()).not.toHaveAttribute("aria-activedescendant");
+
+    fireEvent.click(recent);
+    expect(onChange).toHaveBeenLastCalledWith(product(2));
+  });
+
+  it("separa los recientes por entidad y por recentsKey, y les aplica los filtros", () => {
+    window.localStorage.setItem(
+      getEntityRecentsStorageKey("contact", "compras"),
+      JSON.stringify([contact(1), contact(2, { type: "cliente" })]),
+    );
+    window.localStorage.setItem(
+      getEntityRecentsStorageKey("contact"),
+      JSON.stringify([contact(3)]),
+    );
+    render(
+      <Harness
+        entity="contact"
+        fetcher={async () => []}
+        filters={{ type: ["proveedor", "ambos"] }}
+        recentsKey="compras"
+      />,
+    );
+
+    focusInput();
+
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Contacto 1Proveedor · 0414-0000001",
+    ]);
+  });
+
+  it("guarda como máximo 8 recientes, el último primero y sin duplicados", async () => {
+    const all = Array.from({ length: 10 }, (_, index) => product(index));
+    window.localStorage.setItem(getEntityRecentsStorageKey("product"), JSON.stringify(all.slice(0, 8)));
+    render(<Harness entity="product" fetcher={async () => [product(3), product(9)]} />);
+
+    await search("prod");
+    fireEvent.click(screen.getByRole("option", { name: /Producto 9/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar Producto" }));
+    await search("prod");
+    fireEvent.click(screen.getByRole("option", { name: /Producto 3/ }));
+
+    const stored = JSON.parse(
+      window.localStorage.getItem(getEntityRecentsStorageKey("product")) ?? "[]",
+    ) as ProductEntityOption[];
+
+    expect(stored.map((item) => item.id)).toEqual([
+      "p-3", "p-9", "p-0", "p-1", "p-2", "p-4", "p-5", "p-6",
+    ]);
+  });
+
+  it("tolera el storage bloqueado: sin recientes y la selección sigue funcionando", async () => {
+    jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("denied", "SecurityError");
+    });
+    jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("denied", "SecurityError");
+    });
+    const onChange = jest.fn();
+    render(<Harness entity="product" fetcher={async () => [product(1)]} onChange={onChange} />);
+
+    focusInput();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    await search("prod");
+    fireEvent.click(screen.getByRole("option", { name: /Producto 1/ }));
+
+    expect(onChange).toHaveBeenCalledWith(product(1));
+  });
+
+  it.each([
+    ["JSON roto", "{{no-json"],
+    ["no es una lista", JSON.stringify({ id: "p-1" })],
+    ["elementos con otra forma", JSON.stringify([{ id: 1 }, null, "x", { id: "p-1", label: "Solo" }])],
+  ])("tolera el storage corrupto (%s)", (_name, raw) => {
+    window.localStorage.setItem(getEntityRecentsStorageKey("product"), raw);
+    render(<Harness entity="product" fetcher={async () => []} />);
+
+    focusInput();
+
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+});
+
+describe("EntityAutocomplete: lector de barras y Enter", () => {
+  it("Enter tras la ráfaga busca de inmediato y elige la coincidencia exacta de código de barras", async () => {
+    const onChange = jest.fn();
+    const scanned = product(5, { barcode: "7591234567890", label: "Arroz 1kg" });
+    const fetcher = jest.fn(async () => [product(4, { barcode: "75912345678901" }), scanned]);
+    render(<Harness entity="product" fetcher={fetcher} onChange={onChange} />);
+
+    type("7591234567890");
+    pressKey("Enter");
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.objectContaining({ exact: true, limit: 8, query: "7591234567890" }),
+    );
+
+    await flushPromises();
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(scanned);
+
+    await advance(500);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("Enter elige la coincidencia exacta de SKU sin distinguir mayúsculas", async () => {
+    const onChange = jest.fn();
+    const fetcher = jest.fn(async () => [
+      product(1, { sku: "ARR-10" }),
+      product(2, { sku: "ARR-1" }),
+    ]);
+    render(<Harness entity="product" fetcher={fetcher} onChange={onChange} />);
+
+    type("arr-1");
+    pressKey("Enter");
+    await flushPromises();
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ id: "p-2" }));
+  });
+
+  it("Enter con el texto no envía el formulario que contiene el campo", async () => {
+    render(<Harness entity="product" fetcher={async () => []} />);
+
+    type("759");
+
+    expect(pressKey("Enter")).toBe(false);
+    await flushPromises();
+  });
+
+  it("Enter sin coincidencia exacta y con un único resultado lo elige", async () => {
+    const onChange = jest.fn();
+    render(<Harness entity="product" fetcher={async () => [product(1)]} onChange={onChange} />);
+
+    type("produ");
+    pressKey("Enter");
+    await flushPromises();
+
+    expect(onChange).toHaveBeenCalledWith(product(1));
+  });
+
+  it("Enter con varios resultados elige el resaltado", async () => {
+    const onChange = jest.fn();
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [product(1), product(2), product(3)]}
+        onChange={onChange}
+      />,
+    );
+
+    await search("prod");
+    expect(activeOptionText()).toContain("Producto 1");
+
+    pressKey("ArrowDown");
+    pressKey("ArrowDown");
+    expect(activeOptionText()).toContain("Producto 3");
+
+    pressKey("Enter");
+
+    expect(onChange).toHaveBeenCalledWith(product(3));
+  });
+
+  it("llama a onNotFound cuando el Enter no encuentra nada", async () => {
+    const onChange = jest.fn();
+    const onNotFound = jest.fn();
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => []}
+        onChange={onChange}
+        onNotFound={onNotFound}
+      />,
+    );
+
+    type("7599999999999");
+    pressKey("Enter");
+    await flushPromises();
+
+    expect(onNotFound).toHaveBeenCalledTimes(1);
+    expect(onNotFound).toHaveBeenCalledWith("7599999999999");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent("Sin resultados para “7599999999999”");
+
+    pressKey("Enter");
+    expect(onNotFound).toHaveBeenCalledTimes(2);
+  });
+
+  it("descarta el Enter si el usuario siguió escribiendo antes de la respuesta", async () => {
+    const onChange = jest.fn();
+    const pending = deferred<ProductEntityOption[]>();
+    render(<Harness entity="product" fetcher={() => pending.promise} onChange={onChange} />);
+
+    type("759");
+    pressKey("Enter");
+    type("7591");
+    pending.resolve([product(1, { barcode: "759" })]);
+    await flushPromises();
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("no elige una coincidencia exacta deshabilitada y muestra el motivo", async () => {
+    const onChange = jest.fn();
+    const onNotFound = jest.fn();
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [product(1, { barcode: "759" }), product(2)]}
+        getOptionDisabled={(option) => (option.id === "p-1" ? "Ya está en la compra" : null)}
+        onChange={onChange}
+        onNotFound={onNotFound}
+      />,
+    );
+
+    type("759");
+    pressKey("Enter");
+    await flushPromises();
+
+    const blocked = screen.getByRole("option", { name: /Producto 1/ });
+
+    expect(blocked).toHaveAttribute("aria-disabled", "true");
+    expect(blocked).toHaveTextContent("Ya está en la compra");
+
+    fireEvent.click(blocked);
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onNotFound).not.toHaveBeenCalled();
+  });
+});
+
+describe("EntityAutocomplete: teclado y ARIA", () => {
+  it("cumple el patrón combobox y navega con flechas, Home y End saltando deshabilitadas", async () => {
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [product(1), product(2), product(3), product(4)]}
+        getOptionDisabled={(option) => (option.id === "p-2" ? "Sin stock" : false)}
+      />,
+    );
+
+    const input = getInput();
+
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(input).toHaveAttribute("aria-autocomplete", "list");
+    expect(input).not.toHaveAttribute("aria-controls");
+
+    await search("prod");
+
+    const listbox = screen.getByRole("listbox", { name: "Producto" });
+
+    expect(input).toHaveAttribute("aria-expanded", "true");
+    expect(input).toHaveAttribute("aria-controls", listbox.id);
+    expect(within(listbox).getAllByRole("option")).toHaveLength(4);
+    expect(activeOptionText()).toContain("Producto 1");
+    expect(screen.getByRole("option", { name: /Producto 1/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("option", { name: /Producto 3/ })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+
+    pressKey("ArrowDown");
+    expect(activeOptionText()).toContain("Producto 3");
+
+    pressKey("End");
+    expect(activeOptionText()).toContain("Producto 4");
+
+    pressKey("ArrowDown");
+    expect(activeOptionText()).toContain("Producto 1");
+
+    pressKey("ArrowUp");
+    expect(activeOptionText()).toContain("Producto 4");
+
+    pressKey("Home");
+    expect(activeOptionText()).toContain("Producto 1");
+  });
+
+  it("Escape cierra el desplegable y ArrowDown lo reabre", async () => {
+    render(<Harness entity="product" fetcher={async () => [product(1)]} />);
+
+    await search("prod");
+    pressKey("Escape");
+
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(getInput()).toHaveAttribute("aria-expanded", "false");
+    expect(getInput()).toHaveValue("prod");
+
+    pressKey("ArrowDown");
+
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+  });
+
+  it("cierra el desplegable al perder el foco", async () => {
+    render(<Harness entity="product" fetcher={async () => [product(1)]} />);
+
+    await search("prod");
+    fireEvent.blur(getInput());
+
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("el clic en el desplegable no le quita el foco al campo", async () => {
+    render(<Harness entity="product" fetcher={async () => [product(1)]} />);
+
+    await search("prod");
+
+    expect(fireEvent.mouseDown(screen.getByRole("option"))).toBe(false);
+  });
+});
+
+describe("EntityAutocomplete dentro de un Modal", () => {
+  it("monta el desplegable en un portal y Escape lo cierra sin cerrar el modal", async () => {
+    const onOpenChange = jest.fn();
+    render(
+      <Modal onOpenChange={onOpenChange} description="Busca el producto." open title="Vincular producto">
+        <Harness entity="product" fetcher={async () => [product(1)]} />
+      </Modal>,
+    );
+
+    await search("prod");
+
+    const dialog = screen.getByRole("dialog");
+    const popup = screen.getByTestId("entity-autocomplete-popup");
+
+    expect(dialog).not.toContainElement(popup);
+    expect(popup.parentElement).toBe(document.body);
+    expect(popup).toHaveClass("fixed", "z-50", "pointer-events-auto");
+
+    pressKey("Escape");
+    await advance(10);
+
+    expect(screen.queryByTestId("entity-autocomplete-popup")).not.toBeInTheDocument();
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    pressKey("Escape");
+    await advance(10);
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("elegir una opción con el ratón no cierra el modal", async () => {
+    const onOpenChange = jest.fn();
+    const onChange = jest.fn();
+    render(
+      <Modal onOpenChange={onOpenChange} description="Busca el producto." open title="Vincular producto">
+        <Harness entity="product" fetcher={async () => [product(1)]} onChange={onChange} />
+      </Modal>,
+    );
+
+    await search("prod");
+
+    const option = screen.getByRole("option", { name: /Producto 1/ });
+
+    fireEvent.pointerDown(option);
+    fireEvent.mouseDown(option);
+    fireEvent.click(option);
+    await advance(10);
+
+    expect(onChange).toHaveBeenCalledWith(product(1));
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+});
