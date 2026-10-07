@@ -7,7 +7,18 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import type { CategoryInput } from "./categories.mock-server";
 
-const categorySelect = "id, name, description, tax_rate, is_active, created_at, updated_at";
+const categorySelect =
+  "id, name, description, tax_rate, tax_rate_id, is_active, created_at, updated_at";
+
+type CategoryWithTaxRateRow = CategoryRow & { tax_rate_id?: string | null };
+
+/** Categoria con su alicuota de IVA (`tax_rates.id`); `taxRate` es el porcentaje derivado. */
+function mapCategoryWithTaxRate(row: CategoryWithTaxRateRow) {
+  return {
+    ...mapCategory(row),
+    taxRateId: row.tax_rate_id ?? undefined,
+  };
+}
 
 function toCategoryInsert(input: CategoryInput, storeId: string) {
   return {
@@ -55,7 +66,7 @@ export async function listCategories(searchParams: URLSearchParams, storeId: str
   throwIfSupabaseError(error);
 
   return {
-    items: (data ?? []).map((row) => mapCategory(row as CategoryRow)),
+    items: (data ?? []).map((row) => mapCategoryWithTaxRate(row as CategoryWithTaxRateRow)),
     limit,
     skip,
     total: count ?? 0,
@@ -70,7 +81,7 @@ export async function getCategoryById(id: string, storeId: string) {
     .select(categorySelect)
     .eq("id", id)
     .eq("store_id", storeId)
-    .maybeSingle<CategoryRow>();
+    .maybeSingle<CategoryWithTaxRateRow>();
 
   throwIfSupabaseError(error);
 
@@ -78,7 +89,7 @@ export async function getCategoryById(id: string, storeId: string) {
     throw new ApiError(404, "NOT_FOUND", "Categoria no encontrada.");
   }
 
-  return mapCategory(data);
+  return mapCategoryWithTaxRate(data);
 }
 
 export async function createCategory(input: CategoryInput, storeId: string) {
@@ -87,7 +98,7 @@ export async function createCategory(input: CategoryInput, storeId: string) {
     .from("categories")
     .insert(toCategoryInsert(input, storeId))
     .select(categorySelect)
-    .single<CategoryRow>();
+    .single<CategoryWithTaxRateRow>();
 
   throwIfSupabaseError(error);
 
@@ -95,7 +106,7 @@ export async function createCategory(input: CategoryInput, storeId: string) {
     throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear la categoria.");
   }
 
-  return mapCategory(data);
+  return mapCategoryWithTaxRate(data);
 }
 
 export async function updateCategory(id: string, input: CategoryInput, storeId: string) {
@@ -107,7 +118,7 @@ export async function updateCategory(id: string, input: CategoryInput, storeId: 
     .eq("id", id)
     .eq("store_id", storeId)
     .select(categorySelect)
-    .maybeSingle<CategoryRow>();
+    .maybeSingle<CategoryWithTaxRateRow>();
 
   throwIfSupabaseError(error);
 
@@ -115,7 +126,7 @@ export async function updateCategory(id: string, input: CategoryInput, storeId: 
     throw new ApiError(404, "NOT_FOUND", "Categoria no encontrada.");
   }
 
-  return mapCategory(data);
+  return mapCategoryWithTaxRate(data);
 }
 
 export async function deleteCategory(id: string, storeId: string) {
@@ -128,7 +139,7 @@ export async function deleteCategory(id: string, storeId: string) {
     .eq("store_id", storeId)
     .eq("is_active", true)
     .select(categorySelect)
-    .maybeSingle<CategoryRow>();
+    .maybeSingle<CategoryWithTaxRateRow>();
 
   throwIfSupabaseError(error);
 
@@ -137,7 +148,7 @@ export async function deleteCategory(id: string, storeId: string) {
   }
 
   return {
-    ...mapCategory(data),
+    ...mapCategoryWithTaxRate(data),
     deleted: true,
   };
 }

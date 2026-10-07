@@ -37,6 +37,19 @@ export type CategoryMock = {
   storeId?: string | null;
   /** Impuesto de la categoria en porcentaje (ej. 16 = IVA 16%). */
   taxRate: number;
+  /** Alicuota de IVA de la categoria (`tax_rates.id`); `taxRate` es su porcentaje. */
+  taxRateId?: string | null;
+};
+
+/** Alicuota de IVA. `storeId: null` = global; con tienda manda sobre la global del mismo `code`. */
+export type TaxRateMock = {
+  code: string;
+  id: string;
+  isActive: boolean;
+  label: string;
+  pct: number;
+  sortOrder: number;
+  storeId: string | null;
 };
 
 export type ContactMock = {
@@ -147,6 +160,8 @@ export type PurchaseItemMock = {
   subtotalRef: number;
   subtotalVes: number;
   taxRate?: number;
+  /** `code` de la alicuota de IVA de la linea; `taxRate` es el porcentaje congelado. */
+  taxRateCode?: string;
   taxRef?: number;
   taxVes?: number;
   unitCostRef: number;
@@ -277,11 +292,20 @@ export type UserProfileMock = {
 export type AppSettingsMock = {
   businessName: string;
   defaultTaxRate: number;
+  /** Alicuota de IVA por defecto de la tienda (`tax_rates.id`). */
+  defaultTaxRateId?: string | null;
   enabledPaymentMethods: PaymentMethod[];
   invoicePrefix: string;
   lowStockThreshold: number;
   storeId?: string | null;
 };
+
+/** Semilla global de alicuotas de IVA (la misma del parche 20261007a). */
+export const mockTaxRates: TaxRateMock[] = [
+  { code: "exento", id: "tax-exento", isActive: true, label: "Exento", pct: 0, sortOrder: 10, storeId: null },
+  { code: "reducida", id: "tax-reducida", isActive: true, label: "Reducida", pct: 8, sortOrder: 20, storeId: null },
+  { code: "general", id: "tax-general", isActive: true, label: "General", pct: 16, sortOrder: 30, storeId: null },
+];
 
 export const mockCategories: CategoryMock[] = [
   {
@@ -290,6 +314,7 @@ export const mockCategories: CategoryMock[] = [
     isActive: true,
     name: "Herramientas",
     taxRate: 16,
+    taxRateId: "tax-general",
   },
   {
     description: "Material electrico",
@@ -297,6 +322,7 @@ export const mockCategories: CategoryMock[] = [
     isActive: true,
     name: "Electricidad",
     taxRate: 16,
+    taxRateId: "tax-general",
   },
   {
     description: "Pinturas y acabados",
@@ -304,6 +330,7 @@ export const mockCategories: CategoryMock[] = [
     isActive: true,
     name: "Pintura",
     taxRate: 16,
+    taxRateId: "tax-general",
   },
   {
     description: "Tuberias, conexiones y accesorios",
@@ -311,6 +338,7 @@ export const mockCategories: CategoryMock[] = [
     isActive: true,
     name: "Plomeria",
     taxRate: 16,
+    taxRateId: "tax-general",
   },
   {
     description: "Categoria archivada para pruebas",
@@ -318,6 +346,7 @@ export const mockCategories: CategoryMock[] = [
     isActive: false,
     name: "Archivada",
     taxRate: 0,
+    taxRateId: "tax-exento",
   },
 ];
 
@@ -1525,6 +1554,7 @@ export const mockUserProfiles: UserProfileMock[] = [
 export const mockAppSettings: AppSettingsMock = {
   businessName: "BodegaHub",
   defaultTaxRate: 0,
+  defaultTaxRateId: "tax-exento",
   enabledPaymentMethods: [
     "efectivo_ves",
     "efectivo_usd",

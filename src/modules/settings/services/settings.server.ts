@@ -17,7 +17,17 @@ import type { SettingsInput, UserProfileInput } from "./settings.mock-server";
 const APP_SETTINGS_ID = 1;
 
 const appSettingsSelect =
-  "id, business_name, default_tax_rate, invoice_prefix, low_stock_threshold, enabled_payment_methods";
+  "id, business_name, default_tax_rate, default_tax_rate_id, invoice_prefix, low_stock_threshold, enabled_payment_methods";
+
+type AppSettingsWithTaxRateRow = AppSettingsRow & { default_tax_rate_id?: string | null };
+
+/** Configuracion con su alicuota de IVA por defecto (`tax_rates.id`). */
+function mapAppSettingsWithTaxRate(row: AppSettingsWithTaxRateRow) {
+  return {
+    ...mapAppSettings(row),
+    defaultTaxRateId: row.default_tax_rate_id ?? undefined,
+  };
+}
 
 const profileSelect =
   "id, full_name, role, is_active, granted_permissions, denied_permissions";
@@ -65,7 +75,7 @@ export async function getSettings(storeId: string) {
     .from("app_settings")
     .select(appSettingsSelect)
     .eq("store_id", storeId)
-    .maybeSingle<AppSettingsRow>();
+    .maybeSingle<AppSettingsWithTaxRateRow>();
 
   throwIfSupabaseError(error);
 
@@ -73,7 +83,7 @@ export async function getSettings(storeId: string) {
     throw new ApiError(404, "NOT_FOUND", "Configuracion no encontrada.");
   }
 
-  return mapAppSettings(data);
+  return mapAppSettingsWithTaxRate(data);
 }
 
 export async function updateSettings(input: SettingsInput, storeId: string) {
@@ -93,7 +103,7 @@ export async function updateSettings(input: SettingsInput, storeId: string) {
     })
     .eq("store_id", storeId)
     .select(appSettingsSelect)
-    .maybeSingle<AppSettingsRow>();
+    .maybeSingle<AppSettingsWithTaxRateRow>();
 
   throwIfSupabaseError(error);
 
@@ -101,7 +111,7 @@ export async function updateSettings(input: SettingsInput, storeId: string) {
     throw new ApiError(404, "NOT_FOUND", "Configuracion no encontrada.");
   }
 
-  return mapAppSettings(data);
+  return mapAppSettingsWithTaxRate(data);
 }
 
 export async function listUsers(searchParams: URLSearchParams, storeId: string) {

@@ -1,5 +1,6 @@
 import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
+import { resolveMockCategoryTaxRate } from "@/modules/settings/services/taxRates.mock-server";
 import { mockCategories, type CategoryMock } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
@@ -33,23 +34,35 @@ export function getCategoryById(id: string, storeId: string) {
 }
 
 export function createCategory(input: CategoryInput, storeId: string) {
+  // Como el trigger de la base: el porcentaje debe ser el de una alicuota de la tienda.
+  const taxRate = resolveMockCategoryTaxRate(storeId, input.taxRate ?? 16);
+
   return {
     description: input.description,
     id: `cat-mock-${Date.now()}`,
     isActive: input.isActive ?? true,
     name: input.name ?? "Categoria mock",
     storeId,
-    taxRate: input.taxRate ?? 16,
+    taxRate: taxRate.pct,
+    taxRateId: taxRate.id,
   } satisfies CategoryMock;
 }
 
 export function updateCategory(id: string, input: CategoryInput, storeId: string) {
   const category = getCategoryById(id, storeId);
+  // Se resuelve antes de escribir nada: un porcentaje sin alicuota rechaza el cambio entero.
+  const taxRate =
+    input.taxRate !== undefined && input.taxRate !== category.taxRate
+      ? resolveMockCategoryTaxRate(storeId, input.taxRate)
+      : undefined;
 
   if (input.description !== undefined) category.description = input.description;
   if (input.isActive !== undefined) category.isActive = input.isActive;
   if (input.name !== undefined) category.name = input.name;
-  if (input.taxRate !== undefined) category.taxRate = input.taxRate;
+  if (taxRate) {
+    category.taxRate = taxRate.pct;
+    category.taxRateId = taxRate.id;
+  }
 
   return getCategoryById(id, storeId);
 }
