@@ -3,6 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
+import { ActionsMenu } from "../ActionsMenu/ActionsMenu";
 import { ConfirmActionModal, type ConfirmActionModalProps } from "./ConfirmActionModal";
 
 type HarnessProps = Partial<ConfirmActionModalProps>;
@@ -35,6 +36,20 @@ function deferred() {
   });
 
   return { promise, reject, resolve };
+}
+
+function modalElement(props: HarnessProps, onConfirm: () => void | Promise<void>) {
+  return (
+    <ConfirmActionModal
+      confirmLabel="Anular venta"
+      description="La venta quedará anulada."
+      onOpenChange={jest.fn()}
+      open
+      title="Anular venta V-0012"
+      {...props}
+      onConfirm={onConfirm}
+    />
+  );
 }
 
 async function flushDeferredClose() {
@@ -83,9 +98,31 @@ describe("ConfirmActionModal", () => {
     expect(within(items[2]).getByText("Bs 1.200,00")).toBeVisible();
     expect(within(items[2]).queryByText("pasa a")).not.toBeInTheDocument();
 
-    expect(items[3]).toHaveTextContent(/^El historial se conserva$/);
+    expect(within(items[3]).getByText("El historial se conserva")).toBeVisible();
     expect(items[3]).toHaveAttribute("data-tone", "neutral");
   });
+
+  it.each([
+    ["neutral", "lucide-minus", "Información:"],
+    ["positive", "lucide-circle-check", "Efecto favorable:"],
+    ["warning", "lucide-triangle-alert", "Aviso:"],
+    ["danger", "lucide-octagon-alert", "Efecto crítico:"],
+  ] as const)(
+    "marks the %s tone with its own icon and screen reader text",
+    (tone, iconClass, text) => {
+      renderModal({ effects: [{ label: "Estado de la venta", tone }] });
+
+      const item = within(screen.getByRole("list", { name: "Qué va a pasar" })).getByRole(
+        "listitem",
+      );
+      const icon = item.querySelector("svg");
+
+      expect(icon).toHaveClass(iconClass);
+      expect(icon).toHaveAttribute("aria-hidden", "true");
+      expect(within(item).getByText(text)).toHaveClass("sr-only");
+      expect(item).toHaveTextContent(`${text} Estado de la venta`);
+    },
+  );
 
   it("renders custom effects through renderEffects", () => {
     renderModal({
@@ -235,12 +272,298 @@ describe("ConfirmActionModal", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
-  it("shows the error message as is", () => {
-    renderModal({ error: "No hay stock suficiente para revertir (PT409)" });
+  it("shows an error that arrives after opening as is", () => {
+    const onConfirm = jest.fn();
+    const { rerender } = render(modalElement({}, onConfirm));
+
+    rerender(modalElement({ error: "No hay stock suficiente para revertir (PT409)" }, onConfirm));
 
     expect(screen.getByRole("alert")).toHaveTextContent(
       /^No hay stock suficiente para revertir \(PT409\)$/,
     );
+  });
+
+  describe("re-entry lock with a synchronous onConfirm (SHR-07 F1)", () => {
+    it("runs onConfirm once on double click and shows the button as busy", async () => {
+      const user = userEvent.setup();
+      const { onConfirm } = renderModal();
+
+      await user.dblClick(screen.getByRole("button", { name: "Anular venta" }));
+
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+
+      const busyButton = screen.getByRole("button", { name: "Procesando..." });
+      expect(busyButton).toBeDisabled();
+      expect(busyButton).toHaveAttribute("aria-busy", "true");
+    });
+
+    it("runs onConfirm once when Enter is pressed three times on the button", async () => {
+      const user = userEvent.setup();
+      const { onConfirm } = renderModal();
+
+      expect(screen.getByRole("button", { name: "Anular venta" })).toHaveFocus();
+      await user.keyboard("{Enter}{Enter}{Enter}");
+
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+    });
+
+    it("runs onConfirm once when Enter is pressed three times on the typed field", async () => {
+      const user = userEvent.setup();
+      const { onConfirm } = renderModal({ requireTypedConfirmation: "ANULAR" });
+
+      await user.type(
+        screen.getByRole("textbox", { name: "Palabra de confirmación" }),
+        "anular{Enter}{Enter}{Enter}",
+      );
+
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows a retry once isPending goes back to false with an error", async () => {
+      const user = userEvent.setup();
+      const onConfirm = jest.fn();
+      const { rerender } = render(modalElement({}, onConfirm));
+
+      await user.dblClick(screen.getByRole("button", { name: "Anular venta" }));
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+
+      rerender(modalElement({ isPending: true }, onConfirm));
+      expect(screen.getByRole("button", { name: "Procesando..." })).toBeDisabled();
+
+      rerender(modalElement({ error: "La caja está cerrada", isPending: false }, onConfirm));
+      expect(screen.getByRole("alert")).toHaveTextContent("La caja está cerrada");
+
+      await user.click(screen.getByRole("button", { name: "Anular venta" }));
+      expect(onConfirm).toHaveBeenCalledTimes(2);
+    });
+
+    it("allows a retry as soon as a new error arrives without isPending", async () => {
+      const user = userEvent.setup();
+      const onConfirm = jest.fn();
+      const { rerender } = render(modalElement({}, onConfirm));
+
+      await user.dblClick(screen.getByRole("button", { name: "Anular venta" }));
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+      rerender(modalElement({ error: "Selecciona una caja" }, onConfirm));
+
+      await user.click(screen.getByRole("button", { name: "Anular venta" }));
+      expect(onConfirm).toHaveBeenCalledTimes(2);
+    });
+
+    it("releases the lock after the safety timeout when nothing observable happens", async () => {
+      jest.useFakeTimers();
+
+      try {
+        const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+        const { onConfirm } = renderModal();
+
+        await user.dblClick(screen.getByRole("button", { name: "Anular venta" }));
+        expect(onConfirm).toHaveBeenCalledTimes(1);
+
+        act(() => {
+          jest.advanceTimersByTime(900);
+        });
+        expect(screen.getByRole("button", { name: "Procesando..." })).toBeDisabled();
+
+        act(() => {
+          jest.advanceTimersByTime(200);
+        });
+
+        await user.click(screen.getByRole("button", { name: "Anular venta" }));
+        expect(onConfirm).toHaveBeenCalledTimes(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("keeps the lock past the safety timeout while isPending is true", async () => {
+      jest.useFakeTimers();
+
+      try {
+        const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+        const onConfirm = jest.fn();
+        const { rerender } = render(modalElement({}, onConfirm));
+
+        await user.click(screen.getByRole("button", { name: "Anular venta" }));
+        rerender(modalElement({ isPending: true }, onConfirm));
+
+        act(() => {
+          jest.advanceTimersByTime(5000);
+        });
+        expect(screen.getByRole("button", { name: "Procesando..." })).toBeDisabled();
+
+        rerender(modalElement({ isPending: false }, onConfirm));
+        await user.click(screen.getByRole("button", { name: "Anular venta" }));
+        expect(onConfirm).toHaveBeenCalledTimes(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("releases the lock when the modal is closed and reopened", async () => {
+      const user = userEvent.setup();
+      const onConfirm = jest.fn();
+      const { rerender } = render(modalElement({}, onConfirm));
+
+      await user.dblClick(screen.getByRole("button", { name: "Anular venta" }));
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+
+      rerender(modalElement({ open: false }, onConfirm));
+      rerender(modalElement({ open: true }, onConfirm));
+
+      await user.click(await screen.findByRole("button", { name: "Anular venta" }));
+      expect(onConfirm).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("stale errors (SHR-07 F2)", () => {
+    it("hides the error left by a previous attempt until this opening produces one", async () => {
+      const user = userEvent.setup();
+      const onConfirm = jest.fn();
+      const staleMessage = "El producto tiene stock";
+      const { rerender } = render(modalElement({ error: staleMessage }, onConfirm));
+
+      expect(screen.getByRole("dialog")).toBeVisible();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Anular venta" }));
+      rerender(modalElement({ error: null, isPending: true }, onConfirm));
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      rerender(modalElement({ error: staleMessage, isPending: false }, onConfirm));
+      expect(screen.getByRole("alert")).toHaveTextContent(staleMessage);
+
+      rerender(modalElement({ error: staleMessage, open: false }, onConfirm));
+      rerender(modalElement({ error: staleMessage, open: true }, onConfirm));
+
+      expect(await screen.findByRole("dialog")).toBeVisible();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Anular venta" }));
+      rerender(modalElement({ error: null, isPending: true }, onConfirm));
+      rerender(modalElement({ error: staleMessage, isPending: false }, onConfirm));
+
+      expect(screen.getByRole("alert")).toHaveTextContent(staleMessage);
+      expect(onConfirm).toHaveBeenCalledTimes(2);
+    });
+
+    it("shows the same message again when the caller never clears it between attempts", async () => {
+      const user = userEvent.setup();
+      const onConfirm = jest.fn();
+      const staleMessage = "El producto tiene stock";
+
+      render(modalElement({ error: staleMessage }, onConfirm));
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Anular venta" }));
+
+      expect(screen.getByRole("alert")).toHaveTextContent(staleMessage);
+    });
+  });
+
+  describe("focus return (SHR-07 F3)", () => {
+    function FocusHarness({ removeTriggerOnConfirm = false }: { removeTriggerOnConfirm?: boolean }) {
+      const [open, setOpen] = useState(false);
+      const [hasTrigger, setHasTrigger] = useState(true);
+
+      return (
+        <>
+          {hasTrigger ? (
+            <button onClick={() => setOpen(true)} type="button">
+              Anular
+            </button>
+          ) : null}
+          <ConfirmActionModal
+            confirmLabel="Anular venta"
+            description="La venta quedará anulada."
+            onConfirm={() => {
+              if (removeTriggerOnConfirm) {
+                setHasTrigger(false);
+              }
+              setOpen(false);
+            }}
+            onOpenChange={setOpen}
+            open={open}
+            title="Anular venta V-0012"
+            variant="danger"
+          />
+        </>
+      );
+    }
+
+    type User = ReturnType<typeof userEvent.setup>;
+
+    it.each([
+      ["Escape", (user: User) => user.keyboard("{Escape}")],
+      ["Cancelar", (user: User) => user.click(screen.getByRole("button", { name: "Cancelar" }))],
+      [
+        "the close button",
+        (user: User) => user.click(screen.getByRole("button", { name: "Cerrar modal" })),
+      ],
+      [
+        "the caller after confirming",
+        (user: User) => user.click(screen.getByRole("button", { name: "Anular venta" })),
+      ],
+    ])("returns focus to the trigger when closed with %s", async (_label, closeModal) => {
+      const user = userEvent.setup();
+      render(<FocusHarness />);
+
+      const trigger = screen.getByRole("button", { name: "Anular" });
+      await user.click(trigger);
+      expect(await screen.findByRole("button", { name: "Cancelar" })).toHaveFocus();
+
+      await closeModal(user);
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      await waitFor(() => expect(trigger).toHaveFocus());
+    });
+
+    it("leaves focus alone when the trigger is gone after the action", async () => {
+      const user = userEvent.setup();
+      render(<FocusHarness removeTriggerOnConfirm />);
+
+      await user.click(screen.getByRole("button", { name: "Anular" }));
+      await user.click(await screen.findByRole("button", { name: "Anular venta" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: "Anular" })).not.toBeInTheDocument();
+      await flushDeferredClose();
+      expect(document.body).toHaveFocus();
+    });
+
+    it("returns focus to the menu button when the trigger was a menu item", async () => {
+      const user = userEvent.setup();
+
+      function MenuHarness() {
+        const [open, setOpen] = useState(false);
+
+        return (
+          <>
+            <ActionsMenu actions={[{ label: "Desactivar", onSelect: () => setOpen(true) }]} />
+            <ConfirmActionModal
+              confirmLabel="Desactivar producto"
+              description="El producto quedará inactivo."
+              onConfirm={jest.fn()}
+              onOpenChange={setOpen}
+              open={open}
+              title="Confirmar desactivación"
+              variant="danger"
+            />
+          </>
+        );
+      }
+
+      render(<MenuHarness />);
+
+      const menuButton = screen.getByRole("button", { name: "Abrir acciones" });
+      await user.click(menuButton);
+      await user.click(screen.getByRole("menuitem", { name: "Desactivar" }));
+      expect(await screen.findByRole("dialog")).toBeVisible();
+
+      await user.keyboard("{Escape}");
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      await waitFor(() => expect(menuButton).toHaveFocus());
+    });
   });
 
   it("closes with Escape", async () => {

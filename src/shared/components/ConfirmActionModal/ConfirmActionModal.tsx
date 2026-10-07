@@ -1,6 +1,14 @@
 "use client";
 
-import { ArrowRight, Loader2 } from "lucide-react";
+import {
+  ArrowRight,
+  CircleCheck,
+  Loader2,
+  type LucideIcon,
+  Minus,
+  OctagonAlert,
+  TriangleAlert,
+} from "lucide-react";
 import {
   type ReactNode,
   type RefObject,
@@ -59,12 +67,83 @@ const toneBadgeVariant = {
   warning: "warning",
 } as const satisfies Record<ConfirmActionEffectTone, string>;
 
-const toneDotClassName: Record<ConfirmActionEffectTone, string> = {
-  danger: "bg-red-500",
-  neutral: "bg-slate-400",
-  positive: "bg-emerald-500",
-  warning: "bg-amber-500",
+// The tone must not depend on colour alone: each one has its own icon shape and
+// a short prefix that only screen readers announce.
+const toneMarker: Record<
+  ConfirmActionEffectTone,
+  { className: string; Icon: LucideIcon; srLabel: string }
+> = {
+  danger: {
+    className: "text-red-600 dark:text-red-400",
+    Icon: OctagonAlert,
+    srLabel: "Efecto crítico:",
+  },
+  neutral: {
+    className: "text-slate-500 dark:text-slate-400",
+    Icon: Minus,
+    srLabel: "Información:",
+  },
+  positive: {
+    className: "text-emerald-600 dark:text-emerald-400",
+    Icon: CircleCheck,
+    srLabel: "Efecto favorable:",
+  },
+  warning: {
+    className: "text-amber-600 dark:text-amber-400",
+    Icon: TriangleAlert,
+    srLabel: "Aviso:",
+  },
 };
+
+/** Safety net for synchronous handlers that end without any observable signal. */
+const LOCK_SAFETY_TIMEOUT_MS = 1000;
+
+type FocusReturnTarget = {
+  /** Element that had focus when the modal opened. */
+  element: HTMLElement | null;
+  /** Button that opened the menu holding `element`, which survives the menu closing. */
+  menuOpener: HTMLElement | null;
+};
+
+const noFocusReturnTarget: FocusReturnTarget = { element: null, menuOpener: null };
+
+function captureFocusReturnTarget(): FocusReturnTarget {
+  if (typeof document === "undefined") {
+    return noFocusReturnTarget;
+  }
+
+  const element = document.activeElement;
+
+  if (!(element instanceof HTMLElement) || element === document.body) {
+    return noFocusReturnTarget;
+  }
+
+  const menu = element.closest('[role="menu"]');
+
+  if (!menu) {
+    return { element, menuOpener: null };
+  }
+
+  const labelledBy = menu.getAttribute("aria-labelledby");
+  const menuOpener =
+    (labelledBy ? document.getElementById(labelledBy) : null) ??
+    document.querySelector('[aria-haspopup="menu"][aria-expanded="true"]');
+
+  return { element, menuOpener: menuOpener instanceof HTMLElement ? menuOpener : null };
+}
+
+function restoreFocus({ element, menuOpener }: FocusReturnTarget) {
+  const active = document.activeElement;
+
+  // Only when closing left focus nowhere: never steal it from where the caller put it.
+  if (active != null && active !== document.body && active.isConnected) {
+    return;
+  }
+
+  const target = [element, menuOpener].find((candidate) => candidate?.isConnected);
+
+  target?.focus();
+}
 
 function normalizeTypedWord(value: string) {
   return value.trim().toLowerCase();
@@ -89,6 +168,7 @@ function FocusOnMount({ targetRef }: { targetRef: RefObject<HTMLElement | null> 
 
 function EffectItem({ effect }: { effect: ConfirmActionEffect }) {
   const tone = effect.tone ?? "neutral";
+  const marker = toneMarker[tone];
   const hasBefore = effect.before != null && effect.before !== "";
   const hasAfter = effect.after != null && effect.after !== "";
 
@@ -98,11 +178,14 @@ function EffectItem({ effect }: { effect: ConfirmActionEffect }) {
       data-tone={tone}
     >
       <span className="flex min-w-0 items-center gap-2 text-foreground">
-        <span
+        <marker.Icon
           aria-hidden="true"
-          className={cn("h-1.5 w-1.5 shrink-0 rounded-full", toneDotClassName[tone])}
+          className={cn("h-4 w-4 shrink-0", marker.className)}
         />
-        <span className="min-w-0 break-words">{effect.label}</span>
+        <span className="min-w-0 break-words">
+          <span className="sr-only">{marker.srLabel} </span>
+          {effect.label}
+        </span>
       </span>
       {hasBefore || hasAfter ? (
         <span className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -151,25 +234,89 @@ export function ConfirmActionModal({
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
   const typedInputRef = useRef<HTMLInputElement | null>(null);
-  const runningRef = useRef(false);
+  const lockedRef = useRef(false);
+  const lockGenerationRef = useRef(0);
+  const sawPendingRef = useRef(false);
+  const safetyTimerRef = useRef<number | null>(null);
 
-  const [isRunning, setIsRunning] = useState(false);
+  const currentError = error || null;
+
+  const [isLocked, setIsLocked] = useState(false);
   const [typedValue, setTypedValue] = useState("");
+  // Error already present when the modal opened: it belongs to an earlier attempt.
+  const [staleError, setStaleError] = useState(open ? currentError : null);
+  const [focusReturnTarget, setFocusReturnTarget] = useState(() =>
+    open ? captureFocusReturnTarget() : noFocusReturnTarget,
+  );
   const [previousOpen, setPreviousOpen] = useState(open);
+  const [previousPending, setPreviousPending] = useState(isPending);
+  const [previousError, setPreviousError] = useState(currentError);
 
   if (previousOpen !== open) {
     setPreviousOpen(open);
+    setIsLocked(false);
     if (open) {
       setTypedValue("");
+      setStaleError(currentError);
+      setFocusReturnTarget(captureFocusReturnTarget());
+    }
+  } else if (staleError !== null && currentError !== staleError) {
+    setStaleError(null);
+  }
+
+  if (previousPending !== isPending) {
+    setPreviousPending(isPending);
+    if (!isPending) {
+      setIsLocked(false);
     }
   }
+
+  if (previousError !== currentError) {
+    setPreviousError(currentError);
+    if (currentError !== null) {
+      setIsLocked(false);
+    }
+  }
+
+  // The ref blocks re-entry within the same tick; the state releases it from render.
+  useEffect(() => {
+    lockedRef.current = isLocked;
+  });
+
+  useEffect(() => {
+    if (isPending) {
+      sawPendingRef.current = true;
+    }
+  }, [isPending]);
+
+  useEffect(
+    () => () => {
+      if (safetyTimerRef.current != null) {
+        window.clearTimeout(safetyTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  // Modal keeps focus from jumping on close (POS), so hand it back to the trigger here.
+  // Deferred: when this cleanup runs the dialog is still mounted and trapping focus.
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    return () => {
+      window.setTimeout(() => restoreFocus(focusReturnTarget), 0);
+    };
+  }, [focusReturnTarget, open]);
 
   const requiredWord = requireTypedConfirmation?.trim() ?? "";
   const needsTypedConfirmation = requiredWord !== "";
   const isTypedConfirmed =
     !needsTypedConfirmation ||
     normalizeTypedWord(typedValue) === normalizeTypedWord(requiredWord);
-  const isBusy = isPending || isRunning;
+  const isBusy = isPending || isLocked;
+  const visibleError = currentError !== staleError ? currentError : null;
   const hasEffects = renderEffects != null || (effects != null && effects.length > 0);
 
   let initialFocusRef: RefObject<HTMLElement | null> = confirmRef;
@@ -180,7 +327,7 @@ export function ConfirmActionModal({
   }
 
   function handleOpenChange(nextOpen: boolean) {
-    if (!nextOpen && (isPending || runningRef.current)) {
+    if (!nextOpen && (isPending || lockedRef.current)) {
       return;
     }
 
@@ -188,27 +335,59 @@ export function ConfirmActionModal({
   }
 
   function handleConfirm() {
-    if (isPending || runningRef.current || !isTypedConfirmed) {
+    if (isPending || lockedRef.current || !isTypedConfirmed) {
       return;
     }
 
-    const result = onConfirm();
+    const generation = lockGenerationRef.current + 1;
 
-    if (!isPromiseLike(result)) {
-      return;
+    lockGenerationRef.current = generation;
+    lockedRef.current = true;
+    sawPendingRef.current = false;
+    setIsLocked(true);
+    // From here on any error belongs to this opening, even with the same text.
+    setStaleError(null);
+
+    if (safetyTimerRef.current != null) {
+      window.clearTimeout(safetyTimerRef.current);
+      safetyTimerRef.current = null;
     }
-
-    runningRef.current = true;
-    setIsRunning(true);
 
     const release = () => {
-      runningRef.current = false;
-      setIsRunning(false);
+      if (lockGenerationRef.current !== generation) {
+        return;
+      }
+
+      lockedRef.current = false;
+      setIsLocked(false);
     };
 
-    // A rejection keeps the modal open so the action can be retried; the caller
-    // surfaces the message through `error`.
-    result.then(release, release);
+    let result: void | Promise<void>;
+
+    try {
+      result = onConfirm();
+    } catch (confirmError) {
+      release();
+      throw confirmError;
+    }
+
+    if (isPromiseLike(result)) {
+      // A rejection keeps the modal open so the action can be retried; the caller
+      // surfaces the message through `error`.
+      result.then(release, release);
+      return;
+    }
+
+    // Synchronous handler: the lock is released from render when the modal closes,
+    // `isPending` ends or a new error arrives. If none of that happens (the caller
+    // bailed out silently), free it after a short wait.
+    safetyTimerRef.current = window.setTimeout(() => {
+      safetyTimerRef.current = null;
+
+      if (!sawPendingRef.current) {
+        release();
+      }
+    }, LOCK_SAFETY_TIMEOUT_MS);
   }
 
   return (
@@ -308,12 +487,12 @@ export function ConfirmActionModal({
         </div>
       ) : null}
 
-      {error ? (
+      {visibleError ? (
         <p
           className="shrink-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300"
           role="alert"
         >
-          {error}
+          {visibleError}
         </p>
       ) : null}
     </Modal>
