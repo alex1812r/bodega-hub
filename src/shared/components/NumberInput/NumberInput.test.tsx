@@ -292,6 +292,104 @@ describe("NumberInput", () => {
     expect(getField()).toHaveValue("1234.50");
   });
 
+  describe("text that is not a plain number (SHR-09K)", () => {
+    const modes: [string, number | undefined][] = [
+      ["an integer", 0],
+      ["a decimal", 2],
+    ];
+
+    describe.each(modes)("in %s field", (_mode, decimals) => {
+      // Antes la letra se descartaba y los digitos se unian: pegar 1e3 dejaba 13.
+      it.each(["1e3", "1E3", "1e-3", "12abc3", "3-4", "10 20", "1 0000", "Bs 1e3"])(
+        "rejects pasting %s instead of joining its digits",
+        async (pasted) => {
+          const user = userEvent.setup();
+          const onChange = jest.fn();
+          const onValueChange = jest.fn();
+
+          render(
+            <NumberInput
+              decimals={decimals}
+              defaultValue={99}
+              label="Monto"
+              onChange={onChange}
+              onValueChange={onValueChange}
+            />,
+          );
+
+          await user.click(getField());
+          await user.paste(pasted);
+
+          expect(getField()).toHaveValue("99");
+          expect(onChange).not.toHaveBeenCalled();
+          expect(onValueChange).not.toHaveBeenCalled();
+          expect(getField()).not.toHaveAttribute("aria-invalid");
+        },
+      );
+
+      it("rejects a paste that only becomes another number next to what was already typed", async () => {
+        const user = userEvent.setup();
+
+        render(<NumberInput decimals={decimals} label="Monto" />);
+
+        await user.type(getField(), "1");
+        await user.paste("e3");
+
+        expect(getField()).toHaveValue("1");
+      });
+
+      it("leaves an empty field empty when the paste is rejected", async () => {
+        const user = userEvent.setup();
+
+        render(<NumberInput decimals={decimals} label="Monto" />);
+
+        await user.click(getField());
+        await user.paste("1e3");
+
+        expect(getField()).toHaveValue("");
+      });
+
+      it.each([
+        ["1 000", "1000"],
+        ["1 234 567", "1234567"],
+        ["1 000", "1000"],
+        [" 7 ", "7"],
+        ["Bs 12", "12"],
+        ["12 Bs", "12"],
+      ])("still pastes %s as %s", async (pasted, expected) => {
+        const user = userEvent.setup();
+
+        render(<NumberInput decimals={decimals} label="Monto" />);
+
+        await user.click(getField());
+        await user.paste(pasted);
+
+        expect(getField()).toHaveValue(expected);
+      });
+
+      it("rejects each key that is not numeric, so the field never shows text it will not send", async () => {
+        const user = userEvent.setup();
+
+        render(<NumberInput decimals={decimals} label="Monto" />);
+
+        await user.type(getField(), "1e");
+
+        expect(getField()).toHaveValue("1");
+      });
+    });
+
+    it("still pastes thousands written with spaces and a decimal comma", async () => {
+      const user = userEvent.setup();
+
+      render(<NumberInput decimals={2} label="Monto" />);
+
+      await user.click(getField());
+      await user.paste("1 250,75");
+
+      expect(getField()).toHaveValue("1250.75");
+    });
+  });
+
   it("applies min and max when leaving the field", async () => {
     const user = userEvent.setup();
     const onValueChange = jest.fn();

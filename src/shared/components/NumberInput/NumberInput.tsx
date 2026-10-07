@@ -142,6 +142,19 @@ export function sanitizeNumberText(raw: string, { allowNegative }: TextOptions =
   return `${sign}${integerPart}${hasSeparator ? `.${fractionPart}` : ""}`;
 }
 
+/**
+ * `true` si entre el primer y el último dígito hay algo que no es dígito ni
+ * separador ("1e3", "12abc3", "3-4", "10 20"). Limpiar ese texto uniría los
+ * dígitos (1e3 → 13) y cambiaría la cantidad sin avisar. Un espacio seguido de
+ * exactamente tres dígitos sí vale: son miles ("1 000"). Lo que rodea al número
+ * ("Bs 12", " 7 ") no cuenta.
+ */
+function hasForeignTextBetweenDigits(text: string) {
+  const body = /\d(?:[^]*\d)?/.exec(text)?.[0] ?? "";
+
+  return /[^\d.,]/.test(body.replace(/(\d)[   ](?=\d{3}(?!\d))/g, "$1"));
+}
+
 function incrementDigits(digits: string) {
   const chars = digits.split("");
   let index = chars.length - 1;
@@ -438,7 +451,14 @@ export function NumberInput({
     const current = element.value;
     const start = element.selectionStart ?? current.length;
     const end = element.selectionEnd ?? start;
-    const head = current.slice(0, start) + normalizePastedNumber(event.clipboardData.getData("text"));
+    const pasted = event.clipboardData.getData("text");
+
+    // Se mira junto a lo que ya había: pegar "e3" detrás de "1" también daría 13. El campo se queda como estaba.
+    if (hasForeignTextBetweenDigits(current.slice(0, start) + pasted + current.slice(end))) {
+      return;
+    }
+
+    const head =current.slice(0, start) + normalizePastedNumber(pasted);
     const next = sanitizeNumberText(head + current.slice(end), options);
     const caret = Math.min(sanitizeNumberText(head, options).length, next.length);
 

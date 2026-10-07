@@ -36,7 +36,10 @@ junto al componente).
 
 **Pegado**: con coma y punto, el último es el decimal (\`1.234,50\` y \`1,234.50\` → \`1234.50\`); un mismo
 separador repetido son miles (\`1.234.567\` → \`1234567\`); un único separador es siempre decimal
-(\`1.234\` → \`1.234\`).
+(\`1.234\` → \`1.234\`). Un espacio seguido de tres dígitos son miles (\`1 000\` → \`1000\`) y lo que rodea
+al número se ignora (\`Bs 12\` → \`12\`). Si entre los dígitos hay otra cosa (\`1e3\`, \`12abc3\`, \`10 20\`)
+el pegado se rechaza entero y el campo se queda como estaba: no se unen los dígitos (\`1e3\` no es \`13\`).
+Al teclear, cada tecla que no es numérica se rechaza en el momento.
 
 **Separadores al teclear**: un único separador es siempre el decimal (\`1.234\` vale 1,234). Si llega un segundo:
 
