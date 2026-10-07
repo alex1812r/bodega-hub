@@ -21,4 +21,10 @@ describe("LoginForm", () => {
 
     expect(getByRole("button", { name: /entrando/i })).toBeDisabled();
   });
+
+  it("never submits natively with GET, so credentials cannot reach the URL before hydration", () => {
+    const { container } = render(<LoginForm onSubmit={jest.fn()} />);
+
+    expect(container.querySelector("form")).toHaveAttribute("method", "post");
+  });
 });

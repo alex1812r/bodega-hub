@@ -9,7 +9,7 @@ import { Input } from "@/shared/components/Input";
 
 import { loginSchema, type LoginFormValues } from "../schemas/loginSchema";
 
-type LoginFormProps = Omit<ComponentPropsWithoutRef<"form">, "onSubmit"> & {
+type LoginFormProps = Omit<ComponentPropsWithoutRef<"form">, "method" | "onSubmit"> & {
   errorMessage?: string;
   isSubmitting?: boolean;
   onSubmit: (values: LoginFormValues) => void;
@@ -34,7 +34,9 @@ export function LoginForm({
   });
 
   return (
-    <form className="space-y-5" onSubmit={handleSubmit(onSubmit)} {...props}>
+    // `method="post"`: si se envia antes de hidratar (sin `onSubmit`), el envio
+    // nativo no debe ser un GET que deje el correo y la clave en la URL.
+    <form className="space-y-5" onSubmit={handleSubmit(onSubmit)} {...props} method="post">
       <Input
         autoComplete="email"
         error={errors.email?.message}
