@@ -5,6 +5,11 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
+// Regla 12 del plan ux-mejoras: nada de diálogos nativos del navegador.
+const NATIVE_DIALOGS = ["confirm", "alert", "prompt"];
+const NATIVE_DIALOG_MESSAGE =
+  "Diálogos nativos prohibidos (regla 12 del plan ux-mejoras): usa ConfirmActionModal para confirmar, Modal para pedir datos y los toasts de src/shared/components/ para avisar.";
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -17,7 +22,22 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     "public/mockServiceWorker.js",
   ]),
-  ...storybook.configs["flat/recommended"]
+  ...storybook.configs["flat/recommended"],
+  {
+    files: ["src/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}", "packages/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        ...NATIVE_DIALOGS.map((name) => ({ name, message: NATIVE_DIALOG_MESSAGE })),
+      ],
+      "no-restricted-properties": [
+        "error",
+        ...["window", "globalThis"].flatMap((object) =>
+          NATIVE_DIALOGS.map((property) => ({ object, property, message: NATIVE_DIALOG_MESSAGE })),
+        ),
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

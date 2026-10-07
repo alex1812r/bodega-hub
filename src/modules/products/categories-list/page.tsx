@@ -112,6 +112,7 @@ export function CategoriesListPage() {
   }
 
   async function handleDeactivateCategory(category: CategoryMock) {
+    // eslint-disable-next-line no-restricted-properties -- CNF-12 (Ola 2) reemplaza este confirm por ConfirmActionModal
     const confirmed = window.confirm(
       "La categoría dejará de aparecer en selectores. Los productos que la usan no se modifican.",
     );
@@ -124,6 +125,7 @@ export function CategoriesListPage() {
   }
 
   async function handleReactivateCategory(category: CategoryMock) {
+    // eslint-disable-next-line no-restricted-properties -- CNF-12 (Ola 2) reemplaza este confirm por ConfirmActionModal
     const confirmed = window.confirm(
       "La categoría volverá a aparecer en selectores de producto y formularios.",
     );
