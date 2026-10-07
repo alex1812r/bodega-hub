@@ -82,6 +82,30 @@
   --sidebar-foreground: #e2e8f0;
   --sidebar-muted: #94a3b8;
   --ring: #818cf8;
+
+  /* SHR-13: tokens de color de :root que no tenian valor oscuro.
+     Ratios de contraste en docs/design-tokens.md (seccion "Tema oscuro"). */
+  --surface-container-highest: #475569;
+  --surface-variant: #334155;
+  --surface-bright: #1e293b;
+  --on-surface-variant: #cbd5e1;
+  --outline: #94a3b8;
+  --destructive: #f87171;
+  --on-error: #450a0a;
+  --error-container: #450a0a;
+  --on-error-container: #fca5a5;
+  --stitch-secondary: #34d399;
+  --secondary-container: #022c22;
+  --on-secondary-container: #6ee7b7;
+  /* Acentos y roles "fixed": mismo valor en ambos temas (ya cumplen AA con su par). */
+  --secondary: #10b981;
+  --tertiary: #f59e0b;
+  --tertiary-container: #885500;
+  --tertiary-fixed: #ffddb8;
+  --on-tertiary-fixed: #2a1700;
+  --tertiary-fixed-dim: #ffb95f;
+  --primary-fixed-dim: #c3c0ff;
+  --on-primary-fixed: #0f0069;
 }
 
 @theme inline {
