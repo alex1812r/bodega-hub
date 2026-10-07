@@ -1520,6 +1520,172 @@ describe("EntityAutocomplete: escaneos seguidos", () => {
 
       expect(onNotFound).not.toHaveBeenCalled();
     });
+
+    describe("todo Enter que no elige deja su texto seleccionado (SHR-31)", () => {
+      function selection() {
+        const input = getInput() as HTMLInputElement;
+
+        return [input.selectionStart, input.selectionEnd];
+      }
+
+      /**
+       * Como el navegador: cada tecla sustituye lo seleccionado o se inserta en
+       * el cursor (`fireEvent.change` por sí solo pisaría el campo entero).
+       */
+      function readerScan(code: string) {
+        const input = getInput() as HTMLInputElement;
+
+        focusInput();
+
+        for (const key of code) {
+          const start = input.selectionStart ?? input.value.length;
+          const end = input.selectionEnd ?? input.value.length;
+
+          pressKey(key);
+          fireEvent.change(input, {
+            target: { value: input.value.slice(0, start) + key + input.value.slice(end) },
+          });
+        }
+
+        pressKey("Enter");
+      }
+
+      it("parcial, el mismo parcial otra vez y un exacto: el exacto se elige y el parcial se avisa una vez", async () => {
+        const fetcher = partialFetcher();
+        const { onChange, onNotFound } = renderScanner(fetcher);
+
+        readerScan(partialCode);
+        await advance(200);
+
+        expect(getInput()).toHaveValue(partialCode);
+        expect(selection()).toEqual([0, partialCode.length]);
+
+        readerScan(partialCode);
+        await advance(200);
+
+        expect(onChange).not.toHaveBeenCalled();
+        expect(onNotFound).not.toHaveBeenCalled();
+        expect(getInput()).toHaveValue(partialCode);
+        expect(screen.getAllByRole("option")).toHaveLength(2);
+        expect(selection()).toEqual([0, partialCode.length]);
+
+        readerScan(codeB);
+        await advance(200);
+
+        expect(fetcher.mock.calls.map(([params]) => params.query)).toEqual([partialCode, codeB]);
+        expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+        expect(onNotFound.mock.calls).toEqual([[partialCode]]);
+        expect(getInput()).toHaveValue("");
+      });
+
+      it("el mismo parcial tres veces y otro parcial: se avisa una sola vez", async () => {
+        const { onChange, onNotFound } = renderScanner(partialFetcher());
+
+        for (let pass = 0; pass < 3; pass += 1) {
+          readerScan(partialCode);
+          await advance(200);
+
+          expect(selection()).toEqual([0, partialCode.length]);
+        }
+
+        readerScan(otherPartialCode);
+        await advance(200);
+
+        expect(onNotFound.mock.calls).toEqual([[partialCode]]);
+        expect(onChange).not.toHaveBeenCalled();
+        expect(getInput()).toHaveValue(otherPartialCode);
+        expect(selection()).toEqual([0, otherPartialCode.length]);
+      });
+
+      it("Enter sobre «Sin resultados» ya cargado: avisa, queda seleccionado y el siguiente escaneo no lo repite", async () => {
+        const unknownCode = "0000000000000";
+        const fetcher = partialFetcher();
+        const { onChange, onNotFound } = renderScanner(fetcher);
+
+        await search(unknownCode);
+        await advance(200);
+
+        expect(screen.getByRole("status")).toHaveTextContent("Sin resultados");
+
+        pressKey("Enter");
+
+        expect(onNotFound.mock.calls).toEqual([[unknownCode]]);
+        expect(selection()).toEqual([0, unknownCode.length]);
+
+        readerScan(codeB);
+        await advance(200);
+
+        expect(fetcher.mock.calls.map(([params]) => params.query)).toEqual([unknownCode, codeB]);
+        expect(onNotFound.mock.calls).toEqual([[unknownCode]]);
+        expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+      });
+
+      it("Enter con la lista cerrada (Esc) la reabre con el texto seleccionado y el siguiente escaneo lo avisa", async () => {
+        const fetcher = partialFetcher();
+        const { onChange, onNotFound } = renderScanner(fetcher);
+
+        await search(partialCode);
+        await advance(200);
+        pressKey("Escape");
+        pressKey("Enter");
+
+        expect(onChange).not.toHaveBeenCalled();
+        expect(screen.getAllByRole("option")).toHaveLength(2);
+        expect(selection()).toEqual([0, partialCode.length]);
+
+        readerScan(codeB);
+        await advance(200);
+
+        expect(fetcher.mock.calls.map(([params]) => params.query)).toEqual([partialCode, codeB]);
+        expect(onNotFound.mock.calls).toEqual([[partialCode]]);
+        expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+      });
+
+      it.each([
+        ["la coincidencia exacta está deshabilitada", codeA, ["p-1"]],
+        ["todas las opciones a la vista están deshabilitadas", partialCode, ["p-1", "p-2"]],
+      ])(
+        "Enter con los resultados cargados cuando %s: no elige, queda seleccionado y el siguiente escaneo lo avisa",
+        async (_name, code, disabledIds) => {
+          const fetcher = partialFetcher();
+          const onChange = jest.fn();
+          const onNotFound = jest.fn();
+
+          render(
+            <EntityAutocomplete
+              entity="product"
+              fetcher={fetcher}
+              getOptionDisabled={(option) =>
+                disabledIds.includes(option.id) ? "Ya está en la compra" : null
+              }
+              label="Producto"
+              onChange={onChange}
+              onNotFound={onNotFound}
+              value={null}
+            />,
+          );
+
+          await search(code);
+          await advance(200);
+          pressKey("Enter");
+
+          expect(onChange).not.toHaveBeenCalled();
+          expect(onNotFound).not.toHaveBeenCalled();
+          expect(getInput()).toHaveValue(code);
+          expect(screen.getAllByText("Ya está en la compra")).toHaveLength(disabledIds.length);
+          expect(selection()).toEqual([0, code.length]);
+
+          readerScan(otherPartialCode);
+          await advance(200);
+
+          expect(fetcher.mock.calls.map(([params]) => params.query)).toEqual([
+            code,
+            otherPartialCode,
+          ]);
+          expect(onNotFound.mock.calls).toEqual([[code]]);
+        },
+      );
+    });
   });
 });
 

@@ -143,8 +143,9 @@ export function EntityAutocomplete<K extends EntityKind>({
   const resultsEpochRef = useRef(0);
   // Código de un escaneo devuelto al campo sin avisar (con su lista o su
   // error) mientras el usuario no haya hecho nada con él: si el siguiente
-  // escaneo lo reemplaza, se avisa con `onNotFound`.
-  const shownScanRef = useRef<string | null>(null);
+  // escaneo lo reemplaza, se avisa con `onNotFound`. `epoch` es el valor de
+  // `fieldEpochRef` al mostrarlo: mientras coincidan, el texto está intacto.
+  const shownScanRef = useRef<{ code: string; epoch: number } | null>(null);
   const scanQueueRef = useRef<Promise<void>>(Promise.resolve());
   const scanControllersRef = useRef(new Set<AbortController>());
   const callbacksRef = useRef({ onChange, onNotFound });
@@ -293,9 +294,10 @@ export function EntityAutocomplete<K extends EntityKind>({
     callbacksRef.current = { onChange, onNotFound };
   });
 
-  // El texto de un escaneo sin resolver vuelve seleccionado: el siguiente
-  // escaneo lo reemplaza en vez de escribirse a continuación. En el mismo
-  // commit que el texto: entre ambos no cabe la primera tecla de ese escaneo.
+  // El texto de un escaneo sin resolver queda seleccionado, tanto si vuelve al
+  // campo como si nunca salió de él: el siguiente escaneo lo reemplaza en vez
+  // de escribirse a continuación. En el mismo commit que el texto: entre ambos
+  // no cabe la primera tecla de ese escaneo.
   useLayoutEffect(() => {
     if (restoredScans > 0) {
       inputRef.current?.select();
@@ -462,39 +464,47 @@ export function EntityAutocomplete<K extends EntityKind>({
   }
 
   /**
+   * Un escaneo que no eligió sigue a la vista en el campo: su texto queda
+   * seleccionado entero y, si aún no se avisó por él, anotado por si el
+   * siguiente escaneo lo reemplaza.
+   */
+  function keepScanInField(code: string, isAlreadyReported: boolean) {
+    showPopup();
+    setRestoredScans((count) => count + 1);
+    shownScanRef.current = isAlreadyReported ? null : { code, epoch: fieldEpochRef.current };
+  }
+
+  /**
    * Enter sobre los resultados ya cargados de `enteredText`: elige la
    * coincidencia exacta de código. La opción resaltada solo se elige si el
    * usuario ya tenía la lista a la vista para ese texto; si no (lista cerrada,
    * o texto reescrito por otro escaneo del mismo código), la lista se abre
-   * para que decida: una coincidencia a medias no se elige a ciegas.
+   * para que decida: una coincidencia a medias no se elige a ciegas. Si no
+   * elige, el texto sigue en el campo como el de cualquier escaneo sin resolver.
    */
   function resolveEnter(
     items: EntityOption<K>[],
     enteredText: string,
     wasListVisible: boolean,
   ) {
-    const exactMatch = config.findExact(items, enteredText);
-
-    if (exactMatch) {
-      selectOption(exactMatch, false);
-      return;
-    }
-
     if (items.length === 0) {
       onNotFound?.(enteredText);
+      keepScanInField(enteredText, true);
       return;
     }
 
-    if (!wasListVisible) {
-      showPopup();
+    const exactMatch = config.findExact(items, enteredText);
+    const highlighted = wasListVisible
+      ? items.find((option) => !getDisabledReason(option))
+      : undefined;
+    const choice = exactMatch ?? highlighted;
+
+    if (choice && !getDisabledReason(choice)) {
+      selectOption(choice, choice !== exactMatch);
       return;
     }
 
-    const highlighted = items.find((option) => !getDisabledReason(option));
-
-    if (highlighted) {
-      selectOption(highlighted, true);
-    }
+    keepScanInField(enteredText, false);
   }
 
   /**
@@ -537,9 +547,7 @@ export function EntityAutocomplete<K extends EntityKind>({
       setIsDirty(true);
       setActiveIndex(null);
       resultsEpochRef.current = fieldEpochRef.current;
-      showPopup();
-      setRestoredScans((count) => count + 1);
-      shownScanRef.current = hasNoResults ? null : code;
+      keepScanInField(code, hasNoResults);
     }
 
     if (!canShowInField || hasNoResults) {
@@ -564,8 +572,8 @@ export function EntityAutocomplete<K extends EntityKind>({
 
     shownScanRef.current = null;
 
-    if (replacedScan !== null && replacedScan !== code) {
-      onNotFound?.(replacedScan);
+    if (replacedScan !== null && replacedScan.code !== code) {
+      onNotFound?.(replacedScan.code);
     }
 
     resetTypedText();
@@ -675,12 +683,14 @@ export function EntityAutocomplete<K extends EntityKind>({
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     const { selectionEnd, selectionStart, value: fieldText } = event.currentTarget;
 
-    // El lector escribe sobre el texto seleccionado de un escaneo devuelto al
-    // campo y lo reemplaza entero. Una tecla con la selección deshecha es el
-    // usuario corrigiéndolo a mano: ya lo vio y no se avisará por él.
+    // El lector escribe sobre el texto seleccionado de un escaneo a la vista
+    // en el campo y lo reemplaza entero. Una tecla sobre ese texto intacto con
+    // la selección deshecha es el usuario corrigiéndolo a mano: ya lo vio y no
+    // se avisará por él. Con el texto ya reemplazado no cuenta: el código que
+    // se está leyendo puede empezar por el que estaba a la vista.
     if (
       event.key !== "Enter" &&
-      shownScanRef.current === fieldText &&
+      shownScanRef.current?.epoch === fieldEpochRef.current &&
       (selectionStart !== 0 || selectionEnd !== fieldText.length)
     ) {
       shownScanRef.current = null;
