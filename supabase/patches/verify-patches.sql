@@ -1102,4 +1102,50 @@ select
       and p.prosrc not ilike '%purchase_items%'
       and p.prosrc not ilike '%current_stock%'
   )
+union all
+select
+  'payments.client_request_id / client_request_hash e indice unico por tienda (20261008a, P4-3)',
+  (
+    select count(*) = 2
+    from information_schema.columns
+    where table_schema = 'public' and table_name = 'payments' and is_nullable = 'YES'
+      and (column_name, data_type) in (('client_request_id', 'uuid'), ('client_request_hash', 'text'))
+  )
+  and exists (
+    select 1 from pg_indexes i
+    where i.schemaname = 'public' and i.tablename = 'payments'
+      and i.indexname = 'payments_store_client_request_unique'
+      and i.indexdef ilike '%unique%(store_id, client_request_id)%where (client_request_id is not null)%'
+  )
+union all
+select
+  'rpc register_payment: una sola firma de 13 argumentos con p_client_request_id, advisory lock y replay antes de leer saldos (20261008a, P4-3)',
+  (
+    select count(*) = 1
+       and bool_and(
+         pg_get_function_identity_arguments(p.oid) ilike '%p_client_request_id uuid'
+         and p.pronargs = 13
+         and p.prosecdef
+         and p.proconfig @> array['search_path=public']
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%pg_advisory_xact_lock(%''payment-request:''%payment_idempotent_replay(v_store_id, p_client_request_id, v_request_hash)%return v_payment;%from public.sales where id = p_sale_id and store_id = v_store_id for update%'
+         and p.prosrc ilike '%client_request_id, client_request_hash%p_client_request_id, case when p_client_request_id is not null then v_request_hash end%'
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'register_payment'
+  )
+union all
+select
+  'payment_idempotent_replay: interna (sin execute para authenticated / anon), PT409 con otra huella, otro usuario o pago anulado (20261008a, P4-3)',
+  exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.payment_idempotent_replay(uuid, uuid, text)')
+      and p.prosecdef
+      and p.prosrc ilike '%client_request_hash is distinct from p_client_request_hash%created_by is distinct from auth.uid()%status = ''anulado''%errcode = ''PT409''%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
 order by 1;

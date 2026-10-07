@@ -432,3 +432,16 @@ notify pgrst, 'reload schema';
 -- purchase_items.tax_rate_code) y llama a tax_rates_for_store y override_tax_rate_for_store: sin los dos parches,
 -- categorias, configuracion, detalle de compra y /api/tax-rates responden error. Los parches si son compatibles con el
 -- BFF anterior (create_purchase sigue aceptando solo tax_rate), asi que el orden seguro es parches -> verify -> BFF.
+-- -----------------------------------------------------------------------------
+-- 20261008a — register_payment idempotency (PAG-06a, P4-3): clave opcional p_client_request_id en register_payment
+--             (payments.client_request_id + client_request_hash, unica por tienda); el reintento con la misma clave
+--             devuelve el pago original sin tocar documento, caja ni baul; otro contenido responde PT409
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261008a-register-payment-idempotency.sql
+-- Requiere 20261006c (stock_request_hash) y 20261006h (register_payment vigente). Idempotente, una transaccion. No migra
+-- ni toca filas: anade dos columnas nullable y un indice unico parcial a payments. La semantica monetaria no cambia (el
+-- cuerpo es copia del de 20261006h); sin clave la RPC se comporta igual y create_sale_with_payments no se toca.
+-- OJO: firma nueva de 13 argumentos; el parche elimina la de 12 (PGRST203). Reaplicar 20261006b, c, f, g o h reinstala
+-- la de 12 y deja dos sobrecargas: volver a aplicar este parche despues (verify-patches lo detecta).
+-- Orden con el BFF: indistinto. El BFF que envia la clave sobre una base sin el parche recibe PGRST202 y registra el
+-- pago una vez sin idempotencia (queda en el log); el BFF anterior funciona sobre la base ya parcheada.

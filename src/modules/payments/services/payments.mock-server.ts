@@ -9,6 +9,7 @@ import {
   type PaymentMethod,
   type PaymentMock,
 } from "@/shared/mocks/erp-data";
+import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { PaymentDocumentBalance } from "../payment-details/types";
@@ -33,6 +34,8 @@ export type PaymentInput = {
   bankName?: string;
   change?: PaymentChangeInput | null;
   changeDenominations?: PaymentDenominations | null;
+  /** Clave de idempotencia del intento (P4-3). */
+  clientRequestId?: string;
   currency?: "USD" | "VES";
   method: PaymentMethod;
   notes?: string;
@@ -178,7 +181,61 @@ export function updatePayment(id: string, input: PaymentUpdateInput, storeId: st
   return getPaymentById(id, storeId);
 }
 
+type CreatedPaymentMock = ReturnType<typeof registerMockPayment>;
+
+/**
+ * Pagos ya registrados por clave de idempotencia (`storeId:clientRequestId`), como
+ * hace `register_payment` en la base: la misma clave con el mismo contenido
+ * devuelve el pago original; con otro contenido se rechaza.
+ */
+function paymentsByClientRequest() {
+  return mockState(
+    "payments:byClientRequest",
+    () => new Map<string, { content: string; payment: CreatedPaymentMock }>(),
+  );
+}
+
+/** Contenido del envio sin la clave, con las propiedades en orden estable. */
+function paymentRequestContent(input: PaymentInput) {
+  const sortKeys = (_key: string, value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)),
+        )
+      : value;
+
+  return JSON.stringify({ ...input, clientRequestId: undefined }, sortKeys);
+}
+
 export function createPayment(input: PaymentInput, storeId: string) {
+  const requestKey = input.clientRequestId ? `${storeId}:${input.clientRequestId}` : null;
+  const previous = requestKey ? paymentsByClientRequest().get(requestKey) : undefined;
+
+  if (previous) {
+    if (previous.content !== paymentRequestContent(input)) {
+      throw new ApiError(
+        409,
+        "CONFLICT",
+        "La clave de idempotencia ya se usó en otro pago. Revisa el pago registrado antes de reintentar.",
+      );
+    }
+
+    return previous.payment;
+  }
+
+  const payment = registerMockPayment(input, storeId);
+
+  if (requestKey) {
+    paymentsByClientRequest().set(requestKey, {
+      content: paymentRequestContent(input),
+      payment,
+    });
+  }
+
+  return payment;
+}
+
+function registerMockPayment(input: PaymentInput, storeId: string) {
   const sale = input.saleId
     ? mockSales.find((candidate) => candidate.id === input.saleId)
     : undefined;

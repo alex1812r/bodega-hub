@@ -2,6 +2,8 @@
  * @jest-environment node
  */
 
+import { mockSales } from "@/shared/mocks/erp-data";
+
 import { GET, POST } from "./route";
 
 describe("/api/payments", () => {
@@ -281,5 +283,96 @@ describe("/api/payments", () => {
     );
 
     expect(response.status).toBe(400);
+  });
+
+  describe("clave de idempotencia (P4-3)", () => {
+    const KEY_REPLAY = "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7";
+    const KEY_CONFLICT = "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d";
+
+    function postPayment(body: Record<string, unknown>) {
+      return POST(
+        new Request("http://localhost/api/payments", {
+          body: JSON.stringify(body),
+          headers: {
+            "content-type": "application/json",
+            "x-demo-role": "contador",
+          },
+          method: "POST",
+        }),
+      );
+    }
+
+    function salePaidVes(saleId: string) {
+      return mockSales.find((sale) => sale.id === saleId)?.paidVes;
+    }
+
+    it("un reintento con la misma clave responde 201 con el mismo pago y no vuelve a abonar la venta", async () => {
+      const payload = {
+        amount: 100,
+        clientRequestId: KEY_REPLAY,
+        method: "punto_venta",
+        saleId: "sale-002",
+      };
+      const before = salePaidVes("sale-002") ?? 0;
+
+      const first = await postPayment(payload);
+      const firstBody = await first.json();
+      const afterFirst = salePaidVes("sale-002");
+      const retry = await postPayment(payload);
+      const retryBody = await retry.json();
+
+      expect(first.status).toBe(201);
+      expect(retry.status).toBe(201);
+      expect(retryBody.data).toEqual(firstBody.data);
+      expect(afterFirst).toBe(before + 100);
+      expect(salePaidVes("sale-002")).toBe(before + 100);
+    });
+
+    it("la misma clave con otro contenido responde 409 y no abona nada", async () => {
+      const first = await postPayment({
+        amount: 50,
+        clientRequestId: KEY_CONFLICT,
+        method: "punto_venta",
+        saleId: "sale-002",
+      });
+      const afterFirst = salePaidVes("sale-002");
+      const other = await postPayment({
+        amount: 75,
+        clientRequestId: KEY_CONFLICT,
+        method: "punto_venta",
+        saleId: "sale-002",
+      });
+      const body = await other.json();
+
+      expect(first.status).toBe(201);
+      expect(other.status).toBe(409);
+      expect(body.error.code).toBe("CONFLICT");
+      expect(salePaidVes("sale-002")).toBe(afterFirst);
+    });
+
+    it("sin clave cada envio registra su pago (comportamiento de siempre)", async () => {
+      const payload = { amount: 10, method: "punto_venta", saleId: "sale-002" };
+      const before = salePaidVes("sale-002") ?? 0;
+
+      const first = await postPayment(payload);
+      const second = await postPayment(payload);
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(salePaidVes("sale-002")).toBe(before + 20);
+    });
+
+    it("rechaza con 400 una clave que no es uuid", async () => {
+      const before = salePaidVes("sale-002");
+      const response = await postPayment({
+        amount: 10,
+        clientRequestId: "no-es-uuid",
+        method: "punto_venta",
+        saleId: "sale-002",
+      });
+
+      expect(response.status).toBe(400);
+      expect(salePaidVes("sale-002")).toBe(before);
+    });
   });
 });

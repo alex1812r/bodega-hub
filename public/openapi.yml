@@ -1998,7 +1998,11 @@ paths:
     post:
       tags: [Payments]
       summary: Registrar pago
-      description: Crea pago con RPC `register_payment` cuando `API_DATA_SOURCE=supabase`.
+      description: >-
+        Crea pago con RPC `register_payment` cuando `API_DATA_SOURCE=supabase`.
+        Con `clientRequestId`, repetir la peticion (misma clave, mismo contenido,
+        mismo usuario) responde 201 con el pago original sin registrar otro pago ni
+        mover caja, baul o el saldo del documento.
       x-permission: payments.manage
       requestBody:
         required: true
@@ -2017,6 +2021,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
   /api/payments/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -3912,6 +3918,13 @@ components:
       required: [method, amount]
       description: "Debe incluir saleId o purchaseId, pero no ambos. pago_movil requiere bankName, phone y referenceCode de 4 digitos. transferencia requiere bankName y referenceCode."
       properties:
+        clientRequestId:
+          type: string
+          format: uuid
+          description: >-
+            Clave de idempotencia opcional por intento, unica por tienda: repetir la
+            peticion con la misma clave y el mismo contenido devuelve el pago original
+            sin registrar otro; la misma clave con otro contenido responde 409.
         saleId:
           type: string
         purchaseId:

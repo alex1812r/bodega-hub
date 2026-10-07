@@ -25,6 +25,10 @@ import type { Permission } from "@/shared/auth/permissions";
 const createPaymentSchema = z
   .object({
     ...paymentLineFields,
+    // Clave de idempotencia por intento (P4-3): con la misma clave en la misma
+    // tienda el servidor devuelve el pago original en vez de registrar otro.
+    // Opcional para no romper clientes que aun no la envian (app movil).
+    clientRequestId: z.string().uuid().optional(),
     purchaseId: z.string().optional(),
     saleId: z.string().optional(),
   })
@@ -87,6 +91,8 @@ export async function POST(request: Request) {
     }
 
     const service = getPaymentsService();
+    // Un reintento con la misma clave responde 201 con el pago original, igual
+    // que POST /api/purchases: el cliente no distingue el replay del alta.
     return jsonCreated(await service.createPayment(input, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);
