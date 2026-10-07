@@ -189,13 +189,15 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
     setSkip(0);
   }
 
-  async function handleCancelPayment() {
+  function handleCancelPayment() {
     if (!paymentToCancel) {
       return;
     }
 
-    await cancelPayment.mutateAsync(paymentToCancel);
-    setPaymentToCancel(null);
+    // `mutate` no rechaza: si falla, el modal sigue abierto y muestra `cancelPayment.error`.
+    cancelPayment.mutate(paymentToCancel, {
+      onSuccess: () => setPaymentToCancel(null),
+    });
   }
 
   return (
@@ -279,7 +281,7 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
                 title="No hay pagos para mostrar"
               />
             }
-            error={payments.error ?? cancelPayment.error}
+            error={payments.error}
             getRowId={(payment) => payment.id}
             isFetching={payments.isFetching}
             isLoading={payments.isLoading}
@@ -303,11 +305,14 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
       </EntityListPage>
 
       <PaymentCancelConfirmModal
+        error={cancelPayment.error?.message}
         isConfirming={cancelPayment.isPending}
-        onConfirm={() => void handleCancelPayment()}
+        onConfirm={handleCancelPayment}
         onOpenChange={(open) => {
           if (!open) {
             setPaymentToCancel(null);
+            // El rechazo era de este pago: que no reaparezca al abrir otro.
+            cancelPayment.reset();
           }
         }}
         open={paymentToCancel !== null}

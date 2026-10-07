@@ -8,6 +8,8 @@ import {
 import { formatPaymentHeading } from "../payment-details/utils/paymentDetailLabels";
 
 type PaymentCancelConfirmModalProps = {
+  /** Mensaje del rechazo de la anulación; se muestra tal cual dentro del modal. */
+  error?: string | null;
   isConfirming?: boolean;
   onConfirm: () => void | Promise<void>;
   onOpenChange: (open: boolean) => void;
@@ -21,6 +23,7 @@ const cancelEffects: ConfirmActionEffect[] = [
 ];
 
 export function PaymentCancelConfirmModal({
+  error,
   isConfirming = false,
   onConfirm,
   onOpenChange,
@@ -32,6 +35,7 @@ export function PaymentCancelConfirmModal({
       confirmLabel="Anular pago"
       description="El pago quedara marcado como anulado y se ajustara el saldo del documento vinculado. Esta accion no se puede deshacer."
       effects={cancelEffects}
+      error={error}
       isPending={isConfirming}
       onConfirm={onConfirm}
       onOpenChange={onOpenChange}
