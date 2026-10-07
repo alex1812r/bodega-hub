@@ -10,7 +10,8 @@ import { Tabs, type TabItem } from "./Tabs";
  * - No controlado: `defaultValue` (o la primera habilitada).
  * - Controlado: `value` + `onValueChange`.
  * - En la URL: `urlParam="tab"` lee la pestaña al montar y la escribe con
- *   `router.replace(..., { scroll: false })` conservando los demás parámetros;
+ *   `window.history.replaceState` nativo (sin navegación del router ni ida al
+ *   servidor) conservando los demás parámetros;
  *   la pestaña por defecto se omite y un valor inválido cae al default.
  *   `urlParam` y `value` no se combinan. El límite de Suspense que exige
  *   `useSearchParams` lo pone el propio componente.

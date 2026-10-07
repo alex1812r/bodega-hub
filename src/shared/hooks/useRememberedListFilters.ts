@@ -162,7 +162,7 @@ export type RememberedListFilters = {
  * - La página NO se recuerda: la lista restaurada empieza en la primera. Los
  *   datos pueden haber cambiado desde la última visita y una página guardada
  *   que ya no existe dejaría la lista vacía; "Volver" desde un detalle sí
- *   conserva la página, porque viaja en `from`.
+ *   conserva la página, porque viaja en `returnTo`.
  * - Todo va detrás de la preferencia "Recordar filtros" (por defecto activa).
  *
  * `listKey` identifica la lista (p. ej. `"products"`); si los filtros dependen

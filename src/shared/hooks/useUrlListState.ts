@@ -412,7 +412,7 @@ function reconcileWithUrl(
  *   Decláralo FUERA del componente: su identidad debe ser estable.
  * - Los valores por defecto no se escriben en la URL.
  * - Lectura tolerante: un parámetro inválido cae a su default sin afectar al
- *   resto; los parámetros que no son del schema (`tab`, `from`, …) se conservan.
+ *   resto; los parámetros que no son del schema (`tab`, `returnTo`, …) se conservan.
  * - Escribe con `window.history.replaceState` nativo, que Next refleja en
  *   `useSearchParams` sin ir al servidor ni mover el scroll. No usa
  *   `router.replace`: es una navegación que queda pendiente, y el `push` de un

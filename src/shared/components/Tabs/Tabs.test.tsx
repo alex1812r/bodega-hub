@@ -5,7 +5,13 @@ import { useState } from "react";
 
 import { Tabs, type TabItem } from "./Tabs";
 
-const mockReplace = jest.fn();
+/** Cada escritura de `Tabs` en la URL, tal como la recibe Next: un `history.replaceState` que sincroniza. */
+const mockReplace = jest.fn<void, [string]>();
+/**
+ * `router.replace` / `router.push`. En Next son navegaciones con ida al servidor
+ * que quedan pendientes; aquí ninguna llega a terminar. `Tabs` no debe usarlas.
+ */
+const mockRouterNavigate = jest.fn();
 const mockUseRouter = jest.fn();
 const mockUsePathname = jest.fn();
 const mockUseSearchParams = jest.fn();
@@ -25,7 +31,56 @@ const items: TabItem<DemoTab>[] = [
   { value: "notas", label: "Notas", content: <p>Panel notas</p> },
 ];
 
+const PATHNAME = "/contactos/c-1";
+const nativeHistory = {
+  push: window.history.pushState.bind(window.history),
+  replace: window.history.replaceState.bind(window.history),
+};
+/** Claves con las que Next guarda su estado en cada entrada del historial. */
+const NEXT_HISTORY_KEYS = ["__NA", "__PRIVATE_NEXTJS_INTERNALS_TREE"] as const;
+/** Primer argumento (`data`) de cada `history.replaceState` que hace el componente. */
+const writtenStates: unknown[] = [];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Modelo del `history.replaceState` que parchea Next (`client/components/app-router.js`):
+ * copia su estado interno a la entrada y refleja la URL en `useSearchParams`.
+ * Si `data` ya trae `__NA` lo toma por una llamada suya y NO sincroniza nada.
+ */
+function nextReplaceState(data: unknown, unused: string, url?: string | URL | null) {
+  writtenStates.push(data);
+
+  if (isRecord(data) && data.__NA) {
+    nativeHistory.replace(data, unused, url);
+
+    return;
+  }
+
+  const current: unknown = window.history.state;
+  const next: Record<string, unknown> = isRecord(data) ? { ...data } : {};
+
+  if (isRecord(current)) {
+    for (const key of NEXT_HISTORY_KEYS) {
+      if (current[key]) {
+        next[key] = current[key];
+      }
+    }
+  }
+
+  nativeHistory.replace(next, unused, url);
+
+  if (url) {
+    mockReplace(String(url));
+    mockUseSearchParams.mockReturnValue(new URLSearchParams(String(url).split("?")[1] ?? ""));
+  }
+}
+
+/** Deja la pantalla en `PATHNAME?query`: barra de direcciones y `useSearchParams`. */
 function setUrl(query: string) {
+  nativeHistory.replace(null, "", query ? `${PATHNAME}?${query}` : PATHNAME);
   mockUseSearchParams.mockReturnValue(new URLSearchParams(query));
 }
 
@@ -35,9 +90,17 @@ function tab(name: RegExp) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockUseRouter.mockReturnValue({ replace: mockReplace });
-  mockUsePathname.mockReturnValue("/contactos/c-1");
+  writtenStates.length = 0;
+  mockUseRouter.mockReturnValue({ push: mockRouterNavigate, replace: mockRouterNavigate });
+  mockUsePathname.mockReturnValue(PATHNAME);
   setUrl("");
+  window.history.replaceState = nextReplaceState;
+});
+
+afterEach(() => {
+  window.history.replaceState = nativeHistory.replace;
+  // Ninguna escritura de la pestaña puede ser una navegación del router (SHR-30).
+  expect(mockRouterNavigate).not.toHaveBeenCalled();
 });
 
 describe("Tabs", () => {
@@ -458,7 +521,7 @@ describe("Tabs", () => {
       expect(mockReplace).not.toHaveBeenCalled();
     });
 
-    it("escribe el parámetro con replace sin scroll y conserva los demás", async () => {
+    it("escribe el parámetro con history.replaceState, sin navegar, y conserva los demás", async () => {
       const user = userEvent.setup();
       const onValueChange = jest.fn();
       setUrl("q=harina&page=2");
@@ -469,9 +532,8 @@ describe("Tabs", () => {
       await user.click(tab(/ventas/i));
 
       expect(mockReplace).toHaveBeenCalledTimes(1);
-      expect(mockReplace).toHaveBeenCalledWith("/contactos/c-1?q=harina&page=2&tab=ventas", {
-        scroll: false,
-      });
+      expect(mockReplace).toHaveBeenCalledWith("/contactos/c-1?q=harina&page=2&tab=ventas");
+      expect(window.location.search).toBe("?q=harina&page=2&tab=ventas");
       expect(screen.getByRole("tabpanel")).toHaveTextContent("Panel ventas");
       expect(onValueChange).toHaveBeenCalledWith("ventas");
     });
@@ -483,7 +545,7 @@ describe("Tabs", () => {
 
       await user.click(tab(/resumen/i));
 
-      expect(mockReplace).toHaveBeenCalledWith("/contactos/c-1?q=harina", { scroll: false });
+      expect(mockReplace).toHaveBeenCalledWith("/contactos/c-1?q=harina");
     });
 
     it("deja la ruta sin query al volver al default sin otros parámetros", async () => {
@@ -493,7 +555,7 @@ describe("Tabs", () => {
 
       await user.click(tab(/resumen/i));
 
-      expect(mockReplace).toHaveBeenCalledWith("/contactos/c-1", { scroll: false });
+      expect(mockReplace).toHaveBeenCalledWith("/contactos/c-1");
     });
 
     it("respeta defaultValue como pestaña omitida", async () => {
@@ -503,7 +565,7 @@ describe("Tabs", () => {
       expect(tab(/ventas/i)).toHaveAttribute("aria-selected", "true");
 
       await user.click(tab(/resumen/i));
-      expect(mockReplace).toHaveBeenLastCalledWith("/contactos/c-1?tab=resumen", { scroll: false });
+      expect(mockReplace).toHaveBeenLastCalledWith("/contactos/c-1?tab=resumen");
     });
 
     it("un valor inexistente en la URL cae al default sin error", () => {
@@ -541,7 +603,87 @@ describe("Tabs", () => {
       tab(/ventas/i).focus();
       await user.keyboard("{ArrowRight}");
 
-      expect(mockReplace).toHaveBeenCalledWith("/contactos/c-1?tab=notas", { scroll: false });
+      expect(mockReplace).toHaveBeenCalledWith("/contactos/c-1?tab=notas");
+    });
+  });
+
+  describe("enlace pulsado con la pestaña recién cambiada (SHR-30)", () => {
+    /** Lo que el enlace encuentra en la barra de direcciones al recibir el clic. */
+    const seenByLink: string[] = [];
+
+    function TabsWithNextLink() {
+      return (
+        <>
+          <Tabs ariaLabel="Secciones" items={items} urlParam="tab" />
+          <a
+            href="/ventas/9"
+            onClick={(event) => {
+              event.preventDefault();
+              seenByLink.push(window.location.pathname + window.location.search);
+
+              // Como el router de Next: el `push` de un enlace que llega con otra
+              // navegación aún pendiente se confirma como `replaceState`.
+              if (mockRouterNavigate.mock.calls.length > 0) {
+                nativeHistory.replace(null, "", "/ventas/9");
+              } else {
+                nativeHistory.push(null, "", "/ventas/9");
+              }
+            }}
+          >
+            Detalle
+          </a>
+        </>
+      );
+    }
+
+    beforeEach(() => {
+      seenByLink.length = 0;
+    });
+
+    it("tras cambiar de pestaña, el enlace añade su entrada y la pantalla queda detrás con su pestaña", async () => {
+      const user = userEvent.setup();
+      setUrl("q=harina");
+      render(<TabsWithNextLink />);
+
+      const entries = window.history.length;
+
+      await user.click(tab(/ventas/i));
+      await user.click(screen.getByText("Detalle"));
+
+      expect(window.location.pathname).toBe("/ventas/9");
+      // La entrada de la pantalla con pestañas sigue en el historial: ATRÁS vuelve a ella.
+      expect(window.history.length).toBe(entries + 1);
+      expect(seenByLink).toEqual(["/contactos/c-1?q=harina&tab=ventas"]);
+      expect(mockRouterNavigate).not.toHaveBeenCalled();
+    });
+
+    it("escribe con history.replaceState(null), que conserva el estado de Next y llega a useSearchParams", async () => {
+      const user = userEvent.setup();
+      setUrl("q=harina");
+      nativeHistory.replace(
+        { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: "contacto" },
+        "",
+        "/contactos/c-1?q=harina",
+      );
+
+      const { rerender } = render(<Tabs ariaLabel="Secciones" items={items} urlParam="tab" />);
+
+      await user.click(tab(/notas/i));
+
+      // `null` y no el estado de la entrada: con la marca `__NA` Next no sincroniza.
+      expect(writtenStates).toEqual([null]);
+      expect(mockReplace).toHaveBeenCalledTimes(1);
+      expect(mockReplace).toHaveBeenCalledWith("/contactos/c-1?q=harina&tab=notas");
+      expect(window.history.state).toEqual({
+        __NA: true,
+        __PRIVATE_NEXTJS_INTERNALS_TREE: "contacto",
+      });
+
+      // Next refleja la URL nueva en `useSearchParams`: la pestaña sigue siendo la elegida.
+      rerender(<Tabs ariaLabel="Secciones" items={items} urlParam="tab" />);
+
+      expect(tab(/notas/i)).toHaveAttribute("aria-selected", "true");
+      expect(mockReplace).toHaveBeenCalledTimes(1);
     });
   });
 });

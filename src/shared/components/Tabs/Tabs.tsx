@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   Suspense,
   useEffect,
@@ -286,7 +286,6 @@ function UrlTabs<TValue extends string>({
   className,
   panelClassName,
 }: TabsUrlProps<TValue>) {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const urlValue = searchParams.get(urlParam);
@@ -321,7 +320,14 @@ function UrlTabs<TValue extends string>({
 
     const query = params.toString();
 
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    // `history.replaceState` nativo y no `router.replace`: Next lo refleja en
+    // `useSearchParams` sin ir al servidor ni mover el scroll. `router.replace`
+    // es una navegación que queda pendiente, y el `push` de un enlace pulsado
+    // mientras tanto sustituía la entrada de esta pantalla (ATRÁS se la saltaba).
+    // `null` y no `window.history.state`: Next copia él mismo su estado interno
+    // a la entrada, y si lo recibe con su marca (`__NA`) toma la llamada por
+    // suya y no actualiza `useSearchParams`.
+    window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
     onValueChange?.(nextValue);
   }
 

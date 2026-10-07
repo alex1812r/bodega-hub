@@ -340,24 +340,24 @@ describe("useUrlListState", () => {
   });
 
   describe("parámetros ajenos", () => {
-    it("conserva tab y from intactos al escribir y al limpiar", () => {
-      const from = encodeURIComponent("/ventas?estado=pagada&page=2");
-      const { result } = renderList(`tab=compras&from=${from}&status=active`);
+    it("conserva tab y returnTo intactos al escribir y al limpiar", () => {
+      const returnTo = encodeURIComponent("/ventas?estado=pagada&page=2");
+      const { result } = renderList(`tab=compras&returnTo=${returnTo}&status=active`);
 
       act(() => result.current.setField("status", "inactive"));
 
       const params = new URLSearchParams(lastReplacedUrl().split("?")[1]);
 
       expect(params.get("tab")).toBe("compras");
-      expect(params.get("from")).toBe("/ventas?estado=pagada&page=2");
+      expect(params.get("returnTo")).toBe("/ventas?estado=pagada&page=2");
       expect(params.get("status")).toBe("inactive");
 
       act(() => result.current.reset());
 
       const cleaned = new URLSearchParams(lastReplacedUrl().split("?")[1]);
 
-      expect([...cleaned.keys()]).toEqual(["tab", "from"]);
-      expect(cleaned.get("from")).toBe("/ventas?estado=pagada&page=2");
+      expect([...cleaned.keys()]).toEqual(["tab", "returnTo"]);
+      expect(cleaned.get("returnTo")).toBe("/ventas?estado=pagada&page=2");
     });
 
     it("un cambio de un parámetro ajeno no pisa el texto pendiente", () => {
