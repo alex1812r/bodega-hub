@@ -22,6 +22,7 @@ export function ProductDetailPriceChangeCard({
   const [priceInput, setPriceInput] = useState(String(currentPriceRef));
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- el precio en edicion se realinea con el precio guardado tras cada cambio confirmado; flujo de precio, no se mueve el momento del reinicio
     setPriceInput(String(currentPriceRef));
   }, [currentPriceRef]);
 

@@ -48,6 +48,7 @@ export function PosSingleMethodDetailsModal({
     }
 
     confirmedRef.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- los datos del pago se recargan al abrir junto con confirmedRef (guardia de doble confirmacion); un key o ajuste en render cambiaria cuando se inicializa el pago
     setHasSubmitted(false);
     setDetails(
       initialDetails

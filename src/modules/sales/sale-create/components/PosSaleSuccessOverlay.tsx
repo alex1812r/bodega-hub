@@ -33,6 +33,7 @@ export function PosSaleSuccessOverlay({
 
   useEffect(() => {
     didAutoContinueRef.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- la cuenta atras se reinicia en el mismo efecto que arma el intervalo y rearma didAutoContinueRef; separarlos cambia el orden que dispara la nueva venta
     setSecondsLeft(AUTO_CONTINUE_SECONDS);
 
     if (pendingPayment) {

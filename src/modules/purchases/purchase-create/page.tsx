@@ -82,6 +82,7 @@ export function PurchaseCreatePage() {
 
   useEffect(() => {
     if (!supplierId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- los metadatos de linea se vacian al quitar el proveedor y se fusionan con el catalogo al cargarlo; reordenarlo arriesga perder lineas de la compra en curso
       setLineMetaByProductId(new Map());
       return;
     }

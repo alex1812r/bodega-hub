@@ -187,6 +187,7 @@ function SaleCreatePosWorkspace() {
       paymentMethod &&
       !isPaymentMethodEnabled(paymentMethod, enabledPaymentMethods)
     ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- si la tienda deshabilita el metodo elegido se descarta el pago en curso al llegar la configuracion; cobro del POS, no se reordena
       setPaymentMethod(null);
       setPaymentDetails(null);
       setPaymentDetailsModalOpen(false);
@@ -202,6 +203,7 @@ function SaleCreatePosWorkspace() {
         !isPaymentMethodEnabled(checkout.change.method, enabledPaymentMethods));
 
     if (hasDisabledMethod) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- un cobro mixto con un metodo ya deshabilitado se descarta al llegar la configuracion; cobro del POS, no se reordena
       setCheckout(null);
     }
   }, [checkout, enabledPaymentMethods]);
@@ -235,6 +237,7 @@ function SaleCreatePosWorkspace() {
 
   useEffect(() => {
     if (!customerId && defaultCustomerId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- el cliente por defecto se asigna cuando carga la lista de contactos y cada vez que la venta queda sin cliente; depende de datos asincronos del POS
       setCustomerId(defaultCustomerId);
     }
   }, [customerId, defaultCustomerId]);

@@ -51,6 +51,7 @@ export function OpenCashSessionModal({
     didPrefillRef.current = true;
     const closure = lastClosure.data;
     if (closure) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- el fondo de apertura se precarga una sola vez por apertura, cuando termina la consulta del ultimo cierre (didPrefillRef); moverlo cambia cuando se inicializa el monto de caja
       setOpeningVes(amountInputValue(closure.closingVes));
       setOpeningRef(amountInputValue(closure.closingRef));
       setPrefilledFromClosure(true);

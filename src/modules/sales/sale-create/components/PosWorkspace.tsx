@@ -53,6 +53,7 @@ export function PosWorkspace({
 
   useEffect(() => {
     if (isDesktop) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- el carrito movil se cierra al pasar a escritorio leyendo matchMedia; POS, cambio minimo sin tocar el orden frente al efecto de cierre tras la venta
       setMobileCartOpen(false);
     }
   }, [isDesktop]);
