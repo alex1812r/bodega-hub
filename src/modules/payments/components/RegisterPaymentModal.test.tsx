@@ -8,6 +8,8 @@ import { VENEZUELAN_BANKS } from "@/shared/venezuela/banks";
 import { RegisterPaymentModal } from "./RegisterPaymentModal";
 
 const BANK = VENEZUELAN_BANKS[0];
+// SHR-34: 220 caracteres sin un solo punto de corte, como el mensaje hostil del caos.
+const UNBROKEN_MESSAGE = "ERR_UPSTREAM_".padEnd(220, "X");
 
 function jsonResponse(payload: unknown, status = 200) {
   return {
@@ -574,6 +576,40 @@ describe("RegisterPaymentModal", () => {
       expect(dialog.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
       expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeEnabled();
     });
+
+    // Caos pasada 3, B5: jsdom no calcula layout; se comprueban las clases de corte.
+    it("SHR-34: un mensaje largo y sin espacios se pinta entero y con corte de linea en el aviso", async () => {
+      replyToDocumentWith("/api/sales/", async () =>
+        jsonResponse({ error: { code: "INTERNAL", message: UNBROKEN_MESSAGE } }, 500),
+      );
+
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog } = await openModalWithoutBalance();
+
+      const message = within(await dialog.findByRole("alert")).getByText(
+        `No se pudo comprobar el saldo pendiente: ${UNBROKEN_MESSAGE}`,
+      );
+
+      expect(message.tagName).toBe("P");
+      expect(message).toHaveClass("min-w-0", "[overflow-wrap:anywhere]");
+    });
+  });
+
+  it("SHR-34: un rechazo del servidor largo y sin espacios se pinta entero y con corte de linea", async () => {
+    paymentResponse = jsonResponse(
+      { error: { code: "BAD_REQUEST", message: UNBROKEN_MESSAGE } },
+      400,
+    );
+    renderModal(<RegisterPaymentModal saleId="sale-002" />);
+    const { dialog, user } = await openModal();
+
+    await user.type(dialog.getByLabelText("Monto"), "100");
+    await submit(user);
+
+    const message = await dialog.findByText(UNBROKEN_MESSAGE);
+
+    expect(message.tagName).toBe("P");
+    expect(message).toHaveClass("min-w-0", "[overflow-wrap:anywhere]");
   });
 
   // Caos pasada 2, N4: la tienda no tiene Efectivo Bs y sus metodos llegan con el monto

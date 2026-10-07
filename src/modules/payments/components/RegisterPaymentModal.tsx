@@ -290,7 +290,7 @@ export function RegisterPaymentModal({
             className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200"
             role="alert"
           >
-            <p>No se pudo comprobar el saldo pendiente: {balanceError.message}</p>
+            <p className="min-w-0 [overflow-wrap:anywhere]">No se pudo comprobar el saldo pendiente: {balanceError.message}</p>
             <Button
               onClick={() => void linkedDocument?.refetch()}
               size="sm"
@@ -325,7 +325,7 @@ export function RegisterPaymentModal({
         ) : null}
 
         {createPayment.error ? (
-          <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+          <p className="min-w-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 [overflow-wrap:anywhere] dark:bg-red-950 dark:text-red-300">
             {createPayment.error.message}
           </p>
         ) : null}
