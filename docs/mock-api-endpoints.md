@@ -95,6 +95,7 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 | `/api/contacts/[id]/payments` | `GET` | `contacts.view` | Pagos del contacto paginados |
 | `/api/payments` | `GET` | `payments.view` | Lista pagos paginada (`payments` + contacto) |
 | `/api/payments` | `POST` | `payments.manage` o `sales.create` | Registra pago (`register_payment` RPC). Vendedor solo ventas. |
+| `/api/payments/open-documents` | `GET` | `payments.manage` o `sales.create` | Ventas por cobrar y compras por pagar con saldo, mas antiguas primero (`type`, `search`, `contactId`, `from`, `to`, `olderThanDays`, paginacion) + `totals`. Compras: `payments.manage` y rol distinto de vendedor. |
 | `/api/payments/[id]` | `GET` | `payments.view` | Detalle con saldo pendiente |
 | `/api/payments/[id]` | `PATCH` | `payments.manage` | Actualiza notas y referencia bancaria |
 | `/api/reports/daily-sales` | `GET` | `reports.view` | Vista `daily_sales_summary` (`from`, `to`, paginacion) |

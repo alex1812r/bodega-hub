@@ -2023,6 +2023,106 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/IdempotencyConflict"
+  /api/payments/open-documents:
+    get:
+      tags: [Payments]
+      summary: Listar documentos con saldo
+      description: >-
+        Ventas por cobrar y compras por pagar de la tienda, con el mismo criterio
+        que acepta `register_payment`: venta `pendiente_pago`/`pagada` o compra no
+        cancelada ni devuelta, con `total_ves - paid_ves > 0`. Ordenado por
+        antiguedad (mas antiguo primero). Solo lectura. Las ventas piden
+        `payments.manage` o `sales.create`; las compras piden `payments.manage` y
+        un rol que vea pagos de compra (el vendedor recibe 403 con `type=purchase`
+        y solo ventas si no envia `type`). Con `API_DATA_SOURCE=supabase` el saldo
+        se remata en servidor sobre un tope de filas leidas (3000 ventas
+        `pendiente_pago`, 5000 compras abiertas); si se alcanza,
+        `totals.truncated` es `true`.
+      x-permission: payments.manage | sales.create
+      parameters:
+        - name: type
+          in: query
+          required: false
+          description: Sin valor, ventas y (si el rol puede) compras.
+          schema:
+            type: string
+            enum: [sale, purchase]
+        - name: search
+          in: query
+          required: false
+          description: Numero de venta/compra, o nombre/RIF del contacto.
+          schema:
+            type: string
+            maxLength: 120
+        - name: contactId
+          in: query
+          required: false
+          description: Cliente de la venta o proveedor de la compra.
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          description: Fecha Caracas del documento, inclusive.
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          description: Fecha Caracas del documento, inclusive.
+          schema:
+            type: string
+            format: date
+        - name: olderThanDays
+          in: query
+          required: false
+          description: >-
+            Solo documentos con N dias o mas de antiguedad (fecha Caracas <= hoy - N).
+            Combinado con `to` manda el limite mas antiguo.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 3650
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Lista paginada de documentos con saldo y totales del conjunto filtrado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        required: [totals]
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/OpenDocument"
+                          totals:
+                            type: object
+                            required: [count, pendingVes, truncated]
+                            properties:
+                              count:
+                                type: integer
+                                minimum: 0
+                              pendingVes:
+                                type: number
+                              pendingRef:
+                                type: number
+                              truncated:
+                                type: boolean
+                                description: La lectura alcanzo el tope de filas; el conjunto puede estar incompleto.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/payments/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -3178,6 +3278,62 @@ components:
         total:
           type: integer
           minimum: 0
+    OpenDocument:
+      type: object
+      description: Venta por cobrar o compra por pagar que `register_payment` aun acepta.
+      required:
+        - type
+        - id
+        - number
+        - status
+        - createdAt
+        - totalVes
+        - paidVes
+        - pendingVes
+        - totalRef
+        - refRateVes
+      properties:
+        type:
+          type: string
+          enum: [sale, purchase]
+        id:
+          type: string
+        number:
+          type: string
+          description: "`invoice_number` de la venta o `purchase_number` de la compra."
+        status:
+          type: string
+          enum: [pendiente_pago, pagada, pedido, recibido]
+        createdAt:
+          type: string
+          format: date-time
+        contact:
+          type: object
+          required: [id, name]
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            taxId:
+              type: string
+        totalVes:
+          type: number
+        paidVes:
+          type: number
+        pendingVes:
+          type: number
+          description: "`roundMoney(totalVes - paidVes)`, siempre mayor que cero."
+        totalRef:
+          type: number
+        paidRef:
+          type: number
+          description: Solo compras.
+        pendingRef:
+          type: number
+          description: "Compras: `totalRef - paidRef`. Ventas: `pendingVes / refRateVes`."
+        refRateVes:
+          type: number
     ErrorResponse:
       type: object
       required: [error]

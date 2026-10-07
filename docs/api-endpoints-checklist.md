@@ -130,6 +130,7 @@ Este checklist compara el plan funcional del ERP contra los endpoints actuales e
 - `[x]` `GET /api/payments`: listado.
 - `[x]` `GET /api/payments?direction=entrada|salida`: filtro por direccion.
 - `[x]` `POST /api/payments`: creacion simulada.
+- `[x]` `GET /api/payments/open-documents`: ventas por cobrar y compras por pagar con saldo (`type`, `search`, `contactId`, `from`, `to`, `olderThanDays`).
 - `[x]` `GET /api/payments/[id]`: detalle.
 - `[x]` `PATCH /api/payments/[id]`: actualiza metadatos (notas, banco, telefono, referencia).
 - `[~]` Payload valida que el pago pertenezca a venta o compra.
