@@ -1,5 +1,10 @@
-/** Parámetro de la URL del detalle que guarda la URL de la lista de origen. */
-export const RETURN_TO_PARAM = "from";
+/**
+ * Parámetro de la URL del detalle que guarda la URL de la lista de origen.
+ * Nombre reservado: ninguna lista lo usa como filtro. `from` y `to` no sirven
+ * porque son los filtros de rango de fechas de ventas, compras, inventario,
+ * reportes y dashboard.
+ */
+export const RETURN_TO_PARAM = "returnTo";
 /** Una URL de retorno más larga que esto se descarta. */
 export const MAX_RETURN_TO_LENGTH = 2000;
 
@@ -14,15 +19,17 @@ const ENCODED_PATH_HAZARD = /%(?:2f|5c|2e|25|[01][0-9a-f]|7f)/i;
 /**
  * Parámetros de la query (en minúsculas) que una pantalla puede usar como
  * destino de una redirección, p. ej. `next` en `/login`. Su valor debe ser a su
- * vez una ruta interna segura. `from` no está aquí: `resolveReturnTo` y
- * `withReturnTo` lo eliminan en vez de rechazar la URL.
+ * vez una ruta interna segura. Incluye el parámetro propio (`RETURN_TO_PARAM`):
+ * un destino con un `returnTo` anidado inseguro se rechaza entero, y uno seguro
+ * lo eliminan después `resolveReturnTo` y `withReturnTo`. `from` no está aquí:
+ * es un filtro de fechas, nadie navega a su valor.
  */
 const REDIRECT_PARAMS = new Set([
   "next",
   "redirect",
   "redirectto",
   "redirect_to",
-  "returnto",
+  RETURN_TO_PARAM.toLowerCase(),
   "return_to",
   "callbackurl",
 ]);
@@ -61,12 +68,12 @@ function isReturnToPair(pair: string) {
   }
 }
 
-/** Pares `clave=valor` de una query tal cual vienen, sin el parámetro `from`. */
+/** Pares `clave=valor` de una query tal cual vienen, sin el parámetro `returnTo`. */
 function pairsWithoutReturnTo(query: string) {
   return query.split("&").filter((pair) => pair !== "" && !isReturnToPair(pair));
 }
 
-/** Quita `from` de una URL relativa sin tocar el resto de sus parámetros. */
+/** Quita `returnTo` de una URL relativa sin tocar el resto de sus parámetros. */
 function stripReturnTo(url: string) {
   const { hash, path, query } = splitHref(url);
   const pairs = pairsWithoutReturnTo(query);
@@ -129,7 +136,7 @@ export function isSafeInternalPath(value: unknown): value is string {
 /**
  * `value` si es una ruta interna segura (ver `isSafeInternalPath`); si no,
  * `fallback`. Para destinos que llegan en la URL y se navegan tal cual, p. ej.
- * `next` tras iniciar sesión. A diferencia de `resolveReturnTo`, no quita `from`.
+ * `next` tras iniciar sesión. A diferencia de `resolveReturnTo`, no quita `returnTo`.
  */
 export function safeInternalPath(value: unknown, fallback: string): string {
   return isSafeInternalPath(value) ? value : fallback;
@@ -145,12 +152,14 @@ function encodeComponentOrNull(value: string) {
 }
 
 /**
- * Añade a `href` (enlace de fila a un detalle) el parámetro `from` con la URL
- * de la lista (`currentUrl`: ruta + query, relativa; p. ej. `list.href` de
+ * Añade a `href` (enlace de fila a un detalle) el parámetro `returnTo` con la
+ * URL de la lista (`currentUrl`: ruta + query, relativa; p. ej. `list.href` de
  * `useUrlListState`). Conserva los parámetros y el `#` de `href`, sustituye un
- * `from` anterior y no encadena: el `from` que traiga la URL de la lista se
- * elimina. Si `currentUrl` no es una ruta interna segura o no se puede
- * codificar (surrogate suelto), devuelve `href` igual.
+ * `returnTo` anterior y no encadena: el `returnTo` que traiga la URL de la lista
+ * se elimina (desde un subdetalle se vuelve al detalle, sin su lista). Los
+ * filtros de la lista, incluido `from`, viajan intactos. Si `currentUrl` no es
+ * una ruta interna segura o no se puede codificar (surrogate suelto), devuelve
+ * `href` igual.
  */
 export function withReturnTo(href: string, currentUrl: string | null | undefined): string {
   if (!currentUrl) {
@@ -175,14 +184,18 @@ export function withReturnTo(href: string, currentUrl: string | null | undefined
 }
 
 /**
- * Destino de "Volver": `from` (valor ya decodificado del parámetro de la URL,
- * p. ej. `searchParams.get("from")`) solo si es una ruta interna segura; si no,
- * `fallbackHref`. Un `from` anidado dentro de `from` se descarta.
+ * Destino de "Volver": `returnTo` (valor ya decodificado del parámetro de la
+ * URL, `searchParams.get(RETURN_TO_PARAM)`) solo si es una ruta interna segura;
+ * si no, `fallbackHref`. Un `returnTo` seguro anidado dentro de `returnTo` se
+ * descarta; uno inseguro invalida el destino entero.
  */
-export function resolveReturnTo(from: string | null | undefined, fallbackHref: string): string {
-  if (!isSafeInternalPath(from)) {
+export function resolveReturnTo(
+  returnTo: string | null | undefined,
+  fallbackHref: string,
+): string {
+  if (!isSafeInternalPath(returnTo)) {
     return fallbackHref;
   }
 
-  return stripReturnTo(from);
+  return stripReturnTo(returnTo);
 }

@@ -24,14 +24,14 @@ type PageBackButtonBaseProps = {
 export type PageBackButtonProps = PageBackButtonBaseProps &
   (
     | {
-        /** Destino cuando la URL no trae un `from` válido. */
+        /** Destino cuando la URL no trae un `returnTo` válido. */
         fallbackHref: string;
         href?: string;
       }
     | {
         fallbackHref?: undefined;
         /**
-         * Forma heredada: enlace fijo a `href`, como antes. No lee `from` ni
+         * Forma heredada: enlace fijo a `href`, como antes. No lee `returnTo` ni
          * activa atajos; al migrar la pantalla, cámbialo por `fallbackHref`.
          */
         href: string;
@@ -172,9 +172,10 @@ function ReturnAwareBackButton({
 
 /**
  * Botón "Volver" de un detalle. Vuelve a la URL de la lista de origen que
- * viaja en `?from=` (la añade `withReturnTo` en el enlace de la fila) si es una
- * ruta interna válida; si no, a `fallbackHref`. Es un enlace real: se puede
- * abrir en otra pestaña, y un guardia de proceso activo pregunta antes de salir.
+ * viaja en `?returnTo=` (`RETURN_TO_PARAM`; la añade `withReturnTo` en el enlace
+ * de la fila) si es una ruta interna válida; si no, a `fallbackHref`. Es un
+ * enlace real: se puede abrir en otra pestaña, y un guardia de proceso activo
+ * pregunta antes de salir.
  *
  * Con `fallbackHref`, `Esc` y `Alt+←` también vuelven, salvo con un diálogo,
  * menú o lista desplegable abiertos, con el foco en un campo editable o si otro

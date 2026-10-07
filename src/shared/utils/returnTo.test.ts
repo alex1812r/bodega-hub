@@ -1,5 +1,6 @@
 import {
   MAX_RETURN_TO_LENGTH,
+  RETURN_TO_PARAM,
   isSafeInternalPath,
   resolveReturnTo,
   safeInternalPath,
@@ -8,45 +9,45 @@ import {
 
 const FALLBACK = "/products";
 
-function fromOf(href: string) {
-  return new URLSearchParams(href.slice(href.indexOf("?") + 1).split("#")[0]).get("from");
+function returnToOf(href: string) {
+  return new URLSearchParams(href.slice(href.indexOf("?") + 1).split("#")[0]).get("returnTo");
 }
 
 describe("withReturnTo", () => {
-  it("añade la URL de la lista codificada en from", () => {
+  it("añade la URL de la lista codificada en returnTo", () => {
     const href = withReturnTo("/products/p-1", "/products?search=coca+cola&page=3");
 
-    expect(href).toBe("/products/p-1?from=%2Fproducts%3Fsearch%3Dcoca%2Bcola%26page%3D3");
-    expect(fromOf(href)).toBe("/products?search=coca+cola&page=3");
+    expect(href).toBe("/products/p-1?returnTo=%2Fproducts%3Fsearch%3Dcoca%2Bcola%26page%3D3");
+    expect(returnToOf(href)).toBe("/products?search=coca+cola&page=3");
   });
 
   it("conserva los parámetros y el hash que ya tenga el enlace", () => {
     const href = withReturnTo("/sales/s-1?tab=pagos&x=a%20b#notas", "/sales?estado=paid");
 
-    expect(href).toBe("/sales/s-1?tab=pagos&x=a%20b&from=%2Fsales%3Festado%3Dpaid#notas");
+    expect(href).toBe("/sales/s-1?tab=pagos&x=a%20b&returnTo=%2Fsales%3Festado%3Dpaid#notas");
   });
 
-  it("sustituye un from anterior del enlace", () => {
-    const href = withReturnTo("/sales/s-1?from=%2Fviejo&tab=pagos", "/sales");
+  it("sustituye un returnTo anterior del enlace", () => {
+    const href = withReturnTo("/sales/s-1?returnTo=%2Fviejo&tab=pagos", "/sales");
 
-    expect(href).toBe("/sales/s-1?tab=pagos&from=%2Fsales");
+    expect(href).toBe("/sales/s-1?tab=pagos&returnTo=%2Fsales");
   });
 
-  it("no encadena: elimina el from que traiga la URL de la lista", () => {
-    const href = withReturnTo("/contacts/c-1", "/sales?estado=paid&from=%2Fproducts%3Fpage%3D2");
+  it("no encadena: elimina el returnTo que traiga la URL de la lista", () => {
+    const href = withReturnTo("/contacts/c-1", "/sales?estado=paid&returnTo=%2Fproducts%3Fpage%3D2");
 
-    expect(fromOf(href)).toBe("/sales?estado=paid");
+    expect(returnToOf(href)).toBe("/sales?estado=paid");
   });
 
   it("descarta el hash de la URL de la lista", () => {
-    expect(fromOf(withReturnTo("/sales/s-1", "/sales?page=2#fila-3"))).toBe("/sales?page=2");
+    expect(returnToOf(withReturnTo("/sales/s-1", "/sales?page=2#fila-3"))).toBe("/sales?page=2");
   });
 
   it("ida y vuelta: resolveReturnTo devuelve la URL exacta de la lista", () => {
     const listUrl = "/purchases?search=harina+pan&estado=pending&estado=partial&dir=desc&page=4";
     const href = withReturnTo("/purchases/abc", listUrl);
 
-    expect(resolveReturnTo(fromOf(href), "/purchases")).toBe(listUrl);
+    expect(resolveReturnTo(returnToOf(href), "/purchases")).toBe(listUrl);
   });
 
   it.each([
@@ -78,7 +79,7 @@ describe("withReturnTo", () => {
   it("sigue aceptando un par surrogate completo (emoji) en la URL de la lista", () => {
     const listUrl = `/products?search=${HIGH}${LOW}`;
 
-    expect(fromOf(withReturnTo("/products/p-1", listUrl))).toBe(listUrl);
+    expect(returnToOf(withReturnTo("/products/p-1", listUrl))).toBe(listUrl);
   });
 });
 
@@ -169,9 +170,11 @@ describe("resolveReturnTo", () => {
     expect(isSafeInternalPath(from)).toBe(false);
   });
 
-  it("rechaza el from del reporte tal como llega de searchParams.get", () => {
-    const detailUrl = "/qa-caos-back?from=%2Flogin%3Fnext%3D%252F%255Cevil.example%252Frobo";
-    const from = new URLSearchParams(detailUrl.slice(detailUrl.indexOf("?") + 1)).get("from");
+  it("rechaza el returnTo del reporte tal como llega de searchParams.get", () => {
+    const detailUrl = "/qa-caos-back?returnTo=%2Flogin%3Fnext%3D%252F%255Cevil.example%252Frobo";
+    const from = new URLSearchParams(detailUrl.slice(detailUrl.indexOf("?") + 1)).get(
+      RETURN_TO_PARAM,
+    );
 
     expect(from).toBe("/login?next=%2F%5Cevil.example%2Frobo");
     expect(resolveReturnTo(from, FALLBACK)).toBe(FALLBACK);
@@ -184,11 +187,48 @@ describe("resolveReturnTo", () => {
     expect(resolveReturnTo(from, FALLBACK)).toBe(from);
   });
 
-  it("descarta un from anidado dentro de from", () => {
-    expect(resolveReturnTo("/sales?estado=paid&from=%2F%2Fevil.com&page=2", FALLBACK)).toBe(
-      "/sales?estado=paid&page=2",
+  it("descarta un returnTo interno anidado dentro de returnTo", () => {
+    expect(
+      resolveReturnTo("/sales?estado=paid&returnTo=%2Fproducts%3Fpage%3D2&page=2", FALLBACK),
+    ).toBe("/sales?estado=paid&page=2");
+    expect(resolveReturnTo("/sales?returnTo=%2Fproducts", FALLBACK)).toBe("/sales");
+  });
+
+  it("rechaza entero un destino con un returnTo anidado hostil", () => {
+    expect(resolveReturnTo("/sales?estado=paid&returnTo=%2F%2Fevil.com&page=2", FALLBACK)).toBe(
+      FALLBACK,
     );
-    expect(resolveReturnTo("/sales?from=%2Fproducts", FALLBACK)).toBe("/sales");
+    expect(resolveReturnTo("/sales?ReturnTo=%2F%5Cevil.example", FALLBACK)).toBe(FALLBACK);
+  });
+});
+
+describe("el filtro de fechas from no es el parámetro de retorno", () => {
+  const SALES_LIST = "/sales?from=2026-10-01&to=2026-10-31&status=paid";
+
+  it("el parámetro de retorno se llama returnTo", () => {
+    expect(RETURN_TO_PARAM).toBe("returnTo");
+  });
+
+  it("ida y vuelta: Volver conserva íntegra una lista filtrada por from y to", () => {
+    const href = withReturnTo("/sales/123", SALES_LIST);
+
+    expect(href).toBe(
+      "/sales/123?returnTo=%2Fsales%3Ffrom%3D2026-10-01%26to%3D2026-10-31%26status%3Dpaid",
+    );
+    expect(resolveReturnTo(returnToOf(href), "/sales")).toBe(SALES_LIST);
+  });
+
+  it("withReturnTo no borra un from que ya tenga el enlace", () => {
+    expect(withReturnTo("/reports/daily?from=2026-10-01&to=2026-10-07", "/reports")).toBe(
+      "/reports/daily?from=2026-10-01&to=2026-10-07&returnTo=%2Freports",
+    );
+  });
+
+  it("un from dentro del destino es un filtro: ni se borra ni se inspecciona como redirección", () => {
+    expect(resolveReturnTo(SALES_LIST, FALLBACK)).toBe(SALES_LIST);
+    expect(resolveReturnTo("/sales?from=%2F%2Fevil.com&page=2", FALLBACK)).toBe(
+      "/sales?from=%2F%2Fevil.com&page=2",
+    );
   });
 });
 
@@ -212,9 +252,9 @@ describe("safeInternalPath", () => {
     },
   );
 
-  it("conserva el from de una ruta interna (no lo elimina como resolveReturnTo)", () => {
-    expect(safeInternalPath("/sales/s-1?from=%2Fsales%3Fpage%3D2", FALLBACK)).toBe(
-      "/sales/s-1?from=%2Fsales%3Fpage%3D2",
+  it("conserva el returnTo de una ruta interna (no lo elimina como resolveReturnTo)", () => {
+    expect(safeInternalPath("/sales/s-1?returnTo=%2Fsales%3Fpage%3D2", FALLBACK)).toBe(
+      "/sales/s-1?returnTo=%2Fsales%3Fpage%3D2",
     );
   });
 

@@ -110,7 +110,7 @@ describe("PageBackButton", () => {
       expect(backLink()).toHaveAttribute("href", LIST_URL);
     });
 
-    it("conserva from al recargar el detalle y con otros parámetros en la URL", () => {
+    it("conserva returnTo al recargar el detalle y con otros parámetros en la URL", () => {
       openDetail(withReturnTo("/products/p-1?tab=stock", LIST_URL));
 
       const first = render(<PageBackButton fallbackHref="/products" />);
@@ -124,7 +124,27 @@ describe("PageBackButton", () => {
       expect(backLink()).toHaveAttribute("href", LIST_URL);
     });
 
-    it("sin from usa fallbackHref", () => {
+    it("sin returnTo usa fallbackHref", () => {
+      render(<PageBackButton fallbackHref="/products" />);
+
+      expect(backLink()).toHaveAttribute("href", "/products");
+    });
+
+    it("ida y vuelta con una lista filtrada por fechas: Volver conserva from y to", () => {
+      const listUrl = "/sales?from=2026-10-01&to=2026-10-31&status=paid";
+
+      openDetail(withReturnTo("/sales/123", listUrl));
+      render(<PageBackButton fallbackHref="/sales" />);
+
+      expect(backLink()).toHaveAttribute("href", listUrl);
+    });
+
+    it.each([
+      ["una ruta interna", "/sales?page=2"],
+      ["un origen externo", "//evil.com"],
+      ["una fecha", "2026-10-01"],
+    ])("ignora un from con %s en la URL del detalle: no es el parámetro de retorno", (_label, from) => {
+      setUrl(new URLSearchParams({ from }).toString());
       render(<PageBackButton fallbackHref="/products" />);
 
       expect(backLink()).toHaveAttribute("href", "/products");
@@ -144,8 +164,8 @@ describe("PageBackButton", () => {
       ["ruta relativa", "products"],
       ["ruta a la API", "/api/products"],
       ["demasiado largo", `/products?search=${"a".repeat(2100)}`],
-    ])("rechaza un from con %s y usa fallbackHref", (_label, from) => {
-      setUrl(new URLSearchParams({ from }).toString());
+    ])("rechaza un returnTo con %s y usa fallbackHref", (_label, returnTo) => {
+      setUrl(new URLSearchParams({ returnTo }).toString());
       render(<PageBackButton fallbackHref="/products" />);
 
       expect(backLink()).toHaveAttribute("href", "/products");
@@ -209,7 +229,7 @@ describe("PageBackButton", () => {
   });
 
   describe("atajos de teclado", () => {
-    it("Esc vuelve a from", () => {
+    it("Esc vuelve a returnTo", () => {
       openDetail(withReturnTo("/products/p-1", LIST_URL));
       render(<PageBackButton fallbackHref="/products" />);
 

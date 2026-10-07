@@ -1,18 +1,20 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect } from "storybook/test";
 
+import { RETURN_TO_PARAM } from "@/shared/utils/returnTo";
+
 import { PageBackButton } from "./PageBackButton";
 
 /**
  * Botón "Volver" de los detalles.
  *
  * - El enlace de la fila de la lista se construye con
- *   `withReturnTo("/products/p-1", list.href)`, que añade `?from=<URL de la lista>`.
- * - En el detalle, `<PageBackButton fallbackHref="/products" />` vuelve a `from`
- *   si es una ruta interna válida y, si no, a `fallbackHref`.
+ *   `withReturnTo("/products/p-1", list.href)`, que añade `?returnTo=<URL de la lista>`.
+ * - En el detalle, `<PageBackButton fallbackHref="/products" />` vuelve a
+ *   `returnTo` si es una ruta interna válida y, si no, a `fallbackHref`.
  * - `Esc` y `Alt+←` también vuelven (no con un diálogo o desplegable abierto ni
  *   con el foco en un campo). `shortcuts={false}` los apaga.
- * - Solo con `href` (forma heredada) es un enlace fijo: no lee `from` ni activa atajos.
+ * - Solo con `href` (forma heredada) es un enlace fijo: no lee `returnTo` ni activa atajos.
  *
  * El límite de Suspense de `useSearchParams` lo pone el propio componente.
  */
@@ -35,13 +37,13 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const WithFrom: Story = {
+export const WithReturnTo: Story = {
   parameters: {
     nextjs: {
       appDirectory: true,
       navigation: {
         pathname: "/products/p-1",
-        query: { from: "/products?search=harina&page=3" },
+        query: { [RETURN_TO_PARAM]: "/products?search=harina&page=3" },
       },
     },
   },
@@ -53,7 +55,7 @@ export const WithFrom: Story = {
   },
 };
 
-export const WithoutFrom: Story = {
+export const WithoutReturnTo: Story = {
   play: async ({ canvas }) => {
     await expect(await canvas.findByRole("link", { name: "Volver" })).toHaveAttribute(
       "href",
@@ -62,13 +64,13 @@ export const WithoutFrom: Story = {
   },
 };
 
-export const ExternalFromRejected: Story = {
+export const ExternalReturnToRejected: Story = {
   parameters: {
     nextjs: {
       appDirectory: true,
       navigation: {
         pathname: "/products/p-1",
-        query: { from: "//evil.com" },
+        query: { [RETURN_TO_PARAM]: "//evil.com" },
       },
     },
   },
