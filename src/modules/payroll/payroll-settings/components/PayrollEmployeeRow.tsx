@@ -5,7 +5,7 @@ import { useState } from "react";
 import { roleLabels } from "@/shared/auth/permissions";
 import { Badge } from "@/shared/components/Badge";
 import { Button } from "@/shared/components/Button";
-import { Input } from "@/shared/components/Input";
+import { NumberInput } from "@/shared/components/NumberInput";
 
 import { useUpdatePayrollEmployee } from "../../hooks/usePayroll";
 import type { PayrollEmployee } from "../../types";
@@ -61,14 +61,11 @@ export function PayrollEmployeeRow({
         {roleLabels[employee.role]}
       </td>
       <td className="px-3 py-2">
-        <Input
+        <NumberInput
           aria-label={`Comision de ${employee.fullName}`}
+          decimals={2}
           error={pctIsValid ? undefined : "Entre 0 y 100."}
-          max="100"
-          min="0"
           onChange={(event) => setCommissionPct(event.target.value)}
-          step="0.01"
-          type="number"
           value={commissionPct}
         />
       </td>

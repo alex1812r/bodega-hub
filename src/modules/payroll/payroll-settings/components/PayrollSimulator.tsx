@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/components/Card";
-import { Input } from "@/shared/components/Input";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { formatRefUsd } from "@/shared/utils/currency";
 
 import { commissionForSale, shareOfGrossProfit } from "../../utils/payrollMath";
@@ -44,23 +44,18 @@ export function PayrollSimulator({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <Input
+          <NumberInput
+            decimals={2}
             helperText="Ventas cobradas del cajero en la quincena."
             label="Ventas (REF)"
-            min="0"
             onChange={(event) => setSalesRef(event.target.value)}
-            step="0.01"
-            type="number"
             value={salesRef}
           />
-          <Input
+          <NumberInput
+            decimals={2}
             helperText="Porcentaje de comision a simular."
             label="Comision (%)"
-            max="100"
-            min="0"
             onChange={(event) => setCommissionPct(event.target.value)}
-            step="0.01"
-            type="number"
             value={commissionPct}
           />
         </div>

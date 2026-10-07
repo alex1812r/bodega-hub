@@ -5,6 +5,7 @@ import { type FormEvent, useState } from "react";
 import { roleLabels, type UserRole } from "@/shared/auth/permissions";
 import { Button } from "@/shared/components/Button";
 import { Input } from "@/shared/components/Input";
+import { NumberInput } from "@/shared/components/NumberInput";
 
 import { useUpdatePayrollSettings } from "../../hooks/usePayroll";
 import type { PayrollSettings } from "../../types";
@@ -73,44 +74,32 @@ export function PayrollSettingsForm({ settings }: PayrollSettingsFormProps) {
           type="date"
           value={commissionSince}
         />
-        <Input
+        <NumberInput
+          decimals={2}
           helperText="Porcentaje que se usa para un cajero que aun no tiene uno propio."
           label="Comision por defecto (%)"
-          max="100"
-          min="0"
           onChange={(event) => setDefaultCommissionPct(event.target.value)}
-          step="0.01"
-          type="number"
           value={defaultCommissionPct}
         />
-        <Input
+        <NumberInput
+          decimals={2}
           helperText="Por encima de este porcentaje de la ganancia bruta el semaforo se pone en rojo."
           label="Umbral de alerta del semaforo (%)"
-          max="100"
-          min="0"
           onChange={(event) => setWarnSharePct(event.target.value)}
-          step="0.01"
-          type="number"
           value={warnSharePct}
         />
-        <Input
+        <NumberInput
+          decimals={2}
           helperText="Cuanto de lo que queda sugerimos reinvertir en mercancia. Solo informativo."
           label="Reinversion sugerida (%)"
-          max="100"
-          min="0"
           onChange={(event) => setReinvestPct(event.target.value)}
-          step="0.01"
-          type="number"
           value={reinvestPct}
         />
-        <Input
+        <NumberInput
+          decimals={2}
           helperText="Cuanto de lo que queda sugerimos guardar como reserva. Solo informativo."
           label="Reserva sugerida (%)"
-          max="100"
-          min="0"
           onChange={(event) => setReservePct(event.target.value)}
-          step="0.01"
-          type="number"
           value={reservePct}
         />
       </div>

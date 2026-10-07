@@ -9,6 +9,7 @@ import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 import { VenezuelanBankField } from "@/shared/components/VenezuelanBankField";
 import {
@@ -196,16 +197,14 @@ export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalPr
               value={suggestedTotal.toFixed(2)}
             />
           ) : (
-            <Input
+            <NumberInput
+              decimals={2}
               error={
                 hasSubmitted && amountNumber <= 0 ? "Indica un monto mayor a cero." : undefined
               }
               helperText={isUsdMethod(method) ? "Monto en USD." : "Monto en Bs."}
               label="Monto"
-              min="0"
               onChange={(event) => setAmountOverride(event.target.value)}
-              step="0.01"
-              type="number"
               value={amount}
             />
           )}
