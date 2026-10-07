@@ -1,7 +1,9 @@
 "use client";
 
-import { Button } from "@/shared/components/Button";
-import { Modal } from "@/shared/components/Modal";
+import {
+  ConfirmActionModal,
+  type ConfirmActionEffect,
+} from "@/shared/components/ConfirmActionModal";
 
 import { useUpdateProduct } from "../../hooks/useProducts";
 
@@ -13,6 +15,12 @@ type DeactivateProductConfirmModalProps = {
   open: boolean;
   product: ProductWithCategory | null;
 };
+
+const deactivateEffects: ConfirmActionEffect[] = [
+  { after: "Inactivo", before: "Activo", label: "Estado en el catálogo", tone: "warning" },
+  { label: "No podrá venderse", tone: "warning" },
+  { label: "El historial de ventas, compras y precios se conserva" },
+];
 
 export function DeactivateProductConfirmModal({
   onOpenChange,
@@ -31,28 +39,19 @@ export function DeactivateProductConfirmModal({
   }
 
   return (
-    <Modal
+    <ConfirmActionModal
+      confirmLabel="Desactivar producto"
       description="El producto dejará de aparecer en el catálogo activo y no podrá venderse. El historial de ventas, compras y precios se conservará."
-      footer={({ close }) => (
-        <>
-          <Button disabled={updateProduct.isPending} onClick={close} type="button" variant="outline">
-            Cancelar
-          </Button>
-          <Button
-            disabled={updateProduct.isPending}
-            onClick={() => void handleConfirm()}
-            type="button"
-            variant="danger"
-          >
-            {updateProduct.isPending ? "Procesando..." : "Desactivar producto"}
-          </Button>
-        </>
-      )}
+      effects={deactivateEffects}
+      error={updateProduct.error instanceof Error ? updateProduct.error.message : null}
+      isPending={updateProduct.isPending}
+      onConfirm={handleConfirm}
       onOpenChange={onOpenChange}
       open={open}
       title="Confirmar desactivación"
+      variant="danger"
     >
-      <p className="text-sm text-on-surface-variant">
+      <p>
         <span className="font-medium text-foreground">{product?.name ?? "Producto"}</span>
         {product?.sku ? (
           <>
@@ -62,6 +61,6 @@ export function DeactivateProductConfirmModal({
         ) : null}{" "}
         quedará inactivo.
       </p>
-    </Modal>
+    </ConfirmActionModal>
   );
 }

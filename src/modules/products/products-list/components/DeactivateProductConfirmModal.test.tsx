@@ -36,6 +36,9 @@ describe("DeactivateProductConfirmModal", () => {
     expect(screen.getByRole("dialog")).toBeVisible();
     expect(screen.getByText(/taladro percutor/i)).toBeVisible();
     expect(screen.getByText(/HER-TAL-001/i)).toBeVisible();
+    expect(screen.getByRole("list", { name: "Qué va a pasar" })).toHaveTextContent(
+      /Estado en el catálogo.*Activo.*Inactivo/,
+    );
   });
 
   it("deactivates the product when confirmed", async () => {

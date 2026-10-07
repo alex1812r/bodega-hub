@@ -45,6 +45,9 @@ describe("UnlinkSupplierProductConfirmModal", () => {
     expect(screen.getByRole("dialog")).toBeVisible();
     expect(screen.getByText(/taladro percutor/i)).toBeVisible();
     expect(screen.getByText(/comercial doble via/i)).toBeVisible();
+    expect(screen.getByRole("list", { name: "Qué va a pasar" })).toHaveTextContent(
+      /Vínculo con el proveedor.*Activo.*Inactivo/,
+    );
   });
 
   it("deactivates the relation when confirmed", async () => {

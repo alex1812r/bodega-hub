@@ -38,6 +38,9 @@ describe("ReactivateProductConfirmModal", () => {
     expect(screen.getByRole("dialog")).toBeVisible();
     expect(screen.getByText(/taladro percutor/i)).toBeVisible();
     expect(screen.getByRole("button", { name: /reactivar producto/i })).toBeVisible();
+    expect(screen.getByRole("list", { name: "Qué va a pasar" })).toHaveTextContent(
+      /Estado en el catálogo.*Inactivo.*Activo/,
+    );
   });
 
   it("reactivates the product when confirmed", async () => {

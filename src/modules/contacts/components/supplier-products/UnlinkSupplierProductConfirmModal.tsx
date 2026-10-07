@@ -1,8 +1,10 @@
 "use client";
 
 import { useDeactivateSupplierProduct } from "@/modules/contacts/hooks/useSupplierProductMutations";
-import { Button } from "@/shared/components/Button";
-import { Modal } from "@/shared/components/Modal";
+import {
+  ConfirmActionModal,
+  type ConfirmActionEffect,
+} from "@/shared/components/ConfirmActionModal";
 
 import type { SupplierProduct } from "../../types/supplierProducts";
 
@@ -12,6 +14,11 @@ type UnlinkSupplierProductConfirmModalProps = {
   open: boolean;
   supplierProduct: SupplierProduct | null;
 };
+
+const unlinkEffects: ConfirmActionEffect[] = [
+  { after: "Inactivo", before: "Activo", label: "Vínculo con el proveedor", tone: "warning" },
+  { label: "El historial de precios se conserva" },
+];
 
 export function UnlinkSupplierProductConfirmModal({
   onOpenChange,
@@ -30,31 +37,22 @@ export function UnlinkSupplierProductConfirmModal({
   }
 
   return (
-    <Modal
+    <ConfirmActionModal
+      confirmLabel="Desvincular producto"
       description="El producto quedará inactivo para este proveedor. El historial de precios se conservará."
-      footer={({ close }) => (
-        <>
-          <Button disabled={deactivate.isPending} onClick={close} type="button" variant="outline">
-            Cancelar
-          </Button>
-          <Button
-            disabled={deactivate.isPending}
-            onClick={() => void handleConfirm()}
-            type="button"
-            variant="danger"
-          >
-            {deactivate.isPending ? "Procesando..." : "Desvincular producto"}
-          </Button>
-        </>
-      )}
+      effects={unlinkEffects}
+      error={deactivate.error instanceof Error ? deactivate.error.message : null}
+      isPending={deactivate.isPending}
+      onConfirm={handleConfirm}
       onOpenChange={onOpenChange}
       open={open}
       title="Confirmar desvinculación"
+      variant="danger"
     >
-      <p className="text-sm text-on-surface-variant">
+      <p>
         {supplierProduct?.product?.name ?? supplierProduct?.productId} dejará de aparecer en el catálogo
         activo de {supplierProduct?.supplier?.name ?? "este proveedor"}.
       </p>
-    </Modal>
+    </ConfirmActionModal>
   );
 }

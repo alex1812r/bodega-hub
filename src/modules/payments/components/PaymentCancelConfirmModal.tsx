@@ -1,7 +1,9 @@
 "use client";
 
-import { Button } from "@/shared/components/Button";
-import { Modal } from "@/shared/components/Modal";
+import {
+  ConfirmActionModal,
+  type ConfirmActionEffect,
+} from "@/shared/components/ConfirmActionModal";
 
 import { formatPaymentHeading } from "../payment-details/utils/paymentDetailLabels";
 
@@ -13,6 +15,11 @@ type PaymentCancelConfirmModalProps = {
   paymentId: string;
 };
 
+const cancelEffects: ConfirmActionEffect[] = [
+  { after: "Anulado", label: "Estado del pago", tone: "danger" },
+  { label: "Se ajusta el saldo del documento vinculado", tone: "warning" },
+];
+
 export function PaymentCancelConfirmModal({
   isConfirming = false,
   onConfirm,
@@ -21,30 +28,18 @@ export function PaymentCancelConfirmModal({
   paymentId,
 }: PaymentCancelConfirmModalProps) {
   return (
-    <Modal
+    <ConfirmActionModal
+      confirmLabel="Anular pago"
       description="El pago quedara marcado como anulado y se ajustara el saldo del documento vinculado. Esta accion no se puede deshacer."
-      footer={({ close }) => (
-        <>
-          <Button disabled={isConfirming} onClick={close} type="button" variant="outline">
-            Cancelar
-          </Button>
-          <Button
-            disabled={isConfirming}
-            onClick={() => void onConfirm()}
-            type="button"
-            variant="danger"
-          >
-            {isConfirming ? "Procesando..." : "Anular pago"}
-          </Button>
-        </>
-      )}
+      effects={cancelEffects}
+      isPending={isConfirming}
+      onConfirm={onConfirm}
       onOpenChange={onOpenChange}
       open={open}
       title="Confirmar anulacion"
+      variant="danger"
     >
-      <p className="text-sm text-on-surface-variant">
-        Pago {formatPaymentHeading(paymentId)}
-      </p>
-    </Modal>
+      <p>Pago {formatPaymentHeading(paymentId)}</p>
+    </ConfirmActionModal>
   );
 }
