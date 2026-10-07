@@ -100,6 +100,59 @@ describe("ProductDetailPackConversionCard · idempotencia (C6)", () => {
   });
 });
 
+describe("ProductDetailPackConversionCard · aviso de cantidad (SHR-09G)", () => {
+  function getQuantityInput() {
+    return screen.getByLabelText<HTMLInputElement>("Cantidad de empaques");
+  }
+
+  it("al abrir no muestra ningun aviso", async () => {
+    installFetchStub(() => null);
+    renderCard();
+    await openDialog();
+
+    expect(getQuantityInput()).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText("Indica una cantidad mayor a cero.")).not.toBeInTheDocument();
+  });
+
+  it.each(["0", ""])("cantidad %p: avisa y no envia", async (value) => {
+    const api = installFetchStub(() => null);
+    const onConverted = renderCard();
+
+    await openDialog();
+    fireEvent.change(getQuantityInput(), { target: { value } });
+
+    expect(screen.getByText("Indica una cantidad mayor a cero.")).toBeVisible();
+    expect(getQuantityInput()).toHaveAttribute("aria-invalid", "true");
+    expect(getQuantityInput()).toHaveAccessibleDescription("Indica una cantidad mayor a cero.");
+
+    fireEvent.submit(getForm());
+
+    expect(api.posts).toHaveLength(0);
+    expect(onConverted).not.toHaveBeenCalled();
+  });
+
+  it("cantidad valida: un solo POST con el mismo payload de siempre", async () => {
+    const api = installFetchStub(() => null);
+    api.respondToNextPost(conversionResult);
+    const onConverted = renderCard();
+
+    await openDialog();
+    fireEvent.change(getQuantityInput(), { target: { value: "2" } });
+    expect(getQuantityInput()).not.toHaveAttribute("aria-invalid");
+
+    fireEvent.submit(getForm());
+    await waitFor(() => expect(onConverted).toHaveBeenCalledTimes(1));
+
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]?.url).toBe("/api/inventory/conversions");
+    expect(api.posts[0]?.body).toEqual({
+      clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      packProductId: "prod-cigar-pack",
+      packQuantity: 2,
+    });
+  });
+});
+
 describe("ProductDetailPackConversionCard · stock insuficiente (STK-607)", () => {
   function getQuantityInput() {
     return screen.getByLabelText<HTMLInputElement>("Cantidad de empaques");

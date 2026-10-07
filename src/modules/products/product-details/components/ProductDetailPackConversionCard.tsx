@@ -32,6 +32,7 @@ export function ProductDetailPackConversionCard({
   const [open, setOpen] = useState(false);
   const [packQuantity, setPackQuantity] = useState("1");
   const [reason, setReason] = useState("");
+  const [quantityTouched, setQuantityTouched] = useState(false);
   const convert = useConvertPackToUnits();
   const requestAttempt = useRequestAttempt();
 
@@ -50,6 +51,10 @@ export function ProductDetailPackConversionCard({
       : quantityNumber > productStock
         ? `Solo hay ${productStock} empaque(s) en stock.`
         : undefined;
+  // Sin `min` en el input tampoco hay burbuja nativa para 0 o vacio: se avisa al tocar el campo.
+  const quantityError =
+    stockError ??
+    (quantityTouched && !(quantityNumber > 0) ? "Indica una cantidad mayor a cero." : undefined);
 
   const linkedHref = useMemo(
     () =>
@@ -85,6 +90,7 @@ export function ProductDetailPackConversionCard({
       setOpen(false);
       setPackQuantity("1");
       setReason("");
+      setQuantityTouched(false);
       onConverted?.();
     } catch (error) {
       requestAttempt.fail(error);
@@ -153,9 +159,12 @@ export function ProductDetailPackConversionCard({
               <form className="grid gap-4" id="open-pack-form" onSubmit={handleSubmit}>
                 <NumberInput
                   decimals={0}
-                  error={stockError}
+                  error={quantityError}
                   label="Cantidad de empaques"
-                  onChange={(event) => setPackQuantity(event.target.value)}
+                  onChange={(event) => {
+                    setPackQuantity(event.target.value);
+                    setQuantityTouched(true);
+                  }}
                   required
                   value={packQuantity}
                 />

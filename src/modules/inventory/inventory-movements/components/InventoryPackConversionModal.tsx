@@ -31,6 +31,8 @@ export function InventoryPackConversionModal({
   const [packProductId, setPackProductId] = useState("");
   const [packQuantity, setPackQuantity] = useState("1");
   const [reason, setReason] = useState("");
+  // Se activa al tocar la cantidad o al intentar enviar; al abrir no hay aviso.
+  const [showQuantityError, setShowQuantityError] = useState(false);
   const packConversionsQuery = usePackConversions();
   const convert = useConvertPackToUnits();
   const requestAttempt = useRequestAttempt();
@@ -59,16 +61,29 @@ export function InventoryPackConversionModal({
     Boolean(selected) &&
     quantityNumber > 0 &&
     quantityNumber <= (selected?.packProduct.currentStock ?? 0);
+  const packStock = selected?.packProduct.currentStock;
+  // Sin `min`/`max` en el input no hay burbuja nativa: el motivo se dice aqui.
+  const quantityError = !showQuantityError
+    ? undefined
+    : !(quantityNumber > 0)
+      ? "Indica una cantidad mayor a cero."
+      : packStock === undefined || quantityNumber <= packStock
+        ? undefined
+        : packStock <= 0
+          ? "No hay empaques en stock para abrir."
+          : `Solo hay ${packStock} empaque(s) en stock.`;
 
   function resetForm() {
     setPackProductId(defaultPackProductId ?? "");
     setPackQuantity("1");
     setReason("");
+    setShowQuantityError(false);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSubmit) {
+      setShowQuantityError(true);
       return;
     }
 
@@ -144,8 +159,12 @@ export function InventoryPackConversionModal({
         ) : null}
         <NumberInput
           decimals={0}
+          error={quantityError}
           label="Cantidad de empaques"
-          onChange={(event) => setPackQuantity(event.target.value)}
+          onChange={(event) => {
+            setPackQuantity(event.target.value);
+            setShowQuantityError(true);
+          }}
           required
           value={packQuantity}
         />
