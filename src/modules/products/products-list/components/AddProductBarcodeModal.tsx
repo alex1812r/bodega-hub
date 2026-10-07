@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { useAddProductBarcode, type ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import { normalizeBarcode } from "@/modules/products/services/productSearch";
@@ -26,18 +26,19 @@ export function AddProductBarcodeModal({
   const [cameraOpen, setCameraOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) {
-      setBarcode("");
-      setCameraOpen(false);
-      setErrorMessage(null);
-      return;
-    }
+  // Al abrir, cerrar o cambiar de producto el formulario vuelve a cero
+  // (ajuste durante el render).
+  const productId = product?.id;
+  const [syncedOpen, setSyncedOpen] = useState(open);
+  const [syncedProductId, setSyncedProductId] = useState(productId);
 
+  if (open !== syncedOpen || productId !== syncedProductId) {
+    setSyncedOpen(open);
+    setSyncedProductId(productId);
     setBarcode("");
     setCameraOpen(false);
     setErrorMessage(null);
-  }, [open, product?.id]);
+  }
 
   async function handleSubmit() {
     const normalized = normalizeBarcode(barcode);

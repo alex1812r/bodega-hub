@@ -38,9 +38,13 @@ export function ProductImageUploadField({
   const [cropOpen, setCropOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
+  // La vista previa sigue a `imageUrl` cuando cambia (ajuste durante el render).
+  const [syncedImageUrl, setSyncedImageUrl] = useState(imageUrl);
+
+  if (imageUrl !== syncedImageUrl) {
+    setSyncedImageUrl(imageUrl);
     setPreviewUrl(imageUrl ?? null);
-  }, [imageUrl]);
+  }
 
   useEffect(() => {
     return () => {

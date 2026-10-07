@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 import { FormActions } from "@/shared/components/FormActions";
@@ -31,13 +31,21 @@ export function ProductImportRowEditModal({
   row,
 }: ProductImportRowEditModalProps) {
   const formId = useId();
-  const [draft, setDraft] = useState<ProductImportRowDraft | null>(null);
+  const [draft, setDraft] = useState<ProductImportRowDraft | null>(() =>
+    row && open ? validatedRowToDraft(row) : null,
+  );
+  // Al abrir o al cambiar de fila se recarga el borrador (ajuste durante el render).
+  const [syncedOpen, setSyncedOpen] = useState(open);
+  const [syncedRow, setSyncedRow] = useState(row);
 
-  useEffect(() => {
+  if (open !== syncedOpen || row !== syncedRow) {
+    setSyncedOpen(open);
+    setSyncedRow(row);
+
     if (row && open) {
       setDraft(validatedRowToDraft(row));
     }
-  }, [open, row]);
+  }
 
   if (!row || !draft) {
     return null;

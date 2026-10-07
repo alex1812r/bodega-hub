@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Button } from "@/shared/components/Button";
@@ -29,11 +29,16 @@ export function CreateStoreAdminPage() {
     storeId: presetStoreId,
   });
 
-  useEffect(() => {
+  // Si cambia el storeId de la URL, se aplica al formulario (ajuste durante el render).
+  const [appliedPresetStoreId, setAppliedPresetStoreId] = useState(presetStoreId);
+
+  if (presetStoreId !== appliedPresetStoreId) {
+    setAppliedPresetStoreId(presetStoreId);
+
     if (presetStoreId) {
       setForm((current) => ({ ...current, storeId: presetStoreId }));
     }
-  }, [presetStoreId]);
+  }
 
   const storeOptions = useMemo(
     () => [
