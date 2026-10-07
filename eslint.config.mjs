@@ -23,8 +23,18 @@ const eslintConfig = defineConfig([
     "public/mockServiceWorker.js",
     // Worktrees de agentes: copias completas del repo que no se lintan.
     ".claude/**",
+    // Notas y scripts de QA de los agentes: carpeta fuera de git (.gitignore).
+    ".notes/**",
   ]),
   ...storybook.configs["flat/recommended"],
+  {
+    // Scripts sueltos de carga de datos que Node ejecuta como CommonJS:
+    // require() es su sistema de módulos, no un import olvidado.
+    files: ["scripts/chocomayor/*.js", "scripts/ferrera-ferrera/*.js"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
   {
     files: ["src/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}", "packages/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"],
     rules: {
