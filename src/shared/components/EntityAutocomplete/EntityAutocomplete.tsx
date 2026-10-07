@@ -64,7 +64,12 @@ export type EntityAutocompleteProps<K extends EntityKind> = {
   helperText?: string;
   label: string;
   onChange: (option: EntityOption<K> | null) => void;
-  /** Enter sin ningún resultado para el texto escrito o leído. */
+  /**
+   * Enter sin ningún resultado para el texto escrito o leído. También recibe
+   * el código de un escaneo que no terminó en una elección (sin coincidencia
+   * exacta o con error de búsqueda) cuando el campo ya está en otro escaneo y
+   * no puede mostrarlo.
+   */
   onNotFound?: (text: string) => void;
   placeholder?: string;
   /** Separa los recientes por contexto (p. ej. por tienda o por pantalla). */
@@ -78,6 +83,8 @@ type SearchState<K extends EntityKind> =
   | { key: string; status: "idle" | "loading" }
   | { error: unknown; key: string; status: "error" }
   | { items: EntityOption<K>[]; key: string; status: "success" };
+
+type ScanOutcome<K extends EntityKind> = { error: unknown } | { items: EntityOption<K>[] };
 
 type PopupView = "empty" | "error" | "loading" | "none" | "recents" | "results";
 
@@ -126,8 +133,13 @@ export function EntityAutocomplete<K extends EntityKind>({
   const popupRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef(0);
   const requestedKeyRef = useRef<string | null>(null);
-  const pendingEnterRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Cambia cada vez que el campo pasa a otra cosa: un escaneo que responde
+  // con otro valor ya no puede tocar el texto ni el desplegable.
+  const fieldEpochRef = useRef(0);
+  const scanQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const scanControllersRef = useRef(new Set<AbortController>());
+  const callbacksRef = useRef({ onChange, onNotFound });
 
   const [text, setText] = useState("");
   const [isDirty, setIsDirty] = useState(false);
@@ -136,6 +148,8 @@ export function EntityAutocomplete<K extends EntityKind>({
   const [recents, setRecents] = useState<EntityOption<K>[]>([]);
   const [search, setSearch] = useState<SearchState<K>>({ key: "", status: "idle" });
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [pendingScans, setPendingScans] = useState(0);
+  const [restoredScans, setRestoredScans] = useState(0);
 
   const hasValue = value !== null;
   const showsValueLabel = hasValue && !isDirty;
@@ -169,7 +183,9 @@ export function EntityAutocomplete<K extends EntityKind>({
   let options: EntityOption<K>[] = [];
 
   if (isOpen && !disabled) {
-    if (query === "") {
+    if (query === "" && pendingScans > 0) {
+      view = "loading";
+    } else if (query === "") {
       view = visibleRecents.length > 0 ? "recents" : "none";
       options = visibleRecents;
     } else if (hasQuery || isSearchCurrent) {
@@ -250,13 +266,29 @@ export function EntityAutocomplete<K extends EntityKind>({
     }
   }, [debouncedQuery, filtersKey, hasQuery, query]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const scanControllers = scanControllersRef.current;
+
+    return () => {
       requestIdRef.current += 1;
       abortRef.current?.abort();
-    },
-    [],
-  );
+      scanControllers.forEach((controller) => controller.abort());
+    };
+  }, []);
+
+  // Un escaneo lento avisa con los callbacks del render vigente, no con los
+  // del render en el que se pulsó Enter.
+  useLayoutEffect(() => {
+    callbacksRef.current = { onChange, onNotFound };
+  });
+
+  // El texto de un escaneo sin resolver vuelve seleccionado: el siguiente
+  // escaneo lo reemplaza en vez de escribirse a continuación.
+  useEffect(() => {
+    if (restoredScans > 0) {
+      inputRef.current?.select();
+    }
+  }, [restoredScans]);
 
   // Con un valor elegido y el foco en el campo, escribir reemplaza la etiqueta.
   useEffect(() => {
@@ -346,7 +378,7 @@ export function EntityAutocomplete<K extends EntityKind>({
     setText("");
     setIsDirty(false);
     setActiveIndex(null);
-    pendingEnterRef.current = null;
+    fieldEpochRef.current += 1;
   }
 
   function showPopup() {
@@ -403,10 +435,10 @@ export function EntityAutocomplete<K extends EntityKind>({
   }
 
   /**
-   * Enter sobre los resultados de `enteredText`: exacto o único. La opción
-   * resaltada solo se elige si el usuario ya tenía la lista a la vista: un
-   * escaneo mal leído que coincide a medias con varios productos no elige
-   * ninguno y deja la lista abierta para que el usuario decida.
+   * Enter sobre los resultados ya cargados de `enteredText`: elige la
+   * coincidencia exacta de código. La opción resaltada solo se elige si el
+   * usuario ya tenía la lista a la vista; si no, la lista se abre para que
+   * decida: un único resultado que coincide a medias no se elige a ciegas.
    */
   function resolveEnter(
     items: EntityOption<K>[],
@@ -425,7 +457,7 @@ export function EntityAutocomplete<K extends EntityKind>({
       return;
     }
 
-    if (!wasListVisible && items.length > 1) {
+    if (!wasListVisible) {
       showPopup();
       return;
     }
@@ -435,6 +467,95 @@ export function EntityAutocomplete<K extends EntityKind>({
     if (highlighted) {
       selectOption(highlighted);
     }
+  }
+
+  /**
+   * Cierra un escaneo: elige la coincidencia exacta de código o, sin ella,
+   * devuelve el texto al campo con sus resultados (o su error). Si el campo ya
+   * está en otro escaneo, avisa con `onNotFound` y el código de este.
+   */
+  function settleScan(code: string, outcome: ScanOutcome<K>, isFieldUnchanged: boolean) {
+    const callbacks = callbacksRef.current;
+    const exactMatch = "items" in outcome ? config.findExact(outcome.items, code) : undefined;
+
+    if (exactMatch && !getDisabledReason(exactMatch)) {
+      rememberEntityRecent(entity, exactMatch, recentsKey);
+
+      if (isFieldUnchanged) {
+        resetTypedText();
+        setIsOpen(false);
+      }
+
+      callbacks.onChange(exactMatch);
+      return;
+    }
+
+    const canShowInField = isFieldUnchanged && document.activeElement === inputRef.current;
+
+    if (canShowInField) {
+      const key = getSearchKey(code);
+
+      abortRef.current?.abort();
+      requestIdRef.current += 1;
+      requestedKeyRef.current = key;
+      setSearch(
+        "items" in outcome
+          ? { items: outcome.items, key, status: "success" }
+          : { error: outcome.error, key, status: "error" },
+      );
+      setText(code);
+      setIsDirty(true);
+      setActiveIndex(null);
+      showPopup();
+      setRestoredScans((count) => count + 1);
+    }
+
+    if (!canShowInField || ("items" in outcome && outcome.items.length === 0)) {
+      callbacks.onNotFound?.(code);
+    }
+  }
+
+  /**
+   * Lector de barras: la ráfaga termina antes del debounce. Cada Enter captura
+   * su texto, libera el campo para el siguiente escaneo y busca ya, con su
+   * propia petición; las respuestas se atienden en el orden de los Enter.
+   */
+  function startScan(code: string) {
+    const controller = new AbortController();
+    const fetchOptions = fetcher ?? config.defaultFetcher;
+
+    resetTypedText();
+    showPopup();
+    setPendingScans((count) => count + 1);
+    scanControllersRef.current.add(controller);
+
+    const epoch = fieldEpochRef.current;
+    const previousScans = scanQueueRef.current;
+    const turn = fetchOptions({
+      exact: true,
+      filters: activeFilters,
+      limit: ENTITY_AUTOCOMPLETE_LIMIT,
+      query: code,
+      signal: controller.signal,
+    })
+      .then(
+        (items): ScanOutcome<K> => ({ items: toVisibleOptions(items, "results") }),
+        (error: unknown): ScanOutcome<K> => ({ error }),
+      )
+      .then((outcome) => previousScans.then(() => outcome));
+
+    void turn.then((outcome) => {
+      scanControllersRef.current.delete(controller);
+
+      // Desmontado: no queda nadie a quien avisar.
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      setPendingScans((count) => count - 1);
+      settleScan(code, outcome, epoch === fieldEpochRef.current);
+    });
+    scanQueueRef.current = turn.then(() => undefined);
   }
 
   function moveActive(direction: 1 | -1) {
@@ -496,17 +617,7 @@ export function EntityAutocomplete<K extends EntityKind>({
       return;
     }
 
-    // Lector de barras: la ráfaga termina antes del debounce; se busca ya.
-    showPopup();
-    setSearch({ key: currentKey, status: "loading" });
-    pendingEnterRef.current = query;
-    void runSearch(query, true).then((items) => {
-      // Si el usuario siguió escribiendo, ese Enter ya no aplica.
-      if (items && pendingEnterRef.current === query) {
-        pendingEnterRef.current = null;
-        resolveEnter(items, query, false);
-      }
-    });
+    startScan(query);
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -538,7 +649,7 @@ export function EntityAutocomplete<K extends EntityKind>({
   }
 
   function handleTextChange(nextText: string) {
-    pendingEnterRef.current = null;
+    fieldEpochRef.current += 1;
     setText(nextText);
     setIsDirty(true);
     setActiveIndex(null);

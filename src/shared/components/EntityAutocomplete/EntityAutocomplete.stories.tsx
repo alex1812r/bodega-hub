@@ -1,10 +1,15 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { delay, http, HttpResponse } from "msw";
 import { useState } from "react";
-import { expect, within } from "storybook/test";
+import { expect, waitFor, within } from "storybook/test";
 
 import { Button } from "../Button";
 import { Modal } from "../Modal";
-import { EntityAutocomplete, type EntityAutocompleteProps } from "./EntityAutocomplete";
+import {
+  ENTITY_AUTOCOMPLETE_LIMIT,
+  EntityAutocomplete,
+  type EntityAutocompleteProps,
+} from "./EntityAutocomplete";
 import type {
   ContactEntityOption,
   EntityAutocompleteValue,
@@ -22,10 +27,14 @@ import { getEntityRecentsStorageKey } from "./entityRecents";
  * - `filters`: `{ active, excludeIds }`, más `categoryId` en productos y `type`
  *   en contactos. `getOptionDisabled` devuelve el motivo de una opción bloqueada.
  * - Recientes al enfocar con el campo vacío (`recentsKey` separa contextos).
- * - Lector de barras: Enter busca de inmediato y elige la coincidencia exacta de
- *   código de barras o SKU; sin resultados llama a `onNotFound`.
+ * - Lector de barras: cada Enter captura su texto, deja el campo libre para el
+ *   siguiente escaneo y busca de inmediato. Solo elige la coincidencia exacta de
+ *   código de barras o SKU (RIF en contactos), en el orden de los escaneos. Sin
+ *   coincidencia exacta el texto vuelve al campo con la lista abierta; sin
+ *   resultados, o si el campo ya está en otro escaneo, llama a `onNotFound`.
  *
- * Estas historias usan fetchers falsos: no tocan la red.
+ * Estas historias usan fetchers falsos y no tocan la red; «Lector de barras» usa
+ * el fetcher real contra un `/api/products` simulado con MSW.
  */
 const meta = {
   component: EntityAutocomplete,
@@ -152,6 +161,78 @@ function Demo<K extends EntityKind>({ initialValue = null, ...props }: DemoProps
   );
 }
 
+const SCAN_LATENCY_MS = 400;
+
+/** `/api/products` simulado: `barcode` y `sku` exactos, `search` parcial. */
+const scanHandlers = [
+  http.get("/api/products", async ({ request }) => {
+    const params = new URL(request.url).searchParams;
+    const barcode = params.get("barcode");
+    const sku = params.get("sku")?.toLowerCase();
+    const term = params.get("search")?.toLowerCase();
+    const limit = Number(params.get("limit") ?? ENTITY_AUTOCOMPLETE_LIMIT);
+
+    await delay(SCAN_LATENCY_MS);
+
+    const matches = products.filter(
+      (product) =>
+        (barcode === null || product.barcode === barcode) &&
+        (sku === undefined || product.sku.toLowerCase() === sku) &&
+        (term === undefined ||
+          [product.label, product.sku, product.barcode ?? ""].some((field) =>
+            field.toLowerCase().includes(term),
+          )),
+    );
+
+    return HttpResponse.json({
+      data: {
+        items: matches.slice(0, limit).map(({ label, ...product }) => ({ ...product, name: label })),
+        limit,
+        skip: 0,
+        total: matches.length,
+      },
+    });
+  }),
+];
+
+/** Como el POS: cada escaneo agrega una línea y el campo queda libre. */
+function ScanDemo() {
+  const [lines, setLines] = useState<ProductEntityOption[]>([]);
+  const [notFound, setNotFound] = useState<string[]>([]);
+
+  return (
+    <div className="max-w-md space-y-3">
+      <EntityAutocomplete
+        entity="product"
+        helperText="Escanea varios códigos seguidos: la respuesta tarda más que la pausa entre ellos."
+        label="Escanear producto"
+        onChange={(option) => {
+          if (option) {
+            setLines((current) => [...current, option]);
+          }
+        }}
+        onNotFound={(code) => setNotFound((current) => [...current, code])}
+        recentsKey="storybook-scan"
+        value={null}
+      />
+      <div className="space-y-1 text-xs text-muted-foreground">
+        <p>Líneas agregadas: {lines.length}</p>
+        <ol aria-label="Líneas agregadas" className="list-decimal pl-5">
+          {lines.map((line, index) => (
+            <li className="break-all" key={`${line.id}-${index}`}>{line.label}</li>
+          ))}
+        </ol>
+        <p>Códigos no encontrados: {notFound.length}</p>
+        <ul aria-label="Códigos no encontrados" className="list-disc pl-5">
+          {notFound.map((code, index) => (
+            <li className="break-all" key={`${code}-${index}`}>{code}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function seedRecents() {
   window.localStorage.setItem(
     getEntityRecentsStorageKey("product", "storybook"),
@@ -200,6 +281,53 @@ export const SupplierContacts: Story = {
 
     await expect(await body.findByRole("option", { name: /Mayorista El Trigal/ })).toBeVisible();
     await expect(body.queryByRole("option", { name: /María Pérez/ })).toBeNull();
+  },
+};
+
+export const BarcodeScanner: Story = {
+  name: "Lector de barras",
+  parameters: {
+    msw: { handlers: scanHandlers },
+  },
+  render: () => <ScanDemo />,
+};
+
+export const BarcodeScannerBurst: Story = {
+  name: "Lector de barras: ráfaga",
+  parameters: {
+    msw: { handlers: scanHandlers },
+  },
+  render: () => <ScanDemo />,
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const input = canvas.getByRole("combobox");
+    const body = within(canvasElement.ownerDocument.body);
+    const lines = within(canvas.getByRole("list", { name: "Líneas agregadas" }));
+    const notFound = within(canvas.getByRole("list", { name: "Códigos no encontrados" }));
+
+    // Dos escaneos y un código desconocido antes de que responda el primero.
+    await userEvent.type(
+      input,
+      `${products[2].barcode}{Enter}${products[4].barcode}{Enter}7599999999999{Enter}`,
+    );
+    await expect(input).toHaveValue("");
+
+    await waitFor(
+      async () => {
+        await expect(lines.getAllByRole("listitem").map((line) => line.textContent)).toEqual([
+          products[2].label,
+          products[4].label,
+        ]);
+        await expect(notFound.getAllByRole("listitem").map((code) => code.textContent)).toEqual([
+          "7599999999999",
+        ]);
+      },
+      { timeout: 4000 },
+    );
+
+    // Coincide a medias con un único producto: no se elige, la lista queda abierta.
+    await userEvent.type(input, "{Control>}a{/Control}000000007{Enter}");
+    await expect(await body.findByRole("option", { name: /Azúcar Montalbán/ }, { timeout: 4000 })).toBeVisible();
+    await expect(lines.getAllByRole("listitem")).toHaveLength(2);
   },
 };
 

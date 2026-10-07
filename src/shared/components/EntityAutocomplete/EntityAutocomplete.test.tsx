@@ -659,15 +659,118 @@ describe("EntityAutocomplete: lector de barras y Enter", () => {
     await flushPromises();
   });
 
-  it("Enter sin coincidencia exacta y con un único resultado lo elige", async () => {
+  it("Enter de escaneo con un único resultado no exacto no lo elige: deja la lista abierta", async () => {
     const onChange = jest.fn();
-    render(<Harness entity="product" fetcher={async () => [product(1)]} onChange={onChange} />);
+    const onNotFound = jest.fn();
+    const trap = product(1, { barcode: "7591111111111", label: "Caja x12 ref 7599999999999" });
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [trap]}
+        onChange={onChange}
+        onNotFound={onNotFound}
+      />,
+    );
 
-    type("produ");
+    type("7599999999999");
     pressKey("Enter");
     await flushPromises();
 
-    expect(onChange).toHaveBeenCalledWith(product(1));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onNotFound).not.toHaveBeenCalled();
+    expect(getInput()).toHaveValue("7599999999999");
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByRole("option")).toHaveTextContent("Caja x12 ref 7599999999999");
+  });
+
+  it("Enter de escaneo no elige el único producto cuyo código solo contiene el texto leído", async () => {
+    const onChange = jest.fn();
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [product(1, { barcode: "7590000001234" })]}
+        onChange={onChange}
+      />,
+    );
+
+    type("0000001234");
+    pressKey("Enter");
+    await flushPromises();
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+  });
+
+  it("Enter con la lista cerrada (Esc) y un único resultado no exacto la reabre sin elegir", async () => {
+    const onChange = jest.fn();
+    render(<Harness entity="product" fetcher={async () => [product(1)]} onChange={onChange} />);
+
+    await search("prod");
+    pressKey("Escape");
+    pressKey("Enter");
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+  });
+
+  it("la coincidencia exacta de código de barras no distingue mayúsculas ni espacios alrededor", async () => {
+    const onChange = jest.fn();
+    const scanned = product(1, { barcode: " Abc-123 " });
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [scanned, product(2)]}
+        onChange={onChange}
+      />,
+    );
+
+    type(" abc-123 ");
+    pressKey("Enter");
+    await flushPromises();
+
+    expect(onChange).toHaveBeenCalledWith(scanned);
+  });
+
+  it("en contactos Enter solo elige con el RIF exacto, no por ser el único resultado", async () => {
+    const onChange = jest.fn();
+    const supplier = contact(1, { taxId: "J-12345671" });
+
+    render(
+      <EntityAutocomplete
+        entity="contact"
+        fetcher={async () => [supplier]}
+        label="Proveedor"
+        onChange={onChange}
+        value={null}
+      />,
+    );
+
+    type("J-1234567");
+    pressKey("Enter");
+    await flushPromises();
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+
+    type("j-12345671");
+    pressKey("Enter");
+    await flushPromises();
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(supplier);
+  });
+
+  it("el texto de un escaneo sin resolver queda seleccionado: el siguiente escaneo lo reemplaza", async () => {
+    render(<Harness entity="product" fetcher={async () => []} />);
+
+    type("7599999999999");
+    pressKey("Enter");
+    await flushPromises();
+
+    const input = getInput() as HTMLInputElement;
+
+    expect(input).toHaveValue("7599999999999");
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 13]);
   });
 
   it("Enter inmediato con varias coincidencias parciales y ninguna exacta no elige: abre la lista", async () => {
@@ -786,20 +889,6 @@ describe("EntityAutocomplete: lector de barras y Enter", () => {
     expect(onNotFound).toHaveBeenCalledTimes(2);
   });
 
-  it("descarta el Enter si el usuario siguió escribiendo antes de la respuesta", async () => {
-    const onChange = jest.fn();
-    const pending = deferred<ProductEntityOption[]>();
-    render(<Harness entity="product" fetcher={() => pending.promise} onChange={onChange} />);
-
-    type("759");
-    pressKey("Enter");
-    type("7591");
-    pending.resolve([product(1, { barcode: "759" })]);
-    await flushPromises();
-
-    expect(onChange).not.toHaveBeenCalled();
-  });
-
   it("no elige una coincidencia exacta deshabilitada y muestra el motivo", async () => {
     const onChange = jest.fn();
     const onNotFound = jest.fn();
@@ -824,6 +913,181 @@ describe("EntityAutocomplete: lector de barras y Enter", () => {
 
     fireEvent.click(blocked);
 
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onNotFound).not.toHaveBeenCalled();
+  });
+});
+
+describe("EntityAutocomplete: escaneos seguidos", () => {
+  const codeA = "7590000000100";
+  const codeB = "7590000000200";
+  const productA = product(1, { barcode: codeA, label: "Producto A" });
+  const productB = product(2, { barcode: codeB, label: "Producto B" });
+  const catalog = [productA, productB];
+
+  /** Servidor con latencia: responde por código exacto pasados `latencyFor(query)` ms. */
+  function slowFetcher(latencyFor: (query: string) => number, failing: string[] = []) {
+    return jest.fn<ReturnType<EntityFetcher<"product">>, Parameters<EntityFetcher<"product">>>(
+      ({ query }) =>
+        new Promise((resolve, reject) => {
+          setTimeout(() => {
+            if (failing.includes(query)) {
+              reject(new Error("Sin conexión con el servidor."));
+            } else {
+              resolve(catalog.filter((item) => item.barcode === query));
+            }
+          }, latencyFor(query));
+        }),
+    );
+  }
+
+  /** Como el POS: cada elección agrega una línea y el campo sigue sin valor. */
+  function renderScanner(fetcher: EntityFetcher<"product">) {
+    const onChange = jest.fn();
+    const onNotFound = jest.fn();
+
+    render(
+      <EntityAutocomplete
+        entity="product"
+        fetcher={fetcher}
+        label="Producto"
+        onChange={onChange}
+        onNotFound={onNotFound}
+        value={null}
+      />,
+    );
+
+    return { onChange, onNotFound };
+  }
+
+  /** El lector escribe a continuación de lo que haya en el campo y pulsa Enter. */
+  function scan(code: string) {
+    type((getInput() as HTMLInputElement).value + code);
+    pressKey("Enter");
+  }
+
+  it.each([150, 400])(
+    "dos escaneos con %i ms de pausa y el servidor a 600 ms eligen los dos, en orden",
+    async (gap) => {
+      const fetcher = slowFetcher(() => 600);
+      const { onChange, onNotFound } = renderScanner(fetcher);
+
+      scan(codeA);
+      expect(getInput()).toHaveValue("");
+
+      await advance(gap);
+      scan(codeB);
+      expect(getInput()).toHaveValue("");
+
+      await advance(2000);
+
+      expect(fetcher.mock.calls.map(([params]) => [params.query, params.exact])).toEqual([
+        [codeA, true],
+        [codeB, true],
+      ]);
+      expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-1", "p-2"]);
+      expect(onNotFound).not.toHaveBeenCalled();
+      expect(getInput()).toHaveValue("");
+    },
+  );
+
+  it("mantiene el orden de los escaneos aunque el primero responda después del segundo", async () => {
+    const { onChange } = renderScanner(slowFetcher((query) => (query === codeA ? 1500 : 50)));
+
+    scan(codeA);
+    await advance(100);
+    scan(codeB);
+    await advance(1000);
+
+    expect(onChange).not.toHaveBeenCalled();
+
+    await advance(1000);
+
+    expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-1", "p-2"]);
+  });
+
+  it("cada escaneo termina con su propio código: el desconocido en onNotFound y el otro elegido", async () => {
+    const { onChange, onNotFound } = renderScanner(slowFetcher(() => 600));
+
+    scan("0000000000000");
+    await advance(150);
+    scan(codeB);
+    await advance(2000);
+
+    expect(onNotFound.mock.calls).toEqual([["0000000000000"]]);
+    expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+  });
+
+  it("un escaneo que falla mientras llega el siguiente se avisa con su código y no frena al otro", async () => {
+    const { onChange, onNotFound } = renderScanner(slowFetcher(() => 600, [codeA]));
+
+    scan(codeA);
+    await advance(150);
+    scan(codeB);
+    await advance(2000);
+
+    expect(onNotFound.mock.calls).toEqual([[codeA]]);
+    expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+  });
+
+  it("la respuesta del primer escaneo no borra el segundo a medio leer", async () => {
+    const { onChange } = renderScanner(slowFetcher(() => 600));
+
+    scan(codeA);
+    await advance(500);
+    type((getInput() as HTMLInputElement).value + codeB.slice(0, 6));
+    await advance(200);
+
+    expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-1"]);
+    expect(getInput()).toHaveValue(codeB.slice(0, 6));
+
+    type(codeB);
+    pressKey("Enter");
+    await advance(700);
+
+    expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-1", "p-2"]);
+  });
+
+  it("usa el onChange vigente cuando responde un escaneo lento", async () => {
+    const first = jest.fn();
+    const latest = jest.fn();
+    const fetcher = slowFetcher(() => 600);
+    const { rerender } = render(
+      <EntityAutocomplete entity="product" fetcher={fetcher} label="Producto" onChange={first} value={null} />,
+    );
+
+    scan(codeA);
+    rerender(
+      <EntityAutocomplete entity="product" fetcher={fetcher} label="Producto" onChange={latest} value={null} />,
+    );
+    await advance(700);
+
+    expect(first).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledWith(productA);
+  });
+
+  it("mientras un escaneo espera respuesta el campo vacío muestra «Buscando...»", async () => {
+    renderScanner(slowFetcher(() => 600));
+
+    scan(codeA);
+
+    expect(getInput()).toHaveValue("");
+    expect(screen.getByRole("status")).toHaveTextContent("Buscando...");
+
+    await advance(700);
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("un escaneo con error y sin otro detrás vuelve al campo con el error y Reintentar", async () => {
+    const { onChange, onNotFound } = renderScanner(slowFetcher(() => 100, [codeA]));
+
+    scan(codeA);
+    await advance(200);
+
+    expect(getInput()).toHaveValue(codeA);
+    expect(screen.getByRole("alert")).toHaveTextContent("Sin conexión con el servidor.");
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
     expect(onNotFound).not.toHaveBeenCalled();
   });

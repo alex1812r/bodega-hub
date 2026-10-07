@@ -20,7 +20,10 @@ export type EntitySecondaryContext = {
 type EntityConfig<K extends EntityKind> = {
   defaultFetcher: EntityFetcher<K>;
   defaultPlaceholder: string;
-  /** Coincidencia exacta de código para el Enter del lector de barras. */
+  /**
+   * Coincidencia exacta de código (sin distinguir mayúsculas ni espacios
+   * alrededor) para el Enter del lector de barras.
+   */
   findExact: (options: EntityOption<K>[], text: string) => EntityOption<K> | undefined;
   getSecondary: (option: EntityOption<K>, context: EntitySecondaryContext) => string;
   matchesFilters: (
@@ -44,6 +47,10 @@ function isExcluded(option: { id: string }, filters: { excludeIds?: string[] }) 
   return filters.excludeIds?.includes(option.id) ?? false;
 }
 
+function normalizeCode(code: string | null) {
+  return (code ?? "").trim().toLowerCase();
+}
+
 function joinSecondary(parts: string[]) {
   return parts.filter(Boolean).join(" · ");
 }
@@ -52,7 +59,11 @@ export const entityConfig: { [K in EntityKind]: EntityConfig<K> } = {
   contact: {
     defaultFetcher: fetchContactEntityOptions,
     defaultPlaceholder: "Buscar por nombre o RIF",
-    findExact: () => undefined,
+    findExact: (options, text) => {
+      const code = normalizeCode(text);
+
+      return code ? options.find((option) => normalizeCode(option.taxId) === code) : undefined;
+    },
     getSecondary: (option) => joinSecondary([contactTypeLabels[option.type], option.phone]),
     // `isActive` de los resultados lo aplica el BFF; un reciente es una copia
     // guardada en el navegador y hay que filtrarla aquí.
@@ -65,12 +76,15 @@ export const entityConfig: { [K in EntityKind]: EntityConfig<K> } = {
     defaultFetcher: fetchProductEntityOptions,
     defaultPlaceholder: "Buscar por nombre, SKU o código de barras",
     findExact: (options, text) => {
-      const code = text.trim();
-      const lowerCode = code.toLowerCase();
+      const code = normalizeCode(text);
+
+      if (!code) {
+        return undefined;
+      }
 
       return (
-        options.find((option) => option.barcode === code) ??
-        options.find((option) => option.sku.toLowerCase() === lowerCode)
+        options.find((option) => normalizeCode(option.barcode) === code) ??
+        options.find((option) => normalizeCode(option.sku) === code)
       );
     },
     // El stock y el precio de un reciente pueden estar desactualizados: solo SKU.
