@@ -6,8 +6,8 @@ import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
-import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 import { cn } from "@/shared/utils/cn";
@@ -200,7 +200,8 @@ export function InventoryAdjustmentModal({
             placeholder="Selecciona tipo"
             value={type}
           />
-          <Input
+          <NumberInput
+            decimals={0}
             error={
               hasSubmitted && quantityNumber <= 0
                 ? "Indica una cantidad mayor a cero."
@@ -208,9 +209,7 @@ export function InventoryAdjustmentModal({
             }
             helperText="Cantidad absoluta; el signo depende del tipo."
             label="Cantidad"
-            min={1}
             onChange={(event) => setQuantity(event.target.value)}
-            type="number"
             value={quantity}
           />
         </div>

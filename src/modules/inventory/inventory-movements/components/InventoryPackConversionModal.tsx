@@ -4,8 +4,8 @@ import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
-import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 
@@ -142,13 +142,11 @@ export function InventoryPackConversionModal({
             {selected.linkedProduct.name} (stock {selected.linkedProduct.currentStock}).
           </p>
         ) : null}
-        <Input
+        <NumberInput
+          decimals={0}
           label="Cantidad de empaques"
-          max={selected?.packProduct.currentStock}
-          min={1}
           onChange={(event) => setPackQuantity(event.target.value)}
           required
-          type="number"
           value={packQuantity}
         />
         <p className="text-sm text-on-surface-variant">
