@@ -15,6 +15,7 @@ import {
   findMockTaxRateForPct,
 } from "@/modules/settings/services/taxRates.mock-server";
 import { normalizeTaxRatePct } from "@/modules/settings/services/taxRates.schemas";
+import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 import { roundMoney } from "@/shared/utils/currency";
@@ -92,8 +93,25 @@ export function listPurchases(searchParams: URLSearchParams, storeId: string) {
  * Compras creadas en esta ejecucion, con sus lineas ya resueltas (porcentaje y
  * `code` de la alicuota de IVA). Solo alimentan el detalle: no entran en los
  * listados ni en los agregados de la semilla (saldos, reportes, stock).
+ *
+ * Ancladas a `globalThis` (`mockState`): `next dev` vuelve a evaluar este modulo
+ * al compilar otra ruta y un `Map` de modulo se vaciaria entre el POST y el GET.
  */
-const createdPurchases = new Map<string, { items: PurchaseItemMock[]; purchase: PurchaseMock }>();
+function createdPurchases() {
+  return mockState(
+    "purchases:created",
+    () => new Map<string, { items: PurchaseItemMock[]; purchase: PurchaseMock }>(),
+  );
+}
+
+/** Secuencia del id: no depende del tamano del registro ni de la evaluacion del modulo. */
+function nextPurchaseSequence() {
+  const sequence = mockState("purchases:idSequence", () => ({ last: 0 }));
+
+  sequence.last += 1;
+
+  return sequence.last;
+}
 
 /** Postgres escribe un `numeric(5,2)` con sus dos decimales ("13.00"). */
 function formatPct(pct: number) {
@@ -187,7 +205,7 @@ function toPurchaseItemMock(
 }
 
 export function getPurchaseById(id: string, storeId: string) {
-  const created = createdPurchases.get(id);
+  const created = createdPurchases().get(id);
   const purchase = created?.purchase ?? mockPurchases.find((item) => item.id === id);
   assertMockStoreResource(purchase, storeId, "Compra no encontrada.");
 
@@ -214,11 +232,13 @@ export function getPurchaseById(id: string, storeId: string) {
  * Compras ya creadas por clave de idempotencia (`storeId:clientRequestId`), como
  * hace `create_purchase` en la base: la misma clave devuelve la compra original.
  */
-const purchasesByClientRequest = new Map<string, PurchaseMock>();
+function purchasesByClientRequest() {
+  return mockState("purchases:byClientRequest", () => new Map<string, PurchaseMock>());
+}
 
 export function createPurchase(input: PurchaseInput, storeId: string) {
   const requestKey = input.clientRequestId ? `${storeId}:${input.clientRequestId}` : null;
-  const previous = requestKey ? purchasesByClientRequest.get(requestKey) : undefined;
+  const previous = requestKey ? purchasesByClientRequest().get(requestKey) : undefined;
 
   if (previous) {
     return previous;
@@ -254,7 +274,7 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
     createdAt: new Date().toISOString(),
     discountRef,
     discountVes,
-    id: `purchase-mock-${Date.now()}-${createdPurchases.size + 1}`,
+    id: `purchase-mock-${Date.now()}-${nextPurchaseSequence()}`,
     paidRef: 0,
     paidVes: 0,
     purchaseNumber: input.purchaseNumber ?? `C-MOCK-${Date.now()}`,
@@ -271,13 +291,13 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
     userId: "user-demo",
   } satisfies PurchaseMock;
 
-  createdPurchases.set(purchase.id, {
+  createdPurchases().set(purchase.id, {
     items: lines.map(({ item, tax }) => toPurchaseItemMock(item, purchase.id, tax)),
     purchase,
   });
 
   if (requestKey) {
-    purchasesByClientRequest.set(requestKey, purchase);
+    purchasesByClientRequest().set(requestKey, purchase);
   }
 
   return purchase;
