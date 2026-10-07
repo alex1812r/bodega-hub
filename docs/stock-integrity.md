@@ -26,6 +26,8 @@ El libro mayor `stock_movements` manda. `products.current_stock` es un derivado 
 4. No escribir `products.current_stock`. Otros `update products` (p. ej. `current_cost_ref`) llevan `store_id` + `get diagnostics row_count = 1`.
 5. Errores de negocio con `errcode` `PT400`/`PT403`/`PT404`/`PT409` y mensaje en español.
 
+**IVA de la línea de compra** (`20261007a`, plan ux-mejoras SHR-10). `create_purchase` conserva la firma de 14 argumentos y todo lo anterior; cada línea de `p_items` acepta además `tax_rate_code` (opcional). Con `tax_rate_code` la alícuota debe existir y estar activa para la tienda (`tax_rates`: propia o global; la propia manda sobre la global del mismo código) y su `pct` es el porcentaje que se congela en `purchase_items.tax_rate`; con solo `tax_rate` el porcentaje debe ser el de una alícuota activa y se guarda su código en `purchase_items.tax_rate_code`; si no coinciden o no hay alícuota activa, `PT400`. No cambia cantidades, costos, totales, bloqueos ni movimientos (test diferencial contra la versión de `20261006h` en `regression/tax-rates.test.ts`).
+
 Lo mismo vale para scripts por conexión directa y fixtures: insertar el movimiento ya mueve el stock; acompañarlo de un `update` manual lo duplica.
 
 ---
@@ -232,10 +234,11 @@ Orden obligatorio:
 1. `20260909-create-sale-with-payments.sql`
 2. `20261005-stock-integrity-views.sql`
 3. `20261006a` → `b` → `c` → `d` → `e` → `f` → `g` → `h` → `i`, en ese orden y en la misma ventana. De `a` a `e` no se admite despliegue parcial: entre `a` y `e` el trigger acepta un modo legado transitorio que solo existe para verificar cada parche, y `e` falla ventas y compras si queda viva una RPC antigua.
-4. `verify-patches.sql` con todas las filas en `ok = true` (en el lab: `ok=92 fail=0`).
-5. Deploy del BFF.
+4. `20261007a-tax-rates.sql` (plan ux-mejoras, SHR-10; después de `i`): catálogo `tax_rates`, `categories.tax_rate_id`, `app_settings.default_tax_rate_id`, `purchase_items.tax_rate_code` y `create_purchase` con `tax_rate_code`. Migra datos la primera vez; revisar después `select * from public.tax_rates_pending_review;` (alícuotas `otro-<pct>` inactivas creadas para porcentajes distintos de 0, 8 y 16).
+5. `verify-patches.sql` con todas las filas en `ok = true` (en el lab: `ok=100 fail=0`).
+6. Deploy del BFF.
 
-Reaplicar un parche de la serie: cada parche reinstala su propia versión de las funciones que define y pisa la de los parches posteriores. Regla única: **tras reaplicar cualquiera de `a`…`h`, reaplicar en orden todos los posteriores hasta `i` y correr `verify-patches.sql`** (son idempotentes). Por qué: `a` reinstala el modo legado que quita `e`; `b` y `c` reinstalan RPC que redefinen `f`, `g` y `h`; `f`, las que redefinen `g` y `h`; `g`, las que redefine `h`. Ejemplo de lo que pasa si se salta uno: reaplicar `c` y después solo `g` y `h` deja `cancel_purchase` y `return_purchase` en la versión de `c`, sin el rechazo de compras con pagos activos (R3), porque su última definición está en `f`.
+Reaplicar un parche de la serie: cada parche reinstala su propia versión de las funciones que define y pisa la de los parches posteriores. Regla única: **tras reaplicar cualquiera de `a`…`h`, reaplicar en orden todos los posteriores hasta `i` y correr `verify-patches.sql`** (son idempotentes). Por qué: `a` reinstala el modo legado que quita `e`; `b` y `c` reinstalan RPC que redefinen `f`, `g` y `h`; `f`, las que redefinen `g` y `h`; `g`, las que redefine `h`. `20261007a` redefine `create_purchase` a partir de `h`: tras reaplicar `c`, `f` o `h` hay que reaplicar también `20261007a`; y `i` puede reaplicarse sin más (regenera los triggers de NaN, incluidos los de `tax_rates`). Ejemplo de lo que pasa si se salta uno: reaplicar `c` y después solo `g` y `h` deja `cancel_purchase` y `return_purchase` en la versión de `c`, sin el rechazo de compras con pagos activos (R3), porque su última definición está en `f`.
 
 El BFF desplegado sin parches sigue cobrando (cae al camino en dos pasos), pero sin idempotencia real ni las garantías nuevas.
 
@@ -247,6 +250,7 @@ Riesgos:
 | Numeración nueva de documentos | `V-YYYYMMDD-NNNNNN` y `C-YYYYMMDD-NNNNNN` por secuencia; cambia respecto al formato por reloj |
 | `clientRequestId` obligatorio | `POST /api/sales` responde 400 sin la clave. Cualquier cliente externo (móvil, scripts) debe enviarla |
 | Devoluciones fuera del ajuste libre | `devolucion_cliente` y `devolucion_proveedor` ya no se ofrecen en el modal de ajuste y la RPC responde `PT400` sin `p_sale_id`/`p_purchase_id` |
+| IVA fuera del catálogo (`20261007a`) | `create_purchase` responde `PT400` si el `tax_rate` de una línea no es el `pct` de una alícuota activa de la tienda, y `categories` responde `PT400` al guardar un `tax_rate` sin alícuota. Una categoría migrada a `otro-<pct>` (inactiva) no puede comprar con ese porcentaje hasta que el admin active la alícuota o reasigne la categoría |
 | One-shots futuros | No acompañar un movimiento con `update products set current_stock`: el libro es la fuente. Usar `adjust_stock` o insertar el movimiento (el trigger mueve el stock). Un `stock_after` escrito a mano se ignora. Excepción documentada: `20261006z` (acción `ledger_from_stock`) devuelve `current_stock` a su valor previo y fija el `stock_after` de su propio asiento, porque la unidad ya estaba contada en el stock; el porqué está en la cabecera del parche |
 | Escritura directa cerrada | `sales`, `purchases`, `payments`, sus líneas, caja y baúl solo se escriben por RPC; quedan dos updates por columnas del BFF (`sales.notes`, metadatos de `payments`) |
 

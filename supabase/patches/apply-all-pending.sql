@@ -403,3 +403,17 @@ notify pgrst, 'reload schema';
 -- OJO: para borrar o cambiar de tipo una columna numeric hay que soltar antes los triggers
 -- trg_zz_reject_non_finite_numeric_ins / _upd de su tabla; despues de eso, o de anadir una columna numeric nueva,
 -- volver a aplicar este parche (regenera los triggers desde el catalogo; verify-patches lo detecta si falta).
+-- -----------------------------------------------------------------------------
+-- 20261007a — tax rates (SHR-10): catalogo de alicuotas de IVA tax_rates (globales + por tienda; semilla exento 0,
+--             reducida 8, general 16), categories.tax_rate_id sincronizada por trigger con tax_rate,
+--             app_settings.default_tax_rate_id, purchase_items.tax_rate_code y create_purchase con tax_rate_code por linea
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261007a-tax-rates.sql
+-- Requiere 20260716, 20260809 y la serie 20261006a … i completa. Idempotente, una transaccion. La firma de create_purchase
+-- no cambia. Reaplicar 20261006c, f o h reinstala el create_purchase anterior: volver a aplicar este parche despues.
+-- OJO: migra datos la primera vez (categories.tax_rate_id, app_settings.default_tax_rate_id y purchase_items.tax_rate_code
+-- por porcentaje; tax_rate no se toca). Un porcentaje que no sea 0, 8 ni 16 crea en su tienda la alicuota 'otro-<pct>'
+-- INACTIVA: revisar despues de aplicar con  select * from public.tax_rates_pending_review;
+-- OJO: create_purchase responde PT400 si el tax_rate de una linea no es el pct de una alicuota ACTIVA de la tienda (las
+-- compras nuevas de productos cuya categoria quedo en 'otro-<pct>' se rechazan hasta activar esa alicuota o reasignar la
+-- categoria), y categories responde PT400 al guardar un tax_rate sin alicuota. Las alicuotas no se borran: se desactivan.

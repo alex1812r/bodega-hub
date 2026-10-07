@@ -35,7 +35,7 @@ const TRIGGERS = ["trg_zz_reject_non_finite_numeric_ins", "trg_zz_reject_non_fin
 /** Texto exacto que ve el usuario (el mismo de `assert_finite_numeric`, con el nombre de la columna). */
 const notFinite = (column: string): string => `Valor numerico invalido en ${column}: debe ser un numero finito`;
 
-/** Las 21 tablas de `public` con columnas numeric (barrido de catálogo del ticket). */
+/** Las 22 tablas de `public` con columnas numeric (las 21 del barrido de STK-625 + `tax_rates`, 20261007a). */
 const NUMERIC_TABLES = [
   "app_settings",
   "cash_movements",
@@ -57,6 +57,7 @@ const NUMERIC_TABLES = [
   "store_vaults",
   "supplier_product_price_history",
   "supplier_products",
+  "tax_rates",
   "vault_movements",
 ];
 
@@ -420,7 +421,7 @@ describe("M1 · un NaN escrito directamente en una columna numeric se rechaza co
 // llevan el mismo trigger. `authenticated` no puede escribirlas, así que se prueba como `postgres`, que es como
 // escriben las RPC.
 describe("M1 · el trigger cubre todas las tablas de public con columnas numeric", () => {
-  /** Deja al menos una fila en cada una de las 21 tablas (flujos reales por RPC + nómina por SQL). */
+  /** Deja al menos una fila en cada una de las 22 tablas (flujos reales por RPC + nómina por SQL; `tax_rates` trae su semilla). */
   async function populate(): Promise<void> {
     const p = await product("net", 10);
     await must("precio", "almacen", "select id from public.update_product_price($1::uuid, 4.25, $2)", [p, TAG]);
@@ -487,7 +488,7 @@ describe("M1 · el trigger cubre todas las tablas de public con columnas numeric
     );
   }
 
-  it("M1 · UPDATE con NaN como postgres en cada columna numeric de las 21 tablas responde PT400 con el nombre de la columna", async () => {
+  it("M1 · UPDATE con NaN como postgres en cada columna numeric de las 22 tablas responde PT400 con el nombre de la columna", async () => {
     await withRollback(db, async () => {
       await populate();
       const columns = await sql(

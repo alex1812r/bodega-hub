@@ -949,4 +949,126 @@ select
         where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e'
       )
   )
+union all
+select
+  'tax_rates: tabla con RLS, code unico por ambito (global / tienda) y sin delete por PostgREST (20261007a)',
+  exists (
+    select 1 from pg_class c
+    where c.oid = to_regclass('public.tax_rates')
+      and c.relrowsecurity
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and not has_table_privilege('authenticated', c.oid, 'delete')
+      and not has_table_privilege('anon', c.oid, 'select')
+  )
+  and (
+    select count(*) = 2
+    from pg_indexes i
+    where i.schemaname = 'public' and i.tablename = 'tax_rates'
+      and (
+        (i.indexname = 'tax_rates_global_code_unique' and i.indexdef ilike '%unique%(code)%where (store_id is null)%')
+        or (i.indexname = 'tax_rates_store_code_unique' and i.indexdef ilike '%unique%(store_id, code)%where (store_id is not null)%')
+      )
+  )
+  and (
+    select count(*) = 3
+       and count(*) filter (where p.cmd = 'SELECT' and p.qual ilike '%store_id is null%current_user_store_id()%') = 1
+       and count(*) filter (where p.cmd in ('INSERT', 'UPDATE') and p.with_check ilike '%current_user_store_id()%current_user_role()%admin%') = 2
+    from pg_policies p
+    where p.schemaname = 'public' and p.tablename = 'tax_rates'
+  )
+union all
+select
+  'tax_rates: semilla global exento 0, reducida 8 y general 16 (20261007a)',
+  (
+    select count(*) = 3
+    from public.tax_rates t
+    where t.store_id is null
+      and (t.code, t.pct) in (('exento', 0), ('reducida', 8), ('general', 16))
+  )
+union all
+select
+  'categories.tax_rate_id y app_settings.default_tax_rate_id son FK a tax_rates (20261007a)',
+  (
+    select count(*) = 2
+    from pg_constraint k
+    join pg_attribute a on a.attrelid = k.conrelid and a.attnum = k.conkey[1]
+    where k.contype = 'f'
+      and k.confrelid = to_regclass('public.tax_rates')
+      and array_length(k.conkey, 1) = 1
+      and (k.conrelid::regclass::text, a.attname::text) in (('categories', 'tax_rate_id'), ('app_settings', 'default_tax_rate_id'))
+  )
+union all
+select
+  'categories.tax_rate y tax_rate_id se sincronizan por trigger y un porcentaje sin alicuota responde PT400 (20261007a)',
+  exists (
+    select 1
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    where t.tgrelid = to_regclass('public.categories')
+      and t.tgname = 'trg_categories_sync_tax_rate'
+      and not t.tgisinternal
+      and t.tgenabled = 'O'
+      and t.tgtype::int = 23   -- row + before + insert + update
+      and p.oid = to_regprocedure('public.categories_sync_tax_rate()')
+      and p.prosecdef
+      and p.prosrc ilike '%new.tax_rate := v_rate.pct%tax_rate_for_pct(new.store_id, new.tax_rate, false)%errcode = ''PT400''%new.tax_rate_id := v_rate.id%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+  )
+  and exists (
+    select 1 from pg_trigger t
+    where t.tgrelid = to_regclass('public.tax_rates')
+      and t.tgname = 'trg_tax_rates_propagate_pct'
+      and t.tgenabled = 'O'
+      and t.tgfoid = to_regprocedure('public.tax_rates_propagate_pct()')
+  )
+union all
+select
+  'ninguna categoria queda sin alicuota ni con un porcentaje distinto al de su alicuota (20261007a)',
+  not exists (
+    select 1
+    from public.categories c
+    left join public.tax_rates t on t.id = c.tax_rate_id
+    where t.id is null
+       or t.pct is distinct from c.tax_rate
+       or (t.store_id is not null and t.store_id <> c.store_id)
+  )
+union all
+select
+  'purchase_items.tax_rate_code (20261007a)',
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'purchase_items'
+      and column_name = 'tax_rate_code' and data_type = 'text' and is_nullable = 'YES'
+  )
+union all
+select
+  'rpc create_purchase: misma firma de 14 argumentos y la linea toma su IVA del catalogo tax_rates (20261007a)',
+  (
+    select count(*) = 1
+       and bool_and(
+         pg_get_function_identity_arguments(p.oid) ilike '%p_client_request_id uuid'
+         and p.pronargs = 14
+         and p.prosecdef
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%'
+         and p.prosrc ilike '%v_item ->> ''tax_rate_code''%public.tax_rates_for_store(v_store_id)%t.is_active%errcode = ''PT400''%public.tax_rate_for_pct(v_store_id, v_tax_rate, true)%errcode = ''PT400''%'
+         and p.prosrc ilike '%cost_currency,%tax_rate_code%v_cost_currency,%v_tax_rate_code%'
+         and p.prosrc not ilike '%current_stock%'
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'create_purchase'
+  )
+union all
+select
+  'tax_rates_for_store / tax_rate_for_pct: lectura con el RLS de quien llama; solo la primera es ejecutable por authenticated (20261007a)',
+  (
+    select count(*) = 2
+       and bool_and(not p.prosecdef and not has_function_privilege('anon', p.oid, 'execute'))
+       and bool_or(p.proname = 'tax_rates_for_store' and has_function_privilege('authenticated', p.oid, 'execute'))
+       and bool_or(p.proname = 'tax_rate_for_pct' and not has_function_privilege('authenticated', p.oid, 'execute'))
+    from pg_proc p
+    where p.oid in (
+      to_regprocedure('public.tax_rates_for_store(uuid)'),
+      to_regprocedure('public.tax_rate_for_pct(uuid, numeric, boolean)')
+    )
+  )
 order by 1;
