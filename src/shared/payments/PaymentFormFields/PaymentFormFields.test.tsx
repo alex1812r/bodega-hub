@@ -304,6 +304,33 @@ describe("PaymentFormFields", () => {
       }
     });
 
+    // SHR-03F: en oscuro `--primary` no llega a 4.5:1 como color de texto de 12 px,
+    // y `ring-primary/30` no llega a 3:1 como anillo de foco.
+    it("los atajos no usan text-primary sin variante dark ni el anillo translucido", () => {
+      render(<Harness pendingBalance={8475.5} rateVes={510} />);
+
+      const shortcuts = [
+        screen.getByRole("button", { name: "Completar saldo" }),
+        screen.getByRole("button", { name: "50 % del saldo" }),
+      ];
+
+      for (const shortcut of shortcuts) {
+        const classes = shortcut.className.split(/\s+/);
+        const primaryText = classes.filter((name) => name.endsWith("text-primary"));
+
+        expect(primaryText.filter((name) => !name.startsWith("dark:"))).toEqual([]);
+        expect(classes.filter((name) => name.includes("ring-primary/30"))).toEqual([]);
+        expect(classes.some((name) => name.endsWith("text-indigo-300") && name.startsWith("dark:"))).toBe(
+          true,
+        );
+        expect(shortcut).toHaveClass(
+          "focus-visible:ring-2",
+          "focus-visible:ring-ring",
+          "focus-visible:ring-offset-2",
+        );
+      }
+    });
+
     it("no devuelve monto si no hay saldo, porcentaje o tasa", () => {
       expect(amountForPendingShare("efectivo_ves", undefined, 100)).toBeNull();
       expect(amountForPendingShare("efectivo_ves", 0, 100)).toBeNull();
