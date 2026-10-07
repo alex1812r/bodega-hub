@@ -5,7 +5,11 @@ import { type ReactElement, StrictMode } from "react";
 
 import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
 
-import { useProcessGuard, type UseProcessGuardOptions } from "./useProcessGuard";
+import {
+  PROCESS_GUARD_LEAVE_TIMEOUT_MS,
+  useProcessGuard,
+  type UseProcessGuardOptions,
+} from "./useProcessGuard";
 
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
@@ -925,6 +929,362 @@ describe("useProcessGuard", () => {
       await user.click(button(/pagina: ir a ventas/));
 
       expect(await screen.findByRole("dialog")).toHaveTextContent("Compra a Distribuidora X");
+    });
+
+    it("'Reintentar' no repite el manejador del guardia que ya había terminado bien", async () => {
+      const user = userEvent.setup();
+      const outerSaveDraft = jest
+        .fn()
+        .mockRejectedValueOnce(new Error("Sin conexión con el servidor"))
+        .mockResolvedValue(undefined);
+      const innerDiscard = jest.fn();
+
+      render(
+        <>
+          <Harness name="pagina" onSaveDraft={outerSaveDraft} />
+          <Harness name="modal" onDiscard={innerDiscard} onLeave="discard" />
+        </>,
+      );
+
+      await user.click(button(/pagina: ir a ventas/));
+      await user.click(await screen.findByRole("button", { name: "Salir" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("Sin conexión con el servidor");
+      expect(innerDiscard).toHaveBeenCalledTimes(1);
+      expect(outerSaveDraft).toHaveBeenCalledTimes(1);
+
+      await user.click(screen.getByRole("button", { name: "Reintentar" }));
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(1));
+      expect(mockPush).toHaveBeenCalledWith("/sales");
+      expect(outerSaveDraft).toHaveBeenCalledTimes(2);
+      expect(innerDiscard).toHaveBeenCalledTimes(1);
+    });
+
+    it("tras 'Seguir aquí' la siguiente salida vuelve a ejecutar todos los manejadores", async () => {
+      const user = userEvent.setup();
+      const outerSaveDraft = jest
+        .fn()
+        .mockRejectedValueOnce(new Error("Sin conexión con el servidor"))
+        .mockResolvedValue(undefined);
+      const innerDiscard = jest.fn();
+
+      render(
+        <>
+          <Harness name="pagina" onSaveDraft={outerSaveDraft} />
+          <Harness name="modal" onDiscard={innerDiscard} onLeave="discard" />
+        </>,
+      );
+
+      await user.click(button(/pagina: ir a ventas/));
+      await user.click(await screen.findByRole("button", { name: "Salir" }));
+      await screen.findByRole("alert");
+      await user.click(screen.getByRole("button", { name: "Seguir aquí" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+      await user.click(button(/pagina: ir a ventas/));
+      await user.click(await screen.findByRole("button", { name: "Salir" }));
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(1));
+      expect(innerDiscard).toHaveBeenCalledTimes(2);
+      expect(outerSaveDraft).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("salida que no termina (onSaveDraft / onDiscard colgado)", () => {
+    const TIMEOUT_MS = 5_000;
+
+    /** Manejador que solo termina cuando el test lo decide. */
+    function hangingHandler() {
+      let resolveRun: () => void = () => undefined;
+      let rejectRun: (reason: Error) => void = () => undefined;
+      const handler = jest.fn(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            resolveRun = resolve;
+            rejectRun = reject;
+          }),
+      );
+
+      return {
+        fail: (message: string) => act(async () => rejectRun(new Error(message))),
+        finish: () => act(async () => resolveRun()),
+        handler,
+      };
+    }
+
+    // Con timers falsos `findBy`/`waitFor` adelantarían el reloj por su cuenta: se avanza a mano.
+    function advance(ms: number) {
+      return act(async () => {
+        jest.advanceTimersByTime(ms);
+      });
+    }
+
+    function askAndLeave(trigger = /ir a ventas/) {
+      fireEvent.click(button(trigger));
+      fireEvent.click(screen.getByRole("button", { name: "Salir" }));
+    }
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
+    });
+
+    it("hasta el tiempo de espera el modal sigue bloqueado; después ofrece seguir aquí o salir sin guardar, sin un segundo guardado", async () => {
+      const { handler } = hangingHandler();
+
+      render(<Harness leaveTimeoutMs={TIMEOUT_MS} onSaveDraft={handler} />);
+      askAndLeave();
+
+      await advance(TIMEOUT_MS - 1);
+
+      expect(screen.getByRole("button", { name: "Salir" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Seguir aquí" })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: "Salir sin guardar" })).not.toBeInTheDocument();
+
+      await advance(1);
+
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        "Guardar el borrador está tardando más de lo normal.",
+      );
+      expect(screen.getByRole("button", { name: "Seguir aquí" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Seguir aquí" })).toHaveFocus();
+      expect(screen.getByRole("button", { name: "Salir sin guardar" })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: "Salir" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it("sin opción usa el tiempo de espera por defecto", async () => {
+      const { handler } = hangingHandler();
+
+      render(<Harness onSaveDraft={handler} />);
+      askAndLeave();
+
+      await advance(PROCESS_GUARD_LEAVE_TIMEOUT_MS - 1);
+      expect(screen.getByRole("button", { name: "Seguir aquí" })).toBeDisabled();
+
+      await advance(1);
+      expect(screen.getByRole("button", { name: "Seguir aquí" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Salir sin guardar" })).toBeEnabled();
+    });
+
+    it("con discard el aviso y la salida usan los textos del descarte", async () => {
+      const { handler } = hangingHandler();
+
+      render(<Harness leaveTimeoutMs={TIMEOUT_MS} onDiscard={handler} onLeave="discard" />);
+      askAndLeave();
+      await advance(TIMEOUT_MS);
+
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        "Descartar los cambios está tardando más de lo normal.",
+      );
+      expect(screen.getByRole("button", { name: "Salir de todos modos" })).toBeEnabled();
+    });
+
+    it("'Seguir aquí' cierra el modal y, si el guardado termina después, no saca de la pantalla", async () => {
+      const { finish, handler } = hangingHandler();
+
+      render(<Harness leaveTimeoutMs={TIMEOUT_MS} onSaveDraft={handler} />);
+      askAndLeave();
+      await advance(TIMEOUT_MS);
+
+      fireEvent.click(screen.getByRole("button", { name: "Seguir aquí" }));
+      await advance(0);
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+      await finish();
+      await advance(TIMEOUT_MS);
+
+      expect(mockPush).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(handler).toHaveBeenCalledTimes(1);
+      // El proceso sigue protegido.
+      expect(fireBeforeUnload().defaultPrevented).toBe(true);
+    });
+
+    it("Esc con la salida atascada equivale a 'Seguir aquí'", async () => {
+      const { finish, handler } = hangingHandler();
+
+      render(<Harness leaveTimeoutMs={TIMEOUT_MS} onSaveDraft={handler} />);
+      askAndLeave();
+      await advance(TIMEOUT_MS);
+
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      await advance(1);
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+      await finish();
+
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it("tras 'Seguir aquí', otro 'Salir' con el guardado aún colgado espera al mismo: no lanza un segundo en paralelo", async () => {
+      const { finish, handler } = hangingHandler();
+
+      render(<Harness leaveTimeoutMs={TIMEOUT_MS} onSaveDraft={handler} />);
+      askAndLeave();
+      await advance(TIMEOUT_MS);
+      fireEvent.click(screen.getByRole("button", { name: "Seguir aquí" }));
+      await advance(0);
+
+      askAndLeave(/reemplazar por ventas/);
+      await advance(0);
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "Salir" })).toBeDisabled();
+
+      await finish();
+
+      expect(mockReplace).toHaveBeenCalledTimes(1);
+      expect(mockReplace).toHaveBeenCalledWith("/sales");
+      expect(mockPush).not.toHaveBeenCalled();
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("'Salir sin guardar' sale una vez y el guardado que termina después no navega otra vez", async () => {
+      const { finish, handler } = hangingHandler();
+
+      render(<Harness leaveTimeoutMs={TIMEOUT_MS} onSaveDraft={handler} />);
+      askAndLeave();
+      await advance(TIMEOUT_MS);
+
+      const leaveWithoutSaving = screen.getByRole("button", { name: "Salir sin guardar" });
+
+      fireEvent.click(leaveWithoutSaving);
+      fireEvent.click(leaveWithoutSaving);
+      await advance(0);
+
+      expect(mockPush).toHaveBeenCalledTimes(1);
+      expect(mockPush).toHaveBeenCalledWith("/sales");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(fireBeforeUnload().defaultPrevented).toBe(false);
+
+      await finish();
+      await advance(TIMEOUT_MS);
+
+      expect(mockPush).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it("'Salir sin guardar' y el guardado falla después: no reabre el modal ni muestra el error", async () => {
+      const { fail, handler } = hangingHandler();
+
+      render(<Harness leaveTimeoutMs={TIMEOUT_MS} onSaveDraft={handler} />);
+      askAndLeave();
+      await advance(TIMEOUT_MS);
+      fireEvent.click(screen.getByRole("button", { name: "Salir sin guardar" }));
+      await advance(0);
+
+      await fail("Sin conexión con el servidor");
+
+      expect(mockPush).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("si el guardado termina con la salida atascada y sin elegir nada, sale una vez al destino pedido", async () => {
+      const { finish, handler } = hangingHandler();
+
+      render(<Harness leaveTimeoutMs={TIMEOUT_MS} onSaveDraft={handler} />);
+      askAndLeave();
+      await advance(TIMEOUT_MS);
+
+      await finish();
+
+      expect(mockPush).toHaveBeenCalledTimes(1);
+      expect(mockPush).toHaveBeenCalledWith("/sales");
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("si el guardado falla con la salida atascada, pasa al estado de fallo con 'Reintentar'", async () => {
+      const { fail, handler } = hangingHandler();
+
+      render(<Harness leaveTimeoutMs={TIMEOUT_MS} onSaveDraft={handler} />);
+      askAndLeave();
+      await advance(TIMEOUT_MS);
+
+      await fail("Sin conexión con el servidor");
+
+      expect(screen.getByRole("alert")).toHaveTextContent(/^Sin conexión con el servidor$/);
+      expect(screen.getByRole("dialog")).not.toHaveTextContent(/está tardando/);
+      expect(screen.getByRole("button", { name: "Reintentar" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Salir sin guardar" })).toBeEnabled();
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it("una salida que termina a tiempo no deja el aviso programado para la siguiente", async () => {
+      const { finish, handler } = hangingHandler();
+      const onClosed = jest.fn();
+
+      render(<Harness leaveTimeoutMs={TIMEOUT_MS} onClosed={onClosed} onSaveDraft={handler} />);
+      askAndLeave(/cerrar formulario/);
+      await advance(TIMEOUT_MS - 1_000);
+      await finish();
+
+      expect(onClosed).toHaveBeenCalledTimes(1);
+
+      askAndLeave(/cerrar formulario/);
+      await advance(1_000);
+
+      expect(handler).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("button", { name: "Salir" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Seguir aquí" })).toBeDisabled();
+    });
+
+    it("otra petición de salida con la salida atascada no sustituye el destino ni quita el aviso", async () => {
+      const { finish, handler } = hangingHandler();
+      const onClosed = jest.fn();
+
+      render(<Harness leaveTimeoutMs={TIMEOUT_MS} onClosed={onClosed} onSaveDraft={handler} />);
+      askAndLeave();
+      await advance(TIMEOUT_MS);
+
+      fireEvent.click(screen.getByText(/cerrar formulario/));
+      await advance(0);
+
+      expect(screen.getByRole("button", { name: "Salir sin guardar" })).toBeEnabled();
+
+      await finish();
+
+      expect(mockPush).toHaveBeenCalledWith("/sales");
+      expect(onClosed).not.toHaveBeenCalled();
+    });
+
+    it("guardias apilados: tras 'Seguir aquí', el manejador colgado que termina después no arrastra al del otro guardia", async () => {
+      const { finish, handler } = hangingHandler();
+      const outerSaveDraft = jest.fn();
+
+      render(
+        <>
+          <Harness name="pagina" onSaveDraft={outerSaveDraft} />
+          <Harness
+            leaveTimeoutMs={TIMEOUT_MS}
+            name="modal"
+            onDiscard={handler}
+            onLeave="discard"
+          />
+        </>,
+      );
+      askAndLeave(/pagina: ir a ventas/);
+      await advance(TIMEOUT_MS);
+      fireEvent.click(screen.getByRole("button", { name: "Seguir aquí" }));
+      await advance(0);
+
+      await finish();
+
+      expect(outerSaveDraft).not.toHaveBeenCalled();
+      expect(mockPush).not.toHaveBeenCalled();
     });
   });
 });

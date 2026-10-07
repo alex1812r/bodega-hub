@@ -24,6 +24,11 @@ const FAILURE_TEXT = {
   draft: "No se pudo guardar el borrador.",
 } as const;
 
+const STALLED_TEXT = {
+  discard: "Descartar los cambios está tardando más de lo normal.",
+  draft: "Guardar el borrador está tardando más de lo normal.",
+} as const;
+
 const LEAVE_ANYWAY_TEXT = {
   discard: "Salir de todos modos",
   draft: "Salir sin guardar",
@@ -35,18 +40,39 @@ type ProcessGuardModalProps = {
 
 /** Modal del guardia. Recibe lo que devuelve `useProcessGuard`. */
 export function ProcessGuardModal({ guard }: ProcessGuardModalProps) {
-  const { description, error, label, leave, leaveWithoutSaving, leaving, onLeave, open, stay } =
-    guard.dialog;
+  const {
+    description,
+    error,
+    label,
+    leave,
+    leaveWithoutSaving,
+    leaving,
+    onLeave,
+    open,
+    stalled,
+    stay,
+  } = guard.dialog;
 
   return (
     <Modal
       description={CONSEQUENCE_TEXT[onLeave]}
       footer={
         <>
-          <Button autoFocus disabled={leaving} onClick={stay}>
+          {/* Atascada se monta de nuevo: `autoFocus` devuelve el foco, que se perdió al deshabilitarse los botones. */}
+          <Button
+            autoFocus
+            disabled={leaving && !stalled}
+            key={stalled ? "stalled" : "default"}
+            onClick={stay}
+          >
             Seguir aquí
           </Button>
-          {error === null ? (
+          {stalled ? (
+            // Sin "Reintentar": el manejador sigue en curso y no se lanza otro en paralelo.
+            <Button onClick={leaveWithoutSaving} variant="danger">
+              {LEAVE_ANYWAY_TEXT[onLeave]}
+            </Button>
+          ) : error === null ? (
             <Button
               disabled={leaving}
               onClick={leave}
@@ -80,6 +106,14 @@ export function ProcessGuardModal({ guard }: ProcessGuardModalProps) {
       </p>
       {description ? (
         <p className="mt-3 text-sm leading-6 text-on-surface-variant">{description}</p>
+      ) : null}
+      {stalled ? (
+        <p
+          className="mt-3 rounded-md border border-border bg-surface-container-low px-3 py-2 text-sm text-foreground"
+          role="status"
+        >
+          {STALLED_TEXT[onLeave]}
+        </p>
       ) : null}
       {error === null ? null : (
         <div className="mt-3 rounded-md border border-error bg-error-container px-3 py-2 text-sm text-on-error-container">

@@ -14,6 +14,11 @@ export type UseProcessGuardOptions = {
   description?: string;
   /** Nombre del proceso que muestra el modal, p. ej. "Compra a Distribuidora X · 12 líneas · REF 240,00". */
   label: string;
+  /**
+   * Milisegundos que "Salir" espera a `onSaveDraft`/`onDiscard` antes de ofrecer
+   * seguir aquí o salir sin esperarlo. Por defecto `PROCESS_GUARD_LEAVE_TIMEOUT_MS`.
+   */
+  leaveTimeoutMs?: number;
   onDiscard?: LeaveHandler;
   /** `draft`: al salir se llama a `onSaveDraft`. `discard`: se llama a `onDiscard`. */
   onLeave: ProcessGuardLeaveMode;
@@ -30,12 +35,20 @@ export type ProcessGuardDialogState = {
   label: string;
   /** "Salir" y "Reintentar": ejecuta `onSaveDraft`/`onDiscard` y, si no fallan, sale. */
   leave: () => void;
-  /** Salida tras un fallo (`error`): sale sin volver a llamar a `onSaveDraft` ni a `onDiscard`. */
+  /**
+   * Salida tras un fallo (`error`) o con la salida atascada (`stalled`): sale sin
+   * llamar a `onSaveDraft` ni a `onDiscard` y sin esperar al que siga en curso.
+   */
   leaveWithoutSaving: () => void;
-  /** Hay una salida en curso: el modal queda bloqueado hasta que termina o falla. */
+  /** Hay una salida en curso: el modal queda bloqueado hasta que termina, falla o se atasca. */
   leaving: boolean;
   onLeave: ProcessGuardLeaveMode;
   open: boolean;
+  /**
+   * La salida en curso superó `leaveTimeoutMs` y el manejador sigue sin terminar:
+   * `stay` y `leaveWithoutSaving` vuelven a funcionar; `leave` no.
+   */
+  stalled: boolean;
   stay: () => void;
 };
 
@@ -67,6 +80,9 @@ type GuardEntry = {
   release: () => void;
   saveDraftSync: () => void;
 };
+
+/** Espera por defecto de "Salir" antes de dar la salida por atascada. */
+export const PROCESS_GUARD_LEAVE_TIMEOUT_MS = 10_000;
 
 /** Marca de `GuardedLink`: esos enlaces se bloquean con `onNavigate`, no con el listener global. */
 export const PROCESS_GUARD_LINK_ATTRIBUTE = "data-process-guard-link";
@@ -504,7 +520,15 @@ export function interceptProcessGuardNavigation(href: string, replace = false): 
  * el manejador se llama una vez y se sale una vez, al destino confirmado. Si
  * el manejador falla no se sale: el modal muestra `error.message` y ofrece
  * reintentar (`dialog.leave`) o salir sin volver a llamarlo
- * (`dialog.leaveWithoutSaving`).
+ * (`dialog.leaveWithoutSaving`). Con varios guardias, reintentar solo repite
+ * los manejadores que fallaron o no llegaron a ejecutarse.
+ *
+ * Si el manejador no ha terminado pasados `leaveTimeoutMs`, la salida se da por
+ * atascada (`dialog.stalled`): el modal deja seguir aquí o salir sin esperarlo.
+ * El manejador no se cancela ni se lanza otro en paralelo: si el usuario se
+ * quedó, lo que tarde en terminar ya no lo saca de la pantalla, y un "Salir"
+ * posterior espera a ese mismo manejador mientras siga en curso (guarda lo que
+ * había cuando se lanzó).
  *
  * Límites conocidos (los pone el navegador; la mitigación es `beforeunload` y
  * el borrador de `onSaveDraft`):
@@ -535,8 +559,15 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
   const bypassedRef = useRef(false);
   const pendingRef = useRef<PendingLeave | null>(null);
   const leavingRef = useRef(false);
+  /** Número de la salida vigente: una salida abandonada lo encuentra cambiado al terminar. */
+  const attemptRef = useRef(0);
+  const stalledRef = useRef(false);
+  const stallTimerRef = useRef<number | null>(null);
+  /** Guardias cuyo manejador ya terminó bien para la salida que se está confirmando. */
+  const handledEntriesRef = useRef(new Set<GuardEntry>());
   const [open, setOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [stalled, setStalled] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -546,10 +577,28 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
 
   const closeDialog = useCallback(() => {
     pendingRef.current = null;
+    handledEntriesRef.current.clear();
     setOpen(false);
     setLeaving(false);
+    setStalled(false);
     setError(null);
   }, []);
+
+  const clearStallTimer = useCallback(() => {
+    if (stallTimerRef.current !== null) {
+      window.clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+  }, []);
+
+  /** La salida en curso deja de bloquear: terminó, falló o el usuario dejó de esperarla. */
+  const endAttempt = useCallback(() => {
+    clearStallTimer();
+    leavingRef.current = false;
+    stalledRef.current = false;
+  }, [clearStallTimer]);
+
+  useEffect(() => clearStallTimer, [clearStallTimer]);
 
   const bypass = useCallback(() => {
     bypassedRef.current = true;
@@ -579,6 +628,7 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
       return;
     }
 
+    let running: Promise<void> | null = null;
     const entry: GuardEntry = {
       ask: (pending) => {
         // Con una salida en curso manda la que ya se confirmó: otro ATRÁS o enlace no la sustituye ni desbloquea el modal.
@@ -587,14 +637,24 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
         }
 
         pendingRef.current = pending;
+        handledEntriesRef.current.clear();
         setLeaving(false);
         setError(null);
         setOpen(true);
       },
-      leave: async () => {
-        const current = optionsRef.current;
+      leave: () => {
+        // Un manejador que sigue en curso (salida atascada y abandonada) no se lanza otra vez: se espera al mismo.
+        if (!running) {
+          running = (async () => {
+            const current = optionsRef.current;
 
-        await (current.onLeave === "draft" ? current.onSaveDraft : current.onDiscard)?.();
+            await (current.onLeave === "draft" ? current.onSaveDraft : current.onDiscard)?.();
+          })().finally(() => {
+            running = null;
+          });
+        }
+
+        return running;
       },
       release: bypass,
       saveDraftSync: () => {
@@ -628,22 +688,43 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
   }, [active, bypass, closeDialog]);
 
   const stay = useCallback(() => {
-    if (!leavingRef.current) {
-      closeDialog();
+    // Con una salida en curso solo se puede seguir aquí cuando ya se dio por atascada.
+    if (leavingRef.current && !stalledRef.current) {
+      return;
     }
-  }, [closeDialog]);
+
+    // Si el manejador termina después, ya no saca de la pantalla.
+    attemptRef.current += 1;
+    endAttempt();
+    closeDialog();
+  }, [closeDialog, endAttempt]);
 
   const runLeave = useCallback((runHandlers: boolean) => {
     const pending = pendingRef.current;
 
     // Doble clic = una ejecución: en curso lo impide `leavingRef`; ya terminada, no queda `pending`.
-    if (!pending || leavingRef.current) {
+    // Atascada, lo único que se admite es salir sin esperarla.
+    if (!pending || (leavingRef.current && (runHandlers || !stalledRef.current))) {
       return;
     }
 
+    endAttempt();
+    attemptRef.current += 1;
+
+    const attempt = attemptRef.current;
+
     leavingRef.current = true;
     setLeaving(true);
+    setStalled(false);
     setError(null);
+
+    if (runHandlers) {
+      stallTimerRef.current = window.setTimeout(() => {
+        stallTimerRef.current = null;
+        stalledRef.current = true;
+        setStalled(true);
+      }, optionsRef.current.leaveTimeoutMs ?? PROCESS_GUARD_LEAVE_TIMEOUT_MS);
+    }
 
     const leavesRoute = pending.kind !== "action";
     // Al salir de la ruta se cierran todos los procesos abiertos, no solo el que pregunta.
@@ -657,17 +738,34 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
       if (runHandlers) {
         try {
           for (const entry of leavingEntries) {
+            // Reintento: el que ya terminó bien no se repite.
+            if (handledEntriesRef.current.has(entry)) {
+              continue;
+            }
+
             await entry.leave();
+
+            // El usuario dejó de esperar esta salida: ni sigue con los demás guardias ni sale.
+            if (attemptRef.current !== attempt) {
+              return;
+            }
+
+            handledEntriesRef.current.add(entry);
           }
         } catch (caught) {
-          leavingRef.current = false;
+          if (attemptRef.current !== attempt) {
+            return;
+          }
+
+          endAttempt();
           setLeaving(false);
+          setStalled(false);
           setError(caught instanceof Error ? caught.message : String(caught));
           return;
         }
       }
 
-      leavingRef.current = false;
+      endAttempt();
 
       if (leavesRoute) {
         for (const entry of leavingEntries) {
@@ -685,7 +783,7 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
         pending.run();
       }
     })();
-  }, [closeDialog]);
+  }, [closeDialog, endAttempt]);
 
   const leave = useCallback(() => runLeave(true), [runLeave]);
   const leaveWithoutSaving = useCallback(() => runLeave(false), [runLeave]);
@@ -734,6 +832,7 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
       leaving,
       onLeave,
       open,
+      stalled,
       stay,
     },
     guardedNavigate,

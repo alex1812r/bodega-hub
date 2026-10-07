@@ -24,6 +24,8 @@ import { GuardedLink, ProcessGuard, ProcessGuardModal } from "./ProcessGuard";
  *   terminarlo, con `runUnguarded`.
  * - Si `onSaveDraft`/`onDiscard` falla, el modal muestra `error.message` y
  *   ofrece "Reintentar" y "Salir sin guardar" (story `SaveDraftFails`).
+ * - Si no termina en `leaveTimeoutMs` (10 s por defecto), el modal avisa de que
+ *   está tardando y deja seguir aquí o salir sin guardar (story `SaveDraftHangs`).
  * - `GuardedLink` es `next/link` bloqueado con `onNavigate`; los demás enlaces
  *   se interceptan con un listener global mientras hay un guardia activo.
  *
@@ -49,11 +51,13 @@ type Story = StoryObj<typeof meta>;
 type FakeFormProps = {
   /** El guardado del borrador falla siempre con este mensaje. */
   saveError?: string;
+  /** El guardado del borrador no termina nunca; el modal lo da por atascado a los 300 ms. */
+  saveHangs?: boolean;
   onLeave: ProcessGuardLeaveMode;
   processName: string;
 };
 
-function FakeForm({ onLeave, processName, saveError }: FakeFormProps) {
+function FakeForm({ onLeave, processName, saveError, saveHangs }: FakeFormProps) {
   const [supplier, setSupplier] = useState("");
   const [lines, setLines] = useState(0);
   const [log, setLog] = useState<string[]>([]);
@@ -68,6 +72,7 @@ function FakeForm({ onLeave, processName, saveError }: FakeFormProps) {
     description:
       onLeave === "draft" ? "Podrás restaurarla al volver a esta pantalla." : undefined,
     label: `${processName}${supplier.trim() ? ` a ${supplier.trim()}` : ""} · ${lines} líneas`,
+    leaveTimeoutMs: saveHangs ? 300 : undefined,
     onDiscard: () => addLog("onDiscard"),
     onLeave,
     onSaveDraft: () => {
@@ -76,6 +81,8 @@ function FakeForm({ onLeave, processName, saveError }: FakeFormProps) {
       if (saveError) {
         throw new Error(saveError);
       }
+
+      return saveHangs ? new Promise<void>(() => undefined) : undefined;
     },
   });
 
@@ -193,7 +200,28 @@ export const SaveDraftFails: Story = {
     await expect(body.getByRole("button", { name: "Reintentar" })).toHaveFocus();
     await expect(body.getByRole("button", { name: "Salir sin guardar" })).toBeEnabled();
     await expect(body.getByRole("button", { name: "Seguir aquí" })).toBeEnabled();
-    await expect(canvas.getByRole("status")).toHaveTextContent(/^onSaveDraft$/);
+    // Con el modal abierto el fondo queda `aria-hidden`: el registro solo se encuentra con `hidden`.
+    await expect(canvas.getByRole("status", { hidden: true })).toHaveTextContent(/^onSaveDraft$/);
+  },
+};
+
+export const SaveDraftHangs: Story = {
+  args: baseArgs,
+  render: () => <FakeForm onLeave="draft" processName="Compra" saveHangs />,
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const body = within(canvasElement.ownerDocument.body);
+
+    await userEvent.type(canvas.getByLabelText(/proveedor/i), "Distribuidora X");
+    await userEvent.click(canvas.getByRole("link", { name: /inventario/i }));
+    await userEvent.click(await body.findByRole("button", { name: "Salir" }));
+
+    await expect(await body.findByRole("button", { name: "Salir sin guardar" })).toBeEnabled();
+    await expect(body.getByRole("dialog")).toHaveTextContent(
+      "Guardar el borrador está tardando más de lo normal.",
+    );
+    await expect(body.getByRole("button", { name: "Seguir aquí" })).toHaveFocus();
+    await expect(body.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+    await expect(canvas.getByRole("status", { hidden: true })).toHaveTextContent(/^onSaveDraft$/);
   },
 };
 
