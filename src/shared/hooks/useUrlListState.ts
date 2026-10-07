@@ -6,9 +6,11 @@ import {
   createElement,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ComponentType,
   type ReactNode,
 } from "react";
@@ -19,6 +21,8 @@ import type { SortOrder } from "@/lib/api/sorting";
 
 /** Debounce de los campos de texto antes de escribir la URL. */
 export const URL_LIST_DEBOUNCE_MS = 300;
+/** Tiempo que se sigue reconociendo el eco tardío de una escritura propia ya adelantada. */
+export const URL_LIST_ECHO_TTL_MS = 3000;
 /** Página más alta que se acepta desde la URL. */
 export const MAX_URL_PAGE = 100_000;
 /** Un valor de parámetro más largo que esto se considera corrupto. */
@@ -310,13 +314,95 @@ export type UrlListState<TState> = {
   href: string;
 };
 
-type SyncedState = {
+/**
+ * Estado local de la lista y registro de las escrituras propias, fuera de React.
+ *
+ * Vive en un almacén externo (y no en `useState`) a propósito: reconciliar con
+ * la URL llamando a un `setState` durante el render deja ese valor en la cola
+ * del hook aunque React descarte el render (una transición del router
+ * interrumpida por una tecla), y la siguiente actualización urgente lo toma
+ * como base. Así se perdían teclas y filtros en listas con render pesado.
+ */
+type ListSnapshot = {
   state: LooseState;
-  /** Query de la URL con la que se sincronizó por última vez. */
-  urlKey: string;
-  /** Huella de la URL ya confirmada seguida de las escrituras propias aún en camino. */
-  known: string[];
+  /** Huella de los parámetros propios que la URL ya confirmó. */
+  confirmed: string;
+  /** Huellas de las escrituras propias emitidas y aún sin confirmar, en orden. */
+  inFlight: readonly string[];
+  /** Escrituras propias que una posterior adelantó: su eco puede llegar tarde. */
+  superseded: readonly string[];
 };
+
+function createListStore(initial: ListSnapshot) {
+  const listeners = new Set<() => void>();
+  let snapshot = initial;
+
+  return {
+    get: () => snapshot,
+    set: (next: ListSnapshot) => {
+      if (next !== snapshot) {
+        snapshot = next;
+
+        for (const listener of listeners) {
+          listener();
+        }
+      }
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+/**
+ * Decide qué hacer con la URL que entrega Next. Función pura e idempotente: se
+ * usa igual al derivar el estado en el render y al consolidarlo tras el commit.
+ *
+ * - Misma huella que la confirmada (o solo cambió un parámetro ajeno): nada.
+ * - Coincide con una escritura en camino, sea o no la última: es un eco. Se da
+ *   por confirmada, las anteriores pasan a `superseded` y el estado local NO se
+ *   toca (puede llevar texto tecleado después o un filtro más reciente).
+ * - Coincide con una escritura adelantada: eco tardío, se ignora.
+ * - No coincide con ninguna escritura propia: navegación externa (atrás/adelante,
+ *   enlace). Manda la URL, también si hay escrituras en camino o texto en
+ *   debounce: quien navega después de teclear quiere la URL a la que va.
+ */
+function reconcileWithUrl(
+  model: ListModel,
+  snapshot: ListSnapshot,
+  urlOwnedKey: string,
+  urlState: LooseState,
+): ListSnapshot {
+  if (urlOwnedKey === snapshot.confirmed) {
+    return snapshot;
+  }
+
+  const echoIndex = snapshot.inFlight.indexOf(urlOwnedKey);
+
+  if (echoIndex >= 0) {
+    return {
+      confirmed: urlOwnedKey,
+      inFlight: snapshot.inFlight.slice(echoIndex + 1),
+      state: snapshot.state,
+      superseded: [...snapshot.superseded, ...snapshot.inFlight.slice(0, echoIndex)],
+    };
+  }
+
+  if (snapshot.superseded.includes(urlOwnedKey)) {
+    return snapshot;
+  }
+
+  return {
+    confirmed: urlOwnedKey,
+    inFlight: [],
+    state: model.ownedKey(snapshot.state) === urlOwnedKey ? snapshot.state : urlState,
+    superseded: [],
+  };
+}
 
 /**
  * Estado de una lista (búsqueda, filtros, orden, página, tamaño) guardado en
@@ -330,6 +416,9 @@ type SyncedState = {
  * - Escribe con `router.replace(url, { scroll: false })`. Los `textFields` se
  *   escriben con debounce; el resto, al instante.
  * - Si la URL cambia por fuera (atrás/adelante, enlace), el estado la sigue.
+ * - Mientras una escritura propia está en camino manda el estado local: la URL
+ *   que llega se compara con el registro de escrituras propias
+ *   (`reconcileWithUrl`) y un eco nunca pisa lo tecleado o filtrado después.
  *
  * Suspense: el hook usa `useSearchParams`, que en una ruta prerenderizada exige
  * un límite de `<Suspense>` por encima del componente (si falta, falla el
@@ -368,26 +457,16 @@ export function useUrlListState<TShape extends UrlListShape>(
   const model: ListModel = useMemo(() => createListModel(schema.shape), [schema]);
   const urlState = useMemo(() => model.parse(new URLSearchParams(urlKey)), [model, urlKey]);
   const urlOwnedKey = model.ownedKey(urlState);
-  const [synced, setSynced] = useState<SyncedState>(() => ({
-    known: [urlOwnedKey],
-    state: urlState,
-    urlKey,
-  }));
-
-  let current = synced;
-
-  if (synced.urlKey !== urlKey) {
-    const knownIndex = synced.known.indexOf(urlOwnedKey);
-
-    // URL conocida (eco de una escritura propia o cambio de un parámetro ajeno):
-    // se conserva el estado local para no pisar lo que se está tecleando.
-    // URL desconocida (atrás/adelante, enlace): manda la URL.
-    current =
-      knownIndex >= 0
-        ? { known: synced.known.slice(knownIndex), state: synced.state, urlKey }
-        : { known: [urlOwnedKey], state: urlState, urlKey };
-    setSynced(current);
-  }
+  const [store] = useState(() =>
+    createListStore({ confirmed: urlOwnedKey, inFlight: [], state: urlState, superseded: [] }),
+  );
+  const stored = useSyncExternalStore(store.subscribe, store.get, store.get);
+  // Derivado, sin escribir nada durante el render: un render que React descarte
+  // no deja rastro. El efecto de más abajo lo consolida solo si llega a pantalla.
+  const current = useMemo(
+    () => reconcileWithUrl(model, stored, urlOwnedKey, urlState),
+    [model, stored, urlOwnedKey, urlState],
+  );
 
   const textFields: readonly string[] = options.textFields ?? [DEFAULT_TEXT_FIELD];
   const environment = {
@@ -400,26 +479,25 @@ export function useUrlListState<TShape extends UrlListShape>(
     urlKey,
   };
   const environmentRef = useRef(environment);
-  const stateRef = useRef(current.state);
   /** Última query pedida al router (o la de la URL si no hay escrituras en camino). */
   const targetQueryRef = useRef(urlKey);
   const timerRef = useRef<number | null>(null);
+  const forgetTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     environmentRef.current = environment;
   });
 
-  useEffect(() => {
-    stateRef.current = current.state;
-  }, [current.state]);
+  // Consolida la URL de este commit antes de que pueda llegar otro evento.
+  useLayoutEffect(() => {
+    const next = reconcileWithUrl(model, store.get(), urlOwnedKey, urlState);
 
-  const hasPendingWrites = current.known.length > 1;
+    store.set(next);
 
-  useEffect(() => {
-    if (!hasPendingWrites) {
+    if (next.inFlight.length === 0) {
       targetQueryRef.current = urlKey;
     }
-  }, [hasPendingWrites, urlKey]);
+  }, [model, store, urlKey, urlOwnedKey, urlState]);
 
   const cancelTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -430,41 +508,69 @@ export function useUrlListState<TShape extends UrlListShape>(
 
   // Al desmontar no se escribe lo pendiente: un `replace` tardío devolvería al
   // usuario a la lista que acaba de abandonar.
-  useEffect(() => cancelTimer, [cancelTimer]);
+  useEffect(
+    () => () => {
+      cancelTimer();
+
+      if (forgetTimerRef.current !== null) {
+        window.clearTimeout(forgetTimerRef.current);
+        forgetTimerRef.current = null;
+      }
+    },
+    [cancelTimer],
+  );
 
   const flush = useCallback(() => {
     cancelTimer();
 
     const env = environmentRef.current;
-    const state = stateRef.current;
-    const query = env.model.buildQuery(env.urlKey, state);
+    const snapshot = store.get();
+    // Estado local completo + parámetros ajenos de la última URL en pantalla.
+    const query = env.model.buildQuery(env.urlKey, snapshot.state);
 
     if (query === targetQueryRef.current) {
       return;
     }
 
-    const ownedKey = env.model.ownedKey(state);
+    const ownedKey = env.model.ownedKey(snapshot.state);
+    const lastKey = snapshot.inFlight[snapshot.inFlight.length - 1] ?? snapshot.confirmed;
 
     targetQueryRef.current = query;
-    setSynced((previous) =>
-      previous.known[previous.known.length - 1] === ownedKey
-        ? previous
-        : { ...previous, known: [...previous.known, ownedKey] },
-    );
+
+    if (lastKey !== ownedKey) {
+      store.set({ ...snapshot, inFlight: [...snapshot.inFlight, ownedKey] });
+    }
+
+    // El eco tardío de una escritura adelantada solo se espera un rato: pasado
+    // el plazo, una URL con esa huella vuelve a ser una navegación externa.
+    if (forgetTimerRef.current !== null) {
+      window.clearTimeout(forgetTimerRef.current);
+    }
+
+    forgetTimerRef.current = window.setTimeout(() => {
+      const latest = store.get();
+
+      forgetTimerRef.current = null;
+
+      if (latest.superseded.length > 0) {
+        store.set({ ...latest, superseded: [] });
+      }
+    }, URL_LIST_ECHO_TTL_MS);
+
     env.router.replace(query ? `${env.pathname}?${query}` : env.pathname, { scroll: false });
-  }, [cancelTimer]);
+  }, [cancelTimer, store]);
 
   const setState = useCallback(
     (patch: Partial<TState>) => {
       const env = environmentRef.current;
-      const { changed, next } = env.model.applyPatch(stateRef.current, patch, env.pageField);
+      const snapshot = store.get();
+      const { changed, next } = env.model.applyPatch(snapshot.state, patch, env.pageField);
 
       if (changed.length === 0) {
         return;
       }
 
-      stateRef.current = next;
-      setSynced((previous) => ({ ...previous, state: next }));
+      store.set({ ...snapshot, state: next });
 
       if (changed.every((key) => env.textFields.includes(key))) {
         cancelTimer();
@@ -473,7 +579,7 @@ export function useUrlListState<TShape extends UrlListShape>(
         flush();
       }
     },
-    [cancelTimer, flush],
+    [cancelTimer, flush, store],
   );
 
   const setField = useCallback(
@@ -489,10 +595,9 @@ export function useUrlListState<TShape extends UrlListShape>(
   const reset = useCallback(() => {
     const { defaults } = environmentRef.current.model;
 
-    stateRef.current = defaults;
-    setSynced((previous) => ({ ...previous, state: defaults }));
+    store.set({ ...store.get(), state: defaults });
     flush();
-  }, [flush]);
+  }, [flush, store]);
 
   const query = model.buildQuery(urlKey, current.state);
   const searchString = query ? `?${query}` : "";

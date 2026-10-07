@@ -1,11 +1,22 @@
 import "@testing-library/jest-dom";
-import { act, render, renderHook, screen } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import {
+  Suspense,
+  createContext,
+  startTransition,
+  use,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { z } from "zod";
 
 import { MAX_PAGE_LIMIT } from "@/lib/api/pagination";
 
 import {
+  URL_LIST_ECHO_TTL_MS,
   UrlListBoundary,
   listParams,
   useUrlListState,
@@ -15,12 +26,30 @@ import {
 const mockReplace = jest.fn();
 /** URL simulada. Con `auto`, `router.replace` la actualiza como haría Next. */
 const mockUrl = { auto: true, pathname: "/productos", query: "" };
+/**
+ * Router con latencia: dentro de `LaggedRouter` la URL es estado de React, las
+ * escrituras quedan en `flights` y cada test decide cuándo y en qué orden llegan.
+ */
+const mockLagged = {
+  context: createContext<string | null>(null),
+  flights: [] as string[],
+  held: new Set<string>(),
+  landings: new Map<string, { promise: Promise<void>; release: () => void }>(),
+  navigate: (query: string) => {
+    mockUrl.query = query;
+  },
+};
 
-jest.mock("next/navigation", () => ({
-  usePathname: () => mockUrl.pathname,
-  useRouter: () => ({ replace: mockReplace }),
-  useSearchParams: () => new URLSearchParams(mockUrl.query),
-}));
+jest.mock("next/navigation", () => {
+  const react = jest.requireActual<typeof import("react")>("react");
+
+  return {
+    usePathname: () => mockUrl.pathname,
+    useRouter: () => ({ replace: mockReplace }),
+    useSearchParams: () =>
+      new URLSearchParams(react.useContext(mockLagged.context) ?? mockUrl.query),
+  };
+});
 
 const schema = z.object({
   search: listParams.text(),
@@ -559,6 +588,254 @@ describe("useUrlListState", () => {
       act(() => result.current.setField("page", 2));
 
       expect(lastReplacedUrl()).toBe("/productos?tab=ventas&status=inactive&page=2");
+    });
+  });
+
+  describe("router con latencia (ecos tardíos, intermedios y desordenados)", () => {
+    function landingOf(query: string) {
+      const landing = mockLagged.landings.get(query);
+
+      if (landing) {
+        return landing;
+      }
+
+      let release = () => undefined as void;
+      const created = {
+        promise: new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+        release: () => release(),
+      };
+
+      mockLagged.landings.set(query, created);
+
+      return created;
+    }
+
+    /** Parte lenta de la pantalla: su render no termina hasta que "llegan" los datos de esa URL. */
+    function HeavyRows() {
+      const query = useContext(mockLagged.context) ?? "";
+
+      if (mockLagged.held.has(query)) {
+        use(landingOf(query).promise);
+      }
+
+      return <p data-testid="rows">{query}</p>;
+    }
+
+    function Screen() {
+      const list = useUrlListState(schema);
+
+      return (
+        <>
+          <input
+            aria-label="Buscar"
+            onChange={(event) => list.setField("search", event.target.value)}
+            value={list.state.search}
+          />
+          <select
+            aria-label="Estado"
+            onChange={(event) =>
+              list.setField("status", event.target.value as "all" | "active" | "inactive")
+            }
+            value={list.state.status}
+          >
+            <option value="all">all</option>
+            <option value="active">active</option>
+            <option value="inactive">inactive</option>
+          </select>
+          <output data-testid="href">{list.href}</output>
+          <HeavyRows />
+        </>
+      );
+    }
+
+    /** Como el router de Next: la URL es estado de React y cada navegación llega en una transición. */
+    function LaggedRouter({ children }: { children: ReactNode }) {
+      const [query, setQuery] = useState(mockUrl.query);
+
+      useEffect(() => {
+        mockLagged.navigate = (next) => startTransition(() => setQuery(next));
+      }, []);
+
+      return (
+        <mockLagged.context.Provider value={query}>
+          <Suspense fallback={null}>{children}</Suspense>
+        </mockLagged.context.Provider>
+      );
+    }
+
+    function renderScreen(query = "") {
+      mockUrl.query = query;
+      // `replace` no aplica nada: cada escritura queda en vuelo hasta que el test la aterriza.
+      mockReplace.mockImplementation((url: string) => {
+        mockLagged.flights.push(url.split("?")[1] ?? "");
+      });
+
+      return render(
+        <LaggedRouter>
+          <Screen />
+        </LaggedRouter>,
+      );
+    }
+
+    function land(query: string) {
+      act(() => mockLagged.navigate(query));
+    }
+
+    function type(text: string) {
+      for (let length = 1; length <= text.length; length += 1) {
+        fireEvent.change(screen.getByLabelText("Buscar"), {
+          target: { value: `${(screen.getByLabelText("Buscar") as HTMLInputElement).value}${text[length - 1]}` },
+        });
+      }
+    }
+
+    function expectScreen(expected: { search: string; status: string }) {
+      expect(screen.getByLabelText("Buscar")).toHaveValue(expected.search);
+      expect(screen.getByLabelText("Estado")).toHaveValue(expected.status);
+    }
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      mockLagged.flights.length = 0;
+      mockLagged.held.clear();
+      mockLagged.landings.clear();
+    });
+
+    it("teclear mientras el eco del filtro sigue en render no pierde teclas ni revierte el filtro", async () => {
+      renderScreen();
+
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "active" } });
+      expect(mockLagged.flights).toEqual(["status=active"]);
+
+      // El eco llega, pero el render de la lista (pesado) aún no ha terminado:
+      // React tiene la transición a medias y la pantalla sigue con la URL vieja.
+      mockLagged.held.add("status=active");
+      await act(async () => mockLagged.navigate("status=active"));
+      expect(screen.getByTestId("rows")).toHaveTextContent("");
+
+      // Con la transición suspendida, cada `act` se espera (lo exige React).
+      await act(async () => type("harina pan"));
+      expectScreen({ search: "harina pan", status: "active" });
+
+      await act(async () => {
+        jest.advanceTimersByTime(300);
+      });
+      expect(mockLagged.flights).toEqual(["status=active", "search=harina+pan&status=active"]);
+
+      await act(async () => {
+        landingOf("status=active").release();
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId("rows")).toHaveTextContent("status=active");
+      expectScreen({ search: "harina pan", status: "active" });
+
+      land("search=harina+pan&status=active");
+
+      expectScreen({ search: "harina pan", status: "active" });
+      expect(screen.getByTestId("href")).toHaveTextContent(
+        "/productos?search=harina+pan&status=active",
+      );
+      expect(mockReplace).toHaveBeenCalledTimes(2);
+    });
+
+    it("teclear antes de que llegue el eco del filtro conserva filtro y texto en estado y URL", () => {
+      renderScreen();
+
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "active" } });
+      type("harina pan");
+      land("status=active");
+      expectScreen({ search: "harina pan", status: "active" });
+
+      act(() => {
+        jest.advanceTimersByTime(300);
+      });
+      land("search=harina+pan&status=active");
+
+      expectScreen({ search: "harina pan", status: "active" });
+      expect(lastReplacedUrl()).toBe("/productos?search=harina+pan&status=active");
+      expect(mockReplace).toHaveBeenCalledTimes(2);
+    });
+
+    it("ecos fuera de orden no revierten el estado", () => {
+      renderScreen();
+
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "active" } });
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "inactive" } });
+      expect(mockLagged.flights).toEqual(["status=active", "status=inactive"]);
+
+      land("status=inactive");
+      expectScreen({ search: "", status: "inactive" });
+
+      // El eco de la primera escritura llega después que el de la segunda.
+      land("status=active");
+
+      expectScreen({ search: "", status: "inactive" });
+      expect(mockReplace).toHaveBeenCalledTimes(2);
+    });
+
+    it("un eco intermedio con el debounce pendiente no reescribe el texto ni los filtros", () => {
+      renderScreen();
+
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "active" } });
+      type("pa");
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "inactive" } });
+      type("n");
+      expect(mockLagged.flights).toEqual(["status=active", "search=pa&status=inactive"]);
+
+      land("status=active");
+      expectScreen({ search: "pan", status: "inactive" });
+
+      land("search=pa&status=inactive");
+      expectScreen({ search: "pan", status: "inactive" });
+
+      act(() => {
+        jest.advanceTimersByTime(300);
+      });
+      expect(lastReplacedUrl()).toBe("/productos?search=pan&status=inactive");
+    });
+
+    it("una navegación externa sin escrituras pendientes se adopta", () => {
+      renderScreen("status=active");
+
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "inactive" } });
+      land("status=inactive");
+
+      land("search=pan");
+
+      expectScreen({ search: "pan", status: "all" });
+      expect(mockReplace).toHaveBeenCalledTimes(1);
+    });
+
+    it("una navegación externa con una escritura en vuelo manda al instante; el eco que llegue después también", () => {
+      renderScreen();
+
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "active" } });
+      // Atrás/adelante o un enlace mientras el `replace` propio sigue en vuelo.
+      land("search=pan");
+      expectScreen({ search: "pan", status: "all" });
+
+      // Si el router aun así completa el `replace`, la URL final es esa y el estado la sigue.
+      land("status=active");
+      expectScreen({ search: "", status: "active" });
+      expect(mockReplace).toHaveBeenCalledTimes(1);
+    });
+
+    it("el eco de una escritura adelantada deja de reconocerse pasado el plazo", () => {
+      renderScreen();
+
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "active" } });
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "inactive" } });
+      land("status=inactive");
+
+      act(() => {
+        jest.advanceTimersByTime(URL_LIST_ECHO_TTL_MS);
+      });
+      // Ya no puede ser un eco: es alguien navegando a esa URL.
+      land("status=active");
+
+      expectScreen({ search: "", status: "active" });
     });
   });
 
