@@ -414,7 +414,8 @@ function reconcileWithUrl(
  * - Lectura tolerante: un parámetro inválido cae a su default sin afectar al
  *   resto; los parámetros que no son del schema (`tab`, `from`, …) se conservan.
  * - Escribe con `router.replace(url, { scroll: false })`. Los `textFields` se
- *   escriben con debounce; el resto, al instante.
+ *   escriben con debounce; el resto, al instante. Un clic en un enlace con texto
+ *   pendiente lo escribe en el acto con `history.replaceState`, sin esperar.
  * - Si la URL cambia por fuera (atrás/adelante, enlace), el estado la sigue.
  * - Mientras una escritura propia está en camino manda el estado local: la URL
  *   que llega se compara con el registro de escrituras propias
@@ -520,7 +521,12 @@ export function useUrlListState<TShape extends UrlListShape>(
     [cancelTimer],
   );
 
-  const flush = useCallback(() => {
+  /**
+   * Escribe en la URL el estado local. `"history"` usa `history.replaceState`
+   * nativo (Next lo refleja en `useSearchParams`), que es síncrono: sirve para
+   * dejar la URL escrita ANTES de que arranque otra navegación.
+   */
+  const flush = useCallback((via: "router" | "history" = "router") => {
     cancelTimer();
 
     const env = environmentRef.current;
@@ -557,8 +563,35 @@ export function useUrlListState<TShape extends UrlListShape>(
       }
     }, URL_LIST_ECHO_TTL_MS);
 
-    env.router.replace(query ? `${env.pathname}?${query}` : env.pathname, { scroll: false });
+    const url = query ? `${env.pathname}?${query}` : env.pathname;
+
+    if (via === "history") {
+      window.history.replaceState(window.history.state, "", url);
+    } else {
+      env.router.replace(url, { scroll: false });
+    }
   }, [cancelTimer, store]);
+
+  // Un clic en un enlace con texto aún en debounce: la URL se escribe ya, antes
+  // de que el enlace navegue. Si el `replace` saliera después, con la navegación
+  // en vuelo, Next la descartaría y el usuario se quedaría en la lista. Además,
+  // lo tecleado queda en la entrada de historial de la lista para "atrás".
+  // Fase de captura en `document`: corre antes que el `onClick` de `<Link>`.
+  useEffect(() => {
+    function flushBeforeLinkNavigation(event: MouseEvent) {
+      if (
+        timerRef.current !== null &&
+        event.target instanceof Element &&
+        event.target.closest("a[href]") !== null
+      ) {
+        flush("history");
+      }
+    }
+
+    document.addEventListener("click", flushBeforeLinkNavigation, true);
+
+    return () => document.removeEventListener("click", flushBeforeLinkNavigation, true);
+  }, [flush]);
 
   const setState = useCallback(
     (patch: Partial<TState>) => {
@@ -574,7 +607,7 @@ export function useUrlListState<TShape extends UrlListShape>(
 
       if (changed.every((key) => env.textFields.includes(key))) {
         cancelTimer();
-        timerRef.current = window.setTimeout(flush, env.debounceMs);
+        timerRef.current = window.setTimeout(() => flush(), env.debounceMs);
       } else {
         flush();
       }

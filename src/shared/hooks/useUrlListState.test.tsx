@@ -459,6 +459,165 @@ describe("useUrlListState", () => {
 
       expect(mockReplace).not.toHaveBeenCalled();
     });
+
+    describe("clic en un enlace con texto pendiente (SHR-17)", () => {
+      /** Lo que el enlace encuentra en la barra de direcciones al recibir el clic. */
+      const seenByLink: string[] = [];
+
+      function ListWithLink() {
+        const list = useUrlListState(schema);
+
+        return (
+          <>
+            <input
+              aria-label="Buscar"
+              onChange={(event) => list.setField("search", event.target.value)}
+              value={list.state.search}
+            />
+            <a
+              href="/productos/7"
+              onClick={(event) => {
+                // Como `<Link>`: la navegación arranca aquí y jsdom no navega.
+                event.preventDefault();
+                seenByLink.push(window.location.pathname + window.location.search);
+              }}
+            >
+              <span>Detalle</span>
+            </a>
+            <button type="button">Otro</button>
+          </>
+        );
+      }
+
+      function spyOnHistory() {
+        return {
+          push: jest.spyOn(window.history, "pushState"),
+          replace: jest.spyOn(window.history, "replaceState"),
+        };
+      }
+
+      beforeEach(() => {
+        seenByLink.length = 0;
+        window.history.replaceState(null, "", "/productos?tab=stock");
+        mockUrl.query = "tab=stock";
+      });
+
+      afterEach(() => {
+        jest.restoreAllMocks();
+        window.history.replaceState(null, "", "/");
+      });
+
+      it("escribe la URL antes de que arranque la navegación y no la cancela con un replace tardío", () => {
+        jest.useFakeTimers();
+        render(<ListWithLink />);
+
+        const history = spyOnHistory();
+
+        fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "bet" } });
+        act(() => {
+          jest.advanceTimersByTime(100);
+        });
+        fireEvent.click(screen.getByText("Detalle"));
+
+        // El filtro tecleado queda en la entrada de historial de la lista ("atrás" lo restaura).
+        expect(seenByLink).toEqual(["/productos?tab=stock&search=bet"]);
+        expect(history.replace).toHaveBeenCalledTimes(1);
+        expect(history.push).not.toHaveBeenCalled();
+
+        // La navegación sigue en vuelo cuando habría vencido el debounce.
+        act(() => {
+          jest.advanceTimersByTime(1000);
+        });
+
+        expect(mockReplace).not.toHaveBeenCalled();
+        expect(history.replace).toHaveBeenCalledTimes(1);
+        expect(history.push).not.toHaveBeenCalled();
+      });
+
+      it("conserva el estado interno de Next de la entrada de historial", () => {
+        jest.useFakeTimers();
+        window.history.replaceState({ __NA: true, tree: "lista" }, "", "/productos?tab=stock");
+        render(<ListWithLink />);
+
+        fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "bet" } });
+        fireEvent.click(screen.getByText("Detalle"));
+
+        expect(window.location.search).toBe("?tab=stock&search=bet");
+        expect(window.history.state).toEqual({ __NA: true, tree: "lista" });
+      });
+
+      it("si la navegación no llega a ocurrir, la lista sigue funcionando con la URL ya escrita", () => {
+        jest.useFakeTimers();
+
+        const { rerender } = render(<ListWithLink />);
+
+        fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "bet" } });
+        fireEvent.click(screen.getByText("Detalle"));
+
+        // Next refleja el `replaceState` nativo en `useSearchParams`.
+        mockUrl.query = "tab=stock&search=bet";
+        rerender(<ListWithLink />);
+        expect(screen.getByLabelText("Buscar")).toHaveValue("bet");
+
+        fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "beta" } });
+        act(() => {
+          jest.advanceTimersByTime(300);
+        });
+
+        expect(mockReplace).toHaveBeenCalledTimes(1);
+        expect(lastReplacedUrl()).toBe("/productos?tab=stock&search=beta");
+      });
+
+      it("sin texto pendiente, un clic en un enlace no escribe nada", () => {
+        jest.useFakeTimers();
+        render(<ListWithLink />);
+
+        const history = spyOnHistory();
+
+        fireEvent.click(screen.getByText("Detalle"));
+
+        expect(history.replace).not.toHaveBeenCalled();
+        expect(mockReplace).not.toHaveBeenCalled();
+      });
+
+      it("un clic fuera de un enlace mantiene el debounce", () => {
+        jest.useFakeTimers();
+        render(<ListWithLink />);
+
+        const history = spyOnHistory();
+
+        fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "bet" } });
+        fireEvent.click(screen.getByRole("button", { name: "Otro" }));
+
+        expect(history.replace).not.toHaveBeenCalled();
+        expect(mockReplace).not.toHaveBeenCalled();
+
+        act(() => {
+          jest.advanceTimersByTime(300);
+        });
+
+        expect(mockReplace).toHaveBeenCalledTimes(1);
+        expect(lastReplacedUrl()).toBe("/productos?tab=stock&search=bet");
+        expect(history.replace).not.toHaveBeenCalled();
+      });
+
+      it("al desmontar deja de escuchar los clics", () => {
+        jest.useFakeTimers();
+
+        const { unmount } = render(<ListWithLink />);
+        const history = spyOnHistory();
+
+        fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "bet" } });
+        unmount();
+        const stray = document.body.appendChild(document.createElement("a"));
+
+        stray.href = "#fuera";
+        fireEvent.click(stray);
+        stray.remove();
+
+        expect(history.replace).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe("página", () => {

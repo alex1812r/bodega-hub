@@ -243,6 +243,41 @@ describe("useRememberedListFilters", () => {
       act(() => result.current.list.setState({ sort: "name", status: "all" }));
       expect(result.current.remembered.restored).toBe(false);
     });
+
+    it("con lo guardado inservible, el primer filtro manual no muestra el chip (SHR-17)", () => {
+      remember({ status: "borrados" });
+
+      const { result } = enterList();
+
+      act(() => result.current.list.setField("status", "active"));
+
+      expect(result.current.list.state.status).toBe("active");
+      expect(result.current.remembered.restored).toBe(false);
+    });
+
+    it("con lo guardado igual a los defaults, el primer filtro manual no muestra el chip (SHR-17)", () => {
+      remember({ status: "all" });
+
+      const { result } = enterList();
+
+      act(() => result.current.list.setField("status", "active"));
+
+      expect(result.current.remembered.restored).toBe(false);
+    });
+
+    it("tras un reset manual de la lista restaurada, un filtro nuevo no vuelve a mostrar el chip (SHR-17)", () => {
+      remember({ status: "active" });
+
+      const { result } = enterList();
+
+      expect(result.current.remembered.restored).toBe(true);
+
+      act(() => result.current.list.reset());
+      act(() => result.current.list.setField("status", "inactive"));
+
+      expect(result.current.list.state.status).toBe("inactive");
+      expect(result.current.remembered.restored).toBe(false);
+    });
   });
 
   describe("Limpiar", () => {

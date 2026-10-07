@@ -238,6 +238,15 @@ export function useRememberedListFilters<TState extends Record<string, unknown>>
     restoredFlag.set(true);
   }, [restoredFlag]);
 
+  // La marca solo vale mientras la lista muestra lo restaurado. Se apaga si el
+  // patch no cambió nada (guardado inservible o igual a los defaults) y cuando
+  // la lista vuelve a sus defaults: un filtro manual posterior no es "recordado".
+  useEffect(() => {
+    if (restored && listState.isDefault) {
+      restoredFlag.set(false);
+    }
+  }, [listState.isDefault, restored, restoredFlag]);
+
   useEffect(() => {
     if (skipSaveRef.current) {
       skipSaveRef.current = false;
