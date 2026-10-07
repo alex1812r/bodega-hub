@@ -6,8 +6,8 @@ import { type FormEvent, useMemo, useState } from "react";
 import { Can } from "@/shared/auth/Can";
 import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
-import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { Textarea } from "@/shared/components/Textarea";
 import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 
@@ -151,13 +151,12 @@ export function ProductDetailPackConversionCard({
               }
             >
               <form className="grid gap-4" id="open-pack-form" onSubmit={handleSubmit}>
-                <Input
+                <NumberInput
+                  decimals={0}
                   error={stockError}
                   label="Cantidad de empaques"
-                  min={1}
                   onChange={(event) => setPackQuantity(event.target.value)}
                   required
-                  type="number"
                   value={packQuantity}
                 />
                 <p className="text-sm text-on-surface-variant">

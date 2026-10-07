@@ -7,6 +7,7 @@ import { FormActions } from "@/shared/components/FormActions";
 import { GenerateSkuIconButton } from "@/shared/components/GenerateSkuIconButton";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 
 import type { ProductImportRowDraft } from "../../services/validateProductImportRows";
@@ -114,43 +115,35 @@ export function ProductImportRowEditModal({
           value={draft.categoryId}
         />
         <div className="grid gap-4 sm:grid-cols-2">
-          <Input
+          <NumberInput
+            decimals={2}
             label="Precio ref (USD)"
-            min={0}
             name="precio_ref"
             onChange={(event) => updateField("precio_ref", event.target.value)}
             required
-            step="0.01"
-            type="number"
             value={draft.precio_ref}
           />
-          <Input
+          <NumberInput
+            decimals={2}
             label="Costo ref (USD)"
-            min={0}
             name="costo_ref"
             onChange={(event) => updateField("costo_ref", event.target.value)}
-            step="0.01"
-            type="number"
             value={draft.costo_ref}
           />
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Input
+          <NumberInput
+            decimals={0}
             label="Stock inicial"
-            min={0}
             name="stock_inicial"
             onChange={(event) => updateField("stock_inicial", event.target.value)}
-            step="1"
-            type="number"
             value={draft.stock_inicial}
           />
-          <Input
+          <NumberInput
+            decimals={0}
             label="Stock mínimo"
-            min={0}
             name="stock_minimo"
             onChange={(event) => updateField("stock_minimo", event.target.value)}
-            step="1"
-            type="number"
             value={draft.stock_minimo}
           />
         </div>

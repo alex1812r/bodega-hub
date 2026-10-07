@@ -4,6 +4,7 @@ import { useMemo } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Input } from "@/shared/components/Input";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 
@@ -102,12 +103,11 @@ export function ProductPackConversionFields({
 
       {state.enabled ? (
         <>
-          <Input
+          <NumberInput
+            decimals={0}
             label="Unidades por empaque"
-            min={2}
             onChange={(event) => onChange({ unitsPerPack: event.target.value })}
             required
-            type="number"
             value={state.unitsPerPack}
           />
           <SelectField
@@ -151,13 +151,11 @@ export function ProductPackConversionFields({
                 placeholder="Opcional"
                 value={state.unitBarcode}
               />
-              <Input
+              <NumberInput
+                decimals={2}
                 label="Precio venta unidad (ref)"
-                min={0}
                 onChange={(event) => onChange({ unitSalePriceRef: event.target.value })}
                 required
-                step="0.01"
-                type="number"
                 value={state.unitSalePriceRef}
               />
             </div>

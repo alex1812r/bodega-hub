@@ -4,6 +4,7 @@ import { Save, Tag } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { stitchListFilterFieldClassName } from "@/shared/styles/form-controls";
 import { cn } from "@/shared/utils/cn";
 
@@ -57,14 +58,12 @@ export function ProductDetailPriceChangeCard({
             <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm text-muted-foreground">
               $
             </span>
-            <input
+            <NumberInput
               className={cn(stitchListFilterFieldClassName, "pl-8")}
+              decimals={2}
               id="product-new-price"
-              min={0}
               onChange={(event) => setPriceInput(event.target.value)}
               placeholder={currentPriceRef.toFixed(2)}
-              step="0.01"
-              type="number"
               value={priceInput}
             />
           </div>

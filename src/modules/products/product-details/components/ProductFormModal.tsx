@@ -9,6 +9,7 @@ import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
@@ -252,49 +253,43 @@ export function ProductFormModal({
           placeholder="Selecciona"
         />
         <div className="grid gap-4 md:grid-cols-2">
-          <Input
+          <NumberInput
+            decimals={2}
             defaultValue={product?.currentCostRef}
             label="Costo ref"
-            min={0}
             name="currentCostRef"
-            step="0.01"
-            type="number"
           />
-          <Input
+          <NumberInput
+            decimals={2}
             defaultValue={product?.salePriceRef}
             label="Precio ref"
-            min={0}
             name="salePriceRef"
             required
-            step="0.01"
-            type="number"
           />
         </div>
         <div className="grid gap-4 md:grid-cols-2">
           {isEdit ? (
-            <Input
+            <NumberInput
+              decimals={0}
               defaultValue={product?.currentStock}
               disabled
               helperText="Se corrige desde Inventario con un ajuste, para que quede registrado el movimiento."
               label="Stock actual"
               readOnly
-              type="number"
             />
           ) : (
-            <Input
+            <NumberInput
+              decimals={0}
               defaultValue={product?.currentStock}
               label="Stock inicial"
-              min={0}
               name="currentStock"
-              type="number"
             />
           )}
-          <Input
+          <NumberInput
+            decimals={0}
             defaultValue={product?.minStock}
             label="Stock minimo"
-            min={0}
             name="minStock"
-            type="number"
           />
         </div>
         <ProductPackConversionFields
