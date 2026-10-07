@@ -124,8 +124,14 @@ export function RegisterPaymentModal({
     rateVes,
   );
   const contextIsValid = Boolean(selectedSaleId) !== Boolean(selectedPurchaseId);
+  // Sin el saldo no hay guarda de sobrepago: mientras el documento carga no se envía;
+  // si la carga falló se avisa y decide el servidor (`register_payment`).
+  const linkedDocument = selectedSaleId ? sale : selectedPurchaseId ? purchase : undefined;
+  const balanceIsLoading = Boolean(linkedDocument?.isPending);
+  const balanceError = linkedDocument?.data === undefined ? linkedDocument?.error : null;
   const canSubmit =
     contextIsValid &&
+    !balanceIsLoading &&
     isPaymentFormValid(values, {
       overpayToleranceVes,
       pendingBalance: pendingBalanceVes,
@@ -189,7 +195,11 @@ export function RegisterPaymentModal({
           >
             Cancelar
           </Button>
-          <Button disabled={createPayment.isPending} form={formId} type="submit">
+          <Button
+            disabled={createPayment.isPending || balanceIsLoading}
+            form={formId}
+            type="submit"
+          >
             {createPayment.isPending ? "Registrando..." : "Registrar pago"}
           </Button>
         </>
@@ -250,6 +260,32 @@ export function RegisterPaymentModal({
           <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
             Saldo pendiente actual: {formatVes(pendingBalanceVes)}
           </p>
+        ) : null}
+
+        {balanceIsLoading ? (
+          <p
+            className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+            role="status"
+          >
+            Cargando saldo pendiente...
+          </p>
+        ) : null}
+
+        {balanceError ? (
+          <div
+            className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200"
+            role="alert"
+          >
+            <p>No se pudo comprobar el saldo pendiente: {balanceError.message}</p>
+            <Button
+              onClick={() => void linkedDocument?.refetch()}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Reintentar
+            </Button>
+          </div>
         ) : null}
 
         {hasSubmitted && !contextIsValid && hasFixedContext ? (

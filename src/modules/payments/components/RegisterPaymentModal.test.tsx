@@ -451,6 +451,131 @@ describe("RegisterPaymentModal", () => {
     });
   });
 
+  // Caos pasada 2, N4: sin el saldo cargado no hay guarda de sobrepago en el cliente.
+  describe("SHR-22 N4: saldo del documento sin cargar", () => {
+    type DocumentReply = () => Promise<Response>;
+
+    function replyToDocumentWith(path: string, reply: DocumentReply) {
+      const defaultFetch = fetchMock.getMockImplementation() as (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<Response>;
+
+      fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+        init?.method !== "POST" && String(url).includes(path) ? reply() : defaultFetch(url, init),
+      );
+
+      return () => fetchMock.mockImplementation(defaultFetch);
+    }
+
+    async function openModalWithoutBalance() {
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+
+      return { dialog: within(await screen.findByRole("dialog")), user };
+    }
+
+    it.each([
+      ["venta", "/api/sales/", <RegisterPaymentModal key="sale" saleId="sale-002" />],
+      ["compra", "/api/purchases/", <RegisterPaymentModal key="purchase" purchaseId="purchase-002" />],
+    ])(
+      "mientras carga la %s avisa y no deja registrar ningun monto",
+      async (_document, path, ui) => {
+        let resolveDocument: (response: Response) => void = () => undefined;
+        const loaded = await fetchMock.getMockImplementation()?.(`${path}doc`);
+
+        replyToDocumentWith(
+          path,
+          () =>
+            new Promise<Response>((resolve) => {
+              resolveDocument = resolve;
+            }),
+        );
+        renderModal(ui);
+        const { dialog, user } = await openModalWithoutBalance();
+
+        await user.type(dialog.getByLabelText("Monto"), "99999999{Enter}");
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+
+        expect(postedBodies()).toHaveLength(0);
+        expect(dialog.getByText("Cargando saldo pendiente...")).toBeInTheDocument();
+        expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeDisabled();
+
+        await act(async () => {
+          resolveDocument(loaded as Response);
+        });
+
+        expect(await dialog.findByText(/Saldo pendiente actual/)).toBeInTheDocument();
+        expect(dialog.queryByText("Cargando saldo pendiente...")).not.toBeInTheDocument();
+        expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeEnabled();
+
+        // Con el saldo ya cargado vuelve la guarda de sobrepago de SHR-19.
+        await submit(user);
+        expect(await dialog.findByText(/El monto supera el saldo pendiente/)).toBeInTheDocument();
+        expect(postedBodies()).toHaveLength(0);
+      },
+    );
+
+    it("si la venta responde 500 avisa con el mensaje del fallo, deja reintentar y sigue dejando registrar", async () => {
+      const restore = replyToDocumentWith("/api/sales/", async () =>
+        jsonResponse(
+          { error: { code: "INTERNAL", message: "No se pudo consultar la venta." } },
+          500,
+        ),
+      );
+
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModalWithoutBalance();
+
+      const alert = await dialog.findByRole("alert");
+
+      expect(alert).toHaveTextContent("No se pudo comprobar el saldo pendiente");
+      expect(alert).toHaveTextContent("No se pudo consultar la venta.");
+      expect(dialog.queryByText("Cargando saldo pendiente...")).not.toBeInTheDocument();
+      expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeEnabled();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+
+      expect((await expectSinglePost()).body).toEqual({
+        amount: 100,
+        currency: "VES",
+        method: "efectivo_ves",
+        saleId: "sale-002",
+      });
+      // El aviso sigue a la vista tras registrar: el saldo sigue sin comprobarse.
+      expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+      expect(dialog.getByRole("alert")).toHaveTextContent(
+        "No se pudo comprobar el saldo pendiente",
+      );
+
+      restore();
+      await user.click(dialog.getByRole("button", { name: "Reintentar" }));
+
+      expect(await dialog.findByText(/Saldo pendiente actual/)).toBeInTheDocument();
+      expect(dialog.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("si la carga de la compra se corta avisa con el mensaje del fallo", async () => {
+      replyToDocumentWith("/api/purchases/", async () => {
+        throw new TypeError("Failed to fetch");
+      });
+
+      renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
+      const { dialog } = await openModalWithoutBalance();
+
+      const alert = await dialog.findByRole("alert");
+
+      expect(alert).toHaveTextContent("No se pudo comprobar el saldo pendiente");
+      expect(alert).toHaveTextContent("Failed to fetch");
+      expect(dialog.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
+      expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeEnabled();
+    });
+  });
+
   it("muestra el mensaje de error de la API tal cual", async () => {
     paymentResponse = jsonResponse(
       {
