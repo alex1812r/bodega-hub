@@ -30,6 +30,15 @@ function clearStuckBodyPointerEvents() {
   }
 }
 
+// `close` llega como prop (igual que un handler) para que el footer-función se
+// evalúe aquí y no en el render de Modal, donde `close` cierra sobre un ref.
+function ModalFunctionFooter({
+  close,
+  render,
+}: ModalFooterHelpers & { render: (helpers: ModalFooterHelpers) => ReactNode }) {
+  return render({ close });
+}
+
 export function Modal({
   bodyClassName,
   children,
@@ -128,7 +137,11 @@ export function Modal({
 
           {footer ? (
             <div className="mt-6 flex shrink-0 flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end sm:gap-3 dark:border-slate-800">
-              {typeof footer === "function" ? footer({ close }) : footer}
+              {typeof footer === "function" ? (
+                <ModalFunctionFooter close={close} render={footer} />
+              ) : (
+                footer
+              )}
             </div>
           ) : null}
 
