@@ -3,6 +3,7 @@
 import { Search, X } from "lucide-react";
 import {
   type KeyboardEvent,
+  type MouseEvent,
   type ReactNode,
   useEffect,
   useEffectEvent,
@@ -152,13 +153,15 @@ export function EntityAutocomplete<K extends EntityKind>({
   // Si el siguiente escaneo lo reemplaza y aún no se avisó por él
   // (`isReported`), se avisa con `onNotFound`. `isCaretPlaced`: el usuario ya
   // puso el cursor dentro del texto (segundo clic seguido o tecla de cursor)
-  // para corregirlo a mano, y un clic ya no repone la selección.
+  // para corregirlo a mano, y un clic ya no conserva la selección.
   const shownScanRef = useRef<{
     code: string;
     epoch: number;
     isCaretPlaced: boolean;
     isReported: boolean;
   } | null>(null);
+  // El `mousedown` en curso conservó la selección de un escaneo a la vista.
+  const isSelectionKeptRef = useRef(false);
   const scanQueueRef = useRef<Promise<void>>(Promise.resolve());
   const scanControllersRef = useRef(new Set<AbortController>());
   const callbacksRef = useRef({ onChange, onNotFound });
@@ -784,9 +787,43 @@ export function EntityAutocomplete<K extends EntityKind>({
 
   /**
    * El clic del navegador deshace la selección. Sobre un escaneo a la vista,
-   * el primero la repone (el siguiente escaneo debe reemplazarlo, no escribirse
-   * a continuación); el segundo seguido deja el cursor donde el usuario lo puso
-   * para corregir el texto a mano.
+   * el primero la conserva (el siguiente escaneo debe reemplazarlo, no
+   * escribirse a continuación); el segundo seguido deja el cursor donde el
+   * usuario lo puso para corregir el texto a mano.
+   *
+   * Con el campo ya enfocado, el navegador coloca el cursor como acción por
+   * defecto de `mousedown`, y si se pulsa sobre texto seleccionado la aplaza
+   * hasta después de `click`: reponer la selección en `click` llega antes de
+   * que se deshaga. Se cancela esa acción; el foco ya está en el campo.
+   */
+  function handleMouseDown(event: MouseEvent<HTMLInputElement>) {
+    const shownScan = getShownScan();
+
+    isSelectionKeptRef.current =
+      event.button === 0 &&
+      document.activeElement === event.currentTarget &&
+      shownScan !== null &&
+      !shownScan.isCaretPlaced;
+
+    if (shownScan && isSelectionKeptRef.current) {
+      event.preventDefault();
+      event.currentTarget.select();
+      shownScan.isCaretPlaced = true;
+    }
+  }
+
+  /** La parte aplazada de esa acción por defecto se resuelve al soltar el botón. */
+  function handleMouseUp(event: MouseEvent<HTMLInputElement>) {
+    if (isSelectionKeptRef.current) {
+      isSelectionKeptRef.current = false;
+      event.preventDefault();
+    }
+  }
+
+  /**
+   * Con el campo sin el foco, este entra en `mousedown` y el cursor ya está
+   * colocado al llegar `click`: el primero sobre un escaneo a la vista repone
+   * la selección aquí.
    */
   function handleClick() {
     const shownScan = getShownScan();
@@ -810,7 +847,7 @@ export function EntityAutocomplete<K extends EntityKind>({
   function handleBlur() {
     const shownScan = getShownScan();
 
-    // Al volver al campo, el primer clic repone otra vez la selección.
+    // Al volver al campo, el primer clic vuelve a dejar el texto seleccionado.
     if (shownScan) {
       shownScan.isCaretPlaced = false;
     }
@@ -967,6 +1004,8 @@ export function EntityAutocomplete<K extends EntityKind>({
           onClick={handleClick}
           onFocus={handleFocus}
           onKeyDown={handleKeyDown}
+          onMouseDown={handleMouseDown}
+          onMouseUp={handleMouseUp}
           placeholder={placeholder ?? config.defaultPlaceholder}
           ref={inputRef}
           role="combobox"

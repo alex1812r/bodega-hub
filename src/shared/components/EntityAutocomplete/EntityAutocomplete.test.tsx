@@ -123,6 +123,37 @@ function pressKey(key: string) {
   return fireEvent.keyDown(getInput(), { key });
 }
 
+/**
+ * Clic de ratón con las acciones por defecto de Chromium, que jsdom no ejecuta
+ * (SHR-35). Si `mousedown` no se cancela: con el campo enfocado y texto
+ * seleccionado, la selección sigue intacta hasta DESPUÉS de `click` y solo
+ * entonces se coloca el cursor; en cualquier otro caso el foco entra y el
+ * cursor se coloca ya en `mousedown`. Devuelve si cada evento conservó su
+ * acción por defecto.
+ */
+function browserClick(caret: number) {
+  const input = getInput() as HTMLInputElement;
+  const hadSelectedText =
+    document.activeElement === input && input.selectionStart !== input.selectionEnd;
+  const isMouseDownAllowed = fireEvent.mouseDown(input);
+  const placesCaretAfterClick = isMouseDownAllowed && hadSelectedText;
+
+  if (isMouseDownAllowed && !placesCaretAfterClick) {
+    focusInput();
+    input.setSelectionRange(caret, caret);
+  }
+
+  const isMouseUpAllowed = fireEvent.mouseUp(input);
+
+  fireEvent.click(input);
+
+  if (placesCaretAfterClick) {
+    input.setSelectionRange(caret, caret);
+  }
+
+  return { isMouseDownAllowed, isMouseUpAllowed };
+}
+
 function activeOptionText() {
   const id = getInput().getAttribute("aria-activedescendant");
 
@@ -1495,15 +1526,13 @@ describe("EntityAutocomplete: escaneos seguidos", () => {
 
       await scanShownInField(partialCode, 2);
 
-      // Dos clics seguidos al final (el primero repone la selección, SHR-33; el
-      // segundo deja el cursor) y completa el código tecla a tecla.
+      // Dos clics seguidos al final (el primero conserva la selección, SHR-33;
+      // el segundo deja el cursor) y completa el código tecla a tecla.
       const input = getInput() as HTMLInputElement;
       const missingDigits = codeB.slice(partialCode.length);
 
-      for (let click = 0; click < 2; click += 1) {
-        input.setSelectionRange(partialCode.length, partialCode.length);
-        fireEvent.click(input);
-      }
+      browserClick(partialCode.length);
+      browserClick(partialCode.length);
 
       expect([input.selectionStart, input.selectionEnd]).toEqual([
         partialCode.length,
@@ -1705,18 +1734,9 @@ describe("EntityAutocomplete: escaneos seguidos", () => {
       describe("escaneo a la vista: clic, Enter suelto y resaltado (SHR-33)", () => {
         const unknownCode = "1110000000009";
 
-        /** Como el navegador: el clic deja el cursor donde se pulsa y deshace la selección. */
-        function clickField(caret: number) {
-          const input = getInput() as HTMLInputElement;
-
-          input.setSelectionRange(caret, caret);
-          fireEvent.click(input);
-        }
-
         function clickAwayAndBack(caret: number) {
           act(() => getInput().blur());
-          focusInput();
-          clickField(caret);
+          browserClick(caret);
         }
 
         function highlightedOptions() {
@@ -1726,7 +1746,8 @@ describe("EntityAutocomplete: escaneos seguidos", () => {
         }
 
         it.each([
-          ["en el campo ya enfocado", () => clickField(3)],
+          ["al final del campo ya enfocado", () => browserClick(partialCode.length)],
+          ["sobre el texto del campo ya enfocado", () => browserClick(0)],
           ["fuera y de vuelta en el campo", () => clickAwayAndBack(partialCode.length)],
         ])(
           "N1: un clic %s conserva la selección y el siguiente escaneo no se concatena",
@@ -1759,7 +1780,7 @@ describe("EntityAutocomplete: escaneos seguidos", () => {
 
           readerScan(unknownCode);
           await advance(200);
-          clickField(unknownCode.length);
+          browserClick(unknownCode.length);
 
           expect(selection()).toEqual([0, unknownCode.length]);
 
@@ -1776,14 +1797,81 @@ describe("EntityAutocomplete: escaneos seguidos", () => {
 
           readerScan(partialCode);
           await advance(200);
-          clickField(3);
-          clickField(3);
+          browserClick(3);
+          browserClick(3);
 
           expect(selection()).toEqual([3, 3]);
 
           clickAwayAndBack(5);
 
           expect(selection()).toEqual([0, partialCode.length]);
+        });
+
+        it("N1: el primer clic en el campo ya enfocado cancela las acciones por defecto que deshacen la selección y abre la lista", async () => {
+          renderScanner(partialFetcher());
+
+          readerScan(partialCode);
+          await advance(200);
+          pressKey("Escape");
+
+          expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+          expect(browserClick(3)).toEqual({ isMouseDownAllowed: false, isMouseUpAllowed: false });
+          expect(selection()).toEqual([0, partialCode.length]);
+          expect(screen.getAllByRole("option")).toHaveLength(2);
+
+          // El segundo es del navegador entero: cursor, doble clic o arrastre.
+          expect(browserClick(3)).toEqual({ isMouseDownAllowed: true, isMouseUpAllowed: true });
+          expect(selection()).toEqual([3, 3]);
+        });
+
+        it("N1: un arrastre que acaba fuera del campo no deja bloqueado el siguiente", async () => {
+          renderScanner(partialFetcher());
+
+          readerScan(partialCode);
+          await advance(200);
+
+          // Sin `mouseup` ni `click` sobre el campo.
+          expect(fireEvent.mouseDown(getInput())).toBe(false);
+          expect(selection()).toEqual([0, partialCode.length]);
+          expect(fireEvent.mouseDown(getInput())).toBe(true);
+        });
+
+        it("N1: el botón secundario no se cancela", async () => {
+          renderScanner(partialFetcher());
+
+          readerScan(partialCode);
+          await advance(200);
+
+          expect(fireEvent.mouseDown(getInput(), { button: 2 })).toBe(true);
+        });
+
+        it("N1: primer clic, segundo clic y completar el código a mano: se elige sin avisar", async () => {
+          const fetcher = partialFetcher();
+          const { onChange, onNotFound } = renderScanner(fetcher);
+
+          readerScan(partialCode);
+          await advance(200);
+          browserClick(partialCode.length);
+          browserClick(partialCode.length);
+
+          expect(selection()).toEqual([partialCode.length, partialCode.length]);
+
+          readerScan(codeB.slice(partialCode.length));
+          await advance(200);
+
+          expect(onNotFound).not.toHaveBeenCalled();
+          expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+        });
+
+        it("N1: sin escaneo a la vista el clic no se toca: cursor donde se pulsa", async () => {
+          renderScanner(partialFetcher());
+
+          await search(partialCode);
+          await advance(200);
+          (getInput() as HTMLInputElement).select();
+
+          expect(browserClick(3)).toEqual({ isMouseDownAllowed: true, isMouseUpAllowed: true });
+          expect(selection()).toEqual([3, 3]);
         });
 
         it("N1: tras una flecha de cursor el clic ya no repone la selección", async () => {
@@ -1796,7 +1884,7 @@ describe("EntityAutocomplete: escaneos seguidos", () => {
           // Flecha derecha: el navegador deja el cursor al final.
           pressKey("ArrowRight");
           (getInput() as HTMLInputElement).setSelectionRange(partialCode.length, partialCode.length);
-          clickField(partialCode.length);
+          browserClick(partialCode.length);
 
           expect(selection()).toEqual([partialCode.length, partialCode.length]);
 
