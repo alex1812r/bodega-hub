@@ -9,7 +9,7 @@ import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
-import { NumberInput } from "@/shared/components/NumberInput";
+import { getNumberInputError, NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
@@ -24,8 +24,10 @@ import {
 import { ProductImageUploadField } from "./ProductImageUploadField";
 import {
   createDefaultPackConversionFormState,
+  getUnitsPerPackError,
   packConversionStateToInput,
   ProductPackConversionFields,
+  UNITS_PER_PACK_FIELD_NAME,
   type PackConversionFormState,
 } from "./ProductPackConversionFields";
 
@@ -76,6 +78,7 @@ export function ProductFormModal({
   const [packConversionState, setPackConversionState] = useState<PackConversionFormState>(
     createDefaultPackConversionFormState(product?.packConversion),
   );
+  const [showPackConversionErrors, setShowPackConversionErrors] = useState(false);
   const isEdit = mode === "edit";
   const isUnitRole = product?.packConversion?.role === "unit";
 
@@ -93,6 +96,7 @@ export function ProductFormModal({
     setPendingImageBlob(null);
     setImageError(null);
     setPackConversionState(createDefaultPackConversionFormState(product?.packConversion));
+    setShowPackConversionErrors(false);
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -113,6 +117,30 @@ export function ProductFormModal({
     const shouldSendPackConversion =
       !isUnitRole &&
       (Boolean(product?.packConversion) || packConversionState.enabled);
+    // Sin `step`/`min` nativos: un stock con decimales o un empaque de menos de 2
+    // unidades no se envia. El campo muestra su aviso y recibe el foco.
+    const invalidFieldName =
+      ["currentStock", "minStock"].find((fieldName) =>
+        getNumberInputError(String(formData.get(fieldName) ?? ""), { decimals: 0 }),
+      ) ??
+      (shouldSendPackConversion &&
+      packConversionState.enabled &&
+      getUnitsPerPackError(packConversionState.unitsPerPack)
+        ? UNITS_PER_PACK_FIELD_NAME
+        : undefined);
+
+    if (invalidFieldName) {
+      const field = event.currentTarget.elements.namedItem(invalidFieldName);
+
+      setShowPackConversionErrors(true);
+
+      if (field instanceof HTMLElement) {
+        field.focus();
+      }
+
+      return;
+    }
+
     const input: ProductInput = {
       barcode: normalizeBarcode(String(formData.get("barcode") ?? "")),
       categoryId: categoryId || undefined,
@@ -297,6 +325,7 @@ export function ProductFormModal({
           isUnitRole={isUnitRole}
           packConversion={product?.packConversion}
           productName={name}
+          showErrors={showPackConversionErrors}
           state={packConversionState}
           onChange={(patch) =>
             setPackConversionState((current) => ({ ...current, ...patch }))

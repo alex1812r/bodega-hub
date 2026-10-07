@@ -4,7 +4,7 @@ import { useMemo } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Input } from "@/shared/components/Input";
-import { NumberInput } from "@/shared/components/NumberInput";
+import { getNumberInputError, NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 
@@ -26,9 +26,26 @@ type ProductPackConversionFieldsProps = {
   isUnitRole?: boolean;
   packConversion?: ProductPackConversionSummary;
   productName: string;
+  /** Tras intentar enviar: muestra el aviso del minimo de unidades por empaque. */
+  showErrors?: boolean;
   state: PackConversionFormState;
   onChange: (patch: Partial<PackConversionFormState>) => void;
 };
+
+/** `name` del campo en el formulario, para poder llevarle el foco. */
+export const UNITS_PER_PACK_FIELD_NAME = "unitsPerPack";
+
+/**
+ * Aviso de "Unidades por empaque", o `undefined` si vale. Mismo limite y mismo
+ * texto que `packConversionInputSchema` (entero, minimo 2), que es quien responde
+ * 400 si esto se envia.
+ */
+export function getUnitsPerPackError(text: string) {
+  return (
+    getNumberInputError(text, { decimals: 0 }) ??
+    (Number(text) >= 2 ? undefined : "Indica unidades por empaque (minimo 2).")
+  );
+}
 
 export function createDefaultPackConversionFormState(
   packConversion?: ProductPackConversionSummary,
@@ -63,6 +80,7 @@ export function ProductPackConversionFields({
   isUnitRole = false,
   packConversion,
   productName,
+  showErrors = false,
   state,
   onChange,
 }: ProductPackConversionFieldsProps) {
@@ -105,7 +123,9 @@ export function ProductPackConversionFields({
         <>
           <NumberInput
             decimals={0}
+            error={showErrors ? getUnitsPerPackError(state.unitsPerPack) : undefined}
             label="Unidades por empaque"
+            name={UNITS_PER_PACK_FIELD_NAME}
             onChange={(event) => onChange({ unitsPerPack: event.target.value })}
             required
             value={state.unitsPerPack}
