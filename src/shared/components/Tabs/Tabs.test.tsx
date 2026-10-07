@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
@@ -684,6 +684,64 @@ describe("Tabs", () => {
 
       expect(tab(/notas/i)).toHaveAttribute("aria-selected", "true");
       expect(mockReplace).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("otro escritor de la misma URL en el mismo tick (SHR-32)", () => {
+    const sideItems: TabItem<"lista" | "mapa">[] = [
+      { value: "lista", label: "Lista", content: <p>Panel lista</p> },
+      { value: "mapa", label: "Mapa", content: <p>Panel mapa</p> },
+    ];
+
+    function TwoTabs() {
+      return (
+        <>
+          <Tabs ariaLabel="Secciones" items={items} urlParam="tab" />
+          <Tabs ariaLabel="Vista" items={sideItems} urlParam="vista" />
+        </>
+      );
+    }
+
+    it.each([
+      ["primero la de secciones", [/ventas/i, /mapa/i], "?q=harina&tab=ventas&vista=mapa"],
+      ["primero la de vista", [/mapa/i, /ventas/i], "?q=harina&vista=mapa&tab=ventas"],
+    ] as const)(
+      "dos barras con parámetros distintos cambian en el mismo tick (%s): la URL conserva los dos",
+      (_label, order, expectedSearch) => {
+        setUrl("q=harina");
+
+        const { rerender } = render(<TwoTabs />);
+
+        // Un solo `act`: ningún render entre las dos escrituras.
+        act(() => {
+          for (const name of order) {
+            fireEvent.click(tab(name));
+          }
+        });
+
+        expect(window.location.search).toBe(expectedSearch);
+        expect(mockReplace).toHaveBeenCalledTimes(2);
+
+        rerender(<TwoTabs />);
+
+        expect(tab(/ventas/i)).toHaveAttribute("aria-selected", "true");
+        expect(tab(/mapa/i)).toHaveAttribute("aria-selected", "true");
+        expect(mockReplace).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    it("conserva un parámetro ajeno escrito justo antes del clic y no devuelve uno recién quitado", () => {
+      setUrl("q=harina");
+      render(<Tabs ariaLabel="Secciones" items={items} urlParam="tab" />);
+
+      act(() => {
+        // Una lista de la misma pantalla cambia su filtro y limpia la búsqueda.
+        window.history.replaceState(null, "", `${PATHNAME}?estado=active`);
+        fireEvent.click(tab(/notas/i));
+      });
+
+      expect(mockReplace).toHaveBeenLastCalledWith("/contactos/c-1?estado=active&tab=notas");
+      expect(window.location.search).toBe("?estado=active&tab=notas");
     });
   });
 });

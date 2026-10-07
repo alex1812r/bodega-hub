@@ -310,7 +310,11 @@ function UrlTabs<TValue extends string>({
 
     setSelection({ urlValue, value: nextValue });
 
-    const params = new URLSearchParams(searchParams.toString());
+    // Parte de la URL real de este instante y no de la copia de `useSearchParams`
+    // (la del último render): si otro escritor de la pantalla (una lista, otra
+    // barra de pestañas) acaba de escribir en este mismo tick, su parámetro aún
+    // no está en esa copia y esta escritura lo borraría.
+    const params = new URLSearchParams(window.location.search);
 
     if (nextValue === fallbackValue) {
       params.delete(urlParam);

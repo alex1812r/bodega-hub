@@ -413,6 +413,9 @@ function reconcileWithUrl(
  * - Los valores por defecto no se escriben en la URL.
  * - Lectura tolerante: un parámetro inválido cae a su default sin afectar al
  *   resto; los parámetros que no son del schema (`tab`, `returnTo`, …) se conservan.
+ * - Cada escritura parte de la URL real del navegador en ese instante y solo
+ *   toca los parámetros del schema: varias listas o unas `Tabs` con `urlParam`
+ *   pueden escribir en el mismo tick sin borrarse entre sí.
  * - Escribe con `window.history.replaceState` nativo, que Next refleja en
  *   `useSearchParams` sin ir al servidor ni mover el scroll. No usa
  *   `router.replace`: es una navegación que queda pendiente, y el `push` de un
@@ -480,7 +483,6 @@ export function useUrlListState<TShape extends UrlListShape>(
     pageField: options.pageField ?? DEFAULT_PAGE_FIELD,
     pathname,
     textFields,
-    urlKey,
   };
   const environmentRef = useRef(environment);
   /** Última query escrita (o la de la URL si no hay escrituras en camino). */
@@ -534,8 +536,11 @@ export function useUrlListState<TShape extends UrlListShape>(
 
     const env = environmentRef.current;
     const snapshot = store.get();
-    // Estado local completo + parámetros ajenos de la última URL en pantalla.
-    const query = env.model.buildQuery(env.urlKey, snapshot.state);
+    // Estado local completo + parámetros ajenos de la URL real de este instante.
+    // No se parte de la copia de `useSearchParams` (la del último render): si
+    // otro escritor de la pantalla (pestañas, otra lista) acaba de escribir en
+    // este mismo tick, su parámetro aún no está en esa copia y se borraría.
+    const query = env.model.buildQuery(window.location.search, snapshot.state);
 
     if (query === targetQueryRef.current) {
       return;

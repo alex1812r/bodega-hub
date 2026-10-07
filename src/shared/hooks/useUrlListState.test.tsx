@@ -14,6 +14,7 @@ import {
 import { z } from "zod";
 
 import { MAX_PAGE_LIMIT } from "@/lib/api/pagination";
+import { Tabs, type TabItem } from "@/shared/components/Tabs/Tabs";
 
 import {
   URL_LIST_ECHO_TTL_MS,
@@ -124,8 +125,17 @@ function nextReplaceState(data: unknown, unused: string, url?: string | URL | nu
   }
 }
 
-function renderList(query = "") {
+/**
+ * Deja la pantalla en esa query: la barra de direcciones (de la que parte cada
+ * escritura) y `useSearchParams` (de donde se lee para pintar).
+ */
+function setUrl(query: string) {
+  nativeHistory.replace(null, "", query ? `${mockUrl.pathname}?${query}` : mockUrl.pathname);
   mockUrl.query = query;
+}
+
+function renderList(query = "") {
+  setUrl(query);
 
   return renderHook(() => useUrlListState(schema));
 }
@@ -369,7 +379,7 @@ describe("useUrlListState", () => {
       act(() => result.current.setField("search", "arr"));
 
       // Otro componente (Tabs) cambia su parámetro mientras el debounce corre.
-      mockUrl.query = "tab=ventas";
+      setUrl("tab=ventas");
       rerender();
 
       expect(result.current.state.search).toBe("arr");
@@ -776,6 +786,184 @@ describe("useUrlListState", () => {
     });
   });
 
+  describe("varios escritores de la misma URL en el mismo tick (SHR-32)", () => {
+    const tabItems: TabItem<"resumen" | "ventas">[] = [
+      { value: "resumen", label: "Resumen", content: <p>Panel resumen</p> },
+      { value: "ventas", label: "Ventas", content: <p>Panel ventas</p> },
+    ];
+    const subListSchema = z.object({
+      subEstado: listParams.oneOf(["all", "open"], "all"),
+      subPage: listParams.page(),
+    });
+
+    function TabsAndList() {
+      const list = useUrlListState(schema);
+
+      return (
+        <>
+          <Tabs
+            ariaLabel="Secciones"
+            items={tabItems}
+            onValueChange={() => list.setField("status", "active")}
+            urlParam="tab"
+          />
+          <button onClick={() => list.setField("onlyLow", true)} type="button">
+            Solo bajo stock
+          </button>
+          <output data-testid="status">{list.state.status}</output>
+          <output data-testid="onlyLow">{String(list.state.onlyLow)}</output>
+        </>
+      );
+    }
+
+    function renderTwoLists() {
+      return renderHook(() => ({
+        list: useUrlListState(schema),
+        subList: useUrlListState(subListSchema, { pageField: "subPage" }),
+      }));
+    }
+
+    it("Tabs escribe y su onValueChange cambia un filtro de la lista: la URL conserva los dos", () => {
+      const { rerender } = render(<TabsAndList />);
+
+      fireEvent.click(screen.getByRole("tab", { name: "Ventas" }));
+
+      expect(window.location.search).toBe("?tab=ventas&status=active");
+      expect(mockReplace).toHaveBeenCalledTimes(2);
+
+      // La URL combinada que devuelve Next es un eco para los dos: nadie la reescribe.
+      rerender(<TabsAndList />);
+
+      expect(screen.getByRole("tab", { name: "Ventas" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByTestId("status")).toHaveTextContent("active");
+      expect(window.location.search).toBe("?tab=ventas&status=active");
+      expect(mockReplace).toHaveBeenCalledTimes(2);
+    });
+
+    it("la lista escribe y Tabs escribe después en el mismo tick: la URL conserva los dos", () => {
+      const { rerender } = render(<TabsAndList />);
+
+      // Un solo `act`: ningún render entre las tres escrituras (filtro, pestaña, filtro).
+      act(() => {
+        fireEvent.click(screen.getByRole("button", { name: "Solo bajo stock" }));
+        fireEvent.click(screen.getByRole("tab", { name: "Ventas" }));
+      });
+
+      expect(window.location.search).toBe("?tab=ventas&status=active&onlyLow=true");
+      expect(mockReplace).toHaveBeenCalledTimes(3);
+
+      rerender(<TabsAndList />);
+
+      expect(screen.getByRole("tab", { name: "Ventas" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByTestId("status")).toHaveTextContent("active");
+      expect(screen.getByTestId("onlyLow")).toHaveTextContent("true");
+      expect(mockReplace).toHaveBeenCalledTimes(3);
+    });
+
+    it.each([
+      ["lista y luego sublista", true, "?status=active&subEstado=open"],
+      ["sublista y luego lista", false, "?subEstado=open&status=active"],
+    ] as const)(
+      "dos listas con campos distintos escriben en el mismo tick (%s): cada una conserva lo de la otra",
+      (_label, listFirst, expectedSearch) => {
+        const { result, rerender } = renderTwoLists();
+
+        act(() => {
+          if (listFirst) {
+            result.current.list.setField("status", "active");
+            result.current.subList.setField("subEstado", "open");
+          } else {
+            result.current.subList.setField("subEstado", "open");
+            result.current.list.setField("status", "active");
+          }
+        });
+
+        expect(window.location.search).toBe(expectedSearch);
+
+        rerender();
+
+        expect(result.current.list.state.status).toBe("active");
+        expect(result.current.subList.state.subEstado).toBe("open");
+        expect(mockReplace).toHaveBeenCalledTimes(2);
+
+        // Volver al default en el mismo tick quita solo lo de cada una.
+        act(() => {
+          result.current.list.setField("status", "all");
+          result.current.subList.setField("subPage", 4);
+        });
+
+        expect(window.location.search).toBe("?subEstado=open&subPage=4");
+      },
+    );
+
+    it("un parámetro ajeno escrito justo antes de que venza el debounce se conserva", () => {
+      jest.useFakeTimers();
+
+      const { result } = renderList();
+
+      act(() => result.current.setField("search", "bet"));
+      act(() => {
+        jest.advanceTimersByTime(299);
+        // Otro escritor (pestañas, otra lista) en el mismo tick en que vence el debounce.
+        window.history.replaceState(null, "", "/productos?tab=b");
+        jest.advanceTimersByTime(1);
+      });
+
+      expect(window.location.search).toBe("?tab=b&search=bet");
+      expect(lastReplacedUrl()).toBe("/productos?tab=b&search=bet");
+    });
+
+    it("un parámetro ajeno escrito justo antes del clic en un enlace con texto pendiente se conserva", () => {
+      jest.useFakeTimers();
+
+      const seenByLink: string[] = [];
+
+      function ListWithLink() {
+        const list = useUrlListState(schema);
+
+        return (
+          <>
+            <input
+              aria-label="Buscar"
+              onChange={(event) => list.setField("search", event.target.value)}
+              value={list.state.search}
+            />
+            <a
+              href="/productos/7"
+              onClick={(event) => {
+                event.preventDefault();
+                seenByLink.push(window.location.pathname + window.location.search);
+              }}
+            >
+              Detalle
+            </a>
+          </>
+        );
+      }
+
+      render(<ListWithLink />);
+
+      act(() => {
+        fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "bet" } });
+        window.history.replaceState(null, "", "/productos?tab=b");
+        fireEvent.click(screen.getByText("Detalle"));
+      });
+
+      expect(seenByLink).toEqual(["/productos?tab=b&search=bet"]);
+    });
+
+    it("un parámetro ajeno quitado justo antes de escribir no vuelve a la URL", () => {
+      const { result } = renderList("tab=b");
+
+      act(() => {
+        window.history.replaceState(null, "", "/productos");
+        result.current.setField("status", "active");
+      });
+
+      expect(window.location.search).toBe("?status=active");
+    });
+  });
+
   describe("página", () => {
     it.each([
       ["filtro", { status: "active" }, "/productos?status=active"],
@@ -898,7 +1086,7 @@ describe("useUrlListState", () => {
       const { result, rerender } = renderList("status=active");
 
       act(() => result.current.setField("onlyLow", true));
-      mockUrl.query = "status=inactive&tab=ventas";
+      setUrl("status=inactive&tab=ventas");
       rerender();
       act(() => result.current.setField("page", 2));
 
