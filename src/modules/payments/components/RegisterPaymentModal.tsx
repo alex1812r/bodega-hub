@@ -1,11 +1,10 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useId, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useMemo, useRef, useState } from "react";
 
 import { usePurchase } from "@/modules/purchases/hooks/usePurchases";
 import { useSale } from "@/modules/sales/hooks/useSales";
 import { Button } from "@/shared/components/Button";
-import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
 import { SelectField } from "@/shared/components/SelectField";
@@ -54,6 +53,9 @@ export function RegisterPaymentModal({
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [successBalanceVes, setSuccessBalanceVes] = useState<number | undefined>();
   const createPayment = useCreatePayment();
+  // Candado contra reentrada: `isPending` no cambia hasta el siguiente render, y dos
+  // envíos en el mismo tick registrarían el pago dos veces (no hay idempotencia).
+  const submitLockRef = useRef(false);
   const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
   const enabledMethods = useMemo(
     () =>
@@ -109,9 +111,11 @@ export function RegisterPaymentModal({
     setHasSubmitted(true);
     setSuccessBalanceVes(undefined);
 
-    if (!canSubmit) {
+    if (!canSubmit || submitLockRef.current || createPayment.isPending) {
       return;
     }
+
+    submitLockRef.current = true;
 
     try {
       const payment = await createPayment.mutateAsync({
@@ -123,7 +127,10 @@ export function RegisterPaymentModal({
       setSuccessBalanceVes(payment.pendingBalanceVes);
       clearFields();
     } catch {
+      // El mensaje lo pinta `createPayment.error` dentro del formulario.
       return;
+    } finally {
+      submitLockRef.current = false;
     }
   }
 
@@ -135,15 +142,27 @@ export function RegisterPaymentModal({
           : "Registra un abono asociado a una venta existente."
       }
       footer={({ close }) => (
-        <FormActions
-          isSubmitting={createPayment.isPending}
-          onCancel={close}
-          submitFormId={formId}
-          submitLabel="Registrar pago"
-          submittingLabel="Registrando..."
-        />
+        <>
+          <Button
+            disabled={createPayment.isPending}
+            onClick={close}
+            type="button"
+            variant="outline"
+          >
+            Cancelar
+          </Button>
+          <Button disabled={createPayment.isPending} form={formId} type="submit">
+            {createPayment.isPending ? "Registrando..." : "Registrar pago"}
+          </Button>
+        </>
       )}
       onOpenChange={(nextOpen) => {
+        // Con el pago en vuelo no se cierra (Esc, X, clic fuera): al reabrir, el
+        // formulario limpio invitaría a registrarlo otra vez.
+        if (!nextOpen && (createPayment.isPending || submitLockRef.current)) {
+          return;
+        }
+
         setOpen(nextOpen);
         if (nextOpen) {
           createPayment.reset();

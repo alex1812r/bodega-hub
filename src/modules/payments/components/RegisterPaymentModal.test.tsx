@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 
@@ -267,6 +267,105 @@ describe("RegisterPaymentModal", () => {
       currency: "USD",
       method: "efectivo_usd",
       saleId: "sale-002",
+    });
+  });
+
+  describe("SHR-19 A1: pago en vuelo", () => {
+    let resolvePost: (response: Response) => void;
+
+    beforeEach(() => {
+      const defaultFetch = fetchMock.getMockImplementation() as (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<Response>;
+
+      fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          return new Promise<Response>((resolve) => {
+            resolvePost = resolve;
+          });
+        }
+
+        return defaultFetch(url, init);
+      });
+    });
+
+    it("no se puede cerrar con Esc, X ni Cancelar mientras el POST sigue en curso", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+      await waitFor(() => expect(postedBodies()).toHaveLength(1));
+
+      expect(dialog.getByRole("button", { name: "Cancelar" })).toBeDisabled();
+      expect(dialog.getByRole("button", { name: "Registrando..." })).toBeDisabled();
+
+      await user.keyboard("{Escape}");
+      await user.click(dialog.getByRole("button", { name: "Cerrar modal" }));
+      await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(dialog.getByLabelText("Monto")).toHaveValue("100");
+
+      await act(async () => {
+        resolvePost(paymentResponse);
+      });
+
+      expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+      expect(postedBodies()).toHaveLength(1);
+
+      // Ya sin petición en curso, el modal vuelve a cerrarse con normalidad.
+      await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    });
+
+    it("dos envios del formulario en el mismo tick solo generan un POST", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await user.tab();
+
+      const form = screen.getByRole("dialog").querySelector("form") as HTMLFormElement;
+
+      await act(async () => {
+        fireEvent.submit(form);
+        fireEvent.submit(form);
+      });
+      await act(async () => {
+        fireEvent.submit(form);
+      });
+
+      expect(postedBodies()).toHaveLength(1);
+
+      await act(async () => {
+        resolvePost(paymentResponse);
+      });
+      expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+    });
+
+    it("tras un rechazo del servidor el candado se libera y se puede reintentar", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+      await waitFor(() => expect(postedBodies()).toHaveLength(1));
+      await act(async () => {
+        resolvePost(
+          jsonResponse({ error: { code: "CONFLICT", message: "La caja esta cerrada." } }, 409),
+        );
+      });
+
+      expect(await dialog.findByText("La caja esta cerrada.")).toBeInTheDocument();
+      expect(dialog.getByRole("button", { name: "Cancelar" })).toBeEnabled();
+
+      await submit(user);
+      await waitFor(() => expect(postedBodies()).toHaveLength(2));
     });
   });
 
