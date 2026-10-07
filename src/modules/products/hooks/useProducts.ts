@@ -67,7 +67,8 @@ export type ProductInput = {
     unitsPerPack?: number;
   };
   salePriceRef: number;
-  sku: string;
+  /** Vacío o ausente: en el alta lo genera el servidor; en la edición se conserva el actual. */
+  sku?: string;
 };
 
 export type ProductUpdateInput = Partial<ProductInput> & {

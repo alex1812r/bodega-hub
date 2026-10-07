@@ -21,6 +21,11 @@ import type {
   ProductInput,
   ProductPriceInput,
 } from "./products.mock-server";
+import {
+  buildGeneratedSku,
+  GENERATED_SKU_EXHAUSTED_MESSAGE,
+  GENERATED_SKU_MAX_ATTEMPTS,
+} from "./productSku";
 import { applyProductSort } from "./productSort";
 import { buildProductSearchOrFilter, normalizeBarcode } from "./productSearch";
 import {
@@ -67,7 +72,7 @@ const productSelect = `
   category:categories(id, name, description, tax_rate, is_active, created_at, updated_at)
 `;
 
-function toProductInsert(input: ProductInput, storeId: string) {
+function toProductInsert(input: ProductInput, sku: string, storeId: string) {
   return {
     barcode: normalizeBarcode(input.barcode),
     category_id: input.categoryId ?? null,
@@ -79,12 +84,15 @@ function toProductInsert(input: ProductInput, storeId: string) {
     min_stock: input.minStock ?? 5,
     name: input.name ?? "Producto",
     sale_price_ref: input.salePriceRef ?? 0,
-    sku: normalizeSku(input.sku ?? ""),
+    sku,
     store_id: storeId,
   };
 }
 
 function toProductUpdate(input: ProductInput) {
+  // SKU vacio = se conserva el actual: ni se borra ni se regenera.
+  const sku = normalizeSku(input.sku ?? "");
+
   return {
     ...(input.barcode !== undefined ? { barcode: normalizeBarcode(input.barcode) } : {}),
     ...(input.categoryId !== undefined ? { category_id: input.categoryId ?? null } : {}),
@@ -96,7 +104,7 @@ function toProductUpdate(input: ProductInput) {
     ...(input.minStock !== undefined ? { min_stock: input.minStock } : {}),
     ...(input.name !== undefined ? { name: input.name } : {}),
     ...(input.salePriceRef !== undefined ? { sale_price_ref: input.salePriceRef } : {}),
-    ...(input.sku !== undefined ? { sku: normalizeSku(input.sku) } : {}),
+    ...(sku ? { sku } : {}),
   };
 }
 
@@ -255,16 +263,48 @@ async function registerInitialStock(
   throw adjustError;
 }
 
+/** Violacion de `products_store_sku_unique` (y no de la unicidad del codigo de barras). */
+function isSkuUniqueViolation(error: { code?: string; details?: string; message?: string } | null) {
+  return error?.code === "23505" && /sku/i.test(`${error.message ?? ""} ${error.details ?? ""}`);
+}
+
+/**
+ * Inserta la fila del producto. Con SKU escrito hay un solo intento. Sin SKU lo
+ * genera desde el nombre y, si choca con otro de la tienda, reintenta con sufijo:
+ * la unicidad la decide el indice, no una consulta previa (dos altas a la vez).
+ */
+async function insertProductRow(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  input: ProductInput,
+  storeId: string,
+) {
+  const requestedSku = normalizeSku(input.sku ?? "");
+  const attempts = requestedSku ? 1 : GENERATED_SKU_MAX_ATTEMPTS;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const sku = requestedSku || buildGeneratedSku(input.name ?? "", attempt);
+    const { data, error } = await supabase
+      .from("products")
+      .insert(toProductInsert(input, sku, storeId))
+      .select(productSelect)
+      .single<ProductRow>();
+
+    if (!requestedSku && isSkuUniqueViolation(error)) {
+      continue;
+    }
+
+    throwIfSupabaseError(error);
+
+    return data;
+  }
+
+  throw new ApiError(409, "CONFLICT", GENERATED_SKU_EXHAUSTED_MESSAGE);
+}
+
 export async function createProduct(input: ProductInputWithPackConversion, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { packConversion, ...productInput } = input;
-  const { data, error } = await supabase
-    .from("products")
-    .insert(toProductInsert(productInput, storeId))
-    .select(productSelect)
-    .single<ProductRow>();
-
-  throwIfSupabaseError(error);
+  const data = await insertProductRow(supabase, productInput, storeId);
 
   if (!data) {
     throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear el producto.");

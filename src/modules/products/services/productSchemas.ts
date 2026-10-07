@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { normalizeBarcode } from "@/modules/products/services/productSearch";
-import { normalizeOptionalSku, normalizeSku } from "@/shared/utils/skuGeneration";
+import { normalizeOptionalSku } from "@/shared/utils/skuGeneration";
 
 import { packConversionInputSchema } from "./packConversionSchemas";
 
@@ -10,8 +10,10 @@ export const optionalNullableBarcodeSchema = z
   .optional()
   .transform((value) => (value === undefined ? undefined : normalizeBarcode(value)));
 
-export const skuSchema = z.string().trim().min(1).transform(normalizeSku);
-
+/**
+ * SKU opcional: sin valor o en blanco queda `undefined`. En el alta de producto
+ * el servidor lo genera desde el nombre; en la edición se conserva el actual.
+ */
 export const optionalSkuSchema = z
   .string()
   .optional()
@@ -31,7 +33,7 @@ export const createProductSchema = z.object({
   name: z.string().min(1),
   packConversion: packConversionInputSchema.optional(),
   salePriceRef: z.number().min(0),
-  sku: skuSchema,
+  sku: optionalSkuSchema,
 });
 
 export const updateProductSchema = z.object({
@@ -53,7 +55,7 @@ export const updateProductSchema = z.object({
   name: z.string().min(1).optional(),
   packConversion: packConversionInputSchema.optional(),
   salePriceRef: z.number().min(0).optional(),
-  sku: skuSchema.optional(),
+  sku: optionalSkuSchema,
 });
 
 /** Solo asignar barcode cuando el producto aun no tiene uno. */

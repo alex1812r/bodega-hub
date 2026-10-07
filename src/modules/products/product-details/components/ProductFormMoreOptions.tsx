@@ -13,10 +13,8 @@ import {
   type PackConversionFormState,
 } from "./ProductPackConversionFields";
 
-/** `name` del campo SKU en el formulario, para poder llevarle el foco. */
-export const SKU_FIELD_NAME = "sku";
-
-export const SKU_REQUIRED_MESSAGE = "Indica el SKU o genéralo desde el nombre con el botón.";
+const SKU_HELPER_TEXT =
+  "Código interno; si tienes código de barras, úsalo. Si lo dejas vacío se genera solo.";
 
 type ProductFormMoreOptionsProps = {
   isEdit: boolean;
@@ -28,7 +26,7 @@ type ProductFormMoreOptionsProps = {
   packConversionState: PackConversionFormState;
   product?: ProductWithCategory;
   productName: string;
-  /** Tras intentar enviar: muestra los avisos de SKU y de unidades por empaque. */
+  /** Tras intentar enviar: muestra el aviso de unidades por empaque. */
   showErrors: boolean;
   sku: string;
 };
@@ -57,17 +55,16 @@ export function ProductFormMoreOptions({
       open={open}
       summary={
         isEdit && product
-          ? `SKU ${sku || "sin definir"} · Stock actual ${product.currentStock}`
+          ? `SKU ${sku || product.sku} · Stock actual ${product.currentStock}`
           : "SKU, descripción, stock y empaque"
       }
       title="Más opciones"
     >
       <div className="grid gap-4">
         <Input
-          aria-required
-          error={showErrors && !sku.trim() ? SKU_REQUIRED_MESSAGE : undefined}
+          helperText={SKU_HELPER_TEXT}
           label="SKU"
-          name={SKU_FIELD_NAME}
+          name="sku"
           onChange={(event) => onSkuChange(event.target.value.toLowerCase())}
           trailing={
             <GenerateSkuIconButton

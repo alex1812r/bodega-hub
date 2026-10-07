@@ -2,7 +2,6 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { generateProductSkuFromName } from "../../../../shared/utils/skuGeneration";
 import { ProductFormModal } from "./ProductFormModal";
 
 jest.mock("../../../../shared/auth/Can", () => ({
@@ -304,7 +303,15 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
       "Se puede vender por unidad",
     ]);
     expect(screen.getByLabelText("SKU")).toBeVisible();
-    expect(screen.getByLabelText("SKU")).toHaveAttribute("aria-required", "true");
+    expect(screen.getByLabelText("SKU")).not.toHaveAttribute("aria-required");
+    expect(screen.getByLabelText("SKU")).toHaveAccessibleDescription(
+      "Código interno; si tienes código de barras, úsalo. Si lo dejas vacío se genera solo.",
+    );
+    expect(
+      screen.getByText(
+        "Código interno; si tienes código de barras, úsalo. Si lo dejas vacío se genera solo.",
+      ),
+    ).toBeVisible();
   });
 
   it("edicion sin abrir Mas opciones: envia el mismo payload, con los campos de la seccion cerrada y sin stock", async () => {
@@ -362,27 +369,13 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     expect(onCreated).not.toHaveBeenCalled();
   });
 
-  it("SKU vacio con la seccion cerrada: no envia, abre Mas opciones, enfoca SKU y avisa", async () => {
+  it("alta sin SKU (PRO-05): envia a la primera, sin SKU, sin abrir Mas opciones ni avisar", async () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
+    const onOpenChange = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
     await fillBasics(user);
-    await user.click(screen.getByRole("button", { name: "Crear producto" }));
-
-    const sku = screen.getByLabelText("SKU");
-
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "true");
-    expect(sku).toBeVisible();
-    expect(sku).toHaveFocus();
-    expect(sku).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByText("Indica el SKU o genéralo desde el nombre con el botón.")).toBeVisible();
-
-    await user.paste("harina");
-
-    expect(sku).not.toHaveAttribute("aria-invalid");
-
     await user.click(screen.getByRole("button", { name: "Crear producto" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -395,8 +388,60 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
       name: "Harina",
       packConversion: undefined,
       salePriceRef: 2,
-      sku: "harina",
+      sku: undefined,
     });
+    expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("SKU")).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByLabelText("SKU")).not.toHaveFocus();
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it("el boton de generar sigue rellenando el SKU desde el nombre y ese SKU viaja", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+
+    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    await user.click(screen.getByLabelText("Nombre"));
+    await user.paste("Harina PAN 1kg");
+    await user.click(screen.getByLabelText("Precio REF"));
+    await user.paste("2");
+    await openMoreOptions(user);
+    await user.click(screen.getByRole("button", { name: /generar/i }));
+
+    expect(screen.getByLabelText("SKU")).toHaveValue("hari-pan-1kg");
+
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ sku: "hari-pan-1kg" });
+  });
+
+  it("edicion con el SKU borrado (PRO-05): guarda sin SKU para que el servidor conserve el actual", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+
+    render(
+      <ProductFormModal
+        categories={categories}
+        mode="edit"
+        onOpenChange={jest.fn()}
+        onSubmit={onSubmit}
+        open
+        product={packProduct}
+      />,
+    );
+    await openMoreOptions(user);
+    await user.clear(screen.getByLabelText("SKU"));
+    await user.click(moreOptionsToggle());
+
+    // Cerrada, la sección resume el SKU que el producto conserva.
+    expect(screen.getByText("SKU caja-cola · Stock actual 7")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toHaveProperty("sku", undefined);
+    expect(screen.getByLabelText("SKU")).not.toHaveAttribute("aria-invalid");
   });
 
   it("stock minimo con decimales y la seccion cerrada: no envia, la abre y enfoca el campo", async () => {
@@ -549,10 +594,11 @@ describe("ProductFormModal · modo compact (PRO-01)", () => {
     expect(screen.queryByLabelText("SKU")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Stock inicial")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Se puede vender por unidad")).not.toBeInTheDocument();
+    expect(screen.getByText(/el SKU se genera solo/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Crear producto" })).toBeInTheDocument();
   });
 
-  it("precarga initialValues, envia el alta con SKU generado y entrega el producto creado antes de cerrar", async () => {
+  it("precarga initialValues, envia el alta sin SKU (lo pone el servidor) y entrega el producto creado antes de cerrar", async () => {
     const user = userEvent.setup({ delay: null });
     const created = { id: "prod-9", name: "Harina PAN 1kg", sku: "hari-pan-1kg" } as ProductProp;
     const calls: string[] = [];
@@ -598,9 +644,8 @@ describe("ProductFormModal · modo compact (PRO-01)", () => {
       name: "Harina PAN 1kg",
       packConversion: undefined,
       salePriceRef: 2,
-      sku: generateProductSkuFromName("Harina PAN 1kg"),
+      sku: undefined,
     });
-    expect(onSubmit.mock.calls[0][0].sku).not.toBe("");
     expect(onSubmit.mock.calls[0][1]).toEqual({ pendingImageBlob: null });
     expect(onCreated).toHaveBeenCalledWith(created);
     expect(calls).toEqual(["created", "open:false"]);

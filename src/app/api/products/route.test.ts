@@ -201,6 +201,57 @@ describe("/api/products", () => {
     expect(response.status).toBe(400);
   });
 
+  function postProduct(body: Record<string, unknown>) {
+    return POST(
+      new Request("http://localhost/api/products", {
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json", "x-demo-role": "almacen" },
+        method: "POST",
+      }),
+    );
+  }
+
+  it.each([{}, { sku: "" }, { sku: "   " }])(
+    "creates a product without sku (%j) and generates it from the name",
+    async (input) => {
+      const name = `Ñandú Único ${JSON.stringify(input).length}`;
+      const response = await postProduct({ name, salePriceRef: 10, ...input });
+      const body = await response.json();
+
+      expect(response.status).toBe(201);
+      expect(body.data.name).toBe(name);
+      expect(body.data.sku).toMatch(/^nand-unic-\d+$/);
+    },
+  );
+
+  it("gives a second product with the same name a different generated sku", async () => {
+    const first = await postProduct({ name: "Queso Llanero", salePriceRef: 4 });
+    const second = await postProduct({ name: "Queso Llanero", salePriceRef: 4 });
+    const listed = await GET(
+      new Request("http://localhost/api/products?search=Queso%20Llanero&limit=100"),
+    );
+    const skus = (await listed.json()).data.items.map((product: { sku: string }) => product.sku);
+
+    expect([first.status, second.status]).toEqual([201, 201]);
+    expect(skus).toHaveLength(2);
+    expect(skus).toContain("ques-llan");
+    expect(skus.find((sku: string) => sku !== "ques-llan")).toMatch(/^ques-llan-[0-9a-f]{4}$/);
+  });
+
+  it("creates a product whose name has no letters or digits with a fallback sku", async () => {
+    const response = await postProduct({ name: "🍕🍕", salePriceRef: 1 });
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body.data.sku).toMatch(/^producto(-[0-9a-f]{4})?$/);
+  });
+
+  it("still rejects a sku that is not text", async () => {
+    const response = await postProduct({ name: "Producto", salePriceRef: 10, sku: 123 });
+
+    expect(response.status).toBe(400);
+  });
+
   it("rejects duplicate product SKU", async () => {
     const response = await POST(
       new Request("http://localhost/api/products", {

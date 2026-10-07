@@ -10,7 +10,6 @@ import { FormActions } from "@/shared/components/FormActions";
 import { Modal } from "@/shared/components/Modal";
 import { getNumberInputError } from "@/shared/components/NumberInput";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
-import { generateProductSkuFromName } from "@/shared/utils/skuGeneration";
 
 import type { ProductInput, ProductWithCategory } from "../../hooks/useProducts";
 import { normalizeBarcode } from "../../services/productSearch";
@@ -19,7 +18,7 @@ import {
   uploadProductImageBlob,
 } from "../../services/uploadProductImage";
 import { ProductFormBasicFields } from "./ProductFormBasicFields";
-import { ProductFormMoreOptions, SKU_FIELD_NAME } from "./ProductFormMoreOptions";
+import { ProductFormMoreOptions } from "./ProductFormMoreOptions";
 import { ProductImageUploadField } from "./ProductImageUploadField";
 import {
   createDefaultPackConversionFormState,
@@ -53,7 +52,7 @@ export type ProductFormModalProps = {
    * Precio REF, Costo REF), sin imagen y sin "Más opciones". Siempre es un alta:
    * `mode` y `product` se ignoran. Lo que no se muestra viaja como en un alta
    * con esos campos vacíos (sin stock inicial, sin stock mínimo, sin empaque) y
-   * el SKU, que el BFF exige, se genera con `generateProductSkuFromName(name)`.
+   * sin SKU: lo genera el servidor desde el nombre, único en la tienda.
    */
   compact?: boolean;
   /** Error del servidor (p. ej. `mutation.error?.message`); se muestra al pie del formulario. */
@@ -192,17 +191,13 @@ export function ProductFormModal({
     const form = event.currentTarget;
     const formData = new FormData(form);
     const categoryId = String(formData.get("categoryId") ?? "");
-    // En `compact` el SKU no se muestra y el BFF lo exige: sale del nombre.
-    const submittedSku =
-      sku.trim().toLowerCase() || (compact ? generateProductSkuFromName(name) : "");
     const shouldSendPackConversion =
       !isUnitRole &&
       (Boolean(product?.packConversion) || packConversionState.enabled);
-    // Sin `required`/`step`/`min` nativos: un SKU vacío, un stock con decimales o
-    // un empaque de menos de 2 unidades no se envía. El campo muestra su aviso y
-    // recibe el foco. Se revisan en el orden en que aparecen en "Más opciones".
+    // Sin `required`/`step`/`min` nativos: un stock con decimales o un empaque
+    // de menos de 2 unidades no se envía. El campo muestra su aviso y recibe el
+    // foco. Se revisan en el orden en que aparecen en "Más opciones".
     const invalidFieldName =
-      (submittedSku ? undefined : SKU_FIELD_NAME) ??
       ["currentStock", "minStock"].find((fieldName) =>
         getNumberInputError(String(formData.get(fieldName) ?? ""), { decimals: 0 }),
       ) ??
@@ -232,7 +227,9 @@ export function ProductFormModal({
         ? packConversionStateToInput(packConversionState)
         : undefined,
       salePriceRef: Number(formData.get("salePriceRef") ?? 0),
-      sku: submittedSku,
+      // Vacío no viaja: en el alta el servidor lo genera desde el nombre y en
+      // la edición se conserva el que tiene el producto.
+      sku: sku.trim().toLowerCase() || undefined,
     };
 
     // Si `onSubmit` rechaza, no se llega a `close()`: el modal queda abierto.
@@ -338,7 +335,7 @@ export function ProductFormModal({
         />
         {compact ? (
           <p className="text-sm text-on-surface-variant">
-            Se crea con lo básico y el SKU sale del nombre. El stock, el empaque y la imagen se
+            Se crea con lo básico y el SKU se genera solo. El stock, el empaque y la imagen se
             completan después desde Productos.
           </p>
         ) : (

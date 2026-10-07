@@ -17,6 +17,11 @@ import { generateProductSkuFromName, normalizeSku } from "@/shared/utils/skuGene
 
 import type { PackConversionInput } from "./packConversionSchemas";
 import { buildPackConversionSummary } from "./packConversionSummary";
+import {
+  buildGeneratedSku,
+  GENERATED_SKU_EXHAUSTED_MESSAGE,
+  GENERATED_SKU_MAX_ATTEMPTS,
+} from "./productSku";
 import { parseProductSort, sortProductItems } from "./productSort";
 import { matchesProductSearch, matchesExactBarcode, normalizeBarcode } from "./productSearch";
 import { buildProductSaleHistoryResult, joinProductSaleItems } from "./productSales";
@@ -220,12 +225,35 @@ export function getProductById(id: string, storeId: string) {
   };
 }
 
-export function createProduct(input: ProductInput, storeId: string) {
-  const sku = normalizeSku(input.sku ?? `mock-${Date.now()}`);
+/**
+ * SKU del alta, igual que el server: el escrito (409 si ya existe) o, sin él,
+ * uno generado desde el nombre que reintenta con sufijo mientras choque.
+ */
+function resolveCreateSku(input: ProductInput) {
+  const isTaken = (sku: string) => mockProducts.some((product) => product.sku === sku);
+  const requestedSku = normalizeSku(input.sku ?? "");
 
-  if (mockProducts.some((product) => product.sku === sku)) {
-    throw new ApiError(409, "CONFLICT", "Ya existe un producto con este SKU.");
+  if (requestedSku) {
+    if (isTaken(requestedSku)) {
+      throw new ApiError(409, "CONFLICT", "Ya existe un producto con este SKU.");
+    }
+
+    return requestedSku;
   }
+
+  for (let attempt = 0; attempt < GENERATED_SKU_MAX_ATTEMPTS; attempt += 1) {
+    const sku = buildGeneratedSku(input.name ?? "", attempt);
+
+    if (!isTaken(sku)) {
+      return sku;
+    }
+  }
+
+  throw new ApiError(409, "CONFLICT", GENERATED_SKU_EXHAUSTED_MESSAGE);
+}
+
+export function createProduct(input: ProductInput, storeId: string) {
+  const sku = resolveCreateSku(input);
 
   const product: ProductMock = {
     barcode: normalizeBarcode(input.barcode),
@@ -269,12 +297,11 @@ export function createProduct(input: ProductInput, storeId: string) {
 }
 
 export function updateProduct(id: string, input: ProductInput, storeId: string) {
-  if (input.sku) {
-    const sku = normalizeSku(input.sku);
+  // SKU vacío = se conserva el actual: ni se borra ni se regenera.
+  const sku = normalizeSku(input.sku ?? "");
 
-    if (mockProducts.some((product) => product.id !== id && product.sku === sku)) {
-      throw new ApiError(409, "CONFLICT", "Ya existe un producto con este SKU.");
-    }
+  if (sku && mockProducts.some((product) => product.id !== id && product.sku === sku)) {
+    throw new ApiError(409, "CONFLICT", "Ya existe un producto con este SKU.");
   }
 
   const product = mockProducts.find((item) => item.id === id);
@@ -289,7 +316,7 @@ export function updateProduct(id: string, input: ProductInput, storeId: string) 
   if (input.minStock !== undefined) product.minStock = input.minStock;
   if (input.name !== undefined) product.name = input.name;
   if (input.salePriceRef !== undefined) product.salePriceRef = input.salePriceRef;
-  if (input.sku !== undefined) product.sku = normalizeSku(input.sku);
+  if (sku) product.sku = sku;
 
   if (input.packConversion) {
     upsertMockPackConversion(id, storeId, input.packConversion, product);

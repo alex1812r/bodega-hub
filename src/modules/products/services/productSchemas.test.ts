@@ -1,4 +1,44 @@
-import { updateProductSchema } from "./productSchemas";
+import { createProductSchema, updateProductSchema } from "./productSchemas";
+
+describe("sku del producto (PRO-05)", () => {
+  const base = { name: "Harina PAN", salePriceRef: 2 };
+
+  it.each([{}, { sku: "" }, { sku: "   " }])(
+    "createProductSchema acepta el alta sin SKU (%j) y lo deja sin definir",
+    (input) => {
+      const result = createProductSchema.safeParse({ ...base, ...input });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.sku).toBeUndefined();
+    },
+  );
+
+  it("createProductSchema normaliza el SKU escrito", () => {
+    expect(createProductSchema.parse({ ...base, sku: "  HAR-001 " }).sku).toBe("har-001");
+  });
+
+  it.each([123, null, ["har-001"], { value: "har-001" }])(
+    "un SKU que no es texto (%j) se sigue rechazando en alta y en edición",
+    (sku) => {
+      expect(createProductSchema.safeParse({ ...base, sku }).success).toBe(false);
+      expect(updateProductSchema.safeParse({ sku }).success).toBe(false);
+    },
+  );
+
+  it.each([{}, { sku: "" }, { sku: "   " }])(
+    "updateProductSchema deja el SKU vacío (%j) sin definir: se conserva el actual",
+    (input) => {
+      const result = updateProductSchema.safeParse({ name: "Harina", ...input });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.sku).toBeUndefined();
+    },
+  );
+
+  it("updateProductSchema normaliza el SKU escrito", () => {
+    expect(updateProductSchema.parse({ sku: "  HAR-001 " }).sku).toBe("har-001");
+  });
+});
 
 describe("updateProductSchema imageUrl", () => {
   it("accepts a valid image URL", () => {

@@ -51,5 +51,7 @@ export const MoreOptionsOpen: Story = {
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
     // El contenido entra con un fundido de 200 ms: se espera a que termine.
     await waitFor(() => expect(screen.getByLabelText("SKU")).toBeVisible());
+    // El SKU es opcional: su ayuda dice que vacío lo genera el servidor.
+    await expect(screen.getByText(/Si lo dejas vacío se genera solo\./)).toBeVisible();
   },
 };
