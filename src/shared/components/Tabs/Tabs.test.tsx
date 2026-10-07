@@ -284,6 +284,7 @@ describe("Tabs", () => {
 
   describe("pestaña activa a la vista", () => {
     const barRect = { left: 16, right: 374 };
+    // Posición de cada pestaña con la barra sin desplazar (`scrollLeft` 0).
     const tabRects: Record<string, { left: number; right: number }> = {
       Resumen: { left: 16, right: 116 },
       Ventas: { left: 116, right: 216 },
@@ -292,16 +293,26 @@ describe("Tabs", () => {
     };
     let scrollIntoView: jest.Mock;
 
-    function mockLayout(rects: Record<string, { left: number; right: number }> = tabRects) {
+    // Como en el navegador, las pestañas se mueven con el `scrollLeft` de la barra.
+    function mockLayout() {
       jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
         this: HTMLElement,
       ) {
         const role = this.getAttribute("role");
-        const label = Object.keys(rects).find((key) => this.textContent?.startsWith(key));
-        const { left, right } =
-          role === "tablist" ? barRect : role === "tab" && label ? rects[label] : { left: 0, right: 0 };
+        const label = Object.keys(tabRects).find((key) => this.textContent?.startsWith(key));
 
-        return new DOMRect(left, 0, right - left, 44);
+        if (role === "tablist") {
+          return new DOMRect(barRect.left, 0, barRect.right - barRect.left, 44);
+        }
+
+        if (role !== "tab" || !label) {
+          return new DOMRect(0, 0, 0, 44);
+        }
+
+        const { left, right } = tabRects[label];
+        const scrolled = this.closest('[role="tablist"]')?.scrollLeft ?? 0;
+
+        return new DOMRect(left - scrolled, 0, right - left, 44);
       });
     }
 
@@ -330,8 +341,9 @@ describe("Tabs", () => {
 
     it("desplaza la barra cuando la pestaña activada con clic queda recortada a la izquierda", async () => {
       const user = userEvent.setup();
-      mockLayout({ ...tabRects, Resumen: { left: -60, right: 40 } });
+      mockLayout();
       render(<Tabs ariaLabel="Secciones" defaultValue="ventas" items={items} />);
+      // Con la barra desplazada 76 px, "Resumen" queda en -60..40.
       screen.getByRole("tablist").scrollLeft = 76;
 
       await user.click(tab(/resumen/i));
@@ -355,6 +367,55 @@ describe("Tabs", () => {
       await user.click(tab(/ventas/i));
 
       expect(screen.getByRole("tablist").scrollLeft).toBe(0);
+    });
+
+    // SHR-02G: el usuario desplazó la barra a mano y la pestaña YA activa quedó recortada.
+    it("clic sobre la pestaña ya activa y recortada la trae a la vista", async () => {
+      const user = userEvent.setup();
+      const onValueChange = jest.fn();
+      mockLayout();
+      render(
+        <Tabs
+          ariaLabel="Secciones"
+          defaultValue="ventas"
+          items={items}
+          onValueChange={onValueChange}
+        />,
+      );
+      // Con la barra desplazada 176 px, "Ventas" queda en -60..40.
+      screen.getByRole("tablist").scrollLeft = 176;
+
+      await user.click(tab(/ventas/i));
+
+      expect(screen.getByRole("tablist").scrollLeft).toBe(100);
+      expect(onValueChange).not.toHaveBeenCalled();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    });
+
+    it("el foco sobre la pestaña ya activa y recortada la trae a la vista", () => {
+      mockLayout();
+      render(<Tabs ariaLabel="Secciones" defaultValue="notas" items={items} />);
+      expect(screen.getByRole("tablist").scrollLeft).toBe(42);
+      // El usuario devuelve la barra al inicio: "Notas" queda en 316..416.
+      screen.getByRole("tablist").scrollLeft = 0;
+
+      tab(/notas/i).focus();
+
+      expect(tab(/notas/i)).toHaveFocus();
+      expect(screen.getByRole("tablist").scrollLeft).toBe(42);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    });
+
+    it("clic y foco sobre la pestaña activa ya visible no mueven la barra", async () => {
+      const user = userEvent.setup();
+      mockLayout();
+      render(<Tabs ariaLabel="Secciones" defaultValue="ventas" items={items} />);
+      screen.getByRole("tablist").scrollLeft = 30;
+
+      tab(/ventas/i).focus();
+      await user.click(tab(/ventas/i));
+
+      expect(screen.getByRole("tablist").scrollLeft).toBe(30);
     });
 
     it("nunca desplaza la página: no llama a scrollIntoView", async () => {

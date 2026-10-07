@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Suspense,
   useEffect,
+  useEffectEvent,
   useId,
   useRef,
   useState,
@@ -90,25 +91,31 @@ function TabsView<TValue extends string>({
   const enabledIndexes = items.flatMap((item, index) => (item.disabled ? [] : [index]));
   const activeIndex = items.findIndex((item) => item.value === activeValue);
 
-  // Trae la pestaña activa a la vista dentro de la barra. Solo mueve el scroll
+  // Trae una pestaña a la vista dentro de la barra. Solo mueve el scroll
   // horizontal de la barra: `scrollIntoView` también desplazaría la página en
   // vertical al montar con la barra fuera de pantalla.
-  useEffect(() => {
+  function scrollTabIntoView(index: number) {
     const list = listRef.current;
-    const activeTab = tabRefs.current[activeIndex];
+    const targetTab = tabRefs.current[index];
 
-    if (!list || !activeTab) {
+    if (!list || !targetTab) {
       return;
     }
 
     const listRect = list.getBoundingClientRect();
-    const tabRect = activeTab.getBoundingClientRect();
+    const tabRect = targetTab.getBoundingClientRect();
 
     if (tabRect.left < listRect.left) {
       list.scrollLeft -= listRect.left - tabRect.left;
     } else if (tabRect.right > listRect.right) {
       list.scrollLeft += tabRect.right - listRect.right;
     }
+  }
+
+  const revealActiveTab = useEffectEvent(scrollTabIntoView);
+
+  useEffect(() => {
+    revealActiveTab(activeIndex);
   }, [activeIndex]);
 
   function moveTo(index: number | undefined) {
@@ -171,7 +178,13 @@ function TabsView<TValue extends string>({
               disabled={item.disabled}
               id={`${baseId}-tab-${index}`}
               key={item.value}
-              onClick={() => onSelect?.(item.value)}
+              // El índice activo no cambia si la pestaña ya era la activa: la
+              // barra desplazada a mano se corrige también al pulsarla o enfocarla.
+              onClick={() => {
+                scrollTabIntoView(index);
+                onSelect?.(item.value);
+              }}
+              onFocus={() => scrollTabIntoView(index)}
               onKeyDown={(event) => handleKeyDown(event, index)}
               ref={(node) => {
                 tabRefs.current[index] = node;
