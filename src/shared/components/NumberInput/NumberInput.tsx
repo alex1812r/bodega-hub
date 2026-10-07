@@ -7,6 +7,7 @@ import {
   type FocusEvent,
   type KeyboardEvent,
   type Ref,
+  useRef,
   useState,
 } from "react";
 
@@ -53,7 +54,10 @@ type NormalizeOptions = TextOptions & {
   padDecimals?: boolean;
 };
 
+type TypedSeparator = "," | ".";
+
 const DIGIT = /\d/;
+const SEPARATOR = /[.,]/g;
 
 /**
  * Interpreta el texto del campo. Sirve como `setValueAs` de `register`:
@@ -84,6 +88,8 @@ export function parseNumberInput(value: unknown): number | null {
  * siempre devuelto como punto; los siguientes se ignoran) y, si se permite,
  * un menos inicial. Los decimales sobrantes se conservan (se redondean al salir
  * del campo); con `decimals: 0` el separador se rechaza.
+ * Qué separador queda cuando se teclea un segundo lo decide antes
+ * `findTypedDecimalIndex`; aquí llega ya uno solo.
  */
 export function sanitizeNumberText(raw: string, { allowNegative, decimals }: TextOptions = {}) {
   const sign = allowNegative && raw.trimStart().startsWith("-") ? "-" : "";
@@ -190,6 +196,38 @@ export function normalizePastedNumber(text: string) {
   return result;
 }
 
+/**
+ * Posición del separador que queda como decimal en un texto recién tecleado
+ * (`caret` va justo después de la tecla), o -1 si no queda ninguno.
+ * `shownAs` es el carácter con el que se tecleó el separador que ya estaba.
+ * - Uno solo: es el decimal.
+ * - Se tecleó uno distinto del que había: como al pegar, el último es el
+ *   decimal y el otro son miles ("1.250" + "," → 1250.).
+ * - Se tecleó uno igual al que había: la tecla se rechaza y queda el anterior.
+ */
+function findTypedDecimalIndex(raw: string, caret: number, shownAs: TypedSeparator) {
+  const indexes = Array.from(raw.matchAll(SEPARATOR), (match) => match.index);
+  const last = indexes[indexes.length - 1] ?? -1;
+  const typedIndex = caret - 1;
+
+  if (indexes.length < 2) {
+    return last;
+  }
+
+  if (indexes.length === 2 && indexes.includes(typedIndex)) {
+    const existingIndex = indexes[0] === typedIndex ? indexes[1] : indexes[0];
+
+    return raw[typedIndex] === shownAs ? existingIndex : last;
+  }
+
+  // No fue una sola tecla (arrastre, autocompletado): mismas reglas que al pegar.
+  return raw.includes(",") && raw.includes(".") ? last : -1;
+}
+
+function dropSeparatorsExcept(text: string, keepIndex: number) {
+  return text.replace(SEPARATOR, (separator, index: number) => (index === keepIndex ? separator : ""));
+}
+
 function numberToText(value: number, { decimals, padDecimals }: NormalizeOptions) {
   if (!Number.isFinite(value)) {
     return "";
@@ -277,6 +315,8 @@ export function NumberInput({
   ...props
 }: NumberInputProps) {
   const [draft, setDraft] = useState("");
+  // El DOM siempre lleva punto: aquí se recuerda con qué tecla se escribió el separador actual.
+  const typedSeparator = useRef<TypedSeparator>(".");
   const minLimit = toLimit(min);
   const options: NormalizeOptions = {
     allowNegative,
@@ -306,13 +346,29 @@ export function NumberInput({
   const valueNumber = typeof value === "number" ? parseNumberInput(value) : parseNumberInput(valueText);
   const displayValue = parseNumberInput(draft) === valueNumber ? draft : valueText;
 
+  // Lo que escribe el propio campo (formato al salir, pegado, flechas) lleva siempre punto.
+  function writeValue(element: HTMLInputElement, next: string) {
+    typedSeparator.current = ".";
+    commitValue(element, next);
+  }
+
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
     const element = event.currentTarget;
     const raw = element.value;
-    const next = sanitizeNumberText(raw, options);
+    const rawCaret = element.selectionStart ?? raw.length;
+    // Un entero no admite separador en ninguna posición.
+    const decimalIndex =
+      decimals === 0 ? -1 : findTypedDecimalIndex(raw, rawCaret, typedSeparator.current);
+    const next = sanitizeNumberText(dropSeparatorsExcept(raw, decimalIndex), options);
+
+    if (decimalIndex < 0) {
+      typedSeparator.current = ".";
+    } else if (raw[decimalIndex] === "," || decimalIndex === rawCaret - 1) {
+      typedSeparator.current = raw[decimalIndex] === "," ? "," : ".";
+    }
 
     if (next !== raw) {
-      const typedUntil = raw.slice(0, element.selectionStart ?? raw.length);
+      const typedUntil = dropSeparatorsExcept(raw.slice(0, rawCaret), decimalIndex);
       const caret = Math.min(sanitizeNumberText(typedUntil, options).length, next.length);
 
       element.value = next;
@@ -331,7 +387,7 @@ export function NumberInput({
 
   function handleBlur(event: FocusEvent<HTMLInputElement>) {
     if (!readOnly) {
-      commitValue(event.currentTarget, normalizeNumberText(event.currentTarget.value, options));
+      writeValue(event.currentTarget, normalizeNumberText(event.currentTarget.value, options));
     }
 
     onBlur?.(event);
@@ -359,7 +415,7 @@ export function NumberInput({
     const next = clean(head + current.slice(end));
     const caret = Math.min(clean(head).length, next.length);
 
-    commitValue(element, next);
+    writeValue(element, next);
     element.setSelectionRange(caret, caret);
   }
 
@@ -368,7 +424,7 @@ export function NumberInput({
 
     // Enter envía el formulario sin pasar por blur: se normaliza antes para no enviar sin redondear.
     if (event.key === "Enter" && !event.defaultPrevented && !readOnly) {
-      commitValue(event.currentTarget, normalizeNumberText(event.currentTarget.value, options));
+      writeValue(event.currentTarget, normalizeNumberText(event.currentTarget.value, options));
       return;
     }
 
@@ -387,7 +443,7 @@ export function NumberInput({
     const stepped = current + (event.key === "ArrowUp" ? stepValue : -stepValue);
     const next = Math.min(Math.max(stepped, options.min ?? -Infinity), options.max ?? Infinity);
 
-    commitValue(element, normalizeNumberText(String(Number(next.toFixed(precision))), options));
+    writeValue(element, normalizeNumberText(String(Number(next.toFixed(precision))), options));
   }
 
   // `Input` reenvía sus props al <input>, `ref` incluido, aunque su tipo no lo declare.

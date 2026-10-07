@@ -2,7 +2,7 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Controller, useForm, useWatch } from "react-hook-form";
 
 import {
   normalizeNumberText,
@@ -49,14 +49,199 @@ describe("NumberInput", () => {
     expect(onValueChange).toHaveBeenLastCalledWith(7.25);
   });
 
-  it("rejects non numeric characters and a second separator", async () => {
+  it("rejects non numeric characters and a repeated separator", async () => {
     const user = userEvent.setup();
 
     render(<NumberInput label="Monto" />);
 
-    await user.type(getField(), "1a2b.3,4x");
+    await user.type(getField(), "1a2b.3.4x");
 
     expect(getField()).toHaveValue("12.34");
+  });
+
+  it("reads the last of two different typed separators as the decimal", async () => {
+    const user = userEvent.setup();
+
+    render(<NumberInput label="Monto" />);
+
+    // Antes "12.3" + "," dejaba 12.34; con el contrato de SHR-09H el punto pasa a ser de miles.
+    await user.type(getField(), "1a2b.3,4x");
+
+    expect(getField()).toHaveValue("123.4");
+  });
+
+  describe("second separator while typing", () => {
+    function PriceForm({ defaultPrice }: { defaultPrice?: number }) {
+      const { control, register } = useForm<{ price: number }>({
+        defaultValues: { price: defaultPrice },
+      });
+      const price = useWatch({ control, name: "price" });
+
+      return (
+        <>
+          <NumberInput decimals={2} label="Monto" {...register("price", { valueAsNumber: true })} />
+          <output>{String(price)}</output>
+        </>
+      );
+    }
+
+    function getFormValue() {
+      return screen.getByRole("status").textContent;
+    }
+
+    async function placeCaret(user: ReturnType<typeof userEvent.setup>, position: number) {
+      await user.click(getField());
+      getField().setSelectionRange(position, position);
+    }
+
+    it("drops a comma typed before the existing dot instead of moving the decimal", async () => {
+      const user = userEvent.setup();
+      const onChange = jest.fn();
+      const onValueChange = jest.fn();
+
+      render(
+        <NumberInput
+          decimals={2}
+          defaultValue={1250.75}
+          label="Monto"
+          onChange={onChange}
+          onValueChange={onValueChange}
+        />,
+      );
+
+      await placeCaret(user, 1);
+      await user.keyboard(",");
+
+      expect(getField()).toHaveValue("1250.75");
+      expect(getField().selectionStart).toBe(1);
+      expect(getField().selectionEnd).toBe(1);
+      expect(onChange.mock.lastCall?.[0].target.value).toBe("1250.75");
+      expect(onValueChange).toHaveBeenLastCalledWith(1250.75);
+    });
+
+    it("keeps the form value when a comma is typed before the existing dot", async () => {
+      const user = userEvent.setup();
+
+      render(<PriceForm defaultPrice={1250.75} />);
+
+      await placeCaret(user, 1);
+      await user.keyboard(",");
+
+      expect(getField()).toHaveValue("1250.75");
+      expect(getField().selectionStart).toBe(1);
+      expect(getFormValue()).toBe("1250.75");
+
+      await user.tab();
+      expect(getField()).toHaveValue("1250.75");
+      expect(getFormValue()).toBe("1250.75");
+    });
+
+    it.each([
+      ["1.250,75", ["1", "1.", "1.2", "1.25", "1.250", "1250.", "1250.7", "1250.75"]],
+      ["1,250.75", ["1", "1.", "1.2", "1.25", "1.250", "1250.", "1250.7", "1250.75"]],
+    ])("reads %s typed with a thousands separator as 1250.75", async (typed, steps) => {
+      const user = userEvent.setup();
+
+      render(<PriceForm />);
+      await user.click(getField());
+
+      for (const [index, char] of [...typed].entries()) {
+        await user.keyboard(char);
+
+        expect(getField()).toHaveValue(steps[index]);
+        expect(getField().selectionStart).toBe(steps[index].length);
+        // Lo que recibe el formulario es siempre lo que se ve escrito.
+        expect(getFormValue()).toBe(String(Number(steps[index])));
+      }
+
+      await user.tab();
+      expect(getField()).toHaveValue("1250.75");
+      expect(getFormValue()).toBe("1250.75");
+    });
+
+    it.each([
+      ["1.250", "."],
+      ["1,250", ","],
+    ])("rejects a repeated separator after typing %s", async (typed, separator) => {
+      const user = userEvent.setup();
+
+      render(<PriceForm />);
+      await user.click(getField());
+      await user.keyboard(typed);
+      await user.keyboard(separator);
+
+      expect(getField()).toHaveValue("1.250");
+      expect(getField().selectionStart).toBe(5);
+      expect(getFormValue()).toBe("1.25");
+
+      getField().setSelectionRange(0, 0);
+      await user.keyboard(separator);
+
+      expect(getField()).toHaveValue("1.250");
+      expect(getField().selectionStart).toBe(0);
+      expect(getFormValue()).toBe("1.25");
+    });
+
+    it("rejects a dot typed before the dot of a value that was not typed", async () => {
+      const user = userEvent.setup();
+
+      render(<PriceForm defaultPrice={1250.75} />);
+
+      await placeCaret(user, 1);
+      await user.keyboard(".");
+
+      expect(getField()).toHaveValue("1250.75");
+      expect(getField().selectionStart).toBe(1);
+      expect(getFormValue()).toBe("1250.75");
+    });
+
+    it("treats the separator as the dot it shows once the field was left", async () => {
+      const user = userEvent.setup();
+
+      render(<PriceForm />);
+      await user.click(getField());
+      await user.keyboard("1,25");
+      await user.tab();
+
+      await placeCaret(user, 4);
+      await user.keyboard(".");
+
+      expect(getField()).toHaveValue("1.25");
+      expect(getFormValue()).toBe("1.25");
+    });
+
+    it("rejects any separator typed in the middle of an integer", async () => {
+      const user = userEvent.setup();
+      const onValueChange = jest.fn();
+
+      function IntegerState() {
+        const [quantity, setQuantity] = useState<number | null>(125);
+
+        return (
+          <NumberInput
+            decimals={0}
+            label="Monto"
+            onValueChange={(next) => {
+              onValueChange(next);
+              setQuantity(next);
+            }}
+            value={quantity}
+          />
+        );
+      }
+
+      render(<IntegerState />);
+
+      await placeCaret(user, 1);
+      await user.keyboard(",");
+      expect(getField()).toHaveValue("125");
+      expect(getField().selectionStart).toBe(1);
+
+      await user.keyboard(".");
+      expect(getField()).toHaveValue("125");
+      expect(getField().selectionStart).toBe(1);
+      expect(onValueChange.mock.calls.every(([next]) => next === 125)).toBe(true);
+    });
   });
 
   it("rejects the minus sign unless allowNegative is set", async () => {

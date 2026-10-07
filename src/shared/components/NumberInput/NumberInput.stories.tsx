@@ -32,6 +32,20 @@ Con \`decimals={0}\` el separador se rechaza al teclear y un valor pegado con de
 separador repetido son miles (\`1.234.567\` → \`1234567\`); un único separador es siempre decimal
 (\`1.234\` → \`1.234\`).
 
+**Separadores al teclear**: un único separador es siempre el decimal (\`1.234\` vale 1,234). Si llega un segundo:
+
+- **distinto** del que ya hay (hay punto y se teclea coma, o al revés): igual que al pegar, el último del
+  texto es el decimal y el anterior pasa a ser de miles y se quita. Teclear \`1.250,75\` o \`1,250.75\` va
+  dejando \`1.\` → \`1.250\` → \`1250.\` → \`1250.75\`. Con \`1250.75\` en el campo, una coma tecleada antes del
+  punto se descarta y el valor no cambia.
+- **igual** al que ya hay (\`1.250\` y otro punto): la tecla se rechaza, el valor y el cursor no se mueven.
+  No se reinterpreta como miles: \`1.250.75\` tecleado deja \`1.25075\`.
+
+El campo recuerda con qué tecla se escribió el separador mientras se edita; al salir, pegar o usar las
+flechas cuenta como el punto que se ve. Lo que muestra el campo y lo que reciben
+\`onChange\`/\`onValueChange\`/\`register\` coinciden en cada pulsación. Con \`decimals={0}\` se rechaza
+cualquier separador, en cualquier posición.
+
 \`step\` solo actúa con \`allowArrowStep\`. Sin \`allowNegative\` el campo nunca baja de cero.
 `;
 
