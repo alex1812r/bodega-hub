@@ -1071,4 +1071,35 @@ select
       to_regprocedure('public.tax_rate_for_pct(uuid, numeric, boolean)')
     )
   )
+union all
+select
+  'rpc override_tax_rate_for_store: una sola firma, security definer con search_path, devuelve tax_rates y solo la ejecutan authenticated / service_role (20261007b)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.oid = to_regprocedure('public.override_tax_rate_for_store(uuid, text, numeric, boolean, integer)')
+         and p.prosecdef
+         and p.prorettype = to_regtype('public.tax_rates')
+         and not p.proretset
+         and p.proconfig @> array['search_path=public']
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'override_tax_rate_for_store'
+  )
+union all
+select
+  'rpc override_tax_rate_for_store: tienda de la sesion, solo admin (PT403), PT404 / PT409, bloqueo de alicuota y categorias en orden y traspaso de categorias y alicuota por defecto (20261007b)',
+  exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.override_tax_rate_for_store(uuid, text, numeric, boolean, integer)')
+      and p.prosrc ilike '%v_store_id := public.assert_store_context();%current_user_role()%<> ''admin''%errcode = ''PT403''%'
+      and p.prosrc ilike '%errcode = ''PT404''%on conflict (store_id, code) where store_id is not null do nothing%for update%order by c.id%for update%'
+      and p.prosrc ilike '%update public.categories%set tax_rate_id = v_rate.id%update public.app_settings%set default_tax_rate_id = v_rate.id%errcode = ''PT409''%update public.tax_rates%'
+      and p.prosrc not ilike '%purchase_items%'
+      and p.prosrc not ilike '%current_stock%'
+  )
 order by 1;

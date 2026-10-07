@@ -272,9 +272,12 @@ describe("/api/tax-rates/[id]", () => {
   });
 
   describe("supabase data source", () => {
+    const GLOBAL_ID = "11111111-1111-4111-8111-111111111116";
+    const STORE_RATE_ID = "22222222-2222-4222-8222-222222222231";
+    const OVERRIDE_ID = "22222222-2222-4222-8222-222222222212";
     const globalGeneral = {
       code: "general",
-      id: "g-16",
+      id: GLOBAL_ID,
       is_active: true,
       label: "General",
       pct: "16.00",
@@ -283,7 +286,7 @@ describe("/api/tax-rates/[id]", () => {
     };
     const storeLujo = {
       code: "lujo",
-      id: "s-31",
+      id: STORE_RATE_ID,
       is_active: true,
       label: "Lujo",
       pct: "31.00",
@@ -299,7 +302,10 @@ describe("/api/tax-rates/[id]", () => {
     };
 
     /** Cliente falso: registra cada consulta y responde con `respond(call)`. */
-    function mountClient(respond: (call: Call) => { count?: number; data?: unknown; error?: unknown }) {
+    function mountClient(
+      rpcResult: { data?: unknown; error?: unknown },
+      respond: (call: Call) => { count?: number; data?: unknown; error?: unknown } = () => ({}),
+    ) {
       const calls: Call[] = [];
       const from = jest.fn((table: string) => {
         const call: Call = { filters: [], op: "select", table };
@@ -335,7 +341,7 @@ describe("/api/tax-rates/[id]", () => {
 
         return builder;
       });
-      const rpc = jest.fn().mockResolvedValue({ data: [globalGeneral, storeLujo], error: null });
+      const rpc = jest.fn().mockResolvedValue({ data: null, error: null, ...rpcResult });
 
       (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from, rpc });
 
@@ -348,21 +354,17 @@ describe("/api/tax-rates/[id]", () => {
       process.env.API_DATA_SOURCE = "supabase";
     });
 
-    it("actualiza la fila de la tienda acotada a su store_id y sin code ni store_id en el cambio", async () => {
-      const { calls } = mountClient((call) => {
-        if (call.table === "tax_rates" && call.op === "update") {
-          return { data: { ...storeLujo, label: "Lujo 2026", pct: "32.00" } };
-        }
-
-        return {};
+    it("cambia la fila de la tienda con una sola llamada a la RPC, sin code ni store_id", async () => {
+      const { calls, rpc } = mountClient({
+        data: { ...storeLujo, label: "Lujo 2026", pct: "32.00" },
       });
 
-      const response = await patch("s-31", { label: "Lujo 2026", pct: 32 });
+      const response = await patch(STORE_RATE_ID, { label: "Lujo 2026", pct: 32 });
 
       expect(response.status).toBe(200);
       expect((await response.json()).data).toEqual({
         code: "lujo",
-        id: "s-31",
+        id: STORE_RATE_ID,
         isActive: true,
         isDefault: false,
         isGlobal: false,
@@ -370,84 +372,34 @@ describe("/api/tax-rates/[id]", () => {
         pct: 32,
         sortOrder: 40,
       });
-      expect(writes(calls).filter((call) => call.table === "tax_rates")).toEqual([
-        {
-          filters: [
-            ["eq", "id", "s-31"],
-            ["eq", "store_id", DEFAULT_STORE_ID],
-          ],
-          op: "update",
-          payload: { is_active: true, label: "Lujo 2026", pct: 32, sort_order: 40 },
-          table: "tax_rates",
-        },
+      expect(rpc.mock.calls).toEqual([
+        [
+          "override_tax_rate_for_store",
+          {
+            p_is_active: null,
+            p_label: "Lujo 2026",
+            p_pct: 32,
+            p_sort_order: null,
+            p_tax_rate_id: STORE_RATE_ID,
+          },
+        ],
       ]);
-    });
-
-    it("responde 409 con el numero de categorias y no escribe si la alicuota esta en uso", async () => {
-      const { calls } = mountClient((call) => {
-        if (call.table === "categories" && call.op === "select") {
-          return { count: 3 };
-        }
-
-        return {};
-      });
-
-      const response = await patch("s-31", { isActive: false });
-
-      expect(response.status).toBe(409);
-      expect((await response.json()).error.message).toBe(
-        'No se puede desactivar la alicuota "Lujo": la usan 3 categorias activas. Reasignalas a otra alicuota antes de desactivarla.',
-      );
-      expect(calls.find((call) => call.table === "categories" && call.op === "select")?.filters).toEqual([
-        ["eq", "store_id", DEFAULT_STORE_ID],
-        ["eq", "tax_rate_id", "s-31"],
-        ["eq", "is_active", true],
-      ]);
-      expect(writes(calls).filter((call) => call.table === "tax_rates")).toEqual([]);
-    });
-
-    it("responde 409 si es la alicuota por defecto de la tienda", async () => {
-      const { calls } = mountClient((call) => {
-        if (call.table === "app_settings" && call.op === "select") {
-          return { data: { default_tax_rate_id: "g-16" } };
-        }
-
-        return { count: 0 };
-      });
-
-      const response = await patch("g-16", { isActive: false });
-
-      expect(response.status).toBe(409);
-      expect((await response.json()).error.message).toContain(
-        "es la alicuota por defecto de la tienda",
-      );
       expect(writes(calls)).toEqual([]);
     });
 
-    it("nunca escribe la global: inserta la fila de la tienda y le pasa categorias y por defecto", async () => {
-      const override = { ...globalGeneral, id: "s-12", pct: "12.00", store_id: DEFAULT_STORE_ID };
-      const { calls } = mountClient((call) => {
-        if (call.table === "app_settings" && call.op === "select") {
-          return { data: { default_tax_rate_id: "g-16" } };
-        }
+    it("PATCH de una global: una sola llamada rpc('override_tax_rate_for_store') y ninguna escritura de tablas", async () => {
+      const { calls, rpc } = mountClient(
+        { data: { ...globalGeneral, id: OVERRIDE_ID, pct: "12.00", store_id: DEFAULT_STORE_ID } },
+        (call) =>
+          call.table === "app_settings" ? { data: { default_tax_rate_id: OVERRIDE_ID } } : {},
+      );
 
-        if (call.table === "tax_rates" && call.op === "insert") {
-          return { data: override };
-        }
-
-        if (call.table === "tax_rates" && call.op === "select") {
-          return { data: { id: "g-16" } };
-        }
-
-        return {};
-      });
-
-      const response = await patch("g-16", { pct: 12 });
+      const response = await patch(GLOBAL_ID, { pct: 12 });
 
       expect(response.status).toBe(200);
       expect((await response.json()).data).toEqual({
         code: "general",
-        id: "s-12",
+        id: OVERRIDE_ID,
         isActive: true,
         isDefault: true,
         isGlobal: false,
@@ -455,63 +407,74 @@ describe("/api/tax-rates/[id]", () => {
         pct: 12,
         sortOrder: 30,
       });
-      expect(writes(calls)).toEqual([
-        {
-          filters: [],
-          op: "insert",
-          payload: {
-            code: "general",
-            is_active: true,
-            label: "General",
-            pct: 12,
-            sort_order: 30,
-            store_id: DEFAULT_STORE_ID,
-          },
-          table: "tax_rates",
-        },
-        {
-          filters: [
-            ["eq", "store_id", DEFAULT_STORE_ID],
-            ["eq", "tax_rate_id", "g-16"],
-          ],
-          op: "update",
-          payload: { tax_rate_id: "s-12" },
-          table: "categories",
-        },
-        {
-          filters: [
-            ["eq", "store_id", DEFAULT_STORE_ID],
-            ["eq", "default_tax_rate_id", "g-16"],
-          ],
-          op: "update",
-          payload: { default_tax_rate_id: "s-12" },
-          table: "app_settings",
-        },
+      expect(rpc).toHaveBeenCalledTimes(1);
+      expect(rpc).toHaveBeenCalledWith("override_tax_rate_for_store", {
+        p_is_active: null,
+        p_label: null,
+        p_pct: 12,
+        p_sort_order: null,
+        p_tax_rate_id: GLOBAL_ID,
+      });
+      expect(writes(calls)).toEqual([]);
+      // La alicuota por defecto se lee de la tienda de la sesion, despues del cambio.
+      expect(calls).toEqual([
+        { filters: [["eq", "store_id", DEFAULT_STORE_ID]], op: "select", table: "app_settings" },
       ]);
     });
 
-    it("responde 404 a un id que la tienda no ve (otra tienda) sin escribir nada", async () => {
-      const { calls } = mountClient(() => ({}));
+    it("responde 409 con el mensaje de la RPC si la alicuota esta en uso", async () => {
+      const message =
+        'No se puede desactivar la alicuota "Lujo": la usan 3 categorias activas. Reasignalas a otra alicuota antes de desactivarla.';
+      const { calls } = mountClient({ error: { code: "PT409", message } });
 
-      const response = await patch("otra-tienda-31", { isActive: false });
+      const response = await patch(STORE_RATE_ID, { isActive: false });
 
-      expect(response.status).toBe(404);
-      expect(writes(calls)).toEqual([]);
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toEqual(
+        expect.objectContaining({ code: "CONFLICT", message }),
+      );
+      expect(calls).toEqual([]);
     });
 
-    it("devuelve tal cual el rechazo PT400 de la base", async () => {
-      mountClient((call) => {
-        if (call.table === "tax_rates" && call.op === "update") {
-          return { error: { code: "PT400", message: "pct no puede ser NaN ni infinito" } };
-        }
-
-        return {};
+    it("responde 404 a un id que la tienda no ve (otra tienda) sin escribir nada", async () => {
+      const { calls } = mountClient({
+        error: { code: "PT404", message: "Alicuota de IVA no encontrada." },
       });
 
-      const response = await patch("s-31", { pct: 40 });
+      const response = await patch("33333333-3333-4333-8333-333333333331", { isActive: false });
 
-      expect(response.status).toBe(400);
-      expect((await response.json()).error.message).toBe("pct no puede ser NaN ni infinito");
+      expect(response.status).toBe(404);
+      expect((await response.json()).error.message).toBe("Alicuota de IVA no encontrada.");
+      expect(calls).toEqual([]);
+    });
+
+    it("responde 404 a un id que no es uuid sin llamar a la base", async () => {
+      const { rpc } = mountClient({ data: storeLujo });
+
+      expect((await patch("otra-tienda-31", { isActive: false })).status).toBe(404);
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("devuelve tal cual los rechazos PT400 y PT403 de la base", async () => {
+      mountClient({ error: { code: "PT400", message: "pct no puede ser NaN ni infinito" } });
+
+      const invalid = await patch(STORE_RATE_ID, { pct: 40 });
+
+      expect(invalid.status).toBe(400);
+      expect((await invalid.json()).error.message).toBe("pct no puede ser NaN ni infinito");
+
+      mountClient({
+        error: { code: "PT403", message: "No autorizado para modificar alicuotas de IVA" },
+      });
+
+      expect((await patch(STORE_RATE_ID, { pct: 40 })).status).toBe(403);
+    });
+
+    it("no llega a la base si el rol no es admin", async () => {
+      const { rpc } = mountClient({ data: storeLujo });
+
+      expect((await patch(STORE_RATE_ID, { pct: 40 }, "almacen")).status).toBe(403);
+      expect(rpc).not.toHaveBeenCalled();
     });
   });
 });

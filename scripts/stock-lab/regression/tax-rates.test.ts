@@ -2,7 +2,8 @@
 /**
  * SHR-10 · regresión del parche `20261007a-tax-rates.sql`: catálogo `tax_rates`, sincronización
  * `categories.tax_rate` ↔ `tax_rate_id`, `app_settings.default_tax_rate_id`, migración de datos y
- * `create_purchase` con `tax_rate_code` por línea.
+ * `create_purchase` con `tax_rate_code` por línea. SHR-10c · parche `20261007b-tax-rates-store-override.sql`: RPC
+ * `override_tax_rate_for_store` (cambio atómico de una alícuota para la tienda).
  *
  * Cada test enuncia el comportamiento SANO. Todo corre por `pg` dentro de una transacción que termina en
  * `rollback` (no queda nada en la base): los datos se preparan como `postgres` y cada sentencia probada se
@@ -22,6 +23,7 @@ import { Client } from "pg";
 
 import type { LabRoleKey } from "../agents/base";
 import { withRollback } from "../db-test-utils";
+import { buildTaxRateInUseMessage } from "../../../src/modules/settings/services/taxRates.schemas";
 import { Lab, actAs } from "../scenarios/db";
 
 type Row = Record<string, unknown>;
@@ -33,6 +35,7 @@ type Line =
 
 const PATCHES = resolve(__dirname, "../../../supabase/patches");
 const PATCH = "20261007a-tax-rates.sql";
+const OVERRIDE_PATCH = "20261007b-tax-rates-store-override.sql";
 const PREVIOUS_PATCH = "20261006h-rls-store-scope-and-finite-guards.sql";
 const NONCE = `${Date.now().toString(36)}${randomUUID().slice(0, 4)}`;
 const TAG = `SHR10-${NONCE}`;
@@ -253,11 +256,11 @@ function createPurchaseOf(patch: string): string {
 }
 
 /** El parche sin su `begin;` / `commit;` (para aplicarlo dentro de la transacción del test) ni el `notify`. */
-function patchBody(): string {
-  const text = readFileSync(resolve(PATCHES, PATCH), "utf8");
+function patchBody(patch: string = PATCH): string {
+  const text = readFileSync(resolve(PATCHES, patch), "utf8");
   const begins = text.match(/^begin;\r?$/gm)?.length ?? 0;
   const commits = text.match(/^commit;\r?$/gm)?.length ?? 0;
-  if (begins !== 1 || commits !== 1) throw new Error(`SETUP · ${PATCH}: se esperaba un begin y un commit (${begins}/${commits})`);
+  if (begins !== 1 || commits !== 1) throw new Error(`SETUP · ${patch}: se esperaba un begin y un commit (${begins}/${commits})`);
   return text.replace(/^begin;\r?$/m, "").replace(/^commit;\r?$/m, "").replace(/^notify pgrst.*$/m, "");
 }
 
@@ -862,6 +865,430 @@ describe("migración de 20261007a · datos anteriores al catálogo", () => {
         ],
       });
       expect(second).toEqual(first);
+    });
+  });
+});
+
+// SHR-10c · parche 20261007b: `override_tax_rate_for_store`, único camino del BFF para cambiar una alícuota.
+describe("override_tax_rate_for_store · cambio atómico de una alícuota para la tienda (20261007b)", () => {
+  type Change = { label?: string; pct?: number | string; isActive?: boolean; sortOrder?: number };
+
+  const CALL = `select id, store_id, code, label, pct::text as pct, is_active, sort_order
+     from public.override_tax_rate_for_store($1::uuid, $2::text, $3::numeric, $4::boolean, $5::integer)`;
+  const args = (id: string, change: Change): unknown[] => [id, change.label ?? null, change.pct ?? null, change.isActive ?? null, change.sortOrder ?? null];
+  const override = (role: LabRoleKey, id: string, change: Change): Promise<Outcome> => run(role, CALL, args(id, change));
+
+  /** Alícuota global propia del test (pct que no usa ninguna otra) con `count` categorías activas de la tienda lab. */
+  async function globalInUse(pct: number, count: number): Promise<{ id: string; code: string; categories: string[] }> {
+    const code = nextCode("glob");
+    const id = await taxRate(null, code, pct, true);
+    const categories: string[] = [];
+    for (let i = 0; i < count; i += 1) categories.push(await category(pct));
+    return { id, code, categories };
+  }
+
+  /** Una consulta tras otra: la conexión del test no admite consultas en paralelo. */
+  async function categoryStates(ids: string[]): Promise<Row[]> {
+    const states: Row[] = [];
+    for (const id of ids) states.push(await categoryState(id));
+    return states;
+  }
+
+  const setDefault = (storeId: string, id: string): Promise<Row[]> =>
+    sql("alícuota por defecto", "update public.app_settings set default_tax_rate_id = $2 where store_id = $1", [storeId, id]);
+
+  const storeDefault = (storeId: string): Promise<Row> =>
+    one(
+      "ajustes",
+      `select s.default_tax_rate::text as pct, t.code, (t.store_id is null) as global
+       from public.app_settings s left join public.tax_rates t on t.id = s.default_tax_rate_id where s.store_id = $1`,
+      [storeId],
+    );
+
+  const rowsOf = (code: string): Promise<Row[]> =>
+    sql(
+      "filas del code",
+      `select (store_id is null) as global, store_id, label, pct::text as pct, is_active
+       from public.tax_rates where code = $1 order by store_id nulls first`,
+      [code],
+    );
+
+  it("cambiar una global crea la fila de la tienda y le traspasa sus categorías y su alícuota por defecto; la global y la otra tienda no cambian", async () => {
+    await withRollback(db, async () => {
+      const rate = await globalInUse(13, 2);
+      await setDefault(lab.storeId, rate.id);
+      const foreign = await one("categoría de la otra tienda", "insert into public.categories (store_id, name, tax_rate_id) values ($1, $2, $3) returning id", [
+        lab.defaultStoreId,
+        nextTag("cat-ajena"),
+        rate.id,
+      ]);
+
+      const out = await override("admin", rate.id, { pct: 14 });
+
+      expect({
+        code: out.code,
+        devuelta: out.rows.map((row) => ({ store: row.store_id, code: row.code, label: row.label, pct: row.pct, activa: row.is_active, orden: row.sort_order })),
+        filas: await rowsOf(rate.code),
+        categorias: await categoryStates(rate.categories),
+        porDefecto: await storeDefault(lab.storeId),
+        categoriaAjena: await categoryState(String(foreign.id)),
+        vigenteEnLaOtraTienda: await sql("vigente", "select pct::text as pct, (store_id is null) as global from public.tax_rates_for_store($1) where code = $2", [
+          lab.defaultStoreId,
+          rate.code,
+        ]),
+      }).toEqual({
+        code: null,
+        devuelta: [{ store: lab.storeId, code: rate.code, label: `Prueba ${rate.code}`, pct: "14.00", activa: true, orden: 500 }],
+        filas: [
+          { global: true, store_id: null, label: `Prueba ${rate.code}`, pct: "13.00", is_active: true },
+          { global: false, store_id: lab.storeId, label: `Prueba ${rate.code}`, pct: "14.00", is_active: true },
+        ],
+        categorias: [
+          { pct: "14.00", code: rate.code, global: false },
+          { pct: "14.00", code: rate.code, global: false },
+        ],
+        porDefecto: { pct: "14.00", code: rate.code, global: false },
+        categoriaAjena: { pct: "13.00", code: rate.code, global: true },
+        vigenteEnLaOtraTienda: [{ pct: "13.00", global: true }],
+      });
+    });
+  });
+
+  it("segunda llamada: el id de la global ya no existe para la tienda (PT404) y no duplica; con el id de la fila propia se actualiza esa misma fila", async () => {
+    await withRollback(db, async () => {
+      const rate = await globalInUse(13, 1);
+      const first = await override("admin", rate.id, { pct: 14 });
+      const ownId = String(first.rows[0]?.id);
+
+      const again = await override("admin", rate.id, { pct: 14 });
+      const own = await override("admin", ownId, { label: "Propia", sortOrder: 7 });
+
+      expect({
+        codes: [first.code, again.code, own.code],
+        mismaFila: own.rows[0]?.id === ownId,
+        filas: (await rowsOf(rate.code)).map((row) => [row.global, row.label, row.pct]),
+        categoria: await categoryState(rate.categories[0]),
+      }).toEqual({
+        codes: [null, "PT404", null],
+        mismaFila: true,
+        filas: [
+          [true, `Prueba ${rate.code}`, "13.00"],
+          [false, "Propia", "14.00"],
+        ],
+        categoria: { pct: "14.00", code: rate.code, global: false },
+      });
+    });
+  });
+
+  it("un cambio que no cambia nada de una global la devuelve tal cual y no crea fila de tienda", async () => {
+    await withRollback(db, async () => {
+      const rate = await globalInUse(13, 1);
+
+      const out = await override("admin", rate.id, { pct: "13.00", isActive: true, label: `Prueba ${rate.code}`, sortOrder: 500 });
+
+      expect({ code: out.code, devuelta: out.rows.map((row) => [row.id, row.store_id]), filas: (await rowsOf(rate.code)).length }).toEqual({
+        code: null,
+        devuelta: [[rate.id, null]],
+        filas: 1,
+      });
+    });
+  });
+
+  it("fila de tienda que ya existía con categorías y por defecto aún en la global (estado a medias): el siguiente cambio los recoge", async () => {
+    await withRollback(db, async () => {
+      const rate = await globalInUse(13, 2);
+      await setDefault(lab.storeId, rate.id);
+      const ownId = await taxRate(lab.storeId, rate.code, 13, true);
+
+      const out = await override("admin", ownId, { pct: 15 });
+
+      expect({
+        code: out.code,
+        categorias: await categoryStates(rate.categories),
+        porDefecto: await storeDefault(lab.storeId),
+        filas: (await rowsOf(rate.code)).map((row) => [row.global, row.pct]),
+      }).toEqual({
+        code: null,
+        categorias: [
+          { pct: "15.00", code: rate.code, global: false },
+          { pct: "15.00", code: rate.code, global: false },
+        ],
+        porDefecto: { pct: "15.00", code: rate.code, global: false },
+        filas: [
+          [true, "13.00"],
+          [false, "15.00"],
+        ],
+      });
+    });
+  });
+
+  it("desactivar una global en uso responde PT409 con el número de categorías activas y no deja nada escrito", async () => {
+    await withRollback(db, async () => {
+      const rate = await globalInUse(13, 3);
+      await sql("categoría inactiva", "update public.categories set is_active = false where id = $1", [rate.categories[2]]);
+      await setDefault(lab.storeId, rate.id);
+
+      const both = await override("admin", rate.id, { isActive: false });
+      await setDefault(lab.storeId, await globalRateId("general"));
+      const onlyCategories = await override("admin", rate.id, { isActive: false, label: "Otro nombre" });
+
+      expect({
+        rechazos: [both, onlyCategories].map((out) => [out.code, out.message]),
+        filas: await rowsOf(rate.code),
+        categorias: await categoryStates(rate.categories),
+      }).toEqual({
+        rechazos: [
+          ["PT409", buildTaxRateInUseMessage(`Prueba ${rate.code}`, 2, true)],
+          ["PT409", buildTaxRateInUseMessage(`Prueba ${rate.code}`, 2, false)],
+        ],
+        filas: [{ global: true, store_id: null, label: `Prueba ${rate.code}`, pct: "13.00", is_active: true }],
+        categorias: rate.categories.map(() => ({ pct: "13.00", code: rate.code, global: true })),
+      });
+    });
+  });
+
+  it("desactivar una alícuota propia: PT409 si la usa 1 categoría activa o es la por defecto; con la categoría inactiva y otra por defecto, se desactiva", async () => {
+    await withRollback(db, async () => {
+      const code = nextCode("propia-uso");
+      const id = await taxRate(lab.storeId, code, 12, true);
+      const cat = await category(12);
+      const label = `Prueba ${code}`;
+
+      const inUse = await override("admin", id, { isActive: false });
+      await sql("categoría inactiva", "update public.categories set is_active = false where id = $1", [cat]);
+      await setDefault(lab.storeId, id);
+      const isDefault = await override("admin", id, { isActive: false });
+      const otherChange = await override("admin", id, { label: "Sigue activa", pct: 12.5 });
+      await setDefault(lab.storeId, await globalRateId("general"));
+      const free = await override("admin", id, { isActive: false });
+
+      expect({
+        rechazos: [inUse, isDefault].map((out) => [out.code, out.message]),
+        otroCambio: [otherChange.code, otherChange.rows[0]?.pct, (await categoryState(cat)).pct],
+        libre: [free.code, free.rows[0]?.is_active, free.rows[0]?.label],
+      }).toEqual({
+        rechazos: [
+          ["PT409", buildTaxRateInUseMessage(label, 1, false)],
+          ["PT409", buildTaxRateInUseMessage(label, 0, true)],
+        ],
+        otroCambio: [null, "12.50", "12.50"],
+        libre: [null, false, "Sigue activa"],
+      });
+    });
+  });
+
+  it("la alícuota de otra tienda o un id inexistente responden PT404 y la fila ajena no cambia", async () => {
+    await withRollback(db, async () => {
+      const code = nextCode("ajena");
+      const foreign = await taxRate(lab.defaultStoreId, code, 9, true);
+
+      const other = await override("admin", foreign, { pct: 10, isActive: false });
+      const missing = await override("admin", randomUUID(), { pct: 10 });
+
+      expect({ rechazos: [other, missing].map((out) => [out.code, out.message]), filas: await rowsOf(code) }).toEqual({
+        rechazos: [
+          ["PT404", "Alicuota de IVA no encontrada."],
+          ["PT404", "Alicuota de IVA no encontrada."],
+        ],
+        filas: [{ global: false, store_id: lab.defaultStoreId, label: `Prueba ${code}`, pct: "9.00", is_active: true }],
+      });
+    });
+  });
+
+  it("solo el admin: almacen, vendedor y contador reciben PT403; anon no puede ejecutarla; nada cambia", async () => {
+    await withRollback(db, async () => {
+      const rate = await globalInUse(13, 1);
+      const ownCode = nextCode("propia-rol");
+      const own = await taxRate(lab.storeId, ownCode, 12, true);
+
+      const codes: Record<string, string | null> = {};
+      for (const role of ["almacen", "vendedor1", "contador"] as const) {
+        codes[`${role}-global`] = (await override(role, rate.id, { pct: 14 })).code;
+        codes[`${role}-propia`] = (await override(role, own, { isActive: false })).code;
+      }
+      await db.query("savepoint shr10c_anon");
+      await actAs(db, null);
+      const anon = await db.query(CALL, args(own, { pct: 14 })).then(
+        () => null,
+        (error: unknown) => failure(error).code,
+      );
+      await db.query("rollback to savepoint shr10c_anon");
+      await db.query("reset role");
+
+      expect({ codes, anon, filas: [...(await rowsOf(rate.code)), ...(await rowsOf(ownCode))].map((row) => [row.global, row.pct, row.is_active]) }).toEqual({
+        codes: {
+          "almacen-global": "PT403",
+          "almacen-propia": "PT403",
+          "vendedor1-global": "PT403",
+          "vendedor1-propia": "PT403",
+          "contador-global": "PT403",
+          "contador-propia": "PT403",
+        },
+        anon: "42501",
+        filas: [
+          [true, "13.00", true],
+          [false, "12.00", true],
+        ],
+      });
+    });
+  });
+
+  it("label vacío, pct fuera de 0..100 o NaN y orden negativo responden PT400 sin crear fila de tienda", async () => {
+    await withRollback(db, async () => {
+      const rate = await globalInUse(13, 0);
+
+      const outcomes = {
+        labelVacio: await override("admin", rate.id, { label: "   " }),
+        negativo: await override("admin", rate.id, { pct: -0.01 }),
+        mayor: await override("admin", rate.id, { pct: 100.01 }),
+        nan: await override("admin", rate.id, { pct: "NaN" }),
+        orden: await override("admin", rate.id, { sortOrder: -1 }),
+      };
+      const rowsAfterRejections = (await rowsOf(rate.code)).length;
+      const edges = await override("admin", rate.id, { pct: 100, label: "  Tope  " });
+
+      expect({
+        codes: Object.fromEntries(Object.entries(outcomes).map(([name, out]) => [name, out.code])),
+        mensajes: [outcomes.labelVacio.message, outcomes.nan.message],
+        filasTrasLosRechazos: rowsAfterRejections,
+        limite: [edges.code, edges.rows[0]?.pct, edges.rows[0]?.label],
+      }).toEqual({
+        codes: { labelVacio: "PT400", negativo: "PT400", mayor: "PT400", nan: "PT400", orden: "PT400" },
+        mensajes: ["El nombre de la alicuota es obligatorio.", "El porcentaje debe estar entre 0 y 100."],
+        filasTrasLosRechazos: 1,
+        limite: [null, "100.00", "Tope"],
+      });
+    });
+  });
+
+  it("tras redefinir 'reducida' al 9 %, create_purchase con ese code congela el 9 % de la tienda y el 8 % deja de aceptarse", async () => {
+    await withRollback(db, async () => {
+      const out = await override("admin", await globalRateId("reducida"), { pct: 9 });
+      const byCode = await product("override-code");
+      const byPct = await product("override-pct");
+      const oldPct = await product("override-8");
+
+      const first = await purchase(byCode, UNIT, 9, { tax_rate_code: "reducida" });
+      const second = await purchase(byPct, UNIT, 9, { tax_rate: 9 });
+      const third = await purchase(oldPct, UNIT, 8, { tax_rate: 8 });
+      const mismatch = await purchase(oldPct, UNIT, 8, { tax_rate_code: "reducida", tax_rate: 8 });
+
+      expect({
+        override: out.code,
+        lineas: [await taxOf(first, byCode), await taxOf(second, byPct)],
+        rechazos: [third.code, mismatch.code],
+        stockSinCompra: await stock(oldPct),
+      }).toEqual({
+        override: null,
+        lineas: [
+          { pct: "9.00", code: "reducida", iva: "1.13", costo: "2.73" },
+          { pct: "9.00", code: "reducida", iva: "1.13", costo: "2.73" },
+        ],
+        rechazos: ["PT400", "PT400"],
+        stockSinCompra: 0,
+      });
+    });
+  });
+
+  it("cambiar la alícuota no toca líneas de compra ya guardadas ni el stock (snapshot)", async () => {
+    await withRollback(db, async () => {
+      const p = await product("override-snapshot");
+      const bought = await purchase(p, UNIT, 8, { tax_rate_code: "reducida" });
+      const before = await footprint(p);
+      const line = await taxOf(bought, p);
+
+      const out = await override("admin", await globalRateId("reducida"), { pct: 9, label: "Reducida 9" });
+
+      expect({ compra: bought.code, override: out.code, huella: await footprint(p), linea: await taxOf(bought, p) }).toEqual({
+        compra: null,
+        override: null,
+        huella: before,
+        linea: line,
+      });
+    });
+  });
+
+  it("dos cambios simultáneos de la misma global dejan UNA fila de tienda con los dos cambios (el segundo reutiliza la fila)", async () => {
+    const reducida = await globalRateId("reducida");
+    const used = await one(
+      "uso de 'reducida' en la tienda lab",
+      `select (select count(*)::int from public.tax_rates where store_id = $1 and code = 'reducida') as propias,
+              (select count(*)::int from public.categories where store_id = $1 and tax_rate_id = $2) as categorias,
+              (select count(*)::int from public.app_settings where store_id = $1 and default_tax_rate_id = $2) as por_defecto`,
+      [lab.storeId, reducida],
+    );
+    if (Number(used.propias) + Number(used.categorias) + Number(used.por_defecto) > 0) {
+      throw new Error(`SETUP · la tienda lab ya usa o redefinió 'reducida': ${JSON.stringify(used)}`);
+    }
+    const a = await lab.pg();
+    const b = await lab.pg();
+    try {
+      await a.query("begin");
+      await actAs(a, lab.uids.admin);
+      const first = await a.query<Row>(CALL, args(reducida, { pct: 9 }));
+
+      await b.query("begin");
+      await actAs(b, lab.uids.admin);
+      let settled = false;
+      const pending = b.query<Row>(CALL, args(reducida, { label: "Reducida B" })).finally(() => {
+        settled = true;
+      });
+      pending.catch(() => undefined);
+      await new Promise((done) => setTimeout(done, 500));
+      const waited = !settled;
+      await a.query("commit");
+      const second = await pending;
+      await b.query("commit");
+
+      expect({
+        esperoAlPrimero: waited,
+        mismaFila: first.rows[0]?.id === second.rows[0]?.id,
+        filas: await sql(
+          "filas de 'reducida'",
+          `select (store_id is null) as global, label, pct::text as pct from public.tax_rates
+           where code = 'reducida' and (store_id is null or store_id = $1) order by store_id nulls first`,
+          [lab.storeId],
+        ),
+      }).toEqual({
+        esperoAlPrimero: true,
+        mismaFila: true,
+        filas: [
+          { global: true, label: "Reducida", pct: "8.00" },
+          { global: false, label: "Reducida B", pct: "9.00" },
+        ],
+      });
+    } finally {
+      await a.query("rollback").catch(() => undefined);
+      await b.query("rollback").catch(() => undefined);
+      await db.query("delete from public.tax_rates where store_id = $1 and code = 'reducida'", [lab.storeId]);
+    }
+  });
+
+  it("el parche es idempotente: aplicado dos veces deja una sola función, con los mismos permisos, y sigue funcionando", async () => {
+    await withRollback(db, async () => {
+      const body = patchBody(OVERRIDE_PATCH);
+      const state = (): Promise<Row> =>
+        one(
+          "función",
+          `select count(*)::int as funciones, bool_and(p.prosecdef) as definer,
+                  bool_and(has_function_privilege('authenticated', p.oid, 'execute')) as authenticated,
+                  bool_or(has_function_privilege('anon', p.oid, 'execute')) as anon,
+                  md5(string_agg(p.prosrc, '')) as cuerpo
+           from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = 'override_tax_rate_for_store'`,
+        );
+      const before = await state();
+
+      await sql("parche 20261007b (1)", body);
+      await sql("parche 20261007b (2)", body);
+      const rate = await globalInUse(13, 1);
+      const out = await override("admin", rate.id, { pct: 14 });
+
+      expect({ antes: before, despues: await state(), code: out.code, categoria: await categoryState(rate.categories[0]) }).toEqual({
+        antes: { funciones: 1, definer: true, authenticated: true, anon: false, cuerpo: before.cuerpo },
+        despues: before,
+        code: null,
+        categoria: { pct: "14.00", code: rate.code, global: false },
+      });
     });
   });
 });

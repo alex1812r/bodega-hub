@@ -99,7 +99,9 @@ export const TAX_RATE_CODE_NOT_DERIVABLE_MESSAGE =
 
 /**
  * Motivo por el que una alicuota no se puede desactivar, o `null` si nadie la usa.
- * Misma regla y mismo texto en mock y Supabase.
+ * El mock lo usa tal cual; en Supabase el rechazo lo redacta la RPC
+ * `override_tax_rate_for_store` (parche 20261007b) con este mismo texto: si
+ * cambia aqui, cambia alli (lo compara `scripts/stock-lab/regression/tax-rates.test.ts`).
  */
 export function buildTaxRateInUseMessage(
   label: string,

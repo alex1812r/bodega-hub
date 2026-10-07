@@ -44,12 +44,6 @@ function storeCategories(storeId: string) {
   return mockCategories.filter((category) => (category.storeId ?? DEFAULT_STORE_ID) === storeId);
 }
 
-function countActiveCategories(storeId: string, taxRateId: string) {
-  return storeCategories(storeId).filter(
-    (category) => category.isActive && category.taxRateId === taxRateId,
-  ).length;
-}
-
 function toTaxRate(row: TaxRateMock, storeId: string): TaxRate {
   return {
     code: row.code,
@@ -130,15 +124,15 @@ function propagatePct(row: TaxRateMock) {
   }
 }
 
+function findGlobalByCode(code: string) {
+  return taxRateRows().find((candidate) => candidate.storeId === null && candidate.code === code);
+}
+
 /**
  * La fila de la tienda manda sobre la global del mismo `code`: lo que en la
  * tienda apuntaba a la global pasa a apuntar a la fila propia.
  */
-function adoptGlobalReferences(storeId: string, row: TaxRateMock) {
-  const global = taxRateRows().find(
-    (candidate) => candidate.storeId === null && candidate.code === row.code,
-  );
-
+function adoptGlobalReferences(storeId: string, row: TaxRateMock, global: TaxRateMock | undefined) {
   if (!global) {
     return;
   }
@@ -156,11 +150,20 @@ function adoptGlobalReferences(storeId: string, row: TaxRateMock) {
   }
 }
 
-function assertCanDeactivate(storeId: string, row: TaxRateMock) {
+/**
+ * Regla 409 de `override_tax_rate_for_store`. La RPC la evalua despues de pasar
+ * a la fila de la tienda lo que apuntaba a la global, y si rechaza deshace todo;
+ * aqui no hay transaccion, asi que se cuenta ANTES de tocar nada lo que usa la
+ * alicuota o la global de su mismo `code`.
+ */
+function assertCanDeactivate(storeId: string, row: TaxRateMock, global: TaxRateMock | undefined) {
+  const ids = [row.id, ...(global ? [global.id] : [])];
   const message = buildTaxRateInUseMessage(
     row.label,
-    countActiveCategories(storeId, row.id),
-    isDefaultTaxRate(storeId, row.id),
+    storeCategories(storeId).filter(
+      (category) => category.isActive && ids.includes(category.taxRateId ?? ""),
+    ).length,
+    ids.some((id) => isDefaultTaxRate(storeId, id)),
   );
 
   if (message) {
@@ -205,7 +208,13 @@ export function createTaxRate(input: CreateTaxRateInput, storeId: string): TaxRa
   return toTaxRate(row, storeId);
 }
 
+/**
+ * Mismo comportamiento que la RPC `override_tax_rate_for_store` (parche
+ * 20261007b): o se aplica todo el cambio o no cambia nada.
+ */
 export function updateTaxRate(id: string, input: UpdateTaxRateInput, storeId: string): TaxRate {
+  // Solo lo que ve la tienda: la alicuota de otra tienda, o una global que la
+  // tienda ya redefinio, no existe para ella.
   const current = mockTaxRatesForStore(storeId).find((row) => row.id === id);
 
   if (!current) {
@@ -218,45 +227,36 @@ export function updateTaxRate(id: string, input: UpdateTaxRateInput, storeId: st
     pct: input.pct === undefined ? current.pct : normalizeTaxRatePct(input.pct),
     sortOrder: input.sortOrder ?? current.sortOrder,
   };
+  const isGlobal = current.storeId === null;
+  const global = isGlobal ? current : findGlobalByCode(current.code);
 
-  if (current.storeId === null) {
-    if (current.isActive && !next.isActive) {
-      assertCanDeactivate(storeId, current);
-    }
-
-    const unchanged =
-      next.isActive === current.isActive &&
-      next.label === current.label &&
-      next.pct === current.pct &&
-      next.sortOrder === current.sortOrder;
-
-    if (unchanged) {
-      return toTaxRate(current, storeId);
-    }
-
-    // Las globales no se escriben: la tienda recibe su propia fila con el mismo code.
-    const rows = taxRateRows();
-    const override: TaxRateMock = {
-      ...next,
-      code: current.code,
-      id: `tax-mock-${rows.length + 1}-${Date.now()}`,
-      storeId,
-    };
-
-    rows.push(override);
-    adoptGlobalReferences(storeId, override);
-
-    return toTaxRate(override, storeId);
+  if (
+    isGlobal &&
+    next.isActive === current.isActive &&
+    next.label === current.label &&
+    next.pct === current.pct &&
+    next.sortOrder === current.sortOrder
+  ) {
+    return toTaxRate(current, storeId);
   }
-
-  adoptGlobalReferences(storeId, current);
 
   if (current.isActive && !next.isActive) {
-    assertCanDeactivate(storeId, current);
+    assertCanDeactivate(storeId, current, global);
   }
 
-  Object.assign(current, next);
-  propagatePct(current);
+  let row = current;
 
-  return toTaxRate(current, storeId);
+  if (isGlobal) {
+    // Las globales no se escriben: la tienda recibe su propia fila con el mismo code.
+    const rows = taxRateRows();
+
+    row = { ...current, id: `tax-mock-${rows.length + 1}-${Date.now()}`, storeId };
+    rows.push(row);
+  }
+
+  adoptGlobalReferences(storeId, row, global);
+  Object.assign(row, next);
+  propagatePct(row);
+
+  return toTaxRate(row, storeId);
 }

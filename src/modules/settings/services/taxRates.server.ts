@@ -7,7 +7,6 @@ import {
   TAX_RATE_NOT_FOUND_MESSAGE,
   buildTaxRateCode,
   buildTaxRateCodeTakenMessage,
-  buildTaxRateInUseMessage,
   compareTaxRates,
   nextTaxRateSortOrder,
   normalizeTaxRatePct,
@@ -31,6 +30,7 @@ type TaxRateRow = {
 };
 
 const taxRateSelect = "id, store_id, code, label, pct, is_active, sort_order";
+const TAX_RATE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function mapTaxRate(row: TaxRateRow, defaultTaxRateId: string | null): TaxRate {
   return {
@@ -64,89 +64,6 @@ async function loadDefaultTaxRateId(supabase: RouteSupabaseClient, storeId: stri
   throwIfSupabaseError(error);
 
   return data?.default_tax_rate_id ?? null;
-}
-
-async function countActiveCategories(
-  supabase: RouteSupabaseClient,
-  storeId: string,
-  taxRateId: string,
-) {
-  const { count, error } = await supabase
-    .from("categories")
-    .select("id", { count: "exact", head: true })
-    .eq("store_id", storeId)
-    .eq("tax_rate_id", taxRateId)
-    .eq("is_active", true);
-
-  throwIfSupabaseError(error);
-
-  return count ?? 0;
-}
-
-async function assertCanDeactivate(
-  supabase: RouteSupabaseClient,
-  storeId: string,
-  row: TaxRateRow,
-  defaultTaxRateId: string | null,
-) {
-  const message = buildTaxRateInUseMessage(
-    row.label,
-    await countActiveCategories(supabase, storeId, row.id),
-    row.id === defaultTaxRateId,
-  );
-
-  if (message) {
-    throw new ApiError(409, "CONFLICT", message);
-  }
-}
-
-/**
- * La fila de la tienda manda sobre la global del mismo `code`: las categorias y
- * la alicuota por defecto de la tienda que apuntaban a la global pasan a la fila
- * propia (el trigger de cada tabla copia el porcentaje). Se repite en cada cambio
- * de una fila de tienda, asi un fallo a medias se corrige solo en el siguiente.
- * Devuelve el id de la alicuota por defecto tras el cambio.
- */
-async function adoptGlobalReferences(
-  supabase: RouteSupabaseClient,
-  storeId: string,
-  row: TaxRateRow,
-  defaultTaxRateId: string | null,
-) {
-  const { data: global, error: globalError } = await supabase
-    .from("tax_rates")
-    .select("id")
-    .is("store_id", null)
-    .eq("code", row.code)
-    .maybeSingle<{ id: string }>();
-
-  throwIfSupabaseError(globalError);
-
-  if (!global) {
-    return defaultTaxRateId;
-  }
-
-  const { error: categoriesError } = await supabase
-    .from("categories")
-    .update({ tax_rate_id: row.id })
-    .eq("store_id", storeId)
-    .eq("tax_rate_id", global.id);
-
-  throwIfSupabaseError(categoriesError);
-
-  if (defaultTaxRateId !== global.id) {
-    return defaultTaxRateId;
-  }
-
-  const { error: settingsError } = await supabase
-    .from("app_settings")
-    .update({ default_tax_rate_id: row.id })
-    .eq("store_id", storeId)
-    .eq("default_tax_rate_id", global.id);
-
-  throwIfSupabaseError(settingsError);
-
-  return row.id;
 }
 
 export async function listTaxRates(
@@ -203,91 +120,39 @@ export async function createTaxRate(input: CreateTaxRateInput, storeId: string):
   return mapTaxRate(data, null);
 }
 
+/**
+ * Todo el cambio lo hace la RPC `override_tax_rate_for_store` (parche 20261007b)
+ * en una transaccion: actualiza la fila de la tienda o, si la alicuota es global,
+ * crea la fila propia y le traspasa categorias y alicuota por defecto. Tambien
+ * decide los rechazos: 404 si la tienda no ve la alicuota y 409 si se desactiva
+ * una en uso. La tienda es la de la sesion (`assert_store_context`).
+ */
 export async function updateTaxRate(
   id: string,
   input: UpdateTaxRateInput,
   storeId: string,
 ): Promise<TaxRate> {
-  const supabase = await createRouteSupabaseClient();
-  const [rows, initialDefaultTaxRateId] = await Promise.all([
-    loadStoreTaxRates(supabase, storeId),
-    loadDefaultTaxRateId(supabase, storeId),
-  ]);
-  // Solo lo que ve la tienda: la alicuota de otra tienda, o una global que la
-  // tienda ya redefinio, no existe para ella.
-  const current = rows.find((row) => row.id === id);
-
-  if (!current) {
+  // Un id que no es uuid no puede existir: mismo 404, sin llegar a la base.
+  if (!TAX_RATE_ID_PATTERN.test(id)) {
     throw new ApiError(404, "NOT_FOUND", TAX_RATE_NOT_FOUND_MESSAGE);
   }
 
-  const currentPct = Number(current.pct);
-  const next = {
-    is_active: input.isActive ?? current.is_active,
-    label: input.label ?? current.label,
-    pct: input.pct === undefined ? currentPct : normalizeTaxRatePct(input.pct),
-    sort_order: input.sortOrder ?? current.sort_order,
-  };
-
-  if (current.store_id === null) {
-    if (current.is_active && !next.is_active) {
-      await assertCanDeactivate(supabase, storeId, current, initialDefaultTaxRateId);
-    }
-
-    const unchanged =
-      next.is_active === current.is_active &&
-      next.label === current.label &&
-      next.pct === currentPct &&
-      next.sort_order === current.sort_order;
-
-    if (unchanged) {
-      return mapTaxRate(current, initialDefaultTaxRateId);
-    }
-
-    // Las globales no se escriben desde la app (el RLS tampoco lo permite): la
-    // tienda recibe su propia fila con el mismo code, que manda sobre la global.
-    const { data: override, error } = await supabase
-      .from("tax_rates")
-      .insert({ ...next, code: current.code, store_id: storeId })
-      .select(taxRateSelect)
-      .single<TaxRateRow>();
-
-    throwIfSupabaseError(error);
-
-    if (!override) {
-      throw new ApiError(500, "INTERNAL_ERROR", "No se pudo guardar la alicuota de IVA.");
-    }
-
-    return mapTaxRate(
-      override,
-      await adoptGlobalReferences(supabase, storeId, override, initialDefaultTaxRateId),
-    );
-  }
-
-  const defaultTaxRateId = await adoptGlobalReferences(
-    supabase,
-    storeId,
-    current,
-    initialDefaultTaxRateId,
-  );
-
-  if (current.is_active && !next.is_active) {
-    await assertCanDeactivate(supabase, storeId, current, defaultTaxRateId);
-  }
-
-  const { data, error } = await supabase
-    .from("tax_rates")
-    .update(next)
-    .eq("id", id)
-    .eq("store_id", storeId)
-    .select(taxRateSelect)
-    .maybeSingle<TaxRateRow>();
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase.rpc("override_tax_rate_for_store", {
+    p_is_active: input.isActive ?? null,
+    p_label: input.label ?? null,
+    p_pct: input.pct === undefined ? null : normalizeTaxRatePct(input.pct),
+    p_sort_order: input.sortOrder ?? null,
+    p_tax_rate_id: id,
+  });
 
   throwIfSupabaseError(error);
 
-  if (!data) {
-    throw new ApiError(404, "NOT_FOUND", TAX_RATE_NOT_FOUND_MESSAGE);
+  const row = data as TaxRateRow | null;
+
+  if (!row?.id) {
+    throw new ApiError(500, "INTERNAL_ERROR", "No se pudo guardar la alicuota de IVA.");
   }
 
-  return mapTaxRate(data, defaultTaxRateId);
+  return mapTaxRate(row, await loadDefaultTaxRateId(supabase, storeId));
 }

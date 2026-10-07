@@ -417,3 +417,18 @@ notify pgrst, 'reload schema';
 -- OJO: create_purchase responde PT400 si el tax_rate de una linea no es el pct de una alicuota ACTIVA de la tienda (las
 -- compras nuevas de productos cuya categoria quedo en 'otro-<pct>' se rechazan hasta activar esa alicuota o reasignar la
 -- categoria), y categories responde PT400 al guardar un tax_rate sin alicuota. Las alicuotas no se borran: se desactivan.
+-- -----------------------------------------------------------------------------
+-- 20261007b — tax rates store override (SHR-10): RPC override_tax_rate_for_store, unico camino del BFF para cambiar una
+--             alicuota (PATCH /api/tax-rates/{id}); crea la fila de la tienda a partir de la global y le traspasa
+--             categorias y alicuota por defecto en una sola transaccion
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261007b-tax-rates-store-override.sql
+-- Requiere 20261007a. Idempotente, una transaccion. Solo crea la funcion: no migra ni toca filas, stock ni dinero.
+-- Solo admin (PT403); PT404 si la alicuota no existe para la tienda; PT409 al desactivar una alicuota que usan
+-- categorias activas o que es la alicuota por defecto; PT400 con label vacio o pct fuera de 0..100.
+-- -----------------------------------------------------------------------------
+-- ORDEN DE DESPLIEGUE (SHR-10): aplicar 20261007a y 20261007b ANTES de desplegar el BFF de la rama feat/ux-mejoras.
+-- Ese BFF ya pide las columnas nuevas en sus select (categories.tax_rate_id, app_settings.default_tax_rate_id,
+-- purchase_items.tax_rate_code) y llama a tax_rates_for_store y override_tax_rate_for_store: sin los dos parches,
+-- categorias, configuracion, detalle de compra y /api/tax-rates responden error. Los parches si son compatibles con el
+-- BFF anterior (create_purchase sigue aceptando solo tax_rate), asi que el orden seguro es parches -> verify -> BFF.
