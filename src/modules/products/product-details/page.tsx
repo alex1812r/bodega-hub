@@ -157,6 +157,7 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
         </div>
         <div className="lg:col-span-4">
           <ProductDetailStockCard
+            adjustableProduct={{ id: data.id, name: data.name, sku: data.sku }}
             currentStock={data.currentStock}
             minStock={data.minStock}
           />

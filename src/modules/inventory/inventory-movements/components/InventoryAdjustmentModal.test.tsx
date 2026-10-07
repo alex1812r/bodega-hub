@@ -47,6 +47,98 @@ describe("InventoryAdjustmentModal · tipos del ajuste libre (R4)", () => {
   });
 });
 
+describe("InventoryAdjustmentModal · producto bloqueado y apertura controlada (PRO-03)", () => {
+  const lockedProduct = { currentStock: 10, id: "prod-cable", name: "Cable HDMI", sku: "ele-cab-001" };
+
+  it("con lockedProduct muestra el producto fijo, sin selector y sin pedir el catalogo", async () => {
+    const gets: string[] = [];
+    installFetchStub((url) => {
+      gets.push(url);
+
+      return products;
+    });
+
+    render(<InventoryAdjustmentModal lockedProduct={lockedProduct} />, {
+      wrapper: createQueryWrapper(),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar ajuste" }));
+
+    const productField = await screen.findByLabelText("Producto");
+
+    expect(productField.tagName).toBe("INPUT");
+    expect(productField).toHaveValue("Cable HDMI (ele-cab-001)");
+    expect(productField).toBeDisabled();
+    expect(productField).toHaveAttribute("readonly");
+    expect(screen.queryByRole("option", { name: /Cable HDMI/ })).toBeNull();
+    expect(screen.getByText("Stock actual:")).toHaveTextContent("Stock actual: 10");
+    expect(gets).toEqual([]);
+
+    fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("Tipo de movimiento"), {
+      target: { value: "ajuste_salida" },
+    });
+
+    expect(screen.getByText("6")).toBeVisible();
+  });
+
+  it("controlado: abre sin boton propio, envia el producto bloqueado con clave y avisa del cierre", async () => {
+    const api = installFetchStub(() => products);
+    const onOpenChange = jest.fn();
+    api.respondToNextPost({ data: { id: "mov-1" } });
+
+    render(
+      <InventoryAdjustmentModal lockedProduct={lockedProduct} onOpenChange={onOpenChange} open />,
+      { wrapper: createQueryWrapper() },
+    );
+
+    expect(screen.getByRole("dialog", { name: "Ajuste de stock" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Registrar ajuste" })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "2" } });
+    fireEvent.submit(getForm());
+    fireEvent.submit(getForm());
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(onOpenChange).toHaveBeenCalledTimes(1);
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]?.body).toMatchObject({
+      clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      productId: "prod-cable",
+      quantityDelta: 2,
+      type: "ajuste_entrada",
+    });
+  });
+
+  it("controlado: cancelar avisa del cierre sin enviar nada", async () => {
+    const api = installFetchStub(() => products);
+    const onOpenChange = jest.fn();
+
+    render(
+      <InventoryAdjustmentModal lockedProduct={lockedProduct} onOpenChange={onOpenChange} open />,
+      { wrapper: createQueryWrapper() },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(api.posts).toHaveLength(0);
+  });
+
+  it("sin controlar tambien avisa de la apertura y del cierre", async () => {
+    installFetchStub(() => products);
+    const onOpenChange = jest.fn();
+
+    render(<InventoryAdjustmentModal onOpenChange={onOpenChange} />, {
+      wrapper: createQueryWrapper(),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar ajuste" }));
+    await screen.findByRole("option", { name: /Cable HDMI/ });
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(document.getElementById("inventory-adjustment-form")).toBeNull());
+    expect(onOpenChange.mock.calls).toEqual([[true], [false]]);
+  });
+});
+
 describe("InventoryAdjustmentModal · idempotencia (C6)", () => {
   it("doble envio = un solo POST, con clave, y el boton queda deshabilitado", async () => {
     const api = installFetchStub(() => products);

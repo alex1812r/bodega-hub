@@ -6,13 +6,14 @@ import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
+import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 import { cn } from "@/shared/utils/cn";
 
-import { useAdjustInventory, useInventory } from "../../hooks/useInventory";
+import { type InventoryItem, useAdjustInventory, useInventory } from "../../hooks/useInventory";
 import { useRequestAttempt } from "../../utils/requestAttempt";
 import {
   getInventoryAdjustmentDelta,
@@ -22,24 +23,79 @@ import {
 
 const formId = "inventory-adjustment-form";
 
+/** Producto fijo del ajuste: lo que el modal muestra de él sin consultar el catálogo. */
+export type InventoryAdjustmentLockedProduct = Pick<
+  InventoryItem,
+  "currentStock" | "id" | "name" | "sku"
+>;
+
 type InventoryAdjustmentModalProps = {
+  /** Producto preseleccionado en el selector; el usuario puede cambiarlo. */
   defaultProductId?: string;
+  /**
+   * Ajuste de un producto concreto: se muestra bloqueado, sin selector y sin
+   * cargar el catálogo. Su `currentStock` es el que pinta "Stock actual".
+   */
+  lockedProduct?: InventoryAdjustmentLockedProduct;
+  /** Avisa de cada apertura y cierre, también del cierre tras registrar el ajuste. */
+  onOpenChange?: (open: boolean) => void;
+  /** Modo controlado. Sin `open`, el modal se abre con `trigger` (o su botón por defecto). */
+  open?: boolean;
   trigger?: ReactNode;
 };
 
-export function InventoryAdjustmentModal({
-  defaultProductId,
-  trigger,
-}: InventoryAdjustmentModalProps = {}) {
-  const [open, setOpen] = useState(false);
-  const [productId, setProductId] = useState("");
-  const [type, setType] = useState<FreeInventoryAdjustmentType>("ajuste_entrada");
-  const [quantity, setQuantity] = useState("");
-  const [reason, setReason] = useState("");
-  const [hasSubmitted, setHasSubmitted] = useState(false);
+type AdjustmentStockPreviewProps = {
+  currentStock: number;
+  /** Con signo; 0 mientras no haya una cantidad mayor a cero. */
+  quantityDelta: number;
+};
+
+function AdjustmentStockPreview({ currentStock, quantityDelta }: AdjustmentStockPreviewProps) {
+  const projectedStock = quantityDelta !== 0 ? currentStock + quantityDelta : undefined;
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border px-4 py-3 text-sm",
+        projectedStock != null && projectedStock < 0
+          ? "border-error/30 bg-error/5 text-error"
+          : "border-primary/20 bg-primary/5 text-foreground",
+      )}
+    >
+      <p className="font-medium">
+        Stock actual: <span className="tabular-nums">{currentStock}</span>
+      </p>
+      {projectedStock != null ? (
+        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-on-surface-variant">
+          <span>Después del movimiento:</span>
+          <ArrowRight aria-hidden className="size-4 shrink-0" />
+          <span
+            className={cn("font-semibold tabular-nums", projectedStock < 0 && "text-error")}
+          >
+            {projectedStock}
+          </span>
+          {projectedStock < 0 ? <span className="text-error">(stock insuficiente)</span> : null}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+type AdjustmentProductSelectProps = {
+  error?: string;
+  onChange: (productId: string) => void;
+  quantityDelta: number;
+  value: string;
+};
+
+/** Selector del catálogo. Solo se monta sin `lockedProduct`: es quien pide los productos. */
+function AdjustmentProductSelect({
+  error,
+  onChange,
+  quantityDelta,
+  value,
+}: AdjustmentProductSelectProps) {
   const productsQuery = useInventory({ limit: 100 });
-  const adjustment = useAdjustInventory();
-  const requestAttempt = useRequestAttempt();
   const products = useMemo(
     () => getPaginatedItems(productsQuery.data),
     [productsQuery.data],
@@ -53,19 +109,66 @@ export function InventoryAdjustmentModal({
     [products],
   );
   const selectedProduct = useMemo(
-    () => products.find((product) => product.id === productId),
-    [productId, products],
+    () => products.find((product) => product.id === value),
+    [products, value],
   );
+
+  return (
+    <>
+      <SelectField
+        disabled={productsQuery.isLoading}
+        error={error}
+        helperText={
+          productsQuery.error ? "No pudimos cargar los productos disponibles." : undefined
+        }
+        label="Producto"
+        onChange={(event) => onChange(event.target.value)}
+        options={productOptions}
+        placeholder="Selecciona producto"
+        value={value}
+      />
+      {selectedProduct != null ? (
+        <AdjustmentStockPreview
+          currentStock={selectedProduct.currentStock}
+          quantityDelta={quantityDelta}
+        />
+      ) : null}
+    </>
+  );
+}
+
+export function InventoryAdjustmentModal({
+  defaultProductId,
+  lockedProduct,
+  onOpenChange,
+  open: openProp,
+  trigger,
+}: InventoryAdjustmentModalProps = {}) {
+  const isControlled = openProp !== undefined;
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = isControlled ? openProp : internalOpen;
+  const [selectedProductId, setProductId] = useState("");
+  const productId = lockedProduct?.id ?? selectedProductId;
+  const [type, setType] = useState<FreeInventoryAdjustmentType>("ajuste_entrada");
+  const [quantity, setQuantity] = useState("");
+  const [reason, setReason] = useState("");
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const adjustment = useAdjustInventory();
+  const requestAttempt = useRequestAttempt();
   const quantityNumber = Number(quantity);
   const quantityDelta =
     quantityNumber > 0 ? getInventoryAdjustmentDelta(quantityNumber, type) : 0;
-  const projectedStock =
-    selectedProduct != null && quantityNumber > 0
-      ? selectedProduct.currentStock + quantityDelta
-      : undefined;
   // Con decimales el propio campo avisa ("Debe ser un número entero."): aquí solo se bloquea el envío.
   const canSubmit =
     Boolean(productId) && quantityNumber > 0 && Number.isInteger(quantityNumber);
+
+  function setOpen(nextOpen: boolean) {
+    if (!isControlled) {
+      setInternalOpen(nextOpen);
+    }
+
+    onOpenChange?.(nextOpen);
+  }
 
   function resetForm() {
     setProductId(defaultProductId ?? "");
@@ -131,66 +234,39 @@ export function InventoryAdjustmentModal({
           setProductId(defaultProductId ?? "");
         } else {
           resetForm();
+
+          // Controlado no hay evento de apertura que limpie el error del intento anterior.
+          if (isControlled) {
+            adjustment.reset();
+          }
         }
       }}
       open={open}
       title="Ajuste de stock"
-      trigger={
-        trigger ?? (
-          <Button size="sm">
-            Registrar ajuste
-          </Button>
-        )
-      }
+      trigger={trigger ?? (isControlled ? undefined : <Button size="sm">Registrar ajuste</Button>)}
     >
       <form className="grid gap-5" id={formId} onSubmit={handleSubmit}>
-        <SelectField
-          disabled={productsQuery.isLoading}
-          error={hasSubmitted && !productId ? "Selecciona un producto." : undefined}
-          helperText={
-            productsQuery.error
-              ? "No pudimos cargar los productos disponibles."
-              : undefined
-          }
-          label="Producto"
-          onChange={(event) => setProductId(event.target.value)}
-          options={productOptions}
-          placeholder="Selecciona producto"
-          value={productId}
-        />
-
-        {selectedProduct != null ? (
-          <div
-            className={cn(
-              "rounded-lg border px-4 py-3 text-sm",
-              projectedStock != null && projectedStock < 0
-                ? "border-error/30 bg-error/5 text-error"
-                : "border-primary/20 bg-primary/5 text-foreground",
-            )}
-          >
-            <p className="font-medium">
-              Stock actual:{" "}
-              <span className="tabular-nums">{selectedProduct.currentStock}</span>
-            </p>
-            {projectedStock != null ? (
-              <p className="mt-1 flex flex-wrap items-center gap-1.5 text-on-surface-variant">
-                <span>Después del movimiento:</span>
-                <ArrowRight aria-hidden className="size-4 shrink-0" />
-                <span
-                  className={cn(
-                    "font-semibold tabular-nums",
-                    projectedStock < 0 && "text-error",
-                  )}
-                >
-                  {projectedStock}
-                </span>
-                {projectedStock < 0 ? (
-                  <span className="text-error">(stock insuficiente)</span>
-                ) : null}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
+        {lockedProduct ? (
+          <>
+            <Input
+              disabled
+              label="Producto"
+              readOnly
+              value={`${lockedProduct.name} (${lockedProduct.sku})`}
+            />
+            <AdjustmentStockPreview
+              currentStock={lockedProduct.currentStock}
+              quantityDelta={quantityDelta}
+            />
+          </>
+        ) : (
+          <AdjustmentProductSelect
+            error={hasSubmitted && !productId ? "Selecciona un producto." : undefined}
+            onChange={setProductId}
+            quantityDelta={quantityDelta}
+            value={productId}
+          />
+        )}
 
         <div className="grid gap-5 md:grid-cols-2 md:items-start">
           <SelectField

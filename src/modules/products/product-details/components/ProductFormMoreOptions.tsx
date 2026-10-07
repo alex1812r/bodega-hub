@@ -1,5 +1,7 @@
 "use client";
 
+import { Can } from "@/shared/auth/Can";
+import { Button } from "@/shared/components/Button";
 import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 import { GenerateSkuIconButton } from "@/shared/components/GenerateSkuIconButton";
 import { Input } from "@/shared/components/Input";
@@ -19,6 +21,11 @@ const SKU_HELPER_TEXT =
 type ProductFormMoreOptionsProps = {
   isEdit: boolean;
   isUnitRole: boolean;
+  /**
+   * Edición: abre el ajuste de inventario del producto. Recibe el botón pulsado,
+   * para devolverle el foco al cerrar. El botón exige `inventory.manage`.
+   */
+  onAdjustStock?: (trigger: HTMLButtonElement) => void;
   onOpenChange: (open: boolean) => void;
   onPackConversionChange: (patch: Partial<PackConversionFormState>) => void;
   onSkuChange: (sku: string) => void;
@@ -39,6 +46,7 @@ type ProductFormMoreOptionsProps = {
 export function ProductFormMoreOptions({
   isEdit,
   isUnitRole,
+  onAdjustStock,
   onOpenChange,
   onPackConversionChange,
   onSkuChange,
@@ -77,14 +85,28 @@ export function ProductFormMoreOptions({
         <Textarea label="Descripción" placeholder="Detalles del producto" />
         <div className="grid gap-4 md:grid-cols-2">
           {isEdit ? (
-            <NumberInput
-              decimals={0}
-              defaultValue={product?.currentStock}
-              disabled
-              helperText="Se corrige desde Inventario con un ajuste, para que quede registrado el movimiento."
-              label="Stock actual"
-              readOnly
-            />
+            <div className="space-y-2">
+              {/* Controlado: tras un ajuste muestra el stock recién consultado. */}
+              <NumberInput
+                decimals={0}
+                disabled
+                helperText="Se corrige desde Inventario con un ajuste, para que quede registrado el movimiento."
+                label="Stock actual"
+                readOnly
+                value={product?.currentStock}
+              />
+              {onAdjustStock ? (
+                <Can permission="inventory.manage">
+                  <Button
+                    onClick={(event) => onAdjustStock(event.currentTarget)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Ajustar stock
+                  </Button>
+                </Can>
+              ) : null}
+            </div>
           ) : (
             <NumberInput
               decimals={0}

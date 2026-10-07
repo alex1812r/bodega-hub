@@ -1,9 +1,10 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useEffect, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
+import { InventoryAdjustmentModal } from "@/modules/inventory/inventory-movements/components/InventoryAdjustmentModal";
 import { Can } from "@/shared/auth/Can";
 import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
@@ -124,6 +125,8 @@ export function ProductFormModal({
     createDefaultPackConversionFormState(product?.packConversion),
   );
   const [showSubmitErrors, setShowSubmitErrors] = useState(false);
+  const [stockAdjustmentOpen, setStockAdjustmentOpen] = useState(false);
+  const stockAdjustmentTriggerRef = useRef<HTMLButtonElement | null>(null);
   const isUnitRole = product?.packConversion?.role === "unit";
 
   useEffect(() => {
@@ -152,6 +155,23 @@ export function ProductFormModal({
     if (nextOpen) {
       resetFormFields();
     }
+  }
+
+  function openStockAdjustment(trigger: HTMLButtonElement) {
+    stockAdjustmentTriggerRef.current = trigger;
+    setStockAdjustmentOpen(true);
+  }
+
+  // El ajuste se cierra (cancelado o registrado) y este formulario sigue abierto
+  // con lo escrito. El Modal compartido no devuelve el foco: se desmonta en el
+  // mismo tick y vuelve al botón que lo abrió.
+  function handleStockAdjustmentOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      return;
+    }
+
+    flushSync(() => setStockAdjustmentOpen(false));
+    stockAdjustmentTriggerRef.current?.focus();
   }
 
   // Un campo de "Más opciones" con la sección cerrada no puede recibir el foco:
@@ -342,6 +362,7 @@ export function ProductFormModal({
           <ProductFormMoreOptions
             isEdit={isEdit}
             isUnitRole={isUnitRole}
+            onAdjustStock={isEdit && product ? openStockAdjustment : undefined}
             onOpenChange={setMoreOptionsOpen}
             onPackConversionChange={(patch) =>
               setPackConversionState((current) => ({ ...current, ...patch }))
@@ -366,6 +387,14 @@ export function ProductFormModal({
           </p>
         ) : null}
       </form>
+      {/* Fuera del <form>: el envío del ajuste no debe burbujear al del producto. */}
+      {isEdit && product && stockAdjustmentOpen ? (
+        <InventoryAdjustmentModal
+          lockedProduct={product}
+          onOpenChange={handleStockAdjustmentOpenChange}
+          open
+        />
+      ) : null}
     </Modal>
   );
 }
