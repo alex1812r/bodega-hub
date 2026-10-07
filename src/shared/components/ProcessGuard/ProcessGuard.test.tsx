@@ -226,26 +226,121 @@ describe("ProcessGuard", () => {
     await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(1));
   });
 
-  it("si el guardado falla muestra error.message tal cual y no navega", async () => {
-    const user = userEvent.setup();
-    const onSaveDraft = jest
-      .fn()
-      .mockRejectedValueOnce(new Error("No se pudo guardar el borrador de la compra"));
+  describe("el guardado o el descarte fallan", () => {
+    it("muestra error.message tal cual, no navega y ofrece reintentar o salir sin guardar", async () => {
+      const user = userEvent.setup();
+      const onSaveDraft = jest.fn().mockRejectedValueOnce(new Error("Sin conexión con el servidor"));
 
-    render(<Screen onSaveDraft={onSaveDraft} />);
+      render(<Screen onSaveDraft={onSaveDraft} />);
 
-    await user.click(link("Ventas"));
-    await user.click(await screen.findByRole("button", { name: "Salir" }));
+      await user.click(link("Ventas"));
+      await user.click(await screen.findByRole("button", { name: "Salir" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "No se pudo guardar el borrador de la compra",
-    );
-    expect(mockPush).not.toHaveBeenCalled();
+      expect(await screen.findByRole("alert")).toHaveTextContent(/^Sin conexión con el servidor$/);
+      expect(screen.getByRole("dialog")).toHaveTextContent("No se pudo guardar el borrador.");
+      expect(mockPush).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: "Salir" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Seguir aquí" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Salir sin guardar" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Reintentar" })).toHaveFocus();
 
-    await user.click(screen.getByRole("button", { name: "Salir" }));
+      await user.click(screen.getByRole("button", { name: "Reintentar" }));
 
-    await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(1));
-    expect(onSaveDraft).toHaveBeenCalledTimes(2);
+      await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(1));
+      expect(mockPush).toHaveBeenCalledWith("/sales");
+      expect(onSaveDraft).toHaveBeenCalledTimes(2);
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    });
+
+    it("si el guardado falla siempre, 'Salir sin guardar' sale una vez sin volver a guardar", async () => {
+      const user = userEvent.setup();
+      const onSaveDraft = jest.fn().mockRejectedValue(new Error("Sin conexión con el servidor"));
+
+      render(<Screen onSaveDraft={onSaveDraft} />);
+
+      await user.click(link("Ventas"));
+      await user.click(await screen.findByRole("button", { name: "Salir" }));
+      await user.click(await screen.findByRole("button", { name: "Reintentar" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("Sin conexión con el servidor");
+      expect(onSaveDraft).toHaveBeenCalledTimes(2);
+      expect(mockPush).not.toHaveBeenCalled();
+
+      const leaveWithoutSaving = screen.getByRole("button", { name: "Salir sin guardar" });
+
+      fireEvent.click(leaveWithoutSaving);
+      fireEvent.click(leaveWithoutSaving);
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/sales"));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(mockPush).toHaveBeenCalledTimes(1);
+      expect(onSaveDraft).toHaveBeenCalledTimes(2);
+
+      // El proceso quedó cerrado: el siguiente enlace ya no pregunta.
+      await user.click(link("Ventas"));
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("un guardado que lanza de forma síncrona se trata igual", async () => {
+      const user = userEvent.setup();
+      const onSaveDraft = jest.fn(() => {
+        throw new Error("sin espacio");
+      });
+
+      render(<Screen onSaveDraft={onSaveDraft} />);
+
+      await user.click(link("Ventas"));
+      await user.click(await screen.findByRole("button", { name: "Salir" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(/^sin espacio$/);
+
+      await user.click(screen.getByRole("button", { name: "Salir sin guardar" }));
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(1));
+      expect(onSaveDraft).toHaveBeenCalledTimes(1);
+    });
+
+    it("'Seguir aquí' tras el fallo cierra el modal y la siguiente pregunta empieza sin error", async () => {
+      const user = userEvent.setup();
+      const onSaveDraft = jest.fn().mockRejectedValue(new Error("Sin conexión con el servidor"));
+
+      render(<Screen onSaveDraft={onSaveDraft} />);
+
+      await user.click(link("Ventas"));
+      await user.click(await screen.findByRole("button", { name: "Salir" }));
+      await screen.findByRole("alert");
+      await user.click(screen.getByRole("button", { name: "Seguir aquí" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(mockPush).not.toHaveBeenCalled();
+
+      await user.click(link("Ventas"));
+
+      expect(await screen.findByRole("button", { name: "Salir" })).toBeEnabled();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Salir sin guardar" })).not.toBeInTheDocument();
+      expect(onSaveDraft).toHaveBeenCalledTimes(1);
+    });
+
+    it("con discard, si onDiscard falla también hay salida: 'Salir de todos modos' no lo repite", async () => {
+      const user = userEvent.setup();
+      const onDiscard = jest.fn().mockRejectedValue(new Error("No se pudo liberar la reserva"));
+
+      render(<Screen onDiscard={onDiscard} onLeave="discard" />);
+
+      await user.click(link("Ventas"));
+      await user.click(await screen.findByRole("button", { name: "Salir" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(/^No se pudo liberar la reserva$/);
+      expect(screen.getByRole("dialog")).not.toHaveTextContent("No se pudo guardar el borrador.");
+      expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Salir de todos modos" }));
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/sales"));
+      expect(mockPush).toHaveBeenCalledTimes(1);
+      expect(onDiscard).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("tras salir no vuelve a preguntar en el siguiente enlace", async () => {

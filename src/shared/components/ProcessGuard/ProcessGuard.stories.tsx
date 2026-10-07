@@ -22,6 +22,8 @@ import { GuardedLink, ProcessGuard, ProcessGuardModal } from "./ProcessGuard";
  * - La navegación programática (`router.push/replace`, `window.location`) NO se
  *   intercepta: dentro de un proceso se navega con `guardedNavigate` o, al
  *   terminarlo, con `runUnguarded`.
+ * - Si `onSaveDraft`/`onDiscard` falla, el modal muestra `error.message` y
+ *   ofrece "Reintentar" y "Salir sin guardar" (story `SaveDraftFails`).
  * - `GuardedLink` es `next/link` bloqueado con `onNavigate`; los demás enlaces
  *   se interceptan con un listener global mientras hay un guardia activo.
  *
@@ -45,11 +47,13 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 type FakeFormProps = {
+  /** El guardado del borrador falla siempre con este mensaje. */
+  saveError?: string;
   onLeave: ProcessGuardLeaveMode;
   processName: string;
 };
 
-function FakeForm({ onLeave, processName }: FakeFormProps) {
+function FakeForm({ onLeave, processName, saveError }: FakeFormProps) {
   const [supplier, setSupplier] = useState("");
   const [lines, setLines] = useState(0);
   const [log, setLog] = useState<string[]>([]);
@@ -66,7 +70,13 @@ function FakeForm({ onLeave, processName }: FakeFormProps) {
     label: `${processName}${supplier.trim() ? ` a ${supplier.trim()}` : ""} · ${lines} líneas`,
     onDiscard: () => addLog("onDiscard"),
     onLeave,
-    onSaveDraft: () => addLog("onSaveDraft"),
+    onSaveDraft: () => {
+      addLog("onSaveDraft");
+
+      if (saveError) {
+        throw new Error(saveError);
+      }
+    },
   });
 
   function reset() {
@@ -163,6 +173,27 @@ export const Discard: Story = {
     await userEvent.click(canvas.getByRole("button", { name: /cerrar formulario/i }));
 
     await expect(await body.findByRole("dialog")).toHaveTextContent(/se perderán los cambios/i);
+  },
+};
+
+export const SaveDraftFails: Story = {
+  args: baseArgs,
+  render: () => (
+    <FakeForm onLeave="draft" processName="Compra" saveError="Sin conexión con el servidor" />
+  ),
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const body = within(canvasElement.ownerDocument.body);
+
+    await userEvent.type(canvas.getByLabelText(/proveedor/i), "Distribuidora X");
+    await userEvent.click(canvas.getByRole("link", { name: /inventario/i }));
+    await userEvent.click(await body.findByRole("button", { name: "Salir" }));
+
+    await expect(await body.findByRole("alert")).toHaveTextContent("Sin conexión con el servidor");
+    await expect(body.getByRole("dialog")).toHaveTextContent("No se pudo guardar el borrador.");
+    await expect(body.getByRole("button", { name: "Reintentar" })).toHaveFocus();
+    await expect(body.getByRole("button", { name: "Salir sin guardar" })).toBeEnabled();
+    await expect(body.getByRole("button", { name: "Seguir aquí" })).toBeEnabled();
+    await expect(canvas.getByRole("status")).toHaveTextContent(/^onSaveDraft$/);
   },
 };
 

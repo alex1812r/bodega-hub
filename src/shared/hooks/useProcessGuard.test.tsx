@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type ReactElement, StrictMode } from "react";
 
@@ -334,6 +334,108 @@ describe("useProcessGuard", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
       go.mockRestore();
+    });
+
+    describe("salida en curso (onSaveDraft lento)", () => {
+      function slowSave() {
+        let finish: () => void = () => undefined;
+        const onSaveDraft = jest.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              finish = resolve;
+            }),
+        );
+
+        return { finish: () => act(async () => finish()), onSaveDraft };
+      }
+
+      async function expectStillPending(user: ReturnType<typeof userEvent.setup>) {
+        const leaveButton = screen.getByRole("button", { name: "Salir" });
+        const stayButton = screen.getByRole("button", { name: "Seguir aquí" });
+
+        expect(leaveButton).toBeDisabled();
+        expect(stayButton).toBeDisabled();
+
+        // Aunque algo los rehabilitara, ni un segundo "Salir" ni "Seguir aquí" ni Esc cambian nada.
+        fireEvent.click(leaveButton);
+        fireEvent.click(stayButton);
+        await user.keyboard("{Escape}");
+        await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+
+        expect(screen.getAllByRole("dialog")).toHaveLength(1);
+      }
+
+      it("ATRÁS a mitad del guardado: el modal sigue bloqueado, se guarda una vez y se sale una vez al destino pedido", async () => {
+        const user = userEvent.setup();
+        const { finish, onSaveDraft } = slowSave();
+
+        renderUnderRouter(<Harness onSaveDraft={onSaveDraft} />);
+
+        await user.click(button(/ir a ventas/));
+        await user.click(await screen.findByRole("button", { name: "Salir" }));
+        await browserBack();
+
+        await expectStillPending(user);
+        expect(onSaveDraft).toHaveBeenCalledTimes(1);
+        expect(mockPush).not.toHaveBeenCalled();
+        expect(window.location.pathname).toBe(PROCESS_PATH);
+        expect(window.history.state).toMatchObject({ __processGuard: "sentinel" });
+
+        await finish();
+
+        await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(1));
+        expect(mockPush).toHaveBeenCalledWith("/sales");
+        expect(onSaveDraft).toHaveBeenCalledTimes(1);
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      });
+
+      it("salida por ATRÁS + otro ATRÁS a mitad del guardado: retrocede una sola vez a la ruta anterior", async () => {
+        const user = userEvent.setup();
+        const { finish, onSaveDraft } = slowSave();
+
+        renderUnderRouter(<Harness onSaveDraft={onSaveDraft} />);
+
+        await browserBack();
+        await user.click(await screen.findByRole("button", { name: "Salir" }));
+        await browserBack();
+
+        await expectStillPending(user);
+        expect(window.location.pathname).toBe(PROCESS_PATH);
+
+        const go = jest.spyOn(window.history, "go");
+
+        await finish();
+        await waitFor(() => expect(window.location.pathname).toBe("/inventory"));
+
+        expect(go.mock.calls).toEqual([[-2]]);
+        expect(onSaveDraft).toHaveBeenCalledTimes(1);
+        expect(mockPush).not.toHaveBeenCalled();
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+        go.mockRestore();
+      });
+
+      it("otra petición de salida a mitad del guardado no sustituye el destino ni rehabilita el modal", async () => {
+        const user = userEvent.setup();
+        const { finish, onSaveDraft } = slowSave();
+        const onClosed = jest.fn();
+
+        renderUnderRouter(<Harness onClosed={onClosed} onSaveDraft={onSaveDraft} />);
+
+        await user.click(button(/ir a ventas/));
+        await user.click(await screen.findByRole("button", { name: "Salir" }));
+        // El modal de Radix deja el fondo inerte: se dispara el clic sin puntero.
+        fireEvent.click(screen.getByText(/cerrar formulario/));
+
+        await expectStillPending(user);
+
+        await finish();
+
+        await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(1));
+        expect(mockPush).toHaveBeenCalledWith("/sales");
+        expect(onClosed).not.toHaveBeenCalled();
+        expect(onSaveDraft).toHaveBeenCalledTimes(1);
+      });
     });
 
     it("proceso terminado (guardia desactivado): un solo atrás sale de la pantalla, sin modal", async () => {
@@ -672,6 +774,29 @@ describe("useProcessGuard", () => {
 
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
       expect(onClosed).not.toHaveBeenCalled();
+    });
+
+    it("si el proceso sigue activo tras salir de la acción, la siguiente petición vuelve a preguntar", async () => {
+      const user = userEvent.setup();
+      const onClosed = jest.fn();
+      const onDiscard = jest.fn();
+
+      render(<Harness onClosed={onClosed} onDiscard={onDiscard} onLeave="discard" />);
+
+      await user.click(button(/cerrar formulario/));
+      await user.click(await screen.findByRole("button", { name: "Salir" }));
+      await waitFor(() => expect(onClosed).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+      await user.click(button(/cerrar formulario/));
+
+      expect(await screen.findByRole("button", { name: "Salir" })).toBeEnabled();
+
+      await user.click(screen.getByRole("button", { name: "Seguir aquí" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(onClosed).toHaveBeenCalledTimes(1);
+      expect(onDiscard).toHaveBeenCalledTimes(1);
     });
 
     it("inactivo: ejecuta la acción directamente", async () => {

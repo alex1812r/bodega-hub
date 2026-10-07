@@ -28,7 +28,11 @@ export type ProcessGuardDialogState = {
   description?: string;
   error: string | null;
   label: string;
+  /** "Salir" y "Reintentar": ejecuta `onSaveDraft`/`onDiscard` y, si no fallan, sale. */
   leave: () => void;
+  /** Salida tras un fallo (`error`): sale sin volver a llamar a `onSaveDraft` ni a `onDiscard`. */
+  leaveWithoutSaving: () => void;
+  /** Hay una salida en curso: el modal queda bloqueado hasta que termina o falla. */
   leaving: boolean;
   onLeave: ProcessGuardLeaveMode;
   open: boolean;
@@ -495,6 +499,13 @@ export function interceptProcessGuardNavigation(href: string, replace = false): 
  * `runUnguarded(() => router.push(href))`. `router.back()` sí pregunta, porque
  * retrocede a la entrada gemela igual que el botón ATRÁS.
  *
+ * "Salir" espera a `onSaveDraft`/`onDiscard`. Mientras tanto el modal queda
+ * bloqueado y cualquier otro intento de salida (ATRÁS, enlace, Esc) se ignora:
+ * el manejador se llama una vez y se sale una vez, al destino confirmado. Si
+ * el manejador falla no se sale: el modal muestra `error.message` y ofrece
+ * reintentar (`dialog.leave`) o salir sin volver a llamarlo
+ * (`dialog.leaveWithoutSaving`).
+ *
  * Límites conocidos (los pone el navegador; la mitigación es `beforeunload` y
  * el borrador de `onSaveDraft`):
  * - Chromium salta, al pulsar ATRÁS, las entradas que una página añade sin que
@@ -570,8 +581,12 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
 
     const entry: GuardEntry = {
       ask: (pending) => {
+        // Con una salida en curso manda la que ya se confirmó: otro ATRÁS o enlace no la sustituye ni desbloquea el modal.
+        if (leavingRef.current) {
+          return;
+        }
+
         pendingRef.current = pending;
-        leavingRef.current = false;
         setLeaving(false);
         setError(null);
         setOpen(true);
@@ -618,10 +633,10 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
     }
   }, [closeDialog]);
 
-  const leave = useCallback(() => {
+  const runLeave = useCallback((runHandlers: boolean) => {
     const pending = pendingRef.current;
 
-    // `leavingRef` solo se rearma en el siguiente `ask`: doble clic = una ejecución.
+    // Doble clic = una ejecución: en curso lo impide `leavingRef`; ya terminada, no queda `pending`.
     if (!pending || leavingRef.current) {
       return;
     }
@@ -639,16 +654,20 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
         : [];
 
     void (async () => {
-      try {
-        for (const entry of leavingEntries) {
-          await entry.leave();
+      if (runHandlers) {
+        try {
+          for (const entry of leavingEntries) {
+            await entry.leave();
+          }
+        } catch (caught) {
+          leavingRef.current = false;
+          setLeaving(false);
+          setError(caught instanceof Error ? caught.message : String(caught));
+          return;
         }
-      } catch (caught) {
-        leavingRef.current = false;
-        setLeaving(false);
-        setError(caught instanceof Error ? caught.message : String(caught));
-        return;
       }
+
+      leavingRef.current = false;
 
       if (leavesRoute) {
         for (const entry of leavingEntries) {
@@ -667,6 +686,9 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
       }
     })();
   }, [closeDialog]);
+
+  const leave = useCallback(() => runLeave(true), [runLeave]);
+  const leaveWithoutSaving = useCallback(() => runLeave(false), [runLeave]);
 
   const guardedNavigate = useCallback((href: string, navigateOptions?: GuardedNavigateOptions) => {
     const replace = navigateOptions?.replace ?? false;
@@ -703,7 +725,17 @@ export function useProcessGuard(options: UseProcessGuardOptions): ProcessGuardCo
 
   return {
     bypass,
-    dialog: { description, error, label, leave, leaving, onLeave, open, stay },
+    dialog: {
+      description,
+      error,
+      label,
+      leave,
+      leaveWithoutSaving,
+      leaving,
+      onLeave,
+      open,
+      stay,
+    },
     guardedNavigate,
     requestLeave,
     runUnguarded,
