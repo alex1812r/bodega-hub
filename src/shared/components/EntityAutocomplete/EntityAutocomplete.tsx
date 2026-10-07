@@ -70,6 +70,8 @@ export type EntityAutocompleteProps<K extends EntityKind> = {
    * exacta o con error de búsqueda) cuando el campo ya está en otro escaneo y
    * no puede mostrarlo, o cuando lo estaba mostrando y el siguiente escaneo lo
    * reemplaza sin que el usuario haya elegido, limpiado ni editado el texto.
+   * Una sola vez por escaneo: un Enter suelto sobre el código que sigue a la
+   * vista en el campo no vuelve a avisar.
    */
   onNotFound?: (text: string) => void;
   placeholder?: string;
@@ -107,6 +109,12 @@ function isForbiddenError(error: unknown) {
  *
  * Los recientes son una copia guardada en el navegador: un consumidor que
  * necesite stock, precio o costo vigentes debe releer la entidad por `id`.
+ *
+ * Con texto o con escaneos sin responder, Enter nunca envía el `<form>` que
+ * contiene el campo. Con el campo vacío y nada pendiente, sí: también el Enter
+ * que llega después de resolverse un escaneo exacto (sufijo CR LF de un lector
+ * más lento que la respuesta). Una pantalla que escanee no debe depender del
+ * envío implícito del formulario.
  */
 export function EntityAutocomplete<K extends EntityKind>({
   autoFocus = false,
@@ -138,14 +146,19 @@ export function EntityAutocomplete<K extends EntityKind>({
   // Cambia cada vez que el campo pasa a otra cosa: un escaneo que responde
   // con otro valor ya no puede tocar el texto ni el desplegable.
   const fieldEpochRef = useRef(0);
-  // Valor de `fieldEpochRef` cuando llegaron los resultados a la vista: si el
-  // texto cambió después, el usuario no ha podido verlos para ese texto.
-  const resultsEpochRef = useRef(0);
-  // Código de un escaneo devuelto al campo sin avisar (con su lista o su
-  // error) mientras el usuario no haya hecho nada con él: si el siguiente
-  // escaneo lo reemplaza, se avisa con `onNotFound`. `epoch` es el valor de
+  // Escaneo a la vista: el código de un Enter que no eligió sigue en el campo,
+  // seleccionado entero, con su lista o su error. `epoch` es el valor de
   // `fieldEpochRef` al mostrarlo: mientras coincidan, el texto está intacto.
-  const shownScanRef = useRef<{ code: string; epoch: number } | null>(null);
+  // Si el siguiente escaneo lo reemplaza y aún no se avisó por él
+  // (`isReported`), se avisa con `onNotFound`. `isCaretPlaced`: el usuario ya
+  // puso el cursor dentro del texto (segundo clic seguido o tecla de cursor)
+  // para corregirlo a mano, y un clic ya no repone la selección.
+  const shownScanRef = useRef<{
+    code: string;
+    epoch: number;
+    isCaretPlaced: boolean;
+    isReported: boolean;
+  } | null>(null);
   const scanQueueRef = useRef<Promise<void>>(Promise.resolve());
   const scanControllersRef = useRef(new Set<AbortController>());
   const callbacksRef = useRef({ onChange, onNotFound });
@@ -157,6 +170,10 @@ export function EntityAutocomplete<K extends EntityKind>({
   const [recents, setRecents] = useState<EntityOption<K>[]>([]);
   const [search, setSearch] = useState<SearchState<K>>({ key: "", status: "idle" });
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  // Los resultados llegaron después del último cambio del texto: el usuario
+  // los tiene a la vista para ese texto y Enter elige la primera opción. No lo
+  // está con un texto que volvió a uno ya cargado ni con un escaneo a la vista.
+  const [isListSeen, setIsListSeen] = useState(false);
   const [pendingScans, setPendingScans] = useState(0);
   const [restoredScans, setRestoredScans] = useState(0);
 
@@ -210,7 +227,8 @@ export function EntityAutocomplete<K extends EntityKind>({
   }
 
   const firstEnabledIndex = options.findIndex((option) => !getDisabledReason(option));
-  const defaultActiveIndex = view === "results" ? firstEnabledIndex : -1;
+  // Lo que se ve resaltado es lo que Enter elegiría.
+  const defaultActiveIndex = view === "results" && isListSeen ? firstEnabledIndex : -1;
   const resolvedActiveIndex =
     activeIndex !== null && activeIndex < options.length ? activeIndex : defaultActiveIndex;
   const activeOption = resolvedActiveIndex >= 0 ? options[resolvedActiveIndex] : undefined;
@@ -247,7 +265,7 @@ export function EntityAutocomplete<K extends EntityKind>({
 
         setSearch({ items: visibleItems, key, status: "success" });
         setActiveIndex(null);
-        resultsEpochRef.current = fieldEpochRef.current;
+        setIsListSeen(true);
         shownScanRef.current = null;
         return visibleItems;
       },
@@ -392,7 +410,15 @@ export function EntityAutocomplete<K extends EntityKind>({
     setText("");
     setIsDirty(false);
     setActiveIndex(null);
+    setIsListSeen(false);
     fieldEpochRef.current += 1;
+  }
+
+  /** El escaneo a la vista en el campo, mientras su texto siga intacto. */
+  function getShownScan() {
+    const shownScan = shownScanRef.current;
+
+    return shownScan?.epoch === fieldEpochRef.current ? shownScan : null;
   }
 
   function showPopup() {
@@ -465,13 +491,19 @@ export function EntityAutocomplete<K extends EntityKind>({
 
   /**
    * Un escaneo que no eligió sigue a la vista en el campo: su texto queda
-   * seleccionado entero y, si aún no se avisó por él, anotado por si el
-   * siguiente escaneo lo reemplaza.
+   * seleccionado entero, ninguna opción resaltada por defecto y anotado, por
+   * si el siguiente escaneo lo reemplaza, con si ya se avisó por él.
    */
-  function keepScanInField(code: string, isAlreadyReported: boolean) {
+  function keepScanInField(code: string, isReported: boolean) {
     showPopup();
     setRestoredScans((count) => count + 1);
-    shownScanRef.current = isAlreadyReported ? null : { code, epoch: fieldEpochRef.current };
+    setIsListSeen(false);
+    shownScanRef.current = {
+      code,
+      epoch: fieldEpochRef.current,
+      isCaretPlaced: false,
+      isReported,
+    };
   }
 
   /**
@@ -546,7 +578,6 @@ export function EntityAutocomplete<K extends EntityKind>({
       setText(code);
       setIsDirty(true);
       setActiveIndex(null);
-      resultsEpochRef.current = fieldEpochRef.current;
       keepScanInField(code, hasNoResults);
     }
 
@@ -572,7 +603,7 @@ export function EntityAutocomplete<K extends EntityKind>({
 
     shownScanRef.current = null;
 
-    if (replacedScan !== null && replacedScan.code !== code) {
+    if (replacedScan !== null && !replacedScan.isReported && replacedScan.code !== code) {
       onNotFound?.(replacedScan.code);
     }
 
@@ -668,20 +699,33 @@ export function EntityAutocomplete<K extends EntityKind>({
       return;
     }
 
+    // Un Enter suelto sobre un escaneo a la vista (LF de un sufijo CR LF que
+    // llega después de la respuesta, o Enter a mano) no es otro escaneo: ni
+    // elige una coincidencia a medias ni vuelve a avisar.
+    if (getShownScan()) {
+      return;
+    }
+
     if (isSearchCurrent && search.status === "success") {
-      resolveEnter(
-        search.items,
-        query,
-        view === "results" && resultsEpochRef.current === fieldEpochRef.current,
-      );
+      resolveEnter(search.items, query, view === "results" && isListSeen);
       return;
     }
 
     startScan(query);
   }
 
+  /** Teclas con las que el navegador deshace la selección y coloca el cursor. */
+  function movesCaret(key: string) {
+    return (
+      key === "ArrowLeft" ||
+      key === "ArrowRight" ||
+      (!hasListbox && (key === "Home" || key === "End"))
+    );
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     const { selectionEnd, selectionStart, value: fieldText } = event.currentTarget;
+    const shownScan = getShownScan();
 
     // El lector escribe sobre el texto seleccionado de un escaneo a la vista
     // en el campo y lo reemplaza entero. Una tecla sobre ese texto intacto con
@@ -689,11 +733,13 @@ export function EntityAutocomplete<K extends EntityKind>({
     // se avisará por él. Con el texto ya reemplazado no cuenta: el código que
     // se está leyendo puede empezar por el que estaba a la vista.
     if (
+      shownScan &&
       event.key !== "Enter" &&
-      shownScanRef.current?.epoch === fieldEpochRef.current &&
       (selectionStart !== 0 || selectionEnd !== fieldText.length)
     ) {
       shownScanRef.current = null;
+    } else if (shownScan && movesCaret(event.key)) {
+      shownScan.isCaretPlaced = true;
     }
 
     switch (event.key) {
@@ -732,7 +778,25 @@ export function EntityAutocomplete<K extends EntityKind>({
     setText(nextText);
     setIsDirty(true);
     setActiveIndex(null);
+    setIsListSeen(false);
     showPopup();
+  }
+
+  /**
+   * El clic del navegador deshace la selección. Sobre un escaneo a la vista,
+   * el primero la repone (el siguiente escaneo debe reemplazarlo, no escribirse
+   * a continuación); el segundo seguido deja el cursor donde el usuario lo puso
+   * para corregir el texto a mano.
+   */
+  function handleClick() {
+    const shownScan = getShownScan();
+
+    openPopup();
+
+    if (shownScan && !shownScan.isCaretPlaced) {
+      shownScan.isCaretPlaced = true;
+      inputRef.current?.select();
+    }
   }
 
   function handleFocus() {
@@ -744,6 +808,13 @@ export function EntityAutocomplete<K extends EntityKind>({
   }
 
   function handleBlur() {
+    const shownScan = getShownScan();
+
+    // Al volver al campo, el primer clic repone otra vez la selección.
+    if (shownScan) {
+      shownScan.isCaretPlaced = false;
+    }
+
     setIsOpen(false);
     setActiveIndex(null);
 
@@ -893,7 +964,7 @@ export function EntityAutocomplete<K extends EntityKind>({
           id={inputId}
           onBlur={handleBlur}
           onChange={(event) => handleTextChange(event.target.value)}
-          onClick={openPopup}
+          onClick={handleClick}
           onFocus={handleFocus}
           onKeyDown={handleKeyDown}
           placeholder={placeholder ?? config.defaultPlaceholder}

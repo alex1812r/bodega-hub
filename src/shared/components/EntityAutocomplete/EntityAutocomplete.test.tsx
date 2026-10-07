@@ -794,7 +794,13 @@ describe("EntityAutocomplete: lector de barras y Enter", () => {
     expect(getInput()).toHaveValue("75910000000");
     expect(screen.getAllByRole("option")).toHaveLength(8);
 
-    // Con la lista ya a la vista, un segundo Enter sí elige la resaltada.
+    // Un Enter suelto sobre el escaneo a la vista no elige (SHR-33 B1b);
+    // resaltar una opción con las flechas, sí.
+    pressKey("Enter");
+
+    expect(onChange).not.toHaveBeenCalled();
+
+    pressKey("ArrowDown");
     pressKey("Enter");
 
     expect(onChange).toHaveBeenCalledTimes(1);
@@ -885,8 +891,9 @@ describe("EntityAutocomplete: lector de barras y Enter", () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent("Sin resultados para “7599999999999”");
 
+    // Una sola vez por escaneo: un Enter suelto no repite el aviso (SHR-33 B1c).
     pressKey("Enter");
-    expect(onNotFound).toHaveBeenCalledTimes(2);
+    expect(onNotFound).toHaveBeenCalledTimes(1);
   });
 
   it("no elige una coincidencia exacta deshabilitada y muestra el motivo", async () => {
@@ -1488,11 +1495,20 @@ describe("EntityAutocomplete: escaneos seguidos", () => {
 
       await scanShownInField(partialCode, 2);
 
-      // Quita la selección (clic al final) y completa el código tecla a tecla.
+      // Dos clics seguidos al final (el primero repone la selección, SHR-33; el
+      // segundo deja el cursor) y completa el código tecla a tecla.
       const input = getInput() as HTMLInputElement;
       const missingDigits = codeB.slice(partialCode.length);
 
-      input.setSelectionRange(partialCode.length, partialCode.length);
+      for (let click = 0; click < 2; click += 1) {
+        input.setSelectionRange(partialCode.length, partialCode.length);
+        fireEvent.click(input);
+      }
+
+      expect([input.selectionStart, input.selectionEnd]).toEqual([
+        partialCode.length,
+        partialCode.length,
+      ]);
 
       for (let length = 1; length <= missingDigits.length; length += 1) {
         pressKey(missingDigits[length - 1]);
@@ -1685,6 +1701,203 @@ describe("EntityAutocomplete: escaneos seguidos", () => {
           expect(onNotFound.mock.calls).toEqual([[code]]);
         },
       );
+
+      describe("escaneo a la vista: clic, Enter suelto y resaltado (SHR-33)", () => {
+        const unknownCode = "1110000000009";
+
+        /** Como el navegador: el clic deja el cursor donde se pulsa y deshace la selección. */
+        function clickField(caret: number) {
+          const input = getInput() as HTMLInputElement;
+
+          input.setSelectionRange(caret, caret);
+          fireEvent.click(input);
+        }
+
+        function clickAwayAndBack(caret: number) {
+          act(() => getInput().blur());
+          focusInput();
+          clickField(caret);
+        }
+
+        function highlightedOptions() {
+          return screen
+            .getAllByRole("option")
+            .filter((option) => option.getAttribute("aria-selected") === "true");
+        }
+
+        it.each([
+          ["en el campo ya enfocado", () => clickField(3)],
+          ["fuera y de vuelta en el campo", () => clickAwayAndBack(partialCode.length)],
+        ])(
+          "N1: un clic %s conserva la selección y el siguiente escaneo no se concatena",
+          async (_name, click) => {
+            const fetcher = partialFetcher();
+            const { onChange, onNotFound } = renderScanner(fetcher);
+
+            readerScan(partialCode);
+            await advance(200);
+            click();
+
+            expect(getInput()).toHaveValue(partialCode);
+            expect(selection()).toEqual([0, partialCode.length]);
+
+            readerScan(codeB);
+            await advance(200);
+
+            expect(fetcher.mock.calls.map(([params]) => params.query)).toEqual([
+              partialCode,
+              codeB,
+            ]);
+            expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+            expect(onNotFound.mock.calls).toEqual([[partialCode]]);
+          },
+        );
+
+        it("N1: con un inexistente a la vista, clic y escanear otro: no se busca la concatenación ni se avisa dos veces", async () => {
+          const fetcher = partialFetcher();
+          const { onChange, onNotFound } = renderScanner(fetcher);
+
+          readerScan(unknownCode);
+          await advance(200);
+          clickField(unknownCode.length);
+
+          expect(selection()).toEqual([0, unknownCode.length]);
+
+          readerScan(codeB);
+          await advance(200);
+
+          expect(fetcher.mock.calls.map(([params]) => params.query)).toEqual([unknownCode, codeB]);
+          expect(onNotFound.mock.calls).toEqual([[unknownCode]]);
+          expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+        });
+
+        it("N1: el segundo clic seguido coloca el cursor; salir del campo y volver vuelve a seleccionar", async () => {
+          renderScanner(partialFetcher());
+
+          readerScan(partialCode);
+          await advance(200);
+          clickField(3);
+          clickField(3);
+
+          expect(selection()).toEqual([3, 3]);
+
+          clickAwayAndBack(5);
+
+          expect(selection()).toEqual([0, partialCode.length]);
+        });
+
+        it("N1: tras una flecha de cursor el clic ya no repone la selección", async () => {
+          const { onChange, onNotFound } = renderScanner(partialFetcher());
+          const missingDigits = codeB.slice(partialCode.length);
+
+          readerScan(partialCode);
+          await advance(200);
+
+          // Flecha derecha: el navegador deja el cursor al final.
+          pressKey("ArrowRight");
+          (getInput() as HTMLInputElement).setSelectionRange(partialCode.length, partialCode.length);
+          clickField(partialCode.length);
+
+          expect(selection()).toEqual([partialCode.length, partialCode.length]);
+
+          readerScan(missingDigits);
+          await advance(200);
+
+          expect(onNotFound).not.toHaveBeenCalled();
+          expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+        });
+
+        it("B1b: un Enter suelto con el parcial a la vista no elige ni envía; ↓ resalta la primera y Enter la elige", async () => {
+          const { onChange, onNotFound } = renderScanner(partialFetcher());
+
+          readerScan(partialCode);
+          await advance(200);
+
+          expect(screen.getAllByRole("option")).toHaveLength(2);
+          expect(getInput()).not.toHaveAttribute("aria-activedescendant");
+          expect(highlightedOptions()).toHaveLength(0);
+
+          // LF de un sufijo CR LF que llega después de la respuesta, o Enter a mano.
+          expect(pressKey("Enter")).toBe(false);
+          expect(pressKey("Enter")).toBe(false);
+
+          expect(onChange).not.toHaveBeenCalled();
+          expect(onNotFound).not.toHaveBeenCalled();
+          expect(getInput()).toHaveValue(partialCode);
+          expect(selection()).toEqual([0, partialCode.length]);
+          expect(highlightedOptions()).toHaveLength(0);
+
+          pressKey("ArrowDown");
+
+          expect(activeOptionText()).toContain("Producto A");
+
+          pressKey("Enter");
+
+          expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-1"]);
+          expect(onNotFound).not.toHaveBeenCalled();
+        });
+
+        it("B1c: un Enter suelto sobre «Sin resultados» no repite onNotFound, y el siguiente escaneo tampoco", async () => {
+          const { onChange, onNotFound } = renderScanner(partialFetcher());
+
+          readerScan(unknownCode);
+          await advance(200);
+
+          expect(screen.getByRole("status")).toHaveTextContent("Sin resultados");
+          expect(onNotFound.mock.calls).toEqual([[unknownCode]]);
+
+          expect(pressKey("Enter")).toBe(false);
+          expect(pressKey("Enter")).toBe(false);
+
+          expect(onNotFound.mock.calls).toEqual([[unknownCode]]);
+          expect(selection()).toEqual([0, unknownCode.length]);
+
+          readerScan(codeB);
+          await advance(200);
+
+          expect(onNotFound.mock.calls).toEqual([[unknownCode]]);
+          expect(onChange.mock.calls.map(([option]) => option.id)).toEqual(["p-2"]);
+        });
+
+        it("B2: el texto que vuelve a uno ya cargado no pinta la primera opción como resaltada y ↓ va a la primera", async () => {
+          const onChange = jest.fn();
+          render(
+            <Harness
+              entity="product"
+              fetcher={async () => [product(1), product(2), product(3)]}
+              onChange={onChange}
+            />,
+          );
+
+          await search("prod");
+
+          expect(activeOptionText()).toContain("Producto 1");
+
+          type("prod0");
+          type("prod");
+
+          expect(screen.getAllByRole("option")).toHaveLength(3);
+          expect(getInput()).not.toHaveAttribute("aria-activedescendant");
+          expect(highlightedOptions()).toHaveLength(0);
+
+          await advance(500);
+
+          expect(highlightedOptions()).toHaveLength(0);
+
+          pressKey("Enter");
+
+          expect(onChange).not.toHaveBeenCalled();
+          expect(highlightedOptions()).toHaveLength(0);
+
+          pressKey("ArrowDown");
+
+          expect(activeOptionText()).toContain("Producto 1");
+
+          pressKey("Enter");
+
+          expect(onChange.mock.calls.map(([option]) => option?.id)).toEqual(["p-1"]);
+        });
+      });
     });
   });
 });
