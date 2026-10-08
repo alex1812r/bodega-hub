@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 const mockPush = jest.fn();
 const mockSuppliers = {
@@ -531,5 +531,215 @@ describe("PurchaseCreatePage · moneda de costo una vez por compra (COM-05)", ()
     const items = body?.items as Array<Record<string, unknown>>;
 
     expect(items.map((item) => item.costCurrency)).toEqual(["ves", "ves"]);
+  });
+});
+
+function renderPurchase(...addButtons: string[]) {
+  render(<PurchaseCreatePage />, { wrapper: createQueryWrapper() });
+  fireEvent.click(screen.getByRole("button", { name: "elegir proveedor" }));
+  for (const name of addButtons) {
+    fireEvent.click(screen.getByRole("button", { name }));
+  }
+}
+
+describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
+  beforeEach(() => {
+    mockPush.mockReset();
+  });
+
+  it("una línea nueva muestra producto, cantidad, costo y total: dos inputs y ningún selector", () => {
+    installFetchStub(() => null);
+
+    renderPurchase("agregar producto");
+
+    const row = screen.getByRole("listitem");
+    const inputs = within(row).getAllByRole("spinbutton");
+
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toHaveAccessibleName("Cantidad de Cable HDMI");
+    expect(inputs[1]).toHaveAccessibleName("Costo unitario BS de Cable HDMI");
+    expect(row.querySelectorAll("input, select, textarea")).toHaveLength(2);
+    expect(within(row).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(within(row).queryByRole("group")).not.toBeInTheDocument();
+    expect(within(row).queryByText("Impuesto")).not.toBeInTheDocument();
+
+    expect(within(row).getByText("Cable HDMI")).toBeInTheDocument();
+    expect(within(row).getByText("ELE-CAB-001")).toBeInTheDocument();
+    // Total en la moneda de la compra y la otra como secundario.
+    expect(within(row).getByText("Bs. 1.020,00")).toBeInTheDocument();
+    expect(within(row).getByText("ref 2.00")).toBeInTheDocument();
+
+    expect(within(row).getByRole("button", { name: "Empaque de Cable HDMI" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(within(row).getByRole("button", { name: "IVA 0 % de Cable HDMI" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("el chip Empaque despliega los cuatro campos y el POST en modo empaque es el de antes", async () => {
+    const api = installFetchStub(() => null);
+
+    renderPurchase("agregar producto");
+
+    const row = screen.getByRole("listitem");
+    fireEvent.click(within(row).getByRole("button", { name: "Empaque de Cable HDMI" }));
+
+    expect(within(row).getByRole("button", { name: "Empaque de Cable HDMI" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(row.querySelectorAll("input, select")).toHaveLength(4);
+    expect(within(row).getByRole("combobox", { name: "Tipo de empaque de Cable HDMI" })).toHaveValue(
+      "custom:Bulto",
+    );
+
+    fireEvent.change(within(row).getByLabelText("Cantidad de bulto de Cable HDMI"), {
+      target: { value: "2" },
+    });
+    fireEvent.change(within(row).getByLabelText("Unidades por bulto de Cable HDMI"), {
+      target: { value: "6" },
+    });
+    fireEvent.change(within(row).getByLabelText("Costo por bulto BS de Cable HDMI"), {
+      target: { value: "6120" },
+    });
+
+    // La fila principal pasa a mostrar las unidades totales y el costo unitario derivado.
+    expect(within(row).getByText("12 u")).toBeInTheDocument();
+    expect(within(row).getByText("Bs. 1.020,00")).toBeInTheDocument();
+
+    // Mismo payload que enviaba el modo "Personalizado" antes de COM-04.
+    expect(await confirmAndGetBody(api)).toEqual({
+      clientRequestId: expect.any(String),
+      discountRef: 0,
+      discountVes: 0,
+      items: [
+        {
+          costCurrency: "ves",
+          entryMode: "pack",
+          packCostRef: 12,
+          packCostVes: 6120,
+          packCount: 2,
+          packLabel: "Bulto",
+          productId: "prod-cable",
+          subtotalRef: 24,
+          subtotalVes: 12240,
+          taxRate: 0,
+          taxRef: 0,
+          taxVes: 0,
+          unitCostRef: 2,
+          unitCostVes: 1020,
+          unitsPerPack: 6,
+        },
+      ],
+      refRateVes: 510,
+      status: "recibido",
+      subtotalRef: 24,
+      subtotalVes: 12240,
+      supplierId: "cont-supplier",
+      taxRef: 0,
+      taxVes: 0,
+    });
+  });
+
+  it("un producto con empaque por defecto del proveedor nace en modo empaque, con el chip activo", async () => {
+    const api = installFetchStub(() => null);
+
+    renderPurchase("agregar producto con empaque");
+
+    const row = screen.getByRole("listitem");
+
+    expect(within(row).getByRole("button", { name: "Empaque de Refresco Cola" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      within(row).getByRole("combobox", { name: "Tipo de empaque de Refresco Cola" }),
+    ).toHaveValue("pack-caja");
+    expect(within(row).getByLabelText("Cantidad de caja de Refresco Cola")).toHaveValue(1);
+    expect(within(row).getByLabelText("Costo por caja BS de Refresco Cola")).toHaveValue(6120);
+    // Las unidades del empaque guardado no se teclean.
+    expect(within(row).queryByLabelText(/Unidades por caja/)).not.toBeInTheDocument();
+    expect(within(row).getByText("12 u")).toBeInTheDocument();
+
+    const body = await confirmAndGetBody(api);
+
+    expect(body?.items).toEqual([
+      { ...refrescoPackItem, packCount: 1, subtotalRef: 12, subtotalVes: 6120, taxRef: 1.92, taxVes: 979.2 },
+    ]);
+  });
+
+  it("quitar el chip Empaque vuelve a unidad conservando las unidades totales y el monto", async () => {
+    const api = installFetchStub(() => null);
+
+    renderPurchase("agregar producto con empaque");
+
+    const row = screen.getByRole("listitem");
+    fireEvent.change(within(row).getByLabelText("Cantidad de caja de Refresco Cola"), {
+      target: { value: "2" },
+    });
+    fireEvent.click(within(row).getByRole("button", { name: "Empaque de Refresco Cola" }));
+
+    expect(within(row).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(within(row).getByLabelText("Cantidad de Refresco Cola")).toHaveValue(24);
+    expect(within(row).getByLabelText("Costo unitario BS de Refresco Cola")).toHaveValue(510);
+
+    const body = await confirmAndGetBody(api);
+
+    expect(body?.items).toEqual([
+      {
+        costCurrency: "ves",
+        entryMode: "unit",
+        productId: "prod-refresco",
+        quantity: 24,
+        subtotalRef: 24,
+        subtotalVes: 12240,
+        taxRate: 16,
+        taxRef: 3.84,
+        taxVes: 1958.4,
+        unitCostRef: 1,
+        unitCostVes: 510,
+      },
+    ]);
+  });
+
+  it("elegir un tipo personalizado deja teclear las unidades por empaque", () => {
+    installFetchStub(() => null);
+
+    renderPurchase("agregar producto con empaque");
+
+    const row = screen.getByRole("listitem");
+    fireEvent.change(within(row).getByRole("combobox", { name: "Tipo de empaque de Refresco Cola" }), {
+      target: { value: "custom:Manga" },
+    });
+
+    expect(within(row).getByLabelText("Unidades por manga de Refresco Cola")).toHaveValue(12);
+    expect(within(row).getByLabelText("Costo por manga BS de Refresco Cola")).toHaveValue(6120);
+  });
+
+  it("el chip IVA muestra la alícuota y despliega el control de impuesto sin ocupar la fila", () => {
+    installFetchStub(() => null);
+
+    renderPurchase("agregar producto con empaque");
+
+    const row = screen.getByRole("listitem");
+    const chip = within(row).getByRole("button", { name: "IVA 16 % de Refresco Cola" });
+
+    expect(chip).toHaveTextContent("IVA 16 %");
+    expect(within(row).queryByText("Impuesto")).not.toBeInTheDocument();
+
+    fireEvent.click(chip);
+
+    expect(chip).toHaveAttribute("aria-expanded", "true");
+    expect(within(row).getByText("Impuesto")).toBeInTheDocument();
+    expect(
+      within(row).getByRole("button", { name: "Editar impuesto de Refresco Cola" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(chip);
+
+    expect(within(row).queryByText("Impuesto")).not.toBeInTheDocument();
   });
 });
