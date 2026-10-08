@@ -220,6 +220,34 @@ describe("TaxSettingsSection · Configuración → Impuestos (PRO-09)", () => {
     expect(api.writes()).toHaveLength(0);
   });
 
+  // PRO-F6: 150 no se recorta a 100 en silencio: se avisa y no se envía.
+  it("añadir con un porcentaje mayor que 100 no envía y avisa, sin cambiar lo escrito", async () => {
+    const api = installServer();
+    const user = renderSection();
+
+    await findRow("General");
+    await user.click(screen.getByRole("button", { name: "Añadir alícuota" }));
+
+    const dialog = within(screen.getByRole("dialog", { name: "Nueva alícuota de IVA" }));
+    const pct = dialog.getByLabelText("Porcentaje (%)");
+
+    await user.type(dialog.getByLabelText("Etiqueta"), "Licores");
+    await user.type(pct, "150");
+    await user.click(dialog.getByRole("button", { name: "Añadir alícuota" }));
+
+    expect(dialog.getByText("El porcentaje debe estar entre 0 y 100.")).toBeInTheDocument();
+    expect(pct).toHaveValue("150");
+    expect(pct).toBeInvalid();
+    expect(api.writes()).toHaveLength(0);
+
+    await user.clear(pct);
+    await user.type(pct, "100");
+    await user.click(dialog.getByRole("button", { name: "Añadir alícuota" }));
+
+    await waitFor(() => expect(api.writes()).toHaveLength(1));
+    expect(api.writes()[0]).toMatchObject({ body: { label: "Licores", pct: 100 } });
+  });
+
   it("desactivar pide confirmación nombrando el efecto y solo entonces escribe", async () => {
     const api = installServer();
     const user = renderSection();

@@ -12,6 +12,8 @@ import { useToast } from "@/shared/components/Toast";
 import { useCreateTaxRate } from "../../hooks/useTaxRatesAdmin";
 
 const PCT_REQUIRED_MESSAGE = "Escribe el porcentaje de la alícuota.";
+const PCT_MAX = 100;
+const PCT_RANGE_MESSAGE = `El porcentaje debe estar entre 0 y ${PCT_MAX}.`;
 
 type TaxRateCreateModalProps = {
   /** Solo recibe `false`: el modal pide cerrarse (cancelado, Escape o alícuota creada). */
@@ -36,6 +38,8 @@ export function TaxRateCreateModal({ onOpenChange }: TaxRateCreateModalProps) {
   // Candado propio: `isPending` llega con el siguiente render, tarde para un
   // segundo Enter o un clic en el mismo tick.
   const isSubmitInFlightRef = useRef(false);
+  // Sin `max` en el campo: recortaría 150 a 100 al salir, sin avisar.
+  const isPctOutOfRange = pct !== null && pct > PCT_MAX;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -47,6 +51,10 @@ export function TaxRateCreateModal({ onOpenChange }: TaxRateCreateModalProps) {
     if (pct === null) {
       setShowPctRequired(true);
 
+      return;
+    }
+
+    if (isPctOutOfRange) {
       return;
     }
 
@@ -93,9 +101,14 @@ export function TaxRateCreateModal({ onOpenChange }: TaxRateCreateModalProps) {
         />
         <NumberInput
           decimals={2}
-          error={showPctRequired && pct === null ? PCT_REQUIRED_MESSAGE : undefined}
+          error={
+            isPctOutOfRange
+              ? PCT_RANGE_MESSAGE
+              : showPctRequired && pct === null
+                ? PCT_REQUIRED_MESSAGE
+                : undefined
+          }
           label="Porcentaje (%)"
-          max={100}
           min={0}
           onValueChange={setPct}
           value={pct}
