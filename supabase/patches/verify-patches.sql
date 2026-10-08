@@ -1549,17 +1549,15 @@ select
   )
 union all
 select
-  'product_pack_components: RLS por tienda (lectura de la tienda, escritura admin / almacen) y sin privilegios para anon (20261009d)',
+  'product_pack_components: RLS por tienda (politicas de lectura de la tienda y de escritura admin / almacen), authenticated solo lee la tabla (la escritura directa la cierra 20261011d: la receta se guarda por save_pack_recipe) y sin privilegios para anon (20261009d)',
   exists (
     select 1
     from pg_class c
     where c.oid = to_regclass('public.product_pack_components')
       and c.relrowsecurity
       and has_table_privilege('authenticated', c.oid, 'select')
-      and has_table_privilege('authenticated', c.oid, 'insert')
-      and not has_table_privilege('authenticated', c.oid, 'truncate')
-      and not has_table_privilege('anon', c.oid, 'select')
-      and not has_table_privilege('anon', c.oid, 'insert')
+      and not has_table_privilege('authenticated', c.oid, 'insert, update, delete, truncate')
+      and not has_table_privilege('anon', c.oid, 'select, insert, update, delete, truncate')
   ) and (
     select count(*) = 2
        and bool_and(pol.roles = '{authenticated}'::name[])
@@ -1928,6 +1926,46 @@ select
       and bool_and(has_function_privilege('authenticated', p.oid, 'execute'))
       and bool_and(has_function_privilege('service_role', p.oid, 'execute'))
       and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'save_pack_recipe'
+  )
+union all
+select
+  'la receta de un empaque solo se escribe por save_pack_recipe: authenticated solo tiene select sobre product_pack_conversions y product_pack_components, y anon y public ningun privilegio (20261011d)',
+  (
+    select count(*) = 2
+      and bool_and(has_table_privilege('authenticated', t.oid, 'select'))
+      and bool_and(not has_table_privilege('authenticated', t.oid, 'insert, update, delete, truncate, references, trigger'))
+      and bool_and(not has_table_privilege('anon', t.oid, 'select, insert, update, delete, truncate, references, trigger'))
+      and bool_and(not has_table_privilege('public', t.oid, 'select, insert, update, delete, truncate, references, trigger'))
+    from pg_class t
+    where t.relnamespace = 'public'::regnamespace
+      and t.relname in ('product_pack_conversions', 'product_pack_components')
+  )
+union all
+select
+  'tras 20261011d la receta conserva su camino de escritura y su RLS: service_role y el dueno de save_pack_recipe (security definer) escriben las dos tablas, que siguen con RLS activa y su politica de lectura (20261011d)',
+  (
+    select count(*) = 2
+      and bool_and(has_table_privilege('service_role', t.oid, 'select'))
+      and bool_and(has_table_privilege('service_role', t.oid, 'insert'))
+      and bool_and(has_table_privilege('service_role', t.oid, 'update'))
+      and bool_and(has_table_privilege('service_role', t.oid, 'delete'))
+      and bool_and(t.relrowsecurity)
+      and bool_and(exists (
+        select 1 from pg_policies pol
+        where pol.schemaname = 'public' and pol.tablename = t.relname and pol.cmd = 'SELECT'
+      ))
+    from pg_class t
+    where t.relnamespace = 'public'::regnamespace
+      and t.relname in ('product_pack_conversions', 'product_pack_components')
+  )
+  and (
+    select count(*) = 1
+      and bool_and(p.prosecdef)
+      and bool_and(has_table_privilege(p.proowner, 'public.product_pack_conversions', 'insert'))
+      and bool_and(has_table_privilege(p.proowner, 'public.product_pack_conversions', 'update'))
+      and bool_and(has_table_privilege(p.proowner, 'public.product_pack_components', 'insert'))
     from pg_proc p
     where p.pronamespace = 'public'::regnamespace and p.proname = 'save_pack_recipe'
   )

@@ -505,8 +505,12 @@ notify pgrst, 'reload schema';
 -- se mantiene uq_product_pack_conversions_pack_active (una receta activa por empaque).
 -- Compatibilidad: product_pack_conversions.units_per_pack (= total_units) y unit_product_id (componente unico o NULL en un
 -- surtido) se mantienen por trigger; el BFF que aun lee y escribe el par 1 a 1 sigue funcionando sobre la base parcheada.
--- OJO: una receta ACTIVA debe sumar total_units (trigger diferido, PT400 al commit). Por PostgREST: crear la cabecera
--- inactiva, insertar los componentes y activarla.
+-- OJO: una receta ACTIVA debe sumar total_units (trigger diferido, PT400 al commit). Hasta 20261011d un usuario podia
+-- escribirla por PostgREST (cabecera inactiva, componentes, activar); desde 20261011d solo por la RPC save_pack_recipe.
+-- OJO (INV-L2): este parche concede a authenticated insert / update / delete sobre product_pack_components (seccion 8).
+-- Sobre una base que ya tiene 20261011d, REAPLICAR este parche reabre la escritura directa de los componentes: volver a
+-- aplicar 20261011d-pack-recipe-write-lockdown.sql justo despues y correr verify-patches.sql (la fila de RLS de 20261009d
+-- y la de 20261011d quedan en fail hasta entonces).
 -- OJO: reaplicar 20261006c deja dos sobrecargas de convert_pack_to_units; reaplicar 20261006c / f / h o 20261007a
 -- reinstala create_purchase sin la lectura de componentes; reaplicar 20261006d reinstala conversion_mismatches del modelo
 -- 1 a 1. En los tres casos: volver a aplicar este parche y correr verify-patches.sql.
@@ -593,3 +597,21 @@ notify pgrst, 'reload schema';
 -- ORDEN DE DESPLIEGUE (INV-09): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada (sigue escribiendo
 -- por tabla). El BFF nuevo sin el parche: guardar o desactivar la receta de un empaque responde 409 ("Esta base aún no
 -- admite guardar la receta de un empaque de forma segura...") sin escribir la receta; el resto de la edicion no cambia.
+-- El riesgo residual lo cierra 20261011d (abajo), que se aplica DESPUES de desplegar el BFF nuevo.
+-- -----------------------------------------------------------------------------
+-- 20261011d — pack recipe write lockdown (INV-L2): la receta de un empaque solo se escribe por save_pack_recipe. Revoca
+--             insert / update / delete / truncate de authenticated y todo de anon y public sobre product_pack_conversions
+--             y product_pack_components; authenticated conserva select
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011d-pack-recipe-write-lockdown.sql
+-- Requiere 20261009d y 20261011c. Idempotente, una transaccion. Solo privilegios de tabla: no toca stock, dinero, filas,
+-- politicas RLS, triggers ni funciones. service_role y el dueno de las tablas (migraciones, fixtures) siguen escribiendo.
+-- OJO: una escritura directa por PostgREST (POST / PATCH / DELETE) sobre cualquiera de las dos tablas responde 403
+-- (42501 permission denied), tambien para admin y almacen. Cualquier script que escriba recetas con un JWT de usuario
+-- debe pasar a la RPC save_pack_recipe.
+-- ORDEN DE DESPLIEGUE (INV-L2): 20261011c -> verify -> BFF nuevo (INV-09) -> este parche -> verify. En el primer verify
+-- quedan en fail, y solo ellas, las dos filas que exigen este parche (la de privilegios de 20261011d y la de RLS de
+-- product_pack_components de 20261009d); en el segundo, fail=0. Si despues se reaplica 20261009d, reaplicar este. NO aplicar antes del
+-- BFF nuevo: el BFF anterior escribe la receta por tabla y, sobre la base con este parche, guardar, editar o desactivar
+-- la receta de un empaque le responde 403. Deshacer: grant insert, update, delete on public.product_pack_conversions,
+-- public.product_pack_components to authenticated;

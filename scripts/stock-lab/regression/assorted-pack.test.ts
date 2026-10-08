@@ -8,8 +8,15 @@
  * `rollback`: los datos se preparan como `postgres` y cada sentencia probada se ejecuta con `set local role
  * authenticated` + `request.jwt.claims` del usuario (ACL y RLS de PostgREST). Tras cada sentencia se fuerzan las
  * restricciones diferidas (`set constraints all immediate`): es lo que pasa al confirmar una petición de PostgREST.
- * El último bloque sí pasa por PostgREST (datos confirmados que se borran al terminar): las llamadas y escrituras
- * que hace hoy el BFF, el commit real de una receta y la relación calculada `pack_role`.
+ * El último bloque sí pasa por PostgREST (datos confirmados que se borran al terminar): las llamadas que hace hoy
+ * el BFF, el commit real de una receta y la relación calculada `pack_role`.
+ *
+ * Desde `20261011d-pack-recipe-write-lockdown.sql` (INV-L2) `authenticated` solo lee las dos tablas de la receta:
+ * un usuario (también admin y almacén) la escribe solo por la RPC `save_pack_recipe`. Los tests que antes escribían
+ * las tablas como `lab-almacen` / `lab-admin` afirman ahora tres cosas: la escritura directa se rechaza con
+ * `42501`, la RPC guarda lo mismo, y los triggers de la tabla (suma, validaciones, compatibilidad cabecera <->
+ * componente, índices) siguen valiendo para quien todavía la escribe (el dueño de la tabla: la RPC `security
+ * definer`, migraciones y fixtures; aquí, actor `null`).
  *
  *   npm run stock-lab:test -- scripts/stock-lab/regression/assorted-pack.test.ts
  *
@@ -41,6 +48,8 @@ const OTHER_STORE_ADMIN_EMAIL = "admin@example.com";
 const TAG = `PRO12-${Date.now().toString(36)}${randomUUID().slice(0, 4)}`;
 /** Tasa fija de las compras de prueba: los montos en Bs salen exactos. */
 const RATE = 100;
+/** SQLSTATE de "permission denied": lo que recibe un usuario que escribe las tablas de la receta sin la RPC. */
+const DENIED = "42501";
 const LEGACY_KEYS = ["conversionId", "packMovement", "packQuantity", "unitCostRef", "unitMovement", "unitQuantity", "unitsPerPack"];
 
 let lab: Lab;
@@ -177,6 +186,35 @@ async function recipe(pack: string, total: number, components: readonly Componen
   const out = await runAll(null, recipeStatements(pack, total, components, id));
   if (out.code !== null) throw new Error(`SETUP · receta de ${total}: ${out.code} ${out.message}`);
   return id;
+}
+
+/** `save_pack_recipe` (20261011c): el único camino de escritura de la receta para un usuario. */
+function save(actor: Actor, pack: string, total: number | null, components: readonly Component[], label: string | null = null): Promise<Outcome> {
+  return run(actor, "select public.save_pack_recipe($1::uuid, true, $2::integer, $3::text, $4::jsonb) as result", [
+    pack,
+    total,
+    label,
+    JSON.stringify(components.map((c) => ({ unit_product_id: c.id, units_per_pack: c.units, ...(c.weight === undefined ? {} : { cost_weight: c.weight }) }))),
+  ]);
+}
+
+/** Cada sentencia por separado como `actor`: el SQLSTATE de cada una (o `null` si pasó). */
+async function codesOf(actor: Actor, statements: ReadonlyArray<readonly [string, unknown[]?]>): Promise<Array<string | null>> {
+  const codes: Array<string | null> = [];
+  for (const [text, params] of statements) codes.push((await run(actor, text, params ?? [])).code);
+  return codes;
+}
+
+/** Receta activa del empaque como está en la base: cabecera + [producto, unidades, peso] por componente. */
+async function activeRecipe(pack: string): Promise<Row[]> {
+  return sql(
+    "receta activa",
+    `select c.unit_product_id, c.units_per_pack, c.total_units, c.label,
+            (select jsonb_agg(jsonb_build_array(pc.unit_product_id, pc.units_per_pack, pc.cost_weight::text) order by pc.unit_product_id)
+             from public.product_pack_components pc where pc.conversion_id = c.id) as components
+     from public.product_pack_conversions c where c.pack_product_id = $1 and c.is_active`,
+    [pack],
+  );
 }
 
 type ConvertOptions = { reason?: string | null; requestId?: string | null; components?: unknown; previous?: boolean };
@@ -808,48 +846,117 @@ describe("convert_pack_to_units · receta surtida", () => {
 });
 
 describe("recetas · invariante de la suma y validaciones", () => {
-  it("cabecera + N componentes en una transacción: pasa si suman total_units y falla con PT400 al confirmar si no", async () => {
+  it("cabecera + N componentes: un usuario no los escribe por tabla (42501) y por save_pack_recipe pasa si suman total_units y falla con PT400 si no; al dueño de la tabla el trigger diferido le exige la suma al confirmar", async () => {
     await withRollback(db, async () => {
       const [p1, p2, p3] = [await product("r-pack"), await product("r-pack"), await product("r-pack")];
+      const [o1, o2, o3] = [await product("r-pack-owner"), await product("r-pack-owner"), await product("r-pack-owner")];
       const [a, b, c] = [await product("r-a"), await product("r-b"), await product("r-c")];
+      const full: Component[] = [{ id: a, units: 2 }, { id: b, units: 2 }, { id: c, units: 2 }];
+      const partial: Component[] = [{ id: a, units: 2 }, { id: b, units: 2 }];
+      const savedPacks = async (packs: string[]): Promise<unknown[]> =>
+        (await sql("recetas guardadas", "select pack_product_id from public.product_pack_conversions where pack_product_id = any($1::uuid[])", [packs])).map((r) => r.pack_product_id);
 
-      const ok = await runAll("almacen", recipeStatements(p1, 6, [{ id: a, units: 2 }, { id: b, units: 2 }, { id: c, units: 2 }], randomUUID()));
-      const short = await runAll("almacen", recipeStatements(p2, 6, [{ id: a, units: 2 }, { id: b, units: 2 }], randomUUID()));
-      const empty = await runAll("almacen", recipeStatements(p3, 6, [], randomUUID()));
-      const saved = await sql("recetas guardadas", "select pack_product_id from public.product_pack_conversions where pack_product_id = any($1::uuid[])", [[p1, p2, p3]]);
+      // Escritura directa como almacén y como admin: ni la cabecera ni los componentes.
+      const direct = {
+        almacen: [(await runAll("almacen", recipeStatements(p1, 6, full, randomUUID()))).code, (await runAll("almacen", recipeStatements(p2, 6, partial, randomUUID()))).code],
+        admin: [(await runAll("admin", recipeStatements(p1, 6, full, randomUUID()))).code, (await runAll("admin", recipeStatements(p3, 6, [], randomUUID()))).code],
+      };
+      const afterDirect = await savedPacks([p1, p2, p3]);
 
-      expect({ codes: [ok.code, short.code, empty.code], mensajes: [short.message, empty.message], guardadas: saved.map((r) => r.pack_product_id) }).toEqual({
+      // Lo mismo por la RPC.
+      const ok = await save("almacen", p1, 6, full);
+      const short = await save("almacen", p2, 6, partial);
+      const empty = await save("almacen", p3, 6, []);
+      const viaRpc = { codes: [ok.code, short.code, empty.code], guardadas: await savedPacks([p1, p2, p3]), receta: await activeRecipe(p1) };
+
+      // El invariante de la tabla (trigger de restricción diferido) para quien sí la escribe.
+      const ownerOk = await runAll(null, recipeStatements(o1, 6, full, randomUUID()));
+      const ownerShort = await runAll(null, recipeStatements(o2, 6, partial, randomUUID()));
+      const ownerEmpty = await runAll(null, recipeStatements(o3, 6, [], randomUUID()));
+
+      expect({ direct, afterDirect }).toEqual({ direct: { almacen: [DENIED, DENIED], admin: [DENIED, DENIED] }, afterDirect: [] });
+      expect(viaRpc).toEqual({
+        codes: [null, "PT400", "PT400"],
+        guardadas: [p1],
+        receta: [{ unit_product_id: null, units_per_pack: 6, total_units: 6, label: null, components: [a, b, c].sort().map((id) => [id, 2, "1"]) }],
+      });
+      expect({ codes: [ownerOk.code, ownerShort.code, ownerEmpty.code], mensajes: [ownerShort.message, ownerEmpty.message], guardadas: await savedPacks([o1, o2, o3]) }).toEqual({
         codes: [null, "PT400", "PT400"],
         mensajes: ["Los componentes de la receta suman 4 unidades y el empaque declara 6", "La receta activa de un empaque debe tener al menos un componente"],
-        guardadas: [p1],
+        guardadas: [o1],
       });
     });
   });
 
-  it("una receta inactiva puede estar incompleta; activarla, quitarle un componente o cambiar unidades exige que cuadre", async () => {
+  it("una receta inactiva puede estar incompleta; activarla, quitarle un componente o cambiar unidades exige que cuadre (dueño de la tabla); un usuario no da ninguno de esos pasos por tabla (42501) y por save_pack_recipe solo guarda recetas que cuadran", async () => {
     await withRollback(db, async () => {
-      const [pack, a, b] = [await product("r-pack"), await product("r-a"), await product("r-b")];
-      const header = await must("almacen", "cabecera inactiva", "insert into public.product_pack_conversions (store_id, pack_product_id, total_units, is_active) values ($1, $2, 6, false) returning id", [lab.storeId, pack]);
+      const [pack, viaRpc, a, b] = [await product("r-pack"), await product("r-pack-rpc"), await product("r-a"), await product("r-b")];
+      const header = await must(null, "cabecera inactiva", "insert into public.product_pack_conversions (store_id, pack_product_id, total_units, is_active) values ($1, $2, 6, false) returning id", [lab.storeId, pack]);
       const id = String(header[0]?.id);
-      const add = (unit: string, units: number): Promise<Outcome> =>
-        run("almacen", "insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack) values ($1, $2, $3, $4)", [id, lab.storeId, unit, units]);
+      const ADD = "insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack) values ($1, $2, $3, $4)";
+      const add = (unit: string, units: number): Promise<Outcome> => run(null, ADD, [id, lab.storeId, unit, units]);
+      const snapshot = async (): Promise<string> =>
+        JSON.stringify(
+          await sql(
+            "receta",
+            `select c.is_active, c.total_units, (select jsonb_agg(jsonb_build_array(pc.unit_product_id, pc.units_per_pack) order by pc.unit_product_id)
+                                               from public.product_pack_components pc where pc.conversion_id = c.id) as components
+             from public.product_pack_conversions c where c.id = $1`,
+            [id],
+          ),
+        );
+
+      // Como almacén, sobre la cabecera inactiva: ningún paso entra.
+      const deniedInactive = await codesOf("almacen", [
+        ["insert into public.product_pack_conversions (store_id, pack_product_id, total_units, is_active) values ($1, $2, 6, false)", [lab.storeId, viaRpc]],
+        [ADD, [id, lab.storeId, a, 2]],
+        ["update public.product_pack_conversions set is_active = true where id = $1", [id]],
+      ]);
 
       const firstComponent = await add(a, 2);
-      const tooEarly = await run("almacen", "update public.product_pack_conversions set is_active = true where id = $1", [id]);
+      const tooEarly = await run(null, "update public.product_pack_conversions set is_active = true where id = $1", [id]);
       const secondComponent = await add(b, 4);
-      const activate = await run("almacen", "update public.product_pack_conversions set is_active = true where id = $1", [id]);
-      const remove = await run("almacen", "delete from public.product_pack_components where conversion_id = $1 and unit_product_id = $2", [id, b]);
-      const changeUnits = await run("almacen", "update public.product_pack_components set units_per_pack = 5 where conversion_id = $1 and unit_product_id = $2", [id, b]);
-      const changeTotal = await run("almacen", "update public.product_pack_conversions set total_units = 7 where id = $1", [id]);
-      const both = await runAll("almacen", [
+      const activate = await run(null, "update public.product_pack_conversions set is_active = true where id = $1", [id]);
+
+      // Como almacén y como admin, sobre la receta ya activa y completa: tampoco, y queda igual.
+      const complete = await snapshot();
+      const changes: Array<[string, unknown[]]> = [
+        ["delete from public.product_pack_components where conversion_id = $1 and unit_product_id = $2", [id, b]],
+        ["update public.product_pack_components set units_per_pack = 5 where conversion_id = $1 and unit_product_id = $2", [id, b]],
+        ["update public.product_pack_conversions set total_units = 7 where id = $1", [id]],
+        ["update public.product_pack_conversions set is_active = false where id = $1", [id]],
+        ["delete from public.product_pack_conversions where id = $1", [id]],
+      ];
+      const deniedActive = [await codesOf("almacen", changes), await codesOf("admin", changes)];
+      const untouched = (await snapshot()) === complete;
+
+      const remove = await run(null, "delete from public.product_pack_components where conversion_id = $1 and unit_product_id = $2", [id, b]);
+      const changeUnits = await run(null, "update public.product_pack_components set units_per_pack = 5 where conversion_id = $1 and unit_product_id = $2", [id, b]);
+      const changeTotal = await run(null, "update public.product_pack_conversions set total_units = 7 where id = $1", [id]);
+      const both = await runAll(null, [
         ["update public.product_pack_conversions set total_units = 7 where id = $1", [id]],
         ["update public.product_pack_components set units_per_pack = 5 where conversion_id = $1 and unit_product_id = $2", [id, b]],
       ]);
-      const deactivate = await runAll("almacen", [
+      const deactivate = await runAll(null, [
         ["update public.product_pack_conversions set is_active = false where id = $1", [id]],
         ["delete from public.product_pack_components where conversion_id = $1", [id]],
       ]);
 
+      // Por la RPC, como almacén: guarda a 2 + b 4 = 6; una que no cuadra (2 + 5 declarando 8) no se guarda y la
+      // vigente queda como estaba; la que cuadra la reemplaza; desactivar deja el empaque sin receta activa.
+      const rpcFirst = await save("almacen", viaRpc, 6, [{ id: a, units: 2 }, { id: b, units: 4 }]);
+      const afterFirst = await activeRecipe(viaRpc);
+      const rpcShort = await save("almacen", viaRpc, 8, [{ id: a, units: 2 }, { id: b, units: 5 }]);
+      const afterShort = await activeRecipe(viaRpc);
+      const rpcOk = await save("almacen", viaRpc, 7, [{ id: a, units: 2 }, { id: b, units: 5 }]);
+      const afterOk = await activeRecipe(viaRpc);
+      const rpcOff = await run("almacen", "select public.save_pack_recipe($1::uuid, false) as result", [viaRpc]);
+
+      expect({ deniedInactive, deniedActive, untouched }).toEqual({
+        deniedInactive: [DENIED, DENIED, DENIED],
+        deniedActive: [changes.map(() => DENIED), changes.map(() => DENIED)],
+        untouched: true,
+      });
       expect([firstComponent, tooEarly, secondComponent, activate, remove, changeUnits, changeTotal, both, deactivate].map((out) => out.code)).toEqual([
         null,
         "PT400",
@@ -861,20 +968,58 @@ describe("recetas · invariante de la suma y validaciones", () => {
         null,
         null,
       ]);
+      const [first, second] = [a, b].sort();
+      const pairs = (unitsA: number, unitsB: number): unknown[] => [
+        [first, first === a ? unitsA : unitsB, "1"],
+        [second, second === a ? unitsA : unitsB, "1"],
+      ];
+      expect({ codes: [rpcFirst.code, rpcShort.code, rpcOk.code, rpcOff.code], afterFirst, afterShort, afterOk, activa: await activeRecipe(viaRpc) }).toEqual({
+        codes: [null, "PT400", null, null],
+        afterFirst: [{ unit_product_id: null, units_per_pack: 6, total_units: 6, label: null, components: pairs(2, 4) }],
+        afterShort: [{ unit_product_id: null, units_per_pack: 6, total_units: 6, label: null, components: pairs(2, 4) }],
+        afterOk: [{ unit_product_id: null, units_per_pack: 7, total_units: 7, label: null, components: pairs(2, 5) }],
+        activa: [],
+      });
     });
   });
 
-  it("validaciones del componente: no el propio empaque, no otra tienda, no cambiar de receta, unidades > 0, peso > 0 y finito, sin repetir producto", async () => {
+  it("validaciones del componente: no el propio empaque, no otra tienda, no cambiar de receta, unidades > 0, peso > 0 y finito, sin repetir producto; las aplica la tabla a su dueño y save_pack_recipe al usuario, que por tabla recibe 42501", async () => {
     await withRollback(db, async () => {
       const [pack, otherPack, a, b] = [await product("v-pack"), await product("v-pack-2"), await product("v-a"), await product("v-b")];
       const foreign = await product("v-otra-tienda", { storeId: lab.defaultStoreId });
       const id = await recipe(pack, 6, [{ id: a, units: 6 }]);
       const otherId = await recipe(otherPack, 6, [{ id: a, units: 6 }]);
-      const insert = (unit: string, units: number, weight: string): Promise<Outcome> =>
-        runAll("almacen", [
-          ["update public.product_pack_conversions set is_active = false where id = $1", [id]],
-          ["insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack, cost_weight) values ($1, $2, $3, $4, $5::numeric)", [id, lab.storeId, unit, units, weight]],
-        ]);
+      const statements = (unit: string, units: number, weight: string): Array<[string, unknown[]]> => [
+        ["update public.product_pack_conversions set is_active = false where id = $1", [id]],
+        ["insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack, cost_weight) values ($1, $2, $3, $4, $5::numeric)", [id, lab.storeId, unit, units, weight]],
+      ];
+      const insert = (unit: string, units: number, weight: string): Promise<Outcome> => runAll(null, statements(unit, units, weight));
+
+      // Como almacén y como admin, hasta el componente válido se rechaza, sentencia a sentencia.
+      const direct = {
+        almacen: await codesOf("almacen", [
+          ...statements(b, 1, "2.5"),
+          ["update public.product_pack_components set conversion_id = $2 where conversion_id = $1", [id, otherId]],
+          ["update public.product_pack_components set cost_weight = 'NaN' where conversion_id = $1", [id]],
+        ]),
+        admin: await codesOf("admin", statements(b, 1, "2.5")),
+      };
+
+      // Las mismas reglas por la RPC, como almacén, sobre otro empaque (con a 5 fijo y un segundo componente).
+      const rpcPack = await product("v-pack-rpc");
+      const viaRpc = (second: Component, total = 5 + second.units): Promise<Outcome> => save("almacen", rpcPack, total, [{ id: a, units: 5 }, second]);
+      const rpc = {
+        elPropioEmpaque: await viaRpc({ id: rpcPack, units: 1 }),
+        otraTienda: await viaRpc({ id: foreign, units: 1 }),
+        unidadesCero: await viaRpc({ id: b, units: 0 }, 6),
+        pesoCero: await viaRpc({ id: b, units: 1, weight: 0 }),
+        pesoNegativo: await viaRpc({ id: b, units: 1, weight: -1 }),
+        pesoNaN: await viaRpc({ id: b, units: 1, weight: "NaN" }),
+        pesoInfinito: await viaRpc({ id: b, units: 1, weight: "Infinity" }),
+        repetido: await viaRpc({ id: a, units: 1 }),
+        valido: await viaRpc({ id: b, units: 1, weight: 2.5 }),
+      };
+      const rpcSaved = await activeRecipe(rpcPack);
 
       const outcomes = {
         elPropioEmpaque: await insert(pack, 1, "1"),
@@ -885,8 +1030,8 @@ describe("recetas · invariante de la suma y validaciones", () => {
         pesoNaN: await insert(b, 1, "NaN"),
         pesoInfinito: await insert(b, 1, "Infinity"),
         repetido: await insert(a, 1, "1"),
-        cambiarDeReceta: await run("almacen", "update public.product_pack_components set conversion_id = $2 where conversion_id = $1", [id, otherId]),
-        pesoNaNAlEditar: await run("almacen", "update public.product_pack_components set cost_weight = 'NaN' where conversion_id = $1", [id]),
+        cambiarDeReceta: await run(null, "update public.product_pack_components set conversion_id = $2 where conversion_id = $1", [id, otherId]),
+        pesoNaNAlEditar: await run(null, "update public.product_pack_components set cost_weight = 'NaN' where conversion_id = $1", [id]),
         valido: await insert(b, 1, "2.5"),
       };
 
@@ -904,10 +1049,26 @@ describe("recetas · invariante de la suma y validaciones", () => {
         valido: null,
       });
       expect(outcomes.pesoNaN.message).toBe("Valor numerico invalido en cost_weight: debe ser un numero finito");
+      expect(direct).toEqual({ almacen: [DENIED, DENIED, DENIED, DENIED], admin: [DENIED, DENIED] });
+      expect(Object.fromEntries(Object.entries(rpc).map(([name, out]) => [name, out.code]))).toEqual({
+        elPropioEmpaque: "PT400",
+        otraTienda: "PT404",
+        unidadesCero: "PT400",
+        pesoCero: "PT400",
+        pesoNegativo: "PT400",
+        pesoNaN: "PT400",
+        pesoInfinito: "PT400",
+        repetido: "PT400",
+        valido: null,
+      });
+      const [first, second] = [a, b].sort();
+      expect(rpcSaved).toEqual([
+        { unit_product_id: null, units_per_pack: 6, total_units: 6, label: null, components: [[first, first === a ? 5 : 1, first === a ? "1" : "2.5"], [second, second === a ? 5 : 1, second === a ? "1" : "2.5"]] },
+      ]);
     });
   });
 
-  it("compatibilidad: escribir la cabecera como antes mantiene la receta de 1 componente, y editar componentes mantiene unit_product_id / units_per_pack", async () => {
+  it("compatibilidad: escribir la cabecera como antes mantiene la receta de 1 componente, y editar componentes mantiene unit_product_id / units_per_pack (dueño de la tabla); las escrituras del BFF anterior, hechas por un usuario, dan 42501 y save_pack_recipe deja las mismas columnas de compatibilidad", async () => {
     await withRollback(db, async () => {
       const [pack, a, b] = [await product("c-pack"), await product("c-a"), await product("c-b")];
       const read = async (): Promise<Row> =>
@@ -915,7 +1076,7 @@ describe("recetas · invariante de la suma y validaciones", () => {
           "receta",
           `select c.unit_product_id, c.units_per_pack, c.total_units,
                   (select jsonb_agg(jsonb_build_array(pc.unit_product_id, pc.units_per_pack) order by pc.unit_product_id)
-                   from public.product_pack_components pc where pc.conversion_id = c.id) as components
+                   from public.product_pack_conversions h join public.product_pack_components pc on pc.conversion_id = h.id where h.id = c.id) as components
            from public.product_pack_conversions c where c.pack_product_id = $1`,
           [pack],
         );
@@ -923,57 +1084,122 @@ describe("recetas · invariante de la suma y validaciones", () => {
       const step = async (name: string, out: Outcome): Promise<void> => {
         steps.push({ paso: name, code: out.code, ...(await read()) });
       };
+      const BFF_INSERT = "insert into public.product_pack_conversions (pack_product_id, store_id, unit_product_id, units_per_pack, is_active) values ($1, $2, $3, 6, true)";
 
-      await step("insert como el BFF anterior", await run("almacen", "insert into public.product_pack_conversions (pack_product_id, store_id, unit_product_id, units_per_pack, is_active) values ($1, $2, $3, 6, true)", [pack, lab.storeId, a]));
-      await step("update de unidades como el BFF anterior", await run("almacen", "update public.product_pack_conversions set unit_product_id = $2, units_per_pack = 12 where pack_product_id = $1", [pack, a]));
-      await step("update de la unidad como el BFF anterior", await run("almacen", "update public.product_pack_conversions set unit_product_id = $2, units_per_pack = 8 where pack_product_id = $1", [pack, b]));
-      await step("vaciar la unidad a mano", await run("almacen", "update public.product_pack_conversions set unit_product_id = null where pack_product_id = $1", [pack]));
+      // El BFF anterior (y cualquier cliente con el JWT de almacén o de admin) ya no enlaza por tabla.
+      const deniedInsert = [(await run("almacen", BFF_INSERT, [pack, lab.storeId, a])).code, (await run("admin", BFF_INSERT, [pack, lab.storeId, a])).code];
+      const afterDenied = await sql("recetas tras el rechazo", "select id from public.product_pack_conversions where pack_product_id = $1", [pack]);
+
+      await step("insert como el BFF anterior", await run(null, BFF_INSERT, [pack, lab.storeId, a]));
+      const afterInsert = await read();
+      const deniedEdits = await codesOf("almacen", [
+        ["update public.product_pack_conversions set unit_product_id = $2, units_per_pack = 12 where pack_product_id = $1", [pack, a]],
+        ["update public.product_pack_components set units_per_pack = 3 where unit_product_id = $2 and conversion_id = (select id from public.product_pack_conversions where pack_product_id = $1)", [pack, a]],
+        ["insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack) select id, store_id, $2, 5 from public.product_pack_conversions where pack_product_id = $1", [pack, b]],
+        ["delete from public.product_pack_components where unit_product_id = $2 and conversion_id = (select id from public.product_pack_conversions where pack_product_id = $1)", [pack, a]],
+      ]);
+      const intact = JSON.stringify(await read()) === JSON.stringify(afterInsert);
+
+      await step("update de unidades como el BFF anterior", await run(null, "update public.product_pack_conversions set unit_product_id = $2, units_per_pack = 12 where pack_product_id = $1", [pack, a]));
+      await step("update de la unidad como el BFF anterior", await run(null, "update public.product_pack_conversions set unit_product_id = $2, units_per_pack = 8 where pack_product_id = $1", [pack, b]));
+      await step("vaciar la unidad a mano", await run(null, "update public.product_pack_conversions set unit_product_id = null where pack_product_id = $1", [pack]));
       await step(
         "pasa a surtida (b 3 + a 5)",
-        await runAll("almacen", [
+        await runAll(null, [
           ["update public.product_pack_components set units_per_pack = 3 where unit_product_id = $2 and conversion_id = (select id from public.product_pack_conversions where pack_product_id = $1)", [pack, b]],
           ["insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack) select id, store_id, $2, 5 from public.product_pack_conversions where pack_product_id = $1", [pack, a]],
         ]),
       );
       await step(
         "vuelve a 1 componente (a 8)",
-        await runAll("almacen", [
+        await runAll(null, [
           ["delete from public.product_pack_components where unit_product_id = $2 and conversion_id = (select id from public.product_pack_conversions where pack_product_id = $1)", [pack, b]],
           ["update public.product_pack_components set units_per_pack = 8 where unit_product_id = $2 and conversion_id = (select id from public.product_pack_conversions where pack_product_id = $1)", [pack, a]],
         ]),
       );
-      await step("el BFF anterior pisa una surtida", await runAll("almacen", [
+      await step("el BFF anterior pisa una surtida", await runAll(null, [
         ["insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack) select id, store_id, $2, 2 from public.product_pack_conversions where pack_product_id = $1", [pack, b]],
         ["update public.product_pack_conversions set total_units = 10 where pack_product_id = $1", [pack]],
         ["update public.product_pack_conversions set unit_product_id = $2, units_per_pack = 4 where pack_product_id = $1", [pack, b]],
       ]));
 
+      // El mismo recorrido por la RPC, como almacén, sobre otro empaque: las columnas de compatibilidad de la receta
+      // ACTIVA quedan igual que por tabla (unidad = componente único o null en un surtido; units_per_pack = total).
+      const rpcPack = await product("c-pack-rpc");
+      const rpcSteps: Row[] = [];
+      const rpcStep = async (name: string, total: number, components: Component[]): Promise<void> => {
+        const out = await save("almacen", rpcPack, total, components);
+        const [active] = await activeRecipe(rpcPack);
+        rpcSteps.push({
+          paso: name,
+          code: out.code,
+          action: resultOf(out)?.action ?? null,
+          unit_product_id: active?.unit_product_id,
+          units_per_pack: active?.units_per_pack,
+          total_units: active?.total_units,
+          components: (active?.components as unknown[][] | undefined)?.map(([id, units]) => [id, units]),
+        });
+      };
+      await rpcStep("par a x6", 6, [{ id: a, units: 6 }]);
+      await rpcStep("mismas unidad, x12", 12, [{ id: a, units: 12 }]);
+      await rpcStep("otra unidad, b x8", 8, [{ id: b, units: 8 }]);
+      await rpcStep("pasa a surtida (b 3 + a 5)", 8, [{ id: b, units: 3 }, { id: a, units: 5 }]);
+      await rpcStep("vuelve a 1 componente (a 8)", 8, [{ id: a, units: 8 }]);
+      const rpcHeaders = await one("cabeceras del empaque por RPC", "select count(*)::int as total, count(*) filter (where is_active)::int as activas from public.product_pack_conversions where pack_product_id = $1", [rpcPack]);
+
       const [first, second] = [a, b].sort();
+      const assorted = [[first, first === a ? 5 : 3], [second, second === a ? 5 : 3]];
+      expect({ deniedInsert, afterDenied, deniedEdits, intact }).toEqual({ deniedInsert: [DENIED, DENIED], afterDenied: [], deniedEdits: [DENIED, DENIED, DENIED, DENIED], intact: true });
       expect(steps).toEqual([
         { paso: "insert como el BFF anterior", code: null, unit_product_id: a, units_per_pack: 6, total_units: 6, components: [[a, 6]] },
         { paso: "update de unidades como el BFF anterior", code: null, unit_product_id: a, units_per_pack: 12, total_units: 12, components: [[a, 12]] },
         { paso: "update de la unidad como el BFF anterior", code: null, unit_product_id: b, units_per_pack: 8, total_units: 8, components: [[b, 8]] },
         { paso: "vaciar la unidad a mano", code: "PT400", unit_product_id: b, units_per_pack: 8, total_units: 8, components: [[b, 8]] },
-        { paso: "pasa a surtida (b 3 + a 5)", code: null, unit_product_id: null, units_per_pack: 8, total_units: 8, components: [[first, first === a ? 5 : 3], [second, second === a ? 5 : 3]] },
+        { paso: "pasa a surtida (b 3 + a 5)", code: null, unit_product_id: null, units_per_pack: 8, total_units: 8, components: assorted },
         { paso: "vuelve a 1 componente (a 8)", code: null, unit_product_id: a, units_per_pack: 8, total_units: 8, components: [[a, 8]] },
         { paso: "el BFF anterior pisa una surtida", code: null, unit_product_id: b, units_per_pack: 4, total_units: 4, components: [[b, 4]] },
       ]);
+      expect({ rpcSteps, rpcHeaders }).toEqual({
+        rpcSteps: [
+          { paso: "par a x6", code: null, action: "created", unit_product_id: a, units_per_pack: 6, total_units: 6, components: [[a, 6]] },
+          { paso: "mismas unidad, x12", code: null, action: "updated", unit_product_id: a, units_per_pack: 12, total_units: 12, components: [[a, 12]] },
+          { paso: "otra unidad, b x8", code: null, action: "replaced", unit_product_id: b, units_per_pack: 8, total_units: 8, components: [[b, 8]] },
+          { paso: "pasa a surtida (b 3 + a 5)", code: null, action: "replaced", unit_product_id: null, units_per_pack: 8, total_units: 8, components: assorted },
+          { paso: "vuelve a 1 componente (a 8)", code: null, action: "replaced", unit_product_id: a, units_per_pack: 8, total_units: 8, components: [[a, 8]] },
+        ],
+        // La RPC no borra ni reescribe los productos de una receta ya escrita: cada reemplazo deja la anterior inactiva.
+        rpcHeaders: { total: 4, activas: 1 },
+      });
     });
   });
 
-  it("índices: el único del lado unidad ya no existe (un producto sale de varios empaques) y sigue habiendo una sola receta activa por empaque", async () => {
+  it("índices: el único del lado unidad ya no existe (un producto sale de varios empaques) y sigue habiendo una sola receta activa por empaque, por tabla (dueño) y por save_pack_recipe; un usuario no inserta cabeceras por tabla (42501)", async () => {
     await withRollback(db, async () => {
-      const [p1, p2, unit] = [await product("i-pack"), await product("i-pack"), await product("i-unit")];
+      const [p1, p2, unit, other] = [await product("i-pack"), await product("i-pack"), await product("i-unit"), await product("i-unit-2")];
+      const [r1, r2] = [await product("i-pack-rpc"), await product("i-pack-rpc")];
       const unique = await sql(
         "índices únicos",
         `select x.indexname, x.indexdef from pg_indexes x join pg_class c on c.relname = x.indexname join pg_index i on i.indexrelid = c.oid
          where x.schemaname = 'public' and x.tablename = 'product_pack_conversions' and i.indisunique and not i.indisprimary order by 1`,
       );
+      const INSERT = "insert into public.product_pack_conversions (store_id, pack_product_id, unit_product_id, units_per_pack, is_active) values ($1, $2, $3, $4, $5)";
+      const header = (actor: Actor, pack: string, units: number, isActive = true): Promise<Outcome> => run(actor, INSERT, [lab.storeId, pack, unit, units, isActive]);
+      const activeCount = async (pack: string): Promise<unknown> =>
+        (await one("recetas activas", "select count(*)::int as n from public.product_pack_conversions where pack_product_id = $1 and is_active", [pack])).n;
 
-      const first = await run("almacen", "insert into public.product_pack_conversions (store_id, pack_product_id, unit_product_id, units_per_pack) values ($1, $2, $3, 6)", [lab.storeId, p1, unit]);
-      const sameUnit = await run("almacen", "insert into public.product_pack_conversions (store_id, pack_product_id, unit_product_id, units_per_pack) values ($1, $2, $3, 12)", [lab.storeId, p2, unit]);
-      const samePack = await run("almacen", "insert into public.product_pack_conversions (store_id, pack_product_id, unit_product_id, units_per_pack) values ($1, $2, $3, 24)", [lab.storeId, p1, unit]);
-      const samePackInactive = await run("almacen", "insert into public.product_pack_conversions (store_id, pack_product_id, unit_product_id, units_per_pack, is_active) values ($1, $2, $3, 24, false)", [lab.storeId, p1, unit]);
+      const denied = [(await header("almacen", p1, 6)).code, (await header("admin", p1, 6)).code, (await header("almacen", p1, 24, false)).code];
+      const afterDenied = await activeCount(p1);
+
+      const first = await header(null, p1, 6);
+      const sameUnit = await header(null, p2, 12);
+      const samePack = await header(null, p1, 24);
+      const samePackInactive = await header(null, p1, 24, false);
+
+      // Por la RPC: la misma unidad sale de dos empaques, y guardar otra receta en un empaque que ya tiene una la
+      // reemplaza (nunca dos activas).
+      const rpcFirst = await save("almacen", r1, 6, [{ id: unit, units: 6 }]);
+      const rpcSameUnit = await save("admin", r2, 12, [{ id: unit, units: 12 }]);
+      const rpcSamePack = await save("almacen", r1, 24, [{ id: other, units: 24 }]);
 
       expect({ unicos: unique, codes: [first.code, sameUnit.code, samePack.code, samePackInactive.code] }).toEqual({
         unicos: [
@@ -984,12 +1210,26 @@ describe("recetas · invariante de la suma y validaciones", () => {
         ],
         codes: [null, null, "23505", null],
       });
+      expect({ denied, afterDenied }).toEqual({ denied: [DENIED, DENIED, DENIED], afterDenied: 0 });
+      expect({
+        codes: [rpcFirst.code, rpcSameUnit.code, rpcSamePack.code],
+        acciones: [resultOf(rpcFirst)?.action, resultOf(rpcSameUnit)?.action, resultOf(rpcSamePack)?.action],
+        activas: [await activeCount(r1), await activeCount(r2)],
+        r1: await activeRecipe(r1),
+        r2: await activeRecipe(r2),
+      }).toEqual({
+        codes: [null, null, null],
+        acciones: ["created", "created", "replaced"],
+        activas: [1, 1],
+        r1: [{ unit_product_id: other, units_per_pack: 24, total_units: 24, label: null, components: [[other, 24, "1"]] }],
+        r2: [{ unit_product_id: unit, units_per_pack: 12, total_units: 12, label: null, components: [[unit, 12, "1"]] }],
+      });
     });
   });
 });
 
 describe("product_pack_components · RLS por tienda y por rol", () => {
-  it("vendedor y contador leen las recetas de su tienda y no las escriben; almacén y admin sí; otra tienda y anon no ven ni escriben nada", async () => {
+  it("vendedor y contador leen las recetas de su tienda; nadie las escribe por tabla (42501, también almacén y admin); almacén y admin las guardan por save_pack_recipe, vendedor y contador no (PT403), otra tienda no las encuentra (PT404) y anon no ve ni ejecuta nada", async () => {
     await withRollback(db, async () => {
       const [pack, a, b] = [await product("s-pack"), await product("s-a"), await product("s-b")];
       const id = await recipe(pack, 6, [{ id: a, units: 6 }]);
@@ -997,14 +1237,13 @@ describe("product_pack_components · RLS por tienda y por rol", () => {
       const foreignId = await recipe(foreignPack, 6, [{ id: foreignUnit, units: 6 }]);
       const count = (actor: Actor, conversion: string): Promise<Outcome> => run(actor, "select count(*)::int as n from public.product_pack_components where conversion_id = $1", [conversion]);
       const write = async (actor: Actor): Promise<Array<string | number | null>> => {
-        const insert = await runAll(actor, [
-          ["update public.product_pack_conversions set total_units = 7 where id = $1", [id]],
-          ["insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack) values ($1, $2, $3, 1)", [id, lab.storeId, b]],
-        ]);
+        const header = await run(actor, "update public.product_pack_conversions set total_units = 7 where id = $1 returning id", [id]);
+        const insert = await run(actor, "insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack) values ($1, $2, $3, 1)", [id, lab.storeId, b]);
         const update = await run(actor, "update public.product_pack_components set cost_weight = 2 where conversion_id = $1 returning id", [id]);
         const remove = await run(actor, "delete from public.product_pack_components where conversion_id = $1 and unit_product_id = $2 returning id", [id, b]);
-        return [insert.code, update.code ?? update.rows.length, remove.code ?? remove.rows.length];
+        return [header.code ?? header.rows.length, insert.code, update.code ?? update.rows.length, remove.code ?? remove.rows.length];
       };
+      const CROSS = "insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack) values ($1, $2, $3, 1)";
 
       const reads = {
         vendedor: (await count("vendedor1", id)).rows[0]?.n,
@@ -1020,25 +1259,43 @@ describe("product_pack_components · RLS por tienda y por rol", () => {
         contador: await write("contador"),
         otraTienda: await write("otherAdmin"),
         anon: await write("anon"),
+        almacen: await write("almacen"),
+        admin: await write("admin"),
       };
-      const crossStore = await run(
-        "otherAdmin",
-        "insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack) values ($1, $2, $3, 1)",
-        [id, lab.defaultStoreId, foreignUnit],
-      );
-      const untouched = await one("receta intacta", "select count(*)::int as n, min(cost_weight)::text as peso from public.product_pack_components where conversion_id = $1", [id]);
-      const allowed = { almacen: await write("almacen"), admin: await write("admin") };
+      const crossStore = await run("otherAdmin", CROSS, [id, lab.defaultStoreId, foreignUnit]);
+      // La regla de la tabla (un componente es de la tienda de su receta) sigue ahí para quien la escribe.
+      const crossStoreOwner = await run(null, CROSS, [id, lab.defaultStoreId, foreignUnit]);
+      const untouched = await one("receta intacta", "select count(*)::int as n, min(cost_weight)::text as peso, (select total_units from public.product_pack_conversions where id = $1) as total from public.product_pack_components where conversion_id = $1", [id]);
 
-      expect({ reads, writes, cruzado: crossStore.code, intacta: untouched }).toEqual({
-        reads: { vendedor: 1, contador: 1, almacen: 1, almacenOtraTienda: 0, otraTienda: 0, otraTiendaLaSuya: 1, anon: "42501" },
-        // El update de la cabecera no afecta filas (RLS) y el insert del componente lo corta su política.
-        writes: { vendedor: ["42501", 0, 0], contador: ["42501", 0, 0], otraTienda: ["42501", 0, 0], anon: ["42501", "42501", "42501"] },
-        cruzado: "PT400",
-        intacta: { n: 1, peso: "1" },
+      // El mismo cambio (total 7 = a 6 + b 1, peso 2) por la RPC, rol a rol.
+      const change: Component[] = [{ id: a, units: 6, weight: 2 }, { id: b, units: 1, weight: 2 }];
+      const rpc = {
+        vendedor: (await save("vendedor1", pack, 7, change)).code,
+        contador: (await save("contador", pack, 7, change)).code,
+        otraTienda: (await save("otherAdmin", pack, 7, change)).code,
+        anon: (await save("anon", pack, 7, change)).code,
+      };
+      const afterRefused = await activeRecipe(pack);
+      const byAlmacen = await save("almacen", pack, 7, change);
+      const afterAlmacen = await activeRecipe(pack);
+      const byAdmin = await save("admin", pack, 6, [{ id: a, units: 6 }]);
+      const afterAdmin = await activeRecipe(pack);
+
+      expect({ reads, writes, cruzado: [crossStore.code, crossStoreOwner.code], intacta: untouched }).toEqual({
+        reads: { vendedor: 1, contador: 1, almacen: 1, almacenOtraTienda: 0, otraTienda: 0, otraTiendaLaSuya: 1, anon: DENIED },
+        // Sin el privilegio de tabla ninguna sentencia llega a la RLS ni a los triggers.
+        writes: Object.fromEntries(["vendedor", "contador", "otraTienda", "anon", "almacen", "admin"].map((who) => [who, [DENIED, DENIED, DENIED, DENIED]])),
+        cruzado: [DENIED, "PT400"],
+        intacta: { n: 1, peso: "1", total: 6 },
       });
-      // Cambiar solo total_units no toca el componente: con el segundo componente (1) la receta suma 7. Al borrarlo
-      // deja de cuadrar: PT400 y no se borra.
-      expect(allowed).toEqual({ almacen: [null, 2, "PT400"], admin: ["23505", 2, "PT400"] });
+      const [first, second] = [a, b].sort();
+      expect({ rpc, afterRefused, codes: [byAlmacen.code, byAdmin.code], afterAlmacen, afterAdmin }).toEqual({
+        rpc: { vendedor: "PT403", contador: "PT403", otraTienda: "PT404", anon: DENIED },
+        afterRefused: [{ unit_product_id: a, units_per_pack: 6, total_units: 6, label: `${TAG} surtido`, components: [[a, 6, "1"]] }],
+        codes: [null, null],
+        afterAlmacen: [{ unit_product_id: null, units_per_pack: 7, total_units: 7, label: null, components: [[first, first === a ? 6 : 1, "2"], [second, second === a ? 6 : 1, "2"]] }],
+        afterAdmin: [{ unit_product_id: a, units_per_pack: 6, total_units: 6, label: null, components: [[a, 6, "1"]] }],
+      });
     });
   });
 });
@@ -1231,9 +1488,13 @@ describe("create_purchase · modo empaque con recetas", () => {
   });
 });
 
-// PostgREST solo ve datos confirmados: los productos se crean de verdad y se borran al terminar. Son las llamadas y
-// escrituras que hace hoy el BFF (`packConversion.server.ts`, `inventory.server.ts`) y el commit real de una receta.
-describe("PostgREST · el BFF de hoy sigue funcionando y una receta se confirma por peticiones", () => {
+// PostgREST solo ve datos confirmados: los productos se crean de verdad y se borran al terminar. Son las llamadas
+// que hace hoy el BFF (`packConversion.server.ts`, `inventory.server.ts`): lee las tablas y escribe la receta solo
+// por `save_pack_recipe`. Las escrituras por tabla del BFF anterior responden 403 (42501) desde 20261011d.
+describe("PostgREST · el BFF de hoy sigue funcionando y una receta se confirma por la RPC, no por tabla", () => {
+  /** Estado y SQLSTATE de una respuesta de PostgREST. */
+  const outcome = (res: { status: number; error: { code?: string } | null }): [number, string | null] => [res.status, res.error?.code ?? null];
+  const FORBIDDEN: [number, string] = [403, DENIED];
   const LINKED = "id, sku, name, sale_price_ref, current_cost_ref, current_stock";
   const BFF_SELECT = `id, pack_product_id, unit_product_id, units_per_pack, pack_product:products!pack_product_id(${LINKED}), unit_product:products!unit_product_id(${LINKED})`;
   const PREFIX = `${TAG}-rest`.toLowerCase();
@@ -1276,36 +1537,62 @@ describe("PostgREST · el BFF de hoy sigue funcionando y una receta se confirma 
     if (lab) await cleanup();
   });
 
-  it("par 1 a 1 por las tablas y la RPC como las usa el BFF anterior: enlazar, leer con sus embebidos, abrir (con y sin clave), cambiar las unidades y desactivar", async () => {
+  it("par 1 a 1: enlazar, cambiar las unidades y desactivar por tabla como el BFF anterior responde 403 (42501) sin cambios; por save_pack_recipe se enlaza, se lee con sus embebidos, se abre (con y sin clave), se cambian las unidades y se desactiva", async () => {
     const almacen = await lab.supa("almacen");
     const [pack, unit] = [await committedProduct("pack", 5), await committedProduct("unit", 0)];
     const requestId = randomUUID();
+    const saveArgs = (units: number): Row => ({ p_pack_product_id: pack, p_enabled: true, p_total_units: units, p_label: null, p_components: [{ unit_product_id: unit, units_per_pack: units }] });
+    const recipes = (): Promise<Row[]> =>
+      lab.rows(
+        `select c.id, c.is_active, c.unit_product_id, c.units_per_pack, c.total_units,
+                (select jsonb_agg(jsonb_build_array(pc.unit_product_id, pc.units_per_pack)) from public.product_pack_components pc where pc.conversion_id = c.id) as components
+         from public.product_pack_conversions c where c.pack_product_id = $1 order by c.id`,
+        [pack],
+      );
 
-    const linked = await almacen.from("product_pack_conversions").insert({ pack_product_id: pack, store_id: lab.storeId, unit_product_id: unit, units_per_pack: 6, is_active: true });
+    const linkedDirect = await almacen.from("product_pack_conversions").insert({ pack_product_id: pack, store_id: lab.storeId, unit_product_id: unit, units_per_pack: 6, is_active: true });
+    const afterLinkedDirect = await recipes();
+    const linked = await almacen.rpc("save_pack_recipe", saveArgs(6));
     const read = await almacen.from("product_pack_conversions").select(BFF_SELECT).eq("store_id", lab.storeId).eq("is_active", true).or(`pack_product_id.eq.${unit},unit_product_id.eq.${unit}`).maybeSingle();
     const plain = await almacen.rpc("convert_pack_to_units", { p_pack_product_id: pack, p_pack_quantity: 1, p_reason: TAG });
     const keyed = await almacen.rpc("convert_pack_to_units", { p_pack_product_id: pack, p_pack_quantity: 1, p_reason: TAG, p_client_request_id: requestId });
     const retried = await almacen.rpc("convert_pack_to_units", { p_pack_product_id: pack, p_pack_quantity: 1, p_reason: TAG, p_client_request_id: requestId });
     const existing = await almacen.from("product_pack_conversions").select("id").eq("store_id", lab.storeId).eq("pack_product_id", pack).eq("is_active", true).maybeSingle();
-    const relinked = await almacen.from("product_pack_conversions").update({ unit_product_id: unit, units_per_pack: 12 }).eq("id", String(existing.data?.id));
+    const beforeDirect = await recipes();
+    const relinkedDirect = await almacen.from("product_pack_conversions").update({ unit_product_id: unit, units_per_pack: 12 }).eq("id", String(existing.data?.id));
+    const componentDirect = await almacen.from("product_pack_components").update({ units_per_pack: 12 }).eq("conversion_id", String(existing.data?.id));
+    const disabledDirect = await almacen.from("product_pack_conversions").update({ is_active: false }).eq("store_id", lab.storeId).eq("pack_product_id", pack).eq("is_active", true);
+    const deletedDirect = await almacen.from("product_pack_conversions").delete().eq("id", String(existing.data?.id));
+    const afterDirect = await recipes();
+    const relinked = await almacen.rpc("save_pack_recipe", saveArgs(12));
     const afterRelink = await almacen.rpc("convert_pack_to_units", { p_pack_product_id: pack, p_pack_quantity: 1, p_reason: TAG });
     const components = await lab.rows("select unit_product_id, units_per_pack from public.product_pack_components where conversion_id = $1", [existing.data?.id]);
-    const disabled = await almacen.from("product_pack_conversions").update({ is_active: false }).eq("store_id", lab.storeId).eq("pack_product_id", pack).eq("is_active", true);
+    const disabled = await almacen.rpc("save_pack_recipe", { p_pack_product_id: pack, p_enabled: false });
     const afterDisable = await almacen.rpc("convert_pack_to_units", { p_pack_product_id: pack, p_pack_quantity: 1, p_reason: TAG });
     const embedded = read.data as { unit_product_id: string; units_per_pack: number; pack_product: unknown; unit_product: unknown } | null;
     const first = (value: unknown): Row | undefined => (Array.isArray(value) ? value[0] : value) as Row | undefined;
 
     expect({
+      directas: [linkedDirect, relinkedDirect, componentDirect, disabledDirect, deletedDirect].map(outcome),
+      sinEnlacePorTabla: afterLinkedDirect,
+      sinCambiosPorTabla: JSON.stringify(afterDirect) === JSON.stringify(beforeDirect),
+    }).toEqual({ directas: [FORBIDDEN, FORBIDDEN, FORBIDDEN, FORBIDDEN, FORBIDDEN], sinEnlacePorTabla: [], sinCambiosPorTabla: true });
+    expect({
       errores: [linked.error, read.error, plain.error, keyed.error, retried.error, existing.error, relinked.error, afterRelink.error, disabled.error].map((error) => error?.message ?? null),
+      acciones: [linked.data, relinked.data, disabled.data].map((data) => (data as Row | null)?.action),
+      mismaReceta: [(linked.data as Row | null)?.conversionId === existing.data?.id, (relinked.data as Row | null)?.conversionId === existing.data?.id],
       lectura: { unit: embedded?.unit_product_id, units: embedded?.units_per_pack, empaque: first(embedded?.pack_product)?.id, unidad: first(embedded?.unit_product)?.id },
       abrir: [plain.data, keyed.data, afterRelink.data].map((data) => [Object.keys(data as Row).sort().filter((key) => LEGACY_KEYS.includes(key)), (data as Row).unitQuantity, ((data as Row).unitMovement as Row).product_id]),
       reintento: (retried.data as Row | null)?.conversionId === (keyed.data as Row | null)?.conversionId,
       componentes: components,
       desactivada: afterDisable.error?.code,
+      recetas: (await recipes()).map((row) => [row.is_active, row.unit_product_id, row.units_per_pack, row.total_units, row.components]),
       stock: await lab.stocks([pack, unit]),
       vistas: await lab.scoped([pack, unit]),
     }).toEqual({
       errores: [null, null, null, null, null, null, null, null, null],
+      acciones: ["created", "updated", "disabled"],
+      mismaReceta: [true, true],
       lectura: { unit, units: 6, empaque: pack, unidad: unit },
       abrir: [
         [LEGACY_KEYS, 6, unit],
@@ -1315,26 +1602,28 @@ describe("PostgREST · el BFF de hoy sigue funcionando y una receta se confirma 
       reintento: true,
       componentes: [{ unit_product_id: unit, units_per_pack: 12 }],
       desactivada: "PT404",
+      recetas: [[false, unit, 12, 12, [[unit, 12]]]],
       stock: { [pack]: 2, [unit]: 24 },
       vistas: Object.fromEntries(INTEGRITY_VIEWS.map((view) => [view, 0])),
     });
   });
 
-  it("receta surtida por peticiones: una cabecera activa sin componentes no se confirma (PT400); inactiva → componentes → activar sí, y se abre con su reparto real", async () => {
+  it("receta surtida por peticiones: por tabla no se crea ni la cabecera (403, 42501); por save_pack_recipe una receta sin componentes o que no suma no se guarda (PT400) y la completa sí, en una petición, y se abre con su reparto real", async () => {
     const almacen = await lab.supa("almacen");
     const [pack, a, b, c] = [await committedProduct("surtido", 3), await committedProduct("a", 0), await committedProduct("b", 0), await committedProduct("c", 0)];
+    const headers = (): Promise<Row[]> => lab.rows("select id from public.product_pack_conversions where pack_product_id = $1", [pack]);
+    const saveArgs = (components: Row[]): Row => ({ p_pack_product_id: pack, p_enabled: true, p_total_units: 6, p_label: "Surtido 3 sabores", p_components: components });
+    const line = (id: string, units: number, weight?: number): Row => ({ unit_product_id: id, units_per_pack: units, ...(weight === undefined ? {} : { cost_weight: weight }) });
 
-    const active = await almacen.from("product_pack_conversions").insert({ pack_product_id: pack, store_id: lab.storeId, total_units: 6, is_active: true });
-    const afterActive = await lab.rows("select id from public.product_pack_conversions where pack_product_id = $1", [pack]);
-    const header = await almacen.from("product_pack_conversions").insert({ pack_product_id: pack, store_id: lab.storeId, total_units: 6, label: "Surtido 3 sabores", is_active: false }).select("id").single();
-    const id = String(header.data?.id);
-    const partial = await almacen.from("product_pack_components").insert([
-      { conversion_id: id, store_id: lab.storeId, unit_product_id: a, units_per_pack: 2 },
-      { conversion_id: id, store_id: lab.storeId, unit_product_id: b, units_per_pack: 2 },
-    ]);
-    const tooEarly = await almacen.from("product_pack_conversions").update({ is_active: true }).eq("id", id);
-    const rest = await almacen.from("product_pack_components").insert({ conversion_id: id, store_id: lab.storeId, unit_product_id: c, units_per_pack: 2, cost_weight: 2 });
-    const activated = await almacen.from("product_pack_conversions").update({ is_active: true }).eq("id", id);
+    const activeDirect = await almacen.from("product_pack_conversions").insert({ pack_product_id: pack, store_id: lab.storeId, total_units: 6, is_active: true });
+    const inactiveDirect = await almacen.from("product_pack_conversions").insert({ pack_product_id: pack, store_id: lab.storeId, total_units: 6, label: "Surtido 3 sabores", is_active: false }).select("id");
+    const afterDirect = await headers();
+    const empty = await almacen.rpc("save_pack_recipe", saveArgs([]));
+    const partial = await almacen.rpc("save_pack_recipe", saveArgs([line(a, 2), line(b, 2)]));
+    const afterRefused = await headers();
+    const saved = await almacen.rpc("save_pack_recipe", saveArgs([line(a, 2), line(b, 2), line(c, 2, 2)]));
+    const id = String((saved.data as Row | null)?.conversionId);
+    const componentDirect = await almacen.from("product_pack_components").insert({ conversion_id: id, store_id: lab.storeId, unit_product_id: a, units_per_pack: 1 });
     const opened = await almacen.rpc("convert_pack_to_units", {
       p_pack_product_id: pack,
       p_pack_quantity: 1,
@@ -1344,22 +1633,29 @@ describe("PostgREST · el BFF de hoy sigue funcionando y una receta se confirma 
     });
     const badSum = await almacen.rpc("convert_pack_to_units", { p_pack_product_id: pack, p_pack_quantity: 1, p_reason: TAG, p_components: [share(a, 3)] });
     const state = await lab.rows("select is_active, unit_product_id, units_per_pack, total_units, label from public.product_pack_conversions where id = $1", [id]);
+    const weights = await lab.rows("select unit_product_id, units_per_pack, cost_weight::text as cost_weight from public.product_pack_components where conversion_id = $1 order by unit_product_id", [id]);
 
     expect({
-      activaSinComponentes: [active.error?.code, active.status, afterActive.length],
-      pasos: [header.error, partial.error, rest.error, activated.error, opened.error].map((error) => error?.message ?? null),
-      activarAntes: [tooEarly.error?.code, tooEarly.error?.message],
+      directas: [activeDirect, inactiveDirect, componentDirect].map(outcome),
+      cabecerasPorTabla: afterDirect.length,
+      rechazadas: [outcome(empty), outcome(partial), afterRefused.length],
+      pasos: [saved.error, opened.error].map((error) => error?.message ?? null),
+      accion: (saved.data as Row | null)?.action,
       sumaMala: [badSum.error?.code, badSum.status],
       cabecera: state,
+      componentes: weights,
       entradas: ((opened.data as Row | null)?.components as Row[] | undefined)?.map((x) => [x.unitProductId, x.units]),
       stock: await lab.stocks([pack, a, b, c]),
       vistas: await lab.scoped([pack, a, b, c]),
     }).toEqual({
-      activaSinComponentes: ["PT400", 400, 0],
-      pasos: [null, null, null, null, null],
-      activarAntes: ["PT400", "Los componentes de la receta suman 4 unidades y el empaque declara 6"],
+      directas: [FORBIDDEN, FORBIDDEN, FORBIDDEN],
+      cabecerasPorTabla: 0,
+      rechazadas: [[400, "PT400"], [400, "PT400"], 0],
+      pasos: [null, null],
+      accion: "created",
       sumaMala: ["PT400", 400],
       cabecera: [{ is_active: true, unit_product_id: null, units_per_pack: 6, total_units: 6, label: "Surtido 3 sabores" }],
+      componentes: [[a, "1"], [b, "1"], [c, "2"]].sort((x, y) => String(x[0]).localeCompare(String(y[0]))).map(([unit_product_id, cost_weight]) => ({ unit_product_id, units_per_pack: 2, cost_weight })),
       entradas: [[a, 3], [b, 1], [c, 2]].sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
       stock: { [pack]: 2, [a]: 3, [b]: 1, [c]: 2 },
       vistas: Object.fromEntries(INTEGRITY_VIEWS.map((view) => [view, 0])),
