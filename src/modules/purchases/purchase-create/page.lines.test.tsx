@@ -78,17 +78,6 @@ const mockTaxCatalog = {
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
 }));
-jest.mock("../../contacts/hooks/useContacts", () => ({
-  useContacts: () => ({
-    data: {
-      items: [{ id: "cont-supplier", name: "Proveedor Demo", type: "proveedor" }],
-      limit: 100,
-      skip: 0,
-      total: 1,
-    },
-    error: null,
-  }),
-}));
 jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
   useCurrentExchangeRate: () => ({ data: { rateVes: 510 }, error: null }),
 }));

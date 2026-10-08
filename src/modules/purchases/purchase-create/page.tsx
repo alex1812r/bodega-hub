@@ -3,8 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-import { getPaginatedItems } from "@/lib/api/pagination";
-import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
@@ -92,7 +90,6 @@ function errorMessage(error: unknown) {
 
 export function PurchaseCreatePage() {
   const router = useRouter();
-  const suppliersQuery = useContacts({ limit: 100, type: "proveedor" });
   const exchangeRate = useCurrentExchangeRate();
   const createPurchase = useCreatePurchase();
   const requestAttempt = useRequestAttempt();
@@ -104,6 +101,8 @@ export function PurchaseCreatePage() {
   // Catálogo completo: los chips muestran también una alícuota desactivada.
   const taxRates = useTaxRates({ activeOnly: false });
   const [supplierId, setSupplierId] = useState("");
+  // Nombre del proveedor elegido: lo da quien lo elige (tarjeta, borrador, compra duplicada).
+  const [supplierName, setSupplierName] = useState<string | null>(null);
   const [productSearch, setProductSearch] = useState("");
   const [status, setStatus] = useState<PurchaseStatus>("recibido");
   const [notes, setNotes] = useState("");
@@ -141,14 +140,6 @@ export function PurchaseCreatePage() {
   const catalog = productSearchResult.catalog;
   const currentRateVes = exchangeRate.data?.rateVes;
   const activeRateVes = currentRateVes ?? 510;
-
-  const suppliers = useMemo(
-    () =>
-      getPaginatedItems(suppliersQuery.data).filter(
-        (contact) => contact.type === "proveedor" || contact.type === "ambos",
-      ),
-    [suppliersQuery.data],
-  );
 
   useEffect(() => {
     if (!supplierId) {
@@ -265,7 +256,6 @@ export function PurchaseCreatePage() {
     return item.quantity > 0 && item.unitCostRef >= 0;
   });
 
-  const supplierName = suppliers.find((supplier) => supplier.id === supplierId)?.name;
   const draftContent = useMemo<PurchaseDraftContent>(
     () => ({
       costCurrency,
@@ -325,15 +315,15 @@ export function PurchaseCreatePage() {
   });
 
   /**
-   * Costos al último conocido para `nextSupplierId`. Devuelve la función que pone las
+   * Costos al último conocido para `nextSupplier`. Devuelve la función que pone las
    * líneas en el formulario (sustituyen las que hubiera): quien llama decide cuándo.
    */
   async function prepareDuplicatedLines(
-    nextSupplierId: string,
+    nextSupplier: { id: string; name: string | null },
     sourceItems: PurchaseDuplicateSourceItem[],
   ) {
     const products = await resolvePurchaseProducts(
-      nextSupplierId,
+      nextSupplier.id,
       sourceItems.map((item) => item.productId),
     );
     const duplicated = buildDuplicatedPurchaseLines(sourceItems, products, {
@@ -343,7 +333,8 @@ export function PurchaseCreatePage() {
     });
 
     return () => {
-      setSupplierId(nextSupplierId);
+      setSupplierId(nextSupplier.id);
+      setSupplierName(nextSupplier.name);
       setProductSearch("");
       setLineMetaByProductId(duplicated.lineMeta);
       dispatchLines({ state: duplicated.lines, type: "linesRestored" });
@@ -365,7 +356,10 @@ export function PurchaseCreatePage() {
         setPendingDuplicate({ items: source.items, supplierName: sourceSupplier?.name ?? null });
     }
 
-    return prepareDuplicatedLines(source.supplierId, source.items);
+    return prepareDuplicatedLines(
+      { id: source.supplierId, name: sourceSupplier.name },
+      source.items,
+    );
   }
 
   const duplicate = usePurchaseDuplicateSource({
@@ -391,6 +385,7 @@ export function PurchaseCreatePage() {
 
       draft.adopt();
       setSupplierId(stored.supplierId);
+      setSupplierName(stored.supplierName ?? null);
       setProductSearch("");
       setStatus(stored.status);
       setNotes(stored.notes);
@@ -422,8 +417,9 @@ export function PurchaseCreatePage() {
     );
   }
 
-  function handleSupplierChange(nextSupplierId: string) {
+  function handleSupplierChange(nextSupplierId: string, nextSupplierName?: string) {
     setSupplierId(nextSupplierId);
+    setSupplierName(nextSupplierName ?? null);
     setProductSearch("");
     dispatchLines({ type: "supplierChanged" });
     setLineMetaByProductId(new Map());
@@ -431,7 +427,10 @@ export function PurchaseCreatePage() {
     // Compra duplicada de un proveedor inactivo: sus líneas entran con el que se elija.
     if (pendingDuplicate && nextSupplierId) {
       setIsLoadingDuplicateLines(true);
-      void prepareDuplicatedLines(nextSupplierId, pendingDuplicate.items)
+      void prepareDuplicatedLines(
+        { id: nextSupplierId, name: nextSupplierName ?? null },
+        pendingDuplicate.items,
+      )
         .then((apply) => apply())
         .catch((error: unknown) => {
           showToast({
@@ -598,7 +597,7 @@ export function PurchaseCreatePage() {
     }
   }
 
-  const dependencyError = suppliersQuery.error ?? exchangeRate.error ?? taxRates.error;
+  const dependencyError = exchangeRate.error ?? taxRates.error;
 
   // Sin tasa la compra de origen no puede llegar al formulario: no se espera para siempre.
   const duplicateError = duplicate.error ?? (duplicate.isLoading ? exchangeRate.error : null);
@@ -671,7 +670,6 @@ export function PurchaseCreatePage() {
           <PurchaseSupplierCard
             onSupplierChange={handleSupplierChange}
             selectedSupplierId={supplierId}
-            suppliers={suppliers}
           />
           <PurchaseProductPickerCard
             catalog={catalog}

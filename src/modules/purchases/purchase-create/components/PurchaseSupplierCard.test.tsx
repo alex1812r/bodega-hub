@@ -29,15 +29,15 @@ function Harness({
   onSupplierChange,
 }: {
   initialId: string;
-  onSupplierChange: (id: string) => void;
+  onSupplierChange: (id: string, name?: string) => void;
 }) {
   const [supplierId, setSupplierId] = useState(initialId);
 
   return (
     <PurchaseSupplierCard
-      onSupplierChange={(id) => {
+      onSupplierChange={(id, name) => {
         setSupplierId(id);
-        onSupplierChange(id);
+        onSupplierChange(id, name);
       }}
       selectedSupplierId={supplierId}
     />
@@ -69,7 +69,7 @@ describe("PurchaseSupplierCard", () => {
     );
   });
 
-  it("busca en servidor proveedores activos y avisa del id elegido", async () => {
+  it("busca en servidor proveedores activos y avisa del id y el nombre elegidos", async () => {
     const user = userEvent.setup();
     const { onSupplierChange } = renderCard();
 
@@ -91,7 +91,7 @@ describe("PurchaseSupplierCard", () => {
 
     await user.click(option);
 
-    expect(onSupplierChange).toHaveBeenCalledWith("sup-norte");
+    expect(onSupplierChange).toHaveBeenCalledWith("sup-norte", "Distribuidora Norte C.A.");
     expect(supplierInput()).toHaveValue("Distribuidora Norte C.A.");
     // El nombre ya lo trae la opción elegida: no se relee el contacto.
     expect(mockApiFetch).not.toHaveBeenCalledWith("/api/contacts/sup-norte");
@@ -105,7 +105,7 @@ describe("PurchaseSupplierCard", () => {
     await user.click(await screen.findByRole("option", { name: /distribuidora norte/i }));
     await user.click(screen.getByRole("button", { name: "Limpiar Proveedor" }));
 
-    expect(onSupplierChange).toHaveBeenLastCalledWith("");
+    expect(onSupplierChange).toHaveBeenLastCalledWith("", undefined);
     expect(supplierInput()).toHaveValue("");
   });
 

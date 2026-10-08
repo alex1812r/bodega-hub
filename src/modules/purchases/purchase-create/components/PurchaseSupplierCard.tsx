@@ -10,7 +10,6 @@ import {
   type EntityAutocompleteValue,
   type EntityFetcher,
 } from "@/shared/components/EntityAutocomplete";
-import type { ContactMock } from "@/shared/mocks/erp-data";
 
 import { PurchaseCreateSectionCard } from "./PurchaseCreateSectionCard";
 
@@ -18,15 +17,11 @@ const SUPPLIER_FILTERS: ContactEntityFilters = { active: true, type: ["proveedor
 const LOADING_SUPPLIER_PLACEHOLDER = "Cargando proveedor…";
 
 type PurchaseSupplierCardProps = {
-  onSupplierChange: (supplierId: string) => void;
+  /** Con el nombre del proveedor elegido; al quitarlo, `""` y sin nombre. */
+  onSupplierChange: (supplierId: string, supplierName?: string) => void;
   selectedSupplierId: string;
   /** Búsqueda de proveedores; por defecto `GET /api/contacts`. */
   supplierFetcher?: EntityFetcher<"contact">;
-  /**
-   * @deprecated La tarjeta busca los proveedores en servidor y ya no usa esta
-   * lista: la página dejará de pasarla.
-   */
-  suppliers?: ContactMock[];
 };
 
 export function PurchaseSupplierCard({
@@ -60,7 +55,7 @@ export function PurchaseSupplierCard({
         label="Proveedor"
         onChange={(option) => {
           setPickedSupplier(option ? { id: option.id, label: option.label } : null);
-          onSupplierChange(option?.id ?? "");
+          onSupplierChange(option?.id ?? "", option?.label);
         }}
         placeholder={isResolvingName ? LOADING_SUPPLIER_PLACEHOLDER : undefined}
         // Un reciente guardado puede haberse desactivado: aquí no se ofrecen.

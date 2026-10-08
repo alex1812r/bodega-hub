@@ -2,15 +2,6 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 const mockPush = jest.fn();
-const mockSuppliers = {
-  data: {
-    items: [{ id: "cont-supplier", name: "Proveedor Demo", type: "proveedor" }],
-    limit: 100,
-    skip: 0,
-    total: 1,
-  },
-  error: null,
-};
 const mockRate = { data: { rateVes: 510 }, error: null };
 const mockSupplierProducts: {
   data: { items: unknown[]; limit: number; skip: number; total: number } | undefined;
@@ -56,9 +47,6 @@ const mockTaxCatalog = {
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
-}));
-jest.mock("../../contacts/hooks/useContacts", () => ({
-  useContacts: () => mockSuppliers,
 }));
 jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
   useCurrentExchangeRate: () => mockRate,

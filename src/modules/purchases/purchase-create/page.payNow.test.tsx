@@ -4,15 +4,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 /** COM-06 · sección opcional "Pagar ahora" de `/purchases/create`. */
 
 const mockPush = jest.fn();
-const mockSuppliers = {
-  data: {
-    items: [{ id: "cont-supplier", name: "Proveedor Demo", type: "proveedor" }],
-    limit: 100,
-    skip: 0,
-    total: 1,
-  },
-  error: null,
-};
 const mockRate = { data: { rateVes: 510 }, error: null };
 const mockTaxCatalog = {
   error: null,
@@ -36,9 +27,6 @@ let mockDenied: string[] = [];
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
-}));
-jest.mock("../../contacts/hooks/useContacts", () => ({
-  useContacts: () => mockSuppliers,
 }));
 jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
   useCurrentExchangeRate: () => mockRate,

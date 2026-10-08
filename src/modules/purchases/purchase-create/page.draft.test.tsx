@@ -361,6 +361,7 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
       costCurrency: "ves",
       storeId: "store-1",
       supplierId: "cont-supplier",
+      supplierName: "Proveedor Demo",
       userId: "user-1",
       version: 1,
     });
@@ -379,7 +380,7 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
         "supplierName",
         "userId",
         "version",
-      ].filter((key) => key !== "supplierName" || "supplierName" in (stored ?? {})),
+      ],
     );
     expect(Object.keys((stored?.lines as object) ?? {}).sort()).toEqual([
       "items",
@@ -395,7 +396,9 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
     leaveUnfinishedPurchase();
     renderPage();
 
-    expect(banner()).toHaveTextContent(/Tienes una compra sin terminar \(.*2 líneas · guardada hace un momento\)/);
+    expect(banner()).toHaveTextContent(
+      "Tienes una compra sin terminar (proveedor Proveedor Demo · 2 líneas · guardada hace un momento)",
+    );
     expect(screen.getByText("proveedor: ninguno")).toBeInTheDocument();
     expect(lineTexts()).toEqual([]);
 
