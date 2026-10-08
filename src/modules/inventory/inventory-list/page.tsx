@@ -1,11 +1,11 @@
 "use client";
 
-import { Filter } from "lucide-react";
+import { Lock } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 
-import { isMockDataSource } from "@/lib/api/dataSourceUi";
 import { getPaginatedItems } from "@/lib/api/pagination";
+import { ClientApiError } from "@/shared/api/apiFetch";
 import { Can } from "@/shared/auth/Can";
 import { usePermission } from "@/shared/auth/usePermission";
 import { type ActionMenuItem } from "@/shared/components/ActionsMenu";
@@ -13,85 +13,136 @@ import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
-import { Modal } from "@/shared/components/Modal";
-import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
+import {
+  ResponsivePagination,
+  getTotalPages,
+  useUrlPaginationState,
+} from "@/shared/components/Pagination";
+import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import {
+  URL_LIST_DEBOUNCE_MS,
+  useUrlListState,
+  withUrlListBoundary,
+} from "@/shared/hooks/useUrlListState";
 import { cn } from "@/shared/utils/cn";
 
-import { useCategories } from "../../products/hooks/useProducts";
+import { useAllCategories } from "../../products/hooks/useProducts";
 import { InventoryAdjustmentModal } from "../inventory-movements/components/InventoryAdjustmentModal";
 import { InventoryPackConversionModal } from "../inventory-movements/components/InventoryPackConversionModal";
-import {
-  useInventory,
-  type InventoryFilters,
-  type InventoryItem,
-} from "../hooks/useInventory";
-import { InventoryContentGrid } from "./components/InventoryContentGrid";
+import { useInventory, type InventoryOverviewItem } from "../hooks/useInventory";
 import { InventoryExportActions } from "./components/InventoryExportActions";
-import {
-  defaultInventorySidebarFilters,
-  InventoryFiltersSidebar,
-  type InventorySidebarFilters,
-} from "./components/InventoryFiltersSidebar";
+import { InventoryLastMovementCell } from "./components/InventoryLastMovementCell";
+import { InventoryListFilters } from "./components/InventoryListFilters";
+import { InventoryReconciliationBadge } from "./components/InventoryReconciliationBadge";
 import { InventorySkuCell } from "./components/InventorySkuCell";
 import { InventoryStockStatusBadge } from "./components/InventoryStockStatusBadge";
-import { sidebarFiltersToQuery } from "./utils/inventoryFilterState";
+import {
+  INVENTORY_LIST_NO_FILTERS,
+  INVENTORY_LIST_TEXT_FIELDS,
+  hasInventoryListFilters,
+  inventoryListSchema,
+  toInventoryFilters,
+} from "./inventoryListParams";
 
-const stickySkuHeaderClass =
-  "sticky left-0 z-10 w-[5.75rem] max-w-[5.75rem] bg-surface-container dark:bg-slate-950";
+/**
+ * Ocho columnas de datos + acciones en el ancho que deja el menú lateral a
+ * 1280 px (≈ 940 px): padding lateral de 8 px en vez de 16 (la primera conserva
+ * 16 a la izquierda). "Categoría" solo desde lg; por debajo de md la lista va en
+ * tarjetas, con todas las cifras.
+ */
+const compactColumnClass = "px-2";
+const numericCellClass = "px-2 tabular-nums";
 
-const stickySkuCellClass =
-  "sticky left-0 z-10 w-[5.75rem] max-w-[5.75rem] bg-inherit transition-colors group-hover:bg-surface-container-low dark:group-hover:bg-slate-800";
-
-const columns: DataTableColumn<InventoryItem>[] = [
-  {
-    cellClassName: stickySkuCellClass,
-    className: stickySkuHeaderClass,
-    header: "SKU",
-    hideInCard: true,
-    key: "sku",
-    render: (item) => <InventorySkuCell sku={item.sku} />,
-  },
-  {
-    cellClassName: "min-w-[8rem] max-w-[16rem] font-medium",
-    header: "Producto",
-    key: "product",
-    render: (item) => (
-      <span
-        className="line-clamp-2 min-w-0 text-sm leading-snug text-foreground"
-        title={item.name}
-      >
+/** Nombre del producto y, para admin, el aviso de descuadre (tabla y tarjeta). */
+function InventoryProductName({ item }: { item: InventoryOverviewItem }) {
+  return (
+    <span className="flex min-w-0 flex-col items-start gap-1">
+      <span className="line-clamp-2 min-w-0 text-sm leading-snug text-foreground" title={item.name}>
         {item.name}
       </span>
+      <InventoryReconciliationBadge diff={item.reconciliationDiff} />
+    </span>
+  );
+}
+
+const columns: DataTableColumn<InventoryOverviewItem>[] = [
+  {
+    cellClassName: "min-w-[10rem] max-w-[16rem] px-2 pl-4 font-medium",
+    className: "px-2 pl-4",
+    header: "Producto",
+    hideInCard: true,
+    key: "product",
+    render: (item) => (
+      <div className="flex min-w-0 flex-col gap-1">
+        <InventoryProductName item={item} />
+        <InventorySkuCell className="max-w-[9rem]" sku={item.sku} />
+      </div>
     ),
   },
   {
-    cellClassName: "text-on-surface-variant",
-    header: "Categoria",
+    cellClassName: "px-2 text-on-surface-variant",
+    className: compactColumnClass,
+    header: "Categoría",
     key: "category",
-    render: (item) => item.category?.name ?? "Sin categoria",
-    visibility: "md",
+    render: (item) => item.category?.name ?? "Sin categoría",
+    visibility: "lg",
   },
   {
     align: "right",
-    cellClassName: "font-medium tabular-nums",
-    header: "Stock actual",
+    cellClassName: cn(numericCellClass, "font-medium"),
+    className: compactColumnClass,
+    header: "Stock",
     key: "currentStock",
     render: (item) => (
-      <span className={cn(item.currentStock === 0 && "text-destructive")}>
+      <span
+        className={cn(
+          item.currentStock === 0 && "text-error",
+          item.currentStock < 0 && "font-semibold text-error",
+        )}
+        data-negative={item.currentStock < 0 ? "true" : undefined}
+        title={item.currentStock < 0 ? "Stock negativo" : undefined}
+      >
         {item.currentStock}
       </span>
     ),
   },
   {
     align: "right",
-    cellClassName: "tabular-nums text-on-surface-variant",
-    header: "Stock minimo",
+    cellClassName: cn(numericCellClass, "text-on-surface-variant"),
+    className: compactColumnClass,
+    header: "Mínimo",
     key: "minStock",
     render: (item) => item.minStock,
-    visibility: "md",
+  },
+  {
+    align: "right",
+    cellClassName: numericCellClass,
+    className: compactColumnClass,
+    header: "Entradas 30 d",
+    key: "entries30d",
+    render: (item) => item.entries30d,
+  },
+  {
+    align: "right",
+    cellClassName: numericCellClass,
+    className: compactColumnClass,
+    header: "Salidas 30 d",
+    key: "exits30d",
+    render: (item) => item.exits30d,
+  },
+  {
+    cellClassName: "min-w-[7rem] px-2",
+    className: compactColumnClass,
+    header: "Último movimiento",
+    key: "lastMovement",
+    render: (item) => (
+      <InventoryLastMovementCell at={item.lastMovementAt} type={item.lastMovementType} />
+    ),
   },
   {
     align: "center",
+    cellClassName: "px-2",
+    className: compactColumnClass,
     header: "Estado",
     key: "status",
     render: (item) => (
@@ -104,36 +155,48 @@ const columns: DataTableColumn<InventoryItem>[] = [
   },
 ];
 
-export function InventoryListPage() {
+function InventoryList() {
   const { can } = usePermission();
+  const list = useUrlListState(inventoryListSchema, { textFields: INVENTORY_LIST_TEXT_FIELDS });
+  const { setState: setListState, state } = list;
+  const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
 
-  const [draftFilters, setDraftFilters] = useState<InventorySidebarFilters>(
-    defaultInventorySidebarFilters,
+  // Los campos reflejan lo tecleado al instante; la consulta espera lo mismo que la URL.
+  const search = useDebouncedValue(state.search, URL_LIST_DEBOUNCE_MS);
+  const minPrice = useDebouncedValue(state.minPrice, URL_LIST_DEBOUNCE_MS);
+  const maxPrice = useDebouncedValue(state.maxPrice, URL_LIST_DEBOUNCE_MS);
+  const { category, lowStock, status } = state;
+  const filters = useMemo(
+    () => toInventoryFilters({ category, lowStock, status }, { maxPrice, minPrice, search }),
+    [category, lowStock, maxPrice, minPrice, search, status],
   );
-  const [appliedFilters, setAppliedFilters] = useState<
-    Pick<InventoryFilters, "categoryId" | "search" | "stockStatus">
-  >({});
-  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
-  const { limit, setLimit, setSkip, skip } = usePaginationState([
-    appliedFilters.categoryId,
-    appliedFilters.search,
-    appliedFilters.stockStatus,
-  ]);
-
-  const inventoryQuery = useInventory({
-    ...appliedFilters,
-    limit,
-    skip,
-  });
-  const categories = useCategories();
+  const inventoryQuery = useInventory({ ...filters, limit, skip });
+  const categories = useAllCategories();
   const inventory = getPaginatedItems(inventoryQuery.data);
-  const categoryOptions = getPaginatedItems(categories.data);
   const totalProducts = inventoryQuery.data?.total ?? 0;
+  const categoryOptions = getPaginatedItems(categories.data).map((item) => ({
+    label: item.name,
+    value: item.id,
+  }));
+  const hasFilters = hasInventoryListFilters(state);
+  const isForbidden =
+    inventoryQuery.error instanceof ClientApiError && inventoryQuery.error.status === 403;
+
+  const lastPage = getTotalPages(totalProducts, limit);
+  // `?page=9999`: el servidor responde lista vacía con el total real; la página pedida no existe.
+  const isPagePastTheEnd = inventoryQuery.data !== undefined && state.page > lastPage;
+
+  // La lista acota la página contra su total y corrige la URL (regla 15).
+  useEffect(() => {
+    if (isPagePastTheEnd) {
+      setListState({ page: lastPage });
+    }
+  }, [isPagePastTheEnd, lastPage, setListState]);
 
   const rowActions = useMemo(
     () =>
-      function inventoryRowActions(item: InventoryItem): ActionMenuItem[] {
+      function inventoryRowActions(item: InventoryOverviewItem): ActionMenuItem[] {
         const items: ActionMenuItem[] = [
           {
             href: `/inventory/movements?productId=${item.id}`,
@@ -153,16 +216,8 @@ export function InventoryListPage() {
     [can],
   );
 
-  function applyFilters() {
-    setAppliedFilters(sidebarFiltersToQuery(draftFilters));
-    setSkip(0);
-    setMobileFiltersOpen(false);
-  }
-
   function clearFilters() {
-    setDraftFilters(defaultInventorySidebarFilters);
-    setAppliedFilters({});
-    setSkip(0);
+    setListState(INVENTORY_LIST_NO_FILTERS);
   }
 
   return (
@@ -170,7 +225,7 @@ export function InventoryListPage() {
       <EntityListPage
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <InventoryExportActions exportFilters={appliedFilters} />
+            <InventoryExportActions exportFilters={filters} />
             <Can permission="inventory.manage">
               <div className="flex flex-wrap items-center gap-2">
                 <InventoryPackConversionModal />
@@ -182,98 +237,85 @@ export function InventoryListPage() {
             </Can>
           </div>
         }
-        description="Consulta existencias, alertas de stock bajo y accede al kardex. El catalogo y precios se gestionan en Productos."
+        description="Consulta existencias, entradas y salidas de los últimos 30 días y el último movimiento de cada producto. El catálogo y los precios se gestionan en Productos."
         layout="sections"
         title="Inventario"
       >
-        <InventoryContentGrid
-          aside={
-            <InventoryFiltersSidebar
-              categories={categoryOptions}
-              filters={draftFilters}
-              onApply={applyFilters}
-              onChange={setDraftFilters}
+        {isForbidden ? (
+          <div className="rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
+            <EmptyState
+              description="Pide al administrador de la tienda el permiso para consultar el inventario."
+              icon={<Lock aria-hidden className="h-5 w-5" />}
+              title="No tienes permiso para ver el inventario"
+            />
+          </div>
+        ) : (
+          <>
+            <InventoryListFilters
+              categoryOptions={categoryOptions}
+              filters={state}
+              hasFilters={hasFilters}
+              onChange={setListState}
               onClear={clearFilters}
             />
-          }
-        >
-          <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
-            <div className="flex items-center justify-between border-b border-border bg-surface-container-low px-4 py-3 lg:hidden dark:border-slate-800">
-              <span className="text-sm font-medium text-foreground">
-                {totalProducts} referencia{totalProducts === 1 ? "" : "s"} con stock
-              </span>
-              <Button
-                onClick={() => setMobileFiltersOpen(true)}
-                size="sm"
-                variant="outline"
-              >
-                <Filter aria-hidden className="size-4" />
-                Filtros
-              </Button>
-            </div>
 
-            <DataTable
-              actions={rowActions}
-              cardSubtitle={(item) => (
-                <span className="inline-flex items-center gap-2">
-                  <InventorySkuCell sku={item.sku} />
-                  <span>
-                    {item.currentStock} uds · min {item.minStock}
+            <div className="flex w-full flex-col md:overflow-hidden md:rounded-xl md:border md:border-border md:bg-surface-container-lowest md:shadow-sm dark:md:border-slate-800">
+              <DataTable
+                actions={rowActions}
+                cardSubtitle={(item) => (
+                  <span className="inline-flex items-center gap-2">
+                    <InventorySkuCell sku={item.sku} />
                   </span>
-                </span>
-              )}
-              cardTitle={(item) => item.name}
-              columns={columns}
-              data={inventory}
-              embedded
-              variant="stitch"
-              emptyState={
-                <EmptyState
-                  description="Ajusta los filtros o registra un movimiento de inventario."
-                  title="No hay referencias para mostrar"
-                />
-              }
-              error={inventoryQuery.error}
-              getRowId={(item) => item.id}
-              isFetching={inventoryQuery.isFetching}
-              isLoading={inventoryQuery.isLoading}
-              onRetry={() => void inventoryQuery.refetch()}
-            />
-
-            <div className="border-t border-border bg-surface-container-lowest px-4 py-4 dark:border-slate-800">
-              <ResponsivePagination
-                isDisabled={inventoryQuery.isFetching}
-                limit={limit}
-                onLimitChange={setLimit}
-                onSkipChange={setSkip}
-                skip={inventoryQuery.data?.skip ?? skip}
-                total={totalProducts}
-                variant="embedded"
+                )}
+                cardTitle={(item) => <InventoryProductName item={item} />}
+                columns={columns}
+                data={isPagePastTheEnd ? [] : inventory}
+                embedded
+                emptyState={
+                  hasFilters ? (
+                    <EmptyState
+                      action={
+                        <Button onClick={clearFilters} size="sm" variant="outline">
+                          Limpiar filtros
+                        </Button>
+                      }
+                      description="Prueba con otra búsqueda o quita algún filtro."
+                      title="Ningún producto coincide con los filtros"
+                    />
+                  ) : (
+                    <EmptyState
+                      description="Crea tus productos en Productos y registra una compra o un ajuste para ver aquí sus existencias."
+                      title="Aún no hay productos en el inventario"
+                    />
+                  )
+                }
+                error={inventoryQuery.error}
+                getRowId={(item) => item.id}
+                isFetching={inventoryQuery.isFetching}
+                isLoading={inventoryQuery.isLoading || isPagePastTheEnd}
+                onRetry={() => void inventoryQuery.refetch()}
+                variant="stitch"
               />
-            </div>
-          </div>
-        </InventoryContentGrid>
 
-        <Modal
-          description={
-            isMockDataSource()
-              ? "Filtros de existencias conectados a la API mock."
-              : "Filtra existencias por categoria, busqueda y estado de stock."
-          }
-          onOpenChange={setMobileFiltersOpen}
-          open={mobileFiltersOpen}
-          title="Filtros"
-        >
-          <InventoryFiltersSidebar
-            categories={categoryOptions}
-            className="border-0 p-0 shadow-none"
-            filters={draftFilters}
-            onApply={applyFilters}
-            onChange={setDraftFilters}
-            onClear={clearFilters}
-          />
-        </Modal>
+              <div className="mt-3 rounded-xl border border-border bg-surface-container-lowest px-4 py-3 shadow-sm dark:border-slate-800 md:mt-0 md:rounded-none md:border-0 md:border-t md:shadow-none dark:md:border-slate-800">
+                <ResponsivePagination
+                  entityLabel="productos"
+                  isDisabled={inventoryQuery.isFetching}
+                  limit={limit}
+                  onLimitChange={setLimit}
+                  onSkipChange={setSkip}
+                  skip={inventoryQuery.data?.skip ?? skip}
+                  total={totalProducts}
+                  variant="stitch"
+                />
+              </div>
+            </div>
+          </>
+        )}
       </EntityListPage>
     </div>
   );
 }
+
+/** `useUrlListState` lee la URL: la pantalla lleva su límite de Suspense. */
+export const InventoryListPage = withUrlListBoundary(InventoryList);

@@ -13,6 +13,7 @@ import type {
 } from "@/shared/mocks/erp-data";
 
 import type { InventoryAdjustmentType } from "../inventory-movements/utils/movementTypeLabels";
+import type { InventoryOverviewItem } from "../services/inventoryOverview";
 import type {
   MovementDocumentKind,
   MovementDocumentKindFilter,
@@ -23,7 +24,10 @@ export type InventoryFilters = PaginationParams & {
   lowStock?: boolean;
   maxPriceRef?: number;
   minPriceRef?: number;
+  /** Id exacto de un producto. */
+  productId?: string;
   search?: string;
+  /** Lista por comas de `ok`, `low`, `out`. */
   stockStatus?: string;
 };
 
@@ -48,9 +52,12 @@ export type InventoryMovementFilters = PaginationParams & {
 
 export type InventoryMovementDocumentKind = MovementDocumentKind;
 
+/** Un producto con su categoría (`GET /api/products/{id}`, formularios de stock). */
 export type InventoryItem = ProductMock & {
   category?: CategoryMock;
 };
+
+export type { InventoryOverviewItem };
 
 export type InventoryMovement = StockMovementMock & {
   /**
@@ -140,11 +147,12 @@ export const inventoryQueryKeys = {
     [...inventoryQueryKeys.all, "stock-card", filters] as const,
 };
 
+/** Vista única de stock (`GET /api/inventory`): todos los filtros los aplica el servidor. */
 export function useInventory(filters: InventoryFilters = {}) {
   return useQuery({
     queryKey: inventoryQueryKeys.list(filters),
     queryFn: () =>
-      apiFetch<PaginatedList<InventoryItem>>("/api/inventory", {
+      apiFetch<PaginatedList<InventoryOverviewItem>>("/api/inventory", {
         query: filters,
       }),
   });
