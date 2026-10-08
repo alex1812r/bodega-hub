@@ -698,6 +698,20 @@ paths:
             type: string
             enum: ["1", "true"]
           description: Solo productos en la cola "Por revisar" (su costo subio y la ganancia bajo de banda). Se combina con los demas filtros, el orden y la paginacion.
+        - name: packLink
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [none, not-pack]
+          description: >-
+            Filtra por el vinculo de empaque activo del producto, resuelto en el
+            servidor. `none` deja solo los productos sin ningun vinculo (ni empaque
+            ni componente de una receta activa). `not-pack` deja fuera solo los que
+            son el EMPAQUE de una receta activa: son los que pueden elegirse como
+            unidad o componente, porque un producto puede salir de varios empaques.
+            Cualquier otro valor no filtra. Se combina con los demas filtros, el
+            orden y la paginacion.
       responses:
         "200":
           description: Lista paginada de productos

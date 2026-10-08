@@ -15,7 +15,7 @@ import {
   attachPackConversionToProduct,
   upsertPackConversionForPackProduct,
 } from "./packConversion.server";
-import type { PackConversionInput } from "./packConversionSchemas";
+import { parsePackLinkFilter, type PackConversionInput } from "./packConversionSchemas";
 import {
   isPriceReviewFilterOn,
   PRICE_HISTORY_COLUMNS,
@@ -104,6 +104,14 @@ const productReviewOnlySelect = productSelect.replace(
   "price_review:price_review!inner(",
 );
 
+/**
+ * `packLink`: la relación calculada `pack_role` (vista `product_pack_roles`,
+ * parche 20261009d) como inner join. El rol de empaque lo resuelve Postgres por
+ * producto: el filtro no viaja como lista de ids y se combina con los demás
+ * filtros, el orden, el conteo y la paginación.
+ */
+const packRoleFilterSelect = "pack_role:pack_role!inner(is_pack, is_component)";
+
 function toProductInsert(input: ProductInput, sku: string, storeId: string) {
   return {
     barcode: normalizeBarcode(input.barcode),
@@ -180,38 +188,15 @@ function applyProductFilters<TQuery extends {
   return filteredQuery;
 }
 
-/**
- * Ids de los productos con un vínculo de empaque activo en la tienda, sea como
- * empaque o como unidad: los que `packLink=none` deja fuera del listado.
- */
-async function listPackLinkedProductIds(
-  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
-  storeId: string,
-) {
-  const { data, error } = await supabase
-    .from("product_pack_conversions")
-    .select("pack_product_id, unit_product_id")
-    .eq("store_id", storeId)
-    .eq("is_active", true);
-
-  throwIfSupabaseError(error);
-
-  const links = (data ?? []) as { pack_product_id: string; unit_product_id: string }[];
-
-  return [...new Set(links.flatMap((link) => [link.pack_product_id, link.unit_product_id]))];
-}
-
 export async function listProducts(searchParams: URLSearchParams, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
-  const packLinkedIds =
-    searchParams.get("packLink") === "none"
-      ? await listPackLinkedProductIds(supabase, storeId)
-      : [];
+  const packLink = parsePackLinkFilter(searchParams);
+  const baseSelect = isPriceReviewFilterOn(searchParams) ? productReviewOnlySelect : productSelect;
 
   let query = supabase
     .from("products")
-    .select(isPriceReviewFilterOn(searchParams) ? productReviewOnlySelect : productSelect, {
+    .select(packLink ? `${baseSelect}, ${packRoleFilterSelect}` : baseSelect, {
       count: "exact",
     })
     .eq("store_id", storeId);
@@ -226,8 +211,12 @@ export async function listProducts(searchParams: URLSearchParams, storeId: strin
   query = applyProductFilters(query, searchParams);
   query = applyProductMarginFilter(query, marginFilter, marginThresholds);
 
-  if (packLinkedIds.length > 0) {
-    query = query.not("id", "in", `(${packLinkedIds.join(",")})`);
+  if (packLink) {
+    query = query.is("pack_role.is_pack", false);
+  }
+
+  if (packLink === "none") {
+    query = query.is("pack_role.is_component", false);
   }
 
   query = applyProductSort(query, searchParams);

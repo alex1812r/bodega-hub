@@ -17,7 +17,7 @@ import {
 import { getPricingSettings } from "@/modules/settings/services/settings.mock-server";
 import { generateProductSkuFromName, normalizeSku } from "@/shared/utils/skuGeneration";
 
-import type { PackConversionInput } from "./packConversionSchemas";
+import { parsePackLinkFilter, type PackConversionInput } from "./packConversionSchemas";
 import { isPriceReviewFilterOn, type ProductPriceHistoryEntry } from "./priceReview";
 import {
   attachMockPriceReview,
@@ -323,12 +323,16 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
   const isActive = searchParams.get("isActive");
   const search = searchParams.get("search")?.toLowerCase();
   const sku = normalizeSku(searchParams.get("sku") ?? "");
-  // `packLink=none`: sin vínculo de empaque activo, ni como empaque ni como unidad.
+  // `packLink=not-pack`: fuera los empaques de una receta activa. `packLink=none`:
+  // fuera también sus componentes (sin ningún vínculo de empaque).
+  const packLink = parsePackLinkFilter(searchParams);
   const packLinkedIds = new Set(
-    searchParams.get("packLink") === "none"
+    packLink
       ? activeMockRecipes(storeId).flatMap((link) => [
           link.packProductId,
-          ...link.components.map((component) => component.unitProductId),
+          ...(packLink === "none"
+            ? link.components.map((component) => component.unitProductId)
+            : []),
         ])
       : [],
   );

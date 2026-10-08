@@ -106,70 +106,75 @@ describe("products.server listProducts: exact sku filter", () => {
   });
 });
 
-describe("products.server listProducts: packLink=none", () => {
-  type LinkRow = { pack_product_id: string; unit_product_id: string };
-
-  function setup(links: LinkRow[]) {
+describe("products.server listProducts: packLink (PRO-06)", () => {
+  function setup() {
     const products = createMockSupabase().chain;
+    products.is = jest.fn().mockReturnValue(products);
     products.not = jest.fn().mockReturnValue(products);
 
-    const linksEq = jest.fn();
-    const linksQuery = {
-      eq: linksEq,
-      select: jest.fn(),
-      then: (resolve: (value: { data: LinkRow[]; error: null }) => void) =>
-        resolve({ data: links, error: null }),
-    };
-
-    linksEq.mockReturnValue(linksQuery);
-    linksQuery.select.mockReturnValue(linksQuery);
-
-    const from = jest.fn((table: string) =>
-      table === "product_pack_conversions" ? linksQuery : products,
-    );
+    const from = jest.fn(() => products);
 
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from });
 
-    return { from, linksEq, products };
+    return { from, products };
+  }
+
+  function selectOf(products: Record<string, jest.Mock>) {
+    return String(products.select.mock.calls[0]?.[0]);
   }
 
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it("leaves out every product with an active pack link, as pack or as unit", async () => {
-    const { linksEq, products } = setup([
-      { pack_product_id: "pack-1", unit_product_id: "unit-1" },
-      { pack_product_id: "pack-2", unit_product_id: "unit-1" },
-    ]);
+  it("packLink=none filters on the embedded pack role: neither pack nor component", async () => {
+    const { from, products } = setup();
 
     await listProducts(new URLSearchParams("packLink=none&isActive=true"), OTHER_STORE_ID);
 
-    expect(linksEq).toHaveBeenCalledWith("store_id", OTHER_STORE_ID);
-    expect(linksEq).toHaveBeenCalledWith("is_active", true);
-    expect(products.not).toHaveBeenCalledTimes(1);
-    expect(products.not).toHaveBeenCalledWith("id", "in", "(pack-1,unit-1,pack-2)");
+    expect(selectOf(products)).toContain("pack_role:pack_role!inner(is_pack, is_component)");
+    expect(products.is.mock.calls).toEqual([
+      ["pack_role.is_pack", false],
+      ["pack_role.is_component", false],
+    ]);
     expect(products.eq).toHaveBeenCalledWith("store_id", OTHER_STORE_ID);
     expect(products.eq).toHaveBeenCalledWith("is_active", true);
+    // Una sola consulta: sin lectura previa de vínculos ni lista de ids en la URL.
+    expect(from.mock.calls).toEqual([["products"]]);
+    expect(products.not).not.toHaveBeenCalled();
+    expect(products.range).toHaveBeenCalledTimes(1);
   });
 
-  it("does not add an empty exclusion when the store has no pack links", async () => {
-    const { products } = setup([]);
+  it("packLink=not-pack only leaves out the packs of an active recipe", async () => {
+    const { from, products } = setup();
 
-    await listProducts(new URLSearchParams("packLink=none"), DEFAULT_STORE_ID);
+    await listProducts(new URLSearchParams("packLink=not-pack&search=cola"), DEFAULT_STORE_ID);
 
+    expect(selectOf(products)).toContain("pack_role:pack_role!inner(is_pack, is_component)");
+    expect(products.is.mock.calls).toEqual([["pack_role.is_pack", false]]);
+    expect(from.mock.calls).toEqual([["products"]]);
     expect(products.not).not.toHaveBeenCalled();
   });
 
-  it.each(["", "packLink=", "packLink=pack", "packLink=NONE"])(
+  it("combines with review=1 keeping both inner relations", async () => {
+    const { products } = setup();
+
+    await listProducts(new URLSearchParams("packLink=none&review=1"), DEFAULT_STORE_ID);
+
+    expect(selectOf(products)).toContain("price_review:price_review!inner(");
+    expect(selectOf(products)).toContain("pack_role:pack_role!inner(");
+  });
+
+  it.each(["", "packLink=", "packLink=pack", "packLink=NONE", "packLink=not_pack"])(
     "keeps the default listing for query [%s]",
     async (queryString) => {
-      const { from, products } = setup([{ pack_product_id: "pack-1", unit_product_id: "unit-1" }]);
+      const { from, products } = setup();
 
       await listProducts(new URLSearchParams(queryString), DEFAULT_STORE_ID);
 
-      expect(from).not.toHaveBeenCalledWith("product_pack_conversions");
-      expect(products.not).not.toHaveBeenCalled();
+      expect(selectOf(products)).not.toContain("pack_role");
+      expect(products.is).not.toHaveBeenCalled();
+      expect(from.mock.calls).toEqual([["products"]]);
     },
   );
 });

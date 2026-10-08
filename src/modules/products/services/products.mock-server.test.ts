@@ -7,11 +7,13 @@ import { resetMockTaxRates } from "@/modules/settings/services/taxRates.testing"
 import { mockProductPriceHistory, mockProducts, type ProductMock } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
+import { packConversionInputSchema } from "./packConversionSchemas";
 import {
   createProductPriceHistoryEntry,
   getProductById,
   getProductPriceHistory,
   listProducts,
+  updateProduct,
   updateProductPrice,
 } from "./products.mock-server";
 
@@ -108,6 +110,62 @@ describe("products.mock-server listProducts: packLink=none", () => {
 
   it("ignores the links of another store", () => {
     expect(ids("packLink=none", OTHER_STORE_ID)).toEqual(ids("", OTHER_STORE_ID));
+  });
+});
+
+describe("products.mock-server listProducts: packLink=not-pack (PRO-06)", () => {
+  function ids(queryString: string, storeId = DEFAULT_STORE_ID) {
+    return list(`${queryString}&limit=100`, storeId).items.map((product) => product.id);
+  }
+
+  it("leaves out only the packs of an active recipe: a unit of another pack stays", () => {
+    expect(ids("search=cig&packLink=not-pack")).toEqual(["prod-cigar-unit"]);
+    expect(ids("packLink=not-pack")).toEqual(ids("").filter((id) => id !== "prod-cigar-pack"));
+  });
+
+  it("combines with the other filters", () => {
+    expect(ids("packLink=not-pack&sku=cig-und-001")).toEqual(["prod-cigar-unit"]);
+    expect(ids("packLink=not-pack&sku=cig-caj-010")).toEqual([]);
+    expect(ids("packLink=not-pack&isActive=true")).not.toContain("prod-latex");
+  });
+
+  it("follows the recipes: every component of an assorted pack stays, an inactive recipe frees its pack", () => {
+    updateProduct(
+      "prod-drill",
+      {
+        packConversion: packConversionInputSchema.parse({
+          components: [
+            { unitProductId: "prod-cable", unitsPerPack: 2 },
+            { unitProductId: "prod-cigar-unit", unitsPerPack: 4 },
+          ],
+          enabled: true,
+          mode: "assorted",
+          totalUnits: 6,
+        }),
+      },
+      DEFAULT_STORE_ID,
+    );
+
+    try {
+      expect(ids("packLink=not-pack")).toEqual(
+        ids("").filter((id) => id !== "prod-cigar-pack" && id !== "prod-drill"),
+      );
+      // `none` conserva su significado: fuera todo producto con algún vínculo.
+      expect(ids("packLink=none")).toEqual(
+        ids("").filter(
+          (id) => !["prod-cigar-pack", "prod-cigar-unit", "prod-drill", "prod-cable"].includes(id),
+        ),
+      );
+    } finally {
+      updateProduct("prod-drill", { packConversion: { enabled: false } }, DEFAULT_STORE_ID);
+    }
+
+    expect(ids("packLink=not-pack")).toContain("prod-drill");
+    expect(ids("packLink=none")).toContain("prod-cable");
+  });
+
+  it("ignores the recipes of another store", () => {
+    expect(ids("packLink=not-pack", OTHER_STORE_ID)).toEqual(ids("", OTHER_STORE_ID));
   });
 });
 

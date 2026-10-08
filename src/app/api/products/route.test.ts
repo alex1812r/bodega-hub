@@ -132,6 +132,17 @@ describe("/api/products", () => {
     expect(freeBody.data.total).toBe(0);
   });
 
+  it("packLink=not-pack leaves out only the pack: the unit of another pack can still be chosen", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/products?search=cig&isActive=true&packLink=not-pack"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.items.map((product: { id: string }) => product.id)).toEqual(["prod-cigar-unit"]);
+    expect(body.data.total).toBe(1);
+  });
+
   it("ignores an empty sku parameter", async () => {
     const withEmptySku = await GET(new Request("http://localhost/api/products?sku=%20&limit=100"));
     const withoutSku = await GET(new Request("http://localhost/api/products?limit=100"));

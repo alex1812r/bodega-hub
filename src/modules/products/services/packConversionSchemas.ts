@@ -189,6 +189,21 @@ export const convertPackToUnitsSchema = z.object({
   reason: z.string().optional(),
 });
 
+/**
+ * Filtro `packLink` de `GET /api/products`:
+ * - `none`: productos sin ningún vínculo de empaque activo (ni empaque ni componente);
+ * - `not-pack`: productos que no son el EMPAQUE de una receta activa. Son los que
+ *   pueden ser unidad / componente: un producto puede salir de varios empaques.
+ * Cualquier otro valor no filtra.
+ */
+export type PackLinkFilter = "none" | "not-pack";
+
+export function parsePackLinkFilter(searchParams: URLSearchParams): PackLinkFilter | null {
+  const value = searchParams.get("packLink");
+
+  return value === "none" || value === "not-pack" ? value : null;
+}
+
 export type PackConversionInput = z.infer<typeof packConversionInputSchema>;
 export type PackConversionComponentInput = z.infer<typeof packConversionComponentSchema>;
 export type PackDistributionItem = z.infer<typeof packDistributionItemSchema>;
