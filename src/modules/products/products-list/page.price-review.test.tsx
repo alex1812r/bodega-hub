@@ -29,6 +29,11 @@ jest.mock("../product-details/components/ProductFormModal", () => ({
 
 import { ProductsListPage } from "./page";
 
+// Cada caso monta la página entera (tabla, filtros, barra y modales) y tarda menos de 1 s
+// aislado, sin esperas reales (userEvent va sin retardo). En `npm test` completo, con todos
+// los workers ocupados, alguno pasó de los 5 s por defecto: margen solo para este archivo.
+jest.setTimeout(20_000);
+
 const LONG_NAME = "X".repeat(115);
 
 function review(previousCostRef: number, currentCostRef: number, salePriceRef: number) {
@@ -239,7 +244,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
   });
 
   it("writes the filter as ?review=1 with its counter and combines it with the other filters", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     renderPage();
     await findRow("Arroz");
@@ -280,7 +285,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
   });
 
   it("selects rows and the whole page, and forgets the selection when a filter changes", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     renderPage("review=1");
     await findRow("Arroz");
@@ -307,7 +312,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
   });
 
   it("confirms the reprice with real figures and sends it once on a double click", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     let release: (response: Response) => void = () => undefined;
 
     repriceResponse = () =>
@@ -362,7 +367,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
   });
 
   it("reprices with a free % typed by the user", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     renderPage("review=1");
     await findRow("Arroz");
@@ -380,7 +385,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
   });
 
   it("reports a mixed result row by row, keeps the failed ones selected and refreshes list and counter", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     repriceResponse = () => {
       queue = [SAL];
@@ -420,7 +425,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
     const result = within(await screen.findByRole("region", { name: "Resultado del reprecio" }));
 
     expect(result.getByText("2 precios actualizados")).toBeInTheDocument();
-    expect(result.getByText("1 no se pudo cambiar y sigue seleccionado:")).toBeInTheDocument();
+    expect(result.getByText("1 no se pudo cambiar:")).toBeInTheDocument();
     expect(result.getByRole("listitem")).toHaveTextContent("Sal · Sin costo");
     // Aviso con Toast, no con un diálogo nativo.
     expect(within(screen.getByRole("status")).getByText("2 precios actualizados")).toBeInTheDocument();
@@ -436,7 +441,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
   // PRO-F5: si el reprecio vacía la página y la lista salta a la anterior, el
   // resultado por fila no se pierde con el salto: sigue hasta que el usuario lo cierra.
   it("keeps the row by row result on screen when the reprice empties the page and the list jumps back", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const firstPage = Array.from({ length: 10 }, (_, index) =>
       product(`p-fill-${index}`, `Relleno ${index}`, 9, 10, review(8, 9, 10)),
     );
@@ -495,7 +500,13 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
     const result = within(screen.getByRole("region", { name: "Resultado del reprecio" }));
 
     expect(result.getByText("Ningún precio actualizado")).toBeInTheDocument();
+    // PRO-F6: Arroz ya salió de la lista; el resultado dice el motivo sin afirmar que sigue seleccionado.
+    expect(result.getByText("1 no se pudo cambiar:")).toBeInTheDocument();
     expect(result.getByRole("listitem")).toHaveTextContent("Arroz · Producto no encontrado.");
+    expect(screen.getByRole("region", { name: "Resultado del reprecio" })).not.toHaveTextContent(
+      /seleccionad/,
+    );
+    expect(screen.getByText("0 seleccionados")).toBeInTheDocument();
 
     await user.click(result.getByRole("button", { name: "Cerrar el resultado del reprecio" }));
 
@@ -503,7 +514,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
   });
 
   it("keeps the dialog open with the server message when the whole reprice fails", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     repriceResponse = () =>
       jsonResponse({ error: { code: "FORBIDDEN", message: "No tienes permiso para cambiar precios." } }, 403);
@@ -523,7 +534,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
   });
 
   it("keeps the price of one row from its actions menu, with an optional reason", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     renderPage();
 
@@ -560,7 +571,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
   });
 
   it("offers no price actions on rows that are not under review", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     renderPage();
     await user.click(
@@ -573,7 +584,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
   });
 
   it("shows the warning but no selection nor price actions without products.manage", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     mockPermissions = ["products.view"];
     renderPage("review=1");

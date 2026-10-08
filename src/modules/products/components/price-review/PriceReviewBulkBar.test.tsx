@@ -2,6 +2,9 @@ import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { MAX_PAGE_LIMIT } from "@/lib/api/pagination";
+
+import { REPRICE_MAX_PRODUCTS } from "../../services/productSchemas";
 import { PriceReviewBulkBar } from "./PriceReviewBulkBar";
 
 function renderBar(props: Partial<React.ComponentProps<typeof PriceReviewBulkBar>> = {}) {
@@ -35,15 +38,17 @@ describe("PriceReviewBulkBar", () => {
     expect(onReprice).toHaveBeenCalledWith(20);
   });
 
-  it("warns and blocks the reprice above the limit of 100 products", () => {
-    const { onReprice } = renderBar({ pageCount: 120, selectedCount: 103 });
+  // PRO-F6: la selección es de una página y una página nunca pasa del tope del
+  // reprecio, así que no hay "más de 100" que avisar: el tope se dice como ayuda.
+  it("cannot select more than one reprice batch: a page never exceeds the limit", () => {
+    expect(MAX_PAGE_LIMIT).toBeLessThanOrEqual(REPRICE_MAX_PRODUCTS);
+  });
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Puedes cambiar hasta 100 productos a la vez. Quita 3 de la selección.",
-    );
-    expect(screen.getByRole("button", { name: "Reprecio al 30 %" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Aplicar" })).toBeDisabled();
-    expect(onReprice).not.toHaveBeenCalled();
+  it.each([0, 2, 100])("tells the batch limit as help with %p selected", (selectedCount) => {
+    renderBar({ pageCount: 100, selectedCount });
+
+    expect(screen.getByText(/Hasta 100 por tanda\./)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("allows exactly 100 products", () => {

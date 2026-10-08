@@ -13,8 +13,6 @@ type PriceReviewBulkBarProps = {
   /** % de ganancia configurados en la tienda (`usePricingSettings`). */
   chips: readonly number[];
   className?: string;
-  /** Tope de productos por reprecio; por defecto el del servidor (100). */
-  maxSelection?: number;
   /** Abre la confirmación: aquí nunca se cambia un precio. */
   onReprice: (markupPct: number) => void;
   onTogglePage: (selected: boolean) => void;
@@ -37,11 +35,13 @@ function isUsablePct(pct: number | null): pct is number {
  * Barra de la acción masiva de "Por revisar" (PRO-11): "seleccionar página",
  * contador de seleccionados y "Reprecio al X %" con los % de la tienda o uno
  * libre. Solo propone: el cambio se confirma en `RepriceConfirmModal`.
+ *
+ * La selección es de la página visible y una página nunca pasa del tope del
+ * reprecio (`MAX_PAGE_LIMIT` ≤ `REPRICE_MAX_PRODUCTS`): el tope se dice como ayuda.
  */
 export function PriceReviewBulkBar({
   chips,
   className,
-  maxSelection = REPRICE_MAX_PRODUCTS,
   onReprice,
   onTogglePage,
   pageCount,
@@ -49,8 +49,7 @@ export function PriceReviewBulkBar({
 }: PriceReviewBulkBarProps) {
   const selectPageId = useId();
   const [customPct, setCustomPct] = useState<number | null>(null);
-  const isOverLimit = selectedCount > maxSelection;
-  const canReprice = selectedCount > 0 && !isOverLimit;
+  const canReprice = selectedCount > 0;
   const isPageSelected = pageCount > 0 && selectedCount >= pageCount;
 
   return (
@@ -85,13 +84,6 @@ export function PriceReviewBulkBar({
           {selectedCount === 1 ? "1 seleccionado" : `${selectedCount} seleccionados`}
         </p>
       </div>
-
-      {isOverLimit ? (
-        <p className="text-sm text-amber-700 dark:text-amber-300" role="alert">
-          Puedes cambiar hasta {maxSelection} productos a la vez. Quita{" "}
-          {selectedCount - maxSelection} de la selección.
-        </p>
-      ) : null}
 
       <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
         <div
@@ -137,11 +129,10 @@ export function PriceReviewBulkBar({
         </form>
       </div>
 
-      {selectedCount === 0 ? (
-        <p className="text-xs text-on-surface-variant">
-          Marca los productos a los que quieres cambiar el precio.
-        </p>
-      ) : null}
+      <p className="text-xs text-on-surface-variant">
+        {selectedCount === 0 ? "Marca los productos a los que quieres cambiar el precio. " : null}
+        Hasta {REPRICE_MAX_PRODUCTS} por tanda.
+      </p>
     </section>
   );
 }

@@ -50,8 +50,8 @@ export function PriceReviewRepriceResult({
             <p className="flex items-center gap-2 font-medium text-amber-700 dark:text-amber-300">
               <AlertTriangle aria-hidden className="size-4 shrink-0" />
               {failures.length === 1
-                ? "1 no se pudo cambiar y sigue seleccionado:"
-                : `${failures.length} no se pudieron cambiar y siguen seleccionados:`}
+                ? "1 no se pudo cambiar:"
+                : `${failures.length} no se pudieron cambiar:`}
             </p>
             <ul className="space-y-1 pl-6">
               {failures.map((failure) => (
