@@ -15,6 +15,7 @@ import {
   normalizeStandardPackLabel,
   STANDARD_PACK_LABELS,
 } from "../utils/purchaseLinePack";
+import type { PurchaseLineScan } from "../utils/purchaseLineScan";
 import { PurchaseLineFieldBox } from "./PurchaseLineFieldBox";
 import { PurchaseLineNumberCell } from "./PurchaseLineNumberCell";
 
@@ -25,8 +26,8 @@ type PurchaseLinePackFieldsProps = {
   meta: PurchaseLineCatalogMeta;
   /** Recibe la línea completa ya sincronizada. */
   onUpdate: (next: PurchaseDraftItem) => void;
-  /** Un lector escribió su código en "Empaques" (ver `PurchaseLineNumberCell`). */
-  onScanCode?: (code: string) => void;
+  /** Un lector escribió su código en "Empaques" o en el costo (ver `PurchaseLineNumberCell`). */
+  onScanCode?: (scan: PurchaseLineScan) => void;
   rateVes: number;
 };
 
@@ -109,6 +110,7 @@ export function PurchaseLinePackFields({
                 syncLineCostFields({ ...item, packUnitId: undefined, unitsPerPack }, rateVes),
               )
             }
+            onScan={onScanCode}
             value={item.unitsPerPack}
           />
         </PurchaseLineFieldBox>
@@ -131,6 +133,7 @@ export function PurchaseLinePackFields({
               ),
             )
           }
+          onScan={onScanCode}
           value={isVes ? item.packCostVes : item.packCostRef}
         />
       </PurchaseLineFieldBox>

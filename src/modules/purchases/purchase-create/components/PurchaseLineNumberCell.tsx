@@ -6,6 +6,13 @@ import { NumberInput } from "@/shared/components/NumberInput";
 import { cn } from "@/shared/utils/cn";
 import { roundMoney } from "@/shared/utils/currency";
 
+import {
+  type PurchaseLineScan,
+  isScannedCode,
+  readPurchaseLineScan,
+  readValueBeforeCode,
+} from "../utils/purchaseLineScan";
+
 /** Tiempo que una celda queda resaltada tras cambiar su valor. */
 export const PURCHASE_CELL_FLASH_MS = 1500;
 
@@ -19,24 +26,13 @@ type PurchaseLineNumberCellProps = {
   /** Solo recibe valores válidos; lo vacío o a medio escribir se queda en la celda. */
   onChange: (value: number) => void;
   /**
-   * Solo en celdas enteras: Enter tras un código de `PURCHASE_SCAN_MIN_DIGITS` o más
-   * dígitos es un lector que escribió aquí; recibe el código tal cual lo tecleó el lector,
-   * sin la cantidad que el usuario hubiera escrito antes.
+   * Enter con `PURCHASE_SCAN_MIN_DIGITS` o más dígitos seguidos es un lector que escribió
+   * aquí: recibe los códigos posibles y avisa de cuál existía (`PurchaseLineScan`).
    */
-  onScan?: (code: string) => void;
+  onScan?: (scan: PurchaseLineScan) => void;
   ref?: Ref<HTMLInputElement>;
   value: number;
 };
-
-/**
- * Longitud mínima de un código de barras (EAN-8). Ninguna cantidad real llega a
- * ocho dígitos: en una celda entera, un texto así es un escaneo y nunca sube.
- */
-export const PURCHASE_SCAN_MIN_DIGITS = 8;
-
-function isScannedCode(text: string) {
-  return /^\d+$/.test(text) && text.length >= PURCHASE_SCAN_MIN_DIGITS;
-}
 
 function isValidValue(value: number | null, integer: boolean): value is number {
   if (value === null) {
@@ -46,55 +42,8 @@ function isValidValue(value: number | null, integer: boolean): value is number {
   return integer ? Number.isInteger(value) && value >= 1 : value >= 0 && roundMoney(value) === value;
 }
 
-/**
- * Un lector deja pocos milisegundos entre dos teclas; quien teclea a mano, bastante más.
- * Por debajo de este intervalo dos teclas seguidas son de la misma ráfaga.
- */
-export const PURCHASE_SCAN_KEY_GAP_MS = 50;
-
 /** Con más dígitos el valor no sube mientras se escribe: puede ser un código a medio llegar. */
 const LIVE_MAX_DIGITS = 6;
-
-/**
- * Cuántos caracteres del final de `text` llegaron en ráfaga hasta `now` (el Enter).
- * `stamps` trae el instante de cada carácter; si no casa con el texto no hay tiempos
- * de los que fiarse y la ráfaga es 0.
- */
-function countBurst(text: string, stamps: number[], now: number) {
-  if (stamps.length !== text.length) {
-    return 0;
-  }
-
-  let count = 0;
-  let next = now;
-
-  while (count < text.length && next - stamps[text.length - 1 - count] < PURCHASE_SCAN_KEY_GAP_MS) {
-    next = stamps[text.length - 1 - count];
-    count += 1;
-  }
-
-  return count;
-}
-
-/**
- * Lo que un Enter encuentra en una celda entera. Si el final del texto llegó en ráfaga y
- * mide como un código, ese es el código y lo de antes es la cantidad que tecleó el usuario
- * (`null` si no hay o no vale: se conserva la anterior). Sin tiempos que separen, el texto
- * entero es el código. `null` = no hay escaneo.
- */
-function readScan(text: string, stamps: number[], now: number) {
-  const burst = countBurst(text, stamps, now);
-  const code = text.slice(text.length - burst);
-
-  if (burst < text.length && isScannedCode(code)) {
-    const before = text.slice(0, text.length - burst);
-    const quantity = /^\d+$/.test(before) && !isScannedCode(before) ? Number(before) : null;
-
-    return { code, quantity: isValidValue(quantity, true) ? quantity : null };
-  }
-
-  return isScannedCode(text) ? { code: text, quantity: null } : null;
-}
 
 /**
  * Celda numérica de una línea de compra (COM-13), sobre `NumberInput`.
@@ -109,12 +58,16 @@ function readScan(text: string, stamps: number[], now: number) {
  *   último cambio confirmado (un nivel). Sin nada que deshacer no hace nada y
  *   deja pasar la tecla.
  * - Lector USB (COM-12): la línea recién agregada deja el foco en Cantidad y el
- *   siguiente escaneo se teclea aquí. En una celda entera, un texto de
- *   `PURCHASE_SCAN_MIN_DIGITS` o más dígitos no es una cantidad: el padre vuelve
- *   al valor que tenía la celda, y con Enter el código sale por `onScan`.
- * - El código es la ráfaga final (teclas a menos de `PURCHASE_SCAN_KEY_GAP_MS`
- *   entre sí y del Enter): lo tecleado antes es la cantidad y se confirma. Si todo
- *   llegó igual de rápido, o pegado, el código es el texto entero.
+ *   siguiente escaneo se teclea aquí. Un texto de `PURCHASE_SCAN_MIN_DIGITS` o más
+ *   dígitos seguidos no es una cantidad ni un costo: el padre vuelve al valor que
+ *   tenía la celda, y con Enter sale por `onScan`.
+ * - El texto es «valor opcional + código». Dónde empieza el código no lo decide solo
+ *   el tiempo entre teclas (un atasco de la página parte la ráfaga del lector): la
+ *   celda propone los sufijos posibles y `onScan` contesta cuál existe. Lo que queda
+ *   delante de ese código es el valor tecleado; si no hay o no vale, se conserva el
+ *   que tenía la celda. Si ninguno existe queda lo tecleado a mano antes de la
+ *   ráfaga o, si no hay, el valor que tenía.
+ * - Mientras se resuelve, la celda muestra ese valor y otro Enter no hace nada.
  * - En una celda entera, un valor de más de 6 dígitos no sube mientras se escribe
  *   (podría ser un código a medio llegar): sube al salir o con Enter.
  */
@@ -147,11 +100,19 @@ export function PurchaseLineNumberCell({
   const stamps = useRef<number[]>([]);
   // Valor válido que aún no subió al padre por tener demasiados dígitos.
   const held = useRef<number | null>(null);
+  // Hay un escaneo de esta celda resolviéndose: otro Enter no lanza un segundo.
+  const scanning = useRef(false);
+  // `onChange` del último render: un escaneo se resuelve después del Enter.
+  const onChangeRef = useRef(onChange);
   const shown = typed && typed.parent === value ? typed.value : value;
 
   useEffect(() => {
     latest.current = value;
   }, [value]);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   useEffect(
     () => () => {
@@ -174,7 +135,7 @@ export function PurchaseLineNumberCell({
   function send(next: number) {
     if (next !== latest.current) {
       latest.current = next;
-      onChange(next);
+      onChangeRef.current(next);
     }
   }
 
@@ -188,7 +149,7 @@ export function PurchaseLineNumberCell({
   function handleValueChange(next: number | null) {
     held.current = null;
 
-    if (integer && isScannedCode(text.current)) {
+    if (isScannedCode(text.current)) {
       setTyped({ parent: committed.current, value: text.current });
       send(committed.current);
       return;
@@ -223,7 +184,7 @@ export function PurchaseLineNumberCell({
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     const field = event.currentTarget;
 
-    if (integer && /^\d$/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (/^\d$/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const start = field.selectionStart ?? field.value.length;
       const end = field.selectionEnd ?? start;
       const known =
@@ -235,16 +196,38 @@ export function PurchaseLineNumberCell({
       return;
     }
 
+    if (event.key === "Enter" && scanning.current) {
+      event.preventDefault();
+      return;
+    }
+
+    const scanText = field.value;
     const scan =
-      event.key === "Enter" && integer ? readScan(field.value, stamps.current, Date.now()) : null;
+      event.key === "Enter" ? readPurchaseLineScan(scanText, stamps.current, Date.now()) : null;
 
     if (scan) {
-      // Sin esto NumberInput normalizaría el código como si fuera la cantidad.
+      const before = committed.current;
+
+      // Sin esto NumberInput normalizaría el código como si fuera el valor de la celda.
       event.preventDefault();
       held.current = null;
       setTyped(null);
-      send(scan.quantity ?? committed.current);
-      onScan?.(scan.code);
+      send(scan.typedValue ?? before);
+
+      if (onScan) {
+        scanning.current = true;
+        onScan({
+          candidates: scan.candidates,
+          onResolved: (code) => {
+            scanning.current = false;
+
+            if (code !== null) {
+              send(readValueBeforeCode(scanText, code) ?? before);
+            }
+          },
+        });
+      }
+
       return;
     }
 

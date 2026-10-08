@@ -15,6 +15,7 @@ import type {
   PurchaseWebLine,
 } from "../types";
 import { purchaseLineGridClassName } from "../utils/purchaseCreateStyles";
+import type { PurchaseLineScan } from "../utils/purchaseLineScan";
 import { PurchaseLineRow } from "./PurchaseLineRow";
 import { PurchaseToggleSwitch } from "./PurchaseToggleSwitch";
 
@@ -31,8 +32,8 @@ type PurchaseLineItemsTableProps = {
   onLineDisassembleChange?: (itemId: string, disassemble: boolean) => void;
   onLineTaxChange: (itemId: string, code: string) => void;
   onRemoveItem: (itemId: string) => void;
-  /** Un lector escribió su código en la Cantidad o los Empaques de una línea. */
-  onScanCode?: (code: string) => void;
+  /** Un lector escribió su código en una celda de una línea (cantidad, empaques o costo). */
+  onScanCode?: (scan: PurchaseLineScan) => void;
   /** Tab desde el candado de la última fila, estando bloqueada. */
   onTabPastLastLock?: () => void;
   /** El foco salió de la fila de esa línea. */

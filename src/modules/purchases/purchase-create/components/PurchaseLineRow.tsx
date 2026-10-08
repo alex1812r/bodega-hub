@@ -23,6 +23,7 @@ import {
   purchaseLineProductCellClassName,
 } from "../utils/purchaseCreateStyles";
 import { applyPackPreset, getDefaultPackUnit, toUnitLine } from "../utils/purchaseLinePack";
+import type { PurchaseLineScan } from "../utils/purchaseLineScan";
 import { PURCHASE_LINE_TAX_REQUIRED_MESSAGE } from "../utils/purchaseLineTax";
 import { PurchaseLineNumberCell } from "./PurchaseLineNumberCell";
 import { PurchaseLinePackFields } from "./PurchaseLinePackFields";
@@ -46,7 +47,7 @@ export type PurchaseLineRowProps = {
   onLockChange: (locked: boolean) => void;
   onRemove: () => void;
   /** Un lector escribió su código en Cantidad o Empaques: se resuelve como en el buscador. */
-  onScanCode?: (code: string) => void;
+  onScanCode?: (scan: PurchaseLineScan) => void;
   /** El foco salió de la fila: la línea deja de ser recién nacida. */
   onSettle: () => void;
   /**
@@ -343,6 +344,7 @@ export function PurchaseLineRow({
             aria-label={`Costo unitario ${currencyLabel} de ${meta.name}`}
             className={cn(purchaseLineInputClassName, "@xl:text-right")}
             onChange={(value) => onUpdate(isVes ? { unitCostVes: value } : { unitCostRef: value })}
+            onScan={onScanCode}
             value={isVes ? item.unitCostVes : item.unitCostRef}
           />
         )}

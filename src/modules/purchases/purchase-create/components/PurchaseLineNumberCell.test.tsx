@@ -3,10 +3,18 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
+import type { PurchaseLineScan } from "../utils/purchaseLineScan";
 import { PURCHASE_CELL_FLASH_MS, PurchaseLineNumberCell } from "./PurchaseLineNumberCell";
 
 const onChange = jest.fn();
 const onOuterKeyDown = jest.fn();
+
+/** El primer código que propone el escaneo recibido: el corte que sugiere el tiempo. */
+function firstCandidate(onScan: jest.Mock) {
+  const [scan] = onScan.mock.calls[0] as [PurchaseLineScan];
+
+  return scan.candidates[0];
+}
 
 function Harness({ initial, integer = false }: { initial: number; integer?: boolean }) {
   const [value, setValue] = useState(initial);
@@ -211,7 +219,7 @@ describe("PurchaseLineNumberCell", () => {
       fireEvent.keyDown(cell(), { key: "Enter" });
 
       expect(onScan).toHaveBeenCalledTimes(1);
-      expect(onScan).toHaveBeenCalledWith("7591234567890");
+      expect(firstCandidate(onScan)).toBe("7591234567890");
       expect(cell()).toHaveValue("3");
       expect(onChange).not.toHaveBeenCalled();
     });
@@ -238,13 +246,29 @@ describe("PurchaseLineNumberCell", () => {
       expect(onScan).not.toHaveBeenCalled();
     });
 
-    it("un costo de 8 dígitos es un costo: sube y Enter no escanea", () => {
+    it("un costo de 8 dígitos enteros tampoco es un costo (COM-F6): no sube y Enter lo da como escaneo", () => {
       renderScanCell(false);
 
       type("12345678");
+      expect(onChange).not.toHaveBeenCalled();
       fireEvent.keyDown(cell(), { key: "Enter" });
 
-      expect(onChange).toHaveBeenLastCalledWith(12345678);
+      expect(onScan).toHaveBeenCalledTimes(1);
+      expect(firstCandidate(onScan)).toBe("12345678");
+      expect(cell()).toHaveValue("3");
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("un costo de 7 dígitos, o con decimales, sigue siendo un costo", () => {
+      renderScanCell(false);
+
+      type("1234567");
+      fireEvent.keyDown(cell(), { key: "Enter" });
+      expect(onChange).toHaveBeenLastCalledWith(1234567);
+
+      type("12345678,5");
+      fireEvent.keyDown(cell(), { key: "Enter" });
+      expect(onChange).toHaveBeenLastCalledWith(12345678.5);
       expect(onScan).not.toHaveBeenCalled();
     });
   });
@@ -314,7 +338,7 @@ describe("PurchaseLineNumberCell", () => {
       await scan(CODE);
 
       expect(onScan).toHaveBeenCalledTimes(1);
-      expect(onScan).toHaveBeenCalledWith(CODE);
+      expect(firstCandidate(onScan)).toBe(CODE);
       expect(screen.getByRole("status")).toHaveTextContent(/^2$/);
       expect(cell()).toHaveValue("2");
     });
@@ -326,7 +350,7 @@ describe("PurchaseLineNumberCell", () => {
       await scan(CODE);
 
       expect(onScan).toHaveBeenCalledTimes(1);
-      expect(onScan).toHaveBeenCalledWith(CODE);
+      expect(firstCandidate(onScan)).toBe(CODE);
       expect(screen.getByRole("status")).toHaveTextContent(/^3$/);
       expect(cell()).toHaveValue("3");
     });
@@ -339,7 +363,7 @@ describe("PurchaseLineNumberCell", () => {
       await scan(CODE);
 
       expect(onScan).toHaveBeenCalledTimes(1);
-      expect(onScan).toHaveBeenCalledWith(CODE);
+      expect(firstCandidate(onScan)).toBe(CODE);
       expect(screen.getByRole("status")).toHaveTextContent(/^1$/);
       expect(cell()).toHaveValue("1");
     });
@@ -350,7 +374,7 @@ describe("PurchaseLineNumberCell", () => {
       focusCell();
       await scan(CODE);
 
-      expect(onScan).toHaveBeenCalledWith(CODE);
+      expect(firstCandidate(onScan)).toBe(CODE);
       expect(screen.getByRole("status")).toHaveTextContent(/^7$/);
     });
 
@@ -361,7 +385,7 @@ describe("PurchaseLineNumberCell", () => {
       await press([..."212345678".split(""), "{Enter}"], 120);
 
       expect(onScan).toHaveBeenCalledTimes(1);
-      expect(onScan).toHaveBeenCalledWith("212345678");
+      expect(firstCandidate(onScan)).toBe("212345678");
       expect(screen.getByRole("status")).toHaveTextContent(/^3$/);
     });
 

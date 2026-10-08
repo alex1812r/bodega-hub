@@ -18,7 +18,11 @@ import type {
   PurchaseTaxCatalog,
   PurchaseWebLine,
 } from "../types";
-import { resolvePurchaseProductByCode } from "../services/resolveSupplierCatalogProduct";
+import {
+  type PurchaseCodeResolution,
+  resolvePurchaseProductByCode,
+} from "../services/resolveSupplierCatalogProduct";
+import type { PurchaseLineScan } from "../utils/purchaseLineScan";
 import { PurchaseLineItemsTable, type PurchaseLineItemMeta } from "./PurchaseLineItemsTable";
 import { PurchaseToggleSwitch } from "./PurchaseToggleSwitch";
 
@@ -128,6 +132,25 @@ export function buildNewProductPrefill(search: string): ProductFormInitialValues
   }
 
   return /^\d+$/.test(text) ? { barcode: text } : { name: text };
+}
+
+/**
+ * Consulta los códigos uno tras otro, con la misma resolución exacta del buscador, y se
+ * detiene en el primero que es de algún producto. `code` es ese código; `null` si ninguno.
+ */
+async function resolveFirstKnownCode(
+  supplierId: string,
+  codes: string[],
+): Promise<{ code: string | null; resolution: PurchaseCodeResolution }> {
+  for (const code of codes) {
+    const resolution = await resolvePurchaseProductByCode(supplierId, code);
+
+    if (resolution.status !== "not_found") {
+      return { code, resolution };
+    }
+  }
+
+  return { code: null, resolution: { status: "not_found" } };
 }
 
 const FOCUSABLE_SELECTOR =
@@ -255,7 +278,21 @@ export function PurchaseProductPickerCard({
 
   // Lector o Enter: el codigo exacto se resuelve en servidor, sin esperar al debounce de la lista.
   function handleCodeSubmit(code: string, options?: { closeScanOnSuccess?: boolean }) {
+    lookUpCodes([code], options);
+  }
+
+  // Lector sobre una celda de línea: el código es uno de los sufijos de lo tecleado. La
+  // celda fija su valor al saber cuál, antes de que agregar el producto la bloquee.
+  function handleLineScan(scan: PurchaseLineScan) {
+    lookUpCodes(scan.candidates, { onResolved: scan.onResolved });
+  }
+
+  function lookUpCodes(
+    codes: string[],
+    options?: { closeScanOnSuccess?: boolean; onResolved?: (code: string | null) => void },
+  ) {
     if (!hasSupplier) {
+      options?.onResolved?.(null);
       setScanError(SCAN_NO_SUPPLIER_MESSAGE);
       return;
     }
@@ -265,9 +302,10 @@ export function PurchaseProductPickerCard({
 
     // Si el código no agrega nada, el foco vuelve al buscador para reintentar; si
     // agrega, se lo queda la cantidad de la línea nueva (COM-12).
-    void resolvePurchaseProductByCode(supplierId, code)
-      .then((resolution) => {
+    void resolveFirstKnownCode(supplierId, codes)
+      .then(({ code, resolution }) => {
         if (resolution.status !== "found") {
+          options?.onResolved?.(null);
           setScanError(
             resolution.status === "ambiguous" ? SCAN_AMBIGUOUS_MESSAGE : SCAN_NOT_FOUND_MESSAGE,
           );
@@ -275,12 +313,14 @@ export function PurchaseProductPickerCard({
           return;
         }
 
+        options?.onResolved?.(code);
         handleAdd(resolution.product);
         if (options?.closeScanOnSuccess) {
           setScanOpen(false);
         }
       })
       .catch(() => {
+        options?.onResolved?.(null);
         setScanError(SCAN_FAILED_MESSAGE);
         focusSearchInput();
       })
@@ -420,7 +460,7 @@ export function PurchaseProductPickerCard({
           onLineDisassembleChange={onLineDisassembleChange}
           onLineTaxChange={onLineTaxChange}
           onRemoveItem={onRemoveItem}
-          onScanCode={handleCodeSubmit}
+          onScanCode={handleLineScan}
           onSettleItem={onSettleItem}
           onTabPastLastLock={handleTabPastLastLock}
           onUpdateItem={onUpdateItem}

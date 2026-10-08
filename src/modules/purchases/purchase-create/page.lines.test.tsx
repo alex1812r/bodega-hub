@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { PurchaseCatalogProduct } from "./components/PurchaseProductPickerCard";
@@ -892,5 +892,215 @@ describe("PurchaseCreatePage · lector sobre una línea y Tab del último candad
     await user.tab();
 
     expect(searchBox().closest("section")).toContainElement(document.activeElement as HTMLElement);
+  });
+});
+
+describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la página (COM-F6)", () => {
+  const CODE = "7598765432101";
+  const NOT_FOUND_MESSAGE = "No hay un producto activo con ese código de barras o SKU.";
+
+  /** Solo esos códigos son de un producto activo; cualquier otro no existe. */
+  function onlyTheseCodesExist(...codes: string[]) {
+    mockResolveByCode.mockImplementation(async (_supplierId: string, code: string) =>
+      codes.includes(code)
+        ? { product: mockScannedProduct, status: "found" }
+        : { status: "not_found" },
+    );
+  }
+
+  function triedCodes() {
+    return mockResolveByCode.mock.calls.map(([, code]) => code as string);
+  }
+
+  /** Teclea carácter a carácter dejando pasar `gapMs` antes de cada tecla. */
+  async function press(keys: string[], gapMs: number) {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime, delay: null });
+
+    for (const key of keys) {
+      act(() => {
+        jest.advanceTimersByTime(gapMs);
+      });
+      await user.keyboard(key);
+    }
+  }
+
+  /** El lector a 4 ms por tecla, con la página atascada 80 ms tras el 4.º dígito, y Enter. */
+  async function scanSplit(code: string) {
+    await press(code.slice(0, 4).split(""), 4);
+    await press([code[4]], 80);
+    await press([...code.slice(5).split(""), "{Enter}"], 4);
+  }
+
+  function costCell(name: string) {
+    return screen.getByLabelText<HTMLInputElement>(`Costo unitario BS de ${name}`);
+  }
+
+  beforeEach(() => {
+    window.localStorage.setItem(LOCK_ON_ADD_KEY, "0");
+    installFetchStub(() => null);
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("«2» tecleado despacio y una ráfaga partida en dos tramos: la cantidad queda en 2 y entra el producto del código completo", async () => {
+    onlyTheseCodesExist(CODE);
+    renderPage();
+    addProduct("Cable HDMI");
+
+    await press(["2"], 300);
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+    await scanSplit(CODE);
+
+    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    expect(quantity("Cable HDMI")).toHaveValue("2");
+    expect(within(row("Cable HDMI")).getByText("Bs. 2.040,00")).toBeInTheDocument();
+    expect(lineRows()).toHaveLength(2);
+    expect(screen.queryByText(NOT_FOUND_MESSAGE)).not.toBeInTheDocument();
+    // Primero el corte que sugiere el tiempo (el tramo final); después, el sufijo de 13.
+    expect(triedCodes()).toEqual(["765432101", CODE]);
+  });
+
+  it("con «Bloquear al agregar», la cantidad tecleada se confirma antes de que la línea quede bloqueada", async () => {
+    window.localStorage.setItem(LOCK_ON_ADD_KEY, "1");
+    onlyTheseCodesExist(CODE);
+    renderPage();
+    addProduct("Cable HDMI");
+
+    await press(["2"], 300);
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+    await scanSplit(CODE);
+
+    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    expect(isLocked("Cable HDMI")).toBe(true);
+    expect(within(row("Cable HDMI")).getByText("2 u")).toBeInTheDocument();
+  });
+
+  it("ráfaga partida sin cantidad tecleada antes: la cantidad sigue intacta y el producto entra", async () => {
+    onlyTheseCodesExist(CODE);
+    renderPage();
+    addProduct("Cable HDMI");
+    expect(quantity("Cable HDMI")).toHaveFocus();
+
+    await scanSplit(CODE);
+
+    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    expect(quantity("Cable HDMI")).toHaveValue("1");
+    expect(lineRows()).toHaveLength(2);
+    expect(editedSummary()).not.toBeInTheDocument();
+  });
+
+  it("14 dígitos seguidos de los que solo el sufijo de 13 es un código: ese producto entra y el dígito de delante es la cantidad", async () => {
+    onlyTheseCodesExist(CODE);
+    renderPage();
+    addProduct("Cable HDMI");
+
+    await press([..."3".concat(CODE).split(""), "{Enter}"], 4);
+
+    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    expect(quantity("Cable HDMI")).toHaveValue("3");
+    expect(triedCodes()).toEqual([`3${CODE}`, CODE]);
+  });
+
+  it("si ningún sufijo es de un producto, la cantidad vuelve a la anterior, avisa y no pasa de 8 consultas", async () => {
+    onlyTheseCodesExist();
+    renderPage();
+    addProduct("Cable HDMI");
+
+    await scanSplit(CODE);
+
+    expect(await screen.findByText(NOT_FOUND_MESSAGE)).toBeInTheDocument();
+    expect(quantity("Cable HDMI")).toHaveValue("1");
+    expect(lineRows()).toHaveLength(1);
+    expect(triedCodes()).toEqual([
+      "765432101",
+      CODE,
+      CODE.slice(-12),
+      CODE.slice(-8),
+      CODE.slice(-11),
+      CODE.slice(-10),
+    ]);
+  });
+
+  it("si ningún sufijo existe y antes se tecleó «2» despacio, queda 2 y ningún trozo del código", async () => {
+    onlyTheseCodesExist();
+    renderPage();
+    addProduct("Cable HDMI");
+
+    await press(["2"], 300);
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+    await scanSplit(CODE);
+
+    expect(await screen.findByText(NOT_FOUND_MESSAGE)).toBeInTheDocument();
+    expect(quantity("Cable HDMI")).toHaveValue("2");
+    expect(lineRows()).toHaveLength(1);
+    expect(mockResolveByCode.mock.calls.length).toBeLessThanOrEqual(8);
+  });
+
+  it("mientras se resuelve la celda muestra el valor anterior y un segundo Enter no agrega dos veces", async () => {
+    let finish: (resolution: unknown) => void = () => undefined;
+
+    // La primera consulta (el corte que sugiere el tiempo) queda en el aire.
+    onlyTheseCodesExist(CODE);
+    mockResolveByCode.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    renderPage();
+    addProduct("Cable HDMI");
+
+    await scanSplit(CODE);
+    expect(quantity("Cable HDMI")).toHaveValue("1");
+    await press(["{Enter}", "{Enter}"], 4);
+    expect(mockResolveByCode).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finish({ status: "not_found" });
+    });
+
+    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    expect(triedCodes()).toEqual(["765432101", CODE]);
+    expect(lineRows()).toHaveLength(2);
+    expect(quantity("Harina Suelta")).toHaveValue("1");
+    expect(quantity("Cable HDMI")).toHaveValue("1");
+  });
+
+  it("una ráfaga sobre Costo no queda como costo: se restaura el anterior y entra el producto", async () => {
+    onlyTheseCodesExist(CODE);
+    renderPage();
+    addProduct("Cable HDMI");
+    act(() => costCell("Cable HDMI").focus());
+    act(() => costCell("Cable HDMI").select());
+
+    await scanSplit(CODE);
+
+    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    expect(costCell("Cable HDMI")).toHaveValue("1020");
+    expect(within(row("Cable HDMI")).getByText("Bs. 1.020,00")).toBeInTheDocument();
+    expect(lineRows()).toHaveLength(2);
+    expect(editedSummary()).not.toBeInTheDocument();
+  });
+
+  it("8 dígitos enteros en Costo y salir sin Enter: vuelve el costo anterior", async () => {
+    renderPage();
+    addProduct("Cable HDMI");
+    act(() => costCell("Cable HDMI").focus());
+    act(() => costCell("Cable HDMI").select());
+
+    await press("12345678".split(""), 120);
+    act(() => searchBox().focus());
+
+    expect(costCell("Cable HDMI")).toHaveValue("1020");
+    expect(mockResolveByCode).not.toHaveBeenCalled();
   });
 });
