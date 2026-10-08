@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
 import { PURCHASE_CELL_FLASH_MS, PurchaseLineNumberCell } from "./PurchaseLineNumberCell";
@@ -245,6 +246,137 @@ describe("PurchaseLineNumberCell", () => {
 
       expect(onChange).toHaveBeenLastCalledWith(12345678);
       expect(onScan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("ráfaga del lector separada por el tiempo entre teclas (COM-F3)", () => {
+    const onScan = jest.fn();
+    const CODE = "7598765432101";
+
+    function ScanHarness({ initial }: { initial: number }) {
+      const [value, setValue] = useState(initial);
+
+      return (
+        <>
+          <PurchaseLineNumberCell
+            aria-label="Celda"
+            integer
+            onChange={(next) => {
+              onChange(next);
+              setValue(next);
+            }}
+            onScan={onScan}
+            value={value}
+          />
+          <output>{value}</output>
+        </>
+      );
+    }
+
+    /** Teclea carácter a carácter dejando pasar `gapMs` antes de cada tecla. */
+    async function press(keys: string[], gapMs: number) {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime, delay: null });
+
+      for (const key of keys) {
+        act(() => {
+          jest.advanceTimersByTime(gapMs);
+        });
+        await user.keyboard(key);
+      }
+    }
+
+    /** El lector: 4 ms por tecla y Enter al final. */
+    function scan(code: string) {
+      return press([...code.split(""), "{Enter}"], 4);
+    }
+
+    function focusCell() {
+      act(() => cell().focus());
+    }
+
+    beforeEach(() => {
+      onScan.mockReset();
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("cantidad tecleada despacio y luego un escaneo: queda la cantidad y sale solo el código", async () => {
+      render(<ScanHarness initial={1} />);
+
+      focusCell();
+      await press(["2"], 300);
+      act(() => {
+        jest.advanceTimersByTime(1500);
+      });
+      await scan(CODE);
+
+      expect(onScan).toHaveBeenCalledTimes(1);
+      expect(onScan).toHaveBeenCalledWith(CODE);
+      expect(screen.getByRole("status")).toHaveTextContent(/^2$/);
+      expect(cell()).toHaveValue("2");
+    });
+
+    it("solo el escaneo sobre el valor seleccionado: la cantidad no cambia", async () => {
+      render(<ScanHarness initial={3} />);
+
+      focusCell();
+      await scan(CODE);
+
+      expect(onScan).toHaveBeenCalledTimes(1);
+      expect(onScan).toHaveBeenCalledWith(CODE);
+      expect(screen.getByRole("status")).toHaveTextContent(/^3$/);
+      expect(cell()).toHaveValue("3");
+    });
+
+    it("escaneo detrás de un valor que ya estaba y no se seleccionó: sale el código limpio", async () => {
+      render(<ScanHarness initial={1} />);
+
+      focusCell();
+      act(() => cell().setSelectionRange(1, 1));
+      await scan(CODE);
+
+      expect(onScan).toHaveBeenCalledTimes(1);
+      expect(onScan).toHaveBeenCalledWith(CODE);
+      expect(screen.getByRole("status")).toHaveTextContent(/^1$/);
+      expect(cell()).toHaveValue("1");
+    });
+
+    it("un código que empieza por el mismo dígito que la cantidad seleccionada sale entero", async () => {
+      render(<ScanHarness initial={7} />);
+
+      focusCell();
+      await scan(CODE);
+
+      expect(onScan).toHaveBeenCalledWith(CODE);
+      expect(screen.getByRole("status")).toHaveTextContent(/^7$/);
+    });
+
+    it("sin tiempos que separen (todo tecleado a mano) vale el texto completo y la cantidad anterior", async () => {
+      render(<ScanHarness initial={3} />);
+
+      focusCell();
+      await press([..."212345678".split(""), "{Enter}"], 120);
+
+      expect(onScan).toHaveBeenCalledTimes(1);
+      expect(onScan).toHaveBeenCalledWith("212345678");
+      expect(screen.getByRole("status")).toHaveTextContent(/^3$/);
+    });
+
+    it("con más de 6 dígitos el valor no sube en vivo: se confirma al salir", async () => {
+      render(<ScanHarness initial={3} />);
+
+      focusCell();
+      await press("1234567".split(""), 120);
+
+      expect(onChange).toHaveBeenLastCalledWith(123456);
+      expect(cell()).toHaveValue("1234567");
+
+      fireEvent.blur(cell());
+      expect(onChange).toHaveBeenLastCalledWith(1234567);
+      expect(cell()).toHaveValue("1234567");
     });
   });
 });
