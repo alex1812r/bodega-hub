@@ -1912,4 +1912,23 @@ select
     from pg_proc p
     where p.pronamespace = 'public'::regnamespace and p.proname = 'adjust_stock'
   )
+union all
+select
+  'save_pack_recipe guarda la receta de un empaque en una transaccion: security definer, una sola firma de 5 argumentos, bloqueo ordenado de productos, regla de cadenas en los dos sentidos y execute solo para authenticated / service_role (20261011c)',
+  (
+    select count(*) = 1
+      and bool_and(p.prosecdef)
+      and bool_and(pg_get_function_identity_arguments(p.oid)
+        = 'p_pack_product_id uuid, p_enabled boolean, p_total_units integer, p_label text, p_components jsonb')
+      and bool_and(p.proconfig @> array['search_path=public'])
+      and bool_and(p.prosrc ilike '%assert_store_context()%')
+      and bool_and(p.prosrc ilike '%where id = any(v_lock_ids)%order by id%for update%')
+      and bool_and(p.prosrc ilike '%es un empaque con receta activa: no puede salir de otro empaque%')
+      and bool_and(p.prosrc ilike '%no puede ser a la vez un empaque%')
+      and bool_and(has_function_privilege('authenticated', p.oid, 'execute'))
+      and bool_and(has_function_privilege('service_role', p.oid, 'execute'))
+      and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'save_pack_recipe'
+  )
 order by 1;

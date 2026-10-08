@@ -1,6 +1,7 @@
 import { type DbProductSummaryRow } from "@/lib/supabase/mappers";
-import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
+import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { isMissingRpcSignatureError } from "@/modules/inventory/services/rpcWithClientRequestId";
 import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 import { generateProductSkuFromName, normalizeSku } from "@/shared/utils/skuGeneration";
 
@@ -8,7 +9,6 @@ import type { PackConversionInput } from "./packConversionSchemas";
 import {
   buildPackConversionListItem,
   buildPackConversionSummary,
-  isSamePackRecipe,
   type PackRecipeProduct,
   type PackRecipeView,
 } from "./packConversionSummary";
@@ -176,26 +176,18 @@ export async function listPackConversions(storeId: string) {
 }
 
 /**
- * Un producto unidad / componente puede salir de varios empaques. Lo que no se
- * admite es que sea él mismo el EMPAQUE de una receta activa (cadena de
- * empaques): regla del BFF, la base no la impone. El sentido contrario lo
- * cubre `assertPackIsNotComponent`.
+ * Comprobación previa al ALTA de un producto con receta (el empaque aún no
+ * existe): un producto unidad puede salir de varios empaques, pero no puede ser
+ * él mismo el EMPAQUE de una receta activa (cadena de empaques). Al guardar, la
+ * regla la impone `save_pack_recipe` con los productos bloqueados.
  */
-async function assertUnitAvailable(
-  unitProductId: string,
-  storeId: string,
-  packProductId: string | null,
-) {
+async function assertUnitAvailable(unitProductId: string, storeId: string) {
   await assertSupabaseStoreResource(
     "products",
     unitProductId,
     storeId,
     "Producto unidad no encontrado.",
   );
-
-  if (unitProductId === packProductId) {
-    throw new ApiError(400, "BAD_REQUEST", "El empaque y la unidad deben ser productos distintos.");
-  }
 
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
@@ -222,12 +214,7 @@ async function assertComponentsAvailable(
   supabase: RouteSupabaseClient,
   unitProductIds: string[],
   storeId: string,
-  packProductId: string | null,
 ) {
-  if (packProductId !== null && unitProductIds.includes(packProductId)) {
-    throw new ApiError(400, "BAD_REQUEST", "El empaque no puede ser componente de sí mismo.");
-  }
-
   const { data: products, error: productsError } = await supabase
     .from("products")
     .select("id")
@@ -269,7 +256,8 @@ type PackOfComponentRow = {
  * empaque (componente de una receta ACTIVA) no puede estrenar receta propia.
  * Solo se llama cuando el producto aún NO tiene receta activa: quien ya era
  * empaque y componente (datos anteriores a la regla) sigue pudiendo editar su
- * receta. Regla del BFF, como `assertUnitAvailable`: la base no la impone.
+ * receta. Aquí es solo la comprobación previa de `create_unit` (antes de crear
+ * la unidad); quien la impone es `save_pack_recipe`, con el mismo mensaje.
  */
 async function assertPackIsNotComponent(
   supabase: RouteSupabaseClient,
@@ -318,8 +306,8 @@ function resolveNewUnitIdentity(input: PackConversionInput, packName: string | u
  * el empaque de una receta activa, y que el SKU de la unidad por crear esté
  * libre. La forma (suma, repetidos, mínimos) ya la validó
  * `packConversionInputSchema`. Así un alta con una receta inválida no deja el
- * producto creado sin receta. `upsertPackConversionForPackProduct` lo vuelve a
- * comprobar al guardar (otra petición pudo cambiarlo entre medias).
+ * producto creado sin receta. Al guardar, `save_pack_recipe` lo vuelve a
+ * comprobar con los productos bloqueados (otra petición pudo cambiarlo entre medias).
  */
 export async function assertPackConversionCanBeCreated(
   storeId: string,
@@ -337,7 +325,6 @@ export async function assertPackConversionCanBeCreated(
       supabase,
       (input.components ?? []).map((component) => component.unitProductId),
       storeId,
-      null,
     );
     return;
   }
@@ -347,7 +334,7 @@ export async function assertPackConversionCanBeCreated(
       throw new ApiError(400, "BAD_REQUEST", "Selecciona el producto unidad.");
     }
 
-    await assertUnitAvailable(input.unitProductId, storeId, null);
+    await assertUnitAvailable(input.unitProductId, storeId);
     return;
   }
 
@@ -373,35 +360,21 @@ export async function assertPackConversionCanBeCreated(
  */
 async function discardCreatedUnit(
   supabase: RouteSupabaseClient,
-  unitProductId: string | undefined,
+  unitProductId: string,
   storeId: string,
 ) {
-  if (!unitProductId) {
-    return;
-  }
-
   await supabase.from("products").delete().eq("id", unitProductId).eq("store_id", storeId);
 }
 
-type ActiveRecipeRow = {
-  components?: { cost_weight: number | string; unit_product_id: string; units_per_pack: number }[] | null;
-  id: string;
-  label?: string | null;
-  total_units: number;
-  unit_product_id: string | null;
-};
-
-/** La receta activa del empaque (a lo sumo una: `uq_product_pack_conversions_pack_active`). */
-async function findActiveRecipe(
+/** ¿El empaque tiene receta activa? (a lo sumo una: `uq_product_pack_conversions_pack_active`). */
+async function hasActiveRecipe(
   supabase: RouteSupabaseClient,
   packProductId: string,
   storeId: string,
 ) {
   const { data, error } = await supabase
     .from("product_pack_conversions")
-    .select(
-      "id, unit_product_id, total_units, label, components:product_pack_components(unit_product_id, units_per_pack, cost_weight)",
-    )
+    .select("id")
     .eq("store_id", storeId)
     .eq("pack_product_id", packProductId)
     .eq("is_active", true)
@@ -409,178 +382,54 @@ async function findActiveRecipe(
 
   throwIfSupabaseError(error);
 
-  return (data as unknown as ActiveRecipeRow | null) ?? null;
+  return Boolean(data);
 }
 
-async function setRecipeActive(supabase: RouteSupabaseClient, recipeId: string, isActive: boolean) {
-  const { error } = await supabase
-    .from("product_pack_conversions")
-    .update({ is_active: isActive })
-    .eq("id", recipeId);
-
-  return error;
-}
+type PackRecipeArgs = {
+  components: { costWeight: number; unitProductId: string; unitsPerPack: number }[];
+  label: string | null;
+  totalUnits: number;
+};
 
 /**
- * Borra una receta que nunca llegó a activarse (sus componentes caen en cascada).
- * `is_active = false` en el filtro: nunca borra una receta en uso. Si el borrado
- * falla queda una cabecera inactiva, que no afecta a ninguna apertura.
- */
-async function discardDraftRecipe(supabase: RouteSupabaseClient, recipeId: string, storeId: string) {
-  await supabase
-    .from("product_pack_conversions")
-    .delete()
-    .eq("id", recipeId)
-    .eq("store_id", storeId)
-    .eq("is_active", false);
-}
-
-/**
- * Tras fallar el último paso de un reemplazo, vuelve a activar la receta que
- * había. Si tampoco se puede, el error dice que el empaque quedó sin receta.
- */
-async function restorePreviousRecipe(
-  supabase: RouteSupabaseClient,
-  previousRecipeId: string | undefined,
-  failure: unknown,
-): Promise<ApiError> {
-  const mapped = mapSupabaseError(failure);
-
-  if (!previousRecipeId) {
-    return mapped;
-  }
-
-  const restoreError = await setRecipeActive(supabase, previousRecipeId, true);
-
-  if (!restoreError) {
-    return mapped;
-  }
-
-  return new ApiError(
-    mapped.status,
-    mapped.code,
-    `${mapped.message} Además no se pudo restaurar la receta anterior: el empaque quedó sin receta activa. Guarda la receta de nuevo.`,
-  );
-}
-
-/**
- * Guarda una receta surtida. PostgREST abre una transacción por petición y la
- * base exige que una receta ACTIVA cuadre al commit, así que el orden es el del
- * parche 20261009d: cabecera INACTIVA → componentes → (desactivar la anterior)
- * → activar. La receta nueva solo existe como activa tras el último paso, que es
- * una sola sentencia validada por la base: nunca queda una receta activa a medias.
+ * Guarda (`recipe`) o desactiva (`null`) la receta del empaque con la RPC
+ * `save_pack_recipe` (parche 20261011c): una sola transacción con el empaque y
+ * sus componentes bloqueados. La base valida existencia, tienda y la regla de
+ * cadenas en los dos sentidos, y decide si no escribe (misma receta), edita en
+ * sitio (misma unidad, otras unidades) o desactiva la anterior y crea otra. Sus
+ * rechazos (`PT400/404/409`) llegan con el mensaje de la base. La tienda la
+ * resuelve la base con la sesión, no un argumento.
  *
- * Una receta distinta de la vigente nunca se edita en sitio: se crea otra y la
- * anterior queda inactiva, para no convertir en `missing_link` las aperturas ya
- * registradas (`conversion_mismatches`).
- *
- * Sin transacción entre peticiones, se compensa: si falla antes de activar se
- * borra el borrador y la receta anterior sigue intacta; si falla la activación
- * se reactiva la anterior y se borra el borrador. Entre desactivar la anterior y
- * activar la nueva el empaque no tiene receta (una apertura simultánea recibe 404).
+ * Base sin el parche (`PGRST202`, no se ejecutó nada): 409. No hay camino
+ * alternativo por tabla: no sería atómico.
  */
-async function saveAssortedRecipe(
+async function savePackRecipe(
   supabase: RouteSupabaseClient,
   packProductId: string,
-  storeId: string,
-  input: PackConversionInput,
+  recipe: PackRecipeArgs | null,
 ) {
-  const components = (input.components ?? []).map((component) => ({
-    costWeight: component.costWeight,
-    unitProductId: component.unitProductId,
-    unitsPerPack: component.unitsPerPack,
-  }));
-  const totalUnits = input.totalUnits ?? 0;
-  const label = input.label?.trim() || null;
+  const { error } = await supabase.rpc("save_pack_recipe", {
+    p_components:
+      recipe?.components.map((component) => ({
+        cost_weight: component.costWeight,
+        unit_product_id: component.unitProductId,
+        units_per_pack: component.unitsPerPack,
+      })) ?? null,
+    p_enabled: recipe !== null,
+    p_label: recipe?.label ?? null,
+    p_pack_product_id: packProductId,
+    p_total_units: recipe?.totalUnits ?? null,
+  });
 
-  await assertComponentsAvailable(
-    supabase,
-    components.map((component) => component.unitProductId),
-    storeId,
-    packProductId,
-  );
-
-  const existing = await findActiveRecipe(supabase, packProductId, storeId);
-
-  if (!existing) {
-    await assertPackIsNotComponent(supabase, packProductId, storeId);
+  if (isMissingRpcSignatureError(error)) {
+    throw new ApiError(
+      409,
+      "CONFLICT",
+      "Esta base aún no admite guardar la receta de un empaque de forma segura. No se guardó la receta.",
+    );
   }
 
-  if (
-    existing &&
-    isSamePackRecipe(
-      {
-        components: (existing.components ?? []).map((component) => ({
-          costWeight: Number(component.cost_weight),
-          unitProductId: component.unit_product_id,
-          unitsPerPack: component.units_per_pack,
-        })),
-        totalUnits: existing.total_units,
-      },
-      { components, totalUnits },
-    )
-  ) {
-    if ((existing.label ?? null) !== label) {
-      const { error } = await supabase
-        .from("product_pack_conversions")
-        .update({ label })
-        .eq("id", existing.id);
-
-      throwIfSupabaseError(error);
-    }
-
-    return;
-  }
-
-  const { data: draft, error: draftError } = await supabase
-    .from("product_pack_conversions")
-    .insert({
-      is_active: false,
-      label,
-      pack_product_id: packProductId,
-      store_id: storeId,
-      total_units: totalUnits,
-    })
-    .select("id")
-    .single();
-
-  throwIfSupabaseError(draftError);
-
-  if (!draft?.id) {
-    throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear la receta del empaque.");
-  }
-
-  const { error: componentsError } = await supabase.from("product_pack_components").insert(
-    components.map((component) => ({
-      conversion_id: draft.id,
-      cost_weight: component.costWeight,
-      store_id: storeId,
-      unit_product_id: component.unitProductId,
-      units_per_pack: component.unitsPerPack,
-    })),
-  );
-
-  if (componentsError) {
-    await discardDraftRecipe(supabase, draft.id, storeId);
-    throw mapSupabaseError(componentsError);
-  }
-
-  if (existing) {
-    const deactivateError = await setRecipeActive(supabase, existing.id, false);
-
-    if (deactivateError) {
-      await discardDraftRecipe(supabase, draft.id, storeId);
-      throw mapSupabaseError(deactivateError);
-    }
-  }
-
-  const activateError = await setRecipeActive(supabase, draft.id, true);
-
-  if (activateError) {
-    const failure = await restorePreviousRecipe(supabase, existing?.id, activateError);
-    await discardDraftRecipe(supabase, draft.id, storeId);
-    throw failure;
-  }
+  throwIfSupabaseError(error);
 }
 
 export async function upsertPackConversionForPackProduct(
@@ -592,110 +441,80 @@ export async function upsertPackConversionForPackProduct(
   const supabase = await createRouteSupabaseClient();
 
   if (!input.enabled) {
-    const { error } = await supabase
-      .from("product_pack_conversions")
-      .update({ is_active: false })
-      .eq("store_id", storeId)
-      .eq("pack_product_id", packProductId)
-      .eq("is_active", true);
-
-    throwIfSupabaseError(error);
+    await savePackRecipe(supabase, packProductId, null);
     return;
   }
 
   if (input.mode === "assorted") {
-    await saveAssortedRecipe(supabase, packProductId, storeId, input);
+    await savePackRecipe(supabase, packProductId, {
+      components: (input.components ?? []).map((component) => ({
+        costWeight: component.costWeight,
+        unitProductId: component.unitProductId,
+        unitsPerPack: component.unitsPerPack,
+      })),
+      label: input.label?.trim() || null,
+      totalUnits: input.totalUnits ?? 0,
+    });
     return;
   }
 
   const unitsPerPack = input.unitsPerPack ?? 2;
-  let unitProductId = input.unitProductId;
-  let createdUnitProductId: string | undefined;
-
-  // Antes de crear el producto unidad: un rechazo no debe dejar nada escrito.
-  const existing = await findActiveRecipe(supabase, packProductId, storeId);
-
-  if (!existing) {
-    await assertPackIsNotComponent(supabase, packProductId, storeId);
-  }
+  const singleRecipe = (unitProductId: string): PackRecipeArgs => ({
+    components: [{ costWeight: 1, unitProductId, unitsPerPack }],
+    label: null,
+    totalUnits: unitsPerPack,
+  });
 
   if (input.mode === "link_existing") {
-    if (!unitProductId) {
+    if (!input.unitProductId) {
       throw new ApiError(400, "BAD_REQUEST", "Selecciona el producto unidad.");
     }
 
-    await assertUnitAvailable(unitProductId, storeId, packProductId);
-  } else {
-    const { name: unitName, sku: unitSku } = resolveNewUnitIdentity(input, packProduct?.name);
-    const unitCost =
-      input.unitProduct?.currentCostRef ??
-      (packProduct?.currentCostRef != null
-        ? Number((packProduct.currentCostRef / unitsPerPack).toFixed(2))
-        : 0);
-
-    const { data: unitRow, error: unitError } = await supabase
-      .from("products")
-      .insert({
-        barcode: normalizeBarcode(input.unitProduct?.barcode),
-        category_id: packProduct?.categoryId ?? null,
-        current_cost_ref: unitCost,
-        current_stock: 0,
-        min_stock: 5,
-        name: unitName,
-        sale_price_ref: input.unitProduct?.salePriceRef ?? 0,
-        sku: unitSku,
-        store_id: storeId,
-      })
-      .select("id")
-      .single();
-
-    throwIfSupabaseError(unitError);
-
-    if (!unitRow?.id) {
-      throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear el producto unidad.");
-    }
-
-    unitProductId = unitRow.id;
-    createdUnitProductId = unitRow.id;
-  }
-
-  // Mismo producto unidad: se edita en sitio, como siempre (una sola sentencia;
-  // el trigger de la cabecera deja el componente al día).
-  if (existing && existing.unit_product_id === unitProductId) {
-    const { error } = await supabase
-      .from("product_pack_conversions")
-      .update({
-        unit_product_id: unitProductId,
-        units_per_pack: unitsPerPack,
-      })
-      .eq("id", existing.id);
-
-    throwIfSupabaseError(error);
+    await savePackRecipe(supabase, packProductId, singleRecipe(input.unitProductId));
     return;
   }
 
-  // Otro producto unidad, o la receta vigente es surtida: receta nueva y la
-  // anterior queda inactiva (ver `saveAssortedRecipe`).
-  if (existing) {
-    const deactivateError = await setRecipeActive(supabase, existing.id, false);
-
-    if (deactivateError) {
-      await discardCreatedUnit(supabase, createdUnitProductId, storeId);
-      throw mapSupabaseError(deactivateError);
-    }
+  // `create_unit`. Antes de crear el producto unidad: el rechazo más previsible
+  // (el empaque ya sale de otro empaque) no debe dejar nada escrito. La RPC lo
+  // vuelve a comprobar; si rechaza la receta, la unidad recién creada se borra.
+  if (!(await hasActiveRecipe(supabase, packProductId, storeId))) {
+    await assertPackIsNotComponent(supabase, packProductId, storeId);
   }
 
-  const { error: insertError } = await supabase.from("product_pack_conversions").insert({
-    pack_product_id: packProductId,
-    store_id: storeId,
-    unit_product_id: unitProductId,
-    units_per_pack: unitsPerPack,
-    is_active: true,
-  });
+  const { name: unitName, sku: unitSku } = resolveNewUnitIdentity(input, packProduct?.name);
+  const unitCost =
+    input.unitProduct?.currentCostRef ??
+    (packProduct?.currentCostRef != null
+      ? Number((packProduct.currentCostRef / unitsPerPack).toFixed(2))
+      : 0);
 
-  if (insertError) {
-    await discardCreatedUnit(supabase, createdUnitProductId, storeId);
-    throw await restorePreviousRecipe(supabase, existing?.id, insertError);
+  const { data: unitRow, error: unitError } = await supabase
+    .from("products")
+    .insert({
+      barcode: normalizeBarcode(input.unitProduct?.barcode),
+      category_id: packProduct?.categoryId ?? null,
+      current_cost_ref: unitCost,
+      current_stock: 0,
+      min_stock: 5,
+      name: unitName,
+      sale_price_ref: input.unitProduct?.salePriceRef ?? 0,
+      sku: unitSku,
+      store_id: storeId,
+    })
+    .select("id")
+    .single();
+
+  throwIfSupabaseError(unitError);
+
+  if (!unitRow?.id) {
+    throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear el producto unidad.");
+  }
+
+  try {
+    await savePackRecipe(supabase, packProductId, singleRecipe(unitRow.id));
+  } catch (error) {
+    await discardCreatedUnit(supabase, unitRow.id, storeId);
+    throw error;
   }
 }
 

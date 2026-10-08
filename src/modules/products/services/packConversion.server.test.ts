@@ -4,7 +4,8 @@
 /**
  * PRO-12 · receta de empaque con N componentes (parche 20261009d), lado BFF con
  * Supabase simulado: lecturas (un vínculo, surtido, unidad en varias recetas) y
- * escritura de la receta en el orden que exige la base, con su compensación.
+ * escritura de la receta con la RPC `save_pack_recipe` (INV-09, parche
+ * 20261011c): una transacción en la base, sin compensación en el BFF.
  */
 
 jest.mock("../../../lib/supabase/route-client");
@@ -23,7 +24,7 @@ import { packConversionInputSchema } from "./packConversionSchemas";
 
 type Call = {
   filters: unknown[][];
-  op: "delete" | "insert" | "select" | "update";
+  op: "delete" | "insert" | "rpc" | "select" | "update";
   payload?: unknown;
   select?: string;
   table: string;
@@ -77,14 +78,21 @@ function mountSupabase(respond: (call: Call) => Reply | undefined) {
     return builder;
   });
 
-  (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from });
+  const rpc = jest.fn((name: string, args: unknown) => {
+    const call: Call = { filters: [], op: "rpc", payload: args, table: name };
+
+    calls.push(call);
+
+    return Promise.resolve({ data: null, error: null, ...respond(call) });
+  });
+
+  (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from, rpc });
 
   return { calls };
 }
 
 const PACK = "pack-1";
 const OLD_RECIPE = "recipe-old";
-const DRAFT = "recipe-draft";
 
 function product(id: string, name: string, extra: Record<string, unknown> = {}) {
   return {
@@ -306,7 +314,7 @@ describe("packConversion.server · lecturas", () => {
   });
 });
 
-describe("packConversion.server · guardar la receta", () => {
+describe("packConversion.server · guardar la receta (INV-09: RPC `save_pack_recipe`)", () => {
   const assortedInput = packConversionInputSchema.parse({
     components: [
       { unitProductId: "unit-cola", unitsPerPack: 2 },
@@ -319,49 +327,55 @@ describe("packConversion.server · guardar la receta", () => {
     totalUnits: 6,
   });
 
-  const singleExisting = {
-    components: [{ cost_weight: 1, unit_product_id: "unit-cola", units_per_pack: 10 }],
-    id: OLD_RECIPE,
-    label: null,
-    total_units: 10,
-    unit_product_id: "unit-cola",
-  };
-
-  const assortedExisting = {
-    components: [
+  const assortedArgs = {
+    p_components: [
       { cost_weight: 1, unit_product_id: "unit-cola", units_per_pack: 2 },
-      { cost_weight: "1.5", unit_product_id: "unit-naranja", units_per_pack: 2 },
+      { cost_weight: 1.5, unit_product_id: "unit-naranja", units_per_pack: 2 },
       { cost_weight: 1, unit_product_id: "unit-uva", units_per_pack: 2 },
     ],
-    id: OLD_RECIPE,
-    label: "Surtido 6",
-    total_units: 6,
-    unit_product_id: null,
+    p_enabled: true,
+    p_label: "Surtido 6",
+    p_pack_product_id: PACK,
+    p_total_units: 6,
   };
 
+  const linkInput = packConversionInputSchema.parse({
+    enabled: true,
+    mode: "link_existing",
+    unitProductId: "unit-cola",
+    unitsPerPack: 12,
+  });
+
+  const createUnitInput = packConversionInputSchema.parse({
+    enabled: true,
+    mode: "create_unit",
+    unitProduct: { name: "Unidad suelta", salePriceRef: 1 },
+    unitsPerPack: 6,
+  });
+
+  function singleArgs(unitProductId: string, units: number) {
+    return {
+      p_components: [{ cost_weight: 1, unit_product_id: unitProductId, units_per_pack: units }],
+      p_enabled: true,
+      p_label: null,
+      p_pack_product_id: PACK,
+      p_total_units: units,
+    };
+  }
+
   /**
-   * Base simulada: los productos existen, ninguno es empaque, `existing` es la
-   * receta activa del empaque y `fail` decide qué escritura falla.
+   * Base simulada: la RPC responde `rpcError` (o va bien), el alta de la unidad
+   * devuelve `unit-new`, `hasActiveRecipe` dice si el empaque ya tiene receta y
+   * `packIsComponentOf` nombra los empaques de cuyas recetas activas sale.
    */
   function mountStore(options: {
-    existing?: typeof singleExisting | typeof assortedExisting | null;
-    fail?: (call: Call) => boolean;
-    knownProducts?: string[];
-    /** Nombres de los empaques de cuyas recetas ACTIVAS sale el empaque que se guarda. */
+    hasActiveRecipe?: boolean;
     packIsComponentOf?: (string | null)[];
-    packsAmongComponents?: string[];
+    rpcError?: { code: string; message: string };
   } = {}) {
-    const failure = { code: "PT400", message: "Los componentes de la receta suman 5 unidades y el empaque declara 6" };
-
     return mountSupabase((call) => {
-      if (options.fail?.(call)) {
-        return { error: failure };
-      }
-
-      if (call.table === "products" && call.op === "select") {
-        return {
-          data: (options.knownProducts ?? ["unit-cola", "unit-naranja", "unit-uva"]).map((id) => ({ id })),
-        };
+      if (call.op === "rpc") {
+        return options.rpcError ? { error: options.rpcError } : { data: { action: "created" } };
       }
 
       if (call.table === "products" && call.op === "insert") {
@@ -377,332 +391,191 @@ describe("packConversion.server · guardar la receta", () => {
       }
 
       if (call.table === "product_pack_conversions" && call.op === "select") {
-        if (call.select === "pack_product_id") {
-          return { data: (options.packsAmongComponents ?? []).map((id) => ({ pack_product_id: id })) };
-        }
-
-        if (call.select === "id") {
-          return { data: null };
-        }
-
-        return { data: options.existing ?? null };
-      }
-
-      if (call.table === "product_pack_conversions" && call.op === "insert") {
-        return { data: { id: DRAFT } };
+        return { data: options.hasActiveRecipe ? { id: OLD_RECIPE } : null };
       }
 
       return {};
     });
   }
 
-  const draftHeader = {
-    is_active: false,
-    label: "Surtido 6",
-    pack_product_id: PACK,
-    store_id: DEFAULT_STORE_ID,
-    total_units: 6,
-  };
-  const draftComponents = [
-    { conversion_id: DRAFT, cost_weight: 1, store_id: DEFAULT_STORE_ID, unit_product_id: "unit-cola", units_per_pack: 2 },
-    { conversion_id: DRAFT, cost_weight: 1.5, store_id: DEFAULT_STORE_ID, unit_product_id: "unit-naranja", units_per_pack: 2 },
-    { conversion_id: DRAFT, cost_weight: 1, store_id: DEFAULT_STORE_ID, unit_product_id: "unit-uva", units_per_pack: 2 },
-  ];
+  function rpcCalls(calls: Call[]) {
+    return calls.filter((call) => call.op === "rpc").map((call) => [call.table, call.payload]);
+  }
 
-  it("surtido nuevo: cabecera inactiva → componentes → activar", async () => {
+  /** Escrituras por tabla sobre la receta: tras INV-09 no debe haber ninguna. */
+  function recipeTableWrites(calls: Call[]) {
+    return calls.filter(
+      (call) =>
+        (call.op === "insert" || call.op === "update" || call.op === "delete") &&
+        (call.table === "product_pack_conversions" || call.table === "product_pack_components"),
+    );
+  }
+
+  it("surtido: una sola llamada a la RPC con la receta completa, sin lecturas ni escrituras por tabla", async () => {
     const { calls } = mountStore();
 
     await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput);
 
-    expect(writes(calls)).toEqual([
-      ["product_pack_conversions", "insert", draftHeader],
-      ["product_pack_components", "insert", draftComponents],
-      ["product_pack_conversions", "update", { is_active: true }],
-    ]);
-    const activation = calls[calls.length - 1];
-    expect(hasFilter(activation, "eq", "id", DRAFT)).toBe(true);
-  });
-
-  it("de 1 a 1 a surtido: receta nueva y la anterior se desactiva justo antes de activar (no se editan sus componentes)", async () => {
-    const { calls } = mountStore({ existing: singleExisting });
-
-    await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput);
-
-    expect(writes(calls)).toEqual([
-      ["product_pack_conversions", "insert", draftHeader],
-      ["product_pack_components", "insert", draftComponents],
-      ["product_pack_conversions", "update", { is_active: false }],
-      ["product_pack_conversions", "update", { is_active: true }],
-    ]);
-    const [deactivate, activate] = calls.filter((call) => call.op === "update");
-    expect(hasFilter(deactivate, "eq", "id", OLD_RECIPE)).toBe(true);
-    expect(hasFilter(activate, "eq", "id", DRAFT)).toBe(true);
-    expect(calls.some((call) => call.op === "delete")).toBe(false);
-  });
-
-  it("editar un surtido (otras unidades) también crea receta nueva", async () => {
-    const { calls } = mountStore({
-      existing: { ...assortedExisting, components: assortedExisting.components.slice(0, 2), total_units: 4 },
-    });
-
-    await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput);
-
-    expect(writes(calls).map(([table, op]) => `${table}:${op}`)).toEqual([
-      "product_pack_conversions:insert",
-      "product_pack_components:insert",
-      "product_pack_conversions:update",
-      "product_pack_conversions:update",
+    expect(calls.map((call) => [call.op, call.table, call.payload])).toEqual([
+      ["rpc", "save_pack_recipe", assortedArgs],
     ]);
   });
 
-  it("la misma receta no escribe nada; si solo cambia el nombre, solo el nombre", async () => {
-    const same = mountStore({ existing: assortedExisting });
-    await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput);
-    expect(writes(same.calls)).toEqual([]);
+  it("surtido sin nombre (o solo espacios): `p_label` null", async () => {
+    const { calls } = mountStore();
 
-    const renamed = mountStore({ existing: { ...assortedExisting, label: "Otro nombre" } });
-    await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput);
-    expect(writes(renamed.calls)).toEqual([["product_pack_conversions", "update", { label: "Surtido 6" }]]);
+    await upsertPackConversionForPackProduct(
+      PACK,
+      DEFAULT_STORE_ID,
+      packConversionInputSchema.parse({ ...assortedInput, label: "   " }),
+    );
+
+    expect(rpcCalls(calls)).toEqual([["save_pack_recipe", { ...assortedArgs, p_label: null }]]);
   });
 
-  it("compensa si fallan los componentes: borra el borrador y la receta anterior sigue activa", async () => {
-    const { calls } = mountStore({
-      existing: singleExisting,
-      fail: (call) => call.table === "product_pack_components" && call.op === "insert",
-    });
-
-    await expect(
-      upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput),
-    ).rejects.toMatchObject({ status: 400 });
-
-    expect(writes(calls).map(([table, op]) => `${table}:${op}`)).toEqual([
-      "product_pack_conversions:insert",
-      "product_pack_components:insert",
-      "product_pack_conversions:delete",
-    ]);
-    const discard = calls[calls.length - 1];
-    expect(hasFilter(discard, "eq", "id", DRAFT)).toBe(true);
-    expect(hasFilter(discard, "eq", "store_id", DEFAULT_STORE_ID)).toBe(true);
-    // Nunca borra una receta en uso.
-    expect(hasFilter(discard, "eq", "is_active", false)).toBe(true);
-  });
-
-  it("compensa si falla desactivar la anterior: borra el borrador y no activa nada", async () => {
-    const { calls } = mountStore({
-      existing: singleExisting,
-      fail: (call) => call.op === "update" && hasFilter(call, "eq", "id", OLD_RECIPE),
-    });
-
-    await expect(
-      upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput),
-    ).rejects.toMatchObject({ status: 400 });
-
-    expect(writes(calls).map(([, op, payload]) => [op, payload])).toEqual([
-      ["insert", draftHeader],
-      ["insert", draftComponents],
-      ["update", { is_active: false }],
-      ["delete", undefined],
-    ]);
-  });
-
-  it("compensa si falla la activación: reactiva la anterior y borra el borrador", async () => {
-    const { calls } = mountStore({
-      existing: singleExisting,
-      fail: (call) =>
-        call.op === "update" &&
-        hasFilter(call, "eq", "id", DRAFT) &&
-        (call.payload as { is_active?: boolean }).is_active === true,
-    });
-
-    await expect(
-      upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput),
-    ).rejects.toMatchObject({
-      message: "Los componentes de la receta suman 5 unidades y el empaque declara 6",
-      status: 400,
-    });
-
-    const tail = calls.slice(-3);
-    expect(tail.map((call) => [call.op, call.payload])).toEqual([
-      ["update", { is_active: true }],
-      ["update", { is_active: true }],
-      ["delete", undefined],
-    ]);
-    expect(hasFilter(tail[0], "eq", "id", DRAFT)).toBe(true);
-    expect(hasFilter(tail[1], "eq", "id", OLD_RECIPE)).toBe(true);
-    expect(hasFilter(tail[2], "eq", "id", DRAFT)).toBe(true);
-  });
-
-  it("si tampoco se puede restaurar la anterior, el error lo dice", async () => {
-    mountStore({
-      existing: singleExisting,
-      fail: (call) =>
-        call.op === "update" && (call.payload as { is_active?: boolean }).is_active === true,
-    });
-
-    await expect(
-      upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput),
-    ).rejects.toMatchObject({
-      message: expect.stringContaining("el empaque quedó sin receta activa"),
-      status: 400,
-    });
-  });
-
-  it("rechaza antes de escribir: el empaque como componente (400), componente inexistente (404), componente que es empaque (409)", async () => {
-    const self = mountStore();
-    await expect(
-      upsertPackConversionForPackProduct("unit-cola", DEFAULT_STORE_ID, assortedInput),
-    ).rejects.toMatchObject({ message: "El empaque no puede ser componente de sí mismo.", status: 400 });
-    expect(self.calls).toEqual([]);
-
-    const missing = mountStore({ knownProducts: ["unit-cola", "unit-uva"] });
-    await expect(
-      upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput),
-    ).rejects.toMatchObject({ status: 404 });
-    expect(writes(missing.calls)).toEqual([]);
-
-    const chained = mountStore({ packsAmongComponents: ["unit-uva"] });
-    await expect(
-      upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(writes(chained.calls)).toEqual([]);
-    const packsCall = chained.calls.find((call) => call.select === "pack_product_id");
-    expect(hasFilter(packsCall!, "in", "pack_product_id", ["unit-cola", "unit-naranja", "unit-uva"])).toBe(true);
-    expect(hasFilter(packsCall!, "eq", "is_active", true)).toBe(true);
-  });
-
-  const linkInput = packConversionInputSchema.parse({
-    enabled: true,
-    mode: "link_existing",
-    unitProductId: "unit-cola",
-    unitsPerPack: 12,
-  });
-
-  it("1 a 1 nuevo: el mismo insert de siempre", async () => {
+  it("1 a 1 con unidad existente: la misma RPC con un componente de peso 1 y sin nombre", async () => {
     const { calls } = mountStore();
 
     await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, linkInput);
 
-    expect(writes(calls)).toEqual([
+    expect(calls.map((call) => [call.op, call.table, call.payload])).toEqual([
+      ["rpc", "save_pack_recipe", singleArgs("unit-cola", 12)],
+    ]);
+  });
+
+  it("desactivar: la RPC con `p_enabled` false, sea par o surtido", async () => {
+    const { calls } = mountStore({ hasActiveRecipe: true, packIsComponentOf: ["Caja surtida"] });
+
+    await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, { enabled: false });
+
+    expect(calls.map((call) => [call.op, call.table, call.payload])).toEqual([
       [
-        "product_pack_conversions",
-        "insert",
+        "rpc",
+        "save_pack_recipe",
         {
-          is_active: true,
-          pack_product_id: PACK,
-          store_id: DEFAULT_STORE_ID,
-          unit_product_id: "unit-cola",
-          units_per_pack: 12,
+          p_components: null,
+          p_enabled: false,
+          p_label: null,
+          p_pack_product_id: PACK,
+          p_total_units: null,
         },
       ],
     ]);
   });
 
-  it("1 a 1 con la misma unidad: el mismo update en sitio de siempre", async () => {
-    const { calls } = mountStore({ existing: singleExisting });
+  it.each([
+    [
+      "PT400 · el empaque como componente",
+      { code: "PT400", message: "El empaque no puede ser componente de sí mismo." },
+      { code: "BAD_REQUEST", status: 400 },
+    ],
+    [
+      "PT404 · componente inexistente o de otra tienda",
+      { code: "PT404", message: "Producto componente no encontrado." },
+      { code: "NOT_FOUND", status: 404 },
+    ],
+    [
+      "PT409 · un componente es empaque con receta activa",
+      { code: "PT409", message: "Un componente es un empaque con receta activa: no puede salir de otro empaque." },
+      { code: "CONFLICT", status: 409 },
+    ],
+    [
+      "PT409 · el empaque ya sale de otro empaque",
+      { code: "PT409", message: "Este producto ya es unidad de Caja surtida; no puede ser a la vez un empaque." },
+      { code: "CONFLICT", status: 409 },
+    ],
+    [
+      "PT403 · rol sin permiso",
+      { code: "PT403", message: "No autorizado para guardar la receta de un empaque" },
+      { code: "FORBIDDEN", status: 403 },
+    ],
+  ])("el rechazo de la base llega con su código y su mensaje: %s", async (_case, rpcError, expected) => {
+    const { calls } = mountStore({ rpcError });
 
-    await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, linkInput);
+    await expect(
+      upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput),
+    ).rejects.toMatchObject({ ...expected, message: rpcError.message });
 
-    expect(writes(calls)).toEqual([
-      ["product_pack_conversions", "update", { unit_product_id: "unit-cola", units_per_pack: 12 }],
-    ]);
-    expect(hasFilter(calls[calls.length - 1], "eq", "id", OLD_RECIPE)).toBe(true);
+    // Nada que compensar: la RPC es una transacción.
+    expect(calls).toHaveLength(1);
   });
 
-  it("una unidad que ya sale de otro empaque se acepta; una que es empaque, no (409)", async () => {
-    const { calls } = mountStore();
-    await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, linkInput);
-    const availability = calls.find((call) => call.select === "id" && call.table === "product_pack_conversions");
-    // Solo se mira si la unidad es EMPAQUE de una receta activa, no si es componente de otra.
-    expect(availability?.filters).toEqual([
-      ["eq", "store_id", DEFAULT_STORE_ID],
-      ["eq", "is_active", true],
-      ["eq", "pack_product_id", "unit-cola"],
-    ]);
+  it("un interbloqueo de la base es un 409 reintentable, sin compensación", async () => {
+    const { calls } = mountStore({ rpcError: { code: "40P01", message: "deadlock detected" } });
 
-    const asPack = mountSupabase((call) =>
-      call.table === "product_pack_conversions" && call.select === "id" ? { data: { id: "recipe-x" } } : {},
-    );
     await expect(
       upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, linkInput),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(writes(asPack.calls)).toEqual([]);
+    ).rejects.toMatchObject({
+      message: "La operacion choco con otra en curso y no se aplico. Intenta de nuevo.",
+      status: 409,
+    });
+
+    expect(calls).toHaveLength(1);
   });
 
-  it("de surtido a 1 a 1 (y 1 a 1 con otra unidad): desactiva la anterior e inserta la nueva", async () => {
-    for (const existing of [assortedExisting, { ...singleExisting, unit_product_id: "unit-uva" }]) {
-      const { calls } = mountStore({ existing });
-
-      await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, linkInput);
-
-      expect(writes(calls)).toEqual([
-        ["product_pack_conversions", "update", { is_active: false }],
-        [
-          "product_pack_conversions",
-          "insert",
-          {
-            is_active: true,
-            pack_product_id: PACK,
-            store_id: DEFAULT_STORE_ID,
-            unit_product_id: "unit-cola",
-            units_per_pack: 12,
-          },
-        ],
-      ]);
-    }
-  });
-
-  it("si falla el insert de la receta 1 a 1 nueva, reactiva la anterior", async () => {
+  it.each([
+    ["surtido", assortedInput],
+    ["1 a 1", linkInput],
+    ["desactivar", { enabled: false as const }],
+  ])("base sin el parche (PGRST202) · %s: 409 claro y ningún camino alternativo por tabla", async (_case, input) => {
     const { calls } = mountStore({
-      existing: assortedExisting,
-      fail: (call) => call.table === "product_pack_conversions" && call.op === "insert",
+      rpcError: { code: "PGRST202", message: "Could not find the function public.save_pack_recipe" },
     });
 
     await expect(
-      upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, linkInput),
-    ).rejects.toMatchObject({ status: 400 });
-
-    const last = calls[calls.length - 1];
-    expect([last.op, last.payload]).toEqual(["update", { is_active: true }]);
-    expect(hasFilter(last, "eq", "id", OLD_RECIPE)).toBe(true);
-  });
-
-  it("desactivar: apaga la receta activa del empaque, sea par o surtido", async () => {
-    const { calls } = mountStore({ existing: assortedExisting });
-
-    await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, { enabled: false });
-
-    expect(writes(calls)).toEqual([["product_pack_conversions", "update", { is_active: false }]]);
-    expect(calls[0].filters).toEqual([
-      ["eq", "store_id", DEFAULT_STORE_ID],
-      ["eq", "pack_product_id", PACK],
-      ["eq", "is_active", true],
-    ]);
-  });
-
-  /**
-   * PRO-F8 · la regla de cadenas en los dos sentidos: un producto que ya sale de
-   * un empaque (componente de una receta activa) no puede estrenar receta propia.
-   */
-  describe("un componente de una receta activa no puede pasar a ser empaque (PRO-F8)", () => {
-    const CHAIN_MESSAGE =
-      "Este producto ya es unidad de Caja surtida; no puede ser a la vez un empaque.";
-    const createUnitInput = packConversionInputSchema.parse({
-      enabled: true,
-      mode: "create_unit",
-      unitProduct: { name: "Unidad suelta", salePriceRef: 1 },
-      unitsPerPack: 6,
+      upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, input),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message:
+        "Esta base aún no admite guardar la receta de un empaque de forma segura. No se guardó la receta.",
+      status: 409,
     });
 
-    it.each([
-      ["1 a 1 con unidad existente", linkInput],
-      ["1 a 1 creando la unidad", createUnitInput],
-      ["surtido", assortedInput],
-    ])("%s: 409 con el nombre del empaque del que sale, sin escribir nada", async (_case, input) => {
+    expect(recipeTableWrites(calls)).toEqual([]);
+    expect(calls.filter((call) => call.op === "rpc")).toHaveLength(1);
+  });
+
+  it("ningún fallo deja el mensaje de «quedó sin receta activa»: ya no hay pasos intermedios", async () => {
+    mountStore({ rpcError: { code: "PT400", message: "Los componentes suman 5 unidades y el empaque declara 6." } });
+
+    const failure = await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, assortedInput).catch(
+      (error: unknown) => error,
+    );
+
+    expect(failure).toMatchObject({
+      message: "Los componentes suman 5 unidades y el empaque declara 6.",
+      status: 400,
+    });
+    expect((failure as Error).message).not.toContain("sin receta activa");
+  });
+
+  describe("«crear unidad»", () => {
+    it("crea el producto unidad y guarda la receta con la RPC", async () => {
+      const { calls } = mountStore();
+
+      await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, createUnitInput, {
+        currentCostRef: 12,
+        name: "Bulto",
+      });
+
+      expect(writes(calls).map(([table, op]) => `${table}:${op}`)).toEqual([
+        "products:insert",
+        "save_pack_recipe:rpc",
+      ]);
+      expect(rpcCalls(calls)).toEqual([["save_pack_recipe", singleArgs("unit-new", 6)]]);
+      expect(recipeTableWrites(calls)).toEqual([]);
+    });
+
+    it("el empaque ya sale de otro empaque: 409 con su nombre, sin crear la unidad ni llamar a la RPC", async () => {
       const { calls } = mountStore({ packIsComponentOf: ["Caja surtida"] });
 
       await expect(
-        upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, input, { name: "Bulto" }),
-      ).rejects.toMatchObject({ code: "CONFLICT", message: CHAIN_MESSAGE, status: 409 });
+        upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, createUnitInput, { name: "Bulto" }),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        message: "Este producto ya es unidad de Caja surtida; no puede ser a la vez un empaque.",
+        status: 409,
+      });
 
       expect(writes(calls)).toEqual([]);
       const chainCall = calls.find((call) => call.table === "product_pack_components");
@@ -717,42 +590,36 @@ describe("packConversion.server · guardar la receta", () => {
       mountStore({ packIsComponentOf: [null] });
 
       await expect(
-        upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, linkInput),
+        upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, createUnitInput),
       ).rejects.toMatchObject({
         message: "Este producto ya es unidad de otro empaque; no puede ser a la vez un empaque.",
         status: 409,
       });
     });
 
-    it("un producto que no sale de ningún empaque estrena receta como siempre", async () => {
-      const { calls } = mountStore({ packIsComponentOf: [] });
+    it("datos anteriores (ya era empaque y componente): no consulta la regla y guarda", async () => {
+      const { calls } = mountStore({ hasActiveRecipe: true, packIsComponentOf: ["Caja surtida"] });
 
-      await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, linkInput);
+      await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, createUnitInput);
 
-      expect(writes(calls)).toHaveLength(1);
+      expect(calls.some((call) => call.table === "product_pack_components")).toBe(false);
+      expect(rpcCalls(calls)).toHaveLength(1);
     });
 
     it.each([
-      ["editar unidades en sitio", singleExisting, linkInput, 1],
-      ["cambiar a surtido", singleExisting, assortedInput, 4],
-      ["cambiar de surtido a 1 a 1", assortedExisting, linkInput, 2],
-    ])(
-      "datos anteriores (ya era empaque y componente): %s sigue permitido",
-      async (_case, existing, input, expectedWrites) => {
-        const { calls } = mountStore({ existing, packIsComponentOf: ["Caja surtida"] });
+      ["la base rechaza la receta", { code: "PT409", message: "Este producto ya es unidad de Caja surtida; no puede ser a la vez un empaque." }],
+      ["la base no tiene el parche", { code: "PGRST202", message: "Could not find the function" }],
+    ])("si %s, borra la unidad recién creada y devuelve ese error", async (_case, rpcError) => {
+      const { calls } = mountStore({ rpcError });
 
-        await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, input);
+      await expect(
+        upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, createUnitInput),
+      ).rejects.toMatchObject({ status: 409 });
 
-        expect(writes(calls)).toHaveLength(expectedWrites);
-      },
-    );
-
-    it("desactivar la receta no consulta la regla", async () => {
-      const { calls } = mountStore({ existing: singleExisting, packIsComponentOf: ["Caja surtida"] });
-
-      await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, { enabled: false });
-
-      expect(calls.some((call) => call.table === "product_pack_components")).toBe(false);
+      const last = calls[calls.length - 1];
+      expect([last.table, last.op]).toEqual(["products", "delete"]);
+      expect(hasFilter(last, "eq", "id", "unit-new")).toBe(true);
+      expect(hasFilter(last, "eq", "store_id", DEFAULT_STORE_ID)).toBe(true);
     });
   });
 });

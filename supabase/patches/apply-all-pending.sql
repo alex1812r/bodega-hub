@@ -581,3 +581,15 @@ notify pgrst, 'reload schema';
 -- Scripts que cargan stock inicial por adjust_stock: crear el producto activo, cargar el stock y desactivarlo despues.
 -- ORDEN DE DESPLIEGUE (COM-15a): parche -> verify. No depende del BFF: el anterior y el nuevo funcionan con y sin el
 -- parche (el 409 llega con el mensaje de la base).
+-- -----------------------------------------------------------------------------
+-- 20261011c — save pack recipe (INV-09): RPC public.save_pack_recipe(p_pack_product_id, p_enabled, p_total_units, p_label,
+--             p_components) que guarda, reemplaza o desactiva la receta de un empaque en UNA transaccion, con el empaque y
+--             sus componentes bloqueados (order by id) y la regla de cadenas validada en base
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011c-save-pack-recipe.sql
+-- Requiere 20261006a y 20261009d. Idempotente, una transaccion. No toca stock, dinero, tablas, politicas ni grants de tabla.
+-- OJO: authenticated conserva insert / update / delete sobre product_pack_conversions y product_pack_components: una
+-- escritura directa por tabla no toma el bloqueo ni pasa la regla de cadenas (riesgo residual, ver cabecera del parche).
+-- ORDEN DE DESPLIEGUE (INV-09): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada (sigue escribiendo
+-- por tabla). El BFF nuevo sin el parche: guardar o desactivar la receta de un empaque responde 409 ("Esta base aún no
+-- admite guardar la receta de un empaque de forma segura...") sin escribir la receta; el resto de la edicion no cambia.

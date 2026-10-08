@@ -71,10 +71,6 @@ function mountSupabase(respond: (call: Call) => Reply | undefined = () => undefi
       return { data: { ...productRow } };
     }
 
-    if (call.table === "product_pack_conversions" && call.op === "insert") {
-      return { data: { id: "recipe-draft" } };
-    }
-
     return {};
   }
 
@@ -190,11 +186,14 @@ function productWrites(calls: Call[]) {
   return calls.filter((call) => call.table === "products" && call.op !== "select").map((call) => call.op);
 }
 
+/** Escrituras de la receta: la RPC `save_pack_recipe` (INV-09) y, si las hubiera, por tabla. */
 function recipeWrites(calls: Call[]) {
   return calls.filter(
     (call) =>
       call.op !== "select" &&
-      (call.table === "product_pack_conversions" || call.table === "product_pack_components"),
+      (call.table === "save_pack_recipe" ||
+        call.table === "product_pack_conversions" ||
+        call.table === "product_pack_components"),
   );
 }
 
@@ -321,7 +320,7 @@ describe("createProduct · orden del alta con receta (PRO-F7)", () => {
     const productInsert = calls.findIndex((call) => call.table === "products" && call.op === "insert");
     const initialStock = calls.findIndex((call) => call.op === "rpc" && call.table === "adjust_stock");
     const recipeInsert = calls.findIndex(
-      (call) => call.table === "product_pack_conversions" && call.op === "insert",
+      (call) => call.op === "rpc" && call.table === "save_pack_recipe",
     );
 
     expect(firstValidation).toBeGreaterThanOrEqual(0);
@@ -343,7 +342,7 @@ describe("createProduct · la receta falla después de crear el producto (PRO-F7
   function failingRecipe(call: Call): Reply | undefined {
     return (
       componentsExist(call, ["cola", "uva"]) ??
-      (call.table === "product_pack_conversions" && call.op === "insert"
+      (call.op === "rpc" && call.table === "save_pack_recipe"
         ? { data: null, error: recipeFailure }
         : undefined)
     );
@@ -415,7 +414,7 @@ describe("createProduct · la receta falla después de crear el producto (PRO-F7
         return { data: [{ id: "x" }] };
       }
 
-      return call.table === "product_pack_conversions" && call.op === "insert"
+      return call.op === "rpc" && call.table === "save_pack_recipe"
         ? { data: null, error: recipeFailure }
         : undefined;
     });
@@ -444,11 +443,7 @@ describe("updateProduct · solo `packConversion` (PRO-F7)", () => {
 
     expect(updated.id).toBe(NEW_PRODUCT);
     expect(productWrites(calls)).toEqual([]);
-    expect(recipeWrites(calls).map((call) => [call.table, call.op])).toEqual([
-      ["product_pack_conversions", "insert"],
-      ["product_pack_components", "insert"],
-      ["product_pack_conversions", "update"],
-    ]);
+    expect(recipeWrites(calls).map((call) => [call.table, call.op])).toEqual([["save_pack_recipe", "rpc"]]);
   });
 
   it("con campos de producto sigue haciendo su update", async () => {
