@@ -9,6 +9,7 @@ import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { usePermission } from "@/shared/auth/usePermission";
+import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { ProcessGuardModal, useProcessGuard } from "@/shared/components/ProcessGuard";
@@ -158,6 +159,11 @@ export function PurchaseCreatePage() {
   const [notices, setNotices] = useState<string[]>([]);
   const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null);
   const [isLoadingDuplicateLines, setIsLoadingDuplicateLines] = useState(false);
+  // Proveedor pedido (o `id: ""` = quitarlo) con líneas en la compra: espera la confirmación.
+  const [supplierChangeRequest, setSupplierChangeRequest] = useState<{
+    id: string;
+    name?: string;
+  } | null>(null);
   // Compra ya creada: ni se vuelve a guardar el borrador ni se pregunta al salir.
   const [confirmed, setConfirmed] = useState(false);
   const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
@@ -454,7 +460,19 @@ export function PurchaseCreatePage() {
     );
   }
 
+  // Cambiar o quitar el proveedor vacía las líneas (sus costos y vínculos son de ese
+  // proveedor): con líneas se pregunta antes. Una compra duplicada cuyo proveedor está
+  // inactivo aún no tiene líneas en el formulario, así que no pregunta.
   function handleSupplierChange(nextSupplierId: string, nextSupplierName?: string) {
+    if (items.length > 0) {
+      setSupplierChangeRequest({ id: nextSupplierId, name: nextSupplierName });
+      return;
+    }
+
+    applySupplierChange(nextSupplierId, nextSupplierName);
+  }
+
+  function applySupplierChange(nextSupplierId: string, nextSupplierName?: string) {
     setSupplierId(nextSupplierId);
     setSupplierName(nextSupplierName ?? null);
     setProductSearch("");
@@ -808,6 +826,29 @@ export function PurchaseCreatePage() {
         }}
         open={newProductValues !== null}
         returnFocusTo={newProductOpenerRef}
+      />
+      <ConfirmActionModal
+        confirmLabel="Quitar líneas y cambiar"
+        description={
+          items.length === 1
+            ? "Cambiar de proveedor quita la línea de esta compra."
+            : `Cambiar de proveedor quita las ${items.length} líneas de esta compra.`
+        }
+        onConfirm={() => {
+          if (supplierChangeRequest) {
+            applySupplierChange(supplierChangeRequest.id, supplierChangeRequest.name);
+          }
+
+          setSupplierChangeRequest(null);
+        }}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSupplierChangeRequest(null);
+          }
+        }}
+        open={supplierChangeRequest !== null}
+        title="Cambiar de proveedor"
+        variant="danger"
       />
       <ProcessGuardModal guard={guard} />
     </div>

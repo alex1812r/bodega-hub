@@ -68,6 +68,9 @@ jest.mock("./components/PurchaseSupplierCard", () => ({
       <button onClick={() => onSupplierChange("cont-otro", "Otro Proveedor")} type="button">
         elegir otro proveedor
       </button>
+      <button onClick={() => onSupplierChange("")} type="button">
+        limpiar proveedor
+      </button>
     </div>
   ),
 }));
@@ -681,5 +684,96 @@ describe("PurchaseCreatePage · duplicar compra (COM-09)", () => {
     expect(lineTexts().map((line) => line?.split(" · ")[0])).toEqual(["Harina PAN", "Cable HDMI"]);
     expect(screen.getByText("compra exenta: sí")).toBeInTheDocument();
     expect(screen.queryByText(/No se duplicó/)).not.toBeInTheDocument();
+  });
+});
+
+describe("PurchaseCreatePage · cambiar de proveedor con líneas pregunta antes (COM-F3)", () => {
+  const confirmDialog = () => screen.queryByRole("dialog", { name: "Cambiar de proveedor" });
+
+  it("sin líneas cambia y limpia directo, sin preguntar", () => {
+    renderPage();
+    click("elegir proveedor");
+    click("elegir otro proveedor");
+
+    expect(confirmDialog()).not.toBeInTheDocument();
+    expect(screen.getByText("proveedor: cont-otro")).toBeInTheDocument();
+
+    click("limpiar proveedor");
+
+    expect(confirmDialog()).not.toBeInTheDocument();
+    expect(screen.getByText("proveedor: ninguno")).toBeInTheDocument();
+  });
+
+  it("limpiar el proveedor con líneas pregunta; Cancelar conserva proveedor, líneas y borrador", async () => {
+    renderPage();
+    click("elegir proveedor");
+    click("agregar cable");
+    click("agregar harina");
+
+    const draftBefore = window.localStorage.getItem(draftKey);
+
+    click("limpiar proveedor");
+
+    expect(confirmDialog()).toHaveTextContent(
+      "Cambiar de proveedor quita las 2 líneas de esta compra.",
+    );
+    // Con el diálogo abierto el resto de la página queda oculto a los roles: se mira por texto.
+    expect(screen.getAllByText(/ u a REF /)).toHaveLength(2);
+    expect(screen.getByText("proveedor: cont-supplier")).toBeInTheDocument();
+
+    click("Cancelar");
+
+    await waitFor(() => expect(confirmDialog()).not.toBeInTheDocument());
+    expect(lineTexts()).toHaveLength(2);
+    expect(screen.getByText("proveedor: cont-supplier")).toBeInTheDocument();
+    expect(window.localStorage.getItem(draftKey)).toBe(draftBefore);
+  });
+
+  it("«Quitar líneas y cambiar» al limpiar deja la compra sin proveedor ni líneas", async () => {
+    renderPage();
+    click("elegir proveedor");
+    click("agregar cable");
+    click("limpiar proveedor");
+
+    expect(confirmDialog()).toHaveTextContent("Cambiar de proveedor quita la línea de esta compra.");
+
+    click("Quitar líneas y cambiar");
+
+    await waitFor(() => expect(confirmDialog()).not.toBeInTheDocument());
+    expect(lineTexts()).toEqual([]);
+    expect(screen.getByText("proveedor: ninguno")).toBeInTheDocument();
+    expect(storedDraft()).toBeNull();
+  });
+
+  it("elegir otro proveedor con líneas también pregunta, y al aceptar entra el nuevo sin líneas", async () => {
+    renderPage();
+    click("elegir proveedor");
+    click("agregar cable");
+    click("agregar harina");
+    click("elegir otro proveedor");
+
+    expect(confirmDialog()).toBeInTheDocument();
+    expect(screen.getByText("proveedor: cont-supplier")).toBeInTheDocument();
+
+    click("Quitar líneas y cambiar");
+
+    await waitFor(() => expect(screen.getByText("proveedor: cont-otro")).toBeInTheDocument());
+    expect(confirmDialog()).not.toBeInTheDocument();
+    expect(lineTexts()).toEqual([]);
+  });
+
+  it("duplicar con el proveedor inactivo: elegir otro no pregunta (las líneas esperan a ese proveedor)", async () => {
+    window.history.replaceState({}, "", "/purchases/create?duplicate=pur-1");
+    installApi({
+      purchase: sourcePurchase({ ...activeSupplier, isActive: false, name: "Distribuidora Vieja" }),
+    });
+    renderPage();
+    await screen.findByText(/Distribuidora Vieja está inactivo/);
+
+    click("elegir otro proveedor");
+
+    expect(confirmDialog()).not.toBeInTheDocument();
+    await waitFor(() => expect(lineTexts()).toHaveLength(2));
+    expect(screen.getByText("proveedor: cont-otro")).toBeInTheDocument();
   });
 });

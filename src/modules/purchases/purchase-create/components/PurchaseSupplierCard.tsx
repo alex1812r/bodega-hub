@@ -17,7 +17,11 @@ const SUPPLIER_FILTERS: ContactEntityFilters = { active: true, type: ["proveedor
 const LOADING_SUPPLIER_PLACEHOLDER = "Cargando proveedor…";
 
 type PurchaseSupplierCardProps = {
-  /** Con el nombre del proveedor elegido; al quitarlo, `""` y sin nombre. */
+  /**
+   * Con el nombre del proveedor elegido; al quitarlo, `""` y sin nombre. Es una petición:
+   * quien la recibe puede retenerla (la página pregunta antes de quitar las líneas) y la
+   * tarjeta sigue mostrando `selectedSupplierId`.
+   */
   onSupplierChange: (supplierId: string, supplierName?: string) => void;
   selectedSupplierId: string;
   /** Búsqueda de proveedores; por defecto `GET /api/contacts`. */
@@ -29,9 +33,10 @@ export function PurchaseSupplierCard({
   selectedSupplierId,
   supplierFetcher,
 }: PurchaseSupplierCardProps) {
-  const [pickedSupplier, setPickedSupplier] = useState<EntityAutocompleteValue | null>(null);
-  const pickedLabel =
-    pickedSupplier?.id === selectedSupplierId ? pickedSupplier.label : undefined;
+  // Nombre de cada proveedor elegido aquí, por id: si la página retiene un cambio, el
+  // anterior sigue teniendo su nombre sin releer el contacto.
+  const [pickedLabels, setPickedLabels] = useState<Record<string, string>>({});
+  const pickedLabel = selectedSupplierId ? pickedLabels[selectedSupplierId] : undefined;
   // El id que llega desde fuera (borrador restaurado, compra duplicada) no trae
   // nombre: se lee el contacto solo en ese caso.
   const externalSupplier = useContact(pickedLabel === undefined ? selectedSupplierId : undefined);
@@ -54,7 +59,10 @@ export function PurchaseSupplierCard({
         filters={SUPPLIER_FILTERS}
         label="Proveedor"
         onChange={(option) => {
-          setPickedSupplier(option ? { id: option.id, label: option.label } : null);
+          if (option) {
+            setPickedLabels((current) => ({ ...current, [option.id]: option.label }));
+          }
+
           onSupplierChange(option?.id ?? "", option?.label);
         }}
         placeholder={isResolvingName ? LOADING_SUPPLIER_PLACEHOLDER : undefined}

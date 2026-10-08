@@ -29,15 +29,17 @@ function Harness({
   onSupplierChange,
 }: {
   initialId: string;
-  onSupplierChange: (id: string, name?: string) => void;
+  /** Devuelve `false` para no aceptar el cambio (la página pregunta antes de aplicarlo). */
+  onSupplierChange: (id: string, name?: string) => boolean | void;
 }) {
   const [supplierId, setSupplierId] = useState(initialId);
 
   return (
     <PurchaseSupplierCard
       onSupplierChange={(id, name) => {
-        setSupplierId(id);
-        onSupplierChange(id, name);
+        if (onSupplierChange(id, name) !== false) {
+          setSupplierId(id);
+        }
       }}
       selectedSupplierId={supplierId}
     />
@@ -107,6 +109,35 @@ describe("PurchaseSupplierCard", () => {
 
     expect(onSupplierChange).toHaveBeenLastCalledWith("", undefined);
     expect(supplierInput()).toHaveValue("");
+  });
+
+  it("si la página no acepta el cambio, sigue mostrando el proveedor anterior sin releer el contacto (COM-F3)", async () => {
+    const user = userEvent.setup();
+    const sur = { ...norte, id: "sup-sur", name: "Distribuidora Sur C.A." };
+    const { onSupplierChange } = renderCard();
+
+    mockApiFetch.mockImplementation(async (path: string) =>
+      path === "/api/contacts" ? { items: [norte, sur], limit: 8, skip: 0, total: 2 } : norte,
+    );
+
+    await user.type(supplierInput(), "dis");
+    await user.click(await screen.findByRole("option", { name: /distribuidora norte/i }));
+    expect(supplierInput()).toHaveValue("Distribuidora Norte C.A.");
+
+    // Desde aquí la página retiene los cambios (pregunta antes de quitar las líneas).
+    onSupplierChange.mockReturnValue(false);
+
+    await user.clear(supplierInput());
+    await user.type(supplierInput(), "dis");
+    await user.click(await screen.findByRole("option", { name: /distribuidora sur/i }));
+
+    expect(onSupplierChange).toHaveBeenLastCalledWith("sup-sur", "Distribuidora Sur C.A.");
+    expect(supplierInput()).toHaveValue("Distribuidora Norte C.A.");
+
+    await user.click(screen.getByRole("button", { name: "Limpiar Proveedor" }));
+
+    expect(onSupplierChange).toHaveBeenLastCalledWith("", undefined);
+    expect(mockApiFetch).not.toHaveBeenCalledWith("/api/contacts/sup-norte");
   });
 
   it("muestra el nombre cuando el id llega por props, con estado neutro mientras carga", async () => {
