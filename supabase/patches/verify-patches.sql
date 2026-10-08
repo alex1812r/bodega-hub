@@ -1909,4 +1909,76 @@ select
       and pol.tablename = 'payments'
       and pol.cmd in ('SELECT', 'ALL')
   )
+union all
+select
+  'purchase_items.disassemble_on_receive (boolean not null default false) y disassembled_conversion_id (uuid null); purchases.receive_client_request_id / receive_request_hash (20261010d)',
+  (
+    select count(*) = 4
+       and bool_and(case c.column_name
+             when 'disassemble_on_receive' then c.data_type = 'boolean' and c.is_nullable = 'NO' and c.column_default = 'false'
+             when 'disassembled_conversion_id' then c.data_type = 'uuid' and c.is_nullable = 'YES'
+             when 'receive_client_request_id' then c.data_type = 'uuid' and c.is_nullable = 'YES'
+             else c.data_type = 'text' and c.is_nullable = 'YES'
+           end)
+    from information_schema.columns c
+    where c.table_schema = 'public'
+      and (
+        (c.table_name = 'purchase_items' and c.column_name in ('disassemble_on_receive', 'disassembled_conversion_id'))
+        or (c.table_name = 'purchases' and c.column_name in ('receive_client_request_id', 'receive_request_hash'))
+      )
+  )
+union all
+select
+  'rpc create_purchase: guarda la marca disassemble_on_receive, exige receta activa (PT400), bloquea recetas y componentes antes que los productos y abre los empaques de la compra recibida con purchase_disassemble_lines (20261010d)',
+  (
+    select count(*) = 1
+       and bool_and(p.pronargs = 14 and p.prosecdef)
+       and bool_and(p.prosrc ilike '%jsonb_typeof(v_item -> ''disassemble_on_receive'') is distinct from ''boolean''%errcode = ''PT400''%insert into public.purchases (%perform public.purchase_disassemble_lock(v_store_id, v_disassemble_ids, v_product_ids);%where id = any(v_product_ids)%order by id%for update;%and p.is_active is not true;%public.purchase_disassemble_missing_recipes(v_store_id, v_disassemble_ids)%errcode = ''PT400''%insert into public.purchase_items (%disassemble_on_receive%total_ves = v_total_ves%if p_status = ''recibido'' and v_disassemble_ids is not null then%perform public.purchase_disassemble_lines(v_purchase.id, null);%return v_purchase;%')
+       and bool_and(p.prosrc ilike '%purchase_idempotent_replay%perform public.purchase_disassemble_lock(%')
+       and bool_and(p.prosrc ilike '%v_sp_is_new := v_sp_id is null;%')
+       and bool_and(p.prosrc not ilike '%current_stock%')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'create_purchase'
+  )
+union all
+select
+  'rpc receive_purchase_and_disassemble(uuid, jsonb, uuid): security definer, assert_store_context, documento for update -> purchase_disassemble_lock -> receive_purchase -> purchase_disassemble_lines; solo authenticated / service_role (20261010d)',
+  (
+    select count(*) = 1
+       and bool_and(p.prosecdef and p.pronargs = 3)
+       and bool_and(coalesce(p.proconfig @> array['search_path=public'], false))
+       and bool_and(pg_get_function_identity_arguments(p.oid) = 'p_purchase_id uuid, p_disassemble jsonb, p_client_request_id uuid')
+       and bool_and(p.prosrc ilike '%v_store_id := public.assert_store_context();%errcode = ''PT403''%from public.purchases%for update;%errcode = ''PT404''%receive_client_request_id = p_client_request_id%errcode = ''PT409''%perform public.purchase_disassemble_lock(v_store_id, v_pack_ids, v_product_ids);%errcode = ''PT409''%v_purchase := public.receive_purchase(p_purchase_id);%perform public.purchase_disassemble_lines(p_purchase_id, p_disassemble);%')
+       and bool_and(p.prosrc not ilike '%current_stock%' and p.prosrc not ilike '%insert into public.stock_movements%')
+       and bool_and(has_function_privilege('authenticated', p.oid, 'execute'))
+       and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'receive_purchase_and_disassemble'
+  )
+union all
+select
+  'funciones internas del desarme (purchase_disassemble_lines / _lock / _missing_recipes / _request_id): sin execute para anon ni authenticated; _lines invoca convert_pack_to_units con la clave de la linea y no inserta movimientos; _lock bloquea recetas y luego productos por id (20261010d)',
+  (
+    select count(*) = 4
+       and bool_and(not has_function_privilege('authenticated', p.oid, 'execute'))
+       and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+       and bool_and(p.prosrc not ilike '%current_stock%' and p.prosrc not ilike '%insert into public.stock_movements%')
+       and bool_and(p.proname <> 'purchase_disassemble_lines'
+             or p.prosrc ilike '%public.assert_store_context()%and disassemble_on_receive%and disassembled_conversion_id is null%order by product_id, id%public.convert_pack_to_units(%public.purchase_disassemble_request_id(v_item.id)%set disassembled_conversion_id =%')
+       and bool_and(p.proname <> 'purchase_disassemble_lock'
+             or p.prosrc ilike '%from public.product_pack_conversions c%order by c.id%for update;%from public.products%order by id%for update;%')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname in ('purchase_disassemble_lines', 'purchase_disassemble_lock', 'purchase_disassemble_missing_recipes', 'purchase_disassemble_request_id')
+  )
+union all
+select
+  'receive_purchase y convert_pack_to_units siguen en sus versiones (20261006c y 20261009d): una firma cada una, 1 y 5 argumentos (20261010d no las redefine)',
+  (
+    select count(*) = 2
+       and bool_and(case p.proname when 'receive_purchase' then p.pronargs = 1 else p.pronargs = 5 end)
+       and bool_and(p.prosrc not ilike '%disassemble%')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname in ('receive_purchase', 'convert_pack_to_units')
+  )
 order by 1;

@@ -25,6 +25,7 @@ import { randomUUID } from "node:crypto";
 import type { ApiResponse } from "../../e2e-bodegon/client";
 import type { LabRoleKey } from "../agents/base";
 import { ASSORTED_PACK_CASES } from "./assorted-pack";
+import { RECEIVE_DISASSEMBLE_CASES } from "./receive-disassemble";
 import {
   Checks,
   actAs,
@@ -1817,7 +1818,7 @@ export const HYPOTHESIS_CASES: readonly CaseDef[] = [
 ];
 
 if (require.main === module) {
-  runSuite("hypotheses", [...HYPOTHESIS_CASES, ...ASSORTED_PACK_CASES], process.argv.slice(2)).then(
+  runSuite("hypotheses", [...HYPOTHESIS_CASES, ...ASSORTED_PACK_CASES, ...RECEIVE_DISASSEMBLE_CASES], process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {
       console.error(error);

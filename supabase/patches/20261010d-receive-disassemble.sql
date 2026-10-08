@@ -1,58 +1,281 @@
 -- =============================================================================
--- 20261010b — create_purchase rechaza las lineas de un producto inactivo
---             (COM-15; plan ux-mejoras, Ola 1; §0b "producto inactivo acepta
---             compras y ajustes", parte de compras)
+-- 20261010d — desarmar al recibir: la linea de compra de un empaque con receta
+--             se abre en sus componentes en la misma transaccion que la recibe
+--             (COM-14; plan ux-mejoras, Ola 1; reglas 7 y 9)
 -- Proyecto: BodegaHub
--- Requiere: 20261006c / f / h, 20261007a, 20261009d, 20261009e y 20261010a
---           (create_purchase con el vinculo automatico proveedor-producto).
+-- Requiere: 20261006a (assert_store_context, libro de stock), 20261006c
+--           (receive_purchase vigente, stock_request_hash), 20261009d
+--           (receta de empaque por componentes y convert_pack_to_units de 5
+--           argumentos), 20261010a y 20261010b (create_purchase vigente).
 --
--- REDEFINE public.create_purchase (misma firma de 14 argumentos). PARTE DE LA
--- VERSION DE 20261010a: copia literal de su cuerpo (IVA por tax_rate_code,
--- receta de empaque por componentes, idempotencia por p_client_request_id,
--- documento -> productos "order by id for update", guardas de formato y de NaN,
--- proveedor activo con PT400 y vinculo automatico por linea) mas UNA guarda. No
--- define ninguna otra funcion ni toca tablas, indices, politicas o triggers.
+--   1. Modelo.
+--        * purchase_items.disassemble_on_receive boolean not null default
+--          false: la marca "Desarmar al recibir" de la linea. La escribe
+--          create_purchase desde el payload y la puede cambiar la recepcion.
+--        * purchase_items.disassembled_conversion_id uuid null: el
+--          conversion_id (stock_movements.conversion_id) de la apertura que
+--          hizo la recepcion. NULL = la linea no se desarmo.
+--        * purchases.receive_client_request_id / receive_request_hash: clave
+--          de idempotencia de la recepcion y huella de lo que se pidio.
+--      Una linea marcada de una compra recibida SIEMPRE tiene su
+--      disassembled_conversion_id: no existe el estado "pendiente de desarmar".
+--   2. Camino elegido: ATOMICO en los dos sitios (sin compensacion).
+--        * Pedido que se recibe: RPC nueva
+--          receive_purchase_and_disassemble(p_purchase_id, p_disassemble,
+--          p_client_request_id). En UNA transaccion llama a receive_purchase y
+--          despues a convert_pack_to_units por cada linea marcada. No
+--          reimplementa ninguna de las dos: las invoca.
+--        * Compra que nace recibida: create_purchase (misma firma de 14
+--          argumentos) invoca convert_pack_to_units por cada linea marcada al
+--          final de su propia transaccion. Se eligio esto y no "crear y luego
+--          desarmar en una segunda llamada" porque create_purchase ya se
+--          redefine aqui para guardar la marca, la segunda llamada exigiria un
+--          estado pendiente, su boton y su ruta, y asi el reintento idempotente
+--          de la compra (p_client_request_id) cubre tambien el desarme.
+--      Si una apertura falla (receta desactivada, incompleta, reparto que no
+--      suma) se revierte TODO: ni compra recibida ni stock movido, y el PT4xx
+--      llega al usuario.
+--   3. Semantica de stock y costo SIN cambios (regla 9). El resultado es el de
+--      "recibir" y despues "abrir N empaques" a mano: N = quantity de la linea
+--      (lo que entro al stock del empaque), costo del empaque = el que dejo la
+--      recepcion, reparto y promedio ponderado de convert_pack_to_units. El
+--      empaque queda con stock neto 0 (+N compra, -N conversion_salida) y cada
+--      componente sube lo de la receta o lo del reparto enviado.
+--   4. Bloqueos. convert_pack_to_units bloquea la cabecera de la receta y luego
+--      empaque + componentes por id; receive_purchase y create_purchase
+--      bloquean documento y luego los productos de la compra por id. Encadenadas
+--      tal cual, los componentes se bloquearian DESPUES de productos de id
+--      mayor y la cabecera despues de los productos. Por eso, antes de llamar a
+--      ninguna, purchase_disassemble_lock bloquea: cabeceras de las recetas
+--      (order by id) y despues TODOS los productos implicados (los de la compra
+--      + los componentes) en una sentencia "order by id for update". Orden
+--      global: documento -> cabeceras de receta -> productos por id.
+--   5. Idempotencia.
+--        * Recepcion: con p_client_request_id, repetir la misma llamada devuelve
+--          la compra ya recibida sin mover nada; la misma clave con otro
+--          contenido es PT409. Sin clave (o con otra), recibir dos veces es
+--          PT409 "Solo se pueden recibir compras en estado pedido", como hoy.
+--        * Cada apertura lleva una clave DERIVADA de la linea
+--          (purchase_disassemble_request_id = md5 de su id): una linea de compra
+--          no se puede desarmar dos veces por este camino aunque cambie la
+--          clave de la recepcion.
+--   6. create_purchase: copia integra de 20261010b mas:
+--        * disassemble_on_receive por linea (booleano JSON opcional; otra cosa
+--          es PT400). Ausente o false = la compra de siempre: mismo resultado y
+--          misma huella de idempotencia (el BFF solo envia la clave cuando es
+--          true).
+--        * una linea marcada exige que su producto sea el empaque de una receta
+--          ACTIVA; si no, PT400 nombrando el producto (pedido o recibida).
+--        * la marca se guarda en la linea; si la compra nace recibida, se
+--          bloquea como en el punto 4 y se abre al final.
+--   7. receive_purchase y convert_pack_to_units NO se redefinen.
+--   8. Receta desactivada entre el pedido y la recepcion: la recepcion responde
+--      PT409 nombrando el producto y no recibe nada. El usuario desmarca la
+--      linea en la confirmacion (p_disassemble sin esa linea) o reactiva la
+--      receta. Producto o componente inactivo: no se rechaza (igual que
+--      receive_purchase y convert_pack_to_units).
+--   9. Anular o devolver una compra desarmada: cancel_purchase / return_purchase
+--      no cambian; retiran los empaques de la linea y, como ya se abrieron,
+--      responden lo mismo que tras abrirlos a mano (stock insuficiente).
 --
---   1. Producto inactivo. Hasta hoy una compra (recibida o en pedido) aceptaba
---      lineas de un producto con products.is_active = false: entraba stock a un
---      producto que no se puede vender. Desde aqui, si alguna linea es de un
---      producto inactivo de la tienda la compra se rechaza entera con PT400,
---      en espanol y nombrando el producto:
---        "El producto X está inactivo: no se puede registrar la compra"
---        "Los productos X, Y están inactivos: no se puede registrar la compra"
---      Nada se crea: ni compra, ni lineas, ni movimientos, ni vinculo, ni
---      empaque del proveedor, ni historial de costo.
---   2. Sin carrera con la desactivacion. La guarda va DESPUES de bloquear todos
---      los productos de la compra ("order by id for update"): quien desactiva
---      el producto espera a que la compra termine, y la compra que espera a una
---      desactivacion en curso ve el producto ya inactivo y se rechaza.
---   3. PT400 y no PT404. create_sale responde PT404 "Producto no encontrado o
---      inactivo: <uuid>" porque busca el producto con is_active = true y no
---      distingue los dos casos. Aqui el producto existe y se nombra: se sigue la
---      convencion de esta misma funcion para el proveedor inactivo (PT400, "El
---      proveedor X está inactivo: no se puede registrar la compra"). El producto
---      inexistente o de otra tienda sigue respondiendo PT404 como hasta hoy.
---   4. Reintento idempotente. La repeticion de un p_client_request_id ya
---      guardado devuelve la compra original ANTES de la guarda, aunque el
---      producto se haya desactivado despues: el reintento no cambia.
---   5. receive_purchase NO se toca (sigue en la version de 20261006c): recibir un
---      pedido cuyo producto se desactivo despues de pedirlo se PERMITE (la
---      mercancia ya viene en camino; rechazarla dejaria el pedido atascado).
+-- p_disassemble de receive_purchase_and_disassemble:
+--   null              -> se desarman las lineas marcadas, con su receta.
+--   [ {"purchase_item_id": uuid, "components": [{"unit_product_id": uuid,
+--      "units": entero >= 0}] | null}, ... ]
+--                     -> la lista ES el conjunto de lineas a desarmar (las demas
+--                        quedan desmarcadas; [] = no desarmar ninguna).
+--                        components es el reparto real de convert_pack_to_units
+--                        (surtidos); sin el, la receta.
 --
--- NO cambia la semantica monetaria ni de stock: para una compra de productos
--- activos, mismas lineas, quantity_delta, costo del producto, totales y vinculos
--- que con 20261010a. No escribe el stock de products: lo mueve el trigger del
--- libro.
---
--- OJO: si se reaplica 20261006c, 20261006f, 20261006h, 20261007a, 20261009d o
--- 20261010a (todos redefinen create_purchase) HAY QUE REAPLICAR 20261010b y
--- correr verify-patches.sql. Reaplicar 20261009e no lo exige.
--- OJO: 20261010d-receive-disassemble.sql (COM-14) redefine create_purchase a
--- partir de este cuerpo: tras reaplicar 20261010b HAY QUE REAPLICAR 20261010d.
+-- OJO: si se reaplica 20261006c, 20261006f, 20261006h, 20261007a, 20261009d,
+-- 20261010a o 20261010b (todos redefinen create_purchase) HAY QUE REAPLICAR
+-- 20261010d y correr verify-patches.sql.
 -- Idempotente, una sola transaccion. Ejecutar en SQL Editor o via db-up.
 -- =============================================================================
 
 begin;
+
+-- -----------------------------------------------------------------------------
+-- 1. Modelo
+-- -----------------------------------------------------------------------------
+
+alter table public.purchase_items
+  add column if not exists disassemble_on_receive boolean not null default false,
+  add column if not exists disassembled_conversion_id uuid;
+
+comment on column public.purchase_items.disassemble_on_receive is
+  'Marca "Desarmar al recibir": al recibir la compra, los empaques de la linea se abren en los componentes de su receta.';
+comment on column public.purchase_items.disassembled_conversion_id is
+  'conversion_id (stock_movements.conversion_id) de la apertura hecha al recibir. NULL = la linea no se desarmo.';
+
+alter table public.purchases
+  add column if not exists receive_client_request_id uuid,
+  add column if not exists receive_request_hash text;
+
+comment on column public.purchases.receive_client_request_id is
+  'Clave de idempotencia de la recepcion (receive_purchase_and_disassemble).';
+comment on column public.purchases.receive_request_hash is
+  'Huella de lo pedido con receive_client_request_id. La misma clave con otra huella se rechaza.';
+
+-- -----------------------------------------------------------------------------
+-- 2. Funciones internas (no son RPC: sin execute para los roles de PostgREST)
+-- -----------------------------------------------------------------------------
+
+-- Clave de idempotencia de la apertura de UNA linea de compra: siempre la misma
+-- para la misma linea.
+create or replace function public.purchase_disassemble_request_id(p_purchase_item_id uuid)
+returns uuid
+language sql
+immutable
+set search_path = public
+as $$
+  select md5('purchase-disassemble:' || p_purchase_item_id::text)::uuid;
+$$;
+
+-- Nombres de los productos de p_pack_ids que existen en la tienda y NO son el
+-- empaque de una receta activa (NULL si todos la tienen).
+create or replace function public.purchase_disassemble_missing_recipes(
+  p_store_id uuid,
+  p_pack_ids uuid[]
+)
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select string_agg(p.name, ', ' order by p.name, p.id)
+  from public.products p
+  where p.id = any(p_pack_ids)
+    and p.store_id = p_store_id
+    and not exists (
+      select 1
+      from public.product_pack_conversions c
+      where c.pack_product_id = p.id
+        and c.store_id = p_store_id
+        and c.is_active = true
+    );
+$$;
+
+-- Bloqueos de una recepcion con desarme, ANTES de recibir y de abrir: las
+-- cabeceras de las recetas activas de p_pack_ids (order by id) y despues, en una
+-- sola sentencia y por id, p_product_ids + p_pack_ids + sus componentes.
+create or replace function public.purchase_disassemble_lock(
+  p_store_id uuid,
+  p_pack_ids uuid[],
+  p_product_ids uuid[]
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_ids uuid[];
+begin
+  perform 1
+  from public.product_pack_conversions c
+  where c.pack_product_id = any(p_pack_ids)
+    and c.store_id = p_store_id
+    and c.is_active = true
+  order by c.id
+  for update;
+
+  select array_agg(distinct ids.id)
+  into v_ids
+  from (
+    select unnest(coalesce(p_product_ids, '{}'::uuid[]) || coalesce(p_pack_ids, '{}'::uuid[])) as id
+    union
+    select pc.unit_product_id
+    from public.product_pack_components pc
+    join public.product_pack_conversions c on c.id = pc.conversion_id
+    where c.pack_product_id = any(p_pack_ids)
+      and c.store_id = p_store_id
+      and c.is_active = true
+  ) as ids;
+
+  perform 1
+  from public.products
+  where id = any(v_ids)
+    and store_id = p_store_id
+  order by id
+  for update;
+end;
+$$;
+
+-- Abre los empaques de cada linea marcada y aun sin desarmar de una compra YA
+-- recibida, invocando convert_pack_to_units (que valida rol, receta, reparto y
+-- stock, reparte el costo y deja los movimientos). p_disassemble aporta el
+-- reparto de las lineas que lo traigan. Quien llama ya tomo los bloqueos.
+create or replace function public.purchase_disassemble_lines(
+  p_purchase_id uuid,
+  p_disassemble jsonb default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_store_id uuid;
+  v_purchase_number text;
+  v_item public.purchase_items;
+  v_components jsonb;
+  v_result jsonb;
+begin
+  v_store_id := public.assert_store_context();
+
+  select purchase_number into v_purchase_number
+  from public.purchases
+  where id = p_purchase_id
+    and store_id = v_store_id
+    and status = 'recibido';
+
+  if not found then
+    raise exception using errcode = 'PT409', message = 'Solo se desarman lineas de una compra recibida';
+  end if;
+
+  for v_item in
+    select *
+    from public.purchase_items
+    where purchase_id = p_purchase_id
+      and disassemble_on_receive
+      and disassembled_conversion_id is null
+    order by product_id, id
+  loop
+    select e.value -> 'components'
+    into v_components
+    from jsonb_array_elements(coalesce(p_disassemble, '[]'::jsonb)) as e(value)
+    where e.value ->> 'purchase_item_id' = v_item.id::text;
+
+    v_result := public.convert_pack_to_units(
+      v_item.product_id,
+      v_item.quantity,
+      'Desarme al recibir ' || v_purchase_number,
+      public.purchase_disassemble_request_id(v_item.id),
+      v_components
+    );
+
+    update public.purchase_items
+    set disassembled_conversion_id = (v_result ->> 'conversionId')::uuid
+    where id = v_item.id;
+  end loop;
+end;
+$$;
+
+revoke all on function public.purchase_disassemble_request_id(uuid) from public, anon, authenticated;
+revoke all on function public.purchase_disassemble_missing_recipes(uuid, uuid[]) from public, anon, authenticated;
+revoke all on function public.purchase_disassemble_lock(uuid, uuid[], uuid[]) from public, anon, authenticated;
+revoke all on function public.purchase_disassemble_lines(uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.purchase_disassemble_request_id(uuid) to service_role;
+grant execute on function public.purchase_disassemble_missing_recipes(uuid, uuid[]) to service_role;
+grant execute on function public.purchase_disassemble_lock(uuid, uuid[], uuid[]) to service_role;
+grant execute on function public.purchase_disassemble_lines(uuid, jsonb) to service_role;
+
+-- -----------------------------------------------------------------------------
+-- 3. create_purchase: 20261010b + marca de la linea y desarme de la compra que
+--    nace recibida
+-- -----------------------------------------------------------------------------
 
 create or replace function public.create_purchase(
   p_supplier_id uuid,
@@ -128,6 +351,8 @@ declare
   v_new_sp_ids uuid[] := '{}';
   v_inactive_names text;
   v_inactive_count integer;
+  v_disassemble_ids uuid[];
+  v_missing_recipes text;
 begin
   v_store_id := public.assert_store_context();
   -- N4 — NaN / Infinity no son menores que 0 y atravesaban las guardas de abajo.
@@ -207,6 +432,14 @@ begin
         and (v_item ->> k.name) !~ '^-?[0-9]{1,9}$'
     ) then
       raise exception using errcode = 'PT400', message = 'Cantidad invalida en item de compra';
+    end if;
+
+    -- COM-14 — la marca "Desarmar al recibir" es un booleano de JSON o no va.
+    if v_item ? 'disassemble_on_receive'
+       and jsonb_typeof(v_item -> 'disassemble_on_receive') is distinct from 'boolean' then
+      raise exception using
+        errcode = 'PT400',
+        message = 'Marca de desarmar al recibir invalida en item de compra';
     end if;
   end loop;
 
@@ -324,6 +557,20 @@ begin
   into v_product_ids
   from jsonb_array_elements(p_items) as e(value);
 
+  -- COM-14 — productos de las lineas marcadas "Desarmar al recibir". Si la compra
+  -- nace recibida, sus empaques se abren al final: las cabeceras de receta y los
+  -- componentes se bloquean AQUI, junto con los productos de la compra y por id,
+  -- antes que ningun otro producto (la sentencia de abajo repite el bloqueo de
+  -- los que ya quedaron tomados).
+  select array_agg(distinct (e.value ->> 'product_id')::uuid)
+  into v_disassemble_ids
+  from jsonb_array_elements(p_items) as e(value)
+  where e.value -> 'disassemble_on_receive' = 'true'::jsonb;
+
+  if v_disassemble_ids is not null and p_status = 'recibido' then
+    perform public.purchase_disassemble_lock(v_store_id, v_disassemble_ids, v_product_ids);
+  end if;
+
   perform 1
   from public.products
   where id = any(v_product_ids)
@@ -350,6 +597,22 @@ begin
     raise exception using
       errcode = 'PT400',
       message = format('Los productos %s están inactivos: no se puede registrar la compra', v_inactive_names);
+  end if;
+
+  -- COM-14 — una linea marcada exige que su producto sea el empaque de una receta
+  -- activa, en un pedido y en una compra recibida. Un producto que no existe lo
+  -- rechaza el bucle de abajo con su PT404.
+  if v_disassemble_ids is not null then
+    v_missing_recipes := public.purchase_disassemble_missing_recipes(v_store_id, v_disassemble_ids);
+
+    if v_missing_recipes is not null then
+      raise exception using
+        errcode = 'PT400',
+        message = format(
+          'Sin receta de apertura activa: %s. No se puede marcar «Desarmar al recibir» en esas líneas',
+          v_missing_recipes
+        );
+    end if;
   end if;
 
   for v_item in select * from jsonb_array_elements(p_items)
@@ -551,7 +814,8 @@ begin
       tax_ref,
       tax_ves,
       cost_currency,
-      tax_rate_code
+      tax_rate_code,
+      disassemble_on_receive
     )
     values (
       v_purchase.id,
@@ -571,7 +835,8 @@ begin
       v_line_tax_ref,
       v_line_tax_ves,
       v_cost_currency,
-      v_tax_rate_code
+      v_tax_rate_code,
+      coalesce((v_item -> 'disassemble_on_receive') = 'true'::jsonb, false)
     );
 
     -- COM-02 — vinculo proveedor-producto de la linea. El producto ya esta
@@ -750,6 +1015,13 @@ begin
   where id = v_purchase.id
   returning * into v_purchase;
 
+  -- COM-14 — la compra nace recibida: los empaques de las lineas marcadas se
+  -- abren ahora, en esta misma transaccion, invocando convert_pack_to_units. Si
+  -- una apertura falla no queda ni la compra.
+  if p_status = 'recibido' and v_disassemble_ids is not null then
+    perform public.purchase_disassemble_lines(v_purchase.id, null);
+  end if;
+
   return v_purchase;
 exception
   -- R6 — tasa, costos, empaques x unidades o totales que no caben en sus columnas.
@@ -777,6 +1049,168 @@ grant execute on function public.create_purchase(
   uuid, jsonb, uuid, numeric, numeric, numeric, text, text, public.purchase_status,
   numeric, numeric, numeric, numeric, uuid
 ) to authenticated, service_role;
+
+-- -----------------------------------------------------------------------------
+-- 4. Recepcion de un pedido con desarme, atomica
+-- -----------------------------------------------------------------------------
+
+create or replace function public.receive_purchase_and_disassemble(
+  p_purchase_id uuid,
+  p_disassemble jsonb default null,
+  p_client_request_id uuid default null
+)
+returns public.purchases
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_store_id uuid;
+  v_purchase public.purchases;
+  v_request_hash text;
+  v_entry jsonb;
+  v_item_ids uuid[] := '{}';
+  v_item_id uuid;
+  v_pack_ids uuid[];
+  v_product_ids uuid[];
+  v_missing text;
+begin
+  v_store_id := public.assert_store_context();
+
+  if coalesce(public.current_user_role()::text, '') not in ('admin', 'almacen') then
+    raise exception using errcode = 'PT403', message = 'No autorizado para recibir compras';
+  end if;
+
+  -- Un null de JSON es lo mismo que no enviar la lista.
+  if jsonb_typeof(p_disassemble) = 'null' then
+    p_disassemble := null;
+  end if;
+
+  -- Documento primero. Su bloqueo serializa dos recepciones de la misma compra.
+  select * into v_purchase
+  from public.purchases
+  where id = p_purchase_id
+    and store_id = v_store_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'PT404', message = 'Compra no encontrada';
+  end if;
+
+  v_request_hash := public.stock_request_hash(jsonb_build_array(
+    'receive_purchase_and_disassemble', p_purchase_id, p_disassemble
+  ));
+
+  -- Reintento de la misma recepcion: la compra ya recibida, sin mover nada.
+  if p_client_request_id is not null
+     and v_purchase.receive_client_request_id = p_client_request_id then
+    if v_purchase.receive_request_hash is distinct from v_request_hash
+       or v_purchase.status <> 'recibido' then
+      raise exception using
+        errcode = 'PT409',
+        message = 'La clave de idempotencia ya se uso en otra recepcion de esta compra. Revisa la compra antes de reintentar.';
+    end if;
+
+    return v_purchase;
+  end if;
+
+  -- Cualquier otro estado lo rechaza receive_purchase con su PT409 de siempre.
+  if v_purchase.status <> 'pedido' then
+    return public.receive_purchase(p_purchase_id);
+  end if;
+
+  if p_disassemble is not null then
+    if jsonb_typeof(p_disassemble) <> 'array' then
+      raise exception using
+        errcode = 'PT400',
+        message = 'La lista de lineas a desarmar debe ser una lista';
+    end if;
+
+    for v_entry in select value from jsonb_array_elements(p_disassemble)
+    loop
+      if jsonb_typeof(v_entry) is distinct from 'object'
+         or jsonb_typeof(v_entry -> 'purchase_item_id') is distinct from 'string'
+         or (v_entry ->> 'purchase_item_id') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+        raise exception using
+          errcode = 'PT400',
+          message = 'Cada linea a desarmar requiere purchase_item_id';
+      end if;
+
+      v_item_id := (v_entry ->> 'purchase_item_id')::uuid;
+
+      if v_item_id = any(v_item_ids) then
+        raise exception using
+          errcode = 'PT400',
+          message = 'La lista de lineas a desarmar repite una linea';
+      end if;
+
+      if not exists (
+        select 1
+        from public.purchase_items
+        where id = v_item_id
+          and purchase_id = p_purchase_id
+      ) then
+        raise exception using
+          errcode = 'PT400',
+          message = 'Una linea a desarmar no pertenece a la compra';
+      end if;
+
+      v_item_ids := v_item_ids || v_item_id;
+    end loop;
+
+    -- La lista manda sobre la marca guardada con el pedido.
+    update public.purchase_items
+    set disassemble_on_receive = (id = any(v_item_ids))
+    where purchase_id = p_purchase_id
+      and disassemble_on_receive is distinct from (id = any(v_item_ids));
+  end if;
+
+  select
+    array_agg(distinct product_id),
+    array_agg(distinct product_id) filter (where disassemble_on_receive)
+  into v_product_ids, v_pack_ids
+  from public.purchase_items
+  where purchase_id = p_purchase_id;
+
+  if v_pack_ids is not null then
+    -- Cabeceras de receta y TODOS los productos (compra + componentes) por id,
+    -- antes de recibir: ni receive_purchase ni convert_pack_to_units toman
+    -- despues un bloqueo fuera de orden.
+    perform public.purchase_disassemble_lock(v_store_id, v_pack_ids, v_product_ids);
+
+    v_missing := public.purchase_disassemble_missing_recipes(v_store_id, v_pack_ids);
+
+    if v_missing is not null then
+      raise exception using
+        errcode = 'PT409',
+        message = format(
+          'Sin receta de apertura activa: %s. Desmarca «Desarmar al recibir» en esas líneas o activa su receta',
+          v_missing
+        );
+    end if;
+  end if;
+
+  v_purchase := public.receive_purchase(p_purchase_id);
+
+  if v_pack_ids is not null then
+    perform public.purchase_disassemble_lines(p_purchase_id, p_disassemble);
+  end if;
+
+  if p_client_request_id is not null then
+    update public.purchases
+    set receive_client_request_id = p_client_request_id,
+        receive_request_hash = v_request_hash
+    where id = p_purchase_id
+      and store_id = v_store_id
+    returning * into v_purchase;
+  end if;
+
+  return v_purchase;
+end;
+$$;
+
+revoke all on function public.receive_purchase_and_disassemble(uuid, jsonb, uuid) from public, anon;
+grant execute on function public.receive_purchase_and_disassemble(uuid, jsonb, uuid) to authenticated, service_role;
 
 commit;
 
