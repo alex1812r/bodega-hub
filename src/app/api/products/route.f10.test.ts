@@ -19,6 +19,7 @@ jest.mock("../../../modules/contacts/services/supplierProducts.server", () => ({
 }));
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { revalidateProductImportRows } from "@/modules/products/products-import/services/validateProductImportRows";
 import { mockCategories } from "@/shared/mocks/erp-data";
 
 import { PATCH as patchCategory } from "../categories/[id]/route";
@@ -274,6 +275,34 @@ describe("PRO-F10 · rutas de productos, categorías y ajustes", () => {
 
       expect(response.status).toBe(400);
       expect(body.error).toEqual({ code: "BAD_REQUEST", message });
+    });
+  });
+
+  describe("M3 · la importación Excel sigue entrando por POST /api/products", () => {
+    // La importación usa este mismo endpoint con el mismo cuerpo que un alta
+    // manual y admite filas sin categoría (`resolveCategoryIdByName` devuelve
+    // vacío): por eso el BFF no exige `categoryId` cuando no viene.
+    it("una fila con categoría y otra sin categoría se validan y se crean", async () => {
+      const rows = revalidateProductImportRows(
+        [
+          { categoria: "Herramientas", nombre: "F10 import con", precio_ref: 3, rowIndex: 2, sku: "f10-imp-con" },
+          { nombre: "F10 import sin", precio_ref: 4, rowIndex: 3, sku: "f10-imp-sin" },
+        ],
+        {
+          categories: mockCategories.filter((category) => category.isActive && !category.storeId),
+          existingSkus: new Set(),
+        },
+      );
+
+      expect(rows.map((row) => row.status)).toEqual(["valid", "valid"]);
+      expect(rows.map((row) => row.input?.categoryId)).toEqual(["cat-tools", undefined]);
+
+      for (const row of rows) {
+        const response = await postProduct(json("/api/products", "POST", row.input));
+
+        expect(response.status).toBe(201);
+        expect((await response.json()).data.sku).toBe(row.sku);
+      }
     });
   });
 

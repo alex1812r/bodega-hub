@@ -175,6 +175,7 @@ describe("ProductsListPage · alta de producto (PRO-04)", () => {
 
     try {
       await fillBasics(user, "Harina");
+      await user.selectOptions(dialog.getByLabelText("Categoría"), "cat-1");
       await user.click(dialog.getByRole("button", { name: "Crear producto" }));
       // El fallo no cierra ni limpia: se ve el motivo junto a lo escrito.
       expect(await dialog.findByText(SKU_TAKEN)).toBeVisible();
