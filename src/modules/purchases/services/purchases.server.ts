@@ -19,6 +19,7 @@ import {
   isMissingRpcSignatureError,
   rpcWithClientRequestId,
 } from "@/modules/inventory/services/rpcWithClientRequestId";
+import { isRangeNotSatisfiable, listCountOptions } from "@/modules/products/services/listRange";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 import { roundMoney } from "@/shared/utils/currency";
 
@@ -411,15 +412,28 @@ export async function listPurchases(
     return listPurchasesWithPendingBalance(supabase, searchParams, storeId, { limit, skip });
   }
 
-  let query = supabase
-    .from("purchases")
-    .select(purchaseSelect, { count: "exact" })
-    .eq("store_id", storeId)
-    .order("created_at", { ascending: false });
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    const query = supabase
+      .from("purchases")
+      .select(purchaseSelect, listCountOptions(head))
+      .eq("store_id", storeId);
 
-  query = applyPurchaseFilters(query, searchParams);
+    return applyPurchaseFilters(query, searchParams);
+  };
 
-  const { count, data, error } = await query.range(skip, skip + limit - 1);
+  const { count, data, error, status } = await buildFilteredQuery(false)
+    .order("created_at", { ascending: false })
+    .range(skip, skip + limit - 1);
+
+  // Página más allá del total: no es un error, es una página vacía con el total real.
+  if (isRangeNotSatisfiable(error, status)) {
+    const total = await buildFilteredQuery(true);
+
+    throwIfSupabaseError(total.error);
+
+    return { items: [], limit, skip, total: total.count ?? 0 };
+  }
 
   throwIfSupabaseError(error);
 
