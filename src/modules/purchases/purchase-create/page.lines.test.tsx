@@ -849,4 +849,48 @@ describe("PurchaseCreatePage · lector sobre una línea y Tab del último candad
 
     expect(screen.getByRole("button", { name: "Quitar Cable HDMI" })).toHaveFocus();
   });
+
+  it("con la última fila bloqueada, Tab sin Shift llega a «Confirmar Compra»: del buscador sale de la tarjeta", async () => {
+    const user = userEvent.setup();
+    installFetchStub(() => null);
+    renderPage();
+    addProduct("Cable HDMI");
+    addProduct("Harina PAN");
+    fireEvent.click(screen.getByRole("button", { name: "Bloquear todas" }));
+
+    const confirm = screen.getByRole("button", { name: /Confirmar Compra/ });
+    const card = searchBox().closest("section");
+    const visited: Element[] = [];
+
+    await user.click(searchBox());
+    for (let step = 0; step < 40 && document.activeElement !== confirm; step += 1) {
+      await user.tab();
+      if (document.activeElement) {
+        visited.push(document.activeElement);
+      }
+    }
+
+    expect(confirm).toHaveFocus();
+    // El salto al buscador se conserva, y de él se sale a lo que sigue a la tarjeta.
+    const jump = visited.lastIndexOf(searchBox());
+
+    expect(visited[jump - 1]).toBe(lockButton("Cable HDMI"));
+    expect(card).not.toContainElement(visited[jump + 1] as HTMLElement);
+  });
+
+  it("tras el salto al buscador, si se escribe algo Tab sigue su orden normal dentro de la tarjeta", async () => {
+    const user = userEvent.setup();
+    installFetchStub(() => null);
+    renderPage();
+    addProduct("Cable HDMI");
+    fireEvent.click(screen.getByRole("button", { name: "Bloquear todas" }));
+
+    lockButton("Cable HDMI").focus();
+    await user.tab();
+    expect(searchBox()).toHaveFocus();
+    await user.keyboard("a");
+    await user.tab();
+
+    expect(searchBox().closest("section")).toContainElement(document.activeElement as HTMLElement);
+  });
 });

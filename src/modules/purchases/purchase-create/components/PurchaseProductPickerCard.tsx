@@ -1,7 +1,7 @@
 "use client";
 
 import { Package, Plus } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { PosCatalogToolbar } from "@/modules/sales/sale-create/components/PosCatalogToolbar";
 import { PosScanModal } from "@/modules/sales/sale-create/components/PosScanModal";
@@ -128,6 +128,22 @@ export function buildNewProductPrefill(search: string): ProductFormInitialValues
   return /^\d+$/.test(text) ? { barcode: text } : { name: text };
 }
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]';
+
+/** Primer elemento al que Tab puede llegar después de `container`, sin contar lo que hay dentro. */
+function findFirstFocusableAfter(container: Element) {
+  return Array.from(document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
+    (element) =>
+      Boolean(container.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+      !container.contains(element) &&
+      element.tabIndex >= 0 &&
+      !element.closest("[hidden], [inert]") &&
+      // jsdom no la implementa: allí todo cuenta como visible.
+      (typeof element.checkVisibility !== "function" || element.checkVisibility()),
+  );
+}
+
 function getLinkChipLabel(product: PurchaseCatalogProduct) {
   const prefix = product.link === "preferred" ? "Habitual" : "Vinculado";
 
@@ -166,6 +182,9 @@ export function PurchaseProductPickerCard({
   const [scanError, setScanError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const cardRef = useRef<HTMLElement>(null);
+  // El foco llegó al buscador por el salto desde el último candado y aún no se tecleó nada.
+  const cameFromLastLock = useRef(false);
   const hasSupplier = Boolean(supplierId);
   const trimmedSearch = search.trim();
   const showResults = pickerOpen && hasSupplier && trimmedSearch.length > 0;
@@ -187,7 +206,35 @@ export function PurchaseProductPickerCard({
     });
   }
 
+  function handleTabPastLastLock() {
+    searchInputRef.current?.focus();
+    cameFromLastLock.current = true;
+  }
+
+  // El salto desde el último candado deja el foco en el buscador para seguir escaneando.
+  // Otro Tab sin haber escrito sale de la tarjeta: seguir el orden natural volvería a los
+  // candados y nunca se llegaría con Tab al resto del formulario.
+  function handleSearchKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (
+      event.key !== "Tab" ||
+      event.shiftKey ||
+      !cameFromLastLock.current ||
+      event.target !== searchInputRef.current ||
+      !cardRef.current
+    ) {
+      return;
+    }
+
+    const next = findFirstFocusableAfter(cardRef.current);
+
+    if (next) {
+      event.preventDefault();
+      next.focus();
+    }
+  }
+
   function handleSearchChange(value: string) {
+    cameFromLastLock.current = false;
     setScanError(null);
     onSearchChange(value);
     setPickerOpen(true);
@@ -241,7 +288,10 @@ export function PurchaseProductPickerCard({
   }
 
   return (
-    <section className="flex min-h-[31.25rem] flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
+    <section
+      className="flex min-h-[31.25rem] flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800"
+      ref={cardRef}
+    >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-5 py-3 dark:border-slate-800">
         <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
           <Package aria-hidden className="size-[1.125rem] text-primary" />
@@ -255,7 +305,17 @@ export function PurchaseProductPickerCard({
       </div>
 
       <div className="flex flex-col gap-2 border-b border-border px-4 py-4 sm:flex-row sm:items-start dark:border-slate-800">
-        <div className="relative min-w-0 flex-1" ref={containerRef}>
+        <div
+          className="relative min-w-0 flex-1"
+          onBlur={(event) => {
+            if (event.target === searchInputRef.current) {
+              cameFromLastLock.current = false;
+            }
+          }}
+          onKeyDown={handleSearchKeyDown}
+          ref={containerRef}
+          role="presentation"
+        >
           <PosCatalogToolbar
             autoFocus={false}
             embedded
@@ -358,7 +418,7 @@ export function PurchaseProductPickerCard({
           onRemoveItem={onRemoveItem}
           onScanCode={handleCodeSubmit}
           onSettleItem={onSettleItem}
-          onTabPastLastLock={() => searchInputRef.current?.focus()}
+          onTabPastLastLock={handleTabPastLastLock}
           onUpdateItem={onUpdateItem}
           rateVes={rateVes}
           taxCatalog={taxCatalog}
