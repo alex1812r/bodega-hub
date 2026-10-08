@@ -12,7 +12,7 @@ import { mockProducts } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
-import { createPurchase, receivePurchase } from "./purchases.mock-server";
+import { createPurchase, getPurchaseById, receivePurchase } from "./purchases.mock-server";
 
 const KEY_A = "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7";
 const KEY_B = "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d";
@@ -116,6 +116,42 @@ describe("purchases.mock-server · costo al recibir (PRO-10)", () => {
 
     expect(costOf(productId)).toBe(9);
     expect(reviewOf(purchase.id).map((item) => item.productId)).toEqual([productId]);
+  });
+
+  // PRO-F5: las compras creadas en el mock no están en la semilla `mockPurchases`.
+  it("una compra creada en el mock llega a la cola con su número y su proveedor", () => {
+    const productId = newProduct(8, 10);
+    const purchase = createPurchase(
+      { ...input, items: [unitLine(productId, 9)], purchaseNumber: "C-000777" },
+      DEFAULT_STORE_ID,
+    );
+
+    expect(reviewOf(purchase.id)[0].purchase).toEqual({
+      id: purchase.id,
+      number: "C-000777",
+      receivedAt: expect.any(String),
+      supplierName: "Suministros Industriales CA",
+    });
+  });
+
+  // PRO-F5: como `receive_purchase`, una compra ya recibida no se vuelve a recibir.
+  it("recibir deja la compra en recibido: un segundo intento se rechaza y no reaplica el costo", () => {
+    const productId = newProduct(8, 10);
+    const purchase = createPurchase(
+      { ...input, items: [unitLine(productId, 9)], status: "pedido" },
+      DEFAULT_STORE_ID,
+    );
+
+    expect(receivePurchase(purchase.id, DEFAULT_STORE_ID).status).toBe("recibido");
+    expect(getPurchaseById(purchase.id, DEFAULT_STORE_ID).status).toBe("recibido");
+
+    // Otra compra posterior baja el costo: recibir de nuevo la primera no debe pisarlo.
+    createPurchase({ ...input, items: [unitLine(productId, 7)] }, DEFAULT_STORE_ID);
+
+    expect(() => receivePurchase(purchase.id, DEFAULT_STORE_ID)).toThrow(
+      "Solo se pueden recibir compras en estado pedido.",
+    );
+    expect(costOf(productId)).toBe(7);
   });
 
   it("el costo es por unidad y con el IVA de la línea, redondeado a dinero", () => {

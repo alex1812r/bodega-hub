@@ -1,11 +1,11 @@
 import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
+import { findMockPurchase } from "@/modules/purchases/services/purchases.mock-server";
 import { getPricingSettings } from "@/modules/settings/services/settings.mock-server";
 import {
   mockContacts,
   mockProductPriceHistory,
   mockProducts,
-  mockPurchases,
   type ProductMock,
   type ProductPriceHistoryMock,
 } from "@/shared/mocks/erp-data";
@@ -180,7 +180,8 @@ function causingPurchase(productId: string, afterSeq: number): ProductPriceRevie
     return undefined;
   }
 
-  const purchase = mockPurchases.find((item) => item.id === latest.purchaseId);
+  // Semilla o creada en el mock: las creadas no están en `mockPurchases`.
+  const purchase = findMockPurchase(latest.purchaseId);
   const supplierName = mockContacts.find((contact) => contact.id === purchase?.supplierId)?.name;
 
   return {

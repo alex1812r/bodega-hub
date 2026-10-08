@@ -206,6 +206,14 @@ function toPurchaseItemMock(
   };
 }
 
+/**
+ * La compra tal como la guarda el mock, sea de la semilla o creada en esta
+ * ejecucion. Sin control de tienda: quien la expone lo hace con `getPurchaseById`.
+ */
+export function findMockPurchase(id: string): PurchaseMock | undefined {
+  return createdPurchases().get(id)?.purchase ?? mockPurchases.find((item) => item.id === id);
+}
+
 export function getPurchaseById(id: string, storeId: string) {
   const created = createdPurchases().get(id);
   const purchase = created?.purchase ?? mockPurchases.find((item) => item.id === id);
@@ -353,6 +361,13 @@ export function receivePurchase(id: string, storeId: string) {
   }
 
   applyReceivedCosts(purchase.id, purchase.items, storeId);
+
+  // Como `receive_purchase`: la compra queda recibida y no se puede volver a recibir.
+  const stored = findMockPurchase(id);
+
+  if (stored) {
+    stored.status = "recibido";
+  }
 
   return {
     ...purchase,
