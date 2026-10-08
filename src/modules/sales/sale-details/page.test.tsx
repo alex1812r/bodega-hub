@@ -369,3 +369,61 @@ describe("SaleDetailsPage · «Volver» (PAG-F2)", () => {
     },
   );
 });
+
+// PAG-F6 U2: un re-pedido fallido sustituia todo el detalle (y el modal de cobro abierto)
+// por la pantalla de error, aunque la venta ya estuviera cargada.
+describe("SaleDetailsPage · re-pedido fallido (PAG-F6 U2)", () => {
+  beforeEach(() => {
+    mockPermissions = ["sales.create", "payments.manage"];
+  });
+
+  function failSaleRequests(failure: () => Promise<Response>) {
+    const working = global.fetch;
+
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === `/api/sales/${PENDING_SALE.id}` ? failure() : working(input, init),
+    ) as unknown as typeof fetch;
+  }
+
+  it.each<[string, () => Promise<Response>]>([
+    ["se corta la red", () => Promise.reject(new TypeError("Failed to fetch"))],
+    [
+      "responde 500",
+      () =>
+        Promise.resolve(
+          jsonResponse({ error: { code: "INTERNAL_ERROR", message: "Fallo interno." } }, 500),
+        ),
+    ],
+  ])(
+    "con la venta cargada, si al abrir «Cobrar saldo» %s el detalle y el modal siguen en pantalla",
+    async (_name, failure) => {
+      await renderSale(PENDING_SALE);
+      failSaleRequests(failure);
+
+      fireEvent.click(screen.getByRole("button", { name: "Cobrar saldo" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "Cobrar saldo" });
+
+      expect(
+        await within(dialog).findByText(/No se pudo comprobar el saldo pendiente/),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("dialog", { name: "Cobrar saldo" })).toBeInTheDocument();
+      expect(screen.queryByText("No pudimos cargar la venta")).not.toBeInTheDocument();
+      expect(screen.getByText("Historial de Pagos")).toBeInTheDocument();
+    },
+  );
+
+  it("sin venta cargada sigue mostrando la pantalla de error", async () => {
+    global.fetch = jest.fn(() =>
+      Promise.resolve(
+        jsonResponse({ error: { code: "INTERNAL_ERROR", message: "Fallo interno." } }, 500),
+      ),
+    ) as unknown as typeof fetch;
+
+    render(<SaleDetailsPage saleId={PENDING_SALE.id} />, { wrapper: createQueryWrapper() });
+
+    expect(await screen.findByText("No pudimos cargar la venta")).toBeInTheDocument();
+    expect(screen.getByText("Fallo interno.")).toBeInTheDocument();
+    expect(screen.queryByText("Historial de Pagos")).not.toBeInTheDocument();
+  });
+});

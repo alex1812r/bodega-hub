@@ -13,6 +13,9 @@ const UNBROKEN_MESSAGE = "ERR_UPSTREAM_".padEnd(220, "X");
 // El boton que abre el modal lleva su titulo y el de envio depende del documento.
 const OPEN_BUTTON = /^(Cobrar saldo|Pagar compra|Registrar pago)$/;
 const SUBMIT_BUTTON = /^Registrar (cobro|pago)$/;
+// PAG-F6 U4: aviso del intento de resultado incierto que sigue sin resolver.
+const UNCONFIRMED_NOTICE =
+  "No pudimos confirmar si el pago se registró. Reintenta: si ya entró, no se duplicará.";
 
 function jsonResponse(payload: unknown, status = 200) {
   return {
@@ -113,6 +116,11 @@ describe("RegisterPaymentModal", () => {
 
   async function submit(user: ReturnType<typeof userEvent.setup>) {
     await user.click(screen.getByRole("button", { name: SUBMIT_BUTTON }));
+  }
+
+  /** PAG-F6 U4: con un intento por confirmar la accion principal es «Reintentar». */
+  async function retry(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "Reintentar" }));
   }
 
   function postedBodies() {
@@ -436,7 +444,8 @@ describe("RegisterPaymentModal", () => {
       expect(await dialog.findByText("La caja esta cerrada.")).toBeInTheDocument();
       expect(dialog.getByRole("button", { name: "Cancelar" })).toBeEnabled();
 
-      await submit(user);
+      // PAG-F6 U4: un 409 es de resultado incierto; el reintento es el mismo envio.
+      await retry(user);
       await waitFor(() => expect(postedBodies()).toHaveLength(2));
     });
   });
@@ -1163,7 +1172,7 @@ describe("RegisterPaymentModal", () => {
         expect(await dialog.findByText("Fallo.")).toBeInTheDocument();
 
         paymentResponse = jsonResponse({ data: { id: "pay-new", pendingBalanceVes: 1000 } });
-        await submit(user);
+        await retry(user);
         expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
 
         const [first, second] = requestIds();
@@ -1194,7 +1203,7 @@ describe("RegisterPaymentModal", () => {
         await submit(user);
         expect(await dialog.findByText(/No se pudo conectar con el servidor\./)).toBeInTheDocument();
 
-        await submit(user);
+        await retry(user);
         expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
 
         const [first, second] = requestIds();
@@ -1363,7 +1372,8 @@ describe("RegisterPaymentModal", () => {
       expect(await dialog.findByText(/Saldo pendiente actual: .*8\.375,00/)).toBeInTheDocument();
     });
 
-    it("tras un 400 definitivo no vuelve a pedir la venta", async () => {
+    // PAG-F6: tras un rechazo (p. ej. sobrepago) el saldo en pantalla puede estar viejo.
+    it("tras un 400 definitivo vuelve a pedir la venta y se sigue editando", async () => {
       paymentResponse = jsonResponse(
         { error: { code: "BAD_REQUEST", message: "Monto rechazado." } },
         400,
@@ -1377,11 +1387,11 @@ describe("RegisterPaymentModal", () => {
 
       await submit(user);
       expect(await dialog.findByText("Monto rechazado.")).toBeInTheDocument();
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      });
 
-      expect(saleRequests()).toBe(requestsBefore);
+      await waitFor(() => expect(saleRequests()).toBe(requestsBefore + 1));
+      // Rechazo definitivo: no queda intento por confirmar.
+      expect(dialog.queryByText(UNCONFIRMED_NOTICE)).not.toBeInTheDocument();
+      expect(dialog.getByLabelText("Monto")).toBeEnabled();
     });
 
     it("cada apertura vuelve a pedir el saldo", async () => {
@@ -1402,7 +1412,8 @@ describe("RegisterPaymentModal", () => {
       expect(reopened.dialog.queryByText(/8\.475,00/)).not.toBeInTheDocument();
     });
 
-    it("500 con el pago guardado, cerrar y reabrir: saldo nuevo y clave nueva", async () => {
+    // PAG-F6 U4: antes la reapertura estrenaba clave y un abono parcial repetido entraba dos veces.
+    it("500 con el pago guardado, cerrar y reabrir: saldo nuevo y el mismo intento por confirmar", async () => {
       savePaymentButReplyWith500();
       renderModal(<RegisterPaymentModal saleId="sale-002" />);
       const { dialog, user } = await openModal();
@@ -1417,18 +1428,21 @@ describe("RegisterPaymentModal", () => {
       expect(
         await reopened.dialog.findByText(/Saldo pendiente actual: .*8\.375,00/),
       ).toBeInTheDocument();
-      expect(reopened.dialog.queryByText("Fallo.")).not.toBeInTheDocument();
+      expect(reopened.dialog.getByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+      expect(reopened.dialog.getByLabelText("Monto")).toHaveValue("100");
+      expect(reopened.dialog.getByLabelText("Monto")).toBeDisabled();
+      expect(
+        reopened.dialog.queryByRole("button", { name: SUBMIT_BUTTON }),
+      ).not.toBeInTheDocument();
 
-      await reopened.user.type(reopened.dialog.getByLabelText("Monto"), "120");
-      await submit(reopened.user);
+      await retry(reopened.user);
       await waitFor(() => expect(postedBodies()).toHaveLength(2));
 
       const [first, second] = postedBodies().map((post) => post.body);
 
-      expect(first).toMatchObject({ amount: 100 });
-      expect(second).toMatchObject({ amount: 120 });
-      expect(second.clientRequestId).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/));
-      expect(second.clientRequestId).not.toBe(first.clientRequestId);
+      expect(second).toEqual(first);
+      // El servidor no lo registra dos veces: el saldo sigue siendo el del primer envio.
+      await waitFor(() => expect(salePaidVes).toBe(3100));
     });
 
     it("si el pago de resultado incierto saldo la venta, al reabrir no deja enviar otro", async () => {
@@ -1451,17 +1465,19 @@ describe("RegisterPaymentModal", () => {
         reopened.dialog.queryByRole("button", { name: "Completar saldo" }),
       ).not.toBeInTheDocument();
 
-      // Ni el saldo viejo ni un monto dentro de la holgura de redondeo (Bs 10) salen.
-      for (const amount of ["8475", "5"]) {
-        await reopened.user.clear(reopened.dialog.getByLabelText("Monto"));
-        await reopened.user.type(reopened.dialog.getByLabelText("Monto"), `${amount}{Enter}`);
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        });
-        expect(reopened.dialog.getByText(/El monto supera el saldo pendiente/)).toBeInTheDocument();
-      }
+      // PAG-F6 U4: no hay formulario donde teclear otro pago; solo cabe repetir el mismo.
+      expect(reopened.dialog.getByLabelText("Monto")).toBeDisabled();
+      expect(
+        reopened.dialog.queryByRole("button", { name: SUBMIT_BUTTON }),
+      ).not.toBeInTheDocument();
 
-      expect(postedBodies()).toHaveLength(1);
+      await retry(reopened.user);
+      await waitFor(() => expect(postedBodies()).toHaveLength(2));
+
+      const keys = postedBodies().map((post) => post.body.clientRequestId);
+
+      expect(new Set(keys).size).toBe(1);
+      expect(salePaidVes).toBe(11475);
     });
   });
 
@@ -1491,6 +1507,362 @@ describe("RegisterPaymentModal", () => {
         ),
       ).toBeInTheDocument();
       expect(dialog.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("PAG-F6 U4: intento por confirmar", () => {
+    const failure = (status: number, message: string) =>
+      jsonResponse({ error: { code: "ERROR", message } }, status);
+    const success = () => jsonResponse({ data: { id: "pay-new", pendingBalanceVes: 1000 } });
+
+    function saleRequests() {
+      return fetchMock.mock.calls.filter(
+        ([url, init]) =>
+          String(url).includes("/api/sales/") &&
+          (init as RequestInit | undefined)?.method !== "POST",
+      ).length;
+    }
+
+    async function submitUncertain() {
+      paymentResponse = failure(500, "Fallo.");
+
+      const opened = await openModal();
+
+      await opened.user.selectOptions(opened.dialog.getByLabelText("Metodo"), "efectivo_usd");
+      await opened.user.type(opened.dialog.getByLabelText("Monto"), "2");
+      await opened.user.type(opened.dialog.getByLabelText("Notas"), "Abono");
+      await submit(opened.user);
+      expect(await opened.dialog.findByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+
+      return opened;
+    }
+
+    it("tras un 500 bloquea los campos con lo enviado, lo explica y ofrece Reintentar", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog } = await submitUncertain();
+
+      expect(dialog.getByText("Fallo.")).toBeInTheDocument();
+      expect(dialog.getByLabelText("Monto")).toHaveValue("2");
+      expect(dialog.getByLabelText("Monto")).toBeDisabled();
+      expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_usd");
+      expect(dialog.getByLabelText("Metodo")).toBeDisabled();
+      expect(dialog.getByLabelText("Notas")).toBeDisabled();
+      expect(dialog.getByRole("button", { name: "Reintentar" })).toBeEnabled();
+      expect(dialog.queryByRole("button", { name: SUBMIT_BUTTON })).not.toBeInTheDocument();
+      expect(dialog.getByRole("button", { name: "Cancelar" })).toBeEnabled();
+    });
+
+    it("Reintentar reenvia exactamente el mismo contenido con la misma clave y, si entra, sigue el flujo normal", async () => {
+      const onRegistered = jest.fn();
+
+      renderModal(<RegisterPaymentModal onRegistered={onRegistered} saleId="sale-002" />);
+      const { dialog, user } = await submitUncertain();
+
+      paymentResponse = success();
+      await retry(user);
+
+      expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+
+      const [first, second] = postedBodies().map((post) => post.body);
+
+      expect(postedBodies()).toHaveLength(2);
+      expect(second).toEqual(first);
+      expect(first.clientRequestId).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/));
+      expect(onRegistered).toHaveBeenCalledTimes(1);
+      // Resuelto: formulario limpio y editable, con el boton de siempre.
+      expect(dialog.queryByText(UNCONFIRMED_NOTICE)).not.toBeInTheDocument();
+      expect(dialog.getByLabelText("Monto")).toBeEnabled();
+      expect(dialog.getByLabelText("Monto")).toHaveValue("");
+      expect(dialog.getByRole("button", { name: SUBMIT_BUTTON })).toBeInTheDocument();
+    });
+
+    it("un reintento que vuelve a fallar con 500 sigue por confirmar con la misma clave", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await submitUncertain();
+
+      await retry(user);
+      await waitFor(() => expect(postedBodies()).toHaveLength(2));
+      await waitFor(() => expect(dialog.getByRole("button", { name: "Reintentar" })).toBeEnabled());
+      expect(dialog.getByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+
+      paymentResponse = success();
+      await retry(user);
+      expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+
+      const keys = postedBodies().map((post) => post.body.clientRequestId);
+
+      expect(keys).toHaveLength(3);
+      expect(new Set(keys).size).toBe(1);
+    });
+
+    it("cerrar y reabrir muestra el intento pendiente, no un formulario limpio con clave nueva", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { user } = await submitUncertain();
+
+      await user.click(screen.getByRole("button", { name: "Cancelar" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+      const reopened = await openModal();
+
+      expect(reopened.dialog.getByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+      expect(reopened.dialog.getByLabelText("Monto")).toHaveValue("2");
+      expect(reopened.dialog.getByLabelText("Monto")).toBeDisabled();
+      expect(reopened.dialog.getByLabelText("Metodo")).toHaveValue("efectivo_usd");
+
+      paymentResponse = success();
+      await retry(reopened.user);
+      expect(
+        await reopened.dialog.findByText(/Pago registrado\. Saldo pendiente:/),
+      ).toBeInTheDocument();
+
+      const [first, second] = postedBodies().map((post) => post.body);
+
+      expect(second).toEqual(first);
+
+      // Resuelto el intento, la siguiente apertura vuelve a ser un formulario limpio.
+      await reopened.user.click(screen.getByRole("button", { name: "Cancelar" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+      const clean = await openModal();
+
+      expect(clean.dialog.queryByText(UNCONFIRMED_NOTICE)).not.toBeInTheDocument();
+      expect(clean.dialog.getByLabelText("Monto")).toHaveValue("");
+      expect(clean.dialog.getByLabelText("Monto")).toBeEnabled();
+    });
+
+    it("el intento es del documento: otro documento sale limpio y al volver al primero sigue pendiente", async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+      });
+      // Como en `/payments` o en Saldos: un solo modal al que se le cambia el documento.
+      const modalFor = (saleId?: string) => (
+        <QueryClientProvider client={queryClient}>
+          <RegisterPaymentModal
+            onOpenChange={() => undefined}
+            open={saleId !== undefined}
+            saleId={saleId}
+          />
+        </QueryClientProvider>
+      );
+
+      paymentResponse = failure(500, "Fallo.");
+
+      const { rerender } = render(modalFor("sale-002"));
+      const user = userEvent.setup();
+      let dialog = within(await screen.findByRole("dialog"));
+
+      await dialog.findByText(/Saldo pendiente actual/);
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+      expect(await dialog.findByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+
+      // El consumidor cierra (documento `undefined`) y abre otra venta.
+      rerender(modalFor(undefined));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      rerender(modalFor("sale-003"));
+      dialog = within(await screen.findByRole("dialog"));
+      await dialog.findByText(/Saldo pendiente actual/);
+      expect(dialog.queryByText(UNCONFIRMED_NOTICE)).not.toBeInTheDocument();
+      expect(dialog.getByLabelText("Monto")).toHaveValue("");
+      expect(dialog.getByLabelText("Monto")).toBeEnabled();
+
+      rerender(modalFor(undefined));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      rerender(modalFor("sale-002"));
+      dialog = within(await screen.findByRole("dialog"));
+      await dialog.findByText(/Saldo pendiente actual/);
+      expect(dialog.getByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+      expect(dialog.getByLabelText("Monto")).toHaveValue("100");
+      expect(dialog.getByLabelText("Monto")).toBeDisabled();
+
+      paymentResponse = success();
+      await retry(user);
+      expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+
+      const [first, second] = postedBodies().map((post) => post.body);
+
+      expect(postedBodies()).toHaveLength(2);
+      expect(second).toEqual(first);
+    });
+
+    it.each([
+      ["un 400", 400],
+      ["un 409 de conflicto de clave", 409],
+    ])(
+      "%s en el reintento es definitivo: muestra el mensaje, refresca el saldo y vuelve a editar con clave nueva",
+      async (_name, status) => {
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog, user } = await submitUncertain();
+
+        await dialog.findByText(/Saldo pendiente actual/);
+
+        const requestsBefore = saleRequests();
+
+        paymentResponse = failure(status, "El pago fue rechazado.");
+        await retry(user);
+
+        expect(await dialog.findByText("El pago fue rechazado.")).toBeInTheDocument();
+        expect(dialog.queryByText(UNCONFIRMED_NOTICE)).not.toBeInTheDocument();
+        await waitFor(() => expect(saleRequests()).toBe(requestsBefore + 1));
+        expect(dialog.getByLabelText("Monto")).toBeEnabled();
+        expect(dialog.getByLabelText("Monto")).toHaveValue("2");
+        expect(dialog.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+
+        paymentResponse = success();
+        await user.clear(dialog.getByLabelText("Monto"));
+        await user.type(dialog.getByLabelText("Monto"), "3");
+        await waitFor(() =>
+          expect(dialog.getByRole("button", { name: SUBMIT_BUTTON })).toBeEnabled(),
+        );
+        await submit(user);
+        await waitFor(() => expect(postedBodies()).toHaveLength(3));
+
+        const [first, second, third] = postedBodies().map((post) => post.body);
+
+        expect(second.clientRequestId).toBe(first.clientRequestId);
+        expect(third.amount).toBe(3);
+        expect(third.clientRequestId).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/));
+        expect(third.clientRequestId).not.toBe(first.clientRequestId);
+      },
+    );
+
+    it("con el saldo sin poder comprobarse solo hay un «Reintentar»: el del pago", async () => {
+      const defaultFetch = fetchMock.getMockImplementation() as (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<Response>;
+      let networkDown = false;
+
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (networkDown) {
+          throw new TypeError("Failed to fetch");
+        }
+
+        return defaultFetch(url, init);
+      });
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      networkDown = true;
+      await submit(user);
+
+      expect(await dialog.findByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+      expect(
+        await dialog.findByText(/No se pudo comprobar el saldo pendiente/),
+      ).toBeInTheDocument();
+      expect(dialog.getAllByRole("button", { name: "Reintentar" })).toHaveLength(1);
+
+      networkDown = false;
+      await retry(user);
+      expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+      expect(postedBodies()[1].body).toEqual(postedBodies()[0].body);
+    });
+  });
+
+  describe("PAG-F6 U3: respuesta que nunca llega", () => {
+    it("el POST viaja con senal de aborto y, si se aborta por tiempo limite, el modal queda por confirmar con la misma clave", async () => {
+      const defaultFetch = fetchMock.getMockImplementation() as (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<Response>;
+      const signals: Array<AbortSignal | null | undefined> = [];
+      let timesOut = true;
+
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (init?.method !== "POST") {
+          return defaultFetch(url, init);
+        }
+
+        signals.push(init.signal);
+
+        if (timesOut) {
+          // Lo que hace `fetch` cuando la senal del tiempo limite aborta la peticion.
+          throw new DOMException("The operation was aborted.", "AbortError");
+        }
+
+        return defaultFetch(url, init);
+      });
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+
+      expect(await dialog.findByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+      expect(signals[0]).toBeInstanceOf(AbortSignal);
+      expect(dialog.queryByText(/aborted/)).not.toBeInTheDocument();
+      // Ya no queda bloqueado: se puede cerrar o reintentar.
+      expect(dialog.getByRole("button", { name: "Cancelar" })).toBeEnabled();
+
+      timesOut = false;
+      await retry(user);
+      expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+      expect(postedBodies()[1].body).toEqual(postedBodies()[0].body);
+    });
+  });
+
+  describe("PAG-F6 bajos", () => {
+    it("un 400 de validacion muestra tambien el primer motivo que viene en español", async () => {
+      paymentResponse = jsonResponse(
+        {
+          error: {
+            code: "BAD_REQUEST",
+            issues: [
+              { code: "invalid_type", message: "Invalid input: expected number", path: ["amount"] },
+              {
+                code: "too_big",
+                message: "El texto no puede superar 2000 caracteres.",
+                path: ["notes"],
+              },
+            ],
+            message: "La solicitud no tiene un formato valido.",
+          },
+        },
+        400,
+      );
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+
+      expect(
+        await dialog.findByText(
+          "La solicitud no tiene un formato valido. El texto no puede superar 2000 caracteres.",
+        ),
+      ).toBeInTheDocument();
+      expect(dialog.queryByText(/Invalid input/)).not.toBeInTheDocument();
+    });
+
+    it("si los metodos habilitados no cargan lo avisa en vez de ofrecerlos todos en silencio", async () => {
+      const defaultFetch = fetchMock.getMockImplementation() as (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<Response>;
+
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+        String(url).includes("/api/settings/payment-methods")
+          ? jsonResponse({ error: { code: "INTERNAL", message: "Sin ajustes." } }, 500)
+          : defaultFetch(url, init),
+      );
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog } = await openModal();
+
+      expect(
+        await dialog.findByText(
+          "No se pudieron cargar los métodos de pago habilitados de la tienda. Se muestran todos: confirma que el método elegido esté habilitado.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("con los metodos cargados no hay aviso de metodos", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog } = await openModal();
+
+      expect(
+        dialog.queryByText(/No se pudieron cargar los métodos de pago/),
+      ).not.toBeInTheDocument();
     });
   });
 

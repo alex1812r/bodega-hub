@@ -15,8 +15,9 @@ import { RegisterPaymentModal, type RegisterPaymentModalProps } from "./Register
  * - Se abre con `trigger` o por código con `open` + `onOpenChange` ("Pagar ahora").
  * - `onRegistered(payment)` avisa de cada pago registrado; el modal sigue abierto
  *   con el saldo que queda.
- * - Cada envío lleva una clave de idempotencia: reintentar tras un fallo de red o
- *   un 5xx no registra el pago dos veces.
+ * - Cada envío lleva una clave de idempotencia. Tras un fallo de red, un tiempo
+ *   límite o un 5xx el modal queda "por confirmar": campos bloqueados con lo enviado
+ *   y "Reintentar", que reenvía lo mismo con la misma clave y no duplica el pago.
  *
  * Estas historias simulan `/api/sales/:id`, `/api/purchases/:id` y `/api/payments`
  * con MSW y abren el modal por código.
@@ -194,8 +195,40 @@ export const SaleWithBalance: Story = {
   },
 };
 
+export const Rejected: Story = {
+  name: "Rechazo del servidor (400)",
+  parameters: {
+    msw: {
+      handlers: [
+        ...documentHandlers,
+        http.post("/api/payments", async () => {
+          await delay(400);
+
+          return HttpResponse.json(
+            { error: { code: "BAD_REQUEST", message: "La caja está cerrada." } },
+            { status: 400 },
+          );
+        }),
+      ],
+    },
+  },
+  render: () => <ModalDemo purchaseId={purchase.id} />,
+  play: async ({ canvasElement, userEvent }) => {
+    const dialog = within(await within(canvasElement.ownerDocument.body).findByRole("dialog"));
+
+    await userEvent.click(await dialog.findByRole("button", { name: "Completar saldo" }));
+    await userEvent.click(dialog.getByRole("button", { name: "Registrar pago" }));
+    await expect(await dialog.findByText("La caja está cerrada.")).toBeInTheDocument();
+    // Rechazo definitivo: se sigue editando y se envía con el botón de siempre.
+    await waitFor(() =>
+      expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeEnabled(),
+    );
+    await expect(dialog.getByLabelText("Monto")).toBeEnabled();
+  },
+};
+
 export const ServerError: Story = {
-  name: "Error de servidor",
+  name: "Por confirmar tras un error de servidor (500)",
   parameters: {
     msw: {
       handlers: [
@@ -218,7 +251,14 @@ export const ServerError: Story = {
     await userEvent.click(await dialog.findByRole("button", { name: "Completar saldo" }));
     await userEvent.click(dialog.getByRole("button", { name: "Registrar pago" }));
     await expect(await dialog.findByText("No se pudo registrar el pago.")).toBeInTheDocument();
-    await expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeEnabled();
+    // Resultado incierto: campos bloqueados con lo enviado y "Reintentar" con la misma clave.
+    await expect(
+      dialog.getByText(
+        "No pudimos confirmar si el pago se registró. Reintenta: si ya entró, no se duplicará.",
+      ),
+    ).toBeInTheDocument();
+    await expect(dialog.getByLabelText("Monto")).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Reintentar" })).toBeEnabled();
   },
 };
 

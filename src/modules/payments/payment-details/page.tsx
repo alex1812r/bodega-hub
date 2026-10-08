@@ -37,7 +37,9 @@ export function PaymentDetailsPage({
     return <DetailSkeleton itemsPerSection={4} />;
   }
 
-  if (payment.error || !payment.data) {
+  // Solo sin datos: si falla un re-pedido con el pago ya cargado, el detalle (y el
+  // modal de «Registrar otro pago» abierto) siguen en pantalla.
+  if (!payment.data) {
     return (
       <ErrorState
         description={

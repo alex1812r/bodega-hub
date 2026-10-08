@@ -1,8 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
-import { useCancelPayment, useCreatePayment, usePayment, usePayments } from "./usePayments";
+import {
+  CREATE_PAYMENT_TIMEOUT_MS,
+  useCancelPayment,
+  useCreatePayment,
+  usePayment,
+  usePayments,
+} from "./usePayments";
 
 function paginated<T>(items: T[]) {
   return { items, limit: 10, skip: 0, total: items.length };
@@ -249,6 +255,78 @@ describe("payments hooks", () => {
       expect(invalidatedKeys()).toEqual(
         expect.arrayContaining([["payments"], ["sales"], ["purchases"], ["cash"], ["vault"]]),
       );
+    });
+  });
+
+  // PAG-F6 U3: sin tiempo limite, una respuesta que nunca llega dejaba el modal bloqueado.
+  describe("tiempo limite del POST de pago", () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("aborta la peticion al vencer el tiempo limite y la mutacion falla", async () => {
+      jest.useFakeTimers();
+
+      let signal: AbortSignal | null | undefined;
+
+      fetchMock.mockImplementation(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            signal = init?.signal;
+            signal?.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            );
+          }),
+      );
+
+      const { result } = renderHook(() => useCreatePayment(), { wrapper: createWrapper() });
+      let failure: unknown;
+
+      act(() => {
+        result.current
+          .mutateAsync({ amount: 100, method: "efectivo_ves", saleId: "sale-002" })
+          .catch((error: unknown) => {
+            failure = error;
+          });
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(CREATE_PAYMENT_TIMEOUT_MS - 1);
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(signal?.aborted).toBe(false);
+      expect(failure).toBeUndefined();
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1);
+      });
+
+      expect(signal?.aborted).toBe(true);
+      expect(failure).toBeInstanceOf(DOMException);
+    });
+
+    it("una respuesta a tiempo no deja el temporizador vivo ni aborta nada", async () => {
+      jest.useFakeTimers();
+
+      let signal: AbortSignal | null | undefined;
+
+      fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+        signal = init?.signal;
+
+        return jsonResponse({ data: { id: "pay-new" } });
+      });
+
+      const { result } = renderHook(() => useCreatePayment(), { wrapper: createWrapper() });
+
+      await act(async () => {
+        await result.current.mutateAsync({ amount: 100, method: "efectivo_ves", saleId: "sale-002" });
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(CREATE_PAYMENT_TIMEOUT_MS * 2);
+      });
+
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal?.aborted).toBe(false);
     });
   });
 });

@@ -403,3 +403,49 @@ describe("PurchaseDetailsPage · «Volver» (PAG-F2)", () => {
     },
   );
 });
+
+// PAG-F6 U2: un re-pedido fallido sustituia todo el detalle (y el modal de pago abierto)
+// por la pantalla de error, aunque la compra ya estuviera cargada.
+describe("PurchaseDetailsPage · re-pedido fallido (PAG-F6 U2)", () => {
+  const serverFailure = () =>
+    Promise.resolve(
+      jsonResponse({ error: { code: "INTERNAL_ERROR", message: "Fallo interno." } }, 500),
+    );
+
+  it("con la compra cargada, si al abrir «Pagar» la compra responde 500 el detalle y el modal siguen en pantalla", async () => {
+    const { user } = await renderPage();
+    const working = global.fetch;
+
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === `/api/purchases/${PURCHASE.id}` ? serverFailure() : working(input, init),
+    ) as unknown as typeof fetch;
+
+    await user.click(screen.getByRole("button", { name: "Pagar" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Pagar compra" });
+
+    expect(
+      await within(dialog).findByText(/No se pudo comprobar el saldo pendiente/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Pagar compra" })).toBeInTheDocument();
+    expect(screen.queryByText("No pudimos cargar la compra")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { hidden: true, name: /C-20261006-000007/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("sin compra cargada sigue mostrando la pantalla de error", async () => {
+    global.fetch = jest.fn(serverFailure) as unknown as typeof fetch;
+
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <PurchaseDetailsPage purchaseId={PURCHASE.id} />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("No pudimos cargar la compra")).toBeInTheDocument();
+    expect(screen.getByText("Fallo interno.")).toBeInTheDocument();
+  });
+});

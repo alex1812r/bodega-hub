@@ -115,15 +115,31 @@ export function usePayment(id?: string) {
   });
 }
 
+/**
+ * Tiempo límite del alta de un pago. Al vencer, la petición se aborta y la mutación
+ * falla con un error que no es `ClientApiError`: resultado incierto (el servidor pudo
+ * registrar el pago), así que quien reintente debe hacerlo con el mismo `clientRequestId`.
+ */
+export const CREATE_PAYMENT_TIMEOUT_MS = 30_000;
+
 export function useCreatePayment() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (input: PaymentCreateInput) =>
-      apiFetch<PaymentDetail>("/api/payments", {
-        body: input,
-        method: "POST",
-      }),
+    mutationFn: async (input: PaymentCreateInput) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), CREATE_PAYMENT_TIMEOUT_MS);
+
+      try {
+        return await apiFetch<PaymentDetail>("/api/payments", {
+          body: input,
+          method: "POST",
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
     onSuccess: (payment) => {
       queryClient.setQueryData(paymentsQueryKeys.detail(payment.id), payment);
       queryClient

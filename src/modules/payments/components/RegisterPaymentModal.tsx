@@ -11,7 +11,6 @@ import {
   useState,
 } from "react";
 
-import { RequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { purchasesQueryKeys, usePurchase } from "@/modules/purchases/hooks/usePurchases";
 import { salesQueryKeys, useSale } from "@/modules/sales/hooks/useSales";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
@@ -29,7 +28,12 @@ import {
 } from "@/shared/payments/PaymentFormFields";
 import { formatVes, roundMoney } from "@/shared/utils/currency";
 
-import { type PaymentDetail, paymentsQueryKeys, useCreatePayment } from "../hooks/usePayments";
+import {
+  type PaymentCreateInput,
+  type PaymentDetail,
+  paymentsQueryKeys,
+  useCreatePayment,
+} from "../hooks/usePayments";
 import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import {
   DEFAULT_ENABLED_PAYMENT_METHODS,
@@ -47,14 +51,24 @@ import {
  *
  * Cambio de documento: el formulario y la clave de idempotencia pertenecen al
  * documento. Si `purchaseId`/`saleId` cambian, el modal se vuelve a montar por dentro
- * (formulario limpio y clave nueva), así que el consumidor no necesita pasar `key`.
+ * (formulario limpio y clave nueva, salvo que ese documento tenga un intento por
+ * confirmar), así que el consumidor no necesita pasar `key`.
  * Con `trigger` (apertura no controlada) ese cambio además lo cierra.
  *
- * Cada apertura vuelve a pedir el saldo del documento y estrena clave de
- * idempotencia. Mientras el modal siga abierto, reintentar sin cambios tras un error
- * de resultado incierto (red, 5xx, 408, 409) conserva la clave y no duplica el pago;
- * tras ese error el modal vuelve a pedir el documento y los pagos, para que se vea
- * si el pago entró.
+ * Cada apertura vuelve a pedir el saldo del documento y, si no hay un intento por
+ * confirmar, estrena formulario y clave de idempotencia.
+ *
+ * Intento por confirmar: tras un error de resultado incierto (red, tiempo límite de
+ * 30 s, 5xx, 408, 409) el pago pudo quedar registrado. El modal vuelve a pedir el
+ * documento y los pagos, bloquea los campos con lo enviado y solo ofrece
+ * "Reintentar", que reenvía exactamente lo mismo con la misma clave (el servidor
+ * devuelve el pago original o lo registra una vez). Ese estado es del documento y
+ * vive en esta instancia del modal: sobrevive a cerrarlo y reabrirlo y a que el
+ * consumidor le cambie el documento y vuelva, pero no a desmontar el modal (mantenlo
+ * montado mientras la pantalla siga viva). Se resuelve cuando el reintento registra el
+ * pago (flujo normal, con `onRegistered`) o cuando el servidor lo rechaza con un 4xx
+ * (409 incluido): se muestra su mensaje, se refresca el saldo y se vuelve a editar con
+ * clave nueva.
  *
  * @example Botón dentro del detalle de una venta
  * <RegisterPaymentModal saleId={sale.id} trigger={<Button>Cobrar saldo</Button>} />
@@ -74,12 +88,14 @@ import {
 export type RegisterPaymentModalProps = {
   /**
    * Se llama al abrirse y al cerrarse el modal por una acción del usuario. Con el
-   * pago en vuelo el cierre se ignora y no se llama. Necesaria si se pasa `open`.
+   * pago en vuelo el cierre se ignora y no se llama. Con un intento por confirmar sí
+   * se puede cerrar: al reabrir sigue ahí. Necesaria si se pasa `open`.
    */
   onOpenChange?: (open: boolean) => void;
   /**
-   * Se llama una vez por pago registrado con éxito, con el pago que devolvió el
-   * servidor (`pendingBalanceVes` trae el saldo que queda). El modal no se cierra
+   * Se llama una vez por pago registrado con éxito (también si se confirma al
+   * reintentar un intento incierto), con el pago que devolvió el servidor
+   * (`pendingBalanceVes` trae el saldo que queda). El modal no se cierra
    * solo: muestra el saldo restante y permite otro abono; quien quiera cerrarlo lo
    * hace aquí.
    */
@@ -120,18 +136,54 @@ const DOCUMENT_TEXTS = {
 
 const CONNECTION_ERROR_MESSAGE = "No se pudo conectar con el servidor.";
 
+const UNCONFIRMED_ATTEMPT_MESSAGE =
+  "No pudimos confirmar si el pago se registró. Reintenta: si ya entró, no se duplicará.";
+
+/** Inicio de los mensajes por defecto de zod, en inglés: no se enseñan al usuario. */
+const DEFAULT_ISSUE_MESSAGE = /^(Invalid|Too (big|small)|Unrecognized|Required|Expected)\b/;
+
+/**
+ * Primer motivo de un 400 de validación (`issues` de zod) con texto propio del
+ * servidor, que está en español; los mensajes por defecto de zod se saltan.
+ */
+function firstIssueMessage(issues: unknown) {
+  if (!Array.isArray(issues)) {
+    return undefined;
+  }
+
+  for (const issue of issues as unknown[]) {
+    const message =
+      typeof issue === "object" && issue !== null
+        ? (issue as { message?: unknown }).message
+        : undefined;
+
+    if (typeof message === "string" && message.trim() && !DEFAULT_ISSUE_MESSAGE.test(message)) {
+      return message;
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Texto de un error para el usuario. Los de negocio (`ClientApiError`) traen el mensaje
- * del servidor y se muestran tal cual; el resto son fallos de red o peticiones
- * abortadas, cuyo mensaje es el del navegador ("Failed to fetch").
+ * del servidor y se muestran tal cual, seguidos del primer motivo de validación si lo
+ * hay; el resto son fallos de red o peticiones abortadas (tiempo límite), cuyo mensaje
+ * es el del navegador ("Failed to fetch").
  */
 function errorMessageFor(error: Error, connectionMessage: string) {
-  return error instanceof ClientApiError ? error.message : connectionMessage;
+  if (!(error instanceof ClientApiError)) {
+    return connectionMessage;
+  }
+
+  const issueMessage = firstIssueMessage(error.issues);
+
+  return issueMessage ? `${error.message} ${issueMessage}` : error.message;
 }
 
 /**
  * El servidor pudo haber registrado el pago aunque la respuesta sea un error: fallo de
- * red, 5xx, 408 y 409 (los mismos casos en los que `RequestAttempt` conserva la clave).
+ * red, petición abortada por tiempo límite, 5xx, 408 y 409.
  */
 function isUncertainResult(error: unknown) {
   return (
@@ -171,16 +223,52 @@ function serverOverpayToleranceVes(
 }
 
 /**
- * El estado del formulario y el `RequestAttempt` viven en `RegisterPaymentForm`, que
- * se monta de nuevo con cada documento: la clave de un intento de resultado incierto
- * (red, 5xx) nunca viaja con otra venta u otra compra. Dentro de un mismo documento,
- * cada apertura estrena `RequestAttempt`.
+ * Envío de resultado incierto que sigue sin resolver: lo que se envió, con su clave de
+ * idempotencia, y lo que mostraba el formulario. El reintento reenvía `input` tal cual.
+ */
+type UnconfirmedAttempt = {
+  clientRequestId: string;
+  input: Omit<PaymentCreateInput, "clientRequestId">;
+  values: PaymentFormValues;
+};
+
+type RegisterPaymentFormProps = RegisterPaymentModalProps & {
+  /** Guarda (o, con `null`, resuelve) el intento por confirmar de este documento. */
+  onUnconfirmedAttemptChange: (attempt: UnconfirmedAttempt | null) => void;
+  unconfirmedAttempt: UnconfirmedAttempt | null;
+};
+
+/**
+ * El estado del formulario vive en `RegisterPaymentForm`, que se monta de nuevo con
+ * cada documento: nada de una venta viaja con otra venta u otra compra. Los intentos
+ * por confirmar se guardan aquí, por documento, porque los consumidores que eligen el
+ * documento (`/payments`, Saldos) lo quitan al cerrar: si vivieran en el formulario,
+ * reabrir el mismo documento estrenaría clave y el mismo pago podría entrar dos veces.
  */
 export function RegisterPaymentModal(props: RegisterPaymentModalProps) {
+  const documentKey = `sale:${props.saleId ?? ""}|purchase:${props.purchaseId ?? ""}`;
+  const [unconfirmedAttempts, setUnconfirmedAttempts] = useState<
+    ReadonlyMap<string, UnconfirmedAttempt>
+  >(() => new Map());
+
   return (
     <RegisterPaymentForm
-      key={`sale:${props.saleId ?? ""}|purchase:${props.purchaseId ?? ""}`}
+      key={documentKey}
       {...props}
+      onUnconfirmedAttemptChange={(attempt) =>
+        setUnconfirmedAttempts((current) => {
+          const next = new Map(current);
+
+          if (attempt) {
+            next.set(documentKey, attempt);
+          } else {
+            next.delete(documentKey);
+          }
+
+          return next;
+        })
+      }
+      unconfirmedAttempt={unconfirmedAttempts.get(documentKey) ?? null}
     />
   );
 }
@@ -188,13 +276,15 @@ export function RegisterPaymentModal(props: RegisterPaymentModalProps) {
 function RegisterPaymentForm({
   onOpenChange,
   onRegistered,
+  onUnconfirmedAttemptChange,
   open: controlledOpen,
   purchaseId,
   saleId,
   submitLabel,
   title,
   trigger,
-}: RegisterPaymentModalProps) {
+  unconfirmedAttempt,
+}: RegisterPaymentFormProps) {
   const formId = useId();
   // Exactamente un documento: sin ninguno, o con los dos, no se envía nada.
   const fixedDocument: DocumentType | undefined =
@@ -203,8 +293,9 @@ function RegisterPaymentForm({
   const [internalOpen, setInternalOpen] = useState(false);
   const open = isControlled ? controlledOpen : internalOpen;
   const [renderedOpen, setRenderedOpen] = useState(open);
-  const [storedValues, setValues] = useState<PaymentFormValues>(() =>
-    createEmptyPaymentFormValues(),
+  // Un documento con un intento por confirmar se vuelve a montar con lo que se envió.
+  const [storedValues, setValues] = useState<PaymentFormValues>(
+    () => unconfirmedAttempt?.values ?? createEmptyPaymentFormValues(),
   );
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [successBalanceVes, setSuccessBalanceVes] = useState<number | undefined>();
@@ -215,10 +306,6 @@ function RegisterPaymentForm({
   // envíos en el mismo tick saldrían como dos peticiones. La clave de idempotencia
   // haría que el servidor registre una sola, pero la segunda no debe ni salir.
   const submitLockRef = useRef(false);
-  // Clave de idempotencia (PAG-06): la misma en el reintento tras un resultado
-  // incierto (red, 5xx, 409); nueva tras el éxito o tras un 4xx con otro contenido.
-  // Un intento por apertura: la clave de un envío incierto no sobrevive al cierre.
-  const [requestAttempt, setRequestAttempt] = useState(() => new RequestAttempt());
   const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
   const enabledMethods = useMemo(
     () =>
@@ -227,6 +314,9 @@ function RegisterPaymentForm({
       ),
     [enabledPaymentMethodsQuery.data],
   );
+  // Sin la lista de la tienda se ofrecen todos (el servidor valida el pago), pero se avisa.
+  const enabledMethodsUnknown =
+    enabledPaymentMethodsQuery.isError && enabledPaymentMethodsQuery.data === undefined;
   const sale = useSale(saleId);
   const purchase = usePurchase(purchaseId);
   // `register_payment` convierte una compra con la tasa del día de la tienda (la venta
@@ -308,14 +398,17 @@ function RegisterPaymentForm({
     setHasSubmitted(false);
   }
 
-  // Cada apertura y cada cierre dejan el formulario limpio y estrenan intento, también
-  // cuando quien abre o cierra es el padre con `open`.
+  // Cada apertura y cada cierre dejan el formulario limpio, también cuando quien abre
+  // o cierra es el padre con `open`. Con un intento por confirmar no: al reabrir se ve
+  // ese intento, no un formulario limpio que saldría con clave nueva.
   if (renderedOpen !== open) {
     setRenderedOpen(open);
-    clearFields();
-    setSuccessBalanceVes(undefined);
-    setSubmitError(null);
-    setRequestAttempt(new RequestAttempt());
+
+    if (!unconfirmedAttempt) {
+      clearFields();
+      setSuccessBalanceVes(undefined);
+      setSubmitError(null);
+    }
   }
 
   // Cada apertura muestra el saldo recién pedido, no el que quedó en caché.
@@ -327,24 +420,25 @@ function RegisterPaymentForm({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setHasSubmitted(true);
-    setSuccessBalanceVes(undefined);
 
-    if (!canSubmit || submitLockRef.current || createPayment.isPending) {
+    const isRetry = unconfirmedAttempt !== null;
+
+    if (!isRetry) {
+      setHasSubmitted(true);
+      setSuccessBalanceVes(undefined);
+    }
+
+    if ((!isRetry && !canSubmit) || submitLockRef.current || createPayment.isPending) {
       return;
     }
 
-    // La huella del intento es el pago completo: documento y valores del formulario.
-    const input = {
-      ...buildPaymentFormPayload(values),
-      purchaseId,
-      saleId,
+    // Clave de idempotencia (PAG-06): una por envío nuevo. El reintento de un intento
+    // por confirmar reenvía lo mismo con la misma clave, sin releer el formulario.
+    const attempt: UnconfirmedAttempt = unconfirmedAttempt ?? {
+      clientRequestId: crypto.randomUUID(),
+      input: { ...buildPaymentFormPayload(values), purchaseId, saleId },
+      values,
     };
-    const clientRequestId = requestAttempt.begin(input);
-
-    if (!clientRequestId) {
-      return;
-    }
 
     submitLockRef.current = true;
     setSubmitError(null);
@@ -352,18 +446,26 @@ function RegisterPaymentForm({
     let payment: PaymentDetail;
 
     try {
-      payment = await createPayment.mutateAsync({ ...input, clientRequestId });
-      requestAttempt.succeed();
+      payment = await createPayment.mutateAsync({
+        ...attempt.input,
+        clientRequestId: attempt.clientRequestId,
+      });
     } catch (error) {
-      requestAttempt.fail(error);
-      setSubmitError(error instanceof Error ? error : new Error(String(error)));
+      // Un 409 al repetir el mismo contenido con la misma clave no debería darse: se
+      // trata como rechazo definitivo para no dejar el modal atascado en esa clave.
+      const isUncertain =
+        isUncertainResult(error) &&
+        !(isRetry && error instanceof ClientApiError && error.status === 409);
 
-      // El pago pudo haberse registrado: se vuelven a pedir el documento (saldo) y los
-      // pagos para que el usuario lo vea antes de reintentar.
-      if (isUncertainResult(error)) {
-        void queryClient.invalidateQueries({
-          queryKey: fixedDocument === "sale" ? salesQueryKeys.all : purchasesQueryKeys.all,
-        });
+      onUnconfirmedAttemptChange(isUncertain ? attempt : null);
+      setSubmitError(error instanceof Error ? error : new Error(String(error)));
+      // Se vuelve a pedir el documento: tras un rechazo el saldo en pantalla puede
+      // estar viejo (sobrepago) y tras un resultado incierto el pago pudo entrar.
+      void queryClient.invalidateQueries({
+        queryKey: fixedDocument === "sale" ? salesQueryKeys.all : purchasesQueryKeys.all,
+      });
+
+      if (isUncertain) {
         void queryClient.invalidateQueries({ queryKey: paymentsQueryKeys.all });
       }
 
@@ -372,6 +474,7 @@ function RegisterPaymentForm({
       submitLockRef.current = false;
     }
 
+    onUnconfirmedAttemptChange(null);
     setSuccessBalanceVes(payment.pendingBalanceVes);
     clearFields();
     onRegistered?.(payment);
@@ -408,6 +511,14 @@ function RegisterPaymentForm({
   const resolvedTitle = title ?? documentTexts?.title ?? "Registrar pago";
   const resolvedSubmitLabel = submitLabel ?? documentTexts?.submitLabel ?? "Registrar pago";
 
+  // Con un intento por confirmar se enseña lo que se envió, no lo que hubiera ahora.
+  const shownValues = unconfirmedAttempt?.values ?? values;
+  const submitButtonLabel = createPayment.isPending
+    ? "Registrando..."
+    : unconfirmedAttempt
+      ? "Reintentar"
+      : resolvedSubmitLabel;
+
   return (
     <Modal
       description={describeDocument()}
@@ -422,11 +533,14 @@ function RegisterPaymentForm({
             Cancelar
           </Button>
           <Button
-            disabled={createPayment.isPending || balanceIsLoading || dayRateIsLoading}
+            disabled={
+              createPayment.isPending ||
+              (!unconfirmedAttempt && (balanceIsLoading || dayRateIsLoading))
+            }
             form={formId}
             type="submit"
           >
-            {createPayment.isPending ? "Registrando..." : resolvedSubmitLabel}
+            {submitButtonLabel}
           </Button>
         </>
       )}
@@ -478,14 +592,18 @@ function RegisterPaymentForm({
             role="alert"
           >
             <p className="min-w-0 [overflow-wrap:anywhere]">No se pudo comprobar el saldo pendiente: {errorMessageFor(balanceError, CONNECTION_ERROR_MESSAGE)}</p>
-            <Button
-              onClick={() => void linkedDocument?.refetch()}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              Reintentar
-            </Button>
+            {/* Con un intento por confirmar el único "Reintentar" es el del pago, que
+                también vuelve a pedir el saldo. */}
+            {unconfirmedAttempt ? null : (
+              <Button
+                onClick={() => void linkedDocument?.refetch()}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                Reintentar
+              </Button>
+            )}
           </div>
         ) : null}
 
@@ -495,19 +613,42 @@ function RegisterPaymentForm({
           </p>
         ) : null}
 
-        <PaymentFormFields
-          methods={enabledMethods}
-          onChange={setValues}
-          overpayToleranceVes={overpayToleranceVes}
-          pendingBalance={pendingBalanceVes}
-          rateVes={rateVes}
-          showErrors={hasSubmitted}
-          values={values}
-        />
+        {enabledMethodsUnknown ? (
+          <p
+            className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200"
+            role="status"
+          >
+            No se pudieron cargar los métodos de pago habilitados de la tienda. Se muestran
+            todos: confirma que el método elegido esté habilitado.
+          </p>
+        ) : null}
+
+        {/* Por confirmar: campos bloqueados con lo enviado, sin atajos ni avisos de un
+            saldo que ya pudo cambiar. */}
+        <fieldset className="min-w-0" disabled={unconfirmedAttempt !== null}>
+          <PaymentFormFields
+            methods={enabledMethods}
+            onChange={setValues}
+            overpayToleranceVes={overpayToleranceVes}
+            pendingBalance={unconfirmedAttempt ? undefined : pendingBalanceVes}
+            rateVes={rateVes}
+            showErrors={hasSubmitted && !unconfirmedAttempt}
+            values={shownValues}
+          />
+        </fieldset>
 
         {successBalanceVes !== undefined ? (
           <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700 dark:bg-green-950 dark:text-green-300">
             Pago registrado. Saldo pendiente: {formatVes(successBalanceVes)}
+          </p>
+        ) : null}
+
+        {unconfirmedAttempt ? (
+          <p
+            className="rounded-md bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-200"
+            role="status"
+          >
+            {UNCONFIRMED_ATTEMPT_MESSAGE}
           </p>
         ) : null}
 

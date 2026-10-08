@@ -71,7 +71,9 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
     return <DetailSkeleton />;
   }
 
-  if (sale.error || !sale.data) {
+  // Solo sin datos: si falla un re-pedido con la venta ya cargada, el detalle (y el
+  // modal de cobro abierto) siguen en pantalla.
+  if (!sale.data) {
     return (
       <ErrorState
         description={

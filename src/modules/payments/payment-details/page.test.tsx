@@ -247,6 +247,57 @@ describe("PaymentDetailsPage · anular pago", () => {
   });
 });
 
+// PAG-F6 U2: un re-pedido fallido sustituia todo el detalle (y el modal de «Registrar
+// otro pago» abierto) por la pantalla de error, aunque el pago ya estuviera cargado.
+describe("PaymentDetailsPage · re-pedido fallido (PAG-F6 U2)", () => {
+  const serverFailure = async () =>
+    jsonResponse({ error: { code: "INTERNAL_ERROR", message: "Fallo interno." } }, 500);
+
+  function renderWithClient() {
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PaymentDetailsPage paymentId="pay-001" />
+      </QueryClientProvider>,
+    );
+
+    return queryClient;
+  }
+
+  it("con el pago cargado, si un re-pedido responde 500 el detalle y el modal siguen montados", async () => {
+    global.fetch = jest.fn(async () => jsonResponse({ data: payment() })) as unknown as typeof fetch;
+
+    const queryClient = renderWithClient();
+
+    expect(await screen.findByTestId("register-payment-modal")).toBeInTheDocument();
+
+    global.fetch = jest.fn(serverFailure) as unknown as typeof fetch;
+    await act(async () => {
+      await queryClient.refetchQueries();
+      // React Query avisa a la pantalla en una tarea posterior al fallo.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+    expect(global.fetch).toHaveBeenCalled();
+    expect(queryClient.getQueryState(["payments", "detail", "pay-001"])?.status).toBe("error");
+    expect(screen.getByTestId("register-payment-modal")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Anular pago" })).toBeInTheDocument();
+    expect(screen.queryByText("No pudimos cargar el pago")).not.toBeInTheDocument();
+  });
+
+  it("sin pago cargado sigue mostrando la pantalla de error", async () => {
+    global.fetch = jest.fn(serverFailure) as unknown as typeof fetch;
+    renderWithClient();
+
+    expect(await screen.findByText("No pudimos cargar el pago")).toBeInTheDocument();
+    expect(screen.getByText("Fallo interno.")).toBeInTheDocument();
+    expect(screen.queryByTestId("register-payment-modal")).not.toBeInTheDocument();
+  });
+});
+
 describe("PaymentDetailPageHeader · «Volver» (PAG-F2)", () => {
   // El resto del archivo sustituye la cabecera por un doble: aqui se pinta la real.
   const { PaymentDetailPageHeader } = jest.requireActual<

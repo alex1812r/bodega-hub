@@ -62,7 +62,9 @@ export function PurchaseDetailsPage({
     return <DetailSkeleton itemsPerSection={4} />;
   }
 
-  if (purchase.error || !purchase.data) {
+  // Solo sin datos: si falla un re-pedido con la compra ya cargada, el detalle (y el
+  // modal de pago abierto) siguen en pantalla.
+  if (!purchase.data) {
     return (
       <ErrorState
         description={
