@@ -98,8 +98,13 @@ describe("InventoryPackConversionModal · descripción de la receta (PRO-F7)", (
 
     expect(screen.getByRole("combobox", { name: "Producto empaque" })).toHaveValue("Surtido A");
     expect(
-      screen.getByText(/Se abrirá en: 6 Cola · 6 Manzana · 6 Naranja \(inactivo\)\./),
+      screen.getByText(/Por empaque: 2 Cola · 2 Manzana · 2 Naranja \(inactivo\)\./),
     ).toBeVisible();
+    // INV-08: lo que se abrirá es el reparto editable, precargado con receta × empaques.
+    expect(screen.getByLabelText("Unidades de Cola")).toHaveValue("6");
+    expect(screen.getByLabelText("Unidades de Manzana")).toHaveValue("6");
+    expect(screen.getByLabelText("Unidades de Naranja")).toHaveValue("6");
+    expect(screen.getByText("Naranja (inactivo)")).toBeVisible();
     expect(screen.getByText(/Preview: −3 empaque\(s\) \/ \+18 unidad\(es\)\./)).toBeVisible();
     // Nada que se lea como "18 Colas".
     expect(screen.queryByText(/Unidad: Cola/)).not.toBeInTheDocument();
@@ -157,6 +162,12 @@ describe("InventoryPackConversionModal · mensaje de resultado (PRO-F7)", () => 
     });
     setQuantity("3");
     submit();
+    // INV-08: un surtido pasa por la confirmación antes de enviarse.
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "Abrir empaque surtido" })).getByRole("button", {
+        name: "Abrir empaque",
+      }),
+    );
 
     const status = await screen.findByRole("status");
 
@@ -175,7 +186,11 @@ describe("InventoryPackConversionModal · mensaje de resultado (PRO-F7)", () => 
     await waitFor(() =>
       expect(document.getElementById("inventory-pack-conversion-form")).toBeNull(),
     );
-    expect(api.posts[0]?.body).not.toHaveProperty("components");
+    expect(api.posts[0]?.body.components).toEqual([
+      { unitProductId: "prod-cola", units: 6 },
+      { unitProductId: "prod-manzana", units: 6 },
+      { unitProductId: "prod-naranja", units: 6 },
+    ]);
   });
 
   it("1 a 1: confirma las unidades que entraron, sin aviso de inactivo", async () => {

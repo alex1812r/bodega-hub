@@ -13,10 +13,13 @@ import { useToast } from "@/shared/components/Toast";
 import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 
 import { useConvertPackToUnits } from "@/modules/inventory/hooks/useInventory";
+import { AssortedPackOpeningConfirm } from "@/modules/inventory/inventory-movements/components/AssortedPackOpeningConfirm";
 import {
-  buildPackOpeningToast,
-  describeRecipeOpening,
-} from "@/modules/inventory/inventory-movements/components/packOpeningText";
+  AssortedPackOpeningActions,
+  AssortedPackOpeningFields,
+} from "@/modules/inventory/inventory-movements/components/AssortedPackOpeningFields";
+import { buildPackOpeningToast } from "@/modules/inventory/inventory-movements/components/packOpeningText";
+import { useAssortedPackOpening } from "@/modules/inventory/inventory-movements/hooks/useAssortedPackOpening";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 
 type ProductDetailPackConversionCardProps = {
@@ -67,6 +70,27 @@ export function ProductDetailPackConversionCard({
     ];
   }, [packConversion]);
   const quantityNumber = Number(packQuantity);
+  // Surtido: reparto editable y confirmación con su efecto. El 1 a 1 sigue por `handleSubmit`.
+  const assorted = useAssortedPackOpening({
+    onOpened: (result, effect) => {
+      if (packConversion) {
+        showToast(
+          buildPackOpeningToast({
+            packName: productName,
+            packQuantity: effect.packQuantity,
+            recipe: packConversion,
+            result,
+          }),
+        );
+      }
+      closeAfterOpening();
+    },
+    packQuantity: quantityNumber,
+    reason,
+    target: isAssorted
+      ? { components, pack: { currentStock: productStock, id: productId, name: productName } }
+      : null,
+  });
   const unitPreview =
     isPack && quantityNumber > 0 && packConversion
       ? quantityNumber * packConversion.unitsPerPack
@@ -111,9 +135,22 @@ export function ProductDetailPackConversionCard({
     ) : null;
   const openLabel = isAssorted ? "Abrir según la receta" : "Abrir empaque";
 
+  function closeAfterOpening() {
+    setOpen(false);
+    setPackQuantity("1");
+    setReason("");
+    setQuantityTouched(false);
+    onConverted?.();
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSubmit || !packConversion) {
+      return;
+    }
+
+    if (isAssorted) {
+      assorted.openConfirm();
       return;
     }
 
@@ -140,11 +177,7 @@ export function ProductDetailPackConversionCard({
           result,
         }),
       );
-      setOpen(false);
-      setPackQuantity("1");
-      setReason("");
-      setQuantityTouched(false);
-      onConverted?.();
+      closeAfterOpening();
     } catch (error) {
       requestAttempt.fail(error);
     }
@@ -250,16 +283,34 @@ export function ProductDetailPackConversionCard({
                   ? `Abre cajas de ${productName} y suma a cada producto las unidades de su receta.`
                   : `Abre cajas de ${productName} y suma unidades al producto suelto.`
               }
-              footer={({ close }) => (
-                <FormActions
-                  isSubmitting={convert.isPending}
-                  onCancel={close}
-                  submitFormId="open-pack-form"
-                  submitLabel="Abrir empaque"
-                  submittingLabel="Convirtiendo..."
-                />
-              )}
-              onOpenChange={setOpen}
+              footer={({ close }) =>
+                isAssorted ? (
+                  <AssortedPackOpeningActions
+                    formId="open-pack-form"
+                    onCancel={close}
+                    opening={assorted}
+                  />
+                ) : (
+                  <FormActions
+                    isSubmitting={convert.isPending}
+                    onCancel={close}
+                    submitFormId="open-pack-form"
+                    submitLabel="Abrir empaque"
+                    submittingLabel="Convirtiendo..."
+                  />
+                )
+              }
+              onOpenChange={(nextOpen) => {
+                // Con la apertura de un surtido en vuelo el modal no se cierra.
+                if (!nextOpen && assorted.isPending) {
+                  return;
+                }
+
+                setOpen(nextOpen);
+                if (!nextOpen) {
+                  assorted.reset();
+                }
+              }}
               open={open}
               title="Abrir empaque"
               trigger={
@@ -283,10 +334,8 @@ export function ProductDetailPackConversionCard({
                 <p className="text-sm text-on-surface-variant">
                   Salida: −{quantityNumber || 0} empaque(s). Entrada: +{unitPreview} unidad(es).
                   Stock actual empaque: {productStock}.
-                  {isAssorted && unitPreview > 0
-                    ? ` Se abrirá en: ${describeRecipeOpening(packConversion, quantityNumber)}.`
-                    : null}
                 </p>
+                <AssortedPackOpeningFields opening={assorted} />
                 <Textarea
                   label="Motivo"
                   onChange={(event) => setReason(event.target.value)}
@@ -301,6 +350,7 @@ export function ProductDetailPackConversionCard({
                   </p>
                 ) : null}
               </form>
+              <AssortedPackOpeningConfirm opening={assorted} />
             </Modal>
           </div>
         </Can>

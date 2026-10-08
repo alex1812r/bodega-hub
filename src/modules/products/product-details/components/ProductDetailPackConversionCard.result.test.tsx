@@ -112,12 +112,20 @@ describe("ProductDetailPackConversionCard · resultado de abrir (PRO-F7)", () =>
       target: { value: "2" },
     });
 
-    expect(
-      screen.getByText(/Se abrirá en: 4 Cola · 4 Manzana · 4 Naranja \(inactivo\)\./),
-    ).toBeVisible();
+    // INV-08: lo que se abrirá es el reparto editable, precargado con receta × empaques.
+    expect(screen.getByLabelText("Unidades de Cola")).toHaveValue("4");
+    expect(screen.getByLabelText("Unidades de Manzana")).toHaveValue("4");
+    expect(screen.getByLabelText("Unidades de Naranja")).toHaveValue("4");
+    expect(screen.getByText("Naranja (inactivo)")).toBeVisible();
     expect(screen.getByText(/Entrada: \+12 unidad\(es\)/)).toBeVisible();
 
     fireEvent.submit(getForm());
+    // INV-08: un surtido pasa por la confirmación antes de enviarse.
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "Abrir empaque surtido" })).getByRole("button", {
+        name: "Abrir empaque",
+      }),
+    );
 
     const status = await screen.findByRole("status");
 

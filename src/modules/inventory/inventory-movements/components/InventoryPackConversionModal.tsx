@@ -17,6 +17,9 @@ import {
   usePackConversions,
 } from "../../hooks/useInventory";
 import { useRequestAttempt } from "../../utils/requestAttempt";
+import { useAssortedPackOpening } from "../hooks/useAssortedPackOpening";
+import { AssortedPackOpeningConfirm } from "./AssortedPackOpeningConfirm";
+import { AssortedPackOpeningActions, AssortedPackOpeningFields } from "./AssortedPackOpeningFields";
 import {
   buildPackOpeningToast,
   describeRecipeOpening,
@@ -74,6 +77,29 @@ export function InventoryPackConversionModal({
     quantityNumber <= (selected?.packProduct.currentStock ?? 0);
   const packStock = selected?.packProduct.currentStock;
   const isAssorted = selected ? isAssortedOpening(selected) : false;
+  // Surtido: reparto editable y confirmación con su efecto. El 1 a 1 sigue por `handleSubmit`.
+  const assorted = useAssortedPackOpening({
+    onOpened: (result, effect) => {
+      if (selected) {
+        showToast(
+          buildPackOpeningToast({
+            packName: effect.pack.name,
+            packQuantity: effect.packQuantity,
+            recipe: selected,
+            result,
+          }),
+        );
+      }
+      resetForm();
+      setOpen(false);
+    },
+    packQuantity: quantityNumber,
+    reason,
+    target:
+      selected && isAssorted
+        ? { components: selected.components ?? [], pack: selected.packProduct }
+        : null,
+  });
   // Sin `min`/`max` en el input no hay burbuja nativa: el motivo se dice aqui.
   const quantityError = !showQuantityError
     ? undefined
@@ -91,6 +117,7 @@ export function InventoryPackConversionModal({
     setReason("");
     setShowQuantityError(false);
     setShowPackError(false);
+    assorted.reset();
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -98,6 +125,11 @@ export function InventoryPackConversionModal({
     if (!canSubmit) {
       setShowPackError(true);
       setShowQuantityError(true);
+      return;
+    }
+
+    if (isAssorted) {
+      assorted.openConfirm();
       return;
     }
 
@@ -137,16 +169,25 @@ export function InventoryPackConversionModal({
     <Modal
       contentClassName="sm:max-w-lg"
       description="Convierte empaques cerrados en unidades sueltas con movimiento de inventario emparejado."
-      footer={({ close }) => (
-        <FormActions
-          isSubmitting={convert.isPending}
-          onCancel={close}
-          submitFormId={formId}
-          submitLabel="Convertir empaque"
-          submittingLabel="Convirtiendo..."
-        />
-      )}
+      footer={({ close }) =>
+        isAssorted ? (
+          <AssortedPackOpeningActions formId={formId} onCancel={close} opening={assorted} />
+        ) : (
+          <FormActions
+            isSubmitting={convert.isPending}
+            onCancel={close}
+            submitFormId={formId}
+            submitLabel="Convertir empaque"
+            submittingLabel="Convirtiendo..."
+          />
+        )
+      }
       onOpenChange={(nextOpen) => {
+        // Con la apertura de un surtido en vuelo el modal no se cierra.
+        if (!nextOpen && assorted.isPending) {
+          return;
+        }
+
         setOpen(nextOpen);
         if (nextOpen) {
           convert.reset();
@@ -213,10 +254,8 @@ export function InventoryPackConversionModal({
         />
         <p className="text-sm text-on-surface-variant">
           Preview: −{quantityNumber || 0} empaque(s) / +{unitPreview} unidad(es).
-          {selected && isAssorted && unitPreview > 0
-            ? ` Se abrirá en: ${describeRecipeOpening(selected, quantityNumber)}.`
-            : null}
         </p>
+        <AssortedPackOpeningFields opening={assorted} />
         <Textarea
           label="Motivo"
           onChange={(event) => setReason(event.target.value)}
@@ -231,6 +270,7 @@ export function InventoryPackConversionModal({
           </p>
         ) : null}
       </form>
+      <AssortedPackOpeningConfirm opening={assorted} />
     </Modal>
   );
 }
