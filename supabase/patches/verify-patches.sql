@@ -1890,4 +1890,26 @@ select
       and i.indisvalid
       and pg_get_indexdef(i.indexrelid) ilike '%(product_id, seq desc)'
   )
+union all
+select
+  'adjust_stock rechaza la entrada libre a un producto inactivo (PT409), deja pasar las salidas y la devolucion de cliente ligada a su venta, y sigue con una sola firma de 7 argumentos (20261011b)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'adjust_stock'
+      and p.prosecdef
+      and p.prosrc ilike '%not v_product.is_active and p_quantity_delta > 0 and p_sale_id is null%'
+      and p.prosrc ilike '%El producto esta inactivo: reactivalo antes de registrar una entrada de stock%'
+      -- Lo que no cambia: R4, clave de idempotencia y stock por movimiento.
+      and p.prosrc ilike '%v_type = ''devolucion_cliente'' and p_sale_id is null%'
+      and p.prosrc ilike '%stock_request_replay%'
+      and p.prosrc ilike '%insert into public.stock_movements%'
+  )
+  and (
+    select count(*) = 1
+      and bool_and(pg_get_function_identity_arguments(p.oid)
+        = 'p_product_id uuid, p_quantity_delta integer, p_reason text, p_type stock_movement_type, p_client_request_id uuid, p_sale_id uuid, p_purchase_id uuid')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'adjust_stock'
+  )
 order by 1;

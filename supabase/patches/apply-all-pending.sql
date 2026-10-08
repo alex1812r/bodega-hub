@@ -565,3 +565,19 @@ notify pgrst, 'reload schema';
 -- grande). Aplicar fuera de hora pico.
 -- ORDEN DE DESPLIEGUE (INV-01): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
 -- el parche: GET /api/inventory responde error (la vista no existe); el resto del inventario no cambia.
+-- -----------------------------------------------------------------------------
+-- 20261011b — adjust_stock inactive (COM-15a): adjust_stock rechaza (PT409) la entrada libre de stock a un producto
+--             inactivo; las salidas y las devoluciones ligadas a su venta / compra no cambian
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011b-adjust-stock-inactive.sql
+-- Requiere 20261006a, b, c, e, f y g. Idempotente, una transaccion. La firma de adjust_stock no cambia (7 argumentos).
+-- Reaplicar 20261006c o 20261006g reinstala la version anterior de adjust_stock (sin la guarda): volver a aplicar este
+-- parche despues.
+-- OJO: un ajuste con delta > 0 (ajuste_entrada, inventario_inicial o sin tipo) sobre un producto con is_active = false
+-- ahora responde PT409 ("El producto esta inactivo: reactivalo antes de registrar una entrada de stock"), sin movimiento
+-- ni clave de idempotencia consumida. Un ajuste de salida sobre un inactivo sigue entrando (para dejarlo en cero), igual
+-- que devolucion_cliente con p_sale_id y devolucion_proveedor con p_purchase_id. Sobre un producto activo nada cambia.
+-- create_purchase / receive_purchase NO cambian: un producto inactivo sigue aceptando compras (pendiente de Compras).
+-- Scripts que cargan stock inicial por adjust_stock: crear el producto activo, cargar el stock y desactivarlo despues.
+-- ORDEN DE DESPLIEGUE (COM-15a): parche -> verify. No depende del BFF: el anterior y el nuevo funcionan con y sin el
+-- parche (el 409 llega con el mensaje de la base).

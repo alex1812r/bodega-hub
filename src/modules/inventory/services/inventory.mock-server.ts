@@ -386,6 +386,17 @@ function applyStockAdjustment(input: StockAdjustmentInput, storeId: string) {
   assertMockStoreResource(product, storeId, "Producto no encontrado.");
   assertLinkedReturnAllowed(input, storeId);
 
+  // COM-15a, como `adjust_stock` (20261011b): un producto inactivo no recibe
+  // entradas libres. Las salidas pasan (para dejarlo en cero) y la devolucion de
+  // cliente ligada a su venta tambien (entra por el documento).
+  if (product.isActive === false && input.quantityDelta > 0 && !input.saleId) {
+    throw new ApiError(
+      409,
+      "CONFLICT",
+      "El producto esta inactivo: reactivalo antes de registrar una entrada de stock",
+    );
+  }
+
   const stockAfter = product.currentStock + input.quantityDelta;
 
   if (stockAfter < 0) {

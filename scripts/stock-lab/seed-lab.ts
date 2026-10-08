@@ -11,7 +11,9 @@
  *
  * El stock inicial se carga SOLO por el camino real: login del lab-admin con la
  * anon key y RPC `adjust_stock(... p_type = 'inventario_inicial')` por producto.
- * Nunca `update products set current_stock`.
+ * Nunca `update products set current_stock`. Los 3 inactivos nacen activos y se
+ * desactivan después de cargar su stock: `adjust_stock` rechaza la entrada a un
+ * producto inactivo (20261011b).
  *
  * Solo lee `.env.stock-lab` (loadStockLabEnv) y aborta si el host de la API o
  * de la base no coincide con STOCK_TEST_ALLOW_WRITES_HOST (regla 1.4 del plan).
@@ -438,9 +440,11 @@ async function createCatalog(db: Client, storeId: string, plan: LabCatalogPlan):
     const result = await db.query<{ id: string }>(
       `insert into public.products
          (store_id, category_id, sku, barcode, name, sale_price_ref, current_cost_ref, current_stock, min_stock, is_active)
-       values ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9)
+       values ($1, $2, $3, $4, $5, $6, $7, 0, $8, true)
        returning id`,
-      [storeId, categoryIds[p.categoryKey], p.sku, p.barcode, p.name, p.salePriceRef, p.currentCostRef, p.minStock, p.isActive],
+      // Todos nacen activos: `adjust_stock` no acepta el stock inicial de un inactivo (20261011b).
+      // Los inactivos del plan se desactivan después de cargar el stock (`deactivateInactive`).
+      [storeId, categoryIds[p.categoryKey], p.sku, p.barcode, p.name, p.salePriceRef, p.currentCostRef, p.minStock],
     );
     productIds[p.sku] = result.rows[0].id;
   }
@@ -537,6 +541,12 @@ async function loadInitialStock(env: SeedEnv, plan: LabCatalogPlan, productIds: 
   return movements;
 }
 
+/** Desactiva los productos inactivos del plan, ya con su stock inicial cargado. */
+async function deactivateInactive(db: Client, plan: LabCatalogPlan, productIds: Record<string, string>): Promise<void> {
+  const ids = plan.products.filter((p) => !p.isActive).map((p) => productIds[p.sku]);
+  await db.query("update public.products set is_active = false where id = any($1::uuid[])", [ids]);
+}
+
 // ---------------------------------------------------------------------------
 // Resumen y verificación
 // ---------------------------------------------------------------------------
@@ -623,6 +633,7 @@ export async function runSeed(rawEnv: Record<string, string | undefined>): Promi
     await createRegistersAndRate(db, storeId, userIds);
     const rpcCalls = await loadInitialStock(env, plan, productIds);
     console.log(`adjust_stock inventario_inicial: ${rpcCalls} llamadas ok`);
+    await deactivateInactive(db, plan, productIds);
 
     const summary = await summarize(db, storeId);
     for (const line of formatSummary(summary)) console.log(line);

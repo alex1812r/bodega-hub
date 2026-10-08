@@ -190,11 +190,21 @@ describe("cálculo de esperados y payloads", () => {
     expect(saleHttp({ active: false, stock: 20 }, 1)).toBe("reject");
   });
 
-  it("un ajuste que deja stock negativo se rechaza; sobre un inactivo se observa", () => {
+  it("un ajuste que deja stock negativo se rechaza", () => {
+    expect(adjustHttp({ active: true, stock: 20 }, 5)).toBe("accept");
     expect(adjustHttp({ active: true, stock: 20 }, -3)).toBe("accept");
     expect(adjustHttp({ active: true, stock: 0 }, -3)).toBe("reject");
     expect(adjustHttp({ active: false, stock: 20 }, -25)).toBe("reject");
-    expect(adjustHttp({ active: false, stock: 20 }, 5)).toBe("either");
+  });
+
+  it("producto inactivo (COM-15a, 20261011b): la entrada se rechaza y la salida se acepta; ya no se observa", () => {
+    expect(adjustHttp({ active: false, stock: 20 }, 5)).toBe("reject");
+    expect(adjustHttp({ active: false, stock: 0 }, 1)).toBe("reject");
+    expect(adjustHttp({ active: false, stock: 20 }, -3)).toBe("accept");
+    expect(adjustHttp({ active: false, stock: 20 }, -20)).toBe("accept");
+    for (const active of [true, false]) {
+      for (const delta of [5, -3, -25]) expect(adjustHttp({ active, stock: 20 }, delta)).not.toBe("either");
+    }
   });
 
   it("SKU con el prefijo del ticket, el run y un sufijo único", () => {
