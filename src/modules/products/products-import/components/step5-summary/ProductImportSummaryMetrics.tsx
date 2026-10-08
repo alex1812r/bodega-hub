@@ -13,6 +13,8 @@ export function ProductImportSummaryMetrics({
   errors,
   skipped,
 }: ProductImportSummaryMetricsProps) {
+  const hasUncreatedRows = errors + skipped > 0;
+
   return (
     <div className="mb-8 overflow-hidden rounded-xl border border-outline-variant bg-surface shadow-sm">
       <div className="flex flex-col items-center border-b border-secondary-container bg-secondary-container/20 px-6 py-8 text-center">
@@ -25,12 +27,16 @@ export function ProductImportSummaryMetrics({
         <h3 className="text-xl font-semibold text-on-surface">
           {cancelled
             ? "Importación cancelada"
-            : "¡Proceso finalizado exitosamente!"}
+            : hasUncreatedRows
+              ? "Importación finalizada con filas sin crear"
+              : "¡Proceso finalizado exitosamente!"}
         </h3>
         <p className="mt-2 max-w-lg text-sm text-on-surface-variant">
           {cancelled
             ? "La operación se detuvo antes de completar todas las filas. Revisa el detalle a continuación."
-            : "El archivo ha sido procesado y el catálogo de productos ha sido actualizado. A continuación se detalla el resultado."}
+            : hasUncreatedRows
+              ? "Algunas filas del archivo no se crearon. Revisa el motivo de cada una en el detalle a continuación."
+              : "El archivo ha sido procesado y el catálogo de productos ha sido actualizado. A continuación se detalla el resultado."}
         </p>
       </div>
       <div className="grid grid-cols-1 gap-px bg-outline-variant md:grid-cols-3">
@@ -65,7 +71,7 @@ export function ProductImportSummaryMetrics({
             Errores Finales
           </span>
           <span className="mt-1 text-xs text-outline">
-            Filas rechazadas al guardar
+            Filas rechazadas al validar o al guardar
           </span>
         </article>
       </div>

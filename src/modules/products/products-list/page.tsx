@@ -56,7 +56,7 @@ import {
   type ProductInput,
   type ProductWithCategory,
   productsQueryKeys,
-  useCategories,
+  useAllCategories,
   useCreateProduct,
   useProduct,
   useProducts,
@@ -302,7 +302,7 @@ function ProductsList() {
     limit,
     skip,
   });
-  const categories = useCategories();
+  const categories = useAllCategories();
   const currentRate = useCurrentExchangeRate();
   const rateVes = currentRate.data?.rateVes ?? 0;
   // El detalle vuelve a esta URL exacta (filtros, orden y página) con "Volver".

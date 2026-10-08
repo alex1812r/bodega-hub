@@ -4,7 +4,7 @@ import { Pencil } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { getPriceChangeReason } from "@/lib/api/dataSourceUi";
-import { getPaginatedItems } from "@/lib/api/pagination";
+import { getPaginatedItems, MAX_PAGE_LIMIT } from "@/lib/api/pagination";
 import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { Can } from "@/shared/auth/Can";
 import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
@@ -23,7 +23,7 @@ import {
 import {
   type ProductInput,
   type ProductPriceHistoryEntry,
-  useCategories,
+  useAllCategories,
   useProduct,
   useProductPriceHistory,
   useProductSuppliers,
@@ -75,11 +75,14 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
   const { can, role } = usePermission();
   const canSeeSuppliers = role ? canViewSupplierContacts(role) : false;
   const product = useProduct(productId);
-  const categories = useCategories();
+  const categories = useAllCategories();
   // Semáforo y chips de la tienda; sin datos (cargando o error) valen los por defecto.
   const pricingSettings = usePricingSettings();
   const priceHistory = useProductPriceHistory(productId);
-  const suppliers = useProductSuppliers(canSeeSuppliers ? productId : undefined);
+  // La tabla no pagina: sin `limit` el BFF entrega 10 y un producto admite 50 proveedores.
+  const suppliers = useProductSuppliers(canSeeSuppliers ? productId : undefined, {
+    limit: MAX_PAGE_LIMIT,
+  });
   const updateProduct = useUpdateProduct(productId);
   const updateProductPrice = useUpdateProductPrice(productId);
   // Mutación aparte para la tarjeta de cambio rápido: su error se avisa en la

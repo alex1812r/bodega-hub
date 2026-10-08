@@ -6,6 +6,7 @@ import { useCallback, useRef, useState } from "react";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
 import { productsQueryKeys } from "../../hooks/useProducts";
+import { buildProductImportResults } from "../services/buildProductImportResults";
 import { downloadProductImportTemplateFromApi } from "../services/buildProductImportTemplate";
 import { fetchExistingSkus } from "../services/fetchExistingSkus";
 import { logProductImportParseSummary } from "../services/logProductImportValidation";
@@ -144,7 +145,7 @@ export function useProductBulkImport({ categories = [] }: UseProductBulkImportOp
           onProgress: setProgress,
         });
 
-        setResults(jobResults);
+        setResults(buildProductImportResults(validatedRows, jobResults));
         await queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
 
         if (abortRef.current.signal.aborted) {

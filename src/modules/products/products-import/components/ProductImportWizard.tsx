@@ -5,7 +5,7 @@ import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
-import { useCategories } from "../../hooks/useProducts";
+import { useAllCategories } from "../../hooks/useProducts";
 import { useProductBulkImport } from "../hooks/useProductBulkImport";
 import { ProductImportStepper } from "./shared/ProductImportStepper";
 import { ProductImportWizardHeader } from "./shared/ProductImportWizardHeader";
@@ -19,7 +19,7 @@ import {
 } from "./step5-summary/ProductImportStep5Summary";
 
 export function ProductImportWizard() {
-  const categories = useCategories();
+  const categories = useAllCategories();
   const bulk = useProductBulkImport({
     categories: getPaginatedItems(categories.data),
   });

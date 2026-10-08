@@ -37,6 +37,9 @@ export type CategoriesFilters = PaginationParams & {
   search?: string;
 };
 
+/** Filtros del catálogo completo de categorías: la paginación la resuelve el hook. */
+export type CategoriesCatalogFilters = Omit<CategoriesFilters, "limit" | "skip">;
+
 export type ProductWithCategory = ProductMock & {
   category?: CategoryMock;
   packConversion?: ProductPackConversionSummary;
@@ -123,6 +126,8 @@ export const productsQueryKeys = {
   all: ["products"] as const,
   categories: (filters: CategoriesFilters = {}) =>
     [...productsQueryKeys.all, "categories", filters] as const,
+  categoriesAll: (filters: CategoriesCatalogFilters = {}) =>
+    [...productsQueryKeys.all, "categories-all", filters] as const,
   detail: (id: string) => [...productsQueryKeys.all, "detail", id] as const,
   list: (filters: ProductsFilters = {}) =>
     [...productsQueryKeys.all, "list", filters] as const,
@@ -199,6 +204,29 @@ export function useCategories(
       apiFetch<PaginatedList<CategoryMock>>("/api/categories", {
         query: filters,
       }),
+    ...options,
+  });
+}
+
+/**
+ * Todas las categorías (sin filtros: las activas), por nombre. `/api/categories`
+ * entrega 10 por página si no se pide `limit` y como mucho `MAX_PAGE_LIMIT`:
+ * usar esto en selectores y filtros, que necesitan la lista entera;
+ * `useCategories` es para la lista paginada.
+ */
+export function useAllCategories(
+  filters: CategoriesCatalogFilters = {},
+  options: CategoriesListQueryOptions = {},
+) {
+  return useQuery({
+    queryKey: productsQueryKeys.categoriesAll(filters),
+    queryFn: async (): Promise<PaginatedList<CategoryMock>> => {
+      const items = await fetchAllPaginatedItems<CategoryMock>("/api/categories", filters);
+
+      items.sort((left, right) => left.name.localeCompare(right.name, "es"));
+
+      return { items, limit: items.length, skip: 0, total: items.length };
+    },
     ...options,
   });
 }
