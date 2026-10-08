@@ -45,6 +45,22 @@ export function isScannedCode(text: string) {
   return /^\d+$/.test(text) && text.length >= PURCHASE_SCAN_MIN_DIGITS;
 }
 
+/**
+ * Los dígitos de `text` entre los que está un código leído, o `null` si el texto es un
+ * valor normal. Además del texto entero de 8 o más dígitos, cuenta el de un costo con
+ * 8 o más decimales («1020.00» + código): nadie teclea tantos, es un lector que escribió
+ * detrás de los decimales que ya mostraba la celda.
+ */
+export function readScanDigits(text: string) {
+  if (isScannedCode(text)) {
+    return text;
+  }
+
+  const decimals = /^\d*\.(\d+)$/.exec(text)?.[1] ?? "";
+
+  return isScannedCode(decimals) ? decimals : null;
+}
+
 function readTypedValue(text: string) {
   if (!/^\d+$/.test(text) || text.length > TYPED_VALUE_MAX_DIGITS) {
     return null;

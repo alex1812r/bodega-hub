@@ -260,7 +260,7 @@ describe("PurchaseLineNumberCell", () => {
 
       expect(onScan).toHaveBeenCalledTimes(1);
       expect(firstCandidate(onScan)).toBe("12345678");
-      expect(cell()).toHaveValue("3");
+      expect(cell()).toHaveValue("3.00");
       expect(onChange).not.toHaveBeenCalled();
     });
 
@@ -407,5 +407,61 @@ describe("PurchaseLineNumberCell", () => {
       expect(onChange).toHaveBeenLastCalledWith(1234567);
       expect(cell()).toHaveValue("1234567");
     });
+  });
+});
+
+describe("PurchaseLineNumberCell · un costo se muestra con dos decimales (COM-F8 · D26)", () => {
+  const onScan = jest.fn();
+
+  beforeEach(() => {
+    onScan.mockReset();
+  });
+
+  it("«30.600» tecleado en un costo queda como 30.60 al salir, no como 30.6", () => {
+    render(<Harness initial={12} />);
+
+    expect(cell()).toHaveValue("12.00");
+    type("30.600");
+    fireEvent.blur(cell());
+
+    expect(onChange).toHaveBeenLastCalledWith(30.6);
+    expect(cell()).toHaveValue("30.60");
+  });
+
+  it("una cantidad sigue sin decimales", () => {
+    render(<Harness initial={3} integer />);
+
+    expect(cell()).toHaveValue("3");
+  });
+
+  /** El lector teclea detrás de «1020.00»: clic en el campo ya enfocado, sin nada seleccionado. */
+  async function scanAfterDecimals(keys: string) {
+    const user = userEvent.setup();
+
+    render(
+      <PurchaseLineNumberCell aria-label="Celda" onChange={onChange} onScan={onScan} value={1020} />,
+    );
+    act(() => cell().focus());
+    cell().setSelectionRange(7, 7);
+    await user.keyboard(keys);
+  }
+
+  it("un código tecleado detrás de los decimales de un costo no es un costo: con Enter sale como escaneo y el costo no cambia", async () => {
+    await scanAfterDecimals("7598765432101{Enter}");
+
+    expect(onScan).toHaveBeenCalledTimes(1);
+    // El campo solo admite 15 dígitos: el código llega entero igualmente.
+    expect(firstCandidate(onScan)).toBe("7598765432101");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(cell()).toHaveValue("1020.00");
+  });
+
+  it("ese mismo código y salir sin Enter: vuelve el costo anterior, sin redondearlo a 1020.01", async () => {
+    await scanAfterDecimals("7598765432101");
+    act(() => cell().blur());
+
+    expect(onScan).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(cell()).toHaveValue("1020.00");
   });
 });

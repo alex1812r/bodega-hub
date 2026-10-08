@@ -648,8 +648,8 @@ describe("PurchaseCreatePage · moneda de costo una vez por compra (COM-05)", ()
     fireEvent.click(screen.getByRole("button", { name: "REF" }));
 
     expect(screen.getByRole("button", { name: "REF" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByLabelText("Costo unitario REF de Cable HDMI")).toHaveValue("2");
-    expect(screen.getByLabelText("Costo por caja REF de Refresco Cola")).toHaveValue("12");
+    expect(screen.getByLabelText("Costo unitario REF de Cable HDMI")).toHaveValue("2.00");
+    expect(screen.getByLabelText("Costo por caja REF de Refresco Cola")).toHaveValue("12.00");
     expect(screen.queryByLabelText(/Costo .* BS de/)).not.toBeInTheDocument();
     expect(screen.getByText("Bs. 17.258,40")).toBeInTheDocument();
     expect(screen.getByText("ref 33.84")).toBeInTheDocument();
@@ -673,13 +673,13 @@ describe("PurchaseCreatePage · moneda de costo una vez por compra (COM-05)", ()
     fireEvent.click(screen.getByRole("button", { name: "agregar producto" }));
     fireEvent.click(screen.getByRole("button", { name: "agregar producto con empaque" }));
 
-    expect(screen.getByLabelText("Costo unitario REF de Cable HDMI")).toHaveValue("2");
-    expect(screen.getByLabelText("Costo por caja REF de Refresco Cola")).toHaveValue("12");
+    expect(screen.getByLabelText("Costo unitario REF de Cable HDMI")).toHaveValue("2.00");
+    expect(screen.getByLabelText("Costo por caja REF de Refresco Cola")).toHaveValue("12.00");
 
     fireEvent.click(screen.getByRole("button", { name: "Bs" }));
 
-    expect(screen.getByLabelText("Costo unitario BS de Cable HDMI")).toHaveValue("1020");
-    expect(screen.getByLabelText("Costo por caja BS de Refresco Cola")).toHaveValue("6120");
+    expect(screen.getByLabelText("Costo unitario BS de Cable HDMI")).toHaveValue("1020.00");
+    expect(screen.getByLabelText("Costo por caja BS de Refresco Cola")).toHaveValue("6120.00");
 
     const body = await confirmAndGetBody(api);
     const items = body?.items as Array<Record<string, unknown>>;
@@ -813,7 +813,7 @@ describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
       within(row).getByRole("combobox", { name: "Tipo de empaque de Refresco Cola" }),
     ).toHaveValue("pack-caja");
     expect(within(row).getByLabelText("Cantidad de caja de Refresco Cola")).toHaveValue("1");
-    expect(within(row).getByLabelText("Costo por caja BS de Refresco Cola")).toHaveValue("6120");
+    expect(within(row).getByLabelText("Costo por caja BS de Refresco Cola")).toHaveValue("6120.00");
     // Las unidades del empaque guardado no se teclean.
     expect(within(row).queryByLabelText(/Unidades por caja/)).not.toBeInTheDocument();
     expect(within(row).getByText("12 u")).toBeInTheDocument();
@@ -838,7 +838,7 @@ describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
 
     expect(within(row).queryByRole("combobox")).not.toBeInTheDocument();
     expect(within(row).getByLabelText("Cantidad de Refresco Cola")).toHaveValue("24");
-    expect(within(row).getByLabelText("Costo unitario BS de Refresco Cola")).toHaveValue("510");
+    expect(within(row).getByLabelText("Costo unitario BS de Refresco Cola")).toHaveValue("510.00");
 
     const body = await confirmAndGetBody(api);
 
@@ -871,7 +871,7 @@ describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
     });
 
     expect(within(row).getByLabelText("Unidades por manga de Refresco Cola")).toHaveValue("12");
-    expect(within(row).getByLabelText("Costo por manga BS de Refresco Cola")).toHaveValue("6120");
+    expect(within(row).getByLabelText("Costo por manga BS de Refresco Cola")).toHaveValue("6120.00");
   });
 });
 

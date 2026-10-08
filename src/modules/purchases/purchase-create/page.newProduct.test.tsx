@@ -281,7 +281,7 @@ describe("PurchaseCreatePage · Nuevo producto desde la compra (COM-03)", () => 
     expect(screen.getByLabelText("Cantidad de Malta 355")).toHaveValue("1");
     expect(within(row("Malta 355")).getByText("malta-355")).toBeInTheDocument();
     // 1,16 REF con IVA del 16 % = 1,00 REF de base = Bs. 510,00; el total vuelve a sumarlo.
-    expect(screen.getByLabelText("Costo unitario BS de Malta 355")).toHaveValue("510");
+    expect(screen.getByLabelText("Costo unitario BS de Malta 355")).toHaveValue("510.00");
     expect(screen.getByRole("button", { name: /^IVA de Malta 355: / })).toHaveAccessibleName(
       /IVA 16 %$/,
     );

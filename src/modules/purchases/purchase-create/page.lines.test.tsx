@@ -1102,7 +1102,7 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
 
     await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
     await waitFor(() => expect(searchBox()).toHaveFocus());
-    expect(costCell("Cable HDMI")).toHaveValue("1020");
+    expect(costCell("Cable HDMI")).toHaveValue("1020.00");
     expect(within(row("Cable HDMI")).getByText("Bs. 1.020,00")).toBeInTheDocument();
     expect(lineRows()).toHaveLength(2);
     expect(editedSummary()).not.toBeInTheDocument();
@@ -1117,7 +1117,7 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
     await press("12345678".split(""), 120);
     act(() => searchBox().focus());
 
-    expect(costCell("Cable HDMI")).toHaveValue("1020");
+    expect(costCell("Cable HDMI")).toHaveValue("1020.00");
     expect(mockResolveByCode).not.toHaveBeenCalled();
   });
 });

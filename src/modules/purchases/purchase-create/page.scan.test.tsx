@@ -338,7 +338,7 @@ describe("PurchaseCreatePage · cola de escaneos (COM-F8 · 2f, R2, 2g)", () => 
       expect(triedCodes()).toEqual([CODE_A, CODE_B, CODE_C]);
       expect(lineNames()).toEqual(["Lija", "Cable", "Taladro"]);
       // Cantidad y costo de cada línea: ni un dígito de un código en ninguna celda.
-      expect(cellValues()).toEqual(["1", "1020", "1", "1020", "1", "1020"]);
+      expect(cellValues()).toEqual(["1", "1020.00", "1", "1020.00", "1", "1020.00"]);
       expect(searchBox()).toHaveValue("");
       expect(searchBox()).toHaveFocus();
       expect(screen.queryByText(NOT_FOUND_MESSAGE)).not.toBeInTheDocument();
@@ -418,7 +418,7 @@ describe("PurchaseCreatePage · cola de escaneos (COM-F8 · 2f, R2, 2g)", () => 
     await settle(3000);
 
     expect(lineNames()).toEqual(["Lija", "Cable", "Taladro"]);
-    expect(cellValues()).toEqual(["1", "1020", "1", "1020", "1", "1020"]);
+    expect(cellValues()).toEqual(["1", "1020.00", "1", "1020.00", "1", "1020.00"]);
     expect(searchBox()).toHaveValue("");
   });
 
@@ -539,7 +539,7 @@ describe("PurchaseCreatePage · el descuento no acepta un código ni supera el s
     expect(searchBox()).toHaveFocus();
     await settle(500);
 
-    expect(discount()).toHaveValue("0");
+    expect(discount()).toHaveValue("0.00");
     expect(lineNames()).toEqual(["Cable", "Taladro"]);
     expect(triedCodes()[0]).toBe(CODE_B);
   });
@@ -552,7 +552,7 @@ describe("PurchaseCreatePage · el descuento no acepta un código ni supera el s
     await press("12345678".split(""), 120);
     act(() => searchBox().focus());
 
-    expect(discount()).toHaveValue("0");
+    expect(discount()).toHaveValue("0.00");
     expect(mockResolveByCode).not.toHaveBeenCalled();
   });
 

@@ -9,7 +9,7 @@ import { roundMoney } from "@/shared/utils/currency";
 
 import {
   type PurchaseLineScan,
-  isScannedCode,
+  readScanDigits,
   readPurchaseLineScan,
   readValueBeforeCode,
 } from "../utils/purchaseLineScan";
@@ -114,6 +114,8 @@ export function PurchaseLineNumberCell({
   const stamps = useRef<number[]>([]);
   // Dígitos tecleados al final que el campo descartó por estar lleno (`FIELD_MAX_DIGITS`).
   const overflow = useRef("");
+  // El foco está saliendo con un código escrito en el campo (no con un valor).
+  const leavingWithScan = useRef(false);
   // Valor válido que aún no subió al padre por tener demasiados dígitos.
   const held = useRef<number | null>(null);
   // `onChange` del último render: un escaneo se resuelve después del Enter.
@@ -161,9 +163,15 @@ export function PurchaseLineNumberCell({
   }
 
   function handleValueChange(next: number | null) {
+    // `NumberInput` redondea lo escrito al salir: si era un código detrás de los decimales
+    // de un costo, ese redondeo no es un valor que alguien haya tecleado.
+    if (leavingWithScan.current) {
+      return;
+    }
+
     held.current = null;
 
-    if (isScannedCode(text.current)) {
+    if (readScanDigits(text.current) !== null) {
       setTyped({ parent: committed.current, value: text.current });
       send(committed.current);
       return;
@@ -185,6 +193,7 @@ export function PurchaseLineNumberCell({
   }
 
   function handleBlur() {
+    leavingWithScan.current = false;
     overflow.current = "";
     sendHeld();
     setTyped(null);
@@ -231,8 +240,16 @@ export function PurchaseLineNumberCell({
 
     overflow.current = "";
 
+    const scanDigits = event.key === "Enter" ? readScanDigits(scanText) : null;
+    // Detrás de los decimales de un costo no hay tiempos de tecla que casen con el código.
     const scan =
-      event.key === "Enter" ? readPurchaseLineScan(scanText, stamps.current, Date.now()) : null;
+      scanDigits === null
+        ? null
+        : readPurchaseLineScan(
+            scanDigits,
+            scanDigits === scanText ? stamps.current : [],
+            Date.now(),
+          );
 
     if (scan) {
       const before = committed.current;
@@ -303,6 +320,10 @@ export function PurchaseLineNumberCell({
       decimals={integer ? 0 : 2}
       min={integer ? 1 : 0}
       onBlur={handleBlur}
+      // Antes de que `NumberInput` normalice lo escrito al salir.
+      onBlurCapture={() => {
+        leavingWithScan.current = readScanDigits(text.current) !== null;
+      }}
       onChange={(event) => {
         text.current = event.currentTarget.value;
       }}
@@ -311,6 +332,8 @@ export function PurchaseLineNumberCell({
       }}
       onKeyDown={handleKeyDown}
       onValueChange={handleValueChange}
+      // Un costo se ve siempre con dos decimales: «30.600» queda en 30.60, no en 30.6 (D26).
+      padDecimals={!integer}
       value={shown}
     />
   );
