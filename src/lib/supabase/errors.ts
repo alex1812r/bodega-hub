@@ -11,7 +11,7 @@ function isSupabaseLikeError(error: unknown): error is SupabaseLikeError {
   return typeof error === "object" && error !== null && "message" in error;
 }
 
-const INVALID_DATA_MESSAGE = "Los datos enviados no son validos.";
+export const INVALID_DATA_MESSAGE ="Los datos enviados no son validos.";
 const RETRYABLE_CONFLICT_MESSAGE =
   "La operacion choco con otra en curso y no se aplico. Intenta de nuevo.";
 

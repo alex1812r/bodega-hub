@@ -6,6 +6,7 @@ import { jsonCreated } from "@/lib/api/jsonResponse";
 import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { assertAdjustmentSignMatchesType } from "@/modules/inventory/services/assertAdjustmentSign";
+import { assertStockEntityIds } from "@/modules/inventory/services/assertStockEntityIds";
 import {
   assertStockReasonCharacters,
   assertStockReasonLength,
@@ -75,6 +76,7 @@ export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "inventory.manage");
     const input = stockAdjustmentSchema.parse(await readJsonBody(request));
+    assertStockEntityIds([input.productId]);
     // R4: fuera del schema para que el 400 lleve su mensaje, no el generico de zod.
     assertReturnAdjustmentHasDocument(input);
     assertAdjustmentSignMatchesType(input);

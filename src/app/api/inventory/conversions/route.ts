@@ -6,6 +6,7 @@ import { jsonCreated } from "@/lib/api/jsonResponse";
 import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { convertPackToUnitsSchema } from "@/modules/products/services/packConversionSchemas";
+import { assertStockEntityIds } from "@/modules/inventory/services/assertStockEntityIds";
 import {
   assertStockReasonCharacters,
   assertStockReasonLength,
@@ -28,6 +29,10 @@ export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "inventory.manage");
     const input = convertPackRequestSchema.parse(await readJsonBody(request));
+    assertStockEntityIds([
+      input.packProductId,
+      ...(input.components ?? []).map((component) => component.unitProductId),
+    ]);
     assertStockReasonCharacters(input.reason);
     assertStockReasonLength(input.reason);
     const service = getInventoryService();
