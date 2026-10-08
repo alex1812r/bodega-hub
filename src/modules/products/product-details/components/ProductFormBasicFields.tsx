@@ -2,6 +2,8 @@
 
 import type { ReactNode } from "react";
 
+import { Can } from "@/shared/auth/Can";
+import { Button } from "@/shared/components/Button";
 import { Input } from "@/shared/components/Input";
 import { NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
@@ -9,16 +11,23 @@ import type { CategoryMock } from "@/shared/mocks/erp-data";
 
 type ProductFormBasicFieldsProps = {
   categories: CategoryMock[];
+  /** Categoría elegida; "" = ninguna. */
+  categoryId: string;
   /** Valores con los que abren los campos no controlados (producto en edición o `initialValues`). */
   defaults: {
     barcode?: string | null;
-    categoryId?: string;
     currentCostRef?: number;
     salePriceRef?: number;
   };
   /** Campo de imagen ya montado; el modo `compact` no lo pasa. */
   image?: ReactNode;
   name: string;
+  onCategoryChange: (categoryId: string) => void;
+  /**
+   * Abre el alta rápida de categoría. Recibe el botón pulsado, para devolverle
+   * el foco al cerrar. El botón exige `products.manage`, como crear categorías.
+   */
+  onCreateCategory?: (trigger: HTMLButtonElement) => void;
   onNameChange: (name: string) => void;
 };
 
@@ -28,9 +37,12 @@ type ProductFormBasicFieldsProps = {
  */
 export function ProductFormBasicFields({
   categories,
+  categoryId,
   defaults,
   image,
   name,
+  onCategoryChange,
+  onCreateCategory,
   onNameChange,
 }: ProductFormBasicFieldsProps) {
   return (
@@ -44,16 +56,31 @@ export function ProductFormBasicFields({
         value={name}
       />
       <div className="grid gap-4 md:grid-cols-2">
-        <SelectField
-          defaultValue={defaults.categoryId ?? ""}
-          label="Categoría"
-          name="categoryId"
-          options={categories.map((category) => ({
-            label: category.name,
-            value: category.id,
-          }))}
-          placeholder="Selecciona"
-        />
+        <div className="space-y-1">
+          <SelectField
+            label="Categoría"
+            name="categoryId"
+            onChange={(event) => onCategoryChange(event.target.value)}
+            options={categories.map((category) => ({
+              label: category.name,
+              value: category.id,
+            }))}
+            placeholder="Selecciona"
+            value={categoryId}
+          />
+          {onCreateCategory ? (
+            <Can permission="products.manage">
+              <Button
+                className="-ml-2 h-8 px-2 text-primary"
+                onClick={(event) => onCreateCategory(event.currentTarget)}
+                size="sm"
+                variant="ghost"
+              >
+                + Nueva categoría
+              </Button>
+            </Can>
+          ) : null}
+        </div>
         <Input
           defaultValue={defaults.barcode ?? ""}
           label="Código de barras"

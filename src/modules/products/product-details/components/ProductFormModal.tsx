@@ -1,6 +1,14 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
@@ -12,6 +20,7 @@ import { Modal } from "@/shared/components/Modal";
 import { getNumberInputError } from "@/shared/components/NumberInput";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
+import { CategoryQuickCreateModal } from "../../categories-list/components/CategoryQuickCreateModal";
 import type { ProductInput, ProductWithCategory } from "../../hooks/useProducts";
 import { normalizeBarcode } from "../../services/productSearch";
 import {
@@ -48,7 +57,11 @@ export type ProductFormInitialValues = Partial<
  * detalle) y, en modo `compact`, Compras (COM-03) y el surtido (PRO-13).
  */
 export type ProductFormModalProps = {
-  /** Opciones del selector de Categoría. */
+  /**
+   * Opciones del selector de Categoría. Con `products.manage` el formulario
+   * ofrece además "+ Nueva categoría": la categoría creada ahí queda elegida y
+   * se lista aunque esta prop todavía no la traiga.
+   */
   categories?: CategoryMock[];
   /**
    * Alta rápida: solo el nivel básico (Nombre, Categoría, Código de barras,
@@ -119,6 +132,23 @@ export function ProductFormModal({
   const isOpen = isControlled ? open : internalOpen;
   const [name, setName] = useState(product?.name ?? createDefaults?.name ?? "");
   const [sku, setSku] = useState(product?.sku ?? "");
+  const [categoryId, setCategoryId] = useState(
+    product?.categoryId ?? createDefaults?.categoryId ?? "",
+  );
+  // Categorías creadas desde aquí: se ofrecen sin esperar a que el consumidor
+  // vuelva a pasar `categories` con la lista refrescada.
+  const [createdCategories, setCreatedCategories] = useState<CategoryMock[]>([]);
+  const [categoryCreateOpen, setCategoryCreateOpen] = useState(false);
+  const categoryCreateTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const categoryOptions = useMemo(
+    () => [
+      ...categories,
+      ...createdCategories.filter(
+        (created) => !categories.some((category) => category.id === created.id),
+      ),
+    ],
+    [categories, createdCategories],
+  );
   const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
   const [pendingImageBlob, setPendingImageBlob] = useState<Blob | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
@@ -146,6 +176,7 @@ export function ProductFormModal({
   function resetFormFields() {
     setName(product?.name ?? createDefaults?.name ?? "");
     setSku(product?.sku ?? "");
+    setCategoryId(product?.categoryId ?? createDefaults?.categoryId ?? "");
     setMoreOptionsOpen(false);
     setPendingImageBlob(null);
     setImageError(null);
@@ -178,6 +209,27 @@ export function ProductFormModal({
 
     flushSync(() => setStockAdjustmentOpen(false));
     stockAdjustmentTriggerRef.current?.focus();
+  }
+
+  function openCategoryCreate(trigger: HTMLButtonElement) {
+    categoryCreateTriggerRef.current = trigger;
+    setCategoryCreateOpen(true);
+  }
+
+  // Igual que el ajuste de stock: al cerrar, este formulario sigue abierto con
+  // lo escrito y el foco vuelve al botón que abrió el alta de categoría.
+  function handleCategoryCreateOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      return;
+    }
+
+    flushSync(() => setCategoryCreateOpen(false));
+    categoryCreateTriggerRef.current?.focus();
+  }
+
+  function handleCategoryCreated(category: CategoryMock) {
+    setCreatedCategories((current) => [...current, category]);
+    setCategoryId(category.id);
   }
 
   // Un campo de "Más opciones" con la sección cerrada no puede recibir el foco:
@@ -220,7 +272,6 @@ export function ProductFormModal({
 
     const form = event.currentTarget;
     const formData = new FormData(form);
-    const categoryId = String(formData.get("categoryId") ?? "");
     const shouldSendPackConversion =
       !isUnitRole &&
       (Boolean(product?.packConversion) || packConversionState.enabled);
@@ -252,7 +303,9 @@ export function ProductFormModal({
 
     const input: ProductInput = {
       barcode: normalizeBarcode(String(formData.get("barcode") ?? "")),
-      categoryId: categoryId || undefined,
+      // Del <select>, no del estado: una categoría que ya no está entre las
+      // opciones (desactivada) no viaja y el producto conserva la suya.
+      categoryId: String(formData.get("categoryId") ?? "") || undefined,
       currentCostRef: numberFromFormData(formData, "currentCostRef"),
       // Solo al crear. En edicion el stock no viaja: el formulario mandaba el
       // valor cargado al abrir y pisaba las ventas hechas mientras tanto, sin
@@ -363,7 +416,8 @@ export function ProductFormModal({
         onSubmit={(event) => handleSubmit(event, () => handleOpenChange(false))}
       >
         <ProductFormBasicFields
-          categories={categories}
+          categories={categoryOptions}
+          categoryId={categoryId}
           defaults={product ?? createDefaults ?? {}}
           image={
             compact ? undefined : (
@@ -380,6 +434,8 @@ export function ProductFormModal({
             )
           }
           name={name}
+          onCategoryChange={setCategoryId}
+          onCreateCategory={openCategoryCreate}
           onNameChange={setName}
         />
         {compact ? (
@@ -423,6 +479,13 @@ export function ProductFormModal({
           lockedProduct={product}
           onOpenChange={handleStockAdjustmentOpenChange}
           open
+        />
+      ) : null}
+      {/* Fuera del <form>: crear la categoría no debe enviar el producto. */}
+      {categoryCreateOpen ? (
+        <CategoryQuickCreateModal
+          onCreated={handleCategoryCreated}
+          onOpenChange={handleCategoryCreateOpenChange}
         />
       ) : null}
     </Modal>

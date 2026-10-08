@@ -17,7 +17,10 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Alta: solo el nivel básico a la vista; "Más opciones" cerrada. */
+/**
+ * Alta: solo el nivel básico a la vista; "Más opciones" cerrada. Con permiso
+ * para gestionar productos, bajo Categoría aparece "+ Nueva categoría".
+ */
 export const Create: Story = {};
 
 /** Edición: "Más opciones" cerrada, con el SKU y el stock actual en el resumen. */
