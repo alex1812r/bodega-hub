@@ -8,7 +8,6 @@ import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { ErrorState } from "@/shared/components/ErrorState";
-import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
@@ -17,12 +16,13 @@ import {
   PurchaseProductPickerCard,
   type PurchaseCatalogProduct,
 } from "./components/PurchaseProductPickerCard";
-import { buildPurchaseCatalog } from "./utils/buildPurchaseCatalog";
+import { usePurchaseProductSearch } from "./hooks/usePurchaseProductSearch";
+import { netCostRef } from "./utils/buildPurchaseCatalog";
 import { PurchaseStatusNotesCard } from "./components/PurchaseStatusNotesCard";
 import { PurchaseSummaryCard } from "./components/PurchaseSummaryCard";
 import { PurchaseSupplierCard } from "./components/PurchaseSupplierCard";
 import type { PurchaseLineItemMeta } from "./components/PurchaseLineItemsTable";
-import { useCreatePurchase, useSupplierProducts } from "../hooks/usePurchases";
+import { useCreatePurchase } from "../hooks/usePurchases";
 import {
   createPackDraftItem,
   createUnitDraftItem,
@@ -34,9 +34,6 @@ import {
   switchCostCurrency,
   syncLineCostFields,
 } from "./utils/normalizePurchaseLine";
-
-const PRODUCT_SEARCH_DEBOUNCE_MS = 300;
-const PRODUCT_SEARCH_LIMIT = 20;
 
 export function PurchaseCreatePage() {
   const router = useRouter();
@@ -54,17 +51,8 @@ export function PurchaseCreatePage() {
   const [lineMetaByProductId, setLineMetaByProductId] = useState(
     () => new Map<string, PurchaseLineItemMeta>(),
   );
-  const debouncedProductSearch = useDebouncedValue(
-    productSearch.trim(),
-    PRODUCT_SEARCH_DEBOUNCE_MS,
-  );
-  const supplierProducts = useSupplierProducts(
-    debouncedProductSearch ? supplierId : undefined,
-    {
-      limit: PRODUCT_SEARCH_LIMIT,
-      search: debouncedProductSearch || undefined,
-    },
-  );
+  const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
+  const catalog = productSearchResult.catalog;
   const activeRateVes = exchangeRate.data?.rateVes ?? 510;
 
   const suppliers = useMemo(
@@ -73,11 +61,6 @@ export function PurchaseCreatePage() {
         (contact) => contact.type === "proveedor" || contact.type === "ambos",
       ),
     [suppliersQuery.data],
-  );
-
-  const catalog = useMemo(
-    () => buildPurchaseCatalog(supplierId, getPaginatedItems(supplierProducts.data)),
-    [supplierId, supplierProducts.data],
   );
 
   useEffect(() => {
@@ -194,10 +177,11 @@ export function PurchaseCreatePage() {
       const defaultPack = product.defaultPackUnit ?? product.packUnits[0];
 
       if (defaultPack) {
-        const packCostRef =
-          product.unitCostRef > 0
-            ? Math.round(product.unitCostRef * defaultPack.unitsPerPack * 100) / 100
-            : 0;
+        // Del costo con IVA del bulto, no del unitario ya redondeado: evita arrastrar centimos.
+        const packCostRef = netCostRef(
+          product.costWithTaxRef * defaultPack.unitsPerPack,
+          product.taxRate,
+        );
 
         return [
           createPackDraftItem({
@@ -306,8 +290,7 @@ export function PurchaseCreatePage() {
     }
   }
 
-  const dependencyError =
-    suppliersQuery.error ?? exchangeRate.error ?? supplierProducts.error;
+  const dependencyError = suppliersQuery.error ?? exchangeRate.error;
 
   return (
     <div className="space-y-6 pb-8">
@@ -337,11 +320,7 @@ export function PurchaseCreatePage() {
           <PurchaseProductPickerCard
             catalog={catalog}
             getItemMeta={getItemMeta}
-            isSearching={
-              Boolean(productSearch.trim()) &&
-              (supplierProducts.isFetching ||
-                productSearch.trim() !== debouncedProductSearch)
-            }
+            isSearching={productSearchResult.isSearching}
             items={items}
             onAddProduct={handleAddProduct}
             onRemoveItem={handleRemoveItem}
@@ -349,6 +328,7 @@ export function PurchaseCreatePage() {
             onUpdateItem={handleUpdateItem}
             rateVes={activeRateVes}
             search={productSearch}
+            searchError={productSearchResult.error?.message ?? null}
             supplierId={supplierId}
           />
         </div>
