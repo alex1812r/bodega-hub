@@ -2,21 +2,27 @@ import { Tags } from "lucide-react";
 
 import { PosProductImage } from "@/modules/sales/sale-create/components/PosProductImage";
 import { ProductsStatusBadge } from "@/modules/products/products-list/components/ProductsStatusBadge";
-import { formatRefUsd } from "@/shared/utils/currency";
+import { MarginBadge } from "@/shared/components/MarginBadge";
+import { formatRefUsd, roundMoney } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
+import type { MarginThresholds } from "@/shared/utils/pricing";
 
 import { ProductDetailSectionCard } from "./ProductDetailSectionCard";
 
-const PLACEHOLDER_DESCRIPTION =
-  "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Presentación estándar para venta en abarrotes e inventario continuo.";
+const NO_DESCRIPTION_TEXT = "Sin descripción";
 
 type ProductDetailInfoCardProps = {
   categoryName: string;
   costRef: number;
-  description?: string;
+  /** Descripción del producto; sin ella se muestra "Sin descripción". */
+  description?: string | null;
   imageUrl?: string | null;
   isActive: boolean;
   salePriceRef: number;
+  /** Cortes del semáforo de la tienda; sin ellos, los por defecto. */
+  thresholds?: MarginThresholds;
+  /** El producto está en "Por revisar" (PRO-11): el semáforo lo dice. */
+  underReview?: boolean;
 };
 
 export function ProductDetailInfoCard({
@@ -26,8 +32,11 @@ export function ProductDetailInfoCard({
   imageUrl,
   isActive,
   salePriceRef,
+  thresholds,
+  underReview = false,
 }: ProductDetailInfoCardProps) {
-  const displayDescription = description?.trim() || PLACEHOLDER_DESCRIPTION;
+  const displayDescription = description?.trim() || NO_DESCRIPTION_TEXT;
+  const gainRef = roundMoney(salePriceRef - costRef);
 
   return (
     <ProductDetailSectionCard
@@ -40,7 +49,9 @@ export function ProductDetailInfoCard({
           <div className="relative aspect-[4/3] w-full max-w-xs overflow-hidden rounded-xl border border-border bg-surface-container">
             <PosProductImage alt="Imagen del producto" imageUrl={imageUrl ?? undefined} />
           </div>
-          <p className="max-w-2xl text-sm text-on-surface-variant">{displayDescription}</p>
+          <p className="min-w-0 max-w-2xl whitespace-pre-line text-sm text-on-surface-variant [overflow-wrap:anywhere]">
+            {displayDescription}
+          </p>
         </div>
 
         <div className="grid grid-cols-2 gap-4 border-t border-border/50 pt-4 md:grid-cols-4 dark:border-slate-800">
@@ -51,14 +62,6 @@ export function ProductDetailInfoCard({
             <span className="flex items-center gap-2 text-sm text-foreground">
               <Tags aria-hidden className="size-4 text-primary" />
               {categoryName}
-            </span>
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-outline">
-              Margen (REF)
-            </span>
-            <span className="text-sm text-foreground">
-              {formatRefUsd(Math.max(0, salePriceRef - costRef))}
             </span>
           </div>
           <div
@@ -79,6 +82,34 @@ export function ProductDetailInfoCard({
             </span>
             <span className="text-lg font-bold tabular-nums text-primary">
               {formatRefUsd(salePriceRef)}
+            </span>
+          </div>
+          <div className="flex min-w-0 flex-col gap-1 p-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-outline">
+              Ganancia
+            </span>
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <MarginBadge
+                // "Por revisar · 11,11 %" no cabe en la columna: parte en dos líneas en vez de salirse.
+                className="max-w-full flex-wrap whitespace-normal rounded-2xl"
+                cost={costRef}
+                price={salePriceRef}
+                review={underReview}
+                size="md"
+                thresholds={thresholds}
+              />
+              {/* Sin costo no hay ganancia que mostrar: el precio entero no es ganancia. */}
+              {costRef > 0 ? (
+                <span
+                  className={cn(
+                    "text-sm tabular-nums",
+                    // Pérdida: mismo aviso que el badge rojo, no un importe neutro.
+                    gainRef < 0 ? "font-medium text-destructive" : "text-on-surface-variant",
+                  )}
+                >
+                  {formatRefUsd(gainRef)}
+                </span>
+              ) : null}
             </span>
           </div>
         </div>

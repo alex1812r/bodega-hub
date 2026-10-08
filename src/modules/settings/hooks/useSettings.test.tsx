@@ -3,6 +3,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import {
+  usePricingSettings,
   useSettings,
   useUpdateSettings,
   useUpdateUser,
@@ -46,6 +47,19 @@ describe("settings hooks", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     global.fetch = fetchMock;
+  });
+
+  it("loads the pricing settings from the read-only endpoint of product viewers", async () => {
+    const pricing = { chipsPct: [5, 50], greenFromPct: 40, yellowFromPct: 10 };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: pricing }));
+
+    const { result } = renderHook(() => usePricingSettings(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(pricing);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/settings/pricing");
   });
 
   it("loads settings and users", async () => {

@@ -445,3 +445,110 @@ notify pgrst, 'reload schema';
 -- la de 12 y deja dos sobrecargas: volver a aplicar este parche despues (verify-patches lo detecta).
 -- Orden con el BFF: indistinto. El BFF que envia la clave sobre una base sin el parche recibe PGRST202 y registra el
 -- pago una vez sin idempotencia (queda en el log); el BFF anterior funciona sobre la base ya parcheada.
+-- -----------------------------------------------------------------------------
+-- 20261009a — product margin pct (PRO-07): columna generada almacenada products.margin_pct (% de ganancia sobre el costo
+--             en REF; NULL con costo 0) + indice (store_id, margin_pct) para filtrar y ordenar el listado por ganancia
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009a-product-margin-pct.sql
+-- No requiere otros parches. Idempotente, una transaccion. No migra datos, no toca stock, dinero ni RPC: Postgres calcula
+-- la columna a partir de sale_price_ref y current_cost_ref (que ya incluye IVA) y la mantiene sola.
+-- OJO: reescribe la tabla products con bloqueo exclusivo mientras dura (aplicar fuera de hora pico).
+-- ORDEN DE DESPLIEGUE (PRO-07): aplicar ANTES de desplegar el BFF: GET /api/products?margin=... y sortBy=marginPct
+-- filtran y ordenan por margin_pct; sin el parche esas dos consultas responden error (el resto del listado no la usa).
+-- -----------------------------------------------------------------------------
+-- 20261009b — pricing settings (PRO-09): semaforo de ganancia y chips de % por tienda en app_settings
+--             (margin_yellow_from_pct 15, margin_green_from_pct 25, markup_chips_pct {12,20,30}) y % de ganancia sugerido
+--             por categoria (categories.default_markup_pct, opcional)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009b-pricing-settings.sql
+-- Requiere 20260716, 20261006i y 20261007a. Idempotente, una transaccion. No migra datos (las tiendas existentes reciben
+-- los valores por defecto de las columnas), no toca stock, dinero, precios, RPC, politicas ni grants. Regenera los
+-- triggers trg_zz_reject_non_finite_numeric_* de app_settings y categories para cubrir las columnas numeric nuevas.
+-- La alicuota por defecto para categorias nuevas ya existe (app_settings.default_tax_rate_id, 20261007a): no se duplica.
+-- ORDEN DE DESPLIEGUE (PRO-09): aplicar ANTES de desplegar el BFF: /api/settings, /api/settings/pricing, /api/categories
+-- y /api/products ya piden las columnas nuevas en sus select; sin el parche responden error.
+-- -----------------------------------------------------------------------------
+-- 20261009c — price review (PRO-11): cola "Por revisar" de precios. product_price_history guarda el costo y la banda de
+--             ganancia de cada precio fijado (cost_ref_snapshot, margin_band_snapshot, snapshot_seq), update_product_price
+--             los rellena, RPC keep_product_price ("Mantener precio"), linea base por producto (backfill + trigger en las
+--             altas) y vista products_price_review (security_invoker) con la compra que subio el costo
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009c-price-review.sql
+-- Requiere 20261006a, 20261006h, 20261006i, 20261009a y 20261009b. Idempotente, una transaccion. Ninguna firma cambia:
+-- update_product_price valida, bloquea, falla y escribe products igual que en 20261006h; solo anade la instantanea a la
+-- fila de historial que ya insertaba. No toca stock, dinero, precios, politicas ni las RPC de compras.
+-- OJO: inserta UNA fila de historial "Línea base de ganancia" (precio anterior = nuevo = actual) por cada producto que
+-- no tenga ninguna instantanea, y cada producto nuevo nace con la suya (trigger trg_products_price_baseline). Las filas
+-- de historial anteriores quedan sin instantanea (no se inventa el costo historico). Reaplicar no inserta mas filas.
+-- OJO: las instantaneas consumen numeros de public.stock_movements_seq (orden exacto frente a las compras recibidas);
+-- no escriben ni leen stock. Un script que reinicie esa secuencia debe vaciar tambien product_price_history
+-- (reset-data.sql y reset-purchases-and-costs.sql ya lo hacen) y reaplicar este parche para recrear las lineas base.
+-- OJO: reaplicar 20261006g o 20261006h reinstala update_product_price sin la instantanea: volver a aplicar este parche.
+-- ORDEN DE DESPLIEGUE (PRO-11): aplicar ANTES de desplegar el BFF: /api/products (listado y detalle),
+-- /api/products/price-review, /api/products/{id}/keep-price y /api/products/{id}/price-history ya leen la vista y las
+-- columnas nuevas; sin el parche responden error.
+-- -----------------------------------------------------------------------------
+-- 20261009d — assorted pack (PRO-12): la conversion empaque -> unidad pasa a RECETA de N componentes.
+--             product_pack_conversions = cabecera (label, total_units) + product_pack_components (unit_product_id,
+--             units_per_pack, cost_weight); convert_pack_to_units gana p_components (reparto real de la apertura) y
+--             reparte el costo por unidades x cost_weight; conversion_mismatches suma las entradas de los componentes;
+--             vista product_pack_roles + relacion calculada pack_role(products)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009d-assorted-pack.sql
+-- Requiere 20260811, 20261006a, 20261006c, 20261006d, 20261006i y 20261007a. Idempotente, una transaccion. Migra datos la
+-- primera vez: cada fila de product_pack_conversions queda como cabecera (total_units = units_per_pack) + 1 componente
+-- (cost_weight 1). Con recetas de 1 componente nada cambia: mismo stock, costo, movimientos y resultado al abrir un
+-- empaque, misma compra en modo empaque y mismas filas en conversion_mismatches.
+-- Firmas: convert_pack_to_units pasa de 4 a 5 argumentos (p_components jsonb al final, con default; se elimina la de 4);
+-- create_purchase conserva la de 14 y solo cambia como lee la receta en modo empaque (componentes / total_units).
+-- Se elimina el indice unico uq_product_pack_conversions_unit_active (un producto unidad puede salir de varios empaques);
+-- se mantiene uq_product_pack_conversions_pack_active (una receta activa por empaque).
+-- Compatibilidad: product_pack_conversions.units_per_pack (= total_units) y unit_product_id (componente unico o NULL en un
+-- surtido) se mantienen por trigger; el BFF que aun lee y escribe el par 1 a 1 sigue funcionando sobre la base parcheada.
+-- OJO: una receta ACTIVA debe sumar total_units (trigger diferido, PT400 al commit). Por PostgREST: crear la cabecera
+-- inactiva, insertar los componentes y activarla.
+-- OJO: reaplicar 20261006c deja dos sobrecargas de convert_pack_to_units; reaplicar 20261006c / f / h o 20261007a
+-- reinstala create_purchase sin la lectura de componentes; reaplicar 20261006d reinstala conversion_mismatches del modelo
+-- 1 a 1. En los tres casos: volver a aplicar este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (PRO-12): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada; el BFF que
+-- envia p_components o lee product_pack_components / pack_role necesita el parche.
+-- -----------------------------------------------------------------------------
+-- 20261009e — supplier preferred (PRO-14): proveedor habitual del producto. supplier_products.is_preferred (como mucho uno
+--             por producto y nunca un vinculo inactivo ni de un proveedor inactivo), triggers "primer vinculo = habitual"
+--             y relevo al desactivar / borrar el habitual o al desactivar su proveedor, backfill de un habitual por
+--             producto y RPC save_product_suppliers (estado deseado de los vinculos del producto en una transaccion)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009e-supplier-preferred.sql
+-- Requiere 20260716 y 20261006h. Idempotente, una transaccion. No toca stock, products (ni current_cost_ref), precios de
+-- venta, compras, politicas ni las RPC existentes: create_purchase / receive_purchase, register_supplier_product_price y
+-- el formulario de contactos siguen igual y los triggers marcan el habitual por ellos. No anade columnas numeric (los
+-- triggers de 20261006i no se regeneran).
+-- OJO: backfill. Cada producto con vinculos activos y sin habitual recibe UNO: el de compra mas reciente
+-- (last_purchased_at) o, sin compras, el vinculo mas antiguo; solo entre proveedores activos. Reaplicar no cambia un
+-- habitual ya elegido. El vinculo elegido estrena updated_at (pasa por trg_supplier_products_updated_at).
+-- OJO: el costo que llega por save_product_suppliers se registra con register_supplier_product_price en modo 'unit'
+-- (borra last_pack_cost_ref del vinculo, igual que registrar un precio por unidad) y sin costo en Bs.
+-- OJO: los triggers bloquean la fila del producto (for no key update) al dar de alta, reactivar, desactivar o borrar un
+-- vinculo que decide el habitual: dos altas simultaneas del primer vinculo ya no eligen dos habituales.
+-- ORDEN DE DESPLIEGUE (PRO-14): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo
+-- sin el parche: PUT /api/products/{id}/suppliers responde error; los listados de productos siguen respondiendo (sin
+-- preferredSupplier) y los de vinculos salen con isPreferred = false.
+-- -----------------------------------------------------------------------------
+-- 20261009f — price and product idempotency (PRO-F9): el precio de un reprecio se calcula DENTRO de la base con el producto
+--             bloqueado (reprice_product_to_markup), cambio de precio y "Mantener precio" con costo esperado
+--             (update_product_price_checked, keep_product_price con p_expected_cost_ref: PT409 si el costo cambio) y clave
+--             de idempotencia del alta de producto (products.client_request_id / client_request_hash + indice unico)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009f-price-and-product-idempotency.sql
+-- Requiere 20261006c, 20261006h y 20261009c. Idempotente, una transaccion. No toca stock, dinero, politicas ni las RPC de
+-- compras; update_product_price queda letra por letra como en 20261009c (las RPC nuevas delegan en ella). No anade columnas
+-- numeric (los triggers de 20261006i no se regeneran). Las dos columnas nuevas de products son opcionales: importacion
+-- masiva, RPC que crean productos y BFF anterior siguen insertando sin ellas.
+-- OJO: keep_product_price cambia de firma: (uuid, text) -> (uuid, text, numeric default null). Se elimina la de dos
+-- argumentos; las llamadas con dos argumentos siguen resolviendo. Reaplicar 20261009c reinstala la firma vieja y deja dos
+-- sobrecargas (PGRST203 en la llamada de un argumento): volver a aplicar este parche y correr verify-patches.sql.
+-- OJO: price_from_markup redondea un % con mas de dos decimales en decimal exacto (1.005 -> 1.01); priceFromMarkup de
+-- @bodega/core lo hace sobre coma flotante (-> 1.00). El BFF envia el % ya redondeado con la regla de @bodega/core.
+-- ORDEN DE DESPLIEGUE (PRO-F9): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: el reprecio masivo, el cambio de precio con costo esperado, "Mantener precio" con costo esperado y el alta de
+-- producto con clientRequestId responden error (funcion o columna inexistente); nada queda a medias.

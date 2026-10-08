@@ -6,8 +6,16 @@ import type { UseQueryOptions } from "@tanstack/react-query";
 import { fetchAllPaginatedItems } from "@/lib/api/fetchAllPaginatedItems";
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import type { SortOrder } from "@/lib/api/sorting";
-import { apiFetch } from "@/shared/api/apiFetch";
+import { supplierProductsQueryKeys } from "@/modules/contacts/hooks/useSupplierProducts";
+import { apiFetch, ClientApiError } from "@/shared/api/apiFetch";
 import type { CategoryInput } from "../services/categories.mock-server";
+import type { ProductPriceHistoryEntry, ProductPriceReview } from "../services/priceReview";
+import type { ProductMarginFilter } from "../services/productMargin";
+import type {
+  ProductPreferredSupplier,
+  ProductSupplierLink,
+  SaveProductSuppliersResult,
+} from "../services/productSuppliers";
 import type {
   ProductSaleHistoryResult,
   ProductSaleHistoryRow,
@@ -16,27 +24,39 @@ import type {
   CategoryMock,
   ProductMock,
   ProductPackConversionSummary,
-  ProductPriceHistoryMock,
   SupplierProductMock,
 } from "@/shared/mocks/erp-data";
 
 export type { CategoryInput };
+export type { ProductPriceHistoryEntry, ProductPriceReview };
 export type { ProductSaleHistoryResult, ProductSaleHistoryRow };
+export type { ProductPreferredSupplier, ProductSupplierLink, SaveProductSuppliersResult };
 
 export type CategoriesFilters = PaginationParams & {
   isActive?: boolean | string;
   search?: string;
 };
 
+/** Filtros del catálogo completo de categorías: la paginación la resuelve el hook. */
+export type CategoriesCatalogFilters = Omit<CategoriesFilters, "limit" | "skip">;
+
 export type ProductWithCategory = ProductMock & {
   category?: CategoryMock;
   packConversion?: ProductPackConversionSummary;
+  /** Proveedor habitual del producto, si tiene. No llega a los roles que no ven proveedores. */
+  preferredSupplier?: ProductPreferredSupplier;
+  /** Solo si el producto está en la cola "Por revisar": su costo subió y la ganancia bajó de banda. */
+  priceReview?: ProductPriceReview;
 };
 
 export type ProductsFilters = PaginationParams & {
   barcode?: string;
   categoryId?: string;
   isActive?: boolean | string;
+  /** Banda de ganancia (`low` / `mid` / `high`) o `none` = productos sin costo. */
+  margin?: ProductMarginFilter;
+  /** `1` = solo productos en la cola "Por revisar". */
+  review?: "1";
   search?: string;
   sortBy?: string;
   sortOrder?: SortOrder;
@@ -48,14 +68,30 @@ export type ProductsCatalogFilters = Omit<ProductsFilters, "limit" | "skip">;
 export type ProductInput = {
   barcode?: string | null;
   categoryId?: string;
+  /**
+   * Solo en el alta: clave de idempotencia del envío (uuid). El reintento con la
+   * misma clave devuelve el producto ya creado en vez de crear otro.
+   */
+  clientRequestId?: string;
   currentCostRef?: number;
   currentStock?: number;
+  /**
+   * Máx. 500 caracteres. `null` la borra; ausente, el alta queda sin ella y la
+   * edición conserva la guardada.
+   */
+  description?: string | null;
   imageUrl?: string | null;
   minStock?: number;
   name: string;
   packConversion?: {
+    /** Solo `mode: "assorted"`: de 2 a 20 productos; sus unidades suman `totalUnits`. */
+    components?: { costWeight?: number; unitProductId: string; unitsPerPack: number }[];
     enabled: boolean;
-    mode?: "create_unit" | "link_existing";
+    /** Solo `mode: "assorted"`: nombre opcional de la receta. */
+    label?: string | null;
+    mode?: "assorted" | "create_unit" | "link_existing";
+    /** Solo `mode: "assorted"`: unidades que salen del empaque en total. */
+    totalUnits?: number;
     unitProduct?: {
       barcode?: string | null;
       currentCostRef?: number;
@@ -67,7 +103,8 @@ export type ProductInput = {
     unitsPerPack?: number;
   };
   salePriceRef: number;
-  sku: string;
+  /** Vacío o ausente: en el alta lo genera el servidor; en la edición se conserva el actual. */
+  sku?: string;
 };
 
 export type ProductUpdateInput = Partial<ProductInput> & {
@@ -75,11 +112,18 @@ export type ProductUpdateInput = Partial<ProductInput> & {
 };
 
 export type ProductPriceUpdateInput = {
+  /**
+   * Costo (REF) sobre el que el usuario decidió el precio. Si el producto ya
+   * cuesta otra cosa responde 409 y el precio no cambia.
+   */
+  expectedCostRef?: number;
+  /** Motivo del cambio (máx. 200 caracteres). Ausente o en blanco: se guarda sin motivo. */
+  reason?: string;
   salePriceRef: number;
 };
 
 export type ProductPriceUpdateResult = {
-  history: ProductPriceHistoryMock;
+  history: ProductPriceHistoryEntry;
   product: ProductWithCategory;
 };
 
@@ -87,6 +131,8 @@ export const productsQueryKeys = {
   all: ["products"] as const,
   categories: (filters: CategoriesFilters = {}) =>
     [...productsQueryKeys.all, "categories", filters] as const,
+  categoriesAll: (filters: CategoriesCatalogFilters = {}) =>
+    [...productsQueryKeys.all, "categories-all", filters] as const,
   detail: (id: string) => [...productsQueryKeys.all, "detail", id] as const,
   list: (filters: ProductsFilters = {}) =>
     [...productsQueryKeys.all, "list", filters] as const,
@@ -167,6 +213,29 @@ export function useCategories(
   });
 }
 
+/**
+ * Todas las categorías (sin filtros: las activas), por nombre. `/api/categories`
+ * entrega 10 por página si no se pide `limit` y como mucho `MAX_PAGE_LIMIT`:
+ * usar esto en selectores y filtros, que necesitan la lista entera;
+ * `useCategories` es para la lista paginada.
+ */
+export function useAllCategories(
+  filters: CategoriesCatalogFilters = {},
+  options: CategoriesListQueryOptions = {},
+) {
+  return useQuery({
+    queryKey: productsQueryKeys.categoriesAll(filters),
+    queryFn: async (): Promise<PaginatedList<CategoryMock>> => {
+      const items = await fetchAllPaginatedItems<CategoryMock>("/api/categories", filters);
+
+      items.sort((left, right) => left.name.localeCompare(right.name, "es"));
+
+      return { items, limit: items.length, skip: 0, total: items.length };
+    },
+    ...options,
+  });
+}
+
 export function useCreateCategory() {
   const queryClient = useQueryClient();
 
@@ -220,7 +289,7 @@ export function useProductPriceHistory(id: string) {
     enabled: Boolean(id),
     queryKey: productsQueryKeys.priceHistory(id),
     queryFn: () =>
-      apiFetch<PaginatedList<ProductPriceHistoryMock>>(`/api/products/${id}/price-history`),
+      apiFetch<PaginatedList<ProductPriceHistoryEntry>>(`/api/products/${id}/price-history`),
   });
 }
 
@@ -235,12 +304,85 @@ export function useProductSales(productId: string, pagination: PaginationParams 
   });
 }
 
-export function useProductSuppliers(id?: string) {
+/** Filtros de `GET /api/products/[id]/suppliers` (sin filtros: activos e inactivos, 10 por página). */
+export type ProductSuppliersFilters = PaginationParams & {
+  isActive?: boolean | string;
+};
+
+/**
+ * Vínculos proveedor–producto de un producto. Cada fila trae `isPreferred`
+ * (el habitual). El formulario de producto pide los activos:
+ * `useProductSuppliers(id, { isActive: true, limit: 100 })`.
+ */
+export function useProductSuppliers(id?: string, filters?: ProductSuppliersFilters) {
   return useQuery({
     enabled: Boolean(id),
-    queryKey: productsQueryKeys.suppliers(id ?? ""),
+    queryKey: filters
+      ? [...productsQueryKeys.suppliers(id ?? ""), filters]
+      : productsQueryKeys.suppliers(id ?? ""),
     queryFn: () =>
-      apiFetch<PaginatedList<SupplierProductMock>>(`/api/products/${id}/suppliers`),
+      apiFetch<PaginatedList<SupplierProductMock>>(
+        `/api/products/${id}/suppliers`,
+        filters ? { query: filters } : undefined,
+      ),
+  });
+}
+
+/** Una fila del estado deseado de los proveedores de un producto. */
+export type ProductSupplierSaveInput = {
+  /** Costo REF por unidad (≥ 0). Sin él, o `null`, el costo del vínculo no se toca. */
+  costRef?: number | null;
+  /** Como mucho uno en `true`. Si ninguno lo marca, el servidor conserva o reasigna el habitual. */
+  isPreferred?: boolean;
+  supplierId: string;
+  /** Sin la clave el código no se toca; `null` o vacío lo borra. */
+  supplierSku?: string | null;
+};
+
+/**
+ * Guarda los proveedores del producto en una llamada (`PUT`): la lista es el
+ * estado DESEADO completo de sus vínculos activos (lo que no viene se
+ * desactiva). La respuesta dice si el habitual cambió (`preferredChanged`) y
+ * si lo movió o quitó el servidor (`preferredAutoAssigned`).
+ */
+export function useSaveProductSuppliers(id: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (suppliers: ProductSupplierSaveInput[]) =>
+      apiFetch<SaveProductSuppliersResult>(`/api/products/${id}/suppliers`, {
+        body: { suppliers },
+        method: "PUT",
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: supplierProductsQueryKeys.all });
+    },
+  });
+}
+
+export type SaveSuppliersForProductInput = {
+  productId: string;
+  suppliers: ProductSupplierSaveInput[];
+};
+
+/**
+ * Igual que `useSaveProductSuppliers`, para cuando el id del producto no se
+ * conoce al montar: en un alta llega con la respuesta del `POST` del producto.
+ */
+export function useSaveSuppliersForProduct() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ productId, suppliers }: SaveSuppliersForProductInput) =>
+      apiFetch<SaveProductSuppliersResult>(`/api/products/${productId}/suppliers`, {
+        body: { suppliers },
+        method: "PUT",
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: supplierProductsQueryKeys.all });
+    },
   });
 }
 
@@ -286,6 +428,13 @@ export function useUpdateProductPrice(id: string) {
         body: input,
         method: "POST",
       }),
+    onError: (error) => {
+      // 409: el costo cambió mientras el usuario decidía. Se refrescan los datos
+      // para que vea el costo y la ganancia reales antes de volver a intentarlo.
+      if (error instanceof ClientApiError && error.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+      }
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
       void queryClient.invalidateQueries({

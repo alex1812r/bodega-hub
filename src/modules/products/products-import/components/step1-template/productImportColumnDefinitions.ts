@@ -28,7 +28,7 @@ export const PRODUCT_IMPORT_COLUMN_DEFINITIONS: ProductImportColumnDefinition[] 
       column: "categoria",
       required: false,
       description:
-        "Nombre exacto de la categoría. Se creará si no existe en el sistema.",
+        "Nombre exacto de la categoría. Debe existir en Categorías; si no existe, la fila no se importa.",
     },
     {
       column: "precio_ref",

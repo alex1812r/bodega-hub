@@ -8,6 +8,7 @@ import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { PurchaseRepriceNotice } from "@/modules/products/components/price-review/PurchaseRepriceNotice";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { roundMoney } from "@/shared/utils/currency";
 
@@ -158,6 +159,7 @@ export function PurchaseDetailsPage({
         status={data.status}
         updatedAt={data.updatedAt}
       />
+      <PurchaseRepriceNotice purchaseId={data.id} />
 
       <PurchaseDetailProductsTable
         discountRef={data.discountRef}

@@ -111,7 +111,19 @@ export function ContactsListPage() {
   }
 
   async function handleCreateContact(input: ContactInput) {
-    await createContact.mutateAsync(input);
+    return createContact.mutateAsync(input);
+  }
+
+  // Al abrir un alta o una edición no debe verse el error de un guardado anterior.
+  function handleCreateOpenChange(open: boolean) {
+    if (open) {
+      createContact.reset();
+    }
+  }
+
+  function openContactEdit(contact: ContactMock) {
+    updateContact.reset();
+    setEditingContact(contact);
   }
 
   async function handleUpdateContact(input: ContactInput) {
@@ -142,6 +154,7 @@ export function ContactsListPage() {
                 customersOnly={customersOnly}
                 errorMessage={createContact.error?.message}
                 isSubmitting={createContact.isPending}
+                onOpenChange={handleCreateOpenChange}
                 onSubmit={handleCreateContact}
                 trigger={
                   <Button className="w-full gap-2 shadow-sm sm:w-auto" size="sm">
@@ -177,7 +190,7 @@ export function ContactsListPage() {
               if (can("contacts.manage")) {
                 items.push({
                   label: "Editar",
-                  onSelect: () => setEditingContact(contact),
+                  onSelect: () => openContactEdit(contact),
                 });
 
                 if (contact.isActive) {
@@ -213,6 +226,7 @@ export function ContactsListPage() {
                       customersOnly={customersOnly}
                       errorMessage={createContact.error?.message}
                       isSubmitting={createContact.isPending}
+                      onOpenChange={handleCreateOpenChange}
                       onSubmit={handleCreateContact}
                       trigger={
                         <Button className="gap-2" size="sm">

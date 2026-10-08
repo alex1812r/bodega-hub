@@ -37,6 +37,21 @@ describe("productImportRowSchema", () => {
     }
   });
 
+  // PRO-05: el SKU opcional es solo del formulario; en el Excel sigue siendo obligatorio.
+  it.each([{ sku: "" }, { sku: "   " }, {}])(
+    "keeps the sku required in the import row (%j)",
+    (input) => {
+      const result = productImportRowSchema.safeParse({
+        nombre: "Producto valido",
+        precio_ref: 1,
+        ...input,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["sku"]);
+    },
+  );
+
   it("rejects empty sku and name", () => {
     const result = productImportRowSchema.safeParse({
       sku: "",

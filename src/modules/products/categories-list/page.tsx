@@ -11,6 +11,7 @@ import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
+import { formatMarkupPct } from "@/shared/components/MarginBadge";
 import { PageBackButton } from "@/shared/components/PageBackButton";
 import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
@@ -65,6 +66,17 @@ const columns: DataTableColumn<CategoryMock>[] = [
     key: "taxRate",
     render: (category) => (
       <span className={cn(!category.isActive && "text-outline")}>{category.taxRate}%</span>
+    ),
+    visibility: "md",
+  },
+  {
+    cellClassName: "tabular-nums text-on-surface-variant",
+    header: "Ganancia sugerida",
+    key: "defaultMarkupPct",
+    render: (category) => (
+      <span className={cn(!category.isActive && "text-outline")}>
+        {category.defaultMarkupPct != null ? formatMarkupPct(category.defaultMarkupPct) : "—"}
+      </span>
     ),
     visibility: "md",
   },

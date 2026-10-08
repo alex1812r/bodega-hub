@@ -415,7 +415,8 @@ describe("N1 · las líneas de documento, los historiales de precio y los empaqu
       expect(await visible(lab.uids[role], filters)).toEqual({
         sale_items: 1,
         purchase_items: 1,
-        product_price_history: 1,
+        // La fila del test y la línea base de ganancia con la que nace el producto (20261009c).
+        product_price_history: 2,
         supplier_product_price_history: 1,
         supplier_product_pack_units: 1,
       });
@@ -427,7 +428,8 @@ describe("N1 · las líneas de documento, los historiales de precio y los empaqu
       const filters = await historyRows(lab.defaultStoreId);
 
       expect(await visible(otherAdmin, filters)).toEqual({
-        product_price_history: 1,
+        // La fila del test y la línea base de ganancia con la que nace el producto (20261009c).
+        product_price_history: 2,
         supplier_product_price_history: 1,
         supplier_product_pack_units: 1,
       });
@@ -498,7 +500,9 @@ describe("N2 · empaques e historiales de precio solo se escriben desde su tiend
       const counts = await one(
         db,
         "historiales",
-        `select (select count(*)::int from public.product_price_history where product_id = $1) as precio,
+        // Sin contar la línea base de ganancia con la que nace el producto (20261009c).
+        `select (select count(*)::int from public.product_price_history
+                 where product_id = $1 and reason is distinct from 'Línea base de ganancia') as precio,
                 (select count(*)::int from public.supplier_product_price_history where supplier_product_id = $2) as costo`,
         [p, sp],
       );

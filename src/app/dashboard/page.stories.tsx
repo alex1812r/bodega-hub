@@ -65,6 +65,20 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
 
+/** PRO-11: con productos en "Por revisar" la tarjeta aparece encima de "Bajo stock". */
+export const WithPriceReview: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        ...dashboardHandlers,
+        http.get("/api/products/price-review/summary", () =>
+          HttpResponse.json({ data: { total: 3 } }),
+        ),
+      ],
+    },
+  },
+};
+
 export const Loading: Story = {
   parameters: {
     msw: {

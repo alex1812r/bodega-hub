@@ -4,12 +4,14 @@ import { paginateList } from "@/lib/api/pagination";
 import {
   mockContacts,
   mockPayments,
+  mockProductPackConversions,
   mockProducts,
   mockPurchaseItems,
   mockPurchases,
   type PurchaseItemMock,
   type PurchaseMock,
 } from "@/shared/mocks/erp-data";
+import { applyMockPurchaseCost } from "@/modules/products/services/priceReview.mock-server";
 import {
   findActiveMockTaxRateByCode,
   findMockTaxRateForPct,
@@ -18,7 +20,7 @@ import { normalizeTaxRatePct } from "@/modules/settings/services/taxRates.schema
 import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
-import { roundMoney } from "@/shared/utils/currency";
+import { amountWithTax, roundMoney } from "@/shared/utils/currency";
 
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
 import { normalizePurchaseLine } from "../schemas/purchaseItem.schema";
@@ -204,6 +206,14 @@ function toPurchaseItemMock(
   };
 }
 
+/**
+ * La compra tal como la guarda el mock, sea de la semilla o creada en esta
+ * ejecucion. Sin control de tienda: quien la expone lo hace con `getPurchaseById`.
+ */
+export function findMockPurchase(id: string): PurchaseMock | undefined {
+  return createdPurchases().get(id)?.purchase ?? mockPurchases.find((item) => item.id === id);
+}
+
 export function getPurchaseById(id: string, storeId: string) {
   const created = createdPurchases().get(id);
   const purchase = created?.purchase ?? mockPurchases.find((item) => item.id === id);
@@ -226,6 +236,43 @@ export function getPurchaseById(id: string, storeId: string) {
       })),
     supplier: mockContacts.find((contact) => contact.id === purchase.supplierId),
   };
+}
+
+/**
+ * Costo que una linea recibida fija en su producto, con la regla de
+ * `create_purchase` / `receive_purchase`: el ULTIMO costo (no un promedio), por
+ * unidad y con el IVA de la linea, `round(unit_cost_ref * (1 + tax_rate / 100), 2)`.
+ * Si el producto es el EMPAQUE de un par empaque -> unidad activo y la linea
+ * llega por empaque, su unidad es el empaque: el costo es el del empaque.
+ */
+function receivedLineCostRef(item: PurchaseItemMock, storeId: string) {
+  const isPackProduct =
+    item.entryMode === "pack" &&
+    mockProductPackConversions.some(
+      (conversion) =>
+        conversion.isActive &&
+        conversion.storeId === storeId &&
+        conversion.packProductId === item.productId,
+    );
+  const netCostRef = isPackProduct ? (item.packCostRef ?? item.unitCostRef) : item.unitCostRef;
+
+  return amountWithTax(roundMoney(netCostRef), item.taxRate ?? 0);
+}
+
+/**
+ * Lo que la recepcion hace con `products.current_cost_ref`, linea a linea (si un
+ * producto se repite manda la ultima). Solo el costo: el mock sigue sin tocar
+ * `currentStock` ni crear movimientos. La compra queda como causante en la cola
+ * "Por revisar" (`price-review?purchaseId=`).
+ */
+function applyReceivedCosts(purchaseId: string, items: PurchaseItemMock[], storeId: string) {
+  for (const item of items) {
+    const product = mockProducts.find((candidate) => candidate.id === item.productId);
+
+    if (product && (product.storeId ?? DEFAULT_STORE_ID) === storeId) {
+      applyMockPurchaseCost(item.productId, receivedLineCostRef(item, storeId), purchaseId);
+    }
+  }
 }
 
 /**
@@ -291,10 +338,13 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
     userId: "user-demo",
   } satisfies PurchaseMock;
 
-  createdPurchases().set(purchase.id, {
-    items: lines.map(({ item, tax }) => toPurchaseItemMock(item, purchase.id, tax)),
-    purchase,
-  });
+  const items = lines.map(({ item, tax }) => toPurchaseItemMock(item, purchase.id, tax));
+
+  createdPurchases().set(purchase.id, { items, purchase });
+
+  if (status === "recibido") {
+    applyReceivedCosts(purchase.id, items, storeId);
+  }
 
   if (requestKey) {
     purchasesByClientRequest().set(requestKey, purchase);
@@ -308,6 +358,15 @@ export function receivePurchase(id: string, storeId: string) {
 
   if (purchase.status !== "pedido") {
     throw new ApiError(400, "BAD_REQUEST", "Solo se pueden recibir compras en estado pedido.");
+  }
+
+  applyReceivedCosts(purchase.id, purchase.items, storeId);
+
+  // Como `receive_purchase`: la compra queda recibida y no se puede volver a recibir.
+  const stored = findMockPurchase(id);
+
+  if (stored) {
+    stored.status = "recibido";
   }
 
   return {

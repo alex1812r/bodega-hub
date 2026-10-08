@@ -5,6 +5,7 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { type ReactNode, useState } from "react";
 
 import { createQueryClient } from "@/lib/query/query-client";
+import { ToastProvider } from "@/shared/components/Toast";
 import { ThemeProvider } from "@/shared/theme/ThemeProvider";
 
 type AppProvidersProps = {
@@ -17,7 +18,7 @@ export function AppProviders({ children }: AppProvidersProps) {
   return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
-        {children}
+        <ToastProvider>{children}</ToastProvider>
         <ReactQueryDevtools initialIsOpen={false} />
       </QueryClientProvider>
     </ThemeProvider>

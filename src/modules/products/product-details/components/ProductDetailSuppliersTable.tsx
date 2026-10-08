@@ -26,7 +26,10 @@ import {
 import type { SupplierProduct } from "@/modules/contacts/types/supplierProducts";
 
 import { ProductDetailSectionCard } from "./ProductDetailSectionCard";
-import { ProductDetailSuppliersSummaryCards } from "./ProductDetailSuppliersSummaryCards";
+import {
+  ProductDetailSuppliersSummaryCards,
+  sortSupplierLinksByCost,
+} from "./ProductDetailSuppliersSummaryCards";
 
 export type ProductSupplierRow = SupplierProduct;
 
@@ -57,14 +60,7 @@ export function ProductDetailSuppliersTable({
   const [selected, setSelected] = useState<SupplierProduct | null>(null);
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
 
-  const bestPriceId = useMemo(() => {
-    const activeRows = rows.filter((row) => row.isActive !== false);
-    if (activeRows.length === 0) return null;
-
-    return [...activeRows].sort(
-      (first, second) => (first.lastCostRef ?? 0) - (second.lastCostRef ?? 0),
-    )[0]?.id;
-  }, [rows]);
+  const bestPriceId = useMemo(() => sortSupplierLinksByCost(rows)[0]?.id ?? null, [rows]);
 
   function openModal(modal: ActiveModal, row: SupplierProduct) {
     setSelected(row);
@@ -160,6 +156,11 @@ export function ProductDetailSuppliersTable({
                       <td className="px-5 py-3 font-medium text-foreground">
                         <div className="flex flex-col gap-1">
                           <span>{row.supplier?.name ?? row.supplierId}</span>
+                          {row.isPreferred ? (
+                            <span className="inline-flex w-fit rounded-full bg-primary/10 px-2 py-0.5 text-[0.625rem] font-bold uppercase text-primary">
+                              Habitual
+                            </span>
+                          ) : null}
                           {row.id === bestPriceId ? (
                             <span className="inline-flex w-fit rounded-full bg-secondary-container px-2 py-0.5 text-[0.625rem] font-bold uppercase text-on-secondary-container">
                               Más económico
@@ -171,7 +172,7 @@ export function ProductDetailSuppliersTable({
                         {row.supplierSku ?? "—"}
                       </td>
                       <td className="px-5 py-3 text-right font-mono text-sm tabular-nums">
-                        {formatRefUsd(row.lastCostRef ?? 0)}
+                        {(row.lastCostRef ?? 0) > 0 ? formatRefUsd(row.lastCostRef ?? 0) : "—"}
                       </td>
                       <td className="px-5 py-3 text-sm text-on-surface-variant">
                         {formatSupplierProductPackUnitsSummary(row.packUnits)}

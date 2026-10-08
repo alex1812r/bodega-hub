@@ -691,6 +691,27 @@ paths:
           schema:
             type: string
           description: SKU exacto (se normaliza con trim y minusculas, igual que al crear). Si se envia, `search` se ignora; vacio no filtra.
+        - name: review
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1", "true"]
+          description: Solo productos en la cola "Por revisar" (su costo subio y la ganancia bajo de banda). Se combina con los demas filtros, el orden y la paginacion.
+        - name: packLink
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [none, not-pack]
+          description: >-
+            Filtra por el vinculo de empaque activo del producto, resuelto en el
+            servidor. `none` deja solo los productos sin ningun vinculo (ni empaque
+            ni componente de una receta activa). `not-pack` deja fuera solo los que
+            son el EMPAQUE de una receta activa: son los que pueden elegirse como
+            unidad o componente, porque un producto puede salir de varios empaques.
+            Cualquier otro valor no filtra. Se combina con los demas filtros, el
+            orden y la paginacion.
       responses:
         "200":
           description: Lista paginada de productos
@@ -714,7 +735,11 @@ paths:
     post:
       tags: [Products]
       summary: Crear producto
-      description: Usa mock o Supabase segun `API_DATA_SOURCE`. SKU duplicado responde `409`.
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. SKU duplicado responde `409`. Con `clientRequestId` el alta
+        es idempotente: repetir el mismo cuerpo con la misma clave (reintento tras una respuesta perdida) responde
+        `201` con el producto ya creado, sin otro producto ni otro movimiento `inventario_inicial`; la misma clave
+        con otro contenido responde `409`.
       x-permission: products.manage
       requestBody:
         required: true
@@ -924,7 +949,10 @@ paths:
     post:
       tags: [Products]
       summary: Cambiar precio de producto
-      description: Mock simula historial. Supabase usa RPC `update_product_price`.
+      description: >-
+        Mock simula historial. Supabase usa RPC `update_product_price`. Con `expectedCostRef` usa
+        `update_product_price_checked`: si el costo del producto ya no es ese (a dos decimales) responde `409`
+        "El costo cambió de X a Y; revisa el precio" y no cambia nada.
       x-permission: products.manage
       requestBody:
         required: true
@@ -941,6 +969,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/products/{id}/price-history:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -973,6 +1003,148 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/products/{id}/keep-price:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [Products]
+      summary: Mantener el precio de un producto en revision
+      description: >-
+        Saca el producto de la cola "Por revisar" sin cambiar su precio: registra una fila de historial con precio
+        anterior = nuevo = actual (`kind: keep`) que vuelve a guardar el costo y la banda de ganancia del momento.
+        Supabase usa la RPC `keep_product_price`; no toca el producto ni el stock. El cuerpo es opcional. Con
+        `expectedCostRef`, si el costo del producto ya no es ese (a dos decimales) responde `409` "El costo cambió
+        de X a Y; revisa el precio" y no registra nada: el producto sigue en la cola.
+      x-permission: products.manage
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductKeepPriceInput"
+      responses:
+        "200":
+          description: Fila de historial registrada y producto (ya sin `priceReview`)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [history, product]
+                    properties:
+                      history:
+                        $ref: "#/components/schemas/ProductPriceHistory"
+                      product:
+                        $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/products/price-review:
+    get:
+      tags: [Products]
+      summary: Listar la cola "Por revisar" de precios
+      description: >-
+        Productos activos cuyo costo subio despues de fijar su precio y cuya banda de ganancia actual es peor que la
+        guardada entonces (verde a amarillo, amarillo a rojo, verde a rojo). Orden: peor banda primero y, dentro de
+        ella, la mayor caida de %. Un producto sale de la cola al cambiar su precio, con "Mantener precio" o si el
+        costo vuelve a bajar. Nunca se cambia un precio automaticamente.
+      x-permission: products.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: purchaseId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Solo los productos cuyo costo subio esa compra (la compra recibida mas reciente posterior al ultimo precio fijado).
+      responses:
+        "200":
+          description: Cola paginada
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/ProductPriceReviewItem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/products/price-review/summary:
+    get:
+      tags: [Products]
+      summary: Contar los productos de la cola "Por revisar"
+      description: Solo el conteo (tarjeta del dashboard).
+      x-permission: products.view
+      responses:
+        "200":
+          description: Total de productos en la cola
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [total]
+                    properties:
+                      total:
+                        type: integer
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/products/price-review/reprice:
+    post:
+      tags: [Products]
+      summary: Reprecio masivo al % de ganancia indicado
+      description: >-
+        Para cada producto la base calcula precio = costo x (1 + markupPct / 100), redondeado a dinero, con el
+        producto bloqueado y sobre su costo vigente (RPC `reprice_product_to_markup`; motivo por defecto "Reprecio
+        al X %"). Un fallo no aborta el lote: la respuesta es 200 con un resultado por producto (`ok` con el precio
+        nuevo o `error` con codigo y mensaje). Un producto sin costo responde `NO_COST` en su fila: nunca se le
+        pone precio 0. Los productos llegan en `items` (con el costo que el usuario vio: si ya es otro, esa fila
+        responde `COST_CHANGED` y su precio no cambia), en `productIds` (sin esa comprobacion) o en ambos; entre
+        los dos, de 1 a 100 productos distintos.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductRepriceInput"
+      responses:
+        "200":
+          description: Resultado por producto
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProductRepriceResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/products/{id}/sales:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -1028,10 +1200,51 @@ paths:
     get:
       tags: [Products]
       summary: Listar proveedores de un producto
+      description: >-
+        Vinculos proveedor-producto del producto (activos e inactivos; `isActive=true` deja solo los activos). Cada
+        fila trae `isPreferred`: el proveedor habitual del producto (como mucho uno).
       x-permission: products.view
       responses:
         "200":
           $ref: "#/components/responses/SupplierProductArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Products]
+      summary: Guardar los proveedores de un producto
+      description: >-
+        El cuerpo es el estado DESEADO completo de los vinculos activos del producto, en una sola llamada y una sola
+        transaccion (RPC `save_product_suppliers`): crea los vinculos que faltan (reactiva el que existia inactivo),
+        actualiza costo y codigo, DESACTIVA (no borra) los activos que no vienen y fija el proveedor habitual. El costo
+        pasa por el historial de precios del proveedor. El mismo proveedor repetido se funde en una fila (gana la
+        ultima aparicion; habitual si alguna lo marca). Habitual: el marcado; si ninguno, se conserva el actual si
+        sigue en la lista; si no, pasa al primero de la lista con proveedor activo; lista vacia = sin proveedores ni
+        habitual. 400: proveedor inexistente, de otra tienda o que no es proveedor / ambos; proveedor inactivo en un
+        vinculo nuevo o marcado habitual; mas de un habitual; costo negativo; mas de 50 filas. Requiere ademas acceso a
+        contactos proveedor (el vendedor recibe 403) y, en Supabase, rol admin o almacen. No toca el producto, su costo,
+        su precio ni el stock.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductSuppliersInput"
+      responses:
+        "200":
+          description: Vinculos activos tras guardar y resultado del proveedor habitual
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProductSuppliersResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -1147,7 +1360,15 @@ paths:
   /api/inventory/conversions:
     post:
       tags: [Inventory]
-      summary: Convertir empaque a unidades (dual SKU)
+      summary: Convertir empaque a unidades (dual SKU o surtido)
+      description: >-
+        Abre `packQuantity` empaques segun su receta activa. Sin `components` cada
+        componente recibe `unitsPerPack x packQuantity`. Con `components` se registra
+        el reparto REAL de esta apertura: solo componentes de la receta, sin
+        repetidos y sumando `totalUnits x packQuantity` (si no, `400` sin mover
+        nada). El valor (`packQuantity` x costo del empaque) se reparte en proporcion
+        a unidades x `costWeight`. Deja 1 `conversion_salida` y 1 `conversion_entrada`
+        por componente con unidades, todos con el mismo `conversionId`.
       x-permission: inventory.manage
       requestBody:
         required: true
@@ -1164,15 +1385,32 @@ paths:
                   minimum: 1
                 reason:
                   type: string
+                components:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  description: >-
+                    Opcional. Reparto real de la apertura de un surtido. Los
+                    componentes con 0 unidades se pueden omitir.
+                  items:
+                    type: object
+                    required: [unitProductId, units]
+                    properties:
+                      unitProductId:
+                        type: string
+                      units:
+                        type: integer
+                        minimum: 0
                 clientRequestId:
                   type: string
                   format: uuid
                   description: >-
                     Clave de idempotencia opcional por intento: repetir la peticion con la
-                    misma clave devuelve la conversion original sin mover stock.
+                    misma clave y el mismo contenido (incluido `components`) devuelve la
+                    conversion original sin mover stock; con otro reparto responde `409`.
       responses:
         "201":
-          description: Conversion creada (par de movimientos)
+          description: Conversion creada (1 salida + 1 entrada por componente con unidades)
           content:
             application/json:
               schema:
@@ -1189,6 +1427,8 @@ paths:
                         packQuantity,
                         unitQuantity,
                         unitsPerPack,
+                        totalUnits,
+                        components,
                       ]
                     properties:
                       conversionId:
@@ -1197,28 +1437,42 @@ paths:
                         type: integer
                       unitQuantity:
                         type: integer
+                        description: Unidades que salieron en total.
                       unitsPerPack:
+                        type: integer
+                        description: Unidades por empaque de la receta (igual a `totalUnits`).
+                      totalUnits:
                         type: integer
                       unitCostRef:
                         type: number
+                        description: Costo medio por unidad. En un surtido, el de cada componente va en `components`.
                       packMovement:
                         $ref: "#/components/schemas/StockMovement"
                       unitMovement:
-                        $ref: "#/components/schemas/StockMovement"
+                        allOf:
+                          - $ref: "#/components/schemas/StockMovement"
+                        description: Entrada del primer componente por id (con un solo componente, la de siempre).
+                      components:
+                        type: array
+                        description: Una entrada por componente con unidades, por id de producto.
+                        items:
+                          $ref: "#/components/schemas/PackConversionOpenedComponent"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/IdempotencyConflict"
   /api/inventory/pack-conversions:
     get:
       tags: [Inventory]
-      summary: Listar vinculos empaque→unidad activos
+      summary: Listar recetas de empaque activas (pares y surtidos)
       x-permission: inventory.view
       responses:
         "200":
-          description: Lista de conversiones configuradas
+          description: Recetas activas, vistas desde el empaque (`role` = `pack`)
           content:
             application/json:
               schema:
@@ -1228,7 +1482,13 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
+                      allOf:
+                        - $ref: "#/components/schemas/ProductPackConversion"
+                        - type: object
+                          required: [packProduct]
+                          properties:
+                            packProduct:
+                              $ref: "#/components/schemas/ProductPackConversionLinkedProduct"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/sales:
@@ -2606,6 +2866,29 @@ paths:
           $ref: "#/components/responses/ReportObjectResponse"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/settings/pricing:
+    get:
+      tags: [Settings]
+      summary: Semaforo de ganancia y chips de % de la tienda (solo lectura)
+      description: >-
+        Los mismos valores que `pricing` de /api/settings, para quien ve productos
+        sin `settings.view` (vendedor, almacen). Basta uno de los dos permisos. Una
+        tienda sin configuracion responde los valores por defecto (15 / 25 y chips
+        12, 20, 30). Se cambian con PATCH /api/settings (`pricing`).
+      x-permission: products.view
+      responses:
+        "200":
+          description: Ajustes de precios de la tienda
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PricingSettings"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/tax-rates:
     get:
       tags: [Settings]
@@ -3457,6 +3740,15 @@ components:
             Alicuota de IVA de la categoria (`id` de /api/tax-rates). Solo lectura:
             se deriva de `taxRate`, que debe ser el porcentaje de una alicuota de la
             tienda (si no, 400 al guardar). `taxRate` siempre es el `pct` de esta alicuota.
+        defaultMarkupPct:
+          type: number
+          nullable: true
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1000
+          description: >-
+            % de ganancia sugerido de la categoria (markup sobre el costo en REF, dos
+            decimales). Se ofrece como primer chip al fijar el precio de sus productos; no cambia ningun precio. Ausente o `null` = sin sugerencia.
         isActive:
           type: boolean
     CategoryResponse:
@@ -3478,6 +3770,15 @@ components:
           type: number
           minimum: 0
           maximum: 100
+        defaultMarkupPct:
+          type: number
+          nullable: true
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1000
+          description: >-
+            % de ganancia sugerido de la categoria (markup sobre el costo en REF, dos
+            decimales). Opcional; mayor que 0 y como maximo 1000 (si no, 400).
     CategoryUpdateInput:
       type: object
       properties:
@@ -3490,8 +3791,89 @@ components:
           type: number
           minimum: 0
           maximum: 100
+        defaultMarkupPct:
+          type: number
+          nullable: true
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1000
+          description: >-
+            % de ganancia sugerido de la categoria (markup sobre el costo en REF, dos
+            decimales). `null` borra la sugerencia; sin el campo, no se toca.
         isActive:
           type: boolean
+    ProductSuppliersInput:
+      type: object
+      required: [suppliers]
+      properties:
+        suppliers:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [supplierId]
+            properties:
+              supplierId:
+                type: string
+              costRef:
+                type: number
+                nullable: true
+                minimum: 0
+                description: Costo REF por unidad. Sin el (o null) el costo del vinculo no se toca.
+              supplierSku:
+                type: string
+                nullable: true
+                description: Codigo del proveedor. Sin la clave no se toca; null o vacio lo borra.
+              isPreferred:
+                type: boolean
+                description: Como mucho uno en true.
+    ProductSupplierLink:
+      type: object
+      required: [id, supplierId, supplierName, supplierIsActive, costRef, isPreferred]
+      properties:
+        id:
+          type: string
+          description: Id del vinculo proveedor-producto.
+        supplierId:
+          type: string
+        supplierName:
+          type: string
+        supplierIsActive:
+          type: boolean
+        costRef:
+          type: number
+          description: Ultimo costo REF por unidad registrado (0 = sin costo registrado).
+        supplierSku:
+          type: string
+        isPreferred:
+          type: boolean
+        lastPurchasedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProductSuppliersResult:
+      type: object
+      required: [suppliers, preferredSupplierId, previousPreferredSupplierId, preferredChanged, preferredAutoAssigned]
+      properties:
+        suppliers:
+          type: array
+          description: Vinculos activos tras guardar; el habitual primero, despues por nombre.
+          items:
+            $ref: "#/components/schemas/ProductSupplierLink"
+        preferredSupplierId:
+          type: string
+          nullable: true
+        previousPreferredSupplierId:
+          type: string
+          nullable: true
+        preferredChanged:
+          type: boolean
+          description: El habitual final es distinto del que habia antes de guardar.
+        preferredAutoAssigned:
+          type: boolean
+          description: El servidor movio o quito el habitual sin que la lista marcara uno.
     SupplierProduct:
       type: object
       required: [id, supplierId, productId, isActive]
@@ -3502,6 +3884,9 @@ components:
           type: string
         productId:
           type: string
+        isPreferred:
+          type: boolean
+          description: Proveedor habitual del producto (como mucho uno por producto; nunca un vinculo inactivo).
         lastCostRef:
           type: number
           minimum: 0
@@ -3682,6 +4067,11 @@ components:
           type: string
         name:
           type: string
+        description:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: Texto libre del producto. `null` = sin descripcion.
         salePriceRef:
           type: number
         currentCostRef:
@@ -3692,6 +4082,359 @@ components:
           type: integer
         isActive:
           type: boolean
+        priceReview:
+          allOf:
+            - $ref: "#/components/schemas/ProductPriceReview"
+          description: Solo si el producto esta en la cola "Por revisar" (listado y detalle).
+        preferredSupplier:
+          type: object
+          required: [id, name]
+          description: >-
+            Proveedor habitual del producto, si tiene (listado y detalle). No se envia a los roles sin acceso a
+            contactos proveedor.
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+        packConversion:
+          allOf:
+            - $ref: "#/components/schemas/ProductPackConversion"
+          description: Solo en el detalle, y solo si el producto es empaque o sale de alguno.
+    ProductPackConversionLinkedProduct:
+      type: object
+      required: [id, sku, name, salePriceRef, currentCostRef, currentStock]
+      properties:
+        id:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        salePriceRef:
+          type: number
+        currentCostRef:
+          type: number
+        currentStock:
+          type: integer
+    ProductPackConversionComponent:
+      type: object
+      required: [unitProductId, name, sku, unitsPerPack, costWeight, isActive, currentStock]
+      properties:
+        unitProductId:
+          type: string
+        name:
+          type: string
+        sku:
+          type: string
+        unitsPerPack:
+          type: integer
+          minimum: 1
+        costWeight:
+          type: number
+          description: Peso relativo en el reparto del costo del empaque (unidades x peso).
+        isActive:
+          type: boolean
+        currentStock:
+          type: integer
+    ProductPackConversionSource:
+      type: object
+      description: Una receta activa de la que sale el producto.
+      required: [conversionId, packProductId, packName, unitsPerPack, totalUnits]
+      properties:
+        conversionId:
+          type: string
+        packProductId:
+          type: string
+        packName:
+          type: string
+        unitsPerPack:
+          type: integer
+          description: Unidades de ESTE producto por empaque.
+        totalUnits:
+          type: integer
+          description: Unidades que salen del empaque en total.
+    ProductPackConversion:
+      type: object
+      description: >-
+        Vinculo de empaque de un producto. `id`, `unitsPerPack`, `linkedProduct`,
+        `kind`, `label`, `totalUnits` y `components` describen UNA receta. Con
+        `role` = `pack` es la receta activa del producto: `unitsPerPack` = unidades
+        que salen en total y `linkedProduct` = su componente (en un surtido, el
+        primero por nombre). Con `role` = `unit` es la primera receta de la que sale
+        el producto (por nombre del empaque): `unitsPerPack` = unidades de este
+        producto por empaque y `linkedProduct` = ese empaque; `sources` las trae
+        todas. Un producto que es empaque y ademas componente de otra receta se
+        informa como `pack`, con `sources`.
+      required: [id, role, unitsPerPack, linkedProduct, kind, label, totalUnits, components, sources]
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [pack, unit]
+        unitsPerPack:
+          type: integer
+        linkedProduct:
+          $ref: "#/components/schemas/ProductPackConversionLinkedProduct"
+        kind:
+          type: string
+          enum: [single, assorted]
+          description: Con `single` hay un solo producto unidad; `assorted` es un surtido.
+        label:
+          type: string
+          nullable: true
+        totalUnits:
+          type: integer
+        components:
+          type: array
+          description: Componentes de la receta, por nombre.
+          items:
+            $ref: "#/components/schemas/ProductPackConversionComponent"
+        sources:
+          type: array
+          description: Recetas activas de las que sale el producto, por nombre del empaque.
+          items:
+            $ref: "#/components/schemas/ProductPackConversionSource"
+    PackConversionInput:
+      type: object
+      description: >-
+        Receta del empaque en el alta / edicion de producto. `enabled: false`
+        desactiva la receta. `link_existing` (con `unitProductId`) y `create_unit`
+        (con `unitProduct`) son el par de siempre y piden `unitsPerPack`.
+        `assorted` es un surtido: `totalUnits` y de 2 a 20 `components` sin
+        repetir, ninguno el propio empaque, cuyas unidades suman `totalUnits`
+        (si no, `400`). Un componente puede salir de varios empaques, pero no puede
+        ser el empaque de una receta activa (`409`). Cambiar los productos de una
+        receta crea una receta nueva y deja inactiva la anterior.
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+        mode:
+          type: string
+          enum: [link_existing, create_unit, assorted]
+        unitProductId:
+          type: string
+        unitsPerPack:
+          type: integer
+          minimum: 2
+        unitProduct:
+          type: object
+          required: [salePriceRef]
+          properties:
+            name:
+              type: string
+            sku:
+              type: string
+            barcode:
+              type: string
+              nullable: true
+            salePriceRef:
+              type: number
+              minimum: 0
+            currentCostRef:
+              type: number
+              minimum: 0
+        label:
+          type: string
+          nullable: true
+          maxLength: 80
+        totalUnits:
+          type: integer
+          minimum: 2
+        components:
+          type: array
+          minItems: 2
+          maxItems: 20
+          items:
+            type: object
+            required: [unitProductId, unitsPerPack]
+            properties:
+              unitProductId:
+                type: string
+              unitsPerPack:
+                type: integer
+                minimum: 1
+              costWeight:
+                type: number
+                exclusiveMinimum: true
+                minimum: 0
+                default: 1
+    PackConversionOpenedComponent:
+      type: object
+      description: Lo que recibio un componente al abrir el empaque.
+      required: [unitProductId, units, costWeight, allocatedValueRef, unitCostRef, newCostRef, isActive, movement]
+      properties:
+        unitProductId:
+          type: string
+        units:
+          type: integer
+        costWeight:
+          type: number
+        allocatedValueRef:
+          type: number
+          description: Parte del valor del empaque asignada (4 decimales). La suma de todas es el valor transferido.
+        unitCostRef:
+          type: number
+          description: Costo por unidad de lo que entro en esta apertura.
+        newCostRef:
+          type: number
+          description: Costo del producto tras la apertura (promedio ponderado).
+        isActive:
+          type: boolean
+        movement:
+          $ref: "#/components/schemas/StockMovement"
+    ProductPriceReview:
+      type: object
+      description: Por que un producto esta en la cola "Por revisar" - ganancia y costo al fijar el precio frente a los actuales.
+      required:
+        - previousBand
+        - currentBand
+        - previousMarginPct
+        - currentMarginPct
+        - previousCostRef
+        - currentCostRef
+        - snapshotAt
+      properties:
+        previousBand:
+          type: string
+          enum: [low, mid, high]
+          description: Banda guardada al fijar el precio (low rojo, mid amarillo, high verde).
+        currentBand:
+          type: string
+          enum: [low, mid, high]
+          description: Banda actual con los umbrales de la tienda.
+        previousMarginPct:
+          type: number
+          description: "% de ganancia del precio vigente sobre el costo guardado."
+        currentMarginPct:
+          type: number
+          description: "% de ganancia del precio vigente sobre el costo actual."
+        previousCostRef:
+          type: number
+        currentCostRef:
+          type: number
+        snapshotAt:
+          type: string
+          format: date-time
+          description: Cuando se fijo (o se mantuvo) el precio por ultima vez.
+        purchase:
+          type: object
+          description: Compra recibida que subio el costo. Ausente si el costo cambio por otra via (edicion, importacion).
+          required: [id, number, receivedAt]
+          properties:
+            id:
+              type: string
+            number:
+              type: string
+            receivedAt:
+              type: string
+              format: date-time
+            supplierName:
+              type: string
+    ProductPriceReviewItem:
+      allOf:
+        - $ref: "#/components/schemas/ProductPriceReview"
+        - type: object
+          required: [productId, name, sku, salePriceRef]
+          properties:
+            productId:
+              type: string
+            name:
+              type: string
+            sku:
+              type: string
+            salePriceRef:
+              type: number
+    ProductKeepPriceInput:
+      type: object
+      properties:
+        expectedCostRef:
+          type: number
+          minimum: 0
+          description: >-
+            Costo (REF) con el que se mostro la ganancia que el usuario acepta. Si el producto ya cuesta otra cosa
+            (a dos decimales) responde 409 y no se registra nada.
+        reason:
+          type: string
+          nullable: true
+          maxLength: 200
+          description: Motivo. Ausente, null o en blanco se guarda "Precio mantenido".
+    ProductRepriceInput:
+      type: object
+      required: [markupPct]
+      description: Al menos uno de `items` o `productIds`; entre los dos, de 1 a 100 productos distintos.
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          description: Productos con el costo que el usuario vio. Si un producto esta tambien en `productIds`, manda este.
+          items:
+            type: object
+            required: [productId, expectedCostRef]
+            properties:
+              productId:
+                type: string
+              expectedCostRef:
+                type: number
+                minimum: 0
+                description: Costo (REF) de la vista previa. Si ya es otro (a dos decimales), la fila responde COST_CHANGED.
+        productIds:
+          type: array
+          maxItems: 100
+          description: Productos sin comprobacion de costo esperado; el precio sale del costo vigente.
+          items:
+            type: string
+        markupPct:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 1000
+          description: "% de ganancia sobre el costo."
+        reason:
+          type: string
+          nullable: true
+          maxLength: 200
+          description: Motivo. Ausente, null o en blanco se guarda "Reprecio al X %".
+    ProductRepriceResult:
+      type: object
+      required: [results, updated, failed]
+      properties:
+        updated:
+          type: integer
+        failed:
+          type: integer
+        results:
+          type: array
+          items:
+            oneOf:
+              - type: object
+                required: [productId, status, salePriceRef]
+                properties:
+                  productId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [ok]
+                  salePriceRef:
+                    type: number
+                    description: Precio nuevo aplicado.
+              - type: object
+                required: [productId, status, code, message]
+                properties:
+                  productId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [error]
+                  code:
+                    type: string
+                    description: >-
+                      NO_COST, COST_CHANGED (el costo ya no es el `expectedCostRef` enviado; el precio no cambio),
+                      NOT_FOUND o el codigo del error de la API (FORBIDDEN, BAD_REQUEST, CONFLICT...).
+                  message:
+                    type: string
     ProductResponse:
       type: object
       required: [data]
@@ -3704,12 +4447,25 @@ components:
       properties:
         categoryId:
           type: string
+        clientRequestId:
+          type: string
+          format: uuid
+          description: >-
+            Clave de idempotencia del alta (opcional). El formulario genera una por intento y la repite al
+            reintentar el mismo envio.
         currentCostRef:
           type: number
           minimum: 0
         currentStock:
           type: integer
           minimum: 0
+        description:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: >-
+            Opcional. Se guarda sin espacios sobrantes ni caracteres de control; en blanco, `null` o ausente
+            queda `null`. Mas de 500 caracteres responde 400. Entra en la huella de idempotencia del alta.
         minStock:
           type: integer
           minimum: 0
@@ -3722,6 +4478,8 @@ components:
         sku:
           type: string
           minLength: 1
+        packConversion:
+          $ref: "#/components/schemas/PackConversionInput"
     ProductUpdateInput:
       type: object
       description: >-
@@ -3734,6 +4492,12 @@ components:
         currentCostRef:
           type: number
           minimum: 0
+        description:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: >-
+            Ausente: se conserva la guardada. En blanco o `null`: se borra. Mas de 500 caracteres responde 400.
         minStock:
           type: integer
           minimum: 0
@@ -3746,16 +4510,24 @@ components:
         sku:
           type: string
           minLength: 1
+        packConversion:
+          $ref: "#/components/schemas/PackConversionInput"
     ProductPriceInput:
       type: object
       required: [salePriceRef]
       properties:
+        expectedCostRef:
+          type: number
+          minimum: 0
+          description: >-
+            Costo (REF) sobre el que el usuario decidio el precio. Si el producto ya cuesta otra cosa (a dos
+            decimales) responde 409 y el precio no cambia.
         salePriceRef:
           type: number
           minimum: 0
     ProductPriceHistory:
       type: object
-      required: [id, productId, salePriceRef, createdAt, userId]
+      required: [id, productId, salePriceRef, previousSalePriceRef, kind, reason, createdAt, userId]
       properties:
         id:
           type: string
@@ -3763,6 +4535,20 @@ components:
           type: string
         salePriceRef:
           type: number
+          description: Precio nuevo.
+        previousSalePriceRef:
+          type: number
+          nullable: true
+          description: Precio antes del cambio, tal como lo guardo la fila. Null si no se registro.
+        kind:
+          type: string
+          enum: [change, keep, baseline]
+          description: >-
+            change = cambio de precio; keep = el precio se mantuvo ("Mantener precio"); baseline = linea base de
+            ganancia del producto (alta o migracion). En keep y baseline el precio anterior y el nuevo coinciden.
+        reason:
+          type: string
+          nullable: true
         createdAt:
           type: string
           format: date-time
@@ -4695,7 +5481,7 @@ components:
           maximum: 100000
     AppSettings:
       type: object
-      required: [businessName, defaultTaxRate, invoicePrefix, lowStockThreshold]
+      required: [businessName, defaultTaxRate, invoicePrefix, lowStockThreshold, pricing]
       properties:
         businessName:
           type: string
@@ -4705,8 +5491,11 @@ components:
         defaultTaxRateId:
           type: string
           description: >-
-            Alicuota por defecto de la tienda (`id` de /api/tax-rates). Solo lectura.
-            Ausente si `defaultTaxRate` no corresponde a ninguna alicuota del catalogo.
+            Alicuota por defecto de la tienda para categorias nuevas (`id` de /api/tax-rates).
+            Se cambia con PATCH /api/settings. Ausente si `defaultTaxRate` no corresponde a
+            ninguna alicuota del catalogo.
+        pricing:
+          $ref: "#/components/schemas/PricingSettings"
         invoicePrefix:
           type: string
         lowStockThreshold:
@@ -4715,6 +5504,34 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PaymentMethod"
+    PricingSettings:
+      type: object
+      required: [yellowFromPct, greenFromPct, chipsPct]
+      description: >-
+        Semaforo de ganancia (markup sobre el costo en REF) y % recomendados del
+        bloque de precio. Es una alerta: no bloquea ventas ni cambia precios.
+      properties:
+        yellowFromPct:
+          type: number
+          minimum: 0
+          maximum: 1000
+          description: Por debajo de este % la ganancia es roja; desde aqui, amarilla. Debe ser menor que `greenFromPct`.
+        greenFromPct:
+          type: number
+          minimum: 0
+          maximum: 1000
+          description: Desde este % la ganancia es verde.
+        chipsPct:
+          type: array
+          minItems: 1
+          maxItems: 6
+          uniqueItems: true
+          description: "% recomendados, en orden ascendente."
+          items:
+            type: number
+            minimum: 0
+            exclusiveMinimum: true
+            maximum: 1000
     AppSettingsResponse:
       type: object
       required: [data]
@@ -4730,12 +5547,32 @@ components:
         defaultTaxRate:
           type: number
           minimum: 0
+          deprecated: true
+          description: Porcentaje suelto. Usar `defaultTaxRateId`, que manda si llegan los dos.
+        defaultTaxRateId:
+          type: string
+          minLength: 1
+          description: >-
+            Alicuota por defecto para categorias nuevas (`id` de /api/tax-rates). Debe
+            existir y estar activa para la tienda; si no, 400 con el motivo en `error.message`.
         invoicePrefix:
           type: string
           minLength: 1
         lowStockThreshold:
           type: integer
           minimum: 0
+        enabledPaymentMethods:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PaymentMethod"
+        pricing:
+          allOf:
+            - $ref: "#/components/schemas/PricingSettings"
+          description: >-
+            Semaforo de ganancia y chips de %. Se envia completo (los tres campos). Umbrales
+            invertidos o iguales, chips repetidos, fuera de rango o mas de 6 responden 400 con el
+            motivo en español en `error.message`.
     LoginInput:
       type: object
       required: [email, password]

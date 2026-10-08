@@ -4,6 +4,8 @@
  * historial se refrescan sin recargar.
  *
  * PAG-F2 · «Volver» regresa a la lista de origen que viaja en `returnTo`.
+ *
+ * PRO-10 · el detalle de compra monta el aviso de reprecio con el id de la compra cargada.
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -23,6 +25,13 @@ jest.mock("next/navigation", () => ({
 // jspdf necesita TextEncoder, que jsdom no trae; el PDF no interviene aqui.
 jest.mock("./services/exportPurchaseDetailPdf", () => ({
   exportPurchaseDetailPdf: jest.fn(),
+}));
+
+// PRO-10: el aviso tiene su propia suite; aqui solo importa que se monte y con que compra.
+jest.mock("../../products/components/price-review/PurchaseRepriceNotice", () => ({
+  PurchaseRepriceNotice: ({ purchaseId }: { purchaseId: string }) => (
+    <div data-purchase-id={purchaseId} data-testid="purchase-reprice-notice" />
+  ),
 }));
 
 import { authQueryKeys } from "@/modules/auth/hooks/useCurrentUser";
@@ -447,5 +456,46 @@ describe("PurchaseDetailsPage · re-pedido fallido (PAG-F6 U2)", () => {
 
     expect(await screen.findByText("No pudimos cargar la compra")).toBeInTheDocument();
     expect(screen.getByText("Fallo interno.")).toBeInTheDocument();
+  });
+});
+
+describe("PurchaseDetailsPage · aviso de reprecio (PRO-10)", () => {
+  it("monta el aviso con el id de la compra", async () => {
+    await renderPage();
+
+    expect(screen.getByTestId("purchase-reprice-notice")).toHaveAttribute(
+      "data-purchase-id",
+      PURCHASE.id,
+    );
+  });
+
+  it("no lo monta mientras la compra carga ni si falla", async () => {
+    installApi({}, { role: "admin" });
+    const { unmount } = render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <PurchaseDetailsPage purchaseId={PURCHASE.id} />
+      </QueryClientProvider>,
+    );
+
+    // Primer pintado: la compra todavia no llego.
+    expect(screen.queryByRole("heading", { name: /C-20261006-000007/ })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("purchase-reprice-notice")).not.toBeInTheDocument();
+    unmount();
+
+    global.fetch = jest.fn(() =>
+      Promise.resolve(jsonResponse({ error: { code: "INTERNAL_ERROR", message: "boom" } }, 500)),
+    ) as unknown as typeof fetch;
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <PurchaseDetailsPage purchaseId={PURCHASE.id} />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("No pudimos cargar la compra")).toBeInTheDocument();
+    expect(screen.queryByTestId("purchase-reprice-notice")).not.toBeInTheDocument();
   });
 });

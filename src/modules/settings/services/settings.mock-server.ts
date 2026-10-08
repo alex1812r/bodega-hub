@@ -7,25 +7,96 @@ import {
   type AppSettingsMock,
   type UserProfileMock,
 } from "@/shared/mocks/erp-data";
+import { mockState } from "@/shared/mocks/mockStore";
+import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { CreateStoreUserInput } from "./createStoreUserSchema";
+import {
+  defaultPricingSettings,
+  parsePricingSettings,
+  type PricingSettings,
+} from "./pricingSettings.schemas";
+import { mockTaxRatesForStore } from "./taxRates.mock-server";
+import { DEFAULT_TAX_RATE_UNAVAILABLE_MESSAGE } from "./taxRates.schemas";
 
 export type SettingsInput = Partial<AppSettingsMock>;
 export type UserProfileInput = Partial<
   Pick<UserProfileMock, "deniedPermissions" | "grantedPermissions" | "isActive" | "name" | "role">
 >;
 
+/** `mockAppSettings` es la configuracion de la tienda demo. */
+function ownsMockSettings(storeId: string) {
+  return (mockAppSettings.storeId ?? DEFAULT_STORE_ID) === storeId;
+}
+
+/**
+ * Ajustes de precios en memoria, por tienda (como las columnas de
+ * `app_settings`). La tienda demo parte de `mockAppSettings.pricing`; cualquier
+ * otra, de los valores por defecto de `@bodega/core`.
+ */
+function pricingByStore() {
+  return mockState<Map<string, PricingSettings>>("settings:pricing", () => new Map());
+}
+
+export function getPricingSettings(storeId: string): PricingSettings {
+  const stored = pricingByStore().get(storeId);
+  const pricing =
+    stored ?? (ownsMockSettings(storeId) ? mockAppSettings.pricing : defaultPricingSettings());
+
+  return { ...pricing, chipsPct: [...pricing.chipsPct] };
+}
+
+/** Misma regla que el servicio real: la alicuota debe verla la tienda y estar activa. */
+function findActiveStoreTaxRate(taxRateId: string, storeId: string) {
+  const rate = mockTaxRatesForStore(storeId).find(
+    (candidate) => candidate.id === taxRateId && candidate.isActive,
+  );
+
+  if (!rate) {
+    throw new ApiError(400, "BAD_REQUEST", DEFAULT_TAX_RATE_UNAVAILABLE_MESSAGE);
+  }
+
+  return rate;
+}
+
 export function getSettings(storeId: string) {
   return {
     ...mockAppSettings,
+    pricing: getPricingSettings(storeId),
     storeId: mockAppSettings.storeId ?? storeId,
   };
 }
 
+/**
+ * Persisten en memoria los ajustes de precios (por tienda) y la alicuota por
+ * defecto (en la tienda demo, de donde la lee el mock de alicuotas). El resto de
+ * campos se devuelven con el cambio aplicado, como hasta ahora.
+ */
 export function updateSettings(input: SettingsInput, storeId: string) {
+  // Todo se valida antes de escribir nada: un rechazo no deja cambios a medias.
+  const pricing = input.pricing !== undefined ? parsePricingSettings(input.pricing) : undefined;
+  const taxRate =
+    input.defaultTaxRateId != null
+      ? findActiveStoreTaxRate(input.defaultTaxRateId, storeId)
+      : undefined;
+  // Como el trigger de la base: con alicuota, el porcentaje es el suyo.
+  const defaultTaxRate = taxRate
+    ? { defaultTaxRate: taxRate.pct, defaultTaxRateId: taxRate.id }
+    : {};
+
+  if (pricing) {
+    pricingByStore().set(storeId, pricing);
+  }
+
+  if (taxRate && ownsMockSettings(storeId)) {
+    Object.assign(mockAppSettings, defaultTaxRate);
+  }
+
   return {
     ...getSettings(storeId),
     ...input,
+    ...defaultTaxRate,
+    pricing: getPricingSettings(storeId),
     storeId,
   };
 }

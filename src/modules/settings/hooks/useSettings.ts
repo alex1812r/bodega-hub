@@ -4,10 +4,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import { apiFetch } from "@/shared/api/apiFetch";
-import type { AppSettingsMock, UserProfileMock } from "@/shared/mocks/erp-data";
+import type {
+  AppSettingsMock,
+  PricingSettingsMock,
+  UserProfileMock,
+} from "@/shared/mocks/erp-data";
 import type { StoreUserRole } from "@/shared/auth/permissions";
 
+/**
+ * `pricing` se envía completo (umbrales y chips); `defaultTaxRateId` debe ser una
+ * alícuota activa de la tienda.
+ */
 export type SettingsInput = Partial<AppSettingsMock>;
+/** Semáforo de ganancia y chips de % de la tienda. */
+export type PricingSettings = PricingSettingsMock;
 export type UserUpdateInput = Partial<
   Pick<
     UserProfileMock,
@@ -25,6 +35,7 @@ export const settingsQueryKeys = {
   all: ["settings"] as const,
   detail: () => [...settingsQueryKeys.all, "detail"] as const,
   paymentMethods: () => [...settingsQueryKeys.all, "payment-methods"] as const,
+  pricing: () => [...settingsQueryKeys.all, "pricing"] as const,
   users: () => [...settingsQueryKeys.all, "users"] as const,
 };
 
@@ -44,6 +55,20 @@ export function useEnabledPaymentMethods() {
       );
       return data.enabledPaymentMethods;
     },
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Semáforo de ganancia y chips de % de la tienda para quien ve productos
+ * (`GET /api/settings/pricing`, permiso `products.view`; `useSettings` exige
+ * `settings.view`). Mientras carga, `getProductPricingOptions(undefined)` da los
+ * valores por defecto.
+ */
+export function usePricingSettings() {
+  return useQuery({
+    queryKey: settingsQueryKeys.pricing(),
+    queryFn: () => apiFetch<PricingSettings>("/api/settings/pricing"),
     staleTime: 60_000,
   });
 }
@@ -69,6 +94,11 @@ export function useUpdateSettings() {
       });
       void queryClient.invalidateQueries({
         queryKey: settingsQueryKeys.paymentMethods(),
+        refetchType: "none",
+      });
+      queryClient.setQueryData(settingsQueryKeys.pricing(), settings.pricing);
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.pricing(),
         refetchType: "none",
       });
     },

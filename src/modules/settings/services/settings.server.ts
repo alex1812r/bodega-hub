@@ -2,8 +2,10 @@ import { ApiError } from "@/lib/api/apiError";
 import { parsePagination } from "@/lib/api/pagination";
 import {
   mapAppSettings,
+  mapPricingSettings,
   mapUserProfile,
   type AppSettingsRow,
+  type PricingSettingsRow,
   type ProfileListRow,
 } from "@/lib/supabase/mappers/settings";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
@@ -12,30 +14,56 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { isStoreUserRole } from "@/shared/auth/permissions";
 
 import type { CreateStoreUserInput } from "./createStoreUserSchema";
+import { parsePricingSettings, type PricingSettings } from "./pricingSettings.schemas";
 import type { SettingsInput, UserProfileInput } from "./settings.mock-server";
+import { DEFAULT_TAX_RATE_UNAVAILABLE_MESSAGE } from "./taxRates.schemas";
 
-const APP_SETTINGS_ID = 1;
+type RouteSupabaseClient = Awaited<ReturnType<typeof createRouteSupabaseClient>>;
 
-const appSettingsSelect =
-  "id, business_name, default_tax_rate, default_tax_rate_id, invoice_prefix, low_stock_threshold, enabled_payment_methods";
+const pricingSettingsSelect = "margin_yellow_from_pct, margin_green_from_pct, markup_chips_pct";
 
-type AppSettingsWithTaxRateRow = AppSettingsRow & { default_tax_rate_id?: string | null };
+const appSettingsSelect = `id, business_name, default_tax_rate, default_tax_rate_id, invoice_prefix, low_stock_threshold, enabled_payment_methods, ${pricingSettingsSelect}`;
 
-/** Configuracion con su alicuota de IVA por defecto (`tax_rates.id`). */
+type AppSettingsWithTaxRateRow = AppSettingsRow &
+  PricingSettingsRow & { default_tax_rate_id?: string | null };
+
+/**
+ * Configuracion con su alicuota de IVA por defecto (`tax_rates.id`) y los
+ * ajustes de precios (semaforo y chips).
+ */
 function mapAppSettingsWithTaxRate(row: AppSettingsWithTaxRateRow) {
   return {
     ...mapAppSettings(row),
     defaultTaxRateId: row.default_tax_rate_id ?? undefined,
+    pricing: mapPricingSettings(row),
   };
 }
 
 const profileSelect =
   "id, full_name, role, is_active, granted_permissions, denied_permissions";
 
+function toPricingUpdate(pricing: PricingSettings) {
+  return {
+    margin_green_from_pct: pricing.greenFromPct,
+    margin_yellow_from_pct: pricing.yellowFromPct,
+    markup_chips_pct: pricing.chipsPct,
+  };
+}
+
 function toSettingsUpdate(input: SettingsInput) {
+  // Con alicuota por defecto manda ella: el trigger de 20261007a copia su
+  // porcentaje a default_tax_rate, asi que el numero suelto no se envia.
+  const defaultTaxRate =
+    input.defaultTaxRateId != null
+      ? { default_tax_rate_id: input.defaultTaxRateId }
+      : input.defaultTaxRate !== undefined
+        ? { default_tax_rate: input.defaultTaxRate }
+        : {};
+
   return {
     ...(input.businessName !== undefined ? { business_name: input.businessName } : {}),
-    ...(input.defaultTaxRate !== undefined ? { default_tax_rate: input.defaultTaxRate } : {}),
+    ...defaultTaxRate,
+    ...(input.pricing !== undefined ? toPricingUpdate(parsePricingSettings(input.pricing)) : {}),
     ...(input.invoicePrefix !== undefined ? { invoice_prefix: input.invoicePrefix } : {}),
     ...(input.lowStockThreshold !== undefined ? { low_stock_threshold: input.lowStockThreshold } : {}),
     ...(input.enabledPaymentMethods !== undefined
@@ -86,7 +114,48 @@ export async function getSettings(storeId: string) {
   return mapAppSettingsWithTaxRate(data);
 }
 
+/**
+ * Ajustes de precios de la tienda (semaforo de ganancia y chips de %). Una
+ * tienda sin fila de configuracion usa los por defecto de `@bodega/core`: aqui
+ * no hay 404, porque el listado y el bloque de precio deben funcionar siempre.
+ */
+export async function getPricingSettings(storeId: string): Promise<PricingSettings> {
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("app_settings")
+    .select(pricingSettingsSelect)
+    .eq("store_id", storeId)
+    .maybeSingle<PricingSettingsRow>();
+
+  throwIfSupabaseError(error);
+
+  return mapPricingSettings(data);
+}
+
+/**
+ * La alicuota por defecto debe ser una de las que la tienda ve HOY (propia, o
+ * global que no haya redefinido) y estar activa. El trigger de la base solo
+ * comprueba que sea de la tienda: una inactiva la rechaza el BFF.
+ */
+async function assertActiveStoreTaxRate(
+  supabase: RouteSupabaseClient,
+  taxRateId: string,
+  storeId: string,
+) {
+  const { data, error } = await supabase.rpc("tax_rates_for_store", { p_store_id: storeId });
+
+  throwIfSupabaseError(error);
+
+  const rates = (data ?? []) as Array<{ id: string; is_active: boolean }>;
+
+  if (!rates.some((rate) => rate.id === taxRateId && rate.is_active)) {
+    throw new ApiError(400, "BAD_REQUEST", DEFAULT_TAX_RATE_UNAVAILABLE_MESSAGE);
+  }
+}
+
 export async function updateSettings(input: SettingsInput, storeId: string) {
+  // Se valida antes de abrir ninguna consulta: unos ajustes inválidos no llegan a la base.
+  const settingsUpdate = toSettingsUpdate(input);
   const supabase = await createRouteSupabaseClient();
   const {
     data: { user },
@@ -95,10 +164,14 @@ export async function updateSettings(input: SettingsInput, storeId: string) {
 
   throwIfSupabaseError(userError);
 
+  if (input.defaultTaxRateId != null) {
+    await assertActiveStoreTaxRate(supabase, input.defaultTaxRateId, storeId);
+  }
+
   const { data, error } = await supabase
     .from("app_settings")
     .update({
-      ...toSettingsUpdate(input),
+      ...settingsUpdate,
       updated_by: user?.id ?? null,
     })
     .eq("store_id", storeId)

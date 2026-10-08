@@ -1,7 +1,8 @@
 "use client";
 
 import { AlertTriangle } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { formatMarkupPct, MarginBadge } from "@/shared/components/MarginBadge";
 import { NumberInput } from "@/shared/components/NumberInput";
@@ -20,9 +21,20 @@ export type PricingFieldsProps = {
   className?: string;
   /** Costo actual en REF. Ya incluye el IVA: aquí no se aplica ningún impuesto. */
   cost: number;
+  /**
+   * Cuándo se ve el campo "Ganancia %" (el % libre). `"always"` (por defecto):
+   * siempre. `"onDemand"`: lo revela el chip "Otro %", y abre ya revelado si el
+   * % del precio inicial no es ninguno de los chips. Una vez a la vista, se queda.
+   */
+  customPct?: "always" | "onDemand";
   disabled?: boolean;
   /** Error del precio (se muestra tal cual bajo el campo). */
   error?: string;
+  /**
+   * Oculta la caja de solo lectura "Costo actual" cuando el consumidor ya
+   * muestra el costo (p. ej. en su propio campo). El semáforo se mantiene.
+   */
+  hideCost?: boolean;
   /** % resultante de cada cambio del usuario; `null` si no hay % definible. */
   onMarkupChange?: (pct: number | null) => void;
   /** `null` cuando el usuario vacía el campo de precio. */
@@ -62,8 +74,10 @@ export function PricingFields({
   chips = DEFAULT_MARKUP_CHIPS,
   className,
   cost,
+  customPct = "always",
   disabled = false,
   error,
+  hideCost = false,
   onMarkupChange,
   onPriceChange,
   price,
@@ -71,6 +85,7 @@ export function PricingFields({
   thresholds,
 }: PricingFieldsProps) {
   const [draft, setDraft] = useState<PctDraft | null>(null);
+  const pctFieldRef = useRef<HTMLInputElement | null>(null);
 
   const hasCost = Number.isFinite(cost) && cost > 0;
   const actualPct = price === null ? null : markupPct(cost, price);
@@ -89,6 +104,18 @@ export function PricingFields({
       .filter((chip, index) => isUsablePct(chip) && chip !== suggested && chips.indexOf(chip) === index)
       .map((chip) => ({ pct: chip, suggested: false })),
   ];
+
+  // Solo cuenta el estado inicial: teclear el precio no hace aparecer el campo.
+  const [pctFieldRevealed, setPctFieldRevealed] = useState(
+    () => derivedPct !== null && !chipList.some((chip) => chip.pct === derivedPct),
+  );
+  const showsPctField = customPct === "always" || pctFieldRevealed;
+  const hasBadge = price !== null || !hasCost;
+
+  function revealPctField() {
+    flushSync(() => setPctFieldRevealed(true));
+    pctFieldRef.current?.focus();
+  }
 
   function applyPct(nextPct: number | null) {
     if (nextPct === null) {
@@ -121,63 +148,93 @@ export function PricingFields({
     onMarkupChange?.(nextPrice === null ? null : markupPct(cost, nextPrice));
   }
 
+  const badge = hasBadge ? (
+    <MarginBadge pct={actualPct} size="md" thresholds={thresholds} />
+  ) : null;
+
+  const chipsGroup =
+    chipList.length > 0 ? (
+      <div
+        aria-label="Porcentajes de ganancia recomendados"
+        // Con "Otro %" al lado, los chips y ese botón comparten una sola fila.
+        className={showsPctField ? "flex flex-wrap gap-2" : "contents"}
+        role="group"
+      >
+        {chipList.map((chip) => {
+          const isSelected = pctValue === chip.pct;
+
+          return (
+            <button
+              aria-pressed={isSelected}
+              className={cn(
+                chipClassName,
+                isSelected
+                  ? chipSelectedClassName
+                  : chip.suggested
+                    ? chipSuggestedClassName
+                    : chipIdleClassName,
+              )}
+              disabled={disabled}
+              key={chip.pct}
+              onClick={() => applyPct(chip.pct)}
+              type="button"
+            >
+              {chip.suggested ? "Sugerido " : null}
+              {formatMarkupPct(chip.pct)}
+            </button>
+          );
+        })}
+      </div>
+    ) : null;
+
   return (
     <div className={cn("space-y-3", className)}>
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-container-lowest px-3 py-2 dark:bg-slate-900">
-        <div>
-          <p className="text-xs text-muted-foreground">Costo actual (ya con IVA)</p>
-          <p className="text-sm font-semibold tabular-nums text-foreground">
-            {hasCost ? formatRefUsd(cost) : "Sin costo"}
-          </p>
+      {hideCost ? (
+        badge ? (
+          <div className="flex justify-end">{badge}</div>
+        ) : null
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-container-lowest px-3 py-2 dark:bg-slate-900">
+          <div>
+            <p className="text-xs text-muted-foreground">Costo actual (ya con IVA)</p>
+            <p className="text-sm font-semibold tabular-nums text-foreground">
+              {hasCost ? formatRefUsd(cost) : "Sin costo"}
+            </p>
+          </div>
+          {badge}
         </div>
-        {price !== null || !hasCost ? (
-          <MarginBadge pct={actualPct} size="md" thresholds={thresholds} />
+      )}
+
+      {showsPctField ? (
+        chipsGroup
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {chipsGroup}
+          <button
+            aria-expanded={false}
+            className={cn(chipClassName, chipIdleClassName)}
+            disabled={disabled}
+            onClick={revealPctField}
+            type="button"
+          >
+            Otro %
+          </button>
+        </div>
+      )}
+
+      <div className={cn("grid gap-3", showsPctField ? "grid-cols-2" : "grid-cols-1")}>
+        {showsPctField ? (
+          <NumberInput
+            decimals={2}
+            disabled={disabled}
+            label="Ganancia %"
+            onBlur={handlePctBlur}
+            onValueChange={applyPct}
+            placeholder="0"
+            ref={pctFieldRef}
+            value={pctValue}
+          />
         ) : null}
-      </div>
-
-      {chipList.length > 0 ? (
-        <div
-          aria-label="Porcentajes de ganancia recomendados"
-          className="flex flex-wrap gap-2"
-          role="group"
-        >
-          {chipList.map((chip) => {
-            const isSelected = pctValue === chip.pct;
-
-            return (
-              <button
-                aria-pressed={isSelected}
-                className={cn(
-                  chipClassName,
-                  isSelected
-                    ? chipSelectedClassName
-                    : chip.suggested
-                      ? chipSuggestedClassName
-                      : chipIdleClassName,
-                )}
-                disabled={disabled}
-                key={chip.pct}
-                onClick={() => applyPct(chip.pct)}
-                type="button"
-              >
-                {chip.suggested ? "Sugerido " : null}
-                {formatMarkupPct(chip.pct)}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-
-      <div className="grid grid-cols-2 gap-3">
-        <NumberInput
-          decimals={2}
-          disabled={disabled}
-          label="Ganancia %"
-          onBlur={handlePctBlur}
-          onValueChange={applyPct}
-          placeholder="0"
-          value={pctValue}
-        />
         <NumberInput
           decimals={2}
           disabled={disabled}

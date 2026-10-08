@@ -1,0 +1,193 @@
+/**
+ * PRO-F7 · QA PRO-13 F1 y F2: el modal describía un surtido como si fuera un
+ * solo producto ("Surtido A → Cola (x6)… +18 unidad(es)") y, al abrir, no decía
+ * qué entró ni avisaba de un componente inactivo.
+ */
+import "@testing-library/jest-dom";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+
+import { ToastProvider } from "@/shared/components/Toast";
+
+import { createQueryWrapper, installFetchStub } from "../../utils/requestAttempt.testUtils";
+import { InventoryPackConversionModal } from "./InventoryPackConversionModal";
+
+function product(id: string, name: string, currentStock: number) {
+  return { currentCostRef: 1, currentStock, id, name, salePriceRef: 2, sku: `${id}-sku` };
+}
+
+function component(unitProductId: string, name: string, isActive = true) {
+  return {
+    costWeight: 1,
+    currentStock: 12,
+    isActive,
+    name,
+    sku: `${unitProductId}-sku`,
+    unitProductId,
+    unitsPerPack: 2,
+  };
+}
+
+const single = {
+  components: [{ ...component("prod-cigar-unit", "Cigarro suelto"), unitsPerPack: 10 }],
+  id: "ppc-cigars",
+  kind: "single",
+  label: null,
+  linkedProduct: product("prod-cigar-unit", "Cigarro suelto", 3),
+  packProduct: product("prod-cigar-pack", "Caja cigarros (x10)", 5),
+  role: "pack",
+  sources: [],
+  totalUnits: 10,
+  unitsPerPack: 10,
+};
+
+const assorted = {
+  components: [
+    component("prod-cola", "Cola"),
+    component("prod-manzana", "Manzana"),
+    component("prod-naranja", "Naranja", false),
+  ],
+  id: "ppc-surtido",
+  kind: "assorted",
+  label: "Sabores surtidos",
+  // En un surtido `linkedProduct` es solo el primer componente por nombre.
+  linkedProduct: product("prod-cola", "Cola", 12),
+  packProduct: product("prod-surtido", "Surtido A", 9),
+  role: "pack",
+  sources: [],
+  totalUnits: 6,
+  unitsPerPack: 6,
+};
+
+function resultComponent(unitProductId: string, units: number, isActive = true) {
+  return { allocatedValueRef: 4, costWeight: 1, isActive, newCostRef: 2, unitCostRef: 2, unitProductId, units };
+}
+
+async function renderOpen(defaultPackProductId: string) {
+  const api = installFetchStub(() => [single, assorted]);
+  const QueryWrapper = createQueryWrapper();
+
+  render(
+    <QueryWrapper>
+      <ToastProvider>
+        <InventoryPackConversionModal defaultPackProductId={defaultPackProductId} />
+      </ToastProvider>
+    </QueryWrapper>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Convertir empaque" }));
+  await screen.findByText(/Stock empaque: /);
+
+  return api;
+}
+
+function setQuantity(value: string) {
+  fireEvent.change(screen.getByLabelText("Cantidad de empaques"), { target: { value } });
+}
+
+function submit() {
+  fireEvent.submit(document.getElementById("inventory-pack-conversion-form") as HTMLFormElement);
+}
+
+describe("InventoryPackConversionModal · descripción de la receta (PRO-F7)", () => {
+  it("surtido: lista los componentes según la receta y los empaques elegidos, con el total", async () => {
+    await renderOpen("prod-surtido");
+    setQuantity("3");
+
+    expect(
+      screen.getByRole("option", { name: "Surtido A → surtido de 3 productos (x6)" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Se abrirá en: 6 Cola · 6 Manzana · 6 Naranja \(inactivo\)\./),
+    ).toBeVisible();
+    expect(screen.getByText(/Preview: −3 empaque\(s\) \/ \+18 unidad\(es\)\./)).toBeVisible();
+    // Nada que se lea como "18 Colas".
+    expect(screen.queryByText(/Unidad: Cola/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Surtido A → Cola/ })).not.toBeInTheDocument();
+  });
+
+  it("1 a 1: el texto queda exactamente como estaba", async () => {
+    await renderOpen("prod-cigar-pack");
+    setQuantity("2");
+
+    expect(
+      screen.getByRole("option", { name: "Caja cigarros (x10) → Cigarro suelto (x10)" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Stock empaque: 5. Unidad: Cigarro suelto (stock 3).")).toBeVisible();
+    expect(screen.getByText("Preview: −2 empaque(s) / +20 unidad(es).")).toBeVisible();
+    expect(screen.queryByText(/Se abrirá en/)).not.toBeInTheDocument();
+  });
+});
+
+describe("InventoryPackConversionModal · mensaje de resultado (PRO-F7)", () => {
+  it("surtido: dice qué entró a cada producto y avisa del componente inactivo sin bloquear", async () => {
+    const api = await renderOpen("prod-surtido");
+    api.respondToNextPost({
+      data: {
+        components: [
+          resultComponent("prod-cola", 6),
+          resultComponent("prod-manzana", 6),
+          resultComponent("prod-naranja", 6, false),
+        ],
+        conversionId: "conv-1",
+        packQuantity: 3,
+        totalUnits: 6,
+        unitQuantity: 18,
+        unitsPerPack: 6,
+      },
+    });
+    setQuantity("3");
+    submit();
+
+    const status = await screen.findByRole("status");
+
+    await waitFor(() =>
+      expect(
+        within(status).getByText("Abriste 3 Surtido A: +6 Cola, +6 Manzana, +6 Naranja"),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      within(status).getByText(
+        "Entró stock a un producto inactivo: Naranja. Actívalo para poder venderlo.",
+      ),
+    ).toBeInTheDocument();
+    // Aviso, no bloqueo: va en la región `status` (la de `alert` sigue vacía) y el modal se cerró como siempre.
+    expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+    await waitFor(() =>
+      expect(document.getElementById("inventory-pack-conversion-form")).toBeNull(),
+    );
+    expect(api.posts[0]?.body).not.toHaveProperty("components");
+  });
+
+  it("1 a 1: confirma las unidades que entraron, sin aviso de inactivo", async () => {
+    const api = await renderOpen("prod-cigar-pack");
+    api.respondToNextPost({
+      data: {
+        components: [resultComponent("prod-cigar-unit", 20)],
+        conversionId: "conv-2",
+        packQuantity: 2,
+        totalUnits: 10,
+        unitQuantity: 20,
+        unitsPerPack: 10,
+      },
+    });
+    setQuantity("2");
+    submit();
+
+    const status = await screen.findByRole("status");
+
+    await waitFor(() =>
+      expect(
+        within(status).getByText("Abriste 2 Caja cigarros (x10): +20 Cigarro suelto"),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/producto inactivo/)).not.toBeInTheDocument();
+  });
+
+  it("un error del servidor no muestra mensaje de éxito", async () => {
+    const api = await renderOpen("prod-cigar-pack");
+    api.respondToNextPost({ error: { message: "Stock insuficiente de empaque" } }, 409);
+    submit();
+
+    await screen.findByText("Stock insuficiente de empaque");
+    expect(screen.queryByText(/Abriste/)).not.toBeInTheDocument();
+  });
+});

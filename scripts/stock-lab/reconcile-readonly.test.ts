@@ -31,7 +31,7 @@ const PATCHES = resolve(__dirname, "../../supabase/patches");
 const STORE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const STORE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
-/** Esquema con los parches 20261006 aplicados (lo que usan las comprobaciones v2). */
+/** Esquema con los parches 20261006 y 20261009d aplicados (lo que usan las comprobaciones vigentes). */
 const FULL_SCHEMA: Record<string, string> = {
   products: "id store_id sku name current_stock created_at",
   stock_movements:
@@ -40,7 +40,8 @@ const FULL_SCHEMA: Record<string, string> = {
   sale_items: "id sale_id product_id quantity",
   purchases: "id store_id status",
   purchase_items: "id purchase_id product_id quantity entry_mode pack_count units_per_pack",
-  product_pack_conversions: "pack_product_id unit_product_id units_per_pack is_active updated_at created_at",
+  product_pack_conversions: "id pack_product_id unit_product_id units_per_pack total_units is_active updated_at created_at",
+  product_pack_components: "conversion_id unit_product_id units_per_pack",
   stores: "id name",
 };
 
@@ -162,23 +163,38 @@ describe("las comprobaciones inline son las de las vistas", () => {
     "conversion_mismatches",
   ];
 
-  function v2Body(name: IntegrityViewName): string {
+  function viewBody(patchText: string, name: IntegrityViewName): string {
     const match = new RegExp(
       `-- view: ${name}\\ncreate or replace view public\\.${name}\\nwith \\(security_invoker = true\\) as\\n([\\s\\S]*?)\\n;\\n`,
-    ).exec(v2Text);
-    if (!match) throw new Error(`el parche v2 no define ${name}`);
+    ).exec(patchText);
+    if (!match) throw new Error(`el parche no define ${name}`);
     return match[1];
   }
 
+  const v2Body = (name: IntegrityViewName): string => viewBody(v2Text, name);
+
+  /** conversion_mismatches vigente: la del modelo de recetas (20261009d), que reemplaza a la de v2. */
+  const recipeConversions = viewBody(readFileSync(resolve(PATCHES, "20261009d-assorted-pack.sql"), "utf8").replace(/\r\n/g, "\n"), "conversion_mismatches");
+
   const caps = (columns: string[]): Capabilities => ({ columns: new Set(columns), integrityViews: [] });
 
-  it("con todas las columnas, cada SELECT es identico al de la vista vigente (v2 sobre v1)", () => {
+  it("con todas las columnas, cada SELECT es identico al de la vista vigente (20261009d sobre v2 sobre v1)", () => {
     const plans = planChecks(caps(schemaWithout()));
     for (const name of INTEGRITY_VIEW_NAMES) {
-      const expected = V2_VIEWS.includes(name) ? v2Body(name) : v1[name];
+      const expected = name === "conversion_mismatches" ? recipeConversions : V2_VIEWS.includes(name) ? v2Body(name) : v1[name];
       expect({ name, sql: squash(plans[name].sql ?? "") }).toEqual({ name, sql: squash(expected) });
       expect(plans[name].degraded).toEqual([]);
     }
+  });
+
+  it.each([
+    ["product_pack_components (la tabla entera)", ["product_pack_components.conversion_id", "product_pack_components.unit_product_id", "product_pack_components.units_per_pack"]],
+    ["product_pack_conversions.total_units", ["product_pack_conversions.total_units"]],
+  ])("sin %s las conversiones se comprueban con el par 1 a 1 de v2, sin degradar", (_label, dropped) => {
+    const plans = planChecks(caps(schemaWithout(...dropped)));
+    expect(squash(plans.conversion_mismatches.sql ?? "")).toBe(squash(v2Body("conversion_mismatches")));
+    expect(plans.conversion_mismatches.sql).not.toContain("product_pack_components");
+    expect(plans.conversion_mismatches).toMatchObject({ missing: [], degraded: [] });
   });
 
   it("sin stock_movements.seq la cadena es la de v1 (created_at, id) y lo declara", () => {

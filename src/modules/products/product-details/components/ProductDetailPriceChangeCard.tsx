@@ -1,44 +1,97 @@
 "use client";
 
 import { Save, Tag } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "@/shared/components/Button";
-import { NumberInput } from "@/shared/components/NumberInput";
-import { stitchListFilterFieldClassName } from "@/shared/styles/form-controls";
-import { cn } from "@/shared/utils/cn";
+import { Input } from "@/shared/components/Input";
+import { formatMarkupPct } from "@/shared/components/MarginBadge";
+import { PricingFields } from "@/shared/components/PricingFields";
+import { markupPct } from "@/shared/utils/pricing";
+
+import {
+  getProductPricingOptions,
+  type ProductPricingSettings,
+} from "../../services/productMargin";
+import { PRICE_CHANGE_REASON_MAX_LENGTH } from "../../services/productSchemas";
 
 type ProductDetailPriceChangeCardProps = {
+  /** % de ganancia sugerido de la categoría del producto: primer chip, destacado. */
+  categoryMarkupPct?: number | null;
+  /** Costo actual en REF (ya con IVA). Solo se muestra: aquí no se edita. */
+  currentCostRef: number;
   currentPriceRef: number;
   isSubmitting?: boolean;
-  onSubmit: (salePriceRef: number) => void | Promise<void>;
+  /**
+   * Recibe el precio nuevo y el motivo que quedó en el campo (el propuesto o el
+   * escrito a mano; "" si no hay), que se guarda en el historial de precios. No
+   * se llama si el precio no cambió o está vacío. El tercer argumento es el costo
+   * que la tarjeta mostraba al enviar: el servidor rechaza el cambio (409) si el
+   * producto ya cuesta otra cosa.
+   */
+  onSubmit: (salePriceRef: number, reason: string, expectedCostRef: number) => void | Promise<void>;
+  /**
+   * Chips y cortes del semáforo de la tienda (`usePricingSettings().data`). Sin
+   * ellos (cargando o la consulta falló) se usan los por defecto.
+   */
+  pricing?: ProductPricingSettings | null;
 };
 
+const NEW_PRICE_REQUIRED_MESSAGE = "Escribe el nuevo precio.";
+
+/** Motivo propuesto para un precio que deja la ganancia en `pct` ("Ajuste de margen a 24,99 %"). */
+export function getMarginAdjustmentReason(pct: number) {
+  return `Ajuste de margen a ${formatMarkupPct(pct)}`;
+}
+
+/**
+ * Cambio de precio del detalle: el costo actual es de solo lectura; un chip o
+ * un % completan el precio nuevo y editar el precio recalcula el %. El motivo
+ * se propone solo ("Ajuste de margen a X %") hasta que el usuario escribe el suyo.
+ */
 export function ProductDetailPriceChangeCard({
+  categoryMarkupPct,
+  currentCostRef,
   currentPriceRef,
   isSubmitting = false,
   onSubmit,
+  pricing,
 }: ProductDetailPriceChangeCardProps) {
-  const [priceInput, setPriceInput] = useState(String(currentPriceRef));
+  const [price, setPrice] = useState<number | null>(currentPriceRef);
+  // `null` = el usuario no ha escrito un motivo: se muestra el propuesto.
+  const [typedReason, setTypedReason] = useState<string | null>(null);
+  const [showPriceRequired, setShowPriceRequired] = useState(false);
+  const [syncedPriceRef, setSyncedPriceRef] = useState(currentPriceRef);
+  const pricingOptions = getProductPricingOptions(pricing);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- el precio en edicion se realinea con el precio guardado tras cada cambio confirmado; flujo de precio, no se mueve el momento del reinicio
-    setPriceInput(String(currentPriceRef));
-  }, [currentPriceRef]);
+  // Tras cada cambio confirmado, el precio en edición se realinea con el
+  // guardado y el motivo vuelve a proponerse.
+  if (syncedPriceRef !== currentPriceRef) {
+    setSyncedPriceRef(currentPriceRef);
+    setPrice(currentPriceRef);
+    setTypedReason(null);
+    setShowPriceRequired(false);
+  }
+
+  const resultingPct =
+    price === null || price === currentPriceRef ? null : markupPct(currentCostRef, price);
+  const suggestedReason = resultingPct === null ? "" : getMarginAdjustmentReason(resultingPct);
+  const reason = typedReason ?? suggestedReason;
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    const nextPrice = Number(priceInput);
 
-    if (!Number.isFinite(nextPrice) || nextPrice < 0) {
+    if (price === null) {
+      setShowPriceRequired(true);
+
       return;
     }
 
-    if (nextPrice === currentPriceRef) {
+    if (!Number.isFinite(price) || price < 0 || price === currentPriceRef) {
       return;
     }
 
-    await onSubmit(nextPrice);
+    await onSubmit(price, reason.trim(), currentCostRef);
   }
 
   return (
@@ -48,27 +101,22 @@ export function ProductDetailPriceChangeCard({
         Cambio rápido de precio
       </h2>
       <form className="flex flex-col gap-4" onSubmit={(event) => void handleSubmit(event)}>
-        <div>
-          <label
-            className="mb-1 block text-xs font-semibold text-on-surface-variant"
-            htmlFor="product-new-price"
-          >
-            Nuevo precio (REF)
-          </label>
-          <div className="relative">
-            <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm text-muted-foreground">
-              $
-            </span>
-            <NumberInput
-              className={cn(stitchListFilterFieldClassName, "pl-8")}
-              decimals={2}
-              id="product-new-price"
-              onChange={(event) => setPriceInput(event.target.value)}
-              placeholder={currentPriceRef.toFixed(2)}
-              value={priceInput}
-            />
-          </div>
-        </div>
+        <PricingFields
+          chips={pricingOptions.chips}
+          cost={currentCostRef}
+          error={showPriceRequired && price === null ? NEW_PRICE_REQUIRED_MESSAGE : undefined}
+          onPriceChange={setPrice}
+          price={price}
+          suggestedPct={categoryMarkupPct}
+          thresholds={pricingOptions.thresholds}
+        />
+        <Input
+          label="Motivo"
+          maxLength={PRICE_CHANGE_REASON_MAX_LENGTH}
+          onChange={(event) => setTypedReason(event.target.value)}
+          placeholder="Opcional"
+          value={reason}
+        />
         <Button
           className="w-full gap-2"
           disabled={isSubmitting}

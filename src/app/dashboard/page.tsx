@@ -16,6 +16,7 @@ import {
   useDashboardMetrics,
   useDashboardSummary,
 } from "@/modules/dashboard/hooks/useDashboard";
+import { PriceReviewDashboardCard } from "@/modules/products/components/price-review/PriceReviewDashboardCard";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { IconButton } from "@/shared/components/IconButton";
 import { LoadingState } from "@/shared/components/LoadingState";
@@ -127,7 +128,14 @@ export default function DashboardPage() {
 
           <DashboardContentGrid
             aside={
-              <DashboardLowStockCard totalCount={summary.data?.lowStockCount ?? 0} />
+              // Si la tarjeta "Por revisar" no pinta nada, "Bajo stock" es el único
+              // hijo y ocupa toda la columna: el `gap` solo separa hijos presentes.
+              <div className="flex h-full flex-col gap-6">
+                <PriceReviewDashboardCard />
+                <div className="min-h-0 flex-1">
+                  <DashboardLowStockCard totalCount={summary.data?.lowStockCount ?? 0} />
+                </div>
+              </div>
             }
           >
             <DashboardSalesChartCard />

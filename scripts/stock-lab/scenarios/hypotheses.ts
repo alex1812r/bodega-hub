@@ -13,6 +13,9 @@
  * (el hueco existe) con `hypothesis_verdict = descartada` (ese hueco no es el
  * mecanismo que la hipótesis describe); el `detail` lo dice en cada caso.
  *
+ * La CLI corre además los casos `pack.assorted_*` de `./assorted-pack` (PRO-12:
+ * empaque surtido), que usan el mismo runner y no pasan por el BFF.
+ *
  * Todo se hace sobre productos propios `s403-<run>-…`. Los casos que corrompen
  * datos a propósito (update directo, cambio de `store_id`) lo dejan anotado en
  * `steps` como `SQL …` y nunca tocan filas de otros prefijos.
@@ -21,6 +24,7 @@ import { randomUUID } from "node:crypto";
 
 import type { ApiResponse } from "../../e2e-bodegon/client";
 import type { LabRoleKey } from "../agents/base";
+import { ASSORTED_PACK_CASES } from "./assorted-pack";
 import {
   Checks,
   actAs,
@@ -1813,7 +1817,7 @@ export const HYPOTHESIS_CASES: readonly CaseDef[] = [
 ];
 
 if (require.main === module) {
-  runSuite("hypotheses", HYPOTHESIS_CASES, process.argv.slice(2)).then(
+  runSuite("hypotheses", [...HYPOTHESIS_CASES, ...ASSORTED_PACK_CASES], process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {
       console.error(error);

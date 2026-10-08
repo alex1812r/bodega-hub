@@ -4,9 +4,11 @@ import { assertContactType } from "@/lib/supabase/contacts";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import {
   computeVariationPercent,
+  mapSaveProductSuppliersResult,
   mapSupplierProduct,
   mapSupplierProductPackUnit,
   mapSupplierProductPriceHistory,
+  type DbSaveProductSuppliersResult,
   type DbSupplierProductPackUnitRow,
   type DbSupplierProductPriceHistoryRow,
   type DbSupplierProductRow,
@@ -17,6 +19,10 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { SUPPLIER_PRODUCT_SELECT } from "./contacts.server";
 import { applySupplierProductSort } from "./supplierProductSort";
 import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
+import type {
+  ProductPreferredSupplier,
+  ProductSupplierInput,
+} from "@/modules/products/services/productSuppliers";
 import { normalizeOptionalSku } from "@/shared/utils/skuGeneration";
 
 import type {
@@ -652,6 +658,86 @@ export async function deactivateSupplierProductPackUnit(supplierProductId: strin
     isActive: false,
     isDefault: false,
   }, storeId);
+}
+
+/**
+ * Estado deseado de los vínculos activos de un producto (RPC
+ * `save_product_suppliers`, parche 20261009e): una sola llamada y una sola
+ * transacción. La RPC crea o reactiva vínculos, registra el costo con su
+ * historial, desactiva los que no vienen y fija el habitual; sus rechazos
+ * (`PT400` / `PT403` / `PT404`) llegan con el mensaje ya redactado.
+ */
+export async function saveProductSuppliers(
+  productId: string,
+  input: ProductSupplierInput[],
+  storeId: string,
+) {
+  await assertSupabaseStoreResource("products", productId, storeId, "Producto no encontrado.");
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase.rpc("save_product_suppliers", {
+    p_product_id: productId,
+    p_suppliers: input.map((item) => ({
+      ...(item.costRef === undefined ? {} : { cost_ref: item.costRef }),
+      is_preferred: item.isPreferred,
+      supplier_id: item.supplierId,
+      ...(item.supplierSku === undefined ? {} : { supplier_sku: item.supplierSku }),
+    })),
+  });
+
+  throwIfSupabaseError(error);
+
+  if (!data) {
+    throw new ApiError(500, "INTERNAL_ERROR", "No se pudieron guardar los proveedores del producto.");
+  }
+
+  return mapSaveProductSuppliersResult(data as DbSaveProductSuppliersResult);
+}
+
+/** La base aún no tiene `supplier_products.is_preferred` (parche 20261009e sin aplicar). */
+function isMissingPreferredColumn(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "42703";
+}
+
+type PreferredSupplierRow = {
+  product_id: string;
+  supplier?: { id: string; name: string } | { id: string; name: string }[] | null;
+};
+
+/**
+ * Proveedor habitual de cada producto pedido, en UNA consulta (los que no
+ * tienen no aparecen). Sin la columna devuelve vacío: el listado de productos
+ * no depende del parche.
+ */
+export async function listPreferredSuppliersByProduct(productIds: string[], storeId: string) {
+  const preferred = new Map<string, ProductPreferredSupplier>();
+
+  if (productIds.length === 0) {
+    return preferred;
+  }
+
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("supplier_products")
+    .select("product_id, supplier:contacts(id, name)")
+    .eq("store_id", storeId)
+    .eq("is_preferred", true)
+    .in("product_id", productIds);
+
+  if (isMissingPreferredColumn(error)) {
+    return preferred;
+  }
+
+  throwIfSupabaseError(error);
+
+  for (const row of (data ?? []) as PreferredSupplierRow[]) {
+    const supplier = Array.isArray(row.supplier) ? row.supplier[0] : row.supplier;
+
+    if (supplier) {
+      preferred.set(row.product_id, { id: supplier.id, name: supplier.name });
+    }
+  }
+
+  return preferred;
 }
 
 export type SupplierProductInput = SupplierProductCreateInput;

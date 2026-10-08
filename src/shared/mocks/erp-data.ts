@@ -39,6 +39,12 @@ export type CategoryMock = {
   taxRate: number;
   /** Alicuota de IVA de la categoria (`tax_rates.id`); `taxRate` es su porcentaje. */
   taxRateId?: string | null;
+  /**
+   * % de ganancia sugerido para los productos de la categoria
+   * (`categories.default_markup_pct`). Ausente = sin sugerencia; al escribir,
+   * `null` la borra.
+   */
+  defaultMarkupPct?: number | null;
 };
 
 /** Alicuota de IVA. `storeId: null` = global; con tienda manda sobre la global del mismo `code`. */
@@ -71,6 +77,8 @@ export type ProductMock = {
   categoryId: string;
   currentCostRef: number;
   currentStock: number;
+  /** Texto libre opcional (máx. 500 caracteres); `null` o ausente = sin descripción. */
+  description?: string | null;
   id: string;
   imageUrl?: string | null;
   isActive: boolean;
@@ -84,10 +92,19 @@ export type ProductMock = {
 };
 
 export type ProductPriceHistoryMock = {
+  /** Costo del producto al guardar la fila (`cost_ref_snapshot`, parche 20261009c). */
+  costRefSnapshot?: number;
   createdAt: string;
   id: string;
+  /** Banda de ganancia al guardar la fila (`margin_band_snapshot`); `none` = sin costo. */
+  marginBandSnapshot?: "high" | "low" | "mid" | "none";
+  /** Precio antes del cambio (`old_sale_price_ref`). */
+  previousSalePriceRef?: number | null;
   productId: string;
+  reason?: string | null;
   salePriceRef: number;
+  /** Posición de la instantánea en el libro (`snapshot_seq`). Sin ella la fila no tiene instantánea. */
+  snapshotSeq?: number;
   userId: string;
 };
 
@@ -218,19 +235,82 @@ export type ProductPackConversionLinkedProduct = {
   sku: string;
 };
 
-export type ProductPackConversionSummary = {
-  id: string;
-  linkedProduct: ProductPackConversionLinkedProduct;
-  role: ProductPackConversionRole;
+export type ProductPackConversionKind = "assorted" | "single";
+
+/** Un producto que sale del empaque al abrirlo. */
+export type ProductPackConversionComponent = {
+  /** Peso relativo en el reparto del costo del empaque (unidades × peso). */
+  costWeight: number;
+  currentStock: number;
+  isActive: boolean;
+  name: string;
+  sku: string;
+  unitProductId: string;
   unitsPerPack: number;
 };
 
+/** Una receta activa de la que sale el producto (rol unidad). */
+export type ProductPackConversionSource = {
+  conversionId: string;
+  packName: string;
+  packProductId: string;
+  /** Unidades que salen del empaque en total. */
+  totalUnits: number;
+  /** Unidades de ESTE producto por empaque. */
+  unitsPerPack: number;
+};
+
+/**
+ * Vínculo de empaque de un producto. Los campos de siempre (`id`, `role`,
+ * `unitsPerPack`, `linkedProduct`) describen UNA receta:
+ * - `role: "pack"`: la receta activa del producto. `unitsPerPack` = unidades que
+ *   salen en total; `linkedProduct` = su componente (en un surtido, el primero
+ *   por nombre: usar `components`).
+ * - `role: "unit"`: la primera receta de la que sale (por nombre del empaque: usar
+ *   `sources` para verlas todas). `unitsPerPack` = unidades de este producto por
+ *   empaque; `linkedProduct` = ese empaque.
+ * Un producto que es empaque y además componente de otra receta se informa como
+ * `pack`, con `sources`.
+ *
+ * Los campos de receta son opcionales en el tipo solo por los datos de prueba
+ * anteriores al surtido: el BFF y el mock los envían siempre.
+ */
+export type ProductPackConversionSummary = {
+  /** Componentes de la receta `id`, por nombre. */
+  components?: ProductPackConversionComponent[];
+  id: string;
+  /** `single` = un solo producto unidad; `assorted` = surtido. */
+  kind?: ProductPackConversionKind;
+  label?: string | null;
+  linkedProduct: ProductPackConversionLinkedProduct;
+  role: ProductPackConversionRole;
+  /** TODAS las recetas activas de las que sale el producto, por nombre del empaque. */
+  sources?: ProductPackConversionSource[];
+  totalUnits?: number;
+  unitsPerPack: number;
+};
+
+export type ProductPackComponentMock = {
+  costWeight: number;
+  unitProductId: string;
+  unitsPerPack: number;
+};
+
+/**
+ * Receta de un empaque (cabecera + componentes), como `product_pack_conversions`
+ * + `product_pack_components`. `unitsPerPack` y `unitProductId` son las columnas
+ * de compatibilidad de la cabecera: `unitsPerPack` = `totalUnits`; `unitProductId`
+ * = el componente si hay uno solo, `null` en un surtido.
+ */
 export type ProductPackConversionMock = {
+  components: ProductPackComponentMock[];
   id: string;
   isActive: boolean;
+  label?: string | null;
   packProductId: string;
   storeId: string;
-  unitProductId: string;
+  totalUnits: number;
+  unitProductId: string | null;
   unitsPerPack: number;
 };
 
@@ -240,6 +320,8 @@ export type SupplierProductMock = {
   createdAt?: string;
   id: string;
   isActive?: boolean;
+  /** Proveedor habitual del producto: como mucho uno por producto y nunca un vínculo inactivo. */
+  isPreferred?: boolean;
   lastCostRef: number;
   lastCostVes?: number;
   lastPackCostRef?: number;
@@ -289,6 +371,16 @@ export type UserProfileMock = {
   storeId?: string | null;
 };
 
+/** Ajustes de precios de la tienda: semaforo de ganancia y chips de % recomendados. */
+export type PricingSettingsMock = {
+  /** % recomendados del bloque de precio, en orden ascendente y sin duplicados. */
+  chipsPct: number[];
+  /** Desde este % la ganancia es verde. */
+  greenFromPct: number;
+  /** Por debajo de este % la ganancia es roja; desde aqui, amarilla. */
+  yellowFromPct: number;
+};
+
 export type AppSettingsMock = {
   businessName: string;
   defaultTaxRate: number;
@@ -297,6 +389,8 @@ export type AppSettingsMock = {
   enabledPaymentMethods: PaymentMethod[];
   invoicePrefix: string;
   lowStockThreshold: number;
+  /** Semaforo de ganancia y chips de % de la tienda (parche 20261009b). */
+  pricing: PricingSettingsMock;
   storeId?: string | null;
 };
 
@@ -491,6 +585,7 @@ export const mockProductPriceHistory: ProductPriceHistoryMock[] = [
   {
     createdAt: "2026-05-18T10:00:00.000Z",
     id: "price-drill-002",
+    previousSalePriceRef: 14,
     productId: "prod-drill",
     salePriceRef: 15,
     userId: "user-admin",
@@ -512,6 +607,7 @@ export const mockProductPriceHistory: ProductPriceHistoryMock[] = [
   {
     createdAt: "2026-05-17T09:30:00.000Z",
     id: "price-hammer-002",
+    previousSalePriceRef: 6.5,
     productId: "prod-hammer",
     salePriceRef: 7,
     userId: "user-admin",
@@ -1314,13 +1410,15 @@ export const mockStockMovements: StockMovementMock[] = [
   },
 ];
 
-/** Vínculos pack→unidad para mock (mutable en runtime). */
+/** Recetas de empaque para mock (mutable en runtime). */
 export const mockProductPackConversions: ProductPackConversionMock[] = [
   {
+    components: [{ costWeight: 1, unitProductId: "prod-cigar-unit", unitsPerPack: 10 }],
     id: "ppc-cigars",
     isActive: true,
     packProductId: "prod-cigar-pack",
     storeId: "00000000-0000-4000-8000-000000000001",
+    totalUnits: 10,
     unitProductId: "prod-cigar-unit",
     unitsPerPack: 10,
   },
@@ -1564,4 +1662,6 @@ export const mockAppSettings: AppSettingsMock = {
   ],
   invoicePrefix: "V",
   lowStockThreshold: 5,
+  // Los valores por defecto de `@bodega/core` (y de las columnas del parche 20261009b).
+  pricing: { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 },
 };

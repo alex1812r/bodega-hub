@@ -10,8 +10,10 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+/** Alta: el pie ofrece "Guardar y crear otro", que deja el modal abierto con el mismo Tipo. */
 export const Create: Story = {};
 
+/** Edición: solo "Guardar cambios". */
 export const Edit: Story = {
   args: {
     contact: {

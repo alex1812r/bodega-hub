@@ -270,7 +270,7 @@ select
     where n.nspname = 'public'
       and p.proname = 'convert_pack_to_units'
       and pg_get_function_identity_arguments(p.oid)
-        = 'p_pack_product_id uuid, p_pack_quantity integer, p_reason text, p_client_request_id uuid'
+        = 'p_pack_product_id uuid, p_pack_quantity integer, p_reason text, p_client_request_id uuid, p_components jsonb'
   )
 union all
 select
@@ -1147,5 +1147,715 @@ select
       and p.prosrc ilike '%client_request_hash is distinct from p_client_request_hash%created_by is distinct from auth.uid()%status = ''anulado''%errcode = ''PT409''%'
       and not has_function_privilege('authenticated', p.oid, 'execute')
       and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'products.margin_pct: columna generada almacenada, numeric, con el calculo de markup sobre current_cost_ref y NULL sin costo (20261009a)',
+  exists (
+    select 1
+    from pg_attribute a
+    join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+    where a.attrelid = to_regclass('public.products')
+      and a.attname = 'margin_pct'
+      and not a.attisdropped
+      and a.attgenerated = 's'
+      and a.atttypid = 'numeric'::regtype
+      and pg_get_expr(d.adbin, d.adrelid) ilike '%current_cost_ref > %sale_price_ref - current_cost_ref%/ current_cost_ref%100%, 6)%'
+  )
+union all
+select
+  'index products_store_margin_pct_idx sobre (store_id, margin_pct) (20261009a)',
+  exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'public'
+      and tablename = 'products'
+      and indexname = 'products_store_margin_pct_idx'
+      and indexdef ilike '%(store_id, margin_pct)%'
+  )
+union all
+select
+  'app_settings: semaforo y chips por tienda (margin_yellow_from_pct 15, margin_green_from_pct 25, markup_chips_pct {12,20,30}), not null (20261009b)',
+  (
+    select count(*) = 3
+    from pg_attribute a
+    join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+    where a.attrelid = to_regclass('public.app_settings')
+      and not a.attisdropped
+      and a.attnotnull
+      and (
+        (a.attname = 'margin_yellow_from_pct' and a.atttypid = 'numeric'::regtype and pg_get_expr(d.adbin, d.adrelid) = '15')
+        or (a.attname = 'margin_green_from_pct' and a.atttypid = 'numeric'::regtype and pg_get_expr(d.adbin, d.adrelid) = '25')
+        or (a.attname = 'markup_chips_pct' and a.atttypid = 'numeric[]'::regtype and pg_get_expr(d.adbin, d.adrelid) ilike '%{12,20,30}%')
+      )
+  )
+union all
+select
+  'app_settings: checks 0 <= amarillo < verde <= 1000 y chips validos (1 a 6, > 0 y <= 1000, sin duplicados) (20261009b)',
+  (
+    select count(*) = 2
+    from pg_constraint c
+    where c.conrelid = to_regclass('public.app_settings')
+      and c.contype = 'c'
+      and c.convalidated
+      and (
+        (c.conname = 'app_settings_margin_thresholds_check'
+          and pg_get_constraintdef(c.oid) ilike '%margin_yellow_from_pct >= %margin_yellow_from_pct < margin_green_from_pct%margin_green_from_pct <= %1000%')
+        or (c.conname = 'app_settings_markup_chips_check'
+          and pg_get_constraintdef(c.oid) ilike '%is_valid_markup_chips(markup_chips_pct)%')
+      )
+  )
+  and exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.is_valid_markup_chips(numeric[])')
+      and p.provolatile = 'i'
+      and not p.prosecdef
+      and p.prosrc ilike '%coalesce(%array_ndims(p_chips) = 1%between 1 and 6%chip.pct > 0 and chip.pct <= 1000%count(distinct chip.pct)%false%'
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'categories.default_markup_pct: numeric opcional con check NULL o (> 0 y <= 1000) (20261009b)',
+  exists (
+    select 1
+    from pg_attribute a
+    join pg_constraint c on c.conrelid = a.attrelid and c.conname = 'categories_default_markup_pct_check'
+    where a.attrelid = to_regclass('public.categories')
+      and a.attname = 'default_markup_pct'
+      and not a.attisdropped
+      and not a.attnotnull
+      and a.atttypid = 'numeric'::regtype
+      and c.contype = 'c'
+      and c.convalidated
+      and pg_get_constraintdef(c.oid) ilike '%default_markup_pct is null%default_markup_pct > %default_markup_pct <= %1000%'
+  )
+union all
+select
+  'app_settings y categories: los triggers de NaN / Infinity cubren las columnas numeric nuevas (20261009b)',
+  (
+    select count(*) = 4
+    from pg_trigger t
+    where not t.tgisinternal
+      and t.tgfoid = to_regprocedure('public.reject_non_finite_numeric()')
+      and t.tgname in ('trg_zz_reject_non_finite_numeric_ins', 'trg_zz_reject_non_finite_numeric_upd')
+      and (
+        (t.tgrelid = to_regclass('public.app_settings')
+          and pg_get_triggerdef(t.oid) ilike '%margin_yellow_from_pct%margin_green_from_pct%')
+        or (t.tgrelid = to_regclass('public.categories')
+          and pg_get_triggerdef(t.oid) ilike '%default_markup_pct%')
+      )
+  )
+union all
+select
+  'product_price_history: instantanea de precio (cost_ref_snapshot numeric, margin_band_snapshot text con check, snapshot_seq bigint; las tres o ninguna) e indices de apoyo (20261009c)',
+  (
+    select count(*) = 3
+    from pg_attribute a
+    where a.attrelid = to_regclass('public.product_price_history')
+      and not a.attisdropped
+      and not a.attnotnull
+      and (
+        (a.attname = 'cost_ref_snapshot' and a.atttypid = 'numeric'::regtype)
+        or (a.attname = 'margin_band_snapshot' and a.atttypid = 'text'::regtype)
+        or (a.attname = 'snapshot_seq' and a.atttypid = 'bigint'::regtype)
+      )
+  )
+  and (
+    select count(*) = 2
+    from pg_constraint c
+    where c.conrelid = to_regclass('public.product_price_history')
+      and c.contype = 'c'
+      and c.convalidated
+      and (
+        (c.conname = 'product_price_history_margin_band_snapshot_check'
+          and pg_get_constraintdef(c.oid) ilike '%red%yellow%green%none%')
+        or (c.conname = 'product_price_history_snapshot_complete_check'
+          and pg_get_constraintdef(c.oid) ilike '%num_nulls(cost_ref_snapshot, margin_band_snapshot, snapshot_seq)%')
+      )
+  )
+  and (
+    select count(*) = 2
+    from pg_indexes i
+    where i.schemaname = 'public'
+      and i.tablename = 'product_price_history'
+      and (
+        (i.indexname = 'idx_product_price_history_product_created' and i.indexdef ilike '%(product_id, created_at desc)%')
+        or (i.indexname = 'idx_product_price_history_product_snapshot'
+          and i.indexdef ilike '%(product_id, snapshot_seq desc)%where%snapshot_seq is not null%')
+      )
+  )
+union all
+select
+  'product_margin_band / margin_band_from_thresholds / margin_band_rank: regla de bordes de @bodega/core, umbrales de la tienda con 15 / 25 por defecto, sin security definer ni execute para anon (20261009c)',
+  (
+    select count(*) = 3
+       and bool_and(not p.prosecdef
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute'))
+       and bool_or(p.proname = 'margin_band_from_thresholds' and p.provolatile = 'i'
+         and p.prosrc ilike '%p_margin_pct is null then ''none''%p_margin_pct < p_yellow_from_pct then ''red''%p_margin_pct < p_green_from_pct then ''yellow''%else ''green''%')
+       and bool_or(p.proname = 'margin_band_rank' and p.provolatile = 'i'
+         and p.prosrc ilike '%''red'' then 0%''yellow'' then 1%''green'' then 2%')
+       and bool_or(p.proname = 'product_margin_band' and p.provolatile = 's'
+         and p.prosrc ilike '%margin_band_from_thresholds(%margin_yellow_from_pct%a.store_id = p_store_id), 15)%margin_green_from_pct%a.store_id = p_store_id), 25)%')
+    from pg_proc p
+    where p.oid in (
+      to_regprocedure('public.margin_band_from_thresholds(numeric, numeric, numeric)'),
+      to_regprocedure('public.margin_band_rank(text)'),
+      to_regprocedure('public.product_margin_band(uuid, numeric)')
+    )
+  )
+union all
+select
+  'rpc update_product_price: una sola firma, mismas guardas que 20261006h y la fila de historial lleva costo, banda y posicion de la instantanea (20261009c)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.oid = to_regprocedure('public.update_product_price(uuid, numeric, text)')
+         and p.prosecdef
+         and p.prorettype = to_regtype('public.products')
+         and p.proconfig @> array['search_path=public']
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%assert_finite_numeric(p_new_sale_price_ref%errcode = ''PT403''%for update%set sale_price_ref = p_new_sale_price_ref%'
+         and p.prosrc ilike '%insert into public.product_price_history%cost_ref_snapshot,%margin_band_snapshot,%snapshot_seq%v_product.current_cost_ref,%product_margin_band(v_store_id, v_product.margin_pct),%nextval(''public.stock_movements_seq'')%'
+         and p.prosrc not ilike '%current_stock%'
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'update_product_price'
+  )
+union all
+select
+  'rpc keep_product_price: una firma (uuid, text, numeric), security definer con search_path, tienda de la sesion, admin / almacen (PT403), bloqueo del producto (PT404), costo esperado (PT409), solo inserta historial y solo la ejecutan authenticated / service_role (20261009c; firma de 20261009f)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.oid = to_regprocedure('public.keep_product_price(uuid, text, numeric)')
+         and p.prosecdef
+         and p.prorettype = to_regtype('public.product_price_history')
+         and not p.proretset
+         and p.proconfig @> array['search_path=public']
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%current_user_role()%not in (''admin'', ''almacen'')%errcode = ''PT403''%and store_id = v_store_id%for update%errcode = ''PT404''%assert_expected_cost_ref(v_product.current_cost_ref, p_expected_cost_ref)%insert into public.product_price_history%'
+         and p.prosrc not ilike '%update public.products%'
+         and p.prosrc not ilike '%current_stock%'
+         and p.prosrc not ilike '%into public.stock_movements%'
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'keep_product_price'
+  )
+union all
+select
+  'trigger trg_products_price_baseline: after insert por fila en products, funcion security definer que solo inserta la linea base y no es ejecutable por /rpc (20261009c)',
+  exists (
+    select 1
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    where t.tgrelid = to_regclass('public.products')
+      and t.tgname = 'trg_products_price_baseline'
+      and not t.tgisinternal
+      and t.tgenabled = 'O'
+      and t.tgtype = 5
+      and p.oid = to_regprocedure('public.products_price_baseline()')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=public']
+      and p.prosrc ilike '%insert into public.product_price_history%new.current_cost_ref%product_margin_band(new.store_id, new.margin_pct)%'
+      and p.prosrc not ilike '%update public.%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'view products_price_review: security_invoker, solo productos activos cuyo costo subio y cuya banda empeoro, select para authenticated / service_role y no para anon (20261009c)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.products_price_review')
+      and c.relkind = 'v'
+      and c.reloptions @> array['security_invoker=true']
+      and pg_get_viewdef(c.oid) ilike '%snapshot_seq is not null%order by h.snapshot_seq desc%sm.seq > s.snapshot_seq%p.is_active%p.current_cost_ref > s.cost_ref_snapshot%margin_band_rank(b.current_band) < %margin_band_rank(s.margin_band_snapshot)%'
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and has_table_privilege('service_role', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'select')
+      and not has_table_privilege('authenticated', c.oid, 'insert')
+  )
+union all
+select
+  'price_review(products): relacion calculada de PostgREST sobre products_price_review, una fila como mucho, con el RLS de quien llama (20261009c)',
+  exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.price_review(public.products)')
+      and not p.prosecdef
+      and p.proretset
+      and p.prorows = 1
+      and p.provolatile = 's'
+      and p.prorettype = to_regtype('public.products_price_review')
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'product_price_history: los triggers de NaN / Infinity cubren cost_ref_snapshot (20261009c)',
+  (
+    select count(*) = 2
+    from pg_trigger t
+    where not t.tgisinternal
+      and t.tgfoid = to_regprocedure('public.reject_non_finite_numeric()')
+      and t.tgname in ('trg_zz_reject_non_finite_numeric_ins', 'trg_zz_reject_non_finite_numeric_upd')
+      and t.tgrelid = to_regclass('public.product_price_history')
+      and pg_get_triggerdef(t.oid) ilike '%cost_ref_snapshot%'
+  )
+union all
+select
+  'product_pack_conversions: cabecera de receta (label text opcional, total_units integer not null > 0, units_per_pack = total_units, unit_product_id opcional) (20261009d)',
+  (
+    select count(*) = 4
+       and bool_and(case c.column_name
+             when 'label' then c.data_type = 'text' and c.is_nullable = 'YES'
+             when 'total_units' then c.data_type = 'integer' and c.is_nullable = 'NO'
+             when 'units_per_pack' then c.data_type = 'integer' and c.is_nullable = 'NO'
+             when 'unit_product_id' then c.data_type = 'uuid' and c.is_nullable = 'YES'
+           end)
+    from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'product_pack_conversions'
+      and c.column_name in ('label', 'total_units', 'units_per_pack', 'unit_product_id')
+  ) and (
+    select count(*) = 2
+    from pg_constraint k
+    where k.conrelid = to_regclass('public.product_pack_conversions') and k.contype = 'c' and k.convalidated
+      and k.conname in ('product_pack_conversions_total_units_check', 'product_pack_conversions_units_mirror_check')
+  )
+union all
+select
+  'product_pack_components: tabla de componentes (conversion_id en cascada, units_per_pack > 0, cost_weight > 0 y finito con default 1, unico por receta y producto) (20261009d)',
+  (
+    select count(*) = 5
+       and bool_and(c.is_nullable = 'NO')
+       and bool_and(case c.column_name
+             when 'units_per_pack' then c.data_type = 'integer'
+             when 'cost_weight' then c.data_type = 'numeric' and c.column_default = '1'
+             else c.data_type = 'uuid'
+           end)
+    from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'product_pack_components'
+      and c.column_name in ('conversion_id', 'store_id', 'unit_product_id', 'units_per_pack', 'cost_weight')
+  ) and (
+    select count(*) = 4
+    from pg_constraint k
+    where k.conrelid = to_regclass('public.product_pack_components') and k.convalidated
+      and (
+        (k.conname = 'product_pack_components_units_per_pack_check' and k.contype = 'c')
+        or (k.conname = 'product_pack_components_cost_weight_check' and k.contype = 'c'
+            and pg_get_constraintdef(k.oid) ilike '%cost_weight > %cost_weight - cost_weight%')
+        or (k.conname = 'product_pack_components_conversion_unit_unique' and k.contype = 'u')
+        or (k.contype = 'f' and k.confrelid = to_regclass('public.product_pack_conversions') and k.confdeltype = 'c')
+      )
+  )
+union all
+select
+  'product_pack_conversions: sin indice unico del lado unidad y con el unico del lado empaque (una receta activa por empaque) (20261009d)',
+  not exists (
+    select 1
+    from pg_index i
+    join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+    where i.indrelid = to_regclass('public.product_pack_conversions')
+      and i.indisunique and a.attname = 'unit_product_id'
+  ) and exists (
+    select 1
+    from pg_indexes x
+    where x.schemaname = 'public' and x.tablename = 'product_pack_conversions'
+      and x.indexname = 'uq_product_pack_conversions_pack_active'
+      and x.indexdef ilike 'create unique index%(pack_product_id) where (is_active = true)'
+  )
+union all
+select
+  'recetas de empaque: la suma de componentes de la receta activa se exige con triggers de restriccion diferidos en cabecera y componentes (20261009d)',
+  (
+    select count(*) = 2
+    from pg_trigger t
+    where not t.tgisinternal and t.tgenabled = 'O'
+      and t.tgconstraint <> 0 and t.tgdeferrable and t.tginitdeferred
+      and t.tgfoid = to_regprocedure('public.assert_pack_recipe_consistent()')
+      and (
+        (t.tgrelid = to_regclass('public.product_pack_conversions') and t.tgname = 'trg_zz_pack_recipe_sum')
+        or (t.tgrelid = to_regclass('public.product_pack_components') and t.tgname = 'trg_zz_pack_recipe_sum')
+      )
+  ) and exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.assert_pack_recipe_consistent()')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=public']
+      and p.prosrc ilike '%not v_header.is_active%sum(pc.units_per_pack)%PT400%v_units <> v_header.total_units%PT400%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'recetas de empaque: triggers de validacion y de compatibilidad (cabecera <-> componente unico) activos y no ejecutables por /rpc (20261009d)',
+  (
+    select count(*) = 7
+    from pg_trigger t
+    where not t.tgisinternal and t.tgenabled = 'O'
+      and (
+        (t.tgrelid = to_regclass('public.product_pack_conversions')
+         and (t.tgname, t.tgfoid) in (
+           ('trg_validate_product_pack_conversion', to_regprocedure('public.validate_product_pack_conversion()')::oid),
+           ('trg_product_pack_conversions_sync_component_ins', to_regprocedure('public.product_pack_conversions_sync_component()')::oid),
+           ('trg_product_pack_conversions_sync_component_upd', to_regprocedure('public.product_pack_conversions_sync_component()')::oid)
+         ))
+        or (t.tgrelid = to_regclass('public.product_pack_components')
+         and (t.tgname, t.tgfoid) in (
+           ('trg_validate_product_pack_component', to_regprocedure('public.validate_product_pack_component()')::oid),
+           ('trg_product_pack_components_sync_header_ins', to_regprocedure('public.product_pack_components_sync_header()')::oid),
+           ('trg_product_pack_components_sync_header_upd', to_regprocedure('public.product_pack_components_sync_header()')::oid),
+           ('trg_product_pack_components_sync_header_del', to_regprocedure('public.product_pack_components_sync_header()')::oid)
+         ))
+      )
+  ) and (
+    select count(*) = 3
+    from pg_proc p
+    where p.oid in (
+        to_regprocedure('public.product_pack_conversions_sync_component()'),
+        to_regprocedure('public.validate_product_pack_component()'),
+        to_regprocedure('public.product_pack_components_sync_header()')
+      )
+      and p.prosecdef
+      and p.proconfig @> array['search_path=public']
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'recetas de empaque: toda receta activa cuadra con sus componentes y la cabecera refleja al componente unico (migracion 1 a 1 de 20261009d)',
+  not exists (
+    select 1
+    from public.product_pack_conversions c
+    left join lateral (
+      select count(*) as n, coalesce(sum(pc.units_per_pack), 0) as units, min(pc.unit_product_id::text)::uuid as only_unit
+      from public.product_pack_components pc
+      where pc.conversion_id = c.id
+    ) s on true
+    where (c.is_active and (s.n = 0 or s.units <> c.total_units))
+       or c.unit_product_id is distinct from (case when s.n = 1 then s.only_unit end)
+       or c.units_per_pack <> c.total_units
+  )
+union all
+select
+  'product_pack_components: RLS por tienda (lectura de la tienda, escritura admin / almacen) y sin privilegios para anon (20261009d)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.product_pack_components')
+      and c.relrowsecurity
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and has_table_privilege('authenticated', c.oid, 'insert')
+      and not has_table_privilege('authenticated', c.oid, 'truncate')
+      and not has_table_privilege('anon', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'insert')
+  ) and (
+    select count(*) = 2
+       and bool_and(pol.roles = '{authenticated}'::name[])
+       and bool_and(pol.qual ilike '%store_id = current_user_store_id()%')
+       and bool_and(pol.cmd = 'SELECT' or (pol.cmd = 'ALL' and pol.qual ilike '%current_user_role()%admin%almacen%'
+                                          and pol.with_check ilike '%store_id = current_user_store_id()%current_user_role()%admin%almacen%'))
+    from pg_policies pol
+    where pol.schemaname = 'public' and pol.tablename = 'product_pack_components'
+  )
+union all
+select
+  'product_pack_components: los triggers de NaN / Infinity cubren cost_weight (20261009d)',
+  (
+    select count(*) = 2
+    from pg_trigger t
+    where not t.tgisinternal
+      and t.tgfoid = to_regprocedure('public.reject_non_finite_numeric()')
+      and t.tgname in ('trg_zz_reject_non_finite_numeric_ins', 'trg_zz_reject_non_finite_numeric_upd')
+      and t.tgrelid = to_regclass('public.product_pack_components')
+      and pg_get_triggerdef(t.oid) ilike '%cost_weight%'
+  )
+union all
+select
+  'rpc convert_pack_to_units: una firma de 5 argumentos (p_components al final), security definer, tienda de la sesion, bloqueo ordenado de empaque y componentes, reparto por unidades x cost_weight y huella con la distribucion (20261009d)',
+  (
+    select count(*) = 1
+       and bool_and(pg_get_function_identity_arguments(p.oid)
+             = 'p_pack_product_id uuid, p_pack_quantity integer, p_reason text, p_client_request_id uuid, p_components jsonb')
+       and bool_and(p.pronargdefaults = 3)
+       and bool_and(p.prosecdef)
+       and bool_and(p.proconfig @> array['search_path=public'])
+       and bool_and(p.prosrc ilike '%v_store_id := public.assert_store_context();%')
+       and bool_and(p.prosrc ilike '%from public.product_pack_components%')
+       and bool_and(p.prosrc ilike '%v_ids := v_component_ids || v_link.pack_product_id%where id = any(v_ids)%and store_id = v_store_id%order by id%for update%')
+       and bool_and(p.prosrc ilike '%v_units[v_index] * v_weights[v_index]%v_shares[v_residual_index] := v_transferred_value - v_allocated%')
+       and bool_and(p.prosrc ilike '%''convert_pack_to_units'', p_pack_product_id, p_pack_quantity, p_reason, p_components%')
+       and bool_and(p.prosrc ilike '%get diagnostics v_rows = row_count%')
+       and bool_and(has_function_privilege('authenticated', p.oid, 'execute'))
+       and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'convert_pack_to_units'
+  )
+union all
+select
+  'rpc create_purchase: el modo empaque lee la receta del modelo de componentes (unidad = componente unico de alguna receta activa; empaque = total_units) (20261009d)',
+  (
+    select count(*) = 1
+       and bool_and(p.prosrc ilike '%from public.product_pack_components pc%pc.units_per_pack = c.total_units%v_units_per_pack = any(v_unit_pack_sizes)%select c.total_units into v_pair_units%')
+       and bool_and(p.prosrc not ilike '%where c.unit_product_id = v_product_id%')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'create_purchase'
+  )
+union all
+select
+  'conversion_mismatches suma las entradas de todos los componentes y exige que cada uno sea de una receta del empaque (20261009d)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.conversion_mismatches')
+      and c.relkind = 'v'
+      and c.reloptions @> array['security_invoker=true']
+      and pg_get_viewdef(c.oid) ilike '%product_pack_components%unlinked_components%'
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'select')
+  ) and (
+    select array_agg(a.attname::text order by a.attnum)
+           = array['conversion_id', 'store_id', 'pack_product_id', 'unit_product_id', 'pack_delta', 'unit_delta',
+                   'units_per_pack', 'issue', 'current_units_per_pack']
+    from pg_attribute a
+    where a.attrelid = to_regclass('public.conversion_mismatches') and a.attnum > 0 and not a.attisdropped
+  )
+union all
+select
+  'view product_pack_roles y pack_role(products): rol de empaque por producto con security_invoker, relacion calculada de una fila y sin acceso anon (20261009d)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.product_pack_roles')
+      and c.relkind = 'v'
+      and c.reloptions @> array['security_invoker=true']
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'select')
+      and not has_table_privilege('authenticated', c.oid, 'insert')
+  ) and exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.pack_role(public.products)')
+      and not p.prosecdef
+      and p.proretset
+      and p.prorows = 1
+      and p.provolatile = 's'
+      and p.prorettype = to_regtype('public.product_pack_roles')
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'supplier_products.is_preferred: boolean not null default false, check "inactivo nunca habitual" e indice unico parcial (product_id) where is_preferred (20261009e)',
+  exists (
+    select 1
+    from pg_attribute a
+    join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+    where a.attrelid = to_regclass('public.supplier_products')
+      and a.attname = 'is_preferred'
+      and not a.attisdropped
+      and a.atttypid = 'boolean'::regtype
+      and a.attnotnull
+      and pg_get_expr(d.adbin, d.adrelid) = 'false'
+  ) and exists (
+    select 1
+    from pg_constraint c
+    where c.conrelid = to_regclass('public.supplier_products')
+      and c.conname = 'supplier_products_preferred_active_check'
+      and c.contype = 'c'
+      and c.convalidated
+      and pg_get_constraintdef(c.oid) ilike '%not is_preferred%or is_active%'
+  ) and exists (
+    select 1
+    from pg_index i
+    where i.indexrelid = to_regclass('public.uq_supplier_products_preferred')
+      and i.indrelid = to_regclass('public.supplier_products')
+      and i.indisunique
+      and i.indisvalid
+      and i.indnkeyatts = 1
+      and pg_get_indexdef(i.indexrelid) ilike '%(product_id) where is_preferred'
+  )
+union all
+select
+  'supplier_products: triggers del habitual (guard before insert / update / delete, relevo after update / delete solo si la fila era habitual) con funciones security definer no ejecutables por /rpc (20261009e)',
+  (
+    select count(*) = 2
+       and bool_and(t.tgenabled = 'O')
+       and bool_and(p.prosecdef and p.proconfig @> array['search_path=public'])
+       and bool_and(not has_function_privilege('authenticated', p.oid, 'execute'))
+       and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+       and bool_or(
+         t.tgname = 'trg_supplier_products_preferred_guard'
+         and t.tgtype = 31
+         and p.oid = to_regprocedure('public.supplier_products_preferred_guard()')
+         and p.prosrc ilike '%for no key update%new.is_preferred := false%errcode = ''PT400''%new.is_preferred := true%'
+       )
+       and bool_or(
+         t.tgname = 'trg_supplier_products_preferred_handoff'
+         and t.tgtype = 25
+         and p.oid = to_regprocedure('public.supplier_products_preferred_handoff()')
+         and pg_get_triggerdef(t.oid) ilike '%when (old.is_preferred)%'
+         and p.prosrc ilike '%supplier_products_next_preferred(old.product_id)%set is_preferred = true%'
+       )
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    where t.tgrelid = to_regclass('public.supplier_products')
+      and not t.tgisinternal
+      and t.tgname in ('trg_supplier_products_preferred_guard', 'trg_supplier_products_preferred_handoff')
+  )
+union all
+select
+  'contacts: trigger trg_contacts_release_preferred_supplier (after update de is_active / type) suelta los habituales del proveedor desactivado; relevo supplier_products_next_preferred interno (20261009e)',
+  exists (
+    select 1
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    where t.tgrelid = to_regclass('public.contacts')
+      and t.tgname = 'trg_contacts_release_preferred_supplier'
+      and not t.tgisinternal
+      and t.tgenabled = 'O'
+      and t.tgtype = 17
+      and p.oid = to_regprocedure('public.contacts_release_preferred_supplier()')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=public']
+      and p.prosrc ilike '%set is_preferred = false%supplier_products_next_preferred(v_link.product_id)%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  ) and exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.supplier_products_next_preferred(uuid)')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=public']
+      and p.prosrc ilike '%sp.is_active%c.is_active%last_purchased_at desc nulls last, sp.created_at, sp.id%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'rpc save_product_suppliers: una firma (uuid, jsonb), security definer con search_path, tienda de la sesion, admin / almacen (PT403), producto bloqueado (PT404), costo por register_supplier_product_price y solo la ejecutan authenticated / service_role (20261009e)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.oid = to_regprocedure('public.save_product_suppliers(uuid, jsonb)')
+         and p.prosecdef
+         and p.prorettype = 'jsonb'::regtype
+         and not p.proretset
+         and p.proconfig @> array['search_path=public']
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%current_user_role()%not in (''admin'', ''almacen'')%errcode = ''PT403''%and c.store_id = v_store_id%and store_id = v_store_id%for update%errcode = ''PT404''%set is_preferred = false%set is_active = false%public.register_supplier_product_price(%'
+         and p.prosrc not ilike '%delete from%'
+         and p.prosrc not ilike '%update public.products%'
+         and p.prosrc not ilike '%current_stock%'
+         and p.prosrc not ilike '%into public.stock_movements%'
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'save_product_suppliers'
+  )
+union all
+select
+  'proveedor habitual: ningun habitual es un vinculo inactivo ni de un proveedor inactivo o que ya no es proveedor (20261009e)',
+  not exists (
+    select 1
+    from public.supplier_products sp
+    join public.contacts c on c.id = sp.supplier_id
+    where sp.is_preferred
+      and (not sp.is_active or not c.is_active or c.type::text not in ('proveedor', 'ambos'))
+  )
+union all
+select
+  'price_from_markup (costo al centimo, % a dos decimales, producto exacto) y assert_expected_cost_ref (PT409 con hint COST_CHANGED, interna: no ejecutable por /rpc) (20261009f)',
+  exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.price_from_markup(numeric, numeric)')
+      and p.provolatile = 'i'
+      and p.prosrc ilike '%round(round(p_cost_ref, 2) * (10000 + round(p_markup_pct, 2) * 100) * 0.0001, 2)%'
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+  and exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.assert_expected_cost_ref(numeric, numeric)')
+      and p.prosrc ilike '%round(coalesce(p_current_cost_ref, 0), 2) <> round(p_expected_cost_ref, 2)%errcode = ''PT409''%hint = ''COST_CHANGED''%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'rpc reprice_product_to_markup: una firma (uuid, numeric, text, numeric), security definer con search_path, tienda de la sesion, admin / almacen (PT403), % en (0, 1000], producto bloqueado (PT404), sin costo PT400, costo esperado PT409 y delega en update_product_price (20261009f)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.oid = to_regprocedure('public.reprice_product_to_markup(uuid, numeric, text, numeric)')
+         and p.prosecdef
+         and p.prorettype = to_regtype('public.products')
+         and not p.proretset
+         and p.proconfig @> array['search_path=public']
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%assert_finite_numeric(p_markup_pct%not in (''admin'', ''almacen'')%errcode = ''PT403''%p_markup_pct <= 0 or p_markup_pct > 1000%and store_id = v_store_id%for update%errcode = ''PT404''%hint = ''NO_COST''%assert_expected_cost_ref(v_product.current_cost_ref, p_expected_cost_ref)%return public.update_product_price(%public.price_from_markup(v_product.current_cost_ref, p_markup_pct)%'
+         and p.prosrc not ilike '%update public.products%'
+         and p.prosrc not ilike '%insert into%'
+         and p.prosrc not ilike '%current_stock%'
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'reprice_product_to_markup'
+  )
+union all
+select
+  'rpc update_product_price_checked: una firma (uuid, numeric, text, numeric), security definer con search_path, tienda de la sesion, admin / almacen (PT403), producto bloqueado (PT404), costo esperado PT409 y delega en update_product_price (20261009f)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.oid = to_regprocedure('public.update_product_price_checked(uuid, numeric, text, numeric)')
+         and p.prosecdef
+         and p.prorettype = to_regtype('public.products')
+         and not p.proretset
+         and p.proconfig @> array['search_path=public']
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%not in (''admin'', ''almacen'')%errcode = ''PT403''%and store_id = v_store_id%for update%errcode = ''PT404''%assert_expected_cost_ref(v_product.current_cost_ref, p_expected_cost_ref)%return public.update_product_price(p_product_id, p_new_sale_price_ref, p_reason)%'
+         and p.prosrc not ilike '%update public.products%'
+         and p.prosrc not ilike '%insert into%'
+         and p.prosrc not ilike '%current_stock%'
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'update_product_price_checked'
+  )
+union all
+select
+  'products.client_request_id (uuid) y client_request_hash (text) opcionales, con indice unico parcial (store_id, client_request_id) where client_request_id is not null (20261009f)',
+  (
+    select count(*) = 2 and bool_and(c.is_nullable = 'YES' and c.column_default is null)
+    from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'products'
+      and ((c.column_name = 'client_request_id' and c.data_type = 'uuid')
+        or (c.column_name = 'client_request_hash' and c.data_type = 'text'))
+  )
+  and exists (
+    select 1
+    from pg_index i
+    where i.indexrelid = to_regclass('public.products_store_client_request_unique')
+      and i.indrelid = 'public.products'::regclass
+      and i.indisunique
+      and i.indisvalid
+      and pg_get_indexdef(i.indexrelid) ilike '%(store_id, client_request_id) where (client_request_id is not null)'
   )
 order by 1;

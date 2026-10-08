@@ -302,4 +302,175 @@ describe("PricingFields", () => {
     expect(getPriceField()).toHaveAttribute("aria-invalid", "true");
     expect(getPriceField()).toHaveAccessibleDescription("El precio debe ser mayor a 0");
   });
+
+  it("by default always shows the % field and offers no 'Otro %' chip", () => {
+    render(<Harness cost={10} />);
+
+    expect(getPctField()).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Otro %" })).not.toBeInTheDocument();
+  });
+});
+
+describe("PricingFields · customPct=\"onDemand\"", () => {
+  function getOtherChip() {
+    return screen.getByRole("button", { name: "Otro %" });
+  }
+
+  function queryPctField() {
+    return screen.queryByLabelText("Ganancia %");
+  }
+
+  it("opens with the chips, 'Otro %' and the price as the only field", () => {
+    render(<Harness cost={10} customPct="onDemand" />);
+
+    expect(getChips().map((chip) => chip.textContent)).toEqual(["12 %", "20 %", "30 %"]);
+    expect(getOtherChip()).toHaveAttribute("aria-expanded", "false");
+    expect(queryPctField()).not.toBeInTheDocument();
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+  });
+
+  it("a chip still fills the price in one click, without revealing the % field", async () => {
+    const user = userEvent.setup();
+    const onPriceChange = jest.fn();
+
+    render(<Harness cost={10} customPct="onDemand" onPriceChange={onPriceChange} />);
+
+    await user.click(screen.getByRole("button", { name: "30 %" }));
+
+    expect(onPriceChange).toHaveBeenCalledTimes(1);
+    expect(onPriceChange).toHaveBeenLastCalledWith(13);
+    expect(getPriceField()).toHaveValue("13");
+    expect(screen.getByRole("button", { name: "30 %" })).toHaveAttribute("aria-pressed", "true");
+    expect(queryPctField()).not.toBeInTheDocument();
+  });
+
+  it("'Otro %' reveals the % field with the focus, and typing it fills the price", async () => {
+    const user = userEvent.setup();
+    const onPriceChange = jest.fn();
+
+    render(<Harness cost={8} customPct="onDemand" onPriceChange={onPriceChange} />);
+
+    await user.click(getOtherChip());
+
+    expect(getPctField()).toHaveFocus();
+    expect(onPriceChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Otro %" })).not.toBeInTheDocument();
+
+    await user.keyboard("25");
+
+    expect(getPriceField()).toHaveValue("10");
+    expect(onPriceChange).toHaveBeenLastCalledWith(10);
+  });
+
+  it("works from the keyboard: Enter on 'Otro %' reveals the field", async () => {
+    const user = userEvent.setup();
+
+    render(<Harness cost={8} customPct="onDemand" />);
+
+    getOtherChip().focus();
+    await user.keyboard("{Enter}");
+
+    expect(getPctField()).toHaveFocus();
+  });
+
+  it("once revealed the % field stays, also after choosing a chip", async () => {
+    const user = userEvent.setup();
+
+    render(<Harness cost={10} customPct="onDemand" />);
+
+    await user.click(getOtherChip());
+    await user.click(screen.getByRole("button", { name: "20 %" }));
+
+    expect(getPctField()).toHaveValue("20");
+    expect(getPriceField()).toHaveValue("12");
+  });
+
+  it("opens already revealed when the current % matches no chip", () => {
+    render(<Harness cost={8} customPct="onDemand" initialPrice={10} />);
+
+    expect(getPctField()).toHaveValue("25");
+    expect(screen.queryByRole("button", { name: "Otro %" })).not.toBeInTheDocument();
+  });
+
+  it("stays collapsed when the current % is one of the chips, the suggested one included", () => {
+    const { unmount } = render(<Harness cost={10} customPct="onDemand" initialPrice={12} />);
+
+    expect(queryPctField()).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "20 %" })).toHaveAttribute("aria-pressed", "true");
+    unmount();
+
+    render(<Harness cost={10} customPct="onDemand" initialPrice={11.8} suggestedPct={18} />);
+
+    expect(queryPctField()).not.toBeInTheDocument();
+    expect(getOtherChip()).toBeInTheDocument();
+  });
+
+  it("stays collapsed without a price, without a cost or below the cost", () => {
+    const noPrice = render(<Harness cost={10} customPct="onDemand" />);
+
+    expect(queryPctField()).not.toBeInTheDocument();
+    noPrice.unmount();
+
+    const noCost = render(<Harness cost={0} customPct="onDemand" initialPrice={5} />);
+
+    expect(queryPctField()).not.toBeInTheDocument();
+    noCost.unmount();
+
+    render(<Harness cost={10} customPct="onDemand" initialPrice={9} />);
+
+    expect(queryPctField()).not.toBeInTheDocument();
+    expect(getBadge()).toHaveTextContent("-10 %");
+  });
+
+  it("typing a price does not make the % field appear: the badge shows the result", async () => {
+    const user = userEvent.setup();
+
+    render(<Harness cost={8} customPct="onDemand" />);
+
+    await user.type(getPriceField(), "10");
+
+    expect(queryPctField()).not.toBeInTheDocument();
+    expect(getBadge()).toHaveTextContent("25 %");
+  });
+
+  it("disables 'Otro %' with the rest", () => {
+    render(<Harness cost={10} customPct="onDemand" disabled />);
+
+    expect(getOtherChip()).toBeDisabled();
+  });
+
+  it("offers 'Otro %' also without chips", async () => {
+    const user = userEvent.setup();
+
+    render(<Harness chips={[]} cost={10} customPct="onDemand" />);
+
+    await user.click(getOtherChip());
+
+    expect(getPctField()).toHaveFocus();
+  });
+});
+
+describe("PricingFields · hideCost", () => {
+  it("hides the read-only cost box and keeps the badge", () => {
+    render(<Harness cost={8} hideCost initialPrice={10} />);
+
+    expect(screen.queryByText("Costo actual (ya con IVA)")).not.toBeInTheDocument();
+    expect(screen.queryByText("ref 8.00")).not.toBeInTheDocument();
+    expect(getBadge()).toHaveTextContent("25 %");
+    expect(getPctField()).toHaveValue("25");
+  });
+
+  it("without a cost shows 'Sin costo' once, in the badge", () => {
+    render(<Harness cost={0} hideCost />);
+
+    expect(screen.getAllByText("Sin costo")).toHaveLength(1);
+    expect(getBadge()).toHaveTextContent("Sin costo");
+  });
+
+  it("with a cost and no price shows neither the box nor a badge", () => {
+    render(<Harness cost={8} hideCost />);
+
+    expect(screen.queryByText("Costo actual (ya con IVA)")).not.toBeInTheDocument();
+    expect(screen.queryByTitle(BADGE_TITLE)).not.toBeInTheDocument();
+  });
 });

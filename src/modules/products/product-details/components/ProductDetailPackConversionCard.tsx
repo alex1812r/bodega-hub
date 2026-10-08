@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useMemo, useState } from "react";
+import { Fragment, type FormEvent, useMemo, useState } from "react";
 
 import { Can } from "@/shared/auth/Can";
 import { Button } from "@/shared/components/Button";
@@ -9,9 +9,14 @@ import { FormActions } from "@/shared/components/FormActions";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
 import { Textarea } from "@/shared/components/Textarea";
+import { useToast } from "@/shared/components/Toast";
 import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 
 import { useConvertPackToUnits } from "@/modules/inventory/hooks/useInventory";
+import {
+  buildPackOpeningToast,
+  describeRecipeOpening,
+} from "@/modules/inventory/inventory-movements/components/packOpeningText";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 
 type ProductDetailPackConversionCardProps = {
@@ -35,8 +40,32 @@ export function ProductDetailPackConversionCard({
   const [quantityTouched, setQuantityTouched] = useState(false);
   const convert = useConvertPackToUnits();
   const requestAttempt = useRequestAttempt();
+  const { showToast } = useToast();
 
   const isPack = packConversion?.role === "pack";
+  const isAssorted = isPack && packConversion?.kind === "assorted";
+  const components = packConversion?.components ?? [];
+  // Empaques de los que sale el producto. Un vínculo sin `sources` (datos
+  // anteriores al surtido) de rol unidad sale de su único empaque.
+  const sources = useMemo(() => {
+    if (!packConversion) {
+      return [];
+    }
+
+    if (packConversion.sources?.length || packConversion.role === "pack") {
+      return packConversion.sources ?? [];
+    }
+
+    return [
+      {
+        conversionId: packConversion.id,
+        packName: packConversion.linkedProduct.name,
+        packProductId: packConversion.linkedProduct.id,
+        totalUnits: packConversion.totalUnits ?? packConversion.unitsPerPack,
+        unitsPerPack: packConversion.unitsPerPack,
+      },
+    ];
+  }, [packConversion]);
   const quantityNumber = Number(packQuantity);
   const unitPreview =
     isPack && quantityNumber > 0 && packConversion
@@ -61,15 +90,26 @@ export function ProductDetailPackConversionCard({
     stockError ??
     (quantityTouched && !(quantityNumber > 0) ? "Indica una cantidad mayor a cero." : undefined);
 
-  const linkedHref = useMemo(
-    () =>
-      packConversion ? `/products/${packConversion.linkedProduct.id}` : undefined,
-    [packConversion],
-  );
-
   if (!packConversion) {
     return null;
   }
+
+  const linkClassName = "font-medium text-on-surface underline-offset-2 hover:underline";
+  const sourcesLine =
+    sources.length > 0 ? (
+      <p className="mt-1 text-sm text-on-surface-variant [overflow-wrap:anywhere]">
+        Proviene de:{" "}
+        {sources.map((source, index) => (
+          <Fragment key={source.conversionId}>
+            {index > 0 ? ", " : null}
+            <Link className={linkClassName} href={`/products/${source.packProductId}`}>
+              {source.packName}
+            </Link>
+          </Fragment>
+        ))}
+      </p>
+    ) : null;
+  const openLabel = isAssorted ? "Abrir según la receta" : "Abrir empaque";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -90,8 +130,16 @@ export function ProductDetailPackConversionCard({
     }
 
     try {
-      await convert.mutateAsync({ ...input, clientRequestId });
+      const result = await convert.mutateAsync({ ...input, clientRequestId });
       requestAttempt.succeed();
+      showToast(
+        buildPackOpeningToast({
+          packName: productName,
+          packQuantity: quantityNumber,
+          recipe: packConversion,
+          result,
+        }),
+      );
       setOpen(false);
       setPackQuantity("1");
       setReason("");
@@ -104,45 +152,104 @@ export function ProductDetailPackConversionCard({
 
   return (
     <section className="rounded-xl border border-outline-variant/30 bg-surface-container-lowest p-4">
-      <h2 className="text-base font-semibold text-on-surface">Conversion empaque</h2>
-      <p className="mt-1 text-sm text-on-surface-variant">
-        {isPack
-          ? `Este empaque se abre en ${packConversion.unitsPerPack} unidades.`
-          : `Unidad suelta de un empaque (${packConversion.unitsPerPack} und/caja).`}
-      </p>
-      <dl className="mt-4 grid gap-2 text-sm">
-        <div className="flex justify-between gap-3">
-          <dt className="text-on-surface-variant">{isPack ? "Unidad" : "Empaque"}</dt>
-          <dd className="text-right font-medium text-on-surface">
-            {linkedHref ? (
-              <Link className="underline-offset-2 hover:underline" href={linkedHref}>
-                {packConversion.linkedProduct.name}
-              </Link>
-            ) : (
-              packConversion.linkedProduct.name
-            )}
-          </dd>
-        </div>
-        <div className="flex justify-between gap-3">
-          <dt className="text-on-surface-variant">
-            Stock de {packConversion.linkedProduct.name}
-          </dt>
-          <dd className="font-medium text-on-surface">
-            {packConversion.linkedProduct.currentStock}
-          </dd>
-        </div>
-        <div className="flex justify-between gap-3">
-          <dt className="text-on-surface-variant">Factor</dt>
-          <dd className="font-medium text-on-surface">{packConversion.unitsPerPack}</dd>
-        </div>
-      </dl>
+      <h2 className="text-base font-semibold text-on-surface">Conversión de empaque</h2>
+      {isAssorted ? (
+        <>
+          <p className="mt-1 text-sm text-on-surface-variant [overflow-wrap:anywhere]">
+            Se abre en:{" "}
+            {components.map((component, index) => (
+              <Fragment key={component.unitProductId}>
+                {index > 0 ? " · " : null}
+                {component.unitsPerPack}{" "}
+                <Link className={linkClassName} href={`/products/${component.unitProductId}`}>
+                  {component.name}
+                </Link>
+                {component.isActive ? null : " (inactivo)"}
+              </Fragment>
+            ))}
+          </p>
+          {sourcesLine}
+          <dl className="mt-4 grid gap-2 text-sm">
+            {packConversion.label ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-on-surface-variant">Surtido</dt>
+                <dd className="text-right font-medium text-on-surface [overflow-wrap:anywhere]">
+                  {packConversion.label}
+                </dd>
+              </div>
+            ) : null}
+            <div className="flex justify-between gap-3">
+              <dt className="text-on-surface-variant">Total por empaque</dt>
+              <dd className="font-medium text-on-surface">
+                {packConversion.totalUnits ?? packConversion.unitsPerPack} unidades
+              </dd>
+            </div>
+          </dl>
+        </>
+      ) : isPack || sources.length <= 1 ? (
+        <>
+          {isPack ? (
+            <p className="mt-1 text-sm text-on-surface-variant">
+              Este empaque se abre en {packConversion.unitsPerPack} unidades.
+            </p>
+          ) : null}
+          {sourcesLine}
+          <dl className="mt-4 grid gap-2 text-sm">
+            {isPack ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-on-surface-variant">Unidad</dt>
+                <dd className="text-right font-medium text-on-surface">
+                  <Link
+                    className="underline-offset-2 hover:underline"
+                    href={`/products/${packConversion.linkedProduct.id}`}
+                  >
+                    {packConversion.linkedProduct.name}
+                  </Link>
+                </dd>
+              </div>
+            ) : null}
+            <div className="flex justify-between gap-3">
+              <dt className="text-on-surface-variant">
+                Stock de {packConversion.linkedProduct.name}
+              </dt>
+              <dd className="font-medium text-on-surface">
+                {packConversion.linkedProduct.currentStock}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-on-surface-variant">Factor</dt>
+              <dd className="font-medium text-on-surface">{packConversion.unitsPerPack}</dd>
+            </div>
+          </dl>
+        </>
+      ) : (
+        <>
+          {sourcesLine}
+          <dl className="mt-4 grid gap-2 text-sm">
+            {sources.map((source) => (
+              <div className="flex justify-between gap-3" key={source.conversionId}>
+                <dt className="min-w-0 text-on-surface-variant [overflow-wrap:anywhere]">
+                  {source.packName}
+                </dt>
+                <dd className="shrink-0 font-medium text-on-surface">
+                  {source.unitsPerPack} und/caja
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      )}
 
       {isPack ? (
         <Can permission="inventory.manage">
           <div className="mt-4">
             <Modal
               contentClassName="sm:max-w-md"
-              description={`Abre cajas de ${productName} y suma unidades al producto suelto.`}
+              description={
+                isAssorted
+                  ? `Abre cajas de ${productName} y suma a cada producto las unidades de su receta.`
+                  : `Abre cajas de ${productName} y suma unidades al producto suelto.`
+              }
               footer={({ close }) => (
                 <FormActions
                   isSubmitting={convert.isPending}
@@ -157,7 +264,7 @@ export function ProductDetailPackConversionCard({
               title="Abrir empaque"
               trigger={
                 <Button size="sm" type="button" variant="outline">
-                  Abrir empaque
+                  {openLabel}
                 </Button>
               }
             >
@@ -176,6 +283,9 @@ export function ProductDetailPackConversionCard({
                 <p className="text-sm text-on-surface-variant">
                   Salida: −{quantityNumber || 0} empaque(s). Entrada: +{unitPreview} unidad(es).
                   Stock actual empaque: {productStock}.
+                  {isAssorted && unitPreview > 0
+                    ? ` Se abrirá en: ${describeRecipeOpening(packConversion, quantityNumber)}.`
+                    : null}
                 </p>
                 <Textarea
                   label="Motivo"

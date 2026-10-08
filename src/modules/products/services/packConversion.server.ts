@@ -1,25 +1,63 @@
 import { type DbProductSummaryRow } from "@/lib/supabase/mappers";
-import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 import { generateProductSkuFromName, normalizeSku } from "@/shared/utils/skuGeneration";
 
 import type { PackConversionInput } from "./packConversionSchemas";
+import {
+  buildPackConversionListItem,
+  buildPackConversionSummary,
+  isSamePackRecipe,
+  type PackRecipeProduct,
+  type PackRecipeView,
+} from "./packConversionSummary";
 import { normalizeBarcode } from "./productSearch";
 import type { ProductInput } from "./products.mock-server";
 import { ApiError } from "@/lib/api/apiError";
 import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 
-const linkedProductSelect =
-  "id, sku, name, sale_price_ref, current_cost_ref, current_stock";
+type RouteSupabaseClient = Awaited<ReturnType<typeof createRouteSupabaseClient>>;
 
-type PackConversionRow = {
-  id: string;
-  pack_product_id: string;
+const linkedProductSelect =
+  "id, sku, name, sale_price_ref, current_cost_ref, current_stock, is_active";
+
+/**
+ * Receta completa: cabecera, empaque y componentes con su producto (parche
+ * 20261009d). Una sola lectura trae todo: no hay consulta por componente.
+ */
+const recipeSelect = `
+  id,
+  pack_product_id,
+  label,
+  total_units,
+  pack_product:products!pack_product_id(${linkedProductSelect}),
+  components:product_pack_components(
+    unit_product_id,
+    units_per_pack,
+    cost_weight,
+    unit_product:products!unit_product_id(${linkedProductSelect})
+  )
+`;
+
+type PackComponentRow = {
+  cost_weight: number | string;
+  unit_product?: DbProductSummaryRow | DbProductSummaryRow[] | null;
   unit_product_id: string;
   units_per_pack: number;
+};
+
+type PackRecipeRow = {
+  components?: PackComponentRow[] | null;
+  id: string;
+  label?: string | null;
   pack_product?: DbProductSummaryRow | DbProductSummaryRow[] | null;
-  unit_product?: DbProductSummaryRow | DbProductSummaryRow[] | null;
+  pack_product_id: string;
+  total_units: number;
+};
+
+type PackRecipeSourceRow = {
+  conversion?: PackRecipeRow | PackRecipeRow[] | null;
 };
 
 function resolveEmbedded<T>(value: T | T[] | null | undefined): T | undefined {
@@ -30,110 +68,123 @@ function resolveEmbedded<T>(value: T | T[] | null | undefined): T | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function mapLinkedProduct(row: DbProductSummaryRow) {
+function mapRecipeProduct(row: DbProductSummaryRow): PackRecipeProduct {
   return {
     currentCostRef: Number(row.current_cost_ref ?? 0),
     currentStock: row.current_stock ?? 0,
     id: row.id,
+    isActive: row.is_active ?? true,
     name: row.name,
     salePriceRef: Number(row.sale_price_ref ?? 0),
     sku: normalizeSku(row.sku),
   };
 }
 
-export function mapPackConversionRow(
-  row: PackConversionRow,
-  productId: string,
-): ProductPackConversionSummary | undefined {
+/** `undefined` si falta el empaque o algún producto componente (fila no visible). */
+export function mapPackRecipeRow(row: PackRecipeRow): PackRecipeView | undefined {
   const pack = resolveEmbedded(row.pack_product);
-  const unit = resolveEmbedded(row.unit_product);
+  const components = (row.components ?? []).map((component) => ({
+    component,
+    product: resolveEmbedded(component.unit_product),
+  }));
 
-  if (!pack || !unit) {
+  if (!pack || components.length === 0 || components.some((item) => !item.product)) {
     return undefined;
   }
 
-  const isPack = row.pack_product_id === productId;
-
   return {
+    components: components.flatMap(({ component, product }) =>
+      product
+        ? [
+            {
+              costWeight: Number(component.cost_weight),
+              product: mapRecipeProduct(product),
+              unitsPerPack: component.units_per_pack,
+            },
+          ]
+        : [],
+    ),
     id: row.id,
-    role: isPack ? "pack" : "unit",
-    unitsPerPack: row.units_per_pack,
-    linkedProduct: mapLinkedProduct(isPack ? unit : pack),
+    label: row.label ?? null,
+    packProduct: mapRecipeProduct(pack),
+    totalUnits: row.total_units,
   };
 }
 
+/**
+ * Vínculo de empaque de un producto: la receta de la que es empaque y TODAS las
+ * recetas activas de las que sale como componente (un producto puede salir de
+ * varios empaques). Dos lecturas en paralelo, sea cual sea el número de recetas.
+ */
 export async function getPackConversionForProduct(
   productId: string,
   storeId: string,
 ): Promise<ProductPackConversionSummary | undefined> {
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase
-    .from("product_pack_conversions")
-    .select(
-      `
-      id,
-      pack_product_id,
-      unit_product_id,
-      units_per_pack,
-      pack_product:products!pack_product_id(${linkedProductSelect}),
-      unit_product:products!unit_product_id(${linkedProductSelect})
-    `,
-    )
-    .eq("store_id", storeId)
-    .eq("is_active", true)
-    .or(`pack_product_id.eq.${productId},unit_product_id.eq.${productId}`)
-    .maybeSingle();
+  const [packResult, sourcesResult] = await Promise.all([
+    // A lo sumo una fila: `uq_product_pack_conversions_pack_active`.
+    supabase
+      .from("product_pack_conversions")
+      .select(recipeSelect)
+      .eq("store_id", storeId)
+      .eq("is_active", true)
+      .eq("pack_product_id", productId)
+      .maybeSingle(),
+    supabase
+      .from("product_pack_components")
+      .select(`conversion:product_pack_conversions!inner(${recipeSelect})`)
+      .eq("store_id", storeId)
+      .eq("unit_product_id", productId)
+      .eq("conversion.is_active", true),
+  ]);
 
-  throwIfSupabaseError(error);
+  throwIfSupabaseError(packResult.error);
+  throwIfSupabaseError(sourcesResult.error);
 
-  if (!data) {
-    return undefined;
-  }
+  const packRecipe = packResult.data
+    ? mapPackRecipeRow(packResult.data as unknown as PackRecipeRow)
+    : undefined;
+  const sourceRecipes = ((sourcesResult.data ?? []) as unknown as PackRecipeSourceRow[]).flatMap(
+    (row) => {
+      const conversion = resolveEmbedded(row.conversion);
+      const recipe = conversion ? mapPackRecipeRow(conversion) : undefined;
 
-  return mapPackConversionRow(data as PackConversionRow, productId);
+      return recipe ? [recipe] : [];
+    },
+  );
+
+  return buildPackConversionSummary({ packRecipe, productId, sourceRecipes });
 }
 
 export async function listPackConversions(storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("product_pack_conversions")
-    .select(
-      `
-      id,
-      pack_product_id,
-      unit_product_id,
-      units_per_pack,
-      pack_product:products!pack_product_id(${linkedProductSelect}),
-      unit_product:products!unit_product_id(${linkedProductSelect})
-    `,
-    )
+    .select(recipeSelect)
     .eq("store_id", storeId)
     .eq("is_active", true)
     .order("created_at", { ascending: false });
 
   throwIfSupabaseError(error);
 
-  return (data ?? [])
-    .map((row) => {
-      const mapped = mapPackConversionRow(row as PackConversionRow, (row as PackConversionRow).pack_product_id);
-      if (!mapped) {
-        return null;
-      }
+  return ((data ?? []) as unknown as PackRecipeRow[]).flatMap((row) => {
+    const recipe = mapPackRecipeRow(row);
+    const item = recipe ? buildPackConversionListItem(recipe) : null;
 
-      const pack = resolveEmbedded((row as PackConversionRow).pack_product);
-
-      return {
-        ...mapped,
-        packProduct: pack ? mapLinkedProduct(pack) : mapped.linkedProduct,
-      };
-    })
-    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+    return item ? [item] : [];
+  });
 }
 
+/**
+ * Un producto unidad / componente puede salir de varios empaques. Lo que no se
+ * admite es que sea él mismo el EMPAQUE de una receta activa (cadena de
+ * empaques): regla del BFF, la base no la impone. El sentido contrario lo
+ * cubre `assertPackIsNotComponent`.
+ */
 async function assertUnitAvailable(
   unitProductId: string,
   storeId: string,
-  packProductId: string,
+  packProductId: string | null,
 ) {
   await assertSupabaseStoreResource(
     "products",
@@ -149,16 +200,386 @@ async function assertUnitAvailable(
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("product_pack_conversions")
-    .select("id, pack_product_id, unit_product_id")
+    .select("id")
     .eq("store_id", storeId)
     .eq("is_active", true)
-    .or(`pack_product_id.eq.${unitProductId},unit_product_id.eq.${unitProductId}`)
+    .eq("pack_product_id", unitProductId)
     .maybeSingle();
 
   throwIfSupabaseError(error);
 
-  if (data && data.pack_product_id !== packProductId) {
-    throw new ApiError(409, "CONFLICT", "El producto unidad ya esta vinculado a otro empaque.");
+  if (data) {
+    throw new ApiError(
+      409,
+      "CONFLICT",
+      "El producto unidad es un empaque con receta activa: no puede salir de otro empaque.",
+    );
+  }
+}
+
+/** Lo mismo que `assertUnitAvailable` para todos los componentes, en dos lecturas. */
+async function assertComponentsAvailable(
+  supabase: RouteSupabaseClient,
+  unitProductIds: string[],
+  storeId: string,
+  packProductId: string | null,
+) {
+  if (packProductId !== null && unitProductIds.includes(packProductId)) {
+    throw new ApiError(400, "BAD_REQUEST", "El empaque no puede ser componente de sí mismo.");
+  }
+
+  const { data: products, error: productsError } = await supabase
+    .from("products")
+    .select("id")
+    .eq("store_id", storeId)
+    .in("id", unitProductIds);
+
+  throwIfSupabaseError(productsError);
+
+  if ((products ?? []).length !== unitProductIds.length) {
+    throw new ApiError(404, "NOT_FOUND", "Producto componente no encontrado.");
+  }
+
+  const { data: packs, error: packsError } = await supabase
+    .from("product_pack_conversions")
+    .select("pack_product_id")
+    .eq("store_id", storeId)
+    .eq("is_active", true)
+    .in("pack_product_id", unitProductIds);
+
+  throwIfSupabaseError(packsError);
+
+  if ((packs ?? []).length > 0) {
+    throw new ApiError(
+      409,
+      "CONFLICT",
+      "Un componente es un empaque con receta activa: no puede salir de otro empaque.",
+    );
+  }
+}
+
+type PackNameRow = { name?: string | null };
+type PackOfComponentConversionRow = { pack_product?: PackNameRow | PackNameRow[] | null };
+type PackOfComponentRow = {
+  conversion?: PackOfComponentConversionRow | PackOfComponentConversionRow[] | null;
+};
+
+/**
+ * La misma regla de cadenas en el otro sentido: un producto que ya sale de un
+ * empaque (componente de una receta ACTIVA) no puede estrenar receta propia.
+ * Solo se llama cuando el producto aún NO tiene receta activa: quien ya era
+ * empaque y componente (datos anteriores a la regla) sigue pudiendo editar su
+ * receta. Regla del BFF, como `assertUnitAvailable`: la base no la impone.
+ */
+async function assertPackIsNotComponent(
+  supabase: RouteSupabaseClient,
+  packProductId: string,
+  storeId: string,
+) {
+  const { data, error } = await supabase
+    .from("product_pack_components")
+    .select(
+      "conversion:product_pack_conversions!inner(pack_product:products!pack_product_id(name))",
+    )
+    .eq("store_id", storeId)
+    .eq("unit_product_id", packProductId)
+    .eq("conversion.is_active", true);
+
+  throwIfSupabaseError(error);
+
+  const [source] = (data ?? []) as unknown as PackOfComponentRow[];
+
+  if (!source) {
+    return;
+  }
+
+  const packName = resolveEmbedded(resolveEmbedded(source.conversion)?.pack_product)?.name;
+
+  throw new ApiError(
+    409,
+    "CONFLICT",
+    `Este producto ya es unidad de ${packName?.trim() || "otro empaque"}; no puede ser a la vez un empaque.`,
+  );
+}
+
+/** Nombre y SKU del producto unidad que crea el modo `create_unit`. */
+function resolveNewUnitIdentity(input: PackConversionInput, packName: string | undefined) {
+  const name = input.unitProduct?.name?.trim() || `${packName ?? "Producto"} (unidad)`;
+
+  return {
+    name,
+    sku: normalizeSku(input.unitProduct?.sku ?? "") || generateProductSkuFromName(name),
+  };
+}
+
+/**
+ * Lo que se puede comprobar de una receta ANTES de que exista su empaque (alta
+ * de producto): que la unidad / los componentes existan en la tienda y no sean
+ * el empaque de una receta activa, y que el SKU de la unidad por crear esté
+ * libre. La forma (suma, repetidos, mínimos) ya la validó
+ * `packConversionInputSchema`. Así un alta con una receta inválida no deja el
+ * producto creado sin receta. `upsertPackConversionForPackProduct` lo vuelve a
+ * comprobar al guardar (otra petición pudo cambiarlo entre medias).
+ */
+export async function assertPackConversionCanBeCreated(
+  storeId: string,
+  input: PackConversionInput,
+  packProduct: { name?: string; sku?: string },
+) {
+  if (!input.enabled) {
+    return;
+  }
+
+  const supabase = await createRouteSupabaseClient();
+
+  if (input.mode === "assorted") {
+    await assertComponentsAvailable(
+      supabase,
+      (input.components ?? []).map((component) => component.unitProductId),
+      storeId,
+      null,
+    );
+    return;
+  }
+
+  if (input.mode === "link_existing") {
+    if (!input.unitProductId) {
+      throw new ApiError(400, "BAD_REQUEST", "Selecciona el producto unidad.");
+    }
+
+    await assertUnitAvailable(input.unitProductId, storeId, null);
+    return;
+  }
+
+  const unit = resolveNewUnitIdentity(input, packProduct.name);
+  const { data, error } = await supabase
+    .from("products")
+    .select("id")
+    .eq("store_id", storeId)
+    .eq("sku", unit.sku)
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+
+  if (data || unit.sku === normalizeSku(packProduct.sku ?? "")) {
+    throw new ApiError(409, "CONFLICT", "Ya existe un producto con este SKU de unidad.");
+  }
+}
+
+/**
+ * Borra el producto unidad que `create_unit` acaba de insertar cuando su receta
+ * no llegó a guardarse: no tiene movimientos ni receta, y dejarlo haría chocar
+ * el reintento con su SKU. Si el borrado falla, queda un producto suelto sin stock.
+ */
+async function discardCreatedUnit(
+  supabase: RouteSupabaseClient,
+  unitProductId: string | undefined,
+  storeId: string,
+) {
+  if (!unitProductId) {
+    return;
+  }
+
+  await supabase.from("products").delete().eq("id", unitProductId).eq("store_id", storeId);
+}
+
+type ActiveRecipeRow = {
+  components?: { cost_weight: number | string; unit_product_id: string; units_per_pack: number }[] | null;
+  id: string;
+  label?: string | null;
+  total_units: number;
+  unit_product_id: string | null;
+};
+
+/** La receta activa del empaque (a lo sumo una: `uq_product_pack_conversions_pack_active`). */
+async function findActiveRecipe(
+  supabase: RouteSupabaseClient,
+  packProductId: string,
+  storeId: string,
+) {
+  const { data, error } = await supabase
+    .from("product_pack_conversions")
+    .select(
+      "id, unit_product_id, total_units, label, components:product_pack_components(unit_product_id, units_per_pack, cost_weight)",
+    )
+    .eq("store_id", storeId)
+    .eq("pack_product_id", packProductId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+
+  return (data as unknown as ActiveRecipeRow | null) ?? null;
+}
+
+async function setRecipeActive(supabase: RouteSupabaseClient, recipeId: string, isActive: boolean) {
+  const { error } = await supabase
+    .from("product_pack_conversions")
+    .update({ is_active: isActive })
+    .eq("id", recipeId);
+
+  return error;
+}
+
+/**
+ * Borra una receta que nunca llegó a activarse (sus componentes caen en cascada).
+ * `is_active = false` en el filtro: nunca borra una receta en uso. Si el borrado
+ * falla queda una cabecera inactiva, que no afecta a ninguna apertura.
+ */
+async function discardDraftRecipe(supabase: RouteSupabaseClient, recipeId: string, storeId: string) {
+  await supabase
+    .from("product_pack_conversions")
+    .delete()
+    .eq("id", recipeId)
+    .eq("store_id", storeId)
+    .eq("is_active", false);
+}
+
+/**
+ * Tras fallar el último paso de un reemplazo, vuelve a activar la receta que
+ * había. Si tampoco se puede, el error dice que el empaque quedó sin receta.
+ */
+async function restorePreviousRecipe(
+  supabase: RouteSupabaseClient,
+  previousRecipeId: string | undefined,
+  failure: unknown,
+): Promise<ApiError> {
+  const mapped = mapSupabaseError(failure);
+
+  if (!previousRecipeId) {
+    return mapped;
+  }
+
+  const restoreError = await setRecipeActive(supabase, previousRecipeId, true);
+
+  if (!restoreError) {
+    return mapped;
+  }
+
+  return new ApiError(
+    mapped.status,
+    mapped.code,
+    `${mapped.message} Además no se pudo restaurar la receta anterior: el empaque quedó sin receta activa. Guarda la receta de nuevo.`,
+  );
+}
+
+/**
+ * Guarda una receta surtida. PostgREST abre una transacción por petición y la
+ * base exige que una receta ACTIVA cuadre al commit, así que el orden es el del
+ * parche 20261009d: cabecera INACTIVA → componentes → (desactivar la anterior)
+ * → activar. La receta nueva solo existe como activa tras el último paso, que es
+ * una sola sentencia validada por la base: nunca queda una receta activa a medias.
+ *
+ * Una receta distinta de la vigente nunca se edita en sitio: se crea otra y la
+ * anterior queda inactiva, para no convertir en `missing_link` las aperturas ya
+ * registradas (`conversion_mismatches`).
+ *
+ * Sin transacción entre peticiones, se compensa: si falla antes de activar se
+ * borra el borrador y la receta anterior sigue intacta; si falla la activación
+ * se reactiva la anterior y se borra el borrador. Entre desactivar la anterior y
+ * activar la nueva el empaque no tiene receta (una apertura simultánea recibe 404).
+ */
+async function saveAssortedRecipe(
+  supabase: RouteSupabaseClient,
+  packProductId: string,
+  storeId: string,
+  input: PackConversionInput,
+) {
+  const components = (input.components ?? []).map((component) => ({
+    costWeight: component.costWeight,
+    unitProductId: component.unitProductId,
+    unitsPerPack: component.unitsPerPack,
+  }));
+  const totalUnits = input.totalUnits ?? 0;
+  const label = input.label?.trim() || null;
+
+  await assertComponentsAvailable(
+    supabase,
+    components.map((component) => component.unitProductId),
+    storeId,
+    packProductId,
+  );
+
+  const existing = await findActiveRecipe(supabase, packProductId, storeId);
+
+  if (!existing) {
+    await assertPackIsNotComponent(supabase, packProductId, storeId);
+  }
+
+  if (
+    existing &&
+    isSamePackRecipe(
+      {
+        components: (existing.components ?? []).map((component) => ({
+          costWeight: Number(component.cost_weight),
+          unitProductId: component.unit_product_id,
+          unitsPerPack: component.units_per_pack,
+        })),
+        totalUnits: existing.total_units,
+      },
+      { components, totalUnits },
+    )
+  ) {
+    if ((existing.label ?? null) !== label) {
+      const { error } = await supabase
+        .from("product_pack_conversions")
+        .update({ label })
+        .eq("id", existing.id);
+
+      throwIfSupabaseError(error);
+    }
+
+    return;
+  }
+
+  const { data: draft, error: draftError } = await supabase
+    .from("product_pack_conversions")
+    .insert({
+      is_active: false,
+      label,
+      pack_product_id: packProductId,
+      store_id: storeId,
+      total_units: totalUnits,
+    })
+    .select("id")
+    .single();
+
+  throwIfSupabaseError(draftError);
+
+  if (!draft?.id) {
+    throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear la receta del empaque.");
+  }
+
+  const { error: componentsError } = await supabase.from("product_pack_components").insert(
+    components.map((component) => ({
+      conversion_id: draft.id,
+      cost_weight: component.costWeight,
+      store_id: storeId,
+      unit_product_id: component.unitProductId,
+      units_per_pack: component.unitsPerPack,
+    })),
+  );
+
+  if (componentsError) {
+    await discardDraftRecipe(supabase, draft.id, storeId);
+    throw mapSupabaseError(componentsError);
+  }
+
+  if (existing) {
+    const deactivateError = await setRecipeActive(supabase, existing.id, false);
+
+    if (deactivateError) {
+      await discardDraftRecipe(supabase, draft.id, storeId);
+      throw mapSupabaseError(deactivateError);
+    }
+  }
+
+  const activateError = await setRecipeActive(supabase, draft.id, true);
+
+  if (activateError) {
+    const failure = await restorePreviousRecipe(supabase, existing?.id, activateError);
+    await discardDraftRecipe(supabase, draft.id, storeId);
+    throw failure;
   }
 }
 
@@ -182,8 +603,21 @@ export async function upsertPackConversionForPackProduct(
     return;
   }
 
+  if (input.mode === "assorted") {
+    await saveAssortedRecipe(supabase, packProductId, storeId, input);
+    return;
+  }
+
   const unitsPerPack = input.unitsPerPack ?? 2;
   let unitProductId = input.unitProductId;
+  let createdUnitProductId: string | undefined;
+
+  // Antes de crear el producto unidad: un rechazo no debe dejar nada escrito.
+  const existing = await findActiveRecipe(supabase, packProductId, storeId);
+
+  if (!existing) {
+    await assertPackIsNotComponent(supabase, packProductId, storeId);
+  }
 
   if (input.mode === "link_existing") {
     if (!unitProductId) {
@@ -192,12 +626,7 @@ export async function upsertPackConversionForPackProduct(
 
     await assertUnitAvailable(unitProductId, storeId, packProductId);
   } else {
-    const unitName =
-      input.unitProduct?.name?.trim() ||
-      `${packProduct?.name ?? "Producto"} (unidad)`;
-    const unitSku =
-      normalizeSku(input.unitProduct?.sku ?? "") ||
-      generateProductSkuFromName(unitName);
+    const { name: unitName, sku: unitSku } = resolveNewUnitIdentity(input, packProduct?.name);
     const unitCost =
       input.unitProduct?.currentCostRef ??
       (packProduct?.currentCostRef != null
@@ -227,19 +656,12 @@ export async function upsertPackConversionForPackProduct(
     }
 
     unitProductId = unitRow.id;
+    createdUnitProductId = unitRow.id;
   }
 
-  const { data: existing, error: existingError } = await supabase
-    .from("product_pack_conversions")
-    .select("id")
-    .eq("store_id", storeId)
-    .eq("pack_product_id", packProductId)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  throwIfSupabaseError(existingError);
-
-  if (existing?.id) {
+  // Mismo producto unidad: se edita en sitio, como siempre (una sola sentencia;
+  // el trigger de la cabecera deja el componente al día).
+  if (existing && existing.unit_product_id === unitProductId) {
     const { error } = await supabase
       .from("product_pack_conversions")
       .update({
@@ -252,6 +674,17 @@ export async function upsertPackConversionForPackProduct(
     return;
   }
 
+  // Otro producto unidad, o la receta vigente es surtida: receta nueva y la
+  // anterior queda inactiva (ver `saveAssortedRecipe`).
+  if (existing) {
+    const deactivateError = await setRecipeActive(supabase, existing.id, false);
+
+    if (deactivateError) {
+      await discardCreatedUnit(supabase, createdUnitProductId, storeId);
+      throw mapSupabaseError(deactivateError);
+    }
+  }
+
   const { error: insertError } = await supabase.from("product_pack_conversions").insert({
     pack_product_id: packProductId,
     store_id: storeId,
@@ -260,7 +693,10 @@ export async function upsertPackConversionForPackProduct(
     is_active: true,
   });
 
-  throwIfSupabaseError(insertError);
+  if (insertError) {
+    await discardCreatedUnit(supabase, createdUnitProductId, storeId);
+    throw await restorePreviousRecipe(supabase, existing?.id, insertError);
+  }
 }
 
 export async function attachPackConversionToProduct<T extends { id: string }>(
@@ -274,7 +710,4 @@ export async function attachPackConversionToProduct<T extends { id: string }>(
   };
 }
 
-/** Re-export for inventory list typing. */
-export type PackConversionListItem = ProductPackConversionSummary & {
-  packProduct: ProductPackConversionSummary["linkedProduct"];
-};
+export type { PackConversionListItem } from "./packConversionSummary";

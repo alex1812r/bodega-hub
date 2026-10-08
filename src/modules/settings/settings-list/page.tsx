@@ -12,6 +12,7 @@ import {
 } from "@/lib/api/dataSourceUi";
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { getStoredDemoRole, setStoredDemoRole } from "@/shared/auth/demoAuth";
+import { usePermission } from "@/shared/auth/usePermission";
 import {
   roleLabels,
   storeUserRoles,
@@ -30,6 +31,7 @@ import {
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import { Input } from "@/shared/components/Input";
+import { isIntegerText, NumberInput } from "@/shared/components/NumberInput";
 import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
 import { SelectField } from "@/shared/components/SelectField";
 import type { ExchangeRateMock, PaymentMethod, UserProfileMock } from "@/shared/mocks/erp-data";
@@ -47,11 +49,12 @@ import {
 } from "../hooks/useCurrentExchangeRate";
 import { useSettings, useUpdateSettings, useUpdateUser, useUsers } from "../hooks/useSettings";
 import { CreateStoreUserModal } from "./components/CreateStoreUserModal";
+import { PricingSettingsSection } from "./components/PricingSettingsSection";
 import { SettingsTabs, type SettingsTabId } from "./components/SettingsTabs";
+import { TaxSettingsSection } from "./components/TaxSettingsSection";
 
 type SettingsFormState = {
   businessName: string;
-  defaultTaxRate: string;
   enabledPaymentMethods: PaymentMethod[];
   invoicePrefix: string;
   lowStockThreshold: string;
@@ -64,7 +67,6 @@ type ExchangeRateFormState = {
 
 const initialSettingsForm: SettingsFormState = {
   businessName: "",
-  defaultTaxRate: "0",
   enabledPaymentMethods: [...DEFAULT_ENABLED_PAYMENT_METHODS],
   invoicePrefix: "",
   lowStockThreshold: "0",
@@ -79,14 +81,12 @@ const SETTINGS_FORM_ID = "settings-general-form";
 
 function toSettingsFormState(data: {
   businessName: string;
-  defaultTaxRate: number;
   enabledPaymentMethods?: PaymentMethod[];
   invoicePrefix: string;
   lowStockThreshold: number;
 }): SettingsFormState {
   return {
     businessName: data.businessName,
-    defaultTaxRate: String(data.defaultTaxRate),
     enabledPaymentMethods: normalizeEnabledPaymentMethods(data.enabledPaymentMethods),
     invoicePrefix: data.invoicePrefix,
     lowStockThreshold: String(data.lowStockThreshold),
@@ -189,6 +189,9 @@ function DemoAuthCard() {
 }
 
 export function SettingsListPage() {
+  const { can } = usePermission();
+  // Mismo permiso que exige el servidor para guardar ajustes y cambiar alícuotas.
+  const canEditSettings = can("users.manage");
   const [activeTab, setActiveTab] = useState<SettingsTabId>("general");
   const [createUserOpen, setCreateUserOpen] = useState(false);
   const settingsQuery = useSettings();
@@ -235,7 +238,6 @@ export function SettingsListPage() {
 
     return (
       settingsForm.businessName !== loaded.businessName ||
-      settingsForm.defaultTaxRate !== loaded.defaultTaxRate ||
       settingsForm.invoicePrefix !== loaded.invoicePrefix ||
       settingsForm.lowStockThreshold !== loaded.lowStockThreshold ||
       enabledChanged
@@ -265,9 +267,13 @@ export function SettingsListPage() {
       return;
     }
 
+    // El umbral es un entero: con decimales el campo ya muestra su aviso y no se envía.
+    if (settingsForm.lowStockThreshold !== "" && !isIntegerText(settingsForm.lowStockThreshold)) {
+      return;
+    }
+
     updateSettings.mutate({
       businessName: settingsForm.businessName,
-      defaultTaxRate: Number(settingsForm.defaultTaxRate),
       enabledPaymentMethods: settingsForm.enabledPaymentMethods,
       invoicePrefix: settingsForm.invoicePrefix,
       lowStockThreshold: Number(settingsForm.lowStockThreshold),
@@ -300,7 +306,8 @@ export function SettingsListPage() {
     event.preventDefault();
 
     createExchangeRate.mutate({
-      rateVes: Number(exchangeRateForm.rateVes),
+      // Dos decimales, como deja el campo al salir (Enter envía sin pasar por ahí).
+      rateVes: Math.round(Number(exchangeRateForm.rateVes) * 100) / 100,
       source: exchangeRateForm.source || "Manual",
     });
     setExchangeRateForm(initialExchangeRateForm);
@@ -403,31 +410,16 @@ export function SettingsListPage() {
                       }
                       value={settingsForm.invoicePrefix}
                     />
-                    <Input
-                      disabled={settingsQuery.isLoading}
-                      label="IVA por defecto (%)"
-                      min="0"
-                      onChange={(event) =>
-                        setSettingsForm((current) => ({
-                          ...current,
-                          defaultTaxRate: event.target.value,
-                        }))
-                      }
-                      step="0.01"
-                      type="number"
-                      value={settingsForm.defaultTaxRate}
-                    />
-                    <Input
+                    <NumberInput
+                      decimals={0}
                       disabled={settingsQuery.isLoading}
                       label="Umbral bajo inventario"
-                      min="0"
                       onChange={(event) =>
                         setSettingsForm((current) => ({
                           ...current,
                           lowStockThreshold: event.target.value,
                         }))
                       }
-                      type="number"
                       value={settingsForm.lowStockThreshold}
                     />
 
@@ -486,6 +478,28 @@ export function SettingsListPage() {
 
               {showDemoAuthCard ? <DemoAuthCard /> : null}
             </div>
+          </div>
+        ) : null}
+
+        {activeTab === "taxes" ? (
+          <div
+            aria-labelledby="settings-tabs-taxes"
+            className="space-y-4 p-4 md:p-6"
+            id="settings-tabs-taxes-panel"
+            role="tabpanel"
+          >
+            <TaxSettingsSection canEdit={canEditSettings} />
+          </div>
+        ) : null}
+
+        {activeTab === "pricing" ? (
+          <div
+            aria-labelledby="settings-tabs-pricing"
+            className="space-y-4 p-4 md:p-6"
+            id="settings-tabs-pricing-panel"
+            role="tabpanel"
+          >
+            <PricingSettingsSection canEdit={canEditSettings} />
           </div>
         ) : null}
 
@@ -561,9 +575,9 @@ export function SettingsListPage() {
                       La tasa operativa se obtiene en el servidor desde DolarAPI. El registro
                       manual solo alimenta el historial; no reemplaza la tasa vigente.
                     </p>
-                    <Input
+                    <NumberInput
+                      decimals={2}
                       label="Tasa manual (historial)"
-                      min="0"
                       onChange={(event) =>
                         setExchangeRateForm((current) => ({
                           ...current,
@@ -571,8 +585,6 @@ export function SettingsListPage() {
                         }))
                       }
                       required
-                      step="0.01"
-                      type="number"
                       value={exchangeRateForm.rateVes}
                     />
                     <Input

@@ -175,16 +175,15 @@ describe("purchases.mock-server · IVA por linea (SHR-10)", () => {
     ]);
   });
 
-  it("no toca stock, costos, movimientos ni los agregados de la semilla", () => {
+  // El costo SI cambia al recibir (PRO-10, `purchases.mock-server.test.ts`).
+  it("no toca stock, movimientos ni los agregados de la semilla", () => {
     const stock = mockProducts.map((product) => [product.id, product.currentStock]);
-    const costs = mockProducts.map((product) => [product.id, product.currentCostRef]);
     const movements = mockStockMovements.length;
     const purchases = mockPurchases.length;
 
     const purchase = create([line({ taxRateCode: "general" })]);
 
     expect(mockProducts.map((product) => [product.id, product.currentStock])).toEqual(stock);
-    expect(mockProducts.map((product) => [product.id, product.currentCostRef])).toEqual(costs);
     expect(mockStockMovements).toHaveLength(movements);
     expect(mockPurchases).toHaveLength(purchases);
     expect(purchase.totalRef).toBe(4.64);

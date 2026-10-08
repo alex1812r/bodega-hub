@@ -1,10 +1,15 @@
 import { z } from "zod";
 
+import { cleanText } from "@/modules/products/services/productText";
+
 /** Mismo formato que el check `tax_rates_code_format` del parche 20261007a. */
 export const TAX_RATE_CODE_PATTERN = /^[a-z0-9]+([.-][a-z0-9]+)*$/;
 export const TAX_RATE_CODE_MAX_LENGTH = 40;
 
 export const TAX_RATE_NOT_FOUND_MESSAGE = "Alicuota de IVA no encontrada.";
+/** Rechazo (400) al elegir como alícuota por defecto una que la tienda no ve o que está inactiva. */
+export const DEFAULT_TAX_RATE_UNAVAILABLE_MESSAGE =
+  "La alícuota de IVA por defecto no existe o no está activa para esta tienda.";
 
 /** Alicuota de IVA tal como la devuelve `/api/tax-rates`. */
 export type TaxRate = {
@@ -28,7 +33,11 @@ export type TaxRateListFilters = {
   activeOnly?: boolean;
 };
 
-const labelSchema = z.string().trim().min(1, "El nombre de la alicuota es obligatorio.").max(60);
+// Sin caracteres de control: Postgres rechaza el NUL en `text` y salía como 500.
+const labelSchema = z
+  .string()
+  .transform(cleanText)
+  .pipe(z.string().min(1, "El nombre de la alicuota es obligatorio.").max(60));
 const pctSchema = z
   .number()
   .min(0, "El porcentaje debe estar entre 0 y 100.")

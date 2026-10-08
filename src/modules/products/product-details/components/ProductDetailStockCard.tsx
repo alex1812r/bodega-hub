@@ -2,6 +2,13 @@ import { Package } from "lucide-react";
 import Link from "next/link";
 
 import {
+  InventoryAdjustmentModal,
+  type InventoryAdjustmentLockedProduct,
+} from "@/modules/inventory/inventory-movements/components/InventoryAdjustmentModal";
+import { Can } from "@/shared/auth/Can";
+import { Button } from "@/shared/components/Button";
+
+import {
   getStockLevelBarClassName,
   getStockLevelBarPercent,
   getStockLevelLabel,
@@ -9,11 +16,17 @@ import {
 import { cn } from "@/shared/utils/cn";
 
 type ProductDetailStockCardProps = {
+  /**
+   * Producto de la tarjeta: con él, quien tiene `inventory.manage` ve "Ajustar
+   * stock", que abre el ajuste de inventario con ese producto bloqueado.
+   */
+  adjustableProduct?: Omit<InventoryAdjustmentLockedProduct, "currentStock">;
   currentStock: number;
   minStock: number;
 };
 
 export function ProductDetailStockCard({
+  adjustableProduct,
   currentStock,
   minStock,
 }: ProductDetailStockCardProps) {
@@ -62,6 +75,18 @@ export function ProductDetailStockCard({
           {minStock} un
         </span>
       </div>
+      {adjustableProduct ? (
+        <Can permission="inventory.manage">
+          <InventoryAdjustmentModal
+            lockedProduct={{ ...adjustableProduct, currentStock }}
+            trigger={
+              <Button className="mt-3 w-full" size="sm" variant="outline">
+                Ajustar stock
+              </Button>
+            }
+          />
+        </Can>
+      ) : null}
       <Link
         className="mt-3 text-center text-xs font-medium text-primary hover:underline"
         href="/inventory/movements"
