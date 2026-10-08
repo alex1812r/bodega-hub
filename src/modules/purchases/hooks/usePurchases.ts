@@ -21,7 +21,10 @@ import type {
 } from "@/shared/mocks/erp-data";
 
 export type PurchasesFilters = PaginationParams & {
+  /** `YYYY-MM-DD`, día operativo Caracas. */
   from?: string;
+  /** `"1"`: solo compras vigentes (pedidas o recibidas) con saldo por pagar. */
+  pendingBalance?: "1";
   search?: string;
   status?: PurchaseStatus | string;
   supplierId?: string;
@@ -49,6 +52,11 @@ export type PurchaseInput = {
 export type PurchaseListRow = PurchaseMock & {
   itemsCount: number;
   supplier?: ContactMock;
+};
+
+/** Con `pendingBalance=1` el listado trae la suma del saldo de todo el filtro. */
+export type PurchasesList = PaginatedList<PurchaseListRow> & {
+  pendingBalanceRef?: number;
 };
 
 export type PurchaseDetails = PurchaseMock & {
@@ -89,7 +97,7 @@ export function usePurchases(filters: PurchasesFilters = {}) {
   return useQuery({
     queryKey: purchasesQueryKeys.list(filters),
     queryFn: () =>
-      apiFetch<PaginatedList<PurchaseListRow>>("/api/purchases", {
+      apiFetch<PurchasesList>("/api/purchases", {
         query: filters,
       }),
   });

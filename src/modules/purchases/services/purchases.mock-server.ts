@@ -1,6 +1,6 @@
 import { ApiError } from "@/lib/api/apiError";
 import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
-import { paginateList } from "@/lib/api/pagination";
+import { paginateList, type PaginatedList } from "@/lib/api/pagination";
 import {
   mockContacts,
   mockPayments,
@@ -27,6 +27,7 @@ import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 import { amountWithTax, roundMoney } from "@/shared/utils/currency";
 
+import { getPurchasePendingRef, hasPendingBalance } from "../purchases-list/utils/purchaseBalance";
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
 import { normalizePurchaseLine } from "../schemas/purchaseItem.schema";
 
@@ -98,8 +99,14 @@ function mockPaidTotals(purchaseId: string) {
   };
 }
 
+/**
+ * Mismos filtros que `purchases.server`: `search`, `status`, `supplierId`,
+ * `from` / `to` (día operativo Caracas) y `pendingBalance=1` (solo compras
+ * vigentes con saldo; añade `pendingBalanceRef`, la suma del saldo del filtro).
+ */
 export function listPurchases(searchParams: URLSearchParams, storeId: string) {
   const from = searchParams.get("from");
+  const onlyPendingBalance = searchParams.get("pendingBalance") === "1";
   const search = searchParams.get("search");
   const status = searchParams.get("status");
   const supplierId = searchParams.get("supplierId");
@@ -122,9 +129,19 @@ export function listPurchases(searchParams: URLSearchParams, storeId: string) {
       ...mockPaidTotals(purchase.id),
       itemsCount: mockPurchaseItems.filter((item) => item.purchaseId === purchase.id).length,
       supplier: mockContacts.find((contact) => contact.id === purchase.supplierId),
-    }));
+    }))
+    .filter((purchase) => !onlyPendingBalance || hasPendingBalance(purchase));
 
-  return paginateList(items, searchParams);
+  const page: PaginatedList<(typeof items)[number]> & { pendingBalanceRef?: number } =
+    paginateList(items, searchParams);
+
+  if (onlyPendingBalance) {
+    page.pendingBalanceRef = roundMoney(
+      items.reduce((sum, purchase) => sum + getPurchasePendingRef(purchase), 0),
+    );
+  }
+
+  return page;
 }
 
 /**

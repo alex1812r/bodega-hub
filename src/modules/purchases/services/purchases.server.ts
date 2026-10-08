@@ -17,7 +17,13 @@ import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { rpcWithClientRequestId } from "@/modules/inventory/services/rpcWithClientRequestId";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
+import { roundMoney } from "@/shared/utils/currency";
 
+import {
+  getPurchasePendingRef,
+  hasPendingBalance,
+  PAYABLE_PURCHASE_STATUSES,
+} from "../purchases-list/utils/purchaseBalance";
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
 import { normalizePurchaseLine, toRpcPurchaseItem } from "../schemas/purchaseItem.schema";
 import type { PurchaseDetailAccess, PurchaseInput } from "./purchases.mock-server";
@@ -183,9 +189,121 @@ function mapPurchaseListRow(row: PurchaseListRow) {
   };
 }
 
-export async function listPurchases(searchParams: URLSearchParams, storeId: string) {
+type PurchasesListResult = {
+  items: ReturnType<typeof mapPurchaseListRow>[];
+  limit: number;
+  /** Solo con `pendingBalance=1`: suma del saldo de todas las compras filtradas. */
+  pendingBalanceRef?: number;
+  skip: number;
+  total: number;
+};
+
+/** Filas por consulta al recorrer las compras vigentes (tope de filas de PostgREST). */
+const BALANCE_SCAN_PAGE_SIZE = 1000;
+
+type PurchaseBalanceRow = {
+  id: string;
+  paid_ref: number | string | null;
+  status: string;
+  total_ref: number | string | null;
+};
+
+/**
+ * `pendingBalance=1`: compras vigentes con saldo. PostgREST no compara dos
+ * columnas (`total_ref` contra `paid_ref`), así que se recorren las cabeceras
+ * vigentes que cumplen los demás filtros (solo id e importes), el saldo se
+ * decide aquí con la regla de `purchaseBalance` y se pide la página pedida por
+ * id. Lo pagado es el de la cabecera (`purchases.paid_ref`): nunca se leen
+ * filas de `payments`, así que vale igual para roles sin permiso sobre pagos.
+ * De paso sale la suma del saldo de todo el filtro (`pendingBalanceRef`).
+ */
+async function listPurchasesWithPendingBalance(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  searchParams: URLSearchParams,
+  storeId: string,
+  { limit, skip }: { limit: number; skip: number },
+): Promise<PurchasesListResult> {
+  const pending: { id: string; pendingRef: number }[] = [];
+
+  for (let offset = 0; ; offset += BALANCE_SCAN_PAGE_SIZE) {
+    const scan = supabase
+      .from("purchases")
+      .select("id, total_ref, paid_ref, status")
+      .eq("store_id", storeId)
+      .in("status", [...PAYABLE_PURCHASE_STATUSES])
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false });
+
+    const { data, error } = await applyPurchaseFilters(scan, searchParams).range(
+      offset,
+      offset + BALANCE_SCAN_PAGE_SIZE - 1,
+    );
+
+    throwIfSupabaseError(error);
+
+    const rows = (data ?? []) as PurchaseBalanceRow[];
+
+    for (const row of rows) {
+      const amounts = {
+        paidRef: Number(row.paid_ref ?? 0),
+        status: row.status,
+        totalRef: Number(row.total_ref ?? 0),
+      };
+
+      if (hasPendingBalance(amounts)) {
+        pending.push({ id: row.id, pendingRef: getPurchasePendingRef(amounts) });
+      }
+    }
+
+    if (rows.length < BALANCE_SCAN_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  const pageIds = pending.slice(skip, skip + limit).map((row) => row.id);
+  const summary = {
+    limit,
+    pendingBalanceRef: roundMoney(pending.reduce((sum, row) => sum + row.pendingRef, 0)),
+    skip,
+    total: pending.length,
+  };
+
+  if (pageIds.length === 0) {
+    return { ...summary, items: [] };
+  }
+
+  const { data, error } = await supabase
+    .from("purchases")
+    .select(purchaseSelect)
+    .eq("store_id", storeId)
+    .in("id", pageIds);
+
+  throwIfSupabaseError(error);
+
+  const items = (data ?? []).map((row) => mapPurchaseListRow(row as unknown as PurchaseListRow));
+
+  return {
+    ...summary,
+    // `in` no garantiza orden: se respeta el del recorrido (más reciente primero).
+    items: items.sort((a, b) => pageIds.indexOf(a.id) - pageIds.indexOf(b.id)),
+  };
+}
+
+/**
+ * Filtros: `search`, `status`, `supplierId`, `from` / `to` (día operativo
+ * Caracas) y `pendingBalance=1` (solo compras vigentes con saldo; añade
+ * `pendingBalanceRef`, la suma del saldo de todo el filtro).
+ */
+export async function listPurchases(
+  searchParams: URLSearchParams,
+  storeId: string,
+): Promise<PurchasesListResult> {
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
+
+  if (searchParams.get("pendingBalance") === "1") {
+    return listPurchasesWithPendingBalance(supabase, searchParams, storeId, { limit, skip });
+  }
 
   let query = supabase
     .from("purchases")

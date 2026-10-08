@@ -1664,21 +1664,61 @@ paths:
           required: false
           schema:
             type: string
+        - name: search
+          in: query
+          required: false
+          description: Texto a buscar en el numero de compra.
+          schema:
+            type: string
         - name: from
           in: query
           required: false
+          description: >-
+            Primer dia del rango (dia operativo Caracas, incluido). Una fecha que
+            no existe o con otro formato responde 400, igual que `from` posterior
+            a `to`.
           schema:
             type: string
             format: date
         - name: to
           in: query
           required: false
+          description: Ultimo dia del rango (dia operativo Caracas, incluido).
           schema:
             type: string
             format: date
+        - name: pendingBalance
+          in: query
+          required: false
+          description: >-
+            `1` = solo compras con saldo pendiente: estado `pedido` o `recibido`
+            y `totalRef - paidRef` de al menos 0.01 REF. Lo pagado es el de la
+            cabecera de la compra (no se leen pagos), asi que vale para cualquier
+            rol con `purchases.view`. Con este filtro la respuesta incluye
+            `pendingBalanceRef`, la suma del saldo de todas las compras filtradas
+            (no solo la pagina). Cualquier otro valor responde 400.
+          schema:
+            type: string
+            enum: ["1"]
+        - name: skip
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
       responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "200":
-          description: Lista de compras
+          description: >-
+            Lista de compras. Cada compra lleva `paidRef` y `paidVes`; con
+            `pendingBalance=1` el objeto de la respuesta lleva ademas
+            `pendingBalanceRef`.
           content:
             application/json:
               schema:

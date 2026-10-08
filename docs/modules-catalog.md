@@ -382,6 +382,8 @@ Errores de negocio: SQLSTATE `PT400` / `PT403` / `PT404` / `PT409` (PostgREST re
 | `useReturnPurchase` | POST `/api/purchases/[id]/return` |
 | `useSupplierProducts` | GET `/api/suppliers/[id]/products` |
 
+**Lista (`/purchases`, COM-08):** columnas Pagado y Saldo (REF) y badge de pago (Pagada / Parcial / Pendiente; una compra `cancelado` o `devuelto` no lleva ni badge ni saldo). El estado vive en la URL con `useUrlListState` (`purchases-list/utils/purchasesListState.ts`): `search`, `status`, `pendingBalance=1`, `from`/`to`, `page`, `limit`; «Ver detalle» lleva `returnTo`. `GET /api/purchases` filtra en servidor: `from`/`to` (día operativo Caracas; fecha inválida o rango invertido → 400) y `pendingBalance=1` = compras `pedido`/`recibido` con `totalRef − paidRef ≥ 0.01` (regla en `purchases-list/utils/purchaseBalance.ts`, la misma de "cuentas por pagar" de `store_capital_summary`), y entonces la respuesta trae `pendingBalanceRef` (suma del saldo de todo el filtro). Lo pagado del listado sale siempre de la cabecera (`purchases.paid_ref`/`paid_ves`), nunca de filas de `payments`. El Excel respeta los filtros y añade Pagado y Saldo.
+
 **Crear:** `supplierId`, `status` (`pedido`|`recibido`), `items[]` con `entryMode` `unit` o `pack`, `discountRef`, `taxRef`, `refRateVes`, pago inicial opcional. Modo **empaque:** `packLabel`, `packCount`, `unitsPerPack`, `packCostRef` (RPC normaliza a unidades y costo unitario). Modo **unidad:** `quantity`, `unitCostRef`.
 
 **UI `/purchases/create`:** toggle Unidad/Empaque por línea; presets desde catálogo `supplier_product_pack_units`; autocompletado si hay empaque predeterminado al agregar producto.
