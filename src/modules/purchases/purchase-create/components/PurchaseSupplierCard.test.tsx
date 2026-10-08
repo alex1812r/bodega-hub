@@ -137,7 +137,7 @@ describe("PurchaseSupplierCard", () => {
     await screen.findByDisplayValue("Distribuidora Norte C.A.");
     await user.click(screen.getByRole("button", { name: "Limpiar Proveedor" }));
 
-    expect(onSupplierChange).toHaveBeenCalledWith("");
+    expect(onSupplierChange).toHaveBeenCalledWith("", undefined);
     expect(supplierInput()).toHaveValue("");
   });
 
