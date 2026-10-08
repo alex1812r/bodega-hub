@@ -2,10 +2,16 @@
  * @jest-environment node
  */
 
-import { mockProducts, type ProductMock } from "@/shared/mocks/erp-data";
+import { mockProductPriceHistory, mockProducts, type ProductMock } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
-import { getProductById, listProducts, updateProductPrice } from "./products.mock-server";
+import {
+  createProductPriceHistoryEntry,
+  getProductById,
+  getProductPriceHistory,
+  listProducts,
+  updateProductPrice,
+} from "./products.mock-server";
 
 const OTHER_STORE_ID = "00000000-0000-4000-8000-000000000002";
 
@@ -233,5 +239,53 @@ describe("products.mock-server updateProductPrice (parity with the update_produc
       /No tienes permisos/,
     );
     expect(getProductById("prod-drill", DEFAULT_STORE_ID).salePriceRef).toBe(original);
+  });
+});
+
+describe("products.mock-server createProductPriceHistoryEntry (parity with the update_product_price RPC)", () => {
+  const seeded = [...mockProductPriceHistory];
+
+  afterEach(() => {
+    mockProductPriceHistory.splice(0, mockProductPriceHistory.length, ...seeded);
+  });
+
+  function history(productId: string) {
+    return getProductPriceHistory(productId, new URLSearchParams("limit=50"), DEFAULT_STORE_ID);
+  }
+
+  it("stores the entry: the history read afterwards includes the price change", () => {
+    const before = history("prod-drill");
+
+    const entry = createProductPriceHistoryEntry("prod-drill", { salePriceRef: 17.25 }, DEFAULT_STORE_ID);
+    const after = history("prod-drill");
+
+    expect(entry).toMatchObject({ productId: "prod-drill", salePriceRef: 17.25 });
+    expect(after.total).toBe(before.total + 1);
+    expect(after.items).toContainEqual(entry);
+  });
+
+  it("keeps one entry per change, each with its own id", () => {
+    const first = createProductPriceHistoryEntry("prod-drill", { salePriceRef: 16 }, DEFAULT_STORE_ID);
+    const second = createProductPriceHistoryEntry("prod-drill", { salePriceRef: 17 }, DEFAULT_STORE_ID);
+
+    expect(second.id).not.toBe(first.id);
+    expect(history("prod-drill").items.map((item) => item.salePriceRef)).toEqual(
+      expect.arrayContaining([16, 17]),
+    );
+  });
+
+  it("only adds to the history of that product", () => {
+    const other = history("prod-hammer");
+
+    createProductPriceHistoryEntry("prod-drill", { salePriceRef: 17.25 }, DEFAULT_STORE_ID);
+
+    expect(history("prod-hammer")).toEqual(other);
+  });
+
+  it("stores nothing for a product of another store", () => {
+    expect(() =>
+      createProductPriceHistoryEntry("prod-drill", { salePriceRef: 1 }, OTHER_STORE_ID),
+    ).toThrow(/No tienes permisos/);
+    expect(mockProductPriceHistory).toEqual(seeded);
   });
 });

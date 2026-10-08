@@ -425,13 +425,19 @@ export function getProductSales(id: string, searchParams: URLSearchParams, store
 export function createProductPriceHistoryEntry(id: string, input: ProductPriceInput, storeId: string) {
   getProductById(id, storeId);
 
-  return {
+  const entry = {
     createdAt: new Date().toISOString(),
-    id: `price-mock-${Date.now()}`,
+    id: `price-mock-${Date.now()}-${mockProductPriceHistory.length}`,
     productId: id,
     salePriceRef: input.salePriceRef,
     userId: "user-demo",
   } satisfies ProductPriceHistoryMock;
+
+  // Como la RPC `update_product_price`, que inserta en `product_price_history`:
+  // el historial que se lee después incluye este cambio.
+  mockProductPriceHistory.push(entry);
+
+  return entry;
 }
 
 export function listPackConversions(storeId: string) {
