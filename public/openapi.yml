@@ -1798,7 +1798,20 @@ paths:
     patch:
       tags: [Purchases]
       summary: Recibir mercancia de compra en pedido
+      description: >-
+        Recibe el pedido y, en la MISMA transaccion, abre los empaques de las lineas
+        marcadas "Desarmar al recibir" en los componentes de la receta de su producto
+        (COM-14, RPC `receive_purchase_and_disassemble`). Si una apertura falla no se
+        recibe nada. El cuerpo es opcional: sin el se desarman las lineas que el pedido
+        guardo marcadas. La respuesta trae en cada linea `id`, `disassembleOnReceive` y
+        `disassembled`.
       x-permission: purchases.create
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReceivePurchaseInput"
       responses:
         "200":
           description: Compra recibida
@@ -1812,6 +1825,15 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            La compra no esta en pedido; una linea a desarmar ya no tiene receta de
+            apertura activa (el mensaje nombra el producto: desmarcarla o activar la
+            receta); o la clave de idempotencia ya se uso con otra lista.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/purchases/{id}/return:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -5799,6 +5821,47 @@ components:
         quantity:
           type: integer
           minimum: 1
+    ReceivePurchaseInput:
+      type: object
+      description: Cuerpo opcional de PATCH /api/purchases/{id}/receive (COM-14).
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+          description: >-
+            Clave de idempotencia del intento: repetir la misma recepcion devuelve la
+            compra ya recibida sin mover stock; la misma clave con otra lista es 409.
+        disassemble:
+          type: array
+          maxItems: 500
+          description: >-
+            Lineas a desarmar al recibir. Si se envia, la lista ES el conjunto de lineas
+            a desarmar y sustituye las marcas del pedido (`[]` = no desarmar ninguna).
+            Sin el campo, mandan las marcas guardadas.
+          items:
+            type: object
+            required: [purchaseItemId]
+            properties:
+              purchaseItemId:
+                type: string
+                description: Valor de `id` de la linea en el detalle de la compra.
+              distribution:
+                type: array
+                minItems: 1
+                maxItems: 20
+                description: >-
+                  Reparto real de la apertura (surtidos): solo componentes de la receta,
+                  sin repetir, y debe sumar unidades de la receta x empaques de la linea
+                  (400 si no). Sin el campo se usa la receta.
+                items:
+                  type: object
+                  required: [unitProductId, units]
+                  properties:
+                    unitProductId:
+                      type: string
+                    units:
+                      type: integer
+                      minimum: 0
     PurchaseLineItemInput:
       type: object
       required: [productId, quantity, unitCostRef]
@@ -5813,6 +5876,13 @@ components:
           minimum: 0
         supplierSku:
           type: string
+        disassembleOnReceive:
+          type: boolean
+          description: >-
+            "Desarmar al recibir" (COM-14). Solo en la linea de un producto que es el
+            empaque de una receta de apertura activa (si no, 400 nombrando el producto).
+            En un pedido la marca se guarda; en una compra recibida los empaques de la
+            linea se abren en la misma transaccion. Ausente o `false` = compra de siempre.
         taxRateCode:
           type: string
           minLength: 1
