@@ -1,6 +1,6 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { AlertTriangle, Search } from "lucide-react";
 
 import {
   stitchListFilterFieldClassName,
@@ -20,6 +20,8 @@ type ProductsListFiltersProps = {
   categoryOptions: Array<{ label: string; value: string }>;
   filters: ProductsListFilterState;
   onChange: (patch: Partial<ProductsListFilterState>) => void;
+  /** Productos en "Por revisar" (`usePriceReviewSummary`); sin dato, el chip va sin contador. */
+  reviewCount?: number;
 };
 
 const STATUS_LABELS: Record<ProductsListFilterState["status"], string> = {
@@ -48,7 +50,10 @@ export function ProductsListFilters({
   categoryOptions,
   filters,
   onChange,
+  reviewCount,
 }: ProductsListFiltersProps) {
+  const isReviewOn = filters.review === "1";
+
   return (
     <section className="w-full min-w-0 rounded-xl border border-border bg-surface-container-lowest p-4 shadow-sm dark:border-slate-800 md:p-5">
       <div className="grid w-full min-w-0 grid-cols-1 items-end gap-4 md:grid-cols-4 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
@@ -166,6 +171,38 @@ export function ProductsListFilters({
             ))}
           </select>
         </div>
+      </div>
+
+      {/* "Por revisar" (PRO-11): se combina con los demás filtros y vive en `?review=1`. */}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          aria-pressed={isReviewOn}
+          className={cn(
+            "inline-flex h-9 cursor-pointer items-center gap-2 rounded-full border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+            isReviewOn
+              ? "border-amber-600 bg-amber-600 text-white hover:bg-amber-700 dark:border-amber-500 dark:bg-amber-500 dark:text-slate-950 dark:hover:bg-amber-400"
+              : "border-border bg-surface-container-lowest text-foreground hover:bg-surface-container-low dark:hover:bg-surface-container",
+          )}
+          onClick={() => onChange({ review: isReviewOn ? "" : "1" })}
+          title="Productos cuya ganancia bajó de banda al subir el costo"
+          type="button"
+        >
+          <AlertTriangle aria-hidden className="size-4 shrink-0" />
+          Por revisar
+          {reviewCount === undefined ? null : (
+            <span
+              className={cn(
+                "rounded-full px-1.5 text-xs tabular-nums",
+                isReviewOn
+                  ? "bg-white/20"
+                  : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+              )}
+              data-testid="price-review-count"
+            >
+              {reviewCount}
+            </span>
+          )}
+        </button>
       </div>
     </section>
   );

@@ -92,6 +92,11 @@ describe("ProductsListPage · ganancia y estado en la URL", () => {
       jsonResponse({ data: { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 } });
     fetchMock.mockReset();
     fetchMock.mockImplementation(async (url: string) => {
+      // Contador de "Por revisar" (PRO-11): otro endpoint, no es una consulta del listado.
+      if (String(url).startsWith("/api/products/price-review/summary")) {
+        return jsonResponse({ data: { total: 0 } });
+      }
+
       if (String(url).startsWith("/api/products")) {
         return productsResponse();
       }
@@ -139,7 +144,7 @@ describe("ProductsListPage · ganancia y estado en la URL", () => {
   function productRequests() {
     return fetchMock.mock.calls
       .map(([url]) => String(url))
-      .filter((url) => url.startsWith("/api/products"))
+      .filter((url) => url.split("?")[0] === "/api/products")
       .map((url) => new URLSearchParams(url.split("?")[1] ?? ""));
   }
 
@@ -372,7 +377,7 @@ describe("ProductsListPage · ganancia y estado en la URL", () => {
   it("falls back to the defaults for invalid URL values and keeps foreign parameters", async () => {
     const user = userEvent.setup();
 
-    renderPage("margin=verde&sort=precio&page=-3&review=1&tab=x");
+    renderPage("margin=verde&sort=precio&page=-3&review=si&tab=x");
     await findRow("Arroz");
 
     expect(lastProductRequest()).toEqual({
@@ -384,8 +389,8 @@ describe("ProductsListPage · ganancia y estado en la URL", () => {
 
     await user.selectOptions(screen.getByLabelText("Ganancia"), "Alta");
 
-    // `review` queda reservado para PRO-11: la lista no lo lee ni lo borra.
-    expect(window.location.search).toBe("?review=1&tab=x&margin=high");
+    // `review=si` no es un valor de "Por revisar" (PRO-11): no filtra. `tab` es ajeno y se conserva.
+    expect(window.location.search).toBe("?tab=x&margin=high");
   });
 
   it("links every row to the detail with a real anchor carrying the exact list URL", async () => {

@@ -23,6 +23,7 @@ import {
   useUrlPaginationState,
   useUrlSortState,
 } from "@/shared/components/Pagination";
+import { useToast } from "@/shared/components/Toast";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
 import {
   URL_LIST_DEBOUNCE_MS,
@@ -33,6 +34,21 @@ import { cn } from "@/shared/utils/cn";
 import type { MarginThresholds } from "@/shared/utils/pricing";
 import { withReturnTo } from "@/shared/utils/returnTo";
 
+import {
+  KeepPriceConfirmModal,
+  type KeepPriceProduct,
+} from "../components/price-review/KeepPriceConfirmModal";
+import { PriceReviewBadge } from "../components/price-review/PriceReviewBadge";
+import {
+  PriceReviewBulkBar,
+  priceReviewCheckboxClassName,
+} from "../components/price-review/PriceReviewBulkBar";
+import {
+  describeRepriceUpdated,
+  PriceReviewRepriceResult,
+} from "../components/price-review/PriceReviewRepriceResult";
+import { RepriceConfirmModal } from "../components/price-review/RepriceConfirmModal";
+import { type RepriceResult, usePriceReviewSummary } from "../hooks/usePriceReview";
 import { ProductFormModal } from "../product-details/components/ProductFormModal";
 import type { ProductFormSubmitContext } from "../product-details/components/ProductFormModal";
 import { uploadProductImageBlob } from "../services/uploadProductImage";
@@ -54,7 +70,7 @@ import { ProductNameWithThumb } from "./components/ProductNameWithThumb";
 import { ReactivateProductConfirmModal } from "./components/ReactivateProductConfirmModal";
 import { ProductsListFilters } from "./components/ProductsListFilters";
 import { ProductsStatusBadge } from "./components/ProductsStatusBadge";
-import { getProductMarginThresholds } from "../services/productMargin";
+import { getProductMarginThresholds, getProductPricingOptions } from "../services/productMargin";
 import { PRODUCT_EDIT_PRICE_REASON } from "../services/productSchemas";
 import { normalizeBarcode } from "../services/productSearch";
 import { productsListSchema, toProductsFilters } from "./productsListParams";
@@ -78,15 +94,48 @@ function isLowStock(product: ProductWithCategory) {
   return product.isActive && product.currentStock > 0 && product.currentStock <= product.minStock;
 }
 
-function ProductDetailLink({ href, product }: { href: string; product: ProductWithCategory }) {
+/** Casilla por fila de la acción masiva; solo existe con el filtro "Por revisar" y `products.manage`. */
+type RowSelection = {
+  isSelected: (productId: string) => boolean;
+  onToggle: (productId: string, selected: boolean) => void;
+};
+
+/**
+ * Nombre de la fila (tabla y tarjeta móvil): enlace al detalle y, debajo, el
+ * aviso "Por revisar". El aviso y la casilla van fuera del enlace y dentro de
+ * esta celda, que ya es la flexible: no añaden ancho a la tabla (PRO-F2).
+ */
+function ProductNameCell({
+  href,
+  product,
+  selection,
+}: {
+  href: string;
+  product: ProductWithCategory;
+  selection?: RowSelection;
+}) {
   return (
-    <Link className={detailLinkClass} href={href}>
-      <ProductNameWithThumb
-        imageUrl={product.imageUrl}
-        isActive={product.isActive}
-        name={product.name}
-      />
-    </Link>
+    <div className="flex min-w-0 items-start gap-2">
+      {selection ? (
+        <input
+          aria-label={`Seleccionar ${product.name}`}
+          checked={selection.isSelected(product.id)}
+          className={cn(priceReviewCheckboxClassName, "mt-2.5")}
+          onChange={(event) => selection.onToggle(product.id, event.target.checked)}
+          type="checkbox"
+        />
+      ) : null}
+      <div className="flex min-w-0 flex-col items-start gap-1">
+        <Link className={detailLinkClass} href={href}>
+          <ProductNameWithThumb
+            imageUrl={product.imageUrl}
+            isActive={product.isActive}
+            name={product.name}
+          />
+        </Link>
+        {product.priceReview ? <PriceReviewBadge review={product.priceReview} /> : null}
+      </div>
+    </div>
   );
 }
 
@@ -94,6 +143,7 @@ function buildProductColumns(
   rateVes: number,
   detailHref: (productId: string) => string,
   thresholds: MarginThresholds,
+  selection?: RowSelection,
 ): DataTableColumn<ProductWithCategory>[] {
   return [
     {
@@ -111,7 +161,9 @@ function buildProductColumns(
       header: "Nombre",
       hideInCard: true,
       key: "name",
-      render: (product) => <ProductDetailLink href={detailHref(product.id)} product={product} />,
+      render: (product) => (
+        <ProductNameCell href={detailHref(product.id)} product={product} selection={selection} />
+      ),
       sortable: true,
     },
     {
@@ -228,6 +280,19 @@ function ProductsList() {
   const [productToReactivate, setProductToReactivate] = useState<ProductWithCategory | null>(null);
   const [productToAddBarcode, setProductToAddBarcode] = useState<ProductWithCategory | null>(null);
   const [productToEditId, setProductToEditId] = useState<string | null>(null);
+  const [productToKeepPrice, setProductToKeepPrice] = useState<KeepPriceProduct | null>(null);
+  // La selección es local (no va a la URL) y pertenece a una URL exacta de la
+  // lista: al cambiar de página, filtro u orden deja de valer.
+  const [selection, setSelection] = useState<{ ids: string[]; scope: string }>({
+    ids: [],
+    scope: "",
+  });
+  const [repricePct, setRepricePct] = useState<number | null>(null);
+  const [repriceOutcome, setRepriceOutcome] = useState<{
+    names: Record<string, string>;
+    result: RepriceResult;
+  } | null>(null);
+  const { showToast } = useToast();
   const { handleSort, sortBy, sortOrder } = useUrlSortState(list);
   const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
   // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
@@ -252,9 +317,33 @@ function ProductsList() {
     () => getProductMarginThresholds(pricingSettings.data),
     [pricingSettings.data],
   );
+  const priceReviewSummary = usePriceReviewSummary();
+  const isReviewFilterOn = list.state.review === "1";
+  // La acción masiva solo existe en "Por revisar": la lista normal no carga casillas.
+  const canBulkReprice = isReviewFilterOn && can("products.manage");
+  const selectedIds = useMemo(
+    () => (selection.scope === listHref ? selection.ids : []),
+    [listHref, selection],
+  );
+  const rowSelection = useMemo<RowSelection | undefined>(
+    () =>
+      canBulkReprice
+        ? {
+            isSelected: (productId) => selectedIds.includes(productId),
+            onToggle: (productId, selected) =>
+              setSelection({
+                ids: selected
+                  ? [...selectedIds.filter((id) => id !== productId), productId]
+                  : selectedIds.filter((id) => id !== productId),
+                scope: listHref,
+              }),
+          }
+        : undefined,
+    [canBulkReprice, listHref, selectedIds],
+  );
   const columns = useMemo(
-    () => buildProductColumns(rateVes, detailHref, marginThresholds),
-    [detailHref, marginThresholds, rateVes],
+    () => buildProductColumns(rateVes, detailHref, marginThresholds, rowSelection),
+    [detailHref, marginThresholds, rateVes, rowSelection],
   );
   const createProduct = useCreateProduct();
   const productToEditQuery = useProduct(productToEditId ?? "");
@@ -281,6 +370,31 @@ function ProductsList() {
   const editProduct = productToEditQuery.data ?? editProductFallback;
   const isEditModalOpen = Boolean(productToEditId && editProduct);
   const isSavingEdit = updateProduct.isPending || updateProductPrice.isPending;
+  // Solo cuentan los seleccionados que siguen en la página (un reprecio saca filas de la cola).
+  const selectedProducts = productItems.filter((product) => selectedIds.includes(product.id));
+
+  function handleRepriceDone(result: RepriceResult) {
+    const failedIds = result.results
+      .filter((row) => row.status === "error")
+      .map((row) => row.productId);
+
+    setRepriceOutcome({
+      names: Object.fromEntries(selectedProducts.map((product) => [product.id, product.name])),
+      result,
+    });
+    // Los que fallaron quedan seleccionados para corregirlos o reintentar.
+    setSelection({ ids: failedIds, scope: listHref });
+    showToast({
+      description:
+        result.failed === 0
+          ? undefined
+          : result.failed === 1
+            ? "1 producto no se pudo cambiar. Revisa el detalle en la lista."
+            : `${result.failed} productos no se pudieron cambiar. Revisa el detalle en la lista.`,
+      title: describeRepriceUpdated(result.updated),
+      tone: result.failed === 0 ? "success" : result.updated === 0 ? "error" : "info",
+    });
+  }
 
   async function handleCreateProduct(input: ProductInput, context?: ProductFormSubmitContext) {
     const product = await createProduct.mutateAsync(input);
@@ -363,7 +477,31 @@ function ProductsList() {
           categoryOptions={categoryOptions}
           filters={list.state}
           onChange={list.setState}
+          reviewCount={priceReviewSummary.data?.total}
         />
+
+        {canBulkReprice ? (
+          <PriceReviewBulkBar
+            chips={getProductPricingOptions(pricingSettings.data).chips}
+            onReprice={setRepricePct}
+            onTogglePage={(selected) =>
+              setSelection({
+                ids: selected ? productItems.map((product) => product.id) : [],
+                scope: listHref,
+              })
+            }
+            pageCount={productItems.length}
+            selectedCount={selectedProducts.length}
+          />
+        ) : null}
+
+        {isReviewFilterOn && repriceOutcome ? (
+          <PriceReviewRepriceResult
+            onDismiss={() => setRepriceOutcome(null)}
+            productNames={repriceOutcome.names}
+            result={repriceOutcome.result}
+          />
+        ) : null}
 
         <div className="flex w-full flex-col md:overflow-hidden md:rounded-xl md:border md:border-border md:bg-surface-container-lowest md:shadow-sm dark:md:border-slate-800">
           <DataTable
@@ -391,6 +529,17 @@ function ProductsList() {
                 label: "Historial de precios",
               });
 
+              if (product.priceReview && can("products.manage")) {
+                // "Cambiar precio" lleva a lo que ya existe: la tarjeta de precio del detalle.
+                items.push(
+                  { href: detailHref(product.id), label: "Cambiar precio" },
+                  {
+                    label: "Mantener precio",
+                    onSelect: () => setProductToKeepPrice(product),
+                  },
+                );
+              }
+
               if (can("products.manage")) {
                 if (product.isActive) {
                   items.push({
@@ -410,33 +559,49 @@ function ProductsList() {
             }}
             cardSubtitle={(product) => product.category?.name ?? "Sin categoría"}
             cardTitle={(product) => (
-              <ProductDetailLink href={detailHref(product.id)} product={product} />
+              <ProductNameCell
+                href={detailHref(product.id)}
+                product={product}
+                selection={rowSelection}
+              />
             )}
             columns={columns}
             data={productItems}
             embedded
             emptyState={
-              <EmptyState
-                action={
-                  <Can permission="products.manage">
-                    <ProductFormModal
-                      categories={getPaginatedItems(categories.data)}
-                      errorMessage={createProduct.error?.message}
-                      isSubmitting={createProduct.isPending}
-                      onOpenChange={handleCreateOpenChange}
-                      onSubmit={handleCreateProduct}
-                      trigger={
-                        <Button className="gap-1" size="sm">
-                          <Plus aria-hidden className="size-5" />
-                          Nuevo producto
-                        </Button>
-                      }
-                    />
-                  </Can>
-                }
-                description="Crea un producto o ajusta los filtros para ver otros resultados."
-                title="No hay productos para mostrar"
-              />
+              isReviewFilterOn ? (
+                <EmptyState
+                  action={
+                    <Button onClick={() => list.setState({ review: "" })} size="sm" variant="outline">
+                      Ver todos los productos
+                    </Button>
+                  }
+                  description="Cuando el costo de un producto suba y su ganancia baje de banda, aparecerá aquí."
+                  title="Ningún producto bajó de ganancia"
+                />
+              ) : (
+                <EmptyState
+                  action={
+                    <Can permission="products.manage">
+                      <ProductFormModal
+                        categories={getPaginatedItems(categories.data)}
+                        errorMessage={createProduct.error?.message}
+                        isSubmitting={createProduct.isPending}
+                        onOpenChange={handleCreateOpenChange}
+                        onSubmit={handleCreateProduct}
+                        trigger={
+                          <Button className="gap-1" size="sm">
+                            <Plus aria-hidden className="size-5" />
+                            Nuevo producto
+                          </Button>
+                        }
+                      />
+                    </Can>
+                  }
+                  description="Crea un producto o ajusta los filtros para ver otros resultados."
+                  title="No hay productos para mostrar"
+                />
+              )
             }
             error={products.error ?? createProduct.error}
             getRowId={(product) => product.id}
@@ -491,6 +656,28 @@ function ProductsList() {
         open={productToAddBarcode != null}
         product={productToAddBarcode}
       />
+      <KeepPriceConfirmModal
+        onOpenChange={(open) => {
+          if (!open) {
+            setProductToKeepPrice(null);
+          }
+        }}
+        open={productToKeepPrice != null}
+        product={productToKeepPrice}
+      />
+      {repricePct !== null ? (
+        <RepriceConfirmModal
+          markupPct={repricePct}
+          onDone={handleRepriceDone}
+          onOpenChange={(open) => {
+            if (!open) {
+              setRepricePct(null);
+            }
+          }}
+          open
+          products={selectedProducts}
+        />
+      ) : null}
       {editProduct ? (
         <ProductFormModal
           categories={getPaginatedItems(categories.data)}
