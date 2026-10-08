@@ -137,6 +137,10 @@ export function PurchaseLineRow({
   const totalVesText = formatVesBs(totals.totalVes);
   const rowRef = useRef<HTMLLIElement>(null);
   const focusAfterUnlockRef = useRef(false);
+  // Escaneos salidos de una celda de esta fila que aún no tienen respuesta.
+  const pendingScans = useRef(0);
+  // El foco salió de la fila con un escaneo suyo pendiente: asentar al resolverse.
+  const settleAfterScan = useRef(false);
 
   // El doble clic no deja el foco en nada de la fila: al abrirse, lo toma su cantidad.
   useEffect(() => {
@@ -160,10 +164,43 @@ export function PurchaseLineRow({
   }
 
   function handleBlur(event: FocusEvent<HTMLLIElement>) {
-    if (!event.currentTarget.contains(event.relatedTarget)) {
-      onSettle();
+    if (event.currentTarget.contains(event.relatedTarget)) {
+      return;
     }
+
+    // Un escaneo de esta fila se llevó el foco al buscador (D36) y su celda muestra un
+    // valor provisional: la línea se asienta cuando llegue la respuesta, con el definitivo.
+    if (pendingScans.current > 0) {
+      settleAfterScan.current = true;
+      return;
+    }
+
+    onSettle();
   }
+
+  function handleScan(scan: PurchaseLineScan) {
+    pendingScans.current += 1;
+    onScanCode?.({
+      candidates: scan.candidates,
+      onResolved: (code) => {
+        scan.onResolved(code);
+        pendingScans.current -= 1;
+
+        if (pendingScans.current > 0 || !settleAfterScan.current) {
+          return;
+        }
+
+        settleAfterScan.current = false;
+
+        // Si el foco volvió a la fila, se asentará cuando salga de ella.
+        if (!rowRef.current?.contains(document.activeElement)) {
+          onSettle();
+        }
+      },
+    });
+  }
+
+  const scanHandler = onScanCode ? handleScan : undefined;
 
   function handleDoubleClick() {
     focusAfterUnlockRef.current = true;
@@ -327,7 +364,7 @@ export function PurchaseLineRow({
             focusTarget
             integer
             onChange={(quantity) => onUpdate({ quantity })}
-            onScan={onScanCode}
+            onScan={scanHandler}
             value={item.quantity}
           />
         )}
@@ -344,7 +381,7 @@ export function PurchaseLineRow({
             aria-label={`Costo unitario ${currencyLabel} de ${meta.name}`}
             className={cn(purchaseLineInputClassName, "@xl:text-right")}
             onChange={(value) => onUpdate(isVes ? { unitCostVes: value } : { unitCostRef: value })}
-            onScan={onScanCode}
+            onScan={scanHandler}
             value={isVes ? item.unitCostVes : item.unitCostRef}
           />
         )}
@@ -368,7 +405,7 @@ export function PurchaseLineRow({
           item={item}
           key="pack"
           meta={meta}
-          onScanCode={onScanCode}
+          onScanCode={scanHandler}
           onUpdate={onUpdate}
           rateVes={rateVes}
         />

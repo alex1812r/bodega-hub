@@ -503,3 +503,23 @@ describe("PurchaseCreatePage · consultas por un código que no existe (COM-F8 �
     expect(lineNames()).toEqual(["Taladro"]);
   });
 });
+
+describe("PurchaseCreatePage · la línea no se asienta con el valor provisional de un escaneo (COM-F8 · D36)", () => {
+  it("ráfaga atascada tras su primer dígito: la cantidad vuelve a 1 y la línea no queda como editada", async () => {
+    resolveWithLatency(300);
+    renderPage();
+    pickTaladro();
+
+    // El «7» inicial del código parece tecleado a mano hasta que llega la respuesta.
+    await press([CODE_B[0]], 4);
+    await press([CODE_B[1]], 80);
+    await press([...CODE_B.slice(2).split(""), "{Enter}"], 4);
+    expect(searchBox()).toHaveFocus();
+    await settle(1000);
+
+    expect(lineNames()).toEqual(["Cable", "Taladro"]);
+    expect(quantity("Taladro")).toHaveValue("1");
+    expect(screen.queryByRole("img", { name: "Línea editada" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Líneas editadas" })).not.toBeInTheDocument();
+  });
+});
