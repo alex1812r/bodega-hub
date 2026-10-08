@@ -1,30 +1,36 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
+import { EntityAutocomplete, type EntityFetcher } from "@/shared/components/EntityAutocomplete";
 import { FormActions } from "@/shared/components/FormActions";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
-import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 import { useToast } from "@/shared/components/Toast";
 
 import {
+  packConversionsQueryOptions,
   useConvertPackToUnits,
   usePackConversions,
 } from "../../hooks/useInventory";
-
 import { useRequestAttempt } from "../../utils/requestAttempt";
 import {
   buildPackOpeningToast,
   describeRecipeOpening,
   isAssortedOpening,
 } from "./packOpeningText";
+import { describePackRecipe, searchPackOptions } from "./packProductOptions";
 
 const formId = "inventory-pack-conversion-form";
 
 type InventoryPackConversionModalProps = {
+  /**
+   * Empaque precargado; el usuario puede cambiarlo. Si el producto no es un
+   * empaque con receta activa el campo queda vacío.
+   */
   defaultPackProductId?: string;
   trigger?: ReactNode;
 };
@@ -39,29 +45,23 @@ export function InventoryPackConversionModal({
   const [reason, setReason] = useState("");
   // Se activa al tocar la cantidad o al intentar enviar; al abrir no hay aviso.
   const [showQuantityError, setShowQuantityError] = useState(false);
+  // Se activa al intentar enviar sin empaque elegido.
+  const [showPackError, setShowPackError] = useState(false);
+  const queryClient = useQueryClient();
   const packConversionsQuery = usePackConversions();
   const convert = useConvertPackToUnits();
   const requestAttempt = useRequestAttempt();
   const { showToast } = useToast();
 
-  const packOptions = useMemo(
-    () =>
-      (packConversionsQuery.data ?? []).map((item) => ({
-        label: isAssortedOpening(item)
-          ? `${item.packProduct.name} → surtido de ${item.components?.length} productos (x${item.unitsPerPack})`
-          : `${item.packProduct.name} → ${item.linkedProduct.name} (x${item.unitsPerPack})`,
-        value: item.packProduct.id,
-      })),
+  const recipesByPackId = useMemo(
+    () => new Map((packConversionsQuery.data ?? []).map((item) => [item.packProduct.id, item])),
     [packConversionsQuery.data],
   );
-
-  const selected = useMemo(
-    () =>
-      (packConversionsQuery.data ?? []).find(
-        (item) => item.packProduct.id === packProductId,
-      ),
-    [packConversionsQuery.data, packProductId],
-  );
+  const selected = recipesByPackId.get(packProductId);
+  // Las recetas son la fuente (ver packProductOptions): se buscan en la consulta ya cargada.
+  const fetchPackOptions: EntityFetcher<"product"> = async ({ limit, query }) =>
+    searchPackOptions(await queryClient.ensureQueryData(packConversionsQueryOptions), query, limit);
+  const isLoadingDefaultPack = Boolean(packProductId) && packConversionsQuery.isLoading;
 
   const quantityNumber = Number(packQuantity);
   const unitPreview =
@@ -90,11 +90,13 @@ export function InventoryPackConversionModal({
     setPackQuantity("1");
     setReason("");
     setShowQuantityError(false);
+    setShowPackError(false);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSubmit) {
+      setShowPackError(true);
       setShowQuantityError(true);
       return;
     }
@@ -164,14 +166,31 @@ export function InventoryPackConversionModal({
       }
     >
       <form className="grid gap-4" id={formId} onSubmit={handleSubmit}>
-        <SelectField
-          label="Producto empaque"
-          onChange={(event) => setPackProductId(event.target.value)}
-          options={packOptions}
-          placeholder={
-            packConversionsQuery.isLoading ? "Cargando..." : "Selecciona un empaque vinculado"
+        <EntityAutocomplete
+          disabled={isLoadingDefaultPack}
+          entity="product"
+          error={showPackError && !selected ? "Selecciona un empaque." : undefined}
+          fetcher={fetchPackOptions}
+          helperText={
+            isLoadingDefaultPack
+              ? "Cargando empaque…"
+              : packConversionsQuery.error
+                ? packConversionsQuery.error.message
+                : "Solo empaques con receta activa."
           }
-          value={packProductId}
+          label="Producto empaque"
+          onChange={(option) => setPackProductId(option?.id ?? "")}
+          placeholder="Buscar empaque por nombre o SKU"
+          // Sin recientes: un empaque guardado en el navegador puede haber perdido su receta.
+          recentsKey={null}
+          renderSecondary={(option) => {
+            const recipe = recipesByPackId.get(option.id);
+
+            return [option.sku, `Stock ${option.currentStock}`, recipe ? describePackRecipe(recipe) : ""]
+              .filter(Boolean)
+              .join(" · ");
+          }}
+          value={selected ? { id: selected.packProduct.id, label: selected.packProduct.name } : null}
         />
         {selected ? (
           <p className="text-sm text-on-surface-variant">

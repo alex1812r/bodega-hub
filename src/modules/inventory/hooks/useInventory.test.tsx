@@ -101,6 +101,7 @@ describe("inventory hooks", () => {
     });
 
     adjustment.result.current.mutate({
+      clientRequestId: "5b0c1a52-1111-4222-8333-444455556666",
       productId: "prod-cable",
       quantityDelta: -2,
       reason: "Conteo fisico",
@@ -132,6 +133,7 @@ describe("inventory hooks", () => {
     });
 
     adjustment.result.current.mutate({
+      clientRequestId: "5b0c1a52-1111-4222-8333-444455556666",
       productId: "prod-cable",
       quantityDelta: -99,
       type: "ajuste_salida",

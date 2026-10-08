@@ -41,8 +41,11 @@ export type InventoryMovement = StockMovementMock & {
 export type { InventoryAdjustmentType };
 
 export type InventoryAdjustmentInput = {
-  /** Clave de idempotencia del intento: el servidor no duplica el ajuste (C6). */
-  clientRequestId?: string;
+  /**
+   * Clave de idempotencia del intento (C6): el servidor no duplica el ajuste.
+   * Obligatoria en la UI; sale de `useRequestAttempt`.
+   */
+  clientRequestId: string;
   productId: string;
   quantityDelta: number;
   reason?: string;
@@ -54,8 +57,11 @@ export type PackConversionListItem = ProductPackConversionSummary & {
 };
 
 export type ConvertPackToUnitsInput = {
-  /** Clave de idempotencia del intento: el servidor no duplica la conversion (C6). */
-  clientRequestId?: string;
+  /**
+   * Clave de idempotencia del intento (C6): el servidor no duplica la conversión.
+   * Obligatoria en la UI; sale de `useRequestAttempt`.
+   */
+  clientRequestId: string;
   /**
    * Reparto real de la apertura de un surtido: unidades que salieron de cada
    * componente. Debe sumar `totalUnits × packQuantity`. Sin él se usa la receta.
@@ -104,6 +110,7 @@ export const inventoryQueryKeys = {
   movements: (filters: InventoryMovementFilters = {}) =>
     [...inventoryQueryKeys.all, "movements", filters] as const,
   packConversions: () => [...inventoryQueryKeys.all, "pack-conversions"] as const,
+  product: (id: string) => [...inventoryQueryKeys.all, "product", id] as const,
   stockCard: (filters: InventoryMovementFilters = {}) =>
     [...inventoryQueryKeys.all, "stock-card", filters] as const,
 };
@@ -115,6 +122,19 @@ export function useInventory(filters: InventoryFilters = {}) {
       apiFetch<PaginatedList<InventoryItem>>("/api/inventory", {
         query: filters,
       }),
+  });
+}
+
+/**
+ * Un producto por id (`GET /api/products/{id}`), para precargar un formulario de
+ * stock sin pedir el catálogo. Cuelga de `inventoryQueryKeys.all`: se refresca
+ * con cada ajuste o conversión.
+ */
+export function useInventoryProduct(id: string | undefined, enabled = true) {
+  return useQuery({
+    enabled: enabled && Boolean(id),
+    queryKey: inventoryQueryKeys.product(id ?? ""),
+    queryFn: () => apiFetch<InventoryItem>(`/api/products/${id}`),
   });
 }
 
@@ -160,11 +180,14 @@ export function useAdjustInventory() {
   });
 }
 
+/** Recetas activas de la tienda: la misma consulta para `usePackConversions` y la búsqueda de empaques. */
+export const packConversionsQueryOptions = {
+  queryKey: inventoryQueryKeys.packConversions(),
+  queryFn: () => apiFetch<PackConversionListItem[]>("/api/inventory/pack-conversions"),
+};
+
 export function usePackConversions() {
-  return useQuery({
-    queryKey: inventoryQueryKeys.packConversions(),
-    queryFn: () => apiFetch<PackConversionListItem[]>("/api/inventory/pack-conversions"),
-  });
+  return useQuery(packConversionsQueryOptions);
 }
 
 export function useConvertPackToUnits() {

@@ -1,10 +1,13 @@
 "use client";
 
 import { ArrowRight } from "lucide-react";
-import { type FormEvent, type ReactNode, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 
-import { getPaginatedItems } from "@/lib/api/pagination";
 import { Button } from "@/shared/components/Button";
+import {
+  EntityAutocomplete,
+  type ProductEntityFilters,
+} from "@/shared/components/EntityAutocomplete";
 import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
@@ -13,7 +16,11 @@ import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 import { cn } from "@/shared/utils/cn";
 
-import { type InventoryItem, useAdjustInventory, useInventory } from "../../hooks/useInventory";
+import {
+  type InventoryItem,
+  useAdjustInventory,
+  useInventoryProduct,
+} from "../../hooks/useInventory";
 import { useRequestAttempt } from "../../utils/requestAttempt";
 import {
   getInventoryAdjustmentDelta,
@@ -23,6 +30,9 @@ import {
 
 const formId = "inventory-adjustment-form";
 
+/** El ajuste libre solo se ofrece sobre productos activos, como la lista de inventario. */
+const searchFilters: ProductEntityFilters = { active: true };
+
 /** Producto fijo del ajuste: lo que el modal muestra de él sin consultar el catálogo. */
 export type InventoryAdjustmentLockedProduct = Pick<
   InventoryItem,
@@ -30,11 +40,14 @@ export type InventoryAdjustmentLockedProduct = Pick<
 >;
 
 type InventoryAdjustmentModalProps = {
-  /** Producto preseleccionado en el selector; el usuario puede cambiarlo. */
+  /**
+   * Producto precargado en el buscador (se lee por id, sin pedir el catálogo);
+   * el usuario puede cambiarlo. Un producto inactivo no se precarga.
+   */
   defaultProductId?: string;
   /**
-   * Ajuste de un producto concreto: se muestra bloqueado, sin selector y sin
-   * cargar el catálogo. Su `currentStock` es el que pinta "Stock actual".
+   * Ajuste de un producto concreto: se muestra bloqueado, sin buscador y sin
+   * ninguna petición. Su `currentStock` es el que pinta "Stock actual".
    */
   lockedProduct?: InventoryAdjustmentLockedProduct;
   /** Avisa de cada apertura y cierre, también del cierre tras registrar el ajuste. */
@@ -81,62 +94,6 @@ function AdjustmentStockPreview({ currentStock, quantityDelta }: AdjustmentStock
   );
 }
 
-type AdjustmentProductSelectProps = {
-  error?: string;
-  onChange: (productId: string) => void;
-  quantityDelta: number;
-  value: string;
-};
-
-/** Selector del catálogo. Solo se monta sin `lockedProduct`: es quien pide los productos. */
-function AdjustmentProductSelect({
-  error,
-  onChange,
-  quantityDelta,
-  value,
-}: AdjustmentProductSelectProps) {
-  const productsQuery = useInventory({ limit: 100 });
-  const products = useMemo(
-    () => getPaginatedItems(productsQuery.data),
-    [productsQuery.data],
-  );
-  const productOptions = useMemo(
-    () =>
-      products.map((product) => ({
-        label: `${product.name} (${product.sku})`,
-        value: product.id,
-      })),
-    [products],
-  );
-  const selectedProduct = useMemo(
-    () => products.find((product) => product.id === value),
-    [products, value],
-  );
-
-  return (
-    <>
-      <SelectField
-        disabled={productsQuery.isLoading}
-        error={error}
-        helperText={
-          productsQuery.error ? "No pudimos cargar los productos disponibles." : undefined
-        }
-        label="Producto"
-        onChange={(event) => onChange(event.target.value)}
-        options={productOptions}
-        placeholder="Selecciona producto"
-        value={value}
-      />
-      {selectedProduct != null ? (
-        <AdjustmentStockPreview
-          currentStock={selectedProduct.currentStock}
-          quantityDelta={quantityDelta}
-        />
-      ) : null}
-    </>
-  );
-}
-
 export function InventoryAdjustmentModal({
   defaultProductId,
   lockedProduct,
@@ -147,8 +104,17 @@ export function InventoryAdjustmentModal({
   const isControlled = openProp !== undefined;
   const [internalOpen, setInternalOpen] = useState(false);
   const open = isControlled ? openProp : internalOpen;
-  const [selectedProductId, setProductId] = useState("");
-  const productId = lockedProduct?.id ?? selectedProductId;
+  const [pickedProduct, setPickedProduct] = useState<InventoryAdjustmentLockedProduct | null>(null);
+  // Hasta que el usuario elige o limpia el campo manda el producto precargado.
+  const [usesDefaultProduct, setUsesDefaultProduct] = useState(true);
+  const defaultProductQuery = useInventoryProduct(
+    defaultProductId,
+    open && !lockedProduct && usesDefaultProduct,
+  );
+  const defaultProduct = defaultProductQuery.data?.isActive ? defaultProductQuery.data : null;
+  const selectedProduct =
+    lockedProduct ?? (usesDefaultProduct ? defaultProduct : pickedProduct) ?? null;
+  const productId = selectedProduct?.id ?? "";
   const [type, setType] = useState<FreeInventoryAdjustmentType>("ajuste_entrada");
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState("");
@@ -170,8 +136,13 @@ export function InventoryAdjustmentModal({
     onOpenChange?.(nextOpen);
   }
 
+  function resetProduct() {
+    setPickedProduct(null);
+    setUsesDefaultProduct(true);
+  }
+
   function resetForm() {
-    setProductId(defaultProductId ?? "");
+    resetProduct();
     setType("ajuste_entrada");
     setQuantity("");
     setReason("");
@@ -231,7 +202,7 @@ export function InventoryAdjustmentModal({
         if (nextOpen) {
           setHasSubmitted(false);
           adjustment.reset();
-          setProductId(defaultProductId ?? "");
+          resetProduct();
         } else {
           resetForm();
 
@@ -247,26 +218,54 @@ export function InventoryAdjustmentModal({
     >
       <form className="grid gap-5" id={formId} onSubmit={handleSubmit}>
         {lockedProduct ? (
-          <>
-            <Input
-              disabled
-              label="Producto"
-              readOnly
-              value={`${lockedProduct.name} (${lockedProduct.sku})`}
-            />
-            <AdjustmentStockPreview
-              currentStock={lockedProduct.currentStock}
-              quantityDelta={quantityDelta}
-            />
-          </>
+          <Input
+            disabled
+            label="Producto"
+            readOnly
+            value={`${lockedProduct.name} (${lockedProduct.sku})`}
+          />
         ) : (
-          <AdjustmentProductSelect
+          <EntityAutocomplete
+            disabled={defaultProductQuery.isLoading}
+            entity="product"
             error={hasSubmitted && !productId ? "Selecciona un producto." : undefined}
-            onChange={setProductId}
-            quantityDelta={quantityDelta}
-            value={productId}
+            filters={searchFilters}
+            helperText={
+              defaultProductQuery.isLoading
+                ? "Cargando producto…"
+                : usesDefaultProduct && defaultProductQuery.error
+                  ? defaultProductQuery.error.message
+                  : undefined
+            }
+            label="Producto"
+            onChange={(option) => {
+              setUsesDefaultProduct(false);
+              setPickedProduct(
+                option
+                  ? {
+                      currentStock: option.currentStock,
+                      id: option.id,
+                      name: option.label,
+                      sku: option.sku,
+                    }
+                  : null,
+              );
+            }}
+            // Sin recientes: son una copia del navegador y su stock puede estar desactualizado.
+            recentsKey={null}
+            value={
+              selectedProduct
+                ? { id: selectedProduct.id, label: `${selectedProduct.name} (${selectedProduct.sku})` }
+                : null
+            }
           />
         )}
+        {selectedProduct ? (
+          <AdjustmentStockPreview
+            currentStock={selectedProduct.currentStock}
+            quantityDelta={quantityDelta}
+          />
+        ) : null}
 
         <div className="grid gap-5 md:grid-cols-2 md:items-start">
           <SelectField

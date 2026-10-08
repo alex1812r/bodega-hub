@@ -5,6 +5,7 @@
  */
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { ToastProvider } from "@/shared/components/Toast";
 
@@ -62,7 +63,7 @@ function resultComponent(unitProductId: string, units: number, isActive = true) 
   return { allocatedValueRef: 4, costWeight: 1, isActive, newCostRef: 2, unitCostRef: 2, unitProductId, units };
 }
 
-async function renderOpen(defaultPackProductId: string) {
+async function renderOpen(defaultPackProductId?: string) {
   const api = installFetchStub(() => [single, assorted]);
   const QueryWrapper = createQueryWrapper();
 
@@ -74,7 +75,10 @@ async function renderOpen(defaultPackProductId: string) {
     </QueryWrapper>,
   );
   fireEvent.click(screen.getByRole("button", { name: "Convertir empaque" }));
-  await screen.findByText(/Stock empaque: /);
+
+  if (defaultPackProductId) {
+    await screen.findByText(/Stock empaque: /);
+  }
 
   return api;
 }
@@ -92,25 +96,42 @@ describe("InventoryPackConversionModal · descripción de la receta (PRO-F7)", (
     await renderOpen("prod-surtido");
     setQuantity("3");
 
-    expect(
-      screen.getByRole("option", { name: "Surtido A → surtido de 3 productos (x6)" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Producto empaque" })).toHaveValue("Surtido A");
     expect(
       screen.getByText(/Se abrirá en: 6 Cola · 6 Manzana · 6 Naranja \(inactivo\)\./),
     ).toBeVisible();
     expect(screen.getByText(/Preview: −3 empaque\(s\) \/ \+18 unidad\(es\)\./)).toBeVisible();
     // Nada que se lea como "18 Colas".
     expect(screen.queryByText(/Unidad: Cola/)).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /Surtido A → Cola/ })).not.toBeInTheDocument();
+  });
+
+  it("el buscador describe el surtido como surtido y el 1 a 1 con su unidad", async () => {
+    const user = userEvent.setup();
+    await renderOpen();
+    const field = await screen.findByRole("combobox", { name: "Producto empaque" });
+
+    await user.type(field, "surt");
+
+    const assortedOption = await screen.findByRole("option", { name: /Surtido A/ });
+
+    expect(assortedOption).toHaveTextContent("→ surtido de 3 productos (x6)");
+    expect(assortedOption).not.toHaveTextContent("→ Cola");
+
+    await user.clear(field);
+    await user.type(field, "caja");
+
+    expect(await screen.findByRole("option", { name: /Caja cigarros \(x10\)/ })).toHaveTextContent(
+      "→ Cigarro suelto (x10)",
+    );
   });
 
   it("1 a 1: el texto queda exactamente como estaba", async () => {
     await renderOpen("prod-cigar-pack");
     setQuantity("2");
 
-    expect(
-      screen.getByRole("option", { name: "Caja cigarros (x10) → Cigarro suelto (x10)" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Producto empaque" })).toHaveValue(
+      "Caja cigarros (x10)",
+    );
     expect(screen.getByText("Stock empaque: 5. Unidad: Cigarro suelto (stock 3).")).toBeVisible();
     expect(screen.getByText("Preview: −2 empaque(s) / +20 unidad(es).")).toBeVisible();
     expect(screen.queryByText(/Se abrirá en/)).not.toBeInTheDocument();
