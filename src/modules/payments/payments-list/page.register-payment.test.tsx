@@ -205,6 +205,17 @@ describe("PaymentsListPage · Registrar pago (PAG-03b)", () => {
     );
   }
 
+  /**
+   * Peticiones del BUSCADOR de documentos. El aviso de ventas pendientes (PAG-07)
+   * consulta el mismo endpoint al montar la pagina, siempre con `olderThanDays`:
+   * esas no cuentan aqui.
+   */
+  function pickerDocumentRequests() {
+    return requestsTo("/api/payments/open-documents").filter(
+      ([url]) => !new URLSearchParams(String(url).split("?")[1] ?? "").has("olderThanDays"),
+    );
+  }
+
   function posts() {
     return fetchMock.mock.calls
       .filter(([, init]) => (init as RequestInit | undefined)?.method === "POST")
@@ -291,7 +302,7 @@ describe("PaymentsListPage · Registrar pago (PAG-03b)", () => {
   it("elegir una venta cierra el buscador y abre el modal de cobro con su saldo; al registrar se refrescan pagos y documentos", async () => {
     const user = await renderPage();
     const picker = await openPicker(user);
-    const documentRequestsBefore = requestsTo("/api/payments/open-documents").length;
+    const documentRequestsBefore = pickerDocumentRequests().length;
 
     await user.click(within(picker.getByRole("listbox")).getByRole("option"));
 
@@ -327,9 +338,7 @@ describe("PaymentsListPage · Registrar pago (PAG-03b)", () => {
     // La consulta del buscador quedo invalidada: al reabrirlo se vuelve a pedir.
     await openPicker(user);
     await waitFor(() =>
-      expect(requestsTo("/api/payments/open-documents").length).toBeGreaterThan(
-        documentRequestsBefore,
-      ),
+      expect(pickerDocumentRequests().length).toBeGreaterThan(documentRequestsBefore),
     );
   });
 
@@ -375,7 +384,7 @@ describe("PaymentsListPage · Registrar pago (PAG-03b)", () => {
 
       expect(await within(modal).findByText("Venta F-0002 de Maria Perez.")).toBeInTheDocument();
       expect(screen.queryByRole("combobox", { name: "Buscar documento" })).not.toBeInTheDocument();
-      expect(requestsTo("/api/payments/open-documents")).toHaveLength(0);
+      expect(pickerDocumentRequests()).toHaveLength(0);
       expectNoIdField();
     });
 
@@ -390,7 +399,7 @@ describe("PaymentsListPage · Registrar pago (PAG-03b)", () => {
       expect(
         await within(modal).findByText("Compra C-0002 a Distribuidora Polar."),
       ).toBeInTheDocument();
-      expect(requestsTo("/api/payments/open-documents")).toHaveLength(0);
+      expect(pickerDocumentRequests()).toHaveLength(0);
     });
 
     it("con venta y compra a la vez no adivina: abre el buscador", async () => {
@@ -415,7 +424,7 @@ describe("PaymentsListPage · Registrar pago (PAG-03b)", () => {
       expect(picker.queryByLabelText("Tipo de documento")).not.toBeInTheDocument();
       expect(picker.queryByText("Compras por pagar")).not.toBeInTheDocument();
       expect(
-        requestsTo("/api/payments/open-documents").map(([url]) =>
+        pickerDocumentRequests().map(([url]) =>
           new URLSearchParams(String(url).split("?")[1]).get("type"),
         ),
       ).toEqual(["sale"]);

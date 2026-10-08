@@ -214,6 +214,24 @@ describe("PaymentsListPage", () => {
     return fetchMock.mock.calls.map(([url]) => String(url).split("?")[0]);
   }
 
+  /**
+   * Rutas pedidas por la lista y sus filtros. Deja fuera la unica peticion ajena
+   * legitima: la del aviso de ventas pendientes (PAG-07), `open-documents` con
+   * `olderThanDays`.
+   */
+  function listRequestedPaths() {
+    return fetchMock.mock.calls
+      .map(([url]) => String(url).split("?"))
+      .filter(
+        ([path, search = ""]) =>
+          !(
+            path === "/api/payments/open-documents" &&
+            new URLSearchParams(search).has("olderThanDays")
+          ),
+      )
+      .map(([path]) => path);
+  }
+
   function urlParams() {
     return Object.fromEntries(new URLSearchParams(window.location.search));
   }
@@ -518,7 +536,7 @@ describe("PaymentsListPage", () => {
         saleId: "sale-002",
         skip: "0",
       });
-      expect(requestedPaths().every((path) => path === "/api/payments")).toBe(true);
+      expect(listRequestedPaths().every((path) => path === "/api/payments")).toBe(true);
       expect(filtersPanel().queryByText(/sale-002|cont-customer/)).not.toBeInTheDocument();
     });
 
