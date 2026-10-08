@@ -1,6 +1,9 @@
+import { receivePurchaseBodySchema, toRpcDisassembleList } from "../../services/purchaseDisassemble";
 import {
   buildReceiveDisassembleRequest,
   buildReceivePreview,
+  findReceiveDistributionError,
+  parseReceiveDistribution,
   type ReceivePreviewPurchase,
 } from "./buildReceivePreview";
 
@@ -161,6 +164,7 @@ describe("buildReceivePreview · desarmar al recibir (COM-14)", () => {
               quantityIn: 18,
               stockAfter: 22,
               stockBefore: 4,
+              unitsPerPack: 6,
             },
           ],
           packsOut: 3,
@@ -215,9 +219,10 @@ describe("buildReceivePreview · desarmar al recibir (COM-14)", () => {
     });
 
     expect(line?.disassemble).toEqual({
+      canAdjustDistribution: true,
       components: [
-        { name: "Sabor fresa", productId: "prod-fresa", productInactive: false, quantityIn: 10, stockAfter: 10, stockBefore: 0 },
-        { name: "Sabor uva", productId: "prod-uva", productInactive: true, quantityIn: 2, stockAfter: 9, stockBefore: 7 },
+        { name: "Sabor fresa", productId: "prod-fresa", productInactive: false, quantityIn: 10, stockAfter: 10, stockBefore: 0, unitsPerPack: 5 },
+        { name: "Sabor uva", productId: "prod-uva", productInactive: true, quantityIn: 2, stockAfter: 9, stockBefore: 7, unitsPerPack: 1 },
       ],
       packsOut: 2,
     });
@@ -289,5 +294,238 @@ describe("buildReceiveDisassembleRequest (COM-14)", () => {
 
     expect(buildReceiveDisassembleRequest(unmarked)).toEqual([]);
     expect(buildReceiveDisassembleRequest(withoutRecipe)).toEqual([]);
+  });
+});
+
+describe("buildReceivePreview · reparto ajustado de un surtido (COM-14, flujo 11)", () => {
+  /** 3 cajas surtidas de 6: 2 Cola + 2 Manzana + 2 Naranja por caja. */
+  const assortedRecipe = {
+    components: [
+      { currentStock: 4, isActive: true, name: "Cola", unitProductId: "prod-cola", unitsPerPack: 2 },
+      { currentStock: 0, isActive: true, name: "Manzana", unitProductId: "prod-manzana", unitsPerPack: 2 },
+      { currentStock: 1, isActive: true, name: "Naranja", unitProductId: "prod-naranja", unitsPerPack: 2 },
+    ],
+    conversionId: "rec-surtida",
+    totalUnits: 6,
+  };
+
+  function assorted(overrides: Partial<Item> = {}): Item {
+    return item({
+      disassembleOnReceive: true,
+      id: "item-surtida",
+      packRecipe: assortedRecipe,
+      product: { currentStock: 0, isActive: true, name: "Caja surtida" },
+      productId: "prod-surtida",
+      quantity: 3,
+      unitCostRef: 12,
+      ...overrides,
+    });
+  }
+
+  /** Dos cajas por receta (2-2-2) y una ajustada a 3-1-2. */
+  const adjusted = { "prod-cola": 7, "prod-manzana": 5, "prod-naranja": 6 };
+  const quantities = (line: ReturnType<typeof buildReceivePreview>[number] | undefined) =>
+    line?.disassemble?.components.map((component) => [component.name, component.quantityIn, component.stockBefore, component.stockAfter]);
+
+  it("sin reparto abre por receta: +6 / +6 / +6, se puede ajustar y no se envía distribution", () => {
+    const [line] = buildReceivePreview({ items: [assorted()] });
+
+    expect(quantities(line)).toEqual([
+      ["Cola", 6, 4, 10],
+      ["Manzana", 6, 0, 6],
+      ["Naranja", 6, 1, 7],
+    ]);
+    expect(line?.disassemble).toMatchObject({ canAdjustDistribution: true, packsOut: 3 });
+    expect(line?.disassemble).not.toHaveProperty("distribution");
+    expect(line?.disassemble).not.toHaveProperty("distributionError");
+    expect(buildReceiveDisassembleRequest([line!])).toEqual([{ purchaseItemId: "item-surtida" }]);
+  });
+
+  it("una caja a 3-1-2: −3 cajas, +7 Cola, +5 Manzana, +6 Naranja y el stock después de cada uno", () => {
+    const [line] = buildReceivePreview(
+      { items: [assorted()] },
+      { distribution: { "item-surtida": adjusted } },
+    );
+
+    expect(line).toMatchObject({ quantityIn: 3, stockAfter: 0, stockBefore: 0 });
+    expect(line?.disassemble?.packsOut).toBe(3);
+    expect(quantities(line)).toEqual([
+      ["Cola", 7, 4, 11],
+      ["Manzana", 5, 0, 5],
+      ["Naranja", 6, 1, 7],
+    ]);
+    expect(line?.disassemble).not.toHaveProperty("distributionError");
+    expect(findReceiveDistributionError([line!])).toBeNull();
+  });
+
+  it("la petición lleva ese reparto como distribution, en el orden de la receta, con el formato que aceptan el BFF y la RPC", () => {
+    const lines = buildReceivePreview(
+      { items: [assorted()] },
+      { distribution: { "item-surtida": adjusted } },
+    );
+    const disassemble = buildReceiveDisassembleRequest(lines);
+
+    expect(disassemble).toEqual([
+      {
+        distribution: [
+          { unitProductId: "prod-cola", units: 7 },
+          { unitProductId: "prod-manzana", units: 5 },
+          { unitProductId: "prod-naranja", units: 6 },
+        ],
+        purchaseItemId: "item-surtida",
+      },
+    ]);
+    expect(receivePurchaseBodySchema.parse({ disassemble })).toEqual({ disassemble });
+    expect(toRpcDisassembleList(disassemble ?? [])).toEqual([
+      {
+        components: [
+          { unit_product_id: "prod-cola", units: 7 },
+          { unit_product_id: "prod-manzana", units: 5 },
+          { unit_product_id: "prod-naranja", units: 6 },
+        ],
+        purchase_item_id: "item-surtida",
+      },
+    ]);
+  });
+
+  it("un componente en 0 viaja en 0 y uno sin entrada conserva lo de la receta", () => {
+    const [line] = buildReceivePreview(
+      { items: [assorted()] },
+      { distribution: { "item-surtida": { "prod-cola": 12, "prod-manzana": 0 } } },
+    );
+
+    expect(quantities(line)?.map(([, quantityIn]) => quantityIn)).toEqual([12, 0, 6]);
+    expect(line?.disassemble?.distribution).toEqual([
+      { unitProductId: "prod-cola", units: 12 },
+      { unitProductId: "prod-manzana", units: 0 },
+      { unitProductId: "prod-naranja", units: 6 },
+    ]);
+  });
+
+  it("un reparto igual al de la receta no es un ajuste: la línea viaja sin distribution", () => {
+    const lines = buildReceivePreview(
+      { items: [assorted()] },
+      { distribution: { "item-surtida": { "prod-cola": 6, "prod-manzana": 6, "prod-naranja": 6 } } },
+    );
+
+    expect(buildReceiveDisassembleRequest(lines)).toEqual([{ purchaseItemId: "item-surtida" }]);
+  });
+
+  it("reparto que no suma 18: la línea lleva el motivo, no lleva distribution y bloquea la recepción", () => {
+    const short = buildReceivePreview(
+      { items: [assorted()] },
+      { distribution: { "item-surtida": { ...adjusted, "prod-naranja": 5 } } },
+    );
+    const over = buildReceivePreview(
+      { items: [assorted()] },
+      { distribution: { "item-surtida": { ...adjusted, "prod-naranja": 8 } } },
+    );
+
+    expect(short[0]?.disassemble?.distributionError).toBe(
+      "Faltan 1 unidad(es) por repartir: el reparto debe sumar 18.",
+    );
+    expect(short[0]?.disassemble).not.toHaveProperty("distribution");
+    // Los efectos siguen a lo tecleado, para que el usuario vea qué está repartiendo.
+    expect(quantities(short[0])?.map(([, quantityIn]) => quantityIn)).toEqual([7, 5, 5]);
+    expect(findReceiveDistributionError(short)).toBe(
+      "Caja surtida: Faltan 1 unidad(es) por repartir: el reparto debe sumar 18.",
+    );
+    expect(findReceiveDistributionError(over)).toBe(
+      "Caja surtida: Sobran 2 unidad(es): el reparto debe sumar 18.",
+    );
+  });
+
+  it("cantidades negativas, con decimales o que no son un número: reparto inválido", () => {
+    for (const bad of [-1, 2.5, Number.NaN]) {
+      const lines = buildReceivePreview(
+        { items: [assorted()] },
+        { distribution: { "item-surtida": { ...adjusted, "prod-cola": bad } } },
+      );
+
+      expect(lines[0]?.disassemble?.distributionError).toBe(
+        "Las unidades del reparto deben ser enteros mayores o iguales a cero.",
+      );
+      expect(lines[0]?.disassemble).not.toHaveProperty("distribution");
+    }
+  });
+
+  it("línea desmarcada: su reparto se ignora y no bloquea", () => {
+    const lines = buildReceivePreview(
+      { items: [assorted()] },
+      {
+        disassemble: { "item-surtida": false },
+        distribution: { "item-surtida": { ...adjusted, "prod-naranja": 1 } },
+      },
+    );
+
+    expect(lines[0]).not.toHaveProperty("disassemble");
+    expect(lines[0]).toMatchObject({ canDisassemble: true, stockAfter: 3 });
+    expect(findReceiveDistributionError(lines)).toBeNull();
+    expect(buildReceiveDisassembleRequest(lines)).toEqual([]);
+  });
+
+  it("receta simple (un componente): no se puede ajustar y un reparto enviado se ignora", () => {
+    const simple = assorted({
+      packRecipe: {
+        components: [assortedRecipe.components[0]!],
+        conversionId: "rec-simple",
+        totalUnits: 2,
+      },
+    });
+    const [line] = buildReceivePreview(
+      { items: [simple] },
+      { distribution: { "item-surtida": { "prod-cola": 1 } } },
+    );
+
+    expect(line?.disassemble).not.toHaveProperty("canAdjustDistribution");
+    expect(line?.disassemble).not.toHaveProperty("distribution");
+    expect(line?.disassemble).not.toHaveProperty("distributionError");
+    expect(quantities(line)).toEqual([["Cola", 6, 4, 10]]);
+  });
+
+  it("el stock encadenado sigue al reparto: el componente que además se compra aparte acumula lo ajustado", () => {
+    const lines = buildReceivePreview(
+      {
+        items: [
+          assorted(),
+          item({ id: "item-cola", product: { currentStock: 4, isActive: true, name: "Cola" }, productId: "prod-cola", quantity: 10 }),
+        ],
+      },
+      { distribution: { "item-surtida": adjusted } },
+    );
+
+    expect(lines[1]).toMatchObject({ stockAfter: 21, stockBefore: 11 });
+  });
+});
+
+describe("parseReceiveDistribution (COM-14)", () => {
+  const recipe = {
+    components: [
+      { currentStock: 0, isActive: true, name: "Cola", unitProductId: "prod-cola", unitsPerPack: 2 },
+      { currentStock: 0, isActive: true, name: "Manzana", unitProductId: "prod-manzana", unitsPerPack: 2 },
+    ],
+    conversionId: "rec",
+    totalUnits: 4,
+  };
+  const purchase = {
+    items: [
+      item({ disassembleOnReceive: true, id: "a", packRecipe: recipe, quantity: 3 }),
+      item({ id: "b", productId: "prod-b" }),
+    ],
+  };
+
+  it("lo tecleado pasa a unidades: vacío = 0, sin tocar = receta × empaques, texto no entero = NaN", () => {
+    expect(parseReceiveDistribution(purchase, { a: { "prod-cola": "7" } })).toEqual({
+      a: { "prod-cola": 7, "prod-manzana": 6 },
+    });
+    expect(parseReceiveDistribution(purchase, { a: { "prod-cola": "", "prod-manzana": "12" } })).toEqual({
+      a: { "prod-cola": 0, "prod-manzana": 12 },
+    });
+    expect(parseReceiveDistribution(purchase, { a: { "prod-cola": "2.5" } }).a?.["prod-cola"]).toBeNaN();
+  });
+
+  it("sin nada tecleado, o en una línea sin receta, no hay reparto", () => {
+    expect(parseReceiveDistribution(purchase, {})).toEqual({});
+    expect(parseReceiveDistribution(purchase, { a: {}, b: { "prod-cola": "1" } })).toEqual({});
   });
 });

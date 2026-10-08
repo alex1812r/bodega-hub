@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import type { PackDistributionValue } from "@/modules/inventory/inventory-movements/utils/packDistribution";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { RegisterPaymentModal } from "@/modules/payments/components/RegisterPaymentModal";
 import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
@@ -35,6 +36,8 @@ import { exportPurchaseDetailPdf } from "./services/exportPurchaseDetailPdf";
 import {
   buildReceiveDisassembleRequest,
   buildReceivePreview,
+  findReceiveDistributionError,
+  parseReceiveDistribution,
   type ReceivePreviewPurchase,
 } from "./utils/buildReceivePreview";
 
@@ -62,14 +65,27 @@ export function PurchaseDetailsPage({
   // «Desarmar al recibir» marcado o desmarcado en el modal, por línea (COM-14); sin
   // entrada manda la marca guardada con el pedido.
   const [receiveDisassemble, setReceiveDisassemble] = useState<Record<string, boolean>>({});
+  // Reparto tecleado en «Ajustar reparto» de cada surtido que se desarma, por línea
+  // (COM-14); sin entrada la línea se abre con su receta.
+  const [receiveDistribution, setReceiveDistribution] = useState<
+    Record<string, PackDistributionValue>
+  >({});
+  // El usuario intentó recibir con un reparto que no cuadra: el motivo sube al pie del modal.
+  const [receiveBlocked, setReceiveBlocked] = useState(false);
   const receiveAttempt = useRequestAttempt();
   const receivePreview = useMemo(
     () =>
       receiveSource
-        ? buildReceivePreview(receiveSource, { disassemble: receiveDisassemble })
+        ? buildReceivePreview(receiveSource, {
+            disassemble: receiveDisassemble,
+            distribution: parseReceiveDistribution(receiveSource, receiveDistribution),
+          })
         : null,
-    [receiveDisassemble, receiveSource],
+    [receiveDisassemble, receiveDistribution, receiveSource],
   );
+  const receiveDistributionError = receivePreview
+    ? findReceiveDistributionError(receivePreview)
+    : null;
 
   const purchaseData = purchase.data;
   const canReceive = can("purchases.create");
@@ -126,9 +142,17 @@ export function PurchaseDetailsPage({
   function closeReceivePreview() {
     setReceiveSource(null);
     setReceiveDisassemble({});
+    setReceiveDistribution({});
+    setReceiveBlocked(false);
   }
 
   async function handleConfirmReceive() {
+    // Un reparto que no cuadra no se envía: el control de la línea dice qué falta o sobra.
+    if (receiveDistributionError) {
+      setReceiveBlocked(true);
+      return;
+    }
+
     // Se envía lo que el modal muestra: las líneas que se desarman (si alguna puede).
     const disassemble = receivePreview ? buildReceiveDisassembleRequest(receivePreview) : undefined;
     // Clave de idempotencia del intento; null = ya hay un envío en vuelo (doble clic).
@@ -281,12 +305,22 @@ export function PurchaseDetailsPage({
           recepción repetida tiene que seguir a la vista hasta que se cierre. */}
       {receivePreview ? (
         <PurchaseReceivePreviewModal
-          error={receivePurchase.error instanceof Error ? receivePurchase.error.message : null}
+          distributionValues={receiveDistribution}
+          error={
+            receiveBlocked && receiveDistributionError
+              ? receiveDistributionError
+              : receivePurchase.error instanceof Error
+                ? receivePurchase.error.message
+                : null
+          }
           isPending={receivePurchase.isPending}
           lines={receivePreview}
           onConfirm={handleConfirmReceive}
           onDisassembleChange={(purchaseItemId, disassemble) =>
             setReceiveDisassemble((current) => ({ ...current, [purchaseItemId]: disassemble }))
+          }
+          onDistributionChange={(purchaseItemId, value) =>
+            setReceiveDistribution((current) => ({ ...current, [purchaseItemId]: value }))
           }
           onOpenChange={(open) => {
             if (!open) {

@@ -1,3 +1,10 @@
+import {
+  checkPackDistribution,
+  type PackDistributionUnits,
+  type PackDistributionValue,
+  parsePackDistribution,
+  toPackDistributionList,
+} from "@/modules/inventory/inventory-movements/utils/packDistribution";
 import type { ProductMock, PurchaseItemMock } from "@/shared/mocks/erp-data";
 
 import type {
@@ -21,6 +28,13 @@ export type ReceivePreviewOptions = {
    * entrada usa la marca «Desarmar al recibir» guardada con el pedido.
    */
   disassemble?: Readonly<Record<string, boolean>>;
+  /**
+   * Reparto real de las líneas de un SURTIDO que se desarman: `purchaseItemId` ->
+   * unidades por id de componente, para TODOS los empaques de la línea. Una línea
+   * sin entrada (o un componente sin entrada) usa la receta. En una receta de un
+   * solo componente no hay nada que repartir: se ignora.
+   */
+  distribution?: Readonly<Record<string, PackDistributionUnits>>;
 };
 
 /** Lo que recibe un componente al abrirse los empaques de una línea. */
@@ -29,17 +43,38 @@ export type ReceivePreviewComponent = {
   /** El componente está inactivo: recibe las unidades igualmente. */
   productInactive: boolean;
   productId: string;
-  /** Unidades que entran: unidades por empaque × empaques de la línea. */
+  /**
+   * Unidades que entran: las del reparto ajustado o, sin él, unidades por empaque
+   * × empaques de la línea.
+   */
   quantityIn: number;
   stockAfter: number;
   /** Stock del componente antes de esta apertura (ya con lo que le sumaron líneas anteriores). */
   stockBefore: number;
+  /** Unidades de este componente por empaque, según la receta. */
+  unitsPerPack: number;
 };
 
 /** Segundo efecto de una línea que se desarma al recibir: el empaque sale y entran sus componentes. */
 export type ReceivePreviewDisassemble = {
+  /**
+   * `true` si el empaque es un SURTIDO (receta de varios componentes): el reparto
+   * entre componentes se puede ajustar antes de recibir. Ausente si no.
+   */
+  canAdjustDistribution?: boolean;
   /** Una entrada por componente de la receta, por nombre. */
   components: ReceivePreviewComponent[];
+  /**
+   * Reparto que se envía con la línea (`disassemble[].distribution`): presente
+   * solo si el reparto es válido y distinto del de la receta.
+   */
+  distribution?: { unitProductId: string; units: number }[];
+  /**
+   * Por qué el reparto ajustado no vale (no suma `unidades por empaque ×
+   * empaques`, o tiene cantidades que no son enteros ≥ 0). Con este mensaje la
+   * compra no se puede recibir. Ausente si el reparto vale.
+   */
+  distributionError?: string;
   /** Empaques que salen al abrirse: los mismos que entran (el empaque queda neto 0). */
   packsOut: number;
 };
@@ -95,6 +130,10 @@ export type ReceivePreviewLine = {
  * 2. si la línea se desarma al recibir (COM-14), `disassemble`: los empaques que
  *    salen y lo que sube cada componente de la receta, con su stock antes → después.
  *
+ * En un surtido el reparto entre componentes se puede ajustar (`options.distribution`):
+ * cada componente sube lo que diga el reparto, y la línea dice si vale
+ * (`distributionError`) y qué se envía (`distribution`).
+ *
  * Función pura, sin efectos: no escribe stock ni consulta nada; parte del
  * `currentStock` que trae cada producto (y cada componente de la receta) en el
  * detalle de la compra. El stock se encadena línea a línea: un componente que
@@ -146,10 +185,19 @@ export function buildReceivePreview(
     }
 
     if (recipe && disassembles) {
+      const isAssorted = recipe.components.length > 1;
+      const distribution = checkPackDistribution(
+        recipe.components,
+        item.quantity,
+        isAssorted && item.id ? options.distribution?.[item.id] : undefined,
+      );
+
       line.disassemble = {
         components: recipe.components.map((component) => {
           const before = runningStock.get(component.unitProductId) ?? component.currentStock;
-          const quantityIn = component.unitsPerPack * item.quantity;
+          const typed = distribution.units[component.unitProductId] ?? 0;
+          // Una cantidad que no es un número no suma: el aviso ya dice que el reparto no vale.
+          const quantityIn = Number.isFinite(typed) ? typed : 0;
 
           runningStock.set(component.unitProductId, before + quantityIn);
 
@@ -160,10 +208,24 @@ export function buildReceivePreview(
             quantityIn,
             stockAfter: before + quantityIn,
             stockBefore: before,
+            unitsPerPack: component.unitsPerPack,
           };
         }),
         packsOut: item.quantity,
       };
+
+      if (isAssorted) {
+        line.disassemble.canAdjustDistribution = true;
+      }
+
+      if (distribution.message) {
+        line.disassemble.distributionError = distribution.message;
+      } else if (distribution.isAdjusted) {
+        line.disassemble.distribution = toPackDistributionList(
+          recipe.components,
+          distribution.units,
+        );
+      }
     }
 
     if (item.entryMode === "pack" && item.packCount && item.unitsPerPack) {
@@ -180,10 +242,35 @@ export function buildReceivePreview(
 }
 
 /**
+ * Lo que el usuario tecleó en «Ajustar reparto» (texto de cada campo, por línea y
+ * por componente) como el `distribution` de `buildReceivePreview`. Un campo vacío
+ * reparte 0; un texto que no es un entero deja el reparto de la línea inválido.
+ * Las líneas sin receta o sin nada tecleado no aparecen.
+ */
+export function parseReceiveDistribution(
+  purchase: ReceivePreviewPurchase,
+  values: Readonly<Record<string, PackDistributionValue>>,
+): Record<string, PackDistributionUnits> {
+  return Object.fromEntries(
+    purchase.items.flatMap((item) => {
+      const typed = item.id ? values[item.id] : undefined;
+
+      return item.id && item.packRecipe && typed && Object.keys(typed).length > 0
+        ? [[item.id, parsePackDistribution(item.packRecipe.components, item.quantity, typed)]]
+        : [];
+    }),
+  );
+}
+
+/**
  * Lista `disassemble` del cuerpo de `PATCH /api/purchases/{id}/receive` para lo
- * que muestra la previsualización: las líneas que se desarman, con su receta.
+ * que muestra la previsualización: las líneas que se desarman, con su receta o,
+ * si el reparto de un surtido se ajustó, con ese reparto (`distribution`).
  * `undefined` (no enviar la lista) si ninguna línea se puede desarmar ni estaba
  * marcada: la recepción es la de siempre.
+ *
+ * No envíes la lista si `findReceiveDistributionError(lines)` devuelve un
+ * mensaje: una línea con el reparto inválido viajaría con la receta.
  */
 export function buildReceiveDisassembleRequest(
   lines: readonly ReceivePreviewLine[],
@@ -193,6 +280,27 @@ export function buildReceiveDisassembleRequest(
   }
 
   return lines.flatMap((line) =>
-    line.disassemble && line.purchaseItemId ? [{ purchaseItemId: line.purchaseItemId }] : [],
+    line.disassemble && line.purchaseItemId
+      ? [
+          {
+            ...(line.disassemble.distribution
+              ? { distribution: line.disassemble.distribution }
+              : {}),
+            purchaseItemId: line.purchaseItemId,
+          },
+        ]
+      : [],
   );
+}
+
+/**
+ * El primer reparto inválido de la previsualización, como «Producto: motivo», o
+ * `null` si todos valen. Con mensaje, la compra no se puede recibir.
+ */
+export function findReceiveDistributionError(lines: readonly ReceivePreviewLine[]): string | null {
+  const line = lines.find((item) => item.disassemble?.distributionError);
+
+  return line?.disassemble?.distributionError
+    ? `${line.name}: ${line.disassemble.distributionError}`
+    : null;
 }

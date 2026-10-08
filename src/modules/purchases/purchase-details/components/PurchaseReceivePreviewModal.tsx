@@ -1,6 +1,11 @@
 "use client";
 
 import { ArrowRight, TriangleAlert } from "lucide-react";
+import { useId, useState } from "react";
+
+import { PackDistributionFields } from "@/modules/inventory/inventory-movements/components/PackDistributionFields";
+import type { PackDistributionValue } from "@/modules/inventory/inventory-movements/utils/packDistribution";
+import { Button } from "@/shared/components/Button";
 
 import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { formatRefUsd } from "@/shared/utils/currency";
@@ -9,6 +14,8 @@ import { PurchaseToggleSwitch } from "../../purchase-create/components/PurchaseT
 import type { ReceivePreviewDisassemble, ReceivePreviewLine } from "../utils/buildReceivePreview";
 
 type PurchaseReceivePreviewModalProps = {
+  /** Lo tecleado en «Ajustar reparto», por línea; sin entrada, la receta. */
+  distributionValues?: Readonly<Record<string, PackDistributionValue>>;
   /** Mensaje del servidor al fallar la recepción; se muestra tal cual. */
   error?: string | null;
   isPending?: boolean;
@@ -19,10 +26,18 @@ type PurchaseReceivePreviewModalProps = {
    * este manejador las líneas muestran el desarme pero no dejan cambiarlo.
    */
   onDisassembleChange?: (purchaseItemId: string, disassemble: boolean) => void;
+  /**
+   * El usuario ajustó el reparto de un surtido que se desarma (COM-14): texto de
+   * cada campo por id de componente; `{}` = volver a la receta. Sin este
+   * manejador las líneas no ofrecen «Ajustar reparto».
+   */
+  onDistributionChange?: (purchaseItemId: string, value: PackDistributionValue) => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
   purchaseNumber: string;
 };
+
+const NO_DISTRIBUTION: PackDistributionValue = {};
 
 const noticeClassName =
   "flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300";
@@ -78,14 +93,81 @@ function DisassembleEffects({ effects, name }: { effects: ReceivePreviewDisassem
   );
 }
 
-function PreviewLine({
+/**
+ * «Ajustar reparto» de un surtido que se desarma: despliega el control de reparto
+ * de Inventario con la receta × empaques de la línea. Con el reparto inválido el
+ * control queda a la vista (su aviso es el motivo por el que no se puede recibir).
+ */
+function DistributionAdjust({
   disabled,
-  line,
-  onDisassembleChange,
+  effects,
+  name,
+  onChange,
+  value,
 }: {
   disabled: boolean;
+  effects: ReceivePreviewDisassemble;
+  name: string;
+  onChange: (value: PackDistributionValue) => void;
+  value: PackDistributionValue;
+}) {
+  const [requestedOpen, setRequestedOpen] = useState(false);
+  const panelId = useId();
+  const isInvalid = Boolean(effects.distributionError);
+  const isOpen = requestedOpen || isInvalid;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Button
+          aria-controls={panelId}
+          aria-expanded={isOpen}
+          aria-label={`${isOpen ? "Ocultar reparto" : "Ajustar reparto"} de ${name}`}
+          disabled={disabled || isInvalid}
+          onClick={() => setRequestedOpen(!isOpen)}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          {isOpen ? "Ocultar reparto" : "Ajustar reparto"}
+        </Button>
+        {effects.distribution ? (
+          <p className="text-xs font-medium text-on-surface-variant">Reparto ajustado</p>
+        ) : null}
+      </div>
+      <div id={panelId}>
+        {isOpen ? (
+          <PackDistributionFields
+            components={effects.components.map((component) => ({
+              isActive: !component.productInactive,
+              name: component.name,
+              unitProductId: component.productId,
+              unitsPerPack: component.unitsPerPack,
+            }))}
+            disabled={disabled}
+            legend={`Reparto de ${effects.packsOut} ${effects.packsOut === 1 ? "empaque" : "empaques"}`}
+            onChange={onChange}
+            packQuantity={effects.packsOut}
+            value={value}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PreviewLine({
+  disabled,
+  distributionValue,
+  line,
+  onDisassembleChange,
+  onDistributionChange,
+}: {
+  disabled: boolean;
+  distributionValue?: PackDistributionValue;
   line: ReceivePreviewLine;
   onDisassembleChange?: (purchaseItemId: string, disassemble: boolean) => void;
+  onDistributionChange?: (purchaseItemId: string, value: PackDistributionValue) => void;
 }) {
   const itemId = line.purchaseItemId;
 
@@ -132,6 +214,16 @@ function PreviewLine({
         ) : null
       ) : null}
 
+      {line.disassemble?.canAdjustDistribution && itemId && onDistributionChange ? (
+        <DistributionAdjust
+          disabled={disabled}
+          effects={line.disassemble}
+          name={line.name}
+          onChange={(value) => onDistributionChange(itemId, value)}
+          value={distributionValue ?? NO_DISTRIBUTION}
+        />
+      ) : null}
+
       {line.disassemble ? <DisassembleEffects effects={line.disassemble} name={line.name} /> : null}
 
       {line.disassembleUnavailable ? (
@@ -158,15 +250,19 @@ function PreviewLine({
  * entra, el stock antes → después y el costo unitario. En la línea de un empaque
  * con receta (COM-14) deja marcar o desmarcar «Desarmar al recibir» y, marcada,
  * muestra el segundo efecto: los empaques que salen y lo que sube cada componente.
+ * Si el empaque es un surtido, «Ajustar reparto» deja repartir las unidades entre
+ * sus componentes; los efectos se actualizan con lo tecleado.
  * La lista apila los datos de cada línea y hace scroll dentro del modal, sin
  * desbordar en pantallas estrechas.
  */
 export function PurchaseReceivePreviewModal({
   error,
   isPending = false,
+  distributionValues,
   lines,
   onConfirm,
   onDisassembleChange,
+  onDistributionChange,
   onOpenChange,
   open,
   purchaseNumber,
@@ -196,9 +292,13 @@ export function PurchaseReceivePreviewModal({
             {lines.map((line, index) => (
               <PreviewLine
                 disabled={isPending}
+                distributionValue={
+                  line.purchaseItemId ? distributionValues?.[line.purchaseItemId] : undefined
+                }
                 key={line.purchaseItemId ?? `${line.productId}-${index}`}
                 line={line}
                 onDisassembleChange={onDisassembleChange}
+                onDistributionChange={onDistributionChange}
               />
             ))}
           </ul>
