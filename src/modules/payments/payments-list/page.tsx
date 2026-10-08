@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
@@ -10,18 +10,25 @@ import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
-import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
+import {
+  getTotalPages,
+  ResponsivePagination,
+  useUrlPaginationState,
+} from "@/shared/components/Pagination";
+import { useUrlListState, withUrlListBoundary } from "@/shared/hooks/useUrlListState";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
+import { withReturnTo } from "@/shared/utils/returnTo";
 
+import { PaymentDocumentPicker } from "../components/PaymentDocumentPicker";
 import { RegisterPaymentModal } from "../components/RegisterPaymentModal";
 import { PaymentCancelConfirmModal } from "../components/PaymentCancelConfirmModal";
 import {
   type PaymentListItem,
-  type PaymentsFilters,
   useCancelPayment,
   usePayments,
 } from "../hooks/usePayments";
+import { paymentMethodLabels } from "../payment-details/utils/paymentDetailLabels";
 import { PaymentsContactCell } from "./components/PaymentsContactCell";
 import {
   formatPaymentIdDisplay,
@@ -29,164 +36,154 @@ import {
 } from "./components/PaymentsCopyableCodeCell";
 import { PaymentsCurrencyBadge } from "./components/PaymentsCurrencyBadge";
 import { PaymentsDirectionBadge } from "./components/PaymentsDirectionBadge";
+import { PaymentsDocumentCell } from "./components/PaymentsDocumentCell";
 import { PaymentsExportActions } from "./components/PaymentsExportActions";
 import { PaymentsListFilters } from "./components/PaymentsListFilters";
-import { getPaymentReference } from "./utils/paymentReference";
+import { StalePendingSalesNotice } from "./components/StalePendingSalesNotice";
+import { usePaymentsFilterChips } from "./hooks/usePaymentsFilterChips";
+import {
+  CLEARED_PAYMENTS_FILTERS,
+  hasActivePaymentsFilters,
+  paymentsListSchema,
+  toPaymentsFilters,
+} from "./utils/paymentsListState";
 
-type PaymentsListPageProps = {
-  initialFilters?: PaymentsFilters;
-};
+/** Documento que se está pagando: lo fija el enlace profundo o el buscador. */
+type PayingDocument = { id: string; type: "purchase" | "sale" };
 
-const methodLabel = {
-  efectivo_usd: "Efectivo USD",
-  efectivo_ves: "Efectivo VES",
-  pago_movil: "Pago móvil",
-  punto_venta: "Punto de venta",
-  transferencia: "Transferencia",
-} as const;
+// 9rem: la cabecera «COMPROBANTE» mide ~101 px más 32 px de relleno de la celda.
+const paymentIdCellClass = "min-w-0 w-[9rem] max-w-[9rem] overflow-hidden";
+const paymentIdHeaderClass = "w-[9rem] max-w-[9rem] whitespace-nowrap";
+const documentCellClass = "min-w-0 w-[7rem] max-w-[7rem] overflow-hidden";
+const documentHeaderClass = "w-[7rem] max-w-[7rem]";
 
-const paymentIdCellClass = "min-w-0 w-[5.75rem] max-w-[5.75rem] overflow-hidden";
-const paymentIdHeaderClass = "w-[5.75rem] max-w-[5.75rem]";
-const referenceCellClass = "min-w-0 w-[7rem] max-w-[7rem] overflow-hidden";
-const referenceHeaderClass = "w-[7rem] max-w-[7rem]";
-
-const columns: DataTableColumn<PaymentListItem>[] = [
-  {
-    cellClassName: paymentIdCellClass,
-    className: paymentIdHeaderClass,
-    header: "ID Pago",
-    hideInCard: true,
-    key: "id",
-    render: (payment) => (
-      <PaymentsCopyableCodeCell
-        copyValue={payment.id}
-        displayValue={formatPaymentIdDisplay(payment.id)}
-        maxWidthClass="max-w-[5.75rem]"
-      />
-    ),
-  },
-  {
-    header: "Contacto",
-    key: "contact",
-    render: (payment) => (
-      <PaymentsContactCell
-        name={payment.contact?.name ?? payment.contactId}
-        taxId={payment.contact?.taxId}
-      />
-    ),
-  },
-  {
-    cellClassName: referenceCellClass,
-    className: referenceHeaderClass,
-    header: "Referencia",
-    key: "reference",
-    render: (payment) => {
-      const reference = getPaymentReference(payment);
-
-      return (
+/** `listHref`: URL exacta de la lista, que viaja como `returnTo` al detalle del documento. */
+function buildColumns(listHref: string): DataTableColumn<PaymentListItem>[] {
+  return [
+    {
+      cellClassName: paymentIdCellClass,
+      className: paymentIdHeaderClass,
+      header: "Comprobante",
+      hideInCard: true,
+      key: "id",
+      render: (payment) => (
         <PaymentsCopyableCodeCell
-          copyValue={reference.copyValue}
-          displayValue={reference.displayValue}
-          fullValue={reference.fullValue}
-          href={reference.href}
-          maxWidthClass="w-full max-w-none"
+          copyValue={payment.id}
+          displayValue={formatPaymentIdDisplay(payment.id)}
+          maxWidthClass="max-w-[5.75rem]"
         />
-      );
+      ),
     },
-    visibility: "md",
-  },
-  {
-    cellClassName: "text-on-surface-variant whitespace-nowrap",
-    header: "Fecha",
-    key: "createdAt",
-    render: (payment) => formatDate(payment.createdAt),
-    visibility: "md",
-  },
-  {
-    header: "Método",
-    key: "method",
-    render: (payment) => methodLabel[payment.method],
-  },
-  {
-    align: "center",
-    header: "Moneda",
-    key: "currency",
-    render: (payment) => (
-      <div className="flex justify-center">
-        <PaymentsCurrencyBadge
-          currency={
-            payment.currency ?? (payment.method === "efectivo_usd" ? "USD" : "VES")
-          }
+    {
+      header: "Contacto",
+      key: "contact",
+      render: (payment) => (
+        <PaymentsContactCell
+          name={payment.contact?.name}
+          taxId={payment.contact?.taxId}
         />
-      </div>
-    ),
-    visibility: "lg",
-  },
-  {
-    align: "right",
-    cellClassName: "font-medium tabular-nums",
-    header: "Monto REF",
-    key: "amountRef",
-    render: (payment) => (
-      <span className={payment.status === "anulado" ? "text-muted-foreground line-through" : undefined}>
-        {formatRefUsd(payment.amountRef)}
-      </span>
-    ),
-  },
-  {
-    align: "right",
-    cellClassName: "tabular-nums text-on-surface-variant",
-    header: "Monto VES",
-    key: "amountVes",
-    render: (payment) => formatVesBs(payment.amountVes),
-    visibility: "lg",
-  },
-  {
-    header: "Tipo",
-    key: "direction",
-    render: (payment) => <PaymentsDirectionBadge direction={payment.direction} />,
-  },
-];
+      ),
+    },
+    {
+      cellClassName: documentCellClass,
+      className: documentHeaderClass,
+      header: "Documento",
+      key: "document",
+      render: (payment) => <PaymentsDocumentCell listHref={listHref} payment={payment} />,
+    },
+    {
+      cellClassName: "text-on-surface-variant whitespace-nowrap",
+      header: "Fecha",
+      key: "createdAt",
+      render: (payment) => formatDate(payment.createdAt),
+      visibility: "md",
+    },
+    {
+      header: "Método",
+      key: "method",
+      render: (payment) => paymentMethodLabels[payment.method],
+    },
+    {
+      align: "center",
+      header: "Moneda",
+      key: "currency",
+      render: (payment) => (
+        <div className="flex justify-center">
+          <PaymentsCurrencyBadge
+            currency={
+              payment.currency ?? (payment.method === "efectivo_usd" ? "USD" : "VES")
+            }
+          />
+        </div>
+      ),
+      visibility: "lg",
+    },
+    {
+      align: "right",
+      cellClassName: "font-medium tabular-nums",
+      header: "Monto REF",
+      key: "amountRef",
+      render: (payment) => (
+        <span className={payment.status === "anulado" ? "text-muted-foreground line-through" : undefined}>
+          {formatRefUsd(payment.amountRef)}
+        </span>
+      ),
+    },
+    {
+      align: "right",
+      cellClassName: "tabular-nums text-on-surface-variant",
+      header: "Monto VES",
+      key: "amountVes",
+      render: (payment) => formatVesBs(payment.amountVes),
+      visibility: "lg",
+    },
+    {
+      header: "Tipo",
+      key: "direction",
+      render: (payment) => <PaymentsDirectionBadge direction={payment.direction} />,
+    },
+  ];
+}
 
-export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps) {
+function PaymentsList() {
   const { can, role } = usePermission();
   const salePaymentsOnly = role ? !canViewPurchasePayments(role) : false;
   const canRegisterPayment = can("payments.manage") || can("sales.create");
-  const [filters, setFilters] = useState<PaymentsFilters>(initialFilters);
+  // Filtros, página y tamaño viven en la URL: recarga, "atrás" y volver de un detalle los conservan.
+  const list = useUrlListState(paymentsListSchema);
+  const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
   const [paymentToCancel, setPaymentToCancel] = useState<string | null>(null);
-  const { limit, setLimit, setSkip, skip } = usePaginationState([
-    filters.contactId,
-    filters.direction,
-    filters.purchaseId,
-    filters.saleId,
-  ]);
-  const effectiveFilters: PaymentsFilters = salePaymentsOnly
-    ? {
-        ...filters,
-        direction:
-          filters.direction === "salida" || !filters.direction
-            ? "entrada"
-            : filters.direction,
-        purchaseId: undefined,
-      }
-    : filters;
+  const effectiveFilters = toPaymentsFilters(list.state, salePaymentsOnly);
   const payments = usePayments({ ...effectiveFilters, limit, skip });
   const cancelPayment = useCancelPayment();
   const paymentItems = getPaginatedItems(payments.data);
   const totalPayments = payments.data?.total ?? 0;
+  const filterChips = usePaymentsFilterChips(effectiveFilters, payments.isSuccess);
+  const columns = useMemo(() => buildColumns(list.href), [list.href]);
+  const { setState: setListState } = list;
+  const lastPage = getTotalPages(totalPayments, limit);
+  const isPastLastPage = payments.isSuccess && !payments.isFetching && list.state.page > lastPage;
 
-  function handleFilterChange(patch: Partial<PaymentsFilters>) {
-    setFilters((current) => {
-      const next = { ...current, ...patch };
-      if (salePaymentsOnly) {
-        next.purchaseId = undefined;
-        if (!next.direction || next.direction === "salida") {
-          next.direction = "entrada";
-        }
-      }
-      return next;
-    });
-    setSkip(0);
+  // Una página más allá de la última (`?page=99`, o un enlace viejo tras anular
+  // pagos) cae en la última que existe, y la URL lo refleja.
+  useEffect(() => {
+    if (isPastLastPage) {
+      setListState({ page: lastPage });
+    }
+  }, [isPastLastPage, lastPage, setListState]);
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const [payingDocument, setPayingDocument] = useState<PayingDocument | null>(null);
+  const { purchaseId: linkedPurchaseId, saleId: linkedSaleId } = effectiveFilters;
+
+  function handleRegisterPayment() {
+    // Enlace profundo (`?saleId=` o `?purchaseId=`, uno solo): el documento ya está elegido.
+    if (linkedSaleId && !linkedPurchaseId) {
+      setPayingDocument({ id: linkedSaleId, type: "sale" });
+    } else if (linkedPurchaseId && !linkedSaleId) {
+      setPayingDocument({ id: linkedPurchaseId, type: "purchase" });
+    } else {
+      setIsPickerOpen(true);
+    }
   }
 
   function handleCancelPayment() {
@@ -205,19 +202,20 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
       <EntityListPage
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
-            <PaymentsExportActions exportFilters={effectiveFilters} />
+            <PaymentsExportActions
+              exportFilters={effectiveFilters}
+              filterLabels={filterChips.filter((chip) => chip.isResolved).map((chip) => chip.label)}
+            />
             {canRegisterPayment ? (
-              <RegisterPaymentModal
-                allowPurchaseContext={can("payments.manage") && !salePaymentsOnly}
-                purchaseId={effectiveFilters.purchaseId}
-                saleId={effectiveFilters.saleId}
-                trigger={
-                  <Button className="w-full gap-2 shadow-sm sm:w-auto" size="sm">
-                    <Plus aria-hidden className="size-5" />
-                    Registrar pago
-                  </Button>
-                }
-              />
+              <Button
+                className="w-full gap-2 shadow-sm sm:w-auto"
+                onClick={handleRegisterPayment}
+                size="sm"
+                type="button"
+              >
+                <Plus aria-hidden className="size-5" />
+                Registrar pago
+              </Button>
             ) : null}
           </div>
         }
@@ -229,16 +227,22 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
         layout="sections"
         title="Pagos"
       >
+        <StalePendingSalesNotice listHref={list.href} />
+
         <PaymentsListFilters
-          filters={effectiveFilters}
-          hidePurchaseFilters={salePaymentsOnly}
-          onChange={handleFilterChange}
+          chips={filterChips}
+          hasActiveFilters={hasActivePaymentsFilters(list.state, salePaymentsOnly)}
+          onChange={list.setState}
+          onClear={() => list.setState(CLEARED_PAYMENTS_FILTERS)}
+          onRemoveChip={(key) => list.setField(key, "")}
+          salePaymentsOnly={salePaymentsOnly}
+          state={list.state}
         />
 
         <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
           <DataTable
             actions={(payment) => [
-              { href: `/payments/${payment.id}`, label: "Ver comprobante" },
+              { href: withReturnTo(`/payments/${payment.id}`, list.href), label: "Ver comprobante" },
               ...(can("payments.manage")
                 ? [
                     {
@@ -252,10 +256,6 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
                   ]
                 : []),
             ]}
-            cardSubtitle={(payment) => {
-              const reference = getPaymentReference(payment);
-              return reference.displayValue;
-            }}
             cardTitle={(payment) => formatPaymentIdDisplay(payment.id)}
             columns={columns}
             data={paymentItems}
@@ -264,17 +264,15 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
               <EmptyState
                 action={
                   canRegisterPayment ? (
-                    <RegisterPaymentModal
-                      allowPurchaseContext={can("payments.manage") && !salePaymentsOnly}
-                      purchaseId={effectiveFilters.purchaseId}
-                      saleId={effectiveFilters.saleId}
-                      trigger={
-                        <Button className="gap-2" size="sm">
-                          <Plus aria-hidden className="size-5" />
-                          Registrar pago
-                        </Button>
-                      }
-                    />
+                    <Button
+                      className="gap-2"
+                      onClick={handleRegisterPayment}
+                      size="sm"
+                      type="button"
+                    >
+                      <Plus aria-hidden className="size-5" />
+                      Registrar pago
+                    </Button>
                   ) : undefined
                 }
                 description="Registra un pago o ajusta los filtros para ver otros resultados."
@@ -304,6 +302,31 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
         </div>
       </EntityListPage>
 
+      {canRegisterPayment ? (
+        <>
+          <PaymentDocumentPicker
+            canPayPurchases={can("payments.manage") && !salePaymentsOnly}
+            onOpenChange={setIsPickerOpen}
+            onSelect={(document) => {
+              setIsPickerOpen(false);
+              setPayingDocument({ id: document.id, type: document.type });
+            }}
+            open={isPickerOpen}
+          />
+          {/* Cerrar el modal, con o sin pago, cierra todo: el buscador no se reabre. */}
+          <RegisterPaymentModal
+            onOpenChange={(open) => {
+              if (!open) {
+                setPayingDocument(null);
+              }
+            }}
+            open={payingDocument !== null}
+            purchaseId={payingDocument?.type === "purchase" ? payingDocument.id : undefined}
+            saleId={payingDocument?.type === "sale" ? payingDocument.id : undefined}
+          />
+        </>
+      ) : null}
+
       <PaymentCancelConfirmModal
         error={cancelPayment.error?.message}
         isConfirming={cancelPayment.isPending}
@@ -321,3 +344,5 @@ export function PaymentsListPage({ initialFilters = {} }: PaymentsListPageProps)
     </div>
   );
 }
+
+export const PaymentsListPage = withUrlListBoundary(PaymentsList);

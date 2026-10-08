@@ -15,6 +15,7 @@ import {
   ContactActivityTimeline,
   type ContactActivityTimelineItem,
 } from "./ContactActivityTimeline";
+import { ContactBalancesTab, getContactBalanceSections } from "./ContactBalancesTab";
 import { ContactSupplierProductsTab } from "./ContactSupplierProductsTab";
 
 const salesColumns: DataTableColumn<SaleMock>[] = [
@@ -58,7 +59,7 @@ const baseTabs = [
 ] as const;
 
 type BaseTabId = (typeof baseTabs)[number]["id"];
-type ContactDetailTabId = BaseTabId | "products";
+type ContactDetailTabId = BaseTabId | "balances" | "products";
 
 type QuerySlice<T> = {
   data: T[];
@@ -106,8 +107,12 @@ export function ContactDetailActivityTabs({
   const showProductsTab =
     isSupplierContact(contactType) && can("products.view") && canSeeSuppliers;
   const showPurchasesTab = can("purchases.view") && canSeeSuppliers;
+  // Sin permiso para ninguna sección no hay pestaña: nunca una que acabe en 403.
+  const balanceSections = getContactBalanceSections(contactType, { can, role });
+  const showBalancesTab = balanceSections.length > 0;
   const tabs = [
     ...baseTabs.filter((tab) => tab.id !== "purchases" || showPurchasesTab),
+    ...(showBalancesTab ? [{ id: "balances" as const, label: "Saldos" }] : []),
     ...(showProductsTab ? [{ id: "products" as const, label: "Productos" }] : []),
   ];
 
@@ -208,6 +213,21 @@ export function ContactDetailActivityTabs({
             loadingRows={3}
             onRetry={payments.onRetry}
             variant="stitch-purchases"
+          />
+        </div>
+      ) : null}
+
+      {activeTab === "balances" && showBalancesTab ? (
+        <div
+          aria-labelledby={`${baseId}-balances`}
+          id={`${baseId}-balances-panel`}
+          role="tabpanel"
+        >
+          <ContactBalancesTab
+            contactId={contactId}
+            contactName={contactName ?? ""}
+            returnHref={`/contacts/${encodeURIComponent(contactId)}`}
+            sections={balanceSections}
           />
         </div>
       ) : null}

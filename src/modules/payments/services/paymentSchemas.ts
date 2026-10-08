@@ -15,6 +15,53 @@ export const paymentMethodSchema = z.enum([
   "transferencia",
 ]);
 
+/**
+ * Tope de cada texto libre de un cobro. Las columnas son `text` sin limite, asi que
+ * el tope lo pone el servidor: holgado frente a lo que envian el POS y el formulario
+ * de abono (etiqueta de banco de la lista, telefono de 11 digitos, referencia bancaria).
+ */
+export const PAYMENT_TEXT_LIMITS = {
+  bankName: 120,
+  notes: 2000,
+  phone: 30,
+  referenceCode: 100,
+} as const;
+
+/**
+ * Tope de un monto (y de un vuelto), en la moneda que sea. `register_payment` ya
+ * rechaza lo que supere el saldo; este tope corta antes los valores absurdos
+ * (`1e308`), que en el mock dejaban el documento con `paidVes` infinito.
+ */
+export const PAYMENT_AMOUNT_MAX = 1_000_000_000_000;
+
+const AMOUNT_TOO_BIG_MESSAGE = "El monto no puede superar 1.000.000.000.000.";
+
+/**
+ * Caracteres de control que no se imprimen (NUL incluido, que Postgres no admite en
+ * `text`). Tabulador, salto de linea y retorno de carro si se aceptan.
+ */
+function hasControlCharacter(value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+
+    if ((code < 32 && code !== 9 && code !== 10 && code !== 13) || code === 127) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/** Texto libre de un cobro: con tope de longitud y sin caracteres de control. */
+function paymentText(field: keyof typeof PAYMENT_TEXT_LIMITS) {
+  const limit = PAYMENT_TEXT_LIMITS[field];
+
+  return z
+    .string()
+    .max(limit, `El texto no puede superar ${limit} caracteres.`)
+    .refine((value) => !hasControlCharacter(value), "El texto contiene caracteres no permitidos.");
+}
+
 /** Desglose de billetes por moneda: `{"USD":{"1":3}}`. */
 export const denominationsSchema = z.object({
   USD: z.record(z.string(), z.number().int().nonnegative()).optional(),
@@ -26,25 +73,25 @@ export const denominationsSchema = z.object({
  * opcionales incluso en metodos bancarios (spec cobro-pos-billetes §4).
  */
 export const changeSchema = z.object({
-  amount: z.number().nonnegative(),
-  bankName: z.string().optional(),
+  amount: z.number().nonnegative().max(PAYMENT_AMOUNT_MAX, AMOUNT_TOO_BIG_MESSAGE),
+  bankName: paymentText("bankName").optional(),
   method: paymentMethodSchema.optional(),
-  phone: z.string().optional(),
-  referenceCode: z.string().optional(),
+  phone: paymentText("phone").optional(),
+  referenceCode: paymentText("referenceCode").optional(),
 });
 
 /** Campos de una linea de cobro, sin el documento al que pertenece. */
 export const paymentLineFields = {
-  amount: z.number().positive(),
-  bankName: z.string().optional(),
+  amount: z.number().positive().max(PAYMENT_AMOUNT_MAX, AMOUNT_TOO_BIG_MESSAGE),
+  bankName: paymentText("bankName").optional(),
   change: changeSchema.optional(),
   changeDenominations: denominationsSchema.nullish(),
   currency: z.enum(["USD", "VES"]).optional(),
   method: paymentMethodSchema,
-  notes: z.string().optional(),
-  phone: z.string().optional(),
+  notes: paymentText("notes").optional(),
+  phone: paymentText("phone").optional(),
   receivedDenominations: denominationsSchema.nullish(),
-  referenceCode: z.string().optional(),
+  referenceCode: paymentText("referenceCode").optional(),
 };
 
 type PaymentLine = z.infer<z.ZodObject<typeof paymentLineFields>>;

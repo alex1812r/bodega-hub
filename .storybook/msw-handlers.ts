@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw";
 
 import { ApiError } from "../src/lib/api/apiError";
+import { parsePagination } from "../src/lib/api/pagination";
 import {
   createContact,
   getContactActivity,
@@ -24,6 +25,7 @@ import {
   listInventory,
   listStockMovements,
 } from "../src/modules/inventory/services/inventory.mock-server";
+import { listOpenDocuments } from "../src/modules/payments/services/openDocuments.mock-server";
 import {
   createPayment,
   getPaymentById,
@@ -105,6 +107,7 @@ import {
   type UserRole,
 } from "../src/shared/auth/permissions";
 import { mockUserProfiles } from "../src/shared/mocks/erp-data";
+import { DEFAULT_STORE_ID } from "../src/shared/stores/constants";
 
 function searchParams(request: Request) {
   return new URL(request.url).searchParams;
@@ -303,6 +306,31 @@ export const mswHandlers = [
     fromService(() => listPayments(searchParams(request))),
   ),
   http.post("/api/payments", async ({ request }) => fromJson(request, createPayment, 201)),
+  // Antes de "/api/payments/:id": MSW responde con el primer handler que coincide.
+  http.get("/api/payments/open-documents", async ({ request }) => {
+    const query = searchParams(request);
+    const type = query.get("type");
+    const olderThanDays = Number(query.get("olderThanDays"));
+
+    try {
+      return jsonData(
+        await listOpenDocuments(
+          {
+            ...parsePagination(query),
+            contactId: query.get("contactId") || undefined,
+            from: query.get("from") || undefined,
+            olderThanDays: olderThanDays >= 1 ? olderThanDays : undefined,
+            search: query.get("search") || undefined,
+            to: query.get("to") || undefined,
+            types: type === "sale" || type === "purchase" ? [type] : ["sale", "purchase"],
+          },
+          DEFAULT_STORE_ID,
+        ),
+      );
+    } catch (error) {
+      return jsonError(error);
+    }
+  }),
   http.get("/api/payments/:id", ({ params }) =>
     fromService(() => getPaymentById(String(params.id))),
   ),

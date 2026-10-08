@@ -1,8 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
-import { useCancelPayment, useCreatePayment, usePayment, usePayments } from "./usePayments";
+import {
+  CREATE_PAYMENT_TIMEOUT_MS,
+  useCancelPayment,
+  useCreatePayment,
+  usePayment,
+  usePayments,
+} from "./usePayments";
 
 function paginated<T>(items: T[]) {
   return { items, limit: 10, skip: 0, total: items.length };
@@ -119,5 +125,208 @@ describe("payments hooks", () => {
       "/api/payments/pay-001/cancel",
       expect.objectContaining({ method: "PATCH" }),
     );
+  });
+
+  describe("PAG-01a: idempotencia e invalidacion de caja y baul", () => {
+    function createClientWrapper() {
+      const queryClient = new QueryClient({
+        defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+      });
+      const invalidate = jest.spyOn(queryClient, "invalidateQueries");
+
+      function Wrapper({ children }: { children: ReactNode }) {
+        return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+      }
+
+      return {
+        invalidatedKeys: () => invalidate.mock.calls.map(([filters]) => filters?.queryKey),
+        Wrapper,
+      };
+    }
+
+    it("envia el clientRequestId en el cuerpo del POST", async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ data: { id: "pay-new" } }, 201));
+
+      const { Wrapper } = createClientWrapper();
+      const { result } = renderHook(() => useCreatePayment(), { wrapper: Wrapper });
+
+      result.current.mutate({
+        amount: 100,
+        clientRequestId: "attempt-1",
+        currency: "VES",
+        method: "efectivo_ves",
+        purchaseId: "purchase-002",
+      });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({
+        amount: 100,
+        clientRequestId: "attempt-1",
+        currency: "VES",
+        method: "efectivo_ves",
+        purchaseId: "purchase-002",
+      });
+    });
+
+    it("al registrar un pago invalida caja y baul ademas de los documentos", async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ data: { id: "pay-new" } }, 201));
+
+      const { invalidatedKeys, Wrapper } = createClientWrapper();
+      const { result } = renderHook(() => useCreatePayment(), { wrapper: Wrapper });
+
+      result.current.mutate({ amount: 100, method: "efectivo_ves", saleId: "sale-002" });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(invalidatedKeys()).toEqual(
+        expect.arrayContaining([["sales"], ["purchases"], ["contacts"], ["cash"], ["vault"]]),
+      );
+    });
+
+    it("PAG-F5: el pago nuevo aparece de inmediato en la lista y ademas la lista se revalida", async () => {
+      // El alta en Supabase devuelve la fila sin `contact` ni `relatedDocument`:
+      // la insercion optimista la muestra al instante y el refetch la completa.
+      const created = { createdAt: "2026-05-18T14:30:00.000Z", id: "pay-new", saleId: "sale-002" };
+      const complete = { ...created, contact: { id: "cont-customer", name: "Cliente" } };
+      let resolveRefetch: (response: Response) => void = () => undefined;
+
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ data: paginated([{ id: "pay-001" }]) }))
+        .mockResolvedValueOnce(jsonResponse({ data: created }, 201))
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) => {
+              resolveRefetch = resolve;
+            }),
+        );
+
+      const { invalidatedKeys, Wrapper } = createClientWrapper();
+      const { result } = renderHook(
+        () => ({ create: useCreatePayment(), list: usePayments() }),
+        { wrapper: Wrapper },
+      );
+
+      await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
+      result.current.create.mutate({ amount: 100, method: "efectivo_ves", saleId: "sale-002" });
+
+      // Antes de que responda el refetch la fila ya esta, tal como la devolvio el alta.
+      await waitFor(() =>
+        expect(result.current.list.data?.items.map((item) => item.id)).toEqual([
+          "pay-new",
+          "pay-001",
+        ]),
+      );
+      expect(result.current.list.data?.total).toBe(2);
+      expect(invalidatedKeys()).toContainEqual(["payments"]);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+      expect(fetchMock.mock.calls[2][0]).toBe("/api/payments");
+
+      resolveRefetch(jsonResponse({ data: paginated([complete, { id: "pay-001" }]) }));
+
+      await waitFor(() =>
+        expect(result.current.list.data?.items[0].contact?.name).toBe("Cliente"),
+      );
+    });
+
+    it("si el servidor rechaza el pago no invalida nada", async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ error: { code: "BAD_REQUEST", message: "Rechazado." } }, 400),
+      );
+
+      const { invalidatedKeys, Wrapper } = createClientWrapper();
+      const { result } = renderHook(() => useCreatePayment(), { wrapper: Wrapper });
+
+      result.current.mutate({ amount: 100, method: "efectivo_ves", saleId: "sale-002" });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(invalidatedKeys()).toEqual([]);
+    });
+
+    it("al anular un pago invalida caja y baul", async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ data: { id: "pay-001", status: "anulado" } }),
+      );
+
+      const { invalidatedKeys, Wrapper } = createClientWrapper();
+      const { result } = renderHook(() => useCancelPayment("pay-001"), { wrapper: Wrapper });
+
+      result.current.mutate("pay-001");
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(invalidatedKeys()).toEqual(
+        expect.arrayContaining([["payments"], ["sales"], ["purchases"], ["cash"], ["vault"]]),
+      );
+    });
+  });
+
+  // PAG-F6 U3: sin tiempo limite, una respuesta que nunca llega dejaba el modal bloqueado.
+  describe("tiempo limite del POST de pago", () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("aborta la peticion al vencer el tiempo limite y la mutacion falla", async () => {
+      jest.useFakeTimers();
+
+      let signal: AbortSignal | null | undefined;
+
+      fetchMock.mockImplementation(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            signal = init?.signal;
+            signal?.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            );
+          }),
+      );
+
+      const { result } = renderHook(() => useCreatePayment(), { wrapper: createWrapper() });
+      let failure: unknown;
+
+      act(() => {
+        result.current
+          .mutateAsync({ amount: 100, method: "efectivo_ves", saleId: "sale-002" })
+          .catch((error: unknown) => {
+            failure = error;
+          });
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(CREATE_PAYMENT_TIMEOUT_MS - 1);
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(signal?.aborted).toBe(false);
+      expect(failure).toBeUndefined();
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1);
+      });
+
+      expect(signal?.aborted).toBe(true);
+      expect(failure).toBeInstanceOf(DOMException);
+    });
+
+    it("una respuesta a tiempo no deja el temporizador vivo ni aborta nada", async () => {
+      jest.useFakeTimers();
+
+      let signal: AbortSignal | null | undefined;
+
+      fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+        signal = init?.signal;
+
+        return jsonResponse({ data: { id: "pay-new" } });
+      });
+
+      const { result } = renderHook(() => useCreatePayment(), { wrapper: createWrapper() });
+
+      await act(async () => {
+        await result.current.mutateAsync({ amount: 100, method: "efectivo_ves", saleId: "sale-002" });
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(CREATE_PAYMENT_TIMEOUT_MS * 2);
+      });
+
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal?.aborted).toBe(false);
+    });
   });
 });

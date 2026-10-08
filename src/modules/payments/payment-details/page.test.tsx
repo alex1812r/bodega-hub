@@ -2,16 +2,29 @@
  * SHR-19 M4 · en el detalle de pago, el rechazo de «Anular pago» se ve dentro del modal
  * de confirmacion (que sigue abierto para reintentar), no detras, y no deja promesas
  * sin capturar.
+ *
+ * PAG-F2 · «Volver» de la cabecera regresa a la lista de origen que viaja en `returnTo`.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+/** Query de la URL del detalle, la que lee «Volver». */
+let mockSearch = "";
+const mockRouter = { back: jest.fn(), push: jest.fn(), replace: jest.fn() };
+
+jest.mock("next/navigation", () => ({
+  usePathname: () => "/payments/pay-001",
+  useRouter: () => mockRouter,
+  useSearchParams: () => new URLSearchParams(mockSearch),
+}));
 jest.mock("../../../shared/auth/usePermission", () => ({
   usePermission: () => ({ can: () => true, role: "admin" }),
 }));
 jest.mock("../components/RegisterPaymentModal", () => ({
-  RegisterPaymentModal: () => null,
+  RegisterPaymentModal: ({ purchaseId, saleId }: { purchaseId?: string; saleId?: string }) => (
+    <output data-testid="register-payment-modal">{JSON.stringify({ purchaseId, saleId })}</output>
+  ),
 }));
 jest.mock("./components/PaymentDetailPageHeader", () => ({
   PaymentDetailPageHeader: () => null,
@@ -27,7 +40,10 @@ import { PaymentDetailsPage } from "./page";
 
 const REJECTION = "El pago pertenece a una caja ya cerrada y transferida.";
 
-function payment(status: "activo" | "anulado" = "activo") {
+function payment(
+  status: "activo" | "anulado" = "activo",
+  overrides: Record<string, unknown> = {},
+) {
   return {
     amount: 100,
     amountRef: 0.2,
@@ -41,6 +57,7 @@ function payment(status: "activo" | "anulado" = "activo") {
     refRateVes: 510,
     saleId: "sale-002",
     status,
+    ...overrides,
   };
 }
 
@@ -58,9 +75,11 @@ describe("PaymentDetailsPage · anular pago", () => {
   const unhandled = jest.fn();
   let cancelResponse: () => Promise<Response>;
   let currentStatus: "activo" | "anulado";
+  let paymentOverrides: Record<string, unknown>;
 
   beforeEach(() => {
     currentStatus = "activo";
+    paymentOverrides = {};
     cancelResponse = async () =>
       jsonResponse({ error: { code: "CONFLICT", message: REJECTION } }, 409);
     unhandled.mockReset();
@@ -70,7 +89,7 @@ describe("PaymentDetailsPage · anular pago", () => {
         return cancelResponse();
       }
 
-      return jsonResponse({ data: payment(currentStatus) });
+      return jsonResponse({ data: payment(currentStatus, paymentOverrides) });
     });
     global.fetch = fetchMock;
     process.on("unhandledRejection", unhandled);
@@ -109,6 +128,43 @@ describe("PaymentDetailsPage · anular pago", () => {
       </QueryClientProvider>,
     );
   }
+
+  describe("PAG-03b · «Registrar otro pago» siempre lleva el documento del pago", () => {
+    it("pago de una venta: el modal recibe esa venta", async () => {
+      renderPage();
+
+      expect(await screen.findByTestId("register-payment-modal")).toHaveTextContent(
+        JSON.stringify({ saleId: "sale-002" }),
+      );
+    });
+
+    it("pago de una compra: el modal recibe esa compra", async () => {
+      paymentOverrides = { direction: "salida", purchaseId: "purchase-002", saleId: undefined };
+      renderPage();
+
+      expect(await screen.findByTestId("register-payment-modal")).toHaveTextContent(
+        JSON.stringify({ purchaseId: "purchase-002" }),
+      );
+    });
+
+    it("pago sin venta ni compra: no se ofrece el modal (no hay documento que pagar)", async () => {
+      paymentOverrides = { saleId: undefined };
+      renderPage();
+
+      await screen.findByRole("button", { name: "Anular pago" });
+
+      expect(screen.queryByTestId("register-payment-modal")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Registrar otro pago" })).toBeDisabled();
+    });
+
+    it("pago anulado: no se ofrece el modal", async () => {
+      currentStatus = "anulado";
+      renderPage();
+
+      expect(await screen.findByRole("button", { name: "Registrar otro pago" })).toBeDisabled();
+      expect(screen.queryByTestId("register-payment-modal")).not.toBeInTheDocument();
+    });
+  });
 
   it("muestra el rechazo del servidor dentro del modal, que sigue abierto para reintentar", async () => {
     const user = userEvent.setup();
@@ -189,4 +245,89 @@ describe("PaymentDetailsPage · anular pago", () => {
     await settle();
     expect(unhandled).not.toHaveBeenCalled();
   });
+});
+
+// PAG-F6 U2: un re-pedido fallido sustituia todo el detalle (y el modal de «Registrar
+// otro pago» abierto) por la pantalla de error, aunque el pago ya estuviera cargado.
+describe("PaymentDetailsPage · re-pedido fallido (PAG-F6 U2)", () => {
+  const serverFailure = async () =>
+    jsonResponse({ error: { code: "INTERNAL_ERROR", message: "Fallo interno." } }, 500);
+
+  function renderWithClient() {
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PaymentDetailsPage paymentId="pay-001" />
+      </QueryClientProvider>,
+    );
+
+    return queryClient;
+  }
+
+  it("con el pago cargado, si un re-pedido responde 500 el detalle y el modal siguen montados", async () => {
+    global.fetch = jest.fn(async () => jsonResponse({ data: payment() })) as unknown as typeof fetch;
+
+    const queryClient = renderWithClient();
+
+    expect(await screen.findByTestId("register-payment-modal")).toBeInTheDocument();
+
+    global.fetch = jest.fn(serverFailure) as unknown as typeof fetch;
+    await act(async () => {
+      await queryClient.refetchQueries();
+      // React Query avisa a la pantalla en una tarea posterior al fallo.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+    expect(global.fetch).toHaveBeenCalled();
+    expect(queryClient.getQueryState(["payments", "detail", "pay-001"])?.status).toBe("error");
+    expect(screen.getByTestId("register-payment-modal")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Anular pago" })).toBeInTheDocument();
+    expect(screen.queryByText("No pudimos cargar el pago")).not.toBeInTheDocument();
+  });
+
+  it("sin pago cargado sigue mostrando la pantalla de error", async () => {
+    global.fetch = jest.fn(serverFailure) as unknown as typeof fetch;
+    renderWithClient();
+
+    expect(await screen.findByText("No pudimos cargar el pago")).toBeInTheDocument();
+    expect(screen.getByText("Fallo interno.")).toBeInTheDocument();
+    expect(screen.queryByTestId("register-payment-modal")).not.toBeInTheDocument();
+  });
+});
+
+describe("PaymentDetailPageHeader · «Volver» (PAG-F2)", () => {
+  // El resto del archivo sustituye la cabecera por un doble: aqui se pinta la real.
+  const { PaymentDetailPageHeader } = jest.requireActual<
+    typeof import("./components/PaymentDetailPageHeader")
+  >("./components/PaymentDetailPageHeader");
+  const PAYMENTS_LIST = "/payments?from=2026-05-01&method=pago_movil&page=2";
+
+  afterEach(() => {
+    mockSearch = "";
+  });
+
+  function backHref(search: string) {
+    mockSearch = search;
+    render(<PaymentDetailPageHeader />);
+
+    return screen.getByRole("link", { name: "Volver" }).getAttribute("href");
+  }
+
+  it("con returnTo vuelve a la URL exacta de la lista de origen", () => {
+    expect(backHref(`returnTo=${encodeURIComponent(PAYMENTS_LIST)}`)).toBe(PAYMENTS_LIST);
+  });
+
+  it("sin returnTo vuelve al listado de pagos", () => {
+    expect(backHref("")).toBe("/payments");
+  });
+
+  it.each(["https://evil.example/payments", "//evil.example", "/api/payments"])(
+    "no sigue un returnTo que no es una ruta interna segura (%s)",
+    (returnTo) => {
+      expect(backHref(`returnTo=${encodeURIComponent(returnTo)}`)).toBe("/payments");
+    },
+  );
 });

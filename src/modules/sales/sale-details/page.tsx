@@ -2,9 +2,14 @@
 
 import { useCallback, useState } from "react";
 
+import { RegisterPaymentModal } from "@/modules/payments/components/RegisterPaymentModal";
+import type { PaymentDetail } from "@/modules/payments/hooks/usePayments";
 import { useSettings } from "@/modules/settings/hooks/useSettings";
+import { usePermission } from "@/shared/auth/usePermission";
+import { Button } from "@/shared/components/Button";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { roundMoney } from "@/shared/utils/currency";
 
 import {
   useCancelSale,
@@ -31,6 +36,16 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
   const cancelSale = useCancelSale(saleId);
   const returnSale = useReturnSale(saleId);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isCollecting, setIsCollecting] = useState(false);
+  const { can } = usePermission();
+
+  // El modal deja abonar varias veces seguidas; cuando el servidor confirma que el
+  // saldo quedó en 0 ya no hay nada que cobrar y se cierra solo.
+  const handlePaymentRegistered = useCallback((payment: PaymentDetail) => {
+    if (payment.pendingBalanceVes !== undefined && roundMoney(payment.pendingBalanceVes) <= 0) {
+      setIsCollecting(false);
+    }
+  }, []);
 
   const handlePrint = useCallback(() => {
     window.print();
@@ -56,7 +71,9 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
     return <DetailSkeleton />;
   }
 
-  if (sale.error || !sale.data) {
+  // Solo sin datos: si falla un re-pedido con la venta ya cargada, el detalle (y el
+  // modal de cobro abierto) siguen en pantalla.
+  if (!sale.data) {
     return (
       <ErrorState
         description={
@@ -74,6 +91,13 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
   const pendingVes = Math.max(0, data.totalVes - data.paidVes);
   const seller = resolveSeller(data.userId);
   const companyName = settings.data?.businessName ?? undefined;
+  // Mismas reglas que el servidor: `register_payment` solo cobra ventas pagadas o
+  // pendientes (no borrador, anulada ni devuelta) con saldo, y `POST /api/payments`
+  // exige `payments.manage` o `sales.create`.
+  const canCollectBalance =
+    roundMoney(pendingVes) > 0 &&
+    (data.status === "pendiente_pago" || data.status === "pagada") &&
+    (can("payments.manage") || can("sales.create"));
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">
@@ -87,9 +111,24 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
         onDownloadPdf={() => void handleDownloadPdf()}
         onPrint={handlePrint}
         onReturn={() => returnSale.mutate(saleId)}
-        saleId={data.id}
+        primaryAction={
+          canCollectBalance ? (
+            <Button onClick={() => setIsCollecting(true)} size="sm" type="button">
+              Cobrar saldo
+            </Button>
+          ) : null
+        }
         status={data.status}
       />
+
+      {canCollectBalance || isCollecting ? (
+        <RegisterPaymentModal
+          onOpenChange={setIsCollecting}
+          onRegistered={handlePaymentRegistered}
+          open={isCollecting}
+          saleId={data.id}
+        />
+      ) : null}
 
       {cancelSale.error || returnSale.error ? (
         <ErrorState

@@ -269,7 +269,7 @@ Abiertos, fuera del alcance del libro de stock (requieren decisión de producto)
 |---|---|---|
 | P4-1 | alta | `handle_new_user()` (`20260716c-seed-superadmin.sql`) toma `role` y `store_id` de `raw_user_meta_data`, que el cliente controla en el signup: alta como admin de cualquier tienda si el signup público está activo |
 | P4-2 | media | Un vendedor por API puede vender con `discountRef = subtotal − 0,01` (C19 solo rechaza descuento ≥ subtotal) |
-| P4-3 | media | `register_payment` no tiene clave de idempotencia: un reintento de abono duplica pago y asiento |
+| P4-3 | media | **Cerrado** con `20261008a-register-payment-idempotency.sql` (plan ux-mejoras, PAG-06a): `register_payment` acepta `p_client_request_id` (única por tienda, con huella del contenido); un reintento con la misma clave devuelve el pago original sin tocar documento, caja ni baúl, y otro contenido responde `PT409`. Sin clave se comporta como antes. `POST /api/payments` la recibe como `clientRequestId`. Test: `regression/payments-idempotency.test.ts`. Tras reaplicar `b`, `c`, `f`, `g` o `h` hay que reaplicar este parche (reinstalan la firma de 12 argumentos) |
 | R15 / M2 | media | Caja: anular o devolver un cobro en efectivo de una sesión cerrada y sin transferir deja el cierre teórico por encima de los cobros vivos; una venta cuyo cierre ya se transfirió no se puede devolver. Ver [`cuadre-baul.md`](cuadre-baul.md) |
 | N7 | media | Un usuario desactivado conserva la lectura de su tienda por PostgREST (no escribe ni cruza tiendas) |
 

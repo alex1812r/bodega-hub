@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ApiError, toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import {
   requireStoreAnyPermission,
   requireStorePermission,
@@ -25,6 +26,10 @@ import type { Permission } from "@/shared/auth/permissions";
 const createPaymentSchema = z
   .object({
     ...paymentLineFields,
+    // Clave de idempotencia por intento (P4-3): con la misma clave en la misma
+    // tienda el servidor devuelve el pago original en vez de registrar otro.
+    // Opcional para no romper clientes que aun no la envian (app movil).
+    clientRequestId: z.string().uuid().optional(),
     purchaseId: z.string().optional(),
     saleId: z.string().optional(),
   })
@@ -43,6 +48,64 @@ const createPaymentSchema = z
     }
   });
 
+const PAYMENT_METHODS = [
+  "efectivo_usd",
+  "efectivo_ves",
+  "pago_movil",
+  "punto_venta",
+  "transferencia",
+] as const;
+
+const LIST_FILTER_KEYS = ["method", "from", "to"] as const;
+
+/** Fecha de calendario Caracas `YYYY-MM-DD` que ademas exista (no `2026-02-31`). */
+const isoDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe tener el formato YYYY-MM-DD.")
+  .refine((value) => {
+    const date = new Date(`${value}T12:00:00.000Z`);
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }, "La fecha no es valida.");
+
+const listPaymentsQuerySchema = z
+  .object({
+    from: isoDateSchema.optional(),
+    method: z.enum(PAYMENT_METHODS).optional(),
+    to: isoDateSchema.optional(),
+  })
+  .refine((value) => !value.from || !value.to || value.from <= value.to, {
+    message: "La fecha inicial no puede ser posterior a la final.",
+    path: ["from"],
+  });
+
+/**
+ * Valida `method`, `from` y `to` y los deja normalizados en la query que reciben
+ * los servicios: un parametro vacio o en blanco equivale a no enviarlo.
+ */
+function withValidatedListFilters(searchParams: URLSearchParams) {
+  const filters = listPaymentsQuerySchema.parse(
+    Object.fromEntries(
+      LIST_FILTER_KEYS.flatMap((key) => {
+        const value = searchParams.get(key)?.trim();
+        return value ? [[key, value]] : [];
+      }),
+    ),
+  );
+  const normalized = new URLSearchParams(searchParams);
+
+  for (const key of LIST_FILTER_KEYS) {
+    const value = filters[key];
+
+    if (value) {
+      normalized.set(key, value);
+    } else {
+      normalized.delete(key);
+    }
+  }
+
+  return normalized;
+}
+
 function getPaymentsService() {
   return resolveDataSource() === "supabase" ? paymentsServer : paymentsMockServer;
 }
@@ -50,7 +113,7 @@ function getPaymentsService() {
 export async function GET(request: Request) {
   try {
     const auth = await requireStorePermission(request, "payments.view");
-    const searchParams = new URL(request.url).searchParams;
+    const searchParams = withValidatedListFilters(new URL(request.url).searchParams);
     assertCanQueryPurchasePayments(auth.role, searchParams);
     const service = getPaymentsService();
     return jsonData(
@@ -71,7 +134,7 @@ export async function POST(request: Request) {
       "payments.manage",
       "sales.create",
     ] satisfies Permission[]);
-    const input = createPaymentSchema.parse(await request.json());
+    const input = createPaymentSchema.parse(await readJsonBody(request));
     assertCanCreatePurchasePayment(auth.role, input);
 
     const canManagePayments = auth.permissions.includes("payments.manage");
@@ -87,6 +150,8 @@ export async function POST(request: Request) {
     }
 
     const service = getPaymentsService();
+    // Un reintento con la misma clave responde 201 con el pago original, igual
+    // que POST /api/purchases: el cliente no distingue el replay del alta.
     return jsonCreated(await service.createPayment(input, auth.storeId));
   } catch (error) {
     return toErrorResponse(error);

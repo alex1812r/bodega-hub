@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
+import { cashKeys } from "@/modules/cash/hooks/useCash";
+import { vaultKeys } from "@/modules/vault/hooks/useVault";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
   ContactMock,
@@ -10,12 +12,18 @@ import type {
   PaymentMethod,
   PaymentMock,
 } from "@/shared/mocks/erp-data";
+import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 
 export type PaymentsFilters = PaginationParams & {
   contactId?: string;
   direction?: PaymentDirection | string;
+  /** Dia operativo Caracas `YYYY-MM-DD` del pago, inclusive. */
+  from?: string;
+  method?: PaymentMethod;
   purchaseId?: string;
   saleId?: string;
+  /** Dia operativo Caracas `YYYY-MM-DD` del pago, inclusive. */
+  to?: string;
 };
 
 import type { PaymentDocumentBalance } from "../payment-details/types";
@@ -56,6 +64,11 @@ export type PaymentCreateInput = {
   bankName?: string;
   change?: PaymentChangeInput | null;
   changeDenominations?: PaymentDenominations | null;
+  /**
+   * Clave de idempotencia del intento (PAG-06): el reintento tras un error de
+   * resultado incierto viaja con la misma y el servidor no registra el pago dos veces.
+   */
+  clientRequestId?: string;
   currency?: "USD" | "VES";
   method: PaymentMethod;
   notes?: string;
@@ -78,7 +91,9 @@ function paymentMatchesFilters(payment: PaymentDetail, filters: PaymentsFilters)
     (!filters.contactId || payment.contactId === filters.contactId) &&
     (!filters.direction || payment.direction === filters.direction) &&
     (!filters.purchaseId || payment.purchaseId === filters.purchaseId) &&
-    (!filters.saleId || payment.saleId === filters.saleId)
+    (!filters.saleId || payment.saleId === filters.saleId) &&
+    (!filters.method || payment.method === filters.method) &&
+    isUtcTimestampInCaracasDateRange(payment.createdAt, filters.from, filters.to)
   );
 }
 
@@ -100,15 +115,31 @@ export function usePayment(id?: string) {
   });
 }
 
+/**
+ * Tiempo límite del alta de un pago. Al vencer, la petición se aborta y la mutación
+ * falla con un error que no es `ClientApiError`: resultado incierto (el servidor pudo
+ * registrar el pago), así que quien reintente debe hacerlo con el mismo `clientRequestId`.
+ */
+export const CREATE_PAYMENT_TIMEOUT_MS = 30_000;
+
 export function useCreatePayment() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (input: PaymentCreateInput) =>
-      apiFetch<PaymentDetail>("/api/payments", {
-        body: input,
-        method: "POST",
-      }),
+    mutationFn: async (input: PaymentCreateInput) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), CREATE_PAYMENT_TIMEOUT_MS);
+
+      try {
+        return await apiFetch<PaymentDetail>("/api/payments", {
+          body: input,
+          method: "POST",
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
     onSuccess: (payment) => {
       queryClient.setQueryData(paymentsQueryKeys.detail(payment.id), payment);
       queryClient
@@ -136,11 +167,19 @@ export function useCreatePayment() {
             };
           });
         });
+      // La fila que devuelve el alta puede venir sin contacto ni documento: la
+      // insercion de arriba la muestra ya y este refetch la completa. La misma clave
+      // cubre los documentos con saldo (`["payments", "open-documents"]`): el
+      // documento abonado cambia de saldo o deja de tenerlo.
+      void queryClient.invalidateQueries({ queryKey: paymentsQueryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["sales"] });
       void queryClient.invalidateQueries({ queryKey: ["purchases"] });
       void queryClient.invalidateQueries({ queryKey: ["contacts"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
+      // Un pago mueve efectivo: la sesion de caja y el baul muestran saldos que cambian.
+      void queryClient.invalidateQueries({ queryKey: cashKeys.all });
+      void queryClient.invalidateQueries({ queryKey: vaultKeys.all });
     },
   });
 }
@@ -162,6 +201,9 @@ export function useCancelPayment(id?: string) {
       void queryClient.invalidateQueries({ queryKey: ["contacts"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
+      // Un pago mueve efectivo: la sesion de caja y el baul muestran saldos que cambian.
+      void queryClient.invalidateQueries({ queryKey: cashKeys.all });
+      void queryClient.invalidateQueries({ queryKey: vaultKeys.all });
     },
   });
 }

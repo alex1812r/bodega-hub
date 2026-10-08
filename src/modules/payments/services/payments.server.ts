@@ -10,6 +10,8 @@ import { mapContact, type DbContactRow } from "@/lib/supabase/mappers/contacts";
 import { mapPayment, type DbPaymentRow } from "@/lib/supabase/mappers/transactions";
 import { getPaginationRange, toPaginatedList } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { rpcWithClientRequestId } from "@/modules/inventory/services/rpcWithClientRequestId";
+import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
 import type { PaymentDocumentBalance } from "../payment-details/types";
@@ -261,10 +263,13 @@ async function resolveDocumentBalance(
 
 function applyPaymentFilters<T extends {
   eq: (column: string, value: string) => T;
+  gte: (column: string, value: string) => T;
   is: (column: string, value: null) => T;
+  lt: (column: string, value: string) => T;
 }>(query: T, searchParams: URLSearchParams, salePaymentsOnly?: boolean) {
   const contactId = searchParams.get("contactId");
   const direction = searchParams.get("direction");
+  const method = searchParams.get("method");
   const purchaseId = searchParams.get("purchaseId");
   const saleId = searchParams.get("saleId");
 
@@ -290,7 +295,16 @@ function applyPaymentFilters<T extends {
     filteredQuery = filteredQuery.eq("contact_id", contactId);
   }
 
-  return filteredQuery;
+  if (method) {
+    filteredQuery = filteredQuery.eq("method", method);
+  }
+
+  // Dias operativos Caracas, ambos inclusive.
+  return applyCreatedAtCaracasRange(
+    filteredQuery,
+    searchParams.get("from"),
+    searchParams.get("to"),
+  );
 }
 
 export type PaymentAccessOptions = {
@@ -368,30 +382,38 @@ export function buildPaymentNotes(
 export async function createPayment(input: PaymentInput, _storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const changeAmount = input.change?.method ? Math.max(0, input.change.amount) : 0;
-  const { data, error } = await supabase.rpc("register_payment", {
-    p_amount: input.amount,
-    p_bank_name: input.bankName ?? null,
-    p_method: input.method,
-    p_notes: buildPaymentNotes(input),
-    p_phone: input.phone ?? null,
-    p_purchase_id: input.purchaseId ?? null,
-    p_reference_code: input.referenceCode ?? null,
-    p_sale_id: input.saleId ?? null,
-    // Solo se mandan cuando hay algo que registrar: asi un cobro simple sigue
-    // resolviendo la firma corta de `register_payment`.
-    ...(changeAmount > 0
-      ? {
-          p_change_amount: changeAmount,
-          p_change_method: input.change?.method ?? null,
-        }
-      : {}),
-    ...(input.changeDenominations
-      ? { p_change_denominations: input.changeDenominations }
-      : {}),
-    ...(input.receivedDenominations
-      ? { p_received_denominations: input.receivedDenominations }
-      : {}),
-  });
+  // P4-3: con `clientRequestId` la base devuelve el pago original en un
+  // reintento. Si aun no tiene la firma con la clave (PGRST202, parche
+  // 20261008a sin aplicar) se registra una vez sin idempotencia, nunca un 500.
+  const { data, error } = await rpcWithClientRequestId(
+    supabase,
+    "register_payment",
+    {
+      p_amount: input.amount,
+      p_bank_name: input.bankName ?? null,
+      p_method: input.method,
+      p_notes: buildPaymentNotes(input),
+      p_phone: input.phone ?? null,
+      p_purchase_id: input.purchaseId ?? null,
+      p_reference_code: input.referenceCode ?? null,
+      p_sale_id: input.saleId ?? null,
+      // Solo se mandan cuando hay algo que registrar: asi un cobro simple sigue
+      // resolviendo la firma corta de `register_payment`.
+      ...(changeAmount > 0
+        ? {
+            p_change_amount: changeAmount,
+            p_change_method: input.change?.method ?? null,
+          }
+        : {}),
+      ...(input.changeDenominations
+        ? { p_change_denominations: input.changeDenominations }
+        : {}),
+      ...(input.receivedDenominations
+        ? { p_received_denominations: input.receivedDenominations }
+        : {}),
+    },
+    input.clientRequestId,
+  );
 
   throwIfRpcError(error);
 
