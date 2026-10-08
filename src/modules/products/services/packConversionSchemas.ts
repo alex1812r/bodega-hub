@@ -4,23 +4,34 @@ import { ApiError } from "@/lib/api/apiError";
 import { normalizeBarcode } from "@/modules/products/services/productSearch";
 import { normalizeOptionalSku } from "@/shared/utils/skuGeneration";
 
+// Los mensajes de forma llegan a la pantalla en `error.issues`: todos en español.
+const UNIT_BARCODE_MESSAGE = "El código de barras de la unidad debe ser un texto.";
+const UNIT_SKU_MESSAGE = "El SKU de la unidad debe ser un texto.";
+const UNIT_COST_MESSAGE = "El costo de la unidad debe ser un número mayor o igual a cero.";
+const UNIT_NAME_MESSAGE = "Escribe el nombre de la unidad.";
+const UNIT_SALE_PRICE_MESSAGE = "Indica el precio de venta de la unidad (cero o más).";
+const UNIT_PRODUCT_MESSAGE = "Completa los datos de la unidad.";
+
 const optionalNullableBarcodeSchema = z
-  .union([z.string(), z.null()])
+  .union([z.string(), z.null()], { message: UNIT_BARCODE_MESSAGE })
   .optional()
   .transform((value) => (value === undefined ? undefined : normalizeBarcode(value)));
 
 const optionalSkuSchema = z
-  .string()
+  .string({ message: UNIT_SKU_MESSAGE })
   .optional()
   .transform((value) => normalizeOptionalSku(value) ?? undefined);
 
-export const packConversionUnitProductSchema = z.object({
-  barcode: optionalNullableBarcodeSchema,
-  currentCostRef: z.number().min(0).optional(),
-  name: z.string().min(1).optional(),
-  salePriceRef: z.number().min(0),
-  sku: optionalSkuSchema,
-});
+export const packConversionUnitProductSchema = z.object(
+  {
+    barcode: optionalNullableBarcodeSchema,
+    currentCostRef: z.number({ message: UNIT_COST_MESSAGE }).min(0, UNIT_COST_MESSAGE).optional(),
+    name: z.string({ message: UNIT_NAME_MESSAGE }).min(1, UNIT_NAME_MESSAGE).optional(),
+    salePriceRef: z.number({ message: UNIT_SALE_PRICE_MESSAGE }).min(0, UNIT_SALE_PRICE_MESSAGE),
+    sku: optionalSkuSchema,
+  },
+  { message: UNIT_PRODUCT_MESSAGE },
+);
 
 /** Componentes de una receta surtida: de 2 (con 1 es un vínculo de siempre) a 20. */
 export const ASSORTED_PACK_MIN_COMPONENTS = 2;
@@ -34,20 +45,39 @@ const COST_WEIGHT_MESSAGE = "El peso de costo de cada componente debe ser un nú
 const TOTAL_UNITS_MESSAGE = "Indica el total de unidades del empaque (mínimo 2).";
 const DISTRIBUTION_UNITS_MESSAGE =
   "Las unidades del reparto deben ser enteros mayores o iguales a cero.";
+const COMPONENT_PRODUCT_MESSAGE = "Selecciona el producto de cada componente.";
+const COMPONENT_MESSAGE = "Cada componente del empaque requiere su producto y sus unidades.";
+const COMPONENTS_LIST_MESSAGE = "Los componentes del empaque deben ser una lista.";
+const ENABLED_MESSAGE = "Indica si el empaque está activo.";
+const LABEL_MESSAGE = "El nombre de la receta debe ser un texto.";
+const MODE_MESSAGE = "El tipo de empaque no es válido.";
+const UNIT_PRODUCT_ID_MESSAGE = "Selecciona el producto unidad.";
+const UNITS_PER_PACK_MESSAGE = "Indica unidades por empaque (mínimo 2).";
+const DISTRIBUTION_PRODUCT_MESSAGE = "Cada componente del reparto requiere su producto.";
+const DISTRIBUTION_ITEM_MESSAGE = "Cada componente del reparto requiere su producto y sus unidades.";
+const DISTRIBUTION_LIST_MESSAGE = "El reparto debe ser una lista de componentes.";
+const PACK_PRODUCT_MESSAGE = "Selecciona el empaque que vas a abrir.";
+const PACK_QUANTITY_MESSAGE = "La cantidad de empaques debe ser un entero mayor que 0.";
+const REASON_MESSAGE = "El motivo debe ser un texto.";
 
 /** Un producto que sale del empaque surtido. Sin `costWeight`, el peso es 1. */
-export const packConversionComponentSchema = z.object({
-  costWeight: z
-    .number({ message: COST_WEIGHT_MESSAGE })
-    .positive(COST_WEIGHT_MESSAGE)
-    .refine(Number.isFinite, COST_WEIGHT_MESSAGE)
-    .default(1),
-  unitProductId: z.string().min(1, "Selecciona el producto de cada componente."),
-  unitsPerPack: z
-    .number({ message: COMPONENT_UNITS_MESSAGE })
-    .int(COMPONENT_UNITS_MESSAGE)
-    .positive(COMPONENT_UNITS_MESSAGE),
-});
+export const packConversionComponentSchema = z.object(
+  {
+    costWeight: z
+      .number({ message: COST_WEIGHT_MESSAGE })
+      .positive(COST_WEIGHT_MESSAGE)
+      .refine(Number.isFinite, COST_WEIGHT_MESSAGE)
+      .default(1),
+    unitProductId: z
+      .string({ message: COMPONENT_PRODUCT_MESSAGE })
+      .min(1, COMPONENT_PRODUCT_MESSAGE),
+    unitsPerPack: z
+      .number({ message: COMPONENT_UNITS_MESSAGE })
+      .int(COMPONENT_UNITS_MESSAGE)
+      .positive(COMPONENT_UNITS_MESSAGE),
+  },
+  { message: COMPONENT_MESSAGE },
+);
 
 /**
  * Vínculo de empaque que viaja en el alta / edición de un producto.
@@ -57,25 +87,36 @@ export const packConversionComponentSchema = z.object({
  */
 export const packConversionInputSchema = z
   .object({
-    components: z.array(packConversionComponentSchema).optional(),
-    enabled: z.boolean(),
+    components: z
+      .array(packConversionComponentSchema, { message: COMPONENTS_LIST_MESSAGE })
+      .optional(),
+    enabled: z.boolean({ message: ENABLED_MESSAGE }),
     label: z
-      .string()
+      .string({ message: LABEL_MESSAGE })
       .trim()
       .max(
         PACK_RECIPE_LABEL_MAX_LENGTH,
         `El nombre de la receta admite hasta ${PACK_RECIPE_LABEL_MAX_LENGTH} caracteres.`,
       )
       .nullish(),
-    mode: z.enum(["assorted", "create_unit", "link_existing"]).optional(),
+    mode: z
+      .enum(["assorted", "create_unit", "link_existing"], { message: MODE_MESSAGE })
+      .optional(),
     totalUnits: z
       .number({ message: TOTAL_UNITS_MESSAGE })
       .int(TOTAL_UNITS_MESSAGE)
       .min(2, TOTAL_UNITS_MESSAGE)
       .optional(),
     unitProduct: packConversionUnitProductSchema.optional(),
-    unitProductId: z.string().min(1).optional(),
-    unitsPerPack: z.number().int().min(2).optional(),
+    unitProductId: z
+      .string({ message: UNIT_PRODUCT_ID_MESSAGE })
+      .min(1, UNIT_PRODUCT_ID_MESSAGE)
+      .optional(),
+    unitsPerPack: z
+      .number({ message: UNITS_PER_PACK_MESSAGE })
+      .int(UNITS_PER_PACK_MESSAGE)
+      .min(2, UNITS_PER_PACK_MESSAGE)
+      .optional(),
   })
   .superRefine((value, ctx) => {
     if (!value.enabled) {
@@ -133,7 +174,7 @@ export const packConversionInputSchema = z
     if (value.unitsPerPack == null || value.unitsPerPack < 2) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Indica unidades por empaque (mínimo 2).",
+        message: UNITS_PER_PACK_MESSAGE,
         path: ["unitsPerPack"],
       });
     }
@@ -142,7 +183,7 @@ export const packConversionInputSchema = z
       if (!value.unitProductId) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Selecciona el producto unidad.",
+          message: UNIT_PRODUCT_ID_MESSAGE,
           path: ["unitProductId"],
         });
       }
@@ -159,13 +200,18 @@ export const packConversionInputSchema = z
   });
 
 /** Reparto real de una apertura: cuántas unidades de un componente salieron. */
-export const packDistributionItemSchema = z.object({
-  unitProductId: z.string().min(1, "Cada componente del reparto requiere su producto."),
-  units: z
-    .number({ message: DISTRIBUTION_UNITS_MESSAGE })
-    .int(DISTRIBUTION_UNITS_MESSAGE)
-    .min(0, DISTRIBUTION_UNITS_MESSAGE),
-});
+export const packDistributionItemSchema = z.object(
+  {
+    unitProductId: z
+      .string({ message: DISTRIBUTION_PRODUCT_MESSAGE })
+      .min(1, DISTRIBUTION_PRODUCT_MESSAGE),
+    units: z
+      .number({ message: DISTRIBUTION_UNITS_MESSAGE })
+      .int(DISTRIBUTION_UNITS_MESSAGE)
+      .min(0, DISTRIBUTION_UNITS_MESSAGE),
+  },
+  { message: DISTRIBUTION_ITEM_MESSAGE },
+);
 
 export const convertPackToUnitsSchema = z.object({
   /**
@@ -173,7 +219,7 @@ export const convertPackToUnitsSchema = z.object({
    * sumar `totalUnits × packQuantity` y nombrar solo componentes de la receta.
    */
   components: z
-    .array(packDistributionItemSchema)
+    .array(packDistributionItemSchema, { message: DISTRIBUTION_LIST_MESSAGE })
     .min(1, "El reparto debe traer al menos un componente.")
     .max(
       ASSORTED_PACK_MAX_COMPONENTS,
@@ -184,9 +230,12 @@ export const convertPackToUnitsSchema = z.object({
       "El reparto repite un componente de la receta.",
     )
     .optional(),
-  packProductId: z.string().min(1),
-  packQuantity: z.number().int().positive(),
-  reason: z.string().optional(),
+  packProductId: z.string({ message: PACK_PRODUCT_MESSAGE }).min(1, PACK_PRODUCT_MESSAGE),
+  packQuantity: z
+    .number({ message: PACK_QUANTITY_MESSAGE })
+    .int(PACK_QUANTITY_MESSAGE)
+    .positive(PACK_QUANTITY_MESSAGE),
+  reason: z.string({ message: REASON_MESSAGE }).optional(),
 });
 
 /**

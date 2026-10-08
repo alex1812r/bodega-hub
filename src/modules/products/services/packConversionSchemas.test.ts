@@ -116,6 +116,85 @@ describe("convertPackToUnitsSchema · components (PRO-12)", () => {
   });
 });
 
+/** PRO-F8 · los avisos de forma llegan a la pantalla en `issues`: van en español. */
+describe("mensajes de validación en español (PRO-F8)", () => {
+  const ENGLISH = /\b(expected|invalid|too small|too big|received|required)\b/i;
+
+  function messages(result: { error?: { issues: { message: string }[] }; success: boolean }) {
+    expect(result.success).toBe(false);
+
+    return (result.error?.issues ?? []).map((issue) => issue.message);
+  }
+
+  it.each([
+    ["0 empaques", 0],
+    ["empaques negativos", -2],
+    ["medio empaque", 0.5],
+    ["texto", "dos"],
+    ["sin cantidad", undefined],
+  ])("abrir %s", (_case, packQuantity) => {
+    expect(
+      messages(convertPackToUnitsSchema.safeParse({ packProductId: "pack", packQuantity })),
+    ).toEqual(["La cantidad de empaques debe ser un entero mayor que 0."]);
+  });
+
+  it("abrir sin empaque o con un motivo que no es texto", () => {
+    expect(
+      messages(convertPackToUnitsSchema.safeParse({ packProductId: "", packQuantity: 1 })),
+    ).toEqual(["Selecciona el empaque que vas a abrir."]);
+    expect(
+      messages(convertPackToUnitsSchema.safeParse({ packQuantity: 1, reason: 5 })),
+    ).toEqual(["Selecciona el empaque que vas a abrir.", "El motivo debe ser un texto."]);
+  });
+
+  it.each([
+    ["unidades por empaque con decimales", { enabled: true, mode: "link_existing", unitProductId: "u", unitsPerPack: 2.5 }],
+    ["unidades por empaque como texto", { enabled: true, mode: "link_existing", unitProductId: "u", unitsPerPack: "6" }],
+    ["una sola unidad por empaque", { enabled: true, mode: "link_existing", unitProductId: "u", unitsPerPack: 1 }],
+    ["producto unidad vacío", { enabled: true, mode: "link_existing", unitProductId: "", unitsPerPack: 6 }],
+    ["modo desconocido", { enabled: true, mode: "otro", unitsPerPack: 6 }],
+    ["sin decir si está activo", { mode: "link_existing" }],
+    ["componentes que no son una lista", { components: "x", enabled: true, mode: "assorted", totalUnits: 4 }],
+    ["nombre de receta que no es texto", { enabled: false, label: 5 }],
+    [
+      "unidad nueva con precio negativo, costo negativo y nombre vacío",
+      {
+        enabled: true,
+        mode: "create_unit",
+        unitProduct: { currentCostRef: -1, name: "", salePriceRef: -1 },
+        unitsPerPack: 6,
+      },
+    ],
+    [
+      "unidad nueva sin precio y con SKU y código de barras que no son texto",
+      { enabled: true, mode: "create_unit", unitProduct: { barcode: 5, sku: 7 }, unitsPerPack: 6 },
+    ],
+    [
+      "componente sin producto ni unidades",
+      { components: [{}, { unitProductId: "b", unitsPerPack: 2 }], enabled: true, mode: "assorted", totalUnits: 4 },
+    ],
+  ])("receta: %s", (_case, input) => {
+    const found = messages(packConversionInputSchema.safeParse(input));
+
+    expect(found.length).toBeGreaterThan(0);
+    for (const message of found) {
+      expect(message).not.toMatch(ENGLISH);
+    }
+  });
+
+  it("reparto: producto que no es texto", () => {
+    const found = messages(
+      convertPackToUnitsSchema.safeParse({
+        components: [{ unitProductId: 3, units: 1 }],
+        packProductId: "pack",
+        packQuantity: 1,
+      }),
+    );
+
+    expect(found).toEqual(["Cada componente del reparto requiere su producto."]);
+  });
+});
+
 describe("assertPackDistribution", () => {
   const recipe = { componentIds: ["a", "b", "c"], totalUnits: 6 };
 
