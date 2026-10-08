@@ -32,9 +32,15 @@ type ProductPackConversionFieldsProps = {
   isUnitRole?: boolean;
   packConversion?: ProductPackConversionSummary;
   productName: string;
-  /** Tras intentar enviar: muestra el aviso del minimo de unidades por empaque. */
+  /** Tras intentar enviar: muestra los avisos de unidades por empaque y producto unidad. */
   showErrors?: boolean;
   state: PackConversionFormState;
+  /**
+   * Al cambiar, el buscador de "Producto unidad" olvida las búsquedas ya
+   * respondidas (p. ej. tras un guardado rechazado porque la unidad dejó de
+   * estar libre). La unidad elegida se conserva.
+   */
+  unitSearchResetKey?: number | string;
   onChange: (patch: Partial<PackConversionFormState>) => void;
 };
 
@@ -42,19 +48,36 @@ type ProductPackConversionFieldsProps = {
 export const UNITS_PER_PACK_FIELD_NAME = "unitsPerPack";
 
 /**
- * Aviso de "Unidades por empaque", o `undefined` si vale. Mismo limite y mismo
- * texto que `packConversionInputSchema` (entero, minimo 2), que es quien responde
- * 400 si esto se envia.
+ * Aviso de "Producto unidad", o `undefined` si vale: con el empaque activo en
+ * modo "vincular producto existente" hay que elegir uno. El servidor responde
+ * 400 si esto se envía.
+ */
+export function getUnitProductError(state: PackConversionFormState) {
+  return state.enabled && state.mode === "link_existing" && !state.unitProductId
+    ? "Elige el producto unidad."
+    : undefined;
+}
+
+/** El buscador de "Producto unidad" dentro de `container`, para llevarle el foco. */
+export function findUnitProductField(container: ParentNode) {
+  return container.querySelector<HTMLInputElement>(
+    '[data-pack-unit-product-field] input[role="combobox"]',
+  );
+}
+
+/**
+ * Aviso de "Unidades por empaque", o `undefined` si vale. Mismo límite que
+ * `packConversionInputSchema` (entero, mínimo 2), que es quien responde
+ * 400 si esto se envía.
  */
 export function getUnitsPerPackError(text: string) {
   return (
     getNumberInputError(text, { decimals: 0 }) ??
-    (Number(text) >= 2 ? undefined : "Indica unidades por empaque (minimo 2).")
+    (Number(text) >= 2 ? undefined : "Indica unidades por empaque (mínimo 2).")
   );
 }
 
 const PACK_LINKED_REASON = "Ya tiene un vínculo de empaque.";
-const UNIT_RECENTS_KEY = "pack-unit";
 const UNKNOWN_UNIT_LABEL = "Producto seleccionado";
 
 type UnitCandidateOption = ProductEntityOption & { hasPackLink: boolean };
@@ -156,6 +179,7 @@ export function ProductPackConversionFields({
   productName,
   showErrors = false,
   state,
+  unitSearchResetKey,
   onChange,
 }: ProductPackConversionFieldsProps) {
   const [pickedUnit, setPickedUnit] = useState<EntityAutocompleteValue | null>(null);
@@ -183,7 +207,7 @@ export function ProductPackConversionFields({
         Este producto es la <span className="font-medium text-on-surface">unidad suelta</span> del
         empaque{" "}
         <span className="font-medium text-on-surface">{packConversion.linkedProduct.name}</span> (
-        {packConversion.unitsPerPack} und/caja). Edita el empaque para cambiar el vinculo.
+        {packConversion.unitsPerPack} und/caja). Edita el empaque para cambiar el vínculo.
       </div>
     );
   }
@@ -212,7 +236,7 @@ export function ProductPackConversionFields({
             value={state.unitsPerPack}
           />
           <SelectField
-            label="Modo de vinculo"
+            label="Modo de vínculo"
             onChange={(event) =>
               onChange({
                 mode: event.target.value as "create_unit" | "link_existing",
@@ -225,22 +249,28 @@ export function ProductPackConversionFields({
             value={state.mode}
           />
           {state.mode === "link_existing" ? (
-            <EntityAutocomplete
-              entity="product"
-              fetcher={fetchUnitCandidates}
-              filters={{ active: true, excludeIds: excludeProductId ? [excludeProductId] : [] }}
-              getOptionDisabled={(option) =>
-                option.id !== linkedUnit?.id && hasPackLink(option) && PACK_LINKED_REASON
-              }
-              helperText="Solo productos activos sin vínculo de empaque."
-              label="Producto unidad"
-              onChange={(option) => {
-                setPickedUnit(option ? { id: option.id, label: option.label } : null);
-                onChange({ unitProductId: option?.id ?? "" });
-              }}
-              recentsKey={UNIT_RECENTS_KEY}
-              value={getUnitValue()}
-            />
+            <div className="min-w-0" data-pack-unit-product-field="">
+              <EntityAutocomplete
+                entity="product"
+                error={showErrors ? getUnitProductError(state) : undefined}
+                fetcher={fetchUnitCandidates}
+                filters={{ active: true, excludeIds: excludeProductId ? [excludeProductId] : [] }}
+                getOptionDisabled={(option) =>
+                  option.id !== linkedUnit?.id && hasPackLink(option) && PACK_LINKED_REASON
+                }
+                helperText="Solo productos activos sin vínculo de empaque."
+                key={unitSearchResetKey}
+                label="Producto unidad"
+                onChange={(option) => {
+                  setPickedUnit(option ? { id: option.id, label: option.label } : null);
+                  onChange({ unitProductId: option?.id ?? "" });
+                }}
+                // Sin recientes: son una copia del navegador y la unidad guardada
+                // puede tener ya un vínculo; se ofrecería habilitada y sin motivo.
+                recentsKey={null}
+                value={getUnitValue()}
+              />
+            </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
               <Input
@@ -256,7 +286,7 @@ export function ProductPackConversionFields({
                 value={state.unitSku}
               />
               <Input
-                label="Barcode unidad"
+                label="Código de barras unidad"
                 onChange={(event) => onChange({ unitBarcode: event.target.value })}
                 placeholder="Opcional"
                 value={state.unitBarcode}

@@ -10,6 +10,9 @@ import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import {
   createDefaultPackConversionFormState,
+  findUnitProductField,
+  getUnitProductError,
+  getUnitsPerPackError,
   type PackConversionFormState,
   packConversionStateToInput,
   ProductPackConversionFields,
@@ -60,6 +63,8 @@ type HarnessProps = {
   onPatch?: (patch: Partial<PackConversionFormState>) => void;
   onState?: (state: PackConversionFormState) => void;
   packConversion?: ProductPackConversionSummary;
+  showErrors?: boolean;
+  unitSearchResetKey?: number;
 };
 
 function Harness({
@@ -68,6 +73,8 @@ function Harness({
   onPatch,
   onState,
   packConversion,
+  showErrors,
+  unitSearchResetKey,
 }: HarnessProps) {
   const [state, setState] = useState(initialState);
 
@@ -83,7 +90,9 @@ function Harness({
       }}
       packConversion={packConversion}
       productName="Caja de prueba"
+      showErrors={showErrors}
       state={state}
+      unitSearchResetKey={unitSearchResetKey}
     />
   );
 }
@@ -313,6 +322,114 @@ describe("ProductPackConversionFields: producto unidad", () => {
     await user.click(screen.getByRole("button", { name: "Reintentar" }));
 
     expect(await screen.findByRole("option", { name: /Taladro percutor/ })).toBeVisible();
+  });
+
+  it("getUnitProductError solo avisa con el empaque activo, en modo vincular y sin unidad", () => {
+    expect(getUnitProductError(linkExistingState)).toBe("Elige el producto unidad.");
+    expect(
+      getUnitProductError({ ...linkExistingState, unitProductId: "prod-drill" }),
+    ).toBeUndefined();
+    expect(getUnitProductError({ ...linkExistingState, mode: "create_unit" })).toBeUndefined();
+    expect(getUnitProductError({ ...linkExistingState, enabled: false })).toBeUndefined();
+  });
+
+  it("tras intentar enviar sin producto unidad el campo muestra su aviso, y se va al elegir", async () => {
+    installProductsApi();
+    const { user } = renderFields({ showErrors: true });
+
+    expect(unitField()).toHaveAttribute("aria-invalid", "true");
+    expect(unitField()).toHaveAccessibleDescription("Elige el producto unidad.");
+    expect(findUnitProductField(document.body)).toBe(unitField());
+
+    await user.type(unitField(), "taladro");
+    await user.click(await screen.findByRole("option", { name: /Taladro percutor/ }));
+
+    expect(unitField()).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText("Elige el producto unidad.")).not.toBeInTheDocument();
+  });
+
+  it("antes de intentar enviar el campo vacío no avisa", () => {
+    installProductsApi();
+    renderFields();
+
+    expect(unitField()).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText("Elige el producto unidad.")).not.toBeInTheDocument();
+  });
+
+  it("no ofrece «Recientes»: una unidad elegida antes puede tener ya un vínculo", async () => {
+    installProductsApi();
+    const { user } = renderFields();
+
+    await user.type(unitField(), "taladro");
+    await user.click(await screen.findByRole("option", { name: /Taladro percutor/ }));
+    await user.click(screen.getByRole("button", { name: "Limpiar Producto unidad" }));
+    await user.click(unitField());
+
+    expect(unitField()).toHaveFocus();
+    expect(screen.queryByText("Recientes")).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Taladro percutor/ })).not.toBeInTheDocument();
+    expect(
+      Object.keys(window.localStorage).filter((key) => key.includes("entity-autocomplete:recents")),
+    ).toEqual([]);
+  });
+
+  it("tampoco ofrece los recientes de otros buscadores de producto", async () => {
+    installProductsApi();
+    window.localStorage.setItem(
+      "bodega-hub:entity-autocomplete:recents:product",
+      JSON.stringify([
+        {
+          barcode: null,
+          categoryId: "cat-1",
+          currentCostRef: 1,
+          currentStock: 3,
+          id: "prod-cigar-unit",
+          isActive: true,
+          label: "Cigarro individual",
+          salePriceRef: 2,
+          sku: "cig-und-001",
+        },
+      ]),
+    );
+    const { user } = renderFields();
+
+    await user.click(unitField());
+
+    expect(unitField()).toHaveFocus();
+    expect(screen.queryByText("Recientes")).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Cigarro individual/ })).not.toBeInTheDocument();
+  });
+
+  it("al cambiar unitSearchResetKey la misma búsqueda vuelve a pedirse al servidor", async () => {
+    const urls = installProductsApi();
+    const user = userEvent.setup();
+    const { rerender } = render(<Harness unitSearchResetKey={0} />);
+
+    await user.type(unitField(), "taladro");
+    await screen.findByRole("option", { name: /Taladro percutor/ });
+
+    const requestsPerSearch = urls.length;
+
+    // Sin cambio de clave, repetir el texto reutiliza el resultado.
+    await user.clear(unitField());
+    await user.type(unitField(), "taladro");
+    await screen.findByRole("option", { name: /Taladro percutor/ });
+    expect(urls.length).toBe(requestsPerSearch);
+
+    rerender(<Harness unitSearchResetKey={1} />);
+    await user.type(unitField(), "taladro");
+    await screen.findByRole("option", { name: /Taladro percutor/ });
+
+    expect(urls.length).toBe(requestsPerSearch * 2);
+  });
+
+  it("los textos del empaque llevan tilde", () => {
+    installProductsApi();
+    renderFields({ initialState: { ...linkExistingState, mode: "create_unit" } });
+
+    expect(screen.getByLabelText("Modo de vínculo")).toBeVisible();
+    expect(screen.getByLabelText("Código de barras unidad")).toBeVisible();
+    expect(getUnitsPerPackError("1")).toBe("Indica unidades por empaque (mínimo 2).");
   });
 
   it("en modo «Crear producto unidad» no hay buscador de producto unidad", () => {

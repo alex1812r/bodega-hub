@@ -1,6 +1,8 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+
+import { jsonResponse } from "@/modules/inventory/utils/requestAttempt.testUtils";
 
 import { ProductFormModal } from "./ProductFormModal";
 
@@ -206,8 +208,8 @@ describe("ProductFormModal · enteros y limites (SHR-09J)", () => {
   }
 
   it.each([
-    ["1", "Indica unidades por empaque (minimo 2)."],
-    ["0", "Indica unidades por empaque (minimo 2)."],
+    ["1", "Indica unidades por empaque (mínimo 2)."],
+    ["0", "Indica unidades por empaque (mínimo 2)."],
     ["2.5", "Debe ser un número entero."],
   ])("unidades por empaque = %s: no envia y muestra el aviso %s", async (typed, message) => {
     const { onSubmit, user } = await renderFilled();
@@ -229,7 +231,7 @@ describe("ProductFormModal · enteros y limites (SHR-09J)", () => {
     const units = await enablePackConversion(user, "1");
 
     expect(units).not.toHaveAttribute("aria-invalid");
-    expect(screen.queryByText("Indica unidades por empaque (minimo 2).")).not.toBeInTheDocument();
+    expect(screen.queryByText("Indica unidades por empaque (mínimo 2).")).not.toBeInTheDocument();
   });
 
   it("unidades por empaque = 2: un solo envio con el payload de siempre", async () => {
@@ -491,7 +493,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     expect(onSubmit).not.toHaveBeenCalled();
     expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "true");
     expect(units).toHaveFocus();
-    expect(screen.getByText("Indica unidades por empaque (minimo 2).")).toBeVisible();
+    expect(screen.getByText("Indica unidades por empaque (mínimo 2).")).toBeVisible();
   });
 
   it("un required nativo vacio dentro de la seccion cerrada la abre y enfoca el campo en vez de bloquear en silencio", async () => {
@@ -681,5 +683,242 @@ describe("ProductFormModal · modo compact (PRO-01)", () => {
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ name: "Azúcar", salePriceRef: 3 });
     expect(onSubmit.mock.calls[0][0]).toHaveProperty("currentStock", undefined);
     expect(onCreated).not.toHaveBeenCalled();
+  });
+});
+
+describe("ProductFormModal · fallos de QA (PRO-F1)", () => {
+  const LONG_SKU = "refresco-cola-caja-x12-retornable-350ml";
+  const linkedPackProduct = {
+    currentStock: 7,
+    id: "prod-1",
+    name: "Caja Cola x6",
+    packConversion: {
+      id: "conv-1",
+      linkedProduct: { id: "prod-2", name: "Cola", salePriceRef: 2.5, sku: "cola" },
+      role: "pack",
+      unitsPerPack: 6,
+    },
+    salePriceRef: 12.5,
+    sku: "caja-cola",
+  } as ProductProp;
+
+  async function fillBasics(user: UserSession) {
+    await user.click(screen.getByLabelText("Nombre"));
+    await user.paste("Harina");
+    await user.click(screen.getByLabelText("Precio REF"));
+    await user.paste("2");
+  }
+
+  async function enableLinkExisting(user: UserSession) {
+    await openMoreOptions(user);
+    await user.click(screen.getByLabelText("Se puede vender por unidad"));
+    await user.selectOptions(screen.getByLabelText("Modo de vínculo"), "link_existing");
+  }
+
+  function unitField() {
+    // `hidden`: también con "Más opciones" cerrada, donde el campo sigue montado.
+    return screen.getByRole("combobox", { hidden: true, name: /Producto unidad/ });
+  }
+
+  /** `GET /api/products` con un único producto libre; devuelve las URL pedidas. */
+  function installProductsApi() {
+    const urls: URL[] = [];
+    const drill = {
+      barcode: "7501234567890",
+      categoryId: "cat-1",
+      currentCostRef: 40,
+      currentStock: 5,
+      id: "prod-drill",
+      isActive: true,
+      name: "Taladro percutor",
+      salePriceRef: 60,
+      sku: "her-tal-001",
+    };
+
+    global.fetch = jest.fn((input: RequestInfo | URL) => {
+      urls.push(new URL(String(input), "http://localhost"));
+
+      return Promise.resolve(
+        jsonResponse({ data: { items: [drill], limit: 9, skip: 0, total: 1 } }),
+      );
+    }) as unknown as typeof fetch;
+
+    return urls;
+  }
+
+  /** Aparta el aviso global de jest: el formulario deja subir el rechazo de `onSubmit`. */
+  function captureUnhandledRejections() {
+    const jestListeners = process.listeners("unhandledRejection");
+    const unhandled = jest.fn();
+
+    process.removeAllListeners("unhandledRejection");
+    process.on("unhandledRejection", unhandled);
+
+    return {
+      restore() {
+        process.removeAllListeners("unhandledRejection");
+        jestListeners.forEach((listener) => process.on("unhandledRejection", listener));
+      },
+      unhandled,
+    };
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("edicion con un SKU largo: el resumen de Mas opciones se trunca y no ensancha el formulario", () => {
+    render(
+      <ProductFormModal
+        mode="edit"
+        onOpenChange={jest.fn()}
+        open
+        product={
+          {
+            currentStock: 7,
+            id: "prod-1",
+            name: "Refresco",
+            salePriceRef: 2.5,
+            sku: LONG_SKU,
+          } as ProductProp
+        }
+      />,
+    );
+
+    const summary = screen.getByText(`SKU ${LONG_SKU} · Stock actual 7`);
+
+    // El texto completo sigue disponible aunque se corte con puntos suspensivos.
+    expect(summary).toHaveAttribute("title", `SKU ${LONG_SKU} · Stock actual 7`);
+    expect(summary).toHaveClass("truncate");
+    // La seccion es un item del grid del formulario: sin `min-w-0` su ancho
+    // minimo es el del resumen en una sola linea y desborda el modal.
+    expect(moreOptionsToggle().closest("section")).toHaveClass("min-w-0");
+  });
+
+  it("empaque en modo vincular sin producto unidad y la seccion cerrada: no envia, la abre, avisa y enfoca el campo", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+
+    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    await fillBasics(user);
+    await enableLinkExisting(user);
+
+    expect(screen.queryByText("Elige el producto unidad.")).not.toBeInTheDocument();
+
+    await user.click(moreOptionsToggle());
+    expect(unitField()).not.toBeVisible();
+
+    fireEvent.submit(document.querySelector("form") as HTMLFormElement);
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "true");
+    expect(unitField()).toBeVisible();
+    expect(unitField()).toHaveFocus();
+    expect(unitField()).toHaveAttribute("aria-invalid", "true");
+    expect(unitField()).toHaveAccessibleDescription("Elige el producto unidad.");
+  });
+
+  it("edicion de un empaque al que se le quita la unidad: no envia y enfoca el campo", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+
+    render(
+      <ProductFormModal
+        mode="edit"
+        onOpenChange={jest.fn()}
+        onSubmit={onSubmit}
+        open
+        product={linkedPackProduct}
+      />,
+    );
+    await openMoreOptions(user);
+    await user.click(screen.getByRole("button", { name: "Limpiar Producto unidad" }));
+    await user.click(moreOptionsToggle());
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "true");
+    expect(unitField()).toHaveFocus();
+    expect(screen.getByText("Elige el producto unidad.")).toBeVisible();
+  });
+
+  it("dos Enter y un clic mientras el guardado sigue en vuelo: un solo envio", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onOpenChange = jest.fn();
+    let finishSave: () => void = () => undefined;
+    const onSubmit = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+
+    // `isSubmitting` no llega a cambiar: el candado es del propio formulario.
+    render(<ProductFormModal onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
+    await fillBasics(user);
+
+    const form = document.querySelector("form") as HTMLFormElement;
+
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+
+    await act(async () => finishSave());
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("con isSubmitting el formulario ignora el envio", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+
+    render(<ProductFormModal isSubmitting onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    await fillBasics(user);
+    fireEvent.submit(document.querySelector("form") as HTMLFormElement);
+
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("tras un guardado rechazado se puede reintentar y la misma busqueda de unidad vuelve al servidor", async () => {
+    const user = userEvent.setup();
+    const urls = installProductsApi();
+    const onSubmit = jest
+      .fn()
+      .mockRejectedValue(new Error("El producto unidad ya está vinculado a otro empaque."));
+    const rejections = captureUnhandledRejections();
+
+    try {
+      render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+      await fillBasics(user);
+      await enableLinkExisting(user);
+      await user.type(unitField(), "taladro");
+      await user.click(await screen.findByRole("option", { name: /Taladro percutor/ }));
+
+      const requestsPerSearch = urls.length;
+
+      await user.click(screen.getByRole("button", { name: "Crear producto" }));
+      await waitFor(() => expect(rejections.unhandled).toHaveBeenCalledTimes(1));
+
+      // El campo conserva la unidad elegida; al repetir la busqueda se vuelve a pedir.
+      expect(unitField()).toHaveValue("Taladro percutor");
+
+      await user.click(screen.getByRole("button", { name: "Limpiar Producto unidad" }));
+      await user.type(unitField(), "taladro");
+      await screen.findByRole("option", { name: /Taladro percutor/ });
+
+      expect(urls.length).toBe(requestsPerSearch * 2);
+
+      await user.click(screen.getByRole("option", { name: /Taladro percutor/ }));
+      await user.click(screen.getByRole("button", { name: "Crear producto" }));
+      await waitFor(() => expect(rejections.unhandled).toHaveBeenCalledTimes(2));
+    } finally {
+      rejections.restore();
+    }
+
+    expect(onSubmit).toHaveBeenCalledTimes(2);
   });
 });

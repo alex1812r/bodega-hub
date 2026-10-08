@@ -33,9 +33,11 @@ type ProductFormMoreOptionsProps = {
   packConversionState: PackConversionFormState;
   product?: ProductWithCategory;
   productName: string;
-  /** Tras intentar enviar: muestra el aviso de unidades por empaque. */
+  /** Tras intentar enviar: muestra los avisos del empaque. */
   showErrors: boolean;
   sku: string;
+  /** Cambia tras un guardado rechazado: el buscador de unidad vuelve a preguntar al servidor. */
+  unitSearchResetKey?: number;
 };
 
 /**
@@ -56,15 +58,24 @@ export function ProductFormMoreOptions({
   productName,
   showErrors,
   sku,
+  unitSearchResetKey,
 }: ProductFormMoreOptionsProps) {
+  const summary =
+    isEdit && product
+      ? `SKU ${sku || product.sku} · Stock actual ${product.currentStock}`
+      : "SKU, descripción, stock y empaque";
+
   return (
     <CollapsibleSection
+      // Item del grid del formulario: sin `min-w-0` su ancho mínimo es el del
+      // resumen en una sola línea y un SKU largo desborda el modal.
+      className="min-w-0"
       onOpenChange={onOpenChange}
       open={open}
       summary={
-        isEdit && product
-          ? `SKU ${sku || product.sku} · Stock actual ${product.currentStock}`
-          : "SKU, descripción, stock y empaque"
+        <span className="block truncate" title={summary}>
+          {summary}
+        </span>
       }
       title="Más opciones"
     >
@@ -129,6 +140,7 @@ export function ProductFormMoreOptions({
           productName={productName}
           showErrors={showErrors}
           state={packConversionState}
+          unitSearchResetKey={unitSearchResetKey}
           onChange={onPackConversionChange}
         />
       </div>

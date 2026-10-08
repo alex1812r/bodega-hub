@@ -23,6 +23,8 @@ import { ProductFormMoreOptions } from "./ProductFormMoreOptions";
 import { ProductImageUploadField } from "./ProductImageUploadField";
 import {
   createDefaultPackConversionFormState,
+  findUnitProductField,
+  getUnitProductError,
   getUnitsPerPackError,
   packConversionStateToInput,
   UNITS_PER_PACK_FIELD_NAME,
@@ -127,6 +129,10 @@ export function ProductFormModal({
   const [showSubmitErrors, setShowSubmitErrors] = useState(false);
   const [stockAdjustmentOpen, setStockAdjustmentOpen] = useState(false);
   const stockAdjustmentTriggerRef = useRef<HTMLButtonElement | null>(null);
+  // Candado propio: `isSubmitting` llega con el siguiente render, tarde para un
+  // segundo Enter o un clic en el mismo tick.
+  const isSubmitInFlightRef = useRef(false);
+  const [failedSubmits, setFailedSubmits] = useState(0);
   const isUnitRole = product?.packConversion?.role === "unit";
 
   useEffect(() => {
@@ -208,6 +214,10 @@ export function ProductFormModal({
   async function handleSubmit(event: FormEvent<HTMLFormElement>, close: () => void) {
     event.preventDefault();
 
+    if (isSubmitting || isSubmitInFlightRef.current) {
+      return;
+    }
+
     const form = event.currentTarget;
     const formData = new FormData(form);
     const categoryId = String(formData.get("categoryId") ?? "");
@@ -215,8 +225,9 @@ export function ProductFormModal({
       !isUnitRole &&
       (Boolean(product?.packConversion) || packConversionState.enabled);
     // Sin `required`/`step`/`min` nativos: un stock con decimales o un empaque
-    // de menos de 2 unidades no se envía. El campo muestra su aviso y recibe el
-    // foco. Se revisan en el orden en que aparecen en "Más opciones".
+    // de menos de 2 unidades no se envía, ni un empaque vinculado sin producto
+    // unidad. El campo muestra su aviso y recibe el foco. Se revisan en el orden
+    // en que aparecen en "Más opciones".
     const invalidFieldName =
       ["currentStock", "minStock"].find((fieldName) =>
         getNumberInputError(String(formData.get(fieldName) ?? ""), { decimals: 0 }),
@@ -229,6 +240,12 @@ export function ProductFormModal({
 
     if (invalidFieldName) {
       revealAndFocus(form.elements.namedItem(invalidFieldName));
+
+      return;
+    }
+
+    if (shouldSendPackConversion && getUnitProductError(packConversionState)) {
+      revealAndFocus(findUnitProductField(form));
 
       return;
     }
@@ -252,8 +269,20 @@ export function ProductFormModal({
       sku: sku.trim().toLowerCase() || undefined,
     };
 
-    // Si `onSubmit` rechaza, no se llega a `close()`: el modal queda abierto.
-    const created = await onSubmit?.(input, { pendingImageBlob });
+    // Si `onSubmit` rechaza, no se llega a `close()`: el modal queda abierto y
+    // el rechazo sigue subiendo.
+    let created: ProductWithCategory | void;
+
+    isSubmitInFlightRef.current = true;
+
+    try {
+      created = await onSubmit?.(input, { pendingImageBlob });
+    } catch (error) {
+      setFailedSubmits((count) => count + 1);
+      throw error;
+    } finally {
+      isSubmitInFlightRef.current = false;
+    }
 
     if (!isEdit && created) {
       onCreated?.(created);
@@ -374,6 +403,7 @@ export function ProductFormModal({
             productName={name}
             showErrors={showSubmitErrors}
             sku={sku}
+            unitSearchResetKey={failedSubmits}
           />
         )}
         {imageError ? (

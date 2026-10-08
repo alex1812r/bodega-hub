@@ -100,9 +100,16 @@ type DemoProps = {
   initialState: PackConversionFormState;
   isUnitRole?: boolean;
   packConversion?: ProductPackConversionSummary;
+  showErrors?: boolean;
 };
 
-function Demo({ excludeProductId, initialState, isUnitRole, packConversion }: DemoProps) {
+function Demo({
+  excludeProductId,
+  initialState,
+  isUnitRole,
+  packConversion,
+  showErrors,
+}: DemoProps) {
   const [state, setState] = useState(initialState);
 
   return (
@@ -113,6 +120,7 @@ function Demo({ excludeProductId, initialState, isUnitRole, packConversion }: De
         onChange={(patch) => setState((current) => ({ ...current, ...patch }))}
         packConversion={packConversion}
         productName="Caja cigarros (x10)"
+        showErrors={showErrors}
         state={state}
       />
       <p className="text-xs text-on-surface-variant">
@@ -177,6 +185,17 @@ export const EditLinkedPack: Story = {
     await expect(canvas.getByRole("combobox", { name: /Producto unidad/ })).toHaveValue(
       "Cigarro individual",
     );
+  },
+};
+
+export const MissingUnit: Story = {
+  name: "Enviado sin producto unidad",
+  parameters: { msw: { handlers: [createProductsHandler()] } },
+  render: () => <Demo initialState={linkExistingState} showErrors />,
+  play: async ({ canvas }) => {
+    await expect(
+      canvas.getByRole("combobox", { name: /Producto unidad/ }),
+    ).toHaveAccessibleDescription("Elige el producto unidad.");
   },
 };
 
