@@ -25,6 +25,10 @@ import {
   listInventory,
   listStockMovements,
 } from "../src/modules/inventory/services/inventory.mock-server";
+import {
+  getKardexWindow,
+  type ProductKardex,
+} from "../src/modules/inventory/services/productKardex";
 import { listOpenDocuments } from "../src/modules/payments/services/openDocuments.mock-server";
 import {
   createPayment,
@@ -272,6 +276,24 @@ export const mswHandlers = [
   ),
   http.get("/api/inventory/stock-card", ({ request }) =>
     fromService(() => getStockCard(searchParams(request))),
+  ),
+  // Kardex vacío: las historias que no simulan el suyo no muestran la tarjeta en error.
+  http.get("/api/inventory/kardex", ({ request }) =>
+    fromService((): ProductKardex => ({
+      entries30d: 0,
+      exits30d: 0,
+      lastMovements: [],
+      openingBalance: 0,
+      product: {
+        currentStock: 0,
+        id: searchParams(request).get("productId") ?? "",
+        minStock: 0,
+        name: "",
+        sku: "",
+      },
+      series: getKardexWindow().dates.map((date) => ({ balance: 0, date, entries: 0, exits: 0 })),
+      truncated: false,
+    })),
   ),
   http.post("/api/inventory/adjustments", async ({ request }) =>
     fromJson(request, createStockAdjustment, 201),

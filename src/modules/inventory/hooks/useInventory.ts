@@ -148,8 +148,9 @@ export const inventoryQueryKeys = {
 };
 
 /** Vista única de stock (`GET /api/inventory`): todos los filtros los aplica el servidor. */
-export function useInventory(filters: InventoryFilters = {}) {
+export function useInventory(filters: InventoryFilters = {}, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: inventoryQueryKeys.list(filters),
     queryFn: () =>
       apiFetch<PaginatedList<InventoryOverviewItem>>("/api/inventory", {

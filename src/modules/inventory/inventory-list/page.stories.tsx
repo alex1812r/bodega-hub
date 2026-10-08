@@ -3,6 +3,7 @@ import { http, HttpResponse } from "msw";
 
 import type { CategoryMock, StockMovementType } from "@/shared/mocks/erp-data";
 
+import type { InventoryMovement } from "../hooks/useInventory";
 import type { InventoryOverviewItem } from "../services/inventoryOverview";
 import { InventoryListPage } from "./page";
 
@@ -11,9 +12,12 @@ import { InventoryListPage } from "./page";
  * 30 días, último movimiento y estado. Para admin, el aviso "Descuadre" cuando
  * el stock no coincide con la suma de movimientos.
  *
- * Las historias simulan `GET /api/inventory`, `/api/categories` y
- * `/api/auth/me` con MSW. Los filtros viven en la URL; la respuesta simulada
- * no los aplica.
+ * Cada fila se expande con sus últimos movimientos; el producto abierto vive en
+ * `?product=<id>` y, si no está en la página, se fija encima de la tabla.
+ *
+ * Las historias simulan `GET /api/inventory`, `/api/inventory/movements`,
+ * `/api/categories` y `/api/auth/me` con MSW. Los filtros viven en la URL; la
+ * respuesta simulada no los aplica.
  */
 const meta = {
   component: InventoryListPage,
@@ -139,11 +143,74 @@ const packConversionsHandler = http.get("/api/inventory/pack-conversions", () =>
   HttpResponse.json({ data: [] }),
 );
 
-function inventoryHandler(items: InventoryOverviewItem[]) {
-  return http.get("/api/inventory", () =>
-    HttpResponse.json({ data: { items, limit: 10, skip: 0, total: items.length } }),
-  );
+/** La página de la lista; con `productId`, el producto de `byId` que tenga ese id (o ninguno). */
+function inventoryHandler(items: InventoryOverviewItem[], byId: InventoryOverviewItem[] = []) {
+  return http.get("/api/inventory", ({ request }) => {
+    const productId = new URL(request.url).searchParams.get("productId");
+    const found = productId === null ? items : byId.filter((row) => row.id === productId);
+
+    return HttpResponse.json({ data: { items: found, limit: 10, skip: 0, total: found.length } });
+  });
 }
+
+function movement(overrides: Partial<InventoryMovement>): InventoryMovement {
+  return {
+    createdAt: "2024-03-29T13:05:00.000Z",
+    documentKind: null,
+    documentNumber: null,
+    id: "mov-1",
+    productId: "arr-002",
+    quantityDelta: 1,
+    stockAfter: 1,
+    type: "ajuste_entrada",
+    ...overrides,
+  };
+}
+
+const movements: InventoryMovement[] = [
+  movement({
+    documentKind: "compra",
+    documentNumber: "C-000045",
+    id: "mov-3",
+    purchaseId: "purchase-45",
+    quantityDelta: 24,
+    stockAfter: 9,
+    type: "compra",
+  }),
+  movement({
+    createdAt: "2024-03-27T19:40:00.000Z",
+    id: "mov-2",
+    quantityDelta: -2,
+    reason: "Conteo físico: dos bolsas rotas",
+    stockAfter: -15,
+    type: "ajuste_salida",
+  }),
+  movement({
+    createdAt: "2024-03-20T12:00:00.000Z",
+    documentKind: "venta",
+    documentNumber: "V-000198",
+    id: "mov-1",
+    quantityDelta: -13,
+    saleId: "sale-198",
+    stockAfter: -13,
+    type: "venta",
+  }),
+];
+
+const movementsHandler = http.get("/api/inventory/movements", () =>
+  HttpResponse.json({ data: { items: movements, limit: 10, skip: 0, total: movements.length } }),
+);
+
+/** Producto activo que no está en la página de la lista. */
+const offPageItem = item("caf-006", "Café molido 500 g", {
+  currentStock: 7,
+  entries30d: 12,
+  exits30d: 5,
+  lastMovementAt: "2024-03-28T16:30:00.000Z",
+  lastMovementType: "compra",
+  minStock: 9,
+  reconciliationDiff: 2,
+});
 
 /** Admin: columnas nuevas, un descuadre de +3, un stock negativo con descuadre de −2 y un producto sin movimientos. */
 export const Default: Story = {
@@ -156,6 +223,59 @@ export const Default: Story = {
         inventoryHandler(adminItems),
       ],
     },
+  },
+};
+
+/**
+ * `/inventory?product=arr-002`: la fila de "Arroz blanco" llega expandida con
+ * sus últimos movimientos, el saldo tras cada uno y la línea del descuadre.
+ */
+export const ExpandedRow: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        profileHandler("admin"),
+        categoriesHandler,
+        packConversionsHandler,
+        inventoryHandler(adminItems),
+        movementsHandler,
+      ],
+    },
+    nextjs: { navigation: { pathname: "/inventory", query: { product: "arr-002" } } },
+  },
+};
+
+/**
+ * `/inventory?product=caf-006` (enlace desde Productos): el producto no está en
+ * la página, así que se fija encima de la tabla con sus movimientos abiertos.
+ */
+export const SelectedProductPinned: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        profileHandler("admin"),
+        categoriesHandler,
+        packConversionsHandler,
+        inventoryHandler(adminItems, [offPageItem]),
+        movementsHandler,
+      ],
+    },
+    nextjs: { navigation: { pathname: "/inventory", query: { product: "caf-006" } } },
+  },
+};
+
+/** El producto de la URL no existe, está inactivo o es de otra tienda: aviso y la lista sigue. */
+export const SelectedProductNotFound: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        profileHandler("admin"),
+        categoriesHandler,
+        packConversionsHandler,
+        inventoryHandler(adminItems),
+      ],
+    },
+    nextjs: { navigation: { pathname: "/inventory", query: { product: "no-existe" } } },
   },
 };
 

@@ -11,6 +11,9 @@ export const INVENTORY_STOCK_STATUS_FILTERS = ["ok", "low", "out"] as const;
 /** Precio de referencia más alto que acepta el filtro de rango. */
 export const INVENTORY_MAX_PRICE_FILTER = 999_999_999;
 
+/** Un `product` más largo no es un id: se ignora (el servidor rechaza ids de más de 200). */
+const INVENTORY_PRODUCT_PARAM_MAX_LENGTH = 64;
+
 /** Extremo del rango de precio: `null` = sin límite. */
 const priceParam = () =>
   z.number().min(0).max(INVENTORY_MAX_PRICE_FILTER).nullable().default(null);
@@ -29,9 +32,12 @@ const priceParam = () =>
  * | `maxPrice` | precio de venta máximo (REF), con debounce           | ausente     |
  * | `page`     | base 1                                               | `1`         |
  * | `limit`    | tamaño de página                                     | `10`        |
+ * | `product`  | id del producto con los movimientos abiertos (uno)   | `""`        |
  *
- * `product` queda reservado para la fila expandida (INV-02): no es de este
- * schema, así que `useUrlListState` lo conserva sin tocarlo.
+ * `product` no es un filtro: cambiar filtros, página o tamaño lo conserva, y
+ * "Limpiar filtros" también. Si el producto deja de estar en la página visible,
+ * la lista lo muestra fijado encima de la tabla. Es el enlace profundo que usa
+ * `/products` (`/inventory?product=<id>`).
  */
 export const inventoryListSchema = z.object({
   search: listParams.text(),
@@ -42,6 +48,7 @@ export const inventoryListSchema = z.object({
   maxPrice: priceParam(),
   page: listParams.page(),
   limit: listParams.limit(),
+  product: listParams.text(INVENTORY_PRODUCT_PARAM_MAX_LENGTH),
 });
 
 export type InventoryListState = UrlListStateOf<typeof inventoryListSchema.shape>;

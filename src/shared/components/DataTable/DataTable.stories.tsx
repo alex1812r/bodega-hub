@@ -80,6 +80,22 @@ export const Error: Story = {
   },
 };
 
+/**
+ * `renderExpandedRow`: la fila "Harina PAN" lleva su contenido expandido en una
+ * fila a todo el ancho (al pie de la tarjeta en móvil). Qué fila está abierta y
+ * el botón que la abre los pone quien usa la tabla.
+ */
+export const ExpandedRow: Story = {
+  args: {
+    renderExpandedRow: (row) =>
+      row.id === "P-002" ? (
+        <div className="bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant dark:bg-slate-950">
+          Últimos movimientos de {row.name}: 3 unidades en existencia.
+        </div>
+      ) : null,
+  },
+};
+
 export const EmptyWithAction: Story = {
   args: {
     data: [],

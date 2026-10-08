@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
-import { type ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 import type { SortOrder } from "@/lib/api/sorting";
 import { ActionsMenu, type ActionMenuItem } from "@/shared/components/ActionsMenu";
@@ -52,11 +52,32 @@ type DataTableProps<TData> = {
   loadingRows?: number;
   onRetry?: () => void;
   onSortChange?: (columnKey: string) => void;
+  /**
+   * Contenido expandido de una fila: se pinta en una fila propia a todo el ancho
+   * justo debajo (y al pie de la tarjeta en móvil). `null`, `undefined` o `false`
+   * = fila cerrada. Qué fila está abierta y el botón que la abre son de quien usa
+   * la tabla (una columna normal con `aria-expanded` / `aria-controls`).
+   */
+  renderExpandedRow?: (row: TData) => ReactNode;
   sortBy?: string;
   sortOrder?: SortOrder;
   /** Tablas alineadas al design system Stitch (Inventario, etc.). */
   variant?: DataTableVariant;
 };
+
+function DataTableExpandedRow({ colSpan, content }: { colSpan: number; content: ReactNode }) {
+  if (content === null || content === undefined || content === false) {
+    return null;
+  }
+
+  return (
+    <tr>
+      <td className="p-0" colSpan={colSpan}>
+        {content}
+      </td>
+    </tr>
+  );
+}
 
 const tableHeaderClassDefault =
   "px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground";
@@ -123,6 +144,7 @@ export function DataTable<TData>({
   loadingRows = 5,
   onRetry,
   onSortChange,
+  renderExpandedRow,
   sortBy,
   sortOrder,
   variant = "default",
@@ -157,6 +179,7 @@ export function DataTable<TData>({
         isLoading={isLoading}
         loadingRows={loadingRows}
         onRetry={onRetry}
+        renderExpandedRow={renderExpandedRow}
       />
     );
   }
@@ -270,6 +293,7 @@ export function DataTable<TData>({
               </tr>
             ) : data.length > 0 ? (
               data.map((row, index) => (
+                <Fragment key={getRowId(row)}>
                 <tr
                   className={cn(
                     "group transition-colors",
@@ -289,7 +313,6 @@ export function DataTable<TData>({
                       "bg-surface-bright dark:bg-slate-800/40",
                     !isStitch && index % 2 === 1 && "bg-surface-container-low/70 dark:bg-slate-800/40",
                   )}
-                  key={getRowId(row)}
                 >
                   {columns.map((column) => (
                     <td
@@ -317,6 +340,10 @@ export function DataTable<TData>({
                     </td>
                   ) : null}
                 </tr>
+                {renderExpandedRow ? (
+                  <DataTableExpandedRow colSpan={colSpan} content={renderExpandedRow(row)} />
+                ) : null}
+                </Fragment>
               ))
             ) : (
               <tr>

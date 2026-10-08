@@ -2,7 +2,7 @@
 
 import { Lock } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { ClientApiError } from "@/shared/api/apiFetch";
@@ -33,8 +33,15 @@ import { useInventory, type InventoryOverviewItem } from "../hooks/useInventory"
 import { InventoryExportActions } from "./components/InventoryExportActions";
 import { InventoryLastMovementCell } from "./components/InventoryLastMovementCell";
 import { InventoryListFilters } from "./components/InventoryListFilters";
-import { InventoryReconciliationBadge } from "./components/InventoryReconciliationBadge";
+import {
+  InventoryMovementsToggle,
+  getInventoryMovementsPanelId,
+  getInventoryProductAnchorId,
+} from "./components/InventoryMovementsToggle";
+import { InventoryProductMovementsPanel } from "./components/InventoryProductMovementsPanel";
+import { InventorySelectedProduct } from "./components/InventorySelectedProduct";
 import { InventorySkuCell } from "./components/InventorySkuCell";
+import { InventoryProductName, InventoryStockValue } from "./components/InventoryStockCells";
 import { InventoryStockStatusBadge } from "./components/InventoryStockStatusBadge";
 import {
   INVENTORY_LIST_NO_FILTERS,
@@ -53,32 +60,18 @@ import {
 const compactColumnClass = "px-2";
 const numericCellClass = "px-2 tabular-nums";
 
-/** Nombre del producto y, para admin, el aviso de descuadre (tabla y tarjeta). */
-function InventoryProductName({ item }: { item: InventoryOverviewItem }) {
+/** Códigos con los que `GET /api/inventory?productId=` dice "ese id no es de un producto". */
+const PRODUCT_NOT_FOUND_STATUSES = [400, 404];
+
+function prefersReducedMotion() {
   return (
-    <span className="flex min-w-0 flex-col items-start gap-1">
-      <span className="line-clamp-2 min-w-0 text-sm leading-snug text-foreground" title={item.name}>
-        {item.name}
-      </span>
-      <InventoryReconciliationBadge diff={item.reconciliationDiff} />
-    </span>
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
 }
 
-const columns: DataTableColumn<InventoryOverviewItem>[] = [
-  {
-    cellClassName: "min-w-[10rem] max-w-[16rem] px-2 pl-4 font-medium",
-    className: "px-2 pl-4",
-    header: "Producto",
-    hideInCard: true,
-    key: "product",
-    render: (item) => (
-      <div className="flex min-w-0 flex-col gap-1">
-        <InventoryProductName item={item} />
-        <InventorySkuCell className="max-w-[9rem]" sku={item.sku} />
-      </div>
-    ),
-  },
+/** Columnas fijas: todas menos "Producto", que lleva el botón de movimientos. */
+const figureColumns: DataTableColumn<InventoryOverviewItem>[] = [
   {
     cellClassName: "px-2 text-on-surface-variant",
     className: compactColumnClass,
@@ -93,18 +86,7 @@ const columns: DataTableColumn<InventoryOverviewItem>[] = [
     className: compactColumnClass,
     header: "Stock",
     key: "currentStock",
-    render: (item) => (
-      <span
-        className={cn(
-          item.currentStock === 0 && "text-error",
-          item.currentStock < 0 && "font-semibold text-error",
-        )}
-        data-negative={item.currentStock < 0 ? "true" : undefined}
-        title={item.currentStock < 0 ? "Stock negativo" : undefined}
-      >
-        {item.currentStock}
-      </span>
-    ),
+    render: (item) => <InventoryStockValue currentStock={item.currentStock} />,
   },
   {
     align: "right",
@@ -165,7 +147,7 @@ function InventoryList() {
   const search = useDebouncedValue(state.search, URL_LIST_DEBOUNCE_MS);
   const minPrice = useDebouncedValue(state.minPrice, URL_LIST_DEBOUNCE_MS);
   const maxPrice = useDebouncedValue(state.maxPrice, URL_LIST_DEBOUNCE_MS);
-  const { category, lowStock, status } = state;
+  const { category, lowStock, product: selectedProductId, status } = state;
   const filters = useMemo(
     () => toInventoryFilters({ category, lowStock, status }, { maxPrice, minPrice, search }),
     [category, lowStock, maxPrice, minPrice, search, status],
@@ -193,6 +175,105 @@ function InventoryList() {
       setListState({ page: lastPage });
     }
   }, [isPagePastTheEnd, lastPage, setListState]);
+
+  const isSelectedInPage =
+    selectedProductId !== "" && inventory.some((item) => item.id === selectedProductId);
+  // El producto de la URL no está en la página visible: se pide aparte y se fija
+  // arriba. Se espera a que la página cargue para no pedirlo si ya viene en ella.
+  const mustFetchSelected =
+    selectedProductId !== "" &&
+    inventoryQuery.data !== undefined &&
+    !isPagePastTheEnd &&
+    !isSelectedInPage;
+  const selectedQuery = useInventory(
+    { limit: 10, productId: selectedProductId, skip: 0 },
+    mustFetchSelected,
+  );
+  // Mientras la lista recarga (otro filtro u otra página) el bloque fijado sigue con lo ya leído.
+  const showSelectedBlock =
+    selectedProductId !== "" &&
+    !isSelectedInPage &&
+    (mustFetchSelected || selectedQuery.data !== undefined);
+  const isSelectedNotFound =
+    selectedQuery.error instanceof ClientApiError &&
+    PRODUCT_NOT_FOUND_STATUSES.includes(selectedQuery.error.status);
+  const selectedItem = selectedQuery.data
+    ? (getPaginatedItems(selectedQuery.data).find((item) => item.id === selectedProductId) ?? null)
+    : isSelectedNotFound
+      ? null
+      : undefined;
+
+  // Producto con el que se llegó a la pantalla (`/inventory?product=<id>`): la
+  // página se desplaza hasta él una sola vez, cuando ya está pintado.
+  const arrivalProductRef = useRef(selectedProductId);
+  const isSelectedRendered = isSelectedInPage || showSelectedBlock;
+
+  useEffect(() => {
+    const arrivalProductId = arrivalProductRef.current;
+
+    if (arrivalProductId === "" || arrivalProductId !== selectedProductId || !isSelectedRendered) {
+      return;
+    }
+
+    arrivalProductRef.current = "";
+
+    const anchor = document.getElementById(getInventoryProductAnchorId(arrivalProductId));
+
+    // jsdom no implementa `scrollIntoView`.
+    if (anchor && typeof anchor.scrollIntoView === "function") {
+      anchor.scrollIntoView({
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+        block: "center",
+      });
+    }
+  }, [isSelectedRendered, selectedProductId]);
+
+  // Sin `page` en el patch la lista volvería a la página 1: abrir o cerrar los
+  // movimientos de una fila no cambia de página.
+  const currentPage = state.page;
+  const toggleProduct = useCallback(
+    (productId: string) => {
+      arrivalProductRef.current = "";
+      setListState({
+        page: currentPage,
+        product: productId === selectedProductId ? "" : productId,
+      });
+    },
+    [currentPage, selectedProductId, setListState],
+  );
+  const clearProduct = useCallback(() => {
+    arrivalProductRef.current = "";
+    setListState({ page: currentPage, product: "" });
+  }, [currentPage, setListState]);
+
+  const columns = useMemo<DataTableColumn<InventoryOverviewItem>[]>(
+    () => [
+      {
+        cellClassName: "min-w-[10rem] max-w-[16rem] px-2 pl-4 font-medium",
+        className: "px-2 pl-4",
+        header: "Producto",
+        hideInCard: true,
+        key: "product",
+        render: (item) => (
+          <div className="flex min-w-0 items-start gap-1">
+            <InventoryMovementsToggle
+              className="-ml-2"
+              isExpanded={item.id === selectedProductId}
+              onToggle={toggleProduct}
+              productId={item.id}
+              productName={item.name}
+            />
+            <div className="flex min-w-0 flex-col gap-1 pt-1.5">
+              <InventoryProductName item={item} />
+              <InventorySkuCell className="max-w-[9rem]" sku={item.sku} />
+            </div>
+          </div>
+        ),
+      },
+      ...figureColumns,
+    ],
+    [selectedProductId, toggleProduct],
+  );
 
   const rowActions = useMemo(
     () =>
@@ -259,12 +340,31 @@ function InventoryList() {
               onClear={clearFilters}
             />
 
+            {showSelectedBlock ? (
+              <InventorySelectedProduct
+                error={isSelectedNotFound ? null : selectedQuery.error}
+                isLoading={selectedQuery.isLoading}
+                item={selectedItem}
+                onClear={clearProduct}
+                onRetry={() => void selectedQuery.refetch()}
+                productId={selectedProductId}
+                returnTo={list.href}
+              />
+            ) : null}
+
             <div className="flex w-full flex-col md:overflow-hidden md:rounded-xl md:border md:border-border md:bg-surface-container-lowest md:shadow-sm dark:md:border-slate-800">
               <DataTable
                 actions={rowActions}
                 cardSubtitle={(item) => (
-                  <span className="inline-flex items-center gap-2">
+                  <span className="flex flex-wrap items-center justify-between gap-2">
                     <InventorySkuCell sku={item.sku} />
+                    <InventoryMovementsToggle
+                      isExpanded={item.id === selectedProductId}
+                      onToggle={toggleProduct}
+                      productId={item.id}
+                      productName={item.name}
+                      showLabel
+                    />
                   </span>
                 )}
                 cardTitle={(item) => <InventoryProductName item={item} />}
@@ -294,6 +394,15 @@ function InventoryList() {
                 isFetching={inventoryQuery.isFetching}
                 isLoading={inventoryQuery.isLoading || isPagePastTheEnd}
                 onRetry={() => void inventoryQuery.refetch()}
+                renderExpandedRow={(item) =>
+                  item.id === selectedProductId ? (
+                    <InventoryProductMovementsPanel
+                      id={getInventoryMovementsPanelId(item.id)}
+                      product={item}
+                      returnTo={list.href}
+                    />
+                  ) : null
+                }
                 variant="stitch"
               />
 

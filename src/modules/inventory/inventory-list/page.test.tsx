@@ -2,12 +2,16 @@
  * INV-01b · `/inventory` como vista única de stock: columnas del libro de
  * movimientos, aviso de descuadre (solo admin), filtros aplicados por el
  * servidor y todo el estado de la lista en la URL (regla 15).
+ *
+ * INV-02 · movimientos en línea: fila expandible con `product` en la URL,
+ * carga bajo demanda y producto fijado cuando no está en la página.
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import type { InventoryMovement } from "../hooks/useInventory";
 import type { InventoryOverviewItem } from "../services/inventoryOverview";
 
 const mockExportInventoryToExcel = jest.fn();
@@ -87,6 +91,32 @@ const ADMIN_ITEMS: InventoryOverviewItem[] = [
   item("p-sal", "Sal", { reconciliationDiff: 0 }),
 ];
 
+/** Producto activo que no está en la página que devuelve la lista. */
+const OFF_PAGE_ITEM = item("p-cafe", "Café", {
+  currentStock: 7,
+  entries30d: 12,
+  exits30d: 5,
+  lastMovementAt: "2026-10-06T16:00:00.000Z",
+  lastMovementType: "compra",
+  minStock: 9,
+  reconciliationDiff: 2,
+  stockStatus: "low",
+});
+
+const MOVEMENTS: InventoryMovement[] = [
+  {
+    createdAt: "2026-10-08T14:00:00.000Z",
+    documentKind: "venta",
+    documentNumber: "V-000123",
+    id: "mov-venta",
+    productId: "p-arroz",
+    quantityDelta: -2,
+    saleId: "sale-1",
+    stockAfter: 4,
+    type: "venta",
+  },
+];
+
 function withoutReconciliation(row: InventoryOverviewItem): InventoryOverviewItem {
   const copy = { ...row };
 
@@ -121,14 +151,16 @@ describe("InventoryListPage · vista única de stock", () => {
   /** Respuesta de `GET /api/inventory` según los parámetros pedidos. */
   let inventoryResponse: (params: URLSearchParams) => Response | Promise<Response>;
   let isMobile = false;
+  let prefersReducedMotion = false;
 
   beforeEach(() => {
     isMobile = false;
+    prefersReducedMotion = false;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: (query: string) => ({
         addEventListener: jest.fn(),
-        matches: isMobile,
+        matches: query.includes("prefers-reduced-motion") ? prefersReducedMotion : isMobile,
         media: query,
         removeEventListener: jest.fn(),
       }),
@@ -144,6 +176,12 @@ describe("InventoryListPage · vista única de stock", () => {
 
       if (path === "/api/inventory") {
         return inventoryResponse(params);
+      }
+
+      if (path === "/api/inventory/movements") {
+        return jsonResponse({
+          data: { items: MOVEMENTS, limit: 10, skip: 0, total: MOVEMENTS.length },
+        });
       }
 
       if (path === "/api/categories") {
@@ -190,6 +228,14 @@ describe("InventoryListPage · vista única de stock", () => {
     return fetchMock.mock.calls
       .map(([url]) => String(url))
       .filter((url) => url.split("?")[0] === "/api/inventory")
+      .map((url) => Object.fromEntries(new URLSearchParams(url.split("?")[1] ?? "")));
+  }
+
+  /** Parámetros de cada `GET /api/inventory/movements`, en orden. */
+  function movementRequests() {
+    return fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.split("?")[0] === "/api/inventory/movements")
       .map((url) => Object.fromEntries(new URLSearchParams(url.split("?")[1] ?? "")));
   }
 
@@ -472,7 +518,7 @@ describe("InventoryListPage · vista única de stock", () => {
       await waitFor(() => expect(lastInventoryRequest()).toEqual({ limit: "10", skip: "10" }));
     });
 
-    it("never touches the reserved 'product' parameter", async () => {
+    it("does not send 'product' to the list and keeps it when the filters change or are cleared", async () => {
       const user = userEvent.setup();
 
       renderPage("product=p-arroz&page=2");
@@ -482,7 +528,7 @@ describe("InventoryListPage · vista única de stock", () => {
 
       await user.click(screen.getByRole("button", { name: "Sin Stock" }));
 
-      expect(window.location.search).toBe("?product=p-arroz&status=out");
+      expect(window.location.search).toBe("?status=out&product=p-arroz");
 
       await user.click(screen.getByRole("button", { name: "Limpiar filtros" }));
 
@@ -506,6 +552,414 @@ describe("InventoryListPage · vista única de stock", () => {
       ]);
       expect(screen.queryByText(/Aún no hay productos/)).not.toBeInTheDocument();
       expect(screen.queryByText(/Ningún producto coincide/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("movimientos en línea", () => {
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    const scrollIntoView = jest.fn();
+    const MOVEMENTS_PANEL = /^Últimos movimientos de /;
+
+    beforeEach(() => {
+      scrollIntoView.mockReset();
+      Element.prototype.scrollIntoView = scrollIntoView;
+    });
+
+    afterEach(() => {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    });
+
+    function panelOf(name: string) {
+      return screen.queryByRole("region", { name: `Últimos movimientos de ${name}` });
+    }
+
+    /** La lista sin el producto pedido por id; ese producto, solo con `productId`. */
+    function listWithOffPageProduct(found: InventoryOverviewItem[] = [OFF_PAGE_ITEM]) {
+      inventoryResponse = (params) =>
+        params.has("productId") ? page(found) : page(ADMIN_ITEMS, 45);
+    }
+
+    it("asks for no movements until a row is expanded", async () => {
+      renderPage();
+      await findRow("Harina");
+
+      expect(movementRequests()).toEqual([]);
+      expect(screen.queryByRole("region", { name: MOVEMENTS_PANEL })).not.toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /^Ver movimientos de / })).toHaveLength(4);
+    });
+
+    it("expands a row with its last 10 movements, writes 'product' in the URL and collapses it again", async () => {
+      const user = userEvent.setup();
+
+      renderPage();
+
+      const row = await findRow("Arroz");
+      const toggle = within(row).getByRole("button", { name: "Ver movimientos de Arroz" });
+
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+      await user.click(toggle);
+
+      const panel = panelOf("Arroz");
+
+      expect(panel).toBeInTheDocument();
+      expect(window.location.search).toBe("?product=p-arroz");
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      expect(toggle).toHaveAttribute("aria-controls", panel?.id);
+      expect(toggle).toHaveAccessibleName("Ocultar movimientos de Arroz");
+      // La fila expandida va justo debajo de la del producto, a todo el ancho.
+      expect(panel?.closest("tr")).toBe(row.nextElementSibling);
+      expect(panel?.closest("td")).toHaveAttribute("colspan", "9");
+      expect(await within(panel as HTMLElement).findByText("Venta V-000123")).toBeInTheDocument();
+      expect(movementRequests()).toEqual([{ limit: "10", productId: "p-arroz" }]);
+      // Solo cambió `product`: la lista no se vuelve a pedir.
+      expect(inventoryRequests()).toHaveLength(1);
+
+      await user.click(toggle);
+
+      expect(panelOf("Arroz")).not.toBeInTheDocument();
+      expect(window.location.search).toBe("");
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(toggle).toHaveAccessibleName("Ver movimientos de Arroz");
+    });
+
+    it("passes the reconciliation diff of the row to the panel", async () => {
+      const user = userEvent.setup();
+
+      renderPage();
+      await user.click(
+        within(await findRow("Arroz")).getByRole("button", { name: "Ver movimientos de Arroz" }),
+      );
+
+      expect(within(panelOf("Arroz") as HTMLElement).getByRole("note")).toHaveTextContent(
+        "El stock (4) no coincide con la suma de movimientos (1).",
+      );
+    });
+
+    it("replaces the expanded product when another row is expanded", async () => {
+      const user = userEvent.setup();
+
+      renderPage("product=p-arroz");
+      await findRow("Harina");
+      expect(panelOf("Arroz")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Ver movimientos de Harina" }));
+
+      expect(window.location.search).toBe("?product=p-harina");
+      expect(panelOf("Harina")).toBeInTheDocument();
+      expect(panelOf("Arroz")).not.toBeInTheDocument();
+      expect(screen.getAllByRole("region", { name: MOVEMENTS_PANEL })).toHaveLength(1);
+      expect(screen.getByRole("button", { name: "Ver movimientos de Arroz" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+    });
+
+    it("stays on the same page when a row is expanded or collapsed", async () => {
+      const user = userEvent.setup();
+
+      renderPage("page=2");
+      await findRow("Harina");
+      await user.click(screen.getByRole("button", { name: "Ver movimientos de Sal" }));
+
+      expect(window.location.search).toBe("?page=2&product=p-sal");
+
+      await user.click(screen.getByRole("button", { name: "Ocultar movimientos de Sal" }));
+
+      expect(window.location.search).toBe("?page=2");
+      expect(inventoryRequests()).toEqual([{ limit: "10", skip: "10" }]);
+    });
+
+    it("works with the keyboard: Enter expands and Space collapses", async () => {
+      const user = userEvent.setup();
+
+      renderPage();
+
+      const toggle = within(await findRow("Sal")).getByRole("button", {
+        name: "Ver movimientos de Sal",
+      });
+
+      toggle.focus();
+      await user.keyboard("{Enter}");
+
+      expect(panelOf("Sal")).toBeInTheDocument();
+      expect(toggle).toHaveFocus();
+
+      await user.keyboard(" ");
+
+      expect(panelOf("Sal")).not.toBeInTheDocument();
+    });
+
+    it("expands only from its button: the rest of the row keeps its own clicks", async () => {
+      const user = userEvent.setup();
+
+      renderPage();
+
+      const row = await findRow("Arroz");
+
+      await user.click(within(row).getByTitle("Arroz"));
+      await user.click(within(row).getByText("Compra"));
+
+      expect(screen.queryByRole("region", { name: MOVEMENTS_PANEL })).not.toBeInTheDocument();
+      expect(window.location.search).toBe("");
+      expect(movementRequests()).toEqual([]);
+    });
+
+    it("opens the product of the URL on mount when it is in the page, scrolls to it and asks for nothing else", async () => {
+      renderPage("status=low&product=p-arroz");
+
+      const row = await findRow("Arroz");
+      const panel = panelOf("Arroz") as HTMLElement;
+
+      expect(panel).toBeInTheDocument();
+      expect(window.location.search).toBe("?status=low&product=p-arroz");
+      expect(inventoryRequests()).toEqual([{ limit: "10", skip: "0", stockStatus: "low" }]);
+      expect(screen.queryByRole("region", { name: "Producto seleccionado" })).not.toBeInTheDocument();
+      expect(within(panel).getByRole("link", { name: /Ver kardex completo/ })).toHaveAttribute(
+        "href",
+        `/inventory/movements?productId=p-arroz&returnTo=${encodeURIComponent(
+          "/inventory?status=low&product=p-arroz",
+        )}`,
+      );
+      await waitFor(() => expect(movementRequests()).toHaveLength(1));
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "center" });
+      expect(scrollIntoView.mock.contexts[0]).toBe(
+        within(row).getByRole("button", { name: "Ocultar movimientos de Arroz" }),
+      );
+    });
+
+    it("scrolls without animation when the user prefers reduced motion", async () => {
+      prefersReducedMotion = true;
+      renderPage("product=p-arroz");
+      await findRow("Arroz");
+
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "center" });
+    });
+
+    it("does not scroll when the user expands a row", async () => {
+      const user = userEvent.setup();
+
+      renderPage();
+      await findRow("Harina");
+      await user.click(screen.getByRole("button", { name: "Ver movimientos de Aceite" }));
+
+      expect(panelOf("Aceite")).toBeInTheDocument();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    });
+
+    it("pins the product of the URL above the table when it is not in the page", async () => {
+      const user = userEvent.setup();
+
+      listWithOffPageProduct();
+      renderPage("product=p-cafe");
+
+      const pinned = await screen.findByRole("region", { name: "Producto seleccionado" });
+
+      expect(inventoryRequests()).toEqual([
+        { limit: "10", skip: "0" },
+        { limit: "10", productId: "p-cafe", skip: "0" },
+      ]);
+      expect(await within(pinned).findByTitle("Café")).toBeInTheDocument();
+      expect(pinned).toHaveTextContent("P-CAFE");
+      expect(within(pinned).getByTestId("inventory-reconciliation-badge")).toHaveTextContent(
+        "Descuadre +2",
+      );
+
+      const figures = Object.fromEntries(
+        within(pinned)
+          .getAllByRole("term")
+          .map((term) => [term.textContent, term.nextElementSibling?.textContent]),
+      );
+
+      expect(figures).toMatchObject({
+        "Entradas 30 d": "12",
+        "Mínimo": "9",
+        "Salidas 30 d": "5",
+        Stock: "7",
+      });
+      expect(figures["Último movimiento"]).toContain("06/10/2026");
+      expect(figures["Último movimiento"]).toContain("Compra");
+      expect(Object.keys(figures)).toContain("Estado");
+
+      // Sus movimientos van abiertos y el kardex completo vuelve a esta misma URL.
+      const panel = within(pinned).getByRole("region", { name: "Últimos movimientos de Café" });
+
+      expect(await within(panel).findByText("Venta V-000123")).toBeInTheDocument();
+      expect(movementRequests()).toEqual([{ limit: "10", productId: "p-cafe" }]);
+      expect(within(panel).getByRole("link", { name: /Ver kardex completo/ })).toHaveAttribute(
+        "href",
+        `/inventory/movements?productId=p-cafe&returnTo=${encodeURIComponent("/inventory?product=p-cafe")}`,
+      );
+      // La tabla sigue debajo, con ninguna fila expandida.
+      expect(pinned).not.toContainElement(await findRow("Harina"));
+      expect(pinned.compareDocumentPosition(screen.getByRole("table"))).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+      await user.click(within(pinned).getByRole("button", { name: "Quitar selección" }));
+
+      expect(window.location.search).toBe("");
+      expect(screen.queryByRole("region", { name: "Producto seleccionado" })).not.toBeInTheDocument();
+      expect(await findRow("Harina")).toBeInTheDocument();
+    });
+
+    it("replaces the pinned product when a row is expanded", async () => {
+      const user = userEvent.setup();
+
+      listWithOffPageProduct();
+      renderPage("product=p-cafe");
+      await screen.findByRole("region", { name: "Producto seleccionado" });
+      await user.click(screen.getByRole("button", { name: "Ver movimientos de Harina" }));
+
+      expect(window.location.search).toBe("?product=p-harina");
+      expect(screen.queryByRole("region", { name: "Producto seleccionado" })).not.toBeInTheDocument();
+      expect(panelOf("Harina")).toBeInTheDocument();
+    });
+
+    it.each([
+      ["does not exist, is inactive or belongs to another store", () => page([])],
+      [
+        "is not a valid id",
+        () => jsonResponse({ error: { code: "BAD_REQUEST", message: "Id inválido." } }, 400),
+      ],
+    ])("says the selected product was not found when it %s, and the list keeps working", async (_case, response) => {
+      const user = userEvent.setup();
+
+      inventoryResponse = (params) => (params.has("productId") ? response() : page(ADMIN_ITEMS, 45));
+      renderPage("product=p-fantasma");
+
+      const notice = await screen.findByText("No se encontró el producto seleccionado.");
+      const pinned = notice.closest("section") as HTMLElement;
+
+      expect(await findRow("Harina")).toBeInTheDocument();
+      expect(movementRequests()).toEqual([]);
+      expect(within(pinned).queryByRole("region")).not.toBeInTheDocument();
+
+      await user.click(within(pinned).getByRole("button", { name: "Quitar selección" }));
+
+      expect(window.location.search).toBe("");
+      expect(screen.queryByText("No se encontró el producto seleccionado.")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Ver movimientos de Harina" }));
+
+      expect(panelOf("Harina")).toBeInTheDocument();
+    });
+
+    it("offers to retry when the selected product could not be read", async () => {
+      const user = userEvent.setup();
+      let fail = true;
+
+      inventoryResponse = (params) => {
+        if (!params.has("productId")) {
+          return page(ADMIN_ITEMS, 45);
+        }
+
+        return fail
+          ? jsonResponse({ error: { code: "INTERNAL", message: "No se pudo leer el inventario." } }, 500)
+          : page([OFF_PAGE_ITEM]);
+      };
+      renderPage("product=p-cafe");
+
+      expect(
+        await screen.findByText("No pudimos cargar el producto seleccionado. No se pudo leer el inventario."),
+      ).toBeInTheDocument();
+      expect(await findRow("Harina")).toBeInTheDocument();
+
+      fail = false;
+      await user.click(
+        within(screen.getByRole("region", { name: "Producto seleccionado" })).getByRole("button", {
+          name: "Reintentar",
+        }),
+      );
+
+      expect(await screen.findByTitle("Café")).toBeInTheDocument();
+    });
+
+    it("keeps 'product' when a filter takes the product out of the page: it moves to the pinned block and comes back", async () => {
+      const user = userEvent.setup();
+
+      inventoryResponse = (params) => {
+        if (params.has("productId")) {
+          return page([ADMIN_ITEMS[1]]);
+        }
+
+        return params.get("stockStatus") === "out" ? page([ADMIN_ITEMS[3]]) : page(ADMIN_ITEMS, 45);
+      };
+      renderPage("product=p-arroz");
+      await findRow("Arroz");
+      expect(panelOf("Arroz")?.closest("tr")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Sin Stock" }));
+
+      expect(window.location.search).toBe("?status=out&product=p-arroz");
+
+      const pinned = await screen.findByRole("region", { name: "Producto seleccionado" });
+
+      expect(within(pinned).getByTitle("Arroz")).toBeInTheDocument();
+      expect(within(pinned).getByRole("region", { name: "Últimos movimientos de Arroz" })).toBeInTheDocument();
+      expect(await findRow("Sal")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /movimientos de Arroz/ })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Limpiar filtros" }));
+
+      expect(window.location.search).toBe("?product=p-arroz");
+      expect(panelOf("Arroz")?.closest("tr")).toBe((await findRow("Arroz")).nextElementSibling);
+      expect(screen.queryByRole("region", { name: "Producto seleccionado" })).not.toBeInTheDocument();
+    });
+
+    it("keeps 'product' when the page changes", async () => {
+      const user = userEvent.setup();
+
+      inventoryResponse = (params) => {
+        if (params.has("productId")) {
+          return page([ADMIN_ITEMS[1]]);
+        }
+
+        return params.get("skip") === "10"
+          ? page([ADMIN_ITEMS[3]], 45, 10, 10)
+          : page(ADMIN_ITEMS.slice(0, 3), 45);
+      };
+      renderPage("product=p-arroz");
+      await findRow("Arroz");
+      await user.click(screen.getByRole("button", { name: /siguiente/i }));
+
+      expect(window.location.search).toBe("?page=2&product=p-arroz");
+      expect(
+        within(await screen.findByRole("region", { name: "Producto seleccionado" })).getByTitle("Arroz"),
+      ).toBeInTheDocument();
+    });
+
+    it("ignores a 'product' that cannot be an id", async () => {
+      renderPage(`product=${"x".repeat(65)}`);
+      await findRow("Harina");
+
+      expect(inventoryRequests()).toEqual([{ limit: "10", skip: "0" }]);
+      expect(screen.queryByRole("region", { name: MOVEMENTS_PANEL })).not.toBeInTheDocument();
+    });
+
+    it("expands the card of a phone with a labelled button and the panel at its foot", async () => {
+      const user = userEvent.setup();
+
+      isMobile = true;
+      renderPage();
+
+      const card = (await screen.findByTitle("Arroz")).closest("li") as HTMLElement;
+      const toggle = within(card).getByRole("button", { name: "Ver movimientos de Arroz" });
+
+      expect(toggle).toHaveTextContent("Movimientos");
+      expect(movementRequests()).toEqual([]);
+
+      await user.click(toggle);
+
+      const panel = within(card).getByRole("region", { name: "Últimos movimientos de Arroz" });
+
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      expect(toggle).toHaveAttribute("aria-controls", panel.id);
+      expect(card.lastElementChild).toContainElement(panel);
+      expect(window.location.search).toBe("?product=p-arroz");
+      expect(screen.getAllByRole("region", { name: MOVEMENTS_PANEL })).toHaveLength(1);
     });
   });
 
