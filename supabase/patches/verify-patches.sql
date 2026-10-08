@@ -1858,4 +1858,28 @@ select
       and i.indisvalid
       and pg_get_indexdef(i.indexrelid) ilike '%(store_id, client_request_id) where (client_request_id is not null)'
   )
+union all
+select
+  'rpc create_purchase: vincula cada linea al proveedor (pedido sin vinculo -> alta con origen vinculacion; vinculo inactivo -> se reactiva), crea el empaque del vinculo nuevo y no escribe is_preferred (20261010a)',
+  (
+    select count(*) = 1
+       and bool_and(p.pronargs = 14 and p.prosecdef)
+       and bool_and(p.prosrc ilike '%v_sp_is_new := v_sp_id is null;%if p_status = ''recibido'' then%on conflict (supplier_id, product_id)%''compra'',%elsif v_sp_is_new then%insert into public.supplier_products (%''vinculacion'',%elsif not v_sp_active then%set is_active = true,%')
+       and bool_and(p.prosrc ilike '%if v_entry_mode = ''pack''%and v_sp_id = any(v_new_sp_ids)%insert into public.supplier_product_pack_units (%')
+       and bool_and(p.prosrc not ilike '%is_preferred%')
+       and bool_and(p.prosrc not ilike '%current_stock%')
+       and bool_and(p.prosrc ilike '%purchase_idempotent_replay%v_item ->> ''tax_rate_code''%from public.product_pack_components pc%')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'create_purchase'
+  )
+union all
+select
+  'rpc create_purchase: proveedor de la tienda leido con for share; inactivo o que no es proveedor / ambos -> PT400 antes de crear la compra, sin assert_contact_type (20261010a)',
+  (
+    select count(*) = 1
+       and bool_and(p.prosrc ilike '%from public.contacts c%and c.store_id = v_store_id%for share;%errcode = ''PT400''%if not v_supplier_active then%errcode = ''PT400''%v_supplier_type::text not in (''proveedor'', ''ambos'')%errcode = ''PT400''%insert into public.purchases (%')
+       and bool_and(p.prosrc not ilike '%assert_contact_type(%')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'create_purchase'
+  )
 order by 1;

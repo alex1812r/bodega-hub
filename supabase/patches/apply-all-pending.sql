@@ -552,3 +552,26 @@ notify pgrst, 'reload schema';
 -- ORDEN DE DESPLIEGUE (PRO-F9): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
 -- el parche: el reprecio masivo, el cambio de precio con costo esperado, "Mantener precio" con costo esperado y el alta de
 -- producto con clientRequestId responden error (funcion o columna inexistente); nada queda a medias.
+-- -----------------------------------------------------------------------------
+-- 20261010a — purchase auto link (COM-02): create_purchase deja vinculada al proveedor cada linea de la compra en la misma
+--             transaccion (tambien en un pedido), crea el empaque del proveedor del vinculo nuevo y rechaza con PT400 al
+--             proveedor inactivo o que no es proveedor
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010a-purchase-auto-link.sql
+-- Requiere 20261006c / f / h, 20261007a, 20261009d y 20261009e. Idempotente, una transaccion. Solo redefine create_purchase
+-- (misma firma de 14 argumentos) a partir del cuerpo de 20261009d; no toca tablas, indices, politicas, triggers ni
+-- receive_purchase. No migra datos.
+-- NO cambia lineas, movimientos (quantity_delta), costo del producto ni totales: para el mismo payload la compra es la misma
+-- que con 20261009d. Compra recibida: el vinculo se crea / reactiva y registra el costo como hasta hoy (origen 'compra').
+-- Nuevo: un PEDIDO de un producto sin vinculo lo crea con el costo de la linea (con IVA), historial 'vinculacion' y sin
+-- last_purchased_at; sobre un vinculo inactivo lo reactiva sin tocar costo; sobre uno activo no hace nada. La linea por
+-- empaque de un vinculo creado en esa compra anade su supplier_product_pack_units (el primero, predeterminado).
+-- El proveedor habitual lo sigue decidiendo el trigger de 20261009e: el vinculo nuevo queda habitual solo si el producto
+-- no tenia ninguno.
+-- OJO: el proveedor inactivo o que no es proveedor / ambos responde ahora PT400 con mensaje propio ("El proveedor X está
+-- inactivo: no se puede registrar la compra"); antes salia de assert_contact_type sin errcode (P0001).
+-- OJO: create_purchase lee el contacto con FOR SHARE: desactivar a un proveedor espera a que termine su compra en curso.
+-- OJO: reaplicar 20261006c / f / h, 20261007a o 20261009d reinstala create_purchase sin el vinculo automatico: volver a
+-- aplicar este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (COM-02): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada y el BFF nuevo
+-- sobre la base sin parche (mismo payload y misma firma); sin el parche, un pedido no deja vinculo hasta recibirlo.
