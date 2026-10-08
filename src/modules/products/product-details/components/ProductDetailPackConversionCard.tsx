@@ -9,9 +9,14 @@ import { FormActions } from "@/shared/components/FormActions";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
 import { Textarea } from "@/shared/components/Textarea";
+import { useToast } from "@/shared/components/Toast";
 import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 
 import { useConvertPackToUnits } from "@/modules/inventory/hooks/useInventory";
+import {
+  buildPackOpeningToast,
+  describeRecipeOpening,
+} from "@/modules/inventory/inventory-movements/components/packOpeningText";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 
 type ProductDetailPackConversionCardProps = {
@@ -35,6 +40,7 @@ export function ProductDetailPackConversionCard({
   const [quantityTouched, setQuantityTouched] = useState(false);
   const convert = useConvertPackToUnits();
   const requestAttempt = useRequestAttempt();
+  const { showToast } = useToast();
 
   const isPack = packConversion?.role === "pack";
   const isAssorted = isPack && packConversion?.kind === "assorted";
@@ -124,8 +130,16 @@ export function ProductDetailPackConversionCard({
     }
 
     try {
-      await convert.mutateAsync({ ...input, clientRequestId });
+      const result = await convert.mutateAsync({ ...input, clientRequestId });
       requestAttempt.succeed();
+      showToast(
+        buildPackOpeningToast({
+          packName: productName,
+          packQuantity: quantityNumber,
+          recipe: packConversion,
+          result,
+        }),
+      );
       setOpen(false);
       setPackQuantity("1");
       setReason("");
@@ -138,7 +152,7 @@ export function ProductDetailPackConversionCard({
 
   return (
     <section className="rounded-xl border border-outline-variant/30 bg-surface-container-lowest p-4">
-      <h2 className="text-base font-semibold text-on-surface">Conversion empaque</h2>
+      <h2 className="text-base font-semibold text-on-surface">Conversión de empaque</h2>
       {isAssorted ? (
         <>
           <p className="mt-1 text-sm text-on-surface-variant [overflow-wrap:anywhere]">
@@ -269,6 +283,9 @@ export function ProductDetailPackConversionCard({
                 <p className="text-sm text-on-surface-variant">
                   Salida: −{quantityNumber || 0} empaque(s). Entrada: +{unitPreview} unidad(es).
                   Stock actual empaque: {productStock}.
+                  {isAssorted && unitPreview > 0
+                    ? ` Se abrirá en: ${describeRecipeOpening(packConversion, quantityNumber)}.`
+                    : null}
                 </p>
                 <Textarea
                   label="Motivo"

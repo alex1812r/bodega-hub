@@ -8,6 +8,7 @@ import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
+import { useToast } from "@/shared/components/Toast";
 
 import {
   useConvertPackToUnits,
@@ -15,6 +16,11 @@ import {
 } from "../../hooks/useInventory";
 
 import { useRequestAttempt } from "../../utils/requestAttempt";
+import {
+  buildPackOpeningToast,
+  describeRecipeOpening,
+  isAssortedOpening,
+} from "./packOpeningText";
 
 const formId = "inventory-pack-conversion-form";
 
@@ -36,11 +42,14 @@ export function InventoryPackConversionModal({
   const packConversionsQuery = usePackConversions();
   const convert = useConvertPackToUnits();
   const requestAttempt = useRequestAttempt();
+  const { showToast } = useToast();
 
   const packOptions = useMemo(
     () =>
       (packConversionsQuery.data ?? []).map((item) => ({
-        label: `${item.packProduct.name} → ${item.linkedProduct.name} (x${item.unitsPerPack})`,
+        label: isAssortedOpening(item)
+          ? `${item.packProduct.name} → surtido de ${item.components?.length} productos (x${item.unitsPerPack})`
+          : `${item.packProduct.name} → ${item.linkedProduct.name} (x${item.unitsPerPack})`,
         value: item.packProduct.id,
       })),
     [packConversionsQuery.data],
@@ -64,6 +73,7 @@ export function InventoryPackConversionModal({
     Number.isInteger(quantityNumber) &&
     quantityNumber <= (selected?.packProduct.currentStock ?? 0);
   const packStock = selected?.packProduct.currentStock;
+  const isAssorted = selected ? isAssortedOpening(selected) : false;
   // Sin `min`/`max` en el input no hay burbuja nativa: el motivo se dice aqui.
   const quantityError = !showQuantityError
     ? undefined
@@ -102,8 +112,18 @@ export function InventoryPackConversionModal({
     }
 
     try {
-      await convert.mutateAsync({ ...input, clientRequestId });
+      const result = await convert.mutateAsync({ ...input, clientRequestId });
       requestAttempt.succeed();
+      if (selected) {
+        showToast(
+          buildPackOpeningToast({
+            packName: selected.packProduct.name,
+            packQuantity: quantityNumber,
+            recipe: selected,
+            result,
+          }),
+        );
+      }
       resetForm();
       setOpen(false);
     } catch (error) {
@@ -155,8 +175,10 @@ export function InventoryPackConversionModal({
         />
         {selected ? (
           <p className="text-sm text-on-surface-variant">
-            Stock empaque: {selected.packProduct.currentStock}. Unidad:{" "}
-            {selected.linkedProduct.name} (stock {selected.linkedProduct.currentStock}).
+            Stock empaque: {selected.packProduct.currentStock}.{" "}
+            {isAssorted
+              ? `Por empaque: ${describeRecipeOpening(selected, 1)}.`
+              : `Unidad: ${selected.linkedProduct.name} (stock ${selected.linkedProduct.currentStock}).`}
           </p>
         ) : null}
         <NumberInput
@@ -172,6 +194,9 @@ export function InventoryPackConversionModal({
         />
         <p className="text-sm text-on-surface-variant">
           Preview: −{quantityNumber || 0} empaque(s) / +{unitPreview} unidad(es).
+          {selected && isAssorted && unitPreview > 0
+            ? ` Se abrirá en: ${describeRecipeOpening(selected, quantityNumber)}.`
+            : null}
         </p>
         <Textarea
           label="Motivo"
