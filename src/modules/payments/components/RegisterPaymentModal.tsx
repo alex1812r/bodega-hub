@@ -17,6 +17,7 @@ import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExcha
 import { ClientApiError } from "@/shared/api/apiFetch";
 import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
+import { ProcessGuard } from "@/shared/components/ProcessGuard";
 import {
   PaymentFormFields,
   type PaymentFormValues,
@@ -69,6 +70,11 @@ import {
  * pago (flujo normal, con `onRegistered`) o cuando el servidor lo rechaza con un 4xx
  * (409 incluido): se muestra su mensaje, se refresca el saldo y se vuelve a editar con
  * clave nueva.
+ *
+ * Salir de la pantalla: con el modal abierto y un pago en vuelo o por confirmar, un
+ * guardia de proceso (`ProcessGuard`) pregunta antes de seguir un enlace o de ir
+ * ATRÁS. Usa `useRouter` de `next/navigation`, así que el modal necesita el App Router
+ * (en tests, simular `next/navigation` si se llega a enviar un pago).
  *
  * @example Botón dentro del detalle de una venta
  * <RegisterPaymentModal saleId={sale.id} trigger={<Button>Cobrar saldo</Button>} />
@@ -133,6 +139,8 @@ const DOCUMENT_TEXTS = {
   purchase: { submitLabel: "Registrar pago", title: "Pagar compra" },
   sale: { submitLabel: "Registrar cobro", title: "Cobrar saldo" },
 } as const;
+
+const GUARD_LABELS = { purchase: "Pago en curso", sale: "Cobro en curso" } as const;
 
 const CONNECTION_ERROR_MESSAGE = "No se pudo conectar con el servidor.";
 
@@ -661,6 +669,17 @@ function RegisterPaymentForm({
           </p>
         ) : null}
       </form>
+
+      {/* U6: guardia solo con el modal abierto (este contenido no se pinta cerrado) y un
+          pago en vuelo o por confirmar; con el formulario limpio y tras el éxito no hay. */}
+      {fixedDocument && (createPayment.isPending || unconfirmedAttempt) ? (
+        <ProcessGuard
+          active
+          description="Todavía no sabemos si se registró. Si sales, revisa los pagos del documento antes de repetirlo."
+          label={GUARD_LABELS[fixedDocument]}
+          onLeave="discard"
+        />
+      ) : null}
     </Modal>
   );
 }

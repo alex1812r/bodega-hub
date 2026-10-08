@@ -7,6 +7,11 @@ import { VENEZUELAN_BANKS } from "@/shared/venezuela/banks";
 
 import { RegisterPaymentModal } from "./RegisterPaymentModal";
 
+// PAG-F6 U6: el guardia de proceso (`useProcessGuard`) usa el router de Next.
+const mockRouter = { push: jest.fn(), replace: jest.fn() };
+
+jest.mock("next/navigation", () => ({ useRouter: () => mockRouter }));
+
 const BANK = VENEZUELAN_BANKS[0];
 // SHR-34: 220 caracteres sin un solo punto de corte, como el mensaje hostil del caos.
 const UNBROKEN_MESSAGE = "ERR_UPSTREAM_".padEnd(220, "X");
@@ -1799,6 +1804,146 @@ describe("RegisterPaymentModal", () => {
       await retry(user);
       expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
       expect(postedBodies()[1].body).toEqual(postedBodies()[0].body);
+    });
+  });
+
+  describe("PAG-F6 U6: salir con el pago en vuelo o por confirmar", () => {
+    const LEAVE_DIALOG = "¿Salir sin terminar?";
+
+    beforeEach(() => {
+      mockRouter.push.mockReset();
+    });
+
+    /** Enlace interno fuera del modal, como el menu lateral. */
+    function withLink(modal: ReactNode) {
+      return (
+        <>
+          <a href="/otra-pantalla" onClick={(event) => event.preventDefault()}>
+            Ir a ventas
+          </a>
+          {modal}
+        </>
+      );
+    }
+
+    function clickLink() {
+      // Con el modal abierto el resto de la pagina no recibe el puntero de user-event.
+      fireEvent.click(screen.getByRole("link", { hidden: true, name: "Ir a ventas" }));
+    }
+
+    it("regla 14: con el formulario limpio no pregunta al salir", async () => {
+      renderModal(withLink(<RegisterPaymentModal saleId="sale-002" />));
+      await openModal();
+
+      clickLink();
+
+      expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument();
+      expect(postedBodies()).toHaveLength(0);
+    });
+
+    it("regla 14: tras cerrar el modal sin intento pendiente no pregunta al salir", async () => {
+      renderModal(withLink(<RegisterPaymentModal saleId="sale-002" />));
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await user.click(screen.getByRole("button", { name: "Cancelar" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      clickLink();
+
+      expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument();
+      expect(postedBodies()).toHaveLength(0);
+    });
+
+    it("regla 14: tras un pago con éxito no pregunta al salir, ni abierto ni ya cerrado", async () => {
+      renderModal(withLink(<RegisterPaymentModal saleId="sale-002" />));
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+      expect(await screen.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+      clickLink();
+      expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Cancelar" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      clickLink();
+
+      expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument();
+    });
+
+    it("con el formulario a medio llenar no pregunta al salir", async () => {
+      renderModal(withLink(<RegisterPaymentModal saleId="sale-002" />));
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      clickLink();
+
+      expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument();
+    });
+
+    it("con el POST en vuelo pregunta antes de salir y deja de hacerlo al registrarse el pago", async () => {
+      const defaultFetch = fetchMock.getMockImplementation() as (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<Response>;
+      let resolvePost: (response: Response) => void = () => undefined;
+
+      fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+        init?.method === "POST"
+          ? new Promise<Response>((resolve) => {
+              resolvePost = resolve;
+            })
+          : defaultFetch(url, init),
+      );
+      renderModal(withLink(<RegisterPaymentModal saleId="sale-002" />));
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+      await waitFor(() => expect(postedBodies()).toHaveLength(1));
+      clickLink();
+
+      const leaveDialog = within(await screen.findByRole("dialog", { name: LEAVE_DIALOG }));
+
+      expect(leaveDialog.getByText("Cobro en curso")).toBeInTheDocument();
+      await user.click(leaveDialog.getByRole("button", { name: "Seguir aquí" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument(),
+      );
+      expect(mockRouter.push).not.toHaveBeenCalled();
+
+      await act(async () => {
+        resolvePost(paymentResponse);
+      });
+      expect(await screen.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+
+      // Regla 14: terminado el proceso, el guardia se desactiva.
+      clickLink();
+      expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument();
+    });
+
+    it("con un intento por confirmar pregunta antes de salir; con el modal cerrado, no", async () => {
+      paymentResponse = jsonResponse({ error: { code: "INTERNAL", message: "Fallo." } }, 500);
+      renderModal(withLink(<RegisterPaymentModal purchaseId="purchase-002" />));
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+      expect(await dialog.findByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+      clickLink();
+
+      const leaveDialog = within(await screen.findByRole("dialog", { name: LEAVE_DIALOG }));
+
+      expect(leaveDialog.getByText("Pago en curso")).toBeInTheDocument();
+      await user.click(leaveDialog.getByRole("button", { name: "Seguir aquí" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument(),
+      );
+
+      await user.click(await screen.findByRole("button", { name: "Cancelar" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      clickLink();
+      expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument();
     });
   });
 

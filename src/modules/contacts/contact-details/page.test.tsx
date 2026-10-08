@@ -7,6 +7,10 @@ const mockAuth: { permissions: string[]; role: string } = {
   role: "admin",
 };
 
+// PAG-F6 U6: al enviar un pago el modal monta el guardia de proceso, que usa el router de Next.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
 jest.mock("../../../shared/auth/usePermission", () => ({
   usePermission: () => ({
     can: (permission: string) => mockAuth.permissions.includes(permission),

@@ -18,12 +18,20 @@ import { RegisterPaymentModal, type RegisterPaymentModalProps } from "./Register
  * - Cada envío lleva una clave de idempotencia. Tras un fallo de red, un tiempo
  *   límite o un 5xx el modal queda "por confirmar": campos bloqueados con lo enviado
  *   y "Reintentar", que reenvía lo mismo con la misma clave y no duplica el pago.
+ * - Con un pago en vuelo o por confirmar, un guardia pregunta antes de salir.
  *
  * Estas historias simulan `/api/sales/:id`, `/api/purchases/:id` y `/api/payments`
  * con MSW y abren el modal por código.
  */
 const meta = {
   component: RegisterPaymentModal,
+  parameters: {
+    // El guardia de proceso usa `useRouter` de `next/navigation`: necesita el App Router simulado.
+    nextjs: {
+      appDirectory: true,
+      navigation: { pathname: "/purchases/purchase-story" },
+    },
+  },
   tags: ["ai-generated"],
 } satisfies Meta<typeof RegisterPaymentModal>;
 
