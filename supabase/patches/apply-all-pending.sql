@@ -499,3 +499,24 @@ notify pgrst, 'reload schema';
 -- 1 a 1. En los tres casos: volver a aplicar este parche y correr verify-patches.sql.
 -- ORDEN DE DESPLIEGUE (PRO-12): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada; el BFF que
 -- envia p_components o lee product_pack_components / pack_role necesita el parche.
+-- -----------------------------------------------------------------------------
+-- 20261009e — supplier preferred (PRO-14): proveedor habitual del producto. supplier_products.is_preferred (como mucho uno
+--             por producto y nunca un vinculo inactivo ni de un proveedor inactivo), triggers "primer vinculo = habitual"
+--             y relevo al desactivar / borrar el habitual o al desactivar su proveedor, backfill de un habitual por
+--             producto y RPC save_product_suppliers (estado deseado de los vinculos del producto en una transaccion)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009e-supplier-preferred.sql
+-- Requiere 20260716 y 20261006h. Idempotente, una transaccion. No toca stock, products (ni current_cost_ref), precios de
+-- venta, compras, politicas ni las RPC existentes: create_purchase / receive_purchase, register_supplier_product_price y
+-- el formulario de contactos siguen igual y los triggers marcan el habitual por ellos. No anade columnas numeric (los
+-- triggers de 20261006i no se regeneran).
+-- OJO: backfill. Cada producto con vinculos activos y sin habitual recibe UNO: el de compra mas reciente
+-- (last_purchased_at) o, sin compras, el vinculo mas antiguo; solo entre proveedores activos. Reaplicar no cambia un
+-- habitual ya elegido. El vinculo elegido estrena updated_at (pasa por trg_supplier_products_updated_at).
+-- OJO: el costo que llega por save_product_suppliers se registra con register_supplier_product_price en modo 'unit'
+-- (borra last_pack_cost_ref del vinculo, igual que registrar un precio por unidad) y sin costo en Bs.
+-- OJO: los triggers bloquean la fila del producto (for no key update) al dar de alta, reactivar, desactivar o borrar un
+-- vinculo que decide el habitual: dos altas simultaneas del primer vinculo ya no eligen dos habituales.
+-- ORDEN DE DESPLIEGUE (PRO-14): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo
+-- sin el parche: PUT /api/products/{id}/suppliers responde error; los listados de productos siguen respondiendo (sin
+-- preferredSupplier) y los de vinculos salen con isPreferred = false.

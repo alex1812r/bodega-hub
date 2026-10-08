@@ -1609,4 +1609,124 @@ select
       and has_function_privilege('authenticated', p.oid, 'execute')
       and not has_function_privilege('anon', p.oid, 'execute')
   )
+union all
+select
+  'supplier_products.is_preferred: boolean not null default false, check "inactivo nunca habitual" e indice unico parcial (product_id) where is_preferred (20261009e)',
+  exists (
+    select 1
+    from pg_attribute a
+    join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+    where a.attrelid = to_regclass('public.supplier_products')
+      and a.attname = 'is_preferred'
+      and not a.attisdropped
+      and a.atttypid = 'boolean'::regtype
+      and a.attnotnull
+      and pg_get_expr(d.adbin, d.adrelid) = 'false'
+  ) and exists (
+    select 1
+    from pg_constraint c
+    where c.conrelid = to_regclass('public.supplier_products')
+      and c.conname = 'supplier_products_preferred_active_check'
+      and c.contype = 'c'
+      and c.convalidated
+      and pg_get_constraintdef(c.oid) ilike '%not is_preferred%or is_active%'
+  ) and exists (
+    select 1
+    from pg_index i
+    where i.indexrelid = to_regclass('public.uq_supplier_products_preferred')
+      and i.indrelid = to_regclass('public.supplier_products')
+      and i.indisunique
+      and i.indisvalid
+      and i.indnkeyatts = 1
+      and pg_get_indexdef(i.indexrelid) ilike '%(product_id) where is_preferred'
+  )
+union all
+select
+  'supplier_products: triggers del habitual (guard before insert / update / delete, relevo after update / delete solo si la fila era habitual) con funciones security definer no ejecutables por /rpc (20261009e)',
+  (
+    select count(*) = 2
+       and bool_and(t.tgenabled = 'O')
+       and bool_and(p.prosecdef and p.proconfig @> array['search_path=public'])
+       and bool_and(not has_function_privilege('authenticated', p.oid, 'execute'))
+       and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+       and bool_or(
+         t.tgname = 'trg_supplier_products_preferred_guard'
+         and t.tgtype = 31
+         and p.oid = to_regprocedure('public.supplier_products_preferred_guard()')
+         and p.prosrc ilike '%for no key update%new.is_preferred := false%errcode = ''PT400''%new.is_preferred := true%'
+       )
+       and bool_or(
+         t.tgname = 'trg_supplier_products_preferred_handoff'
+         and t.tgtype = 25
+         and p.oid = to_regprocedure('public.supplier_products_preferred_handoff()')
+         and pg_get_triggerdef(t.oid) ilike '%when (old.is_preferred)%'
+         and p.prosrc ilike '%supplier_products_next_preferred(old.product_id)%set is_preferred = true%'
+       )
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    where t.tgrelid = to_regclass('public.supplier_products')
+      and not t.tgisinternal
+      and t.tgname in ('trg_supplier_products_preferred_guard', 'trg_supplier_products_preferred_handoff')
+  )
+union all
+select
+  'contacts: trigger trg_contacts_release_preferred_supplier (after update de is_active / type) suelta los habituales del proveedor desactivado; relevo supplier_products_next_preferred interno (20261009e)',
+  exists (
+    select 1
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    where t.tgrelid = to_regclass('public.contacts')
+      and t.tgname = 'trg_contacts_release_preferred_supplier'
+      and not t.tgisinternal
+      and t.tgenabled = 'O'
+      and t.tgtype = 17
+      and p.oid = to_regprocedure('public.contacts_release_preferred_supplier()')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=public']
+      and p.prosrc ilike '%set is_preferred = false%supplier_products_next_preferred(v_link.product_id)%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  ) and exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.supplier_products_next_preferred(uuid)')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=public']
+      and p.prosrc ilike '%sp.is_active%c.is_active%last_purchased_at desc nulls last, sp.created_at, sp.id%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'rpc save_product_suppliers: una firma (uuid, jsonb), security definer con search_path, tienda de la sesion, admin / almacen (PT403), producto bloqueado (PT404), costo por register_supplier_product_price y solo la ejecutan authenticated / service_role (20261009e)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.oid = to_regprocedure('public.save_product_suppliers(uuid, jsonb)')
+         and p.prosecdef
+         and p.prorettype = 'jsonb'::regtype
+         and not p.proretset
+         and p.proconfig @> array['search_path=public']
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%current_user_role()%not in (''admin'', ''almacen'')%errcode = ''PT403''%and c.store_id = v_store_id%and store_id = v_store_id%for update%errcode = ''PT404''%set is_preferred = false%set is_active = false%public.register_supplier_product_price(%'
+         and p.prosrc not ilike '%delete from%'
+         and p.prosrc not ilike '%update public.products%'
+         and p.prosrc not ilike '%current_stock%'
+         and p.prosrc not ilike '%into public.stock_movements%'
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'save_product_suppliers'
+  )
+union all
+select
+  'proveedor habitual: ningun habitual es un vinculo inactivo ni de un proveedor inactivo o que ya no es proveedor (20261009e)',
+  not exists (
+    select 1
+    from public.supplier_products sp
+    join public.contacts c on c.id = sp.supplier_id
+    where sp.is_preferred
+      and (not sp.is_active or not c.is_active or c.type::text not in ('proveedor', 'ambos'))
+  )
 order by 1;
