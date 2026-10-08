@@ -185,4 +185,66 @@ describe("PurchaseLineNumberCell", () => {
 
     expect(cell()).toHaveValue("6");
   });
+
+  describe("lector USB sobre una celda entera (COM-12b)", () => {
+    const onScan = jest.fn();
+
+    function renderScanCell(integer: boolean) {
+      onScan.mockReset();
+      render(
+        <PurchaseLineNumberCell
+          aria-label="Celda"
+          integer={integer}
+          onChange={onChange}
+          onScan={onScan}
+          value={3}
+        />,
+      );
+    }
+
+    it("Enter con 8 o más dígitos no es una cantidad: la celda vuelve a su valor y el texto sale como escaneo", () => {
+      renderScanCell(true);
+
+      type("7591234567890");
+      expect(onChange).not.toHaveBeenCalled();
+      fireEvent.keyDown(cell(), { key: "Enter" });
+
+      expect(onScan).toHaveBeenCalledTimes(1);
+      expect(onScan).toHaveBeenCalledWith("7591234567890");
+      expect(cell()).toHaveValue("3");
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("con 7 dígitos sigue siendo una cantidad y Enter no escanea", () => {
+      renderScanCell(true);
+
+      type("1234567");
+      fireEvent.keyDown(cell(), { key: "Enter" });
+
+      expect(onChange).toHaveBeenLastCalledWith(1234567);
+      expect(onScan).not.toHaveBeenCalled();
+    });
+
+    it("8 dígitos y salir sin Enter: vuelve el valor anterior, sin escaneo y sin resaltar", () => {
+      renderScanCell(true);
+
+      type("12345678");
+      fireEvent.blur(cell());
+
+      expect(cell()).toHaveValue("3");
+      expect(cell()).not.toHaveAttribute("data-flash");
+      expect(onChange).not.toHaveBeenCalled();
+      expect(onScan).not.toHaveBeenCalled();
+    });
+
+    it("un costo de 8 dígitos es un costo: sube y Enter no escanea", () => {
+      renderScanCell(false);
+
+      type("12345678");
+      fireEvent.keyDown(cell(), { key: "Enter" });
+
+      expect(onChange).toHaveBeenLastCalledWith(12345678);
+      expect(onScan).not.toHaveBeenCalled();
+    });
+  });
 });

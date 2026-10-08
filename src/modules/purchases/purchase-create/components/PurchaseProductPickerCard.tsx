@@ -301,7 +301,9 @@ export function PurchaseProductPickerCard({
           lockControls={lockControls}
           onLineTaxChange={onLineTaxChange}
           onRemoveItem={onRemoveItem}
+          onScanCode={handleCodeSubmit}
           onSettleItem={onSettleItem}
+          onTabPastLastLock={() => searchInputRef.current?.focus()}
           onUpdateItem={onUpdateItem}
           rateVes={rateVes}
           taxCatalog={taxCatalog}

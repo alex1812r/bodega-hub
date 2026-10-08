@@ -29,6 +29,10 @@ type PurchaseLineItemsTableProps = {
   lockControls: PurchaseLineLockControls;
   onLineTaxChange: (itemId: string, code: string) => void;
   onRemoveItem: (itemId: string) => void;
+  /** Un lector escribió su código en la Cantidad o los Empaques de una línea. */
+  onScanCode?: (code: string) => void;
+  /** Tab desde el candado de la última fila, estando bloqueada. */
+  onTabPastLastLock?: () => void;
   /** El foco salió de la fila de esa línea. */
   onSettleItem: (itemId: string) => void;
   onUpdateItem: (itemId: string, input: Partial<PurchaseDraftItem>) => void;
@@ -51,7 +55,9 @@ export function PurchaseLineItemsTable({
   lockControls,
   onLineTaxChange,
   onRemoveItem,
+  onScanCode,
   onSettleItem,
+  onTabPastLastLock,
   onUpdateItem,
   rateVes,
   taxCatalog,
@@ -145,7 +151,9 @@ export function PurchaseLineItemsTable({
             meta={getItemMeta(item.productId)}
             onLockChange={(nextLocked) => lockControls.onToggleLine(item.id, nextLocked)}
             onRemove={() => onRemoveItem(item.id)}
+            onScanCode={onScanCode}
             onSettle={() => onSettleItem(item.id)}
+            onTabPastLock={index === lines.length - 1 ? onTabPastLastLock : undefined}
             onTaxChange={(code) => onLineTaxChange(item.id, code)}
             onUpdate={(input) => onUpdateItem(item.id, input)}
             rateVes={rateVes}

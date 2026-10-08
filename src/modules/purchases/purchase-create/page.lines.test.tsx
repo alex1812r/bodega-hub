@@ -489,8 +489,9 @@ describe("PurchaseCreatePage · líneas bloqueables (COM-12)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Bloquear todas" }));
 
     await user.click(searchBox());
+    // Una vuelta completa: Tab desde el último candado bloqueado regresa al buscador.
     const visited: Element[] = [];
-    for (let step = 0; step < 12; step += 1) {
+    for (let step = 0; step < 12 && (step === 0 || document.activeElement !== searchBox()); step += 1) {
       await user.tab();
       if (document.activeElement) {
         visited.push(document.activeElement);
@@ -730,5 +731,130 @@ describe("PurchaseCreatePage · líneas bloqueables (COM-12)", () => {
       taxVes: 1958.4,
     });
     expect(JSON.stringify(body)).not.toMatch(/lock|edited|changes|review|bloque/i);
+  });
+});
+
+const mockScannedProduct: PurchaseCatalogProduct = {
+  barcode: "7591234567890",
+  costWithTaxRef: 1.16,
+  currentStock: 7,
+  link: "none",
+  name: "Harina Suelta",
+  packUnits: [],
+  productId: "prod-suelta",
+  sku: "HAR-SUE",
+  taxRate: 16,
+  unitCostRef: 1,
+};
+
+describe("PurchaseCreatePage · lector sobre una línea y Tab del último candado (COM-12b)", () => {
+  it("un segundo escaneo con el foco en Cantidad no cambia la cantidad: agrega el producto de ese código", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(LOCK_ON_ADD_KEY, "0");
+    installFetchStub(() => null);
+    mockResolveByCode.mockResolvedValue({ product: mockScannedProduct, status: "found" });
+    renderPage();
+    addProduct("Cable HDMI");
+    expect(quantity("Cable HDMI")).toHaveFocus();
+
+    await user.keyboard("7591234567890{Enter}");
+
+    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    expect(mockResolveByCode).toHaveBeenCalledTimes(1);
+    expect(mockResolveByCode).toHaveBeenCalledWith("cont-supplier", "7591234567890");
+    expect(quantity("Cable HDMI")).toHaveValue("1");
+    expect(within(row("Cable HDMI")).getByText("Bs. 1.020,00")).toBeInTheDocument();
+    expect(editedDot("Cable HDMI")).not.toBeInTheDocument();
+    expect(editedSummary()).not.toBeInTheDocument();
+  });
+
+  it("si el código tecleado en Cantidad no es de ningún producto, avisa como el buscador y la cantidad sigue igual", async () => {
+    const user = userEvent.setup();
+    installFetchStub(() => null);
+    mockResolveByCode.mockResolvedValue({ status: "not_found" });
+    renderPage();
+    addProduct("Cable HDMI");
+    await user.keyboard("5");
+    // Salir y volver con el teclado: la celda entra con su valor seleccionado.
+    await user.tab();
+    await user.tab({ shift: true });
+    expect(quantity("Cable HDMI")).toHaveFocus();
+    await user.keyboard("00012345{Enter}");
+
+    expect(
+      await screen.findByText("No hay un producto activo con ese código de barras o SKU."),
+    ).toBeInTheDocument();
+    // Los ceros a la izquierda del código llegan tal cual.
+    expect(mockResolveByCode).toHaveBeenCalledWith("cont-supplier", "00012345");
+    expect(quantity("Cable HDMI")).toHaveValue("5");
+    expect(lineRows()).toHaveLength(1);
+  });
+
+  it("el lector en Empaques de una línea por empaque tampoco cambia los empaques", async () => {
+    const user = userEvent.setup();
+    installFetchStub(() => null);
+    mockResolveByCode.mockResolvedValue({ product: mockScannedProduct, status: "found" });
+    renderPage();
+    addProduct("Refresco Cola");
+    expect(screen.getByLabelText("Cantidad de caja de Refresco Cola")).toHaveFocus();
+
+    await user.keyboard("7591234567890{Enter}");
+
+    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    expect(within(row("Refresco Cola")).getByText("1 × 12 u")).toBeInTheDocument();
+    expect(within(row("Refresco Cola")).queryByText(/7591234/)).not.toBeInTheDocument();
+  });
+
+  it("un valor de 8 o más dígitos nunca queda como cantidad, tampoco al salir de la celda sin Enter", async () => {
+    const user = userEvent.setup();
+    const api = installFetchStub(() => null);
+    renderPage();
+    addProduct("Cable HDMI");
+
+    await user.keyboard("12345678");
+    await user.click(searchBox());
+
+    expect(quantity("Cable HDMI")).toHaveValue("1");
+    expect(mockResolveByCode).not.toHaveBeenCalled();
+    expect(editedDot("Cable HDMI")).not.toBeInTheDocument();
+
+    const body = await confirmAndGetBody(api);
+
+    expect((body?.items as Array<{ quantity: number }>)[0]?.quantity).toBe(1);
+  });
+
+  it("Tab desde el candado de la última fila bloqueada lleva al buscador; Shift+Tab sigue normal", async () => {
+    const user = userEvent.setup();
+    installFetchStub(() => null);
+    renderPage();
+    addProduct("Cable HDMI");
+    addProduct("Harina PAN");
+    fireEvent.click(screen.getByRole("button", { name: "Bloquear todas" }));
+
+    // Cable HDMI se agregó primero: es la última fila.
+    lockButton("Cable HDMI").focus();
+    await user.tab();
+    expect(searchBox()).toHaveFocus();
+
+    lockButton("Cable HDMI").focus();
+    await user.tab({ shift: true });
+    expect(lockButton("Harina PAN")).toHaveFocus();
+
+    // El candado de una fila bloqueada que no es la última sigue su orden natural.
+    await user.tab();
+    expect(lockButton("Cable HDMI")).toHaveFocus();
+  });
+
+  it("si la última fila no está bloqueada, Tab desde su candado no salta al buscador", async () => {
+    const user = userEvent.setup();
+    installFetchStub(() => null);
+    renderPage();
+    addProduct("Cable HDMI");
+    fireEvent.blur(quantity("Cable HDMI"));
+
+    lockButton("Cable HDMI").focus();
+    await user.tab();
+
+    expect(screen.getByRole("button", { name: "Quitar Cable HDMI" })).toHaveFocus();
   });
 });

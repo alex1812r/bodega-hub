@@ -25,6 +25,8 @@ type PurchaseLinePackFieldsProps = {
   meta: PurchaseLineCatalogMeta;
   /** Recibe la línea completa ya sincronizada. */
   onUpdate: (next: PurchaseDraftItem) => void;
+  /** Un lector escribió su código en "Empaques" (ver `PurchaseLineNumberCell`). */
+  onScanCode?: (code: string) => void;
   rateVes: number;
 };
 
@@ -38,6 +40,7 @@ export function PurchaseLinePackFields({
   className,
   item,
   meta,
+  onScanCode,
   onUpdate,
   rateVes,
 }: PurchaseLinePackFieldsProps) {
@@ -91,6 +94,7 @@ export function PurchaseLinePackFields({
           focusTarget
           integer
           onChange={(packCount) => onUpdate(syncLineCostFields({ ...item, packCount }, rateVes))}
+          onScan={onScanCode}
           value={item.packCount}
         />
       </PurchaseLineFieldBox>

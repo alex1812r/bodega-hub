@@ -1,7 +1,7 @@
 "use client";
 
 import { Lock, LockOpen, Package, Trash2 } from "lucide-react";
-import type { ButtonHTMLAttributes, FocusEvent } from "react";
+import type { ButtonHTMLAttributes, FocusEvent, KeyboardEvent } from "react";
 
 import { TaxRateChips } from "@/shared/components/TaxRateChips";
 import { cn } from "@/shared/utils/cn";
@@ -35,8 +35,15 @@ export type PurchaseLineRowProps = {
   /** Candado de la fila, o doble clic sobre la fila bloqueada. */
   onLockChange: (locked: boolean) => void;
   onRemove: () => void;
+  /** Un lector escribió su código en Cantidad o Empaques: se resuelve como en el buscador. */
+  onScanCode?: (code: string) => void;
   /** El foco salió de la fila: la línea deja de ser recién nacida. */
   onSettle: () => void;
+  /**
+   * Solo en la última fila: Tab desde su candado, estando bloqueada, no sigue hacia el
+   * resto de la página; quien la pinta se lleva el foco (al buscador de productos).
+   */
+  onTabPastLock?: () => void;
   /** Alícuota elegida en los chips (`code` del catálogo). */
   onTaxChange: (code: string) => void;
   /** Cambios sobre la línea; la página los fusiona y resincroniza los costos. */
@@ -94,7 +101,9 @@ export function PurchaseLineRow({
   meta,
   onLockChange,
   onRemove,
+  onScanCode,
   onSettle,
+  onTabPastLock,
   onTaxChange,
   onUpdate,
   rateVes,
@@ -125,6 +134,15 @@ export function PurchaseLineRow({
     }
   }
 
+  function handleLockKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== "Tab" || event.shiftKey || !locked || !onTabPastLock) {
+      return;
+    }
+
+    event.preventDefault();
+    onTabPastLock();
+  }
+
   // El candado conserva su sitio (y el foco) al bloquear y desbloquear: mismo `key`.
   const actions = (
     <div
@@ -141,6 +159,7 @@ export function PurchaseLineRow({
             : "hover:bg-surface-container hover:text-foreground",
         )}
         onClick={() => onLockChange(!locked)}
+        onKeyDown={handleLockKeyDown}
         title={locked ? "Línea bloqueada: clic para desbloquear" : "Bloquear línea"}
         type="button"
       >
@@ -255,6 +274,7 @@ export function PurchaseLineRow({
             focusTarget
             integer
             onChange={(quantity) => onUpdate({ quantity })}
+            onScan={onScanCode}
             value={item.quantity}
           />
         )}
@@ -294,6 +314,7 @@ export function PurchaseLineRow({
           item={item}
           key="pack"
           meta={meta}
+          onScanCode={onScanCode}
           onUpdate={onUpdate}
           rateVes={rateVes}
         />

@@ -18,9 +18,24 @@ type PurchaseLineNumberCellProps = {
   integer?: boolean;
   /** Solo recibe valores válidos; lo vacío o a medio escribir se queda en la celda. */
   onChange: (value: number) => void;
+  /**
+   * Solo en celdas enteras: Enter con un texto de `PURCHASE_SCAN_MIN_DIGITS` o más
+   * dígitos es un lector que escribió aquí; recibe el código tal cual se tecleó.
+   */
+  onScan?: (code: string) => void;
   ref?: Ref<HTMLInputElement>;
   value: number;
 };
+
+/**
+ * Longitud mínima de un código de barras (EAN-8). Ninguna cantidad real llega a
+ * ocho dígitos: en una celda entera, un texto así es un escaneo y nunca sube.
+ */
+export const PURCHASE_SCAN_MIN_DIGITS = 8;
+
+function isScannedCode(text: string) {
+  return /^\d+$/.test(text) && text.length >= PURCHASE_SCAN_MIN_DIGITS;
+}
 
 function isValidValue(value: number | null, integer: boolean): value is number {
   if (value === null) {
@@ -42,18 +57,26 @@ function isValidValue(value: number | null, integer: boolean): value is number {
  *   valor que tenía al entrar; si no hay nada a medias, al valor anterior al
  *   último cambio confirmado (un nivel). Sin nada que deshacer no hace nada y
  *   deja pasar la tecla.
+ * - Lector USB (COM-12): la línea recién agregada deja el foco en Cantidad y el
+ *   siguiente escaneo se teclea aquí. En una celda entera, un texto de
+ *   `PURCHASE_SCAN_MIN_DIGITS` o más dígitos no es una cantidad: el padre vuelve
+ *   al valor que tenía la celda, y con Enter el texto sale por `onScan`.
  */
 export function PurchaseLineNumberCell({
   className,
   focusTarget = false,
   integer = false,
   onChange,
+  onScan,
   value,
   ...props
 }: PurchaseLineNumberCellProps) {
   // Lo que hay escrito cuando no coincide con el padre (vacío, a medio teclear).
   // Solo vale mientras el padre siga en `parent`: si cambia por fuera, manda el padre.
-  const [typed, setTyped] = useState<{ parent: number; value: number | null } | null>(null);
+  const [typed, setTyped] = useState<{
+    parent: number;
+    value: number | string | null;
+  } | null>(null);
   const [flashing, setFlashing] = useState(false);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Último valor que tiene el padre, también dentro del mismo evento (blur normaliza y sale).
@@ -62,6 +85,8 @@ export function PurchaseLineNumberCell({
   const committed = useRef(value);
   // Valor anterior al último cambio confirmado; `null` = nada que deshacer.
   const undo = useRef<number | null>(null);
+  // Texto del campo tal cual: un código leído conserva sus ceros a la izquierda.
+  const text = useRef("");
   const shown = typed && typed.parent === value ? typed.value : value;
 
   useEffect(() => {
@@ -94,6 +119,12 @@ export function PurchaseLineNumberCell({
   }
 
   function handleValueChange(next: number | null) {
+    if (integer && isScannedCode(text.current)) {
+      setTyped({ parent: committed.current, value: text.current });
+      send(committed.current);
+      return;
+    }
+
     if (isValidValue(next, integer)) {
       setTyped({ parent: next, value: next });
       send(next);
@@ -114,6 +145,17 @@ export function PurchaseLineNumberCell({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter" && integer && isScannedCode(event.currentTarget.value)) {
+      const code = event.currentTarget.value;
+
+      // Sin esto NumberInput normalizaría el código como si fuera la cantidad.
+      event.preventDefault();
+      setTyped(null);
+      send(committed.current);
+      onScan?.(code);
+      return;
+    }
+
     if (event.key !== "Escape") {
       return;
     }
@@ -149,6 +191,9 @@ export function PurchaseLineNumberCell({
       decimals={integer ? 0 : 2}
       min={integer ? 1 : 0}
       onBlur={handleBlur}
+      onChange={(event) => {
+        text.current = event.currentTarget.value;
+      }}
       onFocus={() => {
         committed.current = value;
       }}
