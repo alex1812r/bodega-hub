@@ -297,3 +297,65 @@ describe("InventoryPackConversionModal · surtido (INV-F2 · F1 y F3)", () => {
     expect(keyOf(api, 1)).not.toBe(keyOf(api, 0));
   });
 });
+
+describe("InventoryPackConversionModal · stock tras un resultado incierto (INV-F4 · R1)", () => {
+  /** Recetas tal como las devuelve el servidor una vez registrada la apertura perdida. */
+  const assortedAfterLostOpening = {
+    ...assorted,
+    components: [component("prod-cola", "Cola", 14), component("prod-manzana", "Manzana", 2)],
+    packProduct: product("prod-surtido", "Surtido A", 8),
+  };
+
+  function renderWithServerState() {
+    const server = { recipes: [single, assorted] };
+    const api = installFetchStub(() => server.recipes);
+    const QueryWrapper = createQueryWrapper();
+
+    render(
+      <QueryWrapper>
+        <ToastProvider>
+          <InventoryPackConversionModal defaultPackProductId="prod-surtido" />
+        </ToastProvider>
+      </QueryWrapper>,
+    );
+
+    return { api, server };
+  }
+
+  it("apertura perdida que el servidor sí registró → reabrir: la confirmación anuncia el stock real", async () => {
+    const { api, server } = renderWithServerState();
+    api.networkErrorOnNextPost();
+
+    await openModal();
+    const dialog = await openConfirm();
+    expect(dialog).toHaveTextContent("Stock 9");
+    // El servidor registra la apertura aunque la respuesta no llegue.
+    server.recipes = [single, assortedAfterLostOpening];
+    fireEvent.click(confirmButton(dialog));
+    await within(dialog).findByRole("alert");
+    await cancelConfirm(dialog);
+
+    await closeWithEscape();
+    await openModal();
+    await screen.findByText(/Stock empaque: 8\./);
+    const secondDialog = await openConfirm();
+
+    expect(secondDialog).toHaveTextContent("Stock 8");
+    expect(secondDialog).toHaveTextContent("Stock 14");
+    expect(secondDialog).not.toHaveTextContent("Stock 9");
+    expect(secondDialog).not.toHaveTextContent("Stock 12");
+  });
+
+  it("al abrir el modal se vuelven a pedir las recetas", async () => {
+    const { server } = renderWithServerState();
+
+    await openModal();
+    await screen.findByText(/Stock empaque: 9\./);
+    await closeWithEscape();
+    // Otra pantalla u otro usuario movió el stock del empaque.
+    server.recipes = [single, assortedAfterLostOpening];
+    await openModal();
+
+    expect(await screen.findByText(/Stock empaque: 8\./)).toBeInTheDocument();
+  });
+});

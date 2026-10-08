@@ -13,13 +13,13 @@ import { type ActionMenuItem } from "@/shared/components/ActionsMenu";
 import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
-import { EntityListPage } from "@/shared/components/EntityListPage";
 import { PageBackButton } from "@/shared/components/PageBackButton";
 import {
   ResponsivePagination,
   getTotalPages,
   useUrlPaginationState,
 } from "@/shared/components/Pagination";
+import { Typography } from "@/shared/components/Typography";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
 import {
   URL_LIST_DEBOUNCE_MS,
@@ -59,10 +59,13 @@ import {
 /**
  * Ocho columnas de datos + acciones en el ancho que deja el menú lateral a
  * 1280 px (≈ 940 px): padding lateral de 8 px en vez de 16 (la primera conserva
- * 16 a la izquierda). "Categoría" solo desde lg; por debajo de md la lista va en
- * tarjetas, con todas las cifras.
+ * 16 a la izquierda). "Categoría" y "Último movimiento" solo desde xl: con el
+ * menú lateral fijo a 1024 px quedan ≈ 690 px y "Acciones" debe verse sin
+ * desplazar la tabla. Por debajo de md la lista va en tarjetas, con todas las cifras.
  */
 const compactColumnClass = "px-2";
+/** Columna secundaria de la tabla: oculta hasta xl (en tarjetas se muestra siempre). */
+const wideOnlyColumnClass = "hidden px-2 xl:table-cell";
 const numericCellClass = "px-2 tabular-nums";
 
 /** Códigos con los que `GET /api/inventory?productId=` dice "ese id no es de un producto". */
@@ -79,11 +82,10 @@ function prefersReducedMotion() {
 const figureColumns: DataTableColumn<InventoryOverviewItem>[] = [
   {
     cellClassName: "px-2 text-on-surface-variant",
-    className: compactColumnClass,
+    className: wideOnlyColumnClass,
     header: "Categoría",
     key: "category",
     render: (item) => item.category?.name ?? "Sin categoría",
-    visibility: "lg",
   },
   {
     align: "right",
@@ -121,7 +123,7 @@ const figureColumns: DataTableColumn<InventoryOverviewItem>[] = [
   },
   {
     cellClassName: "min-w-[7rem] px-2",
-    className: compactColumnClass,
+    className: wideOnlyColumnClass,
     header: "Último movimiento",
     key: "lastMovement",
     render: (item) => (
@@ -309,28 +311,39 @@ function InventoryList() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl">
-      <EntityListPage
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {hasReturnTo ? <PageBackButton fallbackHref="/inventory" size="sm" /> : null}
-            <InventoryExportActions exportFilters={filters} />
-            {state.lowStock ? <RestockPurchaseButton size="sm" variant="primary" /> : null}
-            <Can permission="inventory.manage">
-              <div className="flex flex-wrap items-center gap-2">
-                <InventoryPackConversionModal />
-                <InventoryAdjustmentModal />
-                <Button asChild size="sm" variant="outline">
-                  <Link href="/inventory/movements">Ver todos los movimientos</Link>
-                </Button>
-              </div>
-            </Can>
-          </div>
-        }
-        description="Consulta existencias, entradas y salidas de los últimos 30 días y el último movimiento de cada producto. El catálogo y los precios se gestionan en Productos."
-        layout="sections"
-        title="Inventario"
-      >
+    <div className="mx-auto w-full max-w-7xl space-y-5">
+      {/*
+        Cabecera propia: hasta seis acciones según filtro, permiso y `returnTo`.
+        El título conserva al menos 20rem; si las acciones no caben a su lado
+        bajan a su propia línea y allí se parten.
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0 grow basis-80">
+          <Typography as="h1" variant="h1">
+            Inventario
+          </Typography>
+          <Typography className="mt-2 max-w-2xl" variant="muted">
+            Consulta existencias, entradas y salidas de los últimos 30 días y el último movimiento
+            de cada producto. El catálogo y los precios se gestionan en Productos.
+          </Typography>
+        </div>
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:max-w-full">
+          {hasReturnTo ? <PageBackButton fallbackHref="/inventory" size="sm" /> : null}
+          <InventoryExportActions exportFilters={filters} />
+          {state.lowStock ? <RestockPurchaseButton size="sm" variant="primary" /> : null}
+          <Can permission="inventory.manage">
+            <div className="flex flex-wrap items-center gap-2">
+              <InventoryPackConversionModal />
+              <InventoryAdjustmentModal />
+              <Button asChild size="sm" variant="outline">
+                <Link href="/inventory/movements">Ver todos los movimientos</Link>
+              </Button>
+            </div>
+          </Can>
+        </div>
+      </div>
+
+      <div className="min-w-0 space-y-4">
         {isForbidden ? (
           <div className="rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
             <EmptyState
@@ -430,7 +443,7 @@ function InventoryList() {
             </div>
           </>
         )}
-      </EntityListPage>
+      </div>
     </div>
   );
 }

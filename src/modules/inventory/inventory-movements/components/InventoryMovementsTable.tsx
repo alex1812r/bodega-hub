@@ -41,9 +41,13 @@ export type InventoryMovementsEmptyKind = "filtered" | "invalid-range" | "none";
 /**
  * Ocho columnas de datos + acciones en el ancho que deja el menú lateral a
  * 1280 px (≈ 940 px): padding lateral de 8 px en vez de 16 (la primera conserva
- * 16 a la izquierda), como la tabla de `/inventory`.
+ * 16 a la izquierda), como la tabla de `/inventory`. "SKU" y "Motivo" solo desde
+ * xl: con el menú lateral fijo a 1024 px quedan ≈ 690 px y "Acciones" debe verse
+ * sin desplazar la tabla (el SKU pasa bajo el nombre; el motivo está en "Ver detalle").
  */
 const compactColumnClass = "px-2";
+/** Columna secundaria de la tabla: oculta hasta xl (en tarjetas se muestra siempre). */
+const wideOnlyColumnClass = "hidden px-2 xl:table-cell";
 
 function buildColumns(returnTo?: string): DataTableColumn<InventoryMovementRow>[] {
   return [
@@ -62,7 +66,7 @@ function buildColumns(returnTo?: string): DataTableColumn<InventoryMovementRow>[
         <div className="flex flex-col">
           <span className="font-medium text-foreground">{row.product}</span>
           {row.productSku ? (
-            <span className="text-xs text-on-surface-variant md:hidden">
+            <span className="text-xs text-on-surface-variant xl:hidden">
               SKU: {row.productSku}
             </span>
           ) : null}
@@ -71,12 +75,11 @@ function buildColumns(returnTo?: string): DataTableColumn<InventoryMovementRow>[
     },
     {
       cellClassName: "font-mono text-sm text-on-surface-variant",
-      className: compactColumnClass,
+      className: wideOnlyColumnClass,
       header: "SKU",
       hideInCard: true,
       key: "productSku",
       render: (row) => row.productSku ?? "—",
-      visibility: "lg",
     },
     {
       className: compactColumnClass,
@@ -116,11 +119,10 @@ function buildColumns(returnTo?: string): DataTableColumn<InventoryMovementRow>[
     },
     {
       cellClassName: "max-w-[14rem] truncate text-on-surface-variant",
-      className: compactColumnClass,
+      className: wideOnlyColumnClass,
       header: "Motivo",
       key: "reason",
       render: (row) => row.reason ?? "Sin motivo",
-      visibility: "lg",
     },
   ];
 }

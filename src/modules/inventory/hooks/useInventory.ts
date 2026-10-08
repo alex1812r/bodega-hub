@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import { apiFetch } from "@/shared/api/apiFetch";
@@ -18,6 +18,10 @@ import type {
   MovementDocumentKind,
   MovementDocumentKindFilter,
 } from "../utils/inventoryMovementFilters";
+import {
+  UNCERTAIN_STOCK_REQUEST_MESSAGE,
+  describeStockRequestError,
+} from "../utils/stockRequestError";
 
 export type InventoryFilters = PaginationParams & {
   categoryId?: string;
@@ -197,6 +201,24 @@ export function useStockCard(filters: InventoryMovementFilters = {}) {
   });
 }
 
+/** Lo que cambia con un movimiento de stock: vistas de inventario y fichas de producto. */
+function invalidateStockQueries(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: inventoryQueryKeys.all });
+  void queryClient.invalidateQueries({ queryKey: ["products"] });
+}
+
+/**
+ * Tras un envío fallido: si el resultado es incierto (el criterio de
+ * `describeStockRequestError`: sin respuesta, 5xx o 408) el movimiento pudo
+ * registrarse, así que el stock en caché ya no es de fiar y se vuelve a pedir.
+ * Un rechazo del servidor (resto de 4xx) no movió nada.
+ */
+function invalidateStockQueriesIfUncertain(queryClient: QueryClient, error: unknown) {
+  if (describeStockRequestError(error) === UNCERTAIN_STOCK_REQUEST_MESSAGE) {
+    invalidateStockQueries(queryClient);
+  }
+}
+
 export function useAdjustInventory() {
   const queryClient = useQueryClient();
 
@@ -209,10 +231,8 @@ export function useAdjustInventory() {
     // Sin reintento automatico: el reintento lo decide el usuario y viaja con la
     // misma clave de idempotencia.
     retry: false,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: inventoryQueryKeys.all });
-      void queryClient.invalidateQueries({ queryKey: ["products"] });
-    },
+    onSuccess: () => invalidateStockQueries(queryClient),
+    onError: (error) => invalidateStockQueriesIfUncertain(queryClient, error),
   });
 }
 
@@ -236,9 +256,7 @@ export function useConvertPackToUnits() {
         method: "POST",
       }),
     retry: false,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: inventoryQueryKeys.all });
-      void queryClient.invalidateQueries({ queryKey: ["products"] });
-    },
+    onSuccess: () => invalidateStockQueries(queryClient),
+    onError: (error) => invalidateStockQueriesIfUncertain(queryClient, error),
   });
 }

@@ -193,6 +193,8 @@ export function InventoryPackConversionModal({
         if (nextOpen) {
           convert.reset();
           setPackProductId(defaultPackProductId ?? "");
+          // El stock del empaque y de sus componentes se lee al abrir: el efecto no se calcula con caché.
+          void packConversionsQuery.refetch();
         } else {
           resetForm();
           // Cerrar descarta el intento: al reabrir, clave nueva y sin el error anterior.

@@ -3,7 +3,9 @@ import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import {
+  inventoryQueryKeys,
   useAdjustInventory,
+  useConvertPackToUnits,
   useInventory,
   useInventoryMovements,
   useStockCard,
@@ -161,5 +163,117 @@ describe("inventory hooks", () => {
     expect(adjustment.result.current.error?.message).toBe(
       "El ajuste no puede dejar stock negativo.",
     );
+  });
+});
+
+/**
+ * INV-F4 · R1: si no se sabe si el movimiento se registró (sin respuesta, 5xx o
+ * 408), el stock en caché puede ser viejo; se invalida lo mismo que tras el éxito.
+ */
+describe("stock mutations · invalidación tras un error (INV-F4 · R1)", () => {
+  const fetchMock = jest.fn();
+  const adjustment = {
+    clientRequestId: "5b0c1a52-1111-4222-8333-444455556666",
+    productId: "prod-cable",
+    quantityDelta: 1,
+  };
+  const conversion = {
+    clientRequestId: "5b0c1a52-1111-4222-8333-444455556667",
+    packProductId: "prod-pack",
+    packQuantity: 1,
+  };
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    global.fetch = fetchMock;
+  });
+
+  function setup() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = jest.spyOn(queryClient, "invalidateQueries");
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    }
+
+    return { invalidate, Wrapper };
+  }
+
+  function errorResponse(status: number) {
+    return jsonResponse({ error: { code: "ERROR", message: "Mensaje del servidor." } }, status);
+  }
+
+  const uncertain: [string, () => void][] = [
+    ["sin respuesta", () => fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"))],
+    ["500", () => fetchMock.mockResolvedValueOnce(errorResponse(500))],
+    ["408", () => fetchMock.mockResolvedValueOnce(errorResponse(408))],
+  ];
+  const definitive: [string, () => void][] = [
+    ["400", () => fetchMock.mockResolvedValueOnce(errorResponse(400))],
+    ["409", () => fetchMock.mockResolvedValueOnce(errorResponse(409))],
+  ];
+
+  it.each(uncertain)(
+    "ajuste con resultado incierto (%s): invalida inventario y productos",
+    async (_, arrange) => {
+      arrange();
+      const { invalidate, Wrapper } = setup();
+      const { result } = renderHook(() => useAdjustInventory(), { wrapper: Wrapper });
+
+      result.current.mutate(adjustment);
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: inventoryQueryKeys.all });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["products"] });
+    },
+  );
+
+  it.each(definitive)("ajuste rechazado (%s): no invalida nada", async (_, arrange) => {
+    arrange();
+    const { invalidate, Wrapper } = setup();
+    const { result } = renderHook(() => useAdjustInventory(), { wrapper: Wrapper });
+
+    result.current.mutate(adjustment);
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it.each(uncertain)(
+    "conversión con resultado incierto (%s): invalida inventario y productos",
+    async (_, arrange) => {
+      arrange();
+      const { invalidate, Wrapper } = setup();
+      const { result } = renderHook(() => useConvertPackToUnits(), { wrapper: Wrapper });
+
+      result.current.mutate(conversion);
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: inventoryQueryKeys.all });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["products"] });
+    },
+  );
+
+  it.each(definitive)("conversión rechazada (%s): no invalida nada", async (_, arrange) => {
+    arrange();
+    const { invalidate, Wrapper } = setup();
+    const { result } = renderHook(() => useConvertPackToUnits(), { wrapper: Wrapper });
+
+    result.current.mutate(conversion);
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("el éxito sigue invalidando inventario y productos", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: { id: "mov-new" } }, 201));
+    const { invalidate, Wrapper } = setup();
+    const { result } = renderHook(() => useAdjustInventory(), { wrapper: Wrapper });
+
+    result.current.mutate(adjustment);
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: inventoryQueryKeys.all });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["products"] });
   });
 });
