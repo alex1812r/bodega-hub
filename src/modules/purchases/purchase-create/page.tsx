@@ -506,7 +506,8 @@ export function PurchaseCreatePage() {
     dispatchLines({ currency: nextCurrency, rateVes: activeRateVes, type: "costCurrencyChanged" });
   }
 
-  function handleAddProduct(product: PurchaseCatalogProduct) {
+  // `scanned`: entró por el lector; el foco se queda en el buscador para encadenar (D36).
+  function handleAddProduct(product: PurchaseCatalogProduct, options?: { scanned?: boolean }) {
     setLineMetaByProductId((prev) => {
       const next = new Map(prev);
       next.set(product.productId, {
@@ -519,6 +520,7 @@ export function PurchaseCreatePage() {
     });
 
     dispatchLines({
+      keepFocus: options?.scanned === true,
       line: buildPurchaseLine(product, {
         costCurrency,
         id: nextPurchaseLineId(),

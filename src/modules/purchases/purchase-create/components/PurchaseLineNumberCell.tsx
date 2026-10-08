@@ -1,6 +1,7 @@
 "use client";
 
 import { type KeyboardEvent, type Ref, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { NumberInput } from "@/shared/components/NumberInput";
 import { cn } from "@/shared/utils/cn";
@@ -245,8 +246,12 @@ export function PurchaseLineNumberCell({
       // Sin esto NumberInput normalizaría el código como si fuera el valor de la celda.
       event.preventDefault();
       held.current = null;
-      setTyped(null);
-      send(scan.typedValue ?? before);
+      // `onScan` se lleva el foco al buscador (D36): el campo ya debe mostrar su valor, o
+      // al salir se normalizaría el código como si fuera lo escrito.
+      flushSync(() => {
+        setTyped(null);
+        send(scan.typedValue ?? before);
+      });
 
       if (onScan) {
         scanning.current = true;

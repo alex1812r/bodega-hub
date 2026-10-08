@@ -223,3 +223,75 @@ describe("PurchaseCreatePage · cantidad de varios dígitos y escaneo en la mism
     expect(screen.getByLabelText(/^Cantidad de .+ de Taladro$/)).toHaveValue("120");
   });
 });
+
+describe("PurchaseCreatePage · el foco tras un escaneo se queda en el buscador (COM-F8 · D36)", () => {
+  it("escaneo en el buscador: la línea nace con cantidad 1 y desbloqueada, y el foco sigue en el buscador", async () => {
+    resolveWithLatency(20);
+    renderPage();
+    act(() => searchBox().focus());
+
+    await scan(CODE_A);
+    await settle(200);
+
+    expect(lineNames()).toEqual(["Taladro"]);
+    expect(quantity("Taladro")).toHaveValue("1");
+    expect(searchBox()).toHaveFocus();
+    expect(searchBox()).toHaveValue("");
+
+    await scan(CODE_B);
+    await settle(200);
+
+    expect(lineNames()).toEqual(["Cable", "Taladro"]);
+    expect(searchBox()).toHaveFocus();
+  });
+
+  it("un código detectado en una celda: el foco pasa al buscador en el mismo Enter y ahí se queda", async () => {
+    resolveWithLatency(300);
+    renderPage();
+    pickTaladro();
+    expect(quantity("Taladro")).toHaveFocus();
+
+    await scan(CODE_B);
+
+    // Aún sin respuesta: el siguiente escaneo ya cae en el buscador.
+    expect(lineNames()).toEqual(["Taladro"]);
+    expect(searchBox()).toHaveFocus();
+
+    await settle(1000);
+
+    expect(lineNames()).toEqual(["Cable", "Taladro"]);
+    expect(quantity("Taladro")).toHaveValue("1");
+    expect(quantity("Cable")).toHaveValue("1");
+    expect(searchBox()).toHaveFocus();
+  });
+
+  it("escanear otra vez el mismo código suma 1 a su línea, la deja desbloqueada y editada, y el foco no sale del buscador", async () => {
+    window.localStorage.setItem(LOCK_ON_ADD_KEY, "1");
+    resolveWithLatency(20);
+    renderPage();
+    act(() => searchBox().focus());
+
+    await scan(CODE_A);
+    await settle(200);
+    await scan(CODE_B);
+    await settle(200);
+    await scan(CODE_A);
+    await settle(200);
+
+    expect(lineNames()).toEqual(["Taladro", "Cable"]);
+    expect(quantity("Taladro")).toHaveValue("2");
+    expect(screen.getByRole("group", { name: "Líneas editadas" })).toHaveTextContent(
+      "Taladro · Cantidad 1 → 2",
+    );
+    expect(screen.getByRole("button", { name: "Desbloquear Cable" })).toBeInTheDocument();
+    expect(searchBox()).toHaveFocus();
+  });
+
+  it("elegir el producto en la lista de resultados sí lleva el foco a su Cantidad", () => {
+    renderPage();
+
+    pickTaladro();
+
+    expect(quantity("Taladro")).toHaveFocus();
+  });
+});

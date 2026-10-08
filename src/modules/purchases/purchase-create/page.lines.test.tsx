@@ -595,7 +595,7 @@ describe("PurchaseCreatePage · líneas bloqueables (COM-12)", () => {
     expect(unlockAll).toBeDisabled();
   });
 
-  it("el lector con todas bloqueadas: la línea nueva nace libre y con el foco en Cantidad", async () => {
+  it("el lector con todas bloqueadas: la línea nueva nace libre y el foco queda en el buscador (D36)", async () => {
     installFetchStub(() => null);
     mockResolveByCode.mockResolvedValue({
       product: {
@@ -619,7 +619,8 @@ describe("PurchaseCreatePage · líneas bloqueables (COM-12)", () => {
     fireEvent.change(searchBox(), { target: { value: "7591234567890" } });
     fireEvent.keyDown(searchBox(), { key: "Enter" });
 
-    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
+    await waitFor(() => expect(searchBox()).toHaveFocus());
     expect(mockResolveByCode).toHaveBeenCalledWith("cont-supplier", "7591234567890");
     expect(isLocked("Harina Suelta")).toBe(false);
     expect(isLocked("Cable HDMI")).toBe(true);
@@ -751,7 +752,8 @@ describe("PurchaseCreatePage · lector sobre una línea y Tab del último candad
 
     await user.keyboard("7591234567890{Enter}");
 
-    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
+    await waitFor(() => expect(searchBox()).toHaveFocus());
     expect(mockResolveByCode).toHaveBeenCalledTimes(1);
     expect(mockResolveByCode).toHaveBeenCalledWith("cont-supplier", "7591234567890");
     expect(quantity("Cable HDMI")).toHaveValue("1");
@@ -792,7 +794,8 @@ describe("PurchaseCreatePage · lector sobre una línea y Tab del último candad
 
     await user.keyboard("7591234567890{Enter}");
 
-    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
+    await waitFor(() => expect(searchBox()).toHaveFocus());
     expect(within(row("Refresco Cola")).getByText("1 × 12 u")).toBeInTheDocument();
     expect(within(row("Refresco Cola")).queryByText(/7591234/)).not.toBeInTheDocument();
   });
@@ -956,7 +959,8 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
     });
     await scanSplit(CODE);
 
-    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
+    await waitFor(() => expect(searchBox()).toHaveFocus());
     expect(quantity("Cable HDMI")).toHaveValue("2");
     expect(within(row("Cable HDMI")).getByText("Bs. 2.040,00")).toBeInTheDocument();
     expect(lineRows()).toHaveLength(2);
@@ -977,7 +981,8 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
     });
     await scanSplit(CODE);
 
-    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
+    await waitFor(() => expect(searchBox()).toHaveFocus());
     expect(isLocked("Cable HDMI")).toBe(true);
     expect(within(row("Cable HDMI")).getByText("2 u")).toBeInTheDocument();
   });
@@ -990,7 +995,8 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
 
     await scanSplit(CODE);
 
-    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
+    await waitFor(() => expect(searchBox()).toHaveFocus());
     expect(quantity("Cable HDMI")).toHaveValue("1");
     expect(lineRows()).toHaveLength(2);
     expect(editedSummary()).not.toBeInTheDocument();
@@ -1003,7 +1009,8 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
 
     await press([..."3".concat(CODE).split(""), "{Enter}"], 4);
 
-    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
+    await waitFor(() => expect(searchBox()).toHaveFocus());
     expect(quantity("Cable HDMI")).toHaveValue("3");
     expect(triedCodes()).toEqual([`3${CODE}`, CODE]);
   });
@@ -1068,7 +1075,8 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
       finish({ status: "not_found" });
     });
 
-    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
+    await waitFor(() => expect(searchBox()).toHaveFocus());
     expect(triedCodes()).toEqual(["765432101", CODE]);
     expect(lineRows()).toHaveLength(2);
     expect(quantity("Harina Suelta")).toHaveValue("1");
@@ -1084,7 +1092,8 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
 
     await scanSplit(CODE);
 
-    await waitFor(() => expect(quantity("Harina Suelta")).toHaveFocus());
+    await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
+    await waitFor(() => expect(searchBox()).toHaveFocus());
     expect(costCell("Cable HDMI")).toHaveValue("1020");
     expect(within(row("Cable HDMI")).getByText("Bs. 1.020,00")).toBeInTheDocument();
     expect(lineRows()).toHaveLength(2);

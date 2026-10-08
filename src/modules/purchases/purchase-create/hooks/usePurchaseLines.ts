@@ -85,10 +85,17 @@ export type PurchaseLinesAction =
   /**
    * `line` es la línea que nacería para ese producto; si el producto ya está en
    * la compra no se usa: se suma 1 a la existente y sube al principio. En ambos
-   * casos esa línea queda desbloqueada y pide el foco en su cantidad; con
+   * casos esa línea queda desbloqueada y pide el foco en su cantidad, salvo con
+   * `keepFocus` (entró por un escaneo: el foco sigue en el buscador, D36); con
    * `lockOthers` (preferencia "Bloquear al agregar") las demás se bloquean.
    */
-  | { line: PurchaseDraftItem; lockOthers: boolean; rateVes: number; type: "productAdded" }
+  | {
+      keepFocus?: boolean;
+      line: PurchaseDraftItem;
+      lockOthers: boolean;
+      rateVes: number;
+      type: "productAdded";
+    }
   /** Cambió el proveedor: la compra empieza de cero y conserva "Compra exenta". */
   | { type: "supplierChanged" };
 
@@ -263,7 +270,9 @@ export function purchaseLinesReducer(
 
       return {
         ...next,
-        focus: { itemId: target.id, token: (state.focus?.token ?? 0) + 1 },
+        focus: action.keepFocus
+          ? state.focus
+          : { itemId: target.id, token: (state.focus?.token ?? 0) + 1 },
         items: [target, ...others],
         locks: unlockPurchaseLines(next.locks, [target.id]),
       };

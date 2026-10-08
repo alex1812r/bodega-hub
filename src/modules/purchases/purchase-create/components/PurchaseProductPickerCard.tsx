@@ -64,7 +64,12 @@ type PurchaseProductPickerCardProps = {
   lockControls: PurchaseLineLockControls;
   /** Chip «Desarmar al recibir» de una línea (COM-14). */
   onLineDisassembleChange?: (itemId: string, disassemble: boolean) => void;
-  onAddProduct: (product: PurchaseCatalogProduct) => void;
+  /**
+   * `scanned`: el producto entró por un escaneo (Enter en el buscador con un código, la
+   * cámara o un código detectado en una celda). Su línea no pide el foco: se queda en el
+   * buscador para encadenar el siguiente (D36).
+   */
+  onAddProduct: (product: PurchaseCatalogProduct, options?: { scanned?: boolean }) => void;
   onExemptPurchaseChange: (exempt: boolean) => void;
   onLineTaxChange: (itemId: string, code: string) => void;
   /**
@@ -283,7 +288,9 @@ export function PurchaseProductPickerCard({
 
   // Lector sobre una celda de línea: el código es uno de los sufijos de lo tecleado. La
   // celda fija su valor al saber cuál, antes de que agregar el producto la bloquee.
+  // El foco pasa ya al buscador: el siguiente escaneo no debe caer en la celda (D36).
   function handleLineScan(scan: PurchaseLineScan) {
+    searchInputRef.current?.focus();
     lookUpCodes(scan.candidates, { onResolved: scan.onResolved });
   }
 
@@ -300,8 +307,7 @@ export function PurchaseProductPickerCard({
     setIsLookingUp(true);
     setScanError(null);
 
-    // Si el código no agrega nada, el foco vuelve al buscador para reintentar; si
-    // agrega, se lo queda la cantidad de la línea nueva (COM-12).
+    // Agregue o no, el foco es del buscador: para reintentar o para el siguiente escaneo (D36).
     void resolveFirstKnownCode(supplierId, codes)
       .then(({ code, resolution }) => {
         if (resolution.status !== "found") {
@@ -314,10 +320,19 @@ export function PurchaseProductPickerCard({
         }
 
         options?.onResolved?.(code);
-        handleAdd(resolution.product);
+        onAddProduct(resolution.product, { scanned: true });
+        onSearchChange("");
+        setPickerOpen(false);
         if (options?.closeScanOnSuccess) {
           setScanOpen(false);
         }
+
+        // Bloquear al agregar puede dejar sin foco a quien lo tenía (su fila ya no tiene campos).
+        requestAnimationFrame(() => {
+          if (!document.activeElement || document.activeElement === document.body) {
+            searchInputRef.current?.focus();
+          }
+        });
       })
       .catch(() => {
         options?.onResolved?.(null);
