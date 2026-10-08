@@ -318,6 +318,31 @@ export function useSaveProductSuppliers(id: string) {
   });
 }
 
+export type SaveSuppliersForProductInput = {
+  productId: string;
+  suppliers: ProductSupplierSaveInput[];
+};
+
+/**
+ * Igual que `useSaveProductSuppliers`, para cuando el id del producto no se
+ * conoce al montar: en un alta llega con la respuesta del `POST` del producto.
+ */
+export function useSaveSuppliersForProduct() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ productId, suppliers }: SaveSuppliersForProductInput) =>
+      apiFetch<SaveProductSuppliersResult>(`/api/products/${productId}/suppliers`, {
+        body: { suppliers },
+        method: "PUT",
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: supplierProductsQueryKeys.all });
+    },
+  });
+}
+
 export function useCreateProduct() {
   const queryClient = useQueryClient();
 

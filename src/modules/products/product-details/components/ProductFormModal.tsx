@@ -3,8 +3,12 @@
 import {
   type FormEvent,
   type ReactNode,
+  type Ref,
   useEffect,
+  useEffectEvent,
   useId,
+  useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,10 +16,12 @@ import {
 import { flushSync } from "react-dom";
 
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
+import { getPaginatedItems } from "@/lib/api/pagination";
 import { InventoryAdjustmentModal } from "@/modules/inventory/inventory-movements/components/InventoryAdjustmentModal";
 import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { Can } from "@/shared/auth/Can";
 import { Button } from "@/shared/components/Button";
+import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 import { FormActions } from "@/shared/components/FormActions";
 import { Modal } from "@/shared/components/Modal";
 import { getNumberInputError } from "@/shared/components/NumberInput";
@@ -25,8 +31,12 @@ import type { CategoryMock } from "@/shared/mocks/erp-data";
 import { CategoryQuickCreateModal } from "../../categories-list/components/CategoryQuickCreateModal";
 import {
   type ProductInput,
+  type ProductSupplierSaveInput,
   type ProductWithCategory,
+  type SaveProductSuppliersResult,
   useCreateProduct,
+  useProductSuppliers,
+  useSaveSuppliersForProduct,
 } from "../../hooks/useProducts";
 import { getProductPricingOptions } from "../../services/productMargin";
 import { normalizeBarcode } from "../../services/productSearch";
@@ -46,6 +56,17 @@ import {
 } from "./ProductFormBasicFields";
 import { ProductFormMoreOptions } from "./ProductFormMoreOptions";
 import { ProductImageUploadField } from "./ProductImageUploadField";
+import {
+  buildProductSuppliersPayload,
+  createProductSuppliersState,
+  EMPTY_PRODUCT_SUPPLIERS_STATE,
+  findProductSuppliersInvalidField,
+  getProductSuppliersErrors,
+  PRODUCT_SUPPLIERS_LOAD_FILTERS,
+  type ProductSupplierLinkSource,
+  ProductSuppliersFields,
+  type ProductSuppliersFormState,
+} from "./ProductSuppliersFields";
 import {
   createDefaultPackConversionFormState,
   findUnitProductField,
@@ -144,8 +165,115 @@ export type ProductFormModalProps = {
    * formulario (cambia al cambiar de categoría); sin ninguno, no hay sugerido.
    */
   suggestedMarkupPct?: number;
+  /**
+   * Alta completa: muestra la sección "Proveedores" dentro de "Más opciones"
+   * (en edición se muestra siempre; en `compact`, nunca). Exige que `onSubmit`
+   * DEVUELVA el producto creado: sus proveedores se guardan después, con su
+   * `id`, en `PUT /api/products/[id]/suppliers`. Por defecto `false`.
+   */
+  suppliersOnCreate?: boolean;
   trigger?: ReactNode;
 };
+
+type ProductSuppliersLoadEvent =
+  | { links: ProductSupplierLinkSource[]; status: "ready" }
+  | { message: string; status: "error" };
+
+/**
+ * `idle`: edición que aún no pidió los proveedores (se piden al desplegar
+ * "Proveedores", no al abrir el formulario ni "Más opciones").
+ */
+type ProductSuppliersLoad = { message?: string; status: "error" | "idle" | "loading" | "ready" };
+
+type ProductSuppliersBridgeHandle = {
+  reload: () => void;
+  save: (
+    productId: string,
+    suppliers: ProductSupplierSaveInput[],
+  ) => Promise<SaveProductSuppliersResult>;
+};
+
+type ProductSuppliersBridgeProps = {
+  /** Producto cuyos proveedores se cargan (edición); sin él no se pide nada. */
+  loadProductId?: string;
+  onLoad: (event: ProductSuppliersLoadEvent) => void;
+  ref: Ref<ProductSuppliersBridgeHandle>;
+};
+
+/**
+ * Datos de la sección "Proveedores": carga los vínculos activos del producto
+ * en edición y guarda la lista en un `PUT`. Componente aparte, montado solo
+ * cuando la sección los necesita: así el modo `compact`, las altas sin
+ * proveedores y una edición que no los despliega no dependen de estas consultas.
+ */
+function ProductSuppliersBridge({ loadProductId, onLoad, ref }: ProductSuppliersBridgeProps) {
+  const { data, error, isFetching, refetch } = useProductSuppliers(
+    loadProductId,
+    PRODUCT_SUPPLIERS_LOAD_FILTERS,
+  );
+  const { mutateAsync } = useSaveSuppliersForProduct();
+  const notifyLoad = useEffectEvent(onLoad);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      reload: () => void refetch(),
+      save: (productId, suppliers) => mutateAsync({ productId, suppliers }),
+    }),
+    [mutateAsync, refetch],
+  );
+
+  // Solo con la respuesta ya asentada: una copia en caché que se está
+  // refrescando podría no traer un vínculo creado desde Contactos.
+  useEffect(() => {
+    if (!loadProductId || isFetching) {
+      return;
+    }
+
+    if (error) {
+      notifyLoad({ message: error.message, status: "error" });
+    } else if (data) {
+      notifyLoad({ links: getPaginatedItems(data), status: "ready" });
+    }
+  }, [data, error, isFetching, loadProductId]);
+
+  return null;
+}
+
+function getSuppliersSaveErrorReason(error: unknown) {
+  const message =
+    error instanceof Error && error.message ? error.message : "no se pudo completar la solicitud.";
+  const issues = error instanceof Error && "issues" in error ? error.issues : undefined;
+  const firstIssue: unknown = Array.isArray(issues) ? issues[0] : undefined;
+  const detail =
+    typeof firstIssue === "object" && firstIssue !== null && "message" in firstIssue
+      ? firstIssue.message
+      : undefined;
+
+  return typeof detail === "string" && detail ? `${message} ${detail}` : message;
+}
+
+/** Resumen de "Proveedores" cerrada: cuántos hay y quién es el habitual. */
+function getSuppliersSectionSummary(
+  state: ProductSuppliersFormState,
+  isLoaded: boolean,
+  product?: ProductWithCategory,
+) {
+  if (!isLoaded) {
+    return product?.preferredSupplier
+      ? `Habitual: ${product.preferredSupplier.name}`
+      : "Proveedores vinculados, costo y habitual";
+  }
+
+  if (state.rows.length === 0) {
+    return "Sin proveedores vinculados";
+  }
+
+  const preferred = state.rows.find((row) => row.supplierId === state.preferredSupplierId);
+  const count = `${state.rows.length} ${state.rows.length === 1 ? "proveedor" : "proveedores"}`;
+
+  return preferred ? `${count} · Habitual: ${preferred.supplierName}` : `${count} · Sin habitual`;
+}
 
 type PackUnitProductCreateModalProps = {
   categories: CategoryMock[];
@@ -210,6 +338,7 @@ export function ProductFormModal({
   product: productProp,
   showCreatedToast = !compact,
   suggestedMarkupPct,
+  suppliersOnCreate = false,
   trigger,
 }: ProductFormModalProps) {
   const { showToast } = useToast();
@@ -217,6 +346,7 @@ export function ProductFormModal({
   const product = compact ? undefined : productProp;
   const createDefaults = isEdit ? undefined : initialValues;
   const canCreateAnother = !isEdit && !compact;
+  const showSuppliers = !compact && (isEdit ? Boolean(product) : suppliersOnCreate);
   const formId = useId();
   const formRef = useRef<HTMLFormElement | null>(null);
   /** El envío en curso lo pidió "Guardar y crear otro" (y no Enter ni el botón principal). */
@@ -272,6 +402,23 @@ export function ProductFormModal({
   const isSubmitInFlightRef = useRef(false);
   const [failedSubmits, setFailedSubmits] = useState(0);
   const isUnitRole = product?.packConversion?.role === "unit";
+  const suppliersBridgeRef = useRef<ProductSuppliersBridgeHandle | null>(null);
+  const [suppliersOpen, setSuppliersOpen] = useState(false);
+  const [suppliersState, setSuppliersState] = useState<ProductSuppliersFormState>(
+    EMPTY_PRODUCT_SUPPLIERS_STATE,
+  );
+  const [suppliersLoad, setSuppliersLoad] = useState<ProductSuppliersLoad>({
+    status: isEdit ? "idle" : "ready",
+  });
+  /** Cuerpo del `PUT` que dejaría los proveedores como están guardados: si coincide, no se llama. */
+  const suppliersBaselineRef = useRef("[]");
+  /** Los proveedores ya se cargaron en esta apertura: un refresco posterior no pisa lo editado. */
+  const suppliersLoadedRef = useRef(false);
+  const [isSavingSuppliers, setIsSavingSuppliers] = useState(false);
+  const [suppliersSaveError, setSuppliersSaveError] = useState<string | null>(null);
+  /** Alta ya guardada cuyos proveedores fallaron: al reintentar no se vuelve a crear. */
+  const [createdProduct, setCreatedProduct] = useState<ProductWithCategory | null>(null);
+  const isBusy = isSubmitting || isSavingSuppliers;
 
   useEffect(() => {
     if (isOpen) {
@@ -280,6 +427,59 @@ export function ProductFormModal({
     // Reset when opening or when the loaded product payload changes (e.g. detail fetch).
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional on open/product.id
   }, [isOpen, product?.id, product?.packConversion?.id]);
+
+  // Antes de que el puente avise de una carga (efecto pasivo de un hijo): un
+  // efecto normal correría después y borraría lo recién cargado. No depende del
+  // empaque: guardarlo cambia su id con el envío de los proveedores aún en curso.
+  useLayoutEffect(() => {
+    if (isOpen) {
+      resetSuppliers();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional on open/product.id
+  }, [isOpen, product?.id]);
+
+  function resetSuppliers() {
+    suppliersLoadedRef.current = false;
+    suppliersBaselineRef.current = "[]";
+    setSuppliersOpen(false);
+    setSuppliersState(EMPTY_PRODUCT_SUPPLIERS_STATE);
+    setSuppliersLoad({ status: isEdit ? "idle" : "ready" });
+    setSuppliersSaveError(null);
+    setCreatedProduct(null);
+  }
+
+  // Edición: los proveedores se piden la primera vez que se despliega su sección.
+  function handleSuppliersOpenChange(nextOpen: boolean) {
+    setSuppliersOpen(nextOpen);
+
+    if (nextOpen) {
+      setSuppliersLoad((current) => (current.status === "idle" ? { status: "loading" } : current));
+    }
+  }
+
+  function handleSuppliersLoad(event: ProductSuppliersLoadEvent) {
+    if (suppliersLoadedRef.current) {
+      return;
+    }
+
+    if (event.status === "error") {
+      setSuppliersLoad({ message: event.message, status: "error" });
+
+      return;
+    }
+
+    const loaded = createProductSuppliersState(event.links);
+
+    suppliersLoadedRef.current = true;
+    suppliersBaselineRef.current = JSON.stringify(buildProductSuppliersPayload(loaded));
+    setSuppliersState(loaded);
+    setSuppliersLoad({ status: "ready" });
+  }
+
+  function retrySuppliersLoad() {
+    setSuppliersLoad({ status: "loading" });
+    suppliersBridgeRef.current?.reload();
+  }
 
   function resetFormFields() {
     setName(product?.name ?? createDefaults?.name ?? "");
@@ -424,7 +624,7 @@ export function ProductFormModal({
   async function handleSubmit(event: FormEvent<HTMLFormElement>, close: () => void) {
     event.preventDefault();
 
-    if (isSubmitting || isSubmitInFlightRef.current) {
+    if (isBusy || isSubmitInFlightRef.current) {
       return;
     }
 
@@ -499,6 +699,28 @@ export function ProductFormModal({
       return;
     }
 
+    // Proveedores: costo que no vale o más de los que admite un producto.
+    const suppliersErrors = showSuppliers ? getProductSuppliersErrors(suppliersState) : undefined;
+
+    if (suppliersErrors) {
+      flushSync(() => {
+        setMoreOptionsOpen(true);
+        setSuppliersOpen(true);
+        setShowSubmitErrors(true);
+      });
+      findProductSuppliersInvalidField(form, suppliersErrors)?.focus();
+
+      return;
+    }
+
+    // Solo se guardan si la sección cambió respecto de lo cargado.
+    const suppliersPayload = buildProductSuppliersPayload(suppliersState);
+    const suppliersSnapshot = JSON.stringify(suppliersPayload);
+    const shouldSaveSuppliers =
+      showSuppliers &&
+      suppliersLoad.status === "ready" &&
+      suppliersSnapshot !== suppliersBaselineRef.current;
+
     const input: ProductInput = {
       barcode: normalizeBarcode(String(formData.get("barcode") ?? "")),
       // Del <select>, no del estado: una categoría que ya no está entre las
@@ -523,30 +745,87 @@ export function ProductFormModal({
     // Si `onSubmit` rechaza, no se llega a `close()`: el modal queda abierto con
     // lo escrito. El rechazo se queda aquí (no sube como promesa sin manejar):
     // el motivo lo pinta el consumidor con `errorMessage`.
-    let created: ProductWithCategory | void;
-
+    // El candado cubre también el guardado de los proveedores.
     isSubmitInFlightRef.current = true;
 
     try {
-      created = await onSubmit?.(input, { pendingImageBlob });
-    } catch {
-      setFailedSubmits((count) => count + 1);
+      let created: ProductWithCategory | undefined = createdProduct ?? undefined;
 
-      return;
+      // Un alta cuyos proveedores fallaron ya está creada: solo se reintentan ellos.
+      if (!createdProduct) {
+        try {
+          created = (await onSubmit?.(input, { pendingImageBlob })) ?? undefined;
+        } catch {
+          setFailedSubmits((count) => count + 1);
+
+          return;
+        }
+
+        if (!isEdit && created) {
+          onCreated?.(created);
+        }
+
+        if (!isEdit && showCreatedToast) {
+          showToast({
+            action: created ? { href: `/products/${created.id}`, label: "Ver" } : undefined,
+            title: `Producto creado: ${created?.name ?? input.name}`,
+            tone: "success",
+          });
+        }
+      }
+
+      if (shouldSaveSuppliers) {
+        const targetId = isEdit ? product?.id : created?.id;
+        const bridge = suppliersBridgeRef.current;
+
+        if (!targetId || !bridge) {
+          // `onSubmit` no devolvió el producto: sin su id no hay a quién vincularlos,
+          // y dejar el modal abierto invitaría a crearlo otra vez.
+          showToast({
+            title: "Los proveedores no se guardaron: añádelos desde el detalle del producto.",
+            tone: "error",
+          });
+        } else {
+          let result: SaveProductSuppliersResult;
+
+          setSuppliersSaveError(null);
+          setIsSavingSuppliers(true);
+
+          try {
+            result = await bridge.save(targetId, suppliersPayload);
+          } catch (error) {
+            setSuppliersSaveError(getSuppliersSaveErrorReason(error));
+            setMoreOptionsOpen(true);
+            setSuppliersOpen(true);
+
+            if (!isEdit && created) {
+              setCreatedProduct(created);
+            }
+
+            return;
+          } finally {
+            setIsSavingSuppliers(false);
+          }
+
+          suppliersBaselineRef.current = suppliersSnapshot;
+
+          // El servidor dejó un habitual distinto del que mostraba el formulario.
+          if (result.preferredSupplierId !== suppliersState.preferredSupplierId) {
+            const preferred = result.suppliers.find(
+              (link) => link.supplierId === result.preferredSupplierId,
+            );
+
+            showToast({
+              title: preferred
+                ? `El habitual pasó a ${preferred.supplierName}`
+                : "El producto quedó sin proveedor habitual",
+              tone: "info",
+            });
+          }
+        }
+      }
     } finally {
       isSubmitInFlightRef.current = false;
-    }
-
-    if (!isEdit && created) {
-      onCreated?.(created);
-    }
-
-    if (!isEdit && showCreatedToast) {
-      showToast({
-        action: created ? { href: `/products/${created.id}`, label: "Ver" } : undefined,
-        title: `Producto creado: ${created?.name ?? input.name}`,
-        tone: "success",
-      });
     }
 
     if (!createAnother) {
@@ -557,6 +836,7 @@ export function ProductFormModal({
 
     flushSync(() => {
       resetFormFields();
+      resetSuppliers();
       setCategoryId(input.categoryId ?? "");
       setFormResetKey((key) => key + 1);
     });
@@ -619,16 +899,16 @@ export function ProductFormModal({
             <Button onClick={close} variant="outline">
               Cancelar
             </Button>
-            <Button disabled={isSubmitting} onClick={submitAndCreateAnother} variant="outline">
+            <Button disabled={isBusy} onClick={submitAndCreateAnother} variant="outline">
               Guardar y crear otro
             </Button>
-            <Button disabled={isSubmitting} form={formId} type="submit">
-              {isSubmitting ? "Guardando..." : "Crear producto"}
+            <Button disabled={isBusy} form={formId} type="submit">
+              {isBusy ? "Guardando..." : createdProduct ? "Guardar proveedores" : "Crear producto"}
             </Button>
           </>
         ) : (
           <FormActions
-            isSubmitting={isSubmitting || isUploadingImage}
+            isSubmitting={isBusy || isUploadingImage}
             onCancel={close}
             submitFormId={formId}
             submitLabel={isEdit ? "Guardar cambios" : "Crear producto"}
@@ -656,33 +936,38 @@ export function ProductFormModal({
         onSubmit={(event) => handleSubmit(event, () => handleOpenChange(false))}
         ref={formRef}
       >
-        <ProductFormBasicFields
-          categories={categoryOptions}
-          categoryId={categoryId}
-          defaults={product ?? createDefaults ?? {}}
-          image={
-            compact ? undefined : (
-              <Can permission="products.manage">
-                <ProductImageUploadField
-                  disabled={isSubmitting}
-                  imageUrl={product?.imageUrl}
-                  isUploading={isUploadingImage}
-                  onPendingBlobChange={isEdit ? undefined : setPendingImageBlob}
-                  onRemove={isEdit && product?.imageUrl ? handleRemoveImage : undefined}
-                  onUpload={isEdit && product?.id ? handleUploadImage : undefined}
-                />
-              </Can>
-            )
-          }
-          name={name}
-          onCategoryChange={setCategoryId}
-          onCreateCategory={openCategoryCreate}
-          onNameChange={setName}
-          pricingChips={pricingChips ?? pricingOptions.chips}
-          showPriceRequired={showPriceRequired}
-          suggestedMarkupPct={suggestedMarkupPct ?? selectedCategory?.defaultMarkupPct ?? undefined}
-          thresholds={pricingOptions.thresholds}
-        />
+        {/* Alta ya guardada: lo básico queda inerte, el producto no se vuelve a enviar. */}
+        <div className="contents" inert={Boolean(createdProduct)}>
+          <ProductFormBasicFields
+            categories={categoryOptions}
+            categoryId={categoryId}
+            defaults={product ?? createDefaults ?? {}}
+            image={
+              compact ? undefined : (
+                <Can permission="products.manage">
+                  <ProductImageUploadField
+                    disabled={isSubmitting}
+                    imageUrl={product?.imageUrl}
+                    isUploading={isUploadingImage}
+                    onPendingBlobChange={isEdit ? undefined : setPendingImageBlob}
+                    onRemove={isEdit && product?.imageUrl ? handleRemoveImage : undefined}
+                    onUpload={isEdit && product?.id ? handleUploadImage : undefined}
+                  />
+                </Can>
+              )
+            }
+            name={name}
+            onCategoryChange={setCategoryId}
+            onCreateCategory={openCategoryCreate}
+            onNameChange={setName}
+            pricingChips={pricingChips ?? pricingOptions.chips}
+            showPriceRequired={showPriceRequired}
+            suggestedMarkupPct={
+              suggestedMarkupPct ?? selectedCategory?.defaultMarkupPct ?? undefined
+            }
+            thresholds={pricingOptions.thresholds}
+          />
+        </div>
         {compact ? (
           <p className="text-sm text-on-surface-variant">
             Se crea con lo básico y el SKU se genera solo. El stock, el empaque y la imagen se
@@ -702,12 +987,57 @@ export function ProductFormModal({
             open={moreOptionsOpen}
             packConversionState={packConversionState}
             product={product}
+            productLocked={Boolean(createdProduct)}
             productName={name}
             showErrors={showSubmitErrors}
             sku={sku}
+            suppliers={
+              showSuppliers ? (
+                <CollapsibleSection
+                  className="min-w-0"
+                  onOpenChange={handleSuppliersOpenChange}
+                  open={suppliersOpen}
+                  summary={
+                    <span className="block truncate">
+                      {getSuppliersSectionSummary(
+                        suppliersState,
+                        suppliersLoad.status === "ready",
+                        product,
+                      )}
+                    </span>
+                  }
+                  title="Proveedores"
+                >
+                  <ProductSuppliersFields
+                    isLoading={
+                      suppliersLoad.status === "idle" || suppliersLoad.status === "loading"
+                    }
+                    loadError={suppliersLoad.status === "error" ? suppliersLoad.message : undefined}
+                    onChange={setSuppliersState}
+                    onRetryLoad={retrySuppliersLoad}
+                    showErrors={showSubmitErrors}
+                    state={suppliersState}
+                  />
+                </CollapsibleSection>
+              ) : undefined
+            }
+            suppliersCount={
+              isEdit && suppliersLoad.status !== "ready" ? undefined : suppliersState.rows.length
+            }
             unitSearchResetKey={failedSubmits}
           />
         )}
+        {suppliersSaveError ? (
+          <p
+            className="break-words rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300"
+            role="alert"
+          >
+            El producto se guardó, pero los proveedores no: {suppliersSaveError}
+            {createdProduct
+              ? " Corrige los proveedores y vuelve a guardar: el producto ya está creado y no se creará otra vez."
+              : ""}
+          </p>
+        ) : null}
         {imageError ? (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
             {imageError}
@@ -719,6 +1049,13 @@ export function ProductFormModal({
           </p>
         ) : null}
       </form>
+      {showSuppliers && isOpen && suppliersLoad.status !== "idle" ? (
+        <ProductSuppliersBridge
+          loadProductId={isEdit ? product?.id : undefined}
+          onLoad={handleSuppliersLoad}
+          ref={suppliersBridgeRef}
+        />
+      ) : null}
       {/* Fuera del <form>: el envío del ajuste no debe burbujear al del producto. */}
       {isEdit && product && stockAdjustmentOpen ? (
         <InventoryAdjustmentModal

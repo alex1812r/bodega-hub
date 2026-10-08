@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import { Can } from "@/shared/auth/Can";
 import { Button } from "@/shared/components/Button";
 import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
@@ -38,15 +40,30 @@ type ProductFormMoreOptionsProps = {
   packConversionState: PackConversionFormState;
   product?: ProductWithCategory;
   productName: string;
+  /**
+   * Alta ya guardada cuyos proveedores no se pudieron guardar: el resto de la
+   * sección queda inerte (el producto no se vuelve a enviar) y solo se corrigen
+   * los proveedores.
+   */
+  productLocked?: boolean;
   /** Tras intentar enviar: muestra los avisos del empaque. */
   showErrors: boolean;
   sku: string;
+  /** Sección "Proveedores" (PRO-14); sin ella no se muestra ni se menciona. */
+  suppliers?: ReactNode;
+  /**
+   * Proveedores en la lista del formulario: se cuentan en el resumen de la
+   * sección cerrada. Sin él (aún no se cargaron), el resumen nombra al habitual
+   * que ya trae el producto.
+   */
+  suppliersCount?: number;
   /** Cambia tras un guardado rechazado: el buscador de unidad vuelve a preguntar al servidor. */
   unitSearchResetKey?: number;
 };
 
 /**
- * Segundo nivel del formulario de producto: SKU, Descripción, stock y empaque.
+ * Segundo nivel del formulario de producto: SKU, Descripción, stock, empaque y,
+ * si se pasan, proveedores.
  * Cerrada, la sección solo se oculta (`hidden`): sus campos siguen montados y
  * viajan en el envío igual que si estuviera abierta.
  */
@@ -61,15 +78,27 @@ export function ProductFormMoreOptions({
   open,
   packConversionState,
   product,
+  productLocked = false,
   productName,
   showErrors,
   sku,
+  suppliers,
+  suppliersCount,
   unitSearchResetKey,
 }: ProductFormMoreOptionsProps) {
-  const summary =
+  const baseSummary =
     isEdit && product
       ? `SKU ${sku || product.sku} · Stock actual ${product.currentStock}`
-      : "SKU, descripción, stock y empaque";
+      : suppliers
+        ? "SKU, descripción, stock, empaque y proveedores"
+        : "SKU, descripción, stock y empaque";
+  const suppliersSummary =
+    suppliersCount === undefined
+      ? product?.preferredSupplier && `Habitual: ${product.preferredSupplier.name}`
+      : suppliersCount > 0 &&
+        `${suppliersCount} ${suppliersCount === 1 ? "proveedor" : "proveedores"}`;
+  const summary =
+    suppliers && suppliersSummary ? `${baseSummary} · ${suppliersSummary}` : baseSummary;
 
   return (
     <CollapsibleSection
@@ -86,70 +115,74 @@ export function ProductFormMoreOptions({
       title="Más opciones"
     >
       <div className="grid gap-4">
-        <Input
-          helperText={SKU_HELPER_TEXT}
-          label="SKU"
-          name="sku"
-          onChange={(event) => onSkuChange(event.target.value.toLowerCase())}
-          trailing={
-            <GenerateSkuIconButton
-              disabled={!productName.trim()}
-              onGenerate={() => onSkuChange(generateProductSkuFromName(productName))}
-            />
-          }
-          value={sku}
-        />
-        <Textarea label="Descripción" placeholder="Detalles del producto" />
-        <div className="grid gap-4 md:grid-cols-2">
-          {isEdit ? (
-            <div className="space-y-2">
-              {/* Controlado: tras un ajuste muestra el stock recién consultado. */}
+        {/* `contents`: sus campos siguen siendo hijos del grid. */}
+        <div className="contents" inert={productLocked}>
+          <Input
+            helperText={SKU_HELPER_TEXT}
+            label="SKU"
+            name="sku"
+            onChange={(event) => onSkuChange(event.target.value.toLowerCase())}
+            trailing={
+              <GenerateSkuIconButton
+                disabled={!productName.trim()}
+                onGenerate={() => onSkuChange(generateProductSkuFromName(productName))}
+              />
+            }
+            value={sku}
+          />
+          <Textarea label="Descripción" placeholder="Detalles del producto" />
+          <div className="grid gap-4 md:grid-cols-2">
+            {isEdit ? (
+              <div className="space-y-2">
+                {/* Controlado: tras un ajuste muestra el stock recién consultado. */}
+                <NumberInput
+                  decimals={0}
+                  disabled
+                  helperText="Se corrige desde Inventario con un ajuste, para que quede registrado el movimiento."
+                  label="Stock actual"
+                  readOnly
+                  value={product?.currentStock}
+                />
+                {onAdjustStock ? (
+                  <Can permission="inventory.manage">
+                    <Button
+                      onClick={(event) => onAdjustStock(event.currentTarget)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      Ajustar stock
+                    </Button>
+                  </Can>
+                ) : null}
+              </div>
+            ) : (
               <NumberInput
                 decimals={0}
-                disabled
-                helperText="Se corrige desde Inventario con un ajuste, para que quede registrado el movimiento."
-                label="Stock actual"
-                readOnly
-                value={product?.currentStock}
+                defaultValue={product?.currentStock}
+                label="Stock inicial"
+                name="currentStock"
               />
-              {onAdjustStock ? (
-                <Can permission="inventory.manage">
-                  <Button
-                    onClick={(event) => onAdjustStock(event.currentTarget)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    Ajustar stock
-                  </Button>
-                </Can>
-              ) : null}
-            </div>
-          ) : (
+            )}
             <NumberInput
               decimals={0}
-              defaultValue={product?.currentStock}
-              label="Stock inicial"
-              name="currentStock"
+              defaultValue={product?.minStock}
+              label="Stock mínimo"
+              name="minStock"
             />
-          )}
-          <NumberInput
-            decimals={0}
-            defaultValue={product?.minStock}
-            label="Stock mínimo"
-            name="minStock"
+          </div>
+          <ProductPackConversionFields
+            excludeProductId={product?.id}
+            isUnitRole={isUnitRole}
+            onCreateUnitProduct={onCreatePackUnitProduct}
+            packConversion={product?.packConversion}
+            productName={productName}
+            showErrors={showErrors}
+            state={packConversionState}
+            unitSearchResetKey={unitSearchResetKey}
+            onChange={onPackConversionChange}
           />
         </div>
-        <ProductPackConversionFields
-          excludeProductId={product?.id}
-          isUnitRole={isUnitRole}
-          onCreateUnitProduct={onCreatePackUnitProduct}
-          packConversion={product?.packConversion}
-          productName={productName}
-          showErrors={showErrors}
-          state={packConversionState}
-          unitSearchResetKey={unitSearchResetKey}
-          onChange={onPackConversionChange}
-        />
+        {suppliers}
       </div>
     </CollapsibleSection>
   );

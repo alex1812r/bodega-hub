@@ -431,8 +431,8 @@ function ProductsList() {
     if (salePriceRef !== editProduct.salePriceRef) {
       await updateProductPrice.mutateAsync({ reason: PRODUCT_EDIT_PRICE_REASON, salePriceRef });
     }
-
-    setProductToEditId(null);
+    // No se cierra aquí: el formulario guarda después los proveedores (PRO-14) y
+    // se cierra él mismo con `onOpenChange(false)`.
   }
 
   return (
@@ -459,6 +459,7 @@ function ProductsList() {
                 isSubmitting={createProduct.isPending}
                 onOpenChange={handleCreateOpenChange}
                 onSubmit={handleCreateProduct}
+                suppliersOnCreate
                 trigger={
                   <Button className="w-full gap-1 sm:w-auto" size="sm">
                     <Plus aria-hidden className="size-5" />
@@ -589,6 +590,7 @@ function ProductsList() {
                         isSubmitting={createProduct.isPending}
                         onOpenChange={handleCreateOpenChange}
                         onSubmit={handleCreateProduct}
+                        suppliersOnCreate
                         trigger={
                           <Button className="gap-1" size="sm">
                             <Plus aria-hidden className="size-5" />
