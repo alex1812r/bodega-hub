@@ -300,6 +300,41 @@ function assertPurchaseSupplier(supplierId: string) {
 }
 
 /**
+ * COM-15 · ninguna línea puede ser de un producto inactivo de la tienda, ni en una
+ * compra recibida ni en un pedido, con la regla (y el texto) de `create_purchase`
+ * (parche 20261010b). Se comprueba antes de crear nada. `receivePurchase` no lo
+ * mira: un pedido hecho con el producto activo se recibe aunque se desactive después.
+ */
+function assertPurchaseProductsActive(items: readonly PurchaseItemInput[], storeId: string) {
+  const productIds = new Set(items.map((item) => item.productId));
+  const names = mockProducts
+    .filter(
+      (product) =>
+        productIds.has(product.id) &&
+        (product.storeId ?? DEFAULT_STORE_ID) === storeId &&
+        !product.isActive,
+    )
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1))
+    .map((product) => product.name);
+
+  if (names.length === 1) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      `El producto ${names[0]} está inactivo: no se puede registrar la compra`,
+    );
+  }
+
+  if (names.length > 1) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      `Los productos ${names.join(", ")} están inactivos: no se puede registrar la compra`,
+    );
+  }
+}
+
+/**
  * COM-02 · cada línea de la compra queda vinculada al proveedor, como en
  * `create_purchase`: costo por unidad con el IVA de la línea y, si la línea se
  * guarda por empaque, su empaque (la línea sobre un producto EMPAQUE se guarda
@@ -379,6 +414,7 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
   const supplierId = input.supplierId ?? "cont-supplier";
 
   assertPurchaseSupplier(supplierId);
+  assertPurchaseProductsActive(input.items ?? [], storeId);
 
   // Antes de crear nada: una linea con IVA invalido rechaza la compra entera.
   const lines = (input.items ?? []).map((item) => ({
