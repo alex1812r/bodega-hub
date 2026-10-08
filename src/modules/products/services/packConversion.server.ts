@@ -158,7 +158,7 @@ async function assertUnitAvailable(
   throwIfSupabaseError(error);
 
   if (data && data.pack_product_id !== packProductId) {
-    throw new ApiError(409, "CONFLICT", "El producto unidad ya esta vinculado a otro empaque.");
+    throw new ApiError(409, "CONFLICT", "El producto unidad ya está vinculado a otro empaque.");
   }
 }
 

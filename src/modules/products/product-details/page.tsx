@@ -113,6 +113,13 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
               isSubmitting={isSaving}
               mode="edit"
               onImageUpdated={() => void product.refetch()}
+              onOpenChange={(open) => {
+                // Al abrir no debe verse el error de un guardado anterior.
+                if (open) {
+                  updateProduct.reset();
+                  updateProductPrice.reset();
+                }
+              }}
               onSubmit={handleUpdateProduct}
               product={data}
               trigger={

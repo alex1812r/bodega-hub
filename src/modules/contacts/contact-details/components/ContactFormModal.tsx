@@ -1,6 +1,7 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
 import { Button } from "@/shared/components/Button";
@@ -13,6 +14,19 @@ import type { ContactMock } from "@/shared/mocks/erp-data";
 
 import type { ContactInput } from "../../hooks/useContacts";
 
+/** Marca del botón "Guardar y crear otro": el envío lee cuál de los dos lo disparó. */
+const CREATE_ANOTHER_INTENT = "create-another";
+const DEFAULT_CONTACT_TYPE: ContactInput["type"] = "cliente";
+
+/**
+ * Formulario de contacto (alta y edición).
+ *
+ * El alta ofrece además "Guardar y crear otro": tras guardar, el modal sigue
+ * abierto con el formulario vacío, el foco en Nombre y el Tipo recién usado ya
+ * elegido, para dar altas en serie (p. ej. varios proveedores). Al cerrar y
+ * volver a abrir, el Tipo vuelve a "Cliente". Si `onSubmit` rechaza no se
+ * limpia nada y el modal queda abierto.
+ */
 type ContactFormModalProps = {
   contact?: ContactMock;
   customersOnly?: boolean;
@@ -41,6 +55,13 @@ export function ContactFormModal({
   const isControlled = open !== undefined;
   const isOpen = isControlled ? open : internalOpen;
   const isEdit = mode === "edit";
+  const formRef = useRef<HTMLFormElement | null>(null);
+  // Cambia tras "Guardar y crear otro": el formulario se monta de nuevo, vacío.
+  const [formResetKey, setFormResetKey] = useState(0);
+  const [createType, setCreateType] = useState(DEFAULT_CONTACT_TYPE);
+  // Candado propio: `isSubmitting` llega con el siguiente render, tarde para un
+  // segundo Enter o un clic en el mismo tick.
+  const isSubmitInFlightRef = useRef(false);
 
   function handleOpenChange(nextOpen: boolean) {
     if (!isControlled) {
@@ -48,11 +69,18 @@ export function ContactFormModal({
     }
 
     onOpenChange?.(nextOpen);
+    setCreateType(DEFAULT_CONTACT_TYPE);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    if (isSubmitting || isSubmitInFlightRef.current) {
+      return;
+    }
+
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const createAnother = !isEdit && submitter?.dataset.intent === CREATE_ANOTHER_INTENT;
     const formData = new FormData(event.currentTarget);
     const input: ContactInput = {
       address: String(formData.get("address") ?? ""),
@@ -63,21 +91,66 @@ export function ContactFormModal({
       type: String(formData.get("type") ?? "cliente") as ContactInput["type"],
     };
 
-    await onSubmit?.(input);
-    handleOpenChange(false);
+    // Si `onSubmit` rechaza no se llega más abajo: el modal queda abierto con
+    // lo escrito y el rechazo sigue subiendo.
+    isSubmitInFlightRef.current = true;
+
+    try {
+      await onSubmit?.(input);
+    } finally {
+      isSubmitInFlightRef.current = false;
+    }
+
+    if (!createAnother) {
+      handleOpenChange(false);
+
+      return;
+    }
+
+    flushSync(() => {
+      setCreateType(input.type);
+      setFormResetKey((key) => key + 1);
+    });
+
+    const nameField = formRef.current?.elements.namedItem("name");
+
+    if (nameField instanceof HTMLElement) {
+      nameField.focus();
+    }
   }
 
   return (
     <Modal
       description={getFormSaveDescription()}
-      footer={({ close }) => (
-        <FormActions
-          isSubmitting={isSubmitting}
-          onCancel={close}
-          submitFormId={formId}
-          submitLabel={isEdit ? "Guardar cambios" : "Crear contacto"}
-        />
-      )}
+      footer={({ close }) =>
+        isEdit ? (
+          <FormActions
+            isSubmitting={isSubmitting}
+            onCancel={close}
+            submitFormId={formId}
+            submitLabel="Guardar cambios"
+          />
+        ) : (
+          // FormActions no admite una acción secundaria entre Cancelar y la principal.
+          <>
+            <Button onClick={close} variant="outline">
+              Cancelar
+            </Button>
+            <Button
+              data-intent={CREATE_ANOTHER_INTENT}
+              disabled={isSubmitting}
+              form={formId}
+              type="submit"
+              variant="outline"
+            >
+              Guardar y crear otro
+            </Button>
+            <Button disabled={isSubmitting} form={formId} type="submit">
+              {isSubmitting ? "Guardando..." : "Crear contacto"}
+            </Button>
+          </>
+        )
+      }
       onOpenChange={handleOpenChange}
       open={isOpen}
       title={isEdit ? "Editar contacto" : "Crear contacto"}
@@ -92,12 +165,13 @@ export function ContactFormModal({
       <form
         className="grid gap-4"
         id={formId}
-        key={contact?.id ?? "new"}
+        key={`${contact?.id ?? "new"}-${formResetKey}`}
         onSubmit={(event) => void handleSubmit(event)}
+        ref={formRef}
       >
         <Input defaultValue={contact?.name} label="Nombre" name="name" required />
         <SelectField
-          defaultValue={contact?.type ?? "cliente"}
+          defaultValue={contact?.type ?? createType}
           label="Tipo"
           name="type"
           options={

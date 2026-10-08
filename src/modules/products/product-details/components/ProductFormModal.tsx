@@ -55,6 +55,13 @@ export type ProductFormInitialValues = Partial<
 /**
  * Contrato del formulario de producto. Estable: lo consumen Productos (lista y
  * detalle) y, en modo `compact`, Compras (COM-03) y el surtido (PRO-13).
+ *
+ * El alta completa (ni edición ni `compact`) ofrece además "Guardar y crear
+ * otro": tras guardar, el modal sigue abierto con el formulario en sus valores
+ * iniciales (sin imagen pendiente, "Más opciones" cerrada, sin avisos), el foco
+ * en Nombre y la Categoría recién usada ya elegida, para dar altas en serie de
+ * una misma categoría. `onCreated` se llama igual que al guardar y cerrar; si
+ * `onSubmit` rechaza no se limpia nada.
  */
 export type ProductFormModalProps = {
   /**
@@ -80,7 +87,7 @@ export type ProductFormModalProps = {
   mode?: "create" | "edit";
   /**
    * Alta terminada: recibe el producto que devolvió `onSubmit`, justo antes de
-   * cerrar. No se llama en edición ni si `onSubmit` no devuelve el producto.
+   * cerrar (o de limpiar el formulario con "Guardar y crear otro"). No se llama en edición ni si `onSubmit` no devuelve el producto.
    */
   onCreated?: (product: ProductWithCategory) => void;
   /** Edición: la imagen se subió o se quitó; el consumidor refresca el producto. */
@@ -101,6 +108,9 @@ export type ProductFormModalProps = {
   product?: ProductWithCategory;
   trigger?: ReactNode;
 };
+
+/** Marca del botón "Guardar y crear otro": el envío lee cuál de los dos lo disparó. */
+const CREATE_ANOTHER_INTENT = "create-another";
 
 function numberFromFormData(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -126,7 +136,12 @@ export function ProductFormModal({
   const isEdit = !compact && mode === "edit";
   const product = compact ? undefined : productProp;
   const createDefaults = isEdit ? undefined : initialValues;
+  const canCreateAnother = !isEdit && !compact;
   const formId = useId();
+  const formRef = useRef<HTMLFormElement | null>(null);
+  // Cambia tras "Guardar y crear otro": el formulario se monta de nuevo y sus
+  // campos no controlados (precios, stock, imagen pendiente) vuelven al inicio.
+  const [formResetKey, setFormResetKey] = useState(0);
   const isControlled = open !== undefined;
   const [internalOpen, setInternalOpen] = useState(false);
   const isOpen = isControlled ? open : internalOpen;
@@ -271,6 +286,9 @@ export function ProductFormModal({
     }
 
     const form = event.currentTarget;
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const createAnother =
+      canCreateAnother && submitter?.dataset.intent === CREATE_ANOTHER_INTENT;
     const formData = new FormData(form);
     const shouldSendPackConversion =
       !isUnitRole &&
@@ -341,7 +359,23 @@ export function ProductFormModal({
       onCreated?.(created);
     }
 
-    close();
+    if (!createAnother) {
+      close();
+
+      return;
+    }
+
+    flushSync(() => {
+      resetFormFields();
+      setCategoryId(input.categoryId ?? "");
+      setFormResetKey((key) => key + 1);
+    });
+
+    const nameField = formRef.current?.elements.namedItem("name");
+
+    if (nameField instanceof HTMLElement) {
+      nameField.focus();
+    }
   }
 
   async function handleUploadImage(blob: Blob) {
@@ -388,14 +422,35 @@ export function ProductFormModal({
   return (
     <Modal
       description={getFormSaveDescription()}
-      footer={({ close }) => (
-        <FormActions
-          isSubmitting={isSubmitting || isUploadingImage}
-          onCancel={close}
-          submitFormId={formId}
-          submitLabel={isEdit ? "Guardar cambios" : "Crear producto"}
-        />
-      )}
+      footer={({ close }) =>
+        canCreateAnother ? (
+          // FormActions no admite una acción secundaria entre Cancelar y la principal.
+          <>
+            <Button onClick={close} variant="outline">
+              Cancelar
+            </Button>
+            <Button
+              data-intent={CREATE_ANOTHER_INTENT}
+              disabled={isSubmitting}
+              form={formId}
+              type="submit"
+              variant="outline"
+            >
+              Guardar y crear otro
+            </Button>
+            <Button disabled={isSubmitting} form={formId} type="submit">
+              {isSubmitting ? "Guardando..." : "Crear producto"}
+            </Button>
+          </>
+        ) : (
+          <FormActions
+            isSubmitting={isSubmitting || isUploadingImage}
+            onCancel={close}
+            submitFormId={formId}
+            submitLabel={isEdit ? "Guardar cambios" : "Crear producto"}
+          />
+        )
+      }
       onOpenChange={handleOpenChange}
       open={isOpen}
       title={isEdit ? "Editar producto" : compact ? "Nuevo producto" : "Crear producto"}
@@ -412,8 +467,10 @@ export function ProductFormModal({
       <form
         className="grid gap-4"
         id={formId}
+        key={formResetKey}
         onInvalidCapture={handleInvalidCapture}
         onSubmit={(event) => handleSubmit(event, () => handleOpenChange(false))}
+        ref={formRef}
       >
         <ProductFormBasicFields
           categories={categoryOptions}

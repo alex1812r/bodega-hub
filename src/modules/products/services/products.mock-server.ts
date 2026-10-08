@@ -117,7 +117,7 @@ function upsertMockPackConversion(
     );
 
     if (conflict) {
-      throw new ApiError(409, "CONFLICT", "El producto unidad ya esta vinculado a otro empaque.");
+      throw new ApiError(409, "CONFLICT", "El producto unidad ya está vinculado a otro empaque.");
     }
   } else {
     const unitName = input.unitProduct?.name?.trim() || `${packProduct.name} (unidad)`;

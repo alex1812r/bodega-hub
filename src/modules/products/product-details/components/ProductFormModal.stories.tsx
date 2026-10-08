@@ -19,7 +19,8 @@ type Story = StoryObj<typeof meta>;
 
 /**
  * Alta: solo el nivel básico a la vista; "Más opciones" cerrada. Con permiso
- * para gestionar productos, bajo Categoría aparece "+ Nueva categoría".
+ * para gestionar productos, bajo Categoría aparece "+ Nueva categoría". El pie
+ * ofrece "Guardar y crear otro" (solo en el alta completa).
  */
 export const Create: Story = {};
 

@@ -241,6 +241,21 @@ function ProductsList() {
       await uploadProductImageBlob(product.id, context.pendingImageBlob);
       void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
     }
+
+    return product;
+  }
+
+  // Al abrir un alta o una edición no debe verse el error de un guardado anterior.
+  function handleCreateOpenChange(open: boolean) {
+    if (open) {
+      createProduct.reset();
+    }
+  }
+
+  function openProductEdit(productId: string) {
+    updateProduct.reset();
+    updateProductPrice.reset();
+    setProductToEditId(productId);
   }
 
   async function handleUpdateProduct(input: ProductInput) {
@@ -280,6 +295,7 @@ function ProductsList() {
                 categories={getPaginatedItems(categories.data)}
                 errorMessage={createProduct.error?.message}
                 isSubmitting={createProduct.isPending}
+                onOpenChange={handleCreateOpenChange}
                 onSubmit={handleCreateProduct}
                 trigger={
                   <Button className="w-full gap-1 sm:w-auto" size="sm">
@@ -318,7 +334,7 @@ function ProductsList() {
               if (can("products.manage")) {
                 items.push({
                   label: "Editar",
-                  onSelect: () => setProductToEditId(product.id),
+                  onSelect: () => openProductEdit(product.id),
                 });
               }
 
@@ -359,6 +375,7 @@ function ProductsList() {
                       categories={getPaginatedItems(categories.data)}
                       errorMessage={createProduct.error?.message}
                       isSubmitting={createProduct.isPending}
+                      onOpenChange={handleCreateOpenChange}
                       onSubmit={handleCreateProduct}
                       trigger={
                         <Button className="gap-1" size="sm">

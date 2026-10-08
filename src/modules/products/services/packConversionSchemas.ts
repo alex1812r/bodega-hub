@@ -37,7 +37,7 @@ export const packConversionInputSchema = z
     if (value.unitsPerPack == null || value.unitsPerPack < 2) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Indica unidades por empaque (minimo 2).",
+        message: "Indica unidades por empaque (mínimo 2).",
         path: ["unitsPerPack"],
       });
     }
