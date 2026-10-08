@@ -520,3 +520,22 @@ notify pgrst, 'reload schema';
 -- ORDEN DE DESPLIEGUE (PRO-14): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo
 -- sin el parche: PUT /api/products/{id}/suppliers responde error; los listados de productos siguen respondiendo (sin
 -- preferredSupplier) y los de vinculos salen con isPreferred = false.
+-- -----------------------------------------------------------------------------
+-- 20261009f — price and product idempotency (PRO-F9): el precio de un reprecio se calcula DENTRO de la base con el producto
+--             bloqueado (reprice_product_to_markup), cambio de precio y "Mantener precio" con costo esperado
+--             (update_product_price_checked, keep_product_price con p_expected_cost_ref: PT409 si el costo cambio) y clave
+--             de idempotencia del alta de producto (products.client_request_id / client_request_hash + indice unico)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009f-price-and-product-idempotency.sql
+-- Requiere 20261006c, 20261006h y 20261009c. Idempotente, una transaccion. No toca stock, dinero, politicas ni las RPC de
+-- compras; update_product_price queda letra por letra como en 20261009c (las RPC nuevas delegan en ella). No anade columnas
+-- numeric (los triggers de 20261006i no se regeneran). Las dos columnas nuevas de products son opcionales: importacion
+-- masiva, RPC que crean productos y BFF anterior siguen insertando sin ellas.
+-- OJO: keep_product_price cambia de firma: (uuid, text) -> (uuid, text, numeric default null). Se elimina la de dos
+-- argumentos; las llamadas con dos argumentos siguen resolviendo. Reaplicar 20261009c reinstala la firma vieja y deja dos
+-- sobrecargas (PGRST203 en la llamada de un argumento): volver a aplicar este parche y correr verify-patches.sql.
+-- OJO: price_from_markup redondea un % con mas de dos decimales en decimal exacto (1.005 -> 1.01); priceFromMarkup de
+-- @bodega/core lo hace sobre coma flotante (-> 1.00). El BFF envia el % ya redondeado con la regla de @bodega/core.
+-- ORDEN DE DESPLIEGUE (PRO-F9): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: el reprecio masivo, el cambio de precio con costo esperado, "Mantener precio" con costo esperado y el alta de
+-- producto con clientRequestId responden error (funcion o columna inexistente); nada queda a medias.

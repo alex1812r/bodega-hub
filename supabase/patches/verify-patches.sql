@@ -1284,16 +1284,16 @@ select
   )
 union all
 select
-  'rpc keep_product_price: security definer con search_path, tienda de la sesion, admin / almacen (PT403), bloqueo del producto (PT404), solo inserta historial y solo la ejecutan authenticated / service_role (20261009c)',
+  'rpc keep_product_price: una firma (uuid, text, numeric), security definer con search_path, tienda de la sesion, admin / almacen (PT403), bloqueo del producto (PT404), costo esperado (PT409), solo inserta historial y solo la ejecutan authenticated / service_role (20261009c; firma de 20261009f)',
   (
     select count(*) = 1
        and bool_and(
-         p.oid = to_regprocedure('public.keep_product_price(uuid, text)')
+         p.oid = to_regprocedure('public.keep_product_price(uuid, text, numeric)')
          and p.prosecdef
          and p.prorettype = to_regtype('public.product_price_history')
          and not p.proretset
          and p.proconfig @> array['search_path=public']
-         and p.prosrc ilike '%v_store_id := public.assert_store_context();%current_user_role()%not in (''admin'', ''almacen'')%errcode = ''PT403''%and store_id = v_store_id%for update%errcode = ''PT404''%insert into public.product_price_history%'
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%current_user_role()%not in (''admin'', ''almacen'')%errcode = ''PT403''%and store_id = v_store_id%for update%errcode = ''PT404''%assert_expected_cost_ref(v_product.current_cost_ref, p_expected_cost_ref)%insert into public.product_price_history%'
          and p.prosrc not ilike '%update public.products%'
          and p.prosrc not ilike '%current_stock%'
          and p.prosrc not ilike '%into public.stock_movements%'
@@ -1728,5 +1728,88 @@ select
     join public.contacts c on c.id = sp.supplier_id
     where sp.is_preferred
       and (not sp.is_active or not c.is_active or c.type::text not in ('proveedor', 'ambos'))
+  )
+union all
+select
+  'price_from_markup (costo al centimo, % a dos decimales, producto exacto) y assert_expected_cost_ref (PT409 con hint COST_CHANGED, interna: no ejecutable por /rpc) (20261009f)',
+  exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.price_from_markup(numeric, numeric)')
+      and p.provolatile = 'i'
+      and p.prosrc ilike '%round(round(p_cost_ref, 2) * (10000 + round(p_markup_pct, 2) * 100) * 0.0001, 2)%'
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+  and exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.assert_expected_cost_ref(numeric, numeric)')
+      and p.prosrc ilike '%round(coalesce(p_current_cost_ref, 0), 2) <> round(p_expected_cost_ref, 2)%errcode = ''PT409''%hint = ''COST_CHANGED''%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'rpc reprice_product_to_markup: una firma (uuid, numeric, text, numeric), security definer con search_path, tienda de la sesion, admin / almacen (PT403), % en (0, 1000], producto bloqueado (PT404), sin costo PT400, costo esperado PT409 y delega en update_product_price (20261009f)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.oid = to_regprocedure('public.reprice_product_to_markup(uuid, numeric, text, numeric)')
+         and p.prosecdef
+         and p.prorettype = to_regtype('public.products')
+         and not p.proretset
+         and p.proconfig @> array['search_path=public']
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%assert_finite_numeric(p_markup_pct%not in (''admin'', ''almacen'')%errcode = ''PT403''%p_markup_pct <= 0 or p_markup_pct > 1000%and store_id = v_store_id%for update%errcode = ''PT404''%hint = ''NO_COST''%assert_expected_cost_ref(v_product.current_cost_ref, p_expected_cost_ref)%return public.update_product_price(%public.price_from_markup(v_product.current_cost_ref, p_markup_pct)%'
+         and p.prosrc not ilike '%update public.products%'
+         and p.prosrc not ilike '%insert into%'
+         and p.prosrc not ilike '%current_stock%'
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'reprice_product_to_markup'
+  )
+union all
+select
+  'rpc update_product_price_checked: una firma (uuid, numeric, text, numeric), security definer con search_path, tienda de la sesion, admin / almacen (PT403), producto bloqueado (PT404), costo esperado PT409 y delega en update_product_price (20261009f)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.oid = to_regprocedure('public.update_product_price_checked(uuid, numeric, text, numeric)')
+         and p.prosecdef
+         and p.prorettype = to_regtype('public.products')
+         and not p.proretset
+         and p.proconfig @> array['search_path=public']
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%not in (''admin'', ''almacen'')%errcode = ''PT403''%and store_id = v_store_id%for update%errcode = ''PT404''%assert_expected_cost_ref(v_product.current_cost_ref, p_expected_cost_ref)%return public.update_product_price(p_product_id, p_new_sale_price_ref, p_reason)%'
+         and p.prosrc not ilike '%update public.products%'
+         and p.prosrc not ilike '%insert into%'
+         and p.prosrc not ilike '%current_stock%'
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'update_product_price_checked'
+  )
+union all
+select
+  'products.client_request_id (uuid) y client_request_hash (text) opcionales, con indice unico parcial (store_id, client_request_id) where client_request_id is not null (20261009f)',
+  (
+    select count(*) = 2 and bool_and(c.is_nullable = 'YES' and c.column_default is null)
+    from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'products'
+      and ((c.column_name = 'client_request_id' and c.data_type = 'uuid')
+        or (c.column_name = 'client_request_hash' and c.data_type = 'text'))
+  )
+  and exists (
+    select 1
+    from pg_index i
+    where i.indexrelid = to_regclass('public.products_store_client_request_unique')
+      and i.indrelid = 'public.products'::regclass
+      and i.indisunique
+      and i.indisvalid
+      and pg_get_indexdef(i.indexrelid) ilike '%(store_id, client_request_id) where (client_request_id is not null)'
   )
 order by 1;
