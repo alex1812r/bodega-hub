@@ -67,6 +67,7 @@ import {
 } from "./utils/purchaseInitialPayment";
 import {
   purchaseLineDisassemblePayload,
+  readPurchasePackRecipes,
   withPurchaseLineDisassemble,
 } from "./utils/purchaseLineDisassemble";
 import { getEditedLinesSummary } from "./utils/purchaseLineReview";
@@ -124,14 +125,10 @@ export function PurchaseCreatePage() {
   // Recetas de apertura activas de la tienda (COM-14): una consulta para toda la compra.
   // Si falla o el rol no puede verlas, ninguna línea ofrece «Desarmar al recibir».
   const packConversions = usePackConversions();
-  const packProductIds = useMemo(
-    () =>
-      new Set(
-        // Una respuesta que no sea la lista esperada no debe tumbar el formulario.
-        (Array.isArray(packConversions.data) ? packConversions.data : []).flatMap((recipe) =>
-          recipe.packProduct?.id ? [recipe.packProduct.id] : [],
-        ),
-      ),
+  // De la misma respuesta: los empaques cuya receta pide «Desarmar siempre al recibir
+  // compras»; sus líneas nacen con el chip marcado (el usuario puede desmarcarlo).
+  const { alwaysDisassembleProductIds, packProductIds } = useMemo(
+    () => readPurchasePackRecipes(packConversions.data),
     [packConversions.data],
   );
   const [lockOnAdd, setLockOnAdd] = usePurchaseLockOnAdd();
@@ -220,9 +217,11 @@ export function PurchaseCreatePage() {
         }),
         disassemble,
         packProductIds,
+        alwaysDisassembleProductIds,
       ),
     [
       activeRateVes,
+      alwaysDisassembleProductIds,
       disassemble,
       items,
       lineMetaByProductId,

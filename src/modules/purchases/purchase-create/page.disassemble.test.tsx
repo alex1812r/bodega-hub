@@ -149,7 +149,7 @@ async function confirmAndGetItems(api: ReturnType<typeof installFetchStub>) {
 function storedDisassemble() {
   const raw = window.localStorage.getItem(purchaseDraftStorageKey(SESSION));
 
-  return raw ? (JSON.parse(raw) as { lines: { disassemble?: Record<string, true> } }).lines.disassemble : null;
+  return raw ? (JSON.parse(raw) as { lines: { disassemble?: Record<string, boolean> } }).lines.disassemble : null;
 }
 
 beforeEach(() => {
@@ -212,6 +212,43 @@ describe("PurchaseCreatePage · chip «Desarmar al recibir» (COM-14)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Quitar Caja de refrescos" }));
 
     await waitFor(() => expect(storedDisassemble() ?? {}).toEqual({}));
+  });
+
+  it("receta con «Desarmar siempre al recibir compras»: el chip nace MARCADO y la línea viaja marcada sin tocarla", async () => {
+    const api = renderPage((url) =>
+      url.includes("/api/inventory/pack-conversions")
+        ? [{ ...RECIPES[0], alwaysDisassembleOnReceive: true }]
+        : null,
+    );
+    addProduct("Caja de refrescos");
+    addProduct("Harina PAN");
+
+    expect(await chip()).toHaveAttribute("aria-pressed", "true");
+
+    const items = await confirmAndGetItems(api);
+
+    expect(items.map((item) => [item.productId, item.disassembleOnReceive])).toEqual([
+      ["prod-harina", undefined],
+      ["prod-caja", true],
+    ]);
+  });
+
+  it("el chip que nace marcado por la receta se puede desmarcar: la línea viaja sin la clave y el borrador recuerda la elección", async () => {
+    const api = renderPage((url) =>
+      url.includes("/api/inventory/pack-conversions")
+        ? [{ ...RECIPES[0], alwaysDisassembleOnReceive: true }]
+        : null,
+    );
+    addProduct("Caja de refrescos");
+
+    fireEvent.click(await chip());
+
+    expect(await chip()).toHaveAttribute("aria-pressed", "false");
+    await waitFor(() => expect(Object.values(storedDisassemble() ?? {})).toEqual([false]));
+
+    const items = await confirmAndGetItems(api);
+
+    expect(items[0]).not.toHaveProperty("disassembleOnReceive");
   });
 
   it("una línea bloqueada marcada lo dice como texto y no deja cambiarlo", async () => {

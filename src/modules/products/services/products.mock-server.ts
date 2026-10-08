@@ -155,6 +155,7 @@ function toMockRecipeView(link: ProductPackConversionMock): PackRecipeView | und
   }
 
   return {
+    ...(link.alwaysDisassembleOnReceive === true ? { alwaysDisassembleOnReceive: true } : {}),
     components,
     id: link.id,
     label: link.label ?? null,
@@ -373,7 +374,38 @@ function assertMockPackConversionCanBeCreated(
   }
 }
 
+/**
+ * Guarda la receta y deja en la receta ACTIVA la preferencia «Desarmar siempre
+ * al recibir compras» (COM-14), como el server: la que llega o, si no llega, la
+ * de la receta que había (una receta reemplazada no la pierde).
+ */
 function upsertMockPackConversion(
+  packProductId: string,
+  storeId: string,
+  input: PackConversionInput,
+  packProduct: ProductMock,
+) {
+  const findActive = () =>
+    activeMockRecipes(storeId).find((item) => item.packProductId === packProductId);
+  const alwaysDisassemble =
+    input.alwaysDisassembleOnReceive ?? findActive()?.alwaysDisassembleOnReceive === true;
+
+  saveMockPackRecipe(packProductId, storeId, input, packProduct);
+
+  const active = input.enabled ? findActive() : undefined;
+
+  if (!active) {
+    return;
+  }
+
+  if (alwaysDisassemble) {
+    active.alwaysDisassembleOnReceive = true;
+  } else {
+    delete active.alwaysDisassembleOnReceive;
+  }
+}
+
+function saveMockPackRecipe(
   packProductId: string,
   storeId: string,
   input: PackConversionInput,

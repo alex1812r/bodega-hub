@@ -304,7 +304,8 @@ describe("purchaseLinesReducer · «Desarmar al recibir» (COM-14)", () => {
     expect(start.disassemble).toBeUndefined();
     expect(marked.disassemble).toEqual({ "line-cable": true });
     expect(both.disassemble).toEqual({ "line-cable": true, "line-refresco": true });
-    expect(unmarked.disassemble).toEqual({ "line-refresco": true });
+    // La desmarcada queda como `false`: la preferencia de la receta no la vuelve a marcar.
+    expect(unmarked.disassemble).toEqual({ "line-cable": false, "line-refresco": true });
     expect(unmarked.items).toBe(start.items);
     expect(unmarked.review).toBe(start.review);
   });

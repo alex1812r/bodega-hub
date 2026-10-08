@@ -276,6 +276,11 @@ export type ProductPackConversionSource = {
  * anteriores al surtido: el BFF y el mock los envían siempre.
  */
 export type ProductPackConversionSummary = {
+  /**
+   * Preferencia de la receta `id` (COM-14): la línea de compra de su empaque nace
+   * marcada «Desarmar al recibir». Solo viaja cuando es `true`; ausente = no.
+   */
+  alwaysDisassembleOnReceive?: boolean;
   /** Componentes de la receta `id`, por nombre. */
   components?: ProductPackConversionComponent[];
   id: string;
@@ -303,6 +308,8 @@ export type ProductPackComponentMock = {
  * = el componente si hay uno solo, `null` en un surtido.
  */
 export type ProductPackConversionMock = {
+  /** Como `always_disassemble_on_receive` de la cabecera; ausente = `false`. */
+  alwaysDisassembleOnReceive?: boolean;
   components: ProductPackComponentMock[];
   id: string;
   isActive: boolean;

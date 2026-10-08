@@ -4268,6 +4268,12 @@ components:
           description: Recetas activas de las que sale el producto, por nombre del empaque.
           items:
             $ref: "#/components/schemas/ProductPackConversionSource"
+        alwaysDisassembleOnReceive:
+          type: boolean
+          description: >-
+            Preferencia de la receta `id` (COM-14): la linea de compra de su empaque
+            nace marcada "Desarmar al recibir" en `/purchases/create` (el usuario la
+            puede desmarcar). Solo se envia cuando es `true`; ausente = `false`.
     PackConversionInput:
       type: object
       description: >-
@@ -4283,6 +4289,13 @@ components:
       properties:
         enabled:
           type: boolean
+        alwaysDisassembleOnReceive:
+          type: boolean
+          description: >-
+            Preferencia "Desarmar siempre al recibir compras" de la receta (COM-14,
+            cualquier `mode`). Opcional: ausente = no cambia (una receta nueva nace
+            en `false`; una receta reemplazada conserva la de la anterior). No
+            cambia stock ni costos: solo decide como nace el chip de la linea de compra.
         mode:
           type: string
           enum: [link_existing, create_unit, assorted]

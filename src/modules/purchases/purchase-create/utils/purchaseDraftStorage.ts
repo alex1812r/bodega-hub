@@ -84,8 +84,8 @@ const storedPurchaseDraftSchema = z.object({
   lineMeta: z.record(z.string(), lineMetaSchema),
   /** `PurchaseLinesState` sin `focus`. */
   lines: z.object({
-    /** Líneas marcadas «Desarmar al recibir» (COM-14); ausente = ninguna. */
-    disassemble: z.record(z.string(), z.literal(true)).optional(),
+    /** Elección «Desarmar al recibir» por línea (COM-14); ausente = ninguna tocada. */
+    disassemble: z.record(z.string(), z.boolean()).optional(),
     items: z.array(draftItemSchema),
     locks: z.object({ locked: z.record(z.string(), z.literal(true)) }),
     review: z.object({

@@ -90,10 +90,13 @@ export type PurchaseWebLine = {
 };
 
 /**
- * Líneas marcadas «Desarmar al recibir» (COM-14): `item.id` -> `true`. Estado de
- * la web: al payload solo llega como `disassembleOnReceive` de cada línea marcada.
+ * Lo que el usuario eligió en el chip «Desarmar al recibir» (COM-14): `item.id` ->
+ * `true` (marcada) / `false` (desmarcada a mano). Una línea sin entrada no se ha
+ * tocado: nace marcada solo si la receta de su empaque tiene la preferencia
+ * «Desarmar siempre al recibir compras». Estado de la web: al payload solo llega
+ * como `disassembleOnReceive` de cada línea marcada.
  */
-export type PurchaseLineDisassembleState = Record<string, true>;
+export type PurchaseLineDisassembleState = Record<string, boolean>;
 
 /** Foto de una línea: lo que se compara para saber si se editó. */
 export type PurchaseLineSnapshot = {

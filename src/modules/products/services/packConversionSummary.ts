@@ -12,6 +12,8 @@ export type PackRecipeProduct = ProductPackConversionLinkedProduct & { isActive:
 
 /** Una receta activa (cabecera + componentes) con sus productos ya resueltos. */
 export type PackRecipeView = {
+  /** Preferencia «Desarmar siempre al recibir compras» de la cabecera; ausente = `false`. */
+  alwaysDisassembleOnReceive?: boolean;
   components: { costWeight: number; product: PackRecipeProduct; unitsPerPack: number }[];
   id: string;
   label: string | null;
@@ -61,6 +63,8 @@ function toComponents(recipe: PackRecipeView): ProductPackConversionComponent[] 
 
 function recipeFields(recipe: PackRecipeView) {
   return {
+    // Solo viaja cuando es `true`: ausente = la receta no tiene la preferencia.
+    ...(recipe.alwaysDisassembleOnReceive === true ? { alwaysDisassembleOnReceive: true as const } : {}),
     components: toComponents(recipe),
     id: recipe.id,
     kind: recipe.components.length > 1 ? ("assorted" as const) : ("single" as const),
@@ -157,6 +161,7 @@ export function buildPackConversionListItem(recipe: PackRecipeView): PackConvers
  * componente único, o `null` en un surtido.
  */
 export function buildMockPackRecipe(params: {
+  alwaysDisassembleOnReceive?: boolean;
   components: ProductPackComponentMock[];
   id: string;
   isActive: boolean;
@@ -166,6 +171,7 @@ export function buildMockPackRecipe(params: {
   totalUnits: number;
 }): ProductPackConversionMock {
   return {
+    ...(params.alwaysDisassembleOnReceive === true ? { alwaysDisassembleOnReceive: true } : {}),
     components: params.components.map((component) => ({ ...component })),
     id: params.id,
     isActive: params.isActive,

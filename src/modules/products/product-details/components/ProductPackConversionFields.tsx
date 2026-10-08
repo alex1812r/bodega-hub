@@ -23,6 +23,11 @@ import { createUnitCandidatesFetcher, isBlockedByPackLink } from "./packUnitCand
 export type PackConversionMode = "assorted" | "create_unit" | "link_existing";
 
 export type PackConversionFormState = {
+  /**
+   * «Desarmar siempre al recibir compras» (COM-14). `undefined` = el usuario no
+   * tocó la casilla: se muestra la preferencia guardada y no viaja al guardar.
+   */
+  alwaysDisassembleOnReceive?: boolean;
   /** Modo surtido: nombre opcional de la receta. */
   assortedLabel: string;
   /** Modo surtido: productos que salen del empaque. */
@@ -93,6 +98,7 @@ export function getUnitsPerPackError(text: string) {
   );
 }
 
+const ALWAYS_DISASSEMBLE_HELP_ID = "pack-always-disassemble-help";
 const UNIT_SALE_PRICE_REQUIRED_MESSAGE = "Escribe el precio de venta de la unidad.";
 
 const PACK_LINKED_REASON = "Ya tiene un vínculo de empaque.";
@@ -390,10 +396,37 @@ export function ProductPackConversionFields({
               />
             </div>
           )}
+          <div className="grid gap-1">
+            <label className="flex items-center gap-2 text-sm text-on-surface">
+              <input
+                aria-describedby={ALWAYS_DISASSEMBLE_HELP_ID}
+                checked={
+                  state.alwaysDisassembleOnReceive ??
+                  (packConversion?.role === "pack" &&
+                    packConversion.alwaysDisassembleOnReceive === true)
+                }
+                className="size-4 accent-primary"
+                onChange={(event) => onChange({ alwaysDisassembleOnReceive: event.target.checked })}
+                type="checkbox"
+              />
+              Desarmar siempre al recibir compras
+            </label>
+            <p className="text-xs text-on-surface-variant" id={ALWAYS_DISASSEMBLE_HELP_ID}>
+              Al comprar este empaque, la línea nace marcada «Desarmar al recibir»; se puede
+              desmarcar en cada compra.
+            </p>
+          </div>
         </>
       ) : null}
     </div>
   );
+}
+
+/** La preferencia solo viaja si el usuario tocó la casilla: ausente = no cambia. */
+function alwaysDisassembleInput(state: PackConversionFormState) {
+  return state.alwaysDisassembleOnReceive === undefined
+    ? {}
+    : { alwaysDisassembleOnReceive: state.alwaysDisassembleOnReceive };
 }
 
 export function packConversionStateToInput(state: PackConversionFormState) {
@@ -403,6 +436,7 @@ export function packConversionStateToInput(state: PackConversionFormState) {
 
   if (state.mode === "assorted") {
     return {
+      ...alwaysDisassembleInput(state),
       // El peso por defecto (1) no viaja: lo pone el servidor.
       components: state.components.map((row) => {
         const costWeight = getPackComponentCostWeight(row.costWeight);
@@ -422,6 +456,7 @@ export function packConversionStateToInput(state: PackConversionFormState) {
 
   if (state.mode === "link_existing") {
     return {
+      ...alwaysDisassembleInput(state),
       enabled: true as const,
       mode: "link_existing" as const,
       unitProductId: state.unitProductId || undefined,
@@ -430,6 +465,7 @@ export function packConversionStateToInput(state: PackConversionFormState) {
   }
 
   return {
+    ...alwaysDisassembleInput(state),
     enabled: true as const,
     mode: "create_unit" as const,
     unitsPerPack: Number(state.unitsPerPack),

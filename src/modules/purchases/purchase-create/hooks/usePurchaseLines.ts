@@ -100,21 +100,25 @@ export const EMPTY_PURCHASE_LINES_STATE: PurchaseLinesState = {
   taxState: EMPTY_PURCHASE_TAX_STATE,
 };
 
-/** Las marcas «Desarmar al recibir» con esa línea marcada o desmarcada. */
+/**
+ * Las marcas «Desarmar al recibir» con la elección del usuario en esa línea. La
+ * desmarcada se guarda como `false`: así no vuelve a nacer marcada por la
+ * preferencia de la receta.
+ */
 function setLineDisassemble(
   state: PurchaseLineDisassembleState | undefined,
   itemId: string,
   disassemble: boolean,
 ): PurchaseLineDisassembleState {
-  const next = Object.fromEntries(
-    Object.entries(state ?? {}).filter(([id]) => id !== itemId),
-  ) as PurchaseLineDisassembleState;
+  return { ...state, [itemId]: disassemble };
+}
 
-  if (disassemble) {
-    next[itemId] = true;
-  }
-
-  return next;
+/** Las marcas sin la de una línea que ya no está en la compra. */
+function dropLineDisassemble(
+  state: PurchaseLineDisassembleState,
+  itemId: string,
+): PurchaseLineDisassembleState {
+  return Object.fromEntries(Object.entries(state).filter(([id]) => id !== itemId));
 }
 
 function bumpLine(item: PurchaseDraftItem, rateVes: number) {
@@ -217,7 +221,7 @@ export function purchaseLinesReducer(
       return {
         ...state,
         ...(state.disassemble
-          ? { disassemble: setLineDisassemble(state.disassemble, action.itemId, false) }
+          ? { disassemble: dropLineDisassemble(state.disassemble, action.itemId) }
           : {}),
         items: state.items.filter((item) => item.id !== action.itemId),
         review: dropPurchaseLineReview(state.review, action.itemId),
