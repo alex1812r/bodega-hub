@@ -40,7 +40,7 @@ export const purchaseItemPackSchema = purchaseItemBaseSchema.extend({
 });
 
 export const PURCHASE_ITEM_TAX_REQUIRED_MESSAGE =
-  "Cada linea debe indicar su alicuota de IVA (taxRateCode) o su porcentaje (taxRate).";
+  "Cada línea debe indicar su alícuota de IVA (taxRateCode) o su porcentaje (taxRate).";
 
 export const purchaseItemInputSchema = z
   .discriminatedUnion("entryMode", [purchaseItemUnitSchema, purchaseItemPackSchema])
