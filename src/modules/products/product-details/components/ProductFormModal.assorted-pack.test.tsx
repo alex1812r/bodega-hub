@@ -91,7 +91,7 @@ function renderForm(props: Partial<ProductFormModalProps> = {}) {
   const onSubmit = jest.fn();
   const user = userEvent.setup({ delay: null });
 
-  render(<ProductFormModal onOpenChange={onOpenChange} onSubmit={onSubmit} open {...props} />, {
+  render(<ProductFormModal {...withCategory} onOpenChange={onOpenChange} onSubmit={onSubmit} open {...props} />, {
     wrapper: createQueryWrapper(),
   });
 
@@ -129,6 +129,12 @@ async function submitWithSectionClosed(user: UserSession) {
   expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "false");
   await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
 }
+
+// PRO-F10: la Categoría es obligatoria en el alta; estas pruebas abren con una ya elegida.
+const withCategory = {
+  categories: [{ id: "cat-1", isActive: true, name: "Bebidas", taxRate: 16 }],
+  initialValues: { categoryId: "cat-1" },
+};
 
 describe("ProductFormModal · empaque surtido (PRO-13)", () => {
   it("edición sin tocar la receta: envía el input `assorted` exacto del contrato", async () => {
@@ -288,6 +294,7 @@ describe("ProductFormModal · crear producto unidad desde el surtido (PRO-13)", 
 
     await user.click(dialog.getByLabelText("Nombre"));
     await user.paste("Uva");
+    await user.selectOptions(dialog.getByLabelText("Categoría"), "cat-1");
     await user.click(dialog.getByLabelText("Precio REF"));
     await user.paste("1");
     api.respondToNextPost({ data: createdUnit });
@@ -323,6 +330,7 @@ describe("ProductFormModal · crear producto unidad desde el surtido (PRO-13)", 
 
     await user.click(dialog.getByLabelText("Nombre"));
     await user.paste("Uva");
+    await user.selectOptions(dialog.getByLabelText("Categoría"), "cat-1");
     await user.click(dialog.getByLabelText("Precio REF"));
     await user.paste("1");
     api.respondToNextPost({ data: createdUnit });
@@ -344,6 +352,7 @@ describe("ProductFormModal · crear producto unidad desde el surtido (PRO-13)", 
 
     await user.click(dialog.getByLabelText("Nombre"));
     await user.paste("Uva");
+    await user.selectOptions(dialog.getByLabelText("Categoría"), "cat-1");
     await user.click(dialog.getByLabelText("Precio REF"));
     await user.paste("1");
     api.respondToNextPost(

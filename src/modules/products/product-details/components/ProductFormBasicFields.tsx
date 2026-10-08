@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 
 import { Can } from "@/shared/auth/Can";
 import { Button } from "@/shared/components/Button";
@@ -18,6 +18,8 @@ export const PRODUCT_PRICING_BLOCK_ATTRIBUTE = "data-product-pricing";
 
 export const SALE_PRICE_REQUIRED_MESSAGE = "Escribe el precio de venta.";
 
+export const CATEGORY_REQUIRED_MESSAGE = "Elige una categoría.";
+
 type ProductFormBasicFieldsProps = {
   categories: CategoryMock[];
   /** Categoría elegida; "" = ninguna. */
@@ -25,7 +27,11 @@ type ProductFormBasicFieldsProps = {
   /** Valores con los que abren los campos no controlados (producto en edición o `initialValues`). */
   defaults: {
     barcode?: string | null;
+    /** Categoría con la que abre el formulario (la del producto en edición). */
+    categoryId?: string | null;
     currentCostRef?: number;
+    /** Solo el producto en edición lo trae: distingue la edición del alta. */
+    id?: string;
     salePriceRef?: number;
   };
   /** Campo de imagen ya montado; el modo `compact` no lo pasa. */
@@ -56,6 +62,12 @@ type ProductFormBasicFieldsProps = {
  * el % del precio cargado no es ningún chip. El costo se ve una sola vez, en
  * su campo: la caja de solo lectura de `PricingFields` va oculta.
  *
+ * La Categoría es obligatoria en el alta. En la edición solo lo es si la del
+ * producto está entre las opciones: no se le puede quitar, pero un producto
+ * antiguo sin categoría, o con una que ya no se ofrece (inactiva), se guarda
+ * sin elegirla. Sin categoría el envío se frena con el aviso en el campo, en
+ * vez del globo nativo del navegador.
+ *
  * El precio solo cambia cuando el usuario elige un chip, escribe un % o
  * escribe el precio: abrir el formulario o cambiar el costo no lo mueven.
  * Viaja en el campo oculto `salePriceRef`; vacío = sin precio.
@@ -76,7 +88,32 @@ export function ProductFormBasicFields({
 }: ProductFormBasicFieldsProps) {
   const [cost, setCost] = useState<number | null>(defaults.currentCostRef ?? null);
   const [price, setPrice] = useState<number | null>(defaults.salePriceRef ?? null);
+  const [showCategoryRequired, setShowCategoryRequired] = useState(false);
   const pricingOptions = getProductPricingOptions();
+  const isCategoryRequired =
+    !defaults.id || categories.some((category) => category.id === defaults.categoryId);
+  const hasCategory = categories.some((category) => category.id === categoryId);
+
+  // Validación nativa (`required`) con aviso propio: el foco va al selector solo
+  // si es el primer campo que falla; si no, el navegador ya señala el anterior.
+  function handleCategoryInvalid(event: FormEvent<HTMLSelectElement>) {
+    event.preventDefault();
+    setShowCategoryRequired(true);
+
+    const select = event.currentTarget;
+    const firstInvalid = Array.from(select.form?.elements ?? []).find(
+      (element) =>
+        (element instanceof HTMLInputElement ||
+          element instanceof HTMLSelectElement ||
+          element instanceof HTMLTextAreaElement) &&
+        element.willValidate &&
+        !element.validity.valid,
+    );
+
+    if (!firstInvalid || firstInvalid === select) {
+      select.focus();
+    }
+  }
 
   return (
     <>
@@ -91,14 +128,17 @@ export function ProductFormBasicFields({
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-1">
           <SelectField
+            error={showCategoryRequired && !hasCategory ? CATEGORY_REQUIRED_MESSAGE : undefined}
             label="Categoría"
             name="categoryId"
             onChange={(event) => onCategoryChange(event.target.value)}
+            onInvalid={handleCategoryInvalid}
             options={categories.map((category) => ({
               label: category.name,
               value: category.id,
             }))}
             placeholder="Selecciona"
+            required={isCategoryRequired}
             value={categoryId}
           />
           {onCreateCategory ? (

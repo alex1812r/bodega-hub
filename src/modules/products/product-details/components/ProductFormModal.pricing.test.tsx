@@ -84,12 +84,18 @@ async function save(user: UserSession, label = "Crear producto") {
   await user.click(screen.getByRole("button", { name: label }));
 }
 
+// PRO-F10: la Categoría es obligatoria en el alta; estas pruebas abren con una ya elegida.
+const withCategory = {
+  categories: [{ id: "cat-1", isActive: true, name: "Bebidas", taxRate: 16 }],
+  initialValues: { categoryId: "cat-1" },
+};
+
 describe("ProductFormModal · bloque de precio (PRO-08)", () => {
   it("con el costo escrito, un clic en el chip 30 deja el precio listo y viaja en el payload", async () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
 
     expect(chips().map((chip) => chip.textContent)).toEqual(["12 %", "20 %", "30 %"]);
 
@@ -116,7 +122,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillName(user);
     await user.type(costField(), "8");
     await user.type(await revealPctField(user), "25");
@@ -132,7 +138,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
   it("editar el precio recalcula el % y el semaforo", async () => {
     const user = userEvent.setup({ delay: null });
 
-    render(<ProductFormModal onOpenChange={jest.fn()} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} open />);
     await user.type(costField(), "10");
     await user.type(priceField(), "12");
 
@@ -150,7 +156,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillName(user);
     await user.type(costField(), "10");
     await user.click(screen.getByRole("button", { name: "30 %" }));
@@ -170,7 +176,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillName(user);
     await user.click(screen.getByRole("button", { name: "30 %" }));
 
@@ -191,7 +197,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillName(user);
     await user.type(costField(), "0");
     await user.type(await revealPctField(user), "20");
@@ -211,7 +217,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillName(user);
     await user.type(costField(), "10");
     await user.type(priceField(), "8");
@@ -232,7 +238,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillName(user);
     await user.type(costField(), "10");
     await save(user);
@@ -256,7 +262,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillName(user);
     await user.type(priceField(), "0");
     await save(user);
@@ -270,9 +276,14 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const onSubmit = jest.fn();
 
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         compact
-        initialValues={{ currentCostRef: 10, name: "Harina PAN 1 kg", salePriceRef: 12 }}
+        initialValues={{
+          categoryId: "cat-1",
+          currentCostRef: 10,
+          name: "Harina PAN 1 kg",
+          salePriceRef: 12,
+        }}
         onOpenChange={jest.fn()}
         onSubmit={onSubmit}
         open
@@ -297,7 +308,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
 
   it("compact: solo con el costo precargado no inventa un precio", () => {
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         compact
         initialValues={{ currentCostRef: 1.5 }}
         onOpenChange={jest.fn()}
@@ -312,7 +323,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
 
   it("compact: un precio precargado cuyo % no es ningun chip abre con el % libre ya a la vista", () => {
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         compact
         initialValues={{ currentCostRef: 8, salePriceRef: 10 }}
         onOpenChange={jest.fn()}
@@ -327,7 +338,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
   it("el costo se ve una sola vez: el campo Costo REF, sin la caja de solo lectura", async () => {
     const user = userEvent.setup({ delay: null });
 
-    render(<ProductFormModal onOpenChange={jest.fn()} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} open />);
 
     expect(screen.queryByText("Costo actual (ya con IVA)")).not.toBeInTheDocument();
 
@@ -345,7 +356,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const onSubmit = jest.fn();
 
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         mode="edit"
         onOpenChange={jest.fn()}
         onSubmit={onSubmit}
@@ -365,7 +376,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const onSubmit = jest.fn();
 
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         mode="edit"
         onOpenChange={jest.fn()}
         onSubmit={onSubmit}
@@ -392,7 +403,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const user = userEvent.setup({ delay: null });
 
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         initialValues={{ currentCostRef: 10 }}
         onOpenChange={jest.fn()}
         open
@@ -414,7 +425,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillName(user);
     await user.type(costField(), "10");
     await user.click(screen.getByRole("button", { name: "30 %" }));
@@ -430,7 +441,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillName(user);
     await user.type(costField(), "8");
     await user.type(await revealPctField(user), "25");

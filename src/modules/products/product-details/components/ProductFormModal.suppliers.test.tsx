@@ -143,7 +143,7 @@ function renderForm(props: Partial<ProductFormModalProps> = {}) {
   render(
     <QueryWrapper>
       <ToastProvider>
-        <ProductFormModal onOpenChange={onOpenChange} onSubmit={onSubmit} open {...props} />
+        <ProductFormModal {...withCategory} onOpenChange={onOpenChange} onSubmit={onSubmit} open {...props} />
       </ToastProvider>
     </QueryWrapper>,
   );
@@ -195,6 +195,12 @@ async function addSupplier(user: UserSession, text: string, name: string) {
   await user.type(screen.getByRole("combobox", { name: "Añadir proveedor" }), text);
   await user.click(await screen.findByRole("option", { name: new RegExp(name) }));
 }
+
+// PRO-F10: la Categoría es obligatoria en el alta; estas pruebas abren con una ya elegida.
+const withCategory = {
+  categories: [{ id: "cat-1", isActive: true, name: "Bebidas", taxRate: 16 }],
+  initialValues: { categoryId: "cat-1" },
+};
 
 describe("ProductFormModal · proveedores (PRO-14)", () => {
   it("compact no tiene la sección, y el alta completa tampoco si el consumidor no la pide", async () => {

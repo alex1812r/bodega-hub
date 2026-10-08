@@ -42,7 +42,7 @@ const created = {
 function renderForm(props: Partial<ProductFormModalProps> = {}) {
   render(
     <ToastProvider>
-      <ProductFormModal onOpenChange={jest.fn()} open {...props} />
+      <ProductFormModal {...withCategory} onOpenChange={jest.fn()} open {...props} />
     </ToastProvider>,
   );
 
@@ -59,6 +59,12 @@ async function fillBasics(user: ReturnType<typeof userEvent.setup>) {
 function toasts() {
   return within(screen.getByRole("status"));
 }
+
+// PRO-F10: la Categoría es obligatoria en el alta; estas pruebas abren con una ya elegida.
+const withCategory = {
+  categories: [{ id: "cat-1", isActive: true, name: "Bebidas", taxRate: 16 }],
+  initialValues: { categoryId: "cat-1" },
+};
 
 describe("ProductFormModal · aviso de producto creado (PRO-04)", () => {
   it("el botón principal avisa con el nombre guardado y el enlace Ver al detalle", async () => {
@@ -166,7 +172,7 @@ describe("ProductFormModal · aviso de producto creado (PRO-04)", () => {
 
     render(
       <ToastProvider>
-        <ProductFormModal
+        <ProductFormModal {...withCategory}
           mode="edit"
           onOpenChange={onOpenChange}
           onSubmit={onSubmit}
@@ -189,7 +195,7 @@ describe("ProductFormModal · aviso de producto creado (PRO-04)", () => {
     const onOpenChange = jest.fn();
     const onSubmit = jest.fn().mockResolvedValue(created);
 
-    render(<ProductFormModal onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
 
     const user = userEvent.setup({ delay: null });
 

@@ -75,12 +75,18 @@ function visibleFieldLabels() {
     .map((element) => element.labels?.[0]?.textContent?.trim());
 }
 
+// PRO-F10: la Categoría es obligatoria en el alta; estas pruebas abren con una ya elegida.
+const withCategory = {
+  categories: [{ id: "cat-1", isActive: true, name: "Bebidas", taxRate: 16 }],
+  initialValues: { categoryId: "cat-1" },
+};
+
 describe("ProductFormModal · NumberInput (SHR-09)", () => {
   it("al enviar con Enter los precios con 3 decimales viajan redondeados a 2 y los stocks como enteros", async () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await openMoreOptions(user);
 
     const cost = screen.getByLabelText("Costo REF");
@@ -124,7 +130,7 @@ describe("ProductFormModal · NumberInput (SHR-09)", () => {
     const onSubmit = jest.fn();
 
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         mode="edit"
         onOpenChange={jest.fn()}
         onSubmit={onSubmit}
@@ -165,7 +171,7 @@ describe("ProductFormModal · enteros y limites (SHR-09J)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await openMoreOptions(user);
 
     await user.click(screen.getByLabelText("Nombre"));
@@ -212,7 +218,7 @@ describe("ProductFormModal · enteros y limites (SHR-09J)", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0]).toEqual({
       barcode: null,
-      categoryId: undefined,
+      categoryId: "cat-1",
       currentCostRef: undefined,
       currentStock: 3,
       minStock: 2,
@@ -312,7 +318,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
   }
 
   it("al abrir un alta solo se ven los campos basicos y Mas opciones esta cerrada", () => {
-    render(<ProductFormModal onOpenChange={jest.fn()} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} open />);
 
     expect(visibleFieldLabels()).toEqual(BASIC_FIELDS);
     expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "false");
@@ -324,7 +330,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
   it("al abrir Mas opciones aparecen SKU, Descripcion, Stock inicial, Stock minimo y el empaque", async () => {
     const user = userEvent.setup({ delay: null });
 
-    render(<ProductFormModal onOpenChange={jest.fn()} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} open />);
     await openMoreOptions(user);
 
     expect(visibleFieldLabels()).toEqual([
@@ -353,7 +359,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     const onCreated = jest.fn();
 
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         categories={categories}
         mode="edit"
         onCreated={onCreated}
@@ -415,14 +421,14 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     const onSubmit = jest.fn();
     const onOpenChange = jest.fn();
 
-    render(<ProductFormModal onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
     await fillBasics(user);
     await user.click(screen.getByRole("button", { name: "Crear producto" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0]).toEqual({
       barcode: null,
-      categoryId: undefined,
+      categoryId: "cat-1",
       currentCostRef: undefined,
       currentStock: undefined,
       minStock: undefined,
@@ -441,7 +447,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await user.click(screen.getByLabelText("Nombre"));
     await user.paste("Harina PAN 1kg");
     await user.click(screen.getByLabelText("Precio REF"));
@@ -462,7 +468,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     const onSubmit = jest.fn();
 
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         categories={categories}
         mode="edit"
         onOpenChange={jest.fn()}
@@ -489,7 +495,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillBasics(user);
     await openMoreOptions(user);
     await user.click(screen.getByLabelText("SKU"));
@@ -514,7 +520,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillBasics(user);
     await openMoreOptions(user);
     await user.click(screen.getByLabelText("SKU"));
@@ -539,7 +545,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillBasics(user);
     await openMoreOptions(user);
     await user.click(screen.getByLabelText("SKU"));
@@ -564,7 +570,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await user.click(screen.getByRole("button", { name: "Crear producto" }));
 
     expect(onSubmit).not.toHaveBeenCalled();
@@ -581,7 +587,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
 
     try {
       render(
-        <ProductFormModal
+        <ProductFormModal {...withCategory}
           compact
           onCreated={onCreated}
           onOpenChange={onOpenChange}
@@ -614,7 +620,7 @@ describe("ProductFormModal · modo compact (PRO-01)", () => {
   >;
 
   it("solo muestra el nivel basico: sin Mas opciones, sin SKU, sin stock ni empaque", () => {
-    render(<ProductFormModal compact onOpenChange={jest.fn()} open />);
+    render(<ProductFormModal {...withCategory} compact onOpenChange={jest.fn()} open />);
 
     expect(screen.getByRole("dialog", { name: "Nuevo producto" })).toBeInTheDocument();
     expect(visibleFieldLabels()).toEqual([
@@ -641,7 +647,7 @@ describe("ProductFormModal · modo compact (PRO-01)", () => {
     const onOpenChange = jest.fn((open: boolean) => calls.push(`open:${open}`));
 
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         categories={categories}
         compact
         initialValues={{
@@ -692,7 +698,7 @@ describe("ProductFormModal · modo compact (PRO-01)", () => {
     const onOpenChange = jest.fn();
 
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         compact
         mode="edit"
         onCreated={onCreated}
@@ -784,7 +790,7 @@ describe("ProductFormModal · fallos de QA (PRO-F1)", () => {
 
   it("edicion con un SKU largo: el resumen de Mas opciones se trunca y no ensancha el formulario", () => {
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         mode="edit"
         onOpenChange={jest.fn()}
         open
@@ -814,7 +820,7 @@ describe("ProductFormModal · fallos de QA (PRO-F1)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillBasics(user);
     await enableLinkExisting(user);
 
@@ -839,7 +845,7 @@ describe("ProductFormModal · fallos de QA (PRO-F1)", () => {
     const onSubmit = jest.fn();
 
     render(
-      <ProductFormModal
+      <ProductFormModal {...withCategory}
         mode="edit"
         onOpenChange={jest.fn()}
         onSubmit={onSubmit}
@@ -870,7 +876,7 @@ describe("ProductFormModal · fallos de QA (PRO-F1)", () => {
     );
 
     // `isSubmitting` no llega a cambiar: el candado es del propio formulario.
-    render(<ProductFormModal onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
     await fillBasics(user);
 
     const form = document.querySelector("form") as HTMLFormElement;
@@ -891,7 +897,7 @@ describe("ProductFormModal · fallos de QA (PRO-F1)", () => {
     const user = userEvent.setup({ delay: null });
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal isSubmitting onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} isSubmitting onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillBasics(user);
     fireEvent.submit(document.querySelector("form") as HTMLFormElement);
 
@@ -907,7 +913,7 @@ describe("ProductFormModal · fallos de QA (PRO-F1)", () => {
     const rejections = watchUnhandledRejections();
 
     try {
-      render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+      render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
       await fillBasics(user);
       await enableLinkExisting(user);
       await user.type(unitField(), "taladro");

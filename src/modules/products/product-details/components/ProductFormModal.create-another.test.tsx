@@ -48,7 +48,7 @@ const created = {
 function renderCreate(props: Partial<ProductFormModalProps> = {}) {
   const user = userEvent.setup({ delay: null });
 
-  render(<ProductFormModal categories={categories} onOpenChange={jest.fn()} open {...props} />);
+  render(<ProductFormModal {...withCategory} categories={categories} onOpenChange={jest.fn()} open {...props} />);
 
   return user;
 }
@@ -102,9 +102,15 @@ function watchUnhandledRejections() {
   };
 }
 
+// PRO-F10: la Categoría es obligatoria en el alta; estas pruebas abren con una ya elegida.
+const withCategory = {
+  categories: [{ id: "cat-1", isActive: true, name: "Bebidas", taxRate: 16 }],
+  initialValues: { categoryId: "cat-1" },
+};
+
 describe("ProductFormModal · Guardar y crear otro (PRO-04)", () => {
   it("solo el alta completa lo ofrece, entre Cancelar y el botón principal", () => {
-    const { unmount } = render(<ProductFormModal onOpenChange={jest.fn()} open />);
+    const { unmount } = render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} open />);
 
     // PRO-F4: no es un botón de envío, para que Enter nunca lo elija.
     expect(createAnotherButton()).toHaveAttribute("type", "button");
@@ -117,14 +123,14 @@ describe("ProductFormModal · Guardar y crear otro (PRO-04)", () => {
     unmount();
 
     const edit = render(
-      <ProductFormModal mode="edit" onOpenChange={jest.fn()} open product={created} />,
+      <ProductFormModal {...withCategory} mode="edit" onOpenChange={jest.fn()} open product={created} />,
     );
 
     expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Guardar y crear otro" })).not.toBeInTheDocument();
     edit.unmount();
 
-    render(<ProductFormModal compact onOpenChange={jest.fn()} open />);
+    render(<ProductFormModal {...withCategory} compact onOpenChange={jest.fn()} open />);
 
     expect(screen.getByRole("button", { name: "Crear producto" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Guardar y crear otro" })).not.toBeInTheDocument();
@@ -205,16 +211,24 @@ describe("ProductFormModal · Guardar y crear otro (PRO-04)", () => {
     expect(screen.getByLabelText("Categoría")).toHaveValue("cat-1");
   });
 
-  it("sin categoría elegida, el siguiente alta también abre sin categoría", async () => {
+  it("sin categoría elegida no guarda: avisa en el campo y lo enfoca (PRO-F10)", async () => {
     const onSubmit = jest.fn().mockResolvedValue(undefined);
-    const user = renderCreate({ onSubmit });
+    const user = renderCreate({ initialValues: {}, onSubmit });
 
     await paste(user, "Nombre", "Harina");
     await paste(user, "Precio REF", "2");
     await user.click(createAnotherButton());
 
-    await waitFor(() => expect(screen.getByLabelText("Nombre")).toHaveValue(""));
-    expect(screen.getByLabelText("Categoría")).toHaveValue("");
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText("Elige una categoría.")).toBeVisible();
+    expect(screen.getByLabelText("Categoría")).toHaveFocus();
+    expect(screen.getByLabelText("Nombre")).toHaveValue("Harina");
+
+    await user.selectOptions(screen.getByLabelText("Categoría"), "cat-2");
+    await user.click(createAnotherButton());
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ categoryId: "cat-2", name: "Harina" });
   });
 
   it("limpia los avisos de un intento anterior", async () => {
@@ -249,7 +263,7 @@ describe("ProductFormModal · Guardar y crear otro (PRO-04)", () => {
     const rejections = watchUnhandledRejections();
     const props = { categories, onCreated, onOpenChange, onSubmit, open: true };
     const user = userEvent.setup({ delay: null });
-    const { rerender } = render(<ProductFormModal {...props} />);
+    const { rerender } = render(<ProductFormModal {...withCategory} {...props} />);
 
     try {
       await fillEverything(user);
@@ -263,7 +277,7 @@ describe("ProductFormModal · Guardar y crear otro (PRO-04)", () => {
     expect(rejections.unhandled).not.toHaveBeenCalled();
 
     // Como las páginas: el motivo llega con el siguiente render.
-    rerender(<ProductFormModal {...props} errorMessage="Ya existe un producto con ese SKU." />);
+    rerender(<ProductFormModal {...withCategory} {...props} errorMessage="Ya existe un producto con ese SKU." />);
 
     expect(screen.getByText("Ya existe un producto con ese SKU.")).toBeVisible();
     expect(screen.getByRole("dialog", { name: "Crear producto" })).toBeInTheDocument();
@@ -312,7 +326,7 @@ describe("ProductFormModal · Guardar y crear otro (PRO-04)", () => {
   });
 
   it("con isSubmitting los dos botones de guardar quedan deshabilitados", () => {
-    render(<ProductFormModal isSubmitting onOpenChange={jest.fn()} open />);
+    render(<ProductFormModal {...withCategory} isSubmitting onOpenChange={jest.fn()} open />);
 
     expect(createAnotherButton()).toBeDisabled();
     expect(screen.getByRole("button", { name: "Guardando..." })).toBeDisabled();

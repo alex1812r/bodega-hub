@@ -78,9 +78,15 @@ function visibleFields() {
   );
 }
 
+// PRO-F10: la Categoría es obligatoria en el alta; estas pruebas abren con una ya elegida.
+const withCategory = {
+  categories: [{ id: "cat-1", isActive: true, name: "Bebidas", taxRate: 16 }],
+  initialValues: { categoryId: "cat-1" },
+};
+
 describe("ProductFormModal · Enter equivale al botón principal (PRO-F4)", () => {
   it("el botón por defecto del alta completa es Crear producto, no Guardar y crear otro", () => {
-    render(<ProductFormModal onOpenChange={jest.fn()} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} open />);
 
     expect(getDefaultButton()).toHaveTextContent("Crear producto");
     expect(screen.getByRole("button", { name: "Guardar y crear otro" })).not.toHaveAttribute(
@@ -94,7 +100,7 @@ describe("ProductFormModal · Enter equivale al botón principal (PRO-F4)", () =
     const onOpenChange = jest.fn();
     const onSubmit = jest.fn().mockResolvedValue(created);
 
-    render(<ProductFormModal onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
 
     await user.click(screen.getByLabelText("Nombre"));
     await user.paste("Harina");
@@ -114,7 +120,7 @@ describe("ProductFormModal · Enter equivale al botón principal (PRO-F4)", () =
     const onOpenChange = jest.fn();
     const onSubmit = jest.fn();
 
-    render(<ProductFormModal onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
 
     await user.click(screen.getByLabelText("Precio REF"));
     await user.paste("2");
@@ -134,7 +140,7 @@ describe("ProductFormModal · Enter equivale al botón principal (PRO-F4)", () =
     const onOpenChange = jest.fn();
     const onSubmit = jest.fn().mockResolvedValue(created);
 
-    render(<ProductFormModal onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
 
     await user.click(screen.getByLabelText("Precio REF"));
     await user.paste("2");
@@ -156,7 +162,7 @@ describe("ProductFormModal · Enter equivale al botón principal (PRO-F4)", () =
     const onOpenChange = jest.fn();
     const onSubmit = jest.fn().mockResolvedValue(created);
 
-    render(<ProductFormModal onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={onOpenChange} onSubmit={onSubmit} open />);
 
     for (const key of ["{Enter}", " "]) {
       await user.click(screen.getByLabelText("Nombre"));
@@ -174,12 +180,12 @@ describe("ProductFormModal · Enter equivale al botón principal (PRO-F4)", () =
   });
 
   it("en compact y en edición el único botón de envío es el principal", () => {
-    const compact = render(<ProductFormModal compact onOpenChange={jest.fn()} open />);
+    const compact = render(<ProductFormModal {...withCategory} compact onOpenChange={jest.fn()} open />);
 
     expect(getDefaultButton()).toHaveTextContent("Crear producto");
     compact.unmount();
 
-    render(<ProductFormModal mode="edit" onOpenChange={jest.fn()} open product={created} />);
+    render(<ProductFormModal {...withCategory} mode="edit" onOpenChange={jest.fn()} open product={created} />);
 
     expect(getDefaultButton()).toHaveTextContent("Guardar cambios");
   });
@@ -193,7 +199,7 @@ describe("ProductFormModal · campos a la vista al abrir Nuevo producto (PRO-F4)
   }
 
   it("alta completa: 6 campos (imagen, Nombre, Categoría, Código de barras, Costo REF, Precio REF)", () => {
-    render(<ProductFormModal onOpenChange={jest.fn()} open />);
+    render(<ProductFormModal {...withCategory} onOpenChange={jest.fn()} open />);
 
     expect(visibleFields()).toHaveLength(6);
     expect(labels().slice(1)).toEqual([
@@ -211,7 +217,7 @@ describe("ProductFormModal · campos a la vista al abrir Nuevo producto (PRO-F4)
   });
 
   it("compact: 5 campos (Nombre, Categoría, Código de barras, Costo REF, Precio REF)", () => {
-    render(<ProductFormModal compact onOpenChange={jest.fn()} open />);
+    render(<ProductFormModal {...withCategory} compact onOpenChange={jest.fn()} open />);
 
     expect(labels()).toEqual(["Nombre", "Categoría", "Código de barras", "Costo REF", "Precio REF"]);
     expect(screen.getByRole("button", { name: "Otro %" })).toBeVisible();
