@@ -27,6 +27,7 @@ import { FormActions } from "@/shared/components/FormActions";
 import { Modal } from "@/shared/components/Modal";
 import { getNumberInputError } from "@/shared/components/NumberInput";
 import { useToast } from "@/shared/components/Toast";
+import { ClientApiError } from "@/shared/api/apiFetch";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
 import { CategoryQuickCreateModal } from "../../categories-list/components/CategoryQuickCreateModal";
@@ -175,6 +176,17 @@ export type ProductFormModalProps = {
   suppliersOnCreate?: boolean;
   trigger?: ReactNode;
 };
+
+const POSSIBLE_DUPLICATE_MESSAGE =
+  "Este producto pudo haberse creado en el intento anterior. Revisa la lista antes de volver a intentarlo.";
+
+/**
+ * El envío terminó sin que el servidor dijera qué pasó (sin respuesta, 5xx o
+ * 408): pudo haberse guardado. Un 4xx, 409 incluido, dice que no se guardó.
+ */
+function isUnansweredRequest(error: unknown) {
+  return !(error instanceof ClientApiError) || error.status >= 500 || error.status === 408;
+}
 
 type ProductSuppliersLoadEvent =
   | { links: ProductSupplierLinkSource[]; status: "ready" }
@@ -405,6 +417,11 @@ export function ProductFormModal({
   // se reintenta el MISMO envío (respuesta perdida, 5xx) y se renueva tras el
   // éxito (también con "Guardar y crear otro") y al reabrir el formulario.
   const createAttempt = useRequestAttempt();
+  // Último alta que terminó sin respuesta del servidor (red, 5xx): pudo crearse.
+  const unansweredCreateRef = useRef<{ fingerprint: string; name: string } | null>(null);
+  /** Nombre de ese alta mientras se muestra el aviso de posible duplicado; `null` = sin aviso. */
+  const [possibleDuplicateName, setPossibleDuplicateName] = useState<string | null>(null);
+  const createAnywayRequestedRef = useRef(false);
   const [failedSubmits, setFailedSubmits] = useState(0);
   const isUnitRole = product?.packConversion?.role === "unit";
   const suppliersBridgeRef = useRef<ProductSuppliersBridgeHandle | null>(null);
@@ -503,6 +520,8 @@ export function ProductFormModal({
     setPackConversionState(createDefaultPackConversionFormState(product?.packConversion));
     setShowSubmitErrors(false);
     setShowPriceRequired(false);
+    unansweredCreateRef.current = null;
+    setPossibleDuplicateName(null);
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -633,6 +652,18 @@ export function ProductFormModal({
     }
   }
 
+  // "Crear de todos modos": el usuario ya revisó la lista y decide que lo
+  // escrito es otro producto. La marca se lee al empezar el envío.
+  function submitCreateAnyway() {
+    createAnywayRequestedRef.current = true;
+
+    try {
+      formRef.current?.requestSubmit();
+    } finally {
+      createAnywayRequestedRef.current = false;
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>, close: () => void) {
     event.preventDefault();
 
@@ -642,6 +673,7 @@ export function ProductFormModal({
 
     const form = event.currentTarget;
     const createAnother = canCreateAnother && createAnotherRequestedRef.current;
+    const createAnyway = createAnywayRequestedRef.current;
     const formData = new FormData(form);
 
     // El precio es obligatorio, como cuando el campo era `required`: vacío no
@@ -754,6 +786,27 @@ export function ProductFormModal({
       sku: sku.trim().toLowerCase() || undefined,
     };
 
+    // Alta sin respuesta y contenido cambiado: la misma clave con otro cuerpo es
+    // un 409 del servidor que no se puede reintentar, y una clave nueva podría
+    // duplicar el producto. No se envía: se avisa y decide el usuario. Si deja
+    // lo escrito como estaba, el reintento viaja con la misma clave.
+    const createFingerprint = JSON.stringify(input);
+    const unansweredCreate = createdProduct ? null : unansweredCreateRef.current;
+
+    if (unansweredCreate && unansweredCreate.fingerprint !== createFingerprint) {
+      if (!createAnyway) {
+        setPossibleDuplicateName(unansweredCreate.name);
+
+        return;
+      }
+
+      // Otro producto: se cierra el intento anterior para estrenar clave.
+      createAttempt.succeed();
+      unansweredCreateRef.current = null;
+    }
+
+    setPossibleDuplicateName(null);
+
     // Si `onSubmit` rechaza, no se llega a `close()`: el modal queda abierto con
     // lo escrito. El rechazo se queda aquí (no sube como promesa sin manejar):
     // el motivo lo pinta el consumidor con `errorMessage`.
@@ -779,12 +832,17 @@ export function ProductFormModal({
             })) ?? undefined;
         } catch (error) {
           createAttempt.fail(error);
+          unansweredCreateRef.current =
+            !isEdit && isUnansweredRequest(error)
+              ? { fingerprint: createFingerprint, name: input.name }
+              : null;
           setFailedSubmits((count) => count + 1);
 
           return;
         }
 
         createAttempt.succeed();
+        unansweredCreateRef.current = null;
 
         if (!isEdit && created) {
           onCreated?.(created);
@@ -1072,6 +1130,27 @@ export function ProductFormModal({
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
             {errorMessage}
           </p>
+        ) : null}
+        {possibleDuplicateName !== null ? (
+          <div
+            className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+            role="alert"
+          >
+            <p>{POSSIBLE_DUPLICATE_MESSAGE}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <a
+                className="font-medium underline underline-offset-2"
+                href={`/products?search=${encodeURIComponent(possibleDuplicateName)}`}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                Buscar en la lista
+              </a>
+              <Button disabled={isBusy} onClick={submitCreateAnyway} size="sm" variant="outline">
+                Crear de todos modos
+              </Button>
+            </div>
+          </div>
         ) : null}
       </form>
       {showSuppliers && isOpen && suppliersLoad.status !== "idle" ? (
