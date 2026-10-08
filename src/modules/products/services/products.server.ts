@@ -19,6 +19,7 @@ import {
   upsertPackConversionForPackProduct,
 } from "./packConversion.server";
 import { assertListFilterParams } from "./listFilterParams";
+import { isRangeNotSatisfiable, listCountOptions } from "./listRange";
 import { parsePackLinkFilter, type PackConversionInput } from "./packConversionSchemas";
 import {
   isPriceReviewFilterOn,
@@ -281,13 +282,6 @@ export async function listProducts(searchParams: URLSearchParams, storeId: strin
   const packLink = parsePackLinkFilter(searchParams);
   const baseSelect = isPriceReviewFilterOn(searchParams) ? productReviewOnlySelect : productSelect;
 
-  let query = supabase
-    .from("products")
-    .select(packLink ? `${baseSelect}, ${packRoleFilterSelect}` : baseSelect, {
-      count: "exact",
-    })
-    .eq("store_id", storeId);
-
   // Los cortes del semáforo son los de la tienda: una sola lectura por petición
   // y solo cuando el filtro los usa ("none" y sin filtro no los necesitan).
   const marginFilter = parseProductMarginFilter(searchParams);
@@ -295,20 +289,43 @@ export async function listProducts(searchParams: URLSearchParams, storeId: strin
     marginFilter !== null && marginFilter !== "none" ? await getPricingSettings(storeId) : null,
   );
 
-  query = applyProductFilters(query, searchParams);
-  query = applyProductMarginFilter(query, marginFilter, marginThresholds);
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    let query = supabase
+      .from("products")
+      .select(
+        packLink ? `${baseSelect}, ${packRoleFilterSelect}` : baseSelect,
+        listCountOptions(head),
+      )
+      .eq("store_id", storeId);
 
-  if (packLink) {
-    query = query.is("pack_role.is_pack", false);
+    query = applyProductFilters(query, searchParams);
+    query = applyProductMarginFilter(query, marginFilter, marginThresholds);
+
+    if (packLink) {
+      query = query.is("pack_role.is_pack", false);
+    }
+
+    if (packLink === "none") {
+      query = query.is("pack_role.is_component", false);
+    }
+
+    return query;
+  };
+
+  const { count, data, error, status } = await applyProductSort(
+    buildFilteredQuery(false),
+    searchParams,
+  ).range(skip, skip + limit - 1);
+
+  // Página más allá del total: no es un error, es una página vacía con el total real.
+  if (isRangeNotSatisfiable(error, status)) {
+    const total = await buildFilteredQuery(true);
+
+    throwIfSupabaseError(total.error);
+
+    return { items: [], limit, skip, total: total.count ?? 0 };
   }
-
-  if (packLink === "none") {
-    query = query.is("pack_role.is_component", false);
-  }
-
-  query = applyProductSort(query, searchParams);
-
-  const { count, data, error } = await query.range(skip, skip + limit - 1);
 
   throwIfSupabaseError(error);
 

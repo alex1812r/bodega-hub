@@ -10,6 +10,7 @@ import {
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import { assertListFilterParams } from "./listFilterParams";
+import { isRangeNotSatisfiable, listCountOptions } from "./listRange";
 import {
   buildRepriceReason,
   COST_CHANGED_CODE,
@@ -39,20 +40,30 @@ export async function listPriceReview(searchParams: URLSearchParams, storeId: st
   const { limit, skip } = parsePagination(searchParams);
   const purchaseId = searchParams.get("purchaseId")?.trim();
 
-  let query = supabase
-    .from(PRICE_REVIEW_VIEW)
-    .select(PRICE_REVIEW_COLUMNS, { count: "exact" })
-    .eq("store_id", storeId);
+  /** La consulta con sus filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    const query = supabase
+      .from(PRICE_REVIEW_VIEW)
+      .select(PRICE_REVIEW_COLUMNS, listCountOptions(head))
+      .eq("store_id", storeId);
 
-  if (purchaseId) {
-    query = query.eq("purchase_id", purchaseId);
-  }
+    return purchaseId ? query.eq("purchase_id", purchaseId) : query;
+  };
 
-  const { count, data, error } = await query
+  const { count, data, error, status } = await buildFilteredQuery(false)
     .order("current_band_rank", { ascending: true })
     .order("margin_drop_pct", { ascending: false })
     .order("product_id", { ascending: true })
     .range(skip, skip + limit - 1);
+
+  // Página más allá del total: no es un error, es una página vacía con el total real.
+  if (isRangeNotSatisfiable(error, status)) {
+    const total = await buildFilteredQuery(true);
+
+    throwIfSupabaseError(total.error);
+
+    return { items: [], limit, skip, total: total.count ?? 0 };
+  }
 
   throwIfSupabaseError(error);
 

@@ -7,6 +7,7 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import type { CategoryInput } from "./categories.mock-server";
 import { parseCategoryDefaultMarkupPct } from "./categorySchemas";
+import { isRangeNotSatisfiable, listCountOptions } from "./listRange";
 import { escapeIlike, isUnsearchableSearchTerm, normalizeProductSearch } from "./productSearch";
 
 const categorySelect =
@@ -62,24 +63,39 @@ export async function listCategories(searchParams: URLSearchParams, storeId: str
   const supabase = await createRouteSupabaseClient();
   const isActive = searchParams.get("isActive");
 
-  let query = supabase
-    .from("categories")
-    .select(categorySelect, { count: "exact" })
-    .eq("store_id", storeId)
-    .order("name", { ascending: true });
+  /** La consulta con sus filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    let query = supabase
+      .from("categories")
+      .select(categorySelect, listCountOptions(head))
+      .eq("store_id", storeId);
 
-  // Sin filtro: solo activas (selectores de producto/POS). Admin pasa isActive=true|false|all via query.
-  if (isActive === null) {
-    query = query.eq("is_active", true);
-  } else if (isActive.toLowerCase() !== "all") {
-    query = query.eq("is_active", isActive.toLowerCase() === "true");
+    // Sin filtro: solo activas (selectores de producto/POS). Admin pasa isActive=true|false|all via query.
+    if (isActive === null) {
+      query = query.eq("is_active", true);
+    } else if (isActive.toLowerCase() !== "all") {
+      query = query.eq("is_active", isActive.toLowerCase() === "true");
+    }
+
+    if (search) {
+      query = query.ilike("name", `%${escapeIlike(search)}%`);
+    }
+
+    return query;
+  };
+
+  const { count, data, error, status } = await buildFilteredQuery(false)
+    .order("name", { ascending: true })
+    .range(skip, skip + limit - 1);
+
+  // Página más allá del total: no es un error, es una página vacía con el total real.
+  if (isRangeNotSatisfiable(error, status)) {
+    const total = await buildFilteredQuery(true);
+
+    throwIfSupabaseError(total.error);
+
+    return { items: [], limit, skip, total: total.count ?? 0 };
   }
-
-  if (search) {
-    query = query.ilike("name", `%${escapeIlike(search)}%`);
-  }
-
-  const { count, data, error } = await query.range(skip, skip + limit - 1);
 
   throwIfSupabaseError(error);
 
