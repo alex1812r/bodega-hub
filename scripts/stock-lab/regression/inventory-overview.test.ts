@@ -365,7 +365,8 @@ describe("20261011a · rendimiento con 5.000 productos", () => {
       const first = await measure("primera página", "", 0);
       const last = await measure("última página", "", PERF_PRODUCTS - PAGE_SIZE);
       const low = await measure("filtro stock_status low + out", " and stock_status in ('low', 'out')", 0);
-      const search = await measure("búsqueda + precio", ` and name ilike '%' || '${TAG}' || '%0042%' and sale_price_ref between 1 and 40`, 0);
+      // El número va con el espacio que lo precede: `%0042%` a secas casa también 00420…00429 (11 productos).
+      const search = await measure("búsqueda + precio", ` and name ilike '%' || '${TAG}' || '% 00042%' and sale_price_ref between 1 and 40`, 0);
 
       const reconciliation = await run(
         "admin",

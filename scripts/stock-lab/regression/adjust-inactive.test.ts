@@ -293,8 +293,11 @@ describe("parche 20261011b · una sola adjust_stock, la vigente", () => {
     const removed = previous.filter((line) => !lines(PATCH).includes(line));
 
     expect(removed).toEqual([]);
+    // La comparación es por línea CON su sangría: `errcode = 'PT409',` ya existe en 20261006g, pero a 8 espacios
+    // (dentro de los `if` de documento); el de la guarda va a 6 y por eso cuenta como línea nueva.
     expect(added.map((line) => line.trim()).filter((line) => !line.startsWith("--"))).toEqual([
       "if not v_product.is_active and p_quantity_delta > 0 and p_sale_id is null then",
+      "errcode = 'PT409',",
       `message = '${INACTIVE_MESSAGE}';`,
     ]);
   });
