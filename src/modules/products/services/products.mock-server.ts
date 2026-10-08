@@ -11,6 +11,8 @@ import {
   mockSales,
   mockStockMovements,
   type ProductMock,
+  type ProductPackComponentMock,
+  type ProductPackConversionMock,
 } from "@/shared/mocks/erp-data";
 import { getPricingSettings } from "@/modules/settings/services/settings.mock-server";
 import { generateProductSkuFromName, normalizeSku } from "@/shared/utils/skuGeneration";
@@ -23,7 +25,14 @@ import {
   recordMockPriceChange,
   toMockPriceHistoryEntry,
 } from "./priceReview.mock-server";
-import { buildPackConversionSummary } from "./packConversionSummary";
+import {
+  buildMockPackRecipe,
+  buildPackConversionListItem,
+  buildPackConversionSummary,
+  isSamePackRecipe,
+  type PackRecipeProduct,
+  type PackRecipeView,
+} from "./packConversionSummary";
 import {
   buildGeneratedSku,
   GENERATED_SKU_EXHAUSTED_MESSAGE,
@@ -63,31 +72,174 @@ export type ProductPriceInput = Pick<ProductMock, "salePriceRef"> & {
 
 export type { ProductPriceHistoryEntry };
 
-function resolvePackConversion(productId: string, storeId: string) {
-  const link = mockProductPackConversions.find(
-    (item) =>
-      item.isActive &&
-      item.storeId === storeId &&
-      (item.packProductId === productId || item.unitProductId === productId),
-  );
+function toMockRecipeProduct(product: ProductMock): PackRecipeProduct {
+  return {
+    currentCostRef: product.currentCostRef,
+    currentStock: product.currentStock,
+    id: product.id,
+    isActive: product.isActive !== false,
+    name: product.name,
+    salePriceRef: product.salePriceRef,
+    sku: product.sku,
+  };
+}
 
-  if (!link) {
-    return undefined;
-  }
-
+/** `undefined` si falta el empaque o algún producto componente, como en el server. */
+function toMockRecipeView(link: ProductPackConversionMock): PackRecipeView | undefined {
   const packProduct = mockProducts.find((item) => item.id === link.packProductId);
-  const unitProduct = mockProducts.find((item) => item.id === link.unitProductId);
+  const components = link.components.flatMap((component) => {
+    const product = mockProducts.find((item) => item.id === component.unitProductId);
 
-  if (!packProduct || !unitProduct) {
+    return product
+      ? [
+          {
+            costWeight: component.costWeight,
+            product: toMockRecipeProduct(product),
+            unitsPerPack: component.unitsPerPack,
+          },
+        ]
+      : [];
+  });
+
+  if (!packProduct || components.length === 0 || components.length !== link.components.length) {
     return undefined;
   }
+
+  return {
+    components,
+    id: link.id,
+    label: link.label ?? null,
+    packProduct: toMockRecipeProduct(packProduct),
+    totalUnits: link.totalUnits,
+  };
+}
+
+function activeMockRecipes(storeId: string) {
+  return mockProductPackConversions.filter((item) => item.isActive && item.storeId === storeId);
+}
+
+function resolvePackConversion(productId: string, storeId: string) {
+  const recipes = activeMockRecipes(storeId);
+  const packLink = recipes.find((item) => item.packProductId === productId);
 
   return buildPackConversionSummary({
-    link,
-    packProduct,
+    packRecipe: packLink ? toMockRecipeView(packLink) : undefined,
     productId,
-    unitProduct,
+    sourceRecipes: recipes
+      .filter((item) => item.components.some((component) => component.unitProductId === productId))
+      .flatMap((item) => {
+        const recipe = toMockRecipeView(item);
+
+        return recipe ? [recipe] : [];
+      }),
   });
+}
+
+/**
+ * Como `packConversion.server`: una unidad / componente puede salir de varios
+ * empaques, pero no puede ser el EMPAQUE de una receta activa.
+ */
+function assertMockUnitAvailable(unitProductId: string, storeId: string, packProductId: string) {
+  const unit = mockProducts.find((item) => item.id === unitProductId);
+  assertMockStoreResource(unit, storeId, "Producto unidad no encontrado.");
+
+  if (unitProductId === packProductId) {
+    throw new ApiError(400, "BAD_REQUEST", "El empaque y la unidad deben ser productos distintos.");
+  }
+
+  if (activeMockRecipes(storeId).some((item) => item.packProductId === unitProductId)) {
+    throw new ApiError(
+      409,
+      "CONFLICT",
+      "El producto unidad es un empaque con receta activa: no puede salir de otro empaque.",
+    );
+  }
+}
+
+function assertMockComponentsAvailable(
+  unitProductIds: string[],
+  storeId: string,
+  packProductId: string,
+) {
+  if (unitProductIds.includes(packProductId)) {
+    throw new ApiError(400, "BAD_REQUEST", "El empaque no puede ser componente de sí mismo.");
+  }
+
+  const allInStore = unitProductIds.every((id) =>
+    mockProducts.some(
+      (product) => product.id === id && (product.storeId ?? DEFAULT_STORE_ID) === storeId,
+    ),
+  );
+
+  if (!allInStore) {
+    throw new ApiError(404, "NOT_FOUND", "Producto componente no encontrado.");
+  }
+
+  if (activeMockRecipes(storeId).some((item) => unitProductIds.includes(item.packProductId))) {
+    throw new ApiError(
+      409,
+      "CONFLICT",
+      "Un componente es un empaque con receta activa: no puede salir de otro empaque.",
+    );
+  }
+}
+
+/**
+ * Receta nueva para el empaque; la vigente queda inactiva. Como el server, una
+ * receta distinta nunca se edita en sitio: la anterior conserva la historia.
+ */
+function replaceMockRecipe(
+  packProductId: string,
+  storeId: string,
+  recipe: { components: ProductPackComponentMock[]; label?: string | null; totalUnits: number },
+) {
+  for (const link of mockProductPackConversions) {
+    if (link.packProductId === packProductId && link.storeId === storeId) {
+      link.isActive = false;
+    }
+  }
+
+  mockProductPackConversions.push(
+    buildMockPackRecipe({
+      components: recipe.components,
+      // El índice evita ids repetidos al reemplazar una receta en el mismo milisegundo.
+      id: `ppc-${Date.now()}-${mockProductPackConversions.length}`,
+      isActive: true,
+      label: recipe.label,
+      packProductId,
+      storeId,
+      totalUnits: recipe.totalUnits,
+    }),
+  );
+}
+
+function upsertMockAssortedRecipe(
+  packProductId: string,
+  storeId: string,
+  input: PackConversionInput,
+) {
+  const components = (input.components ?? []).map((component) => ({
+    costWeight: component.costWeight,
+    unitProductId: component.unitProductId,
+    unitsPerPack: component.unitsPerPack,
+  }));
+  const totalUnits = input.totalUnits ?? 0;
+  const label = input.label?.trim() || null;
+
+  assertMockComponentsAvailable(
+    components.map((component) => component.unitProductId),
+    storeId,
+    packProductId,
+  );
+
+  const existing = activeMockRecipes(storeId).find((item) => item.packProductId === packProductId);
+
+  if (existing && isSamePackRecipe(existing, { components, totalUnits })) {
+    existing.label = label;
+    return;
+  }
+
+  replaceMockRecipe(packProductId, storeId, { components, label, totalUnits });
 }
 
 function upsertMockPackConversion(
@@ -105,6 +257,11 @@ function upsertMockPackConversion(
     return;
   }
 
+  if (input.mode === "assorted") {
+    upsertMockAssortedRecipe(packProductId, storeId, input);
+    return;
+  }
+
   const unitsPerPack = input.unitsPerPack ?? 2;
   let unitProductId = input.unitProductId;
 
@@ -113,24 +270,7 @@ function upsertMockPackConversion(
       throw new ApiError(400, "BAD_REQUEST", "Selecciona el producto unidad.");
     }
 
-    const unit = mockProducts.find((item) => item.id === unitProductId);
-    assertMockStoreResource(unit, storeId, "Producto unidad no encontrado.");
-
-    if (unitProductId === packProductId) {
-      throw new ApiError(400, "BAD_REQUEST", "El empaque y la unidad deben ser productos distintos.");
-    }
-
-    const conflict = mockProductPackConversions.find(
-      (item) =>
-        item.isActive &&
-        item.storeId === storeId &&
-        (item.packProductId === unitProductId || item.unitProductId === unitProductId) &&
-        item.packProductId !== packProductId,
-    );
-
-    if (conflict) {
-      throw new ApiError(409, "CONFLICT", "El producto unidad ya está vinculado a otro empaque.");
-    }
+    assertMockUnitAvailable(unitProductId, storeId, packProductId);
   } else {
     const unitName = input.unitProduct?.name?.trim() || `${packProduct.name} (unidad)`;
     const unitSku =
@@ -160,23 +300,20 @@ function upsertMockPackConversion(
     unitProductId = unitProduct.id;
   }
 
-  const existing = mockProductPackConversions.find(
-    (item) => item.packProductId === packProductId && item.storeId === storeId && item.isActive,
-  );
+  const existing = activeMockRecipes(storeId).find((item) => item.packProductId === packProductId);
+  const existingComponent = existing?.components[0];
 
-  if (existing) {
-    existing.unitProductId = unitProductId!;
+  // Mismo producto unidad: se edita en sitio y el componente conserva su peso.
+  if (existing && existingComponent && existing.unitProductId === unitProductId) {
+    existingComponent.unitsPerPack = unitsPerPack;
+    existing.totalUnits = unitsPerPack;
     existing.unitsPerPack = unitsPerPack;
     return;
   }
 
-  mockProductPackConversions.push({
-    id: `ppc-${Date.now()}`,
-    isActive: true,
-    packProductId,
-    storeId,
-    unitProductId: unitProductId!,
-    unitsPerPack,
+  replaceMockRecipe(packProductId, storeId, {
+    components: [{ costWeight: 1, unitProductId: unitProductId!, unitsPerPack }],
+    totalUnits: unitsPerPack,
   });
 }
 
@@ -189,9 +326,10 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
   // `packLink=none`: sin vínculo de empaque activo, ni como empaque ni como unidad.
   const packLinkedIds = new Set(
     searchParams.get("packLink") === "none"
-      ? mockProductPackConversions
-          .filter((link) => link.isActive && link.storeId === storeId)
-          .flatMap((link) => [link.packProductId, link.unitProductId])
+      ? activeMockRecipes(storeId).flatMap((link) => [
+          link.packProductId,
+          ...link.components.map((component) => component.unitProductId),
+        ])
       : [],
   );
 
@@ -466,32 +604,10 @@ export function createProductPriceHistoryEntry(id: string, input: ProductPriceIn
 export function listPackConversions(storeId: string) {
   return mockProductPackConversions
     .filter((item) => item.isActive && item.storeId === storeId)
-    .map((link) => {
-      const packProduct = mockProducts.find((item) => item.id === link.packProductId);
-      const unitProduct = mockProducts.find((item) => item.id === link.unitProductId);
+    .flatMap((link) => {
+      const recipe = toMockRecipeView(link);
+      const item = recipe ? buildPackConversionListItem(recipe) : null;
 
-      if (!packProduct || !unitProduct) {
-        return null;
-      }
-
-      const summary = buildPackConversionSummary({
-        link,
-        packProduct,
-        productId: link.packProductId,
-        unitProduct,
-      });
-
-      return {
-        ...summary,
-        packProduct: {
-          currentCostRef: packProduct.currentCostRef,
-          currentStock: packProduct.currentStock,
-          id: packProduct.id,
-          name: packProduct.name,
-          salePriceRef: packProduct.salePriceRef,
-          sku: packProduct.sku,
-        },
-      };
-    })
-    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+      return item ? [item] : [];
+    });
 }

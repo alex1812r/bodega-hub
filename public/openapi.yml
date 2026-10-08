@@ -1289,7 +1289,15 @@ paths:
   /api/inventory/conversions:
     post:
       tags: [Inventory]
-      summary: Convertir empaque a unidades (dual SKU)
+      summary: Convertir empaque a unidades (dual SKU o surtido)
+      description: >-
+        Abre `packQuantity` empaques segun su receta activa. Sin `components` cada
+        componente recibe `unitsPerPack x packQuantity`. Con `components` se registra
+        el reparto REAL de esta apertura: solo componentes de la receta, sin
+        repetidos y sumando `totalUnits x packQuantity` (si no, `400` sin mover
+        nada). El valor (`packQuantity` x costo del empaque) se reparte en proporcion
+        a unidades x `costWeight`. Deja 1 `conversion_salida` y 1 `conversion_entrada`
+        por componente con unidades, todos con el mismo `conversionId`.
       x-permission: inventory.manage
       requestBody:
         required: true
@@ -1306,15 +1314,32 @@ paths:
                   minimum: 1
                 reason:
                   type: string
+                components:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  description: >-
+                    Opcional. Reparto real de la apertura de un surtido. Los
+                    componentes con 0 unidades se pueden omitir.
+                  items:
+                    type: object
+                    required: [unitProductId, units]
+                    properties:
+                      unitProductId:
+                        type: string
+                      units:
+                        type: integer
+                        minimum: 0
                 clientRequestId:
                   type: string
                   format: uuid
                   description: >-
                     Clave de idempotencia opcional por intento: repetir la peticion con la
-                    misma clave devuelve la conversion original sin mover stock.
+                    misma clave y el mismo contenido (incluido `components`) devuelve la
+                    conversion original sin mover stock; con otro reparto responde `409`.
       responses:
         "201":
-          description: Conversion creada (par de movimientos)
+          description: Conversion creada (1 salida + 1 entrada por componente con unidades)
           content:
             application/json:
               schema:
@@ -1331,6 +1356,8 @@ paths:
                         packQuantity,
                         unitQuantity,
                         unitsPerPack,
+                        totalUnits,
+                        components,
                       ]
                     properties:
                       conversionId:
@@ -1339,28 +1366,42 @@ paths:
                         type: integer
                       unitQuantity:
                         type: integer
+                        description: Unidades que salieron en total.
                       unitsPerPack:
+                        type: integer
+                        description: Unidades por empaque de la receta (igual a `totalUnits`).
+                      totalUnits:
                         type: integer
                       unitCostRef:
                         type: number
+                        description: Costo medio por unidad. En un surtido, el de cada componente va en `components`.
                       packMovement:
                         $ref: "#/components/schemas/StockMovement"
                       unitMovement:
-                        $ref: "#/components/schemas/StockMovement"
+                        allOf:
+                          - $ref: "#/components/schemas/StockMovement"
+                        description: Entrada del primer componente por id (con un solo componente, la de siempre).
+                      components:
+                        type: array
+                        description: Una entrada por componente con unidades, por id de producto.
+                        items:
+                          $ref: "#/components/schemas/PackConversionOpenedComponent"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/IdempotencyConflict"
   /api/inventory/pack-conversions:
     get:
       tags: [Inventory]
-      summary: Listar vinculos empaque→unidad activos
+      summary: Listar recetas de empaque activas (pares y surtidos)
       x-permission: inventory.view
       responses:
         "200":
-          description: Lista de conversiones configuradas
+          description: Recetas activas, vistas desde el empaque (`role` = `pack`)
           content:
             application/json:
               schema:
@@ -1370,7 +1411,13 @@ paths:
                   data:
                     type: array
                     items:
-                      type: object
+                      allOf:
+                        - $ref: "#/components/schemas/ProductPackConversion"
+                        - type: object
+                          required: [packProduct]
+                          properties:
+                            packProduct:
+                              $ref: "#/components/schemas/ProductPackConversionLinkedProduct"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/sales:
@@ -3696,6 +3743,194 @@ components:
           allOf:
             - $ref: "#/components/schemas/ProductPriceReview"
           description: Solo si el producto esta en la cola "Por revisar" (listado y detalle).
+        packConversion:
+          allOf:
+            - $ref: "#/components/schemas/ProductPackConversion"
+          description: Solo en el detalle, y solo si el producto es empaque o sale de alguno.
+    ProductPackConversionLinkedProduct:
+      type: object
+      required: [id, sku, name, salePriceRef, currentCostRef, currentStock]
+      properties:
+        id:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        salePriceRef:
+          type: number
+        currentCostRef:
+          type: number
+        currentStock:
+          type: integer
+    ProductPackConversionComponent:
+      type: object
+      required: [unitProductId, name, sku, unitsPerPack, costWeight, isActive, currentStock]
+      properties:
+        unitProductId:
+          type: string
+        name:
+          type: string
+        sku:
+          type: string
+        unitsPerPack:
+          type: integer
+          minimum: 1
+        costWeight:
+          type: number
+          description: Peso relativo en el reparto del costo del empaque (unidades x peso).
+        isActive:
+          type: boolean
+        currentStock:
+          type: integer
+    ProductPackConversionSource:
+      type: object
+      description: Una receta activa de la que sale el producto.
+      required: [conversionId, packProductId, packName, unitsPerPack, totalUnits]
+      properties:
+        conversionId:
+          type: string
+        packProductId:
+          type: string
+        packName:
+          type: string
+        unitsPerPack:
+          type: integer
+          description: Unidades de ESTE producto por empaque.
+        totalUnits:
+          type: integer
+          description: Unidades que salen del empaque en total.
+    ProductPackConversion:
+      type: object
+      description: >-
+        Vinculo de empaque de un producto. `id`, `unitsPerPack`, `linkedProduct`,
+        `kind`, `label`, `totalUnits` y `components` describen UNA receta. Con
+        `role` = `pack` es la receta activa del producto: `unitsPerPack` = unidades
+        que salen en total y `linkedProduct` = su componente (en un surtido, el
+        primero por nombre). Con `role` = `unit` es la primera receta de la que sale
+        el producto (por nombre del empaque): `unitsPerPack` = unidades de este
+        producto por empaque y `linkedProduct` = ese empaque; `sources` las trae
+        todas. Un producto que es empaque y ademas componente de otra receta se
+        informa como `pack`, con `sources`.
+      required: [id, role, unitsPerPack, linkedProduct, kind, label, totalUnits, components, sources]
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [pack, unit]
+        unitsPerPack:
+          type: integer
+        linkedProduct:
+          $ref: "#/components/schemas/ProductPackConversionLinkedProduct"
+        kind:
+          type: string
+          enum: [single, assorted]
+          description: Con `single` hay un solo producto unidad; `assorted` es un surtido.
+        label:
+          type: string
+          nullable: true
+        totalUnits:
+          type: integer
+        components:
+          type: array
+          description: Componentes de la receta, por nombre.
+          items:
+            $ref: "#/components/schemas/ProductPackConversionComponent"
+        sources:
+          type: array
+          description: Recetas activas de las que sale el producto, por nombre del empaque.
+          items:
+            $ref: "#/components/schemas/ProductPackConversionSource"
+    PackConversionInput:
+      type: object
+      description: >-
+        Receta del empaque en el alta / edicion de producto. `enabled: false`
+        desactiva la receta. `link_existing` (con `unitProductId`) y `create_unit`
+        (con `unitProduct`) son el par de siempre y piden `unitsPerPack`.
+        `assorted` es un surtido: `totalUnits` y de 2 a 20 `components` sin
+        repetir, ninguno el propio empaque, cuyas unidades suman `totalUnits`
+        (si no, `400`). Un componente puede salir de varios empaques, pero no puede
+        ser el empaque de una receta activa (`409`). Cambiar los productos de una
+        receta crea una receta nueva y deja inactiva la anterior.
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+        mode:
+          type: string
+          enum: [link_existing, create_unit, assorted]
+        unitProductId:
+          type: string
+        unitsPerPack:
+          type: integer
+          minimum: 2
+        unitProduct:
+          type: object
+          required: [salePriceRef]
+          properties:
+            name:
+              type: string
+            sku:
+              type: string
+            barcode:
+              type: string
+              nullable: true
+            salePriceRef:
+              type: number
+              minimum: 0
+            currentCostRef:
+              type: number
+              minimum: 0
+        label:
+          type: string
+          nullable: true
+          maxLength: 80
+        totalUnits:
+          type: integer
+          minimum: 2
+        components:
+          type: array
+          minItems: 2
+          maxItems: 20
+          items:
+            type: object
+            required: [unitProductId, unitsPerPack]
+            properties:
+              unitProductId:
+                type: string
+              unitsPerPack:
+                type: integer
+                minimum: 1
+              costWeight:
+                type: number
+                exclusiveMinimum: true
+                minimum: 0
+                default: 1
+    PackConversionOpenedComponent:
+      type: object
+      description: Lo que recibio un componente al abrir el empaque.
+      required: [unitProductId, units, costWeight, allocatedValueRef, unitCostRef, newCostRef, isActive, movement]
+      properties:
+        unitProductId:
+          type: string
+        units:
+          type: integer
+        costWeight:
+          type: number
+        allocatedValueRef:
+          type: number
+          description: Parte del valor del empaque asignada (4 decimales). La suma de todas es el valor transferido.
+        unitCostRef:
+          type: number
+          description: Costo por unidad de lo que entro en esta apertura.
+        newCostRef:
+          type: number
+          description: Costo del producto tras la apertura (promedio ponderado).
+        isActive:
+          type: boolean
+        movement:
+          $ref: "#/components/schemas/StockMovement"
     ProductPriceReview:
       type: object
       description: Por que un producto esta en la cola "Por revisar" - ganancia y costo al fijar el precio frente a los actuales.
@@ -3853,6 +4088,8 @@ components:
         sku:
           type: string
           minLength: 1
+        packConversion:
+          $ref: "#/components/schemas/PackConversionInput"
     ProductUpdateInput:
       type: object
       description: >-
@@ -3877,6 +4114,8 @@ components:
         sku:
           type: string
           minLength: 1
+        packConversion:
+          $ref: "#/components/schemas/PackConversionInput"
     ProductPriceInput:
       type: object
       required: [salePriceRef]

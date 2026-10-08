@@ -62,8 +62,14 @@ export type ProductInput = {
   minStock?: number;
   name: string;
   packConversion?: {
+    /** Solo `mode: "assorted"`: de 2 a 20 productos; sus unidades suman `totalUnits`. */
+    components?: { costWeight?: number; unitProductId: string; unitsPerPack: number }[];
     enabled: boolean;
-    mode?: "create_unit" | "link_existing";
+    /** Solo `mode: "assorted"`: nombre opcional de la receta. */
+    label?: string | null;
+    mode?: "assorted" | "create_unit" | "link_existing";
+    /** Solo `mode: "assorted"`: unidades que salen del empaque en total. */
+    totalUnits?: number;
     unitProduct?: {
       barcode?: string | null;
       currentCostRef?: number;

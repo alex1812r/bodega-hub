@@ -233,19 +233,82 @@ export type ProductPackConversionLinkedProduct = {
   sku: string;
 };
 
-export type ProductPackConversionSummary = {
-  id: string;
-  linkedProduct: ProductPackConversionLinkedProduct;
-  role: ProductPackConversionRole;
+export type ProductPackConversionKind = "assorted" | "single";
+
+/** Un producto que sale del empaque al abrirlo. */
+export type ProductPackConversionComponent = {
+  /** Peso relativo en el reparto del costo del empaque (unidades × peso). */
+  costWeight: number;
+  currentStock: number;
+  isActive: boolean;
+  name: string;
+  sku: string;
+  unitProductId: string;
   unitsPerPack: number;
 };
 
+/** Una receta activa de la que sale el producto (rol unidad). */
+export type ProductPackConversionSource = {
+  conversionId: string;
+  packName: string;
+  packProductId: string;
+  /** Unidades que salen del empaque en total. */
+  totalUnits: number;
+  /** Unidades de ESTE producto por empaque. */
+  unitsPerPack: number;
+};
+
+/**
+ * Vínculo de empaque de un producto. Los campos de siempre (`id`, `role`,
+ * `unitsPerPack`, `linkedProduct`) describen UNA receta:
+ * - `role: "pack"`: la receta activa del producto. `unitsPerPack` = unidades que
+ *   salen en total; `linkedProduct` = su componente (en un surtido, el primero
+ *   por nombre: usar `components`).
+ * - `role: "unit"`: la primera receta de la que sale (por nombre del empaque: usar
+ *   `sources` para verlas todas). `unitsPerPack` = unidades de este producto por
+ *   empaque; `linkedProduct` = ese empaque.
+ * Un producto que es empaque y además componente de otra receta se informa como
+ * `pack`, con `sources`.
+ *
+ * Los campos de receta son opcionales en el tipo solo por los datos de prueba
+ * anteriores al surtido: el BFF y el mock los envían siempre.
+ */
+export type ProductPackConversionSummary = {
+  /** Componentes de la receta `id`, por nombre. */
+  components?: ProductPackConversionComponent[];
+  id: string;
+  /** `single` = un solo producto unidad; `assorted` = surtido. */
+  kind?: ProductPackConversionKind;
+  label?: string | null;
+  linkedProduct: ProductPackConversionLinkedProduct;
+  role: ProductPackConversionRole;
+  /** TODAS las recetas activas de las que sale el producto, por nombre del empaque. */
+  sources?: ProductPackConversionSource[];
+  totalUnits?: number;
+  unitsPerPack: number;
+};
+
+export type ProductPackComponentMock = {
+  costWeight: number;
+  unitProductId: string;
+  unitsPerPack: number;
+};
+
+/**
+ * Receta de un empaque (cabecera + componentes), como `product_pack_conversions`
+ * + `product_pack_components`. `unitsPerPack` y `unitProductId` son las columnas
+ * de compatibilidad de la cabecera: `unitsPerPack` = `totalUnits`; `unitProductId`
+ * = el componente si hay uno solo, `null` en un surtido.
+ */
 export type ProductPackConversionMock = {
+  components: ProductPackComponentMock[];
   id: string;
   isActive: boolean;
+  label?: string | null;
   packProductId: string;
   storeId: string;
-  unitProductId: string;
+  totalUnits: number;
+  unitProductId: string | null;
   unitsPerPack: number;
 };
 
@@ -1343,13 +1406,15 @@ export const mockStockMovements: StockMovementMock[] = [
   },
 ];
 
-/** Vínculos pack→unidad para mock (mutable en runtime). */
+/** Recetas de empaque para mock (mutable en runtime). */
 export const mockProductPackConversions: ProductPackConversionMock[] = [
   {
+    components: [{ costWeight: 1, unitProductId: "prod-cigar-unit", unitsPerPack: 10 }],
     id: "ppc-cigars",
     isActive: true,
     packProductId: "prod-cigar-pack",
     storeId: "00000000-0000-4000-8000-000000000001",
+    totalUnits: 10,
     unitProductId: "prod-cigar-unit",
     unitsPerPack: 10,
   },

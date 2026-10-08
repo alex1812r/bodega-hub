@@ -23,6 +23,10 @@ import {
   matchesInventoryMovementFilters,
   parseInventoryMovementFilters,
 } from "../utils/inventoryMovementFilters";
+import {
+  assertPackDistribution,
+  type PackDistributionItem,
+} from "@/modules/products/services/packConversionSchemas";
 import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
@@ -233,15 +237,66 @@ export async function createStockAdjustment(
   return mapStockMovement(data as DbStockMovementRow);
 }
 
-export async function convertPackToUnits(
-  input: {
-    clientRequestId?: string;
-    packProductId: string;
-    packQuantity: number;
-    reason?: string;
-  },
+type RouteSupabaseClient = Awaited<ReturnType<typeof createRouteSupabaseClient>>;
+
+type PackConversionRequest = {
+  clientRequestId?: string;
+  /** Reparto real de esta apertura; sin él cada componente recibe lo de la receta. */
+  components?: PackDistributionItem[];
+  packProductId: string;
+  packQuantity: number;
+  reason?: string;
+};
+
+type PackConversionComponentPayload = {
+  allocatedValueRef: number | string;
+  costWeight: number | string;
+  isActive: boolean;
+  movement: DbStockMovementRow;
+  newCostRef: number | string;
+  unitCostRef: number | string;
+  unitProductId: string;
+  units: number;
+};
+
+/**
+ * Rechazo temprano (400) de un reparto que no cuadra con la receta activa. La RPC
+ * lo vuelve a comprobar dentro de su transaccion y es quien decide: si aqui no se
+ * puede leer la receta (o el empaque no tiene), la respuesta la da ella.
+ */
+async function assertDistributionMatchesRecipe(
+  supabase: RouteSupabaseClient,
+  input: PackConversionRequest & { components: PackDistributionItem[] },
   storeId: string,
 ) {
+  const { data, error } = await supabase
+    .from("product_pack_conversions")
+    .select("total_units, components:product_pack_components(unit_product_id)")
+    .eq("store_id", storeId)
+    .eq("pack_product_id", input.packProductId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error || !data) {
+    return;
+  }
+
+  const recipe = data as unknown as {
+    components?: { unit_product_id: string }[] | null;
+    total_units: number;
+  };
+
+  assertPackDistribution(
+    {
+      componentIds: (recipe.components ?? []).map((component) => component.unit_product_id),
+      totalUnits: recipe.total_units,
+    },
+    input.packQuantity,
+    input.components,
+  );
+}
+
+export async function convertPackToUnits(input: PackConversionRequest, storeId: string) {
   await assertSupabaseStoreResource(
     "products",
     input.packProductId,
@@ -249,6 +304,22 @@ export async function convertPackToUnits(
     "Producto de empaque no encontrado.",
   );
   const supabase = await createRouteSupabaseClient();
+  const distribution = input.components;
+
+  if (distribution) {
+    await assertDistributionMatchesRecipe(supabase, { ...input, components: distribution }, storeId);
+  }
+
+  // Solo viaja cuando hay reparto: sin él la llamada es la de siempre. Va tal cual
+  // llega (orden y ceros incluidos): la huella de idempotencia de la RPC lo incluye.
+  const distributionArg = distribution
+    ? {
+        p_components: distribution.map((item) => ({
+          unit_product_id: item.unitProductId,
+          units: item.units,
+        })),
+      }
+    : {};
   const { data, error } = await rpcWithClientRequestId(
     supabase,
     "convert_pack_to_units",
@@ -258,23 +329,49 @@ export async function convertPackToUnits(
       p_reason: input.reason ?? null,
     },
     input.clientRequestId,
+    distributionArg,
   );
+
+  // La base no conoce `p_components` (falta el parche 20261009d). No se repite sin
+  // él: abriría el empaque con el reparto de la receta, que no es el que se pidió.
+  if (distribution && isMissingRpcSignatureError(error)) {
+    throw new ApiError(
+      409,
+      "CONFLICT",
+      "Esta base aun no admite el reparto de un empaque surtido. No se registro la conversion.",
+    );
+  }
 
   throwIfSupabaseError(error);
 
   const payload = data as {
+    /** Ausente si la base aun no tiene el parche 20261009d. */
+    components?: PackConversionComponentPayload[];
     conversionId: string;
     packMovement: DbStockMovementRow;
     unitMovement: DbStockMovementRow;
     packQuantity: number;
+    /** Ausente si la base aun no tiene el parche 20261009d. */
+    totalUnits?: number;
     unitQuantity: number;
     unitsPerPack: number;
     unitCostRef: number;
   };
 
   return {
+    components: (payload.components ?? []).map((component) => ({
+      allocatedValueRef: Number(component.allocatedValueRef),
+      costWeight: Number(component.costWeight),
+      isActive: component.isActive,
+      movement: mapStockMovement(component.movement),
+      newCostRef: Number(component.newCostRef),
+      unitCostRef: Number(component.unitCostRef),
+      unitProductId: component.unitProductId,
+      units: component.units,
+    })),
     conversionId: payload.conversionId,
     packQuantity: payload.packQuantity,
+    totalUnits: payload.totalUnits ?? payload.unitsPerPack,
     unitCostRef: payload.unitCostRef,
     unitQuantity: payload.unitQuantity,
     unitsPerPack: payload.unitsPerPack,

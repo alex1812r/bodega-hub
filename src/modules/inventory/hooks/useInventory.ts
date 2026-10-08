@@ -56,16 +56,41 @@ export type PackConversionListItem = ProductPackConversionSummary & {
 export type ConvertPackToUnitsInput = {
   /** Clave de idempotencia del intento: el servidor no duplica la conversion (C6). */
   clientRequestId?: string;
+  /**
+   * Reparto real de la apertura de un surtido: unidades que salieron de cada
+   * componente. Debe sumar `totalUnits × packQuantity`. Sin él se usa la receta.
+   */
+  components?: { unitProductId: string; units: number }[];
   packProductId: string;
   packQuantity: number;
   reason?: string;
 };
 
+/** Lo que recibió un componente en una apertura. */
+export type ConvertPackToUnitsComponentResult = {
+  /** Parte del valor del empaque asignada al componente (4 decimales). */
+  allocatedValueRef: number;
+  costWeight: number;
+  isActive: boolean;
+  movement: StockMovementMock;
+  /** Costo del producto tras la apertura (promedio ponderado). */
+  newCostRef: number;
+  /** Costo por unidad de lo que entró en esta apertura. */
+  unitCostRef: number;
+  unitProductId: string;
+  units: number;
+};
+
 export type ConvertPackToUnitsResult = {
+  /** Una entrada por componente con unidades, por id de producto. */
+  components: ConvertPackToUnitsComponentResult[];
   conversionId: string;
   packMovement: StockMovementMock;
   packQuantity: number;
+  totalUnits: number;
+  /** Costo medio por unidad; en un surtido, el de cada componente va en `components`. */
   unitCostRef: number;
+  /** La entrada del primer componente (en un surtido, ver `components`). */
   unitMovement: StockMovementMock;
   unitQuantity: number;
   unitsPerPack: number;
