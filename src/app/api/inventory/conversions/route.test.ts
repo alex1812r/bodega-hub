@@ -2,6 +2,8 @@
  * @jest-environment node
  */
 
+import { mockProducts } from "@/shared/mocks/erp-data";
+
 import { POST } from "./route";
 
 describe("/api/inventory/conversions", () => {
@@ -65,5 +67,47 @@ describe("/api/inventory/conversions", () => {
     );
 
     expect(response.status).toBe(400);
+  });
+
+  describe("motivo con caracteres de control (INV-L3 · M4)", () => {
+    function post(reason: string) {
+      return POST(
+        new Request("http://localhost/api/inventory/conversions", {
+          body: JSON.stringify({ packProductId: "prod-cigar-pack", packQuantity: 1, reason }),
+          headers: { "content-type": "application/json", "x-demo-role": "almacen" },
+          method: "POST",
+        }),
+      );
+    }
+
+    function packStock() {
+      return mockProducts.find((item) => item.id === "prod-cigar-pack")?.currentStock;
+    }
+
+    it.each([
+      ["NUL", "antes\u0000despues"],
+      ["campana (C0)", "antes\u0007despues"],
+      ["DEL", "antes\u007fdespues"],
+      ["C1", "antes\u0085despues"],
+    ])("rechaza con 400 en español un motivo con %s, sin abrir el empaque", async (_name, reason) => {
+      const before = packStock();
+      const response = await post(reason);
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body.error).toMatchObject({
+        code: "BAD_REQUEST",
+        message: "El motivo contiene caracteres no permitidos.",
+      });
+      expect(packStock()).toBe(before);
+    });
+
+    it("acepta salto de línea y tabulación, y guarda el motivo sin los espacios de los extremos", async () => {
+      const response = await post("  Abrir caja\nPasillo 3\tñ  ");
+      const body = await response.json();
+
+      expect(response.status).toBe(201);
+      expect(body.data.packMovement.reason).toBe("Abrir caja\nPasillo 3\tñ");
+    });
   });
 });

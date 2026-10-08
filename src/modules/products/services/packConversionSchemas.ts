@@ -249,7 +249,12 @@ export const convertPackToUnitsSchema = z.object({
     .number({ message: PACK_QUANTITY_MESSAGE })
     .int(PACK_QUANTITY_MESSAGE)
     .positive(PACK_QUANTITY_MESSAGE),
-  reason: z.string({ message: REASON_MESSAGE }).transform(cleanText).optional(),
+  // Solo recorta: los caracteres de control no se quitan en silencio, la ruta los
+  // rechaza con 400 igual que en un ajuste (`assertStockReasonCharacters`).
+  reason: z
+    .string({ message: REASON_MESSAGE })
+    .transform((value) => value.trim())
+    .optional(),
 });
 
 /**

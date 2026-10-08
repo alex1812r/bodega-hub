@@ -1607,7 +1607,7 @@ paths:
                 reason:
                   type: string
                   maxLength: 500
-                  description: Sin contar los espacios de los extremos. Mas largo responde 400 "El motivo admite hasta 500 caracteres."
+                  description: Sin contar los espacios de los extremos. Mas largo responde 400 "El motivo admite hasta 500 caracteres." Con caracteres de control (NUL, C0, DEL, C1; se admiten tabulador y saltos de linea) responde 400 "El motivo contiene caracteres no permitidos."
                 components:
                   type: array
                   minItems: 1
@@ -6025,10 +6025,16 @@ components:
           type: integer
           minimum: -2147483647
           maximum: 2147483647
+          description: >-
+            Distinto de cero. Con `type`, el signo debe casar con el tipo:
+            `ajuste_salida` y `devolucion_proveedor` restan (si no, 400 "Una salida
+            debe restar unidades."); `ajuste_entrada`, `devolucion_cliente` e
+            `inventario_inicial` suman (si no, 400 "Una entrada debe sumar
+            unidades."). Sin `type` lo decide el signo.
         reason:
           type: string
           maxLength: 500
-          description: Sin contar los espacios de los extremos. Mas largo responde 400 "El motivo admite hasta 500 caracteres."
+          description: Sin contar los espacios de los extremos. Mas largo responde 400 "El motivo admite hasta 500 caracteres." Con caracteres de control (NUL, C0, DEL, C1; se admiten tabulador y saltos de linea) responde 400 "El motivo contiene caracteres no permitidos."
         saleId:
           type: string
           format: uuid

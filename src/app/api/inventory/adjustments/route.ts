@@ -5,7 +5,11 @@ import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated } from "@/lib/api/jsonResponse";
 import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
-import { assertStockReasonLength } from "@/modules/inventory/services/assertStockReasonLength";
+import { assertAdjustmentSignMatchesType } from "@/modules/inventory/services/assertAdjustmentSign";
+import {
+  assertStockReasonCharacters,
+  assertStockReasonLength,
+} from "@/modules/inventory/services/assertStockReasonLength";
 import * as inventoryMockServer from "@/modules/inventory/services/inventory.mock-server";
 import * as inventoryServer from "@/modules/inventory/services/inventory.server";
 import { assertReturnAdjustmentHasDocument } from "@/modules/inventory/services/returnAdjustmentDocument";
@@ -73,6 +77,8 @@ export async function POST(request: Request) {
     const input = stockAdjustmentSchema.parse(await readJsonBody(request));
     // R4: fuera del schema para que el 400 lleve su mensaje, no el generico de zod.
     assertReturnAdjustmentHasDocument(input);
+    assertAdjustmentSignMatchesType(input);
+    assertStockReasonCharacters(input.reason);
     assertStockReasonLength(input.reason);
     const service = getInventoryService();
     return jsonCreated(await service.createStockAdjustment(input, auth.storeId));
