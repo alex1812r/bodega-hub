@@ -3,6 +3,8 @@ import { z } from "zod";
 import { ApiError } from "@/lib/api/apiError";
 import { normalizeOptionalSku } from "@/shared/utils/skuGeneration";
 
+import { cleanText } from "./productText";
+
 /** Proveedores por producto en una llamada (el mismo tope de la RPC `save_product_suppliers`). */
 export const PRODUCT_SUPPLIERS_MAX = 50;
 
@@ -28,12 +30,13 @@ const productSupplierInputSchema = z.object({
   isPreferred: z.boolean({ message: "La marca de proveedor habitual no es válida." }).optional(),
   supplierId: z
     .string({ message: "El proveedor es obligatorio." })
-    .trim()
-    .min(1, "El proveedor es obligatorio."),
+    .transform(cleanText)
+    .pipe(z.string().min(1, "El proveedor es obligatorio.")),
   /** Sin la clave el código no se toca; `null` o vacío lo borra. */
   supplierSku: z
     .string({ message: "El código del proveedor no es válido." })
-    .max(120, "El código del proveedor admite hasta 120 caracteres.")
+    .transform(cleanText)
+    .pipe(z.string().max(120, "El código del proveedor admite hasta 120 caracteres."))
     .nullable()
     .optional(),
 });

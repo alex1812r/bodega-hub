@@ -4,6 +4,8 @@ import { ApiError } from "@/lib/api/apiError";
 import { normalizeBarcode } from "@/modules/products/services/productSearch";
 import { normalizeOptionalSku } from "@/shared/utils/skuGeneration";
 
+import { cleanText } from "./productText";
+
 // Los mensajes de forma llegan a la pantalla en `error.issues`: todos en español.
 const UNIT_BARCODE_MESSAGE = "El código de barras de la unidad debe ser un texto.";
 const UNIT_SKU_MESSAGE = "El SKU de la unidad debe ser un texto.";
@@ -15,18 +17,26 @@ const UNIT_PRODUCT_MESSAGE = "Completa los datos de la unidad.";
 const optionalNullableBarcodeSchema = z
   .union([z.string(), z.null()], { message: UNIT_BARCODE_MESSAGE })
   .optional()
-  .transform((value) => (value === undefined ? undefined : normalizeBarcode(value)));
+  .transform((value) =>
+    value === undefined ? undefined : normalizeBarcode(value === null ? null : cleanText(value)),
+  );
 
 const optionalSkuSchema = z
   .string({ message: UNIT_SKU_MESSAGE })
   .optional()
-  .transform((value) => normalizeOptionalSku(value) ?? undefined);
+  .transform(
+    (value) => normalizeOptionalSku(value === undefined ? undefined : cleanText(value)) ?? undefined,
+  );
 
 export const packConversionUnitProductSchema = z.object(
   {
     barcode: optionalNullableBarcodeSchema,
     currentCostRef: z.number({ message: UNIT_COST_MESSAGE }).min(0, UNIT_COST_MESSAGE).optional(),
-    name: z.string({ message: UNIT_NAME_MESSAGE }).min(1, UNIT_NAME_MESSAGE).optional(),
+    name: z
+      .string({ message: UNIT_NAME_MESSAGE })
+      .transform(cleanText)
+      .pipe(z.string().min(1, UNIT_NAME_MESSAGE))
+      .optional(),
     salePriceRef: z.number({ message: UNIT_SALE_PRICE_MESSAGE }).min(0, UNIT_SALE_PRICE_MESSAGE),
     sku: optionalSkuSchema,
   },
@@ -93,10 +103,14 @@ export const packConversionInputSchema = z
     enabled: z.boolean({ message: ENABLED_MESSAGE }),
     label: z
       .string({ message: LABEL_MESSAGE })
-      .trim()
-      .max(
-        PACK_RECIPE_LABEL_MAX_LENGTH,
-        `El nombre de la receta admite hasta ${PACK_RECIPE_LABEL_MAX_LENGTH} caracteres.`,
+      .transform(cleanText)
+      .pipe(
+        z
+          .string()
+          .max(
+            PACK_RECIPE_LABEL_MAX_LENGTH,
+            `El nombre de la receta admite hasta ${PACK_RECIPE_LABEL_MAX_LENGTH} caracteres.`,
+          ),
       )
       .nullish(),
     mode: z
@@ -235,7 +249,7 @@ export const convertPackToUnitsSchema = z.object({
     .number({ message: PACK_QUANTITY_MESSAGE })
     .int(PACK_QUANTITY_MESSAGE)
     .positive(PACK_QUANTITY_MESSAGE),
-  reason: z.string({ message: REASON_MESSAGE }).optional(),
+  reason: z.string({ message: REASON_MESSAGE }).transform(cleanText).optional(),
 });
 
 /**

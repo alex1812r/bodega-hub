@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { ApiError } from "@/lib/api/apiError";
 
+import { cleanText } from "./productText";
+
 /** Tope del % de ganancia sugerido (check `categories_default_markup_pct_check`, parche 20261009b). */
 export const CATEGORY_MARKUP_PCT_MAX = 1000;
 
@@ -23,20 +25,23 @@ export const categoryDefaultMarkupPctSchema = z
   .refine((pct) => pct > 0 && pct <= CATEGORY_MARKUP_PCT_MAX, CATEGORY_MARKUP_PCT_RANGE_MESSAGE)
   .nullable();
 
+/** Nombre de la categoría: sin caracteres de control ni espacios sobrantes, y no vacío. */
+const categoryNameSchema = z.string().transform(cleanText).pipe(z.string().min(1));
+
 /** Cuerpo de `POST /api/categories`. */
 export const createCategorySchema = z.object({
   defaultMarkupPct: categoryDefaultMarkupPctSchema.optional(),
-  description: z.string().optional(),
-  name: z.string().min(1),
+  description: z.string().transform(cleanText).optional(),
+  name: categoryNameSchema,
   taxRate: z.number().min(0).max(100).optional(),
 });
 
 /** Cuerpo de `PATCH /api/categories/{id}`. */
 export const updateCategorySchema = z.object({
   defaultMarkupPct: categoryDefaultMarkupPctSchema.optional(),
-  description: z.string().optional(),
+  description: z.string().transform(cleanText).optional(),
   isActive: z.boolean().optional(),
-  name: z.string().min(1).optional(),
+  name: categoryNameSchema.optional(),
   taxRate: z.number().min(0).max(100).optional(),
 });
 

@@ -27,3 +27,8 @@ export function stripControlChars(value: string): string {
 
   return clean;
 }
+
+/** Texto que llega del cliente: sin caracteres de control ni espacios sobrantes. */
+export function cleanText(value: string): string {
+  return stripControlChars(value).trim();
+}
