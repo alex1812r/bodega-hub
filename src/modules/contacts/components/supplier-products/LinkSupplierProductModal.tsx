@@ -2,18 +2,25 @@
 
 import { type FormEvent, type ReactNode, useId, useMemo, useState } from "react";
 
-import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useCreateSupplierProduct } from "@/modules/contacts/hooks/useSupplierProductMutations";
 import { useProducts } from "@/modules/products/hooks/useProducts";
 import { getPaginatedItems } from "@/lib/api/pagination";
+import {
+  type ContactEntityFilters,
+  type ContactEntityOption,
+  EntityAutocomplete,
+} from "@/shared/components/EntityAutocomplete";
 import { GenerateSkuIconButton } from "@/shared/components/GenerateSkuIconButton";
 import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
 import { SearchAutocomplete } from "@/shared/components/SearchAutocomplete";
-import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 import { generateSupplierSkuFromProduct } from "@/shared/utils/skuGeneration";
+
+const SUPPLIER_FILTERS: ContactEntityFilters = { active: true, type: ["proveedor", "ambos"] };
+const MISSING_PRODUCT_MESSAGE = "Selecciona un producto.";
+const MISSING_SUPPLIER_MESSAGE = "Selecciona un proveedor.";
 
 type LinkSupplierProductModalProps = {
   onOpenChange?: (open: boolean) => void;
@@ -46,7 +53,7 @@ export function LinkSupplierProductModal({
   const [productSearch, setProductSearch] = useState("");
   const [selectedProductLabel, setSelectedProductLabel] = useState("");
   const [selectedProductSku, setSelectedProductSku] = useState(fixedProductSku ?? "");
-  const [supplierId, setSupplierId] = useState(fixedSupplierId);
+  const [supplier, setSupplier] = useState<ContactEntityOption | null>(null);
   const [supplierSku, setSupplierSku] = useState("");
   const [lastCostRef, setLastCostRef] = useState("");
   const [notes, setNotes] = useState("");
@@ -57,7 +64,6 @@ export function LinkSupplierProductModal({
     limit: 20,
     search: trimmedProductSearch.length >= 2 ? trimmedProductSearch : undefined,
   });
-  const contacts = useContacts();
   const createSupplierProduct = useCreateSupplierProduct();
   const linkFromProduct = Boolean(fixedProductId);
 
@@ -71,26 +77,17 @@ export function LinkSupplierProductModal({
     [products.data],
   );
 
-  const supplierOptions = useMemo(
-    () =>
-      getPaginatedItems(contacts.data)
-        .filter((contact) => contact.type === "proveedor" || contact.type === "ambos")
-        .map((contact) => ({
-          label: contact.name,
-          value: contact.id,
-        })),
-    [contacts.data],
-  );
-
   const resolvedProductSku = fixedProductSku ?? selectedProductSku;
 
-  const resolvedSupplierName = useMemo(() => {
-    if (linkFromProduct) {
-      return supplierOptions.find((option) => option.value === supplierId)?.label ?? "";
-    }
-
-    return supplierName ?? "";
-  }, [linkFromProduct, supplierId, supplierName, supplierOptions]);
+  const resolvedSupplierName = linkFromProduct ? (supplier?.label ?? "") : (supplierName ?? "");
+  const productFieldError =
+    !linkFromProduct && !productId && errorMessage === MISSING_PRODUCT_MESSAGE
+      ? errorMessage
+      : undefined;
+  const supplierFieldError =
+    linkFromProduct && !supplier && errorMessage === MISSING_SUPPLIER_MESSAGE
+      ? errorMessage
+      : undefined;
 
   const canGenerateSupplierSku =
     resolvedProductSku.trim().length > 0 && resolvedSupplierName.trim().length > 0;
@@ -106,7 +103,7 @@ export function LinkSupplierProductModal({
       setProductSearch("");
       setSelectedProductLabel("");
       setSelectedProductSku(fixedProductSku ?? "");
-      setSupplierId(fixedSupplierId);
+      setSupplier(null);
       setSupplierSku("");
       setLastCostRef("");
       setNotes("");
@@ -119,15 +116,15 @@ export function LinkSupplierProductModal({
     setErrorMessage(null);
 
     const resolvedProductId = fixedProductId ?? productId;
-    const resolvedSupplierId = fixedSupplierId || supplierId;
+    const resolvedSupplierId = fixedSupplierId || (supplier?.id ?? "");
 
     if (!resolvedProductId) {
-      setErrorMessage("Selecciona un producto.");
+      setErrorMessage(MISSING_PRODUCT_MESSAGE);
       return;
     }
 
     if (!resolvedSupplierId) {
-      setErrorMessage("Selecciona un proveedor.");
+      setErrorMessage(MISSING_SUPPLIER_MESSAGE);
       return;
     }
 
@@ -180,18 +177,24 @@ export function LinkSupplierProductModal({
         {linkFromProduct ? (
           <>
             <Input label="Producto" readOnly value={productName ?? fixedProductId ?? ""} />
-            <SelectField
+            <EntityAutocomplete
+              entity="contact"
+              error={supplierFieldError}
+              filters={SUPPLIER_FILTERS}
               label="Proveedor"
-              onChange={(event) => setSupplierId(event.target.value)}
-              options={supplierOptions}
-              placeholder="Selecciona un proveedor"
+              onChange={(option) => {
+                setSupplier(option);
+                setErrorMessage(null);
+              }}
+              // Un reciente guardado puede haberse desactivado: aquí no se ofrecen.
+              recentsKey={null}
               required
-              value={supplierId}
+              value={supplier}
             />
           </>
         ) : (
           <SearchAutocomplete
-            error={!productId && errorMessage === "Selecciona un producto." ? errorMessage : undefined}
+            error={productFieldError}
             helperText="Escribe al menos 2 caracteres para buscar por nombre, SKU o codigo de barras."
             isLoading={products.isFetching && trimmedProductSearch.length >= 2}
             label="Producto"
@@ -251,7 +254,7 @@ export function LinkSupplierProductModal({
           rows={2}
           value={notes}
         />
-        {errorMessage && errorMessage !== "Selecciona un producto." ? (
+        {errorMessage && !productFieldError && !supplierFieldError ? (
           <p className="text-sm text-error">{errorMessage}</p>
         ) : null}
       </form>

@@ -1,64 +1,72 @@
 "use client";
 
 import { Building2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
+import { useContact } from "@/modules/contacts/hooks/useContacts";
+import {
+  type ContactEntityFilters,
+  EntityAutocomplete,
+  type EntityAutocompleteValue,
+  type EntityFetcher,
+} from "@/shared/components/EntityAutocomplete";
 import type { ContactMock } from "@/shared/mocks/erp-data";
 
 import { PurchaseCreateSectionCard } from "./PurchaseCreateSectionCard";
-import {
-  PurchaseSearchAutocomplete,
-  type PurchaseSearchOption,
-} from "./PurchaseSearchAutocomplete";
+
+const SUPPLIER_FILTERS: ContactEntityFilters = { active: true, type: ["proveedor", "ambos"] };
+const LOADING_SUPPLIER_PLACEHOLDER = "Cargando proveedor…";
 
 type PurchaseSupplierCardProps = {
   onSupplierChange: (supplierId: string) => void;
   selectedSupplierId: string;
-  suppliers: ContactMock[];
+  /** Búsqueda de proveedores; por defecto `GET /api/contacts`. */
+  supplierFetcher?: EntityFetcher<"contact">;
+  /**
+   * @deprecated La tarjeta busca los proveedores en servidor y ya no usa esta
+   * lista: la página dejará de pasarla.
+   */
+  suppliers?: ContactMock[];
 };
 
 export function PurchaseSupplierCard({
   onSupplierChange,
   selectedSupplierId,
-  suppliers,
+  supplierFetcher,
 }: PurchaseSupplierCardProps) {
-  const [query, setQuery] = useState("");
-
-  const selectedSupplier = suppliers.find((supplier) => supplier.id === selectedSupplierId);
-
-  const options = useMemo(() => {
-    const term = query.trim().toLowerCase();
-    if (!term) {
-      return [];
-    }
-
-    return suppliers
-      .filter(
-        (supplier) =>
-          supplier.name.toLowerCase().includes(term) ||
-          (supplier.taxId ?? "").toLowerCase().includes(term),
-      )
-      .slice(0, 8)
-      .map(
-        (supplier): PurchaseSearchOption => ({
-          id: supplier.id,
-          label: supplier.name,
-          sublabel: supplier.taxId,
-        }),
-      );
-  }, [query, suppliers]);
+  const [pickedSupplier, setPickedSupplier] = useState<EntityAutocompleteValue | null>(null);
+  const pickedLabel =
+    pickedSupplier?.id === selectedSupplierId ? pickedSupplier.label : undefined;
+  // El id que llega desde fuera (borrador restaurado, compra duplicada) no trae
+  // nombre: se lee el contacto solo en ese caso.
+  const externalSupplier = useContact(pickedLabel === undefined ? selectedSupplierId : undefined);
+  const isResolvingName =
+    Boolean(selectedSupplierId) && pickedLabel === undefined && externalSupplier.isPending;
+  const value: EntityAutocompleteValue | null = selectedSupplierId
+    ? { id: selectedSupplierId, label: pickedLabel ?? externalSupplier.data?.name ?? "" }
+    : null;
 
   return (
     <PurchaseCreateSectionCard icon={Building2} title="Datos del Proveedor">
-      <PurchaseSearchAutocomplete
+      <EntityAutocomplete
+        entity="contact"
+        error={
+          selectedSupplierId && pickedLabel === undefined && externalSupplier.error
+            ? externalSupplier.error.message
+            : undefined
+        }
+        fetcher={supplierFetcher}
+        filters={SUPPLIER_FILTERS}
         label="Proveedor"
-        onQueryChange={setQuery}
-        onSelect={(option) => onSupplierChange(option.id)}
-        options={options}
-        placeholder="Buscar proveedor por nombre o RIF..."
-        query={query}
+        onChange={(option) => {
+          setPickedSupplier(option ? { id: option.id, label: option.label } : null);
+          onSupplierChange(option?.id ?? "");
+        }}
+        placeholder={isResolvingName ? LOADING_SUPPLIER_PLACEHOLDER : undefined}
+        // Un reciente guardado puede haberse desactivado: aquí no se ofrecen.
+        recentsKey={null}
         required
-        selectedLabel={selectedSupplier?.name}
+        value={value}
       />
     </PurchaseCreateSectionCard>
   );
