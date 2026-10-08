@@ -13,6 +13,7 @@ import {
   type ProductPriceHistoryMock,
   type ProductMock,
 } from "@/shared/mocks/erp-data";
+import { getPricingSettings } from "@/modules/settings/services/settings.mock-server";
 import { generateProductSkuFromName, normalizeSku } from "@/shared/utils/skuGeneration";
 
 import type { PackConversionInput } from "./packConversionSchemas";
@@ -192,7 +193,7 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
   );
 
   const marginFilter = parseProductMarginFilter(searchParams);
-  const marginThresholds = getProductMarginThresholds();
+  const marginThresholds = getProductMarginThresholds(getPricingSettings(storeId));
 
   const products = mockProducts.filter((product) => {
     const matchesBarcode = !barcode || matchesExactBarcode(product, barcode);

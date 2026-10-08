@@ -442,3 +442,15 @@ notify pgrst, 'reload schema';
 -- OJO: reescribe la tabla products con bloqueo exclusivo mientras dura (aplicar fuera de hora pico).
 -- ORDEN DE DESPLIEGUE (PRO-07): aplicar ANTES de desplegar el BFF: GET /api/products?margin=... y sortBy=marginPct
 -- filtran y ordenan por margin_pct; sin el parche esas dos consultas responden error (el resto del listado no la usa).
+-- -----------------------------------------------------------------------------
+-- 20261009b — pricing settings (PRO-09): semaforo de ganancia y chips de % por tienda en app_settings
+--             (margin_yellow_from_pct 15, margin_green_from_pct 25, markup_chips_pct {12,20,30}) y % de ganancia sugerido
+--             por categoria (categories.default_markup_pct, opcional)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009b-pricing-settings.sql
+-- Requiere 20260716, 20261006i y 20261007a. Idempotente, una transaccion. No migra datos (las tiendas existentes reciben
+-- los valores por defecto de las columnas), no toca stock, dinero, precios, RPC, politicas ni grants. Regenera los
+-- triggers trg_zz_reject_non_finite_numeric_* de app_settings y categories para cubrir las columnas numeric nuevas.
+-- La alicuota por defecto para categorias nuevas ya existe (app_settings.default_tax_rate_id, 20261007a): no se duplica.
+-- ORDEN DE DESPLIEGUE (PRO-09): aplicar ANTES de desplegar el BFF: /api/settings, /api/settings/pricing, /api/categories
+-- y /api/products ya piden las columnas nuevas en sus select; sin el parche responden error.

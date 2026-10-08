@@ -6,9 +6,10 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import type { CategoryInput } from "./categories.mock-server";
+import { parseCategoryDefaultMarkupPct } from "./categorySchemas";
 
 const categorySelect =
-  "id, name, description, tax_rate, tax_rate_id, is_active, created_at, updated_at";
+  "id, name, description, tax_rate, tax_rate_id, default_markup_pct, is_active, created_at, updated_at";
 
 type CategoryWithTaxRateRow = CategoryRow & { tax_rate_id?: string | null };
 
@@ -20,8 +21,16 @@ function mapCategoryWithTaxRate(row: CategoryWithTaxRateRow) {
   };
 }
 
+/** Columna `default_markup_pct`: número validado, `null` para borrarla o nada si no viene. */
+function toDefaultMarkupPctColumn(input: CategoryInput): { default_markup_pct?: number | null } {
+  const defaultMarkupPct = parseCategoryDefaultMarkupPct(input.defaultMarkupPct);
+
+  return defaultMarkupPct === undefined ? {} : { default_markup_pct: defaultMarkupPct };
+}
+
 function toCategoryInsert(input: CategoryInput, storeId: string) {
   return {
+    ...toDefaultMarkupPctColumn(input),
     description: input.description ?? null,
     name: input.name ?? "Categoria",
     store_id: storeId,
@@ -31,6 +40,7 @@ function toCategoryInsert(input: CategoryInput, storeId: string) {
 
 function toCategoryUpdate(input: CategoryInput) {
   return {
+    ...toDefaultMarkupPctColumn(input),
     ...(input.description !== undefined ? { description: input.description ?? null } : {}),
     ...(input.isActive !== undefined ? { is_active: input.isActive } : {}),
     ...(input.name !== undefined ? { name: input.name } : {}),

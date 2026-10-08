@@ -1,5 +1,6 @@
 import { isUserRole, type UserRole } from "@/shared/auth/permissions";
 import { normalizeEnabledPaymentMethods } from "@/shared/payments/paymentMethods";
+import { DEFAULT_MARGIN_THRESHOLDS, DEFAULT_MARKUP_CHIPS } from "@/shared/utils/pricing";
 
 import { mapBaseEntity, mapBoolean } from "./base";
 import { mapPermissionList } from "./permissions";
@@ -18,6 +19,13 @@ export type AppSettingsRow = {
   id: number;
   invoice_prefix: string;
   low_stock_threshold: number;
+};
+
+/** Columnas de precios de `app_settings` (parche 20261009b). */
+export type PricingSettingsRow = {
+  margin_green_from_pct?: number | string | null;
+  margin_yellow_from_pct?: number | string | null;
+  markup_chips_pct?: ReadonlyArray<number | string> | null;
 };
 
 export type ProfileListRow = {
@@ -47,6 +55,34 @@ export function mapAppSettings(row: AppSettingsRow) {
     enabledPaymentMethods: normalizeEnabledPaymentMethods(row.enabled_payment_methods),
     invoicePrefix: row.invoice_prefix,
     lowStockThreshold: row.low_stock_threshold,
+  };
+}
+
+function toFiniteNumber(value: number | string | null | undefined, fallback: number) {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+/**
+ * Semaforo de ganancia y chips de % de la tienda. Sin fila (o sin la columna)
+ * valen los por defecto de `@bodega/core`. Los chips salen en orden ascendente.
+ */
+export function mapPricingSettings(row: PricingSettingsRow | null | undefined) {
+  const chips = (row?.markup_chips_pct ?? [])
+    .map((chip) => Number(chip))
+    .filter((chip) => Number.isFinite(chip));
+
+  return {
+    chipsPct: (chips.length > 0 ? chips : [...DEFAULT_MARKUP_CHIPS]).sort(
+      (first, second) => first - second,
+    ),
+    greenFromPct: toFiniteNumber(row?.margin_green_from_pct, DEFAULT_MARGIN_THRESHOLDS.high),
+    yellowFromPct: toFiniteNumber(row?.margin_yellow_from_pct, DEFAULT_MARGIN_THRESHOLDS.low),
   };
 }
 

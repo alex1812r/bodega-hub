@@ -303,6 +303,8 @@ describe("/api/products", () => {
       ilike: jest.fn().mockReturnThis(),
       is: mockIs,
       lt: mockLt,
+      // Fila de app_settings de la tienda: sin configuración, umbrales por defecto.
+      maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
       or: mockOr,
       order: mockOrder,
       range: mockRange,

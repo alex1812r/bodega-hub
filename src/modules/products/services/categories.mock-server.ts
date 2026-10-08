@@ -5,8 +5,11 @@ import { resolveMockCategoryTaxRate } from "@/modules/settings/services/taxRates
 import { mockCategories, type CategoryMock } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
+import { parseCategoryDefaultMarkupPct } from "./categorySchemas";
+
+/** `defaultMarkupPct: null` borra el % sugerido; sin el campo, no se toca. */
 export type CategoryInput = Partial<
-  Pick<CategoryMock, "description" | "isActive" | "name" | "taxRate">
+  Pick<CategoryMock, "defaultMarkupPct" | "description" | "isActive" | "name" | "taxRate">
 >;
 
 let lastMockCategorySequence = 0;
@@ -58,6 +61,7 @@ export function getCategoryById(id: string, storeId: string) {
 export function createCategory(input: CategoryInput, storeId: string) {
   // Como el trigger de la base: el porcentaje debe ser el de una alicuota de la tienda.
   const taxRate = resolveMockCategoryTaxRate(storeId, input.taxRate ?? 16);
+  const defaultMarkupPct = parseCategoryDefaultMarkupPct(input.defaultMarkupPct);
   const name = input.name ?? "Categoria mock";
   const isActive = input.isActive ?? true;
 
@@ -68,6 +72,7 @@ export function createCategory(input: CategoryInput, storeId: string) {
   lastMockCategorySequence += 1;
 
   const category: CategoryMock = {
+    ...(defaultMarkupPct != null ? { defaultMarkupPct } : {}),
     description: input.description,
     id: `cat-mock-${Date.now()}-${lastMockCategorySequence}`,
     isActive,
@@ -89,11 +94,14 @@ export function updateCategory(id: string, input: CategoryInput, storeId: string
     input.taxRate !== undefined && input.taxRate !== category.taxRate
       ? resolveMockCategoryTaxRate(storeId, input.taxRate)
       : undefined;
+  const defaultMarkupPct = parseCategoryDefaultMarkupPct(input.defaultMarkupPct);
 
   if (input.isActive ?? category.isActive) {
     assertActiveNameIsFree(input.name ?? category.name, storeId, id);
   }
 
+  if (defaultMarkupPct === null) delete category.defaultMarkupPct;
+  if (typeof defaultMarkupPct === "number") category.defaultMarkupPct = defaultMarkupPct;
   if (input.description !== undefined) category.description = input.description;
   if (input.isActive !== undefined) category.isActive = input.isActive;
   if (input.name !== undefined) category.name = input.name;

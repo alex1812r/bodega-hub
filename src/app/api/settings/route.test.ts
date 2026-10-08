@@ -112,6 +112,7 @@ describe("/api/settings", () => {
         ],
         invoicePrefix: "FAC",
         lowStockThreshold: 5,
+        pricing: { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 },
       });
     });
 

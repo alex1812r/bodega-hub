@@ -1,3 +1,4 @@
+import type { PricingSettingsMock } from "@/shared/mocks/erp-data";
 import {
   DEFAULT_MARGIN_THRESHOLDS,
   DEFAULT_MARKUP_CHIPS,
@@ -20,12 +21,28 @@ export type ProductMarginFilter = (typeof PRODUCT_MARGIN_FILTERS)[number];
 export const MARGIN_PCT_COLUMN = "margin_pct";
 
 /**
- * ÚNICO punto del servidor que decide los cortes de banda del listado (real y
- * mock). Hoy son los por defecto de `@bodega/core`; PRO-09 los leerá de la
- * configuración de la tienda cambiando solo esta función.
+ * Ajustes de precios de la tienda (`pricing` de `/api/settings` y
+ * `/api/settings/pricing`). Este módulo es puro (lo importan también los
+ * formularios del navegador): quien llama los lee UNA vez por petición —el
+ * servidor con `getPricingSettings(storeId)` de `settings.server` /
+ * `settings.mock-server`, la pantalla con `usePricingSettings()`— y los pasa aquí.
  */
-export function getProductMarginThresholds(): MarginThresholds {
-  return DEFAULT_MARGIN_THRESHOLDS;
+export type ProductPricingSettings = PricingSettingsMock;
+
+/**
+ * ÚNICO punto que decide los cortes de banda del semáforo y del filtro
+ * "Ganancia" del listado (real y mock): los configurados en la tienda o, si no
+ * se pasan (tienda sin configuración, ajustes aún cargando), los por defecto de
+ * `@bodega/core`.
+ */
+export function getProductMarginThresholds(
+  pricing?: ProductPricingSettings | null,
+): MarginThresholds {
+  if (!pricing) {
+    return DEFAULT_MARGIN_THRESHOLDS;
+  }
+
+  return { high: pricing.greenFromPct, low: pricing.yellowFromPct };
 }
 
 /** Lo que el bloque de precio (`PricingFields`) necesita además del costo y el precio. */
@@ -38,11 +55,24 @@ export type ProductPricingOptions = {
 /**
  * ÚNICO punto del que los formularios de precio (alta/edición de producto y
  * cambio de precio del detalle) obtienen los chips de % y los cortes del
- * semáforo. Hoy son los por defecto de `@bodega/core`; PRO-09 los leerá de la
- * configuración de la tienda cambiando solo esta función.
+ * semáforo: los de la tienda, o los por defecto de `@bodega/core` si no se pasan.
+ * El % sugerido de la categoría del producto (`category.defaultMarkupPct`), si
+ * tiene, va el PRIMERO y no se repite entre los de la tienda.
  */
-export function getProductPricingOptions(): ProductPricingOptions {
-  return { chips: DEFAULT_MARKUP_CHIPS, thresholds: getProductMarginThresholds() };
+export function getProductPricingOptions(
+  pricing?: ProductPricingSettings | null,
+  categoryMarkupPct?: number | null,
+): ProductPricingOptions {
+  const storeChips = pricing ? pricing.chipsPct : DEFAULT_MARKUP_CHIPS;
+  const hasCategoryChip =
+    typeof categoryMarkupPct === "number" && Number.isFinite(categoryMarkupPct) && categoryMarkupPct > 0;
+
+  return {
+    chips: hasCategoryChip
+      ? [categoryMarkupPct, ...storeChips.filter((chip) => chip !== categoryMarkupPct)]
+      : storeChips,
+    thresholds: getProductMarginThresholds(pricing),
+  };
 }
 
 /** Un valor desconocido no filtra (igual que el resto de filtros del listado). */

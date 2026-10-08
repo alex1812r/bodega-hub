@@ -10,6 +10,7 @@ import {
 import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { getSupabaseUrl } from "@/lib/supabase/env";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { getPricingSettings } from "@/modules/settings/services/settings.server";
 
 import {
   attachPackConversionToProduct,
@@ -74,7 +75,7 @@ const productSelect = `
   is_active,
   created_at,
   updated_at,
-  category:categories(id, name, description, tax_rate, is_active, created_at, updated_at)
+  category:categories(id, name, description, tax_rate, default_markup_pct, is_active, created_at, updated_at)
 `;
 
 function toProductInsert(input: ProductInput, sku: string, storeId: string) {
@@ -187,12 +188,15 @@ export async function listProducts(searchParams: URLSearchParams, storeId: strin
     .select(productSelect, { count: "exact" })
     .eq("store_id", storeId);
 
-  query = applyProductFilters(query, searchParams);
-  query = applyProductMarginFilter(
-    query,
-    parseProductMarginFilter(searchParams),
-    getProductMarginThresholds(),
+  // Los cortes del semáforo son los de la tienda: una sola lectura por petición
+  // y solo cuando el filtro los usa ("none" y sin filtro no los necesitan).
+  const marginFilter = parseProductMarginFilter(searchParams);
+  const marginThresholds = getProductMarginThresholds(
+    marginFilter !== null && marginFilter !== "none" ? await getPricingSettings(storeId) : null,
   );
+
+  query = applyProductFilters(query, searchParams);
+  query = applyProductMarginFilter(query, marginFilter, marginThresholds);
 
   if (packLinkedIds.length > 0) {
     query = query.not("id", "in", `(${packLinkedIds.join(",")})`);

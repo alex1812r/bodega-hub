@@ -175,16 +175,30 @@ describe("products.server listProducts: packLink=none", () => {
 });
 
 describe("products.server listProducts: margin filter and sort", () => {
-  function setup() {
+  /** `pricingRow` es la fila de `app_settings` de la tienda (null = tienda sin configuración). */
+  function setup(pricingRow: Record<string, unknown> | null = null) {
     const supabase = createMockSupabase();
 
     for (const method of ["gte", "is", "lt"]) {
       supabase.chain[method] = jest.fn().mockReturnValue(supabase.chain);
     }
 
+    supabase.chain.maybeSingle = jest.fn().mockResolvedValue({ data: pricingRow, error: null });
+    supabase.chain.from = supabase.from;
+
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue(supabase);
 
     return supabase.chain;
+  }
+
+  const configuredPricing = {
+    margin_green_from_pct: "40.00",
+    margin_yellow_from_pct: "10.00",
+    markup_chips_pct: [5, 50],
+  };
+
+  function settingsReads(chain: Record<string, jest.Mock>) {
+    return chain.from.mock.calls.filter(([table]) => table === "app_settings").length;
   }
 
   beforeEach(() => {
@@ -227,6 +241,52 @@ describe("products.server listProducts: margin filter and sort", () => {
     expect(chain.is.mock.calls).toEqual([["margin_pct", null]]);
     expect(chain.gte).not.toHaveBeenCalled();
     expect(chain.lt).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["low", [], [["margin_pct", 10]]],
+    ["mid", [["margin_pct", 10]], [["margin_pct", 40]]],
+    ["high", [["margin_pct", 40]], []],
+  ])(
+    "sends the %s band with the thresholds configured in the store, read once",
+    async (band, gte, lt) => {
+      const chain = setup(configuredPricing);
+
+      await listProducts(new URLSearchParams(`margin=${band}`), OTHER_STORE_ID);
+
+      expect(chain.gte.mock.calls).toEqual(gte);
+      expect(chain.lt.mock.calls).toEqual(lt);
+      expect(settingsReads(chain)).toBe(1);
+      expect(chain.select).toHaveBeenCalledWith(
+        "margin_yellow_from_pct, margin_green_from_pct, markup_chips_pct",
+      );
+      expect(chain.eq.mock.calls.filter(([column]) => column === "store_id")).toEqual([
+        ["store_id", OTHER_STORE_ID],
+        ["store_id", OTHER_STORE_ID],
+      ]);
+    },
+  );
+
+  it.each(["", "margin=none", "margin=verde", "sortBy=marginPct"])(
+    "does not read the store settings when the query [%s] does not need the thresholds",
+    async (queryString) => {
+      const chain = setup(configuredPricing);
+
+      await listProducts(new URLSearchParams(queryString), DEFAULT_STORE_ID);
+
+      expect(settingsReads(chain)).toBe(0);
+    },
+  );
+
+  it("asks for the suggested % of the category in the product select", async () => {
+    const chain = setup();
+
+    await listProducts(new URLSearchParams(""), DEFAULT_STORE_ID);
+
+    expect(chain.select).toHaveBeenCalledWith(
+      expect.stringContaining("category:categories(id, name, description, tax_rate, default_markup_pct,"),
+      { count: "exact" },
+    );
   });
 
   it.each(["", "margin=", "margin=all", "margin=verde"])(

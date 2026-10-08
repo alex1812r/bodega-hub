@@ -5,6 +5,9 @@ export const TAX_RATE_CODE_PATTERN = /^[a-z0-9]+([.-][a-z0-9]+)*$/;
 export const TAX_RATE_CODE_MAX_LENGTH = 40;
 
 export const TAX_RATE_NOT_FOUND_MESSAGE = "Alicuota de IVA no encontrada.";
+/** Rechazo (400) al elegir como alícuota por defecto una que la tienda no ve o que está inactiva. */
+export const DEFAULT_TAX_RATE_UNAVAILABLE_MESSAGE =
+  "La alícuota de IVA por defecto no existe o no está activa para esta tienda.";
 
 /** Alicuota de IVA tal como la devuelve `/api/tax-rates`. */
 export type TaxRate = {

@@ -2470,6 +2470,29 @@ paths:
           $ref: "#/components/responses/ReportObjectResponse"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/settings/pricing:
+    get:
+      tags: [Settings]
+      summary: Semaforo de ganancia y chips de % de la tienda (solo lectura)
+      description: >-
+        Los mismos valores que `pricing` de /api/settings, para quien ve productos
+        sin `settings.view` (vendedor, almacen). Basta uno de los dos permisos. Una
+        tienda sin configuracion responde los valores por defecto (15 / 25 y chips
+        12, 20, 30). Se cambian con PATCH /api/settings (`pricing`).
+      x-permission: products.view
+      responses:
+        "200":
+          description: Ajustes de precios de la tienda
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PricingSettings"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/tax-rates:
     get:
       tags: [Settings]
@@ -4505,6 +4528,34 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PaymentMethod"
+    PricingSettings:
+      type: object
+      required: [yellowFromPct, greenFromPct, chipsPct]
+      description: >-
+        Semaforo de ganancia (markup sobre el costo en REF) y % recomendados del
+        bloque de precio. Es una alerta: no bloquea ventas ni cambia precios.
+      properties:
+        yellowFromPct:
+          type: number
+          minimum: 0
+          maximum: 1000
+          description: Por debajo de este % la ganancia es roja; desde aqui, amarilla. Debe ser menor que `greenFromPct`.
+        greenFromPct:
+          type: number
+          minimum: 0
+          maximum: 1000
+          description: Desde este % la ganancia es verde.
+        chipsPct:
+          type: array
+          minItems: 1
+          maxItems: 6
+          uniqueItems: true
+          description: "% recomendados, en orden ascendente."
+          items:
+            type: number
+            minimum: 0
+            exclusiveMinimum: true
+            maximum: 1000
     AppSettingsResponse:
       type: object
       required: [data]

@@ -1127,4 +1127,78 @@ select
       and indexname = 'products_store_margin_pct_idx'
       and indexdef ilike '%(store_id, margin_pct)%'
   )
+union all
+select
+  'app_settings: semaforo y chips por tienda (margin_yellow_from_pct 15, margin_green_from_pct 25, markup_chips_pct {12,20,30}), not null (20261009b)',
+  (
+    select count(*) = 3
+    from pg_attribute a
+    join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+    where a.attrelid = to_regclass('public.app_settings')
+      and not a.attisdropped
+      and a.attnotnull
+      and (
+        (a.attname = 'margin_yellow_from_pct' and a.atttypid = 'numeric'::regtype and pg_get_expr(d.adbin, d.adrelid) = '15')
+        or (a.attname = 'margin_green_from_pct' and a.atttypid = 'numeric'::regtype and pg_get_expr(d.adbin, d.adrelid) = '25')
+        or (a.attname = 'markup_chips_pct' and a.atttypid = 'numeric[]'::regtype and pg_get_expr(d.adbin, d.adrelid) ilike '%{12,20,30}%')
+      )
+  )
+union all
+select
+  'app_settings: checks 0 <= amarillo < verde <= 1000 y chips validos (1 a 6, > 0 y <= 1000, sin duplicados) (20261009b)',
+  (
+    select count(*) = 2
+    from pg_constraint c
+    where c.conrelid = to_regclass('public.app_settings')
+      and c.contype = 'c'
+      and c.convalidated
+      and (
+        (c.conname = 'app_settings_margin_thresholds_check'
+          and pg_get_constraintdef(c.oid) ilike '%margin_yellow_from_pct >= %margin_yellow_from_pct < margin_green_from_pct%margin_green_from_pct <= %1000%')
+        or (c.conname = 'app_settings_markup_chips_check'
+          and pg_get_constraintdef(c.oid) ilike '%is_valid_markup_chips(markup_chips_pct)%')
+      )
+  )
+  and exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.is_valid_markup_chips(numeric[])')
+      and p.provolatile = 'i'
+      and not p.prosecdef
+      and p.prosrc ilike '%coalesce(%array_ndims(p_chips) = 1%between 1 and 6%chip.pct > 0 and chip.pct <= 1000%count(distinct chip.pct)%false%'
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'categories.default_markup_pct: numeric opcional con check NULL o (> 0 y <= 1000) (20261009b)',
+  exists (
+    select 1
+    from pg_attribute a
+    join pg_constraint c on c.conrelid = a.attrelid and c.conname = 'categories_default_markup_pct_check'
+    where a.attrelid = to_regclass('public.categories')
+      and a.attname = 'default_markup_pct'
+      and not a.attisdropped
+      and not a.attnotnull
+      and a.atttypid = 'numeric'::regtype
+      and c.contype = 'c'
+      and c.convalidated
+      and pg_get_constraintdef(c.oid) ilike '%default_markup_pct is null%default_markup_pct > %default_markup_pct <= %1000%'
+  )
+union all
+select
+  'app_settings y categories: los triggers de NaN / Infinity cubren las columnas numeric nuevas (20261009b)',
+  (
+    select count(*) = 4
+    from pg_trigger t
+    where not t.tgisinternal
+      and t.tgfoid = to_regprocedure('public.reject_non_finite_numeric()')
+      and t.tgname in ('trg_zz_reject_non_finite_numeric_ins', 'trg_zz_reject_non_finite_numeric_upd')
+      and (
+        (t.tgrelid = to_regclass('public.app_settings')
+          and pg_get_triggerdef(t.oid) ilike '%margin_yellow_from_pct%margin_green_from_pct%')
+        or (t.tgrelid = to_regclass('public.categories')
+          and pg_get_triggerdef(t.oid) ilike '%default_markup_pct%')
+      )
+  )
 order by 1;

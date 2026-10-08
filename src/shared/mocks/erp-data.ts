@@ -39,6 +39,12 @@ export type CategoryMock = {
   taxRate: number;
   /** Alicuota de IVA de la categoria (`tax_rates.id`); `taxRate` es su porcentaje. */
   taxRateId?: string | null;
+  /**
+   * % de ganancia sugerido para los productos de la categoria
+   * (`categories.default_markup_pct`). Ausente = sin sugerencia; al escribir,
+   * `null` la borra.
+   */
+  defaultMarkupPct?: number | null;
 };
 
 /** Alicuota de IVA. `storeId: null` = global; con tienda manda sobre la global del mismo `code`. */
@@ -289,6 +295,16 @@ export type UserProfileMock = {
   storeId?: string | null;
 };
 
+/** Ajustes de precios de la tienda: semaforo de ganancia y chips de % recomendados. */
+export type PricingSettingsMock = {
+  /** % recomendados del bloque de precio, en orden ascendente y sin duplicados. */
+  chipsPct: number[];
+  /** Desde este % la ganancia es verde. */
+  greenFromPct: number;
+  /** Por debajo de este % la ganancia es roja; desde aqui, amarilla. */
+  yellowFromPct: number;
+};
+
 export type AppSettingsMock = {
   businessName: string;
   defaultTaxRate: number;
@@ -297,6 +313,8 @@ export type AppSettingsMock = {
   enabledPaymentMethods: PaymentMethod[];
   invoicePrefix: string;
   lowStockThreshold: number;
+  /** Semaforo de ganancia y chips de % de la tienda (parche 20261009b). */
+  pricing: PricingSettingsMock;
   storeId?: string | null;
 };
 
@@ -1564,4 +1582,6 @@ export const mockAppSettings: AppSettingsMock = {
   ],
   invoicePrefix: "V",
   lowStockThreshold: 5,
+  // Los valores por defecto de `@bodega/core` (y de las columnas del parche 20261009b).
+  pricing: { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 },
 };

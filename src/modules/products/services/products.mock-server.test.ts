@@ -2,6 +2,8 @@
  * @jest-environment node
  */
 
+import { updateSettings } from "@/modules/settings/services/settings.mock-server";
+import { resetMockTaxRates } from "@/modules/settings/services/taxRates.testing";
 import { mockProductPriceHistory, mockProducts, type ProductMock } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
@@ -166,6 +168,40 @@ describe("products.mock-server listProducts: margin filter and sort (parity with
 
   it("none = products without cost, outside the three bands", () => {
     expect(marginIds("margin=none&sortBy=sku")).toEqual(["m-sin-costo", "m-sin-costo-gratis"]);
+  });
+
+  describe("with thresholds configured in the store (red < 20, green from 24.99)", () => {
+    beforeAll(() => {
+      updateSettings(
+        { pricing: { chipsPct: [12], greenFromPct: 24.99, yellowFromPct: 20 } },
+        MARGIN_STORE_ID,
+      );
+    });
+
+    afterAll(() => {
+      resetMockTaxRates();
+    });
+
+    it("splits the bands with the store thresholds instead of the defaults", () => {
+      expect(marginIds("margin=low&sortBy=marginPct")).toEqual(["m-negativo", "m-14.99", "m-15"]);
+      expect(marginIds("margin=mid&sortBy=marginPct")).toEqual([]);
+      expect(marginIds("margin=high&sortBy=marginPct")).toEqual(["m-24.99", "m-25"]);
+      expect(marginIds("margin=none&sortBy=sku")).toEqual(["m-sin-costo", "m-sin-costo-gratis"]);
+    });
+
+    it("does not change the bands of another store", () => {
+      const moved = { ...fixtures[4], id: "m-15-otra", sku: "m-15-otra", storeId: OTHER_STORE_ID };
+
+      mockProducts.push(moved);
+
+      try {
+        expect(
+          list("margin=mid&limit=100", OTHER_STORE_ID).items.map((product) => product.id),
+        ).toContain("m-15-otra");
+      } finally {
+        mockProducts.splice(mockProducts.indexOf(moved), 1);
+      }
+    });
   });
 
   it("the four filters split the catalog without overlap", () => {

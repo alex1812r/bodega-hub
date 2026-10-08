@@ -1,18 +1,10 @@
-import { z } from "zod";
-
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as categoriesMockServer from "@/modules/products/services/categories.mock-server";
 import * as categoriesServer from "@/modules/products/services/categories.server";
-
-const updateCategorySchema = z.object({
-  description: z.string().optional(),
-  isActive: z.boolean().optional(),
-  name: z.string().min(1).optional(),
-  taxRate: z.number().min(0).max(100).optional(),
-});
+import { updateCategorySchema } from "@/modules/products/services/categorySchemas";
 
 function getCategoriesService() {
   return resolveDataSource() === "supabase" ? categoriesServer : categoriesMockServer;

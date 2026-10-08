@@ -13,6 +13,7 @@ import {
 } from "./productMargin";
 
 const thresholds = { high: 25, low: 15 };
+const storePricing = { chipsPct: [5, 18, 50], greenFromPct: 40, yellowFromPct: 10 };
 
 /** Costo 100: el precio es directamente 100 + %. */
 function priced(pct: number) {
@@ -39,9 +40,30 @@ function recordingQuery(calls: Call[] = []) {
 }
 
 describe("productMargin", () => {
-  it("uses the default thresholds of @bodega/core as the single server source", () => {
-    expect(getProductMarginThresholds()).toEqual(DEFAULT_MARGIN_THRESHOLDS);
-    expect(getProductMarginThresholds()).toEqual({ high: 25, low: 15 });
+  describe("getProductMarginThresholds", () => {
+    it.each([undefined, null])("uses the defaults of @bodega/core without store settings (%p)", (pricing) => {
+      expect(getProductMarginThresholds(pricing)).toEqual(DEFAULT_MARGIN_THRESHOLDS);
+      expect(getProductMarginThresholds(pricing)).toEqual({ high: 25, low: 15 });
+    });
+
+    it("uses the thresholds configured in the store", () => {
+      expect(getProductMarginThresholds(storePricing)).toEqual({ high: 40, low: 10 });
+    });
+
+    it("a yellow threshold of 0 is a configured value, not a missing one", () => {
+      expect(getProductMarginThresholds({ ...storePricing, yellowFromPct: 0 })).toEqual({ high: 40, low: 0 });
+    });
+
+    it("moves the bands of the listing filter with the store thresholds", () => {
+      const configured = getProductMarginThresholds(storePricing);
+
+      expect(marginBandRange("low", configured)).toEqual({ lt: 10 });
+      expect(marginBandRange("mid", configured)).toEqual({ gte: 10, lt: 40 });
+      expect(marginBandRange("high", configured)).toEqual({ gte: 40 });
+      expect(matchesProductMarginFilter(priced(30), "high", configured)).toBe(false);
+      expect(matchesProductMarginFilter(priced(30), "mid", configured)).toBe(true);
+      expect(matchesProductMarginFilter(priced(12), "low", configured)).toBe(false);
+    });
   });
 
   describe("productMarginPct", () => {
@@ -139,6 +161,36 @@ describe("productMargin", () => {
         chips: [12, 20, 30],
         thresholds: getProductMarginThresholds(),
       });
+      expect(getProductPricingOptions(null, null)).toEqual(getProductPricingOptions());
+    });
+
+    it("offers the chips and thresholds configured in the store", () => {
+      expect(getProductPricingOptions(storePricing)).toEqual({
+        chips: [5, 18, 50],
+        thresholds: { high: 40, low: 10 },
+      });
+    });
+
+    it("puts the suggested % of the category first, before the store chips", () => {
+      expect(getProductPricingOptions(storePricing, 35).chips).toEqual([35, 5, 18, 50]);
+      expect(getProductPricingOptions(undefined, 35).chips).toEqual([35, 12, 20, 30]);
+    });
+
+    it("does not repeat the category % when the store already offers it", () => {
+      expect(getProductPricingOptions(storePricing, 18).chips).toEqual([18, 5, 50]);
+    });
+
+    it.each([null, undefined, 0, -5, Number.NaN])(
+      "ignores a category without a usable suggestion (%p)",
+      (categoryMarkupPct) => {
+        expect(getProductPricingOptions(storePricing, categoryMarkupPct).chips).toEqual([5, 18, 50]);
+      },
+    );
+
+    it("never mutates the store settings", () => {
+      getProductPricingOptions(storePricing, 35);
+
+      expect(storePricing.chipsPct).toEqual([5, 18, 50]);
     });
   });
 });
