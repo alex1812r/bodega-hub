@@ -8,12 +8,15 @@ import {
   type ProductPriceReviewRow,
 } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
-import { priceFromMarkup } from "@/shared/utils/pricing";
 
 import {
   buildRepriceReason,
+  COST_CHANGED_CODE,
+  NO_COST_HINT,
+  normalizeRepriceMarkupPct,
   PRICE_REVIEW_COLUMNS,
   REPRICE_NO_COST_MESSAGE,
+  resolveRepriceTargets,
   summarizeReprice,
   toProductPriceHistoryEntry,
   type ProductPriceReviewItem,
@@ -85,6 +88,8 @@ export async function keepProductPrice(id: string, input: KeepProductPriceInput,
   const { data, error } = await supabase.rpc("keep_product_price", {
     p_product_id: id,
     p_reason: input.reason ?? null,
+    // Con el costo que vio el usuario, la base responde PT409 (409) si ya es otro.
+    ...(input.expectedCostRef === undefined ? {} : { p_expected_cost_ref: input.expectedCostRef }),
   });
 
   throwIfSupabaseError(error);
@@ -96,60 +101,57 @@ export async function keepProductPrice(id: string, input: KeepProductPriceInput,
   return toProductPriceHistoryEntry(data as ProductPriceHistoryRow);
 }
 
-type RepriceProductRow = { current_cost_ref: number | string | null; id: string };
+/** Error de `reprice_product_to_markup` como fila del lote; el `hint` distingue los rechazos propios. */
+function toRepriceFailure(productId: string, error: { hint?: string | null }): RepriceProductResult {
+  const mapped = mapSupabaseError(error);
+
+  if (error.hint === COST_CHANGED_CODE) {
+    return { code: COST_CHANGED_CODE, message: mapped.message, productId, status: "error" };
+  }
+
+  if (error.hint === NO_COST_HINT) {
+    return { code: "NO_COST", message: REPRICE_NO_COST_MESSAGE, productId, status: "error" };
+  }
+
+  return { code: mapped.code, message: mapped.message, productId, status: "error" };
+}
 
 /**
- * Reprecio masivo: precio = costo × (1 + % / 100) con `priceFromMarkup` de
- * `@bodega/core`, un `update_product_price` por producto. Un fallo no aborta el
- * lote: cada producto responde con su precio nuevo o con su error. Un producto
- * sin costo es un error de su fila (nunca se le pone precio 0).
+ * Reprecio masivo: una RPC `reprice_product_to_markup` por producto. El precio
+ * (costo × (1 + % / 100), con el redondeo de `priceFromMarkup` de `@bodega/core`)
+ * se calcula EN LA BASE con el producto bloqueado: aquí no se lee el costo, que
+ * podía cambiar (una compra recibida) entre la lectura y el cambio de precio.
+ * Con el costo que vio el usuario (`items`), la fila cuyo costo ya es otro
+ * responde `COST_CHANGED` sin tocar el precio. Un fallo no aborta el lote: cada
+ * producto responde con su precio nuevo o con su error. Un producto sin costo es
+ * un error de su fila (nunca se le pone precio 0).
  */
-export async function repriceProducts(input: RepriceProductsInput, storeId: string) {
+export async function repriceProducts(input: RepriceProductsInput) {
   const supabase = await createRouteSupabaseClient();
-  const productIds = [...new Set(input.productIds)];
   const reason = input.reason ?? buildRepriceReason(input.markupPct);
-
-  const { data, error } = await supabase
-    .from("products")
-    .select("id, current_cost_ref")
-    .eq("store_id", storeId)
-    .in("id", productIds);
-
-  throwIfSupabaseError(error);
-
-  const costById = new Map(
-    ((data ?? []) as RepriceProductRow[]).map((row) => [row.id, Number(row.current_cost_ref ?? 0)]),
-  );
+  const markupPct = normalizeRepriceMarkupPct(input.markupPct);
   const results: RepriceProductResult[] = [];
 
   // Uno a uno y en orden: cada RPC bloquea su producto y registra su historial.
-  for (const productId of productIds) {
-    const costRef = costById.get(productId);
-
-    if (costRef === undefined) {
-      results.push({ code: "NOT_FOUND", message: "Producto no encontrado.", productId, status: "error" });
-      continue;
-    }
-
-    if (!Number.isFinite(costRef) || costRef <= 0) {
-      results.push({ code: "NO_COST", message: REPRICE_NO_COST_MESSAGE, productId, status: "error" });
-      continue;
-    }
-
-    const salePriceRef = priceFromMarkup(costRef, input.markupPct);
-    const { error: priceError } = await supabase.rpc("update_product_price", {
-      p_new_sale_price_ref: salePriceRef,
+  // La tienda la fija la sesión dentro de la RPC (otra tienda: PT404).
+  for (const { expectedCostRef, productId } of resolveRepriceTargets(input)) {
+    const { data, error } = await supabase.rpc("reprice_product_to_markup", {
+      p_expected_cost_ref: expectedCostRef,
+      p_markup_pct: markupPct,
       p_product_id: productId,
       p_reason: reason,
     });
 
-    if (priceError) {
-      const mapped = mapSupabaseError(priceError);
-      results.push({ code: mapped.code, message: mapped.message, productId, status: "error" });
+    if (error) {
+      results.push(toRepriceFailure(productId, error));
       continue;
     }
 
-    results.push({ productId, salePriceRef, status: "ok" });
+    results.push({
+      productId,
+      salePriceRef: Number((data as { sale_price_ref: number | string }).sale_price_ref),
+      status: "ok",
+    });
   }
 
   return summarizeReprice(results);

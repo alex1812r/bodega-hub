@@ -93,6 +93,8 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
 
     try {
       await updatePrice.mutateAsync({
+        // El precio propuesto sale de este costo: si ya es otro, 409 y no se aplica.
+        expectedCostRef: item.currentCostRef,
         reason: `${buildRepriceReason(proposal.markupPct)}${purchaseNumber ? ` por compra ${purchaseNumber}` : ""}`,
         salePriceRef: proposal.salePriceRef,
       });
@@ -114,6 +116,7 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
 
     try {
       await keepPrice.mutateAsync({
+        expectedCostRef: item.currentCostRef,
         productId: item.productId,
         reason: purchaseNumber ? `Precio mantenido tras compra ${purchaseNumber}` : undefined,
       });

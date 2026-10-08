@@ -101,9 +101,10 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
 
   // `mutate`, no `mutateAsync`: la tarjeta no espera el resultado y un fallo
   // se queda en `quickPriceUpdate.error` (se pinta abajo) en vez de subir como
-  // promesa rechazada sin manejar.
-  function handleQuickPriceUpdate(salePriceRef: number, reason: string) {
-    quickPriceUpdate.mutate({ reason, salePriceRef });
+  // promesa rechazada sin manejar. `expectedCostRef` es el costo que mostraba
+  // la tarjeta: si ya es otro, el servidor responde 409 y los datos se refrescan.
+  function handleQuickPriceUpdate(salePriceRef: number, reason: string, expectedCostRef: number) {
+    quickPriceUpdate.mutate({ expectedCostRef, reason, salePriceRef });
   }
 
   if (product.isLoading) {

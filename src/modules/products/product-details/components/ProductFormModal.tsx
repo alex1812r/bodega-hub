@@ -18,6 +18,7 @@ import { flushSync } from "react-dom";
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { InventoryAdjustmentModal } from "@/modules/inventory/inventory-movements/components/InventoryAdjustmentModal";
+import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { Can } from "@/shared/auth/Can";
 import { Button } from "@/shared/components/Button";
@@ -400,6 +401,10 @@ export function ProductFormModal({
   // Candado propio: `isSubmitting` llega con el siguiente render, tarde para un
   // segundo Enter o un clic en el mismo tick.
   const isSubmitInFlightRef = useRef(false);
+  // Clave de idempotencia del alta (C6), como en la compra: se conserva mientras
+  // se reintenta el MISMO envío (respuesta perdida, 5xx) y se renueva tras el
+  // éxito (también con "Guardar y crear otro") y al reabrir el formulario.
+  const createAttempt = useRequestAttempt();
   const [failedSubmits, setFailedSubmits] = useState(0);
   const isUnitRole = product?.packConversion?.role === "unit";
   const suppliersBridgeRef = useRef<ProductSuppliersBridgeHandle | null>(null);
@@ -419,6 +424,13 @@ export function ProductFormModal({
   /** Alta ya guardada cuyos proveedores fallaron: al reintentar no se vuelve a crear. */
   const [createdProduct, setCreatedProduct] = useState<ProductWithCategory | null>(null);
   const isBusy = isSubmitting || isSavingSuppliers;
+
+  useEffect(() => {
+    if (isOpen) {
+      // Apertura nueva = intento nuevo: cierra el anterior para estrenar clave.
+      createAttempt.succeed();
+    }
+  }, [createAttempt, isOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -753,13 +765,26 @@ export function ProductFormModal({
 
       // Un alta cuyos proveedores fallaron ya está creada: solo se reintentan ellos.
       if (!createdProduct) {
+        // Solo el alta lleva clave; `null` = ya hay un envío en vuelo.
+        const clientRequestId = isEdit ? undefined : createAttempt.begin(input);
+
+        if (clientRequestId === null) {
+          return;
+        }
+
         try {
-          created = (await onSubmit?.(input, { pendingImageBlob })) ?? undefined;
-        } catch {
+          created =
+            (await onSubmit?.(clientRequestId ? { ...input, clientRequestId } : input, {
+              pendingImageBlob,
+            })) ?? undefined;
+        } catch (error) {
+          createAttempt.fail(error);
           setFailedSubmits((count) => count + 1);
 
           return;
         }
+
+        createAttempt.succeed();
 
         if (!isEdit && created) {
           onCreated?.(created);

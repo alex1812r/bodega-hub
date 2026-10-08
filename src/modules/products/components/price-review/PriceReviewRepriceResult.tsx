@@ -12,6 +12,7 @@ type PriceReviewRepriceResultProps = {
 };
 
 const FAILURE_LABELS: Record<string, string> = {
+  COST_CHANGED: "El costo cambió; vuelve a revisar",
   NO_COST: "Sin costo",
 };
 

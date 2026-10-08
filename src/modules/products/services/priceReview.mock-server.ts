@@ -1,3 +1,4 @@
+import { ApiError } from "@/lib/api/apiError";
 import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
 import { findMockPurchase } from "@/modules/purchases/services/purchases.mock-server";
@@ -15,14 +16,19 @@ import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { priceFromMarkup } from "@/shared/utils/pricing";
 
 import {
+  buildCostChangedMessage,
   buildPriceReview,
   buildRepriceReason,
   comparePriceReviewItems,
+  COST_CHANGED_CODE,
   getPriceHistoryKind,
   getPriceSnapshotBand,
+  isSameCostRef,
+  normalizeRepriceMarkupPct,
   PRICE_BASELINE_REASON,
   PRICE_KEEP_REASON,
   REPRICE_NO_COST_MESSAGE,
+  resolveRepriceTargets,
   summarizeReprice,
   type ProductPriceHistoryEntry,
   type ProductPriceReview,
@@ -273,10 +279,36 @@ export function getPriceReviewSummary(storeId: string) {
   return { total: listStoreReviewItems(storeId).length };
 }
 
+/**
+ * Como `assert_expected_cost_ref` en la base: con el costo que vio el usuario,
+ * 409 si el producto ya cuesta otra cosa (a dos decimales). Sin él no comprueba nada.
+ */
+export function assertMockExpectedCost(
+  id: string,
+  expectedCostRef: number | null | undefined,
+  storeId: string,
+) {
+  const product = mockProducts.find((item) => item.id === id);
+  assertMockStoreResource(product, storeId, "Producto no encontrado.");
+
+  if (
+    expectedCostRef !== null &&
+    expectedCostRef !== undefined &&
+    !isSameCostRef(expectedCostRef, product.currentCostRef)
+  ) {
+    throw new ApiError(
+      409,
+      "CONFLICT",
+      buildCostChangedMessage(expectedCostRef, product.currentCostRef),
+    );
+  }
+}
+
 /** Como la RPC `keep_product_price`: nueva instantánea con el mismo precio; el producto no cambia. */
 export function keepProductPrice(id: string, input: KeepProductPriceInput, storeId: string) {
   const product = mockProducts.find((item) => item.id === id);
   assertMockStoreResource(product, storeId, "Producto no encontrado.");
+  assertMockExpectedCost(id, input.expectedCostRef, storeId);
   ensureMockPriceBaselines();
 
   return toMockPriceHistoryEntry(
@@ -294,7 +326,7 @@ export function repriceProducts(input: RepriceProductsInput, storeId: string) {
   const reason = input.reason ?? buildRepriceReason(input.markupPct);
   const results: RepriceProductResult[] = [];
 
-  for (const productId of new Set(input.productIds)) {
+  for (const { expectedCostRef, productId } of resolveRepriceTargets(input)) {
     const product = mockProducts.find((item) => item.id === productId && storeOf(item) === storeId);
 
     if (!product) {
@@ -307,7 +339,21 @@ export function repriceProducts(input: RepriceProductsInput, storeId: string) {
       continue;
     }
 
-    const salePriceRef = priceFromMarkup(product.currentCostRef, input.markupPct);
+    // Como `reprice_product_to_markup`: el costo que vio el usuario ya no vale.
+    if (expectedCostRef !== null && !isSameCostRef(expectedCostRef, product.currentCostRef)) {
+      results.push({
+        code: COST_CHANGED_CODE,
+        message: buildCostChangedMessage(expectedCostRef, product.currentCostRef),
+        productId,
+        status: "error",
+      });
+      continue;
+    }
+
+    const salePriceRef = priceFromMarkup(
+      product.currentCostRef,
+      normalizeRepriceMarkupPct(input.markupPct),
+    );
 
     recordMockPriceChange(product, { reason, salePriceRef });
     product.salePriceRef = salePriceRef;

@@ -25,9 +25,11 @@ type ProductDetailPriceChangeCardProps = {
   /**
    * Recibe el precio nuevo y el motivo que quedó en el campo (el propuesto o el
    * escrito a mano; "" si no hay), que se guarda en el historial de precios. No
-   * se llama si el precio no cambió o está vacío.
+   * se llama si el precio no cambió o está vacío. El tercer argumento es el costo
+   * que la tarjeta mostraba al enviar: el servidor rechaza el cambio (409) si el
+   * producto ya cuesta otra cosa.
    */
-  onSubmit: (salePriceRef: number, reason: string) => void | Promise<void>;
+  onSubmit: (salePriceRef: number, reason: string, expectedCostRef: number) => void | Promise<void>;
   /**
    * Chips y cortes del semáforo de la tienda (`usePricingSettings().data`). Sin
    * ellos (cargando o la consulta falló) se usan los por defecto.
@@ -89,7 +91,7 @@ export function ProductDetailPriceChangeCard({
       return;
     }
 
-    await onSubmit(price, reason.trim());
+    await onSubmit(price, reason.trim(), currentCostRef);
   }
 
   return (

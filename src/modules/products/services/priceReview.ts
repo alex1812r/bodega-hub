@@ -157,6 +157,65 @@ export type RepriceResult = {
 export const REPRICE_NO_COST_MESSAGE =
   "El producto no tiene costo: no se puede calcular el precio a partir de un % de ganancia.";
 
+/**
+ * Código de la fila de un reprecio cuyo producto ya no cuesta lo que el usuario
+ * vio, y `hint` con el que las RPC de precio marcan ese rechazo (`PT409`).
+ */
+export const COST_CHANGED_CODE = "COST_CHANGED";
+
+/** `hint` con el que `reprice_product_to_markup` marca un producto sin costo (`PT400`). */
+export const NO_COST_HINT = "NO_COST";
+
+/** Costos iguales a dos decimales, como compara `assert_expected_cost_ref` en la base. */
+export function isSameCostRef(left: number, right: number) {
+  return Math.round(left * 100) === Math.round(right * 100);
+}
+
+/** El mismo mensaje que la base (`PT409` de `assert_expected_cost_ref`). */
+export function buildCostChangedMessage(expectedCostRef: number, currentCostRef: number) {
+  return `El costo cambió de ${expectedCostRef.toFixed(2)} a ${currentCostRef.toFixed(2)}; revisa el precio`;
+}
+
+/**
+ * % de un reprecio a dos decimales con la regla de `priceFromMarkup` de
+ * `@bodega/core` (`Math.round(pct × 100)`): así `price_from_markup` de la base,
+ * que redondea en decimal exacto, recibe un % que ya no tiene nada que redondear.
+ */
+export function normalizeRepriceMarkupPct(markupPct: number) {
+  return Math.round(markupPct * 100) / 100;
+}
+
+export type RepriceTarget = {
+  /** Costo que el usuario vio; `null` = sin comprobación de costo. */
+  expectedCostRef: number | null;
+  productId: string;
+};
+
+/**
+ * Productos de un reprecio, sin repetidos y en el orden recibido: primero los de
+ * `items` (con su costo esperado) y después los de `productIds` que no estén ya.
+ */
+export function resolveRepriceTargets(input: {
+  items?: { expectedCostRef: number; productId: string }[];
+  productIds?: string[];
+}): RepriceTarget[] {
+  const targets = new Map<string, RepriceTarget>();
+
+  for (const item of input.items ?? []) {
+    if (!targets.has(item.productId)) {
+      targets.set(item.productId, { expectedCostRef: item.expectedCostRef, productId: item.productId });
+    }
+  }
+
+  for (const productId of input.productIds ?? []) {
+    if (!targets.has(productId)) {
+      targets.set(productId, { expectedCostRef: null, productId });
+    }
+  }
+
+  return [...targets.values()];
+}
+
 export function summarizeReprice(results: RepriceProductResult[]): RepriceResult {
   const updated = results.filter((result) => result.status === "ok").length;
 

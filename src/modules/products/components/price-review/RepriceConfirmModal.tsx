@@ -38,8 +38,9 @@ export function describeReprice(count: number, markupPct: number) {
 /**
  * Confirmación del reprecio masivo (PRO-11, CNF-07): nombra cuántos productos
  * cambian y a qué %, con precio actual → nuevo. El precio nuevo se calcula con
- * `priceFromMarkup` de `@bodega/core`, igual que el servidor. Nunca se cambia
- * un precio sin esta confirmación (regla 10b).
+ * `priceFromMarkup` de `@bodega/core`, igual que el servidor, que lo aplica solo
+ * si el costo sigue siendo el de esta vista previa. Nunca se cambia un precio
+ * sin esta confirmación (regla 10b).
  */
 export function RepriceConfirmModal({
   markupPct,
@@ -61,9 +62,14 @@ export function RepriceConfirmModal({
   }
 
   async function handleConfirm() {
+    // Cada producto viaja con el costo de la vista previa: si ya es otro, su fila
+    // vuelve como `COST_CHANGED` y su precio no cambia.
     const result = await reprice.mutateAsync({
+      items: products.map((product) => ({
+        expectedCostRef: product.currentCostRef,
+        productId: product.id,
+      })),
       markupPct,
-      productIds: products.map((product) => product.id),
     });
 
     onDone(result);

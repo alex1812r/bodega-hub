@@ -6,6 +6,9 @@ import { jsonResponse } from "@/modules/inventory/utils/requestAttempt.testUtils
 
 import { ProductFormModal } from "./ProductFormModal";
 
+/** Clave de idempotencia del alta (PRO-F9): un uuid por intento. */
+const UUID_PATTERN = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+
 jest.mock("../../../../shared/auth/Can", () => ({
   Can: () => null,
 }));
@@ -219,6 +222,7 @@ describe("ProductFormModal · enteros y limites (SHR-09J)", () => {
     expect(onSubmit.mock.calls[0][0]).toEqual({
       barcode: null,
       categoryId: "cat-1",
+      clientRequestId: expect.stringMatching(UUID_PATTERN),
       currentCostRef: undefined,
       currentStock: 3,
       minStock: 2,
@@ -429,6 +433,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     expect(onSubmit.mock.calls[0][0]).toEqual({
       barcode: null,
       categoryId: "cat-1",
+      clientRequestId: expect.stringMatching(UUID_PATTERN),
       currentCostRef: undefined,
       currentStock: undefined,
       minStock: undefined,
@@ -678,6 +683,7 @@ describe("ProductFormModal · modo compact (PRO-01)", () => {
     expect(onSubmit.mock.calls[0][0]).toEqual({
       barcode: "7591234567890",
       categoryId: "cat-1",
+      clientRequestId: expect.stringMatching(UUID_PATTERN),
       currentCostRef: 1.5,
       currentStock: undefined,
       minStock: undefined,

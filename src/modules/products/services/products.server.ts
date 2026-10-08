@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { ApiError } from "@/lib/api/apiError";
 import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { parsePagination } from "@/lib/api/pagination";
@@ -39,9 +41,11 @@ import {
   parseProductMarginFilter,
 } from "./productMargin";
 import {
+  buildProductCreateFingerprint,
   PRODUCT_CATEGORY_INACTIVE_MESSAGE,
   PRODUCT_CATEGORY_NOT_IN_STORE_MESSAGE,
   PRODUCT_CATEGORY_REQUIRED_MESSAGE,
+  PRODUCT_CREATE_REQUEST_REUSED_MESSAGE,
   PRODUCT_EDIT_PRICE_REASON,
 } from "./productSchemas";
 import { applyProductSort } from "./productSort";
@@ -160,8 +164,18 @@ const productReviewOnlySelect = productSelect.replace(
  */
 const packRoleFilterSelect = "pack_role:pack_role!inner(is_pack, is_component)";
 
-function toProductInsert(input: ProductInput, sku: string, storeId: string) {
+/** Clave de idempotencia de un alta y la huella del contenido que se envió con ella. */
+type ProductCreateRequest = { hash: string; id: string };
+
+function toProductInsert(
+  input: ProductInput,
+  sku: string,
+  storeId: string,
+  request: ProductCreateRequest | null,
+) {
   return {
+    // Sin clave (importación, clientes anteriores) las columnas no viajan.
+    ...(request ? { client_request_hash: request.hash, client_request_id: request.id } : {}),
     barcode: normalizeBarcode(input.barcode),
     category_id: input.categoryId ?? null,
     current_cost_ref: input.currentCostRef ?? 0,
@@ -302,6 +316,96 @@ export async function getProductById(id: string, storeId: string) {
 
 const INITIAL_STOCK_REASON = "Inventario inicial al crear el producto";
 
+const PRODUCT_CREATE_REQUEST_INDEX = "products_store_client_request_unique";
+
+/** Espacio de nombres (UUID fijo) de las claves derivadas de la clave de un alta. */
+const INITIAL_STOCK_REQUEST_NAMESPACE = "8f1d6c0e-52a4-4a7b-9c3e-6b1f0d2a7e45";
+
+/**
+ * Clave de idempotencia del `inventario_inicial` de un alta: UUID v5 (SHA-1 del
+ * espacio de nombres + la clave del producto). Determinista, así el reintento
+ * del mismo alta llega a `adjust_stock` con la misma clave y la RPC devuelve el
+ * movimiento ya hecho; distinta de la del producto, así no choca con la clave
+ * que un ajuste manual pudiera reutilizar.
+ */
+export function deriveInitialStockRequestId(clientRequestId: string) {
+  const bytes = createHash("sha1")
+    .update(Buffer.from(INITIAL_STOCK_REQUEST_NAMESPACE.replace(/-/g, ""), "hex"))
+    .update(clientRequestId.toLowerCase())
+    .digest()
+    .subarray(0, 16);
+
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = bytes.toString("hex");
+
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function initialStockArgs(productId: string, quantity: number, request: ProductCreateRequest | null) {
+  return {
+    ...(request ? { p_client_request_id: deriveInitialStockRequestId(request.id) } : {}),
+    p_product_id: productId,
+    p_quantity_delta: quantity,
+    p_reason: INITIAL_STOCK_REASON,
+    p_type: "inventario_inicial",
+  };
+}
+
+/** Violación del índice de la clave de idempotencia del alta (y no del SKU ni del código de barras). */
+function isCreateRequestViolation(error: { code?: string; details?: string; message?: string } | null) {
+  return (
+    error?.code === "23505" &&
+    `${error.message ?? ""} ${error.details ?? ""}`.includes(PRODUCT_CREATE_REQUEST_INDEX)
+  );
+}
+
+/**
+ * Alta ya hecha con esta clave (el cliente reintenta porque perdió la
+ * respuesta): devuelve el producto que se creó, o `null` si la clave es nueva.
+ * La misma clave con otro contenido es un 409, como en compras y ajustes.
+ *
+ * No repite el alta ni la receta. El stock inicial se vuelve a pedir con su
+ * clave derivada: si ya se registró, `adjust_stock` devuelve aquel movimiento;
+ * si el primer intento murió entre el producto y el stock, lo completa. Nunca
+ * hay dos `inventario_inicial`. Un fallo aquí no borra el producto.
+ */
+async function replayCreateProduct(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  request: ProductCreateRequest,
+  initialStock: number,
+  storeId: string,
+) {
+  const { data, error } = await supabase
+    .from("products")
+    .select("id, client_request_hash")
+    .eq("store_id", storeId)
+    .eq("client_request_id", request.id)
+    .maybeSingle<{ client_request_hash: string | null; id: string }>();
+
+  throwIfSupabaseError(error);
+
+  if (!data) {
+    return null;
+  }
+
+  if (data.client_request_hash !== request.hash) {
+    throw new ApiError(409, "CONFLICT", PRODUCT_CREATE_REQUEST_REUSED_MESSAGE);
+  }
+
+  if (initialStock > 0) {
+    const { error: stockError } = await supabase.rpc(
+      "adjust_stock",
+      initialStockArgs(data.id, initialStock, request),
+    );
+
+    throwIfSupabaseError(stockError);
+  }
+
+  return getProductById(data.id, storeId);
+}
+
 /**
  * Registra el stock inicial de un producto recien creado como movimiento
  * `inventario_inicial` (RPC `adjust_stock`, con la sesion del usuario). Si el
@@ -312,13 +416,9 @@ async function registerInitialStock(
   productId: string,
   quantity: number,
   storeId: string,
+  request: ProductCreateRequest | null,
 ) {
-  const { error } = await supabase.rpc("adjust_stock", {
-    p_product_id: productId,
-    p_quantity_delta: quantity,
-    p_reason: INITIAL_STOCK_REASON,
-    p_type: "inventario_inicial",
-  });
+  const { error } = await supabase.rpc("adjust_stock", initialStockArgs(productId, quantity, request));
 
   if (!error) {
     return;
@@ -352,11 +452,15 @@ function isSkuUniqueViolation(error: { code?: string; details?: string; message?
  * Inserta la fila del producto. Con SKU escrito hay un solo intento. Sin SKU lo
  * genera desde el nombre y, si choca con otro de la tienda, reintenta con sufijo:
  * la unicidad la decide el indice, no una consulta previa (dos altas a la vez).
+ *
+ * Devuelve `"replayed"` si la clave de idempotencia ya esta en otro producto de
+ * la tienda (dos envios del mismo alta a la vez): lo decide su indice unico.
  */
 async function insertProductRow(
   supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
   input: ProductInput,
   storeId: string,
+  request: ProductCreateRequest | null,
 ) {
   const requestedSku = normalizeSku(input.sku ?? "");
   const attempts = requestedSku ? 1 : GENERATED_SKU_MAX_ATTEMPTS;
@@ -365,9 +469,13 @@ async function insertProductRow(
     const sku = requestedSku || buildGeneratedSku(input.name ?? "", attempt);
     const { data, error } = await supabase
       .from("products")
-      .insert(toProductInsert(input, sku, storeId))
+      .insert(toProductInsert(input, sku, storeId, request))
       .select(productRowSelect)
       .single<ProductRow>();
+
+    if (request && isCreateRequestViolation(error)) {
+      return "replayed" as const;
+    }
 
     if (!requestedSku && isSkuUniqueViolation(error)) {
       continue;
@@ -425,10 +533,33 @@ async function undoCreateAfterRecipeFailure(
  * 4. guardar la receta (si falla, `undoCreateAfterRecipeFailure`).
  * El stock va antes que la receta para que un fallo del ajuste nunca deje atrás
  * la unidad que crea `create_unit`.
+ *
+ * Con `clientRequestId` el alta es idempotente (C6): el reintento de un envío
+ * cuya respuesta se perdió devuelve el producto ya creado (`replayCreateProduct`)
+ * en vez de crear otro con su `inventario_inicial`.
  */
 export async function createProduct(input: ProductInputWithPackConversion, storeId: string) {
   const supabase = await createRouteSupabaseClient();
-  const { packConversion, ...productInput } = input;
+  const { clientRequestId, packConversion, ...productInput } = input;
+  const initialStock = productInput.currentStock ?? 0;
+  const request: ProductCreateRequest | null = clientRequestId
+    ? {
+        hash: createHash("sha256")
+          .update(buildProductCreateFingerprint({ ...productInput, packConversion }))
+          .digest("hex"),
+        id: clientRequestId,
+      }
+    : null;
+
+  // Antes de validar: tras el primer intento, el SKU o la unidad del empaque ya
+  // existen y la validación del reintento fallaría contra su propio alta.
+  const replayed = request
+    ? await replayCreateProduct(supabase, request, initialStock, storeId)
+    : null;
+
+  if (replayed) {
+    return replayed;
+  }
 
   if (productInput.categoryId !== undefined) {
     await assertProductCategory(supabase, productInput.categoryId, storeId);
@@ -441,16 +572,23 @@ export async function createProduct(input: ProductInputWithPackConversion, store
     });
   }
 
-  const data = await insertProductRow(supabase, productInput, storeId);
+  const data = await insertProductRow(supabase, productInput, storeId, request);
 
-  if (!data) {
+  if (data === "replayed" && request) {
+    // El otro envío del mismo alta ganó la carrera del insert: su producto es el resultado.
+    const winner = await replayCreateProduct(supabase, request, initialStock, storeId);
+
+    if (winner) {
+      return winner;
+    }
+  }
+
+  if (!data || data === "replayed") {
     throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear el producto.");
   }
 
-  const initialStock = productInput.currentStock ?? 0;
-
   if (initialStock > 0) {
-    await registerInitialStock(supabase, data.id, initialStock, storeId);
+    await registerInitialStock(supabase, data.id, initialStock, storeId, request);
   }
 
   if (packConversion) {
@@ -620,11 +758,22 @@ export async function updateProductPrice(id: string, input: ProductPriceInput, s
   await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
 
-  const { data: productRow, error: productError } = await supabase.rpc("update_product_price", {
-    p_new_sale_price_ref: input.salePriceRef,
-    p_product_id: id,
-    p_reason: input.reason ?? null,
-  });
+  // Con el costo que vio el usuario, la comprobación y el cambio van en la misma
+  // transacción (`update_product_price_checked`: PT409 si el costo ya es otro).
+  // Sin él, la RPC de siempre.
+  const { data: productRow, error: productError } =
+    input.expectedCostRef === undefined
+      ? await supabase.rpc("update_product_price", {
+          p_new_sale_price_ref: input.salePriceRef,
+          p_product_id: id,
+          p_reason: input.reason ?? null,
+        })
+      : await supabase.rpc("update_product_price_checked", {
+          p_expected_cost_ref: input.expectedCostRef,
+          p_new_sale_price_ref: input.salePriceRef,
+          p_product_id: id,
+          p_reason: input.reason ?? null,
+        });
 
   throwIfSupabaseError(productError);
 

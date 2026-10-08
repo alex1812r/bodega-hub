@@ -14,12 +14,14 @@ import {
   type ProductPackComponentMock,
   type ProductPackConversionMock,
 } from "@/shared/mocks/erp-data";
+import { mockState } from "@/shared/mocks/mockStore";
 import { getPricingSettings } from "@/modules/settings/services/settings.mock-server";
 import { generateProductSkuFromName, normalizeSku } from "@/shared/utils/skuGeneration";
 
 import { parsePackLinkFilter, type PackConversionInput } from "./packConversionSchemas";
 import { isPriceReviewFilterOn, type ProductPriceHistoryEntry } from "./priceReview";
 import {
+  assertMockExpectedCost,
   attachMockPriceReview,
   ensureMockPriceBaselines,
   recordMockPriceChange,
@@ -44,9 +46,11 @@ import {
   parseProductMarginFilter,
 } from "./productMargin";
 import {
+  buildProductCreateFingerprint,
   PRODUCT_CATEGORY_INACTIVE_MESSAGE,
   PRODUCT_CATEGORY_NOT_IN_STORE_MESSAGE,
   PRODUCT_CATEGORY_REQUIRED_MESSAGE,
+  PRODUCT_CREATE_REQUEST_REUSED_MESSAGE,
   PRODUCT_EDIT_PRICE_REASON,
 } from "./productSchemas";
 import { parseProductSort, sortProductItems } from "./productSort";
@@ -73,10 +77,14 @@ export type ProductInput = Partial<
     | "sku"
   >
 > & {
+  /** Solo en el alta: clave de idempotencia del envío (uuid). */
+  clientRequestId?: string;
   packConversion?: PackConversionInput;
 };
 
 export type ProductPriceInput = Pick<ProductMock, "salePriceRef"> & {
+  /** Costo que vio el usuario: si el producto ya cuesta otra cosa, 409 sin cambiar el precio. */
+  expectedCostRef?: number;
   /** Motivo del cambio; ausente o `null` = sin motivo (`p_reason` nulo en la RPC). */
   reason?: string | null;
 };
@@ -539,7 +547,33 @@ function resolveCreateSku(input: ProductInput) {
   throw new ApiError(409, "CONFLICT", GENERATED_SKU_EXHAUSTED_MESSAGE);
 }
 
+/**
+ * Altas ya hechas por clave de idempotencia (`storeId:clientRequestId`), como el
+ * índice único `products_store_client_request_unique` de la base.
+ */
+function productsByCreateRequest() {
+  return mockState(
+    "products:byCreateRequest",
+    () => new Map<string, { fingerprint: string; productId: string }>(),
+  );
+}
+
 export function createProduct(input: ProductInput, storeId: string) {
+  const { clientRequestId, ...content } = input;
+  const requestKey = clientRequestId ? `${storeId}:${clientRequestId}` : null;
+  const fingerprint = buildProductCreateFingerprint(content);
+  const previous = requestKey ? productsByCreateRequest().get(requestKey) : undefined;
+
+  // Como el server: el reintento del mismo alta devuelve el producto ya creado,
+  // sin otro producto ni otro `inventario_inicial`; la clave con otro contenido, 409.
+  if (previous) {
+    if (previous.fingerprint !== fingerprint) {
+      throw new ApiError(409, "CONFLICT", PRODUCT_CREATE_REQUEST_REUSED_MESSAGE);
+    }
+
+    return getProductById(previous.productId, storeId);
+  }
+
   if (input.categoryId !== undefined) {
     assertMockProductCategory(input.categoryId, storeId);
   }
@@ -569,6 +603,11 @@ export function createProduct(input: ProductInput, storeId: string) {
   };
 
   mockProducts.push(product);
+
+  if (requestKey) {
+    productsByCreateRequest().set(requestKey, { fingerprint, productId: product.id });
+  }
+
   // Como el trigger de las altas: el producto nace con su línea base de ganancia.
   ensureMockPriceBaselines();
 
@@ -742,6 +781,8 @@ export function getProductSales(id: string, searchParams: URLSearchParams, store
 export function createProductPriceHistoryEntry(id: string, input: ProductPriceInput, storeId: string) {
   const product = mockProducts.find((item) => item.id === id);
   assertMockStoreResource(product, storeId, "Producto no encontrado.");
+  // Como `update_product_price_checked`: antes de registrar nada, 409 si el costo ya no es el que vio el usuario.
+  assertMockExpectedCost(id, input.expectedCostRef, storeId);
 
   // Como la RPC `update_product_price`, que inserta en `product_price_history`
   // el precio anterior, el nuevo y la instantánea de costo y banda: el historial

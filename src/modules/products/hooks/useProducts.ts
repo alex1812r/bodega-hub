@@ -7,7 +7,7 @@ import { fetchAllPaginatedItems } from "@/lib/api/fetchAllPaginatedItems";
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import type { SortOrder } from "@/lib/api/sorting";
 import { supplierProductsQueryKeys } from "@/modules/contacts/hooks/useSupplierProducts";
-import { apiFetch } from "@/shared/api/apiFetch";
+import { apiFetch, ClientApiError } from "@/shared/api/apiFetch";
 import type { CategoryInput } from "../services/categories.mock-server";
 import type { ProductPriceHistoryEntry, ProductPriceReview } from "../services/priceReview";
 import type { ProductMarginFilter } from "../services/productMargin";
@@ -65,6 +65,11 @@ export type ProductsCatalogFilters = Omit<ProductsFilters, "limit" | "skip">;
 export type ProductInput = {
   barcode?: string | null;
   categoryId?: string;
+  /**
+   * Solo en el alta: clave de idempotencia del envío (uuid). El reintento con la
+   * misma clave devuelve el producto ya creado en vez de crear otro.
+   */
+  clientRequestId?: string;
   currentCostRef?: number;
   currentStock?: number;
   imageUrl?: string | null;
@@ -99,6 +104,11 @@ export type ProductUpdateInput = Partial<ProductInput> & {
 };
 
 export type ProductPriceUpdateInput = {
+  /**
+   * Costo (REF) sobre el que el usuario decidió el precio. Si el producto ya
+   * cuesta otra cosa responde 409 y el precio no cambia.
+   */
+  expectedCostRef?: number;
   /** Motivo del cambio (máx. 200 caracteres). Ausente o en blanco: se guarda sin motivo. */
   reason?: string;
   salePriceRef: number;
@@ -385,6 +395,13 @@ export function useUpdateProductPrice(id: string) {
         body: input,
         method: "POST",
       }),
+    onError: (error) => {
+      // 409: el costo cambió mientras el usuario decidía. Se refrescan los datos
+      // para que vea el costo y la ganancia reales antes de volver a intentarlo.
+      if (error instanceof ClientApiError && error.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+      }
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
       void queryClient.invalidateQueries({

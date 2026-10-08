@@ -237,7 +237,8 @@ describe("ProductDetailsPage · Por revisar (PRO-11)", () => {
     await waitFor(() =>
       expect(screen.queryByRole("region", { name: "Precio por revisar" })).not.toBeInTheDocument(),
     );
-    expect(posts).toEqual([{ body: {}, path: "/api/products/p-1/keep-price" }]);
+    // Viaja el costo con el que el modal mostró la ganancia (PRO-F9, M1).
+    expect(posts).toEqual([{ body: { expectedCostRef: 9 }, path: "/api/products/p-1/keep-price" }]);
     expect(detailRequests).toBeGreaterThan(requestsBefore);
   });
 

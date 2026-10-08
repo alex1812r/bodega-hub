@@ -345,7 +345,14 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
 
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0]).toEqual({
-      body: { markupPct: 30, productIds: ["p-arroz", "p-harina"] },
+      // Cada producto con el costo de la vista previa (PRO-F9, ALTA-1).
+      body: {
+        items: [
+          { expectedCostRef: 9, productId: "p-arroz" },
+          { expectedCostRef: 10, productId: "p-harina" },
+        ],
+        markupPct: 30,
+      },
       path: "/api/products/price-review/reprice",
     });
 
@@ -565,7 +572,10 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(posts).toEqual([
-      { body: { reason: "Precio de la competencia" }, path: "/api/products/p-arroz/keep-price" },
+      {
+        body: { expectedCostRef: 9, reason: "Precio de la competencia" },
+        path: "/api/products/p-arroz/keep-price",
+      },
     ]);
     await waitFor(() => expect(listRequests().length).toBeGreaterThan(listBefore));
   });

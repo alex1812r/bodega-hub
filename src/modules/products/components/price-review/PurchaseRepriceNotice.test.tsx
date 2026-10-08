@@ -249,7 +249,12 @@ describe("PurchaseRepriceNotice", () => {
     await waitFor(() =>
       expect(mutations()).toEqual([
         {
-          body: { reason: "Reprecio al 25 % por compra C-000123", salePriceRef: 11.25 },
+          // El precio propuesto sale del costo mostrado (9): viaja como costo esperado.
+          body: {
+            expectedCostRef: 9,
+            reason: "Reprecio al 25 % por compra C-000123",
+            salePriceRef: 11.25,
+          },
           method: "POST",
           url: "/api/products/prod-1/price",
         },
@@ -274,7 +279,7 @@ describe("PurchaseRepriceNotice", () => {
     await waitFor(() =>
       expect(mutations()).toEqual([
         {
-          body: { reason: "Precio mantenido tras compra C-000123" },
+          body: { expectedCostRef: 9, reason: "Precio mantenido tras compra C-000123" },
           method: "POST",
           url: "/api/products/prod-1/keep-price",
         },

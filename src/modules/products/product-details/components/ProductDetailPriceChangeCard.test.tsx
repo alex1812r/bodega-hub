@@ -88,7 +88,7 @@ describe("ProductDetailPriceChangeCard · bloque de precio (PRO-08)", () => {
     await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit).toHaveBeenCalledWith(13, "Ajuste de margen a 30 %");
+    expect(onSubmit).toHaveBeenCalledWith(13, "Ajuste de margen a 30 %", 10);
   });
 
   it("escribir un % libre completa el precio y el motivo lo sigue", async () => {
@@ -144,7 +144,7 @@ describe("ProductDetailPriceChangeCard · bloque de precio (PRO-08)", () => {
     await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit).toHaveBeenCalledWith(11.2, "Subió el proveedor");
+    expect(onSubmit).toHaveBeenCalledWith(11.2, "Subió el proveedor", 10);
   });
 
   it("un precio por debajo del costo avisa con % negativo y no bloquea", async () => {
@@ -186,7 +186,7 @@ describe("ProductDetailPriceChangeCard · bloque de precio (PRO-08)", () => {
     await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit).toHaveBeenCalledWith(6, "");
+    expect(onSubmit).toHaveBeenCalledWith(6, "", 0);
   });
 
   it("un precio vacio no se envia (ni como 0) y avisa en el campo", async () => {

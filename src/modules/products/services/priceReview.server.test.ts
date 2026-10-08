@@ -3,7 +3,7 @@
  *
  * PRO-11 · servicio real de la cola "Por revisar": qué le pide a PostgREST
  * (vista `products_price_review`, RPC `keep_product_price` y
- * `update_product_price`) y cómo lo devuelve.
+ * `reprice_product_to_markup`) y cómo lo devuelve.
  */
 
 jest.mock("../../../lib/supabase/route-client");
@@ -248,53 +248,82 @@ describe("priceReview.server keepProductPrice", () => {
   });
 });
 
-describe("priceReview.server repriceProducts", () => {
-  const products = [
-    { current_cost_ref: "9.00", id: "prod-ok" },
-    { current_cost_ref: "0.00", id: "prod-sin-costo" },
-    { current_cost_ref: "1.02", id: "prod-empate" },
-    { current_cost_ref: "5.00", id: "prod-rechazado" },
-  ];
+describe("priceReview.server keepProductPrice · costo esperado (PRO-F9, M1)", () => {
+  it("sends the cost the user saw so the database can refuse a stale confirmation", async () => {
+    const { rpc } = mockSupabase({ rpc: () => ({ data: { id: "price-9", new_sale_price_ref: 10, old_sale_price_ref: 10 }, error: null }) });
 
-  it("reads the costs of the store once and updates each product with update_product_price, one result per product", async () => {
-    const { calls, rpc } = mockSupabase({
-      rpc: (_name, args) =>
-        args.p_product_id === "prod-rechazado"
-          ? { data: null, error: { code: "PT403", message: "No autorizado para cambiar precios" } }
-          : { data: { id: args.p_product_id }, error: null },
-      tables: { products: { data: products, error: null } },
+    await keepProductPrice("prod-1", { expectedCostRef: 10.5, reason: null }, DEFAULT_STORE_ID);
+
+    expect(rpc).toHaveBeenCalledWith("keep_product_price", {
+      p_expected_cost_ref: 10.5,
+      p_product_id: "prod-1",
+      p_reason: null,
+    });
+  });
+
+  it("answers 409 with the database message when the cost is no longer the one the user saw", async () => {
+    mockSupabase({
+      rpc: () => ({
+        data: null,
+        error: { code: "PT409", hint: "COST_CHANGED", message: "El costo cambió de 10.00 a 14.00; revisa el precio" },
+      }),
     });
 
-    const result = await repriceProducts(
-      {
-        markupPct: 25,
-        productIds: ["prod-sin-costo", "prod-ok", "prod-de-otra-tienda", "prod-rechazado", "prod-empate", "prod-ok"],
-        reason: null,
-      },
-      DEFAULT_STORE_ID,
-    );
+    await expect(
+      keepProductPrice("prod-1", { expectedCostRef: 10, reason: null }, DEFAULT_STORE_ID),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "El costo cambió de 10.00 a 14.00; revisa el precio",
+      status: 409,
+    });
+  });
+});
 
-    expect(calls.products).toEqual([
-      { args: ["id, current_cost_ref"], method: "select" },
-      { args: ["store_id", DEFAULT_STORE_ID], method: "eq" },
-      {
-        args: ["id", ["prod-sin-costo", "prod-ok", "prod-de-otra-tienda", "prod-rechazado", "prod-empate"]],
-        method: "in",
-      },
-    ]);
-    // Sin costo y fuera de la tienda no llegan a la RPC; el rechazo de uno no corta el lote.
-    expect(rpc.mock.calls).toEqual([
-      ["update_product_price", { p_new_sale_price_ref: 11.25, p_product_id: "prod-ok", p_reason: "Reprecio al 25 %" }],
-      ["update_product_price", { p_new_sale_price_ref: 6.25, p_product_id: "prod-rechazado", p_reason: "Reprecio al 25 %" }],
-      // 1,02 × 1,25 = 1,275: el empate de medio céntimo sube (priceFromMarkup de @bodega/core).
-      ["update_product_price", { p_new_sale_price_ref: 1.28, p_product_id: "prod-empate", p_reason: "Reprecio al 25 %" }],
-    ]);
+describe("priceReview.server repriceProducts", () => {
+  /** Lo que respondería `reprice_product_to_markup` para cada producto del lote. */
+  function repriceRpc(_name: string, args: Record<string, unknown>): QueryResult {
+    switch (args.p_product_id) {
+      case "prod-sin-costo":
+        return { data: null, error: { code: "PT400", hint: "NO_COST", message: "Sin costo no se puede calcular el precio" } };
+      case "prod-de-otra-tienda":
+        return { data: null, error: { code: "PT404", message: "Producto no encontrado" } };
+      case "prod-rechazado":
+        return { data: null, error: { code: "PT403", message: "No autorizado para cambiar precios" } };
+      case "prod-costo-cambiado":
+        return {
+          data: null,
+          error: { code: "PT409", hint: "COST_CHANGED", message: "El costo cambió de 12.00 a 20.00; revisa el precio" },
+        };
+      case "prod-empate":
+        return { data: { id: "prod-empate", sale_price_ref: "1.28" }, error: null };
+      default:
+        return { data: { id: args.p_product_id, sale_price_ref: 11.25 }, error: null };
+    }
+  }
+
+  it("never reads the cost itself: one reprice_product_to_markup per product, and the price is the one the database computed (ALTA-1)", async () => {
+    const { calls, rpc } = mockSupabase({ rpc: repriceRpc });
+
+    const result = await repriceProducts({
+      markupPct: 25,
+      productIds: ["prod-sin-costo", "prod-ok", "prod-de-otra-tienda", "prod-rechazado", "prod-empate", "prod-ok"],
+      reason: null,
+    });
+
+    // Ninguna lectura de `products`: el costo que cuenta es el que ve la RPC con el producto bloqueado.
+    expect(calls).toEqual({});
+    expect(rpc.mock.calls).toEqual(
+      ["prod-sin-costo", "prod-ok", "prod-de-otra-tienda", "prod-rechazado", "prod-empate"].map((productId) => [
+        "reprice_product_to_markup",
+        { p_expected_cost_ref: null, p_markup_pct: 25, p_product_id: productId, p_reason: "Reprecio al 25 %" },
+      ]),
+    );
     expect(result).toEqual({
       failed: 3,
       results: [
         { code: "NO_COST", message: expect.stringContaining("no tiene costo"), productId: "prod-sin-costo", status: "error" },
         { productId: "prod-ok", salePriceRef: 11.25, status: "ok" },
-        { code: "NOT_FOUND", message: "Producto no encontrado.", productId: "prod-de-otra-tienda", status: "error" },
+        { code: "NOT_FOUND", message: "Producto no encontrado", productId: "prod-de-otra-tienda", status: "error" },
         { code: "FORBIDDEN", message: "No autorizado para cambiar precios", productId: "prod-rechazado", status: "error" },
         { productId: "prod-empate", salePriceRef: 1.28, status: "ok" },
       ],
@@ -302,29 +331,52 @@ describe("priceReview.server repriceProducts", () => {
     });
   });
 
-  it("uses the given reason instead of the default one", async () => {
-    const { rpc } = mockSupabase({
-      rpc: () => ({ data: {}, error: null }),
-      tables: { products: { data: products, error: null } },
+  it("sends each product's expected cost and reports COST_CHANGED for the row whose cost moved, without stopping the batch", async () => {
+    const { rpc } = mockSupabase({ rpc: repriceRpc });
+
+    const result = await repriceProducts({
+      items: [
+        { expectedCostRef: 12, productId: "prod-costo-cambiado" },
+        { expectedCostRef: 9, productId: "prod-ok" },
+      ],
+      markupPct: 30,
+      // Repetido en `items`: manda su costo esperado. El otro va sin comprobación.
+      productIds: ["prod-ok", "prod-libre"],
+      reason: null,
     });
 
-    await repriceProducts({ markupPct: 12.5, productIds: ["prod-ok"], reason: "Ajuste de octubre" }, DEFAULT_STORE_ID);
-
-    expect(rpc).toHaveBeenCalledWith("update_product_price", {
-      p_new_sale_price_ref: 10.13,
-      p_product_id: "prod-ok",
-      p_reason: "Ajuste de octubre",
+    expect(rpc.mock.calls.map(([, args]) => [args.p_product_id, args.p_expected_cost_ref])).toEqual([
+      ["prod-costo-cambiado", 12],
+      ["prod-ok", 9],
+      ["prod-libre", null],
+    ]);
+    expect(result).toEqual({
+      failed: 1,
+      results: [
+        {
+          code: "COST_CHANGED",
+          message: "El costo cambió de 12.00 a 20.00; revisa el precio",
+          productId: "prod-costo-cambiado",
+          status: "error",
+        },
+        { productId: "prod-ok", salePriceRef: 11.25, status: "ok" },
+        { productId: "prod-libre", salePriceRef: 11.25, status: "ok" },
+      ],
+      updated: 2,
     });
   });
 
-  it("fails as a whole only when the costs cannot be read", async () => {
-    const { rpc } = mockSupabase({
-      tables: { products: { data: null, error: { code: "42501", message: "permission denied for table products" } } },
-    });
+  it("uses the given reason instead of the default one and rounds the % to two decimals like priceFromMarkup", async () => {
+    const { rpc } = mockSupabase({ rpc: repriceRpc });
 
-    await expect(
-      repriceProducts({ markupPct: 25, productIds: ["prod-ok"], reason: null }, DEFAULT_STORE_ID),
-    ).rejects.toMatchObject({ status: 403 });
-    expect(rpc).not.toHaveBeenCalled();
+    await repriceProducts({ markupPct: 1.005, productIds: ["prod-ok"], reason: "Ajuste de octubre" });
+
+    // Math.round(1.005 × 100) = 100 en coma flotante: 1 %, lo mismo que usa la vista previa.
+    expect(rpc).toHaveBeenCalledWith("reprice_product_to_markup", {
+      p_expected_cost_ref: null,
+      p_markup_pct: 1,
+      p_product_id: "prod-ok",
+      p_reason: "Ajuste de octubre",
+    });
   });
 });

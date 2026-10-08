@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
-import { apiFetch } from "@/shared/api/apiFetch";
+import { apiFetch, ClientApiError } from "@/shared/api/apiFetch";
 
 import type {
   ProductPriceHistoryEntry,
@@ -21,6 +21,11 @@ export type PriceReviewFilters = PaginationParams & {
 };
 
 export type KeepProductPriceInput = {
+  /**
+   * Costo (REF) con el que se mostró la ganancia que el usuario acepta. Si el
+   * producto ya cuesta otra cosa responde 409 y no se guarda nada.
+   */
+  expectedCostRef?: number;
   productId: string;
   /** Máx. 200 caracteres. Sin motivo se guarda "Precio mantenido". */
   reason?: string;
@@ -34,8 +39,14 @@ export type KeepProductPriceResult = {
 export type RepriceProductsInput = {
   /** % de ganancia sobre el costo (> 0 y ≤ 1000). */
   markupPct: number;
-  /** De 1 a 100 productos por llamada. */
-  productIds: string[];
+  /**
+   * Productos con el costo (REF) que el usuario vio en la vista previa: si el
+   * costo de uno ya es otro, su fila responde `COST_CHANGED` y no cambia.
+   * Entre `items` y `productIds`, de 1 a 100 productos por llamada.
+   */
+  items?: { expectedCostRef: number; productId: string }[];
+  /** Productos sin comprobación de costo: el precio sale del costo vigente. */
+  productIds?: string[];
   /** Sin motivo se guarda "Reprecio al X %". */
   reason?: string;
 };
@@ -69,16 +80,27 @@ export function usePriceReviewSummary(options: { enabled?: boolean } = {}) {
   });
 }
 
+function isConflict(error: unknown) {
+  return error instanceof ClientApiError && error.status === 409;
+}
+
 /** "Mantener precio": el producto sale de la cola sin cambiar su precio. */
 export function useKeepProductPrice() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ productId, reason }: KeepProductPriceInput) =>
+    mutationFn: ({ expectedCostRef, productId, reason }: KeepProductPriceInput) =>
       apiFetch<KeepProductPriceResult>(`/api/products/${productId}/keep-price`, {
-        body: { reason },
+        body: { expectedCostRef, reason },
         method: "POST",
       }),
+    onError: (error) => {
+      // 409: el costo cambió mientras el usuario decidía. Se refrescan los datos
+      // para que vea la ganancia real antes de volver a confirmar.
+      if (isConflict(error)) {
+        void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+      }
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
     },

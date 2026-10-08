@@ -215,7 +215,8 @@ describe("ProductDetailsPage", () => {
 
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0]).toEqual({
-      body: { reason: "Ajuste de margen a 30 %", salePriceRef: 13 },
+      // `expectedCostRef`: el costo que mostraba la tarjeta (PRO-F9).
+      body: { expectedCostRef: 10, reason: "Ajuste de margen a 30 %", salePriceRef: 13 },
       path: "/api/products/p-1/price",
     });
     expect(patches).toHaveLength(0);
@@ -236,7 +237,11 @@ describe("ProductDetailsPage", () => {
     await user.click(card.getByRole("button", { name: "Actualizar precio" }));
 
     await waitFor(() => expect(posts).toHaveLength(1));
-    expect(posts[0].body).toEqual({ reason: "Subió el proveedor", salePriceRef: 13 });
+    expect(posts[0].body).toEqual({
+      expectedCostRef: 10,
+      reason: "Subió el proveedor",
+      salePriceRef: 13,
+    });
 
     await user.click(card.getByRole("button", { name: "12 %" }));
     await user.clear(card.getByLabelText("Motivo"));
@@ -244,7 +249,7 @@ describe("ProductDetailsPage", () => {
 
     // En blanco viaja vacío: el servidor lo guarda como "sin motivo".
     await waitFor(() => expect(posts).toHaveLength(2));
-    expect(posts[1].body).toEqual({ reason: "", salePriceRef: 11.2 });
+    expect(posts[1].body).toEqual({ expectedCostRef: 10, reason: "", salePriceRef: 11.2 });
   });
 
   it("el historial muestra el motivo guardado y el texto fijo solo como respaldo (PRO-F4)", async () => {

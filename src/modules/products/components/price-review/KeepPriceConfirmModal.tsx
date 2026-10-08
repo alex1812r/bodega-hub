@@ -58,7 +58,13 @@ export function KeepPriceConfirmModal({ onOpenChange, open, product }: KeepPrice
       return;
     }
 
-    await keepPrice.mutateAsync({ productId: product.id, reason: reason.trim() || undefined });
+    // El costo con el que se calculó la ganancia que el modal muestra: si ya es
+    // otro, el servidor responde 409, el error queda en el modal y los datos se refrescan.
+    await keepPrice.mutateAsync({
+      expectedCostRef: product.currentCostRef,
+      productId: product.id,
+      reason: reason.trim() || undefined,
+    });
     showToast({
       description: `${product.name} salió de "Por revisar".`,
       title: "Precio mantenido",

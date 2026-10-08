@@ -735,7 +735,11 @@ paths:
     post:
       tags: [Products]
       summary: Crear producto
-      description: Usa mock o Supabase segun `API_DATA_SOURCE`. SKU duplicado responde `409`.
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. SKU duplicado responde `409`. Con `clientRequestId` el alta
+        es idempotente: repetir el mismo cuerpo con la misma clave (reintento tras una respuesta perdida) responde
+        `201` con el producto ya creado, sin otro producto ni otro movimiento `inventario_inicial`; la misma clave
+        con otro contenido responde `409`.
       x-permission: products.manage
       requestBody:
         required: true
@@ -945,7 +949,10 @@ paths:
     post:
       tags: [Products]
       summary: Cambiar precio de producto
-      description: Mock simula historial. Supabase usa RPC `update_product_price`.
+      description: >-
+        Mock simula historial. Supabase usa RPC `update_product_price`. Con `expectedCostRef` usa
+        `update_product_price_checked`: si el costo del producto ya no es ese (a dos decimales) responde `409`
+        "El costo cambió de X a Y; revisa el precio" y no cambia nada.
       x-permission: products.manage
       requestBody:
         required: true
@@ -962,6 +969,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/products/{id}/price-history:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -1003,7 +1012,9 @@ paths:
       description: >-
         Saca el producto de la cola "Por revisar" sin cambiar su precio: registra una fila de historial con precio
         anterior = nuevo = actual (`kind: keep`) que vuelve a guardar el costo y la banda de ganancia del momento.
-        Supabase usa la RPC `keep_product_price`; no toca el producto ni el stock. El cuerpo es opcional.
+        Supabase usa la RPC `keep_product_price`; no toca el producto ni el stock. El cuerpo es opcional. Con
+        `expectedCostRef`, si el costo del producto ya no es ese (a dos decimales) responde `409` "El costo cambió
+        de X a Y; revisa el precio" y no registra nada: el producto sigue en la cola.
       x-permission: products.manage
       requestBody:
         required: false
@@ -1034,6 +1045,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/products/price-review:
     get:
       tags: [Products]
@@ -1103,10 +1116,13 @@ paths:
       tags: [Products]
       summary: Reprecio masivo al % de ganancia indicado
       description: >-
-        Para cada producto calcula precio = costo x (1 + markupPct / 100), redondeado a dinero, y lo aplica con
-        `update_product_price` (motivo por defecto "Reprecio al X %"). Un fallo no aborta el lote: la respuesta es
-        200 con un resultado por producto (`ok` con el precio nuevo o `error` con codigo y mensaje). Un producto sin
-        costo responde `NO_COST` en su fila: nunca se le pone precio 0.
+        Para cada producto la base calcula precio = costo x (1 + markupPct / 100), redondeado a dinero, con el
+        producto bloqueado y sobre su costo vigente (RPC `reprice_product_to_markup`; motivo por defecto "Reprecio
+        al X %"). Un fallo no aborta el lote: la respuesta es 200 con un resultado por producto (`ok` con el precio
+        nuevo o `error` con codigo y mensaje). Un producto sin costo responde `NO_COST` en su fila: nunca se le
+        pone precio 0. Los productos llegan en `items` (con el costo que el usuario vio: si ya es otro, esa fila
+        responde `COST_CHANGED` y su precio no cambia), en `productIds` (sin esa comprobacion) o en ambos; entre
+        los dos, de 1 a 100 productos distintos.
       x-permission: products.manage
       requestBody:
         required: true
@@ -4137,6 +4153,12 @@ components:
     ProductKeepPriceInput:
       type: object
       properties:
+        expectedCostRef:
+          type: number
+          minimum: 0
+          description: >-
+            Costo (REF) con el que se mostro la ganancia que el usuario acepta. Si el producto ya cuesta otra cosa
+            (a dos decimales) responde 409 y no se registra nada.
         reason:
           type: string
           nullable: true
@@ -4144,12 +4166,27 @@ components:
           description: Motivo. Ausente, null o en blanco se guarda "Precio mantenido".
     ProductRepriceInput:
       type: object
-      required: [productIds, markupPct]
+      required: [markupPct]
+      description: Al menos uno de `items` o `productIds`; entre los dos, de 1 a 100 productos distintos.
       properties:
+        items:
+          type: array
+          maxItems: 100
+          description: Productos con el costo que el usuario vio. Si un producto esta tambien en `productIds`, manda este.
+          items:
+            type: object
+            required: [productId, expectedCostRef]
+            properties:
+              productId:
+                type: string
+              expectedCostRef:
+                type: number
+                minimum: 0
+                description: Costo (REF) de la vista previa. Si ya es otro (a dos decimales), la fila responde COST_CHANGED.
         productIds:
           type: array
-          minItems: 1
           maxItems: 100
+          description: Productos sin comprobacion de costo esperado; el precio sale del costo vigente.
           items:
             type: string
         markupPct:
@@ -4196,7 +4233,9 @@ components:
                     enum: [error]
                   code:
                     type: string
-                    description: NO_COST, NOT_FOUND o el codigo del error de la API (FORBIDDEN, BAD_REQUEST, CONFLICT...).
+                    description: >-
+                      NO_COST, COST_CHANGED (el costo ya no es el `expectedCostRef` enviado; el precio no cambio),
+                      NOT_FOUND o el codigo del error de la API (FORBIDDEN, BAD_REQUEST, CONFLICT...).
                   message:
                     type: string
     ProductResponse:
@@ -4211,6 +4250,12 @@ components:
       properties:
         categoryId:
           type: string
+        clientRequestId:
+          type: string
+          format: uuid
+          description: >-
+            Clave de idempotencia del alta (opcional). El formulario genera una por intento y la repite al
+            reintentar el mismo envio.
         currentCostRef:
           type: number
           minimum: 0
@@ -4261,6 +4306,12 @@ components:
       type: object
       required: [salePriceRef]
       properties:
+        expectedCostRef:
+          type: number
+          minimum: 0
+          description: >-
+            Costo (REF) sobre el que el usuario decidio el precio. Si el producto ya cuesta otra cosa (a dos
+            decimales) responde 409 y el precio no cambia.
         salePriceRef:
           type: number
           minimum: 0
