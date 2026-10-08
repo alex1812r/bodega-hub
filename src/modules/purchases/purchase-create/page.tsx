@@ -6,7 +6,10 @@ import { useEffect, useMemo, useState } from "react";
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
+import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
+import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
+import { usePermission } from "@/shared/auth/usePermission";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { useToast } from "@/shared/components/Toast";
 import { useTaxRates } from "@/shared/hooks/useTaxRates";
@@ -14,6 +17,7 @@ import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
 import { PurchaseCreateHeader } from "./components/PurchaseCreateHeader";
+import { PurchaseNewProductModal } from "./components/PurchaseNewProductModal";
 import {
   PurchaseProductPickerCard,
   type PurchaseCatalogProduct,
@@ -27,6 +31,7 @@ import { PurchaseSupplierCard } from "./components/PurchaseSupplierCard";
 import type { PurchaseLineItemMeta } from "./components/PurchaseLineItemsTable";
 import { useCreatePurchase } from "../hooks/usePurchases";
 import type { PurchaseCostCurrency, PurchaseDraftItem } from "./types";
+import { buildUnlinkedCatalogProduct } from "./utils/buildPurchaseCatalog";
 import { buildPurchaseLine, nextPurchaseLineId } from "./utils/buildPurchaseLine";
 import { draftToPurchaseItemInput, sumDraftPurchaseTotals } from "./utils/normalizePurchaseLine";
 import { getEditedLinesSummary } from "./utils/purchaseLineReview";
@@ -47,6 +52,7 @@ export function PurchaseCreatePage() {
   const createPurchase = useCreatePurchase();
   const requestAttempt = useRequestAttempt();
   const { showToast } = useToast();
+  const { can } = usePermission();
   // Catálogo completo: los chips muestran también una alícuota desactivada.
   const taxRates = useTaxRates({ activeOnly: false });
   const [supplierId, setSupplierId] = useState("");
@@ -62,6 +68,8 @@ export function PurchaseCreatePage() {
   // Moneda en la que se teclean los costos: una sola para toda la compra.
   const [costCurrency, setCostCurrency] = useState<PurchaseCostCurrency>("ves");
   const [formError, setFormError] = useState<string | null>(null);
+  // Alta rápida de producto (COM-03): `null` = cerrada; si no, con qué se prellena.
+  const [newProductValues, setNewProductValues] = useState<ProductFormInitialValues | null>(null);
   const [lineMetaByProductId, setLineMetaByProductId] = useState(
     () => new Map<string, PurchaseLineItemMeta>(),
   );
@@ -208,6 +216,13 @@ export function PurchaseCreatePage() {
     });
   }
 
+  // El producto recién creado entra como cualquier otro sin vínculo: por unidad, con su
+  // costo llevado a base sin IVA y la alícuota de su categoría.
+  function handleProductCreated(product: ProductWithCategory) {
+    handleAddProduct(buildUnlinkedCatalogProduct(product));
+    setProductSearch("");
+  }
+
   function handleUpdateItem(itemId: string, input: Partial<PurchaseDraftItem>) {
     dispatchLines({ input, itemId, rateVes: activeRateVes, type: "lineUpdated" });
   }
@@ -329,6 +344,7 @@ export function PurchaseCreatePage() {
             onLineTaxChange={(itemId, code) =>
               dispatchLines({ code, itemId, type: "lineTaxChosen" })
             }
+            onNewProduct={can("products.manage") ? setNewProductValues : undefined}
             onRemoveItem={(itemId) => dispatchLines({ itemId, type: "lineRemoved" })}
             onSearchChange={setProductSearch}
             onSettleItem={(itemId) => dispatchLines({ itemId, type: "lineSettled" })}
@@ -365,6 +381,17 @@ export function PurchaseCreatePage() {
           />
         </div>
       </div>
+
+      <PurchaseNewProductModal
+        initialValues={newProductValues ?? undefined}
+        onCreated={handleProductCreated}
+        onOpenChange={(open) => {
+          if (!open) {
+            setNewProductValues(null);
+          }
+        }}
+        open={newProductValues !== null}
+      />
     </div>
   );
 }

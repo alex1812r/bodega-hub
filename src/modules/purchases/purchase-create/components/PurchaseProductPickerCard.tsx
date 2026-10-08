@@ -1,11 +1,13 @@
 "use client";
 
-import { Package } from "lucide-react";
+import { Package, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { PosCatalogToolbar } from "@/modules/sales/sale-create/components/PosCatalogToolbar";
 import { PosScanModal } from "@/modules/sales/sale-create/components/PosScanModal";
+import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import { Badge } from "@/shared/components/Badge/Badge";
+import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/utils/cn";
 import { formatRefUsd } from "@/shared/utils/currency";
 
@@ -59,6 +61,11 @@ type PurchaseProductPickerCardProps = {
   onAddProduct: (product: PurchaseCatalogProduct) => void;
   onExemptPurchaseChange: (exempt: boolean) => void;
   onLineTaxChange: (itemId: string, code: string) => void;
+  /**
+   * "Nuevo producto" (COM-03): abre el alta rápida con esos valores. Sin él (el
+   * rol no puede crear productos) no se ofrece.
+   */
+  onNewProduct?: (initialValues: ProductFormInitialValues) => void;
   onRemoveItem: (itemId: string) => void;
   onSearchChange: (value: string) => void;
   onSettleItem: (itemId: string) => void;
@@ -105,6 +112,20 @@ const popupClassName =
   "absolute left-0 right-0 top-full z-20 mt-1 rounded-lg border border-border bg-surface-container-lowest shadow-lg";
 const popupMessageClassName = "px-4 py-2.5 text-sm";
 
+/**
+ * Lo buscado sin resultado, como punto de partida del producto nuevo: solo
+ * dígitos es un código de barras; cualquier otra cosa, el nombre.
+ */
+export function buildNewProductPrefill(search: string): ProductFormInitialValues {
+  const text = search.trim();
+
+  if (!text) {
+    return {};
+  }
+
+  return /^\d+$/.test(text) ? { barcode: text } : { name: text };
+}
+
 function getLinkChipLabel(product: PurchaseCatalogProduct) {
   const prefix = product.link === "preferred" ? "Habitual" : "Vinculado";
 
@@ -125,6 +146,7 @@ export function PurchaseProductPickerCard({
   onAddProduct,
   onExemptPurchaseChange,
   onLineTaxChange,
+  onNewProduct,
   onRemoveItem,
   onSearchChange,
   onSettleItem,
@@ -172,6 +194,11 @@ export function PurchaseProductPickerCard({
     onAddProduct(product);
     onSearchChange("");
     setPickerOpen(false);
+  }
+
+  function handleNewProduct(initialValues: ProductFormInitialValues) {
+    setPickerOpen(false);
+    onNewProduct?.(initialValues);
   }
 
   // Lector o Enter: el codigo exacto se resuelve en servidor, sin esperar al debounce de la lista.
@@ -224,8 +251,8 @@ export function PurchaseProductPickerCard({
         />
       </div>
 
-      <div className="border-b border-border px-4 py-4 dark:border-slate-800">
-        <div className="relative" ref={containerRef}>
+      <div className="flex flex-col gap-2 border-b border-border px-4 py-4 sm:flex-row sm:items-start dark:border-slate-800">
+        <div className="relative min-w-0 flex-1" ref={containerRef}>
           <PosCatalogToolbar
             autoFocus={false}
             embedded
@@ -283,14 +310,38 @@ export function PurchaseProductPickerCard({
             </ul>
           ) : null}
           {showResults && !isSearching && !searchError && catalog.length === 0 ? (
-            <p
-              className={cn(popupClassName, popupMessageClassName, "text-muted-foreground")}
-              role="status"
+            <div
+              className={cn(
+                popupClassName,
+                "flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5",
+              )}
             >
-              No hay productos activos que coincidan
-            </p>
+              <p className="text-sm text-muted-foreground" role="status">
+                No hay productos activos que coincidan
+              </p>
+              {onNewProduct ? (
+                <Button
+                  className="gap-1"
+                  onClick={() => handleNewProduct(buildNewProductPrefill(search))}
+                  size="sm"
+                >
+                  <Plus aria-hidden className="size-4" />
+                  Crear producto nuevo
+                </Button>
+              ) : null}
+            </div>
           ) : null}
         </div>
+        {hasSupplier && onNewProduct ? (
+          <Button
+            className="h-12 shrink-0 gap-1"
+            onClick={() => handleNewProduct({})}
+            variant="outline"
+          >
+            <Plus aria-hidden className="size-5" />
+            Nuevo producto
+          </Button>
+        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">

@@ -67,7 +67,10 @@ jest.mock("../../../shared/hooks/useTaxRates", () => ({
   useTaxRates: () => mockTaxCatalog,
 }));
 jest.mock("../../../shared/auth/usePermission", () => ({
-  usePermission: () => ({ profile: { storeId: "store-1", user: { id: "user-1" } } }),
+  usePermission: () => ({
+    can: () => true,
+    profile: { storeId: "store-1", user: { id: "user-1" } },
+  }),
 }));
 jest.mock("../../contacts/hooks/useSupplierProducts", () => ({
   useSupplierProducts: () => mockSupplierProducts,
