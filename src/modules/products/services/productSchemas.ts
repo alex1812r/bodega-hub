@@ -137,11 +137,14 @@ const priceReasonSchema = z
   .nullish()
   .transform((value) => value || null);
 
+/** Tope de `products.current_cost_ref` (`numeric(12,2)`): ningún costo real lo supera. */
+const EXPECTED_COST_REF_MAX = 9_999_999_999.99;
+
 /**
  * Costo (REF) que el usuario tenía delante al decidir. Si viene y el costo del
  * producto ya es otro (a dos decimales), la base rechaza la operación con 409.
  */
-const expectedCostRefSchema = z.number().min(0).optional();
+const expectedCostRefSchema = z.number().min(0).max(EXPECTED_COST_REF_MAX).optional();
 
 /** Cambio de precio (`POST /api/products/[id]/price`). */
 export const productPriceSchema = z.object({
@@ -162,6 +165,9 @@ export const keepProductPriceSchema = z.object({
 /** Productos por lote de reprecio. */
 export const REPRICE_MAX_PRODUCTS = 100;
 
+/** % mínimo de un reprecio: el % se guarda a dos decimales y menos que esto es 0. */
+export const REPRICE_MIN_MARKUP_PCT = 0.01;
+
 /** Tope del % de ganancia de un reprecio (el mismo de los chips de % de la tienda). */
 export const REPRICE_MAX_MARKUP_PCT = 1000;
 
@@ -179,10 +185,15 @@ const repriceProductIdSchema = z.string().trim().min(1);
 export const repriceProductsSchema = z
   .object({
     items: z
-      .array(z.object({ expectedCostRef: z.number().min(0), productId: repriceProductIdSchema }))
+      .array(
+        z.object({
+          expectedCostRef: z.number().min(0).max(EXPECTED_COST_REF_MAX),
+          productId: repriceProductIdSchema,
+        }),
+      )
       .max(REPRICE_MAX_PRODUCTS)
       .optional(),
-    markupPct: z.number().gt(0).max(REPRICE_MAX_MARKUP_PCT),
+    markupPct: z.number().min(REPRICE_MIN_MARKUP_PCT).max(REPRICE_MAX_MARKUP_PCT),
     productIds: z.array(repriceProductIdSchema).max(REPRICE_MAX_PRODUCTS).optional(),
     reason: priceReasonSchema,
   })
