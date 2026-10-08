@@ -610,4 +610,57 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
     expect(screen.queryByRole("menuitem", { name: "Mantener precio" })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Cambiar precio" })).not.toBeInTheDocument();
   });
+
+  // PRO-F11: la fila que volvió como COST_CHANGED queda seleccionada y, ya con la
+  // lista refrescada, el reintento sale del costo nuevo.
+  it("retries a COST_CHANGED row with the refreshed cost", async () => {
+    const user = userEvent.setup({ delay: null });
+    const arrozWithNewCost = product("p-arroz", "Arroz", 12, 10, review(8, 12, 10));
+
+    repriceResponse = () => {
+      queue = [arrozWithNewCost];
+
+      return jsonResponse({
+        data: {
+          failed: 1,
+          results: [
+            {
+              code: "COST_CHANGED",
+              message: "El costo cambió de 9.00 a 12.00; revisa el precio",
+              productId: "p-arroz",
+              status: "error",
+            },
+          ],
+          updated: 0,
+        },
+      });
+    };
+    queue = [ARROZ];
+    renderPage("review=1");
+
+    await user.click(within(await findRow("Arroz")).getByRole("checkbox", { name: "Seleccionar Arroz" }));
+    await user.click(screen.getByRole("button", { name: "Reprecio al 20 %" }));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Cambiar 1 precio" }),
+    );
+
+    const result = within(await screen.findByRole("region", { name: "Resultado del reprecio" }));
+
+    expect(result.getByRole("listitem")).toHaveTextContent("Arroz · El costo cambió; vuelve a revisar");
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Seleccionar Arroz" })).toBeChecked());
+
+    await user.click(screen.getByRole("button", { name: "Reprecio al 20 %" }));
+
+    const retry = within(await screen.findByRole("dialog"));
+
+    // 12 × 1,20: la vista previa ya sale del costo nuevo.
+    await waitFor(() => expect(retry.getByText("ref 14.40")).toBeInTheDocument());
+    await user.click(retry.getByRole("button", { name: "Cambiar 1 precio" }));
+
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[1]?.body).toEqual({
+      items: [{ expectedCostRef: 12, productId: "p-arroz" }],
+      markupPct: 20,
+    });
+  });
 });

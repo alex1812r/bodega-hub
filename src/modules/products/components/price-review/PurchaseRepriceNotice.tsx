@@ -15,6 +15,8 @@ import { formatRefUsd } from "@/shared/utils/currency";
 import { priceFromMarkup, type MarginThresholds } from "@/shared/utils/pricing";
 
 import {
+  COST_CHANGED_LEFT_QUEUE_TITLE,
+  useCostConflictRefresh,
   useKeepProductPrice,
   usePriceReview,
   type ProductPriceReviewItem,
@@ -55,6 +57,7 @@ type PurchaseRepriceRowProps = {
 function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowProps) {
   const updatePrice = useUpdateProductPrice(item.productId);
   const keepPrice = useKeepProductPrice();
+  const costConflict = useCostConflictRefresh();
   const { showToast } = useToast();
   // Candado de la fila: bloquea un segundo envío en el mismo tick y, tras el
   // éxito, hasta que el refresco de la cola la retira.
@@ -86,6 +89,19 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
     setError(message);
   }
 
+  // 409 por costo cambiado: la cola se relee y la fila pasa a las cifras nuevas
+  // (el reintento sale del costo nuevo). Si al releerla el producto ya no está,
+  // la fila desaparece: se avisa para que no se vaya en silencio.
+  async function warnIfLeftQueue(error: unknown) {
+    if (await costConflict.hasLeftQueue(error, item.productId)) {
+      showToast({
+        description: `${item.name} ya no está entre los productos por revisar de esta compra.`,
+        title: COST_CHANGED_LEFT_QUEUE_TITLE,
+        tone: "info",
+      });
+    }
+  }
+
   async function handleApply() {
     if (!lock()) {
       return;
@@ -106,6 +122,7 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
       });
     } catch (applyError) {
       unlock(errorMessage(applyError, "No se pudo cambiar el precio."));
+      await warnIfLeftQueue(applyError);
     }
   }
 
@@ -127,6 +144,7 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
       });
     } catch (keepError) {
       unlock(errorMessage(keepError, "No se pudo mantener el precio."));
+      await warnIfLeftQueue(keepError);
     }
   }
 

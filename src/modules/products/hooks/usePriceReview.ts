@@ -84,6 +84,59 @@ function isConflict(error: unknown) {
   return error instanceof ClientApiError && error.status === 409;
 }
 
+/** Aviso cuando, tras un 409 por costo cambiado, el producto ya no está en "Por revisar". */
+export const COST_CHANGED_LEFT_QUEUE_TITLE = "El costo cambió; revisa el producto";
+
+/**
+ * Lecturas para después de un 409 por costo cambiado (`keep-price`, `price`):
+ * las cifras que el usuario confirmó ya no valen y hay que enseñarle las nuevas
+ * antes de reintentar. Devuelve funciones; no hace nada si el error no es un 409.
+ */
+export function useCostConflictRefresh() {
+  const queryClient = useQueryClient();
+
+  return {
+    /**
+     * El producto recién leído (con `priceReview` solo si sigue en la cola), o
+     * `null` si el error no es un 409 o la lectura falla: quien llama deja
+     * entonces el mensaje del servidor tal cual.
+     */
+    async fetchProduct(error: unknown, productId: string): Promise<ProductWithCategory | null> {
+      if (!isConflict(error)) {
+        return null;
+      }
+
+      try {
+        return await queryClient.fetchQuery({
+          queryFn: () => apiFetch<ProductWithCategory>(`/api/products/${productId}`),
+          queryKey: productsQueryKeys.detail(productId),
+          staleTime: 0,
+        });
+      } catch {
+        return null;
+      }
+    },
+    /**
+     * `true` si el error es un 409 y, releída la cola, el producto ya no está
+     * en ninguna de las listas "Por revisar" cargadas. Espera el refresco que
+     * la mutación ya lanzó en vez de pedir otro.
+     */
+    async hasLeftQueue(error: unknown, productId: string): Promise<boolean> {
+      if (!isConflict(error)) {
+        return false;
+      }
+
+      const listsKey = [...priceReviewQueryKeys.all, "list"];
+
+      await queryClient.invalidateQueries({ queryKey: listsKey }, { cancelRefetch: false });
+
+      return !queryClient
+        .getQueriesData<PaginatedList<ProductPriceReviewItem>>({ queryKey: listsKey })
+        .some(([, list]) => list?.items.some((item) => item.productId === productId));
+    },
+  };
+}
+
 /** "Mantener precio": el producto sale de la cola sin cambiar su precio. */
 export function useKeepProductPrice() {
   const queryClient = useQueryClient();

@@ -9,7 +9,11 @@ import { useToast } from "@/shared/components/Toast";
 import { formatRefUsd } from "@/shared/utils/currency";
 import { markupPct } from "@/shared/utils/pricing";
 
-import { useKeepProductPrice } from "../../hooks/usePriceReview";
+import {
+  COST_CHANGED_LEFT_QUEUE_TITLE,
+  useCostConflictRefresh,
+  useKeepProductPrice,
+} from "../../hooks/usePriceReview";
 import { PRICE_CHANGE_REASON_MAX_LENGTH } from "../../services/productSchemas";
 
 export type KeepPriceProduct = {
@@ -38,15 +42,28 @@ export function describeKeptPrice(
 /**
  * "Mantener precio" (PRO-11): el producto sale de "Por revisar" sin cambiar su
  * precio. El motivo es opcional; sin él el servidor guarda "Precio mantenido".
+ *
+ * Si el costo cambió mientras el usuario decidía (409), relee el producto: el
+ * modal pasa a mostrar el costo y la ganancia actuales y el siguiente clic
+ * confirma sobre ellos; si el producto ya no está en la cola, se cierra con un aviso.
  */
-export function KeepPriceConfirmModal({ onOpenChange, open, product }: KeepPriceConfirmModalProps) {
+export function KeepPriceConfirmModal({
+  onOpenChange,
+  open,
+  product: openedProduct,
+}: KeepPriceConfirmModalProps) {
   const { showToast } = useToast();
   const keepPrice = useKeepProductPrice();
+  const costConflict = useCostConflictRefresh();
   const [reason, setReason] = useState("");
+  // Cifras releídas tras un 409: mandan sobre las que traía quien abrió el modal.
+  const [refreshed, setRefreshed] = useState<KeepPriceProduct | null>(null);
+  const product = refreshed && refreshed.id === openedProduct?.id ? refreshed : openedProduct;
 
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
       setReason("");
+      setRefreshed(null);
       keepPrice.reset();
     }
 
@@ -58,13 +75,41 @@ export function KeepPriceConfirmModal({ onOpenChange, open, product }: KeepPrice
       return;
     }
 
-    // El costo con el que se calculó la ganancia que el modal muestra: si ya es
-    // otro, el servidor responde 409, el error queda en el modal y los datos se refrescan.
-    await keepPrice.mutateAsync({
-      expectedCostRef: product.currentCostRef,
-      productId: product.id,
-      reason: reason.trim() || undefined,
-    });
+    try {
+      // El costo con el que se calculó la ganancia que el modal muestra: si ya es
+      // otro, el servidor responde 409 y no se guarda nada.
+      await keepPrice.mutateAsync({
+        expectedCostRef: product.currentCostRef,
+        productId: product.id,
+        reason: reason.trim() || undefined,
+      });
+    } catch (error) {
+      const fresh = await costConflict.fetchProduct(error, product.id);
+
+      if (fresh && !fresh.priceReview) {
+        showToast({
+          description: `${product.name} ya no está en "Por revisar".`,
+          title: COST_CHANGED_LEFT_QUEUE_TITLE,
+          tone: "info",
+        });
+        handleOpenChange(false);
+
+        return;
+      }
+
+      if (fresh) {
+        setRefreshed({
+          currentCostRef: fresh.currentCostRef,
+          id: product.id,
+          name: product.name,
+          salePriceRef: fresh.salePriceRef,
+        });
+      }
+
+      // El motivo del servidor sigue en el modal, ya con las cifras actuales.
+      throw error;
+    }
+
     showToast({
       description: `${product.name} salió de "Por revisar".`,
       title: "Precio mantenido",
