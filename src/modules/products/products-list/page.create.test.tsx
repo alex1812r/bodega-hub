@@ -1,10 +1,11 @@
 /**
- * PRO-04 · alta de producto desde la lista: el alta devuelve el producto creado
- * y el error de un guardado fallido no sigue ahí al volver a abrir el modal.
+ * PRO-04 · alta y edición de producto desde la lista: el alta devuelve el
+ * producto creado y el error de un guardado fallido (alta o edición) no sigue
+ * ahí al volver a abrir el modal.
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 jest.mock("next/navigation", () => ({
@@ -47,17 +48,24 @@ function jsonResponse(payload: unknown, status = 200) {
   } as unknown as Response;
 }
 
-function captureUnhandledRejections() {
-  const jestListeners = process.listeners("unhandledRejection");
+/**
+ * Vigila los rechazos sin manejar: el formulario captura el de `onSubmit` y
+ * no debe quedar ninguno (en el navegador sería un `pageerror` por guardado fallido).
+ */
+function watchUnhandledRejections() {
   const unhandled = jest.fn();
 
-  process.removeAllListeners("unhandledRejection");
   process.on("unhandledRejection", unhandled);
 
   return {
-    restore() {
-      process.removeAllListeners("unhandledRejection");
-      jestListeners.forEach((listener) => process.on("unhandledRejection", listener));
+    /** Node avisa de un rechazo sin manejar en el turno siguiente: se le da ese turno. */
+    async settle() {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    },
+    stop() {
+      process.off("unhandledRejection", unhandled);
     },
     unhandled,
   };
@@ -65,10 +73,14 @@ function captureUnhandledRejections() {
 
 describe("ProductsListPage · alta de producto (PRO-04)", () => {
   const originalMatchMedia = window.matchMedia;
+  let patchResponses: Response[];
+  let patches: Array<Record<string, unknown>>;
   let postResponses: Response[];
   let posts: Array<Record<string, unknown>>;
 
   beforeEach(() => {
+    patchResponses = [];
+    patches = [];
     postResponses = [];
     posts = [];
     Object.defineProperty(window, "matchMedia", {
@@ -88,6 +100,16 @@ describe("ProductsListPage · alta de producto (PRO-04)", () => {
         posts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
 
         return postResponses.shift() ?? jsonResponse({ error: { code: "X", message: "Sin cola" } }, 500);
+      }
+
+      if (init?.method === "PATCH") {
+        patches.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+
+        return patchResponses.shift() ?? jsonResponse({ data: existing });
+      }
+
+      if (url.startsWith("/api/products/p-1")) {
+        return jsonResponse({ data: existing });
       }
 
       if (url.startsWith("/api/products")) {
@@ -143,7 +165,7 @@ describe("ProductsListPage · alta de producto (PRO-04)", () => {
 
   it("tras un guardado fallido, cerrar y reabrir el alta no muestra el error viejo", async () => {
     const user = renderPage();
-    const rejections = captureUnhandledRejections();
+    const rejections = watchUnhandledRejections();
 
     await screen.findByRole("link", { name: "Arroz" });
 
@@ -154,13 +176,15 @@ describe("ProductsListPage · alta de producto (PRO-04)", () => {
     try {
       await fillBasics(user, "Harina");
       await user.click(dialog.getByRole("button", { name: "Crear producto" }));
-      await waitFor(() => expect(rejections.unhandled).toHaveBeenCalledTimes(1));
+      // El fallo no cierra ni limpia: se ve el motivo junto a lo escrito.
+      expect(await dialog.findByText(SKU_TAKEN)).toBeVisible();
+      await rejections.settle();
     } finally {
-      rejections.restore();
+      rejections.stop();
     }
 
-    // El fallo no cierra ni limpia: se ve el motivo junto a lo escrito.
-    expect(await dialog.findByText(SKU_TAKEN)).toBeVisible();
+    // El formulario captura el rechazo: no queda ninguno sin manejar.
+    expect(rejections.unhandled).not.toHaveBeenCalled();
     expect(within(screen.getByRole("dialog")).getByLabelText("Nombre")).toHaveValue("Harina");
 
     await user.click(dialog.getByRole("button", { name: "Cancelar" }));
@@ -200,5 +224,51 @@ describe("ProductsListPage · alta de producto (PRO-04)", () => {
     expect(posts).toHaveLength(2);
     expect(posts[0]).toMatchObject({ categoryId: "cat-1", name: "Harina", salePriceRef: 2 });
     expect(posts[1]).toMatchObject({ categoryId: "cat-1", name: "Aceite", salePriceRef: 2 });
+  });
+
+  it("tras una edición fallida, cerrar y reabrir la edición no muestra el error viejo", async () => {
+    const user = renderPage();
+    const rejections = watchUnhandledRejections();
+
+    await screen.findByRole("link", { name: "Arroz" });
+
+    async function openEdit() {
+      await user.click(screen.getAllByRole("button", { name: "Abrir acciones" })[0]);
+      await user.click(await screen.findByRole("menuitem", { name: "Editar" }));
+
+      return within(await screen.findByRole("dialog", { name: "Editar producto" }));
+    }
+
+    let dialog = await openEdit();
+
+    patchResponses.push(jsonResponse({ error: { code: "CONFLICT", message: SKU_TAKEN } }, 409));
+
+    try {
+      await user.click(dialog.getByRole("button", { name: "Guardar cambios" }));
+
+      // El fallo no cierra el modal: se ve el motivo.
+      expect(await dialog.findByText(SKU_TAKEN)).toBeVisible();
+      await rejections.settle();
+    } finally {
+      rejections.stop();
+    }
+
+    expect(rejections.unhandled).not.toHaveBeenCalled();
+    expect(patches).toHaveLength(1);
+
+    await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    dialog = await openEdit();
+
+    expect(dialog.queryByText(SKU_TAKEN)).not.toBeInTheDocument();
+    expect(dialog.getByLabelText("Nombre")).toHaveValue("Arroz");
+
+    // El reintento guarda y cierra; el precio no cambió, así que no se pide cambiarlo.
+    await user.click(dialog.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(patches).toHaveLength(2);
+    expect(patches[1]).not.toHaveProperty("salePriceRef");
+    expect(posts).toHaveLength(0);
   });
 });
