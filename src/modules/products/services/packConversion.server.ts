@@ -183,7 +183,7 @@ export async function listPackConversions(storeId: string) {
 async function assertUnitAvailable(
   unitProductId: string,
   storeId: string,
-  packProductId: string,
+  packProductId: string | null,
 ) {
   await assertSupabaseStoreResource(
     "products",
@@ -221,9 +221,9 @@ async function assertComponentsAvailable(
   supabase: RouteSupabaseClient,
   unitProductIds: string[],
   storeId: string,
-  packProductId: string,
+  packProductId: string | null,
 ) {
-  if (unitProductIds.includes(packProductId)) {
+  if (packProductId !== null && unitProductIds.includes(packProductId)) {
     throw new ApiError(400, "BAD_REQUEST", "El empaque no puede ser componente de sí mismo.");
   }
 
@@ -255,6 +255,87 @@ async function assertComponentsAvailable(
       "Un componente es un empaque con receta activa: no puede salir de otro empaque.",
     );
   }
+}
+
+/** Nombre y SKU del producto unidad que crea el modo `create_unit`. */
+function resolveNewUnitIdentity(input: PackConversionInput, packName: string | undefined) {
+  const name = input.unitProduct?.name?.trim() || `${packName ?? "Producto"} (unidad)`;
+
+  return {
+    name,
+    sku: normalizeSku(input.unitProduct?.sku ?? "") || generateProductSkuFromName(name),
+  };
+}
+
+/**
+ * Lo que se puede comprobar de una receta ANTES de que exista su empaque (alta
+ * de producto): que la unidad / los componentes existan en la tienda y no sean
+ * el empaque de una receta activa, y que el SKU de la unidad por crear esté
+ * libre. La forma (suma, repetidos, mínimos) ya la validó
+ * `packConversionInputSchema`. Así un alta con una receta inválida no deja el
+ * producto creado sin receta. `upsertPackConversionForPackProduct` lo vuelve a
+ * comprobar al guardar (otra petición pudo cambiarlo entre medias).
+ */
+export async function assertPackConversionCanBeCreated(
+  storeId: string,
+  input: PackConversionInput,
+  packProduct: { name?: string; sku?: string },
+) {
+  if (!input.enabled) {
+    return;
+  }
+
+  const supabase = await createRouteSupabaseClient();
+
+  if (input.mode === "assorted") {
+    await assertComponentsAvailable(
+      supabase,
+      (input.components ?? []).map((component) => component.unitProductId),
+      storeId,
+      null,
+    );
+    return;
+  }
+
+  if (input.mode === "link_existing") {
+    if (!input.unitProductId) {
+      throw new ApiError(400, "BAD_REQUEST", "Selecciona el producto unidad.");
+    }
+
+    await assertUnitAvailable(input.unitProductId, storeId, null);
+    return;
+  }
+
+  const unit = resolveNewUnitIdentity(input, packProduct.name);
+  const { data, error } = await supabase
+    .from("products")
+    .select("id")
+    .eq("store_id", storeId)
+    .eq("sku", unit.sku)
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+
+  if (data || unit.sku === normalizeSku(packProduct.sku ?? "")) {
+    throw new ApiError(409, "CONFLICT", "Ya existe un producto con este SKU de unidad.");
+  }
+}
+
+/**
+ * Borra el producto unidad que `create_unit` acaba de insertar cuando su receta
+ * no llegó a guardarse: no tiene movimientos ni receta, y dejarlo haría chocar
+ * el reintento con su SKU. Si el borrado falla, queda un producto suelto sin stock.
+ */
+async function discardCreatedUnit(
+  supabase: RouteSupabaseClient,
+  unitProductId: string | undefined,
+  storeId: string,
+) {
+  if (!unitProductId) {
+    return;
+  }
+
+  await supabase.from("products").delete().eq("id", unitProductId).eq("store_id", storeId);
 }
 
 type ActiveRecipeRow = {
@@ -480,6 +561,7 @@ export async function upsertPackConversionForPackProduct(
 
   const unitsPerPack = input.unitsPerPack ?? 2;
   let unitProductId = input.unitProductId;
+  let createdUnitProductId: string | undefined;
 
   if (input.mode === "link_existing") {
     if (!unitProductId) {
@@ -488,12 +570,7 @@ export async function upsertPackConversionForPackProduct(
 
     await assertUnitAvailable(unitProductId, storeId, packProductId);
   } else {
-    const unitName =
-      input.unitProduct?.name?.trim() ||
-      `${packProduct?.name ?? "Producto"} (unidad)`;
-    const unitSku =
-      normalizeSku(input.unitProduct?.sku ?? "") ||
-      generateProductSkuFromName(unitName);
+    const { name: unitName, sku: unitSku } = resolveNewUnitIdentity(input, packProduct?.name);
     const unitCost =
       input.unitProduct?.currentCostRef ??
       (packProduct?.currentCostRef != null
@@ -523,6 +600,7 @@ export async function upsertPackConversionForPackProduct(
     }
 
     unitProductId = unitRow.id;
+    createdUnitProductId = unitRow.id;
   }
 
   const existing = await findActiveRecipe(supabase, packProductId, storeId);
@@ -545,7 +623,12 @@ export async function upsertPackConversionForPackProduct(
   // Otro producto unidad, o la receta vigente es surtida: receta nueva y la
   // anterior queda inactiva (ver `saveAssortedRecipe`).
   if (existing) {
-    throwIfSupabaseError(await setRecipeActive(supabase, existing.id, false));
+    const deactivateError = await setRecipeActive(supabase, existing.id, false);
+
+    if (deactivateError) {
+      await discardCreatedUnit(supabase, createdUnitProductId, storeId);
+      throw mapSupabaseError(deactivateError);
+    }
   }
 
   const { error: insertError } = await supabase.from("product_pack_conversions").insert({
@@ -557,6 +640,7 @@ export async function upsertPackConversionForPackProduct(
   });
 
   if (insertError) {
+    await discardCreatedUnit(supabase, createdUnitProductId, storeId);
     throw await restorePreviousRecipe(supabase, existing?.id, insertError);
   }
 }

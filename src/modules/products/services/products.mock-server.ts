@@ -139,7 +139,11 @@ function resolvePackConversion(productId: string, storeId: string) {
  * Como `packConversion.server`: una unidad / componente puede salir de varios
  * empaques, pero no puede ser el EMPAQUE de una receta activa.
  */
-function assertMockUnitAvailable(unitProductId: string, storeId: string, packProductId: string) {
+function assertMockUnitAvailable(
+  unitProductId: string,
+  storeId: string,
+  packProductId: string | null,
+) {
   const unit = mockProducts.find((item) => item.id === unitProductId);
   assertMockStoreResource(unit, storeId, "Producto unidad no encontrado.");
 
@@ -159,9 +163,9 @@ function assertMockUnitAvailable(unitProductId: string, storeId: string, packPro
 function assertMockComponentsAvailable(
   unitProductIds: string[],
   storeId: string,
-  packProductId: string,
+  packProductId: string | null,
 ) {
-  if (unitProductIds.includes(packProductId)) {
+  if (packProductId !== null && unitProductIds.includes(packProductId)) {
     throw new ApiError(400, "BAD_REQUEST", "El empaque no puede ser componente de sí mismo.");
   }
 
@@ -242,6 +246,55 @@ function upsertMockAssortedRecipe(
   replaceMockRecipe(packProductId, storeId, { components, label, totalUnits });
 }
 
+/** Nombre y SKU del producto unidad que crea el modo `create_unit`. */
+function resolveMockNewUnitIdentity(input: PackConversionInput, packName: string) {
+  const name = input.unitProduct?.name?.trim() || `${packName} (unidad)`;
+
+  return {
+    name,
+    sku: normalizeSku(input.unitProduct?.sku ?? "") || generateProductSkuFromName(name),
+  };
+}
+
+/**
+ * Como `assertPackConversionCanBeCreated` del server: lo que se comprueba de una
+ * receta ANTES de crear su empaque, para que un alta con una receta inválida no
+ * deje el producto creado.
+ */
+function assertMockPackConversionCanBeCreated(
+  storeId: string,
+  input: PackConversionInput,
+  packProduct: { name: string; sku: string },
+) {
+  if (!input.enabled) {
+    return;
+  }
+
+  if (input.mode === "assorted") {
+    assertMockComponentsAvailable(
+      (input.components ?? []).map((component) => component.unitProductId),
+      storeId,
+      null,
+    );
+    return;
+  }
+
+  if (input.mode === "link_existing") {
+    if (!input.unitProductId) {
+      throw new ApiError(400, "BAD_REQUEST", "Selecciona el producto unidad.");
+    }
+
+    assertMockUnitAvailable(input.unitProductId, storeId, null);
+    return;
+  }
+
+  const unit = resolveMockNewUnitIdentity(input, packProduct.name);
+
+  if (unit.sku === packProduct.sku || mockProducts.some((product) => product.sku === unit.sku)) {
+    throw new ApiError(409, "CONFLICT", "Ya existe un producto con este SKU de unidad.");
+  }
+}
+
 function upsertMockPackConversion(
   packProductId: string,
   storeId: string,
@@ -272,9 +325,7 @@ function upsertMockPackConversion(
 
     assertMockUnitAvailable(unitProductId, storeId, packProductId);
   } else {
-    const unitName = input.unitProduct?.name?.trim() || `${packProduct.name} (unidad)`;
-    const unitSku =
-      normalizeSku(input.unitProduct?.sku ?? "") || generateProductSkuFromName(unitName);
+    const { name: unitName, sku: unitSku } = resolveMockNewUnitIdentity(input, packProduct.name);
     const unitCost =
       input.unitProduct?.currentCostRef ??
       Number(((packProduct.currentCostRef ?? 0) / unitsPerPack).toFixed(2));
@@ -421,6 +472,12 @@ function resolveCreateSku(input: ProductInput) {
 
 export function createProduct(input: ProductInput, storeId: string) {
   const sku = resolveCreateSku(input);
+  const name = input.name ?? "Producto mock";
+
+  // Como el server: la receta se valida antes de crear nada.
+  if (input.packConversion) {
+    assertMockPackConversionCanBeCreated(storeId, input.packConversion, { name, sku });
+  }
 
   const product: ProductMock = {
     barcode: normalizeBarcode(input.barcode),
@@ -432,7 +489,7 @@ export function createProduct(input: ProductInput, storeId: string) {
     imageUrl: input.imageUrl ?? undefined,
     isActive: true,
     minStock: input.minStock ?? 5,
-    name: input.name ?? "Producto mock",
+    name,
     salePriceRef: input.salePriceRef ?? 0,
     sku,
     storeId,

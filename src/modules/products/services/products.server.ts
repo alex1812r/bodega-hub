@@ -12,6 +12,7 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { getPricingSettings } from "@/modules/settings/services/settings.server";
 
 import {
+  assertPackConversionCanBeCreated,
   attachPackConversionToProduct,
   upsertPackConversionForPackProduct,
 } from "./packConversion.server";
@@ -332,9 +333,62 @@ async function insertProductRow(
   throw new ApiError(409, "CONFLICT", GENERATED_SKU_EXHAUSTED_MESSAGE);
 }
 
+/**
+ * La receta no se pudo guardar tras crear el producto (ya validada antes del
+ * alta: es un fallo de la base o una carrera). Sin stock inicial el producto no
+ * tiene movimientos y se borra, para que el reintento no choque con su SKU ni
+ * lo duplique. Con stock inicial ya existe su `inventario_inicial` y no se
+ * puede borrar: el error dice que quedó creado y cómo completarlo.
+ */
+async function undoCreateAfterRecipeFailure(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  productId: string,
+  storeId: string,
+  hasInitialStock: boolean,
+  failure: unknown,
+) {
+  const recipeError = mapSupabaseError(failure);
+
+  if (!hasInitialStock) {
+    const { data: deleted, error: deleteError } = await supabase
+      .from("products")
+      .delete()
+      .eq("id", productId)
+      .eq("store_id", storeId)
+      .select("id");
+
+    if (!deleteError && deleted?.length) {
+      return recipeError;
+    }
+  }
+
+  return new ApiError(
+    recipeError.status,
+    recipeError.code,
+    `El producto se creó pero el empaque no se pudo guardar: ${recipeError.message.replace(/\.$/, "")}. Edítalo para completar el empaque.`,
+  );
+}
+
+/**
+ * Alta de producto. Con receta de empaque el orden es:
+ * 1. validar la receta (sin escribir nada: una receta inválida no crea el producto);
+ * 2. insertar el producto;
+ * 3. registrar el stock inicial (`inventario_inicial`; si falla, borra el producto);
+ * 4. guardar la receta (si falla, `undoCreateAfterRecipeFailure`).
+ * El stock va antes que la receta para que un fallo del ajuste nunca deje atrás
+ * la unidad que crea `create_unit`.
+ */
 export async function createProduct(input: ProductInputWithPackConversion, storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { packConversion, ...productInput } = input;
+
+  if (packConversion) {
+    await assertPackConversionCanBeCreated(storeId, packConversion, {
+      name: productInput.name,
+      sku: productInput.sku,
+    });
+  }
+
   const data = await insertProductRow(supabase, productInput, storeId);
 
   if (!data) {
@@ -348,11 +402,15 @@ export async function createProduct(input: ProductInputWithPackConversion, store
   }
 
   if (packConversion) {
-    await upsertPackConversionForPackProduct(data.id, storeId, packConversion, {
-      categoryId: productInput.categoryId,
-      currentCostRef: productInput.currentCostRef,
-      name: productInput.name,
-    });
+    try {
+      await upsertPackConversionForPackProduct(data.id, storeId, packConversion, {
+        categoryId: productInput.categoryId,
+        currentCostRef: productInput.currentCostRef,
+        name: productInput.name,
+      });
+    } catch (error) {
+      throw await undoCreateAfterRecipeFailure(supabase, data.id, storeId, initialStock > 0, error);
+    }
   }
 
   return getProductById(data.id, storeId);
@@ -369,12 +427,13 @@ export async function updateProduct(
   }
   const { packConversion, ...productInput } = input;
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase
-    .from("products")
-    .update(toProductUpdate(productInput))
-    .eq("id", id)
-    .select(productRowSelect)
-    .maybeSingle<ProductRow>();
+  const productUpdate = toProductUpdate(productInput);
+  // Sin columnas que cambiar (p. ej. solo `packConversion`) no hay update: uno
+  // vacío no devuelve fila y la edición respondía 404. Basta leer el producto.
+  const { data, error } = await (Object.keys(productUpdate).length > 0
+    ? supabase.from("products").update(productUpdate).eq("id", id).select(productRowSelect)
+    : supabase.from("products").select(productRowSelect).eq("id", id)
+  ).maybeSingle<ProductRow>();
 
   throwIfSupabaseError(error);
 
