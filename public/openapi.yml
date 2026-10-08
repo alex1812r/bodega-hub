@@ -1427,6 +1427,43 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/inventory/kardex:
+    get:
+      tags: [Inventory]
+      summary: Kardex de un producto
+      description: >-
+        Resumen del libro de un producto de la tienda para su ficha: stock actual, serie diaria de los ultimos 30
+        dias (calendario de Caracas, contando hoy), entradas y salidas del periodo y los 10 ultimos movimientos
+        (orden real del libro, `seq` descendente) con su documento resuelto. El saldo de cada dia se reconstruye
+        hacia atras desde el stock actual restando los movimientos posteriores. La lectura de la ventana esta
+        acotada a 5.000 movimientos (paginas de 1.000): si el producto tiene mas en 30 dias, `truncated` es
+        `true` y los dias mas antiguos, que no se leyeron completos, llegan con `balance`, `entries` y `exits` en
+        `null`. Un producto de otra tienda responde `404`, igual que uno inexistente.
+      x-permission: inventory.view
+      parameters:
+        - name: productId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Id exacto del producto. Ausente, vacio o con formato invalido responde `400`.
+      responses:
+        "200":
+          description: Kardex del producto
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProductKardex"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/inventory/stock-card:
     get:
       tags: [Inventory]
@@ -5837,6 +5874,115 @@ components:
               nullable: true
               description: >-
                 Numero de la venta o de la compra. `null` en una conversion y en un movimiento sin documento.
+    ProductKardex:
+      type: object
+      required: [product, series, entries30d, exits30d, openingBalance, lastMovements, truncated]
+      properties:
+        product:
+          type: object
+          required: [id, name, sku, currentStock, minStock]
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            sku:
+              type: string
+            currentStock:
+              type: integer
+            minStock:
+              type: integer
+        series:
+          type: array
+          description: 30 puntos, uno por dia de Caracas, del mas antiguo a hoy.
+          items:
+            type: object
+            required: [date, entries, exits, balance]
+            properties:
+              date:
+                type: string
+                format: date
+              entries:
+                type: integer
+                nullable: true
+                description: Suma de los movimientos positivos del dia. `null` si el dia no se leyo completo.
+              exits:
+                type: integer
+                nullable: true
+                description: >-
+                  Suma en positivo de los movimientos negativos del dia. `null` si el dia no se leyo completo.
+              balance:
+                type: integer
+                nullable: true
+                description: >-
+                  Saldo al cierre del dia; el de hoy es el stock actual. Puede ser negativo en datos historicos.
+                  `null` si el dia no se leyo completo.
+        entries30d:
+          type: integer
+          description: Entradas de los dias de la serie que tienen dato.
+        exits30d:
+          type: integer
+          description: Salidas (en positivo) de los dias de la serie que tienen dato.
+        openingBalance:
+          type: integer
+          nullable: true
+          description: Saldo antes del primer dia de la serie. `null` si `truncated`.
+        lastMovements:
+          type: array
+          maxItems: 10
+          description: Ultimos movimientos del producto, del mas reciente al mas antiguo.
+          items:
+            type: object
+            required:
+              - id
+              - type
+              - quantityDelta
+              - stockAfter
+              - documentKind
+              - documentNumber
+              - reason
+              - saleId
+              - purchaseId
+              - conversionId
+              - createdAt
+            properties:
+              id:
+                type: string
+              type:
+                $ref: "#/components/schemas/StockMovementType"
+              quantityDelta:
+                type: integer
+              stockAfter:
+                type: integer
+              documentKind:
+                type: string
+                nullable: true
+                enum: [venta, compra, conversion, null]
+                description: "`null` = movimiento sin documento (ajuste manual o asiento historico)."
+              documentNumber:
+                type: string
+                nullable: true
+                description: Numero de la venta o de la compra. `null` en una conversion y sin documento.
+              reason:
+                type: string
+                nullable: true
+              saleId:
+                type: string
+                nullable: true
+              purchaseId:
+                type: string
+                nullable: true
+              conversionId:
+                type: string
+                nullable: true
+              createdAt:
+                type: string
+                format: date-time
+        truncated:
+          type: boolean
+          description: >-
+            `true` si el producto supera los 5.000 movimientos en la ventana: la serie solo cubre los dias leidos
+            completos.
     StockMovementResponse:
       type: object
       required: [data]

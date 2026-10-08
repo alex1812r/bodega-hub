@@ -56,6 +56,17 @@ const priceReview = {
   snapshotAt: "2026-09-20T10:00:00.000Z",
 };
 
+/** INV-03 · kardex sin movimientos: la tarjeta de kardex queda en su estado vacío. */
+const emptyKardex = {
+  entries30d: 0,
+  exits30d: 0,
+  lastMovements: [],
+  openingBalance: 10,
+  product: { currentStock: 10, id: "p-1", minStock: 2, name: "Arroz", sku: "arroz" },
+  series: [],
+  truncated: false,
+};
+
 function jsonResponse(payload: unknown, status = 200) {
   return {
     headers: { get: () => "application/json" },
@@ -102,6 +113,10 @@ describe("ProductDetailsPage · Por revisar (PRO-11)", () => {
         return jsonResponse({
           data: { items: priceHistory, limit: 10, skip: 0, total: priceHistory.length },
         });
+      }
+
+      if (path === "/api/inventory/kardex") {
+        return jsonResponse({ data: emptyKardex });
       }
 
       if (path === "/api/settings/pricing") {
