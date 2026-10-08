@@ -289,6 +289,13 @@ describe("products.mock-server createProductPriceHistoryEntry (parity with the u
     return getProductPriceHistory(productId, new URLSearchParams("limit=50"), DEFAULT_STORE_ID);
   }
 
+  /** Ids de los cambios de precio, sin la línea base de ganancia del producto (PRO-11). */
+  function changeIds(productId: string) {
+    return history(productId)
+      .items.filter((item) => item.kind !== "baseline")
+      .map((item) => item.id);
+  }
+
   it("stores the entry: the history read afterwards includes the price change", () => {
     const before = history("prod-drill");
 
@@ -328,28 +335,67 @@ describe("products.mock-server createProductPriceHistoryEntry (parity with the u
   });
 
   it("returns the history newest first, like products.server (PRO-F4)", () => {
-    expect(history("prod-drill").items.map((item) => item.id)).toEqual([
-      "price-drill-002",
-      "price-drill-001",
-    ]);
+    expect(changeIds("prod-drill")).toEqual(["price-drill-002", "price-drill-001"]);
 
     // Dos cambios en el mismo milisegundo: el último registrado va primero.
     const first = createProductPriceHistoryEntry("prod-drill", { salePriceRef: 16 }, DEFAULT_STORE_ID);
     const second = createProductPriceHistoryEntry("prod-drill", { salePriceRef: 17 }, DEFAULT_STORE_ID);
 
-    expect(history("prod-drill").items.map((item) => item.id)).toEqual([
-      second.id,
-      first.id,
-      "price-drill-002",
-      "price-drill-001",
-    ]);
+    expect(history("prod-drill").items.map((item) => item.id).slice(0, 2)).toEqual([second.id, first.id]);
+    expect(changeIds("prod-drill")).toEqual([second.id, first.id, "price-drill-002", "price-drill-001"]);
     // La paginación corta sobre ese orden.
     expect(
       getProductPriceHistory("prod-drill", new URLSearchParams("skip=1&limit=50"), DEFAULT_STORE_ID)
         .items[0],
     ).toEqual(first);
     // Leer no reordena lo guardado.
-    expect(mockProductPriceHistory.slice(-2)).toEqual([first, second]);
+    expect(mockProductPriceHistory.slice(-2).map((item) => item.id)).toEqual([first.id, second.id]);
+  });
+
+  // QA (PRO-11): el historial mostraba "14.00 → 14.00" en la fila más antigua de un
+  // cambio 12 → 14, porque la API no devolvía el precio anterior y la pantalla lo
+  // deducía de la fila vecina.
+  it("exposes the previous price of each change, also on the oldest row (12 → 14 is not 14 → 14)", () => {
+    const product = mockProducts.find((item) => item.id === "prod-drill");
+    if (!product) throw new Error("falta prod-drill en los mocks");
+    const original = product.salePriceRef;
+
+    try {
+      product.salePriceRef = 12;
+      mockProductPriceHistory.splice(0, mockProductPriceHistory.length);
+      createProductPriceHistoryEntry("prod-drill", { salePriceRef: 14 }, DEFAULT_STORE_ID);
+      updateProductPrice("prod-drill", { salePriceRef: 14 }, DEFAULT_STORE_ID);
+      createProductPriceHistoryEntry("prod-drill", { salePriceRef: 15.5 }, DEFAULT_STORE_ID);
+      updateProductPrice("prod-drill", { salePriceRef: 15.5 }, DEFAULT_STORE_ID);
+
+      const changes = history("prod-drill").items.filter((item) => item.kind === "change");
+
+      expect(changes.map((item) => [item.previousSalePriceRef, item.salePriceRef])).toEqual([
+        [14, 15.5],
+        [12, 14],
+      ]);
+    } finally {
+      product.salePriceRef = original;
+    }
+  });
+
+  it("labels each row: change, kept price and baseline; a seed row without previous price stays null", () => {
+    const items = history("prod-drill").items;
+
+    expect(items.find((item) => item.id === "price-drill-002")).toMatchObject({
+      kind: "change",
+      previousSalePriceRef: 14,
+      reason: null,
+      salePriceRef: 15,
+    });
+    expect(items.find((item) => item.id === "price-drill-001")).toMatchObject({
+      kind: "change",
+      previousSalePriceRef: null,
+    });
+    expect(items.filter((item) => item.kind === "baseline")).toEqual([
+      expect.objectContaining({ reason: "Línea base de ganancia" }),
+    ]);
+    expect(items.every((item) => !("costRefSnapshot" in item) && !("snapshotSeq" in item))).toBe(true);
   });
 
   it("only adds to the history of that product", () => {

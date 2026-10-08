@@ -1,4 +1,9 @@
-import { createProductSchema, updateProductSchema } from "./productSchemas";
+import {
+  createProductSchema,
+  keepProductPriceSchema,
+  repriceProductsSchema,
+  updateProductSchema,
+} from "./productSchemas";
 
 describe("sku del producto (PRO-05)", () => {
   const base = { name: "Harina PAN", salePriceRef: 2 };
@@ -84,5 +89,46 @@ describe("updateProductSchema currentStock", () => {
     if (result.success) {
       expect(result.data).not.toHaveProperty("currentStock");
     }
+  });
+});
+
+describe("keepProductPriceSchema", () => {
+  it.each([[{}], [{ reason: null }], [{ reason: "   " }]])("leaves the reason null for %p", (input) => {
+    expect(keepProductPriceSchema.parse(input)).toEqual({ reason: null });
+  });
+
+  it("trims the reason and rejects more than 200 characters", () => {
+    expect(keepProductPriceSchema.parse({ reason: "  Lo reviso el lunes " })).toEqual({
+      reason: "Lo reviso el lunes",
+    });
+    expect(keepProductPriceSchema.safeParse({ reason: "x".repeat(201) }).success).toBe(false);
+  });
+});
+
+describe("repriceProductsSchema", () => {
+  const ids = (count: number) => Array.from({ length: count }, (_, index) => `prod-${index}`);
+
+  it("accepts 1 to 100 products and a % above 0 up to 1000", () => {
+    expect(repriceProductsSchema.parse({ markupPct: 25, productIds: ["prod-1"] })).toEqual({
+      markupPct: 25,
+      productIds: ["prod-1"],
+      reason: null,
+    });
+    expect(repriceProductsSchema.safeParse({ markupPct: 0.01, productIds: ids(100) }).success).toBe(true);
+    expect(repriceProductsSchema.safeParse({ markupPct: 1000, productIds: ids(1) }).success).toBe(true);
+  });
+
+  it.each([
+    ["no products", { markupPct: 25, productIds: [] }],
+    ["101 products", { markupPct: 25, productIds: ids(101) }],
+    ["a blank id", { markupPct: 25, productIds: ["  "] }],
+    ["% 0", { markupPct: 0, productIds: ids(1) }],
+    ["negative %", { markupPct: -1, productIds: ids(1) }],
+    ["% above the cap", { markupPct: 1000.01, productIds: ids(1) }],
+    ["NaN", { markupPct: Number.NaN, productIds: ids(1) }],
+    ["Infinity", { markupPct: Number.POSITIVE_INFINITY, productIds: ids(1) }],
+    ["a missing %", { productIds: ids(1) }],
+  ])("rejects %s", (_name, input) => {
+    expect(repriceProductsSchema.safeParse(input).success).toBe(false);
   });
 });

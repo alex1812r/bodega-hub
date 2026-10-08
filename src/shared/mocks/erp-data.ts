@@ -90,10 +90,19 @@ export type ProductMock = {
 };
 
 export type ProductPriceHistoryMock = {
+  /** Costo del producto al guardar la fila (`cost_ref_snapshot`, parche 20261009c). */
+  costRefSnapshot?: number;
   createdAt: string;
   id: string;
+  /** Banda de ganancia al guardar la fila (`margin_band_snapshot`); `none` = sin costo. */
+  marginBandSnapshot?: "high" | "low" | "mid" | "none";
+  /** Precio antes del cambio (`old_sale_price_ref`). */
+  previousSalePriceRef?: number | null;
   productId: string;
+  reason?: string | null;
   salePriceRef: number;
+  /** Posición de la instantánea en el libro (`snapshot_seq`). Sin ella la fila no tiene instantánea. */
+  snapshotSeq?: number;
   userId: string;
 };
 
@@ -509,6 +518,7 @@ export const mockProductPriceHistory: ProductPriceHistoryMock[] = [
   {
     createdAt: "2026-05-18T10:00:00.000Z",
     id: "price-drill-002",
+    previousSalePriceRef: 14,
     productId: "prod-drill",
     salePriceRef: 15,
     userId: "user-admin",
@@ -530,6 +540,7 @@ export const mockProductPriceHistory: ProductPriceHistoryMock[] = [
   {
     createdAt: "2026-05-17T09:30:00.000Z",
     id: "price-hammer-002",
+    previousSalePriceRef: 6.5,
     productId: "prod-hammer",
     salePriceRef: 7,
     userId: "user-admin",

@@ -691,6 +691,13 @@ paths:
           schema:
             type: string
           description: SKU exacto (se normaliza con trim y minusculas, igual que al crear). Si se envia, `search` se ignora; vacio no filtra.
+        - name: review
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1", "true"]
+          description: Solo productos en la cola "Por revisar" (su costo subio y la ganancia bajo de banda). Se combina con los demas filtros, el orden y la paginacion.
       responses:
         "200":
           description: Lista paginada de productos
@@ -973,6 +980,141 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/products/{id}/keep-price:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [Products]
+      summary: Mantener el precio de un producto en revision
+      description: >-
+        Saca el producto de la cola "Por revisar" sin cambiar su precio: registra una fila de historial con precio
+        anterior = nuevo = actual (`kind: keep`) que vuelve a guardar el costo y la banda de ganancia del momento.
+        Supabase usa la RPC `keep_product_price`; no toca el producto ni el stock. El cuerpo es opcional.
+      x-permission: products.manage
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductKeepPriceInput"
+      responses:
+        "200":
+          description: Fila de historial registrada y producto (ya sin `priceReview`)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [history, product]
+                    properties:
+                      history:
+                        $ref: "#/components/schemas/ProductPriceHistory"
+                      product:
+                        $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/products/price-review:
+    get:
+      tags: [Products]
+      summary: Listar la cola "Por revisar" de precios
+      description: >-
+        Productos activos cuyo costo subio despues de fijar su precio y cuya banda de ganancia actual es peor que la
+        guardada entonces (verde a amarillo, amarillo a rojo, verde a rojo). Orden: peor banda primero y, dentro de
+        ella, la mayor caida de %. Un producto sale de la cola al cambiar su precio, con "Mantener precio" o si el
+        costo vuelve a bajar. Nunca se cambia un precio automaticamente.
+      x-permission: products.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: purchaseId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Solo los productos cuyo costo subio esa compra (la compra recibida mas reciente posterior al ultimo precio fijado).
+      responses:
+        "200":
+          description: Cola paginada
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/ProductPriceReviewItem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/products/price-review/summary:
+    get:
+      tags: [Products]
+      summary: Contar los productos de la cola "Por revisar"
+      description: Solo el conteo (tarjeta del dashboard).
+      x-permission: products.view
+      responses:
+        "200":
+          description: Total de productos en la cola
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [total]
+                    properties:
+                      total:
+                        type: integer
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/products/price-review/reprice:
+    post:
+      tags: [Products]
+      summary: Reprecio masivo al % de ganancia indicado
+      description: >-
+        Para cada producto calcula precio = costo x (1 + markupPct / 100), redondeado a dinero, y lo aplica con
+        `update_product_price` (motivo por defecto "Reprecio al X %"). Un fallo no aborta el lote: la respuesta es
+        200 con un resultado por producto (`ok` con el precio nuevo o `error` con codigo y mensaje). Un producto sin
+        costo responde `NO_COST` en su fila: nunca se le pone precio 0.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductRepriceInput"
+      responses:
+        "200":
+          description: Resultado por producto
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProductRepriceResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/products/{id}/sales:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -3550,6 +3692,137 @@ components:
           type: integer
         isActive:
           type: boolean
+        priceReview:
+          allOf:
+            - $ref: "#/components/schemas/ProductPriceReview"
+          description: Solo si el producto esta en la cola "Por revisar" (listado y detalle).
+    ProductPriceReview:
+      type: object
+      description: Por que un producto esta en la cola "Por revisar" - ganancia y costo al fijar el precio frente a los actuales.
+      required:
+        - previousBand
+        - currentBand
+        - previousMarginPct
+        - currentMarginPct
+        - previousCostRef
+        - currentCostRef
+        - snapshotAt
+      properties:
+        previousBand:
+          type: string
+          enum: [low, mid, high]
+          description: Banda guardada al fijar el precio (low rojo, mid amarillo, high verde).
+        currentBand:
+          type: string
+          enum: [low, mid, high]
+          description: Banda actual con los umbrales de la tienda.
+        previousMarginPct:
+          type: number
+          description: "% de ganancia del precio vigente sobre el costo guardado."
+        currentMarginPct:
+          type: number
+          description: "% de ganancia del precio vigente sobre el costo actual."
+        previousCostRef:
+          type: number
+        currentCostRef:
+          type: number
+        snapshotAt:
+          type: string
+          format: date-time
+          description: Cuando se fijo (o se mantuvo) el precio por ultima vez.
+        purchase:
+          type: object
+          description: Compra recibida que subio el costo. Ausente si el costo cambio por otra via (edicion, importacion).
+          required: [id, number, receivedAt]
+          properties:
+            id:
+              type: string
+            number:
+              type: string
+            receivedAt:
+              type: string
+              format: date-time
+            supplierName:
+              type: string
+    ProductPriceReviewItem:
+      allOf:
+        - $ref: "#/components/schemas/ProductPriceReview"
+        - type: object
+          required: [productId, name, sku, salePriceRef]
+          properties:
+            productId:
+              type: string
+            name:
+              type: string
+            sku:
+              type: string
+            salePriceRef:
+              type: number
+    ProductKeepPriceInput:
+      type: object
+      properties:
+        reason:
+          type: string
+          nullable: true
+          maxLength: 200
+          description: Motivo. Ausente, null o en blanco se guarda "Precio mantenido".
+    ProductRepriceInput:
+      type: object
+      required: [productIds, markupPct]
+      properties:
+        productIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+        markupPct:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 1000
+          description: "% de ganancia sobre el costo."
+        reason:
+          type: string
+          nullable: true
+          maxLength: 200
+          description: Motivo. Ausente, null o en blanco se guarda "Reprecio al X %".
+    ProductRepriceResult:
+      type: object
+      required: [results, updated, failed]
+      properties:
+        updated:
+          type: integer
+        failed:
+          type: integer
+        results:
+          type: array
+          items:
+            oneOf:
+              - type: object
+                required: [productId, status, salePriceRef]
+                properties:
+                  productId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [ok]
+                  salePriceRef:
+                    type: number
+                    description: Precio nuevo aplicado.
+              - type: object
+                required: [productId, status, code, message]
+                properties:
+                  productId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [error]
+                  code:
+                    type: string
+                    description: NO_COST, NOT_FOUND o el codigo del error de la API (FORBIDDEN, BAD_REQUEST, CONFLICT...).
+                  message:
+                    type: string
     ProductResponse:
       type: object
       required: [data]
@@ -3613,7 +3886,7 @@ components:
           minimum: 0
     ProductPriceHistory:
       type: object
-      required: [id, productId, salePriceRef, createdAt, userId]
+      required: [id, productId, salePriceRef, previousSalePriceRef, kind, reason, createdAt, userId]
       properties:
         id:
           type: string
@@ -3621,6 +3894,20 @@ components:
           type: string
         salePriceRef:
           type: number
+          description: Precio nuevo.
+        previousSalePriceRef:
+          type: number
+          nullable: true
+          description: Precio antes del cambio, tal como lo guardo la fila. Null si no se registro.
+        kind:
+          type: string
+          enum: [change, keep, baseline]
+          description: >-
+            change = cambio de precio; keep = el precio se mantuvo ("Mantener precio"); baseline = linea base de
+            ganancia del producto (alta o migracion). En keep y baseline el precio anterior y el nuevo coinciden.
+        reason:
+          type: string
+          nullable: true
         createdAt:
           type: string
           format: date-time

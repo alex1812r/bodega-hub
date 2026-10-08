@@ -8,6 +8,7 @@ import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import type { SortOrder } from "@/lib/api/sorting";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type { CategoryInput } from "../services/categories.mock-server";
+import type { ProductPriceHistoryEntry, ProductPriceReview } from "../services/priceReview";
 import type { ProductMarginFilter } from "../services/productMargin";
 import type {
   ProductSaleHistoryResult,
@@ -17,11 +18,11 @@ import type {
   CategoryMock,
   ProductMock,
   ProductPackConversionSummary,
-  ProductPriceHistoryMock,
   SupplierProductMock,
 } from "@/shared/mocks/erp-data";
 
 export type { CategoryInput };
+export type { ProductPriceHistoryEntry, ProductPriceReview };
 export type { ProductSaleHistoryResult, ProductSaleHistoryRow };
 
 export type CategoriesFilters = PaginationParams & {
@@ -32,6 +33,8 @@ export type CategoriesFilters = PaginationParams & {
 export type ProductWithCategory = ProductMock & {
   category?: CategoryMock;
   packConversion?: ProductPackConversionSummary;
+  /** Solo si el producto está en la cola "Por revisar": su costo subió y la ganancia bajó de banda. */
+  priceReview?: ProductPriceReview;
 };
 
 export type ProductsFilters = PaginationParams & {
@@ -40,6 +43,8 @@ export type ProductsFilters = PaginationParams & {
   isActive?: boolean | string;
   /** Banda de ganancia (`low` / `mid` / `high`) o `none` = productos sin costo. */
   margin?: ProductMarginFilter;
+  /** `1` = solo productos en la cola "Por revisar". */
+  review?: "1";
   search?: string;
   sortBy?: string;
   sortOrder?: SortOrder;
@@ -82,11 +87,6 @@ export type ProductPriceUpdateInput = {
   /** Motivo del cambio (máx. 200 caracteres). Ausente o en blanco: se guarda sin motivo. */
   reason?: string;
   salePriceRef: number;
-};
-
-/** Cambio del historial de precios; `reason` es el motivo guardado, si lo hubo. */
-export type ProductPriceHistoryEntry = ProductPriceHistoryMock & {
-  reason?: string | null;
 };
 
 export type ProductPriceUpdateResult = {

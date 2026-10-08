@@ -76,16 +76,43 @@ export const PRICE_CHANGE_REASON_MAX_LENGTH = 200;
 /** Motivo que acompaña a un cambio de precio hecho desde la edición del producto. */
 export const PRODUCT_EDIT_PRICE_REASON = "Edición del producto";
 
-/**
- * Cambio de precio (`POST /api/products/[id]/price`). El motivo es opcional:
- * ausente, `null` o en blanco queda `null`, que es lo que recibe `p_reason`.
- */
+/** Motivo opcional: ausente, `null` o en blanco queda `null`, que es lo que recibe `p_reason`. */
+const priceReasonSchema = z
+  .string()
+  .trim()
+  .max(PRICE_CHANGE_REASON_MAX_LENGTH)
+  .nullish()
+  .transform((value) => value || null);
+
+/** Cambio de precio (`POST /api/products/[id]/price`). */
 export const productPriceSchema = z.object({
-  reason: z
-    .string()
-    .trim()
-    .max(PRICE_CHANGE_REASON_MAX_LENGTH)
-    .nullish()
-    .transform((value) => value || null),
+  reason: priceReasonSchema,
   salePriceRef: z.number().min(0),
 });
+
+/**
+ * "Mantener precio" (`POST /api/products/[id]/keep-price`). Sin motivo la RPC
+ * `keep_product_price` guarda "Precio mantenido".
+ */
+export const keepProductPriceSchema = z.object({
+  reason: priceReasonSchema,
+});
+
+/** Productos por lote de reprecio. */
+export const REPRICE_MAX_PRODUCTS = 100;
+
+/** Tope del % de ganancia de un reprecio (el mismo de los chips de % de la tienda). */
+export const REPRICE_MAX_MARKUP_PCT = 1000;
+
+/**
+ * Reprecio masivo (`POST /api/products/price-review/reprice`): precio = costo ×
+ * (1 + % / 100) para cada producto. Sin motivo se guarda "Reprecio al X %".
+ */
+export const repriceProductsSchema = z.object({
+  markupPct: z.number().gt(0).max(REPRICE_MAX_MARKUP_PCT),
+  productIds: z.array(z.string().trim().min(1)).min(1).max(REPRICE_MAX_PRODUCTS),
+  reason: priceReasonSchema,
+});
+
+export type KeepProductPriceInput = z.infer<typeof keepProductPriceSchema>;
+export type RepriceProductsInput = z.infer<typeof repriceProductsSchema>;

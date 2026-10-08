@@ -7,6 +7,8 @@ jest.mock("../../../lib/supabase/route-client", () => ({
 }));
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { applyMockPurchaseCost } from "@/modules/products/services/priceReview.mock-server";
+import { mockPurchases } from "@/shared/mocks/erp-data";
 
 import { GET, POST } from "./route";
 
@@ -287,6 +289,38 @@ describe("/api/products", () => {
 
     expect(response.status).toBe(409);
     expect(body.error.code).toBe("CONFLICT");
+  });
+
+  it("review=1 returns only the products in the price review queue, each with its priceReview (PRO-11)", async () => {
+    const created = await POST(
+      new Request("http://localhost/api/products", {
+        body: JSON.stringify({ currentCostRef: 8, name: "Azúcar en revisión", salePriceRef: 10, sku: "rev-list-1" }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+    );
+    const product = (await created.json()).data;
+    applyMockPurchaseCost(product.id, 9, mockPurchases[0].id);
+
+    const response = await GET(new Request("http://localhost/api/products?review=1&limit=100"));
+    const body = await response.json();
+    const outside = await (await GET(new Request("http://localhost/api/products?review=1&limit=100&margin=high"))).json();
+
+    expect(created.status).toBe(201);
+    expect(product).not.toHaveProperty("priceReview");
+    expect(response.status).toBe(200);
+    expect(body.data.items.length).toBe(body.data.total);
+    expect(body.data.items.every((item: { priceReview?: unknown }) => item.priceReview !== undefined)).toBe(true);
+    expect(body.data.items.find((item: { id: string }) => item.id === product.id).priceReview).toEqual(
+      expect.objectContaining({
+        currentBand: "low",
+        currentCostRef: 9,
+        previousBand: "high",
+        previousCostRef: 8,
+        purchase: expect.objectContaining({ id: mockPurchases[0].id }),
+      }),
+    );
+    expect(outside.data.items).toEqual([]);
   });
 
   describe("supabase data source", () => {

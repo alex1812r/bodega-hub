@@ -334,3 +334,108 @@ describe("products.server listProducts: margin filter and sort", () => {
     ]);
   });
 });
+
+describe("products.server listProducts: price review (PRO-11)", () => {
+  const productRow = {
+    category_id: "cat-1",
+    current_cost_ref: 9,
+    current_stock: 5,
+    id: "prod-1",
+    is_active: true,
+    min_stock: 2,
+    name: "Harina PAN",
+    sale_price_ref: 10,
+    sku: "har-001",
+  };
+  const reviewRow = {
+    current_band: "red",
+    current_cost_ref: 9,
+    current_margin_pct: 11.111111,
+    previous_band: "green",
+    previous_cost_ref: 8,
+    previous_margin_pct: 25,
+    product_id: "prod-1",
+    purchase_id: "pur-1",
+    purchase_number: "C-0001",
+    purchase_received_at: "2026-10-02T10:00:00.000Z",
+    snapshot_at: "2026-10-01T10:00:00.000Z",
+    supplier_name: "Distribuidora Lara",
+  };
+
+  function setup(rows: unknown[] = []) {
+    const supabase = createMockSupabase();
+    supabase.chain.range.mockResolvedValue({ count: rows.length, data: rows, error: null });
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue(supabase);
+
+    return supabase.chain;
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("embeds the price_review relation in the same query: no extra query per product", async () => {
+    const chain = setup();
+
+    await listProducts(new URLSearchParams(), DEFAULT_STORE_ID);
+
+    const select = String(chain.select.mock.calls[0][0]);
+    expect(select).toContain("price_review:price_review(");
+    expect(select).not.toContain("!inner");
+    expect(chain.select).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["review=1", "review=true"])("%s turns the relation into an inner join: only queued products, counted by Postgres", async (query) => {
+    const chain = setup();
+
+    await listProducts(new URLSearchParams(`${query}&categoryId=cat-1&isActive=true&limit=20&skip=20`), DEFAULT_STORE_ID);
+
+    expect(chain.select).toHaveBeenCalledWith(expect.stringContaining("price_review:price_review!inner("), {
+      count: "exact",
+    });
+    // Se combina con los demás filtros y con la paginación.
+    expect(chain.eq).toHaveBeenCalledWith("store_id", DEFAULT_STORE_ID);
+    expect(chain.eq).toHaveBeenCalledWith("category_id", "cat-1");
+    expect(chain.eq).toHaveBeenCalledWith("is_active", true);
+    expect(chain.range).toHaveBeenCalledWith(20, 39);
+  });
+
+  it.each(["review=0", "review="])("%s does not filter", async (query) => {
+    const chain = setup();
+
+    await listProducts(new URLSearchParams(query), DEFAULT_STORE_ID);
+
+    expect(String(chain.select.mock.calls[0][0])).not.toContain("!inner");
+  });
+
+  it("exposes priceReview only on the products that are in the queue", async () => {
+    setup([
+      { ...productRow, price_review: reviewRow },
+      { ...productRow, id: "prod-2", price_review: null },
+      { ...productRow, id: "prod-3", price_review: [] },
+      { ...productRow, id: "prod-4", price_review: [{ ...reviewRow, purchase_id: null }] },
+    ]);
+
+    const result = await listProducts(new URLSearchParams(), DEFAULT_STORE_ID);
+
+    expect(result.items[0].priceReview).toEqual({
+      currentBand: "low",
+      currentCostRef: 9,
+      currentMarginPct: 11.111111,
+      previousBand: "high",
+      previousCostRef: 8,
+      previousMarginPct: 25,
+      purchase: {
+        id: "pur-1",
+        number: "C-0001",
+        receivedAt: "2026-10-02T10:00:00.000Z",
+        supplierName: "Distribuidora Lara",
+      },
+      snapshotAt: "2026-10-01T10:00:00.000Z",
+    });
+    expect(result.items[1]).not.toHaveProperty("priceReview");
+    expect(result.items[2]).not.toHaveProperty("priceReview");
+    expect(result.items[3].priceReview).toMatchObject({ currentBand: "low" });
+    expect(result.items[3].priceReview).not.toHaveProperty("purchase");
+  });
+});

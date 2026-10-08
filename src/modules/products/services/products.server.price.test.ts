@@ -118,3 +118,26 @@ describe("products.server getProductPriceHistory · reason (PRO-F4)", () => {
     ]);
   });
 });
+
+// QA (PRO-11): el historial mostraba "14.00 → 14.00" en la fila más antigua de un
+// cambio 12 → 14: la API no devolvía `old_sale_price_ref` y la pantalla deducía
+// el precio anterior de la fila vecina (que en la más antigua no existe).
+describe("products.server price history · previous price and kind (PRO-11)", () => {
+  it("returns the previous price stored in the row, so the oldest change shows 12 → 13", async () => {
+    mockSupabase(null);
+
+    const history = await getProductPriceHistory("prod-1", new URLSearchParams(), DEFAULT_STORE_ID);
+
+    expect(history.items).toEqual([
+      expect.objectContaining({ kind: "change", previousSalePriceRef: 12, salePriceRef: 13 }),
+    ]);
+  });
+
+  it("returns the previous price and the kind in the entry of a price change", async () => {
+    mockSupabase("Sube el proveedor");
+
+    const result = await updateProductPrice("prod-1", { salePriceRef: 13 }, DEFAULT_STORE_ID);
+
+    expect(result.history).toMatchObject({ kind: "change", previousSalePriceRef: 12, salePriceRef: 13 });
+  });
+});

@@ -3,7 +3,6 @@ import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
 import { parsePagination } from "@/lib/api/pagination";
 import {
   mapProduct,
-  mapProductPriceHistory,
   type ProductPriceHistoryRow,
   type ProductRow,
 } from "@/lib/supabase/mappers";
@@ -17,6 +16,12 @@ import {
   upsertPackConversionForPackProduct,
 } from "./packConversion.server";
 import type { PackConversionInput } from "./packConversionSchemas";
+import {
+  isPriceReviewFilterOn,
+  PRICE_HISTORY_COLUMNS,
+  PRICE_REVIEW_COLUMNS,
+  toProductPriceHistoryEntry,
+} from "./priceReview";
 import { assertAllowedProductImageUrl } from "./productImagePaths";
 import type {
   ProductInput,
@@ -60,7 +65,7 @@ export type ProductInputWithPackConversion = ProductInput & {
   packConversion?: PackConversionInput;
 };
 
-const productSelect = `
+const productRowSelect = `
   id,
   category_id,
   sku,
@@ -77,6 +82,27 @@ const productSelect = `
   updated_at,
   category:categories(id, name, description, tax_rate, default_markup_pct, is_active, created_at, updated_at)
 `;
+
+/**
+ * Lectura de un producto: la fila más `price_review`, la relación calculada del
+ * parche 20261009c que trae su fila de la cola "Por revisar" (o nada). Las
+ * escrituras devuelven solo `productRowSelect`: el `returning` de PostgREST
+ * resuelve la relación con los datos de ANTES del cambio.
+ */
+const productSelect = `${productRowSelect},
+  price_review:price_review(${PRICE_REVIEW_COLUMNS})
+`;
+
+/**
+ * `review=1`: el mismo select con la relación `price_review` como inner join,
+ * que deja solo los productos de la cola "Por revisar" (parche 20261009c). El
+ * filtro lo resuelve Postgres: se combina con los demás filtros, el orden, el
+ * conteo y la paginación sin pasar listas de ids.
+ */
+const productReviewOnlySelect = productSelect.replace(
+  "price_review:price_review(",
+  "price_review:price_review!inner(",
+);
 
 function toProductInsert(input: ProductInput, sku: string, storeId: string) {
   return {
@@ -185,7 +211,9 @@ export async function listProducts(searchParams: URLSearchParams, storeId: strin
 
   let query = supabase
     .from("products")
-    .select(productSelect, { count: "exact" })
+    .select(isPriceReviewFilterOn(searchParams) ? productReviewOnlySelect : productSelect, {
+      count: "exact",
+    })
     .eq("store_id", storeId);
 
   // Los cortes del semáforo son los de la tienda: una sola lectura por petición
@@ -300,7 +328,7 @@ async function insertProductRow(
     const { data, error } = await supabase
       .from("products")
       .insert(toProductInsert(input, sku, storeId))
-      .select(productSelect)
+      .select(productRowSelect)
       .single<ProductRow>();
 
     if (!requestedSku && isSkuUniqueViolation(error)) {
@@ -356,7 +384,7 @@ export async function updateProduct(
     .from("products")
     .update(toProductUpdate(productInput))
     .eq("id", id)
-    .select(productSelect)
+    .select(productRowSelect)
     .maybeSingle<ProductRow>();
 
   throwIfSupabaseError(error);
@@ -408,7 +436,7 @@ export async function deleteProduct(id: string, storeId: string) {
     .update({ is_active: false })
     .eq("id", id)
     .eq("is_active", true)
-    .select(productSelect)
+    .select(productRowSelect)
     .maybeSingle<ProductRow>();
 
   throwIfSupabaseError(error);
@@ -420,14 +448,6 @@ export async function deleteProduct(id: string, storeId: string) {
   return {
     ...mapProduct(data),
     deleted: true,
-  };
-}
-
-/** La fila del historial con su motivo (`null` si el cambio se registró sin él). */
-function mapPriceHistoryEntry(row: ProductPriceHistoryRow) {
-  return {
-    ...mapProductPriceHistory(row),
-    reason: row.reason?.trim() || null,
   };
 }
 
@@ -449,9 +469,10 @@ export async function updateProductPrice(id: string, input: ProductPriceInput, s
 
   const { data: historyRow, error: historyError } = await supabase
     .from("product_price_history")
-    .select("id, product_id, old_sale_price_ref, new_sale_price_ref, reason, changed_by, created_at")
+    .select(PRICE_HISTORY_COLUMNS)
     .eq("product_id", id)
-    .order("created_at", { ascending: false })
+    // La fila que acaba de insertar la RPC es la de mayor `snapshot_seq`.
+    .order("snapshot_seq", { ascending: false, nullsFirst: false })
     .limit(1)
     .maybeSingle<ProductPriceHistoryRow>();
 
@@ -464,7 +485,7 @@ export async function updateProductPrice(id: string, input: ProductPriceInput, s
   const product = await getProductById(id, storeId);
 
   return {
-    history: mapPriceHistoryEntry(historyRow),
+    history: toProductPriceHistoryEntry(historyRow),
     product,
   };
 }
@@ -491,17 +512,17 @@ export async function getProductPriceHistory(
 
   const { count, data, error } = await supabase
     .from("product_price_history")
-    .select("id, product_id, old_sale_price_ref, new_sale_price_ref, reason, changed_by, created_at", {
-      count: "exact",
-    })
+    .select(PRICE_HISTORY_COLUMNS, { count: "exact" })
     .eq("product_id", id)
     .order("created_at", { ascending: false })
+    // Dos filas de la misma transacción comparten fecha: manda el orden en que se guardaron.
+    .order("snapshot_seq", { ascending: false, nullsFirst: false })
     .range(skip, skip + limit - 1);
 
   throwIfSupabaseError(error);
 
   return {
-    items: (data ?? []).map((row) => mapPriceHistoryEntry(row as ProductPriceHistoryRow)),
+    items: (data ?? []).map((row) => toProductPriceHistoryEntry(row as ProductPriceHistoryRow)),
     limit,
     skip,
     total: count ?? 0,

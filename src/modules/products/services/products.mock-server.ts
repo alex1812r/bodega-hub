@@ -10,13 +10,19 @@ import {
   mockSaleItems,
   mockSales,
   mockStockMovements,
-  type ProductPriceHistoryMock,
   type ProductMock,
 } from "@/shared/mocks/erp-data";
 import { getPricingSettings } from "@/modules/settings/services/settings.mock-server";
 import { generateProductSkuFromName, normalizeSku } from "@/shared/utils/skuGeneration";
 
 import type { PackConversionInput } from "./packConversionSchemas";
+import { isPriceReviewFilterOn, type ProductPriceHistoryEntry } from "./priceReview";
+import {
+  attachMockPriceReview,
+  ensureMockPriceBaselines,
+  recordMockPriceChange,
+  toMockPriceHistoryEntry,
+} from "./priceReview.mock-server";
 import { buildPackConversionSummary } from "./packConversionSummary";
 import {
   buildGeneratedSku,
@@ -55,10 +61,7 @@ export type ProductPriceInput = Pick<ProductMock, "salePriceRef"> & {
   reason?: string | null;
 };
 
-/** Entrada del historial de precios con el motivo guardado (`product_price_history.reason`). */
-export type ProductPriceHistoryEntry = ProductPriceHistoryMock & {
-  reason?: string | null;
-};
+export type { ProductPriceHistoryEntry };
 
 function resolvePackConversion(productId: string, storeId: string) {
   const link = mockProductPackConversions.find(
@@ -215,14 +218,18 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
     );
   });
 
-  const items = products.map((product) => {
-    const category = mockCategories.find((item) => item.id === product.categoryId);
-    return {
-      ...product,
-      category,
-      taxRate: product.taxRate ?? category?.taxRate ?? 0,
-    };
-  });
+  // `priceReview` solo en los productos de la cola "Por revisar"; `review=1` deja solo esos.
+  const reviewOnly = isPriceReviewFilterOn(searchParams);
+  const items = attachMockPriceReview(products)
+    .filter((product) => !reviewOnly || product.priceReview !== undefined)
+    .map((product) => {
+      const category = mockCategories.find((item) => item.id === product.categoryId);
+      return {
+        ...product,
+        category,
+        taxRate: product.taxRate ?? category?.taxRate ?? 0,
+      };
+    });
 
   const { sortBy, sortOrder } = parseProductSort(searchParams);
   const sortedItems = sortProductItems(items, sortBy, sortOrder);
@@ -237,7 +244,7 @@ export function getProductById(id: string, storeId: string) {
   const packConversion = resolvePackConversion(id, storeId);
 
   return {
-    ...product,
+    ...attachMockPriceReview([product])[0],
     category: mockCategories.find((category) => category.id === product.categoryId),
     ...(packConversion ? { packConversion } : {}),
   };
@@ -278,7 +285,8 @@ export function createProduct(input: ProductInput, storeId: string) {
     categoryId: input.categoryId ?? "cat-tools",
     currentCostRef: input.currentCostRef ?? 0,
     currentStock: 0,
-    id: `prod-mock-${Date.now()}`,
+    // El índice evita ids repetidos al crear varios productos en el mismo milisegundo.
+    id: `prod-mock-${Date.now()}-${mockProducts.length}`,
     imageUrl: input.imageUrl ?? undefined,
     isActive: true,
     minStock: input.minStock ?? 5,
@@ -289,6 +297,8 @@ export function createProduct(input: ProductInput, storeId: string) {
   };
 
   mockProducts.push(product);
+  // Como el trigger de las altas: el producto nace con su línea base de ganancia.
+  ensureMockPriceBaselines();
 
   // Igual que el server: el stock inicial entra como movimiento `inventario_inicial`.
   const initialStock = input.currentStock ?? 0;
@@ -324,6 +334,8 @@ export function updateProduct(id: string, input: ProductInput, storeId: string) 
 
   const product = mockProducts.find((item) => item.id === id);
   assertMockStoreResource(product, storeId, "Producto no encontrado.");
+  // La línea base guarda el costo ANTES de esta edición.
+  ensureMockPriceBaselines();
 
   if (input.barcode !== undefined) product.barcode = normalizeBarcode(input.barcode);
   if (input.categoryId !== undefined) product.categoryId = input.categoryId;
@@ -406,10 +418,11 @@ export function getProductPriceHistory(id: string, searchParams: URLSearchParams
 
   // Como `products.server`: el cambio más reciente primero. Entre dos con la
   // misma fecha gana el último registrado.
-  const history: ProductPriceHistoryEntry[] = mockProductPriceHistory
+  const history = mockProductPriceHistory
     .filter((item) => item.productId === id)
     .reverse()
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .map(toMockPriceHistoryEntry);
 
   return paginateList(history, searchParams);
 }
@@ -437,22 +450,17 @@ export function getProductSales(id: string, searchParams: URLSearchParams, store
 }
 
 export function createProductPriceHistoryEntry(id: string, input: ProductPriceInput, storeId: string) {
-  getProductById(id, storeId);
+  const product = mockProducts.find((item) => item.id === id);
+  assertMockStoreResource(product, storeId, "Producto no encontrado.");
 
-  const entry = {
-    createdAt: new Date().toISOString(),
-    id: `price-mock-${Date.now()}-${mockProductPriceHistory.length}`,
-    productId: id,
+  // Como la RPC `update_product_price`, que inserta en `product_price_history`
+  // el precio anterior, el nuevo y la instantánea de costo y banda: el historial
+  // que se lee después incluye este cambio. La ruta la llama ANTES de
+  // `updateProductPrice`, por eso el precio anterior aún está en el producto.
+  return recordMockPriceChange(product, {
     reason: input.reason ?? null,
     salePriceRef: input.salePriceRef,
-    userId: "user-demo",
-  } satisfies ProductPriceHistoryEntry;
-
-  // Como la RPC `update_product_price`, que inserta en `product_price_history`:
-  // el historial que se lee después incluye este cambio.
-  mockProductPriceHistory.push(entry);
-
-  return entry;
+  });
 }
 
 export function listPackConversions(storeId: string) {
