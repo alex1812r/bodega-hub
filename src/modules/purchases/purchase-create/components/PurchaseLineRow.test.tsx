@@ -170,14 +170,18 @@ describe("PurchaseLineRow · reparto de columnas en tarjeta estrecha (COM-F1)", 
   it("la fila bloqueada usa la misma rejilla: a 619 px de tarjeta la columna Producto mide 175 px y cabe SKU + alícuota", () => {
     render(<Harness initialLocked item={unitItem} />);
 
-    const detail = screen.getByText("sup-int-001 · IVA General 16 %");
+    const sku = screen.getByText("sup-int-001");
+    const detail = sku.parentElement as HTMLElement;
 
     expect(row()).toHaveAttribute("data-locked", "true");
     expect(row()).toHaveClass(
       "@xl:grid-cols-[minmax(0,1fr)_4.5rem_7rem_8rem_4.25rem]",
       "@xl:gap-x-2",
     );
-    expect(detail).toHaveClass("truncate");
+    expect(detail).toHaveTextContent("sup-int-001 · IVA General 16 %");
+    // Solo el SKU se recorta: la alícuota conserva su ancho.
+    expect(sku).toHaveClass("min-w-0", "truncate");
+    expect(screen.getByText(/IVA General 16/)).toHaveClass("shrink-0");
     expect(detail.parentElement).toHaveClass("min-w-0", "@xl:col-span-1");
   });
 });

@@ -41,8 +41,12 @@ export function PurchaseLockedLineCells({
         <p className="text-sm font-medium break-words text-foreground @xl:truncate" title={meta.name}>
           {meta.name}
         </p>
-        <p className="truncate text-xs text-on-surface-variant">
-          {meta.sku} · IVA {formatLineTaxLabel(tax)}
+        {/* El SKU cede el ancho; la alícuota nunca se recorta. */}
+        <p className="flex min-w-0 items-baseline gap-1 text-xs text-on-surface-variant">
+          <span className="min-w-0 truncate" title={meta.sku}>
+            {meta.sku}
+          </span>{" "}
+          <span className="shrink-0 whitespace-nowrap">· IVA {formatLineTaxLabel(tax)}</span>
         </p>
       </div>
 
