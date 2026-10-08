@@ -90,7 +90,7 @@ describe("ProductDetailPackConversionCard · idempotencia (C6)", () => {
 
     await openDialog();
     fireEvent.submit(getForm());
-    await screen.findByText("Failed to fetch");
+    await screen.findByText(/No pudimos confirmar si el movimiento se registró/);
     expect(onConverted).not.toHaveBeenCalled();
 
     fireEvent.submit(getForm());

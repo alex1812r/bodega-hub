@@ -389,7 +389,7 @@ describe("InventoryPackConversionModal · confirmación del surtido (INV-08)", (
     expect(api.posts).toHaveLength(1);
   });
 
-  it("un error de red se muestra tal cual y el reintento del mismo reparto conserva la clave", async () => {
+  it("un error de red avisa del resultado incierto y el reintento del mismo reparto conserva la clave", async () => {
     const api = await renderOpen();
     api.networkErrorOnNextPost();
     api.respondToNextPost(opened);
@@ -397,7 +397,7 @@ describe("InventoryPackConversionModal · confirmación del surtido (INV-08)", (
 
     fireEvent.click(confirmButton(dialog));
 
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Failed to fetch");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/No pudimos confirmar si el movimiento se registró/);
     expect(document.getElementById(formId)).not.toBeNull();
 
     await waitFor(() => expect(confirmButton(dialog)).toBeEnabled());

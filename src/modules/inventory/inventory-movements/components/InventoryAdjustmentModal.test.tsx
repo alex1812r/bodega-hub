@@ -343,7 +343,7 @@ describe("InventoryAdjustmentModal · idempotencia (C6)", () => {
     await openAndFill();
 
     fireEvent.submit(getForm());
-    await screen.findByText("Failed to fetch");
+    await screen.findByText(/No pudimos confirmar si el movimiento se registró/);
     expect(document.getElementById("inventory-adjustment-form")).not.toBeNull();
 
     fireEvent.submit(getForm());

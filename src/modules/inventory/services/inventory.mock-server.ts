@@ -202,21 +202,54 @@ function requestKeyFor(operation: string, storeId: string, clientRequestId?: str
   return clientRequestId ? `${operation}:${storeId}:${clientRequestId}` : null;
 }
 
+/** Misma clave con otro contenido: el PT409 de `stock_request_replay` (20261006c), con su texto. */
+function requestKeyConflict() {
+  return new ApiError(
+    409,
+    "CONFLICT",
+    "La clave de idempotencia ya se uso en otro movimiento de inventario. Revisa el movimiento registrado antes de reintentar.",
+  );
+}
+
+type StoredStockAdjustment = {
+  fingerprint: string;
+  movement: ReturnType<typeof applyStockAdjustment>;
+};
+
+/** Huella del contenido de un ajuste: los mismos campos que el hash de `adjust_stock`. */
+function stockAdjustmentFingerprint(input: StockAdjustmentInput) {
+  return JSON.stringify([
+    input.productId,
+    input.quantityDelta,
+    input.reason ?? null,
+    input.type ?? null,
+    input.saleId ?? null,
+    input.purchaseId ?? null,
+  ]);
+}
+
 export function createStockAdjustment(
   input: StockAdjustmentInput & { clientRequestId?: string },
   storeId: string,
 ) {
   const requestKey = requestKeyFor("adjustment", storeId, input.clientRequestId);
-  const previous = requestKey ? resultsByClientRequest.get(requestKey) : undefined;
+  const previous = requestKey
+    ? (resultsByClientRequest.get(requestKey) as StoredStockAdjustment | undefined)
+    : undefined;
+  const fingerprint = stockAdjustmentFingerprint(input);
 
   if (previous) {
-    return previous as ReturnType<typeof applyStockAdjustment>;
+    if (previous.fingerprint !== fingerprint) {
+      throw requestKeyConflict();
+    }
+
+    return previous.movement;
   }
 
   const movement = applyStockAdjustment(input, storeId);
 
   if (requestKey) {
-    resultsByClientRequest.set(requestKey, movement);
+    resultsByClientRequest.set(requestKey, { fingerprint, movement } satisfies StoredStockAdjustment);
   }
 
   return movement;
@@ -419,11 +452,7 @@ export function convertPackToUnits(
   if (previous) {
     // Misma clave con otro contenido (otro reparto, o sin reparto): PT409 en la base.
     if (previous.fingerprint !== fingerprint) {
-      throw new ApiError(
-        409,
-        "CONFLICT",
-        "La clave de idempotencia ya se uso en otro movimiento de inventario. Revisa el movimiento registrado antes de reintentar.",
-      );
+      throw requestKeyConflict();
     }
 
     return previous.result;

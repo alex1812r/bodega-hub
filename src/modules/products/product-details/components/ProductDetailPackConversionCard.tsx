@@ -21,6 +21,7 @@ import {
 import { buildPackOpeningToast } from "@/modules/inventory/inventory-movements/components/packOpeningText";
 import { useAssortedPackOpening } from "@/modules/inventory/inventory-movements/hooks/useAssortedPackOpening";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
+import { describeStockRequestError } from "@/modules/inventory/utils/stockRequestError";
 
 type ProductDetailPackConversionCardProps = {
   packConversion?: ProductPackConversionSummary;
@@ -42,7 +43,7 @@ export function ProductDetailPackConversionCard({
   const [reason, setReason] = useState("");
   const [quantityTouched, setQuantityTouched] = useState(false);
   const convert = useConvertPackToUnits();
-  const requestAttempt = useRequestAttempt();
+  const requestAttempt = useRequestAttempt({ renewOnContentChange: true });
   const { showToast } = useToast();
 
   const isPack = packConversion?.role === "pack";
@@ -301,14 +302,17 @@ export function ProductDetailPackConversionCard({
                 )
               }
               onOpenChange={(nextOpen) => {
-                // Con la apertura de un surtido en vuelo el modal no se cierra.
-                if (!nextOpen && assorted.isPending) {
+                // Con una apertura en vuelo (1 a 1 o surtido) el modal no se cierra.
+                if (!nextOpen && (convert.isPending || assorted.isPending)) {
                   return;
                 }
 
                 setOpen(nextOpen);
                 if (!nextOpen) {
                   assorted.reset();
+                  // Cerrar descarta el intento: al reabrir, clave nueva y sin el error anterior.
+                  requestAttempt.discard();
+                  convert.reset();
                 }
               }}
               open={open}
@@ -322,6 +326,7 @@ export function ProductDetailPackConversionCard({
               <form className="grid gap-4" id="open-pack-form" onSubmit={handleSubmit}>
                 <NumberInput
                   decimals={0}
+                  disabled={convert.isPending}
                   error={quantityError}
                   label="Cantidad de empaques"
                   onChange={(event) => {
@@ -337,6 +342,7 @@ export function ProductDetailPackConversionCard({
                 </p>
                 <AssortedPackOpeningFields opening={assorted} />
                 <Textarea
+                  disabled={convert.isPending}
                   label="Motivo"
                   onChange={(event) => setReason(event.target.value)}
                   placeholder="Opcional"
@@ -344,9 +350,7 @@ export function ProductDetailPackConversionCard({
                 />
                 {convert.error ? (
                   <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
-                    {convert.error instanceof Error
-                      ? convert.error.message
-                      : "No se pudo convertir el empaque."}
+                    {describeStockRequestError(convert.error)}
                   </p>
                 ) : null}
               </form>

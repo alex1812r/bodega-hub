@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 
-import { ClientApiError } from "@/shared/api/apiFetch";
 import { parseNumberInput } from "@/shared/components/NumberInput";
 
 import { type ConvertPackToUnitsResult, useConvertPackToUnits } from "../../hooks/useInventory";
-import { RequestAttempt } from "../../utils/requestAttempt";
+import { useRequestAttempt } from "../../utils/requestAttempt";
+import { describeStockRequestError } from "../../utils/stockRequestError";
 import {
   buildDefaultPackOpeningDistribution,
   computePackOpeningEffect,
@@ -14,49 +14,6 @@ import {
   type PackOpeningRecipeComponent,
   toPackOpeningRequestComponents,
 } from "../utils/packOpeningEffect";
-
-/**
- * Clave de idempotencia de la apertura con reparto. Es un `RequestAttempt` con
- * una regla más: tras un 409, si el contenido cambia, se estrena clave.
- * `RequestAttempt` conserva la clave tras un 409 (resultado incierto) aunque el
- * contenido cambie, y aquí "misma clave + otro reparto" es justo lo que el
- * servidor responde con 409: sin esta regla el usuario no podría salir de él.
- * El mismo contenido reintentado conserva la clave.
- */
-class AssortedOpeningAttempt {
-  private attempt = new RequestAttempt();
-  private conflictFingerprint: string | null = null;
-  private sentFingerprint: string | null = null;
-
-  begin(content: unknown): string | null {
-    const fingerprint = JSON.stringify(content);
-
-    if (this.conflictFingerprint !== null && this.conflictFingerprint !== fingerprint) {
-      this.attempt = new RequestAttempt();
-    }
-
-    const clientRequestId = this.attempt.begin(content);
-
-    if (clientRequestId) {
-      this.conflictFingerprint = null;
-      this.sentFingerprint = fingerprint;
-    }
-
-    return clientRequestId;
-  }
-
-  succeed() {
-    this.attempt.succeed();
-    this.conflictFingerprint = null;
-    this.sentFingerprint = null;
-  }
-
-  fail(error: unknown) {
-    this.attempt.fail(error);
-    this.conflictFingerprint =
-      error instanceof ClientApiError && error.status === 409 ? this.sentFingerprint : null;
-  }
-}
 
 export type AssortedPackOpeningTarget = {
   /** Componentes de la receta (`packConversion.components`). */
@@ -99,7 +56,8 @@ export function useAssortedPackOpening({
 }: UseAssortedPackOpeningInput) {
   const [edited, setEdited] = useState<EditedDistribution | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [attempt] = useState(() => new AssortedOpeningAttempt());
+  // Otro reparto estrena clave: "misma clave + otro reparto" es un 409 en el servidor.
+  const attempt = useRequestAttempt({ renewOnContentChange: true });
   const convert = useConvertPackToUnits();
 
   // Un reparto tecleado para otro empaque no vale para este.
@@ -139,6 +97,7 @@ export function useAssortedPackOpening({
     setEdited(null);
     setConfirmOpen(false);
     convert.reset();
+    attempt.discard();
   }
 
   /** Abre la confirmación si el reparto se puede enviar. */
@@ -189,14 +148,14 @@ export function useAssortedPackOpening({
     confirm,
     confirmOpen,
     effect,
-    /** `error.message` del servidor, tal cual. */
-    error: convert.error ? convert.error.message : null,
+    /** `error.message` del servidor tal cual, o el aviso de resultado incierto. */
+    error: convert.error ? describeStockRequestError(convert.error) : null,
     /** El reparto no suma o tiene unidades no enteras: no se puede continuar. */
     hasDistributionIssue,
     isEdited: editedValues !== null,
     isPending: convert.isPending,
     openConfirm,
-    /** Limpia reparto, confirmación y error (al cerrar el modal anfitrión). */
+    /** Limpia reparto, confirmación y error, y descarta el intento (al cerrar el modal anfitrión). */
     reset,
     resetDistribution: () => setEdited(null),
     setUnits,

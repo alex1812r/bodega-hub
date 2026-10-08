@@ -22,6 +22,7 @@ import {
   useInventoryProduct,
 } from "../../hooks/useInventory";
 import { useRequestAttempt } from "../../utils/requestAttempt";
+import { describeStockRequestError } from "../../utils/stockRequestError";
 import {
   getInventoryAdjustmentDelta,
   inventoryAdjustmentTypeOptions,
@@ -120,7 +121,7 @@ export function InventoryAdjustmentModal({
   const [reason, setReason] = useState("");
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const adjustment = useAdjustInventory();
-  const requestAttempt = useRequestAttempt();
+  const requestAttempt = useRequestAttempt({ renewOnContentChange: true });
   const quantityNumber = Number(quantity);
   const quantityDelta =
     quantityNumber > 0 ? getInventoryAdjustmentDelta(quantityNumber, type) : 0;
@@ -197,6 +198,11 @@ export function InventoryAdjustmentModal({
         />
       )}
       onOpenChange={(nextOpen) => {
+        // Con el ajuste en vuelo el modal no se cierra: su resultado llegaría sin formulario.
+        if (!nextOpen && adjustment.isPending) {
+          return;
+        }
+
         setOpen(nextOpen);
 
         if (nextOpen) {
@@ -205,11 +211,9 @@ export function InventoryAdjustmentModal({
           resetProduct();
         } else {
           resetForm();
-
-          // Controlado no hay evento de apertura que limpie el error del intento anterior.
-          if (isControlled) {
-            adjustment.reset();
-          }
+          // Cerrar descarta el intento: al reabrir, clave nueva y sin el error anterior.
+          requestAttempt.discard();
+          adjustment.reset();
         }
       }}
       open={open}
@@ -226,7 +230,7 @@ export function InventoryAdjustmentModal({
           />
         ) : (
           <EntityAutocomplete
-            disabled={defaultProductQuery.isLoading}
+            disabled={defaultProductQuery.isLoading || adjustment.isPending}
             entity="product"
             error={hasSubmitted && !productId ? "Selecciona un producto." : undefined}
             filters={searchFilters}
@@ -269,6 +273,7 @@ export function InventoryAdjustmentModal({
 
         <div className="grid gap-5 md:grid-cols-2 md:items-start">
           <SelectField
+            disabled={adjustment.isPending}
             label="Tipo de movimiento"
             onChange={(event) =>
               setType(event.target.value as FreeInventoryAdjustmentType)
@@ -279,6 +284,7 @@ export function InventoryAdjustmentModal({
           />
           <NumberInput
             decimals={0}
+            disabled={adjustment.isPending}
             error={
               hasSubmitted && quantityNumber <= 0
                 ? "Indica una cantidad mayor a cero."
@@ -292,6 +298,7 @@ export function InventoryAdjustmentModal({
         </div>
 
         <Textarea
+          disabled={adjustment.isPending}
           label="Motivo"
           onChange={(event) => setReason(event.target.value)}
           placeholder="Ej. ajuste por conteo físico"
@@ -300,7 +307,7 @@ export function InventoryAdjustmentModal({
 
         {adjustment.error ? (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
-            {adjustment.error.message}
+            {describeStockRequestError(adjustment.error)}
           </p>
         ) : null}
       </form>
