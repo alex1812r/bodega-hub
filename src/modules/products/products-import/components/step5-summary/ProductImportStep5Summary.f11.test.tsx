@@ -44,6 +44,27 @@ describe("ProductImportStep5Summary (PRO-F11)", () => {
     expect(screen.getByText('La categoria "X" no existe.')).toBeInTheDocument();
   });
 
+  it("PRO-F12: una fila omitida no lleva la etiqueta de error en el detalle", () => {
+    render(
+      <ProductImportStep5Summary
+        cancelled
+        onDownloadLog={jest.fn()}
+        onReset={jest.fn()}
+        results={[
+          { rowIndex: 3, sku: "pan-1", status: "success" },
+          { error: "Cancelada: puede haberse creado; revisa la lista.", rowIndex: 4, sku: "pan-2", status: "skipped" },
+          { error: "El recurso ya existe.", rowIndex: 5, sku: "pan-3", status: "failed" },
+        ]}
+      />,
+    );
+
+    const rowOf = (text: string) => screen.getByText(text).closest("tr");
+
+    expect(rowOf("Cancelada: puede haberse creado; revisa la lista.")).toHaveTextContent("Advertencia");
+    expect(rowOf("Cancelada: puede haberse creado; revisa la lista.")).not.toHaveTextContent("Error");
+    expect(rowOf("El recurso ya existe.")).toHaveTextContent("Error");
+  });
+
   it("anuncia éxito solo si todas las filas se crearon", () => {
     render(
       <ProductImportStep5Summary

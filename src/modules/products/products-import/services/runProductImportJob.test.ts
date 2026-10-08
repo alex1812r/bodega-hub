@@ -102,4 +102,53 @@ describe("runProductImportJob", () => {
 
     expect(results.length).toBeLessThanOrEqual(1);
   });
+
+  it("PRO-F12: la fila en vuelo al cancelar sale como cancelada, no como error del servidor", async () => {
+    const controller = new AbortController();
+    const progressSnapshots: { failed: number; processed: number }[] = [];
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ data: { id: "prod-1" } }, 201))
+      .mockImplementationOnce(async () => {
+        // El navegador corta la petición: el servidor pudo haber creado el producto.
+        controller.abort();
+        throw new DOMException("signal is aborted without reason", "AbortError");
+      });
+
+    const results = await runProductImportJob({
+      rows,
+      onError: "continue",
+      onProgress: ({ failed, processed }) => progressSnapshots.push({ failed, processed }),
+      signal: controller.signal,
+    });
+
+    expect(results).toEqual([
+      { rowIndex: 3, sku: "A", status: "success" },
+      {
+        error: "Cancelada: puede haberse creado; revisa la lista.",
+        rowIndex: 4,
+        sku: "B",
+        status: "skipped",
+      },
+    ]);
+    expect(progressSnapshots.at(-1)).toEqual({ failed: 0, processed: 2 });
+  });
+
+  it("PRO-F12: un rechazo del servidor sin cancelar sigue siendo un error con su mensaje", async () => {
+    const controller = new AbortController();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({ error: { code: "CONFLICT", message: "El recurso ya existe." } }, 409),
+    );
+
+    const results = await runProductImportJob({
+      rows: [rows[0]!],
+      onError: "continue",
+      signal: controller.signal,
+    });
+
+    expect(results).toEqual([
+      { error: "El recurso ya existe.", rowIndex: 3, sku: "A", status: "failed" },
+    ]);
+  });
 });

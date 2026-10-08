@@ -26,7 +26,9 @@ const errorColumns: DataTableColumn<ProductImportRowResult>[] = [
     key: "status",
     render: (row) => (
       <ProductImportValidationStatusBadge
-        status={row.status === "success" ? "valid" : "error"}
+        status={
+          row.status === "success" ? "valid" : row.status === "skipped" ? "warning" : "error"
+        }
       />
     ),
   },

@@ -92,7 +92,7 @@ export function parseProductImportWorkbook(
   }
 
   if (dataRows.length > PRODUCT_IMPORT_MAX_ROWS) {
-    throw new Error(`Maximo ${PRODUCT_IMPORT_MAX_ROWS} filas de datos por archivo.`);
+    throw new Error(`Máximo ${PRODUCT_IMPORT_MAX_ROWS} filas de datos por archivo.`);
   }
 
   const rawRows = dataRows.map((row, index) => toRawRow(index + 3, row));

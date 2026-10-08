@@ -7,6 +7,9 @@ import type {
   ProductImportRowResult,
 } from "../types";
 
+/** Fila cuya petición se cortó al cancelar: el servidor pudo llegar a crear el producto. */
+const CANCELLED_IN_FLIGHT_MESSAGE = "Cancelada: puede haberse creado; revisa la lista.";
+
 export async function runProductImportJob(
   options: ProductImportJobOptions,
 ): Promise<ProductImportRowResult[]> {
@@ -59,6 +62,19 @@ export async function runProductImportJob(
       });
       progress.succeeded += 1;
     } catch (error) {
+      // Cancelación con la petición en vuelo: no es un rechazo del servidor.
+      if (options.signal?.aborted) {
+        results.push({
+          rowIndex: row.rowIndex,
+          sku: row.sku,
+          status: "skipped",
+          error: CANCELLED_IN_FLIGHT_MESSAGE,
+        });
+        progress.processed += 1;
+        options.onProgress?.({ ...progress, currentRow: undefined });
+        break;
+      }
+
       const message =
         error instanceof ClientApiError
           ? error.message
