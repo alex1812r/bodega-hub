@@ -1,5 +1,6 @@
 import {
   DEFAULT_MARGIN_THRESHOLDS,
+  DEFAULT_MARKUP_CHIPS,
   marginBand,
   markupPct,
   type MarginThresholds,
@@ -25,6 +26,23 @@ export const MARGIN_PCT_COLUMN = "margin_pct";
  */
 export function getProductMarginThresholds(): MarginThresholds {
   return DEFAULT_MARGIN_THRESHOLDS;
+}
+
+/** Lo que el bloque de precio (`PricingFields`) necesita además del costo y el precio. */
+export type ProductPricingOptions = {
+  /** % recomendados, en el orden en que se ofrecen. */
+  chips: readonly number[];
+  thresholds: MarginThresholds;
+};
+
+/**
+ * ÚNICO punto del que los formularios de precio (alta/edición de producto y
+ * cambio de precio del detalle) obtienen los chips de % y los cortes del
+ * semáforo. Hoy son los por defecto de `@bodega/core`; PRO-09 los leerá de la
+ * configuración de la tienda cambiando solo esta función.
+ */
+export function getProductPricingOptions(): ProductPricingOptions {
+  return { chips: DEFAULT_MARKUP_CHIPS, thresholds: getProductMarginThresholds() };
 }
 
 /** Un valor desconocido no filtra (igual que el resto de filtros del listado). */

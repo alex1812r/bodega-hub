@@ -3,6 +3,7 @@ import { DEFAULT_MARGIN_THRESHOLDS } from "@/shared/utils/pricing";
 import {
   applyProductMarginFilter,
   getProductMarginThresholds,
+  getProductPricingOptions,
   marginBandRange,
   matchesProductMarginFilter,
   parseProductMarginFilter,
@@ -130,5 +131,14 @@ describe("productMargin", () => {
         expect(parseProductMarginFilter(new URLSearchParams(queryString))).toBeNull();
       },
     );
+  });
+
+  describe("getProductPricingOptions", () => {
+    it("offers the default chips (12 / 20 / 30) and the same thresholds as the listing", () => {
+      expect(getProductPricingOptions()).toEqual({
+        chips: [12, 20, 30],
+        thresholds: getProductMarginThresholds(),
+      });
+    });
   });
 });

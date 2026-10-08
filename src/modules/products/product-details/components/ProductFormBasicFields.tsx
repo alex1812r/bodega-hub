@@ -1,13 +1,21 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 
 import { Can } from "@/shared/auth/Can";
 import { Button } from "@/shared/components/Button";
 import { Input } from "@/shared/components/Input";
 import { NumberInput } from "@/shared/components/NumberInput";
+import { PricingFields } from "@/shared/components/PricingFields";
 import { SelectField } from "@/shared/components/SelectField";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
+
+import { getProductPricingOptions } from "../../services/productMargin";
+
+/** Marca del bloque de precio: el formulario busca dentro el campo de precio para enfocarlo. */
+export const PRODUCT_PRICING_BLOCK_ATTRIBUTE = "data-product-pricing";
+
+export const SALE_PRICE_REQUIRED_MESSAGE = "Escribe el precio de venta.";
 
 type ProductFormBasicFieldsProps = {
   categories: CategoryMock[];
@@ -29,11 +37,22 @@ type ProductFormBasicFieldsProps = {
    */
   onCreateCategory?: (trigger: HTMLButtonElement) => void;
   onNameChange: (name: string) => void;
+  /** % recomendados; sin ellos, los de `getProductPricingOptions`. */
+  pricingChips?: readonly number[];
+  /** Se intentó guardar: un precio vacío muestra su aviso. */
+  showPriceRequired?: boolean;
+  /** % sugerido (el de la categoría): primer chip, destacado. */
+  suggestedMarkupPct?: number;
 };
 
 /**
  * Nivel básico del formulario de producto: lo único visible al abrir.
- * Orden fijo: imagen, Nombre, Categoría, Código de barras, Precio REF, Costo REF.
+ * Orden fijo: imagen, Nombre, Categoría, Código de barras, Costo REF y el
+ * bloque de precio (`PricingFields`: chips de %, Ganancia % y Precio REF).
+ *
+ * El precio solo cambia cuando el usuario elige un chip, escribe un % o
+ * escribe el precio: abrir el formulario o cambiar el costo no lo mueven.
+ * Viaja en el campo oculto `salePriceRef`; vacío = sin precio.
  */
 export function ProductFormBasicFields({
   categories,
@@ -44,7 +63,14 @@ export function ProductFormBasicFields({
   onCategoryChange,
   onCreateCategory,
   onNameChange,
+  pricingChips,
+  showPriceRequired = false,
+  suggestedMarkupPct,
 }: ProductFormBasicFieldsProps) {
+  const [cost, setCost] = useState<number | null>(defaults.currentCostRef ?? null);
+  const [price, setPrice] = useState<number | null>(defaults.salePriceRef ?? null);
+  const pricingOptions = getProductPricingOptions();
+
   return (
     <>
       {image}
@@ -88,20 +114,24 @@ export function ProductFormBasicFields({
           placeholder="Opcional"
         />
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        <NumberInput
-          decimals={2}
-          defaultValue={defaults.salePriceRef}
-          label="Precio REF"
-          name="salePriceRef"
-          required
+      <NumberInput
+        decimals={2}
+        defaultValue={defaults.currentCostRef}
+        label="Costo REF"
+        name="currentCostRef"
+        onValueChange={setCost}
+      />
+      <div {...{ [PRODUCT_PRICING_BLOCK_ATTRIBUTE]: "" }}>
+        <PricingFields
+          chips={pricingChips ?? pricingOptions.chips}
+          cost={cost ?? 0}
+          error={showPriceRequired && price === null ? SALE_PRICE_REQUIRED_MESSAGE : undefined}
+          onPriceChange={setPrice}
+          price={price}
+          suggestedPct={suggestedMarkupPct}
+          thresholds={pricingOptions.thresholds}
         />
-        <NumberInput
-          decimals={2}
-          defaultValue={defaults.currentCostRef}
-          label="Costo REF"
-          name="currentCostRef"
-        />
+        <input name="salePriceRef" type="hidden" value={price ?? ""} />
       </div>
     </>
   );

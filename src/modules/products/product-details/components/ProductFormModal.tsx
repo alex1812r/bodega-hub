@@ -28,7 +28,10 @@ import {
   removeProductImage,
   uploadProductImageBlob,
 } from "../../services/uploadProductImage";
-import { ProductFormBasicFields } from "./ProductFormBasicFields";
+import {
+  PRODUCT_PRICING_BLOCK_ATTRIBUTE,
+  ProductFormBasicFields,
+} from "./ProductFormBasicFields";
 import { ProductFormMoreOptions } from "./ProductFormMoreOptions";
 import { ProductImageUploadField } from "./ProductImageUploadField";
 import {
@@ -73,7 +76,7 @@ export type ProductFormModalProps = {
   categories?: CategoryMock[];
   /**
    * Alta rápida: solo el nivel básico (Nombre, Categoría, Código de barras,
-   * Precio REF, Costo REF), sin imagen y sin "Más opciones". Siempre es un alta:
+   * Costo REF y el bloque de precio), sin imagen y sin "Más opciones". Siempre es un alta:
    * `mode` y `product` se ignoran. Lo que no se muestra viaja como en un alta
    * con esos campos vacíos (sin stock inicial, sin stock mínimo, sin empaque) y
    * sin SKU: lo genera el servidor desde el nombre, único en la tienda.
@@ -105,6 +108,11 @@ export type ProductFormModalProps = {
   ) => Promise<ProductWithCategory | void> | ProductWithCategory | void;
   /** Modo controlado. Sin `open`, el modal se abre con `trigger` (o su botón por defecto). */
   open?: boolean;
+  /**
+   * % de ganancia recomendados del bloque de precio, en el orden en que se
+   * ofrecen. Sin ellos, los de `getProductPricingOptions` (hoy 12 / 20 / 30).
+   */
+  pricingChips?: readonly number[];
   /** Producto en edición. */
   product?: ProductWithCategory;
   /**
@@ -114,6 +122,11 @@ export type ProductFormModalProps = {
    * consumidor decide qué avisar. En edición nunca se muestra.
    */
   showCreatedToast?: boolean;
+  /**
+   * % de ganancia sugerido (p. ej. el de la categoría): primer chip, destacado
+   * como "Sugerido". Solo se ofrece: no fija ningún precio por sí solo.
+   */
+  suggestedMarkupPct?: number;
   trigger?: ReactNode;
 };
 
@@ -138,8 +151,10 @@ export function ProductFormModal({
   onOpenChange,
   onSubmit,
   open,
+  pricingChips,
   product: productProp,
   showCreatedToast = !compact,
+  suggestedMarkupPct,
   trigger,
 }: ProductFormModalProps) {
   const { showToast } = useToast();
@@ -182,6 +197,7 @@ export function ProductFormModal({
     createDefaultPackConversionFormState(product?.packConversion),
   );
   const [showSubmitErrors, setShowSubmitErrors] = useState(false);
+  const [showPriceRequired, setShowPriceRequired] = useState(false);
   const [stockAdjustmentOpen, setStockAdjustmentOpen] = useState(false);
   const stockAdjustmentTriggerRef = useRef<HTMLButtonElement | null>(null);
   // Candado propio: `isSubmitting` llega con el siguiente render, tarde para un
@@ -207,6 +223,7 @@ export function ProductFormModal({
     setImageError(null);
     setPackConversionState(createDefaultPackConversionFormState(product?.packConversion));
     setShowSubmitErrors(false);
+    setShowPriceRequired(false);
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -300,6 +317,20 @@ export function ProductFormModal({
     const createAnother =
       canCreateAnother && submitter?.dataset.intent === CREATE_ANOTHER_INTENT;
     const formData = new FormData(form);
+
+    // El precio es obligatorio, como cuando el campo era `required`: vacío no
+    // se envía (ni se convierte en 0), se avisa en el campo y recibe el foco.
+    if (formData.get("salePriceRef") === "") {
+      flushSync(() => setShowPriceRequired(true));
+      form
+        .querySelector<HTMLInputElement>(
+          `[${PRODUCT_PRICING_BLOCK_ATTRIBUTE}] input[aria-invalid="true"]`,
+        )
+        ?.focus();
+
+      return;
+    }
+
     const shouldSendPackConversion =
       !isUnitRole &&
       (Boolean(product?.packConversion) || packConversionState.enabled);
@@ -514,6 +545,9 @@ export function ProductFormModal({
           onCategoryChange={setCategoryId}
           onCreateCategory={openCategoryCreate}
           onNameChange={setName}
+          pricingChips={pricingChips}
+          showPriceRequired={showPriceRequired}
+          suggestedMarkupPct={suggestedMarkupPct}
         />
         {compact ? (
           <p className="text-sm text-on-surface-variant">

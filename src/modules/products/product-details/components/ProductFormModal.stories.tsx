@@ -32,6 +32,24 @@ export const Edit: Story = {
   },
 };
 
+/**
+ * Bloque de precio (PRO-08): con el costo escrito, el chip del % sugerido (el
+ * primero, destacado) o cualquier otro completan el Precio REF; editar el precio
+ * recalcula el % y el semáforo. Nada fija un precio sin que el usuario lo pida.
+ */
+export const Pricing: Story = {
+  args: {
+    initialValues: { currentCostRef: 10, name: "Harina PAN 1 kg" },
+    suggestedMarkupPct: 25,
+  },
+  play: async () => {
+    await userEvent.click(await screen.findByRole("button", { name: "30 %" }));
+
+    await expect(screen.getByLabelText("Precio REF")).toHaveValue("13");
+    await expect(screen.getByLabelText("Ganancia %")).toHaveValue("30");
+  },
+};
+
 /** Alta rápida para Compras (COM-03) y el surtido (PRO-13), precargada con lo escaneado. */
 export const Compact: Story = {
   args: {

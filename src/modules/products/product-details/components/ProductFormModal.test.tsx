@@ -64,6 +64,7 @@ function visibleFieldLabels() {
         (element instanceof HTMLInputElement ||
           element instanceof HTMLSelectElement ||
           element instanceof HTMLTextAreaElement) &&
+        element.type !== "hidden" &&
         !element.closest("[hidden]"),
     )
     .map((element) => element.labels?.[0]?.textContent?.trim());
@@ -274,7 +275,15 @@ describe("ProductFormModal · enteros y limites (SHR-09J)", () => {
 });
 
 describe("ProductFormModal · dos niveles (PRO-01)", () => {
-  const BASIC_FIELDS = ["Nombre", "Categoría", "Código de barras", "Precio REF", "Costo REF"];
+  // El bloque de precio (PRO-08) aporta "Ganancia %" y "Precio REF"; el costo va antes.
+  const BASIC_FIELDS = [
+    "Nombre",
+    "Categoría",
+    "Código de barras",
+    "Costo REF",
+    "Ganancia %",
+    "Precio REF",
+  ];
   const packProduct = {
     barcode: "7591234567890",
     categoryId: "cat-1",
@@ -303,7 +312,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     await user.paste("2");
   }
 
-  it("al abrir un alta solo se ven los 5 campos basicos y Mas opciones esta cerrada", () => {
+  it("al abrir un alta solo se ven los campos basicos y Mas opciones esta cerrada", () => {
     render(<ProductFormModal onOpenChange={jest.fn()} open />);
 
     expect(visibleFieldLabels()).toEqual(BASIC_FIELDS);
@@ -605,8 +614,9 @@ describe("ProductFormModal · modo compact (PRO-01)", () => {
       "Nombre",
       "Categoría",
       "Código de barras",
-      "Precio REF",
       "Costo REF",
+      "Ganancia %",
+      "Precio REF",
     ]);
     expect(screen.queryByRole("button", { name: /Más opciones/ })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("SKU")).not.toBeInTheDocument();

@@ -183,6 +183,7 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
         <div className="lg:col-span-4">
           <Can permission="products.manage">
             <ProductDetailPriceChangeCard
+              currentCostRef={data.currentCostRef}
               currentPriceRef={data.salePriceRef}
               isSubmitting={updateProductPrice.isPending}
               onSubmit={handleQuickPriceUpdate}
