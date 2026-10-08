@@ -8,7 +8,12 @@ import { Modal } from "@/shared/components/Modal";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
 import type { CategoryInput } from "../../hooks/useProducts";
-import { CategoryFormFields, readCategoryForm } from "./CategoryFormFields";
+import {
+  CATEGORY_NAME_TAKEN_MESSAGE,
+  CategoryFormFields,
+  isCategoryNameTaken,
+  readCategoryForm,
+} from "./CategoryFormFields";
 
 type CategoryFormModalProps = {
   category?: CategoryMock;
@@ -21,7 +26,8 @@ type CategoryFormModalProps = {
    * sin tocarla, la categoría conserva la que tenía. `defaultMarkupPct` llega
    * con el % escrito, o `null` si se borró el que tenía. Si rechaza, el modal
    * queda abierto (el consumidor muestra el motivo con `errorMessage`); el
-   * rechazo se captura aquí.
+   * rechazo se captura aquí. Si rechaza con un 409 de nombre repetido, se
+   * muestra "Ya existe una categoría con ese nombre." en vez de `errorMessage`.
    */
   onSubmit?: (input: CategoryInput) => Promise<void> | void;
   open?: boolean;
@@ -46,11 +52,15 @@ export function CategoryFormModal({
   // Candado propio: `isSubmitting` llega con el siguiente render, tarde para un
   // segundo Enter o un clic en el mismo tick.
   const isSubmitInFlightRef = useRef(false);
+  /** El último guardado se rechazó por nombre repetido (409). */
+  const [isNameTaken, setIsNameTaken] = useState(false);
 
   function handleOpenChange(nextOpen: boolean) {
     if (!isControlled) {
       setInternalOpen(nextOpen);
     }
+
+    setIsNameTaken(false);
 
     onOpenChange?.(nextOpen);
   }
@@ -67,8 +77,9 @@ export function CategoryFormModal({
     try {
       await onSubmit?.(readCategoryForm(event.currentTarget, isEdit ? category : undefined));
       handleOpenChange(false);
-    } catch {
+    } catch (error) {
       // El modal sigue abierto; el consumidor muestra el motivo con `errorMessage`.
+      setIsNameTaken(isCategoryNameTaken(error));
     } finally {
       isSubmitInFlightRef.current = false;
     }
@@ -91,7 +102,10 @@ export function CategoryFormModal({
       trigger={trigger}
     >
       <form className="grid gap-4" id={formId} onSubmit={(event) => void handleSubmit(event)}>
-        <CategoryFormFields category={category} errorMessage={errorMessage} />
+        <CategoryFormFields
+          category={category}
+          errorMessage={isNameTaken ? CATEGORY_NAME_TAKEN_MESSAGE : errorMessage}
+        />
       </form>
     </Modal>
   );

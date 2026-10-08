@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { ClientApiError } from "@/shared/api/apiFetch";
 import { Input } from "@/shared/components/Input";
 import { NumberInput, parseNumberInput } from "@/shared/components/NumberInput";
 import { TaxRateChips } from "@/shared/components/TaxRateChips";
@@ -18,6 +19,28 @@ const TAX_RATE_FIELD_NAME = "taxRate";
 const MARKUP_FIELD_NAME = "defaultMarkupPct";
 
 type TaxRateSelection = { code: string; pct: number };
+
+export const CATEGORY_NAME_TAKEN_MESSAGE = "Ya existe una categoría con ese nombre.";
+
+/**
+ * El guardado se rechazó porque ya hay una categoría con ese nombre: el 409 del
+ * servidor ("El recurso ya existe.") no dice el campo. Se decide por el status;
+ * un 409 reintentable (choque entre operaciones) no es un nombre repetido.
+ */
+export function isCategoryNameTaken(error: unknown) {
+  if (!(error instanceof ClientApiError) || error.status !== 409) {
+    return false;
+  }
+
+  const details: unknown = error.details;
+
+  return !(
+    typeof details === "object" &&
+    details !== null &&
+    "retryable" in details &&
+    details.retryable === true
+  );
+}
 
 type CategoryFormFieldsProps = {
   /** Categoría en edición. Sin ella los campos abren como un alta. */

@@ -7,7 +7,12 @@ import { Modal } from "@/shared/components/Modal";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
 import { useCreateCategory } from "../../hooks/useProducts";
-import { CategoryFormFields, readCategoryForm } from "./CategoryFormFields";
+import {
+  CATEGORY_NAME_TAKEN_MESSAGE,
+  CategoryFormFields,
+  isCategoryNameTaken,
+  readCategoryForm,
+} from "./CategoryFormFields";
 
 type CategoryQuickCreateModalProps = {
   /** Categoría ya guardada, justo antes de cerrar. */
@@ -22,8 +27,8 @@ type CategoryQuickCreateModalProps = {
  * `<form>` que la abre: su envío no debe burbujear al de ese formulario.
  *
  * Guarda con `useCreateCategory`, que refresca las listas de categorías. Si el
- * servidor rechaza el alta (p. ej. nombre repetido), el motivo se muestra aquí
- * y el modal sigue abierto.
+ * servidor rechaza el alta, el motivo se muestra aquí y el modal sigue abierto;
+ * un nombre repetido (409) se dice con "Ya existe una categoría con ese nombre.".
  */
 export function CategoryQuickCreateModal({
   onCreated,
@@ -72,7 +77,11 @@ export function CategoryQuickCreateModal({
     >
       <form className="grid gap-4" id={formId} onSubmit={(event) => void handleSubmit(event)}>
         <CategoryFormFields
-          errorMessage={createCategory.error?.message}
+          errorMessage={
+            isCategoryNameTaken(createCategory.error)
+              ? CATEGORY_NAME_TAKEN_MESSAGE
+              : createCategory.error?.message
+          }
           showDescription={false}
         />
       </form>
