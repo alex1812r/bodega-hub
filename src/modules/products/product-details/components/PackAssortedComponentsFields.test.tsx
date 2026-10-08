@@ -630,3 +630,67 @@ describe("getAssortedPackErrors (PRO-13)", () => {
     expect(appended.components[1]).toMatchObject({ key: appended.rowKey, unitProductId: "prod-new" });
   });
 });
+
+// QA PRO-13 F3: a 1280 el buscador de cada fila mide ~156 px y los tres
+// componentes se leían "QA5 Sabor". jsdom no mide: se comprueba la estructura.
+describe("PackAssortedComponentsFields · nombre completo del componente (PRO-F7)", () => {
+  const longName = "QA5 Sabor Manzana verde botella retornable 350 ml";
+
+  function namedRow(unitProductId: string, unitName: string) {
+    return createPackComponentRow({ unitName, unitProductId, unitsPerPack: "2" });
+  }
+
+  function renderRows() {
+    installProductsApi();
+    renderFields({
+      initialState: assortedState({
+        components: [
+          namedRow("prod-cola", "QA5 Sabor Cola"),
+          namedRow("prod-manzana", longName),
+          createPackComponentRow(),
+        ],
+      }),
+    });
+
+    return screen.getAllByRole("listitem");
+  }
+
+  it("cada fila con producto muestra su nombre entero en una línea propia que ajusta, con `title`", () => {
+    const rows = renderRows();
+    const fullName = rows[1].querySelector<HTMLElement>("[data-pack-component-name]");
+
+    expect(fullName).toHaveTextContent(longName);
+    expect(fullName).toHaveAttribute("title", longName);
+    // Ocupa todo el ancho de la fila y parte la palabra antes que cortarla.
+    expect(fullName?.className).toContain("sm:col-span-3");
+    expect(fullName?.className).toContain("[overflow-wrap:anywhere]");
+    expect(fullName?.className).not.toMatch(/truncate|line-clamp|whitespace-nowrap/);
+    expect(rows[0].querySelector("[data-pack-component-name]")).toHaveTextContent("QA5 Sabor Cola");
+    // El campo cortado también dice el nombre al pasar el puntero.
+    expect(rows[1].querySelector("[data-pack-component-product]")).toHaveAttribute("title", longName);
+  });
+
+  it("una fila sin producto no pinta la línea del nombre", () => {
+    const rows = renderRows();
+
+    expect(rows[2].querySelector("[data-pack-component-name]")).toBeNull();
+    expect(rows[2].querySelector("[data-pack-component-product]")).not.toHaveAttribute("title");
+  });
+
+  it("la rejilla da al producto todo el ancho sobrante y a 390 sigue apilando", () => {
+    const rows = renderRows();
+
+    // Sin prefijo: una columna (390). Desde `sm`: producto flexible, unidades y quitar fijos.
+    expect(rows[1].className).toContain("sm:grid-cols-[minmax(0,1fr)_8rem_auto]");
+    expect(rows[1].className).not.toMatch(/(^|\s)grid-cols-/);
+  });
+
+  it("«Avanzado»: cada peso de costo ocupa su línea, para que la etiqueta con el nombre quepa", () => {
+    renderRows();
+
+    const weight = document.querySelector("[data-pack-component-weight]");
+
+    expect(weight).not.toBeNull();
+    expect(weight?.parentElement?.className).not.toContain("grid-cols-2");
+  });
+});

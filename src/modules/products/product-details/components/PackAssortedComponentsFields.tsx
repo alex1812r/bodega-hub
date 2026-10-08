@@ -343,7 +343,11 @@ export function PackAssortedComponentsFields({
               className="grid min-w-0 gap-3 rounded-lg border border-outline-variant/40 p-3 sm:grid-cols-[minmax(0,1fr)_8rem_auto] sm:items-start"
               key={row.key}
             >
-              <div className="min-w-0" data-pack-component-product={row.key}>
+              <div
+                className="min-w-0"
+                data-pack-component-product={row.key}
+                title={row.unitName || undefined}
+              >
                 <EntityAutocomplete
                   entity="product"
                   error={rowErrors?.product}
@@ -394,6 +398,16 @@ export function PackAssortedComponentsFields({
                 onClick={() => removeRow(row.key)}
                 variant="outline"
               />
+              {/* El campo corta los nombres largos (≈156 px en el modal a 1280): aquí se lee entero. */}
+              {row.unitProductId && row.unitName ? (
+                <p
+                  className="min-w-0 text-xs text-on-surface-variant [overflow-wrap:anywhere] sm:col-span-3"
+                  data-pack-component-name=""
+                  title={row.unitName}
+                >
+                  {row.unitName}
+                </p>
+              ) : null}
             </li>
           );
         })}
@@ -458,7 +472,8 @@ export function PackAssortedComponentsFields({
       >
         <div className="grid gap-3">
           <p className="text-xs text-on-surface-variant">{COST_WEIGHT_HELP}</p>
-          <div className="grid gap-3 sm:grid-cols-2">
+          {/* Una columna: la etiqueta lleva el nombre del producto y en dos se cortaba. */}
+          <div className="grid gap-3">
             {components.map((row, index) => (
               <div className="min-w-0" data-pack-component-weight={row.key} key={row.key}>
                 <NumberInput
