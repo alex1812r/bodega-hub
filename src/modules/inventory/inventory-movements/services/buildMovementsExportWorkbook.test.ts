@@ -123,4 +123,29 @@ describe("buildMovementsExportWorkbook", () => {
     expect(longReason.endsWith("m…")).toBe(true);
     expect(sheet?.getRow(5).getCell(8).value).toBe("Conteo físico");
   });
+
+  // INV-L4: con filtro de producto la cabecera lleva su nombre, no el uuid.
+  it("heads a product-filtered export with the product name taken from its rows", async () => {
+    const productId = "d4c8d016-0000-4000-8000-000000000000";
+    const filtered = await buildMovementsExportWorkbook([sampleRows[1], sampleRows[3]], {
+      exportedAt: "2026-05-20T12:00:00.000Z",
+      filters: { productId },
+    });
+    const empty = await buildMovementsExportWorkbook([], {
+      exportedAt: "2026-05-20T12:00:00.000Z",
+      filters: { productId },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(filtered);
+    expect(workbook.getWorksheet("Movimientos")?.getCell("A1").value).toBe(
+      "Sin filtro de periodo | Producto: Taladro",
+    );
+
+    const emptyWorkbook = new ExcelJS.Workbook();
+    await emptyWorkbook.xlsx.load(empty);
+    expect(emptyWorkbook.getWorksheet("Movimientos")?.getCell("A1").value).toBe(
+      `Sin filtro de periodo | Producto: ${productId}`,
+    );
+  });
 });

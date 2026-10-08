@@ -28,7 +28,8 @@ export async function buildMovementsExportWorkbook(
   workbook.created = new Date(metadata.exportedAt);
 
   const worksheet = workbook.addWorksheet(sanitizeSheetName(SHEET_NAME));
-  worksheet.addRow([buildMovementsExportContextLabel(metadata.filters)]);
+  // Con filtro de producto todas las filas son suyas: la primera trae su nombre.
+  worksheet.addRow([buildMovementsExportContextLabel(metadata.filters, rows[0]?.product)]);
   worksheet.addRow([]);
   worksheet.addRow(movementExportColumns.map((column) => column.header));
 

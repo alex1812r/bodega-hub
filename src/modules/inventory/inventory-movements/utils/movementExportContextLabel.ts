@@ -21,11 +21,15 @@ function formatDateRangeLabel(from?: string, to?: string) {
   return "Sin filtro de periodo";
 }
 
-export function buildMovementsExportContextLabel(filters: MovementsExportFilters) {
+/** `productName`: nombre del producto filtrado; sin él la cabecera cae al id. */
+export function buildMovementsExportContextLabel(
+  filters: MovementsExportFilters,
+  productName?: string,
+) {
   const parts = [formatDateRangeLabel(filters.from, filters.to)];
 
   if (filters.productId?.trim()) {
-    parts.push(`Producto: ${filters.productId.trim()}`);
+    parts.push(`Producto: ${productName?.trim() || filters.productId.trim()}`);
   }
 
   if (filters.type) {

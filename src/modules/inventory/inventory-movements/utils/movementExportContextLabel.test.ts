@@ -25,4 +25,21 @@ describe("buildMovementsExportContextLabel", () => {
       "Sin filtro de periodo | Tipo de documento: Ajuste manual",
     );
   });
+
+  // INV-L4: la cabecera decía "Producto: <uuid>".
+  it("names the filtered product instead of printing its id", () => {
+    expect(
+      buildMovementsExportContextLabel(
+        { productId: "d4c8d016-0000-4000-8000-000000000000" },
+        "Harina PAN 1 kg",
+      ),
+    ).toBe("Sin filtro de periodo | Producto: Harina PAN 1 kg");
+  });
+
+  it("falls back to the product id when the name is unknown, and ignores the name without a product filter", () => {
+    expect(buildMovementsExportContextLabel({ productId: "p-harina" }, "  ")).toBe(
+      "Sin filtro de periodo | Producto: p-harina",
+    );
+    expect(buildMovementsExportContextLabel({}, "Harina PAN 1 kg")).toBe("Sin filtro de periodo");
+  });
 });
