@@ -1569,6 +1569,11 @@ paths:
             recibido menos lo ya devuelto, el documento no esta en un estado
             devolvible, o la base aun no admite devoluciones ligadas (en ese caso
             no se registra nada: el servidor no repite la operacion sin el vinculo).
+            Tambien cuando el producto esta inactivo y el ajuste es una entrada
+            libre (`quantityDelta` > 0 sin `saleId` / `purchaseId`): "El producto
+            esta inactivo: reactivalo antes de registrar una entrada de stock"; no
+            se registra movimiento ni se consume la clave. Las salidas sobre un
+            producto inactivo se aceptan.
           content:
             application/json:
               schema:

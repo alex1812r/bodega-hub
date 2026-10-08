@@ -62,6 +62,7 @@ page.tsx (App Router)
 - **Demo dev:** `ALLOW_DEMO_AUTH=true` + headers `x-demo-role` desde `localStorage`.
 - **Paginación:** `PaginatedList<T>` con `skip`, `limit`, `total`, `items`.
 - **Plantilla Excel:** generación con **exceljs**; lectura de archivos subidos con **xlsx**.
+- **Componentes compartidos:** `src/shared/components/`. `DataTable` acepta `renderExpandedRow(row)`: el contenido expandido se pinta en una fila propia a todo el ancho bajo la fila (al pie de la tarjeta en móvil); `null` / `false` = cerrada. Qué fila está abierta y el botón que la abre (`aria-expanded` / `aria-controls`) son de la pantalla que usa la tabla (hoy, `/inventory`).
 
 ---
 
@@ -186,6 +187,8 @@ Módulo: `src/modules/platform/`. Aislamiento ERP: `requireStorePermission` + `s
 
 **El stock nunca se escribe por PATCH.** `PATCH /api/products/[id]` responde 400 si llega `currentStock`: el formulario de edición mandaba el valor cargado al abrir y pisaba las ventas hechas mientras tanto, sin dejar fila en `stock_movements`. Las existencias solo cambian por RPC con movimiento (`create_sale`, `receive_purchase`, `adjust_stock`, conversiones). Para corregir stock: Inventario → ajuste.
 
+**Stock → Inventario (INV-06).** En `/products` la celda Stock enlaza a `/inventory?product=<id>&returnTo=<lista>` y los filtros de stock se sustituyen por el atajo "Ver stock en Inventario" (lleva búsqueda y categoría); ambos solo con `inventory.view`. **Receta de empaque (INV-09):** el BFF la guarda, reemplaza o desactiva solo por la RPC `save_pack_recipe` (parche `20261011c`: una transacción y regla de cadenas en la base); ver [`stock-integrity.md`](stock-integrity.md) §1. El detalle `/products/[id]` monta `ProductKardexCard` (ver Inventario).
+
 ### Imagen de producto
 
 | Endpoint | Permiso | Descripcion |
@@ -225,25 +228,48 @@ Columnas plantilla: `sku`, `codigo_barras`, `nombre`, `categoria` (lista validad
 
 Vista **operativa de existencias** (no catálogo): stock actual, mínimo, alertas y movimientos. Precios, alta de productos e importación viven en **Productos**.
 
-| Ruta | Permiso |
-|------|---------|
-| `/inventory` | `inventory.view` |
-| `/inventory/movements` | `inventory.view` |
+| Ruta | Permiso | Pantalla |
+|------|---------|----------|
+| `/inventory` | `inventory.view` | **Vista única de stock.** Columnas: Producto, Categoría, Stock, Mínimo, Entradas 30 d, Salidas 30 d, Último movimiento (fecha y tipo) y Estado. Badge "Descuadre ±N" solo para admin cuando `reconciliationDiff` ≠ 0. Cada fila se expande con el kardex inline (últimos 10 movimientos) |
+| `/inventory/movements` | `inventory.view` | Libro de movimientos con filtros en servidor, documento de cada movimiento, exportación a Excel y los modales de ajuste y de conversión (`inventory.manage`) |
 
 | Hook | Endpoint |
 |------|----------|
-| `useInventory` | GET `/api/inventory` — `search`, `categoryId`, `stockStatus`, `lowStock`, paginación |
-| `useInventoryMovements` | GET `/api/inventory/movements` — `productId` (+ filtros `type`/`date` solo en cliente) |
-| `useStockCard` | GET `/api/inventory/stock-card` — `productId` |
+| `useInventory` | GET `/api/inventory` — `search`, `productId`, `categoryId`, `stockStatus`, `lowStock`, `minPriceRef`, `maxPriceRef`, paginación. Lee la vista `inventory_overview` (parche `20261011a`) |
+| `useInventoryMovements` | GET `/api/inventory/movements` — `type`, `from`, `to`, `productId`, `document`, `documentKind`, `saleId`, `purchaseId`, paginación |
+| `useStockCard` | GET `/api/inventory/stock-card` — `productId`, `type`, `from`, `to` |
+| `useProductKardex` | GET `/api/inventory/kardex` — `productId` |
 | `useAdjustInventory` | POST `/api/inventory/adjustments` → RPC `adjust_stock` |
 | `usePackConversions` | GET `/api/inventory/pack-conversions` |
 | `useConvertPackToUnits` | POST `/api/inventory/conversions` → RPC `convert_pack_to_units` |
 
-**Campos ajuste:** `productId`, `quantityDelta`, `reason`, `type` (`ajuste_entrada`, `ajuste_salida`, etc.).
+**`/inventory` (INV-01, INV-02).** Filtros, conteo y paginación se resuelven en la base; orden fijo por nombre; solo productos activos. Cada item suma `entries30d` y `exits30d` (ventana móvil de 30 × 24 h), `lastMovementAt` / `lastMovementType` (movimiento de mayor `seq`) y `stockStatus` (`ok` / `low` / `out`). `reconciliationDiff` (`stock_reconciliation.diff`) solo existe en la respuesta del rol admin. Un `skip` mayor que el total responde 200 con `items: []` y el total real.
 
-**Conversion empaque→unidad (dual SKU):** vínculo en `product_pack_conversions`; movimiento emparejado `conversion_salida` + `conversion_entrada` con `conversion_id`. UI en detalle de producto e Inventario/movimientos.
+- **Estado en la URL** (`useUrlListState`, esquema en `inventory-list/inventoryListParams.ts`): `search`, `category`, `status` (repetible), `lowStock`, `minPrice`, `maxPrice`, `page`, `limit`. Recargar o volver con atrás conserva la lista.
+- **Parámetro `product`:** id del producto con los movimientos abiertos. No es un filtro (cambiar filtros o página lo conserva). Si el producto no está en la página visible se muestra fijado encima de la tabla ("Producto seleccionado"), aunque esté inactivo: la consulta por `productId` exacto es la única que no filtra por `is_active`. Es el enlace profundo que usa `/products`.
+- **Fila expandible:** `DataTable.renderExpandedRow` + `InventoryProductMovementsPanel`. Carga bajo demanda los 10 últimos movimientos (tipo, cantidad, saldo `stockAfter`, documento y fecha), la línea de descuadre si la hay (admin) y "Ver kardex completo" → `/inventory/movements?productId=…&returnTo=…`.
+- **`returnTo` encadenado** (`utils/chainedReturnTo.ts`): `withChainedReturnTo(href, urlActual)` conserva el `returnTo` con el que se llegó, de modo que la cadena `/products` → `/inventory` → `/inventory/movements` vuelve paso a paso con `PageBackButton`. Los detalles de venta y de compra aún descartan el `returnTo` anidado: desde un documento se vuelve a `/inventory`, no a `/products`.
 
-**Campos opcionales (parche `20261006c`):** `clientRequestId` en ajustes y conversiones (misma clave por tienda → devuelve el resultado original sin mover nada); `saleId` / `purchaseId` en ajustes. Los tipos `devolucion_cliente` / `devolucion_proveedor` exigen el documento (400 sin él, parche `20261006g`) y el modal de ajuste ya no los ofrece.
+**`/inventory/movements` (INV-04).** Todos los filtros van al servidor y viven en la URL (`inventoryMovementsParams.ts`): `type`, `from` / `to` (día de Caracas, inclusive), `productId` (`EntityAutocomplete`), `document` (texto parcial del número de venta o compra; se envía desde 3 caracteres y resuelve como máximo las 50 ventas y 50 compras más recientes que casan) y `documentKind` (`venta`, `compra`, `conversion`, `sin_documento`). Rango invertido: aviso en pantalla y no se consulta (el endpoint responde 400). Orden fijo: `seq` descendente.
+
+- **Documento:** cada movimiento trae `documentKind` y `documentNumber`, con enlace a la venta o compra. Ambos `null` = movimiento sin documento → se muestra **"Ajuste manual"**. `/api/inventory/stock-card` no devuelve documento ni atiende `document` / `documentKind`.
+- **Exportación:** el Excel usa los mismos filtros de la pantalla. `fetchExportRows` (`services/fetchExportRows.ts`) descarta filas repetidas por `id` y corta en **20.000 filas** (`EXPORT_MAX_ROWS`), devolviendo `truncated` cuando la lista es mayor. El mismo tope aplica al Excel de `/inventory`.
+
+**Kardex de producto (INV-03).** `ProductKardexCard` (`src/modules/inventory/components/`, prop `productId`) es autónomo y está montado en `/products/[id]`: saldo actual, gráfico del saldo diario de 30 días y los 10 últimos movimientos con su saldo, más el enlace al kardex completo. Lee `GET /api/inventory/kardex?productId=` (`inventory.view`), que agrega en servidor: `series` (30 puntos por día de Caracas con `balance`, `entries`, `exits`), `openingBalance`, `entries30d`, `exits30d`, `lastMovements` y `truncated` (la ventana lee como máximo 5.000 movimientos; los días que quedan fuera van con `null`). La lista de movimientos (`ProductMovementList`) es la misma de la fila expandible.
+
+**Modales de ajuste y conversión (INV-07, INV-08).** `InventoryAdjustmentModal` e `InventoryPackConversionModal` buscan el producto con `EntityAutocomplete` (búsqueda en servidor; el de conversión solo ofrece productos con receta activa); abiertos desde un producto llegan con él precargado.
+
+- **`clientRequestId`:** obligatorio en el tipo de entrada de `useAdjustInventory` y `useConvertPackToUnits` (el esquema de los dos endpoints lo sigue aceptando como opcional). Lo da `useRequestAttempt({ renewOnContentChange: true })` (`utils/requestAttempt.ts`): doble clic = una petición; el reintento del mismo contenido tras un error de resultado incierto (red, 5xx, 409) viaja con la misma clave; si el contenido cambia se estrena clave; cerrar el modal llama a `discard()`. El error incierto se redacta con `describeStockRequestError`.
+- **Sin red:** las dos mutaciones usan `networkMode: "always"` y `retry: false`: fallan al instante en vez de quedar en pausa y enviarse solas al volver la conexión.
+- **Surtido:** al elegir un empaque surtido y la cantidad aparece el reparto editable (una fila por componente, precargada con receta × cantidad, suma en vivo y "Restablecer receta"); no se puede enviar si la suma no coincide o si el empaque quedaría en negativo. Antes de enviar, `ConfirmActionModal` muestra el efecto (−N empaques, +unidades y stock resultante por componente). El empaque 1 a 1 no lleva confirmación nueva (queda para CNF-08).
+- **Efecto como función pura** (para CNF-08): `computePackOpeningEffect` (`inventory-movements/utils/packOpeningEffect.ts`) y `computeStockAdjustmentEffect` (`inventory-movements/utils/stockAdjustmentEffect.ts`).
+- **Límites:** `reason` hasta 500 caracteres. Entrada libre a un producto inactivo → 409 (parche `20261011b`; las salidas se permiten).
+
+**Reposición desde stock bajo (INV-05).** `src/modules/inventory/restock/`: `RestockPurchaseButton` (visible solo con `purchases.create`) abre `RestockSelection`, que lista los productos con stock bajo agrupados por proveedor (el preferido; si no, el último) con cantidad sugerida `max(mínimo × 2 − stock, 1)` editable. Montado en `DashboardLowStockCard` y en la cabecera de `/inventory?lowStock=true`. La selección de un proveedor se guarda en `sessionStorage` (una viva por pestaña, 30 min, firmada con tienda y usuario, máx. 200 líneas) y se navega a `/purchases/create?restock=<id>`. **Receptor pendiente en Compras:** `/purchases/create` aún no lee `restock`; debe hacerlo con `readRestockDraft` / `clearRestockDraft` de `@/modules/inventory/restock`. La precarga no decide costo, moneda, IVA, empaque ni pago.
+
+**Campos ajuste:** `productId`, `quantityDelta`, `reason`, `type` (`ajuste_entrada`, `ajuste_salida`, etc.); `saleId` / `purchaseId` opcionales (parche `20261006c`). Los tipos `devolucion_cliente` / `devolucion_proveedor` exigen el documento (400 sin él, parche `20261006g`) y el modal de ajuste no los ofrece.
+
+**Conversión empaque→unidad (dual SKU o surtido):** receta en `product_pack_conversions` + `product_pack_components`; una `conversion_salida` y una `conversion_entrada` por componente con unidades, todas con el mismo `conversion_id`. Con `components` en el cuerpo se registra el reparto real de la apertura. UI en detalle de producto e Inventario/movimientos.
 
 **Tabla:** `stock_movements` es el libro mayor y la fuente de verdad; `products.current_stock` es un derivado que solo escribe el trigger `stock_movements_apply` al insertar un movimiento (no se actualiza a mano ni desde una RPC). `stock_movements` es solo-append. Detalle, causas y despliegue: [`stock-integrity.md`](stock-integrity.md).
 
@@ -280,14 +306,15 @@ Versión vigente = último parche de la columna. Ninguna escribe `products.curre
 | `create_purchase` | `20261006h` | `p_client_request_id`, `units_per_pack` validado contra el par, numeración por secuencia, guarda de finitud |
 | `receive_purchase` | `20261006c` | Solo `pedido` (`PT409`) |
 | `cancel_purchase`, `return_purchase` | `20261006f` | `return_purchase` exige `recibido`; ambas exigen anular antes los pagos |
-| `adjust_stock` | `20261006g` | Firma `(p_product_id, p_quantity_delta, p_reason, p_type, p_client_request_id, p_sale_id, p_purchase_id)`; devoluciones solo ligadas a documento y con tope |
+| `adjust_stock` | `20261011b` | Firma `(p_product_id, p_quantity_delta, p_reason, p_type, p_client_request_id, p_sale_id, p_purchase_id)`; devoluciones solo ligadas a documento y con tope; entrada libre a producto inactivo → `PT409` |
+| `save_pack_recipe` | `20261011c` | Nueva. Guarda, reemplaza o desactiva la receta de un empaque en una transacción; no mueve stock |
 | `convert_pack_to_units` | `20261006c` | `p_client_request_id`; par y productos bloqueados en orden |
 | `update_product_price`, `register_supplier_product_price`, `deactivate_supplier_product` | `20261006h` | Filtro de tienda, `PT403`, guarda de finitud |
 | `record_cash_close_difference` | `20261006f` | Ya no ejecutable por cualquier usuario autenticado |
 
 Errores de negocio: SQLSTATE `PT400` / `PT403` / `PT404` / `PT409` (PostgREST responde con ese HTTP).
 
-**Pendiente:** anular movimiento (filtros de movimiento en API opcionales).
+**Pendiente:** anular movimiento; receptor de `?restock=` en `/purchases/create` y botón de reposición en el reporte de stock bajo; aplicar y probar en el laboratorio los parches `20261011a`…`c` (ver [`stock-integrity.md`](stock-integrity.md) §7).
 
 ---
 
