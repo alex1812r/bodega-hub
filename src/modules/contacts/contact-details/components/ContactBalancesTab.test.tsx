@@ -11,6 +11,11 @@ import {
   getContactBalanceSections,
 } from "./ContactBalancesTab";
 
+// El modal de abono lleva un guardia de proceso (`useProcessGuard`) que usa el router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 function jsonResponse(payload: unknown, status = 200) {
   return {
     headers: { get: () => "application/json" },
@@ -114,10 +119,14 @@ describe("ContactBalancesTab", () => {
   const originalMatchMedia = window.matchMedia;
   let replies: Record<"purchase" | "sale", Reply>;
   let cardsLayout: boolean;
+  /** Estados HTTP con los que responden los siguientes POST; el pago se guarda igual. */
+  let lostPostResponses: number[];
 
   beforeEach(() => {
     replies = { purchase: { items: PURCHASES }, sale: { items: SALES } };
     cardsLayout = false;
+    lostPostResponses = [];
+    window.sessionStorage.clear();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: (query: string) => ({
@@ -143,6 +152,12 @@ describe("ContactBalancesTab", () => {
               (item) => item.id !== (body.purchaseId ?? body.saleId),
             ),
           };
+        }
+
+        const lostStatus = lostPostResponses.shift();
+
+        if (lostStatus !== undefined) {
+          return jsonResponse({ error: { code: "TEST", message: "ERR_RESPONSE_LOST" } }, lostStatus);
         }
 
         return jsonResponse({ data: { ...body, id: `pay-${body.clientRequestId}` } }, 201);
@@ -467,6 +482,88 @@ describe("ContactBalancesTab", () => {
       expect(screen.queryByRole("button", { name: "Abonar" })).not.toBeInTheDocument();
     },
   );
+
+  // PAG-F7 U1: el pago se guardó pero la respuesta se perdió. La lista se refresca
+  // (queda vacía) y "Abonar" tiene que seguir ahí para confirmar ese abono.
+  it("abono por confirmar: Saldos se refresca tras el fallo y «Abonar» sigue montado, abre en ese abono y no duplica", async () => {
+    const user = userEvent.setup();
+
+    replies.sale = { items: [SALES[1]] };
+    lostPostResponses = [500];
+    renderTab({ sections: ["sale"] });
+
+    const region = within(screen.getByRole("region", { name: "Por cobrar" }));
+
+    await user.click(await region.findByRole("button", { name: "Abonar" }));
+
+    let dialog = within(await screen.findByRole("dialog", { name: "Abonar" }));
+    const complete = await dialog.findByRole("button", { name: "Completar total pendiente" });
+
+    await waitFor(() => expect(complete).toBeEnabled());
+    await user.click(complete);
+    await user.click(dialog.getByRole("button", { name: "Ver reparto" }));
+    await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+    await dialog.findByRole("alert");
+
+    // Saldos ya muestra el saldo real: el pago entró y la venta salió de la lista.
+    expect(await region.findByText("Sin saldos pendientes")).toBeInTheDocument();
+
+    await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Abonar" })).not.toBeInTheDocument(),
+    );
+
+    await user.click(region.getByRole("button", { name: "Abonar" }));
+    dialog = within(await screen.findByRole("dialog", { name: "Abonar" }));
+
+    expect(dialog.queryByLabelText("Monto")).not.toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Reintentar pendientes" }));
+    expect(await dialog.findByText(/Abono registrado: 1 pago por/)).toBeInTheDocument();
+
+    const keys = fetchMock.mock.calls
+      .filter(([, init]) => (init as RequestInit | undefined)?.method === "POST")
+      .map(([, init]) => (JSON.parse(String((init as RequestInit).body)) as { clientRequestId: string }).clientRequestId);
+
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+
+    // Resuelto y sin saldos: al cerrar ya no queda nada que abonar.
+    await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Abonar" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("abono por confirmar guardado: tras recargar, «Abonar» está aunque la lista venga vacía", async () => {
+    const user = userEvent.setup();
+
+    replies.sale = { items: [SALES[1]] };
+    lostPostResponses = [500];
+
+    const first = renderTab({ sections: ["sale"] });
+
+    await user.click(await screen.findByRole("button", { name: "Abonar" }));
+
+    const dialog = within(await screen.findByRole("dialog", { name: "Abonar" }));
+    const complete = await dialog.findByRole("button", { name: "Completar total pendiente" });
+
+    await waitFor(() => expect(complete).toBeEnabled());
+    await user.click(complete);
+    await user.click(dialog.getByRole("button", { name: "Ver reparto" }));
+    await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+    await dialog.findByRole("alert");
+    first.unmount();
+
+    renderTab({ sections: ["sale"] });
+
+    expect(await screen.findByText("Sin saldos pendientes")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Abonar" }));
+    expect(
+      await within(await screen.findByRole("dialog", { name: "Abonar" })).findByRole("button", {
+        name: "Reintentar pendientes",
+      }),
+    ).toBeEnabled();
+  });
 
   it("Cobrar de una fila: si el documento sale de la lista con el modal abierto, el modal no se desmonta", async () => {
     const user = userEvent.setup();

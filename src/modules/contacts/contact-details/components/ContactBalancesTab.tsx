@@ -12,6 +12,7 @@ import {
   useOpenDocuments,
 } from "@/modules/payments/hooks/useOpenDocuments";
 import { formatPurchaseNumberDisplay } from "@/modules/payments/payments-list/utils/paymentReference";
+import { useHasPendingSettlement } from "@/modules/payments/utils/pendingSettlementStore";
 import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
 import type { Permission, UserRole } from "@/shared/auth/permissions";
 import { Button } from "@/shared/components/Button";
@@ -114,6 +115,7 @@ function ContactBalancesSection({
   const copy = sectionCopy[type];
   const [payingDocumentId, setPayingDocumentId] = useState<string>();
   const [isSettlementOpen, setIsSettlementOpen] = useState(false);
+  const hasPendingSettlement = useHasPendingSettlement({ contactId, type });
   const openDocuments = useOpenDocuments(
     { contactId, limit: MAX_PAGE_LIMIT, type },
     { enabled: Boolean(contactId) },
@@ -194,8 +196,10 @@ function ContactBalancesSection({
           ) : null}
         </div>
         {/* Abierto sigue montado aunque la lista quede vacía: un abono que salda todo
-            la vacía al refrescarse y su resultado tiene que seguir a la vista. */}
-        {documents.length > 0 || isSettlementOpen ? (
+            la vacía al refrescarse y su resultado tiene que seguir a la vista. Con un
+            abono sin terminar (por confirmar) también: el modal es la única vía para
+            confirmarlo sin duplicar el pago. */}
+        {documents.length > 0 || isSettlementOpen || hasPendingSettlement ? (
           <ContactSettlementModal
             contactId={contactId}
             contactName={contactName}
@@ -293,7 +297,8 @@ export function ContactBalancesTab({
         <ContactBalancesSection
           contactId={contactId}
           contactName={contactName}
-          key={type}
+          // Por contacto: el abono en curso de un contacto no puede seguir en el de otro.
+          key={`${contactId}:${type}`}
           returnHref={returnHref}
           type={type}
         />

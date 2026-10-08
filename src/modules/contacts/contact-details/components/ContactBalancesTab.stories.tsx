@@ -3,6 +3,7 @@ import { delay, http, HttpResponse } from "msw";
 import { expect, within } from "storybook/test";
 
 import type { OpenDocument } from "@/modules/payments/hooks/useOpenDocuments";
+import { clearPendingSettlement } from "@/modules/payments/utils/pendingSettlementStore";
 
 import { ContactBalancesTab } from "./ContactBalancesTab";
 
@@ -18,6 +19,11 @@ import { ContactBalancesTab } from "./ContactBalancesTab";
  * Estas historias simulan `GET /api/payments/open-documents` con MSW.
  */
 const meta = {
+  // Un abono sin terminar de una historia no debe reaparecer en la siguiente.
+  beforeEach: () => {
+    clearPendingSettlement({ contactId: "cont-story", type: "sale" });
+    clearPendingSettlement({ contactId: "cont-story", type: "purchase" });
+  },
   args: {
     contactId: "cont-story",
     contactName: "Inversiones La Gran Parada del Este, C.A.",

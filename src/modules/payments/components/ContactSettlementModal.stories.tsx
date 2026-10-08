@@ -5,6 +5,8 @@ import { expect, within } from "storybook/test";
 
 import { Button } from "@/shared/components/Button";
 
+import { clearPendingSettlement } from "../utils/pendingSettlementStore";
+
 import {
   ContactSettlementModal,
   type ContactSettlementModalProps,
@@ -18,7 +20,11 @@ import {
  * - Paso 2: el reparto por documento (saldo, se abona, queda) ANTES de confirmar.
  * - Al confirmar registra un pago por documento, en secuencia. Si uno falla se
  *   detiene, dice qué quedó registrado y ofrece "Reintentar pendientes" (misma clave
- *   de idempotencia: no duplica). Tras un rechazo definitivo (4xx) deja volver a editar.
+ *   de idempotencia: no duplica). Tras un rechazo definitivo (4xx) deja volver a editar
+ *   o continuar con los documentos que no se enviaron.
+ * - Tras un fallo incierto (red, 5xx) el abono queda "por confirmar": solo se puede
+ *   reintentar, y sigue ahí al cerrar y volver a abrir (y al recargar: se guarda en
+ *   `sessionStorage` por contacto y tipo).
  * - Un monto mayor que lo abonable no se confirma: no hay vuelto ni sobrepago.
  * - `type="purchase"`: montarlo solo si el usuario puede pagar compras (admin, contador).
  *
@@ -26,6 +32,11 @@ import {
  * `/api/payments` con MSW y abren el modal por código.
  */
 const meta = {
+  // Un abono sin terminar de una historia no debe reaparecer en la siguiente.
+  beforeEach: () => {
+    clearPendingSettlement({ contactId: "contact-story", type: "sale" });
+    clearPendingSettlement({ contactId: "contact-story", type: "purchase" });
+  },
   component: ContactSettlementModal,
   tags: ["ai-generated"],
 } satisfies Meta<typeof ContactSettlementModal>;
@@ -233,6 +244,13 @@ export const StoppedByServerError: Story = {
       await dialog.findByText("Se registró 1 de 3 pagos.", undefined, { timeout: 5000 }),
     ).toBeInTheDocument();
     await expect(dialog.getByRole("button", { name: "Reintentar pendientes" })).toBeEnabled();
+    // Por confirmar: ni editar ni continuar, solo reintentar con la misma clave.
+    await expect(dialog.queryByRole("button", { name: "Volver a editar" })).not.toBeInTheDocument();
+    await expect(
+      dialog.getByText(
+        "No pudimos confirmar si este pago se registró. Reintenta: si ya entró, no se duplicará.",
+      ),
+    ).toBeInTheDocument();
   },
 };
 

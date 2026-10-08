@@ -1,6 +1,7 @@
 "use client";
 
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { MAX_PAGE_LIMIT } from "@/lib/api/pagination";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
@@ -10,6 +11,7 @@ import { Badge } from "@/shared/components/Badge";
 import { Button } from "@/shared/components/Button";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { Modal } from "@/shared/components/Modal";
+import { ProcessGuard } from "@/shared/components/ProcessGuard";
 import {
   PaymentFormFields,
   type PaymentFormCurrency,
@@ -30,7 +32,7 @@ import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
 
 import { type OpenDocument, useOpenDocuments } from "../hooks/useOpenDocuments";
-import { type PaymentDetail, useCreatePayment } from "../hooks/usePayments";
+import { type PaymentDetail, paymentsQueryKeys, useCreatePayment } from "../hooks/usePayments";
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
 import {
   MIN_PAYABLE_VES_BY_DOCUMENT,
@@ -38,6 +40,13 @@ import {
   allocatePayment,
   maxAllocatableAmount,
 } from "../utils/allocatePayment";
+import {
+  type PendingSettlement,
+  type PendingSettlementDocument,
+  clearPendingSettlement,
+  loadPendingSettlement,
+  savePendingSettlement,
+} from "../utils/pendingSettlementStore";
 
 /**
  * Modal "Abonar": registra un abono de un contacto repartido entre sus documentos
@@ -51,6 +60,25 @@ import {
  *    desde el que falló sin reenviar los anteriores.
  *
  * Nunca paga de más ni da vuelto: un monto mayor que lo abonable no se confirma.
+ *
+ * **Abono por confirmar.** Si un pago falla sin que se sepa si se registró (red, 5xx,
+ * 408, 409), el abono queda "por confirmar": el modal no deja editar ni empezar otro
+ * abono; solo "Reintentar pendientes", que reenvía cada pago con su misma clave de
+ * idempotencia hasta que quede registrado o el servidor lo rechace (4xx). Ese abono
+ * sobrevive a cerrar el modal y, guardado en `sessionStorage` por contacto y tipo
+ * (`pendingSettlementStore`), a recargar o navegar: al abrir "Abonar" de nuevo se
+ * muestra directamente. Quien monte el modal de forma condicional debe mantenerlo
+ * montado mientras `useHasPendingSettlement({ contactId, type })` sea `true`.
+ *
+ * Tras un rechazo definitivo (4xx) se puede reintentar, continuar con los documentos
+ * que no se enviaron o volver a editar: el reparto se recalcula con los saldos recién
+ * pedidos. Al abrir, y tras cada fallo, la lista de documentos se vuelve a pedir y el
+ * reparto no se puede ver ni confirmar hasta que llega.
+ *
+ * Si el modal se desmonta a mitad de la secuencia, el pago en vuelo termina y los
+ * siguientes NO se envían: quedan guardados para continuar. Mientras hay pagos en
+ * vuelo o un abono por confirmar, un guardia (`ProcessGuard`, "Abono en curso")
+ * pregunta antes de salir de la pantalla.
  *
  * **Compras (`type="purchase"`):** montar este modal solo si el usuario puede pagar
  * compras (`canViewPurchasePayments(role)` de `@/shared/auth/paymentAccess`: admin y
@@ -114,12 +142,13 @@ type SettlementDocument = OpenDocument & {
   rateVes: number;
 };
 
-type Allocation = PaymentAllocation<SettlementDocument>;
+/** Reparto de un pago ya enviado: solo lo que se pinta, se reenvía y se guarda. */
+type RunAllocation = PaymentAllocation<PendingSettlementDocument>;
 
 type RowStatus = "failed" | "pending" | "registered" | "registering";
 
 type RunRow = {
-  allocation: Allocation;
+  allocation: RunAllocation;
   /** Clave de idempotencia del pago de este documento: la misma en cada reintento. */
   clientRequestId: string;
   error?: Error;
@@ -135,6 +164,8 @@ type Run = {
   /** Pagos registrados en una ejecución anterior de este mismo abono (tras editar). */
   priorPayments: PaymentDetail[];
   rows: RunRow[];
+  /** Lo tecleado al confirmar: "Volver a editar" parte de aquí. */
+  values: PaymentFormValues;
 };
 
 type Step = "form" | "preview" | "run";
@@ -185,6 +216,95 @@ function isDefinitiveRejection(error: unknown) {
   );
 }
 
+const CONNECTION_ERROR_MESSAGE = "No se pudo conectar con el servidor.";
+const UNCERTAIN_MESSAGE =
+  "No pudimos confirmar si este pago se registró. Reintenta: si ya entró, no se duplicará.";
+
+/** Primer motivo de un 400 de validación (`issues` de Zod), si el error lo trae. */
+function firstIssueMessage(issues: unknown) {
+  const [first]: unknown[] = Array.isArray(issues) ? issues : [];
+
+  if (typeof first === "object" && first !== null && "message" in first) {
+    return typeof first.message === "string" && first.message.trim() ? first.message : undefined;
+  }
+
+  return undefined;
+}
+
+/**
+ * Error que se pinta en la fila. Los de negocio llevan el mensaje del servidor tal
+ * cual (más el primer motivo de validación); el resto son fallos de red, cuyo texto
+ * es el del navegador ("Failed to fetch").
+ */
+function toRowError(error: unknown) {
+  if (!(error instanceof ClientApiError)) {
+    return new Error(CONNECTION_ERROR_MESSAGE);
+  }
+
+  const reason = firstIssueMessage(error.issues);
+
+  return reason ? new Error(`${error.message} ${reason}`) : error;
+}
+
+function isUncertainRow(row: RunRow) {
+  return row.status === "failed" && row.uncertain === true;
+}
+
+/**
+ * Lo que se guarda de un abono sin terminar. Un pago en vuelo se guarda como de
+ * resultado incierto: si la página se recarga antes de la respuesta, no se sabe.
+ */
+function toPendingSettlement(run: Run): PendingSettlement {
+  return {
+    currency: run.currency,
+    payload: run.payload,
+    rows: run.rows.map((row) => {
+      const { document } = row.allocation;
+      const inFlight = row.status === "registering";
+
+      return {
+        allocation: {
+          amount: row.allocation.amount,
+          appliedVes: row.allocation.appliedVes,
+          document: {
+            createdAt: document.createdAt,
+            id: document.id,
+            number: document.number,
+            pendingVes: document.pendingVes,
+          },
+          equivalent: row.allocation.equivalent,
+          remainingVes: row.allocation.remainingVes,
+        },
+        clientRequestId: row.clientRequestId,
+        errorMessage: row.error?.message,
+        status: row.status === "registering" ? "failed" : row.status,
+        uncertain: inFlight ? true : row.uncertain,
+      };
+    }),
+    values: run.values,
+  };
+}
+
+function fromPendingSettlement(settlement: PendingSettlement | null): Run | null {
+  if (!settlement) {
+    return null;
+  }
+
+  return {
+    currency: settlement.currency,
+    payload: settlement.payload,
+    priorPayments: [],
+    rows: settlement.rows.map((row) => ({
+      allocation: row.allocation,
+      clientRequestId: row.clientRequestId,
+      error: row.errorMessage ? new Error(row.errorMessage) : undefined,
+      status: row.status,
+      uncertain: row.uncertain,
+    })),
+    values: settlement.values,
+  };
+}
+
 function formatAmount(value: number, currency: PaymentFormCurrency) {
   return currency === "USD" ? formatRefUsd(value) : formatVesBs(value);
 }
@@ -203,7 +323,7 @@ function AllocationRow({
   label,
   row,
 }: {
-  allocation: Allocation;
+  allocation: RunAllocation;
   currency: PaymentFormCurrency;
   label: string;
   row?: RunRow;
@@ -272,21 +392,33 @@ export function ContactSettlementModal({
   const [internalOpen, setInternalOpen] = useState(false);
   const open = isControlled ? controlledOpen : internalOpen;
   const [renderedOpen, setRenderedOpen] = useState(open);
-  const [step, setStep] = useState<Step>("form");
+  // Un abono que quedó sin terminar (recarga, navegación) se retoma donde estaba.
+  const [restoredRun] = useState(() =>
+    fromPendingSettlement(loadPendingSettlement({ contactId, type })),
+  );
+  const [step, setStep] = useState<Step>(restoredRun ? "run" : "form");
   const [storedValues, setValues] = useState<PaymentFormValues>(() =>
     createEmptyPaymentFormValues(),
   );
   const [showErrors, setShowErrors] = useState(false);
-  const [run, setRun] = useState<Run | null>(null);
+  const [run, setRun] = useState<Run | null>(restoredRun);
   const [isRunning, setIsRunning] = useState(false);
   // Candado contra reentrada: `isRunning` no cambia hasta el siguiente render y dos
   // clics en el mismo tick arrancarían dos secuencias.
   const runLockRef = useRef(false);
+  const mountedRef = useRef(true);
+  const queryClient = useQueryClient();
   const createPayment = useCreatePayment();
   const openDocuments = useOpenDocuments(
     { contactId, limit: MAX_PAGE_LIMIT, type },
     { enabled: open && Boolean(contactId) },
   );
+  // La lista vale para repartir solo si se leyó después de este momento: al abrir y al
+  // volver a editar se anota la última lectura y se espera a una más nueva.
+  const [staleDocumentsAt, setStaleDocumentsAt] = useState(openDocuments.dataUpdatedAt);
+  const documentsAreFresh =
+    openDocuments.data !== undefined && openDocuments.dataUpdatedAt !== staleDocumentsAt;
+  const refetchDocuments = openDocuments.refetch;
   // Una compra se convierte con la tasa del día de la tienda, no con la suya.
   const currentRate = useCurrentExchangeRate({ enabled: open && type === "purchase" });
   const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
@@ -360,20 +492,76 @@ export function ContactSettlementModal({
     allocation.allocations.length > 0 &&
     allocation.leftover === 0 &&
     !rateIsLoading &&
+    documentsAreFresh &&
     !openDocuments.isFetching;
   const totals = openDocuments.data?.totals;
   const isPartialList = totals !== undefined && (totals.truncated || totals.count > documents.length);
 
-  // Cada apertura y cada cierre dejan el modal en el paso 1 y limpio.
+  const registeredRows = run?.rows.filter((row) => row.status === "registered") ?? [];
+  const failedRows = run?.rows.filter((row) => row.status === "failed") ?? [];
+  const unsentRows = run?.rows.filter((row) => row.status === "pending") ?? [];
+  const isSettled = run !== null && registeredRows.length === run.rows.length;
+  const hasUncertainRow = failedRows.some(isUncertainRow);
+  // Por confirmar: algún pago pudo haberse registrado. Solo cabe reenviarlo igual.
+  const needsConfirmation = !isSettled && hasUncertainRow;
+  // La secuencia se cortó (el modal se desmontó) antes de enviar todos los pagos.
+  const isInterrupted =
+    !isRunning && !isSettled && failedRows.length === 0 && unsentRows.length > 0;
+
+  // Cada cierre deja el modal en el paso 1 y limpio, salvo con un abono por confirmar:
+  // ese se conserva y la siguiente apertura lo muestra directamente.
   if (renderedOpen !== open) {
     setRenderedOpen(open);
-    setStep("form");
-    setValues(createEmptyPaymentFormValues(values.method));
-    setShowErrors(false);
-    setRun(null);
+
+    if (open) {
+      setStaleDocumentsAt(openDocuments.dataUpdatedAt);
+
+      if (run !== null && !isSettled) {
+        setStep("run");
+      }
+    } else if (!needsConfirmation) {
+      setStep("form");
+      setValues(createEmptyPaymentFormValues(values.method));
+      setShowErrors(false);
+      setRun(null);
+    }
   }
 
-  async function runSequence(startRun: Run) {
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Abierto con una lista anterior a la apertura (o a "Volver a editar"): se pide otra.
+  // `cancelRefetch: false` reutiliza la petición que ya esté en curso.
+  useEffect(() => {
+    if (open && contactId && !documentsAreFresh) {
+      void refetchDocuments({ cancelRefetch: false });
+    }
+  }, [contactId, documentsAreFresh, open, refetchDocuments]);
+
+  // Un abono descartado (cerrar o editar sin nada por confirmar) deja de estar guardado.
+  useEffect(() => {
+    if (run === null && !runLockRef.current) {
+      clearPendingSettlement({ contactId, type });
+    }
+  }, [contactId, run, type]);
+
+  /** El saldo pudo cambiar: documentos con saldo y pagos, el contacto y sus documentos. */
+  function invalidateBalances() {
+    void queryClient.invalidateQueries({ queryKey: paymentsQueryKeys.all });
+    void queryClient.invalidateQueries({ queryKey: ["contacts"] });
+    void queryClient.invalidateQueries({ queryKey: [type === "purchase" ? "purchases" : "sales"] });
+  }
+
+  /**
+   * `skipRejected`: los pagos que el servidor rechazó (4xx) se dejan como están y la
+   * secuencia sigue con los que no se llegaron a enviar.
+   */
+  async function runSequence(startRun: Run, { skipRejected = false } = {}) {
     if (runLockRef.current) {
       return;
     }
@@ -381,8 +569,16 @@ export function ContactSettlementModal({
     runLockRef.current = true;
     setIsRunning(true);
 
+    const scope = { contactId, type };
     const rows = startRun.rows.map((row) => ({ ...row }));
-    const publish = () => setRun({ ...startRun, rows: rows.map((row) => ({ ...row })) });
+    // Cada cambio se guarda además de pintarse: las claves sobreviven a una recarga y a
+    // que el modal se desmonte con la secuencia en marcha.
+    const publish = () => {
+      const nextRun = { ...startRun, rows: rows.map((row) => ({ ...row })) };
+
+      savePendingSettlement(scope, toPendingSettlement(nextRun));
+      setRun(nextRun);
+    };
 
     try {
       // Uno tras otro, nunca en paralelo: cada pago mueve caja o baúl y el siguiente
@@ -390,6 +586,15 @@ export function ContactSettlementModal({
       for (const row of rows) {
         if (row.status === "registered") {
           continue;
+        }
+
+        if (skipRejected && row.status === "failed" && !row.uncertain) {
+          continue;
+        }
+
+        // Sin pantalla no se envía nada más: lo pendiente ya quedó guardado.
+        if (!mountedRef.current) {
+          break;
         }
 
         row.status = "registering";
@@ -410,10 +615,12 @@ export function ContactSettlementModal({
           publish();
         } catch (error) {
           row.status = "failed";
-          row.error = error instanceof Error ? error : new Error(String(error));
+          row.error = toRowError(error);
           row.uncertain = !isDefinitiveRejection(error);
           publish();
-          return;
+          // Incierto o rechazado, el saldo real puede no ser el que hay en pantalla.
+          invalidateBalances();
+          break;
         }
       }
     } finally {
@@ -421,10 +628,18 @@ export function ContactSettlementModal({
       setIsRunning(false);
     }
 
-    onSettled?.([
-      ...startRun.priorPayments,
-      ...rows.flatMap((row) => (row.payment ? [row.payment] : [])),
-    ]);
+    if (rows.some((row) => row.status !== "registered")) {
+      return;
+    }
+
+    clearPendingSettlement(scope);
+
+    if (mountedRef.current) {
+      onSettled?.([
+        ...startRun.priorPayments,
+        ...rows.flatMap((row) => (row.payment ? [row.payment] : [])),
+      ]);
+    }
   }
 
   function handlePreview() {
@@ -436,7 +651,8 @@ export function ContactSettlementModal({
   }
 
   function handleConfirm() {
-    if (runLockRef.current) {
+    // Con un abono por confirmar no se arranca otro: sus pagos saldrían con claves nuevas.
+    if (runLockRef.current || needsConfirmation) {
       return;
     }
 
@@ -458,6 +674,7 @@ export function ContactSettlementModal({
         clientRequestId: crypto.randomUUID(),
         status: "pending",
       })),
+      values,
     };
 
     setRun(nextRun);
@@ -471,23 +688,31 @@ export function ContactSettlementModal({
     }
   }
 
-  /** Solo tras un rechazo definitivo: lo no registrado vuelve al formulario como monto. */
+  /** Tras un rechazo definitivo: deja el rechazado como está y envía los no enviados. */
+  function handleContinue() {
+    if (run && !hasUncertainRow) {
+      void runSequence(run, { skipRejected: true });
+    }
+  }
+
+  /**
+   * Sin nada por confirmar: lo no registrado vuelve al formulario como monto y el
+   * reparto se recalcula con los saldos que se piden en ese momento.
+   */
   function handleEdit() {
-    if (!run) {
+    if (!run || hasUncertainRow) {
       return;
     }
 
     const unregistered = run.rows.filter((row) => row.status !== "registered");
 
-    setValues({ ...values, amount: String(sumAmounts(unregistered)) });
+    setValues({ ...run.values, amount: String(sumAmounts(unregistered)) });
     setShowErrors(false);
+    setStaleDocumentsAt(openDocuments.dataUpdatedAt);
     setStep("form");
   }
 
-  const registeredRows = run?.rows.filter((row) => row.status === "registered") ?? [];
-  const failedRow = run?.rows.find((row) => row.status === "failed");
-  const unsentRows = run?.rows.filter((row) => row.status === "pending") ?? [];
-  const isSettled = run !== null && registeredRows.length === run.rows.length;
+  const canEdit = !hasUncertainRow && (failedRows.length > 0 || isInterrupted);
   const labelsOf = (rows: readonly RunRow[]) =>
     rows.map((row) => texts.label(row.allocation.document.number)).join(", ");
 
@@ -517,7 +742,7 @@ export function ContactSettlementModal({
             </p>
           ) : null}
 
-          {failedRow ? (
+          {failedRows.length > 0 || isInterrupted ? (
             <div className={errorClassName} role="alert">
               <p>
                 {registeredRows.length === 1
@@ -525,12 +750,14 @@ export function ContactSettlementModal({
                   : `Se registraron ${registeredRows.length} de ${countPayments(run.rows.length)}.`}
               </p>
               {registeredRows.length > 0 ? <p>Registrado: {labelsOf(registeredRows)}.</p> : null}
-              <p>Falló: {labelsOf([failedRow])}.</p>
+              {failedRows.length > 0 ? <p>Falló: {labelsOf(failedRows)}.</p> : null}
               {unsentRows.length > 0 ? <p>Sin enviar: {labelsOf(unsentRows)}.</p> : null}
               <p className="mt-1">
-                {failedRow.uncertain
-                  ? "No se sabe si el pago que falló llegó a registrarse. «Reintentar pendientes» lo envía de nuevo sin duplicarlo."
-                  : "El pago que falló no se registró. Puedes reintentar los pendientes o volver a editar el abono."}
+                {hasUncertainRow
+                  ? UNCERTAIN_MESSAGE
+                  : failedRows.length > 0
+                    ? "El pago que falló no se registró. Puedes reintentar los pendientes o volver a editar el abono."
+                    : "El abono se interrumpió antes de enviar todos los pagos. Puedes enviar los pendientes o volver a editar el abono."}
               </p>
             </div>
           ) : null}
@@ -546,7 +773,12 @@ export function ContactSettlementModal({
       );
     }
 
-    if (openDocuments.error && !openDocuments.data) {
+    // Sin lista, o con una que ya no vale porque no se pudo volver a pedir.
+    if (
+      openDocuments.error &&
+      !documentsAreFresh &&
+      (!openDocuments.isFetching || !openDocuments.data)
+    ) {
       return (
         <div
           className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300"
@@ -644,11 +876,17 @@ export function ContactSettlementModal({
           </p>
         ) : null}
 
+        {documentsAreFresh ? null : (
+          <p className={noticeClassName} role="status">
+            Actualizando saldos...
+          </p>
+        )}
+
         {hasLeftover && !rateIsLoading ? (
           <p className={errorClassName} role="alert">
-            El monto supera lo que se puede abonar: sobran{" "}
-            {formatAmount(allocation.leftover, currency)}. Máximo:{" "}
-            {formatAmount(maxAmount, currency)}.
+            {Number(values.amount) > maxAmount
+              ? `El monto supera lo que se puede abonar: sobran ${formatAmount(allocation.leftover, currency)}. Máximo abonable: ${formatAmount(maxAmount, currency)}.`
+              : `No se puede abonar exactamente ${formatAmount(Number(values.amount), currency)}: dejaría un saldo demasiado pequeño para cobrarlo después. Abona ${formatAmount(allocation.appliedAmount, currency)} o el máximo abonable, ${formatAmount(maxAmount, currency)}.`}
           </p>
         ) : null}
       </div>
@@ -662,9 +900,14 @@ export function ContactSettlementModal({
           <Button disabled={isRunning} onClick={close} type="button" variant="outline">
             Cerrar
           </Button>
-          {failedRow && !failedRow.uncertain ? (
+          {canEdit ? (
             <Button disabled={isRunning} onClick={handleEdit} type="button" variant="outline">
               Volver a editar
+            </Button>
+          ) : null}
+          {canEdit && failedRows.length > 0 && unsentRows.length > 0 ? (
+            <Button disabled={isRunning} onClick={handleContinue} type="button" variant="outline">
+              Continuar con los demás
             </Button>
           ) : null}
           {!isSettled ? (
@@ -696,7 +939,7 @@ export function ContactSettlementModal({
         </Button>
         {documents.length > 0 ? (
           <Button
-            disabled={rateIsLoading || openDocuments.isFetching}
+            disabled={rateIsLoading || openDocuments.isFetching || !documentsAreFresh}
             onClick={handlePreview}
             type="button"
           >
@@ -708,27 +951,43 @@ export function ContactSettlementModal({
   }
 
   return (
-    <Modal
-      description={texts.description(contactName)}
-      footer={({ close }) => renderFooter(close)}
-      onOpenChange={(nextOpen) => {
-        // Con pagos en vuelo no se cierra (Esc, X, clic fuera): se perdería qué quedó
-        // registrado y qué no.
-        if (!nextOpen && (isRunning || runLockRef.current)) {
-          return;
-        }
+    <>
+      <Modal
+        description={texts.description(contactName)}
+        footer={({ close }) => renderFooter(close)}
+        onOpenChange={(nextOpen) => {
+          // Con pagos en vuelo no se cierra (Esc, X, clic fuera): se perdería qué quedó
+          // registrado y qué no.
+          if (!nextOpen && (isRunning || runLockRef.current)) {
+            return;
+          }
 
-        if (!isControlled) {
-          setInternalOpen(nextOpen);
-        }
+          if (!isControlled) {
+            setInternalOpen(nextOpen);
+          }
 
-        onOpenChange?.(nextOpen);
-      }}
-      open={open}
-      title="Abonar"
-      trigger={trigger ?? (isControlled ? undefined : <Button size="sm">Abonar</Button>)}
-    >
-      {renderBody()}
-    </Modal>
+          onOpenChange?.(nextOpen);
+        }}
+        open={open}
+        title="Abonar"
+        trigger={trigger ?? (isControlled ? undefined : <Button size="sm">Abonar</Button>)}
+      >
+        {renderBody()}
+      </Modal>
+      {/* Solo existe con pagos en vuelo o un abono por confirmar: nunca con el
+          formulario limpio ni tras terminar con éxito. */}
+      {isRunning || needsConfirmation ? (
+        <ProcessGuard
+          active
+          description={
+            isRunning
+              ? "Hay pagos de este abono enviándose. Si sales, los que falten no se envían y quedan guardados para continuar desde «Abonar»."
+              : "No pudimos confirmar si un pago se registró. Abre «Abonar» y pulsa «Reintentar pendientes»: si ya entró, no se duplicará."
+          }
+          label="Abono en curso"
+          onLeave="draft"
+        />
+      ) : null}
+    </>
   );
 }
