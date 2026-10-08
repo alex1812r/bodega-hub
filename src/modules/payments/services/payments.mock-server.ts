@@ -334,7 +334,15 @@ function registerMockPayment(input: PaymentInput, storeId: string) {
     mockPayments.push(payment);
   }
 
-  return { ...payment, pendingBalanceVes } satisfies PaymentMock;
+  // Misma forma que `getPaymentById`: quien inserta la respuesta en una lista (la
+  // de `/payments`) necesita el contacto y el documento, no solo sus ids.
+  return {
+    ...payment,
+    contact: mockContacts.find((contact) => contact.id === payment.contactId),
+    documentBalance: resolveMockDocumentBalance(payment),
+    pendingBalanceVes,
+    relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, mockPurchases),
+  };
 }
 
 export function cancelPayment(id: string, storeId: string) {

@@ -15,10 +15,20 @@ jest.mock("../../../../shared/auth/usePermission", () => ({
     can: (permission: string) => mockAuth.permissions.includes(permission),
   }),
 }));
-jest.mock("../../components/RegisterPaymentModal", () => ({
-  RegisterPaymentModal: ({ open, saleId }: { open?: boolean; saleId?: string }) =>
-    open ? <div data-sale-id={saleId} role="dialog" /> : null,
-}));
+jest.mock("../../components/RegisterPaymentModal", () => {
+  const react = jest.requireActual<typeof import("react")>("react");
+  let mounts = 0;
+
+  return {
+    // `data-mount` cambia si el modal se desmonta y se vuelve a montar: ahí perdería
+    // lo que tuviera a la vista (el resultado del cobro).
+    RegisterPaymentModal: ({ open, saleId }: { open?: boolean; saleId?: string }) => {
+      const [mount] = react.useState(() => ++mounts);
+
+      return open ? <div data-mount={mount} data-sale-id={saleId} role="dialog" /> : null;
+    },
+  };
+});
 
 import { type OpenDocument, openDocumentsQueryKeys } from "../../hooks/useOpenDocuments";
 import { STALE_PENDING_SALE_DAYS, StalePendingSalesNotice } from "./StalePendingSalesNotice";
@@ -357,6 +367,26 @@ describe("StalePendingSalesNotice (PAG-07)", () => {
     await act(() => client.invalidateQueries({ queryKey: ["payments"] }));
 
     await waitFor(() => expect(queryNotice()).not.toBeInTheDocument());
+  });
+
+  // PAG-F4 A: cobrar la última venta vieja quita el aviso; el modal abierto no se va con él.
+  it("al cobrar la última venta el aviso desaparece y el modal abierto sigue siendo el mismo", async () => {
+    respond = async () => jsonResponse({ data: listPayload([sale(1)]) });
+    const client = renderNotice();
+    const notice = await findNotice();
+    const user = userEvent.setup();
+
+    await user.click(within(notice).getByRole("button", { name: "Ver la venta" }));
+    await user.click(within(notice).getByRole("button", { name: "Cobrar venta V-000001" }));
+
+    const mount = screen.getByRole("dialog").getAttribute("data-mount");
+
+    respond = async () => jsonResponse({ data: listPayload([]) });
+    await act(() => client.invalidateQueries({ queryKey: openDocumentsQueryKeys.all }));
+    await waitFor(() => expect(queryNotice()).not.toBeInTheDocument());
+
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-sale-id", "sale-1");
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-mount", mount);
   });
 
   it("al volver a la lista con la caché vigente (venta anulada en su detalle) no enseña lo viejo y vuelve a pedir", async () => {

@@ -77,8 +77,11 @@ export function StalePendingSalesNotice({ listHref }: StalePendingSalesNoticePro
     }
   }, [canView, refetch]);
 
+  // La `key` mantiene el mismo modal montado cuando el aviso aparece o desaparece
+  // a su lado: cobrar la última venta quita el aviso, no el resultado del cobro.
   const paymentModal = canView ? (
     <RegisterPaymentModal
+      key="payment-modal"
       onOpenChange={(open) => {
         if (!open) {
           setPayingSaleId(null);

@@ -10,7 +10,7 @@
 import { mockPurchases, mockSales } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
-import { createPayment, type PaymentInput } from "./payments.mock-server";
+import { createPayment, getPaymentById, type PaymentInput } from "./payments.mock-server";
 
 const KEY_A = "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7";
 const KEY_B = "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d";
@@ -104,5 +104,36 @@ describe("payments.mock-server · clave de idempotencia (P4-3)", () => {
 
     expect(second).not.toBe(first);
     expect(salePaidVes()).toBe(before + 200);
+  });
+});
+
+// PAG-F4 D: la fila recien insertada en `/payments` salia con el id del contacto
+// porque el POST no traia `contact` ni el documento.
+describe("payments.mock-server · createPayment responde como getPaymentById", () => {
+  it("pago de venta: trae el contacto, el documento relacionado y su saldo", () => {
+    const created = createPayment(salePayment, DEFAULT_STORE_ID);
+    const detail = getPaymentById(created.id, DEFAULT_STORE_ID);
+
+    expect(created.contact).toEqual(expect.objectContaining({ id: "cont-both" }));
+    expect(created.contact?.name).toBeTruthy();
+    expect(created.contact).toEqual(detail.contact);
+    expect(created.relatedDocument).toEqual(detail.relatedDocument);
+    expect(created.relatedDocument).toEqual(
+      expect.objectContaining({ href: "/sales/sale-002" }),
+    );
+    expect(created.documentBalance).toEqual(detail.documentBalance);
+  });
+
+  it("pago de compra: trae el proveedor, la compra y su saldo", () => {
+    const created = createPayment(purchasePayment, DEFAULT_STORE_ID);
+    const detail = getPaymentById(created.id, DEFAULT_STORE_ID);
+
+    expect(created.contact).toEqual(expect.objectContaining({ id: "cont-supplier" }));
+    expect(created.contact).toEqual(detail.contact);
+    expect(created.relatedDocument).toEqual(detail.relatedDocument);
+    expect(created.relatedDocument).toEqual(
+      expect.objectContaining({ href: "/purchases/purchase-001" }),
+    );
+    expect(created.documentBalance).toEqual(detail.documentBalance);
   });
 });

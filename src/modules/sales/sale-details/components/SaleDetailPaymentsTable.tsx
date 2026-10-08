@@ -3,6 +3,8 @@ import { formatVesBs } from "@/shared/utils/currency";
 import { formatDateTimeShort } from "@/shared/utils/date";
 import { cn } from "@/shared/utils/cn";
 
+import { PaymentDetailStatusBadge } from "@/modules/payments/payment-details/components/PaymentDetailStatusBadge";
+
 import { SaleDetailSectionCard } from "./SaleDetailSectionCard";
 import { SalePaymentMethodBadge } from "./SalePaymentMethodBadge";
 
@@ -41,13 +43,27 @@ export function SaleDetailPaymentsTable({ payments }: SaleDetailPaymentsTablePro
                     {formatDateTimeShort(payment.createdAt)}
                   </td>
                   <td className="px-4 py-3">
-                    <SalePaymentMethodBadge method={payment.method} />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <SalePaymentMethodBadge method={payment.method} />
+                      {/* Un pago anulado sigue en el historial, pero ya no cuenta en el saldo. */}
+                      {payment.status === "anulado" ? (
+                        <PaymentDetailStatusBadge status="anulado" />
+                      ) : null}
+                    </div>
                   </td>
                   <td className="px-4 py-3 font-mono text-sm text-on-surface-variant">
                     {payment.referenceCode?.trim() || "—"}
                   </td>
                   <td className="px-4 py-3 text-right font-mono text-sm font-medium tabular-nums">
-                    {formatVesBs(payment.amountVes)}
+                    <span
+                      className={
+                        payment.status === "anulado"
+                          ? "text-on-surface-variant line-through"
+                          : undefined
+                      }
+                    >
+                      {formatVesBs(payment.amountVes)}
+                    </span>
                   </td>
                 </tr>
               ))}

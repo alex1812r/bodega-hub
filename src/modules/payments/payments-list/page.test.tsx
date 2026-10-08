@@ -267,6 +267,20 @@ describe("PaymentsListPage", () => {
     );
   }
 
+  // PAG-F4 D: un pago que llega sin `contact` (la respuesta del POST recién insertada
+  // en la lista) no enseña el id interno del contacto.
+  it("una fila sin datos del contacto dice «Sin contacto», nunca el id", async () => {
+    listItems = [
+      payment("pay-001", { contact: undefined, contactId: "cont-both" }),
+      payment("pay-002"),
+    ];
+    const { container } = renderPage();
+
+    expect(await screen.findByText("Cliente Demo")).toBeInTheDocument();
+    expect(screen.getByText("Sin contacto")).toBeInTheDocument();
+    expect(container).not.toHaveTextContent("cont-both");
+  });
+
   describe("anular pago", () => {
     it("muestra el rechazo del servidor dentro del modal, que sigue abierto para reintentar", async () => {
       const user = userEvent.setup();

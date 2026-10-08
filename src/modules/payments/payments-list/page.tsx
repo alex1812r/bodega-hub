@@ -79,7 +79,7 @@ function buildColumns(listHref: string): DataTableColumn<PaymentListItem>[] {
       key: "contact",
       render: (payment) => (
         <PaymentsContactCell
-          name={payment.contact?.name ?? payment.contactId}
+          name={payment.contact?.name}
           taxId={payment.contact?.taxId}
         />
       ),

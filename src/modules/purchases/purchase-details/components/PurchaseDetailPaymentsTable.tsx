@@ -3,6 +3,7 @@ import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDateTimeShort } from "@/shared/utils/date";
 import { cn } from "@/shared/utils/cn";
 
+import { PaymentDetailStatusBadge } from "@/modules/payments/payment-details/components/PaymentDetailStatusBadge";
 import { SalePaymentMethodBadge } from "@/modules/sales/sale-details/components/SalePaymentMethodBadge";
 
 import { PurchaseDetailSectionCard } from "./PurchaseDetailSectionCard";
@@ -50,6 +51,8 @@ export function PurchaseDetailPaymentsTable({ payments }: PurchaseDetailPayments
               {payments.map((payment, index) => {
                 const name = contactLabel(payment);
                 const amountRef = paymentAmountRef(payment);
+                // Un pago anulado sigue en el historial, pero ya no cuenta en el saldo.
+                const isCancelled = payment.status === "anulado";
 
                 return (
                   <tr
@@ -68,7 +71,10 @@ export function PurchaseDetailPaymentsTable({ payments }: PurchaseDetailPayments
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <SalePaymentMethodBadge method={payment.method} />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <SalePaymentMethodBadge method={payment.method} />
+                        {isCancelled ? <PaymentDetailStatusBadge status="anulado" /> : null}
+                      </div>
                     </td>
                     <td className="max-w-[8rem] px-6 py-4 font-mono text-sm text-on-surface-variant">
                       <span
@@ -80,10 +86,20 @@ export function PurchaseDetailPaymentsTable({ payments }: PurchaseDetailPayments
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex flex-col items-end gap-0.5 leading-tight">
-                        <span className="font-mono text-sm font-semibold tabular-nums text-foreground">
+                        <span
+                          className={cn(
+                            "font-mono text-sm font-semibold tabular-nums",
+                            isCancelled ? "text-on-surface-variant line-through" : "text-foreground",
+                          )}
+                        >
                           {formatVesBs(payment.amountVes)}
                         </span>
-                        <span className="font-mono text-xs tabular-nums text-on-surface-variant">
+                        <span
+                          className={cn(
+                            "font-mono text-xs tabular-nums text-on-surface-variant",
+                            isCancelled && "line-through",
+                          )}
+                        >
                           {formatRefUsd(amountRef)}
                         </span>
                       </div>

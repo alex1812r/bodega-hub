@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { Permission, UserRole } from "@/shared/auth/permissions";
@@ -128,8 +128,25 @@ describe("ContactBalancesTab", () => {
       }),
     });
     fetchMock.mockReset();
-    fetchMock.mockImplementation(async (url: string) => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       const href = String(url);
+
+      // Como el servidor: el documento pagado deja de tener saldo y sale de la lista.
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as Record<string, string>;
+        const type = body.purchaseId ? "purchase" : "sale";
+        const reply = replies[type];
+
+        if (!("error" in reply)) {
+          replies[type] = {
+            items: (reply.items as { id: string }[]).filter(
+              (item) => item.id !== (body.purchaseId ?? body.saleId),
+            ),
+          };
+        }
+
+        return jsonResponse({ data: { ...body, id: `pay-${body.clientRequestId}` } }, 201);
+      }
 
       if (href.includes("/api/payments/open-documents")) {
         const type = new URL(href, "http://localhost").searchParams.get("type") as
@@ -210,17 +227,20 @@ describe("ContactBalancesTab", () => {
       defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
     });
 
-    return render(
-      <QueryClientProvider client={queryClient}>
-        <ContactBalancesTab
-          contactId="cont-both"
-          contactName="Maria Perez"
-          returnHref="/contacts/cont-both"
-          sections={["sale"]}
-          {...props}
-        />
-      </QueryClientProvider>,
-    );
+    return {
+      queryClient,
+      ...render(
+        <QueryClientProvider client={queryClient}>
+          <ContactBalancesTab
+            contactId="cont-both"
+            contactName="Maria Perez"
+            returnHref="/contacts/cont-both"
+            sections={["sale"]}
+            {...props}
+          />
+        </QueryClientProvider>,
+      ),
+    };
   }
 
   function openDocumentRequests() {
@@ -409,5 +429,56 @@ describe("ContactBalancesTab", () => {
         ),
       ).toBe(true),
     );
+  });
+
+  // PAG-F4 A: saldar todo vacía la lista de la sección; el modal no puede irse con ella.
+  it.each([
+    { payments: 2, section: "Por cobrar", type: "sale" },
+    { payments: 1, section: "Por pagar", type: "purchase" },
+  ] as const)(
+    "Abonar todo lo pendiente ($section): el modal sigue abierto con el resultado aunque la lista quede vacia",
+    async ({ payments, section, type }) => {
+      const user = userEvent.setup();
+      renderTab({ sections: [type] });
+
+      const region = within(screen.getByRole("region", { name: section }));
+      await user.click(await region.findByRole("button", { name: "Abonar" }));
+
+      const dialog = within(await screen.findByRole("dialog", { name: "Abonar" }));
+      const complete = await dialog.findByRole("button", { name: "Completar total pendiente" });
+      await waitFor(() => expect(complete).toBeEnabled());
+      await user.click(complete);
+      await user.click(dialog.getByRole("button", { name: "Ver reparto" }));
+      await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+
+      // La lista de la pestaña ya se refrescó sin documentos...
+      expect(await region.findByText("Sin saldos pendientes")).toBeInTheDocument();
+      // ...y el modal sigue ahí, con su resultado.
+      expect(screen.getByRole("dialog", { name: "Abonar" })).toBeInTheDocument();
+      expect(
+        dialog.getByText(new RegExp(`Abono registrado: ${payments} pagos? por`)),
+      ).toBeInTheDocument();
+
+      // Al cerrarlo, sin saldos no queda botón para abonar.
+      await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Abonar" })).not.toBeInTheDocument(),
+      );
+      expect(screen.queryByRole("button", { name: "Abonar" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("Cobrar de una fila: si el documento sale de la lista con el modal abierto, el modal no se desmonta", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderTab({ sections: ["sale"] });
+
+    await user.click(await screen.findByRole("button", { name: "Cobrar F-0002" }));
+    const dialog = await screen.findByRole("dialog", { name: "Cobrar saldo" });
+
+    replies.sale = { items: [] };
+    await act(() => queryClient.invalidateQueries({ queryKey: ["payments"] }));
+
+    expect(await screen.findByText("Sin saldos pendientes")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Cobrar saldo" })).toBe(dialog);
   });
 });

@@ -113,6 +113,7 @@ function ContactBalancesSection({
 }: ContactBalancesSectionProps) {
   const copy = sectionCopy[type];
   const [payingDocumentId, setPayingDocumentId] = useState<string>();
+  const [isSettlementOpen, setIsSettlementOpen] = useState(false);
   const openDocuments = useOpenDocuments(
     { contactId, limit: MAX_PAGE_LIMIT, type },
     { enabled: Boolean(contactId) },
@@ -192,10 +193,13 @@ function ContactBalancesSection({
             </p>
           ) : null}
         </div>
-        {documents.length > 0 ? (
+        {/* Abierto sigue montado aunque la lista quede vacía: un abono que salda todo
+            la vacía al refrescarse y su resultado tiene que seguir a la vista. */}
+        {documents.length > 0 || isSettlementOpen ? (
           <ContactSettlementModal
             contactId={contactId}
             contactName={contactName}
+            onOpenChange={setIsSettlementOpen}
             trigger={
               <Button className="w-full sm:w-auto" size="sm" type="button">
                 Abonar
