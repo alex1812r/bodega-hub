@@ -45,11 +45,6 @@ export const optionalImageUrlSchema = z
 export const createProductSchema = z.object({
   barcode: optionalNullableBarcodeSchema,
   categoryId: productCategoryIdSchema,
-  /**
-   * Clave de idempotencia del alta (C6, como compras y ajustes): el reintento de
-   * un envío cuya respuesta se perdió devuelve el producto ya creado.
-   */
-  clientRequestId: z.string().uuid().optional(),
   currentCostRef: z.number().min(0).optional(),
   currentStock: z.number().int().min(0).optional(),
   imageUrl: optionalImageUrlSchema,
@@ -108,15 +103,8 @@ const priceReasonSchema = z
   .nullish()
   .transform((value) => value || null);
 
-/**
- * Costo (REF) que el usuario tenía delante al decidir. Si viene y el costo del
- * producto ya es otro (a dos decimales), la base rechaza la operación con 409.
- */
-const expectedCostRefSchema = z.number().min(0).optional();
-
 /** Cambio de precio (`POST /api/products/[id]/price`). */
 export const productPriceSchema = z.object({
-  expectedCostRef: expectedCostRefSchema,
   reason: priceReasonSchema,
   salePriceRef: z.number().min(0),
 });
@@ -126,7 +114,6 @@ export const productPriceSchema = z.object({
  * `keep_product_price` guarda "Precio mantenido".
  */
 export const keepProductPriceSchema = z.object({
-  expectedCostRef: expectedCostRefSchema,
   reason: priceReasonSchema,
 });
 
@@ -136,41 +123,15 @@ export const REPRICE_MAX_PRODUCTS = 100;
 /** Tope del % de ganancia de un reprecio (el mismo de los chips de % de la tienda). */
 export const REPRICE_MAX_MARKUP_PCT = 1000;
 
-const repriceProductIdSchema = z.string().trim().min(1);
-
 /**
  * Reprecio masivo (`POST /api/products/price-review/reprice`): precio = costo ×
- * (1 + % / 100) para cada producto, calculado en la base con el costo vigente.
- * Sin motivo se guarda "Reprecio al X %".
- *
- * Los productos llegan en `items` (con el costo que el usuario vio: si cambió,
- * esa fila responde `COST_CHANGED`), en `productIds` (sin esa comprobación) o en
- * ambos; entre los dos, de 1 a 100 productos distintos.
+ * (1 + % / 100) para cada producto. Sin motivo se guarda "Reprecio al X %".
  */
-export const repriceProductsSchema = z
-  .object({
-    items: z
-      .array(z.object({ expectedCostRef: z.number().min(0), productId: repriceProductIdSchema }))
-      .max(REPRICE_MAX_PRODUCTS)
-      .optional(),
-    markupPct: z.number().gt(0).max(REPRICE_MAX_MARKUP_PCT),
-    productIds: z.array(repriceProductIdSchema).max(REPRICE_MAX_PRODUCTS).optional(),
-    reason: priceReasonSchema,
-  })
-  .superRefine((value, context) => {
-    const count = new Set([
-      ...(value.items ?? []).map((item) => item.productId),
-      ...(value.productIds ?? []),
-    ]).size;
-
-    if (count < 1 || count > REPRICE_MAX_PRODUCTS) {
-      context.addIssue({
-        code: "custom",
-        message: `Indica de 1 a ${REPRICE_MAX_PRODUCTS} productos.`,
-        path: [value.items ? "items" : "productIds"],
-      });
-    }
-  });
+export const repriceProductsSchema = z.object({
+  markupPct: z.number().gt(0).max(REPRICE_MAX_MARKUP_PCT),
+  productIds: z.array(z.string().trim().min(1)).min(1).max(REPRICE_MAX_PRODUCTS),
+  reason: priceReasonSchema,
+});
 
 export type KeepProductPriceInput = z.infer<typeof keepProductPriceSchema>;
 export type RepriceProductsInput = z.infer<typeof repriceProductsSchema>;
