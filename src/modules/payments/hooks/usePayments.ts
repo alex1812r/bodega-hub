@@ -12,16 +12,23 @@ import type {
   PaymentMethod,
   PaymentMock,
 } from "@/shared/mocks/erp-data";
+import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 
 export type PaymentsFilters = PaginationParams & {
   contactId?: string;
   direction?: PaymentDirection | string;
+  /** Dia operativo Caracas `YYYY-MM-DD` del pago, inclusive. */
+  from?: string;
+  method?: PaymentMethod;
   purchaseId?: string;
   saleId?: string;
+  /** Dia operativo Caracas `YYYY-MM-DD` del pago, inclusive. */
+  to?: string;
 };
 
 import type { PaymentDocumentBalance } from "../payment-details/types";
 import type { PaymentRelatedDocument } from "../utils/resolvePaymentRelatedDocument";
+import { openDocumentsQueryKeys } from "./useOpenDocuments";
 
 export type { PaymentDocumentBalance, PaymentRelatedDocument };
 
@@ -85,7 +92,9 @@ function paymentMatchesFilters(payment: PaymentDetail, filters: PaymentsFilters)
     (!filters.contactId || payment.contactId === filters.contactId) &&
     (!filters.direction || payment.direction === filters.direction) &&
     (!filters.purchaseId || payment.purchaseId === filters.purchaseId) &&
-    (!filters.saleId || payment.saleId === filters.saleId)
+    (!filters.saleId || payment.saleId === filters.saleId) &&
+    (!filters.method || payment.method === filters.method) &&
+    isUtcTimestampInCaracasDateRange(payment.createdAt, filters.from, filters.to)
   );
 }
 
@@ -151,6 +160,8 @@ export function useCreatePayment() {
       // Un pago mueve efectivo: la sesion de caja y el baul muestran saldos que cambian.
       void queryClient.invalidateQueries({ queryKey: cashKeys.all });
       void queryClient.invalidateQueries({ queryKey: vaultKeys.all });
+      // El documento abonado cambia de saldo o deja de tenerlo.
+      void queryClient.invalidateQueries({ queryKey: openDocumentsQueryKeys.all });
     },
   });
 }

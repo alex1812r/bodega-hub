@@ -11,6 +11,7 @@ import {
 } from "@/shared/mocks/erp-data";
 import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
+import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 
 import type { PaymentDocumentBalance } from "../payment-details/types";
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
@@ -76,8 +77,11 @@ export function listPayments(
 ) {
   const contactId = searchParams.get("contactId");
   const direction = searchParams.get("direction");
+  const from = searchParams.get("from");
+  const method = searchParams.get("method");
   const purchaseId = searchParams.get("purchaseId");
   const saleId = searchParams.get("saleId");
+  const to = searchParams.get("to");
 
   const items = mockPayments
     .filter((payment) => {
@@ -87,7 +91,10 @@ export function listPayments(
         (!direction || payment.direction === direction) &&
         (!saleId || payment.saleId === saleId) &&
         (!purchaseId || payment.purchaseId === purchaseId) &&
-        (!contactId || payment.contactId === contactId)
+        (!contactId || payment.contactId === contactId) &&
+        (!method || payment.method === method) &&
+        // Dias operativos Caracas, ambos inclusive.
+        isUtcTimestampInCaracasDateRange(payment.createdAt, from, to)
       );
     })
     .map((payment) => ({

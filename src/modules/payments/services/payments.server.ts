@@ -11,6 +11,7 @@ import { mapPayment, type DbPaymentRow } from "@/lib/supabase/mappers/transactio
 import { getPaginationRange, toPaginatedList } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { rpcWithClientRequestId } from "@/modules/inventory/services/rpcWithClientRequestId";
+import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
 import type { PaymentDocumentBalance } from "../payment-details/types";
@@ -262,10 +263,13 @@ async function resolveDocumentBalance(
 
 function applyPaymentFilters<T extends {
   eq: (column: string, value: string) => T;
+  gte: (column: string, value: string) => T;
   is: (column: string, value: null) => T;
+  lt: (column: string, value: string) => T;
 }>(query: T, searchParams: URLSearchParams, salePaymentsOnly?: boolean) {
   const contactId = searchParams.get("contactId");
   const direction = searchParams.get("direction");
+  const method = searchParams.get("method");
   const purchaseId = searchParams.get("purchaseId");
   const saleId = searchParams.get("saleId");
 
@@ -291,7 +295,16 @@ function applyPaymentFilters<T extends {
     filteredQuery = filteredQuery.eq("contact_id", contactId);
   }
 
-  return filteredQuery;
+  if (method) {
+    filteredQuery = filteredQuery.eq("method", method);
+  }
+
+  // Dias operativos Caracas, ambos inclusive.
+  return applyCreatedAtCaracasRange(
+    filteredQuery,
+    searchParams.get("from"),
+    searchParams.get("to"),
+  );
 }
 
 export type PaymentAccessOptions = {

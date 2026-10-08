@@ -1952,7 +1952,12 @@ paths:
     get:
       tags: [Payments]
       summary: Listar pagos
-      description: Listado paginado desde tabla `payments` cuando `API_DATA_SOURCE=supabase`.
+      description: >-
+        Listado paginado desde tabla `payments` cuando `API_DATA_SOURCE=supabase`,
+        mas recientes primero. `from` y `to` son dias operativos Caracas, ambos
+        inclusive. `method`, `from` o `to` invalidos (o `from` posterior a `to`)
+        responden 400. El vendedor solo ve cobros de venta: `purchaseId` o
+        `direction=salida` responden 403.
       x-permission: payments.view
       parameters:
         - name: direction
@@ -1960,6 +1965,25 @@ paths:
           required: false
           schema:
             $ref: "#/components/schemas/PaymentDirection"
+        - name: method
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PaymentMethod"
+        - name: from
+          in: query
+          required: false
+          description: Fecha Caracas del pago (`YYYY-MM-DD`), inclusive.
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          description: Fecha Caracas del pago (`YYYY-MM-DD`), inclusive.
+          schema:
+            type: string
+            format: date
         - name: saleId
           in: query
           required: false
@@ -1995,6 +2019,10 @@ paths:
                             type: array
                             items:
                               $ref: "#/components/schemas/Payment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       tags: [Payments]
       summary: Registrar pago

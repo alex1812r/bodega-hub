@@ -47,6 +47,64 @@ const createPaymentSchema = z
     }
   });
 
+const PAYMENT_METHODS = [
+  "efectivo_usd",
+  "efectivo_ves",
+  "pago_movil",
+  "punto_venta",
+  "transferencia",
+] as const;
+
+const LIST_FILTER_KEYS = ["method", "from", "to"] as const;
+
+/** Fecha de calendario Caracas `YYYY-MM-DD` que ademas exista (no `2026-02-31`). */
+const isoDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe tener el formato YYYY-MM-DD.")
+  .refine((value) => {
+    const date = new Date(`${value}T12:00:00.000Z`);
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }, "La fecha no es valida.");
+
+const listPaymentsQuerySchema = z
+  .object({
+    from: isoDateSchema.optional(),
+    method: z.enum(PAYMENT_METHODS).optional(),
+    to: isoDateSchema.optional(),
+  })
+  .refine((value) => !value.from || !value.to || value.from <= value.to, {
+    message: "La fecha inicial no puede ser posterior a la final.",
+    path: ["from"],
+  });
+
+/**
+ * Valida `method`, `from` y `to` y los deja normalizados en la query que reciben
+ * los servicios: un parametro vacio o en blanco equivale a no enviarlo.
+ */
+function withValidatedListFilters(searchParams: URLSearchParams) {
+  const filters = listPaymentsQuerySchema.parse(
+    Object.fromEntries(
+      LIST_FILTER_KEYS.flatMap((key) => {
+        const value = searchParams.get(key)?.trim();
+        return value ? [[key, value]] : [];
+      }),
+    ),
+  );
+  const normalized = new URLSearchParams(searchParams);
+
+  for (const key of LIST_FILTER_KEYS) {
+    const value = filters[key];
+
+    if (value) {
+      normalized.set(key, value);
+    } else {
+      normalized.delete(key);
+    }
+  }
+
+  return normalized;
+}
+
 function getPaymentsService() {
   return resolveDataSource() === "supabase" ? paymentsServer : paymentsMockServer;
 }
@@ -54,7 +112,7 @@ function getPaymentsService() {
 export async function GET(request: Request) {
   try {
     const auth = await requireStorePermission(request, "payments.view");
-    const searchParams = new URL(request.url).searchParams;
+    const searchParams = withValidatedListFilters(new URL(request.url).searchParams);
     assertCanQueryPurchasePayments(auth.role, searchParams);
     const service = getPaymentsService();
     return jsonData(
