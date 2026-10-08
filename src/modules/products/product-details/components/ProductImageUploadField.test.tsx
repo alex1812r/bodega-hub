@@ -12,6 +12,40 @@ function preview() {
   return screen.queryByAltText("Vista previa del producto");
 }
 
+describe("ProductImageUploadField · teclado (PRO-F13)", () => {
+  it("the hidden file input is not a tab stop; the button is, and it opens the file picker", async () => {
+    const user = userEvent.setup();
+    const openPicker = jest.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+
+    try {
+      const { container } = render(
+        <>
+          <ProductImageUploadField />
+          <button type="button">Siguiente</button>
+        </>,
+      );
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const uploadButton = screen.getByRole("button", { name: /Subir imagen/ });
+
+      expect(fileInput).toHaveAttribute("tabindex", "-1");
+      expect(fileInput).toHaveAttribute("aria-hidden", "true");
+
+      await user.tab();
+      expect(uploadButton).toHaveFocus();
+
+      await user.keyboard("{Enter}");
+      expect(openPicker).toHaveBeenCalledTimes(1);
+      expect(openPicker.mock.contexts[0]).toBe(fileInput);
+
+      // El siguiente Tab sale del campo: no se detiene en el input oculto.
+      await user.tab();
+      expect(screen.getByRole("button", { name: "Siguiente" })).toHaveFocus();
+    } finally {
+      openPicker.mockRestore();
+    }
+  });
+});
+
 describe("ProductImageUploadField · vista previa", () => {
   it("shows the saved image, or the empty state without one", () => {
     const { unmount } = render(<ProductImageUploadField imageUrl="https://cdn.test/a.webp" />);

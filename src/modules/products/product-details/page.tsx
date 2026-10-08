@@ -211,6 +211,7 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
           <ProductDetailInfoCard
             categoryName={data.category?.name ?? "Sin categoría"}
             costRef={data.currentCostRef}
+            description={data.description}
             imageUrl={data.imageUrl}
             isActive={data.isActive}
             salePriceRef={data.salePriceRef}

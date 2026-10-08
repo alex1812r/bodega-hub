@@ -144,8 +144,10 @@ export function ProductImageUploadField({
           </Button>
         ) : null}
       </div>
+      {/* El control es el botón de arriba: este input no es parada de Tab ni se anuncia. */}
       <input
         accept="image/jpeg,image/png,image/webp"
+        aria-hidden
         className="sr-only"
         disabled={disabled || isUploading}
         onChange={(event) => {
@@ -157,6 +159,7 @@ export function ProductImageUploadField({
           }
         }}
         ref={inputRef}
+        tabIndex={-1}
         type="file"
       />
       {isUploading ? (

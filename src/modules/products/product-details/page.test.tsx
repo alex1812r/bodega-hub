@@ -4,6 +4,7 @@
  * PRO-08 · la tarjeta de cambio de precio recibe el costo actual y envía lo de siempre.
  * PRO-F4 · el motivo del cambio de precio viaja y se ve en el historial; el error
  * de una edición fallida solo se pinta dentro del modal.
+ * PRO-F13 · la descripción del producto se ve en el detalle.
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -57,8 +58,10 @@ describe("ProductDetailsPage", () => {
   let postResponses: Response[];
   let posts: Array<{ body: Record<string, unknown>; path: string }>;
   let priceHistory: Array<Record<string, unknown>>;
+  let productData: Record<string, unknown>;
 
   beforeEach(() => {
+    productData = product;
     patchResponses = [];
     patches = [];
     postResponses = [];
@@ -95,7 +98,7 @@ describe("ProductDetailsPage", () => {
       }
 
       return path === "/api/products/p-1"
-        ? jsonResponse({ data: product })
+        ? jsonResponse({ data: productData })
         : jsonResponse({ data: { items: [], limit: 10, skip: 0, total: 0 } });
     }) as unknown as typeof fetch;
   });
@@ -118,6 +121,28 @@ describe("ProductDetailsPage", () => {
 
     return userEvent.setup({ delay: null });
   }
+
+  function infoCard(heading: HTMLElement) {
+    return within(heading.closest("section") as HTMLElement);
+  }
+
+  it("muestra la descripción del producto en la información general (PRO-F13)", async () => {
+    productData = { ...product, description: "Refresco de cola 355 ml" };
+    renderPage();
+
+    const card = infoCard(await screen.findByRole("heading", { name: "Información general" }));
+
+    expect(card.getByText("Refresco de cola 355 ml")).toBeInTheDocument();
+    expect(card.queryByText("Sin descripción")).not.toBeInTheDocument();
+  });
+
+  it("un producto sin descripción dice «Sin descripción» (PRO-F13)", async () => {
+    renderPage();
+
+    const card = infoCard(await screen.findByRole("heading", { name: "Información general" }));
+
+    expect(card.getByText("Sin descripción")).toBeInTheDocument();
+  });
 
   it("tras una edición fallida, cerrar y reabrir no muestra el error viejo ni en el modal ni en la página (PRO-04)", async () => {
     const unhandled = jest.fn();

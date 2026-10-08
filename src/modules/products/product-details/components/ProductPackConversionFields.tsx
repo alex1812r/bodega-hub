@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { type FormEvent, useState } from "react";
 
 import {
   EntityAutocomplete,
@@ -92,6 +92,8 @@ export function getUnitsPerPackError(text: string) {
     (Number(text) >= 2 ? undefined : "Indica unidades por empaque (mínimo 2).")
   );
 }
+
+const UNIT_SALE_PRICE_REQUIRED_MESSAGE = "Escribe el precio de venta de la unidad.";
 
 const PACK_LINKED_REASON = "Ya tiene un vínculo de empaque.";
 const UNKNOWN_UNIT_LABEL = "Producto seleccionado";
@@ -196,6 +198,28 @@ export function ProductPackConversionFields({
   onChange,
 }: ProductPackConversionFieldsProps) {
   const [pickedUnit, setPickedUnit] = useState<EntityAutocompleteValue | null>(null);
+  const [showRequired, setShowRequired] = useState(false);
+
+  // Validación nativa (`required`) con aviso propio en vez del globo del navegador:
+  // el foco va al campo solo si es el primero del formulario que falla.
+  function handleRequiredInvalid(event: FormEvent<HTMLInputElement>) {
+    const field = event.currentTarget;
+    const firstInvalid = Array.from(field.form?.elements ?? []).find(
+      (element) =>
+        (element instanceof HTMLInputElement ||
+          element instanceof HTMLSelectElement ||
+          element instanceof HTMLTextAreaElement) &&
+        element.willValidate &&
+        !element.validity.valid,
+    );
+
+    event.preventDefault();
+    setShowRequired(true);
+
+    if (!firstInvalid || firstInvalid === field) {
+      field.focus();
+    }
+  }
   // La unidad ya vinculada 1 a 1 a este empaque sigue siendo elegible para él.
   const linkedUnit =
     packConversion?.role === "pack" && packConversion.kind !== "assorted"
@@ -254,7 +278,9 @@ export function ProductPackConversionFields({
   const unitsPerPackError = showErrors
     ? (getUnitsPerPackError(state.unitsPerPack) ??
       (isAssorted ? getAssortedPackErrors(state)?.total : undefined))
-    : undefined;
+    : showRequired && !state.unitsPerPack.trim()
+      ? getUnitsPerPackError(state.unitsPerPack)
+      : undefined;
 
   return (
     <div className="grid min-w-0 gap-3 rounded-lg border border-outline-variant/40 p-4">
@@ -281,6 +307,7 @@ export function ProductPackConversionFields({
             label="Unidades por empaque"
             name={UNITS_PER_PACK_FIELD_NAME}
             onChange={(event) => onChange({ unitsPerPack: event.target.value })}
+            onInvalid={handleRequiredInvalid}
             required
             value={state.unitsPerPack}
           />
@@ -350,8 +377,14 @@ export function ProductPackConversionFields({
               />
               <NumberInput
                 decimals={2}
+                error={
+                  showRequired && !state.unitSalePriceRef.trim()
+                    ? UNIT_SALE_PRICE_REQUIRED_MESSAGE
+                    : undefined
+                }
                 label="Precio venta unidad (ref)"
                 onChange={(event) => onChange({ unitSalePriceRef: event.target.value })}
+                onInvalid={handleRequiredInvalid}
                 required
                 value={state.unitSalePriceRef}
               />

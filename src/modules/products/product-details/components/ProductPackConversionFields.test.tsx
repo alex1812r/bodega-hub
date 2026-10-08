@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
@@ -431,6 +431,59 @@ describe("ProductPackConversionFields: producto unidad", () => {
     expect(screen.getByLabelText("Modo de vínculo")).toBeVisible();
     expect(screen.getByLabelText("Código de barras unidad")).toBeVisible();
     expect(getUnitsPerPackError("1")).toBe("Indica unidades por empaque (mínimo 2).");
+  });
+
+  it("sin precio de la unidad, el envío se frena con aviso propio y foco en el campo (PRO-F13)", async () => {
+    installProductsApi();
+    const user = userEvent.setup();
+    const { container } = render(
+      <form>
+        <Harness initialState={{ ...linkExistingState, mode: "create_unit" }} />
+      </form>,
+    );
+    const form = container.querySelector("form") as HTMLFormElement;
+    const price = screen.getByLabelText(/Precio venta unidad \(ref\)/);
+    const invalidEvents: Event[] = [];
+
+    form.addEventListener("invalid", (event) => invalidEvents.push(event), true);
+    // Sin `noValidate`: sigue siendo la validación nativa la que frena el envío.
+    expect(form.noValidate).toBe(false);
+    act(() => {
+      expect(form.checkValidity()).toBe(false);
+    });
+
+    // Evento `invalid` cancelado = sin globo nativo del navegador.
+    expect(invalidEvents.map((event) => [event.target, event.defaultPrevented])).toEqual([
+      [price, true],
+    ]);
+    expect(price).toHaveAccessibleDescription("Escribe el precio de venta de la unidad.");
+    expect(price).toHaveAttribute("aria-invalid", "true");
+    expect(price).toHaveFocus();
+
+    await user.type(price, "2");
+    expect(screen.queryByText("Escribe el precio de venta de la unidad.")).not.toBeInTheDocument();
+    expect(form.checkValidity()).toBe(true);
+  });
+
+  it("sin unidades por empaque avisa en ese campo, que es el primero, y lleva ahí el foco (PRO-F13)", () => {
+    installProductsApi();
+    const { container } = render(
+      <form>
+        <Harness initialState={{ ...linkExistingState, mode: "create_unit", unitsPerPack: "" }} />
+      </form>,
+    );
+    const form = container.querySelector("form") as HTMLFormElement;
+    const units = screen.getByLabelText(/Unidades por empaque/);
+
+    act(() => {
+      expect(form.checkValidity()).toBe(false);
+    });
+
+    expect(units).toHaveAccessibleDescription("Indica unidades por empaque (mínimo 2).");
+    expect(units).toHaveFocus();
+    expect(screen.getByLabelText(/Precio venta unidad \(ref\)/)).toHaveAccessibleDescription(
+      "Escribe el precio de venta de la unidad.",
+    );
   });
 
   it("en modo «Crear producto unidad» no hay buscador de producto unidad", () => {
