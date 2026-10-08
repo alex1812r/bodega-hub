@@ -58,6 +58,8 @@ type PurchaseProductPickerCardProps = {
   isSearching?: boolean;
   lines: PurchaseWebLine[];
   lockControls: PurchaseLineLockControls;
+  /** Chip «Desarmar al recibir» de una línea (COM-14). */
+  onLineDisassembleChange?: (itemId: string, disassemble: boolean) => void;
   onAddProduct: (product: PurchaseCatalogProduct) => void;
   onExemptPurchaseChange: (exempt: boolean) => void;
   onLineTaxChange: (itemId: string, code: string) => void;
@@ -143,6 +145,7 @@ export function PurchaseProductPickerCard({
   isSearching = false,
   lines,
   lockControls,
+  onLineDisassembleChange,
   onAddProduct,
   onExemptPurchaseChange,
   onLineTaxChange,
@@ -350,6 +353,7 @@ export function PurchaseProductPickerCard({
           getItemMeta={getItemMeta}
           lines={lines}
           lockControls={lockControls}
+          onLineDisassembleChange={onLineDisassembleChange}
           onLineTaxChange={onLineTaxChange}
           onRemoveItem={onRemoveItem}
           onScanCode={handleCodeSubmit}

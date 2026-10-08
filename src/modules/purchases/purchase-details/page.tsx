@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
+import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { RegisterPaymentModal } from "@/modules/payments/components/RegisterPaymentModal";
 import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
 import { usePermission } from "@/shared/auth/usePermission";
@@ -30,7 +31,11 @@ import { PurchaseDetailSupplierCard } from "./components/PurchaseDetailSupplierC
 import { PurchasePendingReceiptBanner } from "./components/PurchasePendingReceiptBanner";
 import { PurchaseReceivePreviewModal } from "./components/PurchaseReceivePreviewModal";
 import { exportPurchaseDetailPdf } from "./services/exportPurchaseDetailPdf";
-import { buildReceivePreview, type ReceivePreviewLine } from "./utils/buildReceivePreview";
+import {
+  buildReceiveDisassembleRequest,
+  buildReceivePreview,
+  type ReceivePreviewPurchase,
+} from "./utils/buildReceivePreview";
 
 type PurchaseDetailsPageProps = {
   purchaseId?: string;
@@ -47,9 +52,20 @@ export function PurchaseDetailsPage({
   const { can, role } = usePermission();
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isPaying, setIsPaying] = useState(false);
-  // Líneas de la previsualización, fijadas al abrir el modal: si la recepción falla
+  // Compra de la previsualización, fijada al abrir el modal: si la recepción falla
   // y el detalle se refresca, el modal sigue mostrando lo que se intentó recibir.
-  const [receivePreview, setReceivePreview] = useState<ReceivePreviewLine[] | null>(null);
+  const [receiveSource, setReceiveSource] = useState<ReceivePreviewPurchase | null>(null);
+  // «Desarmar al recibir» marcado o desmarcado en el modal, por línea (COM-14); sin
+  // entrada manda la marca guardada con el pedido.
+  const [receiveDisassemble, setReceiveDisassemble] = useState<Record<string, boolean>>({});
+  const receiveAttempt = useRequestAttempt();
+  const receivePreview = useMemo(
+    () =>
+      receiveSource
+        ? buildReceivePreview(receiveSource, { disassemble: receiveDisassemble })
+        : null,
+    [receiveDisassemble, receiveSource],
+  );
 
   async function handleExportPdf() {
     setIsExportingPdf(true);
@@ -65,11 +81,31 @@ export function PurchaseDetailsPage({
     }
   }
 
+  function closeReceivePreview() {
+    setReceiveSource(null);
+    setReceiveDisassemble({});
+  }
+
   async function handleConfirmReceive() {
+    // Se envía lo que el modal muestra: las líneas que se desarman (si alguna puede).
+    const disassemble = receivePreview ? buildReceiveDisassembleRequest(receivePreview) : undefined;
+    // Clave de idempotencia del intento; null = ya hay un envío en vuelo (doble clic).
+    const clientRequestId = receiveAttempt.begin({ disassemble: disassemble ?? null, purchaseId });
+
+    if (!clientRequestId) {
+      return;
+    }
+
     try {
-      await receivePurchase.mutateAsync(purchaseId);
-      setReceivePreview(null);
-    } catch {
+      await receivePurchase.mutateAsync({
+        clientRequestId,
+        ...(disassemble ? { disassemble } : {}),
+        purchaseId,
+      });
+      receiveAttempt.succeed();
+      closeReceivePreview();
+    } catch (error) {
+      receiveAttempt.fail(error);
       // El mensaje del servidor queda en el modal; el detalle se vuelve a pedir
       // por si la compra ya no está en pedido (p. ej. la recibió otra persona).
       await purchase.refetch();
@@ -123,7 +159,7 @@ export function PurchaseDetailsPage({
         <PurchasePendingReceiptBanner
           canReceive={can("purchases.create")}
           isReceiving={receivePurchase.isPending}
-          onReceive={() => setReceivePreview(buildReceivePreview(data))}
+          onReceive={() => setReceiveSource(data)}
         />
       ) : null}
 
@@ -188,6 +224,7 @@ export function PurchaseDetailsPage({
         discountRef={data.discountRef}
         discountVes={data.discountVes ?? 0}
         items={data.items}
+        status={data.status}
         taxRef={data.taxRef}
         taxVes={data.taxVes ?? 0}
         totalRef={data.totalRef}
@@ -206,9 +243,12 @@ export function PurchaseDetailsPage({
           isPending={receivePurchase.isPending}
           lines={receivePreview}
           onConfirm={handleConfirmReceive}
+          onDisassembleChange={(purchaseItemId, disassemble) =>
+            setReceiveDisassemble((current) => ({ ...current, [purchaseItemId]: disassemble }))
+          }
           onOpenChange={(open) => {
             if (!open) {
-              setReceivePreview(null);
+              closeReceivePreview();
               receivePurchase.reset();
             }
           }}

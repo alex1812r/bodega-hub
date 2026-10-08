@@ -77,11 +77,23 @@ export type PurchaseWebLine = {
    * si se desbloquea y se cambia otra vez.
    */
   editedMark: boolean;
+  /**
+   * «Desarmar al recibir» (COM-14). `undefined`: el producto no es un empaque con
+   * receta activa y la fila no ofrece el chip. `true` / `false`: marcado o no.
+   * Lo añade `withPurchaseLineDisassemble`.
+   */
+  disassemble?: boolean;
   item: PurchaseDraftItem;
   /** Línea bloqueada (COM-12): fila de solo lectura, sin campos en el DOM. */
   locked: boolean;
   tax: PurchaseLineTax;
 };
+
+/**
+ * Líneas marcadas «Desarmar al recibir» (COM-14): `item.id` -> `true`. Estado de
+ * la web: al payload solo llega como `disassembleOnReceive` de cada línea marcada.
+ */
+export type PurchaseLineDisassembleState = Record<string, true>;
 
 /** Foto de una línea: lo que se compara para saber si se editó. */
 export type PurchaseLineSnapshot = {

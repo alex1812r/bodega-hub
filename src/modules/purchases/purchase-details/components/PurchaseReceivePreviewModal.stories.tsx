@@ -45,6 +45,74 @@ export const Default: Story = {};
 
 export const Receiving: Story = { args: { isPending: true } };
 
+/** COM-14: una línea que se desarma al recibir, otra que podría y una cuya receta ya no está activa. */
+export const WithDisassemble: Story = {
+  args: {
+    lines: [
+      {
+        canDisassemble: true,
+        disassemble: {
+          components: [
+            {
+              name: "Refresco fresa 355 ml",
+              productId: "prod-fresa",
+              productInactive: false,
+              quantityIn: 12,
+              stockAfter: 15,
+              stockBefore: 3,
+            },
+            {
+              name: "Refresco uva 355 ml",
+              productId: "prod-uva",
+              productInactive: true,
+              quantityIn: 6,
+              stockAfter: 6,
+              stockBefore: 0,
+            },
+          ],
+          packsOut: 3,
+        },
+        name: "Caja surtida de refrescos",
+        productId: "prod-caja",
+        productInactive: false,
+        purchaseItemId: "item-caja",
+        quantityIn: 3,
+        stockAfter: 2,
+        stockBefore: 2,
+        unitCostRef: 9,
+      },
+      {
+        canDisassemble: true,
+        name: "Bulto de harina",
+        productId: "prod-bulto",
+        productInactive: false,
+        purchaseItemId: "item-bulto",
+        quantityIn: 2,
+        stockAfter: 2,
+        stockBefore: 0,
+        unitCostRef: 18,
+      },
+      {
+        disassembleUnavailable: true,
+        name: "Caja de galletas",
+        productId: "prod-galletas",
+        productInactive: false,
+        purchaseItemId: "item-galletas",
+        quantityIn: 1,
+        stockAfter: 1,
+        stockBefore: 0,
+        unitCostRef: 6,
+      },
+    ],
+    onDisassembleChange: fn(),
+  },
+};
+
+export const WithDisassembleNarrow: Story = {
+  args: WithDisassemble.args,
+  globals: { viewport: { isRotated: false, value: "mobile390" } },
+};
+
 export const NarrowScreen: Story = {
   globals: { viewport: { isRotated: false, value: "mobile390" } },
 };

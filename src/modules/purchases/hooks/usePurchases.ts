@@ -11,6 +11,10 @@ import {
 } from "@/modules/contacts/hooks/useSupplierProducts";
 import type { SupplierProduct } from "@/modules/contacts/types/supplierProducts";
 import type { PurchaseItemInput } from "@/modules/purchases/schemas/purchaseItem.schema";
+import type {
+  PurchaseItemDisassemble,
+  ReceivePurchaseOptions,
+} from "@/modules/purchases/services/purchaseDisassemble";
 import type { PaymentFormPayload } from "@/shared/payments/PaymentFormFields";
 import type {
   ContactMock,
@@ -79,7 +83,8 @@ export type PurchasesList = PaginatedList<PurchaseListRow> & {
 };
 
 export type PurchaseDetails = PurchaseMock & {
-  items: Array<PurchaseItemMock & { product?: ProductMock }>;
+  /** Cada línea lleva lo del desarme al recibir (COM-14): id, marca, desarmada y receta. */
+  items: Array<PurchaseItemMock & PurchaseItemDisassemble & { product?: ProductMock }>;
   notes?: string;
   payments: Array<PaymentMock & { contact?: ContactMock }>;
   supplier?: ContactMock;
@@ -207,11 +212,19 @@ export function useReturnPurchase(id?: string) {
   });
 }
 
+/**
+ * Qué recibir: el id de la compra (se desarman las líneas que el pedido guardó
+ * marcadas) o, desde la confirmación de recepción (COM-14), además la lista de
+ * líneas a desarmar y la clave de idempotencia del intento.
+ */
+export type ReceivePurchaseInput = string | ({ purchaseId?: string } & ReceivePurchaseOptions);
+
 export function useReceivePurchase(id?: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (purchaseId?: string) => {
+    mutationFn: (input?: ReceivePurchaseInput) => {
+      const { purchaseId, ...options } = typeof input === "string" ? { purchaseId: input } : (input ?? {});
       const targetId = purchaseId ?? id;
 
       if (!targetId) {
@@ -219,14 +232,20 @@ export function useReceivePurchase(id?: string) {
       }
 
       return apiFetch<PurchaseDetails>(`/api/purchases/${targetId}/receive`, {
+        // Sin opciones no viaja cuerpo: la petición es la de siempre.
+        ...(Object.keys(options).length > 0 ? { body: options } : {}),
         method: "PATCH",
       });
     },
+    // Sin reintento automático: el reintento lo decide el usuario, con la misma clave.
+    retry: false,
     onSuccess: (purchase) => {
       queryClient.setQueryData(purchasesQueryKeys.detail(purchase.id), purchase);
       void queryClient.invalidateQueries({ queryKey: purchasesQueryKeys.all });
       // Recibir sube el costo: productos, su detalle y la cola "Por revisar" (lista y resumen).
       void queryClient.invalidateQueries({ queryKey: ["products"] });
+      // Recibir mueve stock (y, al desarmar, abre empaques): inventario y movimientos.
+      void queryClient.invalidateQueries({ queryKey: inventoryQueryKeys.all });
     },
   });
 }

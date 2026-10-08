@@ -27,6 +27,8 @@ type PurchaseLineItemsTableProps = {
   /** Líneas con su alícuota resuelta (`buildPurchaseWebLines`). */
   lines: PurchaseWebLine[];
   lockControls: PurchaseLineLockControls;
+  /** Chip «Desarmar al recibir» de una línea (COM-14). */
+  onLineDisassembleChange?: (itemId: string, disassemble: boolean) => void;
   onLineTaxChange: (itemId: string, code: string) => void;
   onRemoveItem: (itemId: string) => void;
   /** Un lector escribió su código en la Cantidad o los Empaques de una línea. */
@@ -53,6 +55,7 @@ export function PurchaseLineItemsTable({
   getItemMeta,
   lines,
   lockControls,
+  onLineDisassembleChange,
   onLineTaxChange,
   onRemoveItem,
   onScanCode,
@@ -142,13 +145,15 @@ export function PurchaseLineItemsTable({
         <span />
       </div>
       <ul aria-label="Líneas de la compra" className="divide-y divide-border/50" ref={listRef}>
-        {lines.map(({ editedMark, item, locked, tax }, index) => (
+        {lines.map(({ disassemble, editedMark, item, locked, tax }, index) => (
           <PurchaseLineRow
+            disassemble={disassemble}
             editedMark={editedMark}
             item={item}
             key={item.id}
             locked={locked}
             meta={getItemMeta(item.productId)}
+            onDisassembleChange={(next) => onLineDisassembleChange?.(item.id, next)}
             onLockChange={(nextLocked) => lockControls.onToggleLine(item.id, nextLocked)}
             onRemove={() => onRemoveItem(item.id)}
             onScanCode={onScanCode}

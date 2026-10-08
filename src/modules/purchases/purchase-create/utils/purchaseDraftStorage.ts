@@ -84,6 +84,8 @@ const storedPurchaseDraftSchema = z.object({
   lineMeta: z.record(z.string(), lineMetaSchema),
   /** `PurchaseLinesState` sin `focus`. */
   lines: z.object({
+    /** Líneas marcadas «Desarmar al recibir» (COM-14); ausente = ninguna. */
+    disassemble: z.record(z.string(), z.literal(true)).optional(),
     items: z.array(draftItemSchema),
     locks: z.object({ locked: z.record(z.string(), z.literal(true)) }),
     review: z.object({
@@ -225,6 +227,7 @@ export function restorePurchaseDraft(
     return [syncLineCostFields(item, input.rateVes)];
   });
   const keptIds = new Set(items.map((item) => item.id));
+  const disassemble = pickKeys(draft.lines.disassemble ?? {}, keptIds);
   const notices: string[] = [];
 
   if (roundMoney(draft.rateVes) !== roundMoney(input.rateVes)) {
@@ -247,6 +250,9 @@ export function restorePurchaseDraft(
     costCurrency: draft.costCurrency,
     lineMeta,
     lines: {
+      // La marca vuelve tal cual; si el producto ya no tiene receta, la fila no
+      // ofrece el chip y la línea no se envía marcada.
+      ...(Object.keys(disassemble).length > 0 ? { disassemble } : {}),
       items,
       locks: { locked: pickKeys(draft.lines.locks.locked, keptIds) },
       review: switchPurchaseReviewCostCurrency(

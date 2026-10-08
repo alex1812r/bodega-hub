@@ -307,3 +307,60 @@ describe("antigüedad del borrador", () => {
     );
   });
 });
+
+describe("borrador de compra · «Desarmar al recibir» (COM-14)", () => {
+  function stored(content: PurchaseDraftContent) {
+    const draft = parseStoredPurchaseDraft(serializePurchaseDraft(content, session, savedAt), session);
+
+    if (!draft) {
+      throw new Error("El borrador de prueba no es válido.");
+    }
+
+    return draft;
+  }
+
+  it("las marcas son un campo opcional: un borrador guardado antes de COM-14 sigue siendo válido", () => {
+    const draft = stored(buildContent());
+
+    expect(draft.lines).not.toHaveProperty("disassemble");
+    expect(
+      restorePurchaseDraft(draft, { products: allActive(), rateVes: 510 }).lines,
+    ).not.toHaveProperty("disassemble");
+  });
+
+  it("se guardan y se reponen con sus líneas", () => {
+    const content = buildContent();
+    const draft = stored({ ...content, lines: { ...content.lines, disassemble: { "line-refresco": true } } });
+
+    expect(draft.lines.disassemble).toEqual({ "line-refresco": true });
+    expect(restorePurchaseDraft(draft, { products: allActive(), rateVes: 510 }).lines.disassemble).toEqual({
+      "line-refresco": true,
+    });
+  });
+
+  it("la marca de una línea que se quita al restaurar (producto inactivo) no vuelve", () => {
+    const content = buildContent();
+    const draft = stored({
+      ...content,
+      lines: { ...content.lines, disassemble: { "line-cable": true, "line-refresco": true } },
+    });
+    const products = allActive();
+
+    products.set("prod-refresco", { name: "Refresco", status: "unavailable" });
+
+    expect(restorePurchaseDraft(draft, { products, rateVes: 510 }).lines.disassemble).toEqual({
+      "line-cable": true,
+    });
+  });
+
+  it("un valor que no es `true` invalida el borrador (no se restaura a medias)", () => {
+    const content = buildContent();
+    const raw = JSON.parse(serializePurchaseDraft(content, session, savedAt)) as {
+      lines: Record<string, unknown>;
+    };
+
+    raw.lines.disassemble = { "line-cable": "si" };
+
+    expect(parseStoredPurchaseDraft(JSON.stringify(raw), session)).toBeNull();
+  });
+});

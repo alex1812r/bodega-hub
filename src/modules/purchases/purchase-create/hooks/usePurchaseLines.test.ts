@@ -281,3 +281,72 @@ describe("purchaseLinesReducer · líneas repuestas de golpe (COM-09)", () => {
     expect(summary(restored)).toHaveLength(1);
   });
 });
+
+describe("purchaseLinesReducer · «Desarmar al recibir» (COM-14)", () => {
+  const added = (line: PurchaseDraftItem): PurchaseLinesAction => ({
+    line,
+    lockOthers: false,
+    rateVes: RATE_VES,
+    type: "productAdded",
+  });
+  const mark = (itemId: string, disassemble: boolean): PurchaseLinesAction => ({
+    disassemble,
+    itemId,
+    type: "lineDisassembleChanged",
+  });
+
+  it("nace sin marcas; marcar y desmarcar una línea no toca las demás ni el borrador de core", () => {
+    const start = run(added(cable()), added(refresco()));
+    const marked = purchaseLinesReducer(start, mark("line-cable", true));
+    const both = purchaseLinesReducer(marked, mark("line-refresco", true));
+    const unmarked = purchaseLinesReducer(both, mark("line-cable", false));
+
+    expect(start.disassemble).toBeUndefined();
+    expect(marked.disassemble).toEqual({ "line-cable": true });
+    expect(both.disassemble).toEqual({ "line-cable": true, "line-refresco": true });
+    expect(unmarked.disassemble).toEqual({ "line-refresco": true });
+    expect(unmarked.items).toBe(start.items);
+    expect(unmarked.review).toBe(start.review);
+  });
+
+  it("una línea bloqueada no cambia su marca", () => {
+    const locked = run(added(cable()), mark("line-cable", true), {
+      itemId: "line-cable",
+      locked: true,
+      type: "lineLockChanged",
+    });
+
+    expect(purchaseLinesReducer(locked, mark("line-cable", false))).toBe(locked);
+    expect(locked.disassemble).toEqual({ "line-cable": true });
+  });
+
+  it("quitar la línea se lleva su marca; cambiar de proveedor las borra todas", () => {
+    const state = run(added(cable()), added(refresco()), mark("line-cable", true), mark("line-refresco", true));
+
+    expect(purchaseLinesReducer(state, { itemId: "line-cable", type: "lineRemoved" }).disassemble).toEqual({
+      "line-refresco": true,
+    });
+    expect(purchaseLinesReducer(state, { type: "supplierChanged" }).disassemble).toBeUndefined();
+  });
+
+  it("reponer las líneas (borrador o compra duplicada) sustituye las marcas por las que traiga", () => {
+    const state = run(added(cable()), mark("line-cable", true));
+    const other = run(added(refresco()));
+    const snapshot = {
+      items: other.items,
+      locks: other.locks,
+      review: other.review,
+      taxState: other.taxState,
+    };
+
+    expect(
+      purchaseLinesReducer(state, { state: snapshot, type: "linesRestored" }).disassemble,
+    ).toBeUndefined();
+    expect(
+      purchaseLinesReducer(state, {
+        state: { ...snapshot, disassemble: { "line-refresco": true } },
+        type: "linesRestored",
+      }).disassemble,
+    ).toEqual({ "line-refresco": true });
+  });
+});

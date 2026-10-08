@@ -13,6 +13,7 @@ import {
   type PurchaseTaxCatalog,
 } from "../types";
 import { EMPTY_PURCHASE_LINES_STATE, purchaseLinesReducer } from "../hooks/usePurchaseLines";
+import { withPurchaseLineDisassemble } from "../utils/purchaseLineDisassemble";
 import { lockPurchaseLines } from "../utils/purchaseLineLocks";
 import { settlePurchaseLines } from "../utils/purchaseLineReview";
 import {
@@ -315,6 +316,50 @@ export const UnresolvedTaxRate: Story = {
     const canvas = within(canvasElement);
 
     await expect(canvas.getByText("Elige una alícuota")).toBeVisible();
+  },
+};
+
+/**
+ * COM-14: los productos que son el empaque de una receta de apertura ofrecen el chip
+ * "Desarmar al recibir"; aquí la primera línea lo trae marcado y la segunda sin marcar.
+ */
+export const DisassembleOnReceive: Story = {
+  name: "Chip «Desarmar al recibir»",
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const chips = canvas.getAllByRole("button", { name: /^Desarmar al recibir / });
+
+    await expect(chips.map((chip) => chip.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
+  },
+  render: () => {
+    const items = buildItems("ves");
+
+    return (
+      <PurchaseLineItemsTable
+        getItemMeta={(productId) =>
+          metaByProductId[productId] ?? { name: "Producto", sku: "—", taxRate: 0 }
+        }
+        lines={withPurchaseLineDisassemble(
+          buildPurchaseWebLines({
+            getCategoryPct: () => 16,
+            items,
+            rateVes: RATE_VES,
+            rates: taxRates,
+            taxState: EMPTY_PURCHASE_TAX_STATE,
+          }),
+          items[0] ? { [items[0].id]: true } : {},
+          new Set(items.slice(0, 2).map((item) => item.productId)),
+        )}
+        lockControls={staticLockControls}
+        onLineDisassembleChange={() => undefined}
+        onLineTaxChange={() => undefined}
+        onRemoveItem={() => undefined}
+        onSettleItem={() => undefined}
+        onUpdateItem={() => undefined}
+        rateVes={RATE_VES}
+        taxCatalog={taxCatalog}
+      />
+    );
   },
 };
 

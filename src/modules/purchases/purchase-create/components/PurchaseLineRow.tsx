@@ -1,6 +1,6 @@
 "use client";
 
-import { Lock, LockOpen, Package, Trash2 } from "lucide-react";
+import { Lock, LockOpen, Package, PackageOpen, Trash2 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { ButtonHTMLAttributes, FocusEvent, KeyboardEvent } from "react";
 
@@ -29,12 +29,19 @@ import { PurchaseLinePackFields } from "./PurchaseLinePackFields";
 import { PurchaseLockedLineCells } from "./PurchaseLockedLineCells";
 
 export type PurchaseLineRowProps = {
+  /**
+   * «Desarmar al recibir» (COM-14): `undefined` = el producto no tiene receta de
+   * apertura y la fila no muestra el chip; `true` / `false` = marcado o no.
+   */
+  disassemble?: boolean;
   /** Punto "Línea editada" (`PurchaseWebLine.editedMark`); una línea bloqueada no lo muestra. */
   editedMark?: boolean;
   item: PurchaseDraftItem;
   /** Fila compacta de solo lectura: sin campos, selectores ni chips en el DOM. */
   locked?: boolean;
   meta: PurchaseLineCatalogMeta;
+  /** Chip «Desarmar al recibir»; solo se usa si `disassemble` no es `undefined`. */
+  onDisassembleChange?: (disassemble: boolean) => void;
   /** Candado de la fila, o doble clic sobre la fila bloqueada. */
   onLockChange: (locked: boolean) => void;
   onRemove: () => void;
@@ -91,7 +98,9 @@ function LineChip({
 /**
  * Una línea de la compra. Fila principal: producto, cantidad, costo (en la moneda de la
  * compra) y total. El chip de IVA abre las alícuotas del catálogo (no se teclea un
- * porcentaje) y el chip "Empaque" despliega la fila secundaria.
+ * porcentaje) y el chip "Empaque" despliega la fila secundaria. Si el producto es un
+ * empaque con receta de apertura, el chip "Desarmar al recibir" (COM-14) marca la línea
+ * para que la recepción abra sus empaques en los componentes de la receta.
  *
  * Bloqueada (COM-12) es una fila compacta de solo lectura: lo mismo como texto y, como
  * único elemento enfocable, el candado. Se desbloquea con el candado (que conserva el
@@ -99,10 +108,12 @@ function LineChip({
  * empaque), y no se puede quitar sin desbloquearla.
  */
 export function PurchaseLineRow({
+  disassemble,
   editedMark = false,
   item,
   locked = false,
   meta,
+  onDisassembleChange,
   onLockChange,
   onRemove,
   onScanCode,
@@ -217,6 +228,7 @@ export function PurchaseLineRow({
         ref={rowRef}
       >
         <PurchaseLockedLineCells
+          disassemble={disassemble === true}
           item={normalized}
           key="locked"
           meta={meta}
@@ -286,6 +298,18 @@ export function PurchaseLineRow({
             <Package aria-hidden className="size-3" />
             Empaque
           </LineChip>
+          {disassemble === undefined ? null : (
+            <LineChip
+              active={disassemble}
+              aria-label={`Desarmar al recibir ${meta.name}`}
+              aria-pressed={disassemble}
+              onClick={() => onDisassembleChange?.(!disassemble)}
+              title="Al recibir la compra, sus empaques se abren en los productos de su receta"
+            >
+              <PackageOpen aria-hidden className="size-3" />
+              Desarmar al recibir
+            </LineChip>
+          )}
         </div>
       </div>
 

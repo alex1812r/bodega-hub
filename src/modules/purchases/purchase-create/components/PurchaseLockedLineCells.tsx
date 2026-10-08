@@ -6,6 +6,8 @@ import { purchaseLineFieldLabelClassName } from "../utils/purchaseCreateStyles";
 import { formatLineTaxLabel } from "../utils/purchaseLineTax";
 
 type PurchaseLockedLineCellsProps = {
+  /** La línea está marcada «Desarmar al recibir» (COM-14). */
+  disassemble?: boolean;
   /** Línea ya sincronizada (`syncLineCostFields`). */
   item: PurchaseDraftItem;
   meta: PurchaseLineCatalogMeta;
@@ -23,6 +25,7 @@ const detailClassName = "truncate text-xs leading-tight tabular-nums text-on-sur
  * costo · total · alícuota, todo como texto. Nada aquí recibe foco, teclado ni rueda.
  */
 export function PurchaseLockedLineCells({
+  disassemble = false,
   item,
   meta,
   tax,
@@ -48,6 +51,9 @@ export function PurchaseLockedLineCells({
           </span>{" "}
           <span className="shrink-0 whitespace-nowrap">· IVA {formatLineTaxLabel(tax)}</span>
         </p>
+        {disassemble ? (
+          <p className="text-xs text-on-surface-variant">Se desarma al recibir</p>
+        ) : null}
       </div>
 
       <div className="min-w-0 @xl:text-center">

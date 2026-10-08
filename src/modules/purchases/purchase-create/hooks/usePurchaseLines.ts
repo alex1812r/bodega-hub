@@ -5,6 +5,7 @@ import { useReducer } from "react";
 import type {
   PurchaseCostCurrency,
   PurchaseDraftItem,
+  PurchaseLineDisassembleState,
   PurchaseLineFocusRequest,
   PurchaseLineLockState,
   PurchaseLineReviewState,
@@ -40,6 +41,11 @@ import {
  * efímero y no debe guardarse.
  */
 export type PurchaseLinesState = {
+  /**
+   * Líneas marcadas «Desarmar al recibir» (COM-14). Opcional: ausente = ninguna
+   * (los borradores guardados antes de COM-14 no lo traen).
+   */
+  disassemble?: PurchaseLineDisassembleState;
   /** Última petición de foco en la cantidad de una línea (la recién agregada). */
   focus: PurchaseLineFocusRequest | null;
   /** Líneas en el orden de la tabla: la más reciente primero. */
@@ -60,6 +66,8 @@ export type PurchaseLinesAction =
   | { type: "allLinesUnlocked" }
   | { currency: PurchaseCostCurrency; rateVes: number; type: "costCurrencyChanged" }
   | { exempt: boolean; type: "exemptChanged" }
+  /** Chip «Desarmar al recibir» de una línea; una línea bloqueada lo ignora. */
+  | { disassemble: boolean; itemId: string; type: "lineDisassembleChanged" }
   | { itemId: string; locked: boolean; type: "lineLockChanged" }
   /**
    * Las líneas se reponen de golpe (COM-09): al restaurar el borrador guardado o
@@ -91,6 +99,23 @@ export const EMPTY_PURCHASE_LINES_STATE: PurchaseLinesState = {
   review: EMPTY_PURCHASE_REVIEW_STATE,
   taxState: EMPTY_PURCHASE_TAX_STATE,
 };
+
+/** Las marcas «Desarmar al recibir» con esa línea marcada o desmarcada. */
+function setLineDisassemble(
+  state: PurchaseLineDisassembleState | undefined,
+  itemId: string,
+  disassemble: boolean,
+): PurchaseLineDisassembleState {
+  const next = Object.fromEntries(
+    Object.entries(state ?? {}).filter(([id]) => id !== itemId),
+  ) as PurchaseLineDisassembleState;
+
+  if (disassemble) {
+    next[itemId] = true;
+  }
+
+  return next;
+}
 
 function bumpLine(item: PurchaseDraftItem, rateVes: number) {
   return syncLineCostFields(
@@ -153,6 +178,16 @@ export function purchaseLinesReducer(
         taxState: setPurchaseExempt(action.exempt),
       };
 
+    case "lineDisassembleChanged":
+      if (isPurchaseLineLocked(state.locks, action.itemId)) {
+        return state;
+      }
+
+      return {
+        ...state,
+        disassemble: setLineDisassemble(state.disassemble, action.itemId, action.disassemble),
+      };
+
     case "lineLockChanged":
       return action.locked
         ? lockLines(
@@ -181,6 +216,9 @@ export function purchaseLinesReducer(
 
       return {
         ...state,
+        ...(state.disassemble
+          ? { disassemble: setLineDisassemble(state.disassemble, action.itemId, false) }
+          : {}),
         items: state.items.filter((item) => item.id !== action.itemId),
         review: dropPurchaseLineReview(state.review, action.itemId),
         taxState: dropLineTax(state.taxState, action.itemId),

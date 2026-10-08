@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { usePackConversions } from "@/modules/inventory/hooks/useInventory";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
@@ -63,6 +64,10 @@ import {
   buildInitialPaymentFailedNotice,
   resolveInitialPayment,
 } from "./utils/purchaseInitialPayment";
+import {
+  purchaseLineDisassemblePayload,
+  withPurchaseLineDisassemble,
+} from "./utils/purchaseLineDisassemble";
 import { getEditedLinesSummary } from "./utils/purchaseLineReview";
 import {
   buildExemptOverrideNotice,
@@ -110,7 +115,21 @@ export function PurchaseCreatePage() {
   // `items` es el borrador de core. Su `taxRate` NO es la fuente de verdad: la alícuota de
   // cada línea se deriva de `taxState` en `lines`, que es lo que se pinta y se envía.
   // Bloqueos, historial de edición y alícuotas son estado de la web: no entran en el payload.
-  const [{ focus, items, locks, review, taxState }, dispatchLines] = usePurchaseLines();
+  const [{ disassemble, focus, items, locks, review, taxState }, dispatchLines] =
+    usePurchaseLines();
+  // Recetas de apertura activas de la tienda (COM-14): una consulta para toda la compra.
+  // Si falla o el rol no puede verlas, ninguna línea ofrece «Desarmar al recibir».
+  const packConversions = usePackConversions();
+  const packProductIds = useMemo(
+    () =>
+      new Set(
+        // Una respuesta que no sea la lista esperada no debe tumbar el formulario.
+        (Array.isArray(packConversions.data) ? packConversions.data : []).flatMap((recipe) =>
+          recipe.packProduct?.id ? [recipe.packProduct.id] : [],
+        ),
+      ),
+    [packConversions.data],
+  );
   const [lockOnAdd, setLockOnAdd] = usePurchaseLockOnAdd();
   // Moneda en la que se teclean los costos: una sola para toda la compra.
   const [costCurrency, setCostCurrency] = useState<PurchaseCostCurrency>("ves");
@@ -178,16 +197,30 @@ export function PurchaseCreatePage() {
   // resumen y el payload salen de aqui para que no puedan desalinearse.
   const lines = useMemo(
     () =>
-      buildPurchaseWebLines({
-        getCategoryPct: (productId) => lineMetaByProductId.get(productId)?.taxRate ?? 0,
-        items,
-        rateVes: activeRateVes,
-        locks,
-        rates: taxRates.rates,
-        review,
-        taxState,
-      }),
-    [activeRateVes, items, lineMetaByProductId, locks, review, taxRates.rates, taxState],
+      withPurchaseLineDisassemble(
+        buildPurchaseWebLines({
+          getCategoryPct: (productId) => lineMetaByProductId.get(productId)?.taxRate ?? 0,
+          items,
+          rateVes: activeRateVes,
+          locks,
+          rates: taxRates.rates,
+          review,
+          taxState,
+        }),
+        disassemble,
+        packProductIds,
+      ),
+    [
+      activeRateVes,
+      disassemble,
+      items,
+      lineMetaByProductId,
+      locks,
+      packProductIds,
+      review,
+      taxRates.rates,
+      taxState,
+    ],
   );
   // Revisión antes de confirmar: qué líneas se tocaron después de agregarlas y qué cambió.
   const editedLines = useMemo(
@@ -267,7 +300,7 @@ export function PurchaseCreatePage() {
           return meta ? [[item.productId, meta]] : [];
         }),
       ),
-      lines: { items, locks, review, taxState },
+      lines: { ...(disassemble ? { disassemble } : {}), items, locks, review, taxState },
       notes,
       rateVes: activeRateVes,
       status: status === "pedido" ? "pedido" : "recibido",
@@ -277,6 +310,7 @@ export function PurchaseCreatePage() {
     [
       activeRateVes,
       costCurrency,
+      disassemble,
       discountRef,
       items,
       lineMetaByProductId,
@@ -539,9 +573,11 @@ export function PurchaseCreatePage() {
       discountRef,
       discountVes,
       // `taxRateCode` y `taxRate` van juntos: la RPC valida que el porcentaje sea el de la alicuota.
-      items: validLines.map(({ item, tax }) => ({
-        ...draftToPurchaseItemInput(item, activeRateVes),
-        ...(tax.code ? { taxRateCode: tax.code } : {}),
+      // `disassembleOnReceive` solo en las líneas marcadas de un producto con receta (COM-14).
+      items: validLines.map((line) => ({
+        ...draftToPurchaseItemInput(line.item, activeRateVes),
+        ...(line.tax.code ? { taxRateCode: line.tax.code } : {}),
+        ...purchaseLineDisassemblePayload(line),
       })),
       notes: notes.trim() || undefined,
       refRateVes: activeRateVes,
@@ -689,6 +725,9 @@ export function PurchaseCreatePage() {
             }}
             onAddProduct={handleAddProduct}
             onExemptPurchaseChange={handleExemptPurchaseChange}
+            onLineDisassembleChange={(itemId, nextDisassemble) =>
+              dispatchLines({ disassemble: nextDisassemble, itemId, type: "lineDisassembleChanged" })
+            }
             onLineTaxChange={(itemId, code) =>
               dispatchLines({ code, itemId, type: "lineTaxChosen" })
             }
