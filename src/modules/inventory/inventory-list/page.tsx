@@ -30,6 +30,7 @@ import { useAllCategories } from "../../products/hooks/useProducts";
 import { InventoryAdjustmentModal } from "../inventory-movements/components/InventoryAdjustmentModal";
 import { InventoryPackConversionModal } from "../inventory-movements/components/InventoryPackConversionModal";
 import { useInventory, type InventoryOverviewItem } from "../hooks/useInventory";
+import { RestockPurchaseButton } from "../restock";
 import { InventoryExportActions } from "./components/InventoryExportActions";
 import { InventoryLastMovementCell } from "./components/InventoryLastMovementCell";
 import { InventoryListFilters } from "./components/InventoryListFilters";
@@ -307,6 +308,7 @@ function InventoryList() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <InventoryExportActions exportFilters={filters} />
+            {state.lowStock ? <RestockPurchaseButton size="sm" variant="primary" /> : null}
             <Can permission="inventory.manage">
               <div className="flex flex-wrap items-center gap-2">
                 <InventoryPackConversionModal />

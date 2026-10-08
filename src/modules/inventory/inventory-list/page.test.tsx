@@ -30,6 +30,10 @@ jest.mock("../inventory-movements/components/InventoryAdjustmentModal", () => ({
 jest.mock("../inventory-movements/components/InventoryPackConversionModal", () => ({
   InventoryPackConversionModal: () => null,
 }));
+// La reposición (INV-05) tiene sus propios tests: aquí solo importa cuándo se ofrece.
+jest.mock("../restock", () => ({
+  RestockPurchaseButton: () => <button type="button">Crear compra con estos productos</button>,
+}));
 jest.mock("../services/exportInventoryExcel", () => ({
   exportInventoryToExcel: (...args: unknown[]) => mockExportInventoryToExcel(...args),
 }));
@@ -370,6 +374,25 @@ describe("InventoryListPage · vista única de stock", () => {
 
       expect(screen.queryByTestId("inventory-reconciliation-badge")).not.toBeInTheDocument();
       expect(screen.queryByText(/Descuadre/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("reposición", () => {
+    it("offers 'Crear compra con estos productos' in the header only with the 'Solo por reponer' filter on", async () => {
+      const view = renderPage();
+
+      await findRow("Harina");
+      expect(
+        screen.queryByRole("button", { name: "Crear compra con estos productos" }),
+      ).not.toBeInTheDocument();
+
+      view.unmount();
+      renderPage("lowStock=true");
+
+      await findRow("Harina");
+      expect(
+        screen.getByRole("button", { name: "Crear compra con estos productos" }),
+      ).toBeInTheDocument();
     });
   });
 

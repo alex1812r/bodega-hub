@@ -4,6 +4,7 @@ import { AlertTriangle, Package } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { RestockPurchaseButton } from "@/modules/inventory/restock";
 import { Button } from "@/shared/components/Button";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { cn } from "@/shared/utils/cn";
@@ -102,9 +103,13 @@ export function DashboardLowStockCard({
 
       <div className="border-t border-border/50 p-4">
         {footer ?? (
-          <Button asChild className="w-full" variant="secondary">
-            <Link href="/purchases/create">Generar orden de compra</Link>
-          </Button>
+          <div className="flex flex-col gap-2">
+            {/* Solo se pinta con permiso de crear compras (INV-05). */}
+            <RestockPurchaseButton className="w-full" variant="primary" />
+            <Button asChild className="w-full" variant="secondary">
+              <Link href="/purchases/create">Generar orden de compra</Link>
+            </Button>
+          </div>
         )}
       </div>
     </div>
