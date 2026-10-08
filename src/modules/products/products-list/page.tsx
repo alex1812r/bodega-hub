@@ -504,6 +504,15 @@ function ProductsList() {
           />
         ) : null}
 
+        {/* Un error con parámetros en la URL: "Reintentar" repite la misma petición; esto saca de ahí. */}
+        {products.error && !list.isDefault ? (
+          <div className="flex justify-end">
+            <Button onClick={list.reset} size="sm" variant="outline">
+              Restablecer filtros
+            </Button>
+          </div>
+        ) : null}
+
         <div className="flex w-full flex-col md:overflow-hidden md:rounded-xl md:border md:border-border md:bg-surface-container-lowest md:shadow-sm dark:md:border-slate-800">
           <DataTable
             actions={(product) => {

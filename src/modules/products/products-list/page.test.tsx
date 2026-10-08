@@ -593,6 +593,99 @@ describe("ProductsListPage · ganancia y estado en la URL", () => {
     });
   });
 
+  describe("PRO-F12 · página de la URL más allá del total", () => {
+    /** El servidor desde PRO-F12: más allá del total responde 200 vacío con el total real. */
+    function respondWithTotal(total: number) {
+      const otherRequests = fetchMock.getMockImplementation();
+
+      fetchMock.mockImplementation(async (url: string) => {
+        const [path, query = ""] = String(url).split("?");
+
+        if (path !== "/api/products") {
+          return otherRequests?.(url);
+        }
+
+        const params = new URLSearchParams(query);
+        const skip = Number(params.get("skip"));
+        const limit = Number(params.get("limit"));
+
+        return jsonResponse({
+          data: { items: skip < total ? PRODUCTS : [], limit, skip, total },
+        });
+      });
+    }
+
+    /** Deja pasar efectos y peticiones pendientes: si hubiera un bucle, aparecerían aquí. */
+    async function settle() {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+
+    it("recargar la última página cuando el total bajó vuelve a la última que existe, sin bucle", async () => {
+      respondWithTotal(49);
+      renderPage("category=cat-1&page=6");
+
+      await waitFor(() => expect(window.location.search).toBe("?category=cat-1&page=5"));
+      expect(await screen.findByText(/Mostrando 41/)).toHaveTextContent("49");
+      expect(screen.queryByText("No pudimos cargar los datos")).not.toBeInTheDocument();
+
+      await settle();
+
+      // La página pedida (vacía) y la última válida: ni una petición más.
+      expect(productRequests().map((params) => params.get("skip"))).toEqual(["50", "40"]);
+      expect(window.location.search).toBe("?category=cat-1&page=5");
+    });
+
+    it("con total 0 vuelve a la página 1 y muestra el estado vacío, sin bucle", async () => {
+      respondWithTotal(0);
+      renderPage("review=1&page=999");
+
+      await waitFor(() => expect(window.location.search).toBe("?review=1"));
+      expect(await screen.findByText("Ningún producto bajó de ganancia")).toBeInTheDocument();
+      expect(screen.queryByText("No pudimos cargar los datos")).not.toBeInTheDocument();
+
+      await settle();
+
+      expect(productRequests().map((params) => params.get("skip"))).toEqual(["9980", "0"]);
+      expect(window.location.search).toBe("?review=1");
+    });
+
+    it("si la lista falla con parámetros en la URL ofrece restablecer los filtros", async () => {
+      const user = userEvent.setup();
+
+      const otherRequests = fetchMock.getMockImplementation();
+
+      fetchMock.mockImplementation(async (url: string) => {
+        const [path, query = ""] = String(url).split("?");
+
+        if (path !== "/api/products") {
+          return otherRequests?.(url);
+        }
+
+        return new URLSearchParams(query).get("skip") === "0"
+          ? jsonResponse({ data: { items: PRODUCTS, limit: 10, skip: 0, total: 5 } })
+          : jsonResponse({ error: { code: "INTERNAL_ERROR", message: "Falló el listado." } }, 500);
+      });
+      renderPage("margin=low&page=7");
+
+      expect(await screen.findByText("No pudimos cargar los datos")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Restablecer filtros" }));
+
+      expect(window.location.search).toBe("");
+      await findRow("Arroz");
+      expect(screen.queryByRole("button", { name: "Restablecer filtros" })).not.toBeInTheDocument();
+    });
+
+    it("sin parámetros en la URL el error solo ofrece reintentar", async () => {
+      productsResponse = () =>
+        jsonResponse({ error: { code: "INTERNAL_ERROR", message: "Falló el listado." } }, 500);
+      renderPage();
+
+      expect(await screen.findByText("No pudimos cargar los datos")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Restablecer filtros" })).not.toBeInTheDocument();
+    });
+  });
+
   it("shows the empty state when the filter leaves no products", async () => {
     productsResponse = () => jsonResponse({ data: { items: [], limit: 10, skip: 0, total: 0 } });
     renderPage("margin=high");
