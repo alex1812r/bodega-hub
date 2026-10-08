@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { usePackConversions } from "@/modules/inventory/hooks/useInventory";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
@@ -40,6 +39,7 @@ import { usePurchaseDraftStorage } from "./hooks/usePurchaseDraftStorage";
 import { usePurchaseDuplicateSource } from "./hooks/usePurchaseDuplicateSource";
 import { usePurchaseLines } from "./hooks/usePurchaseLines";
 import { usePurchaseLockOnAdd } from "./hooks/usePurchaseLockOnAdd";
+import { usePurchasePackConversions } from "./hooks/usePurchasePackConversions";
 import { usePurchasePaymentMethods } from "./hooks/usePurchasePaymentMethods";
 import { usePurchaseProductSearch } from "./hooks/usePurchaseProductSearch";
 import { PurchaseStatusNotesCard } from "./components/PurchaseStatusNotesCard";
@@ -123,8 +123,12 @@ export function PurchaseCreatePage() {
   const [{ disassemble, focus, items, locks, review, taxState }, dispatchLines] =
     usePurchaseLines();
   // Recetas de apertura activas de la tienda (COM-14): una consulta para toda la compra.
-  // Si falla o el rol no puede verlas, ninguna línea ofrece «Desarmar al recibir».
-  const packConversions = usePackConversions();
+  // Si falla o el rol no puede verlas (no se piden: responde 403), ninguna línea ofrece
+  // «Desarmar al recibir».
+  const packConversions = usePurchasePackConversions(can("inventory.view"));
+  // El alta rápida solo existe para quien puede crear productos; sin ese permiso no se
+  // monta su formulario, que pide la configuración de precios de la tienda.
+  const canCreateProduct = can("products.manage");
   // De la misma respuesta: los empaques cuya receta pide «Desarmar siempre al recibir
   // compras»; sus líneas nacen con el chip marcado (el usuario puede desmarcarlo).
   const { alwaysDisassembleProductIds, packProductIds } = useMemo(
@@ -752,7 +756,7 @@ export function PurchaseCreatePage() {
               dispatchLines({ code, itemId, type: "lineTaxChosen" })
             }
             onNewProduct={
-              can("products.manage")
+              canCreateProduct
                 ? (initialValues, opener) => {
                     newProductOpenerRef.current = opener;
                     setNewProductValues(initialValues);
@@ -815,17 +819,19 @@ export function PurchaseCreatePage() {
         </div>
       </div>
 
-      <PurchaseNewProductModal
-        initialValues={newProductValues ?? undefined}
-        onCreated={handleProductCreated}
-        onOpenChange={(open) => {
-          if (!open) {
-            setNewProductValues(null);
-          }
-        }}
-        open={newProductValues !== null}
-        returnFocusTo={newProductOpenerRef}
-      />
+      {canCreateProduct ? (
+        <PurchaseNewProductModal
+          initialValues={newProductValues ?? undefined}
+          onCreated={handleProductCreated}
+          onOpenChange={(open) => {
+            if (!open) {
+              setNewProductValues(null);
+            }
+          }}
+          open={newProductValues !== null}
+          returnFocusTo={newProductOpenerRef}
+        />
+      ) : null}
       <ConfirmActionModal
         confirmLabel="Quitar líneas y cambiar"
         description={

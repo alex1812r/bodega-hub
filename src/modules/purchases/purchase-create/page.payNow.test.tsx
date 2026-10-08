@@ -177,6 +177,30 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     await waitFor(() => expect(paymentMethodRequests()).toHaveLength(1));
   });
 
+  it("las consultas opcionales no salen sin el permiso de su endpoint: recetas sin inventory.view, precios sin products.manage (COM-F6)", async () => {
+    const requestsTo = (path: string) =>
+      (global.fetch as jest.Mock).mock.calls.filter(([url]) => String(url).startsWith(path));
+
+    mockDenied = ["inventory.view", "products.manage"];
+    installApi();
+
+    const { unmount } = renderWithCart();
+
+    // Un turno para que una consulta habilitada llegara a salir.
+    await waitFor(() => expect(confirm()).toBeInTheDocument());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requestsTo("/api/inventory/pack-conversions")).toHaveLength(0);
+    expect(requestsTo("/api/settings/pricing")).toHaveLength(0);
+    unmount();
+
+    mockDenied = [];
+    installApi();
+    renderWithCart();
+
+    await waitFor(() => expect(requestsTo("/api/inventory/pack-conversions")).toHaveLength(1));
+    await waitFor(() => expect(requestsTo("/api/settings/pricing")).toHaveLength(1));
+  });
+
   it("Completar saldo pone el total de la compra y confirmar envía initialPayment con su propia clave", async () => {
     const api = installApi();
     api.respondToNextPost({
