@@ -1,6 +1,7 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as categoriesMockServer from "@/modules/products/services/categories.mock-server";
 import * as categoriesServer from "@/modules/products/services/categories.server";
@@ -25,7 +26,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/catego
   try {
     const auth = await requireStorePermission(request, "products.manage");
     const { id } = await context.params;
-    const input = updateCategorySchema.parse(await request.json());
+    const input = updateCategorySchema.parse(await readJsonBody(request));
     const service = getCategoriesService();
     return jsonData(await service.updateCategory(id, input, auth.storeId));
   } catch (error) {

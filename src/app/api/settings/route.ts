@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ApiError, toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { pricingSettingsSchema } from "@/modules/settings/services/pricingSettings.schemas";
 import * as settingsMockServer from "@/modules/settings/services/settings.mock-server";
@@ -69,7 +70,7 @@ export async function GET(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const auth = await requireStorePermission(request, "users.manage");
-    const input = parseSettingsInput(await request.json());
+    const input = parseSettingsInput(await readJsonBody(request));
     const service = getSettingsService();
     return jsonData(await service.updateSettings(input, auth.storeId));
   } catch (error) {

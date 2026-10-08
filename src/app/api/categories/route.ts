@@ -1,6 +1,7 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as categoriesMockServer from "@/modules/products/services/categories.mock-server";
 import * as categoriesServer from "@/modules/products/services/categories.server";
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "products.manage");
-    const input = createCategorySchema.parse(await request.json());
+    const input = createCategorySchema.parse(await readJsonBody(request));
     const service = getCategoriesService();
     return jsonCreated(await service.createCategory(input, auth.storeId));
   } catch (error) {

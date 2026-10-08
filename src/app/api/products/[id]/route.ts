@@ -1,6 +1,7 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 import { updateProductSchema } from "@/modules/products/services/productSchemas";
@@ -40,7 +41,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/produc
   try {
     const auth = await requireStorePermission(request, "products.manage");
     const { id } = await context.params;
-    const input = updateProductSchema.parse(await request.json());
+    const input = updateProductSchema.parse(await readJsonBody(request));
     const service = getProductsService();
     return jsonData(await service.updateProduct(id, input, auth.storeId));
   } catch (error) {

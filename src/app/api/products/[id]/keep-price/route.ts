@@ -1,6 +1,7 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as priceReviewMockServer from "@/modules/products/services/priceReview.mock-server";
 import * as priceReviewServer from "@/modules/products/services/priceReview.server";
@@ -8,11 +9,11 @@ import * as productsMockServer from "@/modules/products/services/products.mock-s
 import * as productsServer from "@/modules/products/services/products.server";
 import { keepProductPriceSchema } from "@/modules/products/services/productSchemas";
 
-/** El cuerpo es opcional: sin cuerpo (o sin JSON) no hay motivo. */
+/** El cuerpo es opcional: sin cuerpo no hay motivo. Uno que no es JSON responde 400. */
 async function readOptionalBody(request: Request): Promise<unknown> {
-  const text = await request.text();
+  const text = await request.clone().text();
 
-  return text.trim() ? JSON.parse(text) : {};
+  return text.trim() ? readJsonBody(request) : {};
 }
 
 /** "Mantener precio": saca el producto de la cola "Por revisar" sin cambiar su precio. */

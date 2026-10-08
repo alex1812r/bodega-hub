@@ -1,6 +1,7 @@
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 import { getProductById } from "@/modules/products/services/products.mock-server";
@@ -43,7 +44,7 @@ export async function PUT(request: Request, context: RouteContext<"/api/products
     const auth = await requireStorePermission(request, "products.manage");
     assertCanAccessSupplierContacts(auth.role);
     const { id } = await context.params;
-    const suppliers = parseSaveProductSuppliersInput(await request.json());
+    const suppliers = parseSaveProductSuppliersInput(await readJsonBody(request));
 
     return jsonData(
       await getSupplierProductsService().saveProductSuppliers(id, suppliers, auth.storeId),

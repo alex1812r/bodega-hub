@@ -1,6 +1,7 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStoreAnyPermission } from "@/lib/api/requirePermission";
 import { addProductBarcodeSchema } from "@/modules/products/services/productSchemas";
 import * as productsMockServer from "@/modules/products/services/products.mock-server";
@@ -18,7 +19,7 @@ export async function POST(request: Request, context: RouteContext<"/api/product
       "products.manage",
     ]);
     const { id } = await context.params;
-    const input = addProductBarcodeSchema.parse(await request.json());
+    const input = addProductBarcodeSchema.parse(await readJsonBody(request));
     const service = getProductsService();
     return jsonData(await service.addProductBarcode(id, input.barcode, auth.storeId));
   } catch (error) {
