@@ -19,6 +19,8 @@ export type ContactAccessOptions = {
   customersOnly?: boolean;
 };
 
+let lastMockContactSequence = 0;
+
 export function listContacts(
   searchParams: URLSearchParams,
   storeId: string,
@@ -63,18 +65,25 @@ export function createContact(input: ContactInput, storeId: string) {
     throw new ApiError(409, "CONFLICT", "Ya existe un contacto con este RIF/CI.");
   }
 
-  return {
+  lastMockContactSequence += 1;
+
+  const contact: ContactMock = {
     address: input.address ?? "",
     email: input.email ?? "",
-    id: `cont-mock-${Date.now()}`,
+    id: `cont-mock-${Date.now()}-${lastMockContactSequence}`,
     isActive: true,
     isPosDefault: false,
     name: input.name ?? "Contacto mock",
     phone: input.phone ?? "",
     storeId,
-    taxId: input.taxId ?? `MOCK-${Date.now()}`,
+    // Como el servidor: sin RIF queda vacio (`tax_id` null), no uno inventado.
+    taxId: input.taxId ?? "",
     type: input.type ?? "cliente",
-  } satisfies ContactMock;
+  };
+
+  mockContacts.push(contact);
+
+  return contact;
 }
 
 export function updateContact(id: string, input: ContactInput, storeId: string) {
@@ -95,11 +104,16 @@ export function updateContact(id: string, input: ContactInput, storeId: string) 
     throw new ApiError(409, "CONFLICT", "Ya existe un contacto con este RIF/CI.");
   }
 
-  return {
-    ...current,
-    ...input,
-    isPosDefault: current.isPosDefault,
-  };
+  // Como el `update` del servidor: solo se escriben los campos que llegan.
+  if (input.address !== undefined) current.address = input.address;
+  if (input.email !== undefined) current.email = input.email;
+  if (input.isActive !== undefined) current.isActive = input.isActive;
+  if (input.name !== undefined) current.name = input.name;
+  if (input.phone !== undefined) current.phone = input.phone;
+  if (input.taxId !== undefined) current.taxId = input.taxId;
+  if (input.type !== undefined) current.type = input.type;
+
+  return current;
 }
 
 export function getContactSales(id: string, searchParams: URLSearchParams, storeId: string) {
