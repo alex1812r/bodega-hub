@@ -20,9 +20,10 @@ import {
   useUrlListState,
   withUrlListBoundary,
 } from "@/shared/hooks/useUrlListState";
-import { RETURN_TO_PARAM, isSafeInternalPath } from "@/shared/utils/returnTo";
+import { RETURN_TO_PARAM } from "@/shared/utils/returnTo";
 
 import { useInventoryMovements, type InventoryMovement } from "../hooks/useInventory";
+import { readChainedReturnTo } from "../utils/chainedReturnTo";
 import { InventoryAdjustmentModal } from "./components/InventoryAdjustmentModal";
 import { InventoryMovementDetailModal } from "./components/InventoryMovementDetailModal";
 import { InventoryMovementsExportActions } from "./components/InventoryMovementsExportActions";
@@ -69,7 +70,7 @@ function InventoryMovements() {
   });
   const { href: listHref, setState: setListState, state } = list;
   const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
-  const hasReturnTo = isSafeInternalPath(useSearchParams().get(RETURN_TO_PARAM));
+  const returnTo = readChainedReturnTo(useSearchParams().get(RETURN_TO_PARAM));
   const [selectedMovement, setSelectedMovement] = useState<InventoryMovement | null>(null);
 
   // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
@@ -138,7 +139,7 @@ function InventoryMovements() {
             </>
           )
         }
-        hasReturnTo={hasReturnTo}
+        returnTo={returnTo}
       />
 
       {isForbidden ? (

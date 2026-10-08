@@ -21,7 +21,7 @@ const HEADING = "Producto seleccionado";
 type InventorySelectedProductProps = {
   /** La consulta del producto falló por algo que no es "no existe". */
   error?: Error | null;
-  /** `undefined` con `isLoading` = cargando; `null` = no existe, está inactivo o es de otra tienda. */
+  /** `undefined` con `isLoading` = cargando; `null` = no existe o es de otra tienda. Un inactivo sí llega. */
   item: InventoryOverviewItem | null | undefined;
   isLoading: boolean;
   /** Quita `product` de la URL. */
@@ -87,6 +87,14 @@ export function InventorySelectedProduct({
               <div className="font-medium">
                 <InventoryProductName item={item} />
               </div>
+              {item.isActive ? null : (
+                <span
+                  className="inline-flex w-fit items-center rounded-full border border-border bg-surface-container px-2 py-0.5 text-xs font-semibold text-on-surface-variant"
+                  title="Producto inactivo: conserva su stock y su historial"
+                >
+                  Inactivo
+                </span>
+              )}
               <InventorySkuCell sku={item.sku} />
             </div>
             {clearButton}

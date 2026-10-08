@@ -2,6 +2,7 @@
 
 import { Lock } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
@@ -13,6 +14,7 @@ import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
+import { PageBackButton } from "@/shared/components/PageBackButton";
 import {
   ResponsivePagination,
   getTotalPages,
@@ -25,6 +27,7 @@ import {
   withUrlListBoundary,
 } from "@/shared/hooks/useUrlListState";
 import { cn } from "@/shared/utils/cn";
+import { RETURN_TO_PARAM, isSafeInternalPath } from "@/shared/utils/returnTo";
 
 import { useAllCategories } from "../../products/hooks/useProducts";
 import { InventoryAdjustmentModal } from "../inventory-movements/components/InventoryAdjustmentModal";
@@ -143,6 +146,8 @@ function InventoryList() {
   const list = useUrlListState(inventoryListSchema, { textFields: INVENTORY_LIST_TEXT_FIELDS });
   const { setState: setListState, state } = list;
   const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
+  // Se llegó desde otra lista (celda Stock de `/products`): se ofrece volver a ella.
+  const hasReturnTo = isSafeInternalPath(useSearchParams().get(RETURN_TO_PARAM));
 
   // Los campos reflejan lo tecleado al instante; la consulta espera lo mismo que la URL.
   const search = useDebouncedValue(state.search, URL_LIST_DEBOUNCE_MS);
@@ -307,6 +312,7 @@ function InventoryList() {
       <EntityListPage
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {hasReturnTo ? <PageBackButton fallbackHref="/inventory" size="sm" /> : null}
             <InventoryExportActions exportFilters={filters} />
             {state.lowStock ? <RestockPurchaseButton size="sm" variant="primary" /> : null}
             <Can permission="inventory.manage">

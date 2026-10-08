@@ -1258,7 +1258,9 @@ paths:
         ultimos 30 dias, el ultimo movimiento y el estado de stock. Filtros, conteo y paginacion se resuelven en la
         base (vista `inventory_overview`). Un `skip` mas alla del total responde `200` con `items: []` y el total
         real. `skip`, `limit`, `minPriceRef`, `maxPriceRef` o `stockStatus` invalidos se ignoran (valor por defecto
-        o sin filtro), no dan error.
+        o sin filtro), no dan error. Excepcion a "solo activos": con `productId` el producto se devuelve aunque
+        este inactivo (`isActive: false`). `categoryId` o `productId` de mas de 200 caracteres o con caracteres de
+        control responden `400`.
       x-permission: inventory.view
       parameters:
         - $ref: "#/components/parameters/Skip"
@@ -1269,7 +1271,9 @@ paths:
           required: false
           schema:
             type: string
-          description: Id exacto de un producto (enlace desde `/products`).
+          description: >-
+            Id exacto de un producto (enlace desde `/products`). No filtra por activo: devuelve el producto aunque
+            este inactivo. Los demas filtros se siguen aplicando.
         - name: categoryId
           in: query
           required: false

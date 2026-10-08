@@ -828,6 +828,32 @@ describe("InventoryListPage · vista única de stock", () => {
       expect(await findRow("Harina")).toBeInTheDocument();
     });
 
+    it("shows an inactive product of the URL with an 'Inactivo' badge, its stock and its movements (INV-F1 · F2)", async () => {
+      listWithOffPageProduct([item("p-cafe", "Café", { currentStock: 0, isActive: false })]);
+      renderPage("product=p-cafe");
+
+      const pinned = await screen.findByRole("region", { name: "Producto seleccionado" });
+
+      expect(await within(pinned).findByTitle("Café")).toBeInTheDocument();
+      expect(within(pinned).getByText("Inactivo")).toBeInTheDocument();
+      expect(screen.queryByText("No se encontró el producto seleccionado.")).not.toBeInTheDocument();
+      expect(
+        await within(
+          within(pinned).getByRole("region", { name: "Últimos movimientos de Café" }),
+        ).findByText("Venta V-000123"),
+      ).toBeInTheDocument();
+    });
+
+    it("does not mark an active pinned product as inactive", async () => {
+      listWithOffPageProduct();
+      renderPage("product=p-cafe");
+
+      const pinned = await screen.findByRole("region", { name: "Producto seleccionado" });
+
+      expect(await within(pinned).findByTitle("Café")).toBeInTheDocument();
+      expect(within(pinned).queryByText("Inactivo")).not.toBeInTheDocument();
+    });
+
     it("replaces the pinned product when a row is expanded", async () => {
       const user = userEvent.setup();
 
@@ -984,6 +1010,74 @@ describe("InventoryListPage · vista única de stock", () => {
       expect(window.location.search).toBe("?product=p-arroz");
       expect(screen.getAllByRole("region", { name: MOVEMENTS_PANEL })).toHaveLength(1);
     });
+
+    it("puts no block element inside the subtitle paragraph of a phone card (INV-F1 · O2)", async () => {
+      isMobile = true;
+
+      const { container } = renderPage();
+
+      await screen.findAllByTitle("Arroz");
+
+      expect(container.querySelectorAll("li p button")).not.toHaveLength(0);
+      expect(container.querySelectorAll("p div")).toHaveLength(0);
+    });
+  });
+
+  describe("volver (returnTo)", () => {
+    const PRODUCTS_URL = "/products?search=caf&page=2";
+    const RETURN_TO = `returnTo=${encodeURIComponent(PRODUCTS_URL)}`;
+
+    function returnToOf(href: string | null) {
+      return new URLSearchParams((href ?? "").split("?")[1] ?? "").get("returnTo");
+    }
+
+    it("offers 'Volver' to the returnTo of the URL and keeps it when filtering, paging and expanding", async () => {
+      const user = userEvent.setup();
+
+      renderPage(RETURN_TO);
+      await findRow("Harina");
+
+      expect(screen.getByRole("link", { name: "Volver" })).toHaveAttribute("href", PRODUCTS_URL);
+
+      await user.click(screen.getByRole("button", { name: "Ver movimientos de Arroz" }));
+      await user.click(screen.getByRole("button", { name: "Ir a pagina 2" }));
+
+      expect(new URLSearchParams(window.location.search).get("page")).toBe("2");
+
+      await user.selectOptions(await screen.findByLabelText("Categoría"), "cat-2");
+
+      const params = new URLSearchParams(window.location.search);
+
+      expect(params.get("returnTo")).toBe(PRODUCTS_URL);
+      expect(params.get("product")).toBe("p-arroz");
+      expect(params.get("category")).toBe("cat-2");
+      expect(screen.getByRole("link", { name: "Volver" })).toHaveAttribute("href", PRODUCTS_URL);
+    });
+
+    it("carries the original returnTo nested in the link to the full kardex", async () => {
+      renderPage(`product=p-arroz&${RETURN_TO}`);
+
+      const link = await screen.findByRole("link", { name: /Ver kardex completo/ });
+      const listUrl = returnToOf(link.getAttribute("href"));
+
+      expect(link.getAttribute("href")?.split("?")[0]).toBe("/inventory/movements");
+      // La lista escribe primero los parámetros ajenos: se comparan los valores, no el orden.
+      expect(listUrl?.split("?")[0]).toBe("/inventory");
+      expect(Object.fromEntries(new URLSearchParams(listUrl?.split("?")[1]))).toEqual({
+        product: "p-arroz",
+        returnTo: PRODUCTS_URL,
+      });
+    });
+
+    it.each(["", "returnTo=%2F%2Fevil.com", "returnTo=https%3A%2F%2Fevil.com"])(
+      "offers no 'Volver' without a safe returnTo (%s)",
+      async (query) => {
+        renderPage(query);
+        await findRow("Harina");
+
+        expect(screen.queryByRole("link", { name: /^Volver/ })).not.toBeInTheDocument();
+      },
+    );
   });
 
   describe("categorías", () => {

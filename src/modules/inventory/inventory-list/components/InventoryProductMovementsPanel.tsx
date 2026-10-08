@@ -7,10 +7,10 @@ import { getPaginatedItems } from "@/lib/api/pagination";
 import { ClientApiError } from "@/shared/api/apiFetch";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { Skeleton } from "@/shared/components/Skeleton";
-import { withReturnTo } from "@/shared/utils/returnTo";
 
 import { ProductMovementList } from "../../components/ProductMovementList";
 import { useInventoryMovements, type InventoryOverviewItem } from "../../hooks/useInventory";
+import { withChainedReturnTo } from "../../utils/chainedReturnTo";
 
 /** Movimientos que muestra el panel: los últimos del producto. */
 export const INVENTORY_PANEL_MOVEMENTS = 10;
@@ -19,7 +19,10 @@ type InventoryProductMovementsPanelProps = {
   /** `id` del panel: el botón que lo abre lo referencia con `aria-controls`. */
   id: string;
   product: Pick<InventoryOverviewItem, "currentStock" | "id" | "name" | "reconciliationDiff">;
-  /** URL de la lista con `product=<id>`: a ella vuelven el kardex completo y los documentos. */
+  /**
+   * URL de la lista con `product=<id>`: a ella vuelven el kardex completo (con el
+   * `returnTo` que traiga la lista) y los documentos.
+   */
   returnTo: string;
 };
 
@@ -58,7 +61,7 @@ export function InventoryProductMovementsPanel({
         {isForbidden ? null : (
           <Link
             className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-            href={withReturnTo(
+            href={withChainedReturnTo(
               `/inventory/movements?productId=${encodeURIComponent(product.id)}`,
               returnTo,
             )}

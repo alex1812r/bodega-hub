@@ -5,15 +5,16 @@ import { PageBackButton } from "@/shared/components/PageBackButton";
 type InventoryMovementsPageHeaderProps = {
   actions?: ReactNode;
   /**
-   * La URL trae un `returnTo` válido (se llegó desde `/inventory` o desde el
-   * detalle de un producto): "Volver" regresa a esa pantalla tal como estaba.
+   * `returnTo` válido de la URL (se llegó desde `/inventory` o desde el detalle
+   * de un producto): "Volver" regresa a esa pantalla tal como estaba, con el
+   * `returnTo` propio que traiga (`readChainedReturnTo`). `null` = no hay.
    */
-  hasReturnTo?: boolean;
+  returnTo?: string | null;
 };
 
 export function InventoryMovementsPageHeader({
   actions,
-  hasReturnTo = false,
+  returnTo = null,
 }: InventoryMovementsPageHeaderProps) {
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -27,8 +28,8 @@ export function InventoryMovementsPageHeader({
         </p>
       </div>
       <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap lg:justify-end">
-        {hasReturnTo ? (
-          <PageBackButton fallbackHref="/inventory" />
+        {returnTo ? (
+          <PageBackButton href={returnTo} shortcuts />
         ) : (
           <PageBackButton href="/inventory" label="Volver a Inventario" />
         )}

@@ -101,6 +101,27 @@ describe("inventory.mock-server · listInventory (vista única de stock)", () =>
     expect(list("search=cable").items.map((entry) => entry.id)).toContain("prod-cable");
   });
 
+  it("productId exacto devuelve el producto aunque esté inactivo; la lista general no (INV-F1 · F2)", () => {
+    expect(list("productId=prod-latex").items).toEqual([
+      expect.objectContaining({ id: "prod-latex", isActive: false }),
+    ]);
+    expect(list("search=latex").items.map((entry) => entry.id)).not.toContain("prod-latex");
+    expect(list("productId=prod-latex", undefined, SUR_STORE_ID)).toMatchObject({ items: [], total: 0 });
+  });
+
+  it("categoryId o productId con caracteres de control o de más de 200 caracteres responden 400 (INV-F1 · F3)", () => {
+    for (const query of [
+      "categoryId=a%01b",
+      "productId=a%01b",
+      `productId=${"a".repeat(201)}`,
+      `categoryId=${"a".repeat(201)}`,
+    ]) {
+      expect(() => list(query)).toThrow(expect.objectContaining({ code: "BAD_REQUEST", status: 400 }));
+    }
+
+    expect(list(`productId=${"a".repeat(200)}`)).toMatchObject({ items: [], total: 0 });
+  });
+
   it("stockStatus de cada fila es el de getInventoryStockStatus", () => {
     for (const entry of list("").items) {
       const expected = entry.currentStock === 0 ? "out" : entry.currentStock <= entry.minStock ? "low" : "ok";

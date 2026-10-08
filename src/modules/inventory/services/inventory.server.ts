@@ -224,12 +224,13 @@ export async function listInventory(
     let query = supabase
       .from("inventory_overview")
       .select(inventoryOverviewSelect, listCountOptions(head))
-      .eq("store_id", storeId)
-      .eq("is_active", true);
+      .eq("store_id", storeId);
 
-    if (filters.productId) {
-      query = query.eq("id", filters.productId);
-    }
+    // Por id exacto el producto se devuelve aunque esté inactivo (enlace desde
+    // `/products`, que lista inactivos); la lista general solo trae activos.
+    query = filters.productId
+      ? query.eq("id", filters.productId)
+      : query.eq("is_active", true);
 
     if (filters.search) {
       query = query.or(buildProductSearchOrFilter(filters.search));

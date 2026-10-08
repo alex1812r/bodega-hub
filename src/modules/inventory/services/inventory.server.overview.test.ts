@@ -161,6 +161,20 @@ describe("inventory.server · listInventory (vista inventory_overview)", () => {
     );
   });
 
+  it("productId exacto no filtra por is_active: devuelve también un producto inactivo (INV-F1 · F2)", async () => {
+    const [query] = mockSupabase([
+      { count: 1, data: [{ ...cableRow, is_active: false }], error: null },
+    ]);
+
+    const result = await list(`productId=${CABLE_ID}`);
+
+    expect(callsOf(query, "eq")).toEqual([
+      ["store_id", DEFAULT_STORE_ID],
+      ["id", CABLE_ID],
+    ]);
+    expect(result.items).toEqual([expect.objectContaining({ id: CABLE_ID, isActive: false })]);
+  });
+
   it("aplica todos los filtros en la consulta", async () => {
     const [query] = mockSupabase([{ count: 1, data: [cableRow], error: null }]);
 

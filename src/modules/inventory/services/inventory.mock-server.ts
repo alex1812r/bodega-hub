@@ -80,11 +80,16 @@ function summarizeProductLedger(productId: string, windowStart: Date) {
   return { entries30d, exits30d, last, ledgerStock };
 }
 
+/** Filtros exactos del listado: mismos límites que en Supabase (400 si no pueden casar). */
+const INVENTORY_LIST_EXACT_FILTERS = ["categoryId", "productId"] as const;
+
 export function listInventory(
   searchParams: URLSearchParams,
   storeId: string,
   options: ListInventoryOptions = {},
 ) {
+  assertListFilterParams(searchParams, INVENTORY_LIST_EXACT_FILTERS);
+
   const filters = parseInventoryListFilters(searchParams);
   const windowStart = inventoryOverviewWindowStart();
   const withReconciliation = canSeeInventoryReconciliation(options.role);
@@ -93,7 +98,11 @@ export function listInventory(
     .filter(
       (product) =>
         (product.storeId ?? DEFAULT_STORE_ID) === storeId &&
-        matchesInventoryListFilters(product, filters),
+        // Por id exacto el producto sale aunque esté inactivo; la lista general, solo activos.
+        matchesInventoryListFilters(
+          filters.productId ? { ...product, isActive: true } : product,
+          filters,
+        ),
     )
     .map((product): InventoryOverviewItem => {
       const ledger = summarizeProductLedger(product.id, windowStart);

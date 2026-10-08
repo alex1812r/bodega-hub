@@ -628,6 +628,15 @@ describe("InventoryMovementsPage · filtros en servidor y en la URL", () => {
       );
     });
 
+    it("goes back to the inventory list with the returnTo that list arrived with (INV-F1)", async () => {
+      const listUrl = `/inventory?product=p-arroz&returnTo=${encodeURIComponent("/products?search=arr&page=2")}`;
+
+      renderPage(`productId=p-arroz&returnTo=${encodeURIComponent(listUrl)}`);
+      await findRowWith("V-0001");
+
+      expect(screen.getByRole("link", { name: "Volver" })).toHaveAttribute("href", listUrl);
+    });
+
     it.each(["", "returnTo=%2F%2Fevil.com", "returnTo=https%3A%2F%2Fevil.com"])(
       "keeps 'Volver a Inventario' without a safe returnTo (%s)",
       async (query) => {
