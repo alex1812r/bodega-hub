@@ -37,6 +37,10 @@ import {
   updateCategory,
 } from "../src/modules/products/services/categories.mock-server";
 import {
+  getPriceReviewSummary,
+  listPriceReview,
+} from "../src/modules/products/services/priceReview.mock-server";
+import {
   createProduct,
   getProductById,
   getProductPriceHistory,
@@ -77,6 +81,7 @@ import {
   listExchangeRates,
 } from "../src/modules/settings/services/exchangeRates.mock-server";
 import {
+  getPricingSettings,
   getSettings,
   listUsers,
   updateSettings,
@@ -105,6 +110,7 @@ import {
   type UserRole,
 } from "../src/shared/auth/permissions";
 import { mockUserProfiles } from "../src/shared/mocks/erp-data";
+import { DEFAULT_STORE_ID } from "../src/shared/stores/constants";
 
 function searchParams(request: Request) {
   return new URL(request.url).searchParams;
@@ -337,6 +343,10 @@ export const mswHandlers = [
     fromService(() => getPurchasesReport(searchParams(request))),
   ),
   http.get("/api/settings", () => fromService(() => getSettings())),
+  // Semáforo de ganancia y chips de % de la tienda demo (formulario, lista y detalle de producto).
+  http.get("/api/settings/pricing", () =>
+    fromService(() => getPricingSettings(DEFAULT_STORE_ID)),
+  ),
   http.patch("/api/settings", async ({ request }) => fromJson(request, updateSettings)),
   http.get("/api/users", ({ request }) => fromService(() => listUsers(searchParams(request)))),
   http.patch("/api/users/:id", async ({ params, request }) =>
@@ -355,6 +365,14 @@ export const mswHandlers = [
     fromService(() => listProducts(searchParams(request))),
   ),
   http.post("/api/products", async ({ request }) => fromJson(request, createProduct, 201)),
+  // Cola "Por revisar" (PRO-11). Antes de `/api/products/:id`: si no, `price-review`
+  // se resolvería como el id de un producto.
+  http.get("/api/products/price-review", ({ request }) =>
+    fromService(() => listPriceReview(searchParams(request), DEFAULT_STORE_ID)),
+  ),
+  http.get("/api/products/price-review/summary", () =>
+    fromService(() => getPriceReviewSummary(DEFAULT_STORE_ID)),
+  ),
   http.get("/api/products/:id", ({ params }) =>
     fromService(() => getProductById(String(params.id))),
   ),
