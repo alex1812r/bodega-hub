@@ -4,8 +4,9 @@
  *
  *   npm run stock-lab:scenarios -- --suite hypotheses --only pack.receive_disassemble_order,pack.receive_disassemble_parallel
  *
- * Corren con la suite `hypotheses` y no pasan por el BFF: la receta se crea por las tablas y las RPC se llaman por
- * PostgREST como `lab-almacen` (cada petición es su propia transacción, así que la concurrencia es real).
+ * Corren con la suite `hypotheses`. La receta se crea por las tablas y las RPC se llaman por PostgREST como
+ * `lab-almacen` (cada petición es su propia transacción, así que la concurrencia es real); solo
+ * `pack.receive_disassemble_bff` pasa por el BFF (`POST /api/purchases`, detalle y `PATCH …/receive`).
  *
  * Convención: `expected` describe lo que haría un sistema sano; `fail` = bug reproducido.
  */
@@ -13,7 +14,7 @@ import { randomUUID } from "node:crypto";
 
 import type { LabRoleKey } from "../agents/base";
 import { createRecipe, expectClean, explain, facts, setCost } from "./assorted-pack";
-import { Checks, outcome, type CaseCtx, type CaseDef, type CaseOutcome, type Lab, type LabProductRef, type RestResult } from "./db";
+import { Checks, buildPurchaseBody, outcome, type CaseCtx, type CaseDef, type CaseOutcome, type Lab, type LabProductRef, type RestResult } from "./db";
 
 export type OrderLine = { product: LabProductRef; quantity: number; costRef: number; disassemble?: boolean };
 
@@ -188,9 +189,70 @@ async function doubleSubmit(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
   });
 }
 
+type DetailLine = { id?: string; productId?: string; disassembleOnReceive?: boolean; disassembled?: boolean; packRecipe?: { totalUnits?: number } };
+
+/** Líneas del detalle de compra tal como las responde el BFF. */
+function detailLines(data: unknown): DetailLine[] {
+  const items = data && typeof data === "object" ? (data as { items?: unknown }).items : null;
+  return Array.isArray(items) ? (items as DetailLine[]) : [];
+}
+
+async function throughBff(lab: Lab, t: CaseCtx): Promise<CaseOutcome> {
+  const checks = new Checks();
+  const { pack, unit } = await box(lab, t, 6);
+  const other = await box(lab, t, 4);
+  const rate = await lab.rate();
+  const body = buildPurchaseBody(
+    [
+      { productId: pack.id, quantity: 2, unitCostRef: 6 },
+      { productId: other.pack.id, quantity: 1, unitCostRef: 4 },
+    ],
+    { supplierId: lab.supplierId, status: "pedido", exchangeRateId: rate.id, rateVes: rate.rateVes, notes: `S403 ${t.key}`, clientRequestId: randomUUID() },
+  );
+  const items = body.items as Array<Record<string, unknown>>;
+  if (items[0]) items[0].disassembleOnReceive = true;
+
+  const created = await t.http(STOCKER, "POST", "/api/purchases", body);
+  const createdData = created.body?.data;
+  const purchaseId = createdData && typeof createdData === "object" ? (createdData as { id?: unknown }).id : null;
+  if (!created.ok || typeof purchaseId !== "string") throw new Error(`No se pudo crear el pedido por el BFF: ${created.status}`);
+
+  const ordered = detailLines((await t.http(STOCKER, "GET", `/api/purchases/${purchaseId}`)).body?.data);
+  const byProduct = (lines: DetailLine[], product: LabProductRef) => lines.find((line) => line.productId === product.id);
+  checks.eq(
+    "el detalle del pedido trae id, marca y receta de cada línea",
+    [byProduct(ordered, pack), byProduct(ordered, other.pack)].map((line) => [typeof line?.id, line?.disassembleOnReceive, line?.disassembled, line?.packRecipe?.totalUnits]),
+    [["string", true, false, 6], ["string", false, false, 4]],
+  );
+
+  // La confirmación cambia de idea: se desarma la segunda línea y no la que el pedido traía marcada.
+  const key = randomUUID();
+  const list = { clientRequestId: key, disassemble: [{ purchaseItemId: byProduct(ordered, other.pack)?.id }] };
+  const received = await t.http(STOCKER, "PATCH", `/api/purchases/${purchaseId}/receive`, list);
+  const retry = await t.http(STOCKER, "PATCH", `/api/purchases/${purchaseId}/receive`, list);
+  const again = await t.http(STOCKER, "PATCH", `/api/purchases/${purchaseId}/receive`, { disassemble: [] });
+  checks.eq("recibir, reintento con la misma clave y segunda recepción", [received.status, retry.status, again.status], [200, 200, 409]);
+
+  const after = await facts(lab, [pack, unit, other.pack, other.unit]);
+  const lines = detailLines(received.body?.data);
+  checks.eq("stock (caja marcada en el pedido, su unidad, la otra caja, su unidad)", after.map((f) => f.stock), [2, 0, 0, 4]);
+  checks.eq(
+    "el detalle recibido dice qué línea se desarmó",
+    [byProduct(lines, pack), byProduct(lines, other.pack)].map((line) => [line?.disassembleOnReceive, line?.disassembled]),
+    [[false, false], [true, true]],
+  );
+  await expectClean(checks, t);
+  return outcome(checks, {
+    expected: { recepcion: 200, reintento: 200, segunda: 409, stock: [2, 0, 0, 4] },
+    actual: { statuses: [created.status, received.status, retry.status, again.status], estado: after },
+    evidence: [`compra ${purchaseId}`, `clave ${key}`],
+  });
+}
+
 export const RECEIVE_DISASSEMBLE_CASES: readonly CaseDef[] = [
   { id: "pack.receive_disassemble_order", title: "Compra con desarmar al recibir: pedido con línea marcada → recibir abre los empaques", hypothesis: ["H1", "H5"], run: orderThenReceive },
   { id: "pack.receive_disassemble_created_received", title: "Compra que nace recibida con línea marcada: entra y se abre en la misma llamada", hypothesis: ["H5"], run: receivedAtCreation },
   { id: "pack.receive_disassemble_parallel", title: "Recepciones con desarme, recepciones normales y aperturas a mano a la vez: stock correcto, sin deadlock", hypothesis: ["H5", "H6"], run: parallel },
   { id: "pack.receive_disassemble_double_submit", title: "Doble envío de la recepción con la MISMA clave: una recepción y una apertura", hypothesis: ["H8", "H11"], run: doubleSubmit },
+  { id: "pack.receive_disassemble_bff", title: "Por el BFF: pedido con línea marcada, detalle con receta y recepción con la lista de la confirmación", hypothesis: ["H1", "H5"], run: throughBff },
 ];

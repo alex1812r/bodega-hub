@@ -36,6 +36,7 @@ describe("catálogo pack.receive_disassemble_*", () => {
       "pack.receive_disassemble_created_received",
       "pack.receive_disassemble_parallel",
       "pack.receive_disassemble_double_submit",
+      "pack.receive_disassemble_bff",
     ]);
   });
 });
