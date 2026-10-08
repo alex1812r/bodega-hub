@@ -11,12 +11,17 @@ import {
   type PurchaseItemMock,
   type PurchaseMock,
 } from "@/shared/mocks/erp-data";
+import {
+  linkPurchaseLines,
+  type PurchaseLinkLine,
+} from "@/modules/contacts/services/supplierProducts.mock-server";
 import { applyMockPurchaseCost } from "@/modules/products/services/priceReview.mock-server";
 import {
   findActiveMockTaxRateByCode,
   findMockTaxRateForPct,
 } from "@/modules/settings/services/taxRates.mock-server";
 import { normalizeTaxRatePct } from "@/modules/settings/services/taxRates.schemas";
+import { isSupplierContactType } from "@/shared/auth/contactAccess";
 import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
@@ -246,17 +251,97 @@ export function getPurchaseById(id: string, storeId: string) {
  * llega por empaque, su unidad es el empaque: el costo es el del empaque.
  */
 function receivedLineCostRef(item: PurchaseItemMock, storeId: string) {
-  const isPackProduct =
+  const netCostRef = isPackProductLine(item, storeId)
+    ? (item.packCostRef ?? item.unitCostRef)
+    : item.unitCostRef;
+
+  return amountWithTax(roundMoney(netCostRef), item.taxRate ?? 0);
+}
+
+/** Línea por empaque sobre el producto EMPAQUE de un par activo: su unidad es el empaque. */
+function isPackProductLine(item: PurchaseItemMock, storeId: string) {
+  return (
     item.entryMode === "pack" &&
     mockProductPackConversions.some(
       (conversion) =>
         conversion.isActive &&
         conversion.storeId === storeId &&
         conversion.packProductId === item.productId,
-    );
-  const netCostRef = isPackProduct ? (item.packCostRef ?? item.unitCostRef) : item.unitCostRef;
+    )
+  );
+}
 
-  return amountWithTax(roundMoney(netCostRef), item.taxRate ?? 0);
+/**
+ * COM-02 · el proveedor de la compra con las reglas (y textos) de `create_purchase`:
+ * existe, está activo y es proveedor / ambos. Se comprueba antes de crear nada.
+ */
+function assertPurchaseSupplier(supplierId: string) {
+  const supplier = mockContacts.find((contact) => contact.id === supplierId);
+
+  if (!supplier) {
+    throw new ApiError(400, "BAD_REQUEST", "Proveedor no encontrado");
+  }
+
+  if (!supplier.isActive) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      `El proveedor ${supplier.name} está inactivo: no se puede registrar la compra`,
+    );
+  }
+
+  if (!isSupplierContactType(supplier.type)) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      `El contacto ${supplier.name} no es proveedor: no se puede registrar la compra`,
+    );
+  }
+}
+
+/**
+ * COM-02 · cada línea de la compra queda vinculada al proveedor, como en
+ * `create_purchase`: costo por unidad con el IVA de la línea y, si la línea se
+ * guarda por empaque, su empaque (la línea sobre un producto EMPAQUE se guarda
+ * por unidad: sin empaque del proveedor).
+ */
+function linkPurchasedProducts(
+  purchase: PurchaseMock,
+  entries: { item: PurchaseItemMock; supplierSku?: string }[],
+  storeId: string,
+) {
+  const lines = entries
+    .filter(({ item }) => {
+      const product = mockProducts.find((candidate) => candidate.id === item.productId);
+
+      return product !== undefined && (product.storeId ?? DEFAULT_STORE_ID) === storeId;
+    })
+    .map(({ item, supplierSku }): PurchaseLinkLine => {
+      const onPackProduct = isPackProductLine(item, storeId);
+      const netCostVes = onPackProduct ? (item.packCostVes ?? item.unitCostVes) : item.unitCostVes;
+      const isPackLine = item.entryMode === "pack" && !onPackProduct;
+
+      return {
+        costRef: receivedLineCostRef(item, storeId),
+        costVes: amountWithTax(roundMoney(netCostVes), item.taxRate ?? 0),
+        pack:
+          isPackLine && item.packLabel && item.unitsPerPack
+            ? { label: item.packLabel, unitsPerPack: item.unitsPerPack }
+            : undefined,
+        productId: item.productId,
+        supplierSku,
+      };
+    });
+
+  linkPurchaseLines(
+    lines,
+    {
+      purchaseNumber: purchase.purchaseNumber,
+      received: purchase.status === "recibido",
+      supplierId: purchase.supplierId,
+    },
+    storeId,
+  );
 }
 
 /**
@@ -290,6 +375,10 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
   if (previous) {
     return previous;
   }
+
+  const supplierId = input.supplierId ?? "cont-supplier";
+
+  assertPurchaseSupplier(supplierId);
 
   // Antes de crear nada: una linea con IVA invalido rechaza la compra entera.
   const lines = (input.items ?? []).map((item) => ({
@@ -330,7 +419,7 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
     storeId,
     subtotalRef,
     subtotalVes,
-    supplierId: input.supplierId ?? "cont-supplier",
+    supplierId,
     taxRef,
     taxVes,
     totalRef,
@@ -345,6 +434,12 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
   if (status === "recibido") {
     applyReceivedCosts(purchase.id, items, storeId);
   }
+
+  linkPurchasedProducts(
+    purchase,
+    items.map((item, index) => ({ item, supplierSku: lines[index]?.item.supplierSku })),
+    storeId,
+  );
 
   if (requestKey) {
     purchasesByClientRequest().set(requestKey, purchase);

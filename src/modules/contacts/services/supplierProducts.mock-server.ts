@@ -486,6 +486,132 @@ export function registerSupplierProductPrice(id: string,
   };
 }
 
+/** Línea de una compra tal como la necesita el vínculo proveedor-producto. */
+export type PurchaseLinkLine = {
+  /** Costo por unidad con el IVA de la línea (el que la compra fija en el producto). */
+  costRef: number;
+  costVes?: number;
+  /** Solo si la línea se guarda en modo empaque. */
+  pack?: { label: string; unitsPerPack: number };
+  productId: string;
+  supplierSku?: string;
+};
+
+let purchaseLinkSequence = 0;
+
+/** Sufijo de id: varias líneas de una compra se crean en el mismo milisegundo. */
+function nextPurchaseLinkSequence() {
+  purchaseLinkSequence += 1;
+
+  return purchaseLinkSequence;
+}
+
+/**
+ * COM-02 · lo que `create_purchase` (parche 20261010a) hace con los vínculos del
+ * proveedor al confirmar una compra, línea a línea:
+ * - recibida: crea el vínculo que falte, reactiva el inactivo y registra el costo
+ *   de la línea con origen `compra`;
+ * - en pedido: crea el que falte con el costo de la línea (origen `vinculacion`,
+ *   sin fecha de última compra), reactiva el inactivo sin tocar su costo y no
+ *   toca el activo;
+ * - línea por empaque sobre un vínculo creado en ESTA compra: añade su empaque
+ *   (el primero queda predeterminado); los vínculos que ya existían conservan
+ *   los suyos;
+ * - habitual: el vínculo que entra a los activos queda habitual solo si el
+ *   producto no tenía ninguno.
+ * Nunca duplica un vínculo. Devuelve los ids de los vínculos creados.
+ */
+export function linkPurchaseLines(
+  lines: PurchaseLinkLine[],
+  purchase: { purchaseNumber: string; received: boolean; supplierId: string },
+  storeId: string,
+) {
+  settlePreferred();
+  const createdIds: string[] = [];
+
+  for (const line of lines) {
+    const now = new Date().toISOString();
+    let relation = findLink(purchase.supplierId, line.productId);
+
+    if (!relation) {
+      relation = {
+        createdAt: now,
+        id: `supp-prod-mock-${Date.now()}-${nextPurchaseLinkSequence()}`,
+        isActive: true,
+        lastCostRef: line.costRef,
+        lastCostVes: line.costVes,
+        lastPriceOrigin: purchase.received ? "compra" : "vinculacion",
+        lastPurchasedAt: purchase.received ? now : undefined,
+        productId: line.productId,
+        storeId,
+        supplierId: purchase.supplierId,
+        supplierSku: line.supplierSku,
+        updatedAt: now,
+        variationPercent: null,
+      };
+      supplierProducts.unshift(relation);
+      createdIds.push(relation.id);
+      markPreferredIfFirst(relation);
+      appendHistory({
+        newCostRef: line.costRef,
+        newCostVes: line.costVes,
+        notes: `${purchase.received ? "Compra" : "Pedido"} ${purchase.purchaseNumber}`,
+        origin: purchase.received ? "compra" : "vinculacion",
+        supplierProductId: relation.id,
+      });
+    } else {
+      if (!isLinkActive(relation)) {
+        relation.isActive = true;
+        relation.updatedAt = now;
+        markPreferredIfFirst(relation);
+      }
+
+      if (purchase.received) {
+        appendHistory({
+          newCostRef: line.costRef,
+          newCostVes: line.costVes,
+          notes: `Compra ${purchase.purchaseNumber}`,
+          oldCostRef: relation.lastCostRef,
+          oldCostVes: relation.lastCostVes,
+          origin: "compra",
+          supplierProductId: relation.id,
+        });
+        relation.supplierSku = line.supplierSku ?? relation.supplierSku;
+        relation.lastCostRef = line.costRef;
+        relation.lastCostVes = line.costVes;
+        relation.lastPriceOrigin = "compra";
+        relation.lastPurchasedAt = now;
+        relation.updatedAt = now;
+      }
+    }
+
+    const { pack } = line;
+    const linkId = relation.id;
+
+    if (pack && createdIds.includes(linkId)) {
+      const linkPackUnits = packUnits.filter((item) => item.supplierProductId === linkId);
+      const alreadyThere = linkPackUnits.some(
+        (item) =>
+          item.unitsPerPack === pack.unitsPerPack &&
+          item.label.toLowerCase() === pack.label.toLowerCase(),
+      );
+
+      if (!alreadyThere) {
+        packUnits.push({
+          id: `sp-pack-mock-${Date.now()}-${nextPurchaseLinkSequence()}`,
+          isActive: true,
+          isDefault: !linkPackUnits.some((item) => item.isDefault && (item.isActive ?? true)),
+          label: pack.label,
+          supplierProductId: linkId,
+          unitsPerPack: pack.unitsPerPack,
+        });
+      }
+    }
+  }
+
+  return createdIds;
+}
+
 export function deactivateSupplierProduct(id: string, storeId: string) {
   settlePreferred();
   const relation = findRelation(id);
