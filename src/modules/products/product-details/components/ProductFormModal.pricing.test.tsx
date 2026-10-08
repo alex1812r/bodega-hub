@@ -2,6 +2,8 @@
  * PRO-08 · bloque de precio del formulario de producto (`PricingFields`):
  * un chip o un % completan el precio, editar el precio recalcula el %, y el
  * precio nunca se mueve sin que el usuario lo pida.
+ * PRO-F4 · el % libre se revela con "Otro %" (un campo menos al abrir) y el
+ * costo se ve una sola vez (el campo "Costo REF").
  */
 import "@testing-library/jest-dom";
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -47,6 +49,17 @@ function pctField() {
   return screen.getByLabelText("Ganancia %");
 }
 
+function queryPctField() {
+  return screen.queryByLabelText("Ganancia %");
+}
+
+/** El % libre no está a la vista al abrir: se pide con el chip "Otro %". */
+async function revealPctField(user: UserSession) {
+  await user.click(screen.getByRole("button", { name: "Otro %" }));
+
+  return pctField();
+}
+
 function priceField() {
   return screen.getByLabelText("Precio REF");
 }
@@ -80,8 +93,9 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     await user.click(screen.getByRole("button", { name: "30 %" }));
 
     expect(priceField()).toHaveValue("13");
-    expect(pctField()).toHaveValue("30");
     expect(screen.getByRole("button", { name: "30 %" })).toHaveAttribute("aria-pressed", "true");
+    // Un solo clic: el chip no obliga a abrir el % libre.
+    expect(queryPctField()).not.toBeInTheDocument();
 
     await save(user);
 
@@ -100,7 +114,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillName(user);
     await user.type(costField(), "8");
-    await user.type(pctField(), "25");
+    await user.type(await revealPctField(user), "25");
 
     expect(priceField()).toHaveValue("10");
 
@@ -117,13 +131,14 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     await user.type(costField(), "10");
     await user.type(priceField(), "12");
 
-    expect(pctField()).toHaveValue("20");
+    expect(screen.getByRole("button", { name: "20 %" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTitle(BADGE_TITLE)).toHaveTextContent("20 %");
 
     await user.clear(priceField());
     await user.type(priceField(), "15");
 
-    expect(pctField()).toHaveValue("50");
+    expect(screen.getByTitle(BADGE_TITLE)).toHaveTextContent("50 %");
+    expect(await revealPctField(user)).toHaveValue("50");
   });
 
   it("cambiar el costo no mueve el precio: solo recalcula el %", async () => {
@@ -138,7 +153,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     await user.type(costField(), "8");
 
     expect(priceField()).toHaveValue("13");
-    expect(pctField()).toHaveValue("62.5");
+    expect(screen.getByTitle(BADGE_TITLE)).toHaveTextContent("62,5 %");
 
     await save(user);
 
@@ -174,7 +189,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
     await fillName(user);
     await user.type(costField(), "0");
-    await user.type(pctField(), "20");
+    await user.type(await revealPctField(user), "20");
 
     expect(priceField()).toHaveValue("0");
     expect(screen.getByText(/Este producto no tiene costo/)).toBeVisible();
@@ -261,8 +276,8 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
 
     expect(costField()).toHaveValue("10");
     expect(priceField()).toHaveValue("12");
-    expect(pctField()).toHaveValue("20");
     expect(screen.getByRole("button", { name: "20 %" })).toHaveAttribute("aria-pressed", "true");
+    expect(queryPctField()).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "30 %" }));
     await save(user);
@@ -287,7 +302,37 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
 
     expect(costField()).toHaveValue("1.5");
     expect(priceField()).toHaveValue("");
-    expect(pctField()).toHaveValue("");
+    expect(queryPctField()).not.toBeInTheDocument();
+  });
+
+  it("compact: un precio precargado cuyo % no es ningun chip abre con el % libre ya a la vista", () => {
+    render(
+      <ProductFormModal
+        compact
+        initialValues={{ currentCostRef: 8, salePriceRef: 10 }}
+        onOpenChange={jest.fn()}
+        open
+      />,
+    );
+
+    expect(pctField()).toHaveValue("25");
+    expect(screen.queryByRole("button", { name: "Otro %" })).not.toBeInTheDocument();
+  });
+
+  it("el costo se ve una sola vez: el campo Costo REF, sin la caja de solo lectura", async () => {
+    const user = userEvent.setup({ delay: null });
+
+    render(<ProductFormModal onOpenChange={jest.fn()} open />);
+
+    expect(screen.queryByText("Costo actual (ya con IVA)")).not.toBeInTheDocument();
+
+    await user.type(costField(), "10");
+    await user.type(priceField(), "12");
+
+    expect(screen.queryByText("Costo actual (ya con IVA)")).not.toBeInTheDocument();
+    expect(screen.queryByText("ref 10.00")).not.toBeInTheDocument();
+    // El semáforo sigue ahí.
+    expect(screen.getByTitle(BADGE_TITLE)).toHaveTextContent("20 %");
   });
 
   it("edicion: abrir y guardar no mueve el precio, ni siquiera uno con mas de 2 decimales", async () => {
@@ -325,7 +370,7 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     );
 
     expect(priceField()).toHaveValue("12");
-    expect(pctField()).toHaveValue("20");
+    expect(screen.getByRole("button", { name: "20 %" })).toHaveAttribute("aria-pressed", "true");
 
     await user.clear(costField());
     await user.type(costField(), "11");
@@ -373,6 +418,22 @@ describe("ProductFormModal · bloque de precio (PRO-08)", () => {
     await waitFor(() => expect(screen.getByLabelText("Nombre")).toHaveValue(""));
     expect(costField()).toHaveValue("");
     expect(priceField()).toHaveValue("");
-    expect(pctField()).toHaveValue("");
+    expect(queryPctField()).not.toBeInTheDocument();
+  });
+
+  it("Guardar y crear otro vuelve a plegar el % libre que se habia abierto", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSubmit = jest.fn();
+
+    render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
+    await fillName(user);
+    await user.type(costField(), "8");
+    await user.type(await revealPctField(user), "25");
+    await save(user, "Guardar y crear otro");
+
+    await waitFor(() => expect(screen.getByLabelText("Nombre")).toHaveValue(""));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ currentCostRef: 8, salePriceRef: 10 });
+    expect(queryPctField()).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Otro %" })).toBeInTheDocument();
   });
 });

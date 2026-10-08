@@ -48,7 +48,10 @@ type ProductFormBasicFieldsProps = {
 /**
  * Nivel básico del formulario de producto: lo único visible al abrir.
  * Orden fijo: imagen, Nombre, Categoría, Código de barras, Costo REF y el
- * bloque de precio (`PricingFields`: chips de %, Ganancia % y Precio REF).
+ * bloque de precio (`PricingFields`: semáforo, chips de % y Precio REF). El %
+ * libre ("Ganancia %") se revela con el chip "Otro %", o abre ya a la vista si
+ * el % del precio cargado no es ningún chip. El costo se ve una sola vez, en
+ * su campo: la caja de solo lectura de `PricingFields` va oculta.
  *
  * El precio solo cambia cuando el usuario elige un chip, escribe un % o
  * escribe el precio: abrir el formulario o cambiar el costo no lo mueven.
@@ -125,7 +128,9 @@ export function ProductFormBasicFields({
         <PricingFields
           chips={pricingChips ?? pricingOptions.chips}
           cost={cost ?? 0}
+          customPct="onDemand"
           error={showPriceRequired && price === null ? SALE_PRICE_REQUIRED_MESSAGE : undefined}
+          hideCost
           onPriceChange={setPrice}
           price={price}
           suggestedPct={suggestedMarkupPct}

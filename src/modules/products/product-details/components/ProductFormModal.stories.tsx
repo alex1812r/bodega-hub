@@ -36,6 +36,7 @@ export const Edit: Story = {
  * Bloque de precio (PRO-08): con el costo escrito, el chip del % sugerido (el
  * primero, destacado) o cualquier otro completan el Precio REF; editar el precio
  * recalcula el % y el semáforo. Nada fija un precio sin que el usuario lo pida.
+ * El % libre no está a la vista al abrir: lo revela el chip "Otro %".
  */
 export const Pricing: Story = {
   args: {
@@ -46,6 +47,13 @@ export const Pricing: Story = {
     await userEvent.click(await screen.findByRole("button", { name: "30 %" }));
 
     await expect(screen.getByLabelText("Precio REF")).toHaveValue("13");
+    await expect(screen.getByRole("button", { name: "30 %" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Otro %" }));
+
     await expect(screen.getByLabelText("Ganancia %")).toHaveValue("30");
   },
 };

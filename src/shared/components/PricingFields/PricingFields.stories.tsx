@@ -15,6 +15,10 @@ se aplica ningún impuesto.
 - \`onMarkupChange\` recibe el % resultante de cada cambio (útil para prellenar "Ajuste de margen a X %").
 - Sin costo, un % deja el precio en 0 y se avisa. Un precio bajo el costo no se bloquea: semáforo rojo
   con % negativo y aviso.
+- \`customPct="onDemand"\` quita "Ganancia %" de la vista inicial: lo revela el chip "Otro %" (y abre ya
+  revelado si el % del precio inicial no es ningún chip). Por defecto \`"always"\`.
+- \`hideCost\` oculta la caja "Costo actual" cuando el consumidor ya muestra el costo en su propio campo;
+  el semáforo se mantiene.
 `;
 
 const meta = {
@@ -104,6 +108,33 @@ export const ConError: Story = {
 
 export const Deshabilitado: Story = {
   args: { disabled: true },
+};
+
+/** El % libre no está a la vista: los chips siguen a un clic y "Otro %" revela el campo, con el foco. */
+export const PorcentajeLibreBajoDemanda: Story = {
+  args: { cost: 10, customPct: "onDemand", price: null },
+  play: async ({ canvas, userEvent }) => {
+    await expect(canvas.queryByLabelText("Ganancia %")).not.toBeInTheDocument();
+
+    await userEvent.click(canvas.getByRole("button", { name: "30 %" }));
+
+    await expect(canvas.getByLabelText("Precio REF")).toHaveValue("13");
+    await expect(canvas.queryByLabelText("Ganancia %")).not.toBeInTheDocument();
+
+    await userEvent.click(canvas.getByRole("button", { name: "Otro %" }));
+
+    await expect(canvas.getByLabelText("Ganancia %")).toHaveFocus();
+  },
+};
+
+/** El % del precio inicial (25 %) no es ningún chip: el campo abre ya revelado. */
+export const PorcentajeLibreYaRevelado: Story = {
+  args: { cost: 8, customPct: "onDemand", price: 10 },
+};
+
+/** El consumidor ya muestra el costo en su propio campo: sin la caja, con el semáforo. */
+export const SinCajaDeCosto: Story = {
+  args: { cost: 8, customPct: "onDemand", hideCost: true, price: 9.6 },
 };
 
 export const Oscuro: Story = {

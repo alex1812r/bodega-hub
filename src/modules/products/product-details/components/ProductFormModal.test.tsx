@@ -275,15 +275,9 @@ describe("ProductFormModal · enteros y limites (SHR-09J)", () => {
 });
 
 describe("ProductFormModal · dos niveles (PRO-01)", () => {
-  // El bloque de precio (PRO-08) aporta "Ganancia %" y "Precio REF"; el costo va antes.
-  const BASIC_FIELDS = [
-    "Nombre",
-    "Categoría",
-    "Código de barras",
-    "Costo REF",
-    "Ganancia %",
-    "Precio REF",
-  ];
+  // El bloque de precio (PRO-08) aporta "Precio REF"; el costo va antes. El % libre
+  // ("Ganancia %") no está al abrir: se revela con el chip "Otro %" (PRO-F4).
+  const BASIC_FIELDS = ["Nombre", "Categoría", "Código de barras", "Costo REF", "Precio REF"];
   const packProduct = {
     barcode: "7591234567890",
     categoryId: "cat-1",
@@ -365,7 +359,15 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
       />,
     );
 
-    expect(visibleFieldLabels()).toEqual(BASIC_FIELDS);
+    // 12.5 sobre 10 es un 25 %, que no es ningún chip: el % libre abre ya a la vista (PRO-F4).
+    expect(visibleFieldLabels()).toEqual([
+      "Nombre",
+      "Categoría",
+      "Código de barras",
+      "Costo REF",
+      "Ganancia %",
+      "Precio REF",
+    ]);
     expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByText("SKU caja-cola · Stock actual 7")).toBeVisible();
 
@@ -615,7 +617,6 @@ describe("ProductFormModal · modo compact (PRO-01)", () => {
       "Categoría",
       "Código de barras",
       "Costo REF",
-      "Ganancia %",
       "Precio REF",
     ]);
     expect(screen.queryByRole("button", { name: /Más opciones/ })).not.toBeInTheDocument();
