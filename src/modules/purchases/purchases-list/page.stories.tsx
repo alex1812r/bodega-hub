@@ -7,6 +7,11 @@ import { PurchasesListPage } from "./page";
  * Búsqueda, filtros, página y tamaño viven en la URL (`useUrlListState`):
  * `search`, `status`, `pendingBalance=1` ("Con saldo pendiente"), `from`/`to`
  * (día operativo Caracas), `page`, `limit`. «Ver detalle» lleva `returnTo`.
+ *
+ * El número de compra es el enlace al detalle. Las columnas siguen el ancho de la
+ * tarjeta de la tabla (`@container`): Fecha aparece desde 1152 px (antes va bajo
+ * el número) y Pagado desde 1280 px; Acciones se ve siempre. En un pedido,
+ * «Recibir mercancía…» no recibe: abre el detalle con la previsualización.
  */
 const meta = {
   component: PurchasesListPage,
