@@ -766,6 +766,13 @@ export function PurchaseCreatePage() {
                 : undefined
             }
             onRemoveItem={(itemId) => dispatchLines({ itemId, type: "lineRemoved" })}
+            onScanMissed={({ code, message }) =>
+              showToast({
+                description: message,
+                title: `No se agregó el código ${code}`,
+                tone: "error",
+              })
+            }
             onSearchChange={setProductSearch}
             onSettleItem={(itemId) => dispatchLines({ itemId, type: "lineSettled" })}
             onUpdateItem={handleUpdateItem}

@@ -71,9 +71,14 @@ jest.mock("./services/resolveSupplierCatalogProduct", () => ({
 }));
 jest.mock("./components/PurchaseSupplierCard", () => ({
   PurchaseSupplierCard: ({ onSupplierChange }: { onSupplierChange: (id: string) => void }) => (
-    <button onClick={() => onSupplierChange("cont-supplier")} type="button">
-      elegir proveedor
-    </button>
+    <>
+      <button onClick={() => onSupplierChange("cont-supplier")} type="button">
+        elegir proveedor
+      </button>
+      <button onClick={() => onSupplierChange("cont-other")} type="button">
+        elegir otro proveedor
+      </button>
+    </>
   ),
 }));
 
@@ -293,5 +298,179 @@ describe("PurchaseCreatePage · el foco tras un escaneo se queda en el buscador 
     pickTaladro();
 
     expect(quantity("Taladro")).toHaveFocus();
+  });
+});
+
+describe("PurchaseCreatePage · cola de escaneos (COM-F8 · 2f, R2, 2g)", () => {
+  /** Escaneos seguidos sobre lo que tenga el foco, con `gapMs` entre el Enter de uno y el siguiente. */
+  async function scanChain(codes: string[], gapMs: number) {
+    for (const code of codes) {
+      await scan(code);
+      await settle(gapMs);
+    }
+  }
+
+  function cellValues() {
+    return within(screen.getByRole("list", { name: "Líneas de la compra" }))
+      .getAllByRole<HTMLInputElement>("textbox")
+      .map((input) => input.value);
+  }
+
+  it.each([
+    [0, 20],
+    [30, 20],
+    [120, 20],
+    [0, 300],
+    [500, 300],
+    [500, 800],
+    [1000, 800],
+    [1500, 800],
+  ])(
+    "A, B y C escaneados cada %i ms con %i ms de latencia: tres líneas en orden, nada perdido ni mezclado",
+    async (gapMs, latencyMs) => {
+      resolveWithLatency(latencyMs);
+      renderPage();
+      act(() => searchBox().focus());
+
+      await scanChain([CODE_A, CODE_B, CODE_C], gapMs);
+      await settle(latencyMs * 4 + 500);
+
+      expect(triedCodes()).toEqual([CODE_A, CODE_B, CODE_C]);
+      expect(lineNames()).toEqual(["Lija", "Cable", "Taladro"]);
+      // Cantidad y costo de cada línea: ni un dígito de un código en ninguna celda.
+      expect(cellValues()).toEqual(["1", "1020", "1", "1020", "1", "1020"]);
+      expect(searchBox()).toHaveValue("");
+      expect(searchBox()).toHaveFocus();
+      expect(screen.queryByText(NOT_FOUND_MESSAGE)).not.toBeInTheDocument();
+    },
+  );
+
+  it("el buscador se vacía en el mismo Enter y sigue aceptando tecleo mientras hay cola", async () => {
+    resolveWithLatency(800);
+    renderPage();
+    act(() => searchBox().focus());
+
+    await scan(CODE_A);
+
+    expect(searchBox()).toHaveValue("");
+    expect(searchBox()).not.toHaveAttribute("readonly");
+
+    await press("cab".split(""), 120);
+    await settle(1000);
+
+    expect(lineNames()).toEqual(["Taladro"]);
+    // Lo tecleado mientras se resolvía A no se borra al llegar su respuesta.
+    expect(searchBox()).toHaveValue("cab");
+  });
+
+  it("el mismo código repetido en la cola suma 1 cada vez: A, A, B, A deja A en 3", async () => {
+    resolveWithLatency(300);
+    renderPage();
+    act(() => searchBox().focus());
+
+    await scanChain([CODE_A, CODE_A, CODE_B, CODE_A], 30);
+    await settle(2000);
+
+    expect(lineNames()).toEqual(["Taladro", "Cable"]);
+    expect(quantity("Taladro")).toHaveValue("3");
+    expect(quantity("Cable")).toHaveValue("1");
+  });
+
+  it("un código que no existe da su aviso y no frena a los siguientes", async () => {
+    resolveWithLatency(300);
+    renderPage();
+    act(() => searchBox().focus());
+
+    await scanChain([CODE_A, "1111111111116", CODE_C], 30);
+    await settle(2000);
+
+    expect(lineNames()).toEqual(["Lija", "Taladro"]);
+    expect(triedCodes()).toEqual([CODE_A, "1111111111116", CODE_C]);
+    // Con otro código detrás en la cola, el aviso lleva el código que no entró.
+    expect(screen.getByText("No se agregó el código 1111111111116")).toBeInTheDocument();
+  });
+
+  it("si la consulta de un código falla, avisa y los siguientes entran", async () => {
+    resolveWithLatency(300);
+    mockResolveByCode.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          setTimeout(() => reject(new Error("red")), 300);
+        }),
+    );
+    renderPage();
+    act(() => searchBox().focus());
+
+    await scanChain([CODE_A, CODE_B], 0);
+    await settle(1000);
+
+    expect(lineNames()).toEqual(["Cable"]);
+    expect(screen.getByText("No se agregó el código 7501234567890")).toBeInTheDocument();
+  });
+
+  it("dos escaneos seguidos con el foco en una celda: el primero se detecta en la celda, el segundo cae en el buscador y entran los dos", async () => {
+    resolveWithLatency(300);
+    renderPage();
+    pickTaladro();
+    expect(quantity("Taladro")).toHaveFocus();
+
+    await scanChain([CODE_B, CODE_C], 0);
+    await settle(3000);
+
+    expect(lineNames()).toEqual(["Lija", "Cable", "Taladro"]);
+    expect(cellValues()).toEqual(["1", "1020", "1", "1020", "1", "1020"]);
+    expect(searchBox()).toHaveValue("");
+  });
+
+  it("dos códigos detectados en la misma celda sin esperar al primero: entran los dos y la celda conserva su valor", async () => {
+    resolveWithLatency(300);
+    renderPage();
+    pickTaladro();
+
+    await scan(CODE_B);
+    // El usuario vuelve a la celda antes de que llegue la respuesta y escanea ahí.
+    act(() => quantity("Taladro").focus());
+    await scan(CODE_C);
+    await settle(3000);
+
+    expect(lineNames()).toEqual(["Lija", "Cable", "Taladro"]);
+    expect(quantity("Taladro")).toHaveValue("1");
+  });
+
+  it("cambiar de proveedor descarta los escaneos que aún no se resolvieron", async () => {
+    resolveWithLatency(800);
+    renderPage();
+    act(() => searchBox().focus());
+
+    await scanChain([CODE_A, CODE_B], 0);
+    fireEvent.click(screen.getByRole("button", { name: "elegir otro proveedor" }));
+    await settle(4000);
+
+    expect(lineNames()).toEqual([]);
+    expect(screen.queryByText(NOT_FOUND_MESSAGE)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No se agregó el código/)).not.toBeInTheDocument();
+  });
+
+  it("un código suelto que no existe vuelve al buscador, seleccionado, con la oferta de crearlo; el siguiente escaneo lo sustituye", async () => {
+    resolveWithLatency(20);
+    renderPage();
+    act(() => searchBox().focus());
+
+    await scan("1111111111116");
+    expect(searchBox()).toHaveValue("");
+    await settle(200);
+
+    expect(screen.getByText(NOT_FOUND_MESSAGE)).toBeInTheDocument();
+    expect(searchBox()).toHaveValue("1111111111116");
+    expect(searchBox().selectionStart).toBe(0);
+    expect(searchBox().selectionEnd).toBe(13);
+
+    await scan(CODE_A);
+    await settle(200);
+
+    expect(triedCodes()).toEqual(["1111111111116", CODE_A]);
+    expect(lineNames()).toEqual(["Taladro"]);
+    expect(searchBox()).toHaveValue("");
+    expect(screen.queryByText(NOT_FOUND_MESSAGE)).not.toBeInTheDocument();
   });
 });

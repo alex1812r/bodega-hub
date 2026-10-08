@@ -438,7 +438,9 @@ describe("PurchaseCreatePage · buscador sobre todos los productos activos (COM-
 
     fireEvent.change(input, { target: { value: "HAR-SUE" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    await waitFor(() => expect(input).toHaveValue(""));
+    // El buscador se vacía en el mismo Enter (cola de escaneos): la línea llega después.
+    expect(input).toHaveValue("");
+    expect(await screen.findByLabelText(/^Cantidad de /)).toHaveValue("1");
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-3"));

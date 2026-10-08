@@ -78,7 +78,8 @@ function countDigits(text: string) {
  *   delante de ese código es el valor tecleado; si no hay o no vale, se conserva el
  *   que tenía la celda. Si ninguno existe queda lo tecleado a mano antes de la
  *   ráfaga o, si no hay, el valor que tenía.
- * - Mientras se resuelve, la celda muestra ese valor y otro Enter no hace nada.
+ * - El escaneo se encola y el foco pasa al buscador (D36); mientras se resuelve, la
+ *   celda muestra ese valor. Otro escaneo aquí antes de la respuesta también se encola.
  * - En una celda entera, un valor de más de 6 dígitos no sube mientras se escribe
  *   (podría ser un código a medio llegar): sube al salir o con Enter.
  * - El campo no admite más de `FIELD_MAX_DIGITS` dígitos: los que el lector teclea de
@@ -115,8 +116,6 @@ export function PurchaseLineNumberCell({
   const overflow = useRef("");
   // Valor válido que aún no subió al padre por tener demasiados dígitos.
   const held = useRef<number | null>(null);
-  // Hay un escaneo de esta celda resolviéndose: otro Enter no lanza un segundo.
-  const scanning = useRef(false);
   // `onChange` del último render: un escaneo se resuelve después del Enter.
   const onChangeRef = useRef(onChange);
   const shown = typed && typed.parent === value ? typed.value : value;
@@ -232,11 +231,6 @@ export function PurchaseLineNumberCell({
 
     overflow.current = "";
 
-    if (event.key === "Enter" && scanning.current) {
-      event.preventDefault();
-      return;
-    }
-
     const scan =
       event.key === "Enter" ? readPurchaseLineScan(scanText, stamps.current, Date.now()) : null;
 
@@ -254,12 +248,9 @@ export function PurchaseLineNumberCell({
       });
 
       if (onScan) {
-        scanning.current = true;
         onScan({
           candidates: scan.candidates,
           onResolved: (code) => {
-            scanning.current = false;
-
             if (code !== null) {
               send(readValueBeforeCode(scanText, code) ?? before);
             }

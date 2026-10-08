@@ -2,6 +2,7 @@
 
 import { Package, Plus } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { PosCatalogToolbar } from "@/modules/sales/sale-create/components/PosCatalogToolbar";
 import { PosScanModal } from "@/modules/sales/sale-create/components/PosScanModal";
@@ -19,9 +20,10 @@ import type {
   PurchaseWebLine,
 } from "../types";
 import {
-  type PurchaseCodeResolution,
-  resolvePurchaseProductByCode,
-} from "../services/resolveSupplierCatalogProduct";
+  type PurchaseScanJob,
+  type PurchaseScanOutcome,
+  usePurchaseScanQueue,
+} from "../hooks/usePurchaseScanQueue";
 import type { PurchaseLineScan } from "../utils/purchaseLineScan";
 import { PurchaseLineItemsTable, type PurchaseLineItemMeta } from "./PurchaseLineItemsTable";
 import { PurchaseToggleSwitch } from "./PurchaseToggleSwitch";
@@ -80,6 +82,11 @@ type PurchaseProductPickerCardProps = {
    */
   onNewProduct?: (initialValues: ProductFormInitialValues, opener: HTMLElement | null) => void;
   onRemoveItem: (itemId: string) => void;
+  /**
+   * Un escaneo no agregó nada y detrás hay más en la cola: su aviso junto al buscador
+   * dura un instante, así que la página lo muestra aparte con el código que no entró.
+   */
+  onScanMissed?: (notice: { code: string; message: string }) => void;
   onSearchChange: (value: string) => void;
   onSettleItem: (itemId: string) => void;
   onUpdateItem: (itemId: string, input: Partial<PurchaseDraftItem>) => void;
@@ -118,9 +125,11 @@ export function PurchaseExemptToggle({
 }
 
 const SCAN_NO_SUPPLIER_MESSAGE = "Selecciona un proveedor antes de buscar productos.";
-const SCAN_NOT_FOUND_MESSAGE = "No hay un producto activo con ese código de barras o SKU.";
-const SCAN_AMBIGUOUS_MESSAGE = "Hay más de un producto activo con ese código.";
-const SCAN_FAILED_MESSAGE = "No se pudo buscar el producto.";
+const SCAN_MISS_MESSAGES = {
+  ambiguous: "Hay más de un producto activo con ese código.",
+  failed: "No se pudo buscar el producto.",
+  not_found: "No hay un producto activo con ese código de barras o SKU.",
+};
 const popupClassName =
   "absolute left-0 right-0 top-full z-20 mt-1 rounded-lg border border-border bg-surface-container-lowest shadow-lg";
 const popupMessageClassName = "px-4 py-2.5 text-sm";
@@ -137,25 +146,6 @@ export function buildNewProductPrefill(search: string): ProductFormInitialValues
   }
 
   return /^\d+$/.test(text) ? { barcode: text } : { name: text };
-}
-
-/**
- * Consulta los códigos uno tras otro, con la misma resolución exacta del buscador, y se
- * detiene en el primero que es de algún producto. `code` es ese código; `null` si ninguno.
- */
-async function resolveFirstKnownCode(
-  supplierId: string,
-  codes: string[],
-): Promise<{ code: string | null; resolution: PurchaseCodeResolution }> {
-  for (const code of codes) {
-    const resolution = await resolvePurchaseProductByCode(supplierId, code);
-
-    if (resolution.status !== "not_found") {
-      return { code, resolution };
-    }
-  }
-
-  return { code: null, resolution: { status: "not_found" } };
 }
 
 const FOCUSABLE_SELECTOR =
@@ -197,6 +187,7 @@ export function PurchaseProductPickerCard({
   onLineTaxChange,
   onNewProduct,
   onRemoveItem,
+  onScanMissed,
   onSearchChange,
   onSettleItem,
   onUpdateItem,
@@ -208,8 +199,9 @@ export function PurchaseProductPickerCard({
 }: PurchaseProductPickerCardProps) {
   const [scanOpen, setScanOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [isLookingUp, setIsLookingUp] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const scanQueue = usePurchaseScanQueue(supplierId, handleScanSettled);
+  const isLookingUp = scanQueue.pending > 0;
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<HTMLElement>(null);
@@ -229,12 +221,6 @@ export function PurchaseProductPickerCard({
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
-
-  function focusSearchInput() {
-    requestAnimationFrame(() => {
-      searchInputRef.current?.focus();
-    });
-  }
 
   function handleTabPastLastLock() {
     searchInputRef.current?.focus();
@@ -281,9 +267,16 @@ export function PurchaseProductPickerCard({
     onNewProduct?.(initialValues, opener);
   }
 
-  // Lector o Enter: el codigo exacto se resuelve en servidor, sin esperar al debounce de la lista.
+  // Lector o Enter: el código exacto se resuelve en servidor, sin esperar al debounce de la
+  // lista. Se encola y el buscador queda vacío en el mismo Enter: el lector puede teclear el
+  // siguiente código sin esperar la respuesta de este.
   function handleCodeSubmit(code: string, options?: { closeScanOnSuccess?: boolean }) {
-    lookUpCodes([code], options);
+    if (!enqueueScan({ closeScanOnSuccess: options?.closeScanOnSuccess, codes: [code], searchText: code })) {
+      return;
+    }
+
+    onSearchChange("");
+    setPickerOpen(false);
   }
 
   // Lector sobre una celda de línea: el código es uno de los sufijos de lo tecleado. La
@@ -291,57 +284,61 @@ export function PurchaseProductPickerCard({
   // El foco pasa ya al buscador: el siguiente escaneo no debe caer en la celda (D36).
   function handleLineScan(scan: PurchaseLineScan) {
     searchInputRef.current?.focus();
-    lookUpCodes(scan.candidates, { onResolved: scan.onResolved });
+    enqueueScan({ codes: scan.candidates, onResolved: scan.onResolved });
   }
 
-  function lookUpCodes(
-    codes: string[],
-    options?: { closeScanOnSuccess?: boolean; onResolved?: (code: string | null) => void },
-  ) {
+  function enqueueScan(job: PurchaseScanJob) {
     if (!hasSupplier) {
-      options?.onResolved?.(null);
+      job.onResolved?.(null);
       setScanError(SCAN_NO_SUPPLIER_MESSAGE);
-      return;
+      return false;
     }
 
-    setIsLookingUp(true);
-    setScanError(null);
+    scanQueue.enqueue(job);
+    return true;
+  }
 
-    // Agregue o no, el foco es del buscador: para reintentar o para el siguiente escaneo (D36).
-    void resolveFirstKnownCode(supplierId, codes)
-      .then(({ code, resolution }) => {
-        if (resolution.status !== "found") {
-          options?.onResolved?.(null);
-          setScanError(
-            resolution.status === "ambiguous" ? SCAN_AMBIGUOUS_MESSAGE : SCAN_NOT_FOUND_MESSAGE,
-          );
-          focusSearchInput();
-          return;
-        }
+  // Resultado de un escaneo de la cola. Agregue o no, el foco es del buscador: para
+  // reintentar o para el siguiente escaneo (D36).
+  function handleScanSettled({ hasMore, job, resolution }: PurchaseScanOutcome) {
+    if (resolution.status === "found") {
+      setScanError(null);
+      onAddProduct(resolution.product, { scanned: true });
 
-        options?.onResolved?.(code);
-        onAddProduct(resolution.product, { scanned: true });
-        onSearchChange("");
-        setPickerOpen(false);
-        if (options?.closeScanOnSuccess) {
-          setScanOpen(false);
-        }
+      if (job.closeScanOnSuccess) {
+        setScanOpen(false);
+      }
+    } else {
+      const message = SCAN_MISS_MESSAGES[resolution.status];
 
-        // Bloquear al agregar puede dejar sin foco a quien lo tenía (su fila ya no tiene campos).
-        requestAnimationFrame(() => {
-          if (!document.activeElement || document.activeElement === document.body) {
-            searchInputRef.current?.focus();
-          }
+      setScanError(message);
+
+      if (hasMore) {
+        // El aviso junto al buscador lo pisará el siguiente escaneo: este queda aparte.
+        onScanMissed?.({ code: job.codes[0], message });
+      } else if (job.searchText && searchInputRef.current?.value === "") {
+        // Nada detrás y el buscador sigue vacío: vuelve lo buscado, para corregirlo o crear
+        // el producto. Queda seleccionado: el siguiente escaneo lo sustituye, no se le pega.
+        const text = job.searchText;
+
+        // Pintado ya: si se seleccionara un instante después, el lector podría adelantarse.
+        flushSync(() => {
+          onSearchChange(text);
+          setPickerOpen(true);
         });
-      })
-      .catch(() => {
-        options?.onResolved?.(null);
-        setScanError(SCAN_FAILED_MESSAGE);
-        focusSearchInput();
-      })
-      .finally(() => {
-        setIsLookingUp(false);
-      });
+
+        if (document.activeElement === searchInputRef.current) {
+          searchInputRef.current?.select();
+        }
+      }
+    }
+
+    // Bloquear al agregar puede dejar sin foco a quien lo tenía (su fila ya no tiene campos).
+    requestAnimationFrame(() => {
+      if (!document.activeElement || document.activeElement === document.body) {
+        searchInputRef.current?.focus();
+      }
+    });
   }
 
   return (
@@ -376,7 +373,9 @@ export function PurchaseProductPickerCard({
           <PosCatalogToolbar
             autoFocus={false}
             embedded
-            isLookingUp={isLookingUp}
+            // Nunca «buscando»: ese estado deja el campo de solo lectura y, con la cola, el
+            // lector debe poder teclear el siguiente código mientras se resuelve el anterior.
+            isLookingUp={false}
             onOpenScan={() => setScanOpen(true)}
             onScanSubmit={handleCodeSubmit}
             onSearchChange={handleSearchChange}
@@ -385,6 +384,13 @@ export function PurchaseProductPickerCard({
             scanError={scanError}
             search={search}
           />
+          {isLookingUp ? (
+            <p className="sr-only" role="status">
+              {scanQueue.pending === 1
+                ? "Buscando 1 código escaneado..."
+                : `Buscando ${scanQueue.pending} códigos escaneados...`}
+            </p>
+          ) : null}
           {showResults && isSearching ? (
             <p
               className={cn(popupClassName, popupMessageClassName, "text-muted-foreground")}
