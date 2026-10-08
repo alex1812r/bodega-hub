@@ -27,7 +27,10 @@ import { PurchaseDetailPaymentStatusCard } from "./components/PurchaseDetailPaym
 import { PurchaseDetailPaymentsTable } from "./components/PurchaseDetailPaymentsTable";
 import { PurchaseDetailProductsTable } from "./components/PurchaseDetailProductsTable";
 import { PurchaseDetailSupplierCard } from "./components/PurchaseDetailSupplierCard";
+import { PurchasePendingReceiptBanner } from "./components/PurchasePendingReceiptBanner";
+import { PurchaseReceivePreviewModal } from "./components/PurchaseReceivePreviewModal";
 import { exportPurchaseDetailPdf } from "./services/exportPurchaseDetailPdf";
+import { buildReceivePreview, type ReceivePreviewLine } from "./utils/buildReceivePreview";
 
 type PurchaseDetailsPageProps = {
   purchaseId?: string;
@@ -44,6 +47,9 @@ export function PurchaseDetailsPage({
   const { can, role } = usePermission();
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isPaying, setIsPaying] = useState(false);
+  // Líneas de la previsualización, fijadas al abrir el modal: si la recepción falla
+  // y el detalle se refresca, el modal sigue mostrando lo que se intentó recibir.
+  const [receivePreview, setReceivePreview] = useState<ReceivePreviewLine[] | null>(null);
 
   async function handleExportPdf() {
     setIsExportingPdf(true);
@@ -56,6 +62,17 @@ export function PurchaseDetailsPage({
       }
     } finally {
       setIsExportingPdf(false);
+    }
+  }
+
+  async function handleConfirmReceive() {
+    try {
+      await receivePurchase.mutateAsync(purchaseId);
+      setReceivePreview(null);
+    } catch {
+      // El mensaje del servidor queda en el modal; el detalle se vuelve a pedir
+      // por si la compra ya no está en pedido (p. ej. la recibió otra persona).
+      await purchase.refetch();
     }
   }
 
@@ -102,18 +119,22 @@ export function PurchaseDetailsPage({
     <div className="mx-auto w-full max-w-7xl space-y-6">
       <PurchaseDetailPageHeader />
 
+      {data.status === "pedido" ? (
+        <PurchasePendingReceiptBanner
+          canReceive={can("purchases.create")}
+          isReceiving={receivePurchase.isPending}
+          onReceive={() => setReceivePreview(buildReceivePreview(data))}
+        />
+      ) : null}
+
       <PurchaseDetailHeaderCard
         isCancelling={cancelPurchase.isPending}
         isExportingPdf={isExportingPdf}
-        isReceiving={receivePurchase.isPending}
         isReturning={returnPurchase.isPending}
         onCancel={() => {
           void cancelPurchase.mutateAsync(purchaseId);
         }}
         onExportPdf={handleExportPdf}
-        onReceive={() => {
-          void receivePurchase.mutateAsync(purchaseId);
-        }}
         onReturn={() => {
           void returnPurchase.mutateAsync(purchaseId);
         }}
@@ -128,12 +149,11 @@ export function PurchaseDetailsPage({
         status={data.status}
       />
 
-      {cancelPurchase.error || returnPurchase.error || receivePurchase.error ? (
+      {cancelPurchase.error || returnPurchase.error ? (
         <ErrorState
           description={
-            (cancelPurchase.error ?? returnPurchase.error ?? receivePurchase.error) instanceof
-            Error
-              ? (cancelPurchase.error ?? returnPurchase.error ?? receivePurchase.error)?.message
+            (cancelPurchase.error ?? returnPurchase.error) instanceof Error
+              ? (cancelPurchase.error ?? returnPurchase.error)?.message
               : "No se pudo completar la acción."
           }
           title="No pudimos actualizar la compra"
@@ -177,6 +197,25 @@ export function PurchaseDetailsPage({
       {role === undefined ? null : (
         <PurchaseDetailPaymentsTable canViewPayments={canViewPayments} payments={data.payments} />
       )}
+
+      {/* Sigue montado aunque la compra ya no esté en pedido: el error de una
+          recepción repetida tiene que seguir a la vista hasta que se cierre. */}
+      {receivePreview ? (
+        <PurchaseReceivePreviewModal
+          error={receivePurchase.error instanceof Error ? receivePurchase.error.message : null}
+          isPending={receivePurchase.isPending}
+          lines={receivePreview}
+          onConfirm={handleConfirmReceive}
+          onOpenChange={(open) => {
+            if (!open) {
+              setReceivePreview(null);
+              receivePurchase.reset();
+            }
+          }}
+          open
+          purchaseNumber={data.purchaseNumber}
+        />
+      ) : null}
 
       {/* Abierto sigue montado aunque la compra ya no admita pagos: un pago de
           resultado incierto pudo saldarla y su error tiene que seguir a la vista. */}

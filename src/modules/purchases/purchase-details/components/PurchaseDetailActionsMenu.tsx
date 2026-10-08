@@ -11,16 +11,14 @@ import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 
-type PurchaseDetailActionId = "cancel" | "pdf" | "receive" | "return";
+type PurchaseDetailActionId = "cancel" | "pdf" | "return";
 
 type PurchaseDetailActionsMenuProps = {
   isCancelling?: boolean;
   isExportingPdf?: boolean;
-  isReceiving?: boolean;
   isReturning?: boolean;
   onCancel: () => void | Promise<void>;
   onExportPdf: () => void | Promise<void>;
-  onReceive: () => void | Promise<void>;
   onReturn: () => void | Promise<void>;
   purchaseNumber: string;
   status: PurchaseStatus;
@@ -47,12 +45,6 @@ const actionConfigs: Record<PurchaseDetailActionId, ActionConfig> = {
       "Se descargará un PDF con los datos actuales de la compra, incluyendo ítems y totales.",
     title: "Confirmar impresión",
   },
-  receive: {
-    confirmLabel: "Confirmar recepción",
-    description:
-      "La mercancía ingresará al inventario y el estado de la compra pasará a recibido.",
-    title: "Recibir pedido",
-  },
   return: {
     confirmLabel: "Confirmar devolución",
     confirmVariant: "danger",
@@ -65,11 +57,9 @@ const actionConfigs: Record<PurchaseDetailActionId, ActionConfig> = {
 export function PurchaseDetailActionsMenu({
   isCancelling = false,
   isExportingPdf = false,
-  isReceiving = false,
   isReturning = false,
   onCancel,
   onExportPdf,
-  onReceive,
   onReturn,
   purchaseNumber,
   status,
@@ -83,14 +73,6 @@ export function PurchaseDetailActionsMenu({
 
   const actions = useMemo(() => {
     const menuActions: ActionMenuItem[] = [];
-
-    if (can("purchases.create") && status === "pedido") {
-      menuActions.push({
-        disabled: isReceiving,
-        label: isReceiving ? "Recibiendo..." : "Recibir pedido",
-        onSelect: () => setPendingAction("receive"),
-      });
-    }
 
     menuActions.push({
       disabled: isExportingPdf,
@@ -119,9 +101,7 @@ export function PurchaseDetailActionsMenu({
     canMutate,
     isCancelling,
     isExportingPdf,
-    isReceiving,
     isReturning,
-    status,
   ]);
 
   async function handleConfirm() {
@@ -138,9 +118,6 @@ export function PurchaseDetailActionsMenu({
           break;
         case "pdf":
           await onExportPdf();
-          break;
-        case "receive":
-          await onReceive();
           break;
         case "return":
           await onReturn();
