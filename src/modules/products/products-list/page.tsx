@@ -2,7 +2,7 @@
 
 import { Plus, Tags, Upload } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
@@ -18,6 +18,7 @@ import { EntityListPage } from "@/shared/components/EntityListPage";
 import { MarginBadge } from "@/shared/components/MarginBadge";
 import {
   ResponsivePagination,
+  getTotalPages,
   useUrlPaginationState,
   useUrlSortState,
 } from "@/shared/components/Pagination";
@@ -54,8 +55,18 @@ import { ProductsStatusBadge } from "./components/ProductsStatusBadge";
 import { normalizeBarcode } from "../services/productSearch";
 import { productsListSchema, toProductsFilters } from "./productsListParams";
 
-const skuHeaderClass = "w-[5.75rem] max-w-[5.75rem]";
-const skuCellClass = "min-w-0 w-[5.75rem] max-w-[5.75rem] overflow-hidden";
+/**
+ * PRO-F2: con la columna "Ganancia" la tabla medía 1021 px y no cabía en los
+ * ≈ 940 px que deja el menú lateral abierto a 1280 px (la columna de acciones
+ * quedaba fuera de la vista). Las ocho columnas de datos llevan 8 px de padding
+ * lateral en vez de 16 (la primera conserva 16 a la izquierda) y sus anchos
+ * mínimos bajan lo mismo, así que el contenido de cada celda no pierde espacio:
+ * SKU 84 · Nombre 144 · Categoría ≈ 105 · Costo 104 · PVP 104 · Ganancia ≈ 109 ·
+ * Stock ≈ 73 · Estado ≈ 79 · Acciones ≈ 99 (de DataTable) = ≈ 901 px.
+ */
+const compactColumnClass = "px-2";
+const skuHeaderClass = "w-[5.25rem] max-w-[5.25rem] px-2 pl-4";
+const skuCellClass = "min-w-0 overflow-hidden";
 const detailLinkClass =
   "block min-w-0 rounded-md hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
@@ -90,7 +101,8 @@ function buildProductColumns(
       sortable: true,
     },
     {
-      cellClassName: "min-w-[10rem] font-medium",
+      cellClassName: "min-w-[9rem] font-medium",
+      className: compactColumnClass,
       header: "Nombre",
       hideInCard: true,
       key: "name",
@@ -99,6 +111,7 @@ function buildProductColumns(
     },
     {
       cellClassName: "text-on-surface-variant",
+      className: compactColumnClass,
       header: "Categoría",
       hideInCard: true,
       key: "category",
@@ -109,7 +122,8 @@ function buildProductColumns(
     },
     {
       align: "right",
-      cellClassName: "min-w-[7.5rem]",
+      cellClassName: "min-w-[6.5rem]",
+      className: compactColumnClass,
       header: "Costo",
       key: "currentCostRef",
       render: (product) => (
@@ -125,7 +139,8 @@ function buildProductColumns(
     },
     {
       align: "right",
-      cellClassName: "min-w-[7.5rem]",
+      cellClassName: "min-w-[6.5rem]",
+      className: compactColumnClass,
       header: "PVP",
       key: "salePriceRef",
       render: (product) => (
@@ -147,6 +162,7 @@ function buildProductColumns(
     },
     {
       align: "right",
+      className: compactColumnClass,
       header: "Ganancia",
       hideInCard: true,
       key: "marginPct",
@@ -162,6 +178,7 @@ function buildProductColumns(
     {
       align: "right",
       cellClassName: "tabular-nums",
+      className: compactColumnClass,
       header: "Stock",
       key: "currentStock",
       render: (product) => (
@@ -179,6 +196,7 @@ function buildProductColumns(
     },
     {
       align: "center",
+      className: compactColumnClass,
       header: "Estado",
       key: "status",
       render: (product) => (
@@ -225,6 +243,17 @@ function ProductsList() {
   const updateProductPrice = useUpdateProductPrice(productToEditId ?? "");
   const productItems = getPaginatedItems(products.data);
   const totalProducts = products.data?.total ?? 0;
+  const { setState: setListState } = list;
+  const lastPage = getTotalPages(totalProducts, limit);
+  // `?page=9999`: con el total ya conocido, la página pedida no existe.
+  const isPagePastTheEnd = products.data !== undefined && list.state.page > lastPage;
+
+  // La lista acota la página contra su total y corrige la URL (regla 15).
+  useEffect(() => {
+    if (isPagePastTheEnd) {
+      setListState({ page: lastPage });
+    }
+  }, [isPagePastTheEnd, lastPage, setListState]);
   const categoryOptions = getPaginatedItems(categories.data).map((category) => ({
     label: category.name,
     value: category.id,

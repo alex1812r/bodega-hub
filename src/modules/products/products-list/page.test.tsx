@@ -394,6 +394,147 @@ describe("ProductsListPage · ganancia y estado en la URL", () => {
     expect(screen.getAllByTitle(MARGIN_BADGE_TITLE)).toHaveLength(PRODUCTS.length);
   });
 
+  describe("PRO-F2", () => {
+    /** Como el servidor: una página más allá del total llega vacía, con el total real. */
+    function respondByPage(total: number) {
+      fetchMock.mockImplementation(async (url: string) => {
+        const [path, query = ""] = String(url).split("?");
+
+        if (!path.startsWith("/api/products")) {
+          return jsonResponse({ data: { items: [], limit: 10, skip: 0, total: 0 } });
+        }
+
+        const params = new URLSearchParams(query);
+        const skip = Number(params.get("skip"));
+        const limit = Number(params.get("limit"));
+
+        return jsonResponse({
+          data: { items: skip < total ? PRODUCTS : [], limit, skip, total },
+        });
+      });
+    }
+
+    it("keeps every column compact so the table fits a 940 px container at 1280 px", async () => {
+      renderPage();
+
+      const row = await findRow("Arroz");
+      const headers = screen
+        .getAllByRole("columnheader")
+        .filter((header) => header.getAttribute("scope") === "col");
+      const cells = Array.from(row.querySelectorAll("td")).slice(0, headers.length);
+
+      expect(headers.map((header) => header.textContent)).toEqual([
+        "SKU",
+        "Nombre",
+        "Categoría",
+        "Costo",
+        "PVP",
+        "Ganancia",
+        "Stock",
+        "Estado",
+      ]);
+
+      for (const element of [...headers, ...cells]) {
+        expect(element).toHaveClass("px-2");
+        expect(element).not.toHaveClass("px-4");
+      }
+
+      // Anchos pensados con ese padding: SKU 84, Nombre ≥ 144, Costo y PVP ≥ 104.
+      expect(headers[0]).toHaveClass("w-[5.25rem]", "pl-4");
+      expect(cells[0]).toHaveClass("w-[5.25rem]", "pl-4");
+      expect(cells[1]).toHaveClass("min-w-[9rem]");
+      expect(cells[3]).toHaveClass("min-w-[6.5rem]");
+      expect(cells[4]).toHaveClass("min-w-[6.5rem]");
+      expect(row.querySelector('[class*="min-w-[7.5rem]"], [class*="min-w-[10rem]"]')).toBeNull();
+    });
+
+    it("clamps a page beyond the total to the last page, in the URL and in the request", async () => {
+      respondByPage(33);
+      renderPage("margin=low&page=9999");
+
+      await waitFor(() => expect(window.location.search).toBe("?margin=low&page=4"));
+      await waitFor(() => expect(lastProductRequest()).toMatchObject({ margin: "low", skip: "30" }));
+      expect(await screen.findByText(/Mostrando 31/)).toHaveTextContent("33");
+      expect(screen.queryByText(/99981/)).not.toBeInTheDocument();
+    });
+
+    it("clamps to the first page when the filter leaves no products", async () => {
+      respondByPage(0);
+      renderPage("margin=high&page=7");
+
+      await waitFor(() => expect(window.location.search).toBe("?margin=high"));
+      expect(await screen.findByText("No hay productos para mostrar")).toBeInTheDocument();
+    });
+
+    it("leaves a valid last page alone", async () => {
+      respondByPage(33);
+      renderPage("page=4");
+
+      await findRow("Arroz");
+
+      expect(window.location.search).toBe("?page=4");
+      expect(productRequests()).toHaveLength(1);
+    });
+
+    it("offers a sort selector below lg that writes sort and dir in the URL", async () => {
+      const user = userEvent.setup();
+
+      renderPage("page=3");
+      await findRow("Arroz");
+
+      const select = screen.getByLabelText("Orden");
+
+      // Desde lg ordenan las cabeceras de la tabla: el selector es para tarjetas y tabla sin "Ganancia".
+      expect(select.parentElement).toHaveClass("lg:hidden");
+      expect(select).toHaveValue("name:asc");
+      expect(
+        within(select).getByRole("option", { name: "Ganancia: menor a mayor" }),
+      ).toBeInTheDocument();
+
+      await user.selectOptions(select, "Ganancia: mayor a menor");
+
+      // Cambiar el orden vuelve a la página 1.
+      expect(window.location.search).toBe("?sort=marginPct&dir=desc");
+      await waitFor(() =>
+        expect(lastProductRequest()).toMatchObject({
+          skip: "0",
+          sortBy: "marginPct",
+          sortOrder: "desc",
+        }),
+      );
+
+      await user.selectOptions(select, "Ganancia: menor a mayor");
+
+      expect(window.location.search).toBe("?sort=marginPct");
+
+      await user.selectOptions(select, "Nombre: A a Z");
+
+      expect(window.location.search).toBe("");
+    });
+
+    it("shows in the sort selector the order that came in the URL or from a header", async () => {
+      const user = userEvent.setup();
+
+      renderPage("sort=sku&dir=desc");
+      await findRow("Arroz");
+
+      expect(screen.getByLabelText("Orden")).toHaveValue("sku:desc");
+
+      await user.click(screen.getByRole("button", { name: "Stock" }));
+
+      expect(screen.getByLabelText("Orden")).toHaveValue("currentStock:asc");
+    });
+
+    it("shows the sort selector on the mobile cards", async () => {
+      isMobile = true;
+      renderPage("sort=marginPct&dir=desc");
+
+      await screen.findByRole("link", { name: "Aceite" });
+
+      expect(screen.getByLabelText("Orden")).toHaveValue("marginPct:desc");
+    });
+  });
+
   it("shows the empty state when the filter leaves no products", async () => {
     productsResponse = () => jsonResponse({ data: { items: [], limit: 10, skip: 0, total: 0 } });
     renderPage("margin=high");

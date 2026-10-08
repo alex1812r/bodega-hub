@@ -4,7 +4,11 @@ import { listParams, type UrlListStateOf } from "@/shared/hooks/useUrlListState"
 
 import type { ProductsFilters } from "../hooks/useProducts";
 import { PRODUCT_MARGIN_FILTERS } from "../services/productMargin";
-import { PRODUCT_SORT_COLUMNS, PRODUCT_SORT_CONFIG } from "../services/productSort";
+import {
+  PRODUCT_SORT_COLUMNS,
+  PRODUCT_SORT_CONFIG,
+  type ProductSortBy,
+} from "../services/productSort";
 
 export const PRODUCT_STATUS_FILTERS = ["all", "active", "inactive"] as const;
 /** `all` = sin filtro; el resto son los valores de `?margin=` de `/api/products`. */
@@ -43,8 +47,42 @@ export type ProductsListState = UrlListStateOf<typeof productsListSchema.shape>;
 
 export type ProductsListFilterState = Pick<
   ProductsListState,
-  "category" | "margin" | "search" | "status"
+  "category" | "dir" | "margin" | "search" | "sort" | "status"
 >;
+
+type ProductSortChoice = Pick<ProductsListState, "dir" | "sort"> & { label: string; value: string };
+
+/** Etiquetas [ascendente, descendente] de cada columna, en el orden del selector. */
+const PRODUCT_SORT_LABELS: Record<ProductSortBy, readonly [string, string]> = {
+  name: ["Nombre: A a Z", "Nombre: Z a A"],
+  marginPct: ["Ganancia: menor a mayor", "Ganancia: mayor a menor"],
+  salePriceRef: ["PVP: menor a mayor", "PVP: mayor a menor"],
+  currentCostRef: ["Costo: menor a mayor", "Costo: mayor a menor"],
+  currentStock: ["Stock: menor a mayor", "Stock: mayor a menor"],
+  category: ["Categoría: A a Z", "Categoría: Z a A"],
+  sku: ["SKU: A a Z", "SKU: Z a A"],
+  status: ["Estado: inactivos primero", "Estado: activos primero"],
+};
+
+/** `sort` + `dir` como un solo valor de `<select>`. */
+export function productSortChoiceValue({ dir, sort }: Pick<ProductsListState, "dir" | "sort">) {
+  return `${sort}:${dir}`;
+}
+
+/**
+ * Opciones del selector "Orden" (tarjetas y tabla sin columna "Ganancia"). Cubre
+ * todas las columnas ordenables: el orden que llega por la URL siempre tiene opción.
+ */
+export const PRODUCT_SORT_CHOICES: readonly ProductSortChoice[] = (
+  Object.keys(PRODUCT_SORT_LABELS) as ProductSortBy[]
+).flatMap((sort) =>
+  (["asc", "desc"] as const).map((dir, index) => ({
+    dir,
+    label: PRODUCT_SORT_LABELS[sort][index],
+    sort,
+    value: productSortChoiceValue({ dir, sort }),
+  })),
+);
 
 /** Estado de la URL → filtros de `GET /api/products`. `search` llega ya con su debounce. */
 export function toProductsFilters(

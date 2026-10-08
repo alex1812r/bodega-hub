@@ -10,7 +10,9 @@ import { cn } from "@/shared/utils/cn";
 
 import {
   PRODUCT_MARGIN_FILTER_OPTIONS,
+  PRODUCT_SORT_CHOICES,
   PRODUCT_STATUS_FILTERS,
+  productSortChoiceValue,
   type ProductsListFilterState,
 } from "../productsListParams";
 
@@ -49,8 +51,8 @@ export function ProductsListFilters({
 }: ProductsListFiltersProps) {
   return (
     <section className="w-full min-w-0 rounded-xl border border-border bg-surface-container-lowest p-4 shadow-sm dark:border-slate-800 md:p-5">
-      <div className="grid w-full min-w-0 grid-cols-1 items-end gap-4 md:grid-cols-3 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
-        <div className="min-w-0 md:col-span-3 lg:col-span-1">
+      <div className="grid w-full min-w-0 grid-cols-1 items-end gap-4 md:grid-cols-4 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
+        <div className="min-w-0 md:col-span-4 lg:col-span-1">
           <label className={stitchListFilterLabelClassName} htmlFor="products-search">
             Búsqueda
           </label>
@@ -132,6 +134,34 @@ export function ProductsListFilters({
             {PRODUCT_MARGIN_FILTER_OPTIONS.map((margin) => (
               <option key={margin} value={margin}>
                 {MARGIN_LABELS[margin]}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Desde lg ordenan las cabeceras de la tabla; por debajo (tarjetas, o tabla
+            sin columna "Ganancia") el orden se elige aquí. Mismos `sort`/`dir` de la URL. */}
+        <div className="min-w-0 lg:hidden">
+          <label className={stitchListFilterLabelClassName} htmlFor="products-sort">
+            Orden
+          </label>
+          <select
+            className={cn(stitchListFilterFieldClassName, "w-full min-w-0")}
+            id="products-sort"
+            onChange={(event) => {
+              const choice = PRODUCT_SORT_CHOICES.find(
+                (option) => option.value === event.target.value,
+              );
+
+              if (choice) {
+                onChange({ dir: choice.dir, sort: choice.sort });
+              }
+            }}
+            value={productSortChoiceValue(filters)}
+          >
+            {PRODUCT_SORT_CHOICES.map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
               </option>
             ))}
           </select>
