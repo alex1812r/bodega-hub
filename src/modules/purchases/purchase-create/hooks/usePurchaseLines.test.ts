@@ -258,3 +258,26 @@ describe("purchaseLinesReducer · línea editada (COM-13)", () => {
     expect(payload(webLines(state))).toEqual(payload(withoutReview));
   });
 });
+
+describe("purchaseLinesReducer · líneas repuestas de golpe (COM-09)", () => {
+  it("linesRestored sustituye líneas, bloqueos, revisión y alícuotas, y no pide el foco", () => {
+    const saved = run(
+      add(cable()),
+      { itemId: "line-cable", type: "lineSettled" },
+      update("line-cable", { quantity: 5 }),
+      add(refresco(), true),
+      { exempt: true, type: "exemptChanged" },
+    );
+    const { focus: savedFocus, ...snapshot } = saved;
+    const before = run(add(cable({ id: "line-otra", productId: "prod-otro" })));
+    const restored = purchaseLinesReducer(before, { state: snapshot, type: "linesRestored" });
+
+    expect(savedFocus).not.toBe(before.focus);
+    expect(restored.focus).toBe(before.focus);
+    expect(restored.items.map((item) => item.id)).toEqual(saved.items.map((item) => item.id));
+    expect(lockedIds(restored)).toEqual(["line-cable"]);
+    expect(restored.taxState.exempt).toBe(true);
+    expect(summary(restored)).toEqual(summary(saved));
+    expect(summary(restored)).toHaveLength(1);
+  });
+});

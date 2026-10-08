@@ -52,12 +52,20 @@ export type PurchaseLinesState = {
   taxState: PurchaseTaxState;
 };
 
+/** Lo que se persiste y se repone de las líneas: todo menos el foco. */
+export type PurchaseLinesSnapshot = Omit<PurchaseLinesState, "focus">;
+
 export type PurchaseLinesAction =
   | { type: "allLinesLocked" }
   | { type: "allLinesUnlocked" }
   | { currency: PurchaseCostCurrency; rateVes: number; type: "costCurrencyChanged" }
   | { exempt: boolean; type: "exemptChanged" }
   | { itemId: string; locked: boolean; type: "lineLockChanged" }
+  /**
+   * Las líneas se reponen de golpe (COM-09): al restaurar el borrador guardado o
+   * al duplicar una compra. Sustituye todo lo que hubiera; nadie pide el foco.
+   */
+  | { state: PurchaseLinesSnapshot; type: "linesRestored" }
   /** El foco salió de la fila: la línea deja de ser recién nacida. */
   | { itemId: string; type: "lineSettled" }
   /** Una línea bloqueada no se quita: la acción se ignora. */
@@ -152,6 +160,9 @@ export function purchaseLinesReducer(
             state.items.filter((item) => item.id === action.itemId),
           )
         : { ...state, locks: unlockPurchaseLines(state.locks, [action.itemId]) };
+
+    case "linesRestored":
+      return { ...action.state, focus: state.focus };
 
     case "lineSettled":
       return {

@@ -12,6 +12,8 @@ import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExcha
 import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import { usePermission } from "@/shared/auth/usePermission";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { LoadingState } from "@/shared/components/LoadingState";
+import { ProcessGuardModal, useProcessGuard } from "@/shared/components/ProcessGuard";
 import { useToast } from "@/shared/components/Toast";
 import { useTaxRates } from "@/shared/hooks/useTaxRates";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
@@ -27,12 +29,16 @@ import {
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
 import { PurchaseCreateHeader } from "./components/PurchaseCreateHeader";
+import { PurchaseDraftBanner } from "./components/PurchaseDraftBanner";
+import { PurchaseFormNotices } from "./components/PurchaseFormNotices";
 import { PurchaseNewProductModal } from "./components/PurchaseNewProductModal";
 import { PurchasePaymentSection } from "./components/PurchasePaymentSection";
 import {
   PurchaseProductPickerCard,
   type PurchaseCatalogProduct,
 } from "./components/PurchaseProductPickerCard";
+import { usePurchaseDraftStorage } from "./hooks/usePurchaseDraftStorage";
+import { usePurchaseDuplicateSource } from "./hooks/usePurchaseDuplicateSource";
 import { usePurchaseLines } from "./hooks/usePurchaseLines";
 import { usePurchaseLockOnAdd } from "./hooks/usePurchaseLockOnAdd";
 import { usePurchaseProductSearch } from "./hooks/usePurchaseProductSearch";
@@ -40,11 +46,20 @@ import { PurchaseStatusNotesCard } from "./components/PurchaseStatusNotesCard";
 import { PurchaseSummaryCard } from "./components/PurchaseSummaryCard";
 import { PurchaseSupplierCard } from "./components/PurchaseSupplierCard";
 import type { PurchaseLineItemMeta } from "./components/PurchaseLineItemsTable";
-import { useCreatePurchase } from "../hooks/usePurchases";
+import { useCreatePurchase, type PurchaseDetails } from "../hooks/usePurchases";
+import { resolvePurchaseProducts } from "./services/resolvePurchaseProducts";
 import type { PurchaseCostCurrency, PurchaseDraftItem } from "./types";
 import { buildUnlinkedCatalogProduct } from "./utils/buildPurchaseCatalog";
 import { buildPurchaseLine, nextPurchaseLineId } from "./utils/buildPurchaseLine";
+import {
+  buildDuplicatedPurchaseLines,
+  type PurchaseDuplicateSourceItem,
+} from "./utils/duplicatePurchase";
 import { draftToPurchaseItemInput, sumDraftPurchaseTotals } from "./utils/normalizePurchaseLine";
+import {
+  restorePurchaseDraft,
+  type PurchaseDraftContent,
+} from "./utils/purchaseDraftStorage";
 import {
   InitialPaymentKey,
   buildInitialPaymentFailedNotice,
@@ -60,6 +75,20 @@ import {
 } from "./utils/purchaseLineTax";
 
 const LINE_TAX_MISSING_MESSAGE = "Elige una alícuota en cada línea antes de confirmar la compra.";
+
+/** Compra de origen cuyo proveedor ya no sirve: sus líneas esperan a que se elija otro. */
+type PendingDuplicate = {
+  items: PurchaseDuplicateSourceItem[];
+  supplierName: string | null;
+};
+
+function describeLineCount(count: number) {
+  return count === 1 ? "1 línea" : `${count} líneas`;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : undefined;
+}
 
 export function PurchaseCreatePage() {
   const router = useRouter();
@@ -99,9 +128,19 @@ export function PurchaseCreatePage() {
   const [lineMetaByProductId, setLineMetaByProductId] = useState(
     () => new Map<string, PurchaseLineItemMeta>(),
   );
+  // Borrador local (COM-09): lo guardado por una visita anterior se ofrece en un aviso.
+  const draft = usePurchaseDraftStorage();
+  const [isRestoringDraft, setIsRestoringDraft] = useState(false);
+  // Lo que cambió al restaurar o duplicar (tasa, productos que se quitaron).
+  const [notices, setNotices] = useState<string[]>([]);
+  const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null);
+  const [isLoadingDuplicateLines, setIsLoadingDuplicateLines] = useState(false);
+  // Compra ya creada: ni se vuelve a guardar el borrador ni se pregunta al salir.
+  const [confirmed, setConfirmed] = useState(false);
   const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
   const catalog = productSearchResult.catalog;
-  const activeRateVes = exchangeRate.data?.rateVes ?? 510;
+  const currentRateVes = exchangeRate.data?.rateVes;
+  const activeRateVes = currentRateVes ?? 510;
 
   const suppliers = useMemo(
     () =>
@@ -226,6 +265,153 @@ export function PurchaseCreatePage() {
     return item.quantity > 0 && item.unitCostRef >= 0;
   });
 
+  const supplierName = suppliers.find((supplier) => supplier.id === supplierId)?.name;
+  const draftContent = useMemo<PurchaseDraftContent>(
+    () => ({
+      costCurrency,
+      discountRef,
+      lineMeta: Object.fromEntries(
+        items.flatMap((item) => {
+          const meta = lineMetaByProductId.get(item.productId);
+
+          return meta ? [[item.productId, meta]] : [];
+        }),
+      ),
+      lines: { items, locks, review, taxState },
+      notes,
+      rateVes: activeRateVes,
+      status: status === "pedido" ? "pedido" : "recibido",
+      supplierId,
+      ...(supplierName ? { supplierName } : {}),
+    }),
+    [
+      activeRateVes,
+      costCurrency,
+      discountRef,
+      items,
+      lineMetaByProductId,
+      locks,
+      notes,
+      review,
+      status,
+      supplierId,
+      supplierName,
+      taxState,
+    ],
+  );
+  const hasPendingDraft = draft.pending !== null;
+  const syncDraft = draft.sync;
+
+  // Se guarda en cada cambio. Con un borrador anterior sin decidir no se escribe:
+  // al restaurarlo o descartarlo el efecto vuelve a correr y guarda lo que haya.
+  useEffect(() => {
+    if (confirmed || hasPendingDraft) {
+      return;
+    }
+
+    syncDraft(draftContent);
+  }, [confirmed, draftContent, hasPendingDraft, syncDraft]);
+
+  // Regla 14: con líneas, salir pregunta. Si hay un borrador anterior sin decidir no se
+  // promete guardar este (no se pisa aquel sin preguntar): el aviso es de pérdida.
+  const guard = useProcessGuard({
+    active: items.length > 0 && !confirmed,
+    description: hasPendingDraft
+      ? "Ya hay otra compra sin terminar guardada: esta no se guardará mientras no restaures o descartes aquella."
+      : undefined,
+    label: `Compra en curso con ${describeLineCount(items.length)}`,
+    onLeave: hasPendingDraft ? "discard" : "draft",
+    onSaveDraft: () => syncDraft(draftContent),
+  });
+
+  /**
+   * Costos al último conocido para `nextSupplierId`. Devuelve la función que pone las
+   * líneas en el formulario (sustituyen las que hubiera): quien llama decide cuándo.
+   */
+  async function prepareDuplicatedLines(
+    nextSupplierId: string,
+    sourceItems: PurchaseDuplicateSourceItem[],
+  ) {
+    const products = await resolvePurchaseProducts(
+      nextSupplierId,
+      sourceItems.map((item) => item.productId),
+    );
+    const duplicated = buildDuplicatedPurchaseLines(sourceItems, products, {
+      costCurrency,
+      nextId: nextPurchaseLineId,
+      rateVes: activeRateVes,
+    });
+
+    return () => {
+      setSupplierId(nextSupplierId);
+      setProductSearch("");
+      setLineMetaByProductId(duplicated.lineMeta);
+      dispatchLines({ state: duplicated.lines, type: "linesRestored" });
+      setNotices(duplicated.notices);
+      setPendingDuplicate(null);
+    };
+  }
+
+  // No copia notas, descuento, pagos ni estado: solo proveedor y líneas.
+  async function loadDuplicate(source: PurchaseDetails) {
+    const sourceSupplier = source.supplier;
+    const canBuyFromSupplier =
+      sourceSupplier !== undefined &&
+      sourceSupplier.isActive !== false &&
+      (sourceSupplier.type === "proveedor" || sourceSupplier.type === "ambos");
+
+    if (!canBuyFromSupplier) {
+      return () =>
+        setPendingDuplicate({ items: source.items, supplierName: sourceSupplier?.name ?? null });
+    }
+
+    return prepareDuplicatedLines(source.supplierId, source.items);
+  }
+
+  const duplicate = usePurchaseDuplicateSource({
+    load: loadDuplicate,
+    ready: currentRateVes !== undefined,
+  });
+
+  async function handleRestoreDraft() {
+    const stored = draft.pending;
+
+    if (!stored || currentRateVes === undefined) {
+      return;
+    }
+
+    setIsRestoringDraft(true);
+
+    try {
+      const products = await resolvePurchaseProducts(
+        stored.supplierId,
+        stored.lines.items.map((item) => item.productId),
+      );
+      const restored = restorePurchaseDraft(stored, { products, rateVes: currentRateVes });
+
+      draft.adopt();
+      setSupplierId(stored.supplierId);
+      setProductSearch("");
+      setStatus(stored.status);
+      setNotes(stored.notes);
+      setDiscountRef(stored.discountRef);
+      setCostCurrency(restored.costCurrency);
+      setLineMetaByProductId(restored.lineMeta);
+      dispatchLines({ state: restored.lines, type: "linesRestored" });
+      setNotices(restored.notices);
+      setPendingDuplicate(null);
+      setFormError(null);
+    } catch (error) {
+      showToast({
+        description: errorMessage(error),
+        title: "No pudimos restaurar la compra",
+        tone: "error",
+      });
+    } finally {
+      setIsRestoringDraft(false);
+    }
+  }
+
   function getItemMeta(productId: string): PurchaseLineItemMeta {
     return (
       lineMetaByProductId.get(productId) ?? {
@@ -241,6 +427,21 @@ export function PurchaseCreatePage() {
     setProductSearch("");
     dispatchLines({ type: "supplierChanged" });
     setLineMetaByProductId(new Map());
+
+    // Compra duplicada de un proveedor inactivo: sus líneas entran con el que se elija.
+    if (pendingDuplicate && nextSupplierId) {
+      setIsLoadingDuplicateLines(true);
+      void prepareDuplicatedLines(nextSupplierId, pendingDuplicate.items)
+        .then((apply) => apply())
+        .catch((error: unknown) => {
+          showToast({
+            description: errorMessage(error),
+            title: "No pudimos cargar las líneas de la compra",
+            tone: "error",
+          });
+        })
+        .finally(() => setIsLoadingDuplicateLines(false));
+    }
   }
 
   function handleCostCurrencyChange(nextCurrency: PurchaseCostCurrency) {
@@ -378,6 +579,9 @@ export function PurchaseCreatePage() {
       });
 
       requestAttempt.succeed();
+      // La compra ya existe: el borrador sobra y salir no debe preguntar.
+      setConfirmed(true);
+      draft.clear();
 
       // La compra existe aunque el pago no haya entrado: se sale del formulario igual
       // (quedarse invitaría a crear otra) y el detalle ofrece registrar el pago.
@@ -387,7 +591,7 @@ export function PurchaseCreatePage() {
           tone: "error",
         });
       }
-      router.push(`/purchases/${purchase.id}`);
+      guard.runUnguarded(() => router.push(`/purchases/${purchase.id}`));
     } catch (error) {
       // Error surfaced via createPurchase.error
       requestAttempt.fail(error);
@@ -396,9 +600,57 @@ export function PurchaseCreatePage() {
 
   const dependencyError = suppliersQuery.error ?? exchangeRate.error ?? taxRates.error;
 
+  // Sin tasa la compra de origen no puede llegar al formulario: no se espera para siempre.
+  const duplicateError = duplicate.error ?? (duplicate.isLoading ? exchangeRate.error : null);
+
+  if (duplicateError || duplicate.isLoading) {
+    return (
+      <div className="space-y-6 pb-8">
+        <PurchaseCreateHeader />
+        {duplicateError ? (
+          <ErrorState
+            actionLabel="Volver a Compras"
+            description={duplicateError.message}
+            onRetry={() => router.push("/purchases")}
+            title="No pudimos duplicar la compra"
+          />
+        ) : (
+          <LoadingState title="Cargando la compra a duplicar..." />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 pb-8">
       <PurchaseCreateHeader />
+
+      {draft.pending ? (
+        <PurchaseDraftBanner
+          draft={draft.pending}
+          isRestoring={isRestoringDraft}
+          onDiscard={draft.clear}
+          onRestore={() => void handleRestoreDraft()}
+          replacesForm={items.length > 0 || pendingDuplicate !== null}
+          restoreDisabled={currentRateVes === undefined}
+        />
+      ) : null}
+
+      {pendingDuplicate ? (
+        <PurchaseFormNotices
+          messages={[
+            pendingDuplicate.supplierName
+              ? `El proveedor ${pendingDuplicate.supplierName} está inactivo: elige otro proveedor para duplicar la compra.`
+              : "El proveedor de la compra original ya no está disponible: elige otro proveedor para duplicar la compra.",
+          ]}
+        />
+      ) : null}
+
+      {isLoadingDuplicateLines ? (
+        <LoadingState title="Cargando las líneas de la compra..." variant="inline" />
+      ) : null}
+
+      <PurchaseFormNotices messages={notices} onDismiss={() => setNotices([])} />
 
       {dependencyError ? (
         <ErrorState
@@ -509,6 +761,7 @@ export function PurchaseCreatePage() {
         }}
         open={newProductValues !== null}
       />
+      <ProcessGuardModal guard={guard} />
     </div>
   );
 }

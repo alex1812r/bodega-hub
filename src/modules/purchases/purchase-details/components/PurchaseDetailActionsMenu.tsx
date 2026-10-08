@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { usePermission } from "@/shared/auth/usePermission";
@@ -65,6 +66,8 @@ export function PurchaseDetailActionsMenu({
   status,
 }: PurchaseDetailActionsMenuProps) {
   const { can } = usePermission();
+  // El detalle vive en `/purchases/[id]`: el id de la compra es el último tramo de la ruta.
+  const purchaseId = usePathname().split("/").filter(Boolean).at(-1);
   const [pendingAction, setPendingAction] = useState<PurchaseDetailActionId | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
 
@@ -79,6 +82,14 @@ export function PurchaseDetailActionsMenu({
       label: isExportingPdf ? "Generando PDF..." : "Descargar PDF",
       onSelect: () => setPendingAction("pdf"),
     });
+
+    // Duplicar vale en cualquier estado: crea otra compra, no toca esta.
+    if (can("purchases.create") && purchaseId) {
+      menuActions.push({
+        href: `/purchases/create?duplicate=${encodeURIComponent(purchaseId)}`,
+        label: "Duplicar compra",
+      });
+    }
 
     if (can("purchases.create")) {
       menuActions.push({
@@ -102,6 +113,7 @@ export function PurchaseDetailActionsMenu({
     isCancelling,
     isExportingPdf,
     isReturning,
+    purchaseId,
   ]);
 
   async function handleConfirm() {
