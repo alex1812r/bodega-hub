@@ -39,6 +39,7 @@ import { PaymentsDirectionBadge } from "./components/PaymentsDirectionBadge";
 import { PaymentsDocumentCell } from "./components/PaymentsDocumentCell";
 import { PaymentsExportActions } from "./components/PaymentsExportActions";
 import { PaymentsListFilters } from "./components/PaymentsListFilters";
+import { StalePendingSalesNotice } from "./components/StalePendingSalesNotice";
 import { usePaymentsFilterChips } from "./hooks/usePaymentsFilterChips";
 import {
   CLEARED_PAYMENTS_FILTERS,
@@ -226,6 +227,8 @@ function PaymentsList() {
         layout="sections"
         title="Pagos"
       >
+        <StalePendingSalesNotice listHref={list.href} />
+
         <PaymentsListFilters
           chips={filterChips}
           hasActiveFilters={hasActivePaymentsFilters(list.state, salePaymentsOnly)}
