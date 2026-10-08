@@ -123,7 +123,7 @@ describe("taxRates.mock-server", () => {
       expect(createCategory({ name: "Nueva", taxRate: 0 }, DEFAULT_STORE_ID)).toEqual(
         expect.objectContaining({ taxRate: 0, taxRateId: "tax-exento" }),
       );
-      expect(createCategory({ name: "Nueva" }, DEFAULT_STORE_ID)).toEqual(
+      expect(createCategory({ name: "Nueva sin alicuota indicada" }, DEFAULT_STORE_ID)).toEqual(
         expect.objectContaining({ taxRate: 16, taxRateId: "tax-general" }),
       );
     });
