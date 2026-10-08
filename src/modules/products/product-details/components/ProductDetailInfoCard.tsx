@@ -21,6 +21,8 @@ type ProductDetailInfoCardProps = {
   salePriceRef: number;
   /** Cortes del semáforo de la tienda; sin ellos, los por defecto. */
   thresholds?: MarginThresholds;
+  /** El producto está en "Por revisar" (PRO-11): el semáforo lo dice. */
+  underReview?: boolean;
 };
 
 export function ProductDetailInfoCard({
@@ -31,6 +33,7 @@ export function ProductDetailInfoCard({
   isActive,
   salePriceRef,
   thresholds,
+  underReview = false,
 }: ProductDetailInfoCardProps) {
   const displayDescription = description?.trim() || PLACEHOLDER_DESCRIPTION;
   const gainRef = roundMoney(salePriceRef - costRef);
@@ -84,7 +87,13 @@ export function ProductDetailInfoCard({
               Ganancia
             </span>
             <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <MarginBadge cost={costRef} price={salePriceRef} size="md" thresholds={thresholds} />
+              <MarginBadge
+                cost={costRef}
+                price={salePriceRef}
+                review={underReview}
+                size="md"
+                thresholds={thresholds}
+              />
               {/* Sin costo no hay ganancia que mostrar: el precio entero no es ganancia. */}
               {costRef > 0 ? (
                 <span

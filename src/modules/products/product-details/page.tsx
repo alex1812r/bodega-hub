@@ -1,6 +1,7 @@
 "use client";
 
 import { Pencil } from "lucide-react";
+import { useRef, useState } from "react";
 
 import { getPriceChangeReason } from "@/lib/api/dataSourceUi";
 import { getPaginatedItems } from "@/lib/api/pagination";
@@ -13,6 +14,12 @@ import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { formatDate } from "@/shared/utils/date";
 
+import { KeepPriceConfirmModal } from "../components/price-review/KeepPriceConfirmModal";
+import { PriceReviewBadge } from "../components/price-review/PriceReviewBadge";
+import {
+  getPriceReviewTargetPct,
+  PriceReviewDetailNotice,
+} from "../components/price-review/PriceReviewDetailNotice";
 import {
   type ProductInput,
   type ProductPriceHistoryEntry,
@@ -51,8 +58,13 @@ function mapPriceHistory(rows: ProductPriceHistoryEntry[]): ProductPriceHistoryR
     changedBy: row.userId,
     date: formatDate(row.createdAt),
     id: row.id,
+    // Entradas anteriores a PRO-11 no traen `kind`: eran todas cambios de precio.
+    kind: row.kind ?? "change",
     newPriceRef: row.salePriceRef,
-    oldPriceRef: rows[index + 1]?.salePriceRef ?? row.salePriceRef,
+    // El precio anterior es el que guardó la propia fila. Solo si no lo trae se
+    // deduce de la fila vecina; la más antigua sin dato queda sin precio anterior
+    // (antes repetía el suyo: "14.00 → 14.00").
+    oldPriceRef: row.previousSalePriceRef ?? rows[index + 1]?.salePriceRef ?? null,
     // El motivo guardado; el texto fijo solo si el cambio se registró sin motivo.
     reason: row.reason?.trim() || getPriceChangeReason(),
   }));
@@ -72,6 +84,8 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
   // Mutación aparte para la tarjeta de cambio rápido: su error se avisa en la
   // página (la tarjeta no lo pinta) y el de la edición solo dentro del modal.
   const quickPriceUpdate = useUpdateProductPrice(productId);
+  const priceCardRef = useRef<HTMLDivElement | null>(null);
+  const [isKeepPriceOpen, setIsKeepPriceOpen] = useState(false);
 
   async function handleUpdateProduct(input: ProductInput, context?: ProductFormSubmitContext) {
     const currentPrice = product.data?.salePriceRef;
@@ -112,6 +126,19 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
   const data = product.data;
   const isSaving = updateProduct.isPending || updateProductPrice.isPending;
   const supplierRows = getPaginatedItems(suppliers.data) as ProductSupplierRow[];
+  const marginThresholds = getProductMarginThresholds(pricingSettings.data);
+  // En "Por revisar", el % sugerido de la tarjeta es el que devuelve el precio a la banda que tenía.
+  const reviewTargetPct = data.priceReview
+    ? getPriceReviewTargetPct(data.priceReview.previousBand, marginThresholds)
+    : null;
+
+  // "Reprecio" no cambia nada: lleva a la tarjeta de precio, con el foco en el % sugerido.
+  function focusPriceCard() {
+    const card = priceCardRef.current;
+
+    card?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    card?.querySelector<HTMLElement>("button, input")?.focus({ preventScroll: true });
+  }
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">
@@ -147,10 +174,21 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
             />
           </Can>
         }
+        badge={data.priceReview ? <PriceReviewBadge review={data.priceReview} /> : null}
         productName={data.name}
         barcode={data.barcode}
         sku={data.sku}
       />
+
+      {data.priceReview ? (
+        <PriceReviewDetailNotice
+          canManage={can("products.manage")}
+          onKeepPrice={() => setIsKeepPriceOpen(true)}
+          onReprice={focusPriceCard}
+          review={data.priceReview}
+          thresholds={marginThresholds}
+        />
+      ) : null}
 
       {quickPriceUpdate.error ? (
         <ErrorState
@@ -171,7 +209,8 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
             imageUrl={data.imageUrl}
             isActive={data.isActive}
             salePriceRef={data.salePriceRef}
-            thresholds={getProductMarginThresholds(pricingSettings.data)}
+            thresholds={marginThresholds}
+            underReview={Boolean(data.priceReview)}
           />
         </div>
         <div className="lg:col-span-4">
@@ -192,10 +231,10 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
             />
           </div>
         ) : null}
-        <div className="lg:col-span-4">
+        <div className="lg:col-span-4" ref={priceCardRef}>
           <Can permission="products.manage">
             <ProductDetailPriceChangeCard
-              categoryMarkupPct={data.category?.defaultMarkupPct}
+              categoryMarkupPct={reviewTargetPct ?? data.category?.defaultMarkupPct}
               currentCostRef={data.currentCostRef}
               currentPriceRef={data.salePriceRef}
               isSubmitting={quickPriceUpdate.isPending}
@@ -227,6 +266,14 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
           <ProductDetailSalesHistoryCard productId={productId} />
         </div>
       </div>
+
+      <Can permission="products.manage">
+        <KeepPriceConfirmModal
+          onOpenChange={setIsKeepPriceOpen}
+          open={isKeepPriceOpen}
+          product={data}
+        />
+      </Can>
     </div>
   );
 }
