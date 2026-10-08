@@ -20,14 +20,20 @@ import {
   assertPackDistribution,
   type PackDistributionItem,
 } from "@/modules/products/services/packConversionSchemas";
+import { assertListFilterParams } from "@/modules/products/services/listFilterParams";
 import { listPackConversions } from "@/modules/products/services/products.mock-server";
 import {
   matchesInventoryListFilters,
   parseInventoryListFilters,
 } from "../utils/inventoryListFilters";
 import {
+  MOVEMENT_EXACT_FILTERS,
   matchesInventoryMovementFilters,
+  matchesStockCardFilters,
   parseInventoryMovementFilters,
+  parseStockCardFilters,
+  resolveMovementDocumentKind,
+  type MovementDocumentKind,
 } from "../utils/inventoryMovementFilters";
 import { getInventoryStockStatus } from "../utils/inventoryStockStatus";
 import {
@@ -108,25 +114,72 @@ export function listInventory(
   return paginateList(items, searchParams);
 }
 
+/**
+ * Movimientos de la tienda en el orden del libro, del más reciente al más
+ * antiguo. El mock no tiene `seq`: ordena por `createdAt` y, a igualdad, gana el
+ * que está antes en `mockStockMovements` (los nuevos entran al principio; el
+ * orden de `sort` es estable).
+ */
+function listStoreMovementsByLedgerOrder(storeId: string) {
+  return mockStockMovements
+    .filter((movement) => (movement.storeId ?? DEFAULT_STORE_ID) === storeId)
+    .sort(
+      (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    );
+}
+
+function withProduct(movement: StockMovementMock) {
+  return {
+    ...movement,
+    product: mockProducts.find((product) => product.id === movement.productId),
+  };
+}
+
+/** Número de la venta o compra del movimiento; `null` si no tiene (o es una conversión). */
+function resolveDocumentNumber(movement: StockMovementMock, kind: MovementDocumentKind | null) {
+  if (kind === "venta") {
+    return mockSales.find((sale) => sale.id === movement.saleId)?.invoiceNumber ?? null;
+  }
+
+  if (kind === "compra") {
+    return (
+      mockPurchases.find((purchase) => purchase.id === movement.purchaseId)?.purchaseNumber ?? null
+    );
+  }
+
+  return null;
+}
+
 export function listStockMovements(searchParams: URLSearchParams, storeId: string) {
+  assertListFilterParams(searchParams, MOVEMENT_EXACT_FILTERS);
+
   const filters = parseInventoryMovementFilters(searchParams);
 
-  const items = mockStockMovements
-    .filter(
-      (movement) =>
-        (movement.storeId ?? DEFAULT_STORE_ID) === storeId &&
-        matchesInventoryMovementFilters(movement, filters),
-    )
-    .map((movement) => ({
-      ...movement,
-      product: mockProducts.find((product) => product.id === movement.productId),
-    }));
+  const items = listStoreMovementsByLedgerOrder(storeId)
+    .map((movement) => {
+      const documentKind = resolveMovementDocumentKind(movement);
+
+      return {
+        ...withProduct(movement),
+        documentKind,
+        documentNumber: resolveDocumentNumber(movement, documentKind),
+      };
+    })
+    .filter((movement) => matchesInventoryMovementFilters(movement, filters));
 
   return paginateList(items, searchParams);
 }
 
 export function getStockCard(searchParams: URLSearchParams, storeId: string) {
-  return listStockMovements(searchParams, storeId);
+  assertListFilterParams(searchParams, MOVEMENT_EXACT_FILTERS);
+
+  const filters = parseStockCardFilters(searchParams);
+
+  const items = listStoreMovementsByLedgerOrder(storeId)
+    .filter((movement) => matchesStockCardFilters(movement, filters))
+    .map(withProduct);
+
+  return paginateList(items, searchParams);
 }
 
 /**

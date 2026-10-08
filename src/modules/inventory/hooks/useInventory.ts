@@ -13,6 +13,10 @@ import type {
 } from "@/shared/mocks/erp-data";
 
 import type { InventoryAdjustmentType } from "../inventory-movements/utils/movementTypeLabels";
+import type {
+  MovementDocumentKind,
+  MovementDocumentKindFilter,
+} from "../utils/inventoryMovementFilters";
 
 export type InventoryFilters = PaginationParams & {
   categoryId?: string;
@@ -23,18 +27,39 @@ export type InventoryFilters = PaginationParams & {
   stockStatus?: string;
 };
 
+/**
+ * Filtros de `/api/inventory/movements`. `/api/inventory/stock-card` solo
+ * atiende `productId`, `type`, `from` y `to`.
+ */
 export type InventoryMovementFilters = PaginationParams & {
+  /** Texto parcial del número de venta o de compra. */
+  document?: string;
+  /** `sin_documento` = ajustes y asientos históricos sin venta, compra ni conversión. */
+  documentKind?: MovementDocumentKindFilter;
+  /** Día de Caracas `YYYY-MM-DD`, inclusive. */
   from?: string;
   productId?: string;
+  purchaseId?: string;
+  saleId?: string;
+  /** Día de Caracas `YYYY-MM-DD`, inclusive. */
   to?: string;
   type?: StockMovementType;
 };
+
+export type InventoryMovementDocumentKind = MovementDocumentKind;
 
 export type InventoryItem = ProductMock & {
   category?: CategoryMock;
 };
 
 export type InventoryMovement = StockMovementMock & {
+  /**
+   * Documento del movimiento (solo en `/api/inventory/movements`). `null` =
+   * sin documento: la UI lo muestra como "Ajuste manual".
+   */
+  documentKind?: InventoryMovementDocumentKind | null;
+  /** Número de la venta o compra; `null` en una conversión o sin documento. */
+  documentNumber?: string | null;
   product?: ProductMock;
 };
 
