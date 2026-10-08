@@ -103,7 +103,7 @@ export function CategoryFormFields({
         />
       ) : null}
       {errorMessage ? (
-        <p className="text-sm break-words text-destructive" role="alert">
+        <p className="min-w-0 text-sm text-destructive [overflow-wrap:anywhere]" role="alert">
           {errorMessage}
         </p>
       ) : null}

@@ -225,4 +225,14 @@ describe("CategoryFormModal · alícuota con chips (PRO-02)", () => {
       "Ya existe una categoría con ese nombre.",
     );
   });
+
+  // PRO-F3: el bloque es de `CategoryFormFields`, el mismo del alta rápida
+  // (`CategoryQuickCreateModal`). Sin `min-w-0` + `overflow-wrap: anywhere`,
+  // una palabra larga ensancha la rejilla del formulario más que el modal.
+  it("un error del servidor sin espacios hace wrap dentro del modal", async () => {
+    installTaxRates();
+    renderModal({ errorMessage: "X".repeat(140) });
+
+    expect(await screen.findByRole("alert")).toHaveClass("min-w-0", "[overflow-wrap:anywhere]");
+  });
 });

@@ -77,7 +77,8 @@ describe("ContactFormModal · Guardar y crear otro (PRO-04)", () => {
   it("solo el alta lo ofrece, entre Cancelar y el botón principal", () => {
     const { unmount } = render(<ContactFormModal onOpenChange={jest.fn()} open />);
 
-    expect(createAnotherButton()).toHaveAttribute("type", "submit");
+    // No es un botón de envío: Enter en un campo nunca lo elige (PRO-F3).
+    expect(createAnotherButton()).toHaveAttribute("type", "button");
     expect(
       within(screen.getByRole("dialog"))
         .getAllByRole("button")
@@ -127,14 +128,8 @@ describe("ContactFormModal · Guardar y crear otro (PRO-04)", () => {
     await user.click(screen.getByRole("button", { name: "Crear contacto" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
-    expect(onSubmit.mock.calls[1][0]).toEqual({
-      address: "",
-      email: "",
-      name: "Alimentos Mary",
-      phone: "",
-      taxId: "",
-      type: "proveedor",
-    });
+    // Los opcionales vacíos no viajan (PRO-F3).
+    expect(onSubmit.mock.calls[1][0]).toEqual({ name: "Alimentos Mary", type: "proveedor" });
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
@@ -247,6 +242,120 @@ describe("ContactFormModal · Guardar y crear otro (PRO-04)", () => {
       type: "proveedor",
     });
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+});
+
+describe("ContactFormModal · fallos de QA (PRO-F3)", () => {
+  /**
+   * Botón que el navegador pulsa con Enter en un campo (envío implícito): el
+   * primer botón de envío del formulario en orden de documento, esté dentro o
+   * asociado con `form=`. jsdom no simula ese Enter, así que se calcula igual.
+   */
+  function implicitSubmitButton() {
+    const form = document.querySelector("form") as HTMLFormElement;
+
+    return Array.from(form.elements).find(
+      (element): element is HTMLButtonElement =>
+        element instanceof HTMLButtonElement && element.type === "submit",
+    );
+  }
+
+  it("Enter en un campo equivale al botón principal: guarda una vez y cierra", async () => {
+    const onOpenChange = jest.fn();
+    const onSubmit = jest.fn().mockResolvedValue(undefined);
+    const user = renderCreate({ onOpenChange, onSubmit });
+
+    expect(implicitSubmitButton()).toHaveTextContent("Crear contacto");
+
+    await paste(user, "Nombre", "Distribuidora Polar");
+    await user.click(implicitSubmitButton() as HTMLButtonElement);
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("Guardar y crear otro se activa con Enter o Espacio teniendo el foco", async () => {
+    const onOpenChange = jest.fn();
+    const onSubmit = jest.fn().mockResolvedValue(undefined);
+    const user = renderCreate({ onOpenChange, onSubmit });
+
+    await paste(user, "Nombre", "Distribuidora Polar");
+    act(() => createAnotherButton().focus());
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByLabelText("Nombre")).toHaveValue(""));
+
+    await paste(user, "Nombre", "Alimentos Mary");
+    act(() => createAnotherButton().focus());
+    await user.keyboard(" ");
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByLabelText("Nombre")).toHaveValue(""));
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it("Guardar y crear otro con el nombre vacío no envía ni deja la intención pendiente", async () => {
+    const onOpenChange = jest.fn();
+    const onSubmit = jest.fn().mockResolvedValue(undefined);
+    const user = renderCreate({ onOpenChange, onSubmit });
+
+    await user.click(createAnotherButton());
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    // El siguiente envío con el botón principal cierra: no hereda "crear otro".
+    await paste(user, "Nombre", "Distribuidora Polar");
+    await user.click(screen.getByRole("button", { name: "Crear contacto" }));
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("alta: los opcionales vacíos o en blanco no viajan (el BFF rechaza email vacío)", async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined);
+    const user = renderCreate({ onSubmit });
+
+    await paste(user, "Nombre", "Distribuidora Polar");
+    await paste(user, "Teléfono", "   ");
+    await user.click(screen.getByRole("button", { name: "Crear contacto" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+
+    const input = onSubmit.mock.calls[0][0];
+
+    expect(input).toEqual({ name: "Distribuidora Polar", type: "cliente" });
+    // Lo que llega al BFF: ni `email: ""` ni ningún otro opcional vacío.
+    expect(JSON.parse(JSON.stringify(input))).toStrictEqual({
+      name: "Distribuidora Polar",
+      type: "cliente",
+    });
+  });
+
+  it("edición: un correo vacío no viaja; vaciar teléfono, RIF o dirección sí los borra", async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined);
+    const user = renderCreate({ contact: supplier, mode: "edit", onSubmit });
+
+    for (const label of ["Teléfono", "Correo", "RIF / Cédula", "Dirección"]) {
+      await user.clear(screen.getByLabelText(label));
+    }
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(JSON.stringify(onSubmit.mock.calls[0][0]))).toStrictEqual({
+      address: "",
+      name: "Distribuidora Polar",
+      phone: "",
+      taxId: "",
+      type: "proveedor",
+    });
+  });
+
+  it("un error del servidor sin espacios hace wrap dentro del modal", () => {
+    const message = "X".repeat(140);
+
+    renderCreate({ errorMessage: message });
+
+    expect(screen.getByText(message)).toHaveClass("min-w-0", "[overflow-wrap:anywhere]");
   });
 });
 

@@ -15,8 +15,6 @@ import type { ContactMock } from "@/shared/mocks/erp-data";
 
 import type { ContactInput } from "../../hooks/useContacts";
 
-/** Marca del botón "Guardar y crear otro": el envío lee cuál de los dos lo disparó. */
-const CREATE_ANOTHER_INTENT = "create-another";
 const DEFAULT_CONTACT_TYPE: ContactInput["type"] = "cliente";
 
 /**
@@ -27,6 +25,15 @@ const DEFAULT_CONTACT_TYPE: ContactInput["type"] = "cliente";
  * elegido, para dar altas en serie (p. ej. varios proveedores). Al cerrar y
  * volver a abrir, el Tipo vuelve a "Cliente". Si `onSubmit` rechaza no se
  * limpia nada y el modal queda abierto.
+ *
+ * Enter en un campo equivale siempre al botón principal: "Guardar y crear otro"
+ * no es un botón de envío (`type="button"`), así que el navegador nunca lo
+ * elige como botón por defecto del formulario; solo actúa con clic o con
+ * Enter/Espacio teniendo el foco.
+ *
+ * Los opcionales vacíos no viajan en un alta (el BFF rechaza `email: ""`). En
+ * edición, Teléfono, RIF y Dirección vacíos sí viajan como `""` para poder
+ * borrarlos; el Correo vacío no viaja (el BFF no admite borrarlo).
  *
  * Tras un alta correcta (con cualquiera de los dos botones) muestra el aviso
  * "Contacto creado: <nombre>" con el enlace "Ver" a su detalle (sin enlace si
@@ -74,6 +81,15 @@ export function ContactFormModal({
   // Candado propio: `isSubmitting` llega con el siguiente render, tarde para un
   // segundo Enter o un clic en el mismo tick.
   const isSubmitInFlightRef = useRef(false);
+  // Solo vale durante el envío que lanza "Guardar y crear otro".
+  const createAnotherRequestedRef = useRef(false);
+
+  function submitAndCreateAnother() {
+    createAnotherRequestedRef.current = true;
+    // Valida como un envío normal; si un campo no es válido no hay evento submit.
+    formRef.current?.requestSubmit();
+    createAnotherRequestedRef.current = false;
+  }
 
   function handleOpenChange(nextOpen: boolean) {
     if (!isControlled) {
@@ -91,15 +107,16 @@ export function ContactFormModal({
       return;
     }
 
-    const submitter = (event.nativeEvent as SubmitEvent).submitter;
-    const createAnother = !isEdit && submitter?.dataset.intent === CREATE_ANOTHER_INTENT;
+    const createAnother = !isEdit && createAnotherRequestedRef.current;
     const formData = new FormData(event.currentTarget);
+    const optionalText = (name: string, clearable = isEdit) =>
+      String(formData.get(name) ?? "").trim() || (clearable ? "" : undefined);
     const input: ContactInput = {
-      address: String(formData.get("address") ?? ""),
-      email: String(formData.get("email") ?? ""),
+      address: optionalText("address"),
+      email: optionalText("email", false),
       name: String(formData.get("name") ?? ""),
-      phone: String(formData.get("phone") ?? ""),
-      taxId: String(formData.get("taxId") ?? ""),
+      phone: optionalText("phone"),
+      taxId: optionalText("taxId"),
       type: String(formData.get("type") ?? "cliente") as ContactInput["type"],
     };
 
@@ -162,10 +179,9 @@ export function ContactFormModal({
               Cancelar
             </Button>
             <Button
-              data-intent={CREATE_ANOTHER_INTENT}
               disabled={isSubmitting}
-              form={formId}
-              type="submit"
+              onClick={submitAndCreateAnother}
+              type="button"
               variant="outline"
             >
               Guardar y crear otro
@@ -231,7 +247,7 @@ export function ContactFormModal({
           name="address"
         />
         {errorMessage ? (
-          <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+          <p className="min-w-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 [overflow-wrap:anywhere] dark:bg-red-950 dark:text-red-300">
             {errorMessage}
           </p>
         ) : null}
