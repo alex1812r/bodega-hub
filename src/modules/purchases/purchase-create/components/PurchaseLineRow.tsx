@@ -1,12 +1,18 @@
 "use client";
 
 import { Package, Trash2 } from "lucide-react";
-import { type ButtonHTMLAttributes, useState } from "react";
+import type { ButtonHTMLAttributes } from "react";
 
+import { TaxRateChips } from "@/shared/components/TaxRateChips";
 import { cn } from "@/shared/utils/cn";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 
-import type { PurchaseDraftItem, PurchaseLineCatalogMeta } from "../types";
+import type {
+  PurchaseDraftItem,
+  PurchaseLineCatalogMeta,
+  PurchaseLineTax,
+  PurchaseTaxCatalog,
+} from "../types";
 import { getDraftLineTotals, syncLineCostFields } from "../utils/normalizePurchaseLine";
 import {
   purchaseLineFieldLabelClassName,
@@ -14,18 +20,23 @@ import {
   purchaseLineInputClassName,
 } from "../utils/purchaseCreateStyles";
 import { applyPackPreset, getDefaultPackUnit, toUnitLine } from "../utils/purchaseLinePack";
+import { PURCHASE_LINE_TAX_REQUIRED_MESSAGE } from "../utils/purchaseLineTax";
 import { PurchaseLinePackFields } from "./PurchaseLinePackFields";
-import { PurchaseLineTaxField } from "./PurchaseLineTaxField";
 
 export type PurchaseLineRowProps = {
   item: PurchaseDraftItem;
   meta: PurchaseLineCatalogMeta;
   onRemove: () => void;
+  /** Alícuota elegida en los chips (`code` del catálogo). */
+  onTaxChange: (code: string) => void;
   /** Cambios sobre la línea; la página los fusiona y resincroniza los costos. */
   onUpdate: (input: Partial<PurchaseDraftItem>) => void;
   rateVes: number;
   /** Fondo alterno de las filas pares. */
   striped?: boolean;
+  /** Alícuota efectiva de la línea; `item.taxRate` ya trae su porcentaje. */
+  tax: PurchaseLineTax;
+  taxCatalog: PurchaseTaxCatalog;
 };
 
 const stackedLabelClassName = cn(purchaseLineFieldLabelClassName, "mb-0.5 block @xl:hidden");
@@ -55,23 +66,26 @@ function LineChip({
 
 /**
  * Una línea de la compra. Fila principal: producto, cantidad, costo (en la moneda de la
- * compra) y total. Los chips "IVA" y "Empaque" despliegan la fila secundaria.
+ * compra) y total. El chip de IVA abre las alícuotas del catálogo (no se teclea un
+ * porcentaje) y el chip "Empaque" despliega la fila secundaria.
  */
 export function PurchaseLineRow({
   item,
   meta,
   onRemove,
+  onTaxChange,
   onUpdate,
   rateVes,
   striped = false,
+  tax,
+  taxCatalog,
 }: PurchaseLineRowProps) {
-  const [taxOpen, setTaxOpen] = useState(false);
   const normalized = syncLineCostFields(item, rateVes);
   const totals = getDraftLineTotals(normalized, rateVes);
   const isPack = item.entryMode === "pack";
   const isVes = item.costCurrency === "ves";
   const currencyLabel = isVes ? "BS" : "REF";
-  const taxRate = item.taxRate ?? meta.taxRate ?? 0;
+  const needsTaxRate = tax.code === null && !taxCatalog.isLoading && !taxCatalog.error;
   const totalRefText = formatRefUsd(totals.totalRef);
   const totalVesText = formatVesBs(totals.totalVes);
 
@@ -97,14 +111,22 @@ export function PurchaseLineRow({
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 @xl:mt-0.5 @xl:flex-nowrap">
           <span className="min-w-0 truncate text-xs text-on-surface-variant">{meta.sku}</span>
-          <LineChip
-            active={taxOpen}
-            aria-expanded={taxOpen}
-            aria-label={`IVA ${taxRate} % de ${meta.name}`}
-            onClick={() => setTaxOpen((current) => !current)}
-          >
-            IVA {taxRate} %
-          </LineChip>
+          <TaxRateChips
+            categoryDefaultCode={tax.categoryCode}
+            className="shrink-0"
+            error={taxCatalog.error}
+            isLoading={taxCatalog.isLoading}
+            label={`IVA de ${meta.name}`}
+            onChange={onTaxChange}
+            onRetry={taxCatalog.refetch}
+            rates={taxCatalog.rates}
+            value={tax.code}
+          />
+          {needsTaxRate ? (
+            <span className="shrink-0 text-xs font-medium text-destructive" role="alert">
+              {PURCHASE_LINE_TAX_REQUIRED_MESSAGE}
+            </span>
+          ) : null}
           <LineChip
             active={isPack}
             aria-label={`Empaque de ${meta.name}`}
@@ -183,27 +205,14 @@ export function PurchaseLineRow({
         <Trash2 aria-hidden className="size-[1.125rem]" />
       </button>
 
-      {isPack || taxOpen ? (
-        <div className="col-span-full flex flex-wrap items-start gap-2 pt-1">
-          {isPack ? (
-            <PurchaseLinePackFields
-              className="min-w-0 basis-full @xl:flex-1 @xl:basis-0"
-              item={item}
-              meta={meta}
-              onUpdate={onUpdate}
-              rateVes={rateVes}
-            />
-          ) : null}
-          {taxOpen ? (
-            <div className="w-32 shrink-0">
-              <PurchaseLineTaxField
-                onChange={(nextTaxRate) => onUpdate({ taxRate: nextTaxRate })}
-                productName={meta.name}
-                taxRate={taxRate}
-              />
-            </div>
-          ) : null}
-        </div>
+      {isPack ? (
+        <PurchaseLinePackFields
+          className="col-span-full min-w-0 pt-1"
+          item={item}
+          meta={meta}
+          onUpdate={onUpdate}
+          rateVes={rateVes}
+        />
       ) : null}
     </li>
   );

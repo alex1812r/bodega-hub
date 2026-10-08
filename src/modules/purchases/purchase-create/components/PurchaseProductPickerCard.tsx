@@ -9,7 +9,7 @@ import { Badge } from "@/shared/components/Badge/Badge";
 import { cn } from "@/shared/utils/cn";
 import { formatRefUsd } from "@/shared/utils/currency";
 
-import type { PurchaseDraftItem } from "../types";
+import type { PurchaseDraftItem, PurchaseTaxCatalog, PurchaseWebLine } from "../types";
 import { resolvePurchaseProductByCode } from "../services/resolveSupplierCatalogProduct";
 import { PurchaseLineItemsTable, type PurchaseLineItemMeta } from "./PurchaseLineItemsTable";
 
@@ -39,10 +39,16 @@ export type PurchaseCatalogProduct = {
 
 type PurchaseProductPickerCardProps = {
   catalog: PurchaseCatalogProduct[];
+  /** Falta una alícuota activa del 0 % (o el catálogo aún no cargó): el toggle no se puede usar. */
+  exemptDisabled?: boolean;
+  /** "Compra exenta": todas las líneas, también las que se agreguen, van a Exento. */
+  exemptPurchase: boolean;
   getItemMeta: (productId: string) => PurchaseLineItemMeta;
   isSearching?: boolean;
-  items: PurchaseDraftItem[];
+  lines: PurchaseWebLine[];
   onAddProduct: (product: PurchaseCatalogProduct) => void;
+  onExemptPurchaseChange: (exempt: boolean) => void;
+  onLineTaxChange: (itemId: string, code: string) => void;
   onRemoveItem: (itemId: string) => void;
   onSearchChange: (value: string) => void;
   onUpdateItem: (itemId: string, input: Partial<PurchaseDraftItem>) => void;
@@ -51,7 +57,56 @@ type PurchaseProductPickerCardProps = {
   /** Error de la búsqueda en servidor (`error.message` tal cual). */
   searchError?: string | null;
   supplierId: string;
+  taxCatalog: PurchaseTaxCatalog;
 };
+
+type PurchaseExemptToggleProps = {
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+};
+
+/**
+ * Interruptor "Compra exenta" de la cabecera: un clic pasa toda la compra a
+ * Exento. Cada línea sigue pudiendo cambiar su alícuota con sus chips, y eso no
+ * apaga el interruptor.
+ */
+export function PurchaseExemptToggle({
+  checked,
+  disabled = false,
+  onChange,
+}: PurchaseExemptToggleProps) {
+  return (
+    <button
+      aria-checked={checked}
+      className={cn(
+        "inline-flex min-h-8 shrink-0 cursor-pointer items-center gap-2 rounded-full text-xs font-medium text-on-surface-variant transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+      )}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      role="switch"
+      type="button"
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "flex h-5 w-9 shrink-0 items-center rounded-full border p-0.5 transition-colors",
+          checked ? "border-primary bg-primary" : "border-border bg-surface-container-low",
+        )}
+      >
+        <span
+          className={cn(
+            "size-3.5 rounded-full transition-transform",
+            checked ? "translate-x-4 bg-primary-foreground" : "bg-on-surface-variant",
+          )}
+        />
+      </span>
+      Compra exenta
+    </button>
+  );
+}
 
 const SCAN_NO_SUPPLIER_MESSAGE = "Selecciona un proveedor antes de buscar productos.";
 const SCAN_NOT_FOUND_MESSAGE = "No hay un producto activo con ese código de barras o SKU.";
@@ -71,10 +126,14 @@ function getLinkChipLabel(product: PurchaseCatalogProduct) {
 
 export function PurchaseProductPickerCard({
   catalog,
+  exemptDisabled = false,
+  exemptPurchase,
   getItemMeta,
   isSearching = false,
-  items,
+  lines,
   onAddProduct,
+  onExemptPurchaseChange,
+  onLineTaxChange,
   onRemoveItem,
   onSearchChange,
   onUpdateItem,
@@ -82,6 +141,7 @@ export function PurchaseProductPickerCard({
   search,
   searchError = null,
   supplierId,
+  taxCatalog,
 }: PurchaseProductPickerCardProps) {
   const [scanOpen, setScanOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -157,10 +217,17 @@ export function PurchaseProductPickerCard({
 
   return (
     <section className="flex min-h-[31.25rem] flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
-      <h3 className="flex items-center gap-2 border-b border-border px-5 py-4 text-sm font-medium text-foreground dark:border-slate-800">
-        <Package aria-hidden className="size-[1.125rem] text-primary" />
-        Productos de la compra
-      </h3>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-5 py-3 dark:border-slate-800">
+        <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Package aria-hidden className="size-[1.125rem] text-primary" />
+          Productos de la compra
+        </h3>
+        <PurchaseExemptToggle
+          checked={exemptPurchase}
+          disabled={exemptDisabled}
+          onChange={onExemptPurchaseChange}
+        />
+      </div>
 
       <div className="border-b border-border px-4 py-4 dark:border-slate-800">
         <div className="relative" ref={containerRef}>
@@ -234,10 +301,12 @@ export function PurchaseProductPickerCard({
       <div className="min-h-0 flex-1 overflow-auto">
         <PurchaseLineItemsTable
           getItemMeta={getItemMeta}
-          items={items}
+          lines={lines}
+          onLineTaxChange={onLineTaxChange}
           onRemoveItem={onRemoveItem}
           onUpdateItem={onUpdateItem}
           rateVes={rateVes}
+          taxCatalog={taxCatalog}
         />
       </div>
 

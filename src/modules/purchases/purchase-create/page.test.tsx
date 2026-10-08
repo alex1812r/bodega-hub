@@ -28,6 +28,32 @@ const mockCajaPack = {
 // Los tests de envio reducen el buscador a un boton; los del buscador (COM-01) usan el real.
 let mockUseRealPicker = false;
 
+function mockBuildTaxRate(code: string, label: string, pct: number, sortOrder: number) {
+  return {
+    code,
+    id: `tax-${code}`,
+    isActive: true,
+    isDefault: code === "general",
+    isGlobal: true,
+    label,
+    pct,
+    sortOrder,
+  };
+}
+
+const mockDefaultTaxRates = [
+  mockBuildTaxRate("exento", "Exento", 0, 10),
+  mockBuildTaxRate("reducida", "Reducida", 8, 20),
+  mockBuildTaxRate("general", "General", 16, 30),
+];
+// Catalogo de alicuotas ya cargado: las lineas resuelven su alicuota en el mismo render.
+const mockTaxCatalog = {
+  error: null,
+  isLoading: false,
+  rates: mockDefaultTaxRates,
+  refetch: jest.fn(),
+};
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
 }));
@@ -36,6 +62,9 @@ jest.mock("../../contacts/hooks/useContacts", () => ({
 }));
 jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
   useCurrentExchangeRate: () => mockRate,
+}));
+jest.mock("../../../shared/hooks/useTaxRates", () => ({
+  useTaxRates: () => mockTaxCatalog,
 }));
 jest.mock("../../contacts/hooks/useSupplierProducts", () => ({
   useSupplierProducts: () => mockSupplierProducts,
@@ -56,15 +85,51 @@ jest.mock("./components/PurchaseProductPickerCard", () => {
     typeof import("./components/PurchaseLineItemsTable")
   >("./components/PurchaseLineItemsTable");
   type PickerProps = Parameters<typeof actual.PurchaseProductPickerCard>[0];
-  // El buscador se reduce a dos botones; las lineas son las reales.
+  // El buscador se reduce a tres botones; las lineas y el interruptor "Compra exenta" son los reales.
   const StubPicker = ({
+    exemptDisabled,
+    exemptPurchase,
     onAddProduct,
+    onExemptPurchaseChange,
     ...tableProps
-  }: Pick<PickerProps, "getItemMeta" | "items" | "onRemoveItem" | "onUpdateItem" | "rateVes"> & {
+  }: Pick<
+    PickerProps,
+    | "exemptDisabled"
+    | "exemptPurchase"
+    | "getItemMeta"
+    | "lines"
+    | "onExemptPurchaseChange"
+    | "onLineTaxChange"
+    | "onRemoveItem"
+    | "onUpdateItem"
+    | "rateVes"
+    | "taxCatalog"
+  > & {
     onAddProduct: (product: Record<string, unknown>) => void;
   }) => (
     <>
+      <actual.PurchaseExemptToggle
+        checked={exemptPurchase}
+        disabled={exemptDisabled}
+        onChange={onExemptPurchaseChange}
+      />
       <PurchaseLineItemsTable {...tableProps} />
+      <button
+        onClick={() =>
+          onAddProduct({
+            costWithTaxRef: 1.08,
+            name: "Harina PAN",
+            packUnits: [],
+            productId: "prod-harina",
+            sku: "HAR-PAN",
+            taxRate: 8,
+            unitCostRef: 1,
+          })
+        }
+        type="button"
+      >
+        agregar producto reducido
+      </button>
       <button
         onClick={() =>
           onAddProduct({
@@ -106,11 +171,16 @@ jest.mock("./components/PurchaseProductPickerCard", () => {
         <actual.PurchaseProductPickerCard {...props} />
       ) : (
         <StubPicker
+          exemptDisabled={props.exemptDisabled}
+          exemptPurchase={props.exemptPurchase}
           getItemMeta={props.getItemMeta}
-          items={props.items}
+          lines={props.lines}
+          onExemptPurchaseChange={props.onExemptPurchaseChange}
+          onLineTaxChange={props.onLineTaxChange}
           onRemoveItem={props.onRemoveItem}
           onUpdateItem={props.onUpdateItem}
           rateVes={props.rateVes}
+          taxCatalog={props.taxCatalog}
           onAddProduct={(product) =>
             props.onAddProduct(product as Parameters<typeof props.onAddProduct>[0])
           }
@@ -124,6 +194,7 @@ import {
   installFetchStub,
   jsonResponse,
 } from "@/modules/inventory/utils/requestAttempt.testUtils";
+import { ToastProvider } from "@/shared/components/Toast";
 
 import { PurchaseCreatePage } from "./page";
 
@@ -406,6 +477,7 @@ const refrescoPackItem = {
   subtotalRef: 24,
   subtotalVes: 12240,
   taxRate: 16,
+  taxRateCode: "general",
   taxRef: 3.84,
   taxVes: 1958.4,
   unitCostRef: 1,
@@ -420,6 +492,7 @@ const cableUnitItem = {
   subtotalRef: 6,
   subtotalVes: 3060,
   taxRate: 0,
+  taxRateCode: "exento",
   taxRef: 0,
   taxVes: 0,
   unitCostRef: 2,
@@ -573,10 +646,9 @@ describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
       "aria-pressed",
       "false",
     );
-    expect(within(row).getByRole("button", { name: "IVA 0 % de Cable HDMI" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    expect(
+      within(row).getByRole("button", { name: "IVA de Cable HDMI: Exento" }),
+    ).toHaveAttribute("aria-expanded", "false");
   });
 
   it("el chip Empaque despliega los cuatro campos y el POST en modo empaque es el de antes", async () => {
@@ -627,6 +699,7 @@ describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
           subtotalRef: 24,
           subtotalVes: 12240,
           taxRate: 0,
+          taxRateCode: "exento",
           taxRef: 0,
           taxVes: 0,
           unitCostRef: 2,
@@ -697,6 +770,7 @@ describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
         subtotalRef: 24,
         subtotalVes: 12240,
         taxRate: 16,
+        taxRateCode: "general",
         taxRef: 3.84,
         taxVes: 1958.4,
         unitCostRef: 1,
@@ -718,28 +792,340 @@ describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
     expect(within(row).getByLabelText("Unidades por manga de Refresco Cola")).toHaveValue(12);
     expect(within(row).getByLabelText("Costo por manga BS de Refresco Cola")).toHaveValue(6120);
   });
+});
 
-  it("el chip IVA muestra la alícuota y despliega el control de impuesto sin ocupar la fila", () => {
+function renderPurchaseWithToasts(...addButtons: string[]) {
+  const QueryWrapper = createQueryWrapper();
+
+  render(
+    <QueryWrapper>
+      <ToastProvider>
+        <PurchaseCreatePage />
+      </ToastProvider>
+    </QueryWrapper>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "elegir proveedor" }));
+  for (const name of addButtons) {
+    fireEvent.click(screen.getByRole("button", { name }));
+  }
+}
+
+function taxChip(productName: string) {
+  return screen.getByRole("button", { name: new RegExp(`^IVA de ${productName}: `) });
+}
+
+function chooseTaxRate(productName: string, rateLabel: RegExp) {
+  fireEvent.click(taxChip(productName));
+  fireEvent.click(screen.getByRole("radio", { name: rateLabel }));
+}
+
+function exemptSwitch() {
+  return screen.getByRole("switch", { name: "Compra exenta" });
+}
+
+function summaryBreakdown() {
+  return screen.queryByRole("group", { name: "Desglose de IVA por alícuota" });
+}
+
+describe("PurchaseCreatePage · alícuota de IVA por línea (COM-11)", () => {
+  beforeEach(() => {
+    mockPush.mockReset();
+  });
+
+  afterEach(() => {
+    mockTaxCatalog.rates = mockDefaultTaxRates;
+  });
+
+  it("una línea nueva nace con la alícuota de la categoría del producto y el POST lleva su taxRateCode", async () => {
+    const api = installFetchStub(() => null);
+
+    renderPurchase("agregar producto", "agregar producto reducido", "agregar producto con empaque");
+
+    expect(taxChip("Cable HDMI")).toHaveAccessibleName("IVA de Cable HDMI: Exento");
+    expect(taxChip("Harina PAN")).toHaveAccessibleName("IVA de Harina PAN: IVA 8 %");
+    expect(taxChip("Refresco Cola")).toHaveAccessibleName("IVA de Refresco Cola: IVA 16 %");
+    expect(screen.queryByText("Elige una alícuota")).not.toBeInTheDocument();
+
+    const body = await confirmAndGetBody(api);
+    const items = body?.items as Array<Record<string, unknown>>;
+
+    expect(items.map((item) => [item.productId, item.taxRateCode, item.taxRate])).toEqual([
+      ["prod-refresco", "general", 16],
+      ["prod-harina", "reducida", 8],
+      ["prod-cable", "exento", 0],
+    ]);
+  });
+
+  it("el chip abre las alícuotas del catálogo, marca la de la categoría y elegir una cierra la lista", () => {
     installFetchStub(() => null);
 
     renderPurchase("agregar producto con empaque");
 
-    const row = screen.getByRole("listitem");
-    const chip = within(row).getByRole("button", { name: "IVA 16 % de Refresco Cola" });
+    const chip = taxChip("Refresco Cola");
 
-    expect(chip).toHaveTextContent("IVA 16 %");
-    expect(within(row).queryByText("Impuesto")).not.toBeInTheDocument();
+    expect(chip).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
 
     fireEvent.click(chip);
 
     expect(chip).toHaveAttribute("aria-expanded", "true");
-    expect(within(row).getByText("Impuesto")).toBeInTheDocument();
+    expect(screen.getAllByRole("radio").map((radio) => radio.textContent)).toEqual([
+      "Exento 0 %",
+      "Reducida 8 %",
+      "General 16 %por defecto",
+    ]);
+    expect(screen.getByRole("radio", { name: /General/ })).toBeChecked();
+
+    fireEvent.click(screen.getByRole("radio", { name: /Reducida/ }));
+
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(taxChip("Refresco Cola")).toHaveAccessibleName("IVA de Refresco Cola: IVA 8 %");
+
+    // La de la categoría sigue marcada "por defecto" aunque la línea ya use otra.
+    fireEvent.click(taxChip("Refresco Cola"));
+    expect(screen.getByRole("radio", { name: /General/ })).toHaveTextContent("por defecto");
+    expect(screen.getByRole("radio", { name: /Reducida/ })).toBeChecked();
+  });
+
+  it("cambiar la alícuota con los chips recalcula el total y el payload", async () => {
+    const api = installFetchStub(() => null);
+
+    renderPurchase("agregar producto con empaque");
+
+    // 1 caja a 6.120 Bs (12 REF) al 16 %.
+    expect(screen.getAllByText("Bs. 7.099,20")).toHaveLength(2);
+
+    chooseTaxRate("Refresco Cola", /Reducida/);
+
+    // Al 8 %: 489,60 Bs / 0,96 REF de IVA, en la línea y en el total del resumen.
+    expect(screen.queryByText("Bs. 7.099,20")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Bs. 6.609,60")).toHaveLength(2);
+    expect(screen.getAllByText("ref 12.96")).toHaveLength(2);
+
+    expect(await confirmAndGetBody(api)).toEqual({
+      ...twoLinePurchaseTotals,
+      clientRequestId: expect.any(String),
+      items: [
+        {
+          ...refrescoPackItem,
+          packCount: 1,
+          subtotalRef: 12,
+          subtotalVes: 6120,
+          taxRate: 8,
+          taxRateCode: "reducida",
+          taxRef: 0.96,
+          taxVes: 489.6,
+        },
+      ],
+      subtotalRef: 12,
+      subtotalVes: 6120,
+      taxRef: 0.96,
+      taxVes: 489.6,
+    });
+  });
+
+  it('"Compra exenta" pasa todas las líneas a Exento con un clic, también las que se agreguen después', async () => {
+    const api = installFetchStub(() => null);
+
+    renderPurchaseWithToasts("agregar producto con empaque", "agregar producto reducido");
+
+    expect(exemptSwitch()).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(exemptSwitch());
+
+    expect(exemptSwitch()).toHaveAttribute("aria-checked", "true");
+    expect(taxChip("Refresco Cola")).toHaveAccessibleName("IVA de Refresco Cola: Exento");
+    expect(taxChip("Harina PAN")).toHaveAccessibleName("IVA de Harina PAN: Exento");
+    // Ninguna línea tenía una alícuota elegida a mano: no hay aviso.
+    expect(screen.queryByText(/elegida a mano/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "agregar producto" }));
+    fireEvent.click(screen.getByRole("button", { name: "agregar producto reducido" }));
+
+    expect(taxChip("Cable HDMI")).toHaveAccessibleName("IVA de Cable HDMI: Exento");
+    expect(taxChip("Harina PAN")).toHaveAccessibleName("IVA de Harina PAN: Exento");
+
+    const body = await confirmAndGetBody(api);
+    const items = body?.items as Array<Record<string, unknown>>;
+
+    expect(items).toHaveLength(3);
+    for (const item of items) {
+      expect(item).toMatchObject({ taxRate: 0, taxRateCode: "exento", taxRef: 0, taxVes: 0 });
+    }
+    expect(body).toMatchObject({ taxRef: 0, taxVes: 0 });
+  });
+
+  it('una línea agregada con "Compra exenta" activo nace exenta y al desactivarlo cada una vuelve a la de su categoría', () => {
+    installFetchStub(() => null);
+
+    renderPurchaseWithToasts("agregar producto con empaque");
+    fireEvent.click(exemptSwitch());
+    fireEvent.click(screen.getByRole("button", { name: "agregar producto reducido" }));
+
+    expect(taxChip("Harina PAN")).toHaveAccessibleName("IVA de Harina PAN: Exento");
+    expect(taxChip("Refresco Cola")).toHaveAccessibleName("IVA de Refresco Cola: Exento");
+
+    fireEvent.click(exemptSwitch());
+
+    expect(exemptSwitch()).toHaveAttribute("aria-checked", "false");
+    expect(taxChip("Harina PAN")).toHaveAccessibleName("IVA de Harina PAN: IVA 8 %");
+    expect(taxChip("Refresco Cola")).toHaveAccessibleName("IVA de Refresco Cola: IVA 16 %");
+  });
+
+  it("avisa de las líneas con alícuota elegida a mano al activar la compra exenta, y las pasa a Exento igualmente", () => {
+    installFetchStub(() => null);
+
+    renderPurchaseWithToasts(
+      "agregar producto",
+      "agregar producto reducido",
+      "agregar producto con empaque",
+    );
+    chooseTaxRate("Refresco Cola", /Reducida/);
+    chooseTaxRate("Harina PAN", /General/);
+    // Elegida a mano pero ya exenta: no cambia, no se cuenta.
+    chooseTaxRate("Cable HDMI", /Reducida/);
+    chooseTaxRate("Cable HDMI", /Exento/);
+
+    fireEvent.click(exemptSwitch());
+
     expect(
-      within(row).getByRole("button", { name: "Editar impuesto de Refresco Cola" }),
+      screen.getByText("2 líneas tenían una alícuota elegida a mano; ahora son exentas"),
     ).toBeInTheDocument();
+    expect(taxChip("Refresco Cola")).toHaveAccessibleName("IVA de Refresco Cola: Exento");
+    expect(taxChip("Harina PAN")).toHaveAccessibleName("IVA de Harina PAN: Exento");
 
-    fireEvent.click(chip);
+    // Al desactivarlo vuelven a la de su categoría, no a la elegida a mano.
+    fireEvent.click(exemptSwitch());
 
-    expect(within(row).queryByText("Impuesto")).not.toBeInTheDocument();
+    expect(taxChip("Refresco Cola")).toHaveAccessibleName("IVA de Refresco Cola: IVA 16 %");
+    expect(taxChip("Harina PAN")).toHaveAccessibleName("IVA de Harina PAN: IVA 8 %");
+  });
+
+  it("con una sola línea elegida a mano el aviso va en singular", () => {
+    installFetchStub(() => null);
+
+    renderPurchaseWithToasts("agregar producto con empaque");
+    chooseTaxRate("Refresco Cola", /Reducida/);
+    fireEvent.click(exemptSwitch());
+
+    expect(
+      screen.getByText("1 línea tenía una alícuota elegida a mano; ahora es exenta"),
+    ).toBeInTheDocument();
+  });
+
+  it('con "Compra exenta" activo una línea puede cambiar su alícuota y el interruptor sigue activo', async () => {
+    const api = installFetchStub(() => null);
+
+    renderPurchaseWithToasts("agregar producto", "agregar producto con empaque");
+    fireEvent.click(exemptSwitch());
+    chooseTaxRate("Refresco Cola", /General/);
+
+    expect(exemptSwitch()).toHaveAttribute("aria-checked", "true");
+    expect(taxChip("Refresco Cola")).toHaveAccessibleName("IVA de Refresco Cola: IVA 16 %");
+    expect(taxChip("Cable HDMI")).toHaveAccessibleName("IVA de Cable HDMI: Exento");
+
+    const body = await confirmAndGetBody(api);
+    const items = body?.items as Array<Record<string, unknown>>;
+
+    expect(items.map((item) => item.taxRateCode)).toEqual(["general", "exento"]);
+  });
+
+  it("el resumen desglosa base e IVA por alícuota y el desglose suma lo mismo que los totales", async () => {
+    const api = installFetchStub(() => null);
+
+    renderTwoLinePurchase();
+
+    const breakdown = summaryBreakdown() as HTMLElement;
+    const rows = [...breakdown.children];
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("Base Exento 0 %Bs. 3.060,00ref 6.00");
+    expect(rows[0]).toHaveTextContent("IVA Exento 0 %Bs. 0,00ref 0.00");
+    expect(rows[1]).toHaveTextContent("Base General 16 %Bs. 12.240,00ref 24.00");
+    expect(rows[1]).toHaveTextContent("IVA General 16 %Bs. 1.958,40ref 3.84");
+    expect(screen.queryByText(/^Impuestos/)).not.toBeInTheDocument();
+
+    // 3.060 + 12.240 = subtotal; 0 + 1.958,40 = IVA; total = 17.258,40.
+    expect(screen.getByText("Bs. 15.300,00")).toBeInTheDocument();
+    expect(screen.getByText("Bs. 17.258,40")).toBeInTheDocument();
+
+    const body = await confirmAndGetBody(api);
+
+    expect(body).toMatchObject({
+      subtotalRef: 6 + 24,
+      subtotalVes: 3060 + 12240,
+      taxRef: 3.84,
+      taxVes: 1958.4,
+    });
+  });
+
+  it("sin líneas el resumen no muestra desglose", () => {
+    installFetchStub(() => null);
+
+    renderPurchase();
+
+    expect(summaryBreakdown()).not.toBeInTheDocument();
+  });
+
+  it("no existe ningún input de IVA: ni en la línea ni con la lista de alícuotas abierta", () => {
+    installFetchStub(() => null);
+
+    renderPurchase("agregar producto", "agregar producto con empaque");
+    fireEvent.click(taxChip("Refresco Cola"));
+
+    const fields = [...document.querySelectorAll("input, select, textarea, [contenteditable]")];
+    const names = fields.map(
+      (field) => field.getAttribute("aria-label") ?? field.getAttribute("placeholder") ?? "",
+    );
+
+    expect(fields.length).toBeGreaterThan(0);
+    for (const name of names) {
+      expect(name).not.toMatch(/iva|impuesto|al[ií]cuota|%/i);
+    }
+    expect(
+      within(screen.getByRole("dialog", { name: "IVA de Refresco Cola" })).queryByRole("spinbutton"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Impuesto")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Editar impuesto/ })).not.toBeInTheDocument();
+  });
+
+  it('si ninguna alícuota activa tiene el % de la categoría, la línea pide "Elige una alícuota" y no se confirma', async () => {
+    const api = installFetchStub(() => null);
+
+    mockTaxCatalog.rates = mockDefaultTaxRates.map((rate) =>
+      rate.code === "reducida" ? { ...rate, isActive: false } : rate,
+    );
+    renderPurchase("agregar producto reducido");
+
+    const row = screen.getByRole("listitem");
+
+    expect(taxChip("Harina PAN")).toHaveAccessibleName("IVA de Harina PAN: Elegir IVA");
+    expect(within(row).getByRole("alert")).toHaveTextContent("Elige una alícuota");
+
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+
+    expect(
+      screen.getByText("Elige una alícuota en cada línea antes de confirmar la compra."),
+    ).toBeInTheDocument();
+    expect(api.posts).toHaveLength(0);
+
+    chooseTaxRate("Harina PAN", /General/);
+
+    expect(within(row).queryByRole("alert")).not.toBeInTheDocument();
+
+    const body = await confirmAndGetBody(api);
+
+    expect(body?.items).toEqual([
+      expect.objectContaining({ productId: "prod-harina", taxRate: 16, taxRateCode: "general" }),
+    ]);
+  });
+
+  it('sin una alícuota activa del 0 % el interruptor "Compra exenta" queda deshabilitado', () => {
+    installFetchStub(() => null);
+
+    mockTaxCatalog.rates = mockDefaultTaxRates.filter((rate) => rate.code !== "exento");
+    renderPurchase("agregar producto con empaque");
+
+    expect(exemptSwitch()).toBeDisabled();
   });
 });

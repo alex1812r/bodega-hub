@@ -2,13 +2,22 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useState } from "react";
 import { expect, userEvent, within } from "storybook/test";
 
+import type { TaxRate } from "@/shared/hooks/useTaxRates";
+
 import {
   createPackDraftItem,
   createUnitDraftItem,
   type PurchaseCostCurrency,
   type PurchaseDraftItem,
+  type PurchaseTaxCatalog,
 } from "../types";
 import { syncLineCostFields } from "../utils/normalizePurchaseLine";
+import {
+  buildPurchaseWebLines,
+  chooseLineTax,
+  EMPTY_PURCHASE_TAX_STATE,
+  setPurchaseExempt,
+} from "../utils/purchaseLineTax";
 import { PurchaseLineItemsTable, type PurchaseLineItemMeta } from "./PurchaseLineItemsTable";
 
 const RATE_VES = 510;
@@ -22,8 +31,35 @@ const cajaPack = {
   unitsPerPack: 12,
 };
 
+function taxRate(code: string, label: string, pct: number, sortOrder: number): TaxRate {
+  return {
+    code,
+    id: `tax-${code}`,
+    isActive: true,
+    isDefault: code === "general",
+    isGlobal: true,
+    label,
+    pct,
+    sortOrder,
+  };
+}
+
+const taxRates = [
+  taxRate("exento", "Exento", 0, 10),
+  taxRate("reducida", "Reducida", 8, 20),
+  taxRate("general", "General", 16, 30),
+];
+const taxCatalog: PurchaseTaxCatalog = {
+  error: null,
+  isLoading: false,
+  rates: taxRates,
+  refetch: () => undefined,
+};
+
 const metaByProductId: Record<string, PurchaseLineItemMeta> = {
   "prod-cable": { name: "Cable HDMI 2 m", packUnits: [], sku: "ELE-CAB-001", taxRate: 16 },
+  // Categoría con un porcentaje que ninguna alícuota activa tiene.
+  "prod-licor": { name: "Ron añejo 750 ml", packUnits: [], sku: "LIC-RON-001", taxRate: 31 },
   "prod-refresco": {
     name: "Refresco Cola 2 L retornable",
     packUnits: [cajaPack],
@@ -58,8 +94,44 @@ function buildItems(costCurrency: PurchaseCostCurrency): PurchaseDraftItem[] {
   ];
 }
 
-function LinesHarness({ costCurrency }: { costCurrency: PurchaseCostCurrency }) {
-  const [items, setItems] = useState(() => buildItems(costCurrency));
+type LinesHarnessProps = {
+  costCurrency: PurchaseCostCurrency;
+  /** "Compra exenta" activo: todas las líneas nacen en Exento. */
+  exempt?: boolean;
+  /** Añade una línea cuya categoría no tiene alícuota activa. */
+  withUnresolvedLine?: boolean;
+};
+
+function LinesHarness({
+  costCurrency,
+  exempt = false,
+  withUnresolvedLine = false,
+}: LinesHarnessProps) {
+  const [items, setItems] = useState(() => [
+    ...buildItems(costCurrency),
+    ...(withUnresolvedLine
+      ? [
+          createUnitDraftItem({
+            costCurrency,
+            id: "line-licor",
+            productId: "prod-licor",
+            rateVes: RATE_VES,
+            taxRate: 31,
+            unitCostRef: 9,
+          }),
+        ]
+      : []),
+  ]);
+  const [taxState, setTaxState] = useState(() =>
+    exempt ? setPurchaseExempt(true) : EMPTY_PURCHASE_TAX_STATE,
+  );
+  const lines = buildPurchaseWebLines({
+    getCategoryPct: (productId) => metaByProductId[productId]?.taxRate ?? 0,
+    items,
+    rateVes: RATE_VES,
+    rates: taxRates,
+    taxState,
+  });
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-surface-container-lowest">
@@ -67,7 +139,10 @@ function LinesHarness({ costCurrency }: { costCurrency: PurchaseCostCurrency }) 
         getItemMeta={(productId) =>
           metaByProductId[productId] ?? { name: "Producto", sku: "—", taxRate: 0 }
         }
-        items={items}
+        lines={lines}
+        onLineTaxChange={(itemId, code) =>
+          setTaxState((current) => chooseLineTax(current, itemId, code))
+        }
         onRemoveItem={(itemId) => setItems((current) => current.filter((item) => item.id !== itemId))}
         onUpdateItem={(itemId, input) =>
           setItems((current) =>
@@ -77,6 +152,7 @@ function LinesHarness({ costCurrency }: { costCurrency: PurchaseCostCurrency }) 
           )
         }
         rateVes={RATE_VES}
+        taxCatalog={taxCatalog}
       />
     </div>
   );
@@ -113,6 +189,67 @@ export const CostsInRef: Story = {
   args: { costCurrency: "ref" },
 };
 
+/** El chip de IVA abre las alícuotas del catálogo; elegir una cierra la lista y recalcula el total. */
+export const TaxRateChange: Story = {
+  name: "Cambiar la alícuota de una línea",
+  play: async ({ canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+
+    await userEvent.click(body.getByRole("button", { name: "IVA de Cable HDMI 2 m: IVA 16 %" }));
+    await userEvent.click(await body.findByRole("radio", { name: /Reducida/ }));
+
+    await expect(body.queryByRole("radiogroup")).not.toBeInTheDocument();
+    await expect(
+      body.getByRole("button", { name: "IVA de Cable HDMI 2 m: IVA 8 %" }),
+    ).toBeVisible();
+  },
+};
+
+/** Con "Compra exenta" todas las líneas muestran Exento. */
+export const ExemptPurchase: Story = {
+  args: { exempt: true },
+  name: "Compra exenta",
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await expect(canvas.getAllByRole("button", { name: /: Exento$/ })).toHaveLength(2);
+  },
+};
+
+/** Ninguna alícuota activa coincide con la de la categoría: la línea pide elegir una. */
+export const UnresolvedTaxRate: Story = {
+  args: { withUnresolvedLine: true },
+  name: "Línea sin alícuota válida",
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await expect(canvas.getByText("Elige una alícuota")).toBeVisible();
+  },
+};
+
+export const TaxRatesLoading: Story = {
+  name: "Alícuotas cargando",
+  render: () => (
+    <PurchaseLineItemsTable
+      getItemMeta={(productId) =>
+        metaByProductId[productId] ?? { name: "Producto", sku: "—", taxRate: 0 }
+      }
+      lines={buildPurchaseWebLines({
+        getCategoryPct: () => 16,
+        items: buildItems("ves"),
+        rateVes: RATE_VES,
+        rates: [],
+        taxState: EMPTY_PURCHASE_TAX_STATE,
+      })}
+      onLineTaxChange={() => undefined}
+      onRemoveItem={() => undefined}
+      onUpdateItem={() => undefined}
+      rateVes={RATE_VES}
+      taxCatalog={{ ...taxCatalog, isLoading: true, rates: [] }}
+    />
+  ),
+};
+
 /** Tarjeta estrecha (móvil 390 px): la línea se apila sin desbordes. */
 export const Mobile: Story = {
   globals: { viewport: { isRotated: false, value: "mobile390" } },
@@ -133,10 +270,12 @@ export const Empty: Story = {
   render: () => (
     <PurchaseLineItemsTable
       getItemMeta={() => ({ name: "Producto", sku: "—", taxRate: 0 })}
-      items={[]}
+      lines={[]}
+      onLineTaxChange={() => undefined}
       onRemoveItem={() => undefined}
       onUpdateItem={() => undefined}
       rateVes={RATE_VES}
+      taxCatalog={taxCatalog}
     />
   ),
 };

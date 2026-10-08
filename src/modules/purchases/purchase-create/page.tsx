@@ -8,6 +8,8 @@ import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { useToast } from "@/shared/components/Toast";
+import { useTaxRates } from "@/shared/hooks/useTaxRates";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
@@ -28,6 +30,7 @@ import {
   createUnitDraftItem,
   type PurchaseCostCurrency,
   type PurchaseDraftItem,
+  type PurchaseTaxState,
 } from "./types";
 import {
   draftToPurchaseItemInput,
@@ -35,6 +38,19 @@ import {
   switchCostCurrency,
   syncLineCostFields,
 } from "./utils/normalizePurchaseLine";
+import {
+  buildExemptOverrideNotice,
+  buildPurchaseTaxBreakdown,
+  buildPurchaseWebLines,
+  chooseLineTax,
+  countManualLinesLostToExempt,
+  dropLineTax,
+  EMPTY_PURCHASE_TAX_STATE,
+  findExemptTaxRate,
+  setPurchaseExempt,
+} from "./utils/purchaseLineTax";
+
+const LINE_TAX_MISSING_MESSAGE = "Elige una alícuota en cada línea antes de confirmar la compra.";
 
 export function PurchaseCreatePage() {
   const router = useRouter();
@@ -42,12 +58,18 @@ export function PurchaseCreatePage() {
   const exchangeRate = useCurrentExchangeRate();
   const createPurchase = useCreatePurchase();
   const requestAttempt = useRequestAttempt();
+  const { showToast } = useToast();
+  // Catálogo completo: los chips muestran también una alícuota desactivada.
+  const taxRates = useTaxRates({ activeOnly: false });
   const [supplierId, setSupplierId] = useState("");
   const [productSearch, setProductSearch] = useState("");
   const [status, setStatus] = useState<PurchaseStatus>("recibido");
   const [notes, setNotes] = useState("");
   const [discountRef, setDiscountRef] = useState(0);
+  // Borrador de core. Su `taxRate` NO es la fuente de verdad: la alícuota de cada
+  // línea se deriva de `taxState` en `lines`, que es lo que se pinta y se envía.
   const [items, setItems] = useState<PurchaseDraftItem[]>([]);
+  const [taxState, setTaxState] = useState<PurchaseTaxState>(EMPTY_PURCHASE_TAX_STATE);
   // Moneda en la que se teclean los costos: una sola para toda la compra.
   const [costCurrency, setCostCurrency] = useState<PurchaseCostCurrency>("ves");
   const [formError, setFormError] = useState<string | null>(null);
@@ -99,19 +121,33 @@ export function PurchaseCreatePage() {
     });
   }, [catalog, supplierId]);
 
-  // Un solo calculo de totales: la suma de las lineas ya redondeadas, en ambas
-  // monedas, para que el resumen no pueda desalinearse de lo que muestra la tabla.
-  const syncedItems = useMemo(
-    () => items.map((item) => syncLineCostFields(item, activeRateVes)),
-    [activeRateVes, items],
+  // Lineas con su alicuota resuelta y los costos sincronizados: la tabla, el
+  // resumen y el payload salen de aqui para que no puedan desalinearse.
+  const lines = useMemo(
+    () =>
+      buildPurchaseWebLines({
+        getCategoryPct: (productId) => lineMetaByProductId.get(productId)?.taxRate ?? 0,
+        items,
+        rateVes: activeRateVes,
+        rates: taxRates.rates,
+        taxState,
+      }),
+    [activeRateVes, items, lineMetaByProductId, taxRates.rates, taxState],
   );
   const totals = useMemo(
-    () => sumDraftPurchaseTotals(syncedItems, activeRateVes),
-    [activeRateVes, syncedItems],
+    () =>
+      sumDraftPurchaseTotals(
+        lines.map((line) => line.item),
+        activeRateVes,
+      ),
+    [activeRateVes, lines],
+  );
+  const taxBreakdown = useMemo(
+    () => buildPurchaseTaxBreakdown(lines, activeRateVes),
+    [activeRateVes, lines],
   );
   const discountVes = roundMoney(refToVes(discountRef, activeRateVes));
-  const validItems = items.filter((item) => {
-    const normalized = syncLineCostFields(item, activeRateVes);
+  const validLines = lines.filter(({ item }) => {
     if (!item.productId) return false;
     if (item.entryMode === "pack") {
       return (
@@ -119,11 +155,11 @@ export function PurchaseCreatePage() {
         item.unitsPerPack > 0 &&
         item.packCostRef >= 0 &&
         item.packLabel.trim().length > 0 &&
-        normalized.quantity > 0
+        item.quantity > 0
       );
     }
 
-    return normalized.quantity > 0 && normalized.unitCostRef >= 0;
+    return item.quantity > 0 && item.unitCostRef >= 0;
   });
 
   function getItemMeta(productId: string): PurchaseLineItemMeta {
@@ -140,6 +176,7 @@ export function PurchaseCreatePage() {
     setSupplierId(nextSupplierId);
     setProductSearch("");
     setItems([]);
+    setTaxState((current) => setPurchaseExempt(current.exempt));
     setLineMetaByProductId(new Map());
   }
 
@@ -234,6 +271,21 @@ export function PurchaseCreatePage() {
 
   function handleRemoveItem(itemId: string) {
     setItems((current) => current.filter((item) => item.id !== itemId));
+    setTaxState((current) => dropLineTax(current, itemId));
+  }
+
+  function handleLineTaxChange(itemId: string, code: string) {
+    setTaxState((current) => chooseLineTax(current, itemId, code));
+  }
+
+  function handleExemptPurchaseChange(exempt: boolean) {
+    const overridden = exempt ? countManualLinesLostToExempt(lines, taxRates.rates) : 0;
+
+    setTaxState(setPurchaseExempt(exempt));
+
+    if (overridden > 0) {
+      showToast({ title: buildExemptOverrideNotice(overridden) });
+    }
   }
 
   async function handleSubmit() {
@@ -242,25 +294,32 @@ export function PurchaseCreatePage() {
       return;
     }
 
-    if (validItems.length === 0) {
+    if (validLines.length === 0) {
       setFormError("Agrega al menos un producto con cantidad y costo validos.");
+      return;
+    }
+
+    if (lines.some((line) => line.tax.code === null)) {
+      setFormError(LINE_TAX_MISSING_MESSAGE);
       return;
     }
 
     setFormError(null);
 
-    const syncedValidItems = validItems.map((item) =>
-      syncLineCostFields(item, activeRateVes),
-    );
     // Mismos helpers que pintan la tabla y el resumen: lo que se envia es
     // exactamente lo que el usuario vio.
-    const submitTotals = sumDraftPurchaseTotals(syncedValidItems, activeRateVes);
+    const submitTotals = sumDraftPurchaseTotals(
+      validLines.map((line) => line.item),
+      activeRateVes,
+    );
     const input = {
       discountRef,
       discountVes,
-      items: syncedValidItems.map((item) =>
-        draftToPurchaseItemInput(item, activeRateVes),
-      ),
+      // `taxRateCode` y `taxRate` van juntos: la RPC valida que el porcentaje sea el de la alicuota.
+      items: validLines.map(({ item, tax }) => ({
+        ...draftToPurchaseItemInput(item, activeRateVes),
+        ...(tax.code ? { taxRateCode: tax.code } : {}),
+      })),
       notes: notes.trim() || undefined,
       refRateVes: activeRateVes,
       status,
@@ -288,7 +347,7 @@ export function PurchaseCreatePage() {
     }
   }
 
-  const dependencyError = suppliersQuery.error ?? exchangeRate.error;
+  const dependencyError = suppliersQuery.error ?? exchangeRate.error ?? taxRates.error;
 
   return (
     <div className="space-y-6 pb-8">
@@ -317,10 +376,14 @@ export function PurchaseCreatePage() {
           />
           <PurchaseProductPickerCard
             catalog={catalog}
+            exemptDisabled={!findExemptTaxRate(taxRates.rates)}
+            exemptPurchase={taxState.exempt}
             getItemMeta={getItemMeta}
             isSearching={productSearchResult.isSearching}
-            items={items}
+            lines={lines}
             onAddProduct={handleAddProduct}
+            onExemptPurchaseChange={handleExemptPurchaseChange}
+            onLineTaxChange={handleLineTaxChange}
             onRemoveItem={handleRemoveItem}
             onSearchChange={setProductSearch}
             onUpdateItem={handleUpdateItem}
@@ -328,6 +391,7 @@ export function PurchaseCreatePage() {
             search={productSearch}
             searchError={productSearchResult.error?.message ?? null}
             supplierId={supplierId}
+            taxCatalog={taxRates}
           />
         </div>
 
@@ -348,12 +412,7 @@ export function PurchaseCreatePage() {
             onDiscountChange={setDiscountRef}
             subtotalRef={totals.subtotalRef}
             subtotalVes={totals.subtotalVes}
-            taxPercentLabel={(() => {
-              if (items.length === 0) return "—";
-              const rates = new Set(items.map((item) => item.taxRate));
-              if (rates.size === 1) return `${items[0]?.taxRate ?? 0}%`;
-              return "mixto";
-            })()}
+            taxBreakdown={taxBreakdown}
             taxRef={totals.taxRef}
             taxVes={totals.taxVes}
           />

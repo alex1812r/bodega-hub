@@ -6,7 +6,7 @@ import { Button } from "@/shared/components/Button";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
 
-import type { PurchaseCostCurrency } from "../types";
+import type { PurchaseCostCurrency, PurchaseTaxBreakdownRow } from "../types";
 import { purchaseInlineInputClassName } from "../utils/purchaseCreateStyles";
 import { PurchaseCreateSectionCard } from "./PurchaseCreateSectionCard";
 
@@ -21,7 +21,9 @@ type PurchaseSummaryCardProps = {
   onDiscountChange: (value: number) => void;
   subtotalRef: number;
   subtotalVes: number;
-  taxPercentLabel?: string;
+  /** Base e IVA por cada alícuota presente en la compra (`buildPurchaseTaxBreakdown`). */
+  taxBreakdown: PurchaseTaxBreakdownRow[];
+  /** IVA total de la compra: es el que entra en el Total; el desglose suma lo mismo. */
   taxRef: number;
   taxVes: number;
 };
@@ -134,7 +136,7 @@ export function PurchaseSummaryCard({
   onDiscountChange,
   subtotalRef,
   subtotalVes,
-  taxPercentLabel = "16%",
+  taxBreakdown,
   taxRef,
   taxVes,
 }: PurchaseSummaryCardProps) {
@@ -177,12 +179,30 @@ export function PurchaseSummaryCard({
             </span>
           </div>
         </div>
-        <SummaryRow
-          costCurrency={costCurrency}
-          label={`Impuestos (${taxPercentLabel})`}
-          refAmount={taxRef}
-          vesAmount={taxVes}
-        />
+        {taxBreakdown.length > 0 ? (
+          <div
+            aria-label="Desglose de IVA por alícuota"
+            className="flex flex-col gap-3"
+            role="group"
+          >
+            {taxBreakdown.map((row) => (
+              <div className="flex flex-col gap-3" key={row.key}>
+                <SummaryRow
+                  costCurrency={costCurrency}
+                  label={`Base ${row.label}`}
+                  refAmount={row.baseRef}
+                  vesAmount={row.baseVes}
+                />
+                <SummaryRow
+                  costCurrency={costCurrency}
+                  label={`IVA ${row.label}`}
+                  refAmount={row.taxRef}
+                  vesAmount={row.taxVes}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className="mt-2 border-t border-border pt-3 dark:border-slate-800">
           <SummaryRow
             costCurrency={costCurrency}
