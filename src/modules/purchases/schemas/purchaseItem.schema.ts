@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { safeText } from "./safeText";
+
 export const purchaseEntryModeSchema = z.enum(["unit", "pack"]);
 export const purchaseCostCurrencySchema = z.enum(["ves", "ref"]);
 
@@ -8,15 +10,15 @@ const purchaseItemBaseSchema = z.object({
   // COM-14: al recibir la compra, los empaques de la linea se abren en los
   // componentes de la receta del producto (que debe ser un empaque con receta activa).
   disassembleOnReceive: z.boolean().optional(),
-  productId: z.string().min(1),
+  productId: safeText().min(1),
   subtotalRef: z.number().min(0),
   subtotalVes: z.number().min(0),
-  supplierSku: z.string().optional(),
+  supplierSku: safeText().optional(),
   // IVA de la linea: `taxRateCode` (alicuota del catalogo) y/o `taxRate` (su
   // porcentaje). Con solo el codigo, la base deriva el porcentaje; con solo el
   // porcentaje (clientes anteriores) debe ser el de una alicuota activa.
   taxRate: z.number().min(0).max(100).optional(),
-  taxRateCode: z.string().trim().min(1).max(40).optional(),
+  taxRateCode: safeText().trim().min(1).max(40).optional(),
   taxRef: z.number().min(0),
   taxVes: z.number().min(0),
   unitCostRef: z.number().min(0),
@@ -30,7 +32,7 @@ export const purchaseItemUnitSchema = purchaseItemBaseSchema.extend({
 
 export const purchaseItemPackSchema = purchaseItemBaseSchema.extend({
   entryMode: z.literal("pack"),
-  packLabel: z.string().min(1),
+  packLabel: safeText().min(1),
   packCount: z.number().int().positive(),
   unitsPerPack: z.number().int().positive(),
   packCostRef: z.number().min(0),

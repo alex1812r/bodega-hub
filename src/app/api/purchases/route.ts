@@ -12,6 +12,7 @@ import {
 import * as paymentsMockServer from "@/modules/payments/services/payments.mock-server";
 import * as paymentsServer from "@/modules/payments/services/payments.server";
 import { purchaseItemInputSchema } from "@/modules/purchases/schemas/purchaseItem.schema";
+import { safeText } from "@/modules/purchases/schemas/safeText";
 import * as purchasesMockServer from "@/modules/purchases/services/purchases.mock-server";
 import * as purchasesServer from "@/modules/purchases/services/purchases.server";
 import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
@@ -49,13 +50,13 @@ const createPurchaseSchema = z.object({
   exchangeRateId: z.string().uuid().optional(),
   initialPayment: initialPaymentSchema.optional(),
   items: z.array(purchaseItemInputSchema).min(1),
-  notes: z.string().optional(),
-  purchaseNumber: z.string().optional(),
+  notes: safeText().optional(),
+  purchaseNumber: safeText().optional(),
   refRateVes: z.number().positive(),
   status: z.enum(["pedido", "recibido"]).default("recibido"),
   subtotalRef: z.number().min(0),
   subtotalVes: z.number().min(0),
-  supplierId: z.string().min(1),
+  supplierId: safeText().min(1),
   taxRef: z.number().min(0),
   taxVes: z.number().min(0),
 });
