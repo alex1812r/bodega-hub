@@ -36,7 +36,7 @@ fase 3 (`.notes/stock-integrity-gtm/phase3-contracts.md`).
 - 40 productos con SKU determinista (22 con barcode EAN-13 único, el resto sin):
   - `LAB-HOT-01..05`: activos, sin empaque, stock inicial 500..1000 (los "calientes" compartidos por los agentes).
   - `LAB-PACK-0n` / `LAB-UNIT-0n`: 5 pares en `product_pack_conversions` con `units_per_pack` 6, 12, 24, 6, 12.
-  - `LAB-INACT-01..03`: `is_active = false` (con stock 10/20/30).
+  - `LAB-INACT-01..03`: `is_active = false` (con stock 10/20/30). Nacen activos y se desactivan después de cargar el stock: `adjust_stock` rechaza la entrada a un producto inactivo (`20261011b`).
   - `LAB-ZERO-01..02`: quedan en stock 0 (no se llama al RPC).
   - `LAB-MIN-01..02`: `min_stock` 500 con stock 20.
   - `LAB-001..018`: genéricos.
