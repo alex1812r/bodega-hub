@@ -125,6 +125,7 @@ describe("ProductPackConversionFields: producto unidad", () => {
     expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
       "Crear producto unidad",
       "Vincular producto existente",
+      "Surtido (varios productos)",
     ]);
     expect(urls).toEqual([]);
   });

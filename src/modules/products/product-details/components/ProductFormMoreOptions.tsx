@@ -26,6 +26,11 @@ type ProductFormMoreOptionsProps = {
    * para devolverle el foco al cerrar. El botón exige `inventory.manage`.
    */
   onAdjustStock?: (trigger: HTMLButtonElement) => void;
+  /**
+   * Empaque surtido: abre el alta rápida de un producto componente. Recibe el
+   * botón pulsado, para devolverle el foco al cerrar.
+   */
+  onCreatePackUnitProduct?: (trigger: HTMLButtonElement) => void;
   onOpenChange: (open: boolean) => void;
   onPackConversionChange: (patch: Partial<PackConversionFormState>) => void;
   onSkuChange: (sku: string) => void;
@@ -49,6 +54,7 @@ export function ProductFormMoreOptions({
   isEdit,
   isUnitRole,
   onAdjustStock,
+  onCreatePackUnitProduct,
   onOpenChange,
   onPackConversionChange,
   onSkuChange,
@@ -136,6 +142,7 @@ export function ProductFormMoreOptions({
         <ProductPackConversionFields
           excludeProductId={product?.id}
           isUnitRole={isUnitRole}
+          onCreateUnitProduct={onCreatePackUnitProduct}
           packConversion={product?.packConversion}
           productName={productName}
           showErrors={showErrors}

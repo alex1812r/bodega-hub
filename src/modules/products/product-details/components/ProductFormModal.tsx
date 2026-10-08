@@ -23,13 +23,23 @@ import { useToast } from "@/shared/components/Toast";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
 import { CategoryQuickCreateModal } from "../../categories-list/components/CategoryQuickCreateModal";
-import type { ProductInput, ProductWithCategory } from "../../hooks/useProducts";
+import {
+  type ProductInput,
+  type ProductWithCategory,
+  useCreateProduct,
+} from "../../hooks/useProducts";
 import { getProductPricingOptions } from "../../services/productMargin";
 import { normalizeBarcode } from "../../services/productSearch";
 import {
   removeProductImage,
   uploadProductImageBlob,
 } from "../../services/uploadProductImage";
+import {
+  addProductToPackComponents,
+  findAssortedInvalidField,
+  findPackComponentUnitsField,
+  getAssortedPackErrors,
+} from "./PackAssortedComponentsFields";
 import {
   PRODUCT_PRICING_BLOCK_ATTRIBUTE,
   ProductFormBasicFields,
@@ -137,6 +147,47 @@ export type ProductFormModalProps = {
   trigger?: ReactNode;
 };
 
+type PackUnitProductCreateModalProps = {
+  categories: CategoryMock[];
+  /** Producto ya guardado, justo antes de cerrar. */
+  onCreated: (product: ProductWithCategory) => void;
+  /** Solo recibe `false`: el modal pide cerrarse (cancelado, Escape o producto creado). */
+  onOpenChange: (open: boolean) => void;
+};
+
+/**
+ * Alta rápida de un producto componente sin salir del formulario del empaque
+ * surtido: el mismo formulario en modo `compact`, que no tiene "Más opciones"
+ * (no hay surtido dentro del surtido). Se monta solo mientras está abierta y
+ * FUERA del `<form>` del empaque: su envío no debe burbujear al de ese
+ * formulario. Guarda con `useCreateProduct`; si el servidor rechaza el alta, el
+ * motivo se muestra aquí y el modal sigue abierto.
+ */
+function PackUnitProductCreateModal({
+  categories,
+  onCreated,
+  onOpenChange,
+}: PackUnitProductCreateModalProps) {
+  const createProduct = useCreateProduct();
+
+  return (
+    <ProductFormModal
+      categories={categories}
+      compact
+      errorMessage={createProduct.error?.message}
+      isSubmitting={createProduct.isPending}
+      onCreated={onCreated}
+      onOpenChange={(open) => {
+        if (!open) {
+          onOpenChange(false);
+        }
+      }}
+      onSubmit={(input) => createProduct.mutateAsync(input)}
+      open
+    />
+  );
+}
+
 function numberFromFormData(formData: FormData, key: string) {
   const value = formData.get(key);
 
@@ -212,6 +263,10 @@ export function ProductFormModal({
   const [showPriceRequired, setShowPriceRequired] = useState(false);
   const [stockAdjustmentOpen, setStockAdjustmentOpen] = useState(false);
   const stockAdjustmentTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [packUnitCreateOpen, setPackUnitCreateOpen] = useState(false);
+  const packUnitCreateTriggerRef = useRef<HTMLButtonElement | null>(null);
+  /** Fila del surtido que recibió el producto recién creado: al cerrar, el foco va a sus unidades. */
+  const packUnitCreatedRowKeyRef = useRef<string | null>(null);
   // Candado propio: `isSubmitting` llega con el siguiente render, tarde para un
   // segundo Enter o un clic en el mismo tick.
   const isSubmitInFlightRef = useRef(false);
@@ -284,6 +339,40 @@ export function ProductFormModal({
   function handleCategoryCreated(category: CategoryMock) {
     setCreatedCategories((current) => [...current, category]);
     setCategoryId(category.id);
+  }
+
+  function openPackUnitCreate(trigger: HTMLButtonElement) {
+    packUnitCreateTriggerRef.current = trigger;
+    packUnitCreatedRowKeyRef.current = null;
+    setPackUnitCreateOpen(true);
+  }
+
+  // El producto creado entra en la receta (primera fila sin producto, o una nueva).
+  function handlePackUnitCreated(created: ProductWithCategory) {
+    const next = addProductToPackComponents(packConversionState.components, created);
+
+    packUnitCreatedRowKeyRef.current = next.rowKey;
+    setPackConversionState((current) => ({ ...current, components: next.components }));
+  }
+
+  // Igual que el ajuste de stock: al cerrar, este formulario sigue abierto con
+  // lo escrito. Si se creó un producto, el foco va a las unidades de su fila;
+  // si no, vuelve al botón que abrió el alta.
+  function handlePackUnitCreateOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      return;
+    }
+
+    flushSync(() => setPackUnitCreateOpen(false));
+
+    const createdRowKey = packUnitCreatedRowKeyRef.current;
+    const unitsField =
+      createdRowKey && formRef.current
+        ? findPackComponentUnitsField(formRef.current, createdRowKey)
+        : null;
+
+    packUnitCreatedRowKeyRef.current = null;
+    (unitsField ?? packUnitCreateTriggerRef.current)?.focus();
   }
 
   // Un campo de "Más opciones" con la sección cerrada no puede recibir el foco:
@@ -381,6 +470,31 @@ export function ProductFormModal({
 
     if (shouldSendPackConversion && getUnitProductError(packConversionState)) {
       revealAndFocus(findUnitProductField(form));
+
+      return;
+    }
+
+    // Surtido: filas sin producto o sin unidades, producto repetido, menos de 2
+    // productos, peso que no vale o suma distinta del total declarado.
+    const assortedErrors =
+      shouldSendPackConversion &&
+      packConversionState.enabled &&
+      packConversionState.mode === "assorted"
+        ? getAssortedPackErrors(packConversionState)
+        : undefined;
+
+    if (assortedErrors) {
+      // Los avisos se pintan antes de buscar el campo: un peso que no vale abre "Avanzado".
+      flushSync(() => {
+        setMoreOptionsOpen(true);
+        setShowSubmitErrors(true);
+      });
+      findAssortedInvalidField(
+        form,
+        assortedErrors,
+        packConversionState.components,
+        UNITS_PER_PACK_FIELD_NAME,
+      )?.focus();
 
       return;
     }
@@ -579,6 +693,7 @@ export function ProductFormModal({
             isEdit={isEdit}
             isUnitRole={isUnitRole}
             onAdjustStock={isEdit && product ? openStockAdjustment : undefined}
+            onCreatePackUnitProduct={openPackUnitCreate}
             onOpenChange={setMoreOptionsOpen}
             onPackConversionChange={(patch) =>
               setPackConversionState((current) => ({ ...current, ...patch }))
@@ -617,6 +732,14 @@ export function ProductFormModal({
         <CategoryQuickCreateModal
           onCreated={handleCategoryCreated}
           onOpenChange={handleCategoryCreateOpenChange}
+        />
+      ) : null}
+      {/* Fuera del <form>: crear el producto componente no debe enviar el empaque. */}
+      {packUnitCreateOpen ? (
+        <PackUnitProductCreateModal
+          categories={categoryOptions}
+          onCreated={handlePackUnitCreated}
+          onOpenChange={handlePackUnitCreateOpenChange}
         />
       ) : null}
     </Modal>

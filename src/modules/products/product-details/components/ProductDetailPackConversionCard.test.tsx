@@ -247,3 +247,173 @@ describe("ProductDetailPackConversionCard · cantidad entera (SHR-09J)", () => {
     });
   });
 });
+
+describe("ProductDetailPackConversionCard · surtido y orígenes (PRO-13)", () => {
+  const linkedProduct = {
+    currentCostRef: 0.5,
+    currentStock: 4,
+    id: "prod-cola",
+    name: "Cola",
+    salePriceRef: 1,
+    sku: "cola-001",
+  };
+
+  function recipeComponent(unitProductId: string, name: string, isActive = true) {
+    return {
+      costWeight: 1,
+      currentStock: 4,
+      isActive,
+      name,
+      sku: `${unitProductId}-sku`,
+      unitProductId,
+      unitsPerPack: 2,
+    };
+  }
+
+  const assorted: ProductPackConversionSummary = {
+    components: [
+      recipeComponent("prod-cola", "Cola"),
+      recipeComponent("prod-manzana", "Manzana", false),
+      recipeComponent("prod-naranja", "Naranja"),
+    ],
+    id: "ppc-sabores",
+    kind: "assorted",
+    label: "Sabores surtidos",
+    linkedProduct,
+    role: "pack",
+    sources: [],
+    totalUnits: 6,
+    unitsPerPack: 6,
+  };
+
+  const unitOfTwoPacks: ProductPackConversionSummary = {
+    components: [recipeComponent("prod-cola", "Cola")],
+    id: "ppc-cola",
+    kind: "single",
+    label: null,
+    linkedProduct: { ...linkedProduct, id: "prod-caja-cola", name: "Caja Cola x6" },
+    role: "unit",
+    sources: [
+      {
+        conversionId: "ppc-cola",
+        packName: "Caja Cola x6",
+        packProductId: "prod-caja-cola",
+        totalUnits: 6,
+        unitsPerPack: 6,
+      },
+      {
+        conversionId: "ppc-sabores",
+        packName: "Refrescos sabores x6",
+        packProductId: "prod-sabores",
+        totalUnits: 6,
+        unitsPerPack: 2,
+      },
+    ],
+    totalUnits: 6,
+    unitsPerPack: 6,
+  };
+
+  function renderWith(conversion: ProductPackConversionSummary, onConverted = jest.fn()) {
+    render(
+      <ProductDetailPackConversionCard
+        onConverted={onConverted}
+        packConversion={conversion}
+        productId="prod-sabores"
+        productName="Refrescos sabores x6"
+        productStock={5}
+      />,
+      { wrapper: createQueryWrapper() },
+    );
+
+    return onConverted;
+  }
+
+  it("empaque surtido: «Se abre en» con cada componente enlazado, inactivos marcados, total y nombre", () => {
+    installFetchStub(() => null);
+    renderWith(assorted);
+
+    expect(
+      screen.getByText((_, element) => element?.tagName === "P" && /^Se abre en:/.test(element.textContent ?? "")),
+    ).toHaveTextContent("Se abre en: 2 Cola · 2 Manzana (inactivo) · 2 Naranja");
+    expect(screen.getByRole("link", { name: "Cola" })).toHaveAttribute("href", "/products/prod-cola");
+    expect(screen.getByRole("link", { name: "Manzana" })).toHaveAttribute(
+      "href",
+      "/products/prod-manzana",
+    );
+    expect(screen.getByRole("link", { name: "Naranja" })).toHaveAttribute(
+      "href",
+      "/products/prod-naranja",
+    );
+    expect(screen.getByText("6 unidades")).toBeVisible();
+    expect(screen.getByText("Sabores surtidos")).toBeVisible();
+    expect(screen.queryByText(/Proviene de/)).not.toBeInTheDocument();
+  });
+
+  it("empaque surtido: «Abrir según la receta» abre sin reparto (el servidor reparte por receta)", async () => {
+    const api = installFetchStub(() => null);
+    api.respondToNextPost(conversionResult);
+    const onConverted = renderWith(assorted);
+
+    expect(screen.queryByRole("button", { name: "Abrir empaque" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Abrir según la receta" }));
+    await screen.findByLabelText("Cantidad de empaques");
+    expect(screen.getByText(/Entrada: \+6 unidad\(es\)/)).toBeVisible();
+
+    fireEvent.submit(getForm());
+    await waitFor(() => expect(onConverted).toHaveBeenCalledTimes(1));
+
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]?.url).toBe("/api/inventory/conversions");
+    expect(api.posts[0]?.body).toMatchObject({ packProductId: "prod-sabores", packQuantity: 1 });
+    expect(api.posts[0]?.body).not.toHaveProperty("components");
+  });
+
+  it("empaque 1 a 1: como siempre, con su unidad enlazada y «Abrir empaque»", () => {
+    installFetchStub(() => null);
+    renderWith({ id: "ppc-cola", linkedProduct, role: "pack", unitsPerPack: 6 });
+
+    expect(screen.getByText("Este empaque se abre en 6 unidades.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Cola" })).toHaveAttribute("href", "/products/prod-cola");
+    expect(screen.getByText("Stock de Cola")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Abrir empaque" })).toBeVisible();
+    expect(screen.queryByText(/Se abre en:/)).not.toBeInTheDocument();
+  });
+
+  it("producto unidad de varios empaques: «Proviene de» los enlaza todos", () => {
+    installFetchStub(() => null);
+    renderWith(unitOfTwoPacks);
+
+    expect(
+      screen.getByText((_, element) => element?.tagName === "P" && /^Proviene de:/.test(element.textContent ?? "")),
+    ).toHaveTextContent("Proviene de: Caja Cola x6, Refrescos sabores x6");
+    expect(screen.getByRole("link", { name: "Caja Cola x6" })).toHaveAttribute(
+      "href",
+      "/products/prod-caja-cola",
+    );
+    expect(screen.getByRole("link", { name: "Refrescos sabores x6" })).toHaveAttribute(
+      "href",
+      "/products/prod-sabores",
+    );
+    expect(screen.getByText("6 und/caja")).toBeVisible();
+    expect(screen.getByText("2 und/caja")).toBeVisible();
+    // Una unidad no se abre.
+    expect(screen.queryByRole("button", { name: /Abrir/ })).not.toBeInTheDocument();
+  });
+
+  it("producto unidad de un solo empaque sin `sources` (datos anteriores): «Proviene de» su empaque", () => {
+    installFetchStub(() => null);
+    renderWith({
+      id: "ppc-cola",
+      linkedProduct: { ...linkedProduct, id: "prod-caja-cola", name: "Caja Cola x6" },
+      role: "unit",
+      unitsPerPack: 6,
+    });
+
+    expect(screen.getByRole("link", { name: "Caja Cola x6" })).toHaveAttribute(
+      "href",
+      "/products/prod-caja-cola",
+    );
+    expect(screen.getByText("Stock de Caja Cola x6")).toBeVisible();
+  });
+});

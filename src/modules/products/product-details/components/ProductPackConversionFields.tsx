@@ -2,37 +2,53 @@
 
 import { useState } from "react";
 
-import { MAX_PAGE_LIMIT, type PaginatedList } from "@/lib/api/pagination";
-import { apiFetch } from "@/shared/api/apiFetch";
 import {
   EntityAutocomplete,
   type EntityAutocompleteValue,
-  type EntityFetcher,
-  type ProductEntityOption,
-  toProductEntityOption,
 } from "@/shared/components/EntityAutocomplete";
 import { Input } from "@/shared/components/Input";
 import { getNumberInputError, NumberInput } from "@/shared/components/NumberInput";
 import { SelectField } from "@/shared/components/SelectField";
-import type { ProductMock, ProductPackConversionSummary } from "@/shared/mocks/erp-data";
+import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
+
+import {
+  createPackComponentRow,
+  getAssortedPackErrors,
+  getPackComponentCostWeight,
+  PackAssortedComponentsFields,
+  type PackComponentFormRow,
+} from "./PackAssortedComponentsFields";
+import { createUnitCandidatesFetcher, isBlockedByPackLink } from "./packUnitCandidates";
+
+export type PackConversionMode = "assorted" | "create_unit" | "link_existing";
 
 export type PackConversionFormState = {
+  /** Modo surtido: nombre opcional de la receta. */
+  assortedLabel: string;
+  /** Modo surtido: productos que salen del empaque. */
+  components: PackComponentFormRow[];
   enabled: boolean;
-  mode: "create_unit" | "link_existing";
+  mode: PackConversionMode;
   unitBarcode: string;
   unitName: string;
   unitProductId: string;
   unitSalePriceRef: string;
   unitSku: string;
+  /** Unidades que salen del empaque; en modo surtido, el total declarado. */
   unitsPerPack: string;
 };
 
 type ProductPackConversionFieldsProps = {
   excludeProductId?: string;
   isUnitRole?: boolean;
+  /**
+   * Modo surtido: abre el alta rápida de un producto para añadirlo como
+   * componente. Recibe el botón pulsado, para devolverle el foco al cerrar.
+   */
+  onCreateUnitProduct?: (trigger: HTMLButtonElement) => void;
   packConversion?: ProductPackConversionSummary;
   productName: string;
-  /** Tras intentar enviar: muestra los avisos de unidades por empaque y producto unidad. */
+  /** Tras intentar enviar: muestra los avisos del empaque (unidades, producto unidad, surtido). */
   showErrors?: boolean;
   state: PackConversionFormState;
   /**
@@ -80,75 +96,69 @@ export function getUnitsPerPackError(text: string) {
 const PACK_LINKED_REASON = "Ya tiene un vínculo de empaque.";
 const UNKNOWN_UNIT_LABEL = "Producto seleccionado";
 
-type UnitCandidateOption = ProductEntityOption & { hasPackLink: boolean };
+// Vínculo 1 a 1: solo productos sin ningún vínculo de empaque.
+const fetchUnitCandidates = createUnitCandidatesFetcher("none");
 
-type ProductSearchCriteria = { barcode: string } | { search: string } | { sku: string };
+const MODE_OPTIONS: { label: string; value: PackConversionMode }[] = [
+  { label: "Crear producto unidad", value: "create_unit" },
+  { label: "Vincular producto existente", value: "link_existing" },
+  { label: "Surtido (varios productos)", value: "assorted" },
+];
 
-/**
- * Candidatos a producto unidad desde `GET /api/products`. Cada búsqueda se pide
- * dos veces, con y sin `packLink=none`: los que solo vienen sin el filtro ya
- * tienen un vínculo de empaque (como empaque o como unidad) y van al final,
- * marcados para mostrarse deshabilitados con su motivo.
- */
-const fetchUnitCandidates: EntityFetcher<"product"> = async ({
-  exact,
-  filters,
-  limit,
-  query,
-  signal,
-}): Promise<UnitCandidateOption[]> => {
-  // Lector de barras: `barcode` y `sku` son igualdad exacta en servidor.
-  const criteria: ProductSearchCriteria[] = exact
-    ? [{ barcode: query }, { sku: query }, { search: query }]
-    : [{ search: query }];
+function isPackConversionMode(value: string): value is PackConversionMode {
+  return MODE_OPTIONS.some((option) => option.value === value);
+}
 
-  async function requestProducts(packLink?: "none") {
-    const pages = await Promise.all(
-      criteria.map((criterion) =>
-        apiFetch<PaginatedList<ProductMock>>("/api/products", {
-          query: {
-            ...criterion,
-            isActive: filters.active,
-            limit: Math.min(MAX_PAGE_LIMIT, limit + (filters.excludeIds?.length ?? 0)),
-            packLink,
-            skip: 0,
-          },
-          signal,
-        }),
-      ),
-    );
+/** Filas con las que abre el modo surtido al editar un empaque. */
+function createComponentRows(packConversion: ProductPackConversionSummary) {
+  const recipeRows = (packConversion.components ?? []).map((component) =>
+    createPackComponentRow({
+      costWeight: String(component.costWeight),
+      isInactive: !component.isActive,
+      unitName: component.name,
+      unitProductId: component.unitProductId,
+      unitsPerPack: String(component.unitsPerPack),
+    }),
+  );
 
-    return pages.flatMap((page) => page.items);
+  if (packConversion.kind === "assorted") {
+    return recipeRows;
   }
 
-  const [withoutLink, all] = await Promise.all([requestProducts("none"), requestProducts()]);
-  const freeIds = new Set(withoutLink.map((product) => product.id));
-  const seen = new Set<string>();
-
-  return [...withoutLink, ...all]
-    .filter((product) => {
-      if (seen.has(product.id)) {
-        return false;
-      }
-
-      seen.add(product.id);
-      return true;
-    })
-    .map((product) => ({
-      ...toProductEntityOption(product),
-      hasPackLink: !freeIds.has(product.id),
-    }));
-};
-
-function hasPackLink(option: ProductEntityOption) {
-  return "hasPackLink" in option && option.hasPackLink === true;
+  // Vínculo 1 a 1: al pasar a surtido, su unidad ya es el primer componente.
+  return [
+    recipeRows[0] ??
+      createPackComponentRow({
+        unitName: packConversion.linkedProduct.name,
+        unitProductId: packConversion.linkedProduct.id,
+        unitsPerPack: String(packConversion.unitsPerPack),
+      }),
+    createPackComponentRow(),
+  ];
 }
 
 export function createDefaultPackConversionFormState(
   packConversion?: ProductPackConversionSummary,
 ): PackConversionFormState {
+  if (packConversion?.role === "pack" && packConversion.kind === "assorted") {
+    return {
+      assortedLabel: packConversion.label ?? "",
+      components: createComponentRows(packConversion),
+      enabled: true,
+      mode: "assorted",
+      unitBarcode: "",
+      unitName: "",
+      unitProductId: "",
+      unitSalePriceRef: "",
+      unitSku: "",
+      unitsPerPack: String(packConversion.totalUnits ?? packConversion.unitsPerPack),
+    };
+  }
+
   if (packConversion?.role === "pack") {
     return {
+      assortedLabel: "",
+      components: createComponentRows(packConversion),
       enabled: true,
       mode: "link_existing",
       unitBarcode: "",
@@ -161,6 +171,8 @@ export function createDefaultPackConversionFormState(
   }
 
   return {
+    assortedLabel: "",
+    components: [createPackComponentRow(), createPackComponentRow()],
     enabled: false,
     mode: "create_unit",
     unitBarcode: "",
@@ -175,6 +187,7 @@ export function createDefaultPackConversionFormState(
 export function ProductPackConversionFields({
   excludeProductId,
   isUnitRole = false,
+  onCreateUnitProduct,
   packConversion,
   productName,
   showErrors = false,
@@ -183,8 +196,12 @@ export function ProductPackConversionFields({
   onChange,
 }: ProductPackConversionFieldsProps) {
   const [pickedUnit, setPickedUnit] = useState<EntityAutocompleteValue | null>(null);
-  // La unidad ya vinculada a este empaque sigue siendo elegible para él.
-  const linkedUnit = packConversion?.role === "pack" ? packConversion.linkedProduct : undefined;
+  // La unidad ya vinculada 1 a 1 a este empaque sigue siendo elegible para él.
+  const linkedUnit =
+    packConversion?.role === "pack" && packConversion.kind !== "assorted"
+      ? packConversion.linkedProduct
+      : undefined;
+  const isAssorted = state.mode === "assorted";
 
   function getUnitValue(): EntityAutocompleteValue | null {
     if (!state.unitProductId) {
@@ -202,6 +219,28 @@ export function ProductPackConversionFields({
   }
 
   if (isUnitRole && packConversion) {
+    const sources = packConversion.sources ?? [];
+
+    if (sources.length > 1) {
+      return (
+        <div className="rounded-lg border border-outline-variant/40 bg-surface-container-low p-4 text-sm text-on-surface-variant">
+          <p>
+            Este producto es <span className="font-medium text-on-surface">unidad suelta</span> de{" "}
+            {sources.length} empaques:
+          </p>
+          <ul className="mt-2 grid gap-1">
+            {sources.map((source) => (
+              <li className="[overflow-wrap:anywhere]" key={source.conversionId}>
+                <span className="font-medium text-on-surface">{source.packName}</span> (
+                {source.unitsPerPack} und/caja)
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2">Edita cada empaque para cambiar su vínculo.</p>
+        </div>
+      );
+    }
+
     return (
       <div className="rounded-lg border border-outline-variant/40 bg-surface-container-low p-4 text-sm text-on-surface-variant">
         Este producto es la <span className="font-medium text-on-surface">unidad suelta</span> del
@@ -212,8 +251,13 @@ export function ProductPackConversionFields({
     );
   }
 
+  const unitsPerPackError = showErrors
+    ? (getUnitsPerPackError(state.unitsPerPack) ??
+      (isAssorted ? getAssortedPackErrors(state)?.total : undefined))
+    : undefined;
+
   return (
-    <div className="grid gap-3 rounded-lg border border-outline-variant/40 p-4">
+    <div className="grid min-w-0 gap-3 rounded-lg border border-outline-variant/40 p-4">
       <label className="flex items-center gap-2 text-sm text-on-surface">
         <input
           checked={state.enabled}
@@ -228,7 +272,12 @@ export function ProductPackConversionFields({
         <>
           <NumberInput
             decimals={0}
-            error={showErrors ? getUnitsPerPackError(state.unitsPerPack) : undefined}
+            error={unitsPerPackError}
+            helperText={
+              isAssorted
+                ? "Total de unidades que salen del empaque, entre todos sus productos."
+                : undefined
+            }
             label="Unidades por empaque"
             name={UNITS_PER_PACK_FIELD_NAME}
             onChange={(event) => onChange({ unitsPerPack: event.target.value })}
@@ -237,18 +286,26 @@ export function ProductPackConversionFields({
           />
           <SelectField
             label="Modo de vínculo"
-            onChange={(event) =>
-              onChange({
-                mode: event.target.value as "create_unit" | "link_existing",
-              })
-            }
-            options={[
-              { label: "Crear producto unidad", value: "create_unit" },
-              { label: "Vincular producto existente", value: "link_existing" },
-            ]}
+            onChange={(event) => {
+              if (isPackConversionMode(event.target.value)) {
+                onChange({ mode: event.target.value });
+              }
+            }}
+            options={MODE_OPTIONS}
             value={state.mode}
           />
-          {state.mode === "link_existing" ? (
+          {isAssorted ? (
+            <PackAssortedComponentsFields
+              components={state.components}
+              excludeProductId={excludeProductId}
+              label={state.assortedLabel}
+              onChange={onChange}
+              onCreateUnitProduct={onCreateUnitProduct}
+              searchResetKey={unitSearchResetKey}
+              showErrors={showErrors}
+              unitsPerPack={state.unitsPerPack}
+            />
+          ) : state.mode === "link_existing" ? (
             <div className="min-w-0" data-pack-unit-product-field="">
               <EntityAutocomplete
                 entity="product"
@@ -256,7 +313,7 @@ export function ProductPackConversionFields({
                 fetcher={fetchUnitCandidates}
                 filters={{ active: true, excludeIds: excludeProductId ? [excludeProductId] : [] }}
                 getOptionDisabled={(option) =>
-                  option.id !== linkedUnit?.id && hasPackLink(option) && PACK_LINKED_REASON
+                  option.id !== linkedUnit?.id && isBlockedByPackLink(option) && PACK_LINKED_REASON
                 }
                 helperText="Solo productos activos sin vínculo de empaque."
                 key={unitSearchResetKey}
@@ -309,6 +366,25 @@ export function ProductPackConversionFields({
 export function packConversionStateToInput(state: PackConversionFormState) {
   if (!state.enabled) {
     return { enabled: false as const };
+  }
+
+  if (state.mode === "assorted") {
+    return {
+      // El peso por defecto (1) no viaja: lo pone el servidor.
+      components: state.components.map((row) => {
+        const costWeight = getPackComponentCostWeight(row.costWeight);
+
+        return {
+          ...(costWeight !== null && costWeight !== 1 ? { costWeight } : {}),
+          unitProductId: row.unitProductId,
+          unitsPerPack: Number(row.unitsPerPack),
+        };
+      }),
+      enabled: true as const,
+      label: state.assortedLabel.trim() || null,
+      mode: "assorted" as const,
+      totalUnits: Number(state.unitsPerPack),
+    };
   }
 
   if (state.mode === "link_existing") {
