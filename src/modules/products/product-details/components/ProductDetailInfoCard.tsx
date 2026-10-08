@@ -29,6 +29,7 @@ export function ProductDetailInfoCard({
   salePriceRef,
 }: ProductDetailInfoCardProps) {
   const displayDescription = description?.trim() || PLACEHOLDER_DESCRIPTION;
+  const gainRef = roundMoney(salePriceRef - costRef);
 
   return (
     <ProductDetailSectionCard
@@ -82,8 +83,14 @@ export function ProductDetailInfoCard({
               <MarginBadge cost={costRef} price={salePriceRef} size="md" />
               {/* Sin costo no hay ganancia que mostrar: el precio entero no es ganancia. */}
               {costRef > 0 ? (
-                <span className="text-sm tabular-nums text-on-surface-variant">
-                  {formatRefUsd(roundMoney(salePriceRef - costRef))}
+                <span
+                  className={cn(
+                    "text-sm tabular-nums",
+                    // Pérdida: mismo aviso que el badge rojo, no un importe neutro.
+                    gainRef < 0 ? "font-medium text-destructive" : "text-on-surface-variant",
+                  )}
+                >
+                  {formatRefUsd(gainRef)}
                 </span>
               ) : null}
             </span>

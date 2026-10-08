@@ -84,6 +84,27 @@ describe("ProductDetailInfoCard · ganancia", () => {
     expect(gainBlock()).toHaveTextContent("ref -2.00");
   });
 
+  it("paints a negative gain in REF with the error token, like the red badge (PRO-F2)", () => {
+    renderCard(10, 9);
+
+    const amount = screen.getByText("ref -1.00");
+
+    expect(amount).toHaveClass("text-destructive");
+    expect(amount).not.toHaveClass("text-on-surface-variant");
+  });
+
+  it.each([
+    [10, 12, "ref 2.00"],
+    [10, 10, "ref 0.00"],
+  ])("keeps the neutral colour when the gain is not negative (%p to %p)", (costRef, salePriceRef, text) => {
+    renderCard(costRef, salePriceRef);
+
+    const amount = screen.getByText(text);
+
+    expect(amount).toHaveClass("text-on-surface-variant");
+    expect(amount).not.toHaveClass("text-destructive");
+  });
+
   it("shows 'Sin costo' and no gain amount when the product has no cost", () => {
     renderCard(0, 5);
 
