@@ -178,7 +178,8 @@ export async function listPackConversions(storeId: string) {
 /**
  * Un producto unidad / componente puede salir de varios empaques. Lo que no se
  * admite es que sea él mismo el EMPAQUE de una receta activa (cadena de
- * empaques): regla del BFF, la base no la impone.
+ * empaques): regla del BFF, la base no la impone. El sentido contrario lo
+ * cubre `assertPackIsNotComponent`.
  */
 async function assertUnitAvailable(
   unitProductId: string,
@@ -255,6 +256,50 @@ async function assertComponentsAvailable(
       "Un componente es un empaque con receta activa: no puede salir de otro empaque.",
     );
   }
+}
+
+type PackNameRow = { name?: string | null };
+type PackOfComponentConversionRow = { pack_product?: PackNameRow | PackNameRow[] | null };
+type PackOfComponentRow = {
+  conversion?: PackOfComponentConversionRow | PackOfComponentConversionRow[] | null;
+};
+
+/**
+ * La misma regla de cadenas en el otro sentido: un producto que ya sale de un
+ * empaque (componente de una receta ACTIVA) no puede estrenar receta propia.
+ * Solo se llama cuando el producto aún NO tiene receta activa: quien ya era
+ * empaque y componente (datos anteriores a la regla) sigue pudiendo editar su
+ * receta. Regla del BFF, como `assertUnitAvailable`: la base no la impone.
+ */
+async function assertPackIsNotComponent(
+  supabase: RouteSupabaseClient,
+  packProductId: string,
+  storeId: string,
+) {
+  const { data, error } = await supabase
+    .from("product_pack_components")
+    .select(
+      "conversion:product_pack_conversions!inner(pack_product:products!pack_product_id(name))",
+    )
+    .eq("store_id", storeId)
+    .eq("unit_product_id", packProductId)
+    .eq("conversion.is_active", true);
+
+  throwIfSupabaseError(error);
+
+  const [source] = (data ?? []) as unknown as PackOfComponentRow[];
+
+  if (!source) {
+    return;
+  }
+
+  const packName = resolveEmbedded(resolveEmbedded(source.conversion)?.pack_product)?.name;
+
+  throw new ApiError(
+    409,
+    "CONFLICT",
+    `Este producto ya es unidad de ${packName?.trim() || "otro empaque"}; no puede ser a la vez un empaque.`,
+  );
 }
 
 /** Nombre y SKU del producto unidad que crea el modo `create_unit`. */
@@ -457,6 +502,10 @@ async function saveAssortedRecipe(
 
   const existing = await findActiveRecipe(supabase, packProductId, storeId);
 
+  if (!existing) {
+    await assertPackIsNotComponent(supabase, packProductId, storeId);
+  }
+
   if (
     existing &&
     isSamePackRecipe(
@@ -563,6 +612,13 @@ export async function upsertPackConversionForPackProduct(
   let unitProductId = input.unitProductId;
   let createdUnitProductId: string | undefined;
 
+  // Antes de crear el producto unidad: un rechazo no debe dejar nada escrito.
+  const existing = await findActiveRecipe(supabase, packProductId, storeId);
+
+  if (!existing) {
+    await assertPackIsNotComponent(supabase, packProductId, storeId);
+  }
+
   if (input.mode === "link_existing") {
     if (!unitProductId) {
       throw new ApiError(400, "BAD_REQUEST", "Selecciona el producto unidad.");
@@ -602,8 +658,6 @@ export async function upsertPackConversionForPackProduct(
     unitProductId = unitRow.id;
     createdUnitProductId = unitRow.id;
   }
-
-  const existing = await findActiveRecipe(supabase, packProductId, storeId);
 
   // Mismo producto unidad: se edita en sitio, como siempre (una sola sentencia;
   // el trigger de la cabecera deja el componente al día).

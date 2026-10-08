@@ -228,3 +228,85 @@ describe("products.mock-server · receta surtida", () => {
     });
   });
 });
+
+/**
+ * PRO-F8 · la regla de cadenas en los dos sentidos, como el server: un producto
+ * que ya sale de un empaque no puede estrenar receta propia.
+ */
+describe("products.mock-server · un componente no puede pasar a ser empaque (PRO-F8)", () => {
+  const CHAIN_MESSAGE = "Este producto ya es unidad de Caja F8; no puede ser a la vez un empaque.";
+
+  function activeRecipeOf(packProductId: string) {
+    return recipesOf(packProductId).find((item) => item.isActive);
+  }
+
+  beforeAll(() => {
+    seedProduct("f8-caja", "Caja F8");
+    seedProduct("f8-cola", "F8 cola");
+    seedProduct("f8-uva", "F8 uva");
+    seedProduct("f8-suelta", "F8 suelta");
+    seedProduct("f8-otra", "F8 otra");
+    seedProduct("f8-antiguo", "F8 empaque antiguo");
+    save("f8-caja", assorted([["f8-cola", 3], ["f8-uva", 3]]));
+  });
+
+  it("1 a 1, creando la unidad o surtido: 409 con el nombre del empaque, sin receta ni producto nuevos", () => {
+    const productsBefore = mockProducts.length;
+    const createUnit = packConversionInputSchema.parse({
+      enabled: true,
+      mode: "create_unit",
+      unitProduct: { name: "F8 unidad nueva", salePriceRef: 1 },
+      unitsPerPack: 6,
+    });
+
+    for (const input of [
+      link("f8-suelta", 6),
+      createUnit,
+      assorted([["f8-suelta", 2], ["f8-otra", 2]]),
+    ]) {
+      expect(() => save("f8-cola", input)).toThrow(
+        expect.objectContaining({ code: "CONFLICT", message: CHAIN_MESSAGE, status: 409 }),
+      );
+    }
+
+    expect(recipesOf("f8-cola")).toEqual([]);
+    expect(mockProducts).toHaveLength(productsBefore);
+    expect(getProductById("f8-cola", DEFAULT_STORE_ID).packConversion).toMatchObject({ role: "unit" });
+  });
+
+  it("si la receta de la que sale está inactiva, ya puede ser empaque", () => {
+    updateProduct("f8-caja", { packConversion: { enabled: false } }, DEFAULT_STORE_ID);
+
+    expect(save("f8-uva", link("f8-suelta", 4))).toMatchObject({ role: "pack", unitsPerPack: 4 });
+
+    updateProduct("f8-uva", { packConversion: { enabled: false } }, DEFAULT_STORE_ID);
+    save("f8-caja", assorted([["f8-cola", 3], ["f8-uva", 3]]));
+  });
+
+  it("datos anteriores (ya era empaque y componente): su receta se sigue pudiendo editar; estrenar otra tras desactivarla, no", () => {
+    save("f8-antiguo", link("f8-suelta", 6));
+    // Cadena que el BFF ya no deja crear: se siembra como dato heredado.
+    activeRecipeOf("f8-caja")!.components.push({
+      costWeight: 1,
+      unitProductId: "f8-antiguo",
+      unitsPerPack: 1,
+    });
+
+    expect(save("f8-antiguo", link("f8-suelta", 8))).toMatchObject({ role: "pack", unitsPerPack: 8 });
+    expect(save("f8-antiguo", link("f8-otra", 8))).toMatchObject({
+      linkedProduct: { id: "f8-otra" },
+      role: "pack",
+    });
+    expect(save("f8-antiguo", assorted([["f8-suelta", 2], ["f8-otra", 2]]))).toMatchObject({
+      kind: "assorted",
+      role: "pack",
+    });
+
+    updateProduct("f8-antiguo", { packConversion: { enabled: false } }, DEFAULT_STORE_ID);
+
+    expect(() => save("f8-antiguo", link("f8-suelta", 6))).toThrow(
+      expect.objectContaining({ message: CHAIN_MESSAGE, status: 409 }),
+    );
+    expect(activeRecipeOf("f8-antiguo")).toBeUndefined();
+  });
+});

@@ -189,6 +189,35 @@ function assertMockComponentsAvailable(
 }
 
 /**
+ * Como `assertPackIsNotComponent` del server: un producto que ya sale de un
+ * empaque (componente de una receta activa) no puede estrenar receta propia. El
+ * que ya tiene receta activa (datos anteriores a la regla) la sigue editando.
+ */
+function assertMockPackIsNotComponent(packProductId: string, storeId: string) {
+  const recipes = activeMockRecipes(storeId);
+
+  if (recipes.some((item) => item.packProductId === packProductId)) {
+    return;
+  }
+
+  const source = recipes.find((item) =>
+    item.components.some((component) => component.unitProductId === packProductId),
+  );
+
+  if (!source) {
+    return;
+  }
+
+  const packName = mockProducts.find((product) => product.id === source.packProductId)?.name;
+
+  throw new ApiError(
+    409,
+    "CONFLICT",
+    `Este producto ya es unidad de ${packName?.trim() || "otro empaque"}; no puede ser a la vez un empaque.`,
+  );
+}
+
+/**
  * Receta nueva para el empaque; la vigente queda inactiva. Como el server, una
  * receta distinta nunca se edita en sitio: la anterior conserva la historia.
  */
@@ -309,6 +338,8 @@ function upsertMockPackConversion(
     }
     return;
   }
+
+  assertMockPackIsNotComponent(packProductId, storeId);
 
   if (input.mode === "assorted") {
     upsertMockAssortedRecipe(packProductId, storeId, input);

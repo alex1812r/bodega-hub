@@ -347,6 +347,8 @@ describe("packConversion.server · guardar la receta", () => {
     existing?: typeof singleExisting | typeof assortedExisting | null;
     fail?: (call: Call) => boolean;
     knownProducts?: string[];
+    /** Nombres de los empaques de cuyas recetas ACTIVAS sale el empaque que se guarda. */
+    packIsComponentOf?: (string | null)[];
     packsAmongComponents?: string[];
   } = {}) {
     const failure = { code: "PT400", message: "Los componentes de la receta suman 5 unidades y el empaque declara 6" };
@@ -364,6 +366,14 @@ describe("packConversion.server · guardar la receta", () => {
 
       if (call.table === "products" && call.op === "insert") {
         return { data: { id: "unit-new" } };
+      }
+
+      if (call.table === "product_pack_components" && call.op === "select") {
+        return {
+          data: (options.packIsComponentOf ?? []).map((name) => ({
+            conversion: { pack_product: name === null ? null : { name } },
+          })),
+        };
       }
 
       if (call.table === "product_pack_conversions" && call.op === "select") {
@@ -667,5 +677,82 @@ describe("packConversion.server · guardar la receta", () => {
       ["eq", "pack_product_id", PACK],
       ["eq", "is_active", true],
     ]);
+  });
+
+  /**
+   * PRO-F8 · la regla de cadenas en los dos sentidos: un producto que ya sale de
+   * un empaque (componente de una receta activa) no puede estrenar receta propia.
+   */
+  describe("un componente de una receta activa no puede pasar a ser empaque (PRO-F8)", () => {
+    const CHAIN_MESSAGE =
+      "Este producto ya es unidad de Caja surtida; no puede ser a la vez un empaque.";
+    const createUnitInput = packConversionInputSchema.parse({
+      enabled: true,
+      mode: "create_unit",
+      unitProduct: { name: "Unidad suelta", salePriceRef: 1 },
+      unitsPerPack: 6,
+    });
+
+    it.each([
+      ["1 a 1 con unidad existente", linkInput],
+      ["1 a 1 creando la unidad", createUnitInput],
+      ["surtido", assortedInput],
+    ])("%s: 409 con el nombre del empaque del que sale, sin escribir nada", async (_case, input) => {
+      const { calls } = mountStore({ packIsComponentOf: ["Caja surtida"] });
+
+      await expect(
+        upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, input, { name: "Bulto" }),
+      ).rejects.toMatchObject({ code: "CONFLICT", message: CHAIN_MESSAGE, status: 409 });
+
+      expect(writes(calls)).toEqual([]);
+      const chainCall = calls.find((call) => call.table === "product_pack_components");
+      expect(chainCall?.filters).toEqual([
+        ["eq", "store_id", DEFAULT_STORE_ID],
+        ["eq", "unit_product_id", PACK],
+        ["eq", "conversion.is_active", true],
+      ]);
+    });
+
+    it("sin poder leer el nombre del empaque, el mensaje no queda cortado", async () => {
+      mountStore({ packIsComponentOf: [null] });
+
+      await expect(
+        upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, linkInput),
+      ).rejects.toMatchObject({
+        message: "Este producto ya es unidad de otro empaque; no puede ser a la vez un empaque.",
+        status: 409,
+      });
+    });
+
+    it("un producto que no sale de ningún empaque estrena receta como siempre", async () => {
+      const { calls } = mountStore({ packIsComponentOf: [] });
+
+      await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, linkInput);
+
+      expect(writes(calls)).toHaveLength(1);
+    });
+
+    it.each([
+      ["editar unidades en sitio", singleExisting, linkInput, 1],
+      ["cambiar a surtido", singleExisting, assortedInput, 4],
+      ["cambiar de surtido a 1 a 1", assortedExisting, linkInput, 2],
+    ])(
+      "datos anteriores (ya era empaque y componente): %s sigue permitido",
+      async (_case, existing, input, expectedWrites) => {
+        const { calls } = mountStore({ existing, packIsComponentOf: ["Caja surtida"] });
+
+        await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, input);
+
+        expect(writes(calls)).toHaveLength(expectedWrites);
+      },
+    );
+
+    it("desactivar la receta no consulta la regla", async () => {
+      const { calls } = mountStore({ existing: singleExisting, packIsComponentOf: ["Caja surtida"] });
+
+      await upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, { enabled: false });
+
+      expect(calls.some((call) => call.table === "product_pack_components")).toBe(false);
+    });
   });
 });
