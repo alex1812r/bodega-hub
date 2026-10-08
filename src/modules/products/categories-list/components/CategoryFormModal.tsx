@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
 import { FormActions } from "@/shared/components/FormActions";
@@ -18,7 +18,9 @@ type CategoryFormModalProps = {
   onOpenChange?: (open: boolean) => void;
   /**
    * Guarda. En edición `taxRate` solo llega si el usuario eligió otra alícuota:
-   * sin tocarla, la categoría conserva la que tenía.
+   * sin tocarla, la categoría conserva la que tenía. Si rechaza, el modal
+   * queda abierto (el consumidor muestra el motivo con `errorMessage`); el
+   * rechazo se captura aquí.
    */
   onSubmit?: (input: CategoryInput) => Promise<void> | void;
   open?: boolean;
@@ -40,6 +42,9 @@ export function CategoryFormModal({
   const isControlled = open !== undefined;
   const isOpen = isControlled ? open : internalOpen;
   const isEdit = mode === "edit";
+  // Candado propio: `isSubmitting` llega con el siguiente render, tarde para un
+  // segundo Enter o un clic en el mismo tick.
+  const isSubmitInFlightRef = useRef(false);
 
   function handleOpenChange(nextOpen: boolean) {
     if (!isControlled) {
@@ -52,8 +57,20 @@ export function CategoryFormModal({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    await onSubmit?.(readCategoryForm(event.currentTarget));
-    handleOpenChange(false);
+    if (isSubmitInFlightRef.current) {
+      return;
+    }
+
+    isSubmitInFlightRef.current = true;
+
+    try {
+      await onSubmit?.(readCategoryForm(event.currentTarget));
+      handleOpenChange(false);
+    } catch {
+      // El modal sigue abierto; el consumidor muestra el motivo con `errorMessage`.
+    } finally {
+      isSubmitInFlightRef.current = false;
+    }
   }
 
   return (
