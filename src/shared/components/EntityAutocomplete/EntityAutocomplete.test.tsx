@@ -575,6 +575,47 @@ describe("EntityAutocomplete: recientes", () => {
     ]);
   });
 
+  it("recentsKey={null} desactiva los recientes: ni los ofrece ni guarda la elección", async () => {
+    const scanned = product(1, { barcode: "7590000000001" });
+
+    window.localStorage.setItem(
+      getEntityRecentsStorageKey("product"),
+      JSON.stringify([product(7)]),
+    );
+    const onChange = jest.fn();
+    render(
+      <Harness
+        entity="product"
+        fetcher={async () => [scanned]}
+        onChange={onChange}
+        recentsKey={null}
+      />,
+    );
+
+    focusInput();
+
+    expect(screen.queryByText("Recientes")).not.toBeInTheDocument();
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+
+    await search("prod");
+    fireEvent.click(screen.getByRole("option", { name: /Producto 1/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar Producto" }));
+
+    // También el escaneo que elige por coincidencia exacta de código.
+    type("7590000000001");
+    pressKey("Enter");
+    await flushPromises();
+
+    expect(onChange).toHaveBeenLastCalledWith(scanned);
+
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar Producto" }));
+
+    expect(screen.queryByText("Recientes")).not.toBeInTheDocument();
+    expect(
+      JSON.parse(window.localStorage.getItem(getEntityRecentsStorageKey("product")) ?? "[]"),
+    ).toEqual([product(7)]);
+  });
+
   it("sigue filtrando por isActive los contactos recientes guardados en el navegador", () => {
     window.localStorage.setItem(
       getEntityRecentsStorageKey("contact"),

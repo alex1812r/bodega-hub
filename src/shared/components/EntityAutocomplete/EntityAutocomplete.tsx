@@ -76,8 +76,12 @@ export type EntityAutocompleteProps<K extends EntityKind> = {
    */
   onNotFound?: (text: string) => void;
   placeholder?: string;
-  /** Separa los recientes por contexto (p. ej. por tienda o por pantalla). */
-  recentsKey?: string;
+  /**
+   * Separa los recientes por contexto (p. ej. por tienda o por pantalla).
+   * `null` los desactiva: el campo ni los ofrece ni guarda lo elegido (para
+   * cuando una copia guardada puede haber dejado de ser elegible).
+   */
+  recentsKey?: string | null;
   renderSecondary?: (option: EntityOption<K>, context: EntitySecondaryContext) => ReactNode;
   required?: boolean;
   value: EntityAutocompleteValue | null;
@@ -435,8 +439,14 @@ export function EntityAutocomplete<K extends EntityKind>({
   }
 
   function openPopup() {
-    setRecents(readEntityRecents(entity, recentsKey));
+    setRecents(recentsKey === null ? [] : readEntityRecents(entity, recentsKey));
     showPopup();
+  }
+
+  function rememberRecent(option: EntityOption<K>) {
+    if (recentsKey !== null) {
+      rememberEntityRecent(entity, option, recentsKey);
+    }
   }
 
   const closeWithEscape = useEffectEvent(() => {
@@ -486,7 +496,7 @@ export function EntityAutocomplete<K extends EntityKind>({
     }
 
     shownScanRef.current = null;
-    rememberEntityRecent(entity, option, recentsKey);
+    rememberRecent(option);
     resetTypedText();
     setIsOpen(false);
     onChange(option);
@@ -553,7 +563,7 @@ export function EntityAutocomplete<K extends EntityKind>({
     const exactMatch = "items" in outcome ? config.findExact(outcome.items, code) : undefined;
 
     if (exactMatch && !getDisabledReason(exactMatch)) {
-      rememberEntityRecent(entity, exactMatch, recentsKey);
+      rememberRecent(exactMatch);
 
       if (isFieldUnchanged) {
         resetTypedText();
