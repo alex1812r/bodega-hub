@@ -650,3 +650,24 @@ notify pgrst, 'reload schema';
 -- tienda, escritura admin / almacen de la tienda.
 -- ORDEN DE DESPLIEGUE: parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sobre la
 -- base sin parche responde error al leer recetas (pide la columna nueva).
+-- -----------------------------------------------------------------------------
+-- 20261010f — receive disassemble invariant (COM-F7 M1, sobre COM-14): una compra no queda recibida con una linea marcada
+--             "Desarmar al recibir" sin desarmar; lo garantiza la base con un constraint trigger diferido
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010f-receive-disassemble-invariant.sql
+-- Requiere 20261010d. Idempotente, una transaccion. Crea la funcion purchases_received_disassemble_guard() (security
+-- definer, sin execute para PostgREST, solo lee) y el constraint trigger del mismo nombre sobre purchases: after insert or
+-- update of status, when (new.status = 'recibido'), deferrable initially deferred. NO redefine receive_purchase,
+-- receive_purchase_and_disassemble, create_purchase ni convert_pack_to_units; no toca tablas, columnas, indices ni
+-- politicas; no migra datos.
+-- NO cambia stock, costo ni dinero. Al final de la transaccion que deja una compra recibida, si le queda una linea con
+-- disassemble_on_receive = true y disassembled_conversion_id NULL responde PT409 ("Esta compra tiene lineas marcadas para
+-- desarmar: ...") y se revierte todo. Solo lo dispara receive_purchase llamada DIRECTAMENTE sobre un pedido con lineas
+-- marcadas (antes dejaba la compra recibida con la marca y sin conversion). receive_purchase_and_disassemble (con marcas,
+-- con reparto o con [] = desmarca y recibe sin abrir), create_purchase recibida y receive_purchase sobre un pedido sin
+-- marcas responden lo mismo que antes.
+-- OJO: el rechazo llega al confirmar la transaccion (por PostgREST, 409 con el mensaje). En una transaccion abierta a mano
+-- se adelanta con: set constraints public.purchases_received_disassemble_guard immediate;
+-- OJO: un constraint trigger no valida filas existentes; la cabecera del parche trae la consulta que localiza una compra
+-- recibida con una linea marcada sin desarmar. Reaplicar 20261010d no elimina el trigger.
+-- ORDEN DE DESPLIEGUE: parche -> verify. No depende del BFF (ya recibe siempre con receive_purchase_and_disassemble).

@@ -46,6 +46,9 @@ type Distribution = { item: string; components?: Array<{ unit_product_id: string
 
 const PATCHES = resolve(__dirname, "../../../supabase/patches");
 const PATCH = "20261010d-receive-disassemble.sql";
+const INVARIANT_PATCH = "20261010f-receive-disassemble-invariant.sql";
+/** Constraint trigger diferido de 20261010f: el invariante se comprueba al confirmar la transacción. */
+const GUARD = "public.purchases_received_disassemble_guard";
 const PREVIOUS_PATCH = "20261010b-purchase-inactive-product.sql";
 const PREVIOUS_NAME = "create_purchase_20261010b";
 const TAG = `COM14-${Date.now().toString(36)}${randomUUID().slice(0, 4)}`;
@@ -79,17 +82,24 @@ async function one(what: string, text: string, params: unknown[] = []): Promise<
   return rows[0];
 }
 
-/** Ejecuta `text` en un savepoint con el rol indicado. Devuelve el error (SQLSTATE + mensaje) en vez de lanzarlo. */
+/**
+ * Ejecuta `text` en un savepoint con el rol indicado. Devuelve el error (SQLSTATE + mensaje) en vez de lanzarlo.
+ * Cada llamada equivale a UNA transacción de PostgREST: como aquí todo termina en `rollback`, la comprobación diferida
+ * de 20261010f (que en la base real salta al confirmar) se adelanta al final de la llamada.
+ */
 async function run(text: string, params: unknown[] = [], role: LabRoleKey = ROLE): Promise<Outcome> {
   await db.query("savepoint com14");
   try {
     await actAs(db, lab.uids[role]);
     const res = await db.query<Row>(text, params);
+    await db.query(`set constraints ${GUARD} immediate`);
+    await db.query(`set constraints ${GUARD} deferred`);
     await db.query("reset role");
     await db.query("release savepoint com14");
     return { rows: res.rows, code: null, message: "" };
   } catch (error) {
     await db.query("rollback to savepoint com14");
+    await db.query(`set constraints ${GUARD} deferred`);
     await db.query("reset role");
     return { rows: [], ...failure(error) };
   }
@@ -1224,6 +1234,258 @@ describe("20261010e · preferencia «Desarmar siempre al recibir compras» de la
       expect((await state([sin.pack, sin.unit])).map((row) => row.stock)).toEqual([0, 17]);
       expect(await integrity([con.pack, con.unit, sin.pack, sin.unit])).toEqual({});
     });
+  });
+});
+
+describe("20261010f · una compra no queda recibida con una línea marcada sin desarmar (COM-F7 M1)", () => {
+  const MESSAGE = /^Esta compra tiene líneas marcadas para desarmar: recíbela desde la pantalla de la compra/;
+
+  function cancel(purchaseId: string): Promise<Outcome> {
+    return run("select id, status from public.cancel_purchase($1::uuid)", [purchaseId]);
+  }
+
+  function giveBack(purchaseId: string): Promise<Outcome> {
+    return run("select id, status from public.return_purchase($1::uuid)", [purchaseId]);
+  }
+
+  /** Marca y desarme de cada línea de la compra. */
+  async function marks(purchaseId: string): Promise<Array<[boolean, boolean]>> {
+    return (await lineRows(purchaseId)).map((line) => [line.marca, line.desarmada]);
+  }
+
+  async function stocks(ids: readonly string[]): Promise<unknown[]> {
+    return (await state(ids)).map((row) => row.stock);
+  }
+
+  /** Líneas marcadas sin desarmar de compras recibidas de la tienda lab: el invariante dice 0. */
+  async function broken(): Promise<number> {
+    const row = await one(
+      "líneas marcadas sin desarmar",
+      `select count(*)::int as n from public.purchases p join public.purchase_items i on i.purchase_id = p.id
+       where p.store_id = $1 and p.status = 'recibido' and i.disassemble_on_receive and i.disassembled_conversion_id is null`,
+      [lab.storeId],
+    );
+    return Number(row.n);
+  }
+
+  it("el parche es una transacción que solo crea la función de guarda y su constraint trigger diferido, sin redefinir ninguna RPC, y recarga PostgREST", () => {
+    const text = readFileSync(resolve(PATCHES, INVARIANT_PATCH), "utf8").replace(/\r\n/g, "\n");
+
+    expect({
+      begins: text.match(/^begin;$/gm)?.length,
+      commits: text.match(/^commit;$/gm)?.length,
+      funciones: text.match(/^create or replace function public\.(\w+)/gm)?.map((line) => line.replace("create or replace function public.", "")),
+      trigger: text.includes(
+        [
+          "create constraint trigger purchases_received_disassemble_guard",
+          "  after insert or update of status on public.purchases",
+          "  deferrable initially deferred",
+          "  for each row",
+          "  when (new.status = 'recibido')",
+          "  execute function public.purchases_received_disassemble_guard();",
+        ].join("\n"),
+      ),
+      idempotente: /^drop trigger if exists purchases_received_disassemble_guard on public\.purchases;$/m.test(text),
+      notify: /^notify pgrst, 'reload schema';$/m.test(text),
+      escribe: /^\s*(insert into|update public\.|delete from|alter table)/m.test(text),
+    }).toEqual({ begins: 1, commits: 1, funciones: ["purchases_received_disassemble_guard"], trigger: true, idempotente: true, notify: true, escribe: false });
+  });
+
+  it("el trigger está instalado como constraint trigger diferido y reaplicar el parche no lo duplica", async () => {
+    await withRollback(db, async () => {
+      const patch = readFileSync(resolve(PATCHES, INVARIANT_PATCH), "utf8").replace(/^begin;\r?$/m, "").replace(/^commit;\r?$/m, "");
+      await sql("reaplicar 20261010f", patch);
+
+      const rows = await sql(
+        "trigger de la guarda",
+        `select t.tgconstraint <> 0 as constraint_trigger, t.tgdeferrable, t.tginitdeferred, p.prosecdef,
+                has_function_privilege('authenticated', p.oid, 'execute') as authenticated
+         from pg_trigger t join pg_proc p on p.oid = t.tgfoid
+         where t.tgrelid = 'public.purchases'::regclass and t.tgname = 'purchases_received_disassemble_guard'`,
+      );
+
+      expect(rows).toEqual([{ constraint_trigger: true, tgdeferrable: true, tginitdeferred: true, prosecdef: true, authenticated: false }]);
+    });
+  });
+
+  it("receive_purchase directa sobre un pedido con una línea marcada: PT409 en español y NADA recibido (pedido, marca, stock y libro intactos)", async () => {
+    await withRollback(db, async () => {
+      const s = await supplier();
+      const { pack, unit } = await boxOf(6, { unitStock: 4 });
+      const id = await order(s, [{ product: pack, costRef: 9, quantity: 2, disassemble: true }]);
+      const antes = await state([pack, unit]);
+
+      const out = await receivePlain(id);
+
+      expect({ code: out.code, mensaje: MESSAGE.test(out.message) }).toEqual({ code: "PT409", mensaje: true });
+      expect({ status: await purchaseStatus(id), lineas: await marks(id), estado: await state([pack, unit]) }).toEqual({
+        status: "pedido",
+        lineas: [[true, false]],
+        estado: antes,
+      });
+      expect(await broken()).toBe(0);
+    });
+  });
+
+  it("tras el rechazo el pedido se recibe por la RPC nueva: desarmando, o sin desarmar con [] (línea desmarcada)", async () => {
+    await withRollback(db, async () => {
+      const s = await supplier();
+      const [a, b] = [await boxOf(6), await boxOf(6)];
+      const idA = await order(s, [{ product: a.pack, costRef: 9, quantity: 2, disassemble: true }]);
+      const idB = await order(s, [{ product: b.pack, costRef: 9, quantity: 2, disassemble: true }]);
+      const rechazos = [(await receivePlain(idA)).code, (await receivePlain(idB)).code];
+
+      const [abierta, cerrada] = [await receive(idA), await receive(idB, { disassemble: [] })];
+
+      expect({ rechazos, abierta: abierta.code, cerrada: cerrada.code }).toEqual({ rechazos: ["PT409", "PT409"], abierta: null, cerrada: null });
+      expect({ a: await marks(idA), b: await marks(idB) }).toEqual({ a: [[true, true]], b: [[false, false]] });
+      expect({ a: await stocks([a.pack, a.unit]), b: await stocks([b.pack, b.unit]) }).toEqual({ a: [0, 12], b: [2, 0] });
+      expect(await broken()).toBe(0);
+    });
+  });
+
+  it("receive_purchase directa sobre un pedido SIN marcas (clave ausente o false): se recibe igual que antes", async () => {
+    await withRollback(db, async () => {
+      const s = await supplier();
+      const [a, b] = [await boxOf(6), await boxOf(6)];
+      const idA = await order(s, [{ product: a.pack, costRef: 9, quantity: 3, taxRate: 16 }]);
+      const idB = await order(s, [{ product: b.pack, costRef: 9, quantity: 3, taxRate: 16, disassemble: false }]);
+
+      const [sinClave, conFalse] = [await receivePlain(idA), await receivePlain(idB)];
+
+      expect({ sinClave: sinClave.code, conFalse: conFalse.code, estados: [await purchaseStatus(idA), await purchaseStatus(idB)] }).toEqual({
+        sinClave: null,
+        conFalse: null,
+        estados: ["recibido", "recibido"],
+      });
+      expect(await stocks([a.pack, a.unit])).toEqual([3, 0]);
+      expect(await state([a.pack, a.unit])).toEqual(await state([b.pack, b.unit]));
+    });
+  });
+
+  it("pedido con una línea marcada y otra normal: receive_purchase directa no recibe NINGUNA de las dos", async () => {
+    await withRollback(db, async () => {
+      const s = await supplier();
+      const { pack, unit } = await boxOf(6);
+      const suelto = await product("suelto");
+      const id = await order(s, [
+        { product: pack, costRef: 9, quantity: 2, disassemble: true },
+        { product: suelto, costRef: 2, quantity: 5 },
+      ]);
+      const antes = await state([pack, unit, suelto]);
+
+      const out = await receivePlain(id);
+
+      expect({ code: out.code, status: await purchaseStatus(id), estado: await state([pack, unit, suelto]) }).toEqual({ code: "PT409", status: "pedido", estado: antes });
+    });
+  });
+
+  it("la RPC nueva pasa la guarda con marcas, con reparto de surtido y con []; la compra que nace recibida y marcada, también", async () => {
+    await withRollback(db, async () => {
+      const s = await supplier();
+      const box = await boxOf(6);
+      const kit = await assortment();
+      const conMarca = await order(s, [{ product: box.pack, costRef: 9, quantity: 2, disassemble: true }]);
+      const conReparto = await order(s, [{ product: kit.pack, costRef: 10, quantity: 1, disassemble: true }]);
+      const sinAbrir = await order(s, [{ product: kit.pack, costRef: 10, quantity: 1, disassemble: true }]);
+      const reparto = [
+        { unit_product_id: kit.a, units: 6 },
+        { unit_product_id: kit.b, units: 3 },
+        { unit_product_id: kit.c, units: 3 },
+      ];
+
+      const codes = {
+        conMarca: (await receive(conMarca, { key: randomUUID() })).code,
+        conReparto: (await receive(conReparto, { disassemble: [{ item: await lineId(conReparto, kit.pack), components: reparto }] })).code,
+        sinAbrir: (await receive(sinAbrir, { disassemble: [] })).code,
+        naceRecibida: (await purchase(s, [{ product: box.pack, costRef: 9, quantity: 1, disassemble: true }])).code,
+      };
+
+      expect(codes).toEqual({ conMarca: null, conReparto: null, sinAbrir: null, naceRecibida: null });
+      expect(await broken()).toBe(0);
+      expect(await integrity([box.pack, box.unit, kit.pack, kit.a, kit.b, kit.c])).toEqual({});
+    });
+  });
+
+  it("anular y devolver no cambian: el pedido marcado se anula; la compra recibida sin marcas se anula y se devuelve; la desarmada responde como tras abrir a mano", async () => {
+    await withRollback(db, async () => {
+      const s = await supplier();
+      const [a, b, c, d] = [await boxOf(6), await boxOf(6), await boxOf(6), await boxOf(6)];
+      const pedidoMarcado = await order(s, [{ product: a.pack, costRef: 9, quantity: 2, disassemble: true }]);
+      const recibidaA = String((await must("compra", purchase(s, [{ product: b.pack, costRef: 9, quantity: 2 }])))[0]?.id);
+      const recibidaB = String((await must("compra", purchase(s, [{ product: c.pack, costRef: 9, quantity: 2 }])))[0]?.id);
+      const desarmada = String((await must("compra", purchase(s, [{ product: d.pack, costRef: 9, quantity: 2, disassemble: true }])))[0]?.id);
+      const antesDesarmada = await state([d.pack, d.unit]);
+
+      const out = {
+        anularPedido: (await cancel(pedidoMarcado)).code,
+        anularRecibida: (await cancel(recibidaA)).code,
+        devolverRecibida: (await giveBack(recibidaB)).code,
+        anularDesarmada: (await cancel(desarmada)).code,
+        devolverDesarmada: (await giveBack(desarmada)).code,
+      };
+
+      expect(out).toEqual({ anularPedido: null, anularRecibida: null, devolverRecibida: null, anularDesarmada: "PT409", devolverDesarmada: "PT409" });
+      expect({
+        estados: [await purchaseStatus(pedidoMarcado), await purchaseStatus(recibidaA), await purchaseStatus(recibidaB), await purchaseStatus(desarmada)],
+        stocks: await stocks([b.pack, c.pack]),
+        desarmada: await state([d.pack, d.unit]),
+      }).toEqual({ estados: ["cancelado", "cancelado", "devuelto", "recibido"], stocks: [0, 0], desarmada: antesDesarmada });
+      expect(await broken()).toBe(0);
+    });
+  });
+
+  it("por PostgREST (transacción real, como lab-almacen): receive_purchase sobre un pedido marcado responde 409 PT409 al confirmar y no recibe nada; la RPC nueva lo recibe y lo desarma", async () => {
+    // La siembra se CONFIRMA (PostgREST no ve una transacción abierta) y en una sola transacción: la receta se valida al confirmar.
+    await db.query("begin");
+    const { s, pack, unit } = await (async () => {
+      try {
+        const seeded = { s: await supplier(), ...(await boxOf(6)) };
+        await db.query("commit");
+        return seeded;
+      } catch (error) {
+        await db.query("rollback");
+        throw error;
+      }
+    })();
+    const client = await lab.supa(ROLE);
+    const line = item({ product: pack, costRef: 9, quantity: 2, disassemble: true });
+    const created = await client.rpc("create_purchase", {
+      p_supplier_id: s,
+      p_items: [line],
+      p_ref_rate_ves: RATE,
+      p_discount_ref: 0,
+      p_tax_ref: 0,
+      p_notes: TAG,
+      p_status: "pedido",
+      p_discount_ves: 0,
+      p_tax_ves: 0,
+      p_subtotal_ves: line.subtotal_ves,
+      p_subtotal_ref: line.subtotal_ref,
+    });
+    if (created.error) throw new Error(`SETUP · pedido por PostgREST: ${created.error.code} ${created.error.message}`);
+    const id = String((created.data as Row).id);
+    const antes = await state([pack, unit]);
+
+    const directa = await client.rpc("receive_purchase", { p_purchase_id: id });
+
+    expect({ http: directa.status, code: directa.error?.code, mensaje: MESSAGE.test(directa.error?.message ?? "") }).toEqual({ http: 409, code: "PT409", mensaje: true });
+    expect({ status: await purchaseStatus(id), lineas: await marks(id), estado: await state([pack, unit]) }).toEqual({
+      status: "pedido",
+      lineas: [[true, false]],
+      estado: antes,
+    });
+
+    const nueva = await client.rpc("receive_purchase_and_disassemble", { p_purchase_id: id });
+
+    expect(nueva.error).toBeNull();
+    expect({ status: await purchaseStatus(id), lineas: await marks(id), stock: await stocks([pack, unit]) }).toEqual({
+      status: "recibido",
+      lineas: [[true, true]],
+      stock: [0, 12],
+    });
+    expect(await broken()).toBe(0);
+    expect(await integrity([pack, unit])).toEqual({});
   });
 });
 

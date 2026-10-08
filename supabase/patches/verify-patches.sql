@@ -1998,4 +1998,28 @@ select
       and c.table_name = 'product_pack_conversions'
       and c.column_name = 'always_disassemble_on_receive'
   )
+union all
+select
+  'trigger purchases_received_disassemble_guard: constraint trigger diferido (after insert or update of status, when status = recibido) sobre purchases; su funcion es security definer, responde PT409 si queda una linea marcada sin desarmar y solo lee (20261010f)',
+  (
+    select count(*) = 1
+       and bool_and(t.tgconstraint <> 0 and t.tgdeferrable and t.tginitdeferred)
+       -- 21 = por fila (1) + insert (4) + update (16), after.
+       and bool_and(t.tgtype = 21 and t.tgenabled = 'O' and t.tgqual is not null)
+       and bool_and(t.tgattr::text = (
+             select a.attnum::text
+             from pg_attribute a
+             where a.attrelid = 'public.purchases'::regclass and a.attname = 'status'
+           ))
+       and bool_and(p.prosecdef and coalesce(p.proconfig @> array['search_path=public'], false))
+       and bool_and(p.prosrc ilike '%from public.purchases p%join public.purchase_items i on i.purchase_id = p.id%p.status = ''recibido''%i.disassemble_on_receive%i.disassembled_conversion_id is null%errcode = ''PT409''%')
+       and bool_and(p.prosrc not ilike '%current_stock%' and p.prosrc not ilike '%insert into%' and p.prosrc not ilike '%update public.%' and p.prosrc not ilike '%delete from%')
+       and bool_and(not has_function_privilege('authenticated', p.oid, 'execute'))
+       and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    where t.tgrelid = 'public.purchases'::regclass
+      and t.tgname = 'purchases_received_disassemble_guard'
+      and not t.tgisinternal
+  )
 order by 1;
