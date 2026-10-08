@@ -20,6 +20,24 @@ export const SALE_PRICE_REQUIRED_MESSAGE = "Escribe el precio de venta.";
 
 export const CATEGORY_REQUIRED_MESSAGE = "Elige una categoría.";
 
+export const NAME_REQUIRED_MESSAGE = "Escribe el nombre del producto.";
+
+type FormField = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+
+/** `field` es el primer campo del formulario que no pasa la validación nativa. */
+function isFirstInvalidField(field: FormField) {
+  const firstInvalid = Array.from(field.form?.elements ?? []).find(
+    (element) =>
+      (element instanceof HTMLInputElement ||
+        element instanceof HTMLSelectElement ||
+        element instanceof HTMLTextAreaElement) &&
+      element.willValidate &&
+      !element.validity.valid,
+  );
+
+  return !firstInvalid || firstInvalid === field;
+}
+
 type ProductFormBasicFieldsProps = {
   categories: CategoryMock[];
   /** Categoría elegida; "" = ninguna. */
@@ -65,8 +83,8 @@ type ProductFormBasicFieldsProps = {
  * La Categoría es obligatoria en el alta. En la edición solo lo es si la del
  * producto está entre las opciones: no se le puede quitar, pero un producto
  * antiguo sin categoría, o con una que ya no se ofrece (inactiva), se guarda
- * sin elegirla. Sin categoría el envío se frena con el aviso en el campo, en
- * vez del globo nativo del navegador.
+ * sin elegirla. Sin categoría o sin nombre el envío se frena con el aviso en
+ * el campo, en vez del globo nativo del navegador.
  *
  * El precio solo cambia cuando el usuario elige un chip, escribe un % o
  * escribe el precio: abrir el formulario o cambiar el costo no lo mueven.
@@ -89,6 +107,7 @@ export function ProductFormBasicFields({
   const [cost, setCost] = useState<number | null>(defaults.currentCostRef ?? null);
   const [price, setPrice] = useState<number | null>(defaults.salePriceRef ?? null);
   const [showCategoryRequired, setShowCategoryRequired] = useState(false);
+  const [showNameRequired, setShowNameRequired] = useState(false);
   const pricingOptions = getProductPricingOptions();
   const isCategoryRequired =
     !defaults.id || categories.some((category) => category.id === defaults.categoryId);
@@ -100,18 +119,18 @@ export function ProductFormBasicFields({
     event.preventDefault();
     setShowCategoryRequired(true);
 
-    const select = event.currentTarget;
-    const firstInvalid = Array.from(select.form?.elements ?? []).find(
-      (element) =>
-        (element instanceof HTMLInputElement ||
-          element instanceof HTMLSelectElement ||
-          element instanceof HTMLTextAreaElement) &&
-        element.willValidate &&
-        !element.validity.valid,
-    );
+    if (isFirstInvalidField(event.currentTarget)) {
+      event.currentTarget.focus();
+    }
+  }
 
-    if (!firstInvalid || firstInvalid === select) {
-      select.focus();
+  // Igual que la Categoría: aviso propio en vez del globo del navegador.
+  function handleNameInvalid(event: FormEvent<HTMLInputElement>) {
+    event.preventDefault();
+    setShowNameRequired(true);
+
+    if (isFirstInvalidField(event.currentTarget)) {
+      event.currentTarget.focus();
     }
   }
 
@@ -119,9 +138,13 @@ export function ProductFormBasicFields({
     <>
       {image}
       <Input
+        // Alta: el foco inicial va al Nombre y no al botón de la imagen, que va antes.
+        autoFocus={!defaults.id}
+        error={showNameRequired && !name ? NAME_REQUIRED_MESSAGE : undefined}
         label="Nombre"
         name="name"
         onChange={(event) => onNameChange(event.target.value)}
+        onInvalid={handleNameInvalid}
         required
         value={name}
       />
