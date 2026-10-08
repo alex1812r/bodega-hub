@@ -1201,4 +1201,169 @@ select
           and pg_get_triggerdef(t.oid) ilike '%default_markup_pct%')
       )
   )
+union all
+select
+  'product_price_history: instantanea de precio (cost_ref_snapshot numeric, margin_band_snapshot text con check, snapshot_seq bigint; las tres o ninguna) e indices de apoyo (20261009c)',
+  (
+    select count(*) = 3
+    from pg_attribute a
+    where a.attrelid = to_regclass('public.product_price_history')
+      and not a.attisdropped
+      and not a.attnotnull
+      and (
+        (a.attname = 'cost_ref_snapshot' and a.atttypid = 'numeric'::regtype)
+        or (a.attname = 'margin_band_snapshot' and a.atttypid = 'text'::regtype)
+        or (a.attname = 'snapshot_seq' and a.atttypid = 'bigint'::regtype)
+      )
+  )
+  and (
+    select count(*) = 2
+    from pg_constraint c
+    where c.conrelid = to_regclass('public.product_price_history')
+      and c.contype = 'c'
+      and c.convalidated
+      and (
+        (c.conname = 'product_price_history_margin_band_snapshot_check'
+          and pg_get_constraintdef(c.oid) ilike '%red%yellow%green%none%')
+        or (c.conname = 'product_price_history_snapshot_complete_check'
+          and pg_get_constraintdef(c.oid) ilike '%num_nulls(cost_ref_snapshot, margin_band_snapshot, snapshot_seq)%')
+      )
+  )
+  and (
+    select count(*) = 2
+    from pg_indexes i
+    where i.schemaname = 'public'
+      and i.tablename = 'product_price_history'
+      and (
+        (i.indexname = 'idx_product_price_history_product_created' and i.indexdef ilike '%(product_id, created_at desc)%')
+        or (i.indexname = 'idx_product_price_history_product_snapshot'
+          and i.indexdef ilike '%(product_id, snapshot_seq desc)%where%snapshot_seq is not null%')
+      )
+  )
+union all
+select
+  'product_margin_band / margin_band_from_thresholds / margin_band_rank: regla de bordes de @bodega/core, umbrales de la tienda con 15 / 25 por defecto, sin security definer ni execute para anon (20261009c)',
+  (
+    select count(*) = 3
+       and bool_and(not p.prosecdef
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute'))
+       and bool_or(p.proname = 'margin_band_from_thresholds' and p.provolatile = 'i'
+         and p.prosrc ilike '%p_margin_pct is null then ''none''%p_margin_pct < p_yellow_from_pct then ''red''%p_margin_pct < p_green_from_pct then ''yellow''%else ''green''%')
+       and bool_or(p.proname = 'margin_band_rank' and p.provolatile = 'i'
+         and p.prosrc ilike '%''red'' then 0%''yellow'' then 1%''green'' then 2%')
+       and bool_or(p.proname = 'product_margin_band' and p.provolatile = 's'
+         and p.prosrc ilike '%margin_band_from_thresholds(%margin_yellow_from_pct%a.store_id = p_store_id), 15)%margin_green_from_pct%a.store_id = p_store_id), 25)%')
+    from pg_proc p
+    where p.oid in (
+      to_regprocedure('public.margin_band_from_thresholds(numeric, numeric, numeric)'),
+      to_regprocedure('public.margin_band_rank(text)'),
+      to_regprocedure('public.product_margin_band(uuid, numeric)')
+    )
+  )
+union all
+select
+  'rpc update_product_price: una sola firma, mismas guardas que 20261006h y la fila de historial lleva costo, banda y posicion de la instantanea (20261009c)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.oid = to_regprocedure('public.update_product_price(uuid, numeric, text)')
+         and p.prosecdef
+         and p.prorettype = to_regtype('public.products')
+         and p.proconfig @> array['search_path=public']
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%assert_finite_numeric(p_new_sale_price_ref%errcode = ''PT403''%for update%set sale_price_ref = p_new_sale_price_ref%'
+         and p.prosrc ilike '%insert into public.product_price_history%cost_ref_snapshot,%margin_band_snapshot,%snapshot_seq%v_product.current_cost_ref,%product_margin_band(v_store_id, v_product.margin_pct),%nextval(''public.stock_movements_seq'')%'
+         and p.prosrc not ilike '%current_stock%'
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'update_product_price'
+  )
+union all
+select
+  'rpc keep_product_price: security definer con search_path, tienda de la sesion, admin / almacen (PT403), bloqueo del producto (PT404), solo inserta historial y solo la ejecutan authenticated / service_role (20261009c)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.oid = to_regprocedure('public.keep_product_price(uuid, text)')
+         and p.prosecdef
+         and p.prorettype = to_regtype('public.product_price_history')
+         and not p.proretset
+         and p.proconfig @> array['search_path=public']
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%current_user_role()%not in (''admin'', ''almacen'')%errcode = ''PT403''%and store_id = v_store_id%for update%errcode = ''PT404''%insert into public.product_price_history%'
+         and p.prosrc not ilike '%update public.products%'
+         and p.prosrc not ilike '%current_stock%'
+         and p.prosrc not ilike '%into public.stock_movements%'
+         and has_function_privilege('authenticated', p.oid, 'execute')
+         and has_function_privilege('service_role', p.oid, 'execute')
+         and not has_function_privilege('anon', p.oid, 'execute')
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'keep_product_price'
+  )
+union all
+select
+  'trigger trg_products_price_baseline: after insert por fila en products, funcion security definer que solo inserta la linea base y no es ejecutable por /rpc (20261009c)',
+  exists (
+    select 1
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    where t.tgrelid = to_regclass('public.products')
+      and t.tgname = 'trg_products_price_baseline'
+      and not t.tgisinternal
+      and t.tgenabled = 'O'
+      and t.tgtype = 5
+      and p.oid = to_regprocedure('public.products_price_baseline()')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=public']
+      and p.prosrc ilike '%insert into public.product_price_history%new.current_cost_ref%product_margin_band(new.store_id, new.margin_pct)%'
+      and p.prosrc not ilike '%update public.%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'view products_price_review: security_invoker, solo productos activos cuyo costo subio y cuya banda empeoro, select para authenticated / service_role y no para anon (20261009c)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.products_price_review')
+      and c.relkind = 'v'
+      and c.reloptions @> array['security_invoker=true']
+      and pg_get_viewdef(c.oid) ilike '%snapshot_seq is not null%order by h.snapshot_seq desc%sm.seq > s.snapshot_seq%p.is_active%p.current_cost_ref > s.cost_ref_snapshot%margin_band_rank(b.current_band) < %margin_band_rank(s.margin_band_snapshot)%'
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and has_table_privilege('service_role', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'select')
+      and not has_table_privilege('authenticated', c.oid, 'insert')
+  )
+union all
+select
+  'price_review(products): relacion calculada de PostgREST sobre products_price_review, una fila como mucho, con el RLS de quien llama (20261009c)',
+  exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.price_review(public.products)')
+      and not p.prosecdef
+      and p.proretset
+      and p.prorows = 1
+      and p.provolatile = 's'
+      and p.prorettype = to_regtype('public.products_price_review')
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'product_price_history: los triggers de NaN / Infinity cubren cost_ref_snapshot (20261009c)',
+  (
+    select count(*) = 2
+    from pg_trigger t
+    where not t.tgisinternal
+      and t.tgfoid = to_regprocedure('public.reject_non_finite_numeric()')
+      and t.tgname in ('trg_zz_reject_non_finite_numeric_ins', 'trg_zz_reject_non_finite_numeric_upd')
+      and t.tgrelid = to_regclass('public.product_price_history')
+      and pg_get_triggerdef(t.oid) ilike '%cost_ref_snapshot%'
+  )
 order by 1;

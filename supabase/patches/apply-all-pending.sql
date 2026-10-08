@@ -454,3 +454,23 @@ notify pgrst, 'reload schema';
 -- La alicuota por defecto para categorias nuevas ya existe (app_settings.default_tax_rate_id, 20261007a): no se duplica.
 -- ORDEN DE DESPLIEGUE (PRO-09): aplicar ANTES de desplegar el BFF: /api/settings, /api/settings/pricing, /api/categories
 -- y /api/products ya piden las columnas nuevas en sus select; sin el parche responden error.
+-- -----------------------------------------------------------------------------
+-- 20261009c — price review (PRO-11): cola "Por revisar" de precios. product_price_history guarda el costo y la banda de
+--             ganancia de cada precio fijado (cost_ref_snapshot, margin_band_snapshot, snapshot_seq), update_product_price
+--             los rellena, RPC keep_product_price ("Mantener precio"), linea base por producto (backfill + trigger en las
+--             altas) y vista products_price_review (security_invoker) con la compra que subio el costo
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009c-price-review.sql
+-- Requiere 20261006a, 20261006h, 20261006i, 20261009a y 20261009b. Idempotente, una transaccion. Ninguna firma cambia:
+-- update_product_price valida, bloquea, falla y escribe products igual que en 20261006h; solo anade la instantanea a la
+-- fila de historial que ya insertaba. No toca stock, dinero, precios, politicas ni las RPC de compras.
+-- OJO: inserta UNA fila de historial "Línea base de ganancia" (precio anterior = nuevo = actual) por cada producto que
+-- no tenga ninguna instantanea, y cada producto nuevo nace con la suya (trigger trg_products_price_baseline). Las filas
+-- de historial anteriores quedan sin instantanea (no se inventa el costo historico). Reaplicar no inserta mas filas.
+-- OJO: las instantaneas consumen numeros de public.stock_movements_seq (orden exacto frente a las compras recibidas);
+-- no escriben ni leen stock. Un script que reinicie esa secuencia debe vaciar tambien product_price_history
+-- (reset-data.sql y reset-purchases-and-costs.sql ya lo hacen) y reaplicar este parche para recrear las lineas base.
+-- OJO: reaplicar 20261006g o 20261006h reinstala update_product_price sin la instantanea: volver a aplicar este parche.
+-- ORDEN DE DESPLIEGUE (PRO-11): aplicar ANTES de desplegar el BFF: /api/products (listado y detalle),
+-- /api/products/price-review, /api/products/{id}/keep-price y /api/products/{id}/price-history ya leen la vista y las
+-- columnas nuevas; sin el parche responden error.
