@@ -1,10 +1,21 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useId, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
-import { usePurchase } from "@/modules/purchases/hooks/usePurchases";
-import { useSale } from "@/modules/sales/hooks/useSales";
+import { RequestAttempt } from "@/modules/inventory/utils/requestAttempt";
+import { purchasesQueryKeys, usePurchase } from "@/modules/purchases/hooks/usePurchases";
+import { salesQueryKeys, useSale } from "@/modules/sales/hooks/useSales";
+import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
+import { ClientApiError } from "@/shared/api/apiFetch";
 import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
 import {
@@ -18,7 +29,7 @@ import {
 } from "@/shared/payments/PaymentFormFields";
 import { formatVes, roundMoney } from "@/shared/utils/currency";
 
-import { type PaymentDetail, useCreatePayment } from "../hooks/usePayments";
+import { type PaymentDetail, paymentsQueryKeys, useCreatePayment } from "../hooks/usePayments";
 import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import {
   DEFAULT_ENABLED_PAYMENT_METHODS,
@@ -38,6 +49,12 @@ import {
  * documento. Si `purchaseId`/`saleId` cambian, el modal se vuelve a montar por dentro
  * (formulario limpio y clave nueva), así que el consumidor no necesita pasar `key`.
  * Con `trigger` (apertura no controlada) ese cambio además lo cierra.
+ *
+ * Cada apertura vuelve a pedir el saldo del documento y estrena clave de
+ * idempotencia. Mientras el modal siga abierto, reintentar sin cambios tras un error
+ * de resultado incierto (red, 5xx, 408, 409) conserva la clave y no duplica el pago;
+ * tras ese error el modal vuelve a pedir el documento y los pagos, para que se vea
+ * si el pago entró.
  *
  * @example Botón dentro del detalle de una venta
  * <RegisterPaymentModal saleId={sale.id} trigger={<Button>Cobrar saldo</Button>} />
@@ -101,21 +118,47 @@ const DOCUMENT_TEXTS = {
   sale: { submitLabel: "Registrar cobro", title: "Cobrar saldo" },
 } as const;
 
+const CONNECTION_ERROR_MESSAGE = "No se pudo conectar con el servidor.";
+
+/**
+ * Texto de un error para el usuario. Los de negocio (`ClientApiError`) traen el mensaje
+ * del servidor y se muestran tal cual; el resto son fallos de red o peticiones
+ * abortadas, cuyo mensaje es el del navegador ("Failed to fetch").
+ */
+function errorMessageFor(error: Error, connectionMessage: string) {
+  return error instanceof ClientApiError ? error.message : connectionMessage;
+}
+
+/**
+ * El servidor pudo haber registrado el pago aunque la respuesta sea un error: fallo de
+ * red, 5xx, 408 y 409 (los mismos casos en los que `RequestAttempt` conserva la clave).
+ */
+function isUncertainResult(error: unknown) {
+  return (
+    !(error instanceof ClientApiError) ||
+    error.status >= 500 ||
+    error.status === 408 ||
+    error.status === 409
+  );
+}
+
 /**
  * Bs por encima del saldo que `register_payment` todavía acepta (guardas F2/F3 de
  * `20260904-payment-guards.sql`); más allá responde 400, así que no se envía.
  * - Venta: el "redondeo a favor", Bs 10 (o 1 % de la tasa) y 1 USD en efectivo USD.
  * - Compra en Bs: el céntimo de la conversión.
- * - Compra en USD: el servidor convierte con la tasa del día, que aquí no se conoce
- *   → `undefined`: superar el saldo solo se avisa y decide el servidor.
+ * - Compra en USD: el servidor convierte con la tasa del día y tolera el mismo
+ *   céntimo. Sin la tasa del día (`hasDayRate` falso) → `undefined`: superar el saldo
+ *   solo se avisa y decide el servidor.
  */
 function serverOverpayToleranceVes(
   document: "purchase" | "sale" | undefined,
   currency: "USD" | "VES",
   rateVes: number | undefined,
+  hasDayRate: boolean,
 ): number | undefined {
   if (document === "purchase") {
-    return currency === "VES" ? 0.01 : undefined;
+    return currency === "VES" || hasDayRate ? 0.01 : undefined;
   }
 
   if (document !== "sale" || !rateVes || rateVes <= 0) {
@@ -130,7 +173,8 @@ function serverOverpayToleranceVes(
 /**
  * El estado del formulario y el `RequestAttempt` viven en `RegisterPaymentForm`, que
  * se monta de nuevo con cada documento: la clave de un intento de resultado incierto
- * (red, 5xx) nunca viaja con otra venta u otra compra.
+ * (red, 5xx) nunca viaja con otra venta u otra compra. Dentro de un mismo documento,
+ * cada apertura estrena `RequestAttempt`.
  */
 export function RegisterPaymentModal(props: RegisterPaymentModalProps) {
   return (
@@ -165,6 +209,7 @@ function RegisterPaymentForm({
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [successBalanceVes, setSuccessBalanceVes] = useState<number | undefined>();
   const [submitError, setSubmitError] = useState<Error | null>(null);
+  const queryClient = useQueryClient();
   const createPayment = useCreatePayment();
   // Candado contra reentrada: `isPending` no cambia hasta el siguiente render, y dos
   // envíos en el mismo tick saldrían como dos peticiones. La clave de idempotencia
@@ -172,7 +217,8 @@ function RegisterPaymentForm({
   const submitLockRef = useRef(false);
   // Clave de idempotencia (PAG-06): la misma en el reintento tras un resultado
   // incierto (red, 5xx, 409); nueva tras el éxito o tras un 4xx con otro contenido.
-  const requestAttempt = useRequestAttempt();
+  // Un intento por apertura: la clave de un envío incierto no sobrevive al cierre.
+  const [requestAttempt, setRequestAttempt] = useState(() => new RequestAttempt());
   const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
   const enabledMethods = useMemo(
     () =>
@@ -183,6 +229,13 @@ function RegisterPaymentForm({
   );
   const sale = useSale(saleId);
   const purchase = usePurchase(purchaseId);
+  // `register_payment` convierte una compra con la tasa del día de la tienda (la venta
+  // usa la suya); si la tienda no tiene, cae en la de la compra.
+  const currentRate = useCurrentExchangeRate({ enabled: open && fixedDocument === "purchase" });
+  const dayRateVes =
+    fixedDocument === "purchase" && currentRate.data && currentRate.data.rateVes > 0
+      ? currentRate.data.rateVes
+      : undefined;
   const pendingBalanceVes = useMemo(() => {
     if (sale.data) {
       return Math.max(sale.data.totalVes - sale.data.paidVes, 0);
@@ -194,7 +247,7 @@ function RegisterPaymentForm({
 
     return undefined;
   }, [purchase.data, sale.data]);
-  const rateVes = sale.data?.refRateVes ?? purchase.data?.refRateVes;
+  const rateVes = sale.data?.refRateVes ?? dayRateVes ?? purchase.data?.refRateVes;
   // Si la tienda no tiene habilitado el método elegido, se usa el primero habilitado.
   // Los métodos pueden llegar con un monto ya tecleado: se convierte igual que en el
   // cambio manual de método, para que la cifra no se lea en otra moneda.
@@ -221,17 +274,28 @@ function RegisterPaymentForm({
     sale.data ? "sale" : purchase.data ? "purchase" : undefined,
     getPaymentCurrency(method),
     rateVes,
+    dayRateVes !== undefined,
   );
   const hasDocument = fixedDocument !== undefined;
-  // Sin el saldo no hay guarda de sobrepago: mientras el documento carga no se envía;
-  // si la carga falló se avisa y decide el servidor (`register_payment`).
+  // Sin el saldo no hay guarda de sobrepago: mientras el documento carga o se vuelve a
+  // pedir (cada apertura, tras cada pago y tras un envío de resultado incierto) no se
+  // envía; si la carga falló se avisa y decide el servidor (`register_payment`).
   const linkedDocument =
     fixedDocument === "sale" ? sale : fixedDocument === "purchase" ? purchase : undefined;
-  const balanceIsLoading = Boolean(linkedDocument?.isPending);
-  const balanceError = linkedDocument?.data === undefined ? linkedDocument?.error : null;
+  const refetchDocument = linkedDocument?.refetch;
+  const balanceIsLoading = Boolean(linkedDocument?.isFetching);
+  const balanceError = linkedDocument?.error ?? null;
+  // Igual con la tasa del día de una compra en USD: mientras carga no se envía; si no
+  // se pudo obtener, superar el saldo solo se avisa.
+  const dayRateIsLoading =
+    fixedDocument === "purchase" && getPaymentCurrency(method) === "USD" && currentRate.isPending;
+  // Un documento ya saldado no admite otro pago, por pequeño que sea.
+  const isSettled = pendingBalanceVes !== undefined && roundMoney(pendingBalanceVes) <= 0;
   const canSubmit =
     hasDocument &&
     !balanceIsLoading &&
+    !dayRateIsLoading &&
+    !isSettled &&
     isPaymentFormValid(values, {
       overpayToleranceVes,
       pendingBalance: pendingBalanceVes,
@@ -244,14 +308,22 @@ function RegisterPaymentForm({
     setHasSubmitted(false);
   }
 
-  // Cada apertura y cada cierre dejan el formulario limpio, también cuando quien
-  // abre o cierra es el padre con `open`.
+  // Cada apertura y cada cierre dejan el formulario limpio y estrenan intento, también
+  // cuando quien abre o cierra es el padre con `open`.
   if (renderedOpen !== open) {
     setRenderedOpen(open);
     clearFields();
     setSuccessBalanceVes(undefined);
     setSubmitError(null);
+    setRequestAttempt(new RequestAttempt());
   }
+
+  // Cada apertura muestra el saldo recién pedido, no el que quedó en caché.
+  useEffect(() => {
+    if (open) {
+      void refetchDocument?.({ cancelRefetch: false });
+    }
+  }, [open, refetchDocument]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -285,6 +357,16 @@ function RegisterPaymentForm({
     } catch (error) {
       requestAttempt.fail(error);
       setSubmitError(error instanceof Error ? error : new Error(String(error)));
+
+      // El pago pudo haberse registrado: se vuelven a pedir el documento (saldo) y los
+      // pagos para que el usuario lo vea antes de reintentar.
+      if (isUncertainResult(error)) {
+        void queryClient.invalidateQueries({
+          queryKey: fixedDocument === "sale" ? salesQueryKeys.all : purchasesQueryKeys.all,
+        });
+        void queryClient.invalidateQueries({ queryKey: paymentsQueryKeys.all });
+      }
+
       return;
     } finally {
       submitLockRef.current = false;
@@ -340,7 +422,7 @@ function RegisterPaymentForm({
             Cancelar
           </Button>
           <Button
-            disabled={createPayment.isPending || balanceIsLoading}
+            disabled={createPayment.isPending || balanceIsLoading || dayRateIsLoading}
             form={formId}
             type="submit"
           >
@@ -366,7 +448,7 @@ function RegisterPaymentForm({
       trigger={trigger ?? (isControlled ? undefined : <Button size="sm">{resolvedTitle}</Button>)}
     >
       <form className="grid gap-4" id={formId} onSubmit={handleSubmit}>
-        {pendingBalanceVes !== undefined ? (
+        {pendingBalanceVes !== undefined && !balanceIsLoading ? (
           <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
             Saldo pendiente actual: {formatVes(pendingBalanceVes)}
           </p>
@@ -381,12 +463,21 @@ function RegisterPaymentForm({
           </p>
         ) : null}
 
+        {dayRateIsLoading && !balanceIsLoading ? (
+          <p
+            className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+            role="status"
+          >
+            Cargando la tasa del día...
+          </p>
+        ) : null}
+
         {balanceError ? (
           <div
             className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200"
             role="alert"
           >
-            <p className="min-w-0 [overflow-wrap:anywhere]">No se pudo comprobar el saldo pendiente: {balanceError.message}</p>
+            <p className="min-w-0 [overflow-wrap:anywhere]">No se pudo comprobar el saldo pendiente: {errorMessageFor(balanceError, CONNECTION_ERROR_MESSAGE)}</p>
             <Button
               onClick={() => void linkedDocument?.refetch()}
               size="sm"
@@ -422,7 +513,10 @@ function RegisterPaymentForm({
 
         {submitError ? (
           <p className="min-w-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 [overflow-wrap:anywhere] dark:bg-red-950 dark:text-red-300">
-            {submitError.message}
+            {errorMessageFor(
+              submitError,
+              `${CONNECTION_ERROR_MESSAGE} Revisa la conexión y reintenta: el pago no se duplicará.`,
+            )}
           </p>
         ) : null}
       </form>

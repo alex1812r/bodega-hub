@@ -35,8 +35,13 @@ describe("RegisterPaymentModal", () => {
   const fetchMock = jest.fn();
   let paymentResponse: Response;
   let enabledPaymentMethods: string[];
+  // Lo ya pagado de sale-002 y la tasa del dia de la tienda, como los tiene el servidor.
+  let salePaidVes: number;
+  let currentRateVes: number | undefined;
 
   beforeEach(() => {
+    salePaidVes = 3000;
+    currentRateVes = undefined;
     paymentResponse = jsonResponse({ data: { id: "pay-new", pendingBalanceVes: 1000 } });
     enabledPaymentMethods = [
       "efectivo_ves",
@@ -65,11 +70,15 @@ describe("RegisterPaymentModal", () => {
             customer: { id: "cont-customer", name: "Maria Perez" },
             id: "sale-002",
             invoiceNumber: "F-0002",
-            paidVes: 3000,
+            paidVes: salePaidVes,
             refRateVes: 510,
             totalVes: 11475,
           },
         });
+      }
+
+      if (String(url).includes("/api/exchange-rates/current") && currentRateVes !== undefined) {
+        return jsonResponse({ data: { id: "rate-today", rateVes: currentRateVes } });
       }
 
       if (String(url).includes("/api/purchases/")) {
@@ -502,7 +511,7 @@ describe("RegisterPaymentModal", () => {
       expect(postedBodies()).toHaveLength(0);
     });
 
-    it("una compra en USD solo avisa: el servidor convierte con la tasa del dia, no la de la compra", async () => {
+    it("una compra en USD sin tasa del dia disponible solo avisa: decide el servidor", async () => {
       renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
       const { dialog, user } = await openModal();
 
@@ -512,6 +521,126 @@ describe("RegisterPaymentModal", () => {
       await submit(user);
 
       expect((await expectSinglePost()).body).toMatchObject({ amount: 45, currency: "USD" });
+    });
+
+    // Saldo de purchase-002: Bs 20.200 (tasa de la compra 500). `register_payment`
+    // convierte el USD de una compra con la tasa del dia y solo tolera Bs 0,01.
+    describe("PAG-F1 A: compra en USD con la tasa del dia", () => {
+      beforeEach(() => {
+        currentRateVes = 520;
+      });
+
+      it.each(["45", "999999"])(
+        "no envia %s USD: supera el saldo de la compra",
+        async (amount) => {
+          renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
+          const { dialog, user } = await openModal();
+
+          await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+          await user.type(dialog.getByLabelText("Monto"), amount);
+          await submit(user);
+
+          expect(await dialog.findByText(/El monto supera el saldo pendiente/)).toBeInTheDocument();
+          await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          });
+          expect(dialog.getByLabelText("Monto")).toHaveAttribute("aria-invalid", "true");
+          expect(postedBodies()).toHaveLength(0);
+        },
+      );
+
+      it("convierte con la tasa del dia, no con la de la compra", async () => {
+        renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
+        const { dialog, user } = await openModal();
+
+        await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+        // 39 USD: Bs 19.500 a la tasa de la compra, Bs 20.280 a la del dia (> 20.200,01).
+        await user.type(dialog.getByLabelText("Monto"), "39");
+        await submit(user);
+
+        expect(await dialog.findByText(/El monto supera el saldo pendiente/)).toBeInTheDocument();
+        expect(postedBodies()).toHaveLength(0);
+
+        // 38.84 USD = Bs 20.196,80 a la tasa del dia: cabe en el saldo.
+        await user.clear(dialog.getByLabelText("Monto"));
+        await user.type(dialog.getByLabelText("Monto"), "38.84");
+        await submit(user);
+
+        expect((await expectSinglePost()).body).toMatchObject({
+          amount: 38.84,
+          currency: "USD",
+          purchaseId: "purchase-002",
+        });
+      });
+
+      it("Completar saldo en USD usa la tasa del dia y se envia", async () => {
+        renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
+        const { dialog, user } = await openModal();
+
+        await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+        await user.click(dialog.getByRole("button", { name: "Completar saldo" }));
+        await submit(user);
+
+        expect((await expectSinglePost()).body).toMatchObject({ amount: 38.84, currency: "USD" });
+      });
+
+      it("mientras la tasa del dia carga no envia un pago en USD", async () => {
+        const defaultFetch = fetchMock.getMockImplementation() as (
+          url: string,
+          init?: RequestInit,
+        ) => Promise<Response>;
+        let releaseRate: (response: Response) => void = () => undefined;
+
+        fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+          String(url).includes("/api/exchange-rates/current")
+            ? new Promise<Response>((resolve) => {
+                releaseRate = resolve;
+              })
+            : defaultFetch(url, init),
+        );
+        renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
+        const { dialog, user } = await openModal();
+
+        await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+        await user.type(dialog.getByLabelText("Monto"), "45{Enter}");
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+
+        expect(postedBodies()).toHaveLength(0);
+        expect(dialog.getByRole("button", { name: SUBMIT_BUTTON })).toBeDisabled();
+
+        await act(async () => {
+          releaseRate(jsonResponse({ data: { id: "rate-today", rateVes: 520 } }));
+        });
+        await waitFor(() =>
+          expect(dialog.getByRole("button", { name: SUBMIT_BUTTON })).toBeEnabled(),
+        );
+        await submit(user);
+
+        expect(await dialog.findByText(/El monto supera el saldo pendiente/)).toBeInTheDocument();
+        expect(postedBodies()).toHaveLength(0);
+      });
+
+      it("una compra en Bs no espera a la tasa del dia", async () => {
+        const defaultFetch = fetchMock.getMockImplementation() as (
+          url: string,
+          init?: RequestInit,
+        ) => Promise<Response>;
+
+        fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+          String(url).includes("/api/exchange-rates/current")
+            ? new Promise<Response>(() => undefined)
+            : defaultFetch(url, init),
+        );
+        renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
+        const { dialog, user } = await openModal();
+
+        await user.type(dialog.getByLabelText("Monto"), "100");
+        await submit(user);
+
+        expect((await expectSinglePost()).body).toMatchObject({ amount: 100, currency: "VES" });
+      });
     });
   });
 
@@ -624,7 +753,7 @@ describe("RegisterPaymentModal", () => {
       expect(dialog.queryByRole("alert")).not.toBeInTheDocument();
     });
 
-    it("si la carga de la compra se corta avisa con el mensaje del fallo", async () => {
+    it("PAG-F1 C: si la carga de la compra se corta lo avisa en español, sin el texto del navegador", async () => {
       replyToDocumentWith("/api/purchases/", async () => {
         throw new TypeError("Failed to fetch");
       });
@@ -635,7 +764,8 @@ describe("RegisterPaymentModal", () => {
       const alert = await dialog.findByRole("alert");
 
       expect(alert).toHaveTextContent("No se pudo comprobar el saldo pendiente");
-      expect(alert).toHaveTextContent("Failed to fetch");
+      expect(alert).toHaveTextContent("No se pudo conectar con el servidor.");
+      expect(alert).not.toHaveTextContent("Failed to fetch");
       expect(dialog.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
       expect(dialog.getByRole("button", { name: SUBMIT_BUTTON })).toBeEnabled();
     });
@@ -1062,7 +1192,7 @@ describe("RegisterPaymentModal", () => {
 
         await user.type(dialog.getByLabelText("Monto"), "100");
         await submit(user);
-        expect(await dialog.findByText("Failed to fetch")).toBeInTheDocument();
+        expect(await dialog.findByText(/No se pudo conectar con el servidor\./)).toBeInTheDocument();
 
         await submit(user);
         expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
@@ -1154,6 +1284,213 @@ describe("RegisterPaymentModal", () => {
         expect(second).toEqual(expect.any(String));
         expect(second).not.toBe(first);
       });
+    });
+  });
+
+  describe("PAG-F1 B: resultado incierto y clave por apertura", () => {
+    /** El servidor guarda el cobro de la venta, pero la respuesta llega como 500. */
+    function savePaymentButReplyWith500() {
+      const defaultFetch = fetchMock.getMockImplementation() as (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<Response>;
+      const savedKeys = new Set<string>();
+
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (init?.method !== "POST") {
+          return defaultFetch(url, init);
+        }
+
+        const body = JSON.parse(String(init.body)) as { amount: number; clientRequestId: string };
+
+        if (!savedKeys.has(body.clientRequestId)) {
+          savedKeys.add(body.clientRequestId);
+          salePaidVes += body.amount;
+        }
+
+        return jsonResponse({ error: { code: "INTERNAL", message: "Fallo." } }, 500);
+      });
+    }
+
+    function saleRequests() {
+      return fetchMock.mock.calls.filter(
+        ([url, init]) =>
+          String(url).includes("/api/sales/") &&
+          (init as RequestInit | undefined)?.method !== "POST",
+      ).length;
+    }
+
+    async function closeModal(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole("button", { name: "Cancelar" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    }
+
+    it("tras un 500 con el pago guardado vuelve a pedir la venta y muestra el saldo nuevo", async () => {
+      savePaymentButReplyWith500();
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      expect(dialog.getByText(/Saldo pendiente actual: .*8\.475,00/)).toBeInTheDocument();
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+
+      expect(await dialog.findByText("Fallo.")).toBeInTheDocument();
+      expect(await dialog.findByText(/Saldo pendiente actual: .*8\.375,00/)).toBeInTheDocument();
+      // El formulario sigue como estaba: el reintento sin cambios conserva la clave.
+      expect(dialog.getByLabelText("Monto")).toHaveValue("100");
+    });
+
+    it("tras un corte de red al enviar tambien vuelve a pedir la venta", async () => {
+      const defaultFetch = fetchMock.getMockImplementation() as (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<Response>;
+
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          salePaidVes += 100;
+          throw new TypeError("Failed to fetch");
+        }
+
+        return defaultFetch(url, init);
+      });
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+
+      expect(await dialog.findByText(/Saldo pendiente actual: .*8\.375,00/)).toBeInTheDocument();
+    });
+
+    it("tras un 400 definitivo no vuelve a pedir la venta", async () => {
+      paymentResponse = jsonResponse(
+        { error: { code: "BAD_REQUEST", message: "Monto rechazado." } },
+        400,
+      );
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+
+      const requestsBefore = saleRequests();
+
+      await submit(user);
+      expect(await dialog.findByText("Monto rechazado.")).toBeInTheDocument();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+
+      expect(saleRequests()).toBe(requestsBefore);
+    });
+
+    it("cada apertura vuelve a pedir el saldo", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      expect(dialog.getByText(/Saldo pendiente actual: .*8\.475,00/)).toBeInTheDocument();
+      await closeModal(user);
+
+      // Otro usuario cobra Bs 1.000 de la misma venta mientras el modal esta cerrado.
+      salePaidVes = 4000;
+
+      const reopened = await openModal();
+
+      expect(
+        await reopened.dialog.findByText(/Saldo pendiente actual: .*7\.475,00/),
+      ).toBeInTheDocument();
+      expect(reopened.dialog.queryByText(/8\.475,00/)).not.toBeInTheDocument();
+    });
+
+    it("500 con el pago guardado, cerrar y reabrir: saldo nuevo y clave nueva", async () => {
+      savePaymentButReplyWith500();
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+      expect(await dialog.findByText("Fallo.")).toBeInTheDocument();
+      await closeModal(user);
+
+      const reopened = await openModal();
+
+      expect(
+        await reopened.dialog.findByText(/Saldo pendiente actual: .*8\.375,00/),
+      ).toBeInTheDocument();
+      expect(reopened.dialog.queryByText("Fallo.")).not.toBeInTheDocument();
+
+      await reopened.user.type(reopened.dialog.getByLabelText("Monto"), "120");
+      await submit(reopened.user);
+      await waitFor(() => expect(postedBodies()).toHaveLength(2));
+
+      const [first, second] = postedBodies().map((post) => post.body);
+
+      expect(first).toMatchObject({ amount: 100 });
+      expect(second).toMatchObject({ amount: 120 });
+      expect(second.clientRequestId).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/));
+      expect(second.clientRequestId).not.toBe(first.clientRequestId);
+    });
+
+    it("si el pago de resultado incierto saldo la venta, al reabrir no deja enviar otro", async () => {
+      savePaymentButReplyWith500();
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.click(dialog.getByRole("button", { name: "Completar saldo" }));
+      await submit(user);
+      expect(await dialog.findByText("Fallo.")).toBeInTheDocument();
+      expect(await dialog.findByText(/Saldo pendiente actual: \D*0,00/)).toBeInTheDocument();
+      await closeModal(user);
+
+      const reopened = await openModal();
+
+      expect(
+        await reopened.dialog.findByText(/Saldo pendiente actual: \D*0,00/),
+      ).toBeInTheDocument();
+      expect(
+        reopened.dialog.queryByRole("button", { name: "Completar saldo" }),
+      ).not.toBeInTheDocument();
+
+      // Ni el saldo viejo ni un monto dentro de la holgura de redondeo (Bs 10) salen.
+      for (const amount of ["8475", "5"]) {
+        await reopened.user.clear(reopened.dialog.getByLabelText("Monto"));
+        await reopened.user.type(reopened.dialog.getByLabelText("Monto"), `${amount}{Enter}`);
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+        expect(reopened.dialog.getByText(/El monto supera el saldo pendiente/)).toBeInTheDocument();
+      }
+
+      expect(postedBodies()).toHaveLength(1);
+    });
+  });
+
+  describe("PAG-F1 C: fallo de red", () => {
+    it("un corte de red al enviar se explica en español, sin el texto del navegador", async () => {
+      const defaultFetch = fetchMock.getMockImplementation() as (
+        url: string,
+        init?: RequestInit,
+      ) => Promise<Response>;
+
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          throw new TypeError("Failed to fetch");
+        }
+
+        return defaultFetch(url, init);
+      });
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog, user } = await openModal();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+
+      expect(
+        await dialog.findByText(
+          "No se pudo conectar con el servidor. Revisa la conexión y reintenta: el pago no se duplicará.",
+        ),
+      ).toBeInTheDocument();
+      expect(dialog.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
     });
   });
 

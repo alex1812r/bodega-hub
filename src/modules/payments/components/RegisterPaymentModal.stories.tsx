@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { delay, http, HttpResponse } from "msw";
 import { useState } from "react";
-import { expect, within } from "storybook/test";
+import { expect, waitFor, within } from "storybook/test";
 
 import { Button } from "@/shared/components/Button";
 
@@ -61,8 +61,21 @@ const paymentMethodsHandler = http.get("/api/settings/payment-methods", () =>
   }),
 );
 
+// Tasa del día de la tienda: con ella se convierte el USD de una compra.
+const dayRateVes = 520;
+
 const documentHandlers = [
   paymentMethodsHandler,
+  http.get("/api/exchange-rates/current", () =>
+    HttpResponse.json({
+      data: {
+        createdAt: "2026-10-07T12:00:00.000Z",
+        id: "rate-story",
+        rateVes: dayRateVes,
+        source: "BCV",
+      },
+    }),
+  ),
   http.get("/api/purchases/:id", () => HttpResponse.json({ data: purchase })),
   http.get("/api/sales/:id", () => HttpResponse.json({ data: sale })),
 ];
@@ -70,7 +83,8 @@ const documentHandlers = [
 const registerHandler = http.post("/api/payments", async ({ request }) => {
   const body = (await request.json()) as { amount: number; currency?: "USD" | "VES" };
   const document = "purchaseId" in body ? purchase : sale;
-  const amountVes = body.currency === "USD" ? body.amount * document.refRateVes : body.amount;
+  const rateVes = "purchaseId" in body ? dayRateVes : document.refRateVes;
+  const amountVes = body.currency === "USD" ? body.amount * rateVes : body.amount;
 
   await delay(400);
 
@@ -127,6 +141,38 @@ export const PurchaseWithBalance: Story = {
     await userEvent.click(await dialog.findByRole("button", { name: "Completar saldo" }));
     await userEvent.click(dialog.getByRole("button", { name: "Registrar pago" }));
     await expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+  },
+};
+
+/**
+ * El saldo es Bs 15.000 y la tasa del día 520: 30 USD son Bs 15.600, más que el
+ * saldo, así que el monto queda marcado y el pago no se envía.
+ */
+export const PurchaseUsdOverBalance: Story = {
+  name: "Compra en USD mayor al saldo",
+  parameters: {
+    msw: { handlers: [...documentHandlers, registerHandler] },
+  },
+  render: () => <ModalDemo purchaseId={purchase.id} />,
+  play: async ({ canvasElement, userEvent }) => {
+    const dialog = within(
+      await within(canvasElement.ownerDocument.body).findByRole("dialog", {
+        name: "Pagar compra",
+      }),
+    );
+
+    await dialog.findByText(/Saldo pendiente actual/);
+    await userEvent.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+    await userEvent.type(dialog.getByLabelText("Monto"), "30");
+    // El botón espera a la tasa del día antes de dejar enviar un pago en USD.
+    await waitFor(() =>
+      expect(dialog.getByRole("button", { name: "Registrar pago" })).toBeEnabled(),
+    );
+    await userEvent.click(dialog.getByRole("button", { name: "Registrar pago" }));
+    await expect(
+      await dialog.findByText(/El monto supera el saldo pendiente/),
+    ).toBeInTheDocument();
+    await expect(dialog.getByLabelText("Monto")).toHaveAttribute("aria-invalid", "true");
   },
 };
 
