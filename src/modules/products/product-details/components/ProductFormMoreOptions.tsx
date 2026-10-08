@@ -12,6 +12,7 @@ import { Textarea } from "@/shared/components/Textarea";
 import { generateProductSkuFromName } from "@/shared/utils/skuGeneration";
 
 import type { ProductWithCategory } from "../../hooks/useProducts";
+import { PRODUCT_DESCRIPTION_MAX_LENGTH } from "../../services/productSchemas";
 import {
   ProductPackConversionFields,
   type PackConversionFormState,
@@ -21,6 +22,8 @@ const SKU_HELPER_TEXT =
   "Código interno; si tienes código de barras, úsalo. Si lo dejas vacío se genera solo.";
 
 type ProductFormMoreOptionsProps = {
+  /** Descripción escrita (máx. 500 caracteres; el campo muestra el contador). */
+  description: string;
   isEdit: boolean;
   isUnitRole: boolean;
   /**
@@ -33,6 +36,7 @@ type ProductFormMoreOptionsProps = {
    * botón pulsado, para devolverle el foco al cerrar.
    */
   onCreatePackUnitProduct?: (trigger: HTMLButtonElement) => void;
+  onDescriptionChange: (description: string) => void;
   onOpenChange: (open: boolean) => void;
   onPackConversionChange: (patch: Partial<PackConversionFormState>) => void;
   onSkuChange: (sku: string) => void;
@@ -68,10 +72,12 @@ type ProductFormMoreOptionsProps = {
  * viajan en el envío igual que si estuviera abierta.
  */
 export function ProductFormMoreOptions({
+  description,
   isEdit,
   isUnitRole,
   onAdjustStock,
   onCreatePackUnitProduct,
+  onDescriptionChange,
   onOpenChange,
   onPackConversionChange,
   onSkuChange,
@@ -130,7 +136,15 @@ export function ProductFormMoreOptions({
             }
             value={sku}
           />
-          <Textarea label="Descripción" placeholder="Detalles del producto" />
+          <Textarea
+            helperText={`${description.length}/${PRODUCT_DESCRIPTION_MAX_LENGTH}`}
+            label="Descripción"
+            maxLength={PRODUCT_DESCRIPTION_MAX_LENGTH}
+            name="description"
+            onChange={(event) => onDescriptionChange(event.target.value)}
+            placeholder="Detalles del producto"
+            value={description}
+          />
           <div className="grid gap-4 md:grid-cols-2">
             {isEdit ? (
               <div className="space-y-2">

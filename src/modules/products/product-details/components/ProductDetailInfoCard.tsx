@@ -9,13 +9,13 @@ import type { MarginThresholds } from "@/shared/utils/pricing";
 
 import { ProductDetailSectionCard } from "./ProductDetailSectionCard";
 
-const PLACEHOLDER_DESCRIPTION =
-  "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Presentación estándar para venta en abarrotes e inventario continuo.";
+const NO_DESCRIPTION_TEXT = "Sin descripción";
 
 type ProductDetailInfoCardProps = {
   categoryName: string;
   costRef: number;
-  description?: string;
+  /** Descripción del producto; sin ella se muestra "Sin descripción". */
+  description?: string | null;
   imageUrl?: string | null;
   isActive: boolean;
   salePriceRef: number;
@@ -35,7 +35,7 @@ export function ProductDetailInfoCard({
   thresholds,
   underReview = false,
 }: ProductDetailInfoCardProps) {
-  const displayDescription = description?.trim() || PLACEHOLDER_DESCRIPTION;
+  const displayDescription = description?.trim() || NO_DESCRIPTION_TEXT;
   const gainRef = roundMoney(salePriceRef - costRef);
 
   return (
@@ -49,7 +49,9 @@ export function ProductDetailInfoCard({
           <div className="relative aspect-[4/3] w-full max-w-xs overflow-hidden rounded-xl border border-border bg-surface-container">
             <PosProductImage alt="Imagen del producto" imageUrl={imageUrl ?? undefined} />
           </div>
-          <p className="max-w-2xl text-sm text-on-surface-variant">{displayDescription}</p>
+          <p className="min-w-0 max-w-2xl whitespace-pre-line text-sm text-on-surface-variant [overflow-wrap:anywhere]">
+            {displayDescription}
+          </p>
         </div>
 
         <div className="grid grid-cols-2 gap-4 border-t border-border/50 pt-4 md:grid-cols-4 dark:border-slate-800">

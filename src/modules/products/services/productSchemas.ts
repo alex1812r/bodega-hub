@@ -38,6 +38,27 @@ const productNameSchema = z.string().transform(cleanText).pipe(z.string().min(1)
  */
 const productCategoryIdSchema = z.string().transform(cleanText).optional();
 
+/** Largo máximo de la descripción de un producto (ya sin espacios sobrantes). */
+export const PRODUCT_DESCRIPTION_MAX_LENGTH = 500;
+
+/**
+ * Descripción del producto, opcional. En blanco o `null` queda `null` (en la
+ * edición, la borra); ausente no viaja y la edición conserva la guardada.
+ */
+const productDescriptionSchema = z
+  .string()
+  .transform(cleanText)
+  .pipe(
+    z
+      .string()
+      .max(
+        PRODUCT_DESCRIPTION_MAX_LENGTH,
+        `La descripción admite hasta ${PRODUCT_DESCRIPTION_MAX_LENGTH} caracteres.`,
+      ),
+  )
+  .nullish()
+  .transform((value) => (value === undefined ? undefined : value || null));
+
 export const optionalImageUrlSchema = z
   .union([z.string().url(), z.null()])
   .optional();
@@ -52,6 +73,7 @@ export const createProductSchema = z.object({
   clientRequestId: z.string().uuid().optional(),
   currentCostRef: z.number().min(0).optional(),
   currentStock: z.number().int().min(0).optional(),
+  description: productDescriptionSchema,
   imageUrl: optionalImageUrlSchema,
   minStock: z.number().int().min(0).optional(),
   name: productNameSchema,
@@ -102,6 +124,7 @@ export const updateProductSchema = z.object({
         "El stock no se edita desde el producto. Usa un ajuste de inventario (POST /api/inventory/adjustments).",
     })
     .optional(),
+  description: productDescriptionSchema,
   imageUrl: optionalImageUrlSchema,
   isActive: z.boolean().optional(),
   minStock: z.number().int().min(0).optional(),

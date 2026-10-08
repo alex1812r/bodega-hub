@@ -185,6 +185,7 @@ function toProductInsert(
     // Siempre 0: el stock inicial entra por `adjust_stock` (movimiento
     // `inventario_inicial`), nunca como valor crudo de la fila (C1).
     current_stock: 0,
+    description: input.description ?? null,
     image_url: input.imageUrl ?? null,
     min_stock: input.minStock ?? 5,
     name: input.name ?? "Producto",
@@ -204,6 +205,8 @@ function toProductUpdate(input: ProductInput) {
     ...(input.currentCostRef !== undefined ? { current_cost_ref: input.currentCostRef } : {}),
     // `current_stock` nunca se escribe desde aqui: solo los RPC con movimiento
     // (create_sale, adjust_stock, receive_purchase...) pueden moverlo.
+    // `null` la borra; ausente, se conserva la guardada.
+    ...(input.description !== undefined ? { description: input.description } : {}),
     ...(input.imageUrl !== undefined ? { image_url: input.imageUrl } : {}),
     ...(input.isActive !== undefined ? { is_active: input.isActive } : {}),
     ...(input.minStock !== undefined ? { min_stock: input.minStock } : {}),

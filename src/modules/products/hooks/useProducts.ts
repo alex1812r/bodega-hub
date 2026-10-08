@@ -75,6 +75,11 @@ export type ProductInput = {
   clientRequestId?: string;
   currentCostRef?: number;
   currentStock?: number;
+  /**
+   * Máx. 500 caracteres. `null` la borra; ausente, el alta queda sin ella y la
+   * edición conserva la guardada.
+   */
+  description?: string | null;
   imageUrl?: string | null;
   minStock?: number;
   name: string;

@@ -42,6 +42,7 @@ import {
 } from "../../hooks/useProducts";
 import { getProductPricingOptions } from "../../services/productMargin";
 import { normalizeBarcode } from "../../services/productSearch";
+import { cleanText } from "../../services/productText";
 import {
   removeProductImage,
   uploadProductImageBlob,
@@ -372,6 +373,7 @@ export function ProductFormModal({
   const isOpen = isControlled ? open : internalOpen;
   const [name, setName] = useState(product?.name ?? createDefaults?.name ?? "");
   const [sku, setSku] = useState(product?.sku ?? "");
+  const [description, setDescription] = useState(product?.description ?? "");
   const [categoryId, setCategoryId] = useState(
     product?.categoryId ?? createDefaults?.categoryId ?? "",
   );
@@ -513,6 +515,7 @@ export function ProductFormModal({
   function resetFormFields() {
     setName(product?.name ?? createDefaults?.name ?? "");
     setSku(product?.sku ?? "");
+    setDescription(product?.description ?? "");
     setCategoryId(product?.categoryId ?? createDefaults?.categoryId ?? "");
     setMoreOptionsOpen(false);
     setPendingImageBlob(null);
@@ -765,6 +768,12 @@ export function ProductFormModal({
       suppliersLoad.status === "ready" &&
       suppliersSnapshot !== suppliersBaselineRef.current;
 
+    // La descripción solo viaja si cambió respecto de la guardada (en un alta,
+    // si se escribió): sin tocarla, la edición conserva la que tiene el
+    // producto. Vaciarla viaja como `null`, que la borra.
+    const descriptionText = cleanText(description);
+    const descriptionChanged = descriptionText !== cleanText(product?.description ?? "");
+
     const input: ProductInput = {
       barcode: normalizeBarcode(String(formData.get("barcode") ?? "")),
       // Del <select>, no del estado: una categoría que ya no está entre las
@@ -775,6 +784,7 @@ export function ProductFormModal({
       // valor cargado al abrir y pisaba las ventas hechas mientras tanto, sin
       // dejar movimiento. Las existencias se corrigen con un ajuste de inventario.
       ...(isEdit ? {} : { currentStock: numberFromFormData(formData, "currentStock") }),
+      ...(!compact && descriptionChanged ? { description: descriptionText || null } : {}),
       minStock: numberFromFormData(formData, "minStock"),
       name: name.trim(),
       packConversion: shouldSendPackConversion
@@ -1058,10 +1068,12 @@ export function ProductFormModal({
           </p>
         ) : (
           <ProductFormMoreOptions
+            description={description}
             isEdit={isEdit}
             isUnitRole={isUnitRole}
             onAdjustStock={isEdit && product ? openStockAdjustment : undefined}
             onCreatePackUnitProduct={openPackUnitCreate}
+            onDescriptionChange={setDescription}
             onOpenChange={setMoreOptionsOpen}
             onPackConversionChange={(patch) =>
               setPackConversionState((current) => ({ ...current, ...patch }))

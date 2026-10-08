@@ -162,3 +162,38 @@ describe("ProductDetailInfoCard · ganancia", () => {
     expect(screen.getByTitle(MARGIN_BADGE_TITLE)).toHaveAttribute("data-band", "mid");
   });
 });
+
+// PRO-F13: el detalle mostraba un "Lorem ipsum" fijo en todos los productos.
+describe("ProductDetailInfoCard · descripción (PRO-F13)", () => {
+  function renderWithDescription(description?: string | null) {
+    return render(
+      <ProductDetailInfoCard
+        categoryName="Víveres"
+        costRef={10}
+        description={description}
+        isActive
+        salePriceRef={12}
+      />,
+    );
+  }
+
+  it("shows the product description, keeping its line breaks", () => {
+    renderWithDescription("Harina de trigo\n1 kg");
+
+    const text = screen.getByText(/Harina de trigo/);
+
+    expect(text).toHaveTextContent("Harina de trigo 1 kg");
+    expect(text).toHaveClass("whitespace-pre-line");
+    expect(screen.queryByText("Sin descripción")).not.toBeInTheDocument();
+  });
+
+  it.each([[undefined], [null], [""], ["   "]])(
+    "shows 'Sin descripción' and never a placeholder text when the description is %p",
+    (description) => {
+      renderWithDescription(description);
+
+      expect(screen.getByText("Sin descripción")).toBeInTheDocument();
+      expect(screen.queryByText(/Lorem ipsum/)).not.toBeInTheDocument();
+    },
+  );
+});

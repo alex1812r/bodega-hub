@@ -77,6 +77,8 @@ export type ProductMock = {
   categoryId: string;
   currentCostRef: number;
   currentStock: number;
+  /** Texto libre opcional (máx. 500 caracteres); `null` o ausente = sin descripción. */
+  description?: string | null;
   id: string;
   imageUrl?: string | null;
   isActive: boolean;

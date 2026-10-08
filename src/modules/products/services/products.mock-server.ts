@@ -71,6 +71,7 @@ export type ProductInput = Partial<
     | "categoryId"
     | "currentCostRef"
     | "currentStock"
+    | "description"
     | "imageUrl"
     | "isActive"
     | "minStock"
@@ -598,6 +599,7 @@ export function createProduct(input: ProductInput, storeId: string) {
     categoryId: input.categoryId ?? "cat-tools",
     currentCostRef: input.currentCostRef ?? 0,
     currentStock: 0,
+    description: input.description ?? null,
     // El índice evita ids repetidos al crear varios productos en el mismo milisegundo.
     id: `prod-mock-${Date.now()}-${mockProducts.length}`,
     imageUrl: input.imageUrl ?? undefined,
@@ -665,6 +667,7 @@ export function updateProduct(id: string, input: ProductInput, storeId: string) 
   if (input.categoryId !== undefined) product.categoryId = input.categoryId;
   if (input.currentCostRef !== undefined) product.currentCostRef = input.currentCostRef;
   // El stock solo cambia por movimientos (ventas, ajustes, compras), nunca por PATCH.
+  if (input.description !== undefined) product.description = input.description;
   if (input.imageUrl !== undefined) product.imageUrl = input.imageUrl ?? undefined;
   if (input.isActive !== undefined) product.isActive = input.isActive;
   if (input.minStock !== undefined) product.minStock = input.minStock;

@@ -3875,6 +3875,11 @@ components:
           type: string
         name:
           type: string
+        description:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: Texto libre del producto. `null` = sin descripcion.
         salePriceRef:
           type: number
         currentCostRef:
@@ -4262,6 +4267,13 @@ components:
         currentStock:
           type: integer
           minimum: 0
+        description:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: >-
+            Opcional. Se guarda sin espacios sobrantes ni caracteres de control; en blanco, `null` o ausente
+            queda `null`. Mas de 500 caracteres responde 400. Entra en la huella de idempotencia del alta.
         minStock:
           type: integer
           minimum: 0
@@ -4288,6 +4300,12 @@ components:
         currentCostRef:
           type: number
           minimum: 0
+        description:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: >-
+            Ausente: se conserva la guardada. En blanco o `null`: se borra. Mas de 500 caracteres responde 400.
         minStock:
           type: integer
           minimum: 0
