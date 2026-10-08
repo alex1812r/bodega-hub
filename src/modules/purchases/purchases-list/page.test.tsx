@@ -34,8 +34,15 @@ jest.mock("next/navigation", () => {
       ),
   };
 });
+/** Permisos que la sesión simulada NO tiene; vacío = admin. */
+const mockDeniedPermissions = new Set<string>();
+
 jest.mock("../../../shared/auth/usePermission", () => ({
-  usePermission: () => ({ can: () => true, isLoading: false, role: "admin" }),
+  usePermission: () => ({
+    can: (permission: string) => !mockDeniedPermissions.has(permission),
+    isLoading: false,
+    role: "admin",
+  }),
 }));
 jest.mock("./components/PurchasesExportActions", () => ({
   PurchasesExportActions: ({ exportFilters }: { exportFilters: unknown }) => (
@@ -100,6 +107,7 @@ describe("PurchasesListPage", () => {
     ];
     listTotal = undefined;
     listFailure = null;
+    mockDeniedPermissions.clear();
     openAt("");
     // Lo que hace Next con un `replaceState`: reflejar la URL en `useSearchParams`.
     window.history.replaceState = (data: unknown, unused: string, url?: string | URL | null) => {
@@ -424,6 +432,78 @@ describe("PurchasesListPage", () => {
         status: "recibido",
         to: "2026-10-06",
       });
+    });
+  });
+
+  describe("recibir desde la fila (COM-F4)", () => {
+    /** Peticiones que no son lecturas: recibir es un PATCH. */
+    function writeRequests() {
+      return fetchMock.mock.calls.filter(([, init]) => {
+        const method = (init as RequestInit | undefined)?.method;
+
+        return method !== undefined && method !== "GET";
+      });
+    }
+
+    async function openRowMenu(user: ReturnType<typeof userEvent.setup>) {
+      await user.click((await screen.findAllByRole("button", { name: /acciones/i }))[0]);
+
+      return screen.findAllByRole("menuitem");
+    }
+
+    it("en un pedido no recibe: lleva al detalle con receive=1 y la URL de la lista en returnTo", async () => {
+      const user = userEvent.setup();
+
+      listItems = [purchase("001", { status: "pedido" })];
+      openAt("status=pedido&pendingBalance=1");
+      renderPage();
+      await openRowMenu(user);
+
+      expect(screen.queryByRole("menuitem", { name: /Recibir pedido/ })).not.toBeInTheDocument();
+
+      const receive = screen.getByRole("menuitem", { name: "Recibir mercancía…" });
+      const detailUrl = new URL(receive.getAttribute("href") ?? "", "http://localhost");
+      const returnTo = new URL(detailUrl.searchParams.get("returnTo") ?? "", "http://localhost");
+
+      expect(receive.tagName).toBe("A");
+      expect(detailUrl.pathname).toBe("/purchases/001");
+      expect(detailUrl.searchParams.get("receive")).toBe("1");
+      expect(returnTo.pathname).toBe("/purchases");
+      expect(Object.fromEntries(returnTo.searchParams)).toEqual({
+        pendingBalance: "1",
+        status: "pedido",
+      });
+
+      // jsdom no navega: el clic solo demuestra que no sale ninguna escritura.
+      receive.addEventListener("click", (event) => event.preventDefault());
+      await user.click(receive);
+
+      expect(writeRequests()).toHaveLength(0);
+    });
+
+    it("una compra que no está en pedido no ofrece recibir", async () => {
+      const user = userEvent.setup();
+
+      listItems = [purchase("001", { status: "recibido" })];
+      renderPage();
+
+      const labels = (await openRowMenu(user)).map((item) => item.textContent);
+
+      expect(labels).toContain("Ver detalle");
+      expect(labels.some((label) => /recibir/i.test(label ?? ""))).toBe(false);
+    });
+
+    it("sin permiso de recibir, el pedido no ofrece la acción", async () => {
+      const user = userEvent.setup();
+
+      mockDeniedPermissions.add("purchases.create");
+      listItems = [purchase("001", { status: "pedido" })];
+      renderPage();
+
+      const labels = (await openRowMenu(user)).map((item) => item.textContent);
+
+      expect(labels).toContain("Ver detalle");
+      expect(labels.some((label) => /recibir/i.test(label ?? ""))).toBe(false);
     });
   });
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { RegisterPaymentModal } from "@/modules/payments/components/RegisterPaymentModal";
@@ -37,6 +38,9 @@ import {
   type ReceivePreviewPurchase,
 } from "./utils/buildReceivePreview";
 
+/** Parámetro (`?receive=1`) con el que la lista pide abrir la previsualización de la recepción. */
+const RECEIVE_PARAM = "receive";
+
 type PurchaseDetailsPageProps = {
   purchaseId?: string;
 };
@@ -49,7 +53,7 @@ export function PurchaseDetailsPage({
   const cancelPurchase = useCancelPurchase(purchaseId);
   const receivePurchase = useReceivePurchase(purchaseId);
   const returnPurchase = useReturnPurchase(purchaseId);
-  const { can, role } = usePermission();
+  const { can, isLoading: isPermissionLoading, role } = usePermission();
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isPaying, setIsPaying] = useState(false);
   // Compra de la previsualización, fijada al abrir el modal: si la recepción falla
@@ -66,6 +70,44 @@ export function PurchaseDetailsPage({
         : null,
     [receiveDisassemble, receiveSource],
   );
+
+  const purchaseData = purchase.data;
+  const canReceive = can("purchases.create");
+  // «Recibir mercancía…» de la lista llega con `?receive=1`: se abre la misma
+  // previsualización que con el botón del aviso y nada se recibe hasta confirmar.
+  const receiveRequested = useSearchParams().get(RECEIVE_PARAM) === "1";
+  const [receiveRequestHandled, setReceiveRequestHandled] = useState(false);
+
+  // La petición se atiende una sola vez, con la compra y los permisos ya cargados.
+  if (receiveRequested && !receiveRequestHandled && purchaseData && !isPermissionLoading) {
+    setReceiveRequestHandled(true);
+
+    // Compra que ya no está en pedido, o usuario sin permiso: el parámetro se ignora.
+    if (purchaseData.status === "pedido" && canReceive) {
+      setReceiveSource(purchaseData);
+    }
+  }
+
+  // Atendida, el parámetro sale de la URL (recargar o volver no reabre el modal);
+  // el resto de la query, `returnTo` incluido, queda tal cual.
+  useEffect(() => {
+    if (!receiveRequestHandled) {
+      return;
+    }
+
+    const query = window.location.search
+      .slice(1)
+      .split("&")
+      .filter((pair) => pair !== "" && pair.split("=", 1)[0] !== RECEIVE_PARAM)
+      .join("&");
+
+    // `null` y no `history.state`: así Next refleja el cambio en `useSearchParams`.
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+  }, [receiveRequestHandled]);
 
   async function handleExportPdf() {
     setIsExportingPdf(true);
@@ -157,7 +199,7 @@ export function PurchaseDetailsPage({
 
       {data.status === "pedido" ? (
         <PurchasePendingReceiptBanner
-          canReceive={can("purchases.create")}
+          canReceive={canReceive}
           isReceiving={receivePurchase.isPending}
           onReceive={() => setReceiveSource(data)}
         />

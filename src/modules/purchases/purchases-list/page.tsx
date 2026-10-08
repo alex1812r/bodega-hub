@@ -6,6 +6,7 @@ import { useEffect } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Can } from "@/shared/auth/Can";
+import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
@@ -30,7 +31,6 @@ import {
   type PurchaseListRow,
   useCancelPurchase,
   usePurchases,
-  useReceivePurchase,
   useReturnPurchase,
 } from "../hooks/usePurchases";
 import { PurchaseNumberCell } from "./components/PurchaseNumberCell";
@@ -174,7 +174,8 @@ function PurchasesList() {
   const filters = toPurchasesFilters(list.state, debouncedSearch);
   const purchases = usePurchases({ ...filters, limit, skip });
   const cancelPurchase = useCancelPurchase();
-  const receivePurchase = useReceivePurchase();
+  // Recibir exige el mismo permiso que el botón «Recibir mercancía» del detalle.
+  const canReceive = usePermission().can("purchases.create");
   const returnPurchase = useReturnPurchase();
   const purchaseItems = getPaginatedItems(purchases.data);
   const totalPurchases = purchases.data?.total ?? 0;
@@ -238,12 +239,12 @@ function PurchasesList() {
             actions={(purchase) => [
               { href: withReturnTo(`/purchases/${purchase.id}`, list.href), label: "Ver detalle" },
               { href: `/payments?purchaseId=${purchase.id}`, label: "Registrar pago" },
-              ...(purchase.status === "pedido"
+              // No recibe: abre el detalle con la previsualización de la recepción.
+              ...(purchase.status === "pedido" && canReceive
                 ? [
                     {
-                      disabled: receivePurchase.isPending,
-                      label: "Recibir pedido",
-                      onSelect: () => void receivePurchase.mutateAsync(purchase.id),
+                      href: withReturnTo(`/purchases/${purchase.id}?receive=1`, list.href),
+                      label: "Recibir mercancía…",
                     },
                   ]
                 : []),
@@ -293,12 +294,7 @@ function PurchasesList() {
                 />
               )
             }
-            error={
-              purchases.error ??
-              cancelPurchase.error ??
-              receivePurchase.error ??
-              returnPurchase.error
-            }
+            error={purchases.error ?? cancelPurchase.error ?? returnPurchase.error}
             getRowId={(purchase) => purchase.id}
             isFetching={purchases.isFetching}
             isLoading={purchases.isLoading}
