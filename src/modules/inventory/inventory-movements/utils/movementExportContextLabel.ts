@@ -1,4 +1,5 @@
 import type { MovementsExportFilters } from "../services/fetchMovementsForExport";
+import { movementDocumentKindOptions } from "./movementDocument";
 import { getMovementTypeLabel } from "./movementTypeLabels";
 
 function formatDateRangeLabel(from?: string, to?: string) {
@@ -29,6 +30,18 @@ export function buildMovementsExportContextLabel(filters: MovementsExportFilters
 
   if (filters.type) {
     parts.push(`Tipo: ${getMovementTypeLabel(filters.type)}`);
+  }
+
+  const documentKind = movementDocumentKindOptions.find(
+    (option) => option.value === filters.documentKind,
+  );
+
+  if (documentKind) {
+    parts.push(`Tipo de documento: ${documentKind.label}`);
+  }
+
+  if (filters.document?.trim()) {
+    parts.push(`Documento: ${filters.document.trim()}`);
   }
 
   return parts.join(" | ");

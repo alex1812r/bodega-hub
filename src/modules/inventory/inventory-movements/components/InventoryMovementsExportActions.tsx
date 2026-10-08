@@ -9,10 +9,13 @@ import { exportMovementsToExcel } from "../services/exportMovementsExcel";
 import type { MovementsExportFilters } from "../services/fetchMovementsForExport";
 
 type InventoryMovementsExportActionsProps = {
+  /** Motivo por el que no se puede exportar (p. ej. rango de fechas invertido). */
+  disabledReason?: string;
   exportFilters: MovementsExportFilters;
 };
 
 export function InventoryMovementsExportActions({
+  disabledReason,
   exportFilters,
 }: InventoryMovementsExportActionsProps) {
   const [isExportingExcel, setIsExportingExcel] = useState(false);
@@ -39,9 +42,10 @@ export function InventoryMovementsExportActions({
     <div className="flex w-full flex-col gap-2 sm:w-auto">
       <Button
         className="w-full gap-2 border-outline-variant bg-surface-container-lowest hover:bg-surface-container-low sm:w-auto"
-        disabled={isExportingExcel}
+        disabled={isExportingExcel || disabledReason !== undefined}
         onClick={() => void handleExportExcel()}
         size="sm"
+        title={disabledReason}
         variant="outline"
       >
         {isExportingExcel ? (

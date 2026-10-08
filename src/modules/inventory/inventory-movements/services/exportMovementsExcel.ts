@@ -18,7 +18,10 @@ function triggerBlobDownload(blob: Blob, filename: string) {
 
 export function toMovementExportRow(movement: InventoryMovement): MovementExportRow {
   return {
+    conversionId: movement.conversionId,
     createdAt: movement.createdAt,
+    documentKind: movement.documentKind,
+    documentNumber: movement.documentNumber,
     product: movement.product?.name ?? movement.productId,
     productSku: movement.product?.sku,
     purchaseId: movement.purchaseId,

@@ -1,16 +1,15 @@
 import type { StockMovementType } from "@/shared/mocks/erp-data";
 import { formatDateTimeShort } from "@/shared/utils/date";
 
+import { resolveMovementDocument, type MovementDocumentSource } from "./movementDocument";
 import { getMovementTypeLabel } from "./movementTypeLabels";
 
-export type MovementExportRow = {
+export type MovementExportRow = MovementDocumentSource & {
   createdAt: string;
   product: string;
   productSku?: string;
-  purchaseId?: string;
   quantity: number;
   reason?: string;
-  saleId?: string;
   stockAfter: number;
   type: StockMovementType;
 };
@@ -42,7 +41,8 @@ export const movementExportColumns: MovementExportColumn[] = [
   { header: "SKU", value: (row) => row.productSku ?? "—" },
   { header: "Tipo", value: (row) => getMovementTypeLabel(row.type) },
   { header: "Cant.", value: (row) => formatMovementQuantity(row.quantity) },
-  { header: "Stock final", value: (row) => row.stockAfter },
+  { header: "Saldo", value: (row) => row.stockAfter },
+  { header: "Documento", value: (row) => resolveMovementDocument(row).label },
   { header: "Motivo", value: (row) => row.reason ?? "Sin motivo" },
   { header: "Referencia", value: formatMovementReference },
 ];

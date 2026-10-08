@@ -1,21 +1,26 @@
 "use client";
 
+import { useMemo } from "react";
+
 import { type ActionMenuItem } from "@/shared/components/ActionsMenu";
+import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import type { StockMovementType } from "@/shared/mocks/erp-data";
+import { cn } from "@/shared/utils/cn";
 import { formatDateTimeShort } from "@/shared/utils/date";
 
-import { InventoryMovementQuantityCell } from "./InventoryMovementQuantityCell";
-import { InventoryMovementReferenceCell } from "./InventoryMovementReferenceCell";
-import { InventoryMovementTypeBadge } from "./InventoryMovementTypeBadge";
+import type { InventoryMovementDocumentKind } from "../../hooks/useInventory";
 import { getMovementTypeLabel } from "../utils/movementTypeLabels";
-
-const referenceCellClass = "min-w-0 w-[7rem] max-w-[7rem] overflow-hidden";
-const referenceHeaderClass = "w-[7rem] max-w-[7rem]";
+import { InventoryMovementDocumentCell } from "./InventoryMovementDocumentCell";
+import { InventoryMovementQuantityCell } from "./InventoryMovementQuantityCell";
+import { InventoryMovementTypeBadge } from "./InventoryMovementTypeBadge";
 
 export type InventoryMovementRow = {
+  conversionId?: string;
   createdAt: string;
+  documentKind?: InventoryMovementDocumentKind | null;
+  documentNumber?: string | null;
   id: string;
   product: string;
   productSku?: string;
@@ -27,89 +32,151 @@ export type InventoryMovementRow = {
   type: StockMovementType;
 };
 
-const columns: DataTableColumn<InventoryMovementRow>[] = [
-  {
-    cellClassName: "whitespace-nowrap text-on-surface-variant",
-    header: "Fecha",
-    key: "createdAt",
-    render: (row) => formatDateTimeShort(row.createdAt),
-  },
-  {
-    header: "Producto",
-    key: "product",
-    render: (row) => (
-      <div className="flex flex-col">
-        <span className="font-medium text-foreground">{row.product}</span>
-        {row.productSku ? (
-          <span className="text-xs text-on-surface-variant md:hidden">
-            SKU: {row.productSku}
-          </span>
-        ) : null}
-      </div>
-    ),
-  },
-  {
-    cellClassName: "font-mono text-sm text-on-surface-variant",
-    header: "SKU",
-    hideInCard: true,
-    key: "productSku",
-    render: (row) => row.productSku ?? "—",
-    visibility: "md",
-  },
-  {
-    header: "Tipo",
-    key: "type",
-    render: (row) => <InventoryMovementTypeBadge type={row.type} />,
-  },
-  {
-    align: "right",
-    header: "Cant.",
-    key: "quantity",
-    render: (row) => <InventoryMovementQuantityCell quantity={row.quantity} />,
-  },
-  {
-    align: "right",
-    cellClassName: "font-semibold tabular-nums",
-    header: "Stock final",
-    key: "stockAfter",
-    render: (row) => row.stockAfter,
-  },
-  {
-    cellClassName: "max-w-[14rem] truncate text-on-surface-variant",
-    header: "Motivo",
-    key: "reason",
-    render: (row) => row.reason ?? "Sin motivo",
-    visibility: "lg",
-  },
-  {
-    cellClassName: referenceCellClass,
-    className: referenceHeaderClass,
-    header: "Referencia",
-    key: "reference",
-    render: (row) => (
-      <InventoryMovementReferenceCell purchaseId={row.purchaseId} saleId={row.saleId} />
-    ),
-    visibility: "md",
-  },
-];
+/**
+ * Por qué no hay filas: sin movimientos, ninguno coincide con los filtros o el
+ * rango de fechas está invertido y no se consultó.
+ */
+export type InventoryMovementsEmptyKind = "filtered" | "invalid-range" | "none";
+
+function buildColumns(returnTo?: string): DataTableColumn<InventoryMovementRow>[] {
+  return [
+    {
+      cellClassName: "whitespace-nowrap text-on-surface-variant",
+      header: "Fecha",
+      key: "createdAt",
+      render: (row) => formatDateTimeShort(row.createdAt),
+    },
+    {
+      header: "Producto",
+      key: "product",
+      render: (row) => (
+        <div className="flex flex-col">
+          <span className="font-medium text-foreground">{row.product}</span>
+          {row.productSku ? (
+            <span className="text-xs text-on-surface-variant md:hidden">
+              SKU: {row.productSku}
+            </span>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      cellClassName: "font-mono text-sm text-on-surface-variant",
+      header: "SKU",
+      hideInCard: true,
+      key: "productSku",
+      render: (row) => row.productSku ?? "—",
+      visibility: "lg",
+    },
+    {
+      header: "Tipo",
+      key: "type",
+      render: (row) => <InventoryMovementTypeBadge type={row.type} />,
+    },
+    {
+      align: "right",
+      header: "Cant.",
+      key: "quantity",
+      render: (row) => <InventoryMovementQuantityCell quantity={row.quantity} />,
+    },
+    {
+      align: "right",
+      cellClassName: "font-semibold tabular-nums",
+      header: "Saldo",
+      key: "stockAfter",
+      render: (row) => (
+        <span
+          className={cn(row.stockAfter < 0 && "text-error")}
+          data-negative={row.stockAfter < 0 ? "true" : undefined}
+          title={row.stockAfter < 0 ? "Saldo negativo" : undefined}
+        >
+          {row.stockAfter}
+        </span>
+      ),
+    },
+    {
+      cellClassName: "min-w-[8rem] max-w-[12rem]",
+      header: "Documento",
+      key: "document",
+      render: (row) => <InventoryMovementDocumentCell movement={row} returnTo={returnTo} />,
+    },
+    {
+      cellClassName: "max-w-[14rem] truncate text-on-surface-variant",
+      header: "Motivo",
+      key: "reason",
+      render: (row) => row.reason ?? "Sin motivo",
+      visibility: "lg",
+    },
+  ];
+}
 
 type InventoryMovementsTableProps = {
   actions?: (row: InventoryMovementRow) => ActionMenuItem[];
+  emptyKind?: InventoryMovementsEmptyKind;
   error?: Error | string | null;
   isFetching?: boolean;
   isLoading?: boolean;
+  /** Con `emptyKind="filtered"` se ofrece "Limpiar filtros". */
+  onClearFilters?: () => void;
   onRetry?: () => void;
+  /** URL de la lista: el detalle de la venta o compra vuelve a ella. */
+  returnTo?: string;
   rows: InventoryMovementRow[];
 };
 
+function MovementsEmptyState({
+  kind,
+  onClearFilters,
+}: {
+  kind: InventoryMovementsEmptyKind;
+  onClearFilters?: () => void;
+}) {
+  if (kind === "invalid-range") {
+    return (
+      <EmptyState
+        description="La fecha inicial no puede ser posterior a la final. Corrige el rango para ver los movimientos."
+        title="Revisa el rango de fechas"
+      />
+    );
+  }
+
+  if (kind === "filtered") {
+    return (
+      <EmptyState
+        action={
+          onClearFilters ? (
+            <Button onClick={onClearFilters} size="sm" variant="outline">
+              Limpiar filtros
+            </Button>
+          ) : undefined
+        }
+        description="Prueba con otro rango de fechas o quita algún filtro."
+        title="Ningún movimiento coincide con los filtros"
+      />
+    );
+  }
+
+  return (
+    <EmptyState
+      description="Las ventas, compras, conversiones de empaque y ajustes de stock aparecerán aquí."
+      title="Aún no hay movimientos de inventario"
+    />
+  );
+}
+
 export function InventoryMovementsTable({
   actions,
+  emptyKind = "none",
   error,
   isFetching,
   isLoading,
+  onClearFilters,
   onRetry,
+  returnTo,
   rows,
 }: InventoryMovementsTableProps) {
+  const columns = useMemo(() => buildColumns(returnTo), [returnTo]);
+
   return (
     <DataTable
       actions={actions}
@@ -118,12 +185,7 @@ export function InventoryMovementsTable({
       columns={columns}
       data={rows}
       embedded
-      emptyState={
-        <EmptyState
-          description="Ajusta los filtros o registra un ajuste manual de stock."
-          title="No hay movimientos para mostrar"
-        />
-      }
+      emptyState={<MovementsEmptyState kind={emptyKind} onClearFilters={onClearFilters} />}
       error={error}
       getRowId={(row) => row.id}
       isFetching={isFetching}

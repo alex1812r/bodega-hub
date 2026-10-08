@@ -91,6 +91,24 @@ describe("inventory hooks", () => {
     );
   });
 
+  it("does not ask for movements while the query is disabled", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: paginated([{ id: "mov-001" }]) }));
+
+    const movements = renderHook(
+      ({ enabled }: { enabled: boolean }) =>
+        useInventoryMovements({ from: "2026-10-05", to: "2026-10-01" }, enabled),
+      { initialProps: { enabled: false }, wrapper: createWrapper() },
+    );
+
+    expect(movements.result.current.fetchStatus).toBe("idle");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    movements.rerender({ enabled: true });
+
+    await waitFor(() => expect(movements.result.current.isSuccess).toBe(true));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("creates inventory adjustments", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ data: { id: "mov-new", type: "ajuste_salida" } }, 201),

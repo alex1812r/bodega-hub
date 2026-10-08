@@ -21,6 +21,8 @@ describe("fetchMovementsForExport", () => {
     fetchAllPaginatedItemsMock.mockResolvedValue([]);
 
     await fetchMovementsForExport({
+      document: "C-00",
+      documentKind: "compra",
       from: "2026-05-01",
       productId: "prod-cable",
       to: "2026-05-18",
@@ -28,10 +30,23 @@ describe("fetchMovementsForExport", () => {
     });
 
     expect(fetchAllPaginatedItemsMock).toHaveBeenCalledWith("/api/inventory/movements", {
+      document: "C-00",
+      documentKind: "compra",
       from: "2026-05-01",
       productId: "prod-cable",
       to: "2026-05-18",
       type: "compra",
     });
+  });
+
+  it("asks for the movements without a document when that is the filter", async () => {
+    fetchAllPaginatedItemsMock.mockResolvedValue([]);
+
+    await fetchMovementsForExport({ documentKind: "sin_documento" });
+
+    expect(fetchAllPaginatedItemsMock).toHaveBeenCalledWith(
+      "/api/inventory/movements",
+      expect.objectContaining({ document: undefined, documentKind: "sin_documento" }),
+    );
   });
 });

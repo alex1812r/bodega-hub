@@ -173,8 +173,10 @@ export function useInventoryProduct(id: string | undefined, enabled = true) {
 
 export function useInventoryMovements(
   filters: InventoryMovementFilters = {},
+  enabled = true,
 ) {
   return useQuery({
+    enabled,
     queryKey: inventoryQueryKeys.movements(filters),
     queryFn: () =>
       apiFetch<PaginatedList<InventoryMovement>>("/api/inventory/movements", {

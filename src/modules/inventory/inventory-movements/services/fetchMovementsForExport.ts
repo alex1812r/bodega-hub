@@ -5,13 +5,16 @@ import type {
   InventoryMovementFilters,
 } from "../../hooks/useInventory";
 
+/** Los filtros del listado de movimientos: la exportación usa los mismos que la pantalla. */
 export type MovementsExportFilters = Pick<
   InventoryMovementFilters,
-  "from" | "productId" | "to" | "type"
+  "document" | "documentKind" | "from" | "productId" | "to" | "type"
 >;
 
 function pickMovementsQuery(filters: MovementsExportFilters) {
   return {
+    document: filters.document,
+    documentKind: filters.documentKind,
     from: filters.from,
     productId: filters.productId,
     to: filters.to,
