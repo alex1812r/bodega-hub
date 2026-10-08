@@ -1895,4 +1895,18 @@ select
     from pg_proc p
     where p.pronamespace = 'public'::regnamespace and p.proname = 'create_purchase'
   )
+union all
+select
+  'payments: los pagos de compras (purchase_id no nulo) solo los leen admin y contador; los de ventas, toda la tienda; una sola politica de lectura (20261010c)',
+  (
+    select count(*) = 1
+       and bool_and(pol.policyname = 'Authenticated users read payments')
+       and bool_and(pol.roles = '{authenticated}'::name[])
+       and bool_and(pol.qual ilike '%store_id = current_user_store_id()%purchase_id is null%current_user_role()%admin%contador%')
+       and bool_and(pol.qual not ilike '%vendedor%' and pol.qual not ilike '%almacen%')
+    from pg_policies pol
+    where pol.schemaname = 'public'
+      and pol.tablename = 'payments'
+      and pol.cmd in ('SELECT', 'ALL')
+  )
 order by 1;

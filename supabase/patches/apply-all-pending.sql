@@ -597,3 +597,18 @@ notify pgrst, 'reload schema';
 -- aplicar este parche y correr verify-patches.sql.
 -- ORDEN DE DESPLIEGUE (COM-15): parche -> verify -> BFF. Mismo payload y misma firma: el BFF anterior y el nuevo funcionan
 -- sobre la base con o sin parche; sin el parche, la compra de un producto inactivo se sigue aceptando.
+-- -----------------------------------------------------------------------------
+-- 20261010c — payments purchase RLS (COM-16, D23): los pagos de COMPRAS (purchase_id no nulo) solo los leen admin y
+--             contador por PostgREST; los pagos de ventas se leen como hasta hoy (toda la tienda)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010c-payments-purchase-rls.sql
+-- Requiere 20260716-multi-store y 20261006a / h. Idempotente, una transaccion. Solo redefine la politica de lectura
+-- "Authenticated users read payments"; no toca tablas, columnas, indices, funciones, triggers ni otras politicas. No
+-- migra datos. Las RPC que leen payments son security definer: cierre de caja, baul y vistas de integridad no cambian.
+-- Efecto: vendedor y almacen dejan de leer pagos a proveedores con su JWT (0 filas, sin error). Lo pagado de una compra
+-- sigue legible desde su cabecera (purchases.paid_ref / paid_ves).
+-- OJO: vault_movements (asientos purchase_out del baul) NO se toca: sigue legible por tienda sin filtro de rol.
+-- OJO: reaplicar 20260716-multi-store reinstala la lectura sin filtro de rol: volver a aplicar este parche.
+-- ORDEN DE DESPLIEGUE (COM-16): BFF -> parche -> verify. El BFF anterior lee payments con la sesion del usuario en
+-- GET /api/purchases/[id] y sobrescribe Pagado con esa suma: sobre la base parcheada almacen veria "Pagado 0". El BFF
+-- nuevo no consulta payments para almacen y funciona igual con o sin parche.
