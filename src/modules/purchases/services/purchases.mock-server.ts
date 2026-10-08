@@ -44,6 +44,9 @@ import {
   type PurchaseLineRecipe,
   type ReceivePurchaseOptions,
 } from "./purchaseDisassemble";
+import { createdMockPurchases, findMockPurchase } from "./purchaseMockStore";
+
+export { findMockPurchase };
 
 export type PurchaseInput = Partial<
   Pick<
@@ -166,13 +169,6 @@ export function listPurchases(searchParams: URLSearchParams, storeId: string) {
  * Ancladas a `globalThis` (`mockState`): `next dev` vuelve a evaluar este modulo
  * al compilar otra ruta y un `Map` de modulo se vaciaria entre el POST y el GET.
  */
-function createdPurchases() {
-  return mockState(
-    "purchases:created",
-    () => new Map<string, { items: PurchaseItemMock[]; purchase: PurchaseMock }>(),
-  );
-}
-
 /** Secuencia del id: no depende del tamano del registro ni de la evaluacion del modulo. */
 function nextPurchaseSequence() {
   const sequence = mockState("purchases:idSequence", () => ({ last: 0 }));
@@ -401,14 +397,6 @@ function disassembleReceivedLines(
 }
 
 /**
- * La compra tal como la guarda el mock, sea de la semilla o creada en esta
- * ejecucion. Sin control de tienda: quien la expone lo hace con `getPurchaseById`.
- */
-export function findMockPurchase(id: string): PurchaseMock | undefined {
-  return createdPurchases().get(id)?.purchase ?? mockPurchases.find((item) => item.id === id);
-}
-
-/**
  * Lo que el detalle de una compra puede enseñar a quien lo pide. La ruta lo
  * calcula con el rol de la sesión (`canViewPurchasePayments`).
  */
@@ -427,7 +415,7 @@ export function getPurchaseById(
   storeId: string,
   access: PurchaseDetailAccess = { canViewPayments: true },
 ) {
-  const created = createdPurchases().get(id);
+  const created = createdMockPurchases().get(id);
   const purchase = created?.purchase ?? mockPurchases.find((item) => item.id === id);
   assertMockStoreResource(purchase, storeId, "Compra no encontrada.");
 
@@ -698,7 +686,7 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
 
   const items = lines.map(({ item, tax }) => toPurchaseItemMock(item, purchase.id, tax));
 
-  createdPurchases().set(purchase.id, { items, purchase });
+  createdMockPurchases().set(purchase.id, { items, purchase });
 
   const marked: DisassembleLine[] = items.flatMap((item, index) =>
     lines[index]?.item.disassembleOnReceive === true
