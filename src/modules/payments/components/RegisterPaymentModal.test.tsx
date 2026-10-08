@@ -119,13 +119,24 @@ describe("RegisterPaymentModal", () => {
     return { dialog: within(dialog), user };
   }
 
+  /**
+   * PAG-F8: tras cada envio las acciones del pie quedan deshabilitadas ~400 ms. Como
+   * haria el usuario, se pulsa el boton cuando ya esta habilitado.
+   */
+  async function pressFooter(user: ReturnType<typeof userEvent.setup>, name: RegExp | string) {
+    const button = await screen.findByRole("button", { name });
+
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+  }
+
   async function submit(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(screen.getByRole("button", { name: SUBMIT_BUTTON }));
+    await pressFooter(user, SUBMIT_BUTTON);
   }
 
   /** PAG-F6 U4: con un intento por confirmar la accion principal es «Reintentar». */
   async function retry(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(screen.getByRole("button", { name: "Reintentar" }));
+    await pressFooter(user, "Reintentar");
   }
 
   function postedBodies() {
@@ -1552,7 +1563,7 @@ describe("RegisterPaymentModal", () => {
       expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_usd");
       expect(dialog.getByLabelText("Metodo")).toBeDisabled();
       expect(dialog.getByLabelText("Notas")).toBeDisabled();
-      expect(dialog.getByRole("button", { name: "Reintentar" })).toBeEnabled();
+      await waitFor(() => expect(dialog.getByRole("button", { name: "Reintentar" })).toBeEnabled());
       expect(dialog.queryByRole("button", { name: SUBMIT_BUTTON })).not.toBeInTheDocument();
       expect(dialog.getByRole("button", { name: "Cancelar" })).toBeEnabled();
     });
@@ -1730,6 +1741,146 @@ describe("RegisterPaymentModal", () => {
         expect(third.clientRequestId).not.toBe(first.clientRequestId);
       },
     );
+
+    describe("PAG-F8 · N1c: descartar un intento por confirmar", () => {
+      const DISCARD = "Descartar intento";
+
+      it("no se ofrece antes del primer reintento fallido; tras uno que sigue incierto, sí", async () => {
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog, user } = await submitUncertain();
+
+        expect(dialog.queryByRole("button", { name: DISCARD })).not.toBeInTheDocument();
+
+        await retry(user);
+        await waitFor(() => expect(postedBodies()).toHaveLength(2));
+
+        expect(await dialog.findByRole("button", { name: DISCARD })).toBeInTheDocument();
+        expect(dialog.getByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+        expect(dialog.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
+      });
+
+      it("pide confirmación con documento y monto; al confirmar refresca el saldo y vuelve a editar con clave nueva", async () => {
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog, user } = await submitUncertain();
+
+        await retry(user);
+        await waitFor(() => expect(postedBodies()).toHaveLength(2));
+
+        const discard = await dialog.findByRole("button", { name: DISCARD });
+
+        await waitFor(() => expect(discard).toBeEnabled());
+        await user.click(discard);
+
+        let confirm = within(await screen.findByRole("dialog", { name: DISCARD }));
+
+        expect(confirm.getByText(/Venta F-0002/)).toHaveTextContent("ref 2.00");
+        expect(confirm.getByText(/quedará duplicado/)).toBeInTheDocument();
+
+        // Cancelar no descarta nada.
+        await user.click(confirm.getByRole("button", { name: "Cancelar" }));
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: DISCARD })).not.toBeInTheDocument(),
+        );
+        expect(dialog.getByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+        expect(dialog.getByLabelText("Monto")).toBeDisabled();
+
+        // El pago incierto sí había entrado: el saldo fresco ya lo descuenta.
+        salePaidVes = 4020;
+
+        const requestsBefore = saleRequests();
+
+        await user.click(dialog.getByRole("button", { name: DISCARD }));
+        confirm = within(await screen.findByRole("dialog", { name: DISCARD }));
+        await user.click(confirm.getByRole("button", { name: DISCARD }));
+
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: DISCARD })).not.toBeInTheDocument(),
+        );
+        await waitFor(() => expect(dialog.queryByText(UNCONFIRMED_NOTICE)).not.toBeInTheDocument());
+        expect(dialog.queryByText("Fallo.")).not.toBeInTheDocument();
+        expect(dialog.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+        expect(dialog.queryByRole("button", { name: DISCARD })).not.toBeInTheDocument();
+        expect(dialog.getByLabelText("Monto")).toBeEnabled();
+        expect(dialog.getByLabelText("Monto")).toHaveValue("");
+        await waitFor(() => expect(saleRequests()).toBeGreaterThan(requestsBefore));
+        expect(await dialog.findByText(/Saldo pendiente actual:.*7\.455/)).toBeInTheDocument();
+        // Descartar no envía nada.
+        expect(postedBodies()).toHaveLength(2);
+
+        paymentResponse = success();
+        await user.type(dialog.getByLabelText("Monto"), "3");
+        await submit(user);
+        await waitFor(() => expect(postedBodies()).toHaveLength(3));
+
+        const [first, , third] = postedBodies().map((post) => post.body);
+
+        expect(third.amount).toBe(3);
+        expect(third.clientRequestId).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/));
+        expect(third.clientRequestId).not.toBe(first.clientRequestId);
+      });
+
+      it("descartado el intento, cerrar y reabrir da un formulario limpio y ya no hay guardia al salir", async () => {
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog, user } = await submitUncertain();
+
+        await retry(user);
+        await waitFor(() => expect(postedBodies()).toHaveLength(2));
+
+        const discard = await dialog.findByRole("button", { name: DISCARD });
+
+        await waitFor(() => expect(discard).toBeEnabled());
+        await user.click(discard);
+        await user.click(
+          within(await screen.findByRole("dialog", { name: DISCARD })).getByRole("button", {
+            name: DISCARD,
+          }),
+        );
+        await waitFor(() => expect(dialog.queryByText(UNCONFIRMED_NOTICE)).not.toBeInTheDocument());
+
+        await pressFooter(user, "Cancelar");
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+        const reopened = await openModal();
+
+        expect(reopened.dialog.queryByText(UNCONFIRMED_NOTICE)).not.toBeInTheDocument();
+        expect(reopened.dialog.getByLabelText("Monto")).toHaveValue("");
+        expect(reopened.dialog.getByLabelText("Monto")).toBeEnabled();
+      });
+    });
+
+    describe("PAG-F8 · bajo: doble clic con respuesta rápida", () => {
+      it("recién registrado el pago al reintentar, el segundo clic no borra el éxito ni envía nada", async () => {
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog, user } = await submitUncertain();
+
+        paymentResponse = success();
+        await retry(user);
+        expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+
+        // El botón que ocupa el sitio de «Reintentar» nace deshabilitado.
+        const submitButton = dialog.getByRole("button", { name: SUBMIT_BUTTON });
+
+        expect(submitButton).toBeDisabled();
+        await user.click(submitButton);
+        fireEvent.submit(submitButton.closest("div[role=dialog]")!.querySelector("form")!);
+
+        expect(dialog.getByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+        expect(dialog.queryByText("Indica un monto mayor a cero.")).not.toBeInTheDocument();
+        expect(postedBodies()).toHaveLength(2);
+
+        await waitFor(() => expect(submitButton).toBeEnabled());
+      });
+
+      it("tras un envío que queda por confirmar, «Reintentar» tarda un instante en aceptar clics; «Cancelar» no", async () => {
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog } = await submitUncertain();
+
+        expect(dialog.getByRole("button", { name: "Reintentar" })).toBeDisabled();
+        // «Cancelar» no cambia de sitio ni de función: no espera.
+        expect(dialog.getByRole("button", { name: "Cancelar" })).toBeEnabled();
+        await waitFor(() => expect(dialog.getByRole("button", { name: "Reintentar" })).toBeEnabled());
+      });
+    });
 
     it("con el saldo sin poder comprobarse solo hay un «Reintentar»: el del pago", async () => {
       const defaultFetch = fetchMock.getMockImplementation() as (

@@ -12,6 +12,17 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 
+type MockProfile = { storeId: string | null; user: { id: string } };
+
+const ADMIN_PROFILE: MockProfile = { storeId: "store-1", user: { id: "user-admin" } };
+const SELLER_PROFILE: MockProfile = { storeId: "store-1", user: { id: "user-seller" } };
+// PAG-F8: el abono guardado es de la sesión (tienda y usuario) que lo dejó.
+const mockAuth: { profile: MockProfile | undefined } = { profile: ADMIN_PROFILE };
+
+jest.mock("../../../shared/auth/usePermission", () => ({
+  usePermission: () => ({ profile: mockAuth.profile }),
+}));
+
 type PostReply = Response | Promise<Response>;
 
 function jsonResponse(payload: unknown, status = 200) {
@@ -66,6 +77,7 @@ describe("ContactSettlementModal", () => {
 
   beforeEach(() => {
     window.sessionStorage.clear();
+    mockAuth.profile = ADMIN_PROFILE;
     documentsGate = null;
     documents = [
       document("sale-internal-1", "F-0001", 100),
@@ -155,11 +167,26 @@ describe("ContactSettlementModal", () => {
     return within(await screen.findByRole("dialog", { name: "Abonar" }));
   }
 
+  /**
+   * PAG-F8: tras cada envío las acciones del pie quedan deshabilitadas ~400 ms. Como
+   * haría el usuario, se pulsa el botón cuando ya está habilitado.
+   */
+  async function press(
+    dialog: ReturnType<typeof within>,
+    user: ReturnType<typeof userEvent.setup>,
+    name: string,
+  ) {
+    const button = await dialog.findByRole("button", { name });
+
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+  }
+
   async function closeDialog(
     dialog: ReturnType<typeof within>,
     user: ReturnType<typeof userEvent.setup>,
   ) {
-    await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+    await press(dialog, user, "Cerrar");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   }
 
@@ -298,7 +325,7 @@ describe("ContactSettlementModal", () => {
     // Resultado incierto: editar cambiaría el contenido y podría duplicar el pago.
     expect(dialog.queryByRole("button", { name: "Volver a editar" })).not.toBeInTheDocument();
 
-    await user.click(dialog.getByRole("button", { name: "Reintentar pendientes" }));
+    await press(dialog, user, "Reintentar pendientes");
 
     expect(await dialog.findByText(/Abono registrado: 3 pagos/)).toBeInTheDocument();
 
@@ -330,7 +357,7 @@ describe("ContactSettlementModal", () => {
     expect(alert.queryByText(/^Registrado:/)).not.toBeInTheDocument();
     expect(posts()).toHaveLength(1);
 
-    await user.click(dialog.getByRole("button", { name: "Reintentar pendientes" }));
+    await press(dialog, user, "Reintentar pendientes");
 
     expect(await dialog.findByText(/Abono registrado: 2 pagos/)).toBeInTheDocument();
     expect(posts()[1].clientRequestId).toBe(posts()[0].clientRequestId);
@@ -357,9 +384,11 @@ describe("ContactSettlementModal", () => {
     expect(alert.getByText("Sin enviar: Venta F-0003.")).toBeInTheDocument();
     expect(row(dialog, "Venta F-0003").getByText("Pendiente")).toBeInTheDocument();
     expect(posts()).toHaveLength(2);
-    expect(dialog.getByRole("button", { name: "Reintentar pendientes" })).toBeEnabled();
+    await waitFor(() =>
+      expect(dialog.getByRole("button", { name: "Reintentar pendientes" })).toBeEnabled(),
+    );
 
-    await user.click(dialog.getByRole("button", { name: "Volver a editar" }));
+    await press(dialog, user, "Volver a editar");
 
     // Vuelve al paso 1 con lo que quedó sin registrar: 250,50 + 80.
     expect(dialog.getByLabelText("Monto")).toHaveValue("330.5");
@@ -488,7 +517,7 @@ describe("ContactSettlementModal", () => {
     expect(await dialog.findByText(/Abono registrado: 2 pagos/)).toBeInTheDocument();
     expect(posts()).toHaveLength(2);
 
-    await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+    await press(dialog, user, "Cerrar");
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
@@ -632,7 +661,7 @@ describe("ContactSettlementModal", () => {
       expect(row(dialog, "Venta F-0001").getByText("Falló")).toBeInTheDocument();
       expect(dialog.getByText(UNCERTAIN_TEXT)).toBeInTheDocument();
 
-      await user.click(dialog.getByRole("button", { name: "Reintentar pendientes" }));
+      await press(dialog, user, "Reintentar pendientes");
 
       expect(await dialog.findByText(/Abono registrado: 1 pago por/)).toBeInTheDocument();
 
@@ -672,7 +701,7 @@ describe("ContactSettlementModal", () => {
       expect(dialog.queryByLabelText("Monto")).not.toBeInTheDocument();
       expect(dialog.queryByRole("button", { name: "Volver a editar" })).not.toBeInTheDocument();
 
-      await user.click(dialog.getByRole("button", { name: "Reintentar pendientes" }));
+      await press(dialog, user, "Reintentar pendientes");
 
       expect(await dialog.findByText(/Abono registrado: 2 pagos por/)).toBeInTheDocument();
 
@@ -701,9 +730,11 @@ describe("ContactSettlementModal", () => {
       await dialog.findByText(UNCERTAIN_TEXT);
       expect(window.sessionStorage).toHaveLength(1);
 
-      await user.click(dialog.getByRole("button", { name: "Reintentar pendientes" }));
+      await press(dialog, user, "Reintentar pendientes");
 
-      expect(await dialog.findByRole("button", { name: "Volver a editar" })).toBeEnabled();
+      await waitFor(() =>
+        expect(dialog.getByRole("button", { name: "Volver a editar" })).toBeEnabled(),
+      );
       expect(dialog.queryByText(UNCERTAIN_TEXT)).not.toBeInTheDocument();
     });
 
@@ -774,7 +805,7 @@ describe("ContactSettlementModal", () => {
       documents = documents.filter((item) => item.id !== "sale-internal-1");
       await waitFor(() => expect(documentRequests()).toBeGreaterThan(before));
 
-      await user.click(dialog.getByRole("button", { name: "Volver a editar" }));
+      await press(dialog, user, "Volver a editar");
 
       expect(dialog.getByLabelText("Monto")).toHaveValue("150");
       await waitFor(() => expect(dialog.getByRole("button", { name: "Ver reparto" })).toBeEnabled());
@@ -804,7 +835,7 @@ describe("ContactSettlementModal", () => {
       await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
       await dialog.findByRole("alert");
 
-      await user.click(dialog.getByRole("button", { name: "Continuar con los demás" }));
+      await press(dialog, user, "Continuar con los demás");
 
       expect(await row(dialog, "Venta F-0002").findByText("Registrado")).toBeInTheDocument();
       expect(row(dialog, "Venta F-0001").getByText("Falló")).toBeInTheDocument();
@@ -853,7 +884,7 @@ describe("ContactSettlementModal", () => {
         "Sin enviar: Venta F-0002, Venta F-0003.",
       );
 
-      await user.click(dialog.getByRole("button", { name: "Reintentar pendientes" }));
+      await press(dialog, user, "Reintentar pendientes");
 
       expect(await dialog.findByText(/Abono registrado: 3 pagos por/)).toBeInTheDocument();
       expect(posts().map((body) => body.saleId)).toEqual([
@@ -903,7 +934,7 @@ describe("ContactSettlementModal", () => {
       await waitFor(() => expect(guardDialog()).not.toBeInTheDocument());
 
       // Terminado con éxito.
-      await user.click(dialog.getByRole("button", { name: "Reintentar pendientes" }));
+      await press(dialog, user, "Reintentar pendientes");
       expect(await dialog.findByText(/Abono registrado: 1 pago por/)).toBeInTheDocument();
       clickLinkToAnotherRoute();
       expect(guardDialog()).not.toBeInTheDocument();
@@ -952,6 +983,256 @@ describe("ContactSettlementModal", () => {
           "La solicitud no tiene un formato valido. El texto no puede superar 2000 caracteres",
         ),
       ).toBeInTheDocument();
+    });
+
+    describe("PAG-F8 · N1: abono por confirmar con salida", () => {
+      const DISCARD = "Descartar abono por confirmar";
+      const KEY_CONFLICT = "La clave de idempotencia ya se usó en otro pago.";
+
+      async function confirmOneUncertain(replies: PostReply[]) {
+        documents = [document("sale-internal-1", "F-0001", 8475)];
+        postReplies = replies;
+
+        const user = userEvent.setup();
+        const view = renderWithTrigger();
+        const dialog = await clickAbonar(user);
+
+        await previewAmount(dialog, user, "100");
+        await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+        await dialog.findByText(UNCERTAIN_TEXT);
+
+        return { dialog, user, view };
+      }
+
+      it("a) un 409 al REINTENTAR es rechazo definitivo: muestra el mensaje, refresca saldos y deja de estar por confirmar", async () => {
+        const { dialog, user } = await confirmOneUncertain([
+          errorResponse(500, "ERR_RESPONSE_LOST"),
+          errorResponse(409, KEY_CONFLICT),
+        ]);
+        const before = documentRequests();
+
+        await press(dialog, user, "Reintentar pendientes");
+
+        expect(await row(dialog, "Venta F-0001").findByText(KEY_CONFLICT)).toBeInTheDocument();
+        await waitFor(() => expect(dialog.queryByText(UNCERTAIN_TEXT)).not.toBeInTheDocument());
+        await waitFor(() => expect(documentRequests()).toBeGreaterThan(before));
+        expect(await dialog.findByRole("button", { name: "Volver a editar" })).toBeInTheDocument();
+        expect(dialog.queryByRole("button", { name: DISCARD })).not.toBeInTheDocument();
+
+        const sent = posts();
+
+        expect(sent).toHaveLength(2);
+        expect(sent[1]).toEqual(sent[0]);
+
+        // Ya no está por confirmar: cerrar lo suelta y "Abonar" abre un formulario nuevo.
+        await closeDialog(dialog, user);
+        expect(window.sessionStorage).toHaveLength(0);
+        expect(await (await clickAbonar(user)).findByLabelText("Monto")).toHaveValue("");
+      });
+
+      it("a) tras ese rechazo, reintentar la misma fila con otro 409 no la devuelve a «por confirmar»", async () => {
+        const { dialog, user } = await confirmOneUncertain([
+          errorResponse(500, "ERR_RESPONSE_LOST"),
+          errorResponse(409, KEY_CONFLICT),
+          errorResponse(409, KEY_CONFLICT),
+        ]);
+
+        await press(dialog, user, "Reintentar pendientes");
+        await dialog.findByRole("button", { name: "Volver a editar" });
+        await press(dialog, user, "Reintentar pendientes");
+        await waitFor(() => expect(posts()).toHaveLength(3));
+
+        await waitFor(() =>
+          expect(dialog.getByRole("button", { name: "Volver a editar" })).toBeEnabled(),
+        );
+        expect(dialog.queryByText(UNCERTAIN_TEXT)).not.toBeInTheDocument();
+        expect(new Set(posts().map((body) => body.clientRequestId)).size).toBe(1);
+      });
+
+      it("a) un 409 en el PRIMER envío sigue siendo de resultado incierto", async () => {
+        const { dialog } = await confirmOneUncertain([errorResponse(409, KEY_CONFLICT)]);
+
+        expect(dialog.queryByRole("button", { name: "Volver a editar" })).not.toBeInTheDocument();
+        expect(dialog.queryByRole("button", { name: DISCARD })).not.toBeInTheDocument();
+        expect(window.sessionStorage).toHaveLength(1);
+      });
+
+      it("b) «Descartar» no se ofrece antes del primer reintento fallido y sí después, también tras recargar", async () => {
+        const { dialog, user, view } = await confirmOneUncertain([
+          errorResponse(500, "ERR_RESPONSE_LOST"),
+          errorResponse(503, "ERR_GATEWAY"),
+        ]);
+
+        expect(dialog.queryByRole("button", { name: DISCARD })).not.toBeInTheDocument();
+
+        await press(dialog, user, "Reintentar pendientes");
+
+        expect(await dialog.findByRole("button", { name: DISCARD })).toBeInTheDocument();
+        expect(dialog.getByText(UNCERTAIN_TEXT)).toBeInTheDocument();
+        expect(dialog.queryByRole("button", { name: "Volver a editar" })).not.toBeInTheDocument();
+        expect(posts()[1]).toEqual(posts()[0]);
+
+        view.unmount();
+        renderWithTrigger();
+
+        const reopened = await clickAbonar(user);
+
+        expect(reopened.getByRole("button", { name: DISCARD })).toBeInTheDocument();
+        expect(reopened.getByRole("button", { name: "Reintentar pendientes" })).toBeInTheDocument();
+      });
+
+      it("b) descartar pide confirmación con documento y monto; al confirmar limpia lo guardado, refresca y vuelve al formulario con clave nueva", async () => {
+        const { dialog, user } = await confirmOneUncertain([
+          errorResponse(500, "ERR_RESPONSE_LOST"),
+          Promise.reject(new TypeError("Failed to fetch")),
+        ]);
+
+        await press(dialog, user, "Reintentar pendientes");
+        await press(dialog, user, DISCARD);
+
+        let confirm = within(await screen.findByRole("dialog", { name: DISCARD }));
+
+        expect(confirm.getByText(/Venta F-0001/)).toHaveTextContent(formatVesBs(100));
+        expect(confirm.getByText(/Maria Perez/)).toHaveTextContent(/duplicado/);
+
+        // Cancelar no descarta nada.
+        await user.click(confirm.getByRole("button", { name: "Cancelar" }));
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: DISCARD })).not.toBeInTheDocument(),
+        );
+        expect(window.sessionStorage).toHaveLength(1);
+        expect(dialog.getByText(UNCERTAIN_TEXT)).toBeInTheDocument();
+        expect(posts()).toHaveLength(2);
+
+        // El pago incierto sí había entrado: el saldo fresco ya lo descuenta.
+        documents = [document("sale-internal-1", "F-0001", 8375, { paidVes: 100 })];
+
+        const before = documentRequests();
+
+        await press(dialog, user, DISCARD);
+        confirm = within(await screen.findByRole("dialog", { name: DISCARD }));
+        await user.click(confirm.getByRole("button", { name: "Descartar abono" }));
+
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: DISCARD })).not.toBeInTheDocument(),
+        );
+        expect(await dialog.findByLabelText("Monto")).toHaveValue("");
+        expect(window.sessionStorage).toHaveLength(0);
+        await waitFor(() => expect(documentRequests()).toBeGreaterThan(before));
+        expect(await dialog.findByText(formatVesBs(8375))).toBeInTheDocument();
+        // Descartar no envía nada.
+        expect(posts()).toHaveLength(2);
+
+        // Sin nada por confirmar ya no hay guardia al salir.
+        clickLinkToAnotherRoute();
+        expect(
+          screen.queryByRole("dialog", { name: "¿Salir sin terminar?" }),
+        ).not.toBeInTheDocument();
+
+        await waitFor(() => expect(dialog.getByRole("button", { name: "Ver reparto" })).toBeEnabled());
+        await previewAmount(dialog, user, "50");
+        await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+        expect(await dialog.findByText(/Abono registrado: 1 pago por/)).toBeInTheDocument();
+
+        const sent = posts();
+
+        expect(sent).toHaveLength(3);
+        expect(sent[2].amount).toBe(50);
+        expect(sent[2].clientRequestId).not.toBe(sent[0].clientRequestId);
+      });
+    });
+
+    describe("PAG-F8 · bajos", () => {
+      it("doble clic: recién terminado un envío las acciones del pie no aceptan clics y luego sí", async () => {
+        const { dialog, user } = await openModal();
+
+        postReplies = [errorResponse(400, "La venta no tiene saldo pendiente: ya está cobrada")];
+        await previewAmount(dialog, user, "150");
+        await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+        await dialog.findByRole("alert");
+
+        const names = ["Cerrar", "Volver a editar", "Continuar con los demás", "Reintentar pendientes"];
+
+        for (const name of names) {
+          expect(dialog.getByRole("button", { name })).toBeDisabled();
+        }
+
+        // El segundo clic de un doble clic no hace nada: ni cierra, ni edita, ni envía.
+        await user.click(dialog.getByRole("button", { name: "Volver a editar" }));
+        await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+        expect(dialog.queryByLabelText("Monto")).not.toBeInTheDocument();
+        expect(screen.getByRole("dialog", { name: "Abonar" })).toBeInTheDocument();
+        expect(posts()).toHaveLength(1);
+
+        for (const name of names) {
+          await waitFor(() => expect(dialog.getByRole("button", { name })).toBeEnabled());
+        }
+      });
+
+      it("sessionStorage: otro usuario en la misma pestaña no ve ni reenvía el abono por confirmar de otro", async () => {
+        documents = [document("sale-internal-1", "F-0001", 8475)];
+        postReplies = [errorResponse(500, "ERR_RESPONSE_LOST")];
+
+        const user = userEvent.setup();
+        const admin = renderWithTrigger();
+        let dialog = await clickAbonar(user);
+
+        await previewAmount(dialog, user, "100");
+        await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+        await dialog.findByText(UNCERTAIN_TEXT);
+        admin.unmount();
+
+        mockAuth.profile = SELLER_PROFILE;
+
+        const seller = renderWithTrigger();
+
+        dialog = await clickAbonar(user);
+        expect(await dialog.findByLabelText("Monto")).toHaveValue("");
+        expect(dialog.queryByText(UNCERTAIN_TEXT)).not.toBeInTheDocument();
+        expect(posts()).toHaveLength(1);
+        seller.unmount();
+
+        // Sigue ahí para quien lo dejó.
+        mockAuth.profile = ADMIN_PROFILE;
+        renderWithTrigger();
+        dialog = await clickAbonar(user);
+        expect(dialog.getByText(UNCERTAIN_TEXT)).toBeInTheDocument();
+      });
+
+      it("sessionStorage: si la sesión se conoce después de montar, retoma el abono guardado", async () => {
+        documents = [document("sale-internal-1", "F-0001", 8475)];
+        postReplies = [errorResponse(500, "ERR_RESPONSE_LOST")];
+
+        const user = userEvent.setup();
+        const first = renderWithTrigger();
+        const dialog = await clickAbonar(user);
+
+        await previewAmount(dialog, user, "100");
+        await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+        await dialog.findByText(UNCERTAIN_TEXT);
+        first.unmount();
+
+        mockAuth.profile = undefined;
+
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const view = renderWithTrigger(queryClient);
+
+        mockAuth.profile = ADMIN_PROFILE;
+        view.rerender(
+          <QueryClientProvider client={queryClient}>
+            <ContactSettlementModal
+              contactId="contact-internal-1"
+              contactName="Maria Perez"
+              type="sale"
+            />
+          </QueryClientProvider>,
+        );
+
+        const reopened = await clickAbonar(user);
+
+        expect(reopened.getByText(UNCERTAIN_TEXT)).toBeInTheDocument();
+        expect(reopened.queryByLabelText("Monto")).not.toBeInTheDocument();
+      });
     });
 
     it("bajo: un monto que no supera el máximo pero no se puede repartir dice qué montos sí se pueden abonar", async () => {

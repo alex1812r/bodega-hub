@@ -16,6 +16,7 @@ import { salesQueryKeys, useSale } from "@/modules/sales/hooks/useSales";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { ClientApiError } from "@/shared/api/apiFetch";
 import { Button } from "@/shared/components/Button";
+import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { Modal } from "@/shared/components/Modal";
 import { ProcessGuard } from "@/shared/components/ProcessGuard";
 import {
@@ -27,7 +28,7 @@ import {
   getPaymentCurrency,
   isPaymentFormValid,
 } from "@/shared/payments/PaymentFormFields";
-import { formatVes, roundMoney } from "@/shared/utils/currency";
+import { formatRefUsd, formatVes, roundMoney } from "@/shared/utils/currency";
 
 import {
   type PaymentCreateInput,
@@ -69,7 +70,14 @@ import {
  * montado mientras la pantalla siga viva). Se resuelve cuando el reintento registra el
  * pago (flujo normal, con `onRegistered`) o cuando el servidor lo rechaza con un 4xx
  * (409 incluido): se muestra su mensaje, se refresca el saldo y se vuelve a editar con
- * clave nueva.
+ * clave nueva. Si un reintento vuelve a quedar sin confirmar aparece además "Descartar
+ * intento": pide confirmación (`ConfirmActionModal`), suelta el intento, refresca el
+ * saldo y deja el formulario limpio con clave nueva. No se ofrece antes del primer
+ * reintento fallido.
+ *
+ * Tras terminar un envío la acción principal (y "Descartar intento") quedan
+ * deshabilitadas ~400 ms: el segundo clic de un doble clic no cae en el botón que
+ * ocupa el sitio del anterior. "Cancelar" no espera.
  *
  * Salir de la pantalla: con el modal abierto y un pago en vuelo o por confirmar, un
  * guardia de proceso (`ProcessGuard`) pregunta antes de seguir un enlace o de ir
@@ -141,6 +149,9 @@ const DOCUMENT_TEXTS = {
 } as const;
 
 const GUARD_LABELS = { purchase: "Pago en curso", sale: "Cobro en curso" } as const;
+
+/** Tras terminar un envío, el pie ignora clics este lapso (segundo clic de un doble clic). */
+const ACTION_COOLDOWN_MS = 400;
 
 const CONNECTION_ERROR_MESSAGE = "No se pudo conectar con el servidor.";
 
@@ -237,6 +248,8 @@ function serverOverpayToleranceVes(
 type UnconfirmedAttempt = {
   clientRequestId: string;
   input: Omit<PaymentCreateInput, "clientRequestId">;
+  /** Ya se reintentó y siguió sin saberse si entró: se ofrece descartarlo. */
+  retried?: boolean;
   values: PaymentFormValues;
 };
 
@@ -314,6 +327,10 @@ function RegisterPaymentForm({
   // envíos en el mismo tick saldrían como dos peticiones. La clave de idempotencia
   // haría que el servidor registre una sola, pero la segunda no debe ni salir.
   const submitLockRef = useRef(false);
+  const mountedRef = useRef(true);
+  const [isCoolingDown, setIsCoolingDown] = useState(false);
+  const cooldownTimerRef = useRef<number | undefined>(undefined);
+  const [isDiscardOpen, setIsDiscardOpen] = useState(false);
   const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
   const enabledMethods = useMemo(
     () =>
@@ -411,6 +428,7 @@ function RegisterPaymentForm({
   // ese intento, no un formulario limpio que saldría con clave nueva.
   if (renderedOpen !== open) {
     setRenderedOpen(open);
+    setIsDiscardOpen(false);
 
     if (!unconfirmedAttempt) {
       clearFields();
@@ -426,8 +444,22 @@ function RegisterPaymentForm({
     }
   }, [open, refetchDocument]);
 
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      window.clearTimeout(cooldownTimerRef.current);
+    };
+  }, []);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    // Recién terminado un envío: es el segundo clic (o Enter) de un doble clic.
+    if (isCoolingDown) {
+      return;
+    }
 
     const isRetry = unconfirmedAttempt !== null;
 
@@ -465,7 +497,7 @@ function RegisterPaymentForm({
         isUncertainResult(error) &&
         !(isRetry && error instanceof ClientApiError && error.status === 409);
 
-      onUnconfirmedAttemptChange(isUncertain ? attempt : null);
+      onUnconfirmedAttemptChange(isUncertain ? { ...attempt, retried: isRetry } : null);
       setSubmitError(error instanceof Error ? error : new Error(String(error)));
       // Se vuelve a pedir el documento: tras un rechazo el saldo en pantalla puede
       // estar viejo (sobrepago) y tras un resultado incierto el pago pudo entrar.
@@ -480,12 +512,53 @@ function RegisterPaymentForm({
       return;
     } finally {
       submitLockRef.current = false;
+
+      if (mountedRef.current) {
+        setIsCoolingDown(true);
+        window.clearTimeout(cooldownTimerRef.current);
+        cooldownTimerRef.current = window.setTimeout(
+          () => setIsCoolingDown(false),
+          ACTION_COOLDOWN_MS,
+        );
+      }
     }
 
     onUnconfirmedAttemptChange(null);
     setSuccessBalanceVes(payment.pendingBalanceVes);
     clearFields();
     onRegistered?.(payment);
+  }
+
+  /**
+   * Suelta el intento por confirmar sin saber si entró: formulario limpio, saldo y
+   * pagos recién pedidos y, en el siguiente envío, clave nueva.
+   */
+  function handleDiscard() {
+    if (!unconfirmedAttempt || submitLockRef.current) {
+      return;
+    }
+
+    setIsDiscardOpen(false);
+    onUnconfirmedAttemptChange(null);
+    setSubmitError(null);
+    clearFields();
+    void queryClient.invalidateQueries({
+      queryKey: fixedDocument === "sale" ? salesQueryKeys.all : purchasesQueryKeys.all,
+    });
+    void queryClient.invalidateQueries({ queryKey: paymentsQueryKeys.all });
+  }
+
+  /** "Venta F-0002" / "Compra C-0002"; sin número cargado, "este documento". */
+  function documentLabel() {
+    if (fixedDocument === "sale" && sale.data?.invoiceNumber) {
+      return `Venta ${sale.data.invoiceNumber}`;
+    }
+
+    if (fixedDocument === "purchase" && purchase.data?.purchaseNumber) {
+      return `Compra ${purchase.data.purchaseNumber}`;
+    }
+
+    return "este documento";
   }
 
   /** Nombra el documento por su número y su contacto; nunca por el id interno. */
@@ -521,6 +594,11 @@ function RegisterPaymentForm({
 
   // Con un intento por confirmar se enseña lo que se envió, no lo que hubiera ahora.
   const shownValues = unconfirmedAttempt?.values ?? values;
+  // Recién terminado un envío la acción principal y "Descartar intento" no aceptan
+  // clics: el segundo de un doble clic caería en el botón que ahora ocupa el sitio del
+  // que se pulsó. "Cancelar" no cambia de sitio ni de función: no espera.
+  const footerBusy = createPayment.isPending || isCoolingDown;
+  const canDiscard = unconfirmedAttempt?.retried === true;
   const submitButtonLabel = createPayment.isPending
     ? "Registrando..."
     : unconfirmedAttempt
@@ -540,10 +618,19 @@ function RegisterPaymentForm({
           >
             Cancelar
           </Button>
+          {canDiscard ? (
+            <Button
+              disabled={footerBusy}
+              onClick={() => setIsDiscardOpen(true)}
+              type="button"
+              variant="outline"
+            >
+              Descartar intento
+            </Button>
+          ) : null}
           <Button
             disabled={
-              createPayment.isPending ||
-              (!unconfirmedAttempt && (balanceIsLoading || dayRateIsLoading))
+              footerBusy || (!unconfirmedAttempt && (balanceIsLoading || dayRateIsLoading))
             }
             form={formId}
             type="submit"
@@ -669,6 +756,27 @@ function RegisterPaymentForm({
           </p>
         ) : null}
       </form>
+
+      {unconfirmedAttempt && canDiscard ? (
+        <ConfirmActionModal
+          confirmLabel="Descartar intento"
+          description={`No sabemos si se registró el pago de ${documentLabel()} por ${
+            getPaymentCurrency(unconfirmedAttempt.input.method) === "USD"
+              ? formatRefUsd(unconfirmedAttempt.input.amount)
+              : formatVes(unconfirmedAttempt.input.amount)
+          }. Al descartarlo podrás registrar otro.`}
+          onConfirm={handleDiscard}
+          onOpenChange={setIsDiscardOpen}
+          open={isDiscardOpen}
+          title="Descartar intento"
+          variant="danger"
+        >
+          <p>
+            Revisa antes los pagos del documento: si ese pago sí entró y registras otro,
+            quedará duplicado.
+          </p>
+        </ConfirmActionModal>
+      ) : null}
 
       {/* U6: guardia solo con el modal abierto (este contenido no se pinta cerrado) y un
           pago en vuelo o por confirmar; con el formulario limpio y tras el éxito no hay. */}

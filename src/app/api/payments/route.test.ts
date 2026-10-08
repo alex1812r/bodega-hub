@@ -447,6 +447,38 @@ describe("/api/payments", () => {
       },
     );
 
+    it.each([
+      ["el monto", { amount: 1e308, method: "punto_venta", saleId: "sale-002" }, ["amount"]],
+      [
+        "el vuelto",
+        {
+          amount: 1,
+          change: { amount: 1e308, method: "efectivo_ves" },
+          method: "efectivo_ves",
+          saleId: "sale-002",
+        },
+        ["change", "amount"],
+      ],
+    ])(
+      "PAG-F8: %s por encima del tope responde 400 sin llegar al servicio",
+      async (_label, payload, path) => {
+        const before = mockPayments.length;
+        const response = await postRaw(JSON.stringify(payload));
+        const body = await response.json();
+
+        expect(response.status).toBe(400);
+        expect(body.error.code).toBe("BAD_REQUEST");
+        expect(body.error.issues).toEqual([
+          expect.objectContaining({
+            message: "El monto no puede superar 1.000.000.000.000.",
+            path,
+          }),
+        ]);
+        expect(createPayment).not.toHaveBeenCalled();
+        expect(mockPayments).toHaveLength(before);
+      },
+    );
+
     it("unas notas de 2 MB responden 400 sin llegar al servicio", async () => {
       const response = await postRaw(
         JSON.stringify({

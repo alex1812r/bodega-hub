@@ -22,11 +22,39 @@ function isOpenPurchase(purchase: PurchaseMock) {
   return purchase.status === "pedido" || purchase.status === "recibido";
 }
 
+/**
+ * Saldos ya calculados por el servidor sobre TODOS los documentos con saldo del
+ * contacto (los totales de la pestaña "Saldos"). Sin valor para una métrica, esa
+ * métrica se calcula con las filas recibidas.
+ */
+export type ContactOpenBalances = {
+  payableRef?: number;
+  receivableRef?: number;
+};
+
+/**
+ * Saldo en REF de una lista de documentos con saldo (`totals` de `useOpenDocuments`):
+ * `0` si no hay ninguno y `undefined` si la lista no ha llegado o no trae REF.
+ */
+export function openBalanceRef(totals: { count: number; pendingRef?: number } | undefined) {
+  if (!totals) {
+    return undefined;
+  }
+
+  return totals.pendingRef ?? (totals.count === 0 ? 0 : undefined);
+}
+
+/**
+ * `sales`, `purchases` y `payments` son la primera página del contacto: con más filas
+ * que esa página, el saldo calculado aquí queda mal. Por eso `openBalances`, cuando
+ * viene, manda sobre `receivableRef` / `payableRef`.
+ */
 export function computeContactDetailMetrics(
   contactType: ContactType,
   sales: SaleMock[],
   purchases: PurchaseMock[],
   payments: PaymentMock[],
+  openBalances: ContactOpenBalances = {},
 ): ContactDetailMetrics {
   const salesTotalRef = sumRef(sales, (row) => row.totalRef);
   const purchasesTotalRef = sumRef(purchases, (row) => row.totalRef);
@@ -77,8 +105,10 @@ export function computeContactDetailMetrics(
         ? purchasesTotalRef
         : salesTotalRef + purchasesTotalRef;
 
-  const receivableRef = Math.max(0, openSalesTotalRef - salesPaymentsRef);
-  const payableRef = Math.max(0, openPurchasesTotalRef - purchasePaymentsRef);
+  const receivableRef =
+    openBalances.receivableRef ?? Math.max(0, openSalesTotalRef - salesPaymentsRef);
+  const payableRef =
+    openBalances.payableRef ?? Math.max(0, openPurchasesTotalRef - purchasePaymentsRef);
 
   return {
     operationsLabel,

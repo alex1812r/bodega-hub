@@ -9,7 +9,13 @@ import {
   useHasPendingSettlement,
 } from "./pendingSettlementStore";
 
-const scope = { contactId: "contact-1", type: "sale" } as const;
+const session = { storeId: "store-1", userId: "user-admin" };
+const scope = { contactId: "contact-1", session, type: "sale" } as const;
+
+/** Lo que queda en `sessionStorage`: el abono junto a la sesión que lo guardó. */
+function stored(value: unknown, owner: unknown = session) {
+  return JSON.stringify({ session: owner, settlement: value });
+}
 
 function settlement(overrides: Partial<PendingSettlement> = {}): PendingSettlement {
   return {
@@ -75,8 +81,8 @@ describe("pendingSettlementStore", () => {
   it("separa por contacto y por tipo de documento", () => {
     savePendingSettlement(scope, settlement());
 
-    expect(loadPendingSettlement({ contactId: "contact-1", type: "purchase" })).toBeNull();
-    expect(loadPendingSettlement({ contactId: "contact-2", type: "sale" })).toBeNull();
+    expect(loadPendingSettlement({ ...scope, type: "purchase" })).toBeNull();
+    expect(loadPendingSettlement({ ...scope, contactId: "contact-2" })).toBeNull();
   });
 
   it("al borrarlo deja de existir", () => {
@@ -89,19 +95,22 @@ describe("pendingSettlementStore", () => {
 
   it.each([
     ["JSON ilegible", "{no es json"],
-    ["sin filas", JSON.stringify({ ...settlement(), rows: [] })],
+    ["sin filas", stored({ ...settlement(), rows: [] })],
     [
       "fila sin clave de idempotencia",
-      JSON.stringify({
+      stored({
         ...settlement(),
         rows: [{ ...settlement().rows[0], clientRequestId: "" }],
       }),
     ],
     [
       "estado desconocido",
-      JSON.stringify({ ...settlement(), rows: [{ ...settlement().rows[0], status: "otro" }] }),
+      stored({ ...settlement(), rows: [{ ...settlement().rows[0], status: "otro" }] }),
     ],
-    ["moneda desconocida", JSON.stringify({ ...settlement(), currency: "EUR" })],
+    ["moneda desconocida", stored({ ...settlement(), currency: "EUR" })],
+    ["sin la sesión que lo guardó", JSON.stringify(settlement())],
+    ["guardado por otro usuario", stored(settlement(), { storeId: "store-1", userId: "user-seller" })],
+    ["guardado en otra tienda", stored(settlement(), { storeId: "store-2", userId: "user-admin" })],
   ])("descarta un valor corrupto (%s) en vez de devolverlo", (_name, raw) => {
     savePendingSettlement(scope, settlement());
     const [key] = Object.keys(window.sessionStorage);
@@ -139,6 +148,71 @@ describe("pendingSettlementStore", () => {
     act(() => {
       clearPendingSettlement(scope);
     });
+    expect(result.current).toBe(false);
+  });
+});
+
+describe("pendingSettlementStore · PAG-F8: el abono es de la sesión que lo guardó", () => {
+  const seller = { storeId: "store-1", userId: "user-seller" };
+  const otherStore = { storeId: "store-2", userId: "user-admin" };
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it("la clave de sessionStorage lleva tienda y usuario", () => {
+    savePendingSettlement(scope, settlement());
+
+    const [key] = Object.keys(window.sessionStorage);
+
+    expect(key).toContain("store-1");
+    expect(key).toContain("user-admin");
+  });
+
+  it("otro usuario u otra tienda en la misma pestaña no ven el abono ni lo borran", () => {
+    savePendingSettlement(scope, settlement());
+
+    for (const other of [seller, otherStore, { storeId: null, userId: "user-admin" }]) {
+      expect(hasPendingSettlement({ ...scope, session: other })).toBe(false);
+      expect(loadPendingSettlement({ ...scope, session: other })).toBeNull();
+      clearPendingSettlement({ ...scope, session: other });
+    }
+
+    // Sigue ahí para quien lo guardó.
+    expect(loadPendingSettlement(scope)?.rows[0].clientRequestId).toBe("key-1");
+  });
+
+  it("sin sesión conocida no guarda, no lee y no borra nada", () => {
+    savePendingSettlement(scope, settlement());
+
+    for (const unknown of [null, undefined]) {
+      const anonymous = { ...scope, session: unknown };
+
+      expect(savePendingSettlement(anonymous, settlement())).toBe(false);
+      expect(hasPendingSettlement(anonymous)).toBe(false);
+      expect(loadPendingSettlement(anonymous)).toBeNull();
+      clearPendingSettlement(anonymous);
+    }
+
+    expect(window.sessionStorage).toHaveLength(1);
+    expect(hasPendingSettlement(scope)).toBe(true);
+  });
+
+  it("useHasPendingSettlement cambia con la sesión", () => {
+    savePendingSettlement(scope, settlement());
+
+    const { rerender, result } = renderHook(
+      ({ owner }: { owner: typeof session | null }) =>
+        useHasPendingSettlement({ ...scope, session: owner }),
+      { initialProps: { owner: null as typeof session | null } },
+    );
+
+    expect(result.current).toBe(false);
+
+    rerender({ owner: session });
+    expect(result.current).toBe(true);
+
+    rerender({ owner: seller });
     expect(result.current).toBe(false);
   });
 });

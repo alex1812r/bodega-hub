@@ -3,7 +3,6 @@ import { delay, http, HttpResponse } from "msw";
 import { expect, within } from "storybook/test";
 
 import type { OpenDocument } from "@/modules/payments/hooks/useOpenDocuments";
-import { clearPendingSettlement } from "@/modules/payments/utils/pendingSettlementStore";
 
 import { ContactBalancesTab } from "./ContactBalancesTab";
 
@@ -15,14 +14,20 @@ import { ContactBalancesTab } from "./ContactBalancesTab";
  * - "Abonar" reparte un pago entre los documentos más antiguos (`ContactSettlementModal`).
  * - "Cobrar"/"Pagar" de una fila registra un pago de ese documento (`RegisterPaymentModal`).
  * - El número enlaza al detalle con `returnTo` a `returnHref`.
+ * - Con un abono por confirmar guardado (y el modal cerrado) avisa en la sección, con
+ *   "Revisar abono" para abrirlo.
  *
  * Estas historias simulan `GET /api/payments/open-documents` con MSW.
  */
 const meta = {
-  // Un abono sin terminar de una historia no debe reaparecer en la siguiente.
+  // Un abono sin terminar de una historia no debe reaparecer en la siguiente. Se
+  // guarda por tienda y usuario: se borran los de cualquier sesión.
   beforeEach: () => {
-    clearPendingSettlement({ contactId: "cont-story", type: "sale" });
-    clearPendingSettlement({ contactId: "cont-story", type: "purchase" });
+    for (const key of Object.keys(window.sessionStorage)) {
+      if (key.startsWith("bodegahub:abono-pendiente:")) {
+        window.sessionStorage.removeItem(key);
+      }
+    }
   },
   args: {
     contactId: "cont-story",

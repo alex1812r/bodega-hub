@@ -3955,6 +3955,7 @@ components:
           type: number
           exclusiveMinimum: true
           minimum: 0
+          maximum: 1000000000000
         method:
           $ref: "#/components/schemas/PaymentMethod"
         currency:
@@ -3975,6 +3976,7 @@ components:
             amount:
               type: number
               minimum: 0
+              maximum: 1000000000000
             method:
               $ref: "#/components/schemas/PaymentMethod"
         receivedDenominations:
@@ -4124,6 +4126,7 @@ components:
           type: number
           minimum: 0
           exclusiveMinimum: true
+          maximum: 1000000000000
         bankName:
           type: string
           maxLength: 120
@@ -4166,6 +4169,7 @@ components:
         amount:
           type: number
           minimum: 0
+          maximum: 1000000000000
         method:
           $ref: "#/components/schemas/PaymentMethod"
         bankName:

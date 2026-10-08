@@ -1,6 +1,7 @@
 import { VENEZUELAN_BANKS, formatBankLabel } from "@/shared/venezuela/banks";
 
 import {
+  PAYMENT_AMOUNT_MAX,
   PAYMENT_TEXT_LIMITS,
   changeSchema,
   salePaymentLineSchema,
@@ -96,5 +97,33 @@ describe("paymentSchemas: texto libre de un cobro (PAG-F5)", () => {
       phone: 30,
       referenceCode: 100,
     });
+  });
+});
+
+describe("paymentSchemas: tope del monto (PAG-F8)", () => {
+  const TOO_BIG = "El monto no puede superar 1.000.000.000.000.";
+
+  it("acepta el tope y rechaza un monto mayor con un mensaje en espanol", () => {
+    expect(PAYMENT_AMOUNT_MAX).toBe(1_000_000_000_000);
+    expect(issuesOf({ amount: PAYMENT_AMOUNT_MAX, method: "efectivo_ves" })).toEqual([]);
+
+    for (const amount of [PAYMENT_AMOUNT_MAX + 1, 1e308]) {
+      expect(issuesOf({ amount, method: "efectivo_ves" })).toEqual([
+        { message: TOO_BIG, path: ["amount"] },
+      ]);
+    }
+  });
+
+  it("el vuelto tiene el mismo tope", () => {
+    expect(
+      changeSchema.safeParse({ amount: PAYMENT_AMOUNT_MAX, method: "efectivo_ves" }).success,
+    ).toBe(true);
+    expect(
+      issuesOf({
+        amount: 10,
+        change: { amount: 1e308, method: "efectivo_ves" },
+        method: "efectivo_ves",
+      }),
+    ).toEqual([{ message: TOO_BIG, path: ["change", "amount"] }]);
   });
 });

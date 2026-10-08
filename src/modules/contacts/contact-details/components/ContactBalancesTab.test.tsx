@@ -16,6 +16,16 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 
+type MockProfile = { storeId: string | null; user: { id: string } };
+
+const ADMIN_PROFILE: MockProfile = { storeId: "store-1", user: { id: "user-admin" } };
+// PAG-F8: el abono por confirmar se guarda por tienda y usuario de la sesión.
+const mockAuth: { profile: MockProfile } = { profile: ADMIN_PROFILE };
+
+jest.mock("../../../../shared/auth/usePermission", () => ({
+  usePermission: () => ({ profile: mockAuth.profile }),
+}));
+
 function jsonResponse(payload: unknown, status = 200) {
   return {
     headers: { get: () => "application/json" },
@@ -126,6 +136,7 @@ describe("ContactBalancesTab", () => {
     replies = { purchase: { items: PURCHASES }, sale: { items: SALES } };
     cardsLayout = false;
     lostPostResponses = [];
+    mockAuth.profile = ADMIN_PROFILE;
     window.sessionStorage.clear();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -256,6 +267,21 @@ describe("ContactBalancesTab", () => {
         </QueryClientProvider>,
       ),
     };
+  }
+
+  /**
+   * PAG-F8: tras cada envío las acciones del pie del modal quedan deshabilitadas
+   * ~400 ms. Como haría el usuario, se pulsa el botón cuando ya está habilitado.
+   */
+  async function press(
+    dialog: ReturnType<typeof within>,
+    user: ReturnType<typeof userEvent.setup>,
+    name: string,
+  ) {
+    const button = await dialog.findByRole("button", { name });
+
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
   }
 
   function openDocumentRequests() {
@@ -475,7 +501,7 @@ describe("ContactBalancesTab", () => {
       ).toBeInTheDocument();
 
       // Al cerrarlo, sin saldos no queda botón para abonar.
-      await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+      await press(dialog, user, "Cerrar");
       await waitFor(() =>
         expect(screen.queryByRole("dialog", { name: "Abonar" })).not.toBeInTheDocument(),
       );
@@ -508,7 +534,7 @@ describe("ContactBalancesTab", () => {
     // Saldos ya muestra el saldo real: el pago entró y la venta salió de la lista.
     expect(await region.findByText("Sin saldos pendientes")).toBeInTheDocument();
 
-    await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+    await press(dialog, user, "Cerrar");
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Abonar" })).not.toBeInTheDocument(),
     );
@@ -517,7 +543,7 @@ describe("ContactBalancesTab", () => {
     dialog = within(await screen.findByRole("dialog", { name: "Abonar" }));
 
     expect(dialog.queryByLabelText("Monto")).not.toBeInTheDocument();
-    await user.click(dialog.getByRole("button", { name: "Reintentar pendientes" }));
+    await press(dialog, user, "Reintentar pendientes");
     expect(await dialog.findByText(/Abono registrado: 1 pago por/)).toBeInTheDocument();
 
     const keys = fetchMock.mock.calls
@@ -528,7 +554,7 @@ describe("ContactBalancesTab", () => {
     expect(keys[1]).toBe(keys[0]);
 
     // Resuelto y sin saldos: al cerrar ya no queda nada que abonar.
-    await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+    await press(dialog, user, "Cerrar");
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Abonar" })).not.toBeInTheDocument(),
     );
@@ -563,6 +589,88 @@ describe("ContactBalancesTab", () => {
         name: "Reintentar pendientes",
       }),
     ).toBeEnabled();
+  });
+
+  describe("PAG-F8: aviso de abono por confirmar", () => {
+    const NOTICE = /Hay un abono por confirmar/;
+
+    async function leaveUnconfirmedSettlement(user: ReturnType<typeof userEvent.setup>) {
+      replies.sale = { items: [SALES[1]] };
+      lostPostResponses = [500];
+
+      const view = renderTab({ sections: ["sale"] });
+
+      await user.click(await screen.findByRole("button", { name: "Abonar" }));
+
+      const dialog = within(await screen.findByRole("dialog", { name: "Abonar" }));
+      const complete = await dialog.findByRole("button", { name: "Completar total pendiente" });
+
+      await waitFor(() => expect(complete).toBeEnabled());
+      await user.click(complete);
+      await user.click(dialog.getByRole("button", { name: "Ver reparto" }));
+      await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+      await dialog.findByRole("alert");
+
+      return { dialog, view };
+    }
+
+    it("sin abono por confirmar no hay aviso", async () => {
+      renderTab({ sections: ["sale"] });
+
+      expect(await screen.findByRole("link", { name: "F-0001" })).toBeInTheDocument();
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    });
+
+    it("tras recargar avisa en la pestaña y su botón abre el modal en ese abono; resuelto, el aviso se va", async () => {
+      const user = userEvent.setup();
+      const { view } = await leaveUnconfirmedSettlement(user);
+
+      view.unmount();
+      renderTab({ sections: ["sale"] });
+
+      const region = within(screen.getByRole("region", { name: "Por cobrar" }));
+      const notice = await region.findByText(NOTICE);
+
+      expect(notice.closest('[role="status"]')).not.toBeNull();
+      await user.click(region.getByRole("button", { name: "Revisar abono" }));
+
+      const dialog = within(await screen.findByRole("dialog", { name: "Abonar" }));
+
+      expect(dialog.queryByLabelText("Monto")).not.toBeInTheDocument();
+      // Con el modal abierto el aviso sobra.
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+
+      await press(dialog, user, "Reintentar pendientes");
+      expect(await dialog.findByText(/Abono registrado: 1 pago por/)).toBeInTheDocument();
+      await press(dialog, user, "Cerrar");
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Abonar" })).not.toBeInTheDocument(),
+      );
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    });
+
+    it("al cerrar el modal con el abono por confirmar el aviso aparece sin recargar", async () => {
+      const user = userEvent.setup();
+      const { dialog } = await leaveUnconfirmedSettlement(user);
+
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+      await press(dialog, user, "Cerrar");
+
+      expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    });
+
+    it("otro usuario en la misma pestaña no ve el aviso ni el abono", async () => {
+      const user = userEvent.setup();
+      const { view } = await leaveUnconfirmedSettlement(user);
+
+      view.unmount();
+      mockAuth.profile = { storeId: "store-1", user: { id: "user-seller" } };
+      renderTab({ sections: ["sale"] });
+
+      expect(await screen.findByText("Sin saldos pendientes")).toBeInTheDocument();
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Abonar" })).not.toBeInTheDocument();
+    });
   });
 
   it("Cobrar de una fila: si el documento sale de la lista con el modal abierto, el modal no se desmonta", async () => {

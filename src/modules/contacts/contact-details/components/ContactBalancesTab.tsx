@@ -12,7 +12,10 @@ import {
   useOpenDocuments,
 } from "@/modules/payments/hooks/useOpenDocuments";
 import { formatPurchaseNumberDisplay } from "@/modules/payments/payments-list/utils/paymentReference";
-import { useHasPendingSettlement } from "@/modules/payments/utils/pendingSettlementStore";
+import {
+  useHasPendingSettlement,
+  usePendingSettlementSession,
+} from "@/modules/payments/utils/pendingSettlementStore";
 import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
 import type { Permission, UserRole } from "@/shared/auth/permissions";
 import { Button } from "@/shared/components/Button";
@@ -115,7 +118,8 @@ function ContactBalancesSection({
   const copy = sectionCopy[type];
   const [payingDocumentId, setPayingDocumentId] = useState<string>();
   const [isSettlementOpen, setIsSettlementOpen] = useState(false);
-  const hasPendingSettlement = useHasPendingSettlement({ contactId, type });
+  const session = usePendingSettlementSession();
+  const hasPendingSettlement = useHasPendingSettlement({ contactId, session, type });
   const openDocuments = useOpenDocuments(
     { contactId, limit: MAX_PAGE_LIMIT, type },
     { enabled: Boolean(contactId) },
@@ -204,6 +208,8 @@ function ContactBalancesSection({
             contactId={contactId}
             contactName={contactName}
             onOpenChange={setIsSettlementOpen}
+            // Controlado además de con botón propio: el aviso de abajo también lo abre.
+            open={isSettlementOpen}
             trigger={
               <Button className="w-full sm:w-auto" size="sm" type="button">
                 Abonar
@@ -213,6 +219,27 @@ function ContactBalancesSection({
           />
         ) : null}
       </header>
+
+      {/* Sin esto nada en la página dice que quedó un abono a medias hasta pulsar
+          "Abonar" (p. ej. tras recargar). Con el modal abierto sobra. */}
+      {hasPendingSettlement && !isSettlementOpen ? (
+        <div
+          className="mx-4 mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 sm:mx-6 dark:bg-amber-950 dark:text-amber-200"
+          role="status"
+        >
+          <p className="min-w-0">
+            Hay un abono por confirmar. Revísalo antes de registrar otro pago.
+          </p>
+          <Button
+            onClick={() => setIsSettlementOpen(true)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Revisar abono
+          </Button>
+        </div>
+      ) : null}
 
       {isIncomplete ? (
         <p

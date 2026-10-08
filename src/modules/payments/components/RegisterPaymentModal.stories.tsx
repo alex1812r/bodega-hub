@@ -17,7 +17,9 @@ import { RegisterPaymentModal, type RegisterPaymentModalProps } from "./Register
  *   con el saldo que queda.
  * - Cada envío lleva una clave de idempotencia. Tras un fallo de red, un tiempo
  *   límite o un 5xx el modal queda "por confirmar": campos bloqueados con lo enviado
- *   y "Reintentar", que reenvía lo mismo con la misma clave y no duplica el pago.
+ *   y "Reintentar", que reenvía lo mismo con la misma clave y no duplica el pago. Si
+ *   el reintento vuelve a quedar sin confirmar aparece "Descartar intento".
+ * - Tras cada envío la acción principal tarda ~400 ms en aceptar clics (doble clic).
  * - Con un pago en vuelo o por confirmar, un guardia pregunta antes de salir.
  *
  * Estas historias simulan `/api/sales/:id`, `/api/purchases/:id` y `/api/payments`
@@ -266,7 +268,36 @@ export const ServerError: Story = {
       ),
     ).toBeInTheDocument();
     await expect(dialog.getByLabelText("Monto")).toBeDisabled();
-    await expect(dialog.getByRole("button", { name: "Reintentar" })).toBeEnabled();
+    // Las acciones del pie tardan un instante en aceptar clics tras el envío.
+    await waitFor(() => expect(dialog.getByRole("button", { name: "Reintentar" })).toBeEnabled());
+    // Antes del primer reintento fallido no hay forma de descartar.
+    await expect(dialog.queryByRole("button", { name: "Descartar intento" })).not.toBeInTheDocument();
+  },
+};
+
+export const StillUnconfirmedAfterRetry: Story = {
+  name: "Por confirmar tras reintentar: se puede descartar",
+  parameters: ServerError.parameters,
+  render: () => <ModalDemo purchaseId={purchase.id} />,
+  play: async ({ canvasElement, userEvent }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = within(await body.findByRole("dialog"));
+
+    await userEvent.click(await dialog.findByRole("button", { name: "Completar saldo" }));
+    await userEvent.click(dialog.getByRole("button", { name: "Registrar pago" }));
+
+    const retry = await dialog.findByRole("button", { name: "Reintentar" });
+
+    await waitFor(() => expect(retry).toBeEnabled());
+    await userEvent.click(retry);
+
+    const discard = await dialog.findByRole("button", { name: "Descartar intento" });
+
+    await waitFor(() => expect(discard).toBeEnabled());
+    await userEvent.click(discard);
+    await expect(await body.findByRole("dialog", { name: "Descartar intento" })).toHaveTextContent(
+      "No sabemos si se registró el pago",
+    );
   },
 };
 

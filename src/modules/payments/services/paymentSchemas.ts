@@ -28,6 +28,15 @@ export const PAYMENT_TEXT_LIMITS = {
 } as const;
 
 /**
+ * Tope de un monto (y de un vuelto), en la moneda que sea. `register_payment` ya
+ * rechaza lo que supere el saldo; este tope corta antes los valores absurdos
+ * (`1e308`), que en el mock dejaban el documento con `paidVes` infinito.
+ */
+export const PAYMENT_AMOUNT_MAX = 1_000_000_000_000;
+
+const AMOUNT_TOO_BIG_MESSAGE = "El monto no puede superar 1.000.000.000.000.";
+
+/**
  * Caracteres de control que no se imprimen (NUL incluido, que Postgres no admite en
  * `text`). Tabulador, salto de linea y retorno de carro si se aceptan.
  */
@@ -64,7 +73,7 @@ export const denominationsSchema = z.object({
  * opcionales incluso en metodos bancarios (spec cobro-pos-billetes §4).
  */
 export const changeSchema = z.object({
-  amount: z.number().nonnegative(),
+  amount: z.number().nonnegative().max(PAYMENT_AMOUNT_MAX, AMOUNT_TOO_BIG_MESSAGE),
   bankName: paymentText("bankName").optional(),
   method: paymentMethodSchema.optional(),
   phone: paymentText("phone").optional(),
@@ -73,7 +82,7 @@ export const changeSchema = z.object({
 
 /** Campos de una linea de cobro, sin el documento al que pertenece. */
 export const paymentLineFields = {
-  amount: z.number().positive(),
+  amount: z.number().positive().max(PAYMENT_AMOUNT_MAX, AMOUNT_TOO_BIG_MESSAGE),
   bankName: paymentText("bankName").optional(),
   change: changeSchema.optional(),
   changeDenominations: denominationsSchema.nullish(),

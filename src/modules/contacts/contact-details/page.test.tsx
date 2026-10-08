@@ -75,11 +75,19 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
   const fetchMock = jest.fn();
   const originalMatchMedia = window.matchMedia;
   let contactType: "ambos" | "cliente" | "proveedor";
+  /** Primera página de ventas/compras del contacto, como la devuelve `/api/contacts/:id/...`. */
+  let contactSales: unknown[];
+  let contactPurchases: unknown[];
+  /** Si está puesto, la lista de documentos con saldo de ese tipo viene vacía. */
+  let settledTypes: string[];
 
   beforeEach(() => {
     mockAuth.permissions = ADMIN_PERMISSIONS;
     mockAuth.role = "admin";
     contactType = "ambos";
+    contactSales = [];
+    contactPurchases = [];
+    settledTypes = [];
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: (query: string) => ({
@@ -101,6 +109,12 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
         const type = new URL(href, "http://localhost").searchParams.get("type");
         const items = type === "purchase" ? [PURCHASE_DOCUMENT] : [SALE_DOCUMENT];
 
+        if (settledTypes.includes(String(type))) {
+          return jsonResponse({
+            data: { ...page([]), totals: { count: 0, pendingVes: 0, truncated: false } },
+          });
+        }
+
         return jsonResponse({
           data: {
             ...page(items),
@@ -112,6 +126,14 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
             },
           },
         });
+      }
+
+      if (/\/api\/contacts\/[^/]+\/sales/.test(href)) {
+        return jsonResponse({ data: page(contactSales) });
+      }
+
+      if (/\/api\/contacts\/[^/]+\/purchases/.test(href)) {
+        return jsonResponse({ data: page(contactPurchases) });
       }
 
       if (/\/api\/contacts\/[^/]+\/(activity|sales|purchases|payments)/.test(href)) {
@@ -195,11 +217,76 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
     return user;
   }
 
-  it("no pide documentos con saldo hasta abrir la pestaña", async () => {
-    renderPage();
+  /** Valor de una tarjeta de métrica de la cabecera, por su etiqueta. */
+  function metricCard(label: string) {
+    return screen.getByText(label).parentElement?.parentElement as HTMLElement;
+  }
 
-    expect(await screen.findByRole("tab", { name: "Saldos" })).toBeInTheDocument();
-    expect(openDocumentTypes()).toEqual([]);
+  describe("PAG-F8 N2: Por cobrar / Por pagar de la cabecera", () => {
+    beforeEach(() => {
+      // Ventas y compras abiertas del contacto; sus pagos no caben en la primera página
+      // (10), así que la cuenta de siempre daría 628,75 por cobrar y 52,40 por pagar.
+      contactSales = [{ id: "sale-old", status: "pendiente_pago", totalRef: 628.75 }];
+      contactPurchases = [{ id: "purchase-old", status: "recibido", totalRef: 52.4 }];
+    });
+
+    it("salen de los mismos documentos con saldo que la pestaña Saldos, pedidos al cargar", async () => {
+      renderPage();
+
+      await waitFor(() => expect(metricCard("Por Cobrar (REF)")).toHaveTextContent("ref 10.00"));
+      expect(metricCard("Por Pagar (REF)")).toHaveTextContent("ref 30.00");
+      expect(screen.queryByText("ref 628.75")).not.toBeInTheDocument();
+      // Las demás métricas siguen saliendo de ventas, compras y pagos del contacto.
+      expect(metricCard("Total Operaciones (REF)")).toHaveTextContent("ref 681.15");
+
+      // Misma consulta que la pestaña (contacto, tipo y límite): una caché, un refresco.
+      const queries = requests("/api/payments/open-documents").map((url) => {
+        const params = new URL(url, "http://localhost").searchParams;
+
+        return [params.get("contactId"), params.get("type"), params.get("limit")].join("|");
+      });
+
+      expect([...queries].sort()).toEqual(["cont-internal|purchase|100", "cont-internal|sale|100"]);
+
+      await openBalancesTab();
+
+      const receivable = within(screen.getByRole("region", { name: "Por cobrar" }));
+
+      expect(await receivable.findByText(/ref 10\.00 ·/)).toBeInTheDocument();
+    });
+
+    it("tras abonar todo, la cabecera queda en cero igual que Saldos", async () => {
+      settledTypes = ["sale", "purchase"];
+      renderPage();
+
+      await waitFor(() =>
+        expect(metricCard("Por Cobrar (REF)")).toHaveTextContent("Sin saldo por cobrar"),
+      );
+      expect(metricCard("Por Cobrar (REF)")).toHaveTextContent("ref 0.00");
+      expect(metricCard("Por Pagar (REF)")).toHaveTextContent("ref 0.00");
+      expect(metricCard("Por Pagar (REF)")).toHaveTextContent("Sin saldo por pagar");
+    });
+
+    it("sin permiso para una sección de Saldos, esa métrica conserva el cálculo de siempre", async () => {
+      // Contador sin payments.manage: ve compras pero no tiene pestaña Saldos.
+      mockAuth.role = "contador";
+      mockAuth.permissions = ["contacts.view", "payments.view", "purchases.view"];
+      renderPage();
+
+      await waitFor(() => expect(metricCard("Por Pagar (REF)")).toHaveTextContent("ref 52.40"));
+      expect(metricCard("Por Cobrar (REF)")).toHaveTextContent("ref 628.75");
+      expect(openDocumentTypes()).toEqual([]);
+    });
+
+    it("vendedor: por cobrar sale de Saldos y no se piden compras", async () => {
+      mockAuth.role = "vendedor";
+      mockAuth.permissions = ["contacts.view", "sales.create"];
+      renderPage();
+
+      await waitFor(() => expect(metricCard("Por Cobrar (REF)")).toHaveTextContent("ref 10.00"));
+      expect(screen.queryByText("Por Pagar (REF)")).not.toBeInTheDocument();
+      expect(openDocumentTypes()).toEqual(["sale"]);
+    });
   });
 
   it("contacto de ambos tipos: por cobrar y por pagar, con returnTo al contacto", async () => {

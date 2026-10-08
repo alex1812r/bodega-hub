@@ -1,4 +1,4 @@
-import { computeContactDetailMetrics } from "./computeContactDetailMetrics";
+import { computeContactDetailMetrics, openBalanceRef } from "./computeContactDetailMetrics";
 
 describe("computeContactDetailMetrics", () => {
   it("calcula ventas, pagos y saldo por cobrar para clientes", () => {
@@ -121,5 +121,42 @@ describe("computeContactDetailMetrics", () => {
 
       expect(metrics.payableRef).toBeCloseTo(52.4, 2);
     });
+  });
+});
+
+describe("PAG-F8 N2: por cobrar / por pagar con los totales de la pestaña Saldos", () => {
+  // Primera página (10) de un contacto con más pagos: faltan los que saldaron la venta.
+  const sales = [{ id: "s1", status: "pendiente_pago", totalRef: 628.75 } as never];
+  const purchases = [{ id: "p1", status: "recibido", totalRef: 52.4 } as never];
+
+  it("usa los saldos de los documentos abiertos en vez de la cuenta con la primera página", () => {
+    const metrics = computeContactDetailMetrics("ambos", sales, purchases, [], {
+      payableRef: 0,
+      receivableRef: 0,
+    });
+
+    expect(metrics.receivableRef).toBe(0);
+    expect(metrics.payableRef).toBe(0);
+    // Las demás métricas no cambian.
+    expect(metrics.operationsTotalRef).toBeCloseTo(681.15);
+    expect(metrics.paymentsTotalRef).toBe(0);
+  });
+
+  it("sin saldo conocido para una sección conserva el cálculo de siempre para esa métrica", () => {
+    const metrics = computeContactDetailMetrics("ambos", sales, purchases, [], {
+      receivableRef: 60,
+    });
+
+    expect(metrics.receivableRef).toBe(60);
+    expect(metrics.payableRef).toBe(52.4);
+    expect(computeContactDetailMetrics("ambos", sales, purchases, []).receivableRef).toBe(628.75);
+  });
+
+  it("openBalanceRef: el total en REF de la lista; 0 si no hay documentos; undefined si no se sabe", () => {
+    expect(openBalanceRef(undefined)).toBeUndefined();
+    expect(openBalanceRef({ count: 2, pendingRef: 26.62 })).toBe(26.62);
+    expect(openBalanceRef({ count: 0 })).toBe(0);
+    // Documentos sin equivalente en REF: no se inventa el saldo.
+    expect(openBalanceRef({ count: 1 })).toBeUndefined();
   });
 });

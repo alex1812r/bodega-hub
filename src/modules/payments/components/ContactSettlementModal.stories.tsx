@@ -1,11 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { delay, http, HttpResponse } from "msw";
 import { useState } from "react";
-import { expect, within } from "storybook/test";
+import { expect, waitFor, within } from "storybook/test";
 
 import { Button } from "@/shared/components/Button";
-
-import { clearPendingSettlement } from "../utils/pendingSettlementStore";
 
 import {
   ContactSettlementModal,
@@ -24,7 +22,9 @@ import {
  *   o continuar con los documentos que no se enviaron.
  * - Tras un fallo incierto (red, 5xx) el abono queda "por confirmar": solo se puede
  *   reintentar, y sigue ahí al cerrar y volver a abrir (y al recargar: se guarda en
- *   `sessionStorage` por contacto y tipo).
+ *   `sessionStorage` por tienda, usuario, contacto y tipo). Si el reintento vuelve a
+ *   quedar sin confirmar aparece "Descartar abono por confirmar", con confirmación.
+ * - Tras cada envío las acciones del pie tardan ~400 ms en aceptar clics (doble clic).
  * - Un monto mayor que lo abonable no se confirma: no hay vuelto ni sobrepago.
  * - `type="purchase"`: montarlo solo si el usuario puede pagar compras (admin, contador).
  *
@@ -32,10 +32,14 @@ import {
  * `/api/payments` con MSW y abren el modal por código.
  */
 const meta = {
-  // Un abono sin terminar de una historia no debe reaparecer en la siguiente.
+  // Un abono sin terminar de una historia no debe reaparecer en la siguiente. Se
+  // guarda por tienda y usuario: se borran los de cualquier sesión.
   beforeEach: () => {
-    clearPendingSettlement({ contactId: "contact-story", type: "sale" });
-    clearPendingSettlement({ contactId: "contact-story", type: "purchase" });
+    for (const key of Object.keys(window.sessionStorage)) {
+      if (key.startsWith("bodegahub:abono-pendiente:")) {
+        window.sessionStorage.removeItem(key);
+      }
+    }
   },
   component: ContactSettlementModal,
   tags: ["ai-generated"],
@@ -243,7 +247,10 @@ export const StoppedByServerError: Story = {
     await expect(
       await dialog.findByText("Se registró 1 de 3 pagos.", undefined, { timeout: 5000 }),
     ).toBeInTheDocument();
-    await expect(dialog.getByRole("button", { name: "Reintentar pendientes" })).toBeEnabled();
+    // Las acciones del pie tardan un instante en aceptar clics tras el envío.
+    await waitFor(() =>
+      expect(dialog.getByRole("button", { name: "Reintentar pendientes" })).toBeEnabled(),
+    );
     // Por confirmar: ni editar ni continuar, solo reintentar con la misma clave.
     await expect(dialog.queryByRole("button", { name: "Volver a editar" })).not.toBeInTheDocument();
     await expect(
@@ -277,9 +284,60 @@ export const StoppedByRejection: Story = {
     );
     await userEvent.click(dialog.getByRole("button", { name: "Ver reparto" }));
     await userEvent.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+    const edit = await dialog.findByRole("button", { name: "Volver a editar" }, { timeout: 5000 });
+
+    await waitFor(() => expect(edit).toBeEnabled());
+  },
+};
+
+export const StillUnconfirmedAfterRetry: Story = {
+  name: "Por confirmar tras reintentar: se puede descartar",
+  parameters: {
+    msw: {
+      handlers: [
+        ...baseHandlers,
+        listHandler(sales),
+        http.post("/api/payments", async () => {
+          await delay(300);
+
+          return HttpResponse.json(
+            { error: { code: "STORY", message: "No se pudo registrar el pago." } },
+            { status: 503 },
+          );
+        }),
+      ],
+    },
+  },
+  render: () => <ModalDemo contactName="María Pérez" type="sale" />,
+  play: async ({ canvasElement, userEvent }) => {
+    const dialog = await findDialog(canvasElement);
+
+    await userEvent.type(await dialog.findByLabelText("Monto"), "1000");
+    await userEvent.click(dialog.getByRole("button", { name: "Ver reparto" }));
+    await userEvent.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+
+    const retry = await dialog.findByRole("button", { name: "Reintentar pendientes" });
+
+    // Antes del primer reintento fallido no hay forma de descartar.
+    await waitFor(() => expect(retry).toBeEnabled());
     await expect(
-      await dialog.findByRole("button", { name: "Volver a editar" }, { timeout: 5000 }),
-    ).toBeEnabled();
+      dialog.queryByRole("button", { name: "Descartar abono por confirmar" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(retry);
+
+    const discard = await dialog.findByRole(
+      "button",
+      { name: "Descartar abono por confirmar" },
+      { timeout: 5000 },
+    );
+
+    await waitFor(() => expect(discard).toBeEnabled());
+    await userEvent.click(discard);
+    await expect(
+      await within(canvasElement.ownerDocument.body).findByRole("dialog", {
+        name: "Descartar abono por confirmar",
+      }),
+    ).toHaveTextContent("Venta F-000310");
   },
 };
 

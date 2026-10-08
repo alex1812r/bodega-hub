@@ -9,6 +9,7 @@ import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import { ClientApiError } from "@/shared/api/apiFetch";
 import { Badge } from "@/shared/components/Badge";
 import { Button } from "@/shared/components/Button";
+import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { Modal } from "@/shared/components/Modal";
 import { ProcessGuard } from "@/shared/components/ProcessGuard";
@@ -46,6 +47,7 @@ import {
   clearPendingSettlement,
   loadPendingSettlement,
   savePendingSettlement,
+  usePendingSettlementSession,
 } from "../utils/pendingSettlementStore";
 
 /**
@@ -64,11 +66,20 @@ import {
  * **Abono por confirmar.** Si un pago falla sin que se sepa si se registró (red, 5xx,
  * 408, 409), el abono queda "por confirmar": el modal no deja editar ni empezar otro
  * abono; solo "Reintentar pendientes", que reenvía cada pago con su misma clave de
- * idempotencia hasta que quede registrado o el servidor lo rechace (4xx). Ese abono
- * sobrevive a cerrar el modal y, guardado en `sessionStorage` por contacto y tipo
- * (`pendingSettlementStore`), a recargar o navegar: al abrir "Abonar" de nuevo se
- * muestra directamente. Quien monte el modal de forma condicional debe mantenerlo
- * montado mientras `useHasPendingSettlement({ contactId, type })` sea `true`.
+ * idempotencia hasta que quede registrado o el servidor lo rechace (4xx; un 409 al
+ * REINTENTAR también cuenta como rechazo: repetir lo mismo con la misma clave no
+ * debería dar conflicto). Ese abono sobrevive a cerrar el modal y, guardado en
+ * `sessionStorage` por tienda, usuario, contacto y tipo (`pendingSettlementStore`), a
+ * recargar o navegar: al abrir "Abonar" de nuevo se muestra directamente. Quien monte
+ * el modal de forma condicional debe mantenerlo montado mientras
+ * `useHasPendingSettlement({ contactId, session, type })` sea `true`.
+ *
+ * Si un reintento vuelve a quedar sin confirmar aparece "Descartar abono por
+ * confirmar": pide confirmación (`ConfirmActionModal`), borra lo guardado, refresca
+ * saldos y vuelve al formulario. No se ofrece antes del primer reintento fallido.
+ *
+ * Tras terminar un envío las acciones del pie quedan deshabilitadas ~400 ms: el
+ * segundo clic de un doble clic no cae en el botón que ocupa el sitio del anterior.
  *
  * Tras un rechazo definitivo (4xx) se puede reintentar, continuar con los documentos
  * que no se enviaron o volver a editar: el reparto se recalcula con los saldos recién
@@ -153,6 +164,8 @@ type RunRow = {
   clientRequestId: string;
   error?: Error;
   payment?: PaymentDetail;
+  /** Ya se reintentó y siguió sin saberse si entró: se ofrece descartar el abono. */
+  retriedUncertain?: boolean;
   status: RowStatus;
   /** El fallo no dice si el pago se registró (red, 5xx, 408, 409). */
   uncertain?: boolean;
@@ -216,6 +229,9 @@ function isDefinitiveRejection(error: unknown) {
   );
 }
 
+/** Tras terminar un envío, el pie ignora clics este lapso (segundo clic de un doble clic). */
+const ACTION_COOLDOWN_MS = 400;
+
 const CONNECTION_ERROR_MESSAGE = "No se pudo conectar con el servidor.";
 const UNCERTAIN_MESSAGE =
   "No pudimos confirmar si este pago se registró. Reintenta: si ya entró, no se duplicará.";
@@ -277,6 +293,7 @@ function toPendingSettlement(run: Run): PendingSettlement {
         },
         clientRequestId: row.clientRequestId,
         errorMessage: row.error?.message,
+        retriedUncertain: row.retriedUncertain,
         status: row.status === "registering" ? "failed" : row.status,
         uncertain: inFlight ? true : row.uncertain,
       };
@@ -298,6 +315,7 @@ function fromPendingSettlement(settlement: PendingSettlement | null): Run | null
       allocation: row.allocation,
       clientRequestId: row.clientRequestId,
       error: row.errorMessage ? new Error(row.errorMessage) : undefined,
+      retriedUncertain: row.retriedUncertain,
       status: row.status,
       uncertain: row.uncertain,
     })),
@@ -392,10 +410,13 @@ export function ContactSettlementModal({
   const [internalOpen, setInternalOpen] = useState(false);
   const open = isControlled ? controlledOpen : internalOpen;
   const [renderedOpen, setRenderedOpen] = useState(open);
+  // El abono guardado es de la sesión (tienda y usuario) que lo dejó.
+  const session = usePendingSettlementSession();
   // Un abono que quedó sin terminar (recarga, navegación) se retoma donde estaba.
   const [restoredRun] = useState(() =>
-    fromPendingSettlement(loadPendingSettlement({ contactId, type })),
+    fromPendingSettlement(loadPendingSettlement({ contactId, session, type })),
   );
+  const [restoredSession, setRestoredSession] = useState(session);
   const [step, setStep] = useState<Step>(restoredRun ? "run" : "form");
   const [storedValues, setValues] = useState<PaymentFormValues>(() =>
     createEmptyPaymentFormValues(),
@@ -403,6 +424,9 @@ export function ContactSettlementModal({
   const [showErrors, setShowErrors] = useState(false);
   const [run, setRun] = useState<Run | null>(restoredRun);
   const [isRunning, setIsRunning] = useState(false);
+  const [isCoolingDown, setIsCoolingDown] = useState(false);
+  const cooldownTimerRef = useRef<number | undefined>(undefined);
+  const [isDiscardOpen, setIsDiscardOpen] = useState(false);
   // Candado contra reentrada: `isRunning` no cambia hasta el siguiente render y dos
   // clics en el mismo tick arrancarían dos secuencias.
   const runLockRef = useRef(false);
@@ -501,17 +525,36 @@ export function ContactSettlementModal({
   const failedRows = run?.rows.filter((row) => row.status === "failed") ?? [];
   const unsentRows = run?.rows.filter((row) => row.status === "pending") ?? [];
   const isSettled = run !== null && registeredRows.length === run.rows.length;
-  const hasUncertainRow = failedRows.some(isUncertainRow);
+  const uncertainRows = failedRows.filter(isUncertainRow);
+  const hasUncertainRow = uncertainRows.length > 0;
   // Por confirmar: algún pago pudo haberse registrado. Solo cabe reenviarlo igual.
   const needsConfirmation = !isSettled && hasUncertainRow;
   // La secuencia se cortó (el modal se desmontó) antes de enviar todos los pagos.
   const isInterrupted =
     !isRunning && !isSettled && failedRows.length === 0 && unsentRows.length > 0;
 
+  // Salida explícita, solo cuando un reintento ya volvió a quedar sin confirmar.
+  const canDiscard = needsConfirmation && uncertainRows.some((row) => row.retriedUncertain);
+
+  // La sesión llegó después de montar: se retoma lo que esa sesión dejó guardado.
+  if (restoredSession !== session) {
+    setRestoredSession(session);
+
+    if (run === null && !isRunning) {
+      const restored = fromPendingSettlement(loadPendingSettlement({ contactId, session, type }));
+
+      if (restored) {
+        setRun(restored);
+        setStep("run");
+      }
+    }
+  }
+
   // Cada cierre deja el modal en el paso 1 y limpio, salvo con un abono por confirmar:
   // ese se conserva y la siguiente apertura lo muestra directamente.
   if (renderedOpen !== open) {
     setRenderedOpen(open);
+    setIsDiscardOpen(false);
 
     if (open) {
       setStaleDocumentsAt(openDocuments.dataUpdatedAt);
@@ -532,6 +575,7 @@ export function ContactSettlementModal({
 
     return () => {
       mountedRef.current = false;
+      window.clearTimeout(cooldownTimerRef.current);
     };
   }, []);
 
@@ -546,9 +590,9 @@ export function ContactSettlementModal({
   // Un abono descartado (cerrar o editar sin nada por confirmar) deja de estar guardado.
   useEffect(() => {
     if (run === null && !runLockRef.current) {
-      clearPendingSettlement({ contactId, type });
+      clearPendingSettlement({ contactId, session, type });
     }
-  }, [contactId, run, type]);
+  }, [contactId, run, session, type]);
 
   /** El saldo pudo cambiar: documentos con saldo y pagos, el contacto y sus documentos. */
   function invalidateBalances() {
@@ -569,7 +613,7 @@ export function ContactSettlementModal({
     runLockRef.current = true;
     setIsRunning(true);
 
-    const scope = { contactId, type };
+    const scope = { contactId, session, type };
     const rows = startRun.rows.map((row) => ({ ...row }));
     // Cada cambio se guarda además de pintarse: las claves sobreviven a una recarga y a
     // que el modal se desmonte con la secuencia en marcha.
@@ -597,6 +641,11 @@ export function ContactSettlementModal({
           break;
         }
 
+        // Reenvío de un pago que ya salió con esta misma clave y este mismo contenido
+        // (incierto o rechazado), y si además seguía sin saberse si había entrado.
+        const isRetry = row.status === "failed";
+        const wasUncertain = isUncertainRow(row);
+
         row.status = "registering";
         row.error = undefined;
         row.uncertain = undefined;
@@ -612,11 +661,18 @@ export function ContactSettlementModal({
               : { saleId: row.allocation.document.id }),
           });
           row.status = "registered";
+          row.retriedUncertain = undefined;
           publish();
         } catch (error) {
+          // Un 409 al repetir lo mismo con la misma clave no debería darse: se trata como
+          // rechazo definitivo para no dejar el abono atascado en esa clave.
+          const isRetryConflict =
+            isRetry && error instanceof ClientApiError && error.status === 409;
+
           row.status = "failed";
           row.error = toRowError(error);
-          row.uncertain = !isDefinitiveRejection(error);
+          row.uncertain = !isDefinitiveRejection(error) && !isRetryConflict;
+          row.retriedUncertain = row.uncertain && wasUncertain ? true : undefined;
           publish();
           // Incierto o rechazado, el saldo real puede no ser el que hay en pantalla.
           invalidateBalances();
@@ -626,6 +682,15 @@ export function ContactSettlementModal({
     } finally {
       runLockRef.current = false;
       setIsRunning(false);
+
+      if (mountedRef.current) {
+        setIsCoolingDown(true);
+        window.clearTimeout(cooldownTimerRef.current);
+        cooldownTimerRef.current = window.setTimeout(
+          () => setIsCoolingDown(false),
+          ACTION_COOLDOWN_MS,
+        );
+      }
     }
 
     if (rows.some((row) => row.status !== "registered")) {
@@ -712,7 +777,29 @@ export function ContactSettlementModal({
     setStep("form");
   }
 
+  /**
+   * Descarta el abono por confirmar: deja de estar guardado y se vuelve al formulario
+   * con saldos recién pedidos. Lo que ya se registró no se toca.
+   */
+  function handleDiscard() {
+    if (!run || runLockRef.current) {
+      return;
+    }
+
+    clearPendingSettlement({ contactId, session, type });
+    setIsDiscardOpen(false);
+    setRun(null);
+    setValues(createEmptyPaymentFormValues(values.method));
+    setShowErrors(false);
+    setStaleDocumentsAt(openDocuments.dataUpdatedAt);
+    setStep("form");
+    invalidateBalances();
+  }
+
   const canEdit = !hasUncertainRow && (failedRows.length > 0 || isInterrupted);
+  // Recién terminado un envío el pie no acepta clics: el segundo de un doble clic
+  // caería en el botón que ahora ocupa el sitio del que se pulsó.
+  const footerBusy = isRunning || isCoolingDown;
   const labelsOf = (rows: readonly RunRow[]) =>
     rows.map((row) => texts.label(row.allocation.document.number)).join(", ");
 
@@ -897,21 +984,31 @@ export function ContactSettlementModal({
     if (step === "run" && run) {
       return (
         <>
-          <Button disabled={isRunning} onClick={close} type="button" variant="outline">
+          <Button disabled={footerBusy} onClick={close} type="button" variant="outline">
             Cerrar
           </Button>
           {canEdit ? (
-            <Button disabled={isRunning} onClick={handleEdit} type="button" variant="outline">
+            <Button disabled={footerBusy} onClick={handleEdit} type="button" variant="outline">
               Volver a editar
             </Button>
           ) : null}
           {canEdit && failedRows.length > 0 && unsentRows.length > 0 ? (
-            <Button disabled={isRunning} onClick={handleContinue} type="button" variant="outline">
+            <Button disabled={footerBusy} onClick={handleContinue} type="button" variant="outline">
               Continuar con los demás
             </Button>
           ) : null}
+          {canDiscard ? (
+            <Button
+              disabled={footerBusy}
+              onClick={() => setIsDiscardOpen(true)}
+              type="button"
+              variant="outline"
+            >
+              Descartar abono por confirmar
+            </Button>
+          ) : null}
           {!isSettled ? (
-            <Button disabled={isRunning} onClick={handleRetry} type="button">
+            <Button disabled={footerBusy} onClick={handleRetry} type="button">
               {isRunning ? "Registrando..." : "Reintentar pendientes"}
             </Button>
           ) : null}
@@ -974,6 +1071,30 @@ export function ContactSettlementModal({
       >
         {renderBody()}
       </Modal>
+      {run && canDiscard ? (
+        <ConfirmActionModal
+          confirmLabel="Descartar abono"
+          description={`No sabemos si se registró el pago de ${uncertainRows
+            .map(
+              (row) =>
+                `${texts.label(row.allocation.document.number)} por ${formatAmount(row.allocation.amount, run.currency)}`,
+            )
+            .join(", ")}. Al descartarlo podrás registrar otro abono.`}
+          onConfirm={handleDiscard}
+          onOpenChange={setIsDiscardOpen}
+          open={isDiscardOpen}
+          title="Descartar abono por confirmar"
+          variant="danger"
+        >
+          <p>
+            Revisa antes los pagos de {contactName}: si ese pago sí entró y registras otro,
+            quedará duplicado.
+          </p>
+          {registeredRows.length > 0 ? (
+            <p className="mt-2">Lo ya registrado ({labelsOf(registeredRows)}) no cambia.</p>
+          ) : null}
+        </ConfirmActionModal>
+      ) : null}
       {/* Solo existe con pagos en vuelo o un abono por confirmar: nunca con el
           formulario limpio ni tras terminar con éxito. */}
       {isRunning || needsConfirmation ? (
