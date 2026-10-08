@@ -433,6 +433,75 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
     expect(screen.getByText("1 seleccionado")).toBeInTheDocument();
   });
 
+  // PRO-F5: si el reprecio vacía la página y la lista salta a la anterior, el
+  // resultado por fila no se pierde con el salto: sigue hasta que el usuario lo cierra.
+  it("keeps the row by row result on screen when the reprice empties the page and the list jumps back", async () => {
+    const user = userEvent.setup();
+    const firstPage = Array.from({ length: 10 }, (_, index) =>
+      product(`p-fill-${index}`, `Relleno ${index}`, 9, 10, review(8, 9, 10)),
+    );
+    let secondPage = [ARROZ];
+    const serveDefault = fetchMock.getMockImplementation();
+
+    fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      const [path, query = ""] = String(input).split("?");
+
+      if (path !== "/api/products" || init?.method === "POST") {
+        return serveDefault?.(input, init);
+      }
+
+      const skip = Number(new URLSearchParams(query).get("skip") ?? 0);
+
+      return jsonResponse({
+        data: {
+          items: skip >= 10 ? secondPage : firstPage,
+          limit: 10,
+          skip,
+          total: firstPage.length + secondPage.length,
+        },
+      });
+    });
+    repriceResponse = () => {
+      secondPage = [];
+
+      return jsonResponse({
+        data: {
+          failed: 1,
+          results: [
+            {
+              code: "NOT_FOUND",
+              message: "Producto no encontrado.",
+              productId: "p-arroz",
+              status: "error",
+            },
+          ],
+          updated: 0,
+        },
+      });
+    };
+    renderPage("review=1&page=2");
+    await findRow("Arroz");
+
+    await user.click(screen.getByRole("checkbox", { name: "Seleccionar Arroz" }));
+    await user.click(screen.getByRole("button", { name: "Reprecio al 20 %" }));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Cambiar 1 precio" }),
+    );
+
+    // La página 2 quedó vacía: la lista vuelve a la 1.
+    await findRow("Relleno 0");
+    expect(window.location.search).not.toContain("page=2");
+
+    const result = within(screen.getByRole("region", { name: "Resultado del reprecio" }));
+
+    expect(result.getByText("Ningún precio actualizado")).toBeInTheDocument();
+    expect(result.getByRole("listitem")).toHaveTextContent("Arroz · Producto no encontrado.");
+
+    await user.click(result.getByRole("button", { name: "Cerrar el resultado del reprecio" }));
+
+    expect(screen.queryByRole("region", { name: "Resultado del reprecio" })).not.toBeInTheDocument();
+  });
+
   it("keeps the dialog open with the server message when the whole reprice fails", async () => {
     const user = userEvent.setup();
 
