@@ -8,7 +8,6 @@ import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
-import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import { usePermission } from "@/shared/auth/usePermission";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
@@ -40,6 +39,7 @@ import { usePurchaseDraftStorage } from "./hooks/usePurchaseDraftStorage";
 import { usePurchaseDuplicateSource } from "./hooks/usePurchaseDuplicateSource";
 import { usePurchaseLines } from "./hooks/usePurchaseLines";
 import { usePurchaseLockOnAdd } from "./hooks/usePurchaseLockOnAdd";
+import { usePurchasePaymentMethods } from "./hooks/usePurchasePaymentMethods";
 import { usePurchaseProductSearch } from "./hooks/usePurchaseProductSearch";
 import { PurchaseStatusNotesCard } from "./components/PurchaseStatusNotesCard";
 import { PurchaseSummaryCard } from "./components/PurchaseSummaryCard";
@@ -100,9 +100,12 @@ export function PurchaseCreatePage() {
   const requestAttempt = useRequestAttempt();
   // Clave del pago inicial: una por intento de compra, ligada a la clave de este.
   const [initialPaymentKey] = useState(() => new InitialPaymentKey());
-  const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
   const { showToast } = useToast();
   const { can } = usePermission();
+  // Un pago de compra lo registra quien ve y gestiona pagos (regla de `POST /api/payments`).
+  const canPayNow = can("payments.manage") && can("payments.view");
+  // Sin ese permiso no hay sección "Pagar ahora" ni se piden sus métodos (responde 403).
+  const enabledPaymentMethodsQuery = usePurchasePaymentMethods(canPayNow);
   // Catálogo completo: los chips muestran también una alícuota desactivada.
   const taxRates = useTaxRates({ activeOnly: false });
   const [supplierId, setSupplierId] = useState("");
@@ -247,8 +250,6 @@ export function PurchaseCreatePage() {
   );
   const discountVes = roundMoney(refToVes(discountRef, activeRateVes));
   const totalVes = Math.max(0, roundMoney(totals.subtotalVes - discountVes + totals.taxVes));
-  // Un pago de compra lo registra quien ve y gestiona pagos (regla de `POST /api/payments`).
-  const canPayNow = can("payments.manage") && can("payments.view");
   const paymentMethods = useMemo(
     () =>
       filterEnabledPaymentMethods(

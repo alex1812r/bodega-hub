@@ -97,7 +97,7 @@ function installApi() {
 function renderWithCart() {
   const QueryWrapper = createQueryWrapper();
 
-  render(
+  const view = render(
     <QueryWrapper>
       <ToastProvider>
         <PurchaseCreatePage />
@@ -106,6 +106,8 @@ function renderWithCart() {
   );
   fireEvent.click(screen.getByRole("button", { name: "elegir proveedor" }));
   fireEvent.click(screen.getByRole("button", { name: "agregar producto" }));
+
+  return view;
 }
 
 const toggle = () => screen.getByRole("button", { name: /Pagar ahora/ });
@@ -147,6 +149,32 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     renderWithCart();
 
     expect(screen.queryByRole("button", { name: /Pagar ahora/ })).not.toBeInTheDocument();
+  });
+
+  it("sin permiso de pagos la pantalla no pide los métodos de pago (para almacén responde 403); con permiso sí (COM-F3)", async () => {
+    const paymentMethodRequests = () =>
+      (global.fetch as jest.Mock).mock.calls.filter(([url]) =>
+        String(url).startsWith("/api/settings/payment-methods"),
+      );
+
+    for (const denied of [["payments.manage"], ["payments.view"], ["payments.manage", "payments.view"]]) {
+      mockDenied = denied;
+      installApi();
+
+      const { unmount } = renderWithCart();
+
+      // Un turno para que una consulta habilitada llegara a salir.
+      await waitFor(() => expect(confirm()).toBeInTheDocument());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(paymentMethodRequests()).toHaveLength(0);
+      unmount();
+    }
+
+    mockDenied = [];
+    installApi();
+    renderWithCart();
+
+    await waitFor(() => expect(paymentMethodRequests()).toHaveLength(1));
   });
 
   it("Completar saldo pone el total de la compra y confirmar envía initialPayment con su propia clave", async () => {
