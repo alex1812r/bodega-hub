@@ -233,16 +233,21 @@ function TaxRateField({
   );
 }
 
-/** Dos montos apilados: BS (principal) + REF/USD (secundario). */
+/** Dos montos apilados: el de la moneda de la compra (principal) y su equivalente (secundario). */
 function DualMoneyStack({
   align = "right",
+  costCurrency,
   refAmount,
   vesAmount,
 }: {
   align?: "left" | "right";
+  costCurrency: PurchaseCostCurrency;
   refAmount: number;
   vesAmount: number;
 }) {
+  const refText = formatRefUsd(refAmount);
+  const vesText = formatVesBs(vesAmount);
+
   return (
     <div
       className={cn(
@@ -251,48 +256,11 @@ function DualMoneyStack({
       )}
     >
       <span className="font-mono text-sm tabular-nums text-foreground">
-        {formatVesBs(vesAmount)}
+        {costCurrency === "ves" ? vesText : refText}
       </span>
       <span className="font-mono text-[0.7rem] tabular-nums text-on-surface-variant">
-        {formatRefUsd(refAmount)}
+        {costCurrency === "ves" ? refText : vesText}
       </span>
-    </div>
-  );
-}
-
-function CostCurrencyToggle({
-  onChange,
-  productName,
-  value,
-}: {
-  onChange: (currency: PurchaseCostCurrency) => void;
-  productName: string;
-  value: PurchaseCostCurrency;
-}) {
-  return (
-    <div
-      aria-label={`Moneda de costo de ${productName}`}
-      className="inline-flex w-fit shrink-0 rounded-md border border-border p-0.5 dark:border-slate-700"
-      role="group"
-    >
-      {(["ves", "ref"] as const).map((currency) => {
-        const active = value === currency;
-        return (
-          <button
-            className={cn(
-              "cursor-pointer rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors",
-              active
-                ? "bg-primary text-primary-foreground"
-                : "text-on-surface-variant hover:bg-surface-container-low",
-            )}
-            key={currency}
-            onClick={() => onChange(currency)}
-            type="button"
-          >
-            {currency === "ves" ? "BS" : "REF"}
-          </button>
-        );
-      })}
     </div>
   );
 }
@@ -377,13 +345,6 @@ export function PurchaseLineItemsTable({
                         </span>
                       ) : null}
                     </div>
-                    <CostCurrencyToggle
-                      onChange={(currency) =>
-                        onUpdateItem(item.id, { costCurrency: currency })
-                      }
-                      productName={meta.name}
-                      value={item.costCurrency}
-                    />
                     <TaxRateField
                       onChange={(nextTaxRate) => onUpdateItem(item.id, { taxRate: nextTaxRate })}
                       productName={meta.name}
@@ -576,17 +537,6 @@ export function PurchaseLineItemsTable({
                             value={isVes ? item.unitCostVes : item.unitCostRef}
                           />
                         </LineFieldBox>
-                        <LineFieldBox
-                          align="right"
-                          label={isVes ? "Unitario REF (auto)" : "Unitario BS (auto)"}
-                          locked
-                        >
-                          <p className="h-7 text-right text-xs leading-7 tabular-nums text-foreground">
-                            {isVes
-                              ? formatRefUsd(normalized.unitCostRef)
-                              : formatVesBs(normalized.unitCostVes)}
-                          </p>
-                        </LineFieldBox>
                       </>
                     ) : (
                       <>
@@ -621,21 +571,6 @@ export function PurchaseLineItemsTable({
                         </LineFieldBox>
                         <LineFieldBox
                           align="right"
-                          label={
-                            isVes
-                              ? `Costo ${packLabel.toLowerCase()} REF`
-                              : `Costo ${packLabel.toLowerCase()} BS`
-                          }
-                          locked
-                        >
-                          <p className="h-7 text-right text-xs leading-7 tabular-nums text-foreground">
-                            {isVes
-                              ? formatRefUsd(normalized.packCostRef)
-                              : formatVesBs(normalized.packCostVes)}
-                          </p>
-                        </LineFieldBox>
-                        <LineFieldBox
-                          align="right"
                           label={isVes ? "Unitario BS (auto)" : "Unitario REF (auto)"}
                           locked
                         >
@@ -652,7 +587,11 @@ export function PurchaseLineItemsTable({
                 <td className="px-4 py-3">
                   <div className="flex min-w-[9.5rem] flex-col gap-1.5">
                     <LineFieldBox align="right" label="Subtotal" locked>
-                      <DualMoneyStack refAmount={subtotalRef} vesAmount={subtotalVes} />
+                      <DualMoneyStack
+                        costCurrency={item.costCurrency}
+                        refAmount={subtotalRef}
+                        vesAmount={subtotalVes}
+                      />
                     </LineFieldBox>
                     <LineFieldBox
                       align="right"
@@ -660,6 +599,7 @@ export function PurchaseLineItemsTable({
                       locked
                     >
                       <DualMoneyStack
+                        costCurrency={item.costCurrency}
                         refAmount={totalWithTaxRef}
                         vesAmount={totalWithTaxVes}
                       />

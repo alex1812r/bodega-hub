@@ -6,14 +6,18 @@ import { Button } from "@/shared/components/Button";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
 
+import type { PurchaseCostCurrency } from "../types";
 import { purchaseInlineInputClassName } from "../utils/purchaseCreateStyles";
 import { PurchaseCreateSectionCard } from "./PurchaseCreateSectionCard";
 
 type PurchaseSummaryCardProps = {
+  /** Moneda en la que se teclean los costos de TODAS las líneas de la compra. */
+  costCurrency: PurchaseCostCurrency;
   discountRef: number;
   discountVes: number;
   isSubmitting?: boolean;
   onConfirm: () => void;
+  onCostCurrencyChange: (currency: PurchaseCostCurrency) => void;
   onDiscountChange: (value: number) => void;
   subtotalRef: number;
   subtotalVes: number;
@@ -22,18 +26,72 @@ type PurchaseSummaryCardProps = {
   taxVes: number;
 };
 
-/** Fila con el monto en Bs arriba y su equivalente REF debajo, igual que las lineas. */
+const COST_CURRENCY_OPTIONS: ReadonlyArray<{ label: string; value: PurchaseCostCurrency }> = [
+  { label: "REF", value: "ref" },
+  { label: "Bs", value: "ves" },
+];
+
+/** Un solo selector para toda la compra: las líneas ya no eligen moneda. */
+function CostCurrencyToggle({
+  onChange,
+  value,
+}: {
+  onChange: (currency: PurchaseCostCurrency) => void;
+  value: PurchaseCostCurrency;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-sm text-on-surface-variant" id="purchase-cost-currency-label">
+        Costos en
+      </span>
+      <div
+        aria-labelledby="purchase-cost-currency-label"
+        className="inline-flex shrink-0 rounded-md border border-border p-0.5"
+        role="group"
+      >
+        {COST_CURRENCY_OPTIONS.map((option) => {
+          const active = value === option.value;
+
+          return (
+            <button
+              aria-pressed={active}
+              className={cn(
+                "min-h-8 min-w-12 cursor-pointer rounded px-3 text-xs font-semibold transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                active
+                  ? "bg-primary text-primary-foreground"
+                  : "text-on-surface-variant hover:bg-surface-container-low",
+              )}
+              key={option.value}
+              onClick={() => onChange(option.value)}
+              type="button"
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Fila con el monto en la moneda de la compra arriba y su equivalente debajo, igual que las líneas. */
 function SummaryRow({
+  costCurrency,
   emphasize = false,
   label,
   refAmount,
   vesAmount,
 }: {
+  costCurrency: PurchaseCostCurrency;
   emphasize?: boolean;
   label: string;
   refAmount: number;
   vesAmount: number;
 }) {
+  const refText = formatRefUsd(refAmount);
+  const vesText = formatVesBs(vesAmount);
+
   return (
     <div className="flex items-start justify-between gap-3">
       <span
@@ -51,7 +109,7 @@ function SummaryRow({
             emphasize ? "text-xl font-bold text-primary" : "text-sm text-foreground",
           )}
         >
-          {formatVesBs(vesAmount)}
+          {costCurrency === "ves" ? vesText : refText}
         </span>
         <span
           className={cn(
@@ -59,7 +117,7 @@ function SummaryRow({
             emphasize ? "text-sm font-medium" : "text-xs",
           )}
         >
-          {formatRefUsd(refAmount)}
+          {costCurrency === "ves" ? refText : vesText}
         </span>
       </div>
     </div>
@@ -67,10 +125,12 @@ function SummaryRow({
 }
 
 export function PurchaseSummaryCard({
+  costCurrency,
   discountRef,
   discountVes,
   isSubmitting = false,
   onConfirm,
+  onCostCurrencyChange,
   onDiscountChange,
   subtotalRef,
   subtotalVes,
@@ -84,7 +144,13 @@ export function PurchaseSummaryCard({
   return (
     <PurchaseCreateSectionCard icon={Receipt} title="Resumen de Compra">
       <div className="flex flex-col gap-3">
-        <SummaryRow label="Subtotal" refAmount={subtotalRef} vesAmount={subtotalVes} />
+        <CostCurrencyToggle onChange={onCostCurrencyChange} value={costCurrency} />
+        <SummaryRow
+          costCurrency={costCurrency}
+          label="Subtotal"
+          refAmount={subtotalRef}
+          vesAmount={subtotalVes}
+        />
         <div className="flex items-start justify-between gap-3">
           <span className="text-sm text-on-surface-variant">Descuento</span>
           <div className="flex flex-col items-end leading-tight">
@@ -112,12 +178,19 @@ export function PurchaseSummaryCard({
           </div>
         </div>
         <SummaryRow
+          costCurrency={costCurrency}
           label={`Impuestos (${taxPercentLabel})`}
           refAmount={taxRef}
           vesAmount={taxVes}
         />
         <div className="mt-2 border-t border-border pt-3 dark:border-slate-800">
-          <SummaryRow emphasize label="Total" refAmount={totalRef} vesAmount={totalVes} />
+          <SummaryRow
+            costCurrency={costCurrency}
+            emphasize
+            label="Total"
+            refAmount={totalRef}
+            vesAmount={totalVes}
+          />
         </div>
       </div>
 

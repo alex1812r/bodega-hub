@@ -17,6 +17,14 @@ const mockSupplierProducts: {
   error: Error | null;
   isFetching: boolean;
 } = { data: undefined, error: null, isFetching: false };
+const mockCajaPack = {
+  id: "pack-caja",
+  isActive: true,
+  isDefault: true,
+  label: "Caja",
+  supplierProductId: "supp-refresco",
+  unitsPerPack: 12,
+};
 // Los tests de envio reducen el buscador a un boton; los del buscador (COM-01) usan el real.
 let mockUseRealPicker = false;
 
@@ -44,36 +52,65 @@ jest.mock("./components/PurchaseProductPickerCard", () => {
   const actual = jest.requireActual<typeof import("./components/PurchaseProductPickerCard")>(
     "./components/PurchaseProductPickerCard",
   );
+  const { PurchaseLineItemsTable } = jest.requireActual<
+    typeof import("./components/PurchaseLineItemsTable")
+  >("./components/PurchaseLineItemsTable");
+  type PickerProps = Parameters<typeof actual.PurchaseProductPickerCard>[0];
+  // El buscador se reduce a dos botones; las lineas son las reales.
   const StubPicker = ({
     onAddProduct,
-  }: {
+    ...tableProps
+  }: Pick<PickerProps, "getItemMeta" | "items" | "onRemoveItem" | "onUpdateItem" | "rateVes"> & {
     onAddProduct: (product: Record<string, unknown>) => void;
   }) => (
-    <button
-      onClick={() =>
-        onAddProduct({
-          name: "Cable HDMI",
-          packUnits: [],
-          productId: "prod-cable",
-          sku: "ELE-CAB-001",
-          taxRate: 0,
-          unitCostRef: 2,
-        })
-      }
-      type="button"
-    >
-      agregar producto
-    </button>
+    <>
+      <PurchaseLineItemsTable {...tableProps} />
+      <button
+        onClick={() =>
+          onAddProduct({
+            name: "Cable HDMI",
+            packUnits: [],
+            productId: "prod-cable",
+            sku: "ELE-CAB-001",
+            taxRate: 0,
+            unitCostRef: 2,
+          })
+        }
+        type="button"
+      >
+        agregar producto
+      </button>
+      <button
+        onClick={() =>
+          onAddProduct({
+            costWithTaxRef: 1.16,
+            defaultPackUnit: mockCajaPack,
+            name: "Refresco Cola",
+            packUnits: [mockCajaPack],
+            productId: "prod-refresco",
+            sku: "BEB-REF-001",
+            taxRate: 16,
+            unitCostRef: 1,
+          })
+        }
+        type="button"
+      >
+        agregar producto con empaque
+      </button>
+    </>
   );
 
   return {
-    PurchaseProductPickerCard: (
-      props: Parameters<typeof actual.PurchaseProductPickerCard>[0],
-    ) =>
+    PurchaseProductPickerCard: (props: PickerProps) =>
       mockUseRealPicker ? (
         <actual.PurchaseProductPickerCard {...props} />
       ) : (
         <StubPicker
+          getItemMeta={props.getItemMeta}
+          items={props.items}
+          onRemoveItem={props.onRemoveItem}
+          onUpdateItem={props.onUpdateItem}
+          rateVes={props.rateVes}
           onAddProduct={(product) =>
             props.onAddProduct(product as Parameters<typeof props.onAddProduct>[0])
           }
@@ -354,5 +391,145 @@ describe("PurchaseCreatePage · buscador sobre todos los productos activos (COM-
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "No tienes permiso para ver productos.",
     );
+  });
+});
+
+// Payload que enviaba la pantalla antes de COM-05 para estas dos líneas (tasa 510, captura en Bs).
+const refrescoPackItem = {
+  costCurrency: "ves",
+  entryMode: "pack",
+  packCostRef: 12,
+  packCostVes: 6120,
+  packCount: 2,
+  packLabel: "Caja",
+  productId: "prod-refresco",
+  subtotalRef: 24,
+  subtotalVes: 12240,
+  taxRate: 16,
+  taxRef: 3.84,
+  taxVes: 1958.4,
+  unitCostRef: 1,
+  unitCostVes: 510,
+  unitsPerPack: 12,
+};
+const cableUnitItem = {
+  costCurrency: "ves",
+  entryMode: "unit",
+  productId: "prod-cable",
+  quantity: 3,
+  subtotalRef: 6,
+  subtotalVes: 3060,
+  taxRate: 0,
+  taxRef: 0,
+  taxVes: 0,
+  unitCostRef: 2,
+  unitCostVes: 1020,
+};
+const twoLinePurchaseTotals = {
+  discountRef: 0,
+  discountVes: 0,
+  refRateVes: 510,
+  status: "recibido",
+  subtotalRef: 30,
+  subtotalVes: 15300,
+  supplierId: "cont-supplier",
+  taxRef: 3.84,
+  taxVes: 1958.4,
+};
+
+function renderTwoLinePurchase() {
+  render(<PurchaseCreatePage />, { wrapper: createQueryWrapper() });
+  fireEvent.click(screen.getByRole("button", { name: "elegir proveedor" }));
+  fireEvent.click(screen.getByRole("button", { name: "agregar producto" }));
+  fireEvent.click(screen.getByRole("button", { name: "agregar producto con empaque" }));
+  fireEvent.change(screen.getByLabelText("Cantidad de Cable HDMI"), { target: { value: "3" } });
+  fireEvent.change(screen.getByLabelText("Cantidad de caja de Refresco Cola"), {
+    target: { value: "2" },
+  });
+}
+
+async function confirmAndGetBody(api: ReturnType<typeof installFetchStub>) {
+  api.respondToNextPost({ data: { id: "purchase-moneda" } });
+  fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+  await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-moneda"));
+
+  return api.posts[0]?.body;
+}
+
+describe("PurchaseCreatePage · moneda de costo una vez por compra (COM-05)", () => {
+  beforeEach(() => {
+    mockPush.mockReset();
+  });
+
+  it("sin tocar la moneda, totales y payload son los de antes y cada línea manda costCurrency", async () => {
+    const api = installFetchStub(() => null);
+
+    renderTwoLinePurchase();
+
+    expect(screen.getByRole("button", { name: "Bs" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Bs. 17.258,40")).toBeInTheDocument();
+    expect(screen.getByText("ref 33.84")).toBeInTheDocument();
+
+    expect(await confirmAndGetBody(api)).toEqual({
+      ...twoLinePurchaseTotals,
+      clientRequestId: expect.any(String),
+      items: [refrescoPackItem, cableUnitItem],
+    });
+  });
+
+  it("el selector está una sola vez, en el resumen, y ninguna línea trae el suyo", () => {
+    installFetchStub(() => null);
+
+    renderTwoLinePurchase();
+
+    expect(screen.getAllByRole("button", { name: "REF" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Bs" })).toHaveLength(1);
+    expect(screen.queryByRole("group", { name: /Moneda de costo de/ })).not.toBeInTheDocument();
+  });
+
+  it("cambiar a REF pasa TODAS las líneas a REF sin mover totales ni montos del payload", async () => {
+    const api = installFetchStub(() => null);
+
+    renderTwoLinePurchase();
+    fireEvent.click(screen.getByRole("button", { name: "REF" }));
+
+    expect(screen.getByRole("button", { name: "REF" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Costo unitario REF de Cable HDMI")).toHaveValue(2);
+    expect(screen.getByLabelText("Costo por caja REF de Refresco Cola")).toHaveValue(12);
+    expect(screen.queryByLabelText(/Costo .* BS de/)).not.toBeInTheDocument();
+    expect(screen.getByText("Bs. 17.258,40")).toBeInTheDocument();
+    expect(screen.getByText("ref 33.84")).toBeInTheDocument();
+
+    expect(await confirmAndGetBody(api)).toEqual({
+      ...twoLinePurchaseTotals,
+      clientRequestId: expect.any(String),
+      items: [
+        { ...refrescoPackItem, costCurrency: "ref" },
+        { ...cableUnitItem, costCurrency: "ref" },
+      ],
+    });
+  });
+
+  it("las líneas nuevas nacen en la moneda de la compra y volver a Bs las devuelve todas", async () => {
+    const api = installFetchStub(() => null);
+
+    render(<PurchaseCreatePage />, { wrapper: createQueryWrapper() });
+    fireEvent.click(screen.getByRole("button", { name: "elegir proveedor" }));
+    fireEvent.click(screen.getByRole("button", { name: "REF" }));
+    fireEvent.click(screen.getByRole("button", { name: "agregar producto" }));
+    fireEvent.click(screen.getByRole("button", { name: "agregar producto con empaque" }));
+
+    expect(screen.getByLabelText("Costo unitario REF de Cable HDMI")).toHaveValue(2);
+    expect(screen.getByLabelText("Costo por caja REF de Refresco Cola")).toHaveValue(12);
+
+    fireEvent.click(screen.getByRole("button", { name: "Bs" }));
+
+    expect(screen.getByLabelText("Costo unitario BS de Cable HDMI")).toHaveValue(1020);
+    expect(screen.getByLabelText("Costo por caja BS de Refresco Cola")).toHaveValue(6120);
+
+    const body = await confirmAndGetBody(api);
+    const items = body?.items as Array<Record<string, unknown>>;
+
+    expect(items.map((item) => item.costCurrency)).toEqual(["ves", "ves"]);
   });
 });

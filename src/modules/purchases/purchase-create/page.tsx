@@ -26,6 +26,7 @@ import { useCreatePurchase } from "../hooks/usePurchases";
 import {
   createPackDraftItem,
   createUnitDraftItem,
+  type PurchaseCostCurrency,
   type PurchaseDraftItem,
 } from "./types";
 import {
@@ -47,6 +48,8 @@ export function PurchaseCreatePage() {
   const [notes, setNotes] = useState("");
   const [discountRef, setDiscountRef] = useState(0);
   const [items, setItems] = useState<PurchaseDraftItem[]>([]);
+  // Moneda en la que se teclean los costos: una sola para toda la compra.
+  const [costCurrency, setCostCurrency] = useState<PurchaseCostCurrency>("ves");
   const [formError, setFormError] = useState<string | null>(null);
   const [lineMetaByProductId, setLineMetaByProductId] = useState(
     () => new Map<string, PurchaseLineItemMeta>(),
@@ -140,6 +143,13 @@ export function PurchaseCreatePage() {
     setLineMetaByProductId(new Map());
   }
 
+  function handleCostCurrencyChange(nextCurrency: PurchaseCostCurrency) {
+    setCostCurrency(nextCurrency);
+    setItems((current) =>
+      current.map((item) => switchCostCurrency(item, nextCurrency, activeRateVes)),
+    );
+  }
+
   function handleAddProduct(product: PurchaseCatalogProduct) {
     setLineMetaByProductId((prev) => {
       const next = new Map(prev);
@@ -185,7 +195,7 @@ export function PurchaseCreatePage() {
 
         return [
           createPackDraftItem({
-            costCurrency: "ves",
+            costCurrency,
             id: `purchase-item-${Date.now()}`,
             packCostRef,
             packLabel: defaultPack.label,
@@ -202,7 +212,7 @@ export function PurchaseCreatePage() {
 
       return [
         createUnitDraftItem({
-          costCurrency: "ves",
+          costCurrency,
           id: `purchase-item-${Date.now()}`,
           productId: product.productId,
           rateVes: activeRateVes,
@@ -216,21 +226,9 @@ export function PurchaseCreatePage() {
 
   function handleUpdateItem(itemId: string, input: Partial<PurchaseDraftItem>) {
     setItems((current) =>
-      current.map((item) => {
-        if (item.id !== itemId) {
-          return item;
-        }
-
-        if (
-          input.costCurrency != null &&
-          input.costCurrency !== item.costCurrency &&
-          Object.keys(input).length === 1
-        ) {
-          return switchCostCurrency(item, input.costCurrency, activeRateVes);
-        }
-
-        return syncLineCostFields({ ...item, ...input }, activeRateVes);
-      }),
+      current.map((item) =>
+        item.id === itemId ? syncLineCostFields({ ...item, ...input }, activeRateVes) : item,
+      ),
     );
   }
 
@@ -341,10 +339,12 @@ export function PurchaseCreatePage() {
             status={status}
           />
           <PurchaseSummaryCard
+            costCurrency={costCurrency}
             discountRef={discountRef}
             discountVes={discountVes}
             isSubmitting={createPurchase.isPending}
             onConfirm={() => void handleSubmit()}
+            onCostCurrencyChange={handleCostCurrencyChange}
             onDiscountChange={setDiscountRef}
             subtotalRef={totals.subtotalRef}
             subtotalVes={totals.subtotalVes}

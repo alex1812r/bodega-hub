@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { expect, fn, within } from "storybook/test";
+import { expect, fn, userEvent, within } from "storybook/test";
 
 import { PurchaseSummaryCard } from "./PurchaseSummaryCard";
 
@@ -12,9 +12,11 @@ const taxRef = 0.35;
 
 const meta = {
   args: {
+    costCurrency: "ves",
     discountRef: 0,
     discountVes: 0,
     onConfirm: fn(),
+    onCostCurrencyChange: fn(),
     onDiscountChange: fn(),
     subtotalRef,
     subtotalVes,
@@ -49,5 +51,22 @@ export const WithDiscount: Story = {
   args: {
     discountRef: 0.5,
     discountVes: 399.16,
+  },
+};
+
+/** Compra capturada en REF: el monto principal de cada fila es el REF y los Bs quedan debajo. */
+export const CostsInRef: Story = {
+  args: {
+    costCurrency: "ref",
+  },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await expect(canvas.getByRole("button", { name: "REF" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await userEvent.click(canvas.getByRole("button", { name: "Bs" }));
+    await expect(args.onCostCurrencyChange).toHaveBeenCalledWith("ves");
   },
 };
