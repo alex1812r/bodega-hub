@@ -284,6 +284,20 @@ describe("ContactBalancesTab", () => {
     await user.click(button);
   }
 
+  /**
+   * PAG-F9: recién mostrado el reparto, «Confirmar abono» ignora los clics ~400 ms
+   * (guarda de doble clic) y lo anuncia con `aria-disabled`. Se espera a que pase.
+   */
+  async function confirmSettlement(
+    dialog: ReturnType<typeof within>,
+    user: ReturnType<typeof userEvent.setup>,
+  ) {
+    const button = dialog.getByRole("button", { name: "Confirmar abono" });
+
+    await waitFor(() => expect(button).not.toHaveAttribute("aria-disabled"));
+    await user.click(button);
+  }
+
   function openDocumentRequests() {
     return fetchMock.mock.calls
       .map(([url]) => String(url))
@@ -490,7 +504,7 @@ describe("ContactBalancesTab", () => {
       await waitFor(() => expect(complete).toBeEnabled());
       await user.click(complete);
       await user.click(dialog.getByRole("button", { name: "Ver reparto" }));
-      await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+      await confirmSettlement(dialog, user);
 
       // La lista de la pestaña ya se refrescó sin documentos...
       expect(await region.findByText("Sin saldos pendientes")).toBeInTheDocument();
@@ -528,7 +542,7 @@ describe("ContactBalancesTab", () => {
     await waitFor(() => expect(complete).toBeEnabled());
     await user.click(complete);
     await user.click(dialog.getByRole("button", { name: "Ver reparto" }));
-    await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+    await confirmSettlement(dialog, user);
     await dialog.findByRole("alert");
 
     // Saldos ya muestra el saldo real: el pago entró y la venta salió de la lista.
@@ -576,7 +590,7 @@ describe("ContactBalancesTab", () => {
     await waitFor(() => expect(complete).toBeEnabled());
     await user.click(complete);
     await user.click(dialog.getByRole("button", { name: "Ver reparto" }));
-    await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+    await confirmSettlement(dialog, user);
     await dialog.findByRole("alert");
     first.unmount();
 
@@ -608,7 +622,7 @@ describe("ContactBalancesTab", () => {
       await waitFor(() => expect(complete).toBeEnabled());
       await user.click(complete);
       await user.click(dialog.getByRole("button", { name: "Ver reparto" }));
-      await user.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+      await confirmSettlement(dialog, user);
       await dialog.findByRole("alert");
 
       return { dialog, view };

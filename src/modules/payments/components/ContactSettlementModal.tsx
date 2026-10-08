@@ -34,6 +34,7 @@ import { formatDate } from "@/shared/utils/date";
 
 import { type OpenDocument, useOpenDocuments } from "../hooks/useOpenDocuments";
 import { type PaymentDetail, paymentsQueryKeys, useCreatePayment } from "../hooks/usePayments";
+import { useStepClickGuard } from "../hooks/useStepClickGuard";
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
 import {
   MIN_PAYABLE_VES_BY_DOCUMENT,
@@ -78,8 +79,12 @@ import {
  * confirmar": pide confirmación (`ConfirmActionModal`), borra lo guardado, refresca
  * saldos y vuelve al formulario. No se ofrece antes del primer reintento fallido.
  *
- * Tras terminar un envío las acciones del pie quedan deshabilitadas ~400 ms: el
- * segundo clic de un doble clic no cae en el botón que ocupa el sitio del anterior.
+ * Doble clic: tras cada cambio de paso o de estado (formulario ↔ reparto, fin de un
+ * envío, abono por confirmar, confirmación de descarte recién abierta) el modal ignora
+ * ~400 ms los clics en las acciones del pie y en el botón de confirmar el descarte, y
+ * los cierres por clic fuera (`useStepClickGuard`): el segundo clic de un doble clic
+ * no ejecuta el botón que ocupa el sitio del anterior ni cierra el modal. Esc y la X
+ * no esperan.
  *
  * Tras un rechazo definitivo (4xx) se puede reintentar, continuar con los documentos
  * que no se enviaron o volver a editar: el reparto se recalcula con los saldos recién
@@ -228,9 +233,6 @@ function isDefinitiveRejection(error: unknown) {
     error.status !== 409
   );
 }
-
-/** Tras terminar un envío, el pie ignora clics este lapso (segundo clic de un doble clic). */
-const ACTION_COOLDOWN_MS = 400;
 
 const CONNECTION_ERROR_MESSAGE = "No se pudo conectar con el servidor.";
 const UNCERTAIN_MESSAGE =
@@ -424,8 +426,6 @@ export function ContactSettlementModal({
   const [showErrors, setShowErrors] = useState(false);
   const [run, setRun] = useState<Run | null>(restoredRun);
   const [isRunning, setIsRunning] = useState(false);
-  const [isCoolingDown, setIsCoolingDown] = useState(false);
-  const cooldownTimerRef = useRef<number | undefined>(undefined);
   const [isDiscardOpen, setIsDiscardOpen] = useState(false);
   // Candado contra reentrada: `isRunning` no cambia hasta el siguiente render y dos
   // clics en el mismo tick arrancarían dos secuencias.
@@ -535,6 +535,14 @@ export function ContactSettlementModal({
 
   // Salida explícita, solo cuando un reintento ya volvió a quedar sin confirmar.
   const canDiscard = needsConfirmation && uncertainRows.some((row) => row.retriedUncertain);
+  // Todo lo que cambia qué botones hay en el pie y dónde: tras cada cambio el modal
+  // ignora un instante el segundo clic de un doble clic.
+  const stepGuard = useStepClickGuard(
+    [step, isRunning, isSettled, needsConfirmation, canDiscard].join("|"),
+    { enabled: open },
+  );
+  // Lo mismo para la confirmación de descarte, que se abre encima del botón pulsado.
+  const discardGuard = useStepClickGuard(isDiscardOpen ? "open" : "closed", { enabled: open });
 
   // La sesión llegó después de montar: se retoma lo que esa sesión dejó guardado.
   if (restoredSession !== session) {
@@ -575,7 +583,6 @@ export function ContactSettlementModal({
 
     return () => {
       mountedRef.current = false;
-      window.clearTimeout(cooldownTimerRef.current);
     };
   }, []);
 
@@ -682,15 +689,6 @@ export function ContactSettlementModal({
     } finally {
       runLockRef.current = false;
       setIsRunning(false);
-
-      if (mountedRef.current) {
-        setIsCoolingDown(true);
-        window.clearTimeout(cooldownTimerRef.current);
-        cooldownTimerRef.current = window.setTimeout(
-          () => setIsCoolingDown(false),
-          ACTION_COOLDOWN_MS,
-        );
-      }
     }
 
     if (rows.some((row) => row.status !== "registered")) {
@@ -799,7 +797,17 @@ export function ContactSettlementModal({
   const canEdit = !hasUncertainRow && (failedRows.length > 0 || isInterrupted);
   // Recién terminado un envío el pie no acepta clics: el segundo de un doble clic
   // caería en el botón que ahora ocupa el sitio del que se pulsó.
-  const footerBusy = isRunning || isCoolingDown;
+  const footerBusy = isRunning || stepGuard.isGuarded;
+  // Formulario y reparto: el botón pulsado sigue siendo el mismo elemento con otra
+  // acción, así que no se deshabilita (perdería el foco del teclado): ignora el clic.
+  const stepActionProps = (action: () => void) => ({
+    "aria-disabled": stepGuard.isGuarded || undefined,
+    onClick: () => {
+      if (!stepGuard.isGuarded) {
+        action();
+      }
+    },
+  });
   const labelsOf = (rows: readonly RunRow[]) =>
     rows.map((row) => texts.label(row.allocation.document.number)).join(", ");
 
@@ -1019,10 +1027,10 @@ export function ContactSettlementModal({
     if (step === "preview" && documents.length > 0) {
       return (
         <>
-          <Button onClick={() => setStep("form")} type="button" variant="outline">
+          <Button {...stepActionProps(() => setStep("form"))} type="button" variant="outline">
             Volver
           </Button>
-          <Button onClick={handleConfirm} type="button">
+          <Button {...stepActionProps(handleConfirm)} type="button">
             Confirmar abono
           </Button>
         </>
@@ -1031,13 +1039,13 @@ export function ContactSettlementModal({
 
     return (
       <>
-        <Button onClick={close} type="button" variant="outline">
+        <Button {...stepActionProps(close)} type="button" variant="outline">
           {documents.length === 0 ? "Cerrar" : "Cancelar"}
         </Button>
         {documents.length > 0 ? (
           <Button
+            {...stepActionProps(handlePreview)}
             disabled={rateIsLoading || openDocuments.isFetching || !documentsAreFresh}
-            onClick={handlePreview}
             type="button"
           >
             Ver reparto
@@ -1056,6 +1064,12 @@ export function ContactSettlementModal({
           // Con pagos en vuelo no se cierra (Esc, X, clic fuera): se perdería qué quedó
           // registrado y qué no.
           if (!nextOpen && (isRunning || runLockRef.current)) {
+            return;
+          }
+
+          // Recién cambiado de paso el modal cambia de alto: el segundo clic de un doble
+          // clic cae en el fondo y lo cerraría, con lo tecleado o el resultado sin ver.
+          if (!nextOpen && stepGuard.ignoresOutsideClose()) {
             return;
           }
 
@@ -1080,8 +1094,22 @@ export function ContactSettlementModal({
                 `${texts.label(row.allocation.document.number)} por ${formatAmount(row.allocation.amount, run.currency)}`,
             )
             .join(", ")}. Al descartarlo podrás registrar otro abono.`}
-          onConfirm={handleDiscard}
-          onOpenChange={setIsDiscardOpen}
+          onConfirm={() => {
+            // Segundo clic del doble clic que abrió la confirmación: no confirma. La
+            // promesa resuelta hace que `ConfirmActionModal` suelte su botón al momento.
+            if (discardGuard.isGuarded) {
+              return Promise.resolve();
+            }
+
+            handleDiscard();
+          }}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen && discardGuard.ignoresOutsideClose()) {
+              return;
+            }
+
+            setIsDiscardOpen(nextOpen);
+          }}
           open={isDiscardOpen}
           title="Descartar abono por confirmar"
           variant="danger"

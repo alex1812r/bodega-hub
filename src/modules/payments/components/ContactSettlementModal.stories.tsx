@@ -24,7 +24,9 @@ import {
  *   reintentar, y sigue ahí al cerrar y volver a abrir (y al recargar: se guarda en
  *   `sessionStorage` por tienda, usuario, contacto y tipo). Si el reintento vuelve a
  *   quedar sin confirmar aparece "Descartar abono por confirmar", con confirmación.
- * - Tras cada envío las acciones del pie tardan ~400 ms en aceptar clics (doble clic).
+ * - Tras cada cambio de paso o de estado (ver el reparto, volver, fin de un envío,
+ *   confirmación de descarte recién abierta) el modal ignora ~400 ms los clics en las
+ *   acciones y los cierres por clic fuera: un doble clic no ejecuta el paso siguiente.
  * - Un monto mayor que lo abonable no se confirma: no hay vuelto ni sobrepago.
  * - `type="purchase"`: montarlo solo si el usuario puede pagar compras (admin, contador).
  *
@@ -176,6 +178,17 @@ async function findDialog(canvasElement: HTMLElement) {
   );
 }
 
+/** Recién mostrado el reparto, "Confirmar abono" ignora los clics ~400 ms (doble clic). */
+async function confirmSettlement(
+  dialog: Awaited<ReturnType<typeof findDialog>>,
+  userEvent: { click: (element: Element) => Promise<void> },
+) {
+  const button = dialog.getByRole("button", { name: "Confirmar abono" });
+
+  await waitFor(() => expect(button).not.toHaveAttribute("aria-disabled"));
+  await userEvent.click(button);
+}
+
 export const SalesPreview: Story = {
   name: "Cobro: reparto antes de confirmar",
   parameters: { msw: { handlers: [...baseHandlers, listHandler(sales), registerHandler] } },
@@ -203,7 +216,7 @@ export const SalesSettled: Story = {
       await dialog.findByRole("button", { name: "Completar total pendiente" }),
     );
     await userEvent.click(dialog.getByRole("button", { name: "Ver reparto" }));
-    await userEvent.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+    await confirmSettlement(dialog, userEvent);
     await expect(
       await dialog.findByText(/Abono registrado: 3 pagos/, undefined, { timeout: 5000 }),
     ).toBeInTheDocument();
@@ -243,7 +256,7 @@ export const StoppedByServerError: Story = {
       await dialog.findByRole("button", { name: "Completar total pendiente" }),
     );
     await userEvent.click(dialog.getByRole("button", { name: "Ver reparto" }));
-    await userEvent.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+    await confirmSettlement(dialog, userEvent);
     await expect(
       await dialog.findByText("Se registró 1 de 3 pagos.", undefined, { timeout: 5000 }),
     ).toBeInTheDocument();
@@ -283,7 +296,7 @@ export const StoppedByRejection: Story = {
       await dialog.findByRole("button", { name: "Completar total pendiente" }),
     );
     await userEvent.click(dialog.getByRole("button", { name: "Ver reparto" }));
-    await userEvent.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+    await confirmSettlement(dialog, userEvent);
     const edit = await dialog.findByRole("button", { name: "Volver a editar" }, { timeout: 5000 });
 
     await waitFor(() => expect(edit).toBeEnabled());
@@ -314,7 +327,7 @@ export const StillUnconfirmedAfterRetry: Story = {
 
     await userEvent.type(await dialog.findByLabelText("Monto"), "1000");
     await userEvent.click(dialog.getByRole("button", { name: "Ver reparto" }));
-    await userEvent.click(dialog.getByRole("button", { name: "Confirmar abono" }));
+    await confirmSettlement(dialog, userEvent);
 
     const retry = await dialog.findByRole("button", { name: "Reintentar pendientes" });
 

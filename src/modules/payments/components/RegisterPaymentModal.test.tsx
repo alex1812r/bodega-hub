@@ -5,6 +5,7 @@ import { type ReactNode, useState } from "react";
 
 import { VENEZUELAN_BANKS } from "@/shared/venezuela/banks";
 
+import { STEP_CLICK_GUARD_MS } from "../hooks/useStepClickGuard";
 import { RegisterPaymentModal } from "./RegisterPaymentModal";
 
 // PAG-F6 U6: el guardia de proceso (`useProcessGuard`) usa el router de Next.
@@ -1745,6 +1746,16 @@ describe("RegisterPaymentModal", () => {
     describe("PAG-F8 · N1c: descartar un intento por confirmar", () => {
       const DISCARD = "Descartar intento";
 
+      /**
+       * PAG-F9: recién abierta, la confirmación de descarte ignora ~400 ms el clic en su
+       * botón de confirmar y no lo anuncia (es de `ConfirmActionModal`): se deja pasar.
+       */
+      async function discardGuardSettled() {
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, STEP_CLICK_GUARD_MS));
+        });
+      }
+
       it("no se ofrece antes del primer reintento fallido; tras uno que sigue incierto, sí", async () => {
         renderModal(<RegisterPaymentModal saleId="sale-002" />);
         const { dialog, user } = await submitUncertain();
@@ -1791,6 +1802,7 @@ describe("RegisterPaymentModal", () => {
 
         await user.click(dialog.getByRole("button", { name: DISCARD }));
         confirm = within(await screen.findByRole("dialog", { name: DISCARD }));
+        await discardGuardSettled();
         await user.click(confirm.getByRole("button", { name: DISCARD }));
 
         await waitFor(() =>
@@ -1830,11 +1842,11 @@ describe("RegisterPaymentModal", () => {
 
         await waitFor(() => expect(discard).toBeEnabled());
         await user.click(discard);
-        await user.click(
-          within(await screen.findByRole("dialog", { name: DISCARD })).getByRole("button", {
-            name: DISCARD,
-          }),
-        );
+
+        const confirm = within(await screen.findByRole("dialog", { name: DISCARD }));
+
+        await discardGuardSettled();
+        await user.click(confirm.getByRole("button", { name: DISCARD }));
         await waitFor(() => expect(dialog.queryByText(UNCONFIRMED_NOTICE)).not.toBeInTheDocument());
 
         await pressFooter(user, "Cancelar");
@@ -1845,6 +1857,155 @@ describe("RegisterPaymentModal", () => {
         expect(reopened.dialog.queryByText(UNCONFIRMED_NOTICE)).not.toBeInTheDocument();
         expect(reopened.dialog.getByLabelText("Monto")).toHaveValue("");
         expect(reopened.dialog.getByLabelText("Monto")).toBeEnabled();
+      });
+    });
+
+    describe("PAG-F9 · doble clic que ejecuta la acción del paso siguiente", () => {
+      const DISCARD = "Descartar intento";
+
+      afterEach(() => {
+        act(() => {
+          jest.runOnlyPendingTimers();
+        });
+        jest.useRealTimers();
+      });
+
+      /** Desde aquí el reloj lo mueve el test: la espera del doble clic se mide exacta. */
+      function freezeClock() {
+        jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask"] });
+      }
+
+      function advance(ms: number) {
+        act(() => {
+          jest.advanceTimersByTime(ms);
+        });
+      }
+
+      /** Clic en el fondo del diálogo de arriba; el cierre del modal sale en el siguiente tick. */
+      function pressOutside() {
+        const overlays = document.querySelectorAll("div.fixed.inset-0");
+
+        fireEvent.pointerDown(overlays[overlays.length - 1]);
+        advance(1);
+      }
+
+      /** Intento por confirmar con «Descartar intento» a la vista y ya habilitado. */
+      async function openOnDiscardable() {
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+
+        const opened = await submitUncertain();
+
+        await retry(opened.user);
+        await waitFor(() => expect(postedBodies()).toHaveLength(2));
+
+        const discard = await opened.dialog.findByRole("button", { name: DISCARD });
+
+        await waitFor(() => expect(discard).toBeEnabled());
+        freezeClock();
+
+        return { ...opened, discard };
+      }
+
+      it("F2: doble clic en «Descartar intento» deja la confirmación abierta y los campos bloqueados; pasada la espera sí descarta", async () => {
+        const { dialog, discard } = await openOnDiscardable();
+
+        fireEvent.click(discard);
+
+        const confirm = within(screen.getByRole("dialog", { name: DISCARD }));
+
+        // El segundo clic cae en el botón de confirmar.
+        fireEvent.click(confirm.getByRole("button", { name: DISCARD }));
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+        expect(screen.getByRole("dialog", { name: DISCARD })).toBeInTheDocument();
+        expect(dialog.getByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+        expect(dialog.getByLabelText("Monto")).toBeDisabled();
+        // El clic ignorado no deja el botón en «Procesando...».
+        expect(confirm.getByRole("button", { name: DISCARD })).toBeEnabled();
+
+        // 300 ms: la separación más larga que midió QA.
+        advance(300);
+        fireEvent.click(confirm.getByRole("button", { name: DISCARD }));
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(dialog.getByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+
+        advance(100);
+        fireEvent.click(confirm.getByRole("button", { name: DISCARD }));
+
+        await waitFor(() => expect(dialog.queryByText(UNCONFIRMED_NOTICE)).not.toBeInTheDocument());
+        expect(dialog.getByLabelText("Monto")).toBeEnabled();
+        expect(postedBodies()).toHaveLength(2);
+      });
+
+      it("F3: el segundo clic cae fuera tras «Descartar intento»: la confirmación sigue abierta; pasada la espera, clic fuera la cierra sin descartar", async () => {
+        const { dialog, discard } = await openOnDiscardable();
+
+        fireEvent.click(discard);
+        // La separación típica de un doble clic (QA: 120 ms).
+        advance(120);
+        pressOutside();
+
+        expect(screen.getByRole("dialog", { name: DISCARD })).toBeInTheDocument();
+
+        advance(400);
+        pressOutside();
+        await waitFor(() =>
+          expect(screen.queryByRole("dialog", { name: DISCARD })).not.toBeInTheDocument(),
+        );
+        expect(dialog.getByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
+        expect(dialog.getByLabelText("Monto")).toBeDisabled();
+      });
+
+      it("F3: recién registrado al reintentar, el segundo clic cae fuera y el modal sigue abierto con «Pago registrado»; pasada la espera, clic fuera cierra", async () => {
+        renderModal(<RegisterPaymentModal saleId="sale-002" />);
+        const { dialog } = await submitUncertain();
+        const retryButton = dialog.getByRole("button", { name: "Reintentar" });
+
+        await waitFor(() => expect(retryButton).toBeEnabled());
+        paymentResponse = success();
+        freezeClock();
+
+        fireEvent.click(retryButton);
+        // Respuesta rápida: llega en pocos milisegundos, muy por debajo de la espera.
+        await dialog.findByText(/Pago registrado\. Saldo pendiente:/, undefined, { interval: 5 });
+        pressOutside();
+
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(dialog.getByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+
+        advance(400);
+        pressOutside();
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      });
+
+      it("el pago en 3 clics (Pagar → Completar saldo → Registrar pago) no espera: abrir el modal no arma la espera", async () => {
+        freezeClock();
+        renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
+
+        fireEvent.click(screen.getByRole("button", { name: "Pagar compra" }));
+
+        const dialog = within(await screen.findByRole("dialog", { name: "Pagar compra" }));
+        const complete = await dialog.findByRole("button", { name: "Completar saldo" });
+        const submitButton = dialog.getByRole("button", { name: "Registrar pago" });
+
+        await waitFor(() => expect(submitButton).toBeEnabled());
+
+        // Los dos clics siguientes, seguidos y sin que corra el reloj.
+        fireEvent.click(complete);
+        fireEvent.click(submitButton);
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+        expect(await dialog.findByText(/Pago registrado\. Saldo pendiente:/)).toBeInTheDocument();
+        expect(postedBodies()).toHaveLength(1);
+        expect(postedBodies()[0].body).toEqual(
+          expect.objectContaining({ amount: 20200, purchaseId: "purchase-002" }),
+        );
       });
     });
 

@@ -19,7 +19,9 @@ import { RegisterPaymentModal, type RegisterPaymentModalProps } from "./Register
  *   límite o un 5xx el modal queda "por confirmar": campos bloqueados con lo enviado
  *   y "Reintentar", que reenvía lo mismo con la misma clave y no duplica el pago. Si
  *   el reintento vuelve a quedar sin confirmar aparece "Descartar intento".
- * - Tras cada envío la acción principal tarda ~400 ms en aceptar clics (doble clic).
+ * - Tras cada envío la acción principal tarda ~400 ms en aceptar clics y, recién
+ *   abierta, la confirmación de "Descartar intento" tarda lo mismo en aceptar su
+ *   botón de confirmar (doble clic). Abrir el modal no arma esa espera.
  * - Con un pago en vuelo o por confirmar, un guardia pregunta antes de salir.
  *
  * Estas historias simulan `/api/sales/:id`, `/api/purchases/:id` y `/api/payments`

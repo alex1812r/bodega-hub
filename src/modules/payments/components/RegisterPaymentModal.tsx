@@ -36,6 +36,7 @@ import {
   paymentsQueryKeys,
   useCreatePayment,
 } from "../hooks/usePayments";
+import { useStepClickGuard } from "../hooks/useStepClickGuard";
 import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import {
   DEFAULT_ENABLED_PAYMENT_METHODS,
@@ -75,9 +76,13 @@ import {
  * saldo y deja el formulario limpio con clave nueva. No se ofrece antes del primer
  * reintento fallido.
  *
- * Tras terminar un envío la acción principal (y "Descartar intento") quedan
- * deshabilitadas ~400 ms: el segundo clic de un doble clic no cae en el botón que
- * ocupa el sitio del anterior. "Cancelar" no espera.
+ * Doble clic: tras terminar un envío, y al aparecer o resolverse el intento por
+ * confirmar, la acción principal y "Descartar intento" quedan deshabilitadas ~400 ms y
+ * se ignoran los cierres por clic fuera; recién abierta la confirmación de descarte,
+ * su botón de confirmar y su cierre por clic fuera esperan lo mismo
+ * (`useStepClickGuard`). Así el segundo clic de un doble clic no ejecuta el botón que
+ * ocupa el sitio del anterior ni cierra el modal. "Cancelar", Esc y la X no esperan;
+ * abrir el modal tampoco arma la espera.
  *
  * Salir de la pantalla: con el modal abierto y un pago en vuelo o por confirmar, un
  * guardia de proceso (`ProcessGuard`) pregunta antes de seguir un enlace o de ir
@@ -149,9 +154,6 @@ const DOCUMENT_TEXTS = {
 } as const;
 
 const GUARD_LABELS = { purchase: "Pago en curso", sale: "Cobro en curso" } as const;
-
-/** Tras terminar un envío, el pie ignora clics este lapso (segundo clic de un doble clic). */
-const ACTION_COOLDOWN_MS = 400;
 
 const CONNECTION_ERROR_MESSAGE = "No se pudo conectar con el servidor.";
 
@@ -327,10 +329,16 @@ function RegisterPaymentForm({
   // envíos en el mismo tick saldrían como dos peticiones. La clave de idempotencia
   // haría que el servidor registre una sola, pero la segunda no debe ni salir.
   const submitLockRef = useRef(false);
-  const mountedRef = useRef(true);
-  const [isCoolingDown, setIsCoolingDown] = useState(false);
-  const cooldownTimerRef = useRef<number | undefined>(undefined);
   const [isDiscardOpen, setIsDiscardOpen] = useState(false);
+  const canDiscard = unconfirmedAttempt?.retried === true;
+  // Todo lo que cambia qué hace o qué botones tiene el pie: tras cada cambio el modal
+  // ignora un instante el segundo clic de un doble clic. Abrirlo no cuenta.
+  const stepGuard = useStepClickGuard(
+    [createPayment.isPending, unconfirmedAttempt !== null, canDiscard].join("|"),
+    { enabled: open },
+  );
+  // Lo mismo para la confirmación de descarte, que se abre encima del botón pulsado.
+  const discardGuard = useStepClickGuard(isDiscardOpen ? "open" : "closed", { enabled: open });
   const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
   const enabledMethods = useMemo(
     () =>
@@ -444,20 +452,11 @@ function RegisterPaymentForm({
     }
   }, [open, refetchDocument]);
 
-  useEffect(() => {
-    mountedRef.current = true;
-
-    return () => {
-      mountedRef.current = false;
-      window.clearTimeout(cooldownTimerRef.current);
-    };
-  }, []);
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     // Recién terminado un envío: es el segundo clic (o Enter) de un doble clic.
-    if (isCoolingDown) {
+    if (stepGuard.isGuarded) {
       return;
     }
 
@@ -512,15 +511,6 @@ function RegisterPaymentForm({
       return;
     } finally {
       submitLockRef.current = false;
-
-      if (mountedRef.current) {
-        setIsCoolingDown(true);
-        window.clearTimeout(cooldownTimerRef.current);
-        cooldownTimerRef.current = window.setTimeout(
-          () => setIsCoolingDown(false),
-          ACTION_COOLDOWN_MS,
-        );
-      }
     }
 
     onUnconfirmedAttemptChange(null);
@@ -597,8 +587,7 @@ function RegisterPaymentForm({
   // Recién terminado un envío la acción principal y "Descartar intento" no aceptan
   // clics: el segundo de un doble clic caería en el botón que ahora ocupa el sitio del
   // que se pulsó. "Cancelar" no cambia de sitio ni de función: no espera.
-  const footerBusy = createPayment.isPending || isCoolingDown;
-  const canDiscard = unconfirmedAttempt?.retried === true;
+  const footerBusy = createPayment.isPending || stepGuard.isGuarded;
   const submitButtonLabel = createPayment.isPending
     ? "Registrando..."
     : unconfirmedAttempt
@@ -643,6 +632,12 @@ function RegisterPaymentForm({
         // Con el pago en vuelo no se cierra (Esc, X, clic fuera): al reabrir, el
         // formulario limpio invitaría a registrarlo otra vez.
         if (!nextOpen && (createPayment.isPending || submitLockRef.current)) {
+          return;
+        }
+
+        // Recién terminado un envío el modal cambia de alto: el segundo clic de un doble
+        // clic cae en el fondo y lo cerraría sin enseñar el resultado.
+        if (!nextOpen && stepGuard.ignoresOutsideClose()) {
           return;
         }
 
@@ -765,8 +760,22 @@ function RegisterPaymentForm({
               ? formatRefUsd(unconfirmedAttempt.input.amount)
               : formatVes(unconfirmedAttempt.input.amount)
           }. Al descartarlo podrás registrar otro.`}
-          onConfirm={handleDiscard}
-          onOpenChange={setIsDiscardOpen}
+          onConfirm={() => {
+            // Segundo clic del doble clic que abrió la confirmación: no confirma. La
+            // promesa resuelta hace que `ConfirmActionModal` suelte su botón al momento.
+            if (discardGuard.isGuarded) {
+              return Promise.resolve();
+            }
+
+            handleDiscard();
+          }}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen && discardGuard.ignoresOutsideClose()) {
+              return;
+            }
+
+            setIsDiscardOpen(nextOpen);
+          }}
           open={isDiscardOpen}
           title="Descartar intento"
           variant="danger"
