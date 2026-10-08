@@ -11,9 +11,9 @@ export const PURCHASE_SCAN_MIN_DIGITS = 8;
 export const PURCHASE_SCAN_KEY_GAP_MS = 50;
 
 /** Códigos que se consultan como mucho por escaneo, uno tras otro. */
-export const PURCHASE_SCAN_MAX_CANDIDATES = 8;
+export const PURCHASE_SCAN_MAX_CANDIDATES = 4;
 
-/** EAN-13, UPC-A, ITF-14 y EAN-8: los largos que se prueban antes que el resto. */
+/** EAN-13, UPC-A, ITF-14 y EAN-8: los largos que se prueban, en este orden. */
 const TYPICAL_CODE_LENGTHS = [13, 12, 14, 8];
 
 /** Lo tecleado delante de un código solo vale como cantidad o costo hasta este largo. */
@@ -115,9 +115,10 @@ function readHandTypedPrefix(text: string, stamps: number[], now: number) {
  * `PURCHASE_SCAN_MIN_DIGITS` dígitos, o no son solo dígitos).
  *
  * El texto es «valor opcional + código», y el código es un SUFIJO. Candidatos, sin
- * repetir y hasta `PURCHASE_SCAN_MAX_CANDIDATES`: el corte que sugiere el tiempo entre
- * teclas; los sufijos de 13, 12, 14 y 8 dígitos; el resto de sufijos de 8 o más, del más
- * largo al más corto.
+ * repetir y hasta `PURCHASE_SCAN_MAX_CANDIDATES`: los sufijos de 13, 12, 14 y 8 dígitos,
+ * en ese orden. Si el texto es tan corto que no dan cuatro, cierra la lista el corte que
+ * sugiere el tiempo entre teclas (un código de otro largo, p. ej. 10 dígitos). Ningún
+ * otro sufijo se consulta: un código inexistente no puede costar una docena de peticiones.
  */
 export function readPurchaseLineScan(
   text: string,
@@ -128,16 +129,12 @@ export function readPurchaseLineScan(
     return null;
   }
 
-  const otherLengths = Array.from(
-    { length: text.length - PURCHASE_SCAN_MIN_DIGITS + 1 },
-    (_, index) => text.length - index,
+  const suffixes = TYPICAL_CODE_LENGTHS.filter((length) => length <= text.length).map((length) =>
+    text.slice(text.length - length),
   );
-  const suffixes = [...TYPICAL_CODE_LENGTHS, ...otherLengths]
-    .filter((length) => length <= text.length)
-    .map((length) => text.slice(text.length - length));
 
   return {
-    candidates: [...new Set([readTimedCode(text, stamps, now), ...suffixes])].slice(
+    candidates: [...new Set([...suffixes, readTimedCode(text, stamps, now)])].slice(
       0,
       PURCHASE_SCAN_MAX_CANDIDATES,
     ),

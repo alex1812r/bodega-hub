@@ -474,3 +474,32 @@ describe("PurchaseCreatePage · cola de escaneos (COM-F8 · 2f, R2, 2g)", () => 
     expect(screen.queryByText(NOT_FOUND_MESSAGE)).not.toBeInTheDocument();
   });
 });
+
+describe("PurchaseCreatePage · consultas por un código que no existe (COM-F8 · 2c)", () => {
+  it("en el buscador se consulta solo el código exacto", async () => {
+    resolveWithLatency(20);
+    renderPage();
+    act(() => searchBox().focus());
+
+    await scan("1111111111116");
+    await settle(500);
+
+    expect(triedCodes()).toEqual(["1111111111116"]);
+  });
+
+  it("en una celda, con «4» tecleado delante: como mucho los sufijos de 13, 12, 14 y 8 dígitos, en ese orden", async () => {
+    resolveWithLatency(20);
+    renderPage();
+    pickTaladro();
+
+    await press(["4"], 300);
+    await settle(400);
+    await scan("1111111111116");
+    await settle(1000);
+
+    expect(triedCodes()).toEqual(["1111111111116", "111111111116", "41111111111116", "11111116"]);
+    expect(screen.getByText(NOT_FOUND_MESSAGE)).toBeInTheDocument();
+    expect(quantity("Taladro")).toHaveValue("4");
+    expect(lineNames()).toEqual(["Taladro"]);
+  });
+});

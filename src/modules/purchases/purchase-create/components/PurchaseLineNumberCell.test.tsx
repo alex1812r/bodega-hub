@@ -9,11 +9,16 @@ import { PURCHASE_CELL_FLASH_MS, PurchaseLineNumberCell } from "./PurchaseLineNu
 const onChange = jest.fn();
 const onOuterKeyDown = jest.fn();
 
-/** El primer código que propone el escaneo recibido: el corte que sugiere el tiempo. */
-function firstCandidate(onScan: jest.Mock) {
+/** Los códigos que propone el escaneo recibido, en el orden en que se consultan. */
+function candidates(onScan: jest.Mock) {
   const [scan] = onScan.mock.calls[0] as [PurchaseLineScan];
 
-  return scan.candidates[0];
+  return scan.candidates;
+}
+
+/** El primero de ellos: el sufijo del largo más habitual que cabe en el texto. */
+function firstCandidate(onScan: jest.Mock) {
+  return candidates(onScan)[0];
 }
 
 function Harness({ initial, integer = false }: { initial: number; integer?: boolean }) {
@@ -378,14 +383,14 @@ describe("PurchaseLineNumberCell", () => {
       expect(screen.getByRole("status")).toHaveTextContent(/^7$/);
     });
 
-    it("sin tiempos que separen (todo tecleado a mano) vale el texto completo y la cantidad anterior", async () => {
+    it("sin tiempos que separen (todo tecleado a mano) se consulta su sufijo de 8 y luego el texto completo, y queda la cantidad anterior", async () => {
       render(<ScanHarness initial={3} />);
 
       focusCell();
       await press([..."212345678".split(""), "{Enter}"], 120);
 
       expect(onScan).toHaveBeenCalledTimes(1);
-      expect(firstCandidate(onScan)).toBe("212345678");
+      expect(candidates(onScan)).toEqual(["12345678", "212345678"]);
       expect(screen.getByRole("status")).toHaveTextContent(/^3$/);
     });
 

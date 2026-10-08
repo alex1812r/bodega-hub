@@ -965,8 +965,8 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
     expect(within(row("Cable HDMI")).getByText("Bs. 2.040,00")).toBeInTheDocument();
     expect(lineRows()).toHaveLength(2);
     expect(screen.queryByText(NOT_FOUND_MESSAGE)).not.toBeInTheDocument();
-    // Primero el corte que sugiere el tiempo (el tramo final); después, el sufijo de 13.
-    expect(triedCodes()).toEqual(["765432101", CODE]);
+    // El sufijo de 13 va primero (COM-F8 · 2c): el tramo final suelto ya no se consulta.
+    expect(triedCodes()).toEqual([CODE]);
   });
 
   it("con «Bloquear al agregar», la cantidad tecleada se confirma antes de que la línea quede bloqueada", async () => {
@@ -1012,10 +1012,10 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
     await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
     await waitFor(() => expect(searchBox()).toHaveFocus());
     expect(quantity("Cable HDMI")).toHaveValue("3");
-    expect(triedCodes()).toEqual([`3${CODE}`, CODE]);
+    expect(triedCodes()).toEqual([CODE]);
   });
 
-  it("si ningún sufijo es de un producto, la cantidad vuelve a la anterior, avisa y no pasa de 8 consultas", async () => {
+  it("si ningún sufijo es de un producto, la cantidad vuelve a la anterior, avisa y no pasa de 4 consultas", async () => {
     onlyTheseCodesExist();
     renderPage();
     addProduct("Cable HDMI");
@@ -1025,14 +1025,8 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
     expect(await screen.findByText(NOT_FOUND_MESSAGE)).toBeInTheDocument();
     expect(quantity("Cable HDMI")).toHaveValue("1");
     expect(lineRows()).toHaveLength(1);
-    expect(triedCodes()).toEqual([
-      "765432101",
-      CODE,
-      CODE.slice(-12),
-      CODE.slice(-8),
-      CODE.slice(-11),
-      CODE.slice(-10),
-    ]);
+    // Sufijos de 13, 12 y 8; como no dan cuatro, cierra el corte que sugiere el tiempo.
+    expect(triedCodes()).toEqual([CODE, CODE.slice(-12), CODE.slice(-8), "765432101"]);
   });
 
   it("si ningún sufijo existe y antes se tecleó «2» despacio, queda 2 y ningún trozo del código", async () => {
@@ -1049,13 +1043,13 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
     expect(await screen.findByText(NOT_FOUND_MESSAGE)).toBeInTheDocument();
     expect(quantity("Cable HDMI")).toHaveValue("2");
     expect(lineRows()).toHaveLength(1);
-    expect(mockResolveByCode.mock.calls.length).toBeLessThanOrEqual(8);
+    expect(mockResolveByCode.mock.calls.length).toBeLessThanOrEqual(4);
   });
 
   it("mientras se resuelve la celda muestra el valor anterior y un segundo Enter no agrega dos veces", async () => {
     let finish: (resolution: unknown) => void = () => undefined;
 
-    // La primera consulta (el corte que sugiere el tiempo) queda en el aire.
+    // La consulta del código queda en el aire.
     onlyTheseCodesExist(CODE);
     mockResolveByCode.mockImplementationOnce(
       () =>
@@ -1072,12 +1066,12 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
     expect(mockResolveByCode).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      finish({ status: "not_found" });
+      finish({ product: mockScannedProduct, status: "found" });
     });
 
     await waitFor(() => expect(quantity("Harina Suelta")).toBeInTheDocument());
     await waitFor(() => expect(searchBox()).toHaveFocus());
-    expect(triedCodes()).toEqual(["765432101", CODE]);
+    expect(triedCodes()).toEqual([CODE]);
     expect(lineRows()).toHaveLength(2);
     expect(quantity("Harina Suelta")).toHaveValue("1");
     expect(quantity("Cable HDMI")).toHaveValue("1");

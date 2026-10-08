@@ -25,71 +25,61 @@ describe("readPurchaseLineScan", () => {
     expect(readPurchaseLineScan("", [], 0)).toBeNull();
   });
 
-  it("«2» a mano y la ráfaga entera: primero el corte del tiempo, luego 13, 12, 14, 8 y el resto de mayor a menor", () => {
+  // COM-F8 · 2c: antes iba primero el corte del tiempo y se consultaban hasta 8 sufijos.
+  it("«2» a mano y la ráfaga entera: los sufijos de 13, 12, 14 y 8 dígitos, en ese orden y nada más", () => {
     const text = `2${CODE}`;
     const { now, stamps } = timeline([300, ...burst(13, 400)]);
 
     expect(readPurchaseLineScan(text, stamps, now)).toEqual({
-      candidates: [
-        CODE,
-        text.slice(-12),
-        text,
-        text.slice(-8),
-        text.slice(-11),
-        text.slice(-10),
-        text.slice(-9),
-      ],
+      candidates: [CODE, text.slice(-12), text, text.slice(-8)],
       typedValue: 2,
     });
   });
 
-  it("ráfaga partida por un atasco de 80 ms: el corte del tiempo es solo el tramo final, y el sufijo de 13 va justo después", () => {
+  it("ráfaga partida por un atasco de 80 ms: el sufijo de 13 sigue yendo primero y el tramo final suelto no se consulta", () => {
     const text = `2${CODE}`;
     const { now, stamps } = timeline([300, ...burst(4, 400), ...burst(9, 80)]);
     const scan = readPurchaseLineScan(text, stamps, now);
 
-    expect(scan?.candidates.slice(0, 2)).toEqual(["765432101", CODE]);
+    expect(scan?.candidates).toEqual([CODE, text.slice(-12), text, text.slice(-8)]);
     // «7598» llegó a ritmo de ráfaga: no es parte de lo tecleado a mano.
     expect(scan?.typedValue).toBe(2);
   });
 
-  it("si el tramo final no llega a 8 dígitos, el corte del tiempo es el texto entero", () => {
+  it("un EAN-13 solo: él mismo, sus sufijos de 12 y 8, y nada más", () => {
     const { now, stamps } = timeline([...burst(9), ...burst(4, 80)]);
 
     expect(readPurchaseLineScan(CODE, stamps, now)).toEqual({
-      candidates: [CODE, CODE.slice(-12), CODE.slice(-8), CODE.slice(-11), CODE.slice(-10), CODE.slice(-9)],
+      candidates: [CODE, CODE.slice(-12), CODE.slice(-8)],
       typedValue: null,
     });
   });
 
-  it("sin tiempos (pegado) propone el texto entero y sus sufijos, y no hay valor tecleado", () => {
+  it("sin tiempos (pegado) propone los mismos sufijos, y no hay valor tecleado", () => {
     expect(readPurchaseLineScan(`3${CODE}`, [], 0)).toEqual({
-      candidates: [
-        `3${CODE}`,
-        CODE,
-        CODE.slice(-12),
-        CODE.slice(-8),
-        CODE.slice(-11),
-        CODE.slice(-10),
-        CODE.slice(-9),
-      ],
+      candidates: [CODE, CODE.slice(-12), `3${CODE}`, CODE.slice(-8)],
       typedValue: null,
     });
   });
 
-  it("nunca propone más de 8 códigos ni uno de menos de 8 dígitos", () => {
+  it("un código de otro largo (10 dígitos) se consulta entero después de su sufijo de 8", () => {
+    const { now, stamps } = timeline(burst(10));
+
+    expect(readPurchaseLineScan("4012345678", stamps, now)?.candidates).toEqual([
+      "12345678",
+      "4012345678",
+    ]);
+  });
+
+  it("nunca propone más de 4 códigos ni uno de menos de 8 dígitos", () => {
     const text = "12345678901234567890";
     const scan = readPurchaseLineScan(text, [], 0);
 
     expect(scan?.candidates).toEqual([
-      text,
       text.slice(-13),
       text.slice(-12),
       text.slice(-14),
       text.slice(-8),
-      text.slice(-19),
-      text.slice(-18),
-      text.slice(-17),
     ]);
     expect(scan?.candidates).toHaveLength(PURCHASE_SCAN_MAX_CANDIDATES);
   });
