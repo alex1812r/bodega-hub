@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Can } from "@/shared/auth/Can";
@@ -61,10 +61,16 @@ function formatPurchaseNumber(purchaseNumber: string) {
   return `#C-${normalized}`;
 }
 
-const purchaseNumberHeaderClass = "w-[5.75rem] max-w-[5.75rem]";
-
-const purchaseNumberCellClass =
-  "min-w-0 w-[5.75rem] max-w-[5.75rem] overflow-hidden";
+/*
+ * Anchos de columna. La tabla vive en una tarjeta `@container` y las columnas
+ * siguen el ancho de ESA tarjeta, no el de la ventana (a 1280 px con el menú
+ * lateral abierto quedan 942 px):
+ * - siempre: N° Compra, Proveedor, Estado, Pago, Total, Saldo y Acciones;
+ * - desde `@6xl` (1152 px): además Fecha, que hasta entonces va bajo el número;
+ * - desde `@7xl` (1280 px): además Pagado (= Total − Saldo).
+ */
+const compactColumnClass = "px-2 @6xl:px-3";
+const amountColumnClass = `whitespace-nowrap ${compactColumnClass}`;
 
 /** Una compra cancelada o devuelta no se debe: ni estado de pago ni saldo. */
 function NotApplicable() {
@@ -75,95 +81,110 @@ function NotApplicable() {
   );
 }
 
-const columns: DataTableColumn<PurchaseListRow>[] = [
-  {
-    cellClassName: purchaseNumberCellClass,
-    className: purchaseNumberHeaderClass,
-    header: "N° Compra",
-    hideInCard: true,
-    key: "purchase",
-    render: (purchase) => (
-      <PurchaseNumberCell purchaseNumber={formatPurchaseNumber(purchase.purchaseNumber)} />
-    ),
-  },
-  {
-    cellClassName: "text-on-surface-variant",
-    header: "Fecha",
-    key: "date",
-    render: (purchase) => formatDateTimeShort(purchase.createdAt),
-    visibility: "md",
-  },
-  {
-    header: "Proveedor",
-    key: "supplier",
-    render: (purchase) => (
-      <PurchaseSupplierCell
-        name={purchase.supplier?.name ?? purchase.supplierId}
-      />
-    ),
-  },
-  {
-    header: "Estado",
-    key: "status",
-    render: (purchase) => <PurchasesStatusBadge status={purchase.status} />,
-  },
-  {
-    header: "Pago",
-    key: "paymentStatus",
-    render: (purchase) =>
-      isPayablePurchaseStatus(purchase.status) ? (
-        <PurchasePaymentStatusBadge status={getPurchasePaymentStatus(purchase)} />
-      ) : (
-        <NotApplicable />
+/** Columnas de la tabla; `listHref` es la URL de la lista, que viaja al detalle como `returnTo`. */
+function buildColumns(listHref: string): DataTableColumn<PurchaseListRow>[] {
+  return [
+    {
+      className: compactColumnClass,
+      header: "N° Compra",
+      hideInCard: true,
+      key: "purchase",
+      render: (purchase) => (
+        <>
+          <PurchaseNumberCell
+            href={withReturnTo(`/purchases/${purchase.id}`, listHref)}
+            purchaseNumber={formatPurchaseNumber(purchase.purchaseNumber)}
+          />
+          <span className="mt-0.5 block whitespace-nowrap text-xs text-on-surface-variant @6xl:hidden">
+            {formatDateTimeShort(purchase.createdAt)}
+          </span>
+        </>
       ),
-  },
-  {
-    align: "right",
-    cellClassName: "font-medium tabular-nums",
-    header: "Total (REF)",
-    key: "totalRef",
-    render: (purchase) => (
-      <span
-        className={cn(
-          purchase.status === "cancelado" && "text-muted-foreground line-through",
-        )}
-      >
-        {formatRefUsd(purchase.totalRef)}
-      </span>
-    ),
-  },
-  {
-    align: "right",
-    cellClassName: "tabular-nums text-on-surface-variant",
-    header: "Pagado (REF)",
-    key: "paidRef",
-    render: (purchase) => formatRefUsd(purchase.paidRef ?? 0),
-    visibility: "lg",
-  },
-  {
-    align: "right",
-    cellClassName: "font-semibold tabular-nums",
-    header: "Saldo (REF)",
-    key: "balanceRef",
-    render: (purchase) => {
-      const balanceRef = getPurchaseBalanceRef(purchase);
-
-      if (balanceRef === null) {
-        return <NotApplicable />;
-      }
-
-      return (
+    },
+    {
+      cellClassName: "text-on-surface-variant",
+      className: "hidden whitespace-nowrap px-3 @6xl:table-cell",
+      header: "Fecha",
+      key: "date",
+      render: (purchase) => formatDateTimeShort(purchase.createdAt),
+    },
+    {
+      className: compactColumnClass,
+      header: "Proveedor",
+      key: "supplier",
+      render: (purchase) => (
+        <PurchaseSupplierCell
+          name={purchase.supplier?.name ?? purchase.supplierId}
+        />
+      ),
+    },
+    {
+      className: compactColumnClass,
+      header: "Estado",
+      key: "status",
+      render: (purchase) => <PurchasesStatusBadge status={purchase.status} />,
+    },
+    {
+      className: compactColumnClass,
+      header: "Pago",
+      key: "paymentStatus",
+      render: (purchase) =>
+        isPayablePurchaseStatus(purchase.status) ? (
+          <PurchasePaymentStatusBadge status={getPurchasePaymentStatus(purchase)} />
+        ) : (
+          <NotApplicable />
+        ),
+    },
+    {
+      align: "right",
+      cellClassName: "font-medium tabular-nums",
+      className: amountColumnClass,
+      header: "Total (REF)",
+      key: "totalRef",
+      render: (purchase) => (
         <span
           className={cn(
-            balanceRef >= PURCHASE_BALANCE_TOLERANCE_REF ? "text-destructive" : "text-foreground",
+            purchase.status === "cancelado" && "text-muted-foreground line-through",
           )}
         >
-          {formatRefUsd(balanceRef)}
+          {formatRefUsd(purchase.totalRef)}
         </span>
-      );
+      ),
     },
-  },
-];
+    {
+      align: "right",
+      cellClassName: "tabular-nums text-on-surface-variant",
+      className: "hidden whitespace-nowrap px-3 @7xl:table-cell",
+      header: "Pagado (REF)",
+      key: "paidRef",
+      render: (purchase) => formatRefUsd(purchase.paidRef ?? 0),
+    },
+    {
+      align: "right",
+      cellClassName: "font-semibold tabular-nums",
+      className: amountColumnClass,
+      header: "Saldo (REF)",
+      key: "balanceRef",
+      render: (purchase) => {
+        const balanceRef = getPurchaseBalanceRef(purchase);
+
+        if (balanceRef === null) {
+          return <NotApplicable />;
+        }
+
+        return (
+          <span
+            className={cn(
+              balanceRef >= PURCHASE_BALANCE_TOLERANCE_REF ? "text-destructive" : "text-foreground",
+            )}
+          >
+            {formatRefUsd(balanceRef)}
+          </span>
+        );
+      },
+    },
+  ];
+}
 
 function PurchasesList() {
   // Búsqueda, filtros, página y tamaño viven en la URL: recarga, "atrás" y volver del detalle los conservan.
@@ -181,7 +202,8 @@ function PurchasesList() {
   const totalPurchases = purchases.data?.total ?? 0;
   const pendingBalanceRef = purchases.data?.pendingBalanceRef;
   const hasActiveFilters = hasActivePurchasesFilters(list.state);
-  const { setState: setListState } = list;
+  const { href: listHref, setState: setListState } = list;
+  const columns = useMemo(() => buildColumns(listHref), [listHref]);
   const lastPage = getTotalPages(totalPurchases, limit);
   const isPastLastPage = purchases.isSuccess && !purchases.isFetching && list.state.page > lastPage;
 
@@ -234,7 +256,7 @@ function PurchasesList() {
           </p>
         ) : null}
 
-        <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
+        <div className="@container flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
           <DataTable
             actions={(purchase) => [
               { href: withReturnTo(`/purchases/${purchase.id}`, list.href), label: "Ver detalle" },

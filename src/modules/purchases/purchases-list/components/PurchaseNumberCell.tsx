@@ -1,17 +1,21 @@
 "use client";
 
 import { Check, Copy } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { cn } from "@/shared/utils/cn";
 
 type PurchaseNumberCellProps = {
   className?: string;
+  /** Detalle de la compra (con `returnTo`): el número es el enlace que lo abre. */
+  href: string;
   purchaseNumber: string;
 };
 
 export function PurchaseNumberCell({
   className,
+  href,
   purchaseNumber,
 }: PurchaseNumberCellProps) {
   const [copied, setCopied] = useState(false);
@@ -27,13 +31,13 @@ export function PurchaseNumberCell({
   }
 
   return (
-    <div className={cn("flex min-w-0 max-w-[5.5rem] items-center gap-0.5", className)}>
-      <span
-        className="min-w-0 flex-1 truncate font-mono text-[13px] leading-[18px] text-outline"
-        title={purchaseNumber}
+    <div className={cn("flex items-center gap-0.5", className)}>
+      <Link
+        className="whitespace-nowrap rounded font-mono text-[13px] leading-[18px] text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        href={href}
       >
         {purchaseNumber}
-      </span>
+      </Link>
       <button
         aria-label={copied ? "Número copiado" : `Copiar número ${purchaseNumber}`}
         className="shrink-0 rounded p-0.5 text-outline transition-colors hover:bg-surface-container hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

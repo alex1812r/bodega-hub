@@ -435,6 +435,96 @@ describe("PurchasesListPage", () => {
     });
   });
 
+  describe("la tabla cabe sin desplazamiento horizontal (COM-F4)", () => {
+    function header(name: string) {
+      return screen.getByRole("columnheader", { name });
+    }
+
+    it("el número de compra va entero y es un enlace al detalle con returnTo", async () => {
+      openAt("pendingBalance=1&page=1");
+      renderPage();
+      await screen.findByText("Proveedor 001");
+
+      const link = rowOf("Proveedor 001").getByRole("link", { name: "#C-001" });
+      const detailUrl = new URL(link.getAttribute("href") ?? "", "http://localhost");
+      const returnTo = new URL(detailUrl.searchParams.get("returnTo") ?? "", "http://localhost");
+
+      expect(link).toHaveTextContent(/^#C-001$/);
+      expect(link).toHaveClass("whitespace-nowrap");
+      expect(link).not.toHaveClass("truncate");
+      expect(link.closest("td")).not.toHaveClass("overflow-hidden");
+      expect(link.closest("td")?.className).not.toMatch(/max-w-/);
+      expect(detailUrl.pathname).toBe("/purchases/001");
+      expect([...detailUrl.searchParams.keys()]).toEqual(["returnTo"]);
+      expect(returnTo.pathname).toBe("/purchases");
+      expect(Object.fromEntries(returnTo.searchParams)).toEqual({ pendingBalance: "1" });
+    });
+
+    it("Fecha y Pagado solo se ven con ancho de contenedor de sobra; el resto, siempre", async () => {
+      renderPage();
+      await screen.findByText("Proveedor 001");
+
+      // El ancho que cuenta es el de la tarjeta de la tabla, no el de la ventana.
+      expect(screen.getByRole("table").closest(".\\@container")).not.toBeNull();
+      expect(header("Fecha")).toHaveClass("hidden", "@6xl:table-cell");
+      expect(header("Pagado (REF)")).toHaveClass("hidden", "@7xl:table-cell");
+
+      for (const name of [
+        "N° Compra",
+        "Proveedor",
+        "Estado",
+        "Pago",
+        "Total (REF)",
+        "Saldo (REF)",
+        "Acciones",
+      ]) {
+        expect(header(name)).not.toHaveClass("hidden");
+      }
+    });
+
+    it("las celdas siguen la misma regla que su cabecera y la fecha no se pierde al ocultar su columna", async () => {
+      renderPage();
+      await screen.findByText("Proveedor 002");
+
+      const row = rowOf("Proveedor 002");
+      const paidCell = row.getByText("ref 5.02").closest("td");
+      const [dateUnderNumber, dateCell] = row.getAllByText(/^6 oct\.?, \d{2}:\d{2}$/);
+
+      expect(paidCell).toHaveClass("hidden", "@7xl:table-cell");
+      // Bajo el número mientras la columna Fecha está oculta; después, solo en su columna.
+      expect(dateUnderNumber).toHaveClass("@6xl:hidden");
+      expect(dateCell.closest("td")).toHaveClass("hidden", "@6xl:table-cell");
+      expect(row.getByText("ref 12.98").closest("td")).not.toHaveClass("hidden");
+      expect(row.getByRole("button", { name: /acciones/i }).closest("td")).not.toHaveClass(
+        "hidden",
+      );
+    });
+
+    it("importes, fecha y sus cabeceras no se parten en dos líneas", async () => {
+      renderPage();
+      await screen.findByText("Proveedor 002");
+
+      const row = rowOf("Proveedor 002");
+
+      for (const name of ["Fecha", "Total (REF)", "Pagado (REF)", "Saldo (REF)"]) {
+        expect(header(name)).toHaveClass("whitespace-nowrap");
+      }
+
+      expect(row.getByText("ref 18.00").closest("td")).toHaveClass("whitespace-nowrap");
+      expect(row.getByText("ref 12.98").closest("td")).toHaveClass("whitespace-nowrap");
+    });
+
+    it("el nombre del proveedor tiene tope de ancho y se recorta con el nombre completo en el título", async () => {
+      renderPage();
+
+      const name = await screen.findByText("Proveedor 001");
+
+      expect(name).toHaveClass("truncate");
+      expect(name).toHaveAttribute("title", "Proveedor 001");
+      expect(name.parentElement?.className).toMatch(/(^| )max-w-/);
+    });
+  });
+
   describe("recibir desde la fila (COM-F4)", () => {
     /** Peticiones que no son lecturas: recibir es un PATCH. */
     function writeRequests() {
