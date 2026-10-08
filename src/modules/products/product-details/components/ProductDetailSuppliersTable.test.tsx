@@ -70,3 +70,65 @@ describe("ProductDetailSuppliersTable · proveedor habitual (PRO-14)", () => {
     expect(screen.queryByText("Habitual")).not.toBeInTheDocument();
   });
 });
+
+/** PRO-F8 · un vínculo sin costo no compite por "más económico / mejor precio". */
+describe("ProductDetailSuppliersTable · proveedores sin costo (PRO-F8)", () => {
+  function card(label: string) {
+    return screen.getByText(label).parentElement!;
+  }
+
+  it.each([
+    ["0", 0],
+    ["ausente", undefined],
+  ])("un proveedor con costo %s no es el más económico ni el mejor precio", (_case, lastCostRef) => {
+    renderTable([
+      row("sup-norte", "Distribuidora Norte", { lastCostRef: 1.75 }),
+      row("sup-sur", "Importadora Sur", { lastCostRef }),
+    ]);
+
+    expect(within(tableRow("Importadora Sur")).queryByText("Más económico")).not.toBeInTheDocument();
+    expect(within(tableRow("Distribuidora Norte")).getByText("Más económico")).toBeVisible();
+
+    expect(card("Mejor precio")).toHaveTextContent("Distribuidora Norte");
+    expect(card("Mejor precio")).toHaveTextContent("ref 1.75");
+    expect(card("Precio más alto")).toHaveTextContent("Distribuidora Norte");
+    // Margen contra el mejor costo REAL (1,75 con venta 3), no contra 0.
+    expect(card("Margen estimado")).toHaveTextContent("41.7%");
+  });
+
+  it("en la tabla un costo vacío se muestra como —, no como ref 0.00", () => {
+    renderTable([
+      row("sup-norte", "Distribuidora Norte", { lastCostRef: 1.75 }),
+      row("sup-sur", "Importadora Sur", { lastCostRef: 0 }),
+    ]);
+
+    expect(within(tableRow("Importadora Sur")).getAllByRole("cell")[2]).toHaveTextContent(/^—$/);
+    expect(within(tableRow("Distribuidora Norte")).getAllByRole("cell")[2]).toHaveTextContent(
+      "ref 1.75",
+    );
+    expect(screen.queryByText("ref 0.00")).not.toBeInTheDocument();
+  });
+
+  it("si ningún proveedor tiene costo, no hay más económico y el resumen lo dice", () => {
+    renderTable([
+      row("sup-norte", "Distribuidora Norte", { lastCostRef: 0 }),
+      row("sup-sur", "Importadora Sur", { lastCostRef: undefined }),
+    ]);
+
+    expect(screen.queryByText("Más económico")).not.toBeInTheDocument();
+    expect(screen.queryByText("Mejor precio")).not.toBeInTheDocument();
+    expect(screen.queryByText("Margen estimado")).not.toBeInTheDocument();
+    expect(screen.getByText("Sin costos registrados.")).toBeVisible();
+    expect(screen.queryByText("ref 0.00")).not.toBeInTheDocument();
+  });
+
+  it("un vínculo inactivo con costo no cuenta para el resumen ni es el más económico", () => {
+    renderTable([
+      row("sup-norte", "Distribuidora Norte", { isActive: false, lastCostRef: 1 }),
+      row("sup-sur", "Importadora Sur", { lastCostRef: 0 }),
+    ]);
+
+    expect(screen.getByText("Sin costos registrados.")).toBeVisible();
+    expect(screen.queryByText("Más económico")).not.toBeInTheDocument();
+  });
+});
