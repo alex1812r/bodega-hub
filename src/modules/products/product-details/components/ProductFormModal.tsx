@@ -18,6 +18,7 @@ import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
 import { Modal } from "@/shared/components/Modal";
 import { getNumberInputError } from "@/shared/components/NumberInput";
+import { useToast } from "@/shared/components/Toast";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
 import { CategoryQuickCreateModal } from "../../categories-list/components/CategoryQuickCreateModal";
@@ -95,7 +96,7 @@ export type ProductFormModalProps = {
   onOpenChange?: (open: boolean) => void;
   /**
    * Guarda. Si lanza o rechaza, el modal queda abierto (el consumidor muestra el
-   * motivo con `errorMessage`). Puede devolver el producto creado para que
+   * motivo con `errorMessage`); el rechazo se captura aquí. Puede devolver el producto creado para que
    * llegue a `onCreated`; no devolver nada sigue siendo válido.
    */
   onSubmit?: (
@@ -106,6 +107,13 @@ export type ProductFormModalProps = {
   open?: boolean;
   /** Producto en edición. */
   product?: ProductWithCategory;
+  /**
+   * Tras un alta correcta, aviso "Producto creado: <nombre>" con el enlace
+   * "Ver" a su detalle (sin enlace si `onSubmit` no devolvió el producto). Por
+   * defecto `true` en el alta completa y `false` en `compact`, donde el
+   * consumidor decide qué avisar. En edición nunca se muestra.
+   */
+  showCreatedToast?: boolean;
   trigger?: ReactNode;
 };
 
@@ -131,8 +139,10 @@ export function ProductFormModal({
   onSubmit,
   open,
   product: productProp,
+  showCreatedToast = !compact,
   trigger,
 }: ProductFormModalProps) {
+  const { showToast } = useToast();
   const isEdit = !compact && mode === "edit";
   const product = compact ? undefined : productProp;
   const createDefaults = isEdit ? undefined : initialValues;
@@ -340,23 +350,33 @@ export function ProductFormModal({
       sku: sku.trim().toLowerCase() || undefined,
     };
 
-    // Si `onSubmit` rechaza, no se llega a `close()`: el modal queda abierto y
-    // el rechazo sigue subiendo.
+    // Si `onSubmit` rechaza, no se llega a `close()`: el modal queda abierto con
+    // lo escrito. El rechazo se queda aquí (no sube como promesa sin manejar):
+    // el motivo lo pinta el consumidor con `errorMessage`.
     let created: ProductWithCategory | void;
 
     isSubmitInFlightRef.current = true;
 
     try {
       created = await onSubmit?.(input, { pendingImageBlob });
-    } catch (error) {
+    } catch {
       setFailedSubmits((count) => count + 1);
-      throw error;
+
+      return;
     } finally {
       isSubmitInFlightRef.current = false;
     }
 
     if (!isEdit && created) {
       onCreated?.(created);
+    }
+
+    if (!isEdit && showCreatedToast) {
+      showToast({
+        action: created ? { href: `/products/${created.id}`, label: "Ver" } : undefined,
+        title: `Producto creado: ${created?.name ?? input.name}`,
+        tone: "success",
+      });
     }
 
     if (!createAnother) {

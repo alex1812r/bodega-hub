@@ -111,7 +111,7 @@ export function ContactsListPage() {
   }
 
   async function handleCreateContact(input: ContactInput) {
-    await createContact.mutateAsync(input);
+    return createContact.mutateAsync(input);
   }
 
   // Al abrir un alta o una edición no debe verse el error de un guardado anterior.

@@ -74,17 +74,24 @@ async function fillEverything(user: UserSession) {
   await paste(user, "Stock mínimo", "1");
 }
 
-function captureUnhandledRejections() {
-  const jestListeners = process.listeners("unhandledRejection");
+/**
+ * Vigila los rechazos sin manejar: el formulario captura el de `onSubmit` y
+ * no debe quedar ninguno (en el navegador sería un `pageerror` por guardado fallido).
+ */
+function watchUnhandledRejections() {
   const unhandled = jest.fn();
 
-  process.removeAllListeners("unhandledRejection");
   process.on("unhandledRejection", unhandled);
 
   return {
-    restore() {
-      process.removeAllListeners("unhandledRejection");
-      jestListeners.forEach((listener) => process.on("unhandledRejection", listener));
+    /** Node avisa de un rechazo sin manejar en el turno siguiente: se le da ese turno. */
+    async settle() {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    },
+    stop() {
+      process.off("unhandledRejection", unhandled);
     },
     unhandled,
   };
@@ -233,7 +240,7 @@ describe("ProductFormModal · Guardar y crear otro (PRO-04)", () => {
     const onCreated = jest.fn();
     const onOpenChange = jest.fn();
     const onSubmit = jest.fn().mockRejectedValue(new Error("Ya existe un producto con ese SKU."));
-    const rejections = captureUnhandledRejections();
+    const rejections = watchUnhandledRejections();
     const props = { categories, onCreated, onOpenChange, onSubmit, open: true };
     const user = userEvent.setup({ delay: null });
     const { rerender } = render(<ProductFormModal {...props} />);
@@ -241,10 +248,13 @@ describe("ProductFormModal · Guardar y crear otro (PRO-04)", () => {
     try {
       await fillEverything(user);
       await user.click(createAnotherButton());
-      await waitFor(() => expect(rejections.unhandled).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      await rejections.settle();
     } finally {
-      rejections.restore();
+      rejections.stop();
     }
+
+    expect(rejections.unhandled).not.toHaveBeenCalled();
 
     // Como las páginas: el motivo llega con el siguiente render.
     rerender(<ProductFormModal {...props} errorMessage="Ya existe un producto con ese SKU." />);
@@ -259,6 +269,13 @@ describe("ProductFormModal · Guardar y crear otro (PRO-04)", () => {
     expect(moreOptionsToggle()).toHaveAttribute("aria-expanded", "true");
     expect(onCreated).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
+
+    // Se puede reintentar: el candado se suelta tras el fallo.
+    onSubmit.mockResolvedValueOnce(created);
+    await user.click(createAnotherButton());
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByLabelText("Nombre")).toHaveValue(""));
+    expect(onCreated).toHaveBeenCalledWith(created);
   });
 
   it("doble clic y clic en el otro botón con el guardado en vuelo: un solo envío", async () => {

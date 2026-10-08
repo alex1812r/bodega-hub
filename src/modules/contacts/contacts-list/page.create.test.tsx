@@ -1,10 +1,11 @@
 /**
- * PRO-04 · alta de contacto desde la lista: "Guardar y crear otro" y el error
- * de un guardado fallido, que no sigue ahí al volver a abrir el modal.
+ * PRO-04 · alta de contacto desde la lista: "Guardar y crear otro", el aviso
+ * del contacto creado y el error de un guardado fallido (alta o edición), que
+ * no sigue ahí al volver a abrir el modal.
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 jest.mock("next/navigation", () => ({
@@ -16,6 +17,7 @@ jest.mock("../../../shared/auth/usePermission", () => ({
   usePermission: () => ({ can: () => true, isLoading: false, role: "admin" }),
 }));
 
+import { ToastProvider } from "../../../shared/components/Toast";
 import { ContactsListPage } from "./page";
 
 type UserSession = ReturnType<typeof userEvent.setup>;
@@ -42,17 +44,24 @@ function jsonResponse(payload: unknown, status = 200) {
   } as unknown as Response;
 }
 
-function captureUnhandledRejections() {
-  const jestListeners = process.listeners("unhandledRejection");
+/**
+ * Vigila los rechazos sin manejar: el formulario captura el de `onSubmit` y
+ * no debe quedar ninguno (en el navegador sería un `pageerror` por guardado fallido).
+ */
+function watchUnhandledRejections() {
   const unhandled = jest.fn();
 
-  process.removeAllListeners("unhandledRejection");
   process.on("unhandledRejection", unhandled);
 
   return {
-    restore() {
-      process.removeAllListeners("unhandledRejection");
-      jestListeners.forEach((listener) => process.on("unhandledRejection", listener));
+    /** Node avisa de un rechazo sin manejar en el turno siguiente: se le da ese turno. */
+    async settle() {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    },
+    stop() {
+      process.off("unhandledRejection", unhandled);
     },
     unhandled,
   };
@@ -60,10 +69,12 @@ function captureUnhandledRejections() {
 
 describe("ContactsListPage · alta de contacto (PRO-04)", () => {
   const originalMatchMedia = window.matchMedia;
+  let patchResponses: Response[];
   let postResponses: Response[];
   let posts: Array<Record<string, unknown>>;
 
   beforeEach(() => {
+    patchResponses = [];
     postResponses = [];
     posts = [];
     Object.defineProperty(window, "matchMedia", {
@@ -82,6 +93,10 @@ describe("ContactsListPage · alta de contacto (PRO-04)", () => {
         return postResponses.shift() ?? jsonResponse({ error: { code: "X", message: "Sin cola" } }, 500);
       }
 
+      if (init?.method === "PATCH") {
+        return patchResponses.shift() ?? jsonResponse({ data: existing });
+      }
+
       return jsonResponse({ data: { items: [existing], limit: 10, skip: 0, total: 1 } });
     }) as unknown as typeof fetch;
   });
@@ -98,7 +113,9 @@ describe("ContactsListPage · alta de contacto (PRO-04)", () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <ContactsListPage />
+        <ToastProvider>
+          <ContactsListPage />
+        </ToastProvider>
       </QueryClientProvider>,
     );
 
@@ -118,7 +135,7 @@ describe("ContactsListPage · alta de contacto (PRO-04)", () => {
 
   it("tras un guardado fallido, cerrar y reabrir el alta no muestra el error viejo", async () => {
     const user = renderPage();
-    const rejections = captureUnhandledRejections();
+    const rejections = watchUnhandledRejections();
 
     await screen.findAllByText("Ferretería La Central");
 
@@ -129,13 +146,14 @@ describe("ContactsListPage · alta de contacto (PRO-04)", () => {
     try {
       await fillName(user, "Distribuidora Polar");
       await user.click(dialog.getByRole("button", { name: "Crear contacto" }));
-      await waitFor(() => expect(rejections.unhandled).toHaveBeenCalledTimes(1));
+      // El fallo no cierra ni limpia: se ve el motivo junto a lo escrito.
+      expect(await dialog.findByText(TAX_ID_TAKEN)).toBeVisible();
+      await rejections.settle();
     } finally {
-      rejections.restore();
+      rejections.stop();
     }
 
-    // El fallo no cierra ni limpia: se ve el motivo junto a lo escrito.
-    expect(await dialog.findByText(TAX_ID_TAKEN)).toBeVisible();
+    expect(rejections.unhandled).not.toHaveBeenCalled();
     expect(within(screen.getByRole("dialog")).getByLabelText("Nombre")).toHaveValue("Distribuidora Polar");
 
     await user.click(dialog.getByRole("button", { name: "Cancelar" }));
@@ -175,5 +193,54 @@ describe("ContactsListPage · alta de contacto (PRO-04)", () => {
     expect(posts).toHaveLength(2);
     expect(posts[0]).toMatchObject({ name: "Distribuidora Polar", type: "proveedor" });
     expect(posts[1]).toMatchObject({ name: "Alimentos Mary", type: "proveedor" });
+
+    // Un aviso por contacto, cada uno con el enlace a su detalle.
+    const toasts = within(screen.getByRole("status"));
+
+    expect(toasts.getByText("Contacto creado: Distribuidora Polar")).toBeInTheDocument();
+    expect(await toasts.findByText("Contacto creado: Alimentos Mary")).toBeInTheDocument();
+    expect(toasts.getAllByRole("link", { name: "Ver" }).map((link) => link.getAttribute("href"))).toEqual([
+      "/contacts/cont-2",
+      "/contacts/cont-3",
+    ]);
+  });
+
+  it("tras una edición fallida, cerrar y reabrir la edición no muestra el error viejo", async () => {
+    const user = renderPage();
+    const rejections = watchUnhandledRejections();
+
+    await screen.findAllByText("Ferretería La Central");
+
+    async function openEdit() {
+      await user.click(screen.getAllByRole("button", { name: "Abrir acciones" })[0]);
+      await user.click(await screen.findByRole("menuitem", { name: "Editar" }));
+
+      return within(await screen.findByRole("dialog", { name: "Editar contacto" }));
+    }
+
+    let dialog = await openEdit();
+
+    patchResponses.push(jsonResponse({ error: { code: "CONFLICT", message: TAX_ID_TAKEN } }, 409));
+
+    try {
+      await user.click(dialog.getByRole("button", { name: "Guardar cambios" }));
+
+      // El fallo no cierra el modal: se ve el motivo.
+      expect(await dialog.findByText(TAX_ID_TAKEN)).toBeVisible();
+      await rejections.settle();
+    } finally {
+      rejections.stop();
+    }
+
+    expect(rejections.unhandled).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+
+    await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    dialog = await openEdit();
+
+    expect(dialog.queryByText(TAX_ID_TAKEN)).not.toBeInTheDocument();
+    expect(dialog.getByLabelText("Nombre")).toHaveValue("Ferretería La Central");
   });
 });

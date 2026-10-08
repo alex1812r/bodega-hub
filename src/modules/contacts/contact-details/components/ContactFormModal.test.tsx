@@ -2,6 +2,8 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { ToastProvider } from "@/shared/components/Toast";
+
 import { ContactFormModal } from "./ContactFormModal";
 
 /** PRO-04 · "Guardar y crear otro" en el alta de contacto. */
@@ -48,17 +50,24 @@ async function fillEverything(user: UserSession) {
   await paste(user, "Dirección", "Av. Principal");
 }
 
-function captureUnhandledRejections() {
-  const jestListeners = process.listeners("unhandledRejection");
+/**
+ * Vigila los rechazos sin manejar: el formulario captura el de `onSubmit` y
+ * no debe quedar ninguno (en el navegador sería un `pageerror` por guardado fallido).
+ */
+function watchUnhandledRejections() {
   const unhandled = jest.fn();
 
-  process.removeAllListeners("unhandledRejection");
   process.on("unhandledRejection", unhandled);
 
   return {
-    restore() {
-      process.removeAllListeners("unhandledRejection");
-      jestListeners.forEach((listener) => process.on("unhandledRejection", listener));
+    /** Node avisa de un rechazo sin manejar en el turno siguiente: se le da ese turno. */
+    async settle() {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    },
+    stop() {
+      process.off("unhandledRejection", unhandled);
     },
     unhandled,
   };
@@ -152,7 +161,7 @@ describe("ContactFormModal · Guardar y crear otro (PRO-04)", () => {
   it("si el guardado falla no limpia nada, el modal sigue abierto y se ve el error", async () => {
     const onOpenChange = jest.fn();
     const onSubmit = jest.fn().mockRejectedValue(new Error("Ya existe un contacto con ese RIF."));
-    const rejections = captureUnhandledRejections();
+    const rejections = watchUnhandledRejections();
     const props = { onOpenChange, onSubmit, open: true };
     const user = userEvent.setup({ delay: null });
     const { rerender } = render(<ContactFormModal {...props} />);
@@ -160,10 +169,13 @@ describe("ContactFormModal · Guardar y crear otro (PRO-04)", () => {
     try {
       await fillEverything(user);
       await user.click(createAnotherButton());
-      await waitFor(() => expect(rejections.unhandled).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      await rejections.settle();
     } finally {
-      rejections.restore();
+      rejections.stop();
     }
+
+    expect(rejections.unhandled).not.toHaveBeenCalled();
 
     // Como las páginas: el motivo llega con el siguiente render.
     rerender(<ContactFormModal {...props} errorMessage="Ya existe un contacto con ese RIF." />);
@@ -235,5 +247,97 @@ describe("ContactFormModal · Guardar y crear otro (PRO-04)", () => {
       type: "proveedor",
     });
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+});
+
+describe("ContactFormModal · aviso de contacto creado (PRO-04)", () => {
+  function renderWithToasts(props: ModalProps = {}) {
+    render(
+      <ToastProvider>
+        <ContactFormModal onOpenChange={jest.fn()} open {...props} />
+      </ToastProvider>,
+    );
+
+    return userEvent.setup({ delay: null });
+  }
+
+  function toasts() {
+    return within(screen.getByRole("status"));
+  }
+
+  it("el botón principal avisa con el nombre guardado y el enlace Ver al detalle", async () => {
+    const onOpenChange = jest.fn();
+    const onSubmit = jest.fn().mockResolvedValue(supplier);
+    const user = renderWithToasts({ onOpenChange, onSubmit });
+
+    await paste(user, "Nombre", "polar");
+    await user.click(screen.getByRole("button", { name: "Crear contacto" }));
+
+    expect(await toasts().findByText("Contacto creado: Distribuidora Polar")).toBeInTheDocument();
+    expect(toasts().getByRole("link", { name: "Ver" })).toHaveAttribute("href", "/contacts/cont-1");
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it("Guardar y crear otro avisa con el modal aún abierto y el foco sigue en Nombre", async () => {
+    const onOpenChange = jest.fn();
+    const onSubmit = jest.fn().mockResolvedValue(supplier);
+    const user = renderWithToasts({ onOpenChange, onSubmit });
+
+    await paste(user, "Nombre", "Distribuidora Polar");
+    await user.click(createAnotherButton());
+
+    expect(await toasts().findByText("Contacto creado: Distribuidora Polar")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Crear contacto" })).toBeInTheDocument();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    await waitFor(() => expect(screen.getByLabelText("Nombre")).toHaveFocus());
+  });
+
+  it("si onSubmit no devuelve el contacto, avisa con el nombre escrito y sin enlace", async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined);
+    const user = renderWithToasts({ onSubmit });
+
+    await paste(user, "Nombre", "Alimentos Mary");
+    await user.click(screen.getByRole("button", { name: "Crear contacto" }));
+
+    expect(await toasts().findByText("Contacto creado: Alimentos Mary")).toBeInTheDocument();
+    expect(toasts().queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("si el guardado falla no avisa de ningún alta", async () => {
+    const onSubmit = jest.fn().mockRejectedValue(new Error("Ya existe un contacto con ese RIF."));
+    const user = renderWithToasts({ onSubmit });
+
+    await paste(user, "Nombre", "Alimentos Mary");
+    await user.click(screen.getByRole("button", { name: "Crear contacto" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+    expect(screen.getByLabelText("Nombre")).toHaveValue("Alimentos Mary");
+  });
+
+  it("la edición no avisa, y si falla el modal queda abierto sin rechazo pendiente", async () => {
+    const onOpenChange = jest.fn();
+    const onSubmit = jest.fn().mockResolvedValueOnce(supplier).mockRejectedValueOnce(new Error("Sin red"));
+    const rejections = watchUnhandledRejections();
+    const user = renderWithToasts({ contact: supplier, mode: "edit", onOpenChange, onSubmit });
+
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+
+    onOpenChange.mockClear();
+
+    try {
+      await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+      await rejections.settle();
+    } finally {
+      rejections.stop();
+    }
+
+    expect(rejections.unhandled).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(screen.getByRole("dialog", { name: "Editar contacto" })).toBeInTheDocument();
   });
 });

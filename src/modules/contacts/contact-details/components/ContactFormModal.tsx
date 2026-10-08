@@ -10,6 +10,7 @@ import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
 import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
+import { useToast } from "@/shared/components/Toast";
 import type { ContactMock } from "@/shared/mocks/erp-data";
 
 import type { ContactInput } from "../../hooks/useContacts";
@@ -26,6 +27,10 @@ const DEFAULT_CONTACT_TYPE: ContactInput["type"] = "cliente";
  * elegido, para dar altas en serie (p. ej. varios proveedores). Al cerrar y
  * volver a abrir, el Tipo vuelve a "Cliente". Si `onSubmit` rechaza no se
  * limpia nada y el modal queda abierto.
+ *
+ * Tras un alta correcta (con cualquiera de los dos botones) muestra el aviso
+ * "Contacto creado: <nombre>" con el enlace "Ver" a su detalle (sin enlace si
+ * `onSubmit` no devolvió el contacto). En edición no avisa.
  */
 type ContactFormModalProps = {
   contact?: ContactMock;
@@ -34,7 +39,13 @@ type ContactFormModalProps = {
   isSubmitting?: boolean;
   mode?: "create" | "edit";
   onOpenChange?: (open: boolean) => void;
-  onSubmit?: (input: ContactInput) => Promise<void> | void;
+  /**
+   * Guarda. Si lanza o rechaza, el modal queda abierto (el consumidor muestra el
+   * motivo con `errorMessage`); el rechazo se captura aquí. En un alta puede
+   * devolver el contacto creado para que el aviso enlace a su detalle; no
+   * devolver nada sigue siendo válido.
+   */
+  onSubmit?: (input: ContactInput) => Promise<ContactMock | void> | ContactMock | void;
   open?: boolean;
   trigger?: ReactNode;
 };
@@ -50,6 +61,7 @@ export function ContactFormModal({
   open,
   trigger,
 }: ContactFormModalProps) {
+  const { showToast } = useToast();
   const formId = useId();
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = open !== undefined;
@@ -92,13 +104,26 @@ export function ContactFormModal({
     };
 
     // Si `onSubmit` rechaza no se llega más abajo: el modal queda abierto con
-    // lo escrito y el rechazo sigue subiendo.
+    // lo escrito. El rechazo se queda aquí (no sube como promesa sin manejar):
+    // el motivo lo pinta el consumidor con `errorMessage`.
+    let created: ContactMock | void;
+
     isSubmitInFlightRef.current = true;
 
     try {
-      await onSubmit?.(input);
+      created = await onSubmit?.(input);
+    } catch {
+      return;
     } finally {
       isSubmitInFlightRef.current = false;
+    }
+
+    if (!isEdit) {
+      showToast({
+        action: created ? { href: `/contacts/${created.id}`, label: "Ver" } : undefined,
+        title: `Contacto creado: ${created?.name ?? input.name}`,
+        tone: "success",
+      });
     }
 
     if (!createAnother) {

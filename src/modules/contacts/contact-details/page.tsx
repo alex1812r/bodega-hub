@@ -1,5 +1,6 @@
 "use client";
 
+import { Pencil } from "lucide-react";
 import { useMemo } from "react";
 
 import { getConnectedToApiPhrase } from "@/lib/api/dataSourceUi";
@@ -7,6 +8,7 @@ import { Can } from "@/shared/auth/Can";
 import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
 import { usePermission } from "@/shared/auth/usePermission";
 import { getPaginatedItems } from "@/lib/api/pagination";
+import { Button } from "@/shared/components/Button";
 import { PageBackButton } from "@/shared/components/PageBackButton";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
@@ -16,10 +18,7 @@ import { formatDate } from "@/shared/utils/date";
 import { buildActivityTimelineItems } from "./components/ContactActivityTimeline";
 import { ContactDetailActivityTabs } from "./components/ContactDetailActivityTabs";
 import { ContactDetailMetrics } from "./components/ContactDetailMetrics";
-import {
-  ContactDetailEditButton,
-  ContactDetailPageHeader,
-} from "./components/ContactDetailPageHeader";
+import { ContactDetailPageHeader } from "./components/ContactDetailPageHeader";
 import { ContactFormModal } from "./components/ContactFormModal";
 import { ContactProfileCard } from "./components/ContactProfileCard";
 import { computeContactDetailMetrics } from "./utils/computeContactDetailMetrics";
@@ -93,6 +92,13 @@ export function ContactDetailsPage({ contactId = "cont-customer" }: ContactDetai
     await updateContact.mutateAsync(input);
   }
 
+  // Al abrir la edición no debe verse el error de un guardado anterior.
+  function handleEditOpenChange(open: boolean) {
+    if (open) {
+      updateContact.reset();
+    }
+  }
+
   if (contact.isLoading) {
     return <DetailSkeleton itemsPerSection={4} />;
   }
@@ -127,11 +133,14 @@ export function ContactDetailsPage({ contactId = "cont-customer" }: ContactDetai
                 errorMessage={updateContact.error?.message}
                 isSubmitting={isSaving}
                 mode="edit"
+                onOpenChange={handleEditOpenChange}
                 onSubmit={handleUpdateContact}
+                // `Button` directo: el disparador recibe del modal el `onClick` que lo abre.
                 trigger={
-                  <ContactDetailEditButton disabled={isSaving}>
+                  <Button className="w-full gap-2 sm:w-auto" disabled={isSaving} size="sm">
+                    <Pencil aria-hidden className="size-[1.125rem]" />
                     {isSaving ? "Guardando..." : "Editar"}
-                  </ContactDetailEditButton>
+                  </Button>
                 }
               />
             </Can>

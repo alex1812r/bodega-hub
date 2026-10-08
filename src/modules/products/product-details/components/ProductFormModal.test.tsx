@@ -22,6 +22,29 @@ jest.mock("../../services/uploadProductImage", () => ({
 type UserSession = ReturnType<typeof userEvent.setup>;
 type ProductProp = NonNullable<Parameters<typeof ProductFormModal>[0]["product"]>;
 
+/**
+ * Vigila los rechazos sin manejar: el formulario captura el de `onSubmit` y
+ * no debe quedar ninguno (en el navegador sería un `pageerror` por guardado fallido).
+ */
+function watchUnhandledRejections() {
+  const unhandled = jest.fn();
+
+  process.on("unhandledRejection", unhandled);
+
+  return {
+    /** Node avisa de un rechazo sin manejar en el turno siguiente: se le da ese turno. */
+    async settle() {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    },
+    stop() {
+      process.off("unhandledRejection", unhandled);
+    },
+    unhandled,
+  };
+}
+
 function moreOptionsToggle() {
   return screen.getByRole("button", { name: /Más opciones/ });
 }
@@ -538,14 +561,7 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
     const onOpenChange = jest.fn();
     const onCreated = jest.fn();
     const onSubmit = jest.fn().mockRejectedValue(new Error("SKU duplicado"));
-    const unhandled = jest.fn();
-
-    // El formulario no se traga el rechazo: sube sin atender, como hoy el de
-    // `mutateAsync`. Se aparta el aviso global de jest para poder observarlo.
-    const jestListeners = process.listeners("unhandledRejection");
-
-    process.removeAllListeners("unhandledRejection");
-    process.on("unhandledRejection", unhandled);
+    const rejections = watchUnhandledRejections();
 
     try {
       render(
@@ -561,13 +577,13 @@ describe("ProductFormModal · dos niveles (PRO-01)", () => {
       await user.click(screen.getByRole("button", { name: "Crear producto" }));
 
       await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(unhandled).toHaveBeenCalledTimes(1));
+      await rejections.settle();
     } finally {
-      process.removeAllListeners("unhandledRejection");
-      jestListeners.forEach((listener) => process.on("unhandledRejection", listener));
+      rejections.stop();
     }
 
-    expect(unhandled.mock.calls[0][0]).toEqual(new Error("SKU duplicado"));
+    // El formulario captura el rechazo: el motivo lo pinta el consumidor.
+    expect(rejections.unhandled).not.toHaveBeenCalled();
 
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
     expect(onCreated).not.toHaveBeenCalled();
@@ -746,23 +762,6 @@ describe("ProductFormModal · fallos de QA (PRO-F1)", () => {
     return urls;
   }
 
-  /** Aparta el aviso global de jest: el formulario deja subir el rechazo de `onSubmit`. */
-  function captureUnhandledRejections() {
-    const jestListeners = process.listeners("unhandledRejection");
-    const unhandled = jest.fn();
-
-    process.removeAllListeners("unhandledRejection");
-    process.on("unhandledRejection", unhandled);
-
-    return {
-      restore() {
-        process.removeAllListeners("unhandledRejection");
-        jestListeners.forEach((listener) => process.on("unhandledRejection", listener));
-      },
-      unhandled,
-    };
-  }
-
   beforeEach(() => {
     window.localStorage.clear();
   });
@@ -889,7 +888,7 @@ describe("ProductFormModal · fallos de QA (PRO-F1)", () => {
     const onSubmit = jest
       .fn()
       .mockRejectedValue(new Error("El producto unidad ya está vinculado a otro empaque."));
-    const rejections = captureUnhandledRejections();
+    const rejections = watchUnhandledRejections();
 
     try {
       render(<ProductFormModal onOpenChange={jest.fn()} onSubmit={onSubmit} open />);
@@ -901,7 +900,8 @@ describe("ProductFormModal · fallos de QA (PRO-F1)", () => {
       const requestsPerSearch = urls.length;
 
       await user.click(screen.getByRole("button", { name: "Crear producto" }));
-      await waitFor(() => expect(rejections.unhandled).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      await rejections.settle();
 
       // El campo conserva la unidad elegida; al repetir la busqueda se vuelve a pedir.
       expect(unitField()).toHaveValue("Taladro percutor");
@@ -914,11 +914,12 @@ describe("ProductFormModal · fallos de QA (PRO-F1)", () => {
 
       await user.click(screen.getByRole("option", { name: /Taladro percutor/ }));
       await user.click(screen.getByRole("button", { name: "Crear producto" }));
-      await waitFor(() => expect(rejections.unhandled).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+      await rejections.settle();
     } finally {
-      rejections.restore();
+      rejections.stop();
     }
 
-    expect(onSubmit).toHaveBeenCalledTimes(2);
+    expect(rejections.unhandled).not.toHaveBeenCalled();
   });
 });
