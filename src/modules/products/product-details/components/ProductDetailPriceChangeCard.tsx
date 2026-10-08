@@ -9,10 +9,15 @@ import { formatMarkupPct } from "@/shared/components/MarginBadge";
 import { PricingFields } from "@/shared/components/PricingFields";
 import { markupPct } from "@/shared/utils/pricing";
 
-import { getProductPricingOptions } from "../../services/productMargin";
+import {
+  getProductPricingOptions,
+  type ProductPricingSettings,
+} from "../../services/productMargin";
 import { PRICE_CHANGE_REASON_MAX_LENGTH } from "../../services/productSchemas";
 
 type ProductDetailPriceChangeCardProps = {
+  /** % de ganancia sugerido de la categoría del producto: primer chip, destacado. */
+  categoryMarkupPct?: number | null;
   /** Costo actual en REF (ya con IVA). Solo se muestra: aquí no se edita. */
   currentCostRef: number;
   currentPriceRef: number;
@@ -23,6 +28,11 @@ type ProductDetailPriceChangeCardProps = {
    * se llama si el precio no cambió o está vacío.
    */
   onSubmit: (salePriceRef: number, reason: string) => void | Promise<void>;
+  /**
+   * Chips y cortes del semáforo de la tienda (`usePricingSettings().data`). Sin
+   * ellos (cargando o la consulta falló) se usan los por defecto.
+   */
+  pricing?: ProductPricingSettings | null;
 };
 
 const NEW_PRICE_REQUIRED_MESSAGE = "Escribe el nuevo precio.";
@@ -38,17 +48,19 @@ export function getMarginAdjustmentReason(pct: number) {
  * se propone solo ("Ajuste de margen a X %") hasta que el usuario escribe el suyo.
  */
 export function ProductDetailPriceChangeCard({
+  categoryMarkupPct,
   currentCostRef,
   currentPriceRef,
   isSubmitting = false,
   onSubmit,
+  pricing,
 }: ProductDetailPriceChangeCardProps) {
   const [price, setPrice] = useState<number | null>(currentPriceRef);
   // `null` = el usuario no ha escrito un motivo: se muestra el propuesto.
   const [typedReason, setTypedReason] = useState<string | null>(null);
   const [showPriceRequired, setShowPriceRequired] = useState(false);
   const [syncedPriceRef, setSyncedPriceRef] = useState(currentPriceRef);
-  const pricingOptions = getProductPricingOptions();
+  const pricingOptions = getProductPricingOptions(pricing);
 
   // Tras cada cambio confirmado, el precio en edición se realinea con el
   // guardado y el motivo vuelve a proponerse.
@@ -93,6 +105,7 @@ export function ProductDetailPriceChangeCard({
           error={showPriceRequired && price === null ? NEW_PRICE_REQUIRED_MESSAGE : undefined}
           onPriceChange={setPrice}
           price={price}
+          suggestedPct={categoryMarkupPct}
           thresholds={pricingOptions.thresholds}
         />
         <Input

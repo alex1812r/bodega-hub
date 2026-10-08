@@ -8,6 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { InventorySkuCell } from "@/modules/inventory/inventory-list/components/InventorySkuCell";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
+import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { Can } from "@/shared/auth/Can";
 import { usePermission } from "@/shared/auth/usePermission";
 import { type ActionMenuItem } from "@/shared/components/ActionsMenu";
@@ -29,6 +30,7 @@ import {
   withUrlListBoundary,
 } from "@/shared/hooks/useUrlListState";
 import { cn } from "@/shared/utils/cn";
+import type { MarginThresholds } from "@/shared/utils/pricing";
 import { withReturnTo } from "@/shared/utils/returnTo";
 
 import { ProductFormModal } from "../product-details/components/ProductFormModal";
@@ -52,6 +54,7 @@ import { ProductNameWithThumb } from "./components/ProductNameWithThumb";
 import { ReactivateProductConfirmModal } from "./components/ReactivateProductConfirmModal";
 import { ProductsListFilters } from "./components/ProductsListFilters";
 import { ProductsStatusBadge } from "./components/ProductsStatusBadge";
+import { getProductMarginThresholds } from "../services/productMargin";
 import { PRODUCT_EDIT_PRICE_REASON } from "../services/productSchemas";
 import { normalizeBarcode } from "../services/productSearch";
 import { productsListSchema, toProductsFilters } from "./productsListParams";
@@ -90,6 +93,7 @@ function ProductDetailLink({ href, product }: { href: string; product: ProductWi
 function buildProductColumns(
   rateVes: number,
   detailHref: (productId: string) => string,
+  thresholds: MarginThresholds,
 ): DataTableColumn<ProductWithCategory>[] {
   return [
     {
@@ -151,6 +155,7 @@ function buildProductColumns(
             className="lg:hidden"
             cost={product.currentCostRef}
             price={product.salePriceRef}
+            thresholds={thresholds}
           />
           <ProductMoneyCell
             isActive={product.isActive}
@@ -170,7 +175,11 @@ function buildProductColumns(
       // currentCostRef ya incluye el IVA: el % se calcula sobre él tal cual.
       render: (product) => (
         <div className="flex justify-end">
-          <MarginBadge cost={product.currentCostRef} price={product.salePriceRef} />
+          <MarginBadge
+            cost={product.currentCostRef}
+            price={product.salePriceRef}
+            thresholds={thresholds}
+          />
         </div>
       ),
       sortable: true,
@@ -237,7 +246,16 @@ function ProductsList() {
     (productId: string) => withReturnTo(`/products/${productId}`, listHref),
     [listHref],
   );
-  const columns = useMemo(() => buildProductColumns(rateVes, detailHref), [detailHref, rateVes]);
+  // Semáforo de la tienda; sin datos (cargando o error) valen los cortes por defecto.
+  const pricingSettings = usePricingSettings();
+  const marginThresholds = useMemo(
+    () => getProductMarginThresholds(pricingSettings.data),
+    [pricingSettings.data],
+  );
+  const columns = useMemo(
+    () => buildProductColumns(rateVes, detailHref, marginThresholds),
+    [detailHref, marginThresholds, rateVes],
+  );
   const createProduct = useCreateProduct();
   const productToEditQuery = useProduct(productToEditId ?? "");
   const updateProduct = useUpdateProduct(productToEditId ?? "");

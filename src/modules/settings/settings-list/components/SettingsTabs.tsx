@@ -2,10 +2,12 @@
 
 import { cn } from "@/shared/utils/cn";
 
-export type SettingsTabId = "general" | "users" | "rates";
+export type SettingsTabId = "general" | "taxes" | "pricing" | "users" | "rates";
 
 const TABS: { id: SettingsTabId; label: string }[] = [
   { id: "general", label: "General / sistema" },
+  { id: "taxes", label: "Impuestos" },
+  { id: "pricing", label: "Precios" },
   { id: "users", label: "Usuarios" },
   { id: "rates", label: "Tasas" },
 ];

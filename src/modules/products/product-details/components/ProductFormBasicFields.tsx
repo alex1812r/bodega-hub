@@ -9,6 +9,7 @@ import { NumberInput } from "@/shared/components/NumberInput";
 import { PricingFields } from "@/shared/components/PricingFields";
 import { SelectField } from "@/shared/components/SelectField";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
+import type { MarginThresholds } from "@/shared/utils/pricing";
 
 import { getProductPricingOptions } from "../../services/productMargin";
 
@@ -37,12 +38,14 @@ type ProductFormBasicFieldsProps = {
    */
   onCreateCategory?: (trigger: HTMLButtonElement) => void;
   onNameChange: (name: string) => void;
-  /** % recomendados; sin ellos, los de `getProductPricingOptions`. */
+  /** % recomendados; sin ellos, los por defecto de `getProductPricingOptions`. */
   pricingChips?: readonly number[];
   /** Se intentó guardar: un precio vacío muestra su aviso. */
   showPriceRequired?: boolean;
   /** % sugerido (el de la categoría): primer chip, destacado. */
   suggestedMarkupPct?: number;
+  /** Cortes del semáforo; sin ellos, los por defecto de `getProductPricingOptions`. */
+  thresholds?: MarginThresholds;
 };
 
 /**
@@ -69,6 +72,7 @@ export function ProductFormBasicFields({
   pricingChips,
   showPriceRequired = false,
   suggestedMarkupPct,
+  thresholds,
 }: ProductFormBasicFieldsProps) {
   const [cost, setCost] = useState<number | null>(defaults.currentCostRef ?? null);
   const [price, setPrice] = useState<number | null>(defaults.salePriceRef ?? null);
@@ -134,7 +138,7 @@ export function ProductFormBasicFields({
           onPriceChange={setPrice}
           price={price}
           suggestedPct={suggestedMarkupPct}
-          thresholds={pricingOptions.thresholds}
+          thresholds={thresholds ?? pricingOptions.thresholds}
         />
         <input name="salePriceRef" type="hidden" value={price ?? ""} />
       </div>

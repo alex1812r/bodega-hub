@@ -70,6 +70,8 @@ describe("ProductsListPage · ganancia y estado en la URL", () => {
   const fetchMock = jest.fn();
   const originalMatchMedia = window.matchMedia;
   let productsResponse: () => Response;
+  /** `GET /api/settings/pricing`: los ajustes de la tienda, o un 403. */
+  let pricingResponse: () => Response;
   let isMobile = false;
 
   beforeEach(() => {
@@ -86,10 +88,16 @@ describe("ProductsListPage · ganancia y estado en la URL", () => {
     window.history.replaceState(null, "", "/products");
     productsResponse = () =>
       jsonResponse({ data: { items: PRODUCTS, limit: 10, skip: 0, total: 45 } });
+    pricingResponse = () =>
+      jsonResponse({ data: { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 } });
     fetchMock.mockReset();
     fetchMock.mockImplementation(async (url: string) => {
       if (String(url).startsWith("/api/products")) {
         return productsResponse();
+      }
+
+      if (String(url).startsWith("/api/settings/pricing")) {
+        return pricingResponse();
       }
 
       if (String(url).startsWith("/api/categories")) {
@@ -178,6 +186,51 @@ describe("ProductsListPage · ganancia y estado en la URL", () => {
     expect(screen.getByRole("columnheader", { name: /Ganancia/ })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /Costo/ })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /PVP/ })).toBeInTheDocument();
+  });
+
+  it("paints the badge with the store thresholds: 20 % is green with green from 18 % (PRO-09)", async () => {
+    pricingResponse = () =>
+      jsonResponse({ data: { chipsPct: [10, 40], greenFromPct: 18, yellowFromPct: 8 } });
+    renderPage();
+
+    const expected: [string, string][] = [
+      ["Arroz", "mid"], // 10 %
+      ["Harina", "high"], // 20 %
+      ["Aceite", "high"], // 50 %
+      ["Azúcar", "low"], // −20 %
+    ];
+
+    for (const [name, band] of expected) {
+      const row = await findRow(name);
+
+      await waitFor(() => {
+        for (const badge of within(row).getAllByTitle(MARGIN_BADGE_TITLE)) {
+          expect(badge.getAttribute("data-band")).toBe(band);
+        }
+      });
+    }
+
+    // Una sola consulta de ajustes para toda la lista.
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/settings/pricing")),
+    ).toHaveLength(1);
+  });
+
+  it("falls back to the default thresholds when the store settings fail (PRO-09)", async () => {
+    pricingResponse = () =>
+      jsonResponse({ error: { code: "FORBIDDEN", message: "No tienes permiso." } }, 403);
+    renderPage();
+
+    const badges = within(await findRow("Harina")).getAllByTitle(MARGIN_BADGE_TITLE);
+
+    expect(badges).toHaveLength(2);
+
+    for (const badge of badges) {
+      expect(badge).toHaveTextContent("20 %");
+      expect(badge.getAttribute("data-band")).toBe("mid");
+    }
+
+    expect(await findRow("Aceite")).toBeInTheDocument();
   });
 
   it("uses the current defaults without URL parameters and writes nothing", async () => {

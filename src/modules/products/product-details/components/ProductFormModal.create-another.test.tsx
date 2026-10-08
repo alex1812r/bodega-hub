@@ -10,6 +10,11 @@ jest.mock("../../../../shared/auth/Can", () => ({
   Can: () => null,
 }));
 
+// Sin configuración de la tienda: el formulario usa los chips y el semáforo por defecto.
+jest.mock("../../../settings/hooks/useSettings", () => ({
+  usePricingSettings: () => ({ data: undefined }),
+}));
+
 jest.mock("../../hooks/useProducts", () => ({
   useProducts: () => ({ data: undefined }),
 }));

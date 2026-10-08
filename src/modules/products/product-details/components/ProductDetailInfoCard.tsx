@@ -5,6 +5,7 @@ import { ProductsStatusBadge } from "@/modules/products/products-list/components
 import { MarginBadge } from "@/shared/components/MarginBadge";
 import { formatRefUsd, roundMoney } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
+import type { MarginThresholds } from "@/shared/utils/pricing";
 
 import { ProductDetailSectionCard } from "./ProductDetailSectionCard";
 
@@ -18,6 +19,8 @@ type ProductDetailInfoCardProps = {
   imageUrl?: string | null;
   isActive: boolean;
   salePriceRef: number;
+  /** Cortes del semáforo de la tienda; sin ellos, los por defecto. */
+  thresholds?: MarginThresholds;
 };
 
 export function ProductDetailInfoCard({
@@ -27,6 +30,7 @@ export function ProductDetailInfoCard({
   imageUrl,
   isActive,
   salePriceRef,
+  thresholds,
 }: ProductDetailInfoCardProps) {
   const displayDescription = description?.trim() || PLACEHOLDER_DESCRIPTION;
   const gainRef = roundMoney(salePriceRef - costRef);
@@ -80,7 +84,7 @@ export function ProductDetailInfoCard({
               Ganancia
             </span>
             <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <MarginBadge cost={costRef} price={salePriceRef} size="md" />
+              <MarginBadge cost={costRef} price={salePriceRef} size="md" thresholds={thresholds} />
               {/* Sin costo no hay ganancia que mostrar: el precio entero no es ganancia. */}
               {costRef > 0 ? (
                 <span

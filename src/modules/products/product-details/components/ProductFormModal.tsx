@@ -13,6 +13,7 @@ import { flushSync } from "react-dom";
 
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
 import { InventoryAdjustmentModal } from "@/modules/inventory/inventory-movements/components/InventoryAdjustmentModal";
+import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { Can } from "@/shared/auth/Can";
 import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
@@ -23,6 +24,7 @@ import type { CategoryMock } from "@/shared/mocks/erp-data";
 
 import { CategoryQuickCreateModal } from "../../categories-list/components/CategoryQuickCreateModal";
 import type { ProductInput, ProductWithCategory } from "../../hooks/useProducts";
+import { getProductPricingOptions } from "../../services/productMargin";
 import { normalizeBarcode } from "../../services/productSearch";
 import {
   removeProductImage,
@@ -110,7 +112,10 @@ export type ProductFormModalProps = {
   open?: boolean;
   /**
    * % de ganancia recomendados del bloque de precio, en el orden en que se
-   * ofrecen. Sin ellos, los de `getProductPricingOptions` (hoy 12 / 20 / 30).
+   * ofrecen. Precedencia: esta prop si se pasa; si no, los configurados en la
+   * tienda (`usePricingSettings`, una query cacheada); mientras cargan o si
+   * fallan (p. ej. 403), los por defecto (12 / 20 / 30). Los cortes del
+   * semáforo siguen siempre la configuración de la tienda (o los por defecto).
    */
   pricingChips?: readonly number[];
   /** Producto en edición. */
@@ -123,8 +128,10 @@ export type ProductFormModalProps = {
    */
   showCreatedToast?: boolean;
   /**
-   * % de ganancia sugerido (p. ej. el de la categoría): primer chip, destacado
-   * como "Sugerido". Solo se ofrece: no fija ningún precio por sí solo.
+   * % de ganancia sugerido: primer chip, destacado como "Sugerido". Solo se
+   * ofrece: no fija ningún precio por sí solo. Precedencia: esta prop si se
+   * pasa; si no, el `defaultMarkupPct` de la categoría elegida en el
+   * formulario (cambia al cambiar de categoría); sin ninguno, no hay sugerido.
    */
   suggestedMarkupPct?: number;
   trigger?: ReactNode;
@@ -188,6 +195,12 @@ export function ProductFormModal({
     ],
     [categories, createdCategories],
   );
+  // Chips y semáforo de la tienda; sin datos (cargando, error o 403) valen los por defecto.
+  const pricingSettings = usePricingSettings();
+  const pricingOptions = getProductPricingOptions(pricingSettings.data);
+  const selectedCategory =
+    categoryOptions.find((category) => category.id === categoryId) ??
+    (product?.category?.id === categoryId ? product.category : undefined);
   const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
   const [pendingImageBlob, setPendingImageBlob] = useState<Blob | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
@@ -551,9 +564,10 @@ export function ProductFormModal({
           onCategoryChange={setCategoryId}
           onCreateCategory={openCategoryCreate}
           onNameChange={setName}
-          pricingChips={pricingChips}
+          pricingChips={pricingChips ?? pricingOptions.chips}
           showPriceRequired={showPriceRequired}
-          suggestedMarkupPct={suggestedMarkupPct}
+          suggestedMarkupPct={suggestedMarkupPct ?? selectedCategory?.defaultMarkupPct ?? undefined}
+          thresholds={pricingOptions.thresholds}
         />
         {compact ? (
           <p className="text-sm text-on-surface-variant">

@@ -79,9 +79,10 @@ describe("CategoryFormModal · alícuota con chips (PRO-02)", () => {
     expect(form.querySelector('input[type="number"]')).toBeNull();
     expect(screen.queryByLabelText(/Impuesto/)).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
-    // Lo único que se escribe: Nombre y Descripción.
+    // Lo único que se escribe: Nombre, el % de ganancia sugerido (opcional) y Descripción.
     expect(screen.getAllByRole("textbox").map((field) => field.getAttribute("name"))).toEqual([
       "name",
+      "defaultMarkupPct",
       "description",
     ]);
   });

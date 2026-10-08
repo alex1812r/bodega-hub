@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Input } from "@/shared/components/Input";
+import { NumberInput, parseNumberInput } from "@/shared/components/NumberInput";
 import { TaxRateChips } from "@/shared/components/TaxRateChips";
 import { Textarea } from "@/shared/components/Textarea";
 import { type TaxRate, useTaxRates } from "@/shared/hooks/useTaxRates";
@@ -14,6 +15,7 @@ import type { CategoryInput } from "../../hooks/useProducts";
 /** Porcentaje con el que el servidor crea una categoría que no indica alícuota. */
 const FALLBACK_TAX_RATE_PCT = 16;
 const TAX_RATE_FIELD_NAME = "taxRate";
+const MARKUP_FIELD_NAME = "defaultMarkupPct";
 
 type TaxRateSelection = { code: string; pct: number };
 
@@ -22,7 +24,10 @@ type CategoryFormFieldsProps = {
   category?: CategoryMock;
   /** Error del servidor; se muestra al pie de los campos. */
   errorMessage?: string;
-  /** El alta rápida desde el producto solo pide Nombre y alícuota. */
+  /**
+   * El alta rápida desde el producto solo pide Nombre y alícuota: sin
+   * Descripción ni "% de ganancia sugerido" (se completan desde Categorías).
+   */
   showDescription?: boolean;
 };
 
@@ -54,13 +59,16 @@ function resolveInitialSelection(
 
 /**
  * Campos de una categoría: Nombre, alícuota de IVA y, salvo en el alta rápida,
- * Descripción. Los usan `CategoryFormModal` (lista de categorías) y
+ * "% de ganancia sugerido" (opcional) y Descripción. Los usan `CategoryFormModal` (lista de categorías) y
  * `CategoryQuickCreateModal` (formulario de producto). Van dentro de un
  * `<form>` que se lee con `readCategoryForm`.
  *
  * El IVA nunca se teclea: se elige una alícuota del catálogo. La alícuota solo
  * viaja en un alta o cuando el usuario la cambia: al editar sin tocarla, la
  * categoría conserva la que tenía aunque ya no esté activa.
+ *
+ * El % de ganancia sugerido solo se ofrece como primer chip al fijar el precio
+ * de un producto de la categoría: no cambia ningún precio. Vacío = sin sugerencia.
  */
 export function CategoryFormFields({
   category,
@@ -95,6 +103,21 @@ export function CategoryFormFields({
         ) : null}
       </div>
       {showDescription ? (
+        <div className="space-y-1">
+          <NumberInput
+            decimals={2}
+            defaultValue={category?.defaultMarkupPct ?? null}
+            label="% de ganancia sugerido (opcional)"
+            name={MARKUP_FIELD_NAME}
+            placeholder="Sin sugerencia"
+          />
+          <p className={formHelperClassName}>
+            Se ofrece como primer porcentaje al fijar el precio de sus productos. No cambia
+            ningún precio.
+          </p>
+        </div>
+      ) : null}
+      {showDescription ? (
         <Textarea
           defaultValue={category?.description ?? ""}
           label="Descripción (opcional)"
@@ -111,14 +134,24 @@ export function CategoryFormFields({
   );
 }
 
-/** Lee el `<form>` que contiene `CategoryFormFields`. Sin alícuota en el formulario, no viaja. */
-export function readCategoryForm(form: HTMLFormElement): CategoryInput {
+/**
+ * Lee el `<form>` que contiene `CategoryFormFields`. Sin alícuota en el
+ * formulario, no viaja. El % de ganancia sugerido viaja cuando se escribe; si
+ * se deja vacío solo viaja (`null`, para borrarlo) al editar una `category`
+ * que lo tenía.
+ */
+export function readCategoryForm(form: HTMLFormElement, category?: CategoryMock): CategoryInput {
   const formData = new FormData(form);
   const taxRate = formData.get(TAX_RATE_FIELD_NAME);
+  const markupPct = parseNumberInput(formData.get(MARKUP_FIELD_NAME));
+  const clearsMarkup =
+    markupPct === null && formData.has(MARKUP_FIELD_NAME) && category?.defaultMarkupPct != null;
 
   return {
     description: String(formData.get("description") ?? "").trim() || undefined,
     name: String(formData.get("name") ?? "").trim(),
     ...(taxRate === null ? {} : { taxRate: Number(taxRate) }),
+    ...(markupPct !== null ? { defaultMarkupPct: markupPct } : {}),
+    ...(clearsMarkup ? { defaultMarkupPct: null } : {}),
   };
 }

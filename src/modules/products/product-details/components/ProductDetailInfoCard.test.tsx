@@ -115,4 +115,27 @@ describe("ProductDetailInfoCard · ganancia", () => {
     expect(gainBlock()).not.toHaveTextContent("ref");
     expect(gainBlock()).not.toHaveTextContent(/Infinity|NaN|∞/);
   });
+
+  it("uses the store thresholds when given: 20 % is green with green from 18 % (PRO-09)", () => {
+    render(
+      <ProductDetailInfoCard
+        categoryName="Víveres"
+        costRef={10}
+        isActive
+        salePriceRef={12}
+        thresholds={{ high: 18, low: 8 }}
+      />,
+    );
+
+    const badge = screen.getByTitle(MARGIN_BADGE_TITLE);
+
+    expect(badge).toHaveTextContent("20 %");
+    expect(badge).toHaveAttribute("data-band", "high");
+  });
+
+  it("falls back to the default thresholds without them: 20 % is yellow (PRO-09)", () => {
+    renderCard(10, 12);
+
+    expect(screen.getByTitle(MARGIN_BADGE_TITLE)).toHaveAttribute("data-band", "mid");
+  });
 });

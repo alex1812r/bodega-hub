@@ -18,7 +18,8 @@ type CategoryFormModalProps = {
   onOpenChange?: (open: boolean) => void;
   /**
    * Guarda. En edición `taxRate` solo llega si el usuario eligió otra alícuota:
-   * sin tocarla, la categoría conserva la que tenía. Si rechaza, el modal
+   * sin tocarla, la categoría conserva la que tenía. `defaultMarkupPct` llega
+   * con el % escrito, o `null` si se borró el que tenía. Si rechaza, el modal
    * queda abierto (el consumidor muestra el motivo con `errorMessage`); el
    * rechazo se captura aquí.
    */
@@ -64,7 +65,7 @@ export function CategoryFormModal({
     isSubmitInFlightRef.current = true;
 
     try {
-      await onSubmit?.(readCategoryForm(event.currentTarget));
+      await onSubmit?.(readCategoryForm(event.currentTarget, isEdit ? category : undefined));
       handleOpenChange(false);
     } catch {
       // El modal sigue abierto; el consumidor muestra el motivo con `errorMessage`.

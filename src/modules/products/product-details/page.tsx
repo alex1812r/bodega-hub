@@ -4,6 +4,7 @@ import { Pencil } from "lucide-react";
 
 import { getPriceChangeReason } from "@/lib/api/dataSourceUi";
 import { getPaginatedItems } from "@/lib/api/pagination";
+import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { Can } from "@/shared/auth/Can";
 import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
 import { usePermission } from "@/shared/auth/usePermission";
@@ -22,6 +23,7 @@ import {
   useUpdateProduct,
   useUpdateProductPrice,
 } from "../hooks/useProducts";
+import { getProductMarginThresholds } from "../services/productMargin";
 import { PRODUCT_EDIT_PRICE_REASON } from "../services/productSchemas";
 import type { ProductFormSubmitContext } from "./components/ProductFormModal";
 import { ProductDetailPackConversionCard } from "./components/ProductDetailPackConversionCard";
@@ -61,6 +63,8 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
   const canSeeSuppliers = role ? canViewSupplierContacts(role) : false;
   const product = useProduct(productId);
   const categories = useCategories();
+  // Semáforo y chips de la tienda; sin datos (cargando o error) valen los por defecto.
+  const pricingSettings = usePricingSettings();
   const priceHistory = useProductPriceHistory(productId);
   const suppliers = useProductSuppliers(canSeeSuppliers ? productId : undefined);
   const updateProduct = useUpdateProduct(productId);
@@ -167,6 +171,7 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
             imageUrl={data.imageUrl}
             isActive={data.isActive}
             salePriceRef={data.salePriceRef}
+            thresholds={getProductMarginThresholds(pricingSettings.data)}
           />
         </div>
         <div className="lg:col-span-4">
@@ -190,10 +195,12 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
         <div className="lg:col-span-4">
           <Can permission="products.manage">
             <ProductDetailPriceChangeCard
+              categoryMarkupPct={data.category?.defaultMarkupPct}
               currentCostRef={data.currentCostRef}
               currentPriceRef={data.salePriceRef}
               isSubmitting={quickPriceUpdate.isPending}
               onSubmit={handleQuickPriceUpdate}
+              pricing={pricingSettings.data}
             />
           </Can>
         </div>

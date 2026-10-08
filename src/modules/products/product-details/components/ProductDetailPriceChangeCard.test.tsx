@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ProductDetailPriceChangeCard } from "./ProductDetailPriceChangeCard";
@@ -226,5 +226,45 @@ describe("ProductDetailPriceChangeCard · bloque de precio (PRO-08)", () => {
 
     expect(priceField()).toHaveValue("12");
     expect(reasonField()).toHaveValue("Ajuste de margen a 20 %");
+  });
+
+  it("PRO-09: usa los chips y el semaforo de la tienda y ofrece primero el % de la categoria", () => {
+    render(
+      <ProductDetailPriceChangeCard
+        categoryMarkupPct={18}
+        currentCostRef={10}
+        currentPriceRef={12}
+        onSubmit={jest.fn()}
+        pricing={{ chipsPct: [10, 40], greenFromPct: 18, yellowFromPct: 8 }}
+      />,
+    );
+
+    const chips = within(
+      screen.getByRole("group", { name: "Porcentajes de ganancia recomendados" }),
+    ).getAllByRole("button");
+
+    expect(chips.map((chip) => chip.textContent)).toEqual(["Sugerido 18 %", "10 %", "40 %"]);
+    // 20 % es verde porque la tienda fija el verde en 18 %.
+    expect(screen.getByTitle(BADGE_TITLE)).toHaveAttribute("data-band", "high");
+    // Ofrecer el % no mueve el precio.
+    expect(priceField()).toHaveValue("12");
+  });
+
+  it("PRO-09: sin ajustes de la tienda (cargando o error) usa los valores por defecto", () => {
+    render(
+      <ProductDetailPriceChangeCard
+        currentCostRef={10}
+        currentPriceRef={12}
+        onSubmit={jest.fn()}
+        pricing={undefined}
+      />,
+    );
+
+    const chips = within(
+      screen.getByRole("group", { name: "Porcentajes de ganancia recomendados" }),
+    ).getAllByRole("button");
+
+    expect(chips.map((chip) => chip.textContent)).toEqual(["12 %", "20 %", "30 %"]);
+    expect(screen.getByTitle(BADGE_TITLE)).toHaveAttribute("data-band", "mid");
   });
 });
