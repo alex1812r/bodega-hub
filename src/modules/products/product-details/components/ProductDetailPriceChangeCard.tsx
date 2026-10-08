@@ -10,6 +10,7 @@ import { PricingFields } from "@/shared/components/PricingFields";
 import { markupPct } from "@/shared/utils/pricing";
 
 import { getProductPricingOptions } from "../../services/productMargin";
+import { PRICE_CHANGE_REASON_MAX_LENGTH } from "../../services/productSchemas";
 
 type ProductDetailPriceChangeCardProps = {
   /** Costo actual en REF (ya con IVA). Solo se muestra: aquí no se edita. */
@@ -18,7 +19,8 @@ type ProductDetailPriceChangeCardProps = {
   isSubmitting?: boolean;
   /**
    * Recibe el precio nuevo y el motivo que quedó en el campo (el propuesto o el
-   * escrito a mano; "" si no hay). No se llama si el precio no cambió o está vacío.
+   * escrito a mano; "" si no hay), que se guarda en el historial de precios. No
+   * se llama si el precio no cambió o está vacío.
    */
   onSubmit: (salePriceRef: number, reason: string) => void | Promise<void>;
 };
@@ -95,6 +97,7 @@ export function ProductDetailPriceChangeCard({
         />
         <Input
           label="Motivo"
+          maxLength={PRICE_CHANGE_REASON_MAX_LENGTH}
           onChange={(event) => setTypedReason(event.target.value)}
           placeholder="Opcional"
           value={reason}

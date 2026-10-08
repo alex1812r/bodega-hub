@@ -52,6 +52,7 @@ import { ProductNameWithThumb } from "./components/ProductNameWithThumb";
 import { ReactivateProductConfirmModal } from "./components/ReactivateProductConfirmModal";
 import { ProductsListFilters } from "./components/ProductsListFilters";
 import { ProductsStatusBadge } from "./components/ProductsStatusBadge";
+import { PRODUCT_EDIT_PRICE_REASON } from "../services/productSchemas";
 import { normalizeBarcode } from "../services/productSearch";
 import { productsListSchema, toProductsFilters } from "./productsListParams";
 
@@ -296,7 +297,7 @@ function ProductsList() {
     await updateProduct.mutateAsync(productInput);
 
     if (salePriceRef !== editProduct.salePriceRef) {
-      await updateProductPrice.mutateAsync({ salePriceRef });
+      await updateProductPrice.mutateAsync({ reason: PRODUCT_EDIT_PRICE_REASON, salePriceRef });
     }
 
     setProductToEditId(null);

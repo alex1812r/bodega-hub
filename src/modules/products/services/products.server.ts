@@ -419,6 +419,14 @@ export async function deleteProduct(id: string, storeId: string) {
   };
 }
 
+/** La fila del historial con su motivo (`null` si el cambio se registró sin él). */
+function mapPriceHistoryEntry(row: ProductPriceHistoryRow) {
+  return {
+    ...mapProductPriceHistory(row),
+    reason: row.reason?.trim() || null,
+  };
+}
+
 export async function updateProductPrice(id: string, input: ProductPriceInput, storeId: string) {
   await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
   const supabase = await createRouteSupabaseClient();
@@ -426,7 +434,7 @@ export async function updateProductPrice(id: string, input: ProductPriceInput, s
   const { data: productRow, error: productError } = await supabase.rpc("update_product_price", {
     p_new_sale_price_ref: input.salePriceRef,
     p_product_id: id,
-    p_reason: null,
+    p_reason: input.reason ?? null,
   });
 
   throwIfSupabaseError(productError);
@@ -452,7 +460,7 @@ export async function updateProductPrice(id: string, input: ProductPriceInput, s
   const product = await getProductById(id, storeId);
 
   return {
-    history: mapProductPriceHistory(historyRow),
+    history: mapPriceHistoryEntry(historyRow),
     product,
   };
 }
@@ -489,7 +497,7 @@ export async function getProductPriceHistory(
   throwIfSupabaseError(error);
 
   return {
-    items: (data ?? []).map((row) => mapProductPriceHistory(row as ProductPriceHistoryRow)),
+    items: (data ?? []).map((row) => mapPriceHistoryEntry(row as ProductPriceHistoryRow)),
     limit,
     skip,
     total: count ?? 0,

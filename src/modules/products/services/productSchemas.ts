@@ -69,3 +69,23 @@ export const addProductBarcodeSchema = z.object({
       message: "El codigo de barras es obligatorio",
     }),
 });
+
+/** Largo máximo del motivo de un cambio de precio (ya sin espacios sobrantes). */
+export const PRICE_CHANGE_REASON_MAX_LENGTH = 200;
+
+/** Motivo que acompaña a un cambio de precio hecho desde la edición del producto. */
+export const PRODUCT_EDIT_PRICE_REASON = "Edición del producto";
+
+/**
+ * Cambio de precio (`POST /api/products/[id]/price`). El motivo es opcional:
+ * ausente, `null` o en blanco queda `null`, que es lo que recibe `p_reason`.
+ */
+export const productPriceSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .max(PRICE_CHANGE_REASON_MAX_LENGTH)
+    .nullish()
+    .transform((value) => value || null),
+  salePriceRef: z.number().min(0),
+});

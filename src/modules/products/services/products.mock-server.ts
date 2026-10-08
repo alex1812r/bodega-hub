@@ -49,7 +49,15 @@ export type ProductInput = Partial<
   packConversion?: PackConversionInput;
 };
 
-export type ProductPriceInput = Pick<ProductMock, "salePriceRef">;
+export type ProductPriceInput = Pick<ProductMock, "salePriceRef"> & {
+  /** Motivo del cambio; ausente o `null` = sin motivo (`p_reason` nulo en la RPC). */
+  reason?: string | null;
+};
+
+/** Entrada del historial de precios con el motivo guardado (`product_price_history.reason`). */
+export type ProductPriceHistoryEntry = ProductPriceHistoryMock & {
+  reason?: string | null;
+};
 
 function resolvePackConversion(productId: string, storeId: string) {
   const link = mockProductPackConversions.find(
@@ -395,7 +403,12 @@ export function deleteProduct(id: string, storeId: string) {
 export function getProductPriceHistory(id: string, searchParams: URLSearchParams, storeId: string) {
   getProductById(id, storeId);
 
-  const history = mockProductPriceHistory.filter((item) => item.productId === id);
+  // Como `products.server`: el cambio más reciente primero. Entre dos con la
+  // misma fecha gana el último registrado.
+  const history: ProductPriceHistoryEntry[] = mockProductPriceHistory
+    .filter((item) => item.productId === id)
+    .reverse()
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 
   return paginateList(history, searchParams);
 }
@@ -429,9 +442,10 @@ export function createProductPriceHistoryEntry(id: string, input: ProductPriceIn
     createdAt: new Date().toISOString(),
     id: `price-mock-${Date.now()}-${mockProductPriceHistory.length}`,
     productId: id,
+    reason: input.reason ?? null,
     salePriceRef: input.salePriceRef,
     userId: "user-demo",
-  } satisfies ProductPriceHistoryMock;
+  } satisfies ProductPriceHistoryEntry;
 
   // Como la RPC `update_product_price`, que inserta en `product_price_history`:
   // el historial que se lee después incluye este cambio.

@@ -79,11 +79,18 @@ export type ProductUpdateInput = Partial<ProductInput> & {
 };
 
 export type ProductPriceUpdateInput = {
+  /** Motivo del cambio (máx. 200 caracteres). Ausente o en blanco: se guarda sin motivo. */
+  reason?: string;
   salePriceRef: number;
 };
 
+/** Cambio del historial de precios; `reason` es el motivo guardado, si lo hubo. */
+export type ProductPriceHistoryEntry = ProductPriceHistoryMock & {
+  reason?: string | null;
+};
+
 export type ProductPriceUpdateResult = {
-  history: ProductPriceHistoryMock;
+  history: ProductPriceHistoryEntry;
   product: ProductWithCategory;
 };
 
@@ -224,7 +231,7 @@ export function useProductPriceHistory(id: string) {
     enabled: Boolean(id),
     queryKey: productsQueryKeys.priceHistory(id),
     queryFn: () =>
-      apiFetch<PaginatedList<ProductPriceHistoryMock>>(`/api/products/${id}/price-history`),
+      apiFetch<PaginatedList<ProductPriceHistoryEntry>>(`/api/products/${id}/price-history`),
   });
 }
 

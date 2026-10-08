@@ -274,6 +274,48 @@ describe("products.mock-server createProductPriceHistoryEntry (parity with the u
     );
   });
 
+  it("stores the reason of the change, and null when there is none (PRO-F4)", () => {
+    const withReason = createProductPriceHistoryEntry(
+      "prod-drill",
+      { reason: "Ajuste de margen a 30 %", salePriceRef: 16 },
+      DEFAULT_STORE_ID,
+    );
+    const withoutReason = createProductPriceHistoryEntry("prod-drill", { salePriceRef: 17 }, DEFAULT_STORE_ID);
+    const items = history("prod-drill").items;
+
+    expect(withReason.reason).toBe("Ajuste de margen a 30 %");
+    expect(withoutReason.reason).toBeNull();
+    expect(items.find((item) => item.id === withReason.id)).toMatchObject({
+      reason: "Ajuste de margen a 30 %",
+    });
+    expect(items.find((item) => item.id === withoutReason.id)).toMatchObject({ reason: null });
+  });
+
+  it("returns the history newest first, like products.server (PRO-F4)", () => {
+    expect(history("prod-drill").items.map((item) => item.id)).toEqual([
+      "price-drill-002",
+      "price-drill-001",
+    ]);
+
+    // Dos cambios en el mismo milisegundo: el último registrado va primero.
+    const first = createProductPriceHistoryEntry("prod-drill", { salePriceRef: 16 }, DEFAULT_STORE_ID);
+    const second = createProductPriceHistoryEntry("prod-drill", { salePriceRef: 17 }, DEFAULT_STORE_ID);
+
+    expect(history("prod-drill").items.map((item) => item.id)).toEqual([
+      second.id,
+      first.id,
+      "price-drill-002",
+      "price-drill-001",
+    ]);
+    // La paginación corta sobre ese orden.
+    expect(
+      getProductPriceHistory("prod-drill", new URLSearchParams("skip=1&limit=50"), DEFAULT_STORE_ID)
+        .items[0],
+    ).toEqual(first);
+    // Leer no reordena lo guardado.
+    expect(mockProductPriceHistory.slice(-2)).toEqual([first, second]);
+  });
+
   it("only adds to the history of that product", () => {
     const other = history("prod-hammer");
 

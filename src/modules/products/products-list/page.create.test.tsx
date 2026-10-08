@@ -271,4 +271,23 @@ describe("ProductsListPage · alta de producto (PRO-04)", () => {
     expect(patches[1]).not.toHaveProperty("salePriceRef");
     expect(posts).toHaveLength(0);
   });
+
+  it("la edición que cambia el precio lo guarda por el cambio de precio, con su motivo automático (PRO-F4)", async () => {
+    const user = renderPage();
+
+    await screen.findByRole("link", { name: "Arroz" });
+    await user.click(screen.getAllByRole("button", { name: "Abrir acciones" })[0]);
+    await user.click(await screen.findByRole("menuitem", { name: "Editar" }));
+
+    const dialog = within(await screen.findByRole("dialog", { name: "Editar producto" }));
+
+    postResponses.push(jsonResponse({ data: { history: {}, product: existing } }));
+    await user.click(dialog.getByRole("button", { name: "30 %" }));
+    await user.click(dialog.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(patches).toHaveLength(1);
+    expect(patches[0]).not.toHaveProperty("salePriceRef");
+    expect(posts).toEqual([{ reason: "Edición del producto", salePriceRef: 1.3 }]);
+  });
 });

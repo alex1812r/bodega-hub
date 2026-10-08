@@ -14,6 +14,7 @@ import { formatDate } from "@/shared/utils/date";
 
 import {
   type ProductInput,
+  type ProductPriceHistoryEntry,
   useCategories,
   useProduct,
   useProductPriceHistory,
@@ -21,6 +22,7 @@ import {
   useUpdateProduct,
   useUpdateProductPrice,
 } from "../hooks/useProducts";
+import { PRODUCT_EDIT_PRICE_REASON } from "../services/productSchemas";
 import type { ProductFormSubmitContext } from "./components/ProductFormModal";
 import { ProductDetailPackConversionCard } from "./components/ProductDetailPackConversionCard";
 import { ProductDetailInfoCard } from "./components/ProductDetailInfoCard";
@@ -42,16 +44,15 @@ type ProductDetailsPageProps = {
   productId?: string;
 };
 
-function mapPriceHistory(
-  rows: { createdAt: string; id: string; salePriceRef: number; userId: string }[],
-): ProductPriceHistoryRow[] {
+function mapPriceHistory(rows: ProductPriceHistoryEntry[]): ProductPriceHistoryRow[] {
   return rows.map((row, index) => ({
     changedBy: row.userId,
     date: formatDate(row.createdAt),
     id: row.id,
     newPriceRef: row.salePriceRef,
     oldPriceRef: rows[index + 1]?.salePriceRef ?? row.salePriceRef,
-    reason: getPriceChangeReason(),
+    // El motivo guardado; el texto fijo solo si el cambio se registró sin motivo.
+    reason: row.reason?.trim() || getPriceChangeReason(),
   }));
 }
 
@@ -64,6 +65,9 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
   const suppliers = useProductSuppliers(canSeeSuppliers ? productId : undefined);
   const updateProduct = useUpdateProduct(productId);
   const updateProductPrice = useUpdateProductPrice(productId);
+  // Mutación aparte para la tarjeta de cambio rápido: su error se avisa en la
+  // página (la tarjeta no lo pinta) y el de la edición solo dentro del modal.
+  const quickPriceUpdate = useUpdateProductPrice(productId);
 
   async function handleUpdateProduct(input: ProductInput, context?: ProductFormSubmitContext) {
     const currentPrice = product.data?.salePriceRef;
@@ -72,12 +76,15 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
     await updateProduct.mutateAsync(productInput);
 
     if (currentPrice !== undefined && salePriceRef !== currentPrice) {
-      await updateProductPrice.mutateAsync({ salePriceRef });
+      await updateProductPrice.mutateAsync({ reason: PRODUCT_EDIT_PRICE_REASON, salePriceRef });
     }
   }
 
-  async function handleQuickPriceUpdate(salePriceRef: number) {
-    await updateProductPrice.mutateAsync({ salePriceRef });
+  // `mutate`, no `mutateAsync`: la tarjeta no espera el resultado y un fallo
+  // se queda en `quickPriceUpdate.error` (se pinta abajo) en vez de subir como
+  // promesa rechazada sin manejar.
+  function handleQuickPriceUpdate(salePriceRef: number, reason: string) {
+    quickPriceUpdate.mutate({ reason, salePriceRef });
   }
 
   if (product.isLoading) {
@@ -141,11 +148,11 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
         sku={data.sku}
       />
 
-      {updateProduct.error || updateProductPrice.error ? (
+      {quickPriceUpdate.error ? (
         <ErrorState
           description={
-            (updateProduct.error ?? updateProductPrice.error) instanceof Error
-              ? (updateProduct.error ?? updateProductPrice.error)?.message
+            quickPriceUpdate.error instanceof Error
+              ? quickPriceUpdate.error.message
               : "No se pudo guardar el cambio."
           }
           title="No pudimos actualizar el producto"
@@ -185,7 +192,7 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
             <ProductDetailPriceChangeCard
               currentCostRef={data.currentCostRef}
               currentPriceRef={data.salePriceRef}
-              isSubmitting={updateProductPrice.isPending}
+              isSubmitting={quickPriceUpdate.isPending}
               onSubmit={handleQuickPriceUpdate}
             />
           </Can>

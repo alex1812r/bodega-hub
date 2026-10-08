@@ -176,8 +176,16 @@ describe("product hooks", () => {
     updateProduct.result.current.mutate({ name: "Producto editado" });
     await waitFor(() => expect(updateProduct.result.current.isSuccess).toBe(true));
 
-    updatePrice.result.current.mutate({ salePriceRef: 12 });
+    updatePrice.result.current.mutate({ reason: "Ajuste de margen a 20 %", salePriceRef: 12 });
     await waitFor(() => expect(updatePrice.result.current.isSuccess).toBe(true));
+
+    // PRO-F4: el motivo viaja en el cuerpo del cambio de precio.
+    const priceCall = fetchMock.mock.calls.find(([url]) => url === "/api/products/prod-drill/price");
+
+    expect(JSON.parse(String(priceCall?.[1]?.body))).toEqual({
+      reason: "Ajuste de margen a 20 %",
+      salePriceRef: 12,
+    });
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/products",
