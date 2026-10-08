@@ -13,7 +13,11 @@ export async function GET(request: Request) {
   try {
     const auth = await requireStorePermission(request, "inventory.view");
     const service = getInventoryService();
-    return jsonData(await service.listInventory(new URL(request.url).searchParams, auth.storeId));
+    return jsonData(
+      await service.listInventory(new URL(request.url).searchParams, auth.storeId, {
+        role: auth.role,
+      }),
+    );
   } catch (error) {
     return toErrorResponse(error);
   }

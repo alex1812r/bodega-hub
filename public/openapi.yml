@@ -1252,17 +1252,61 @@ paths:
   /api/inventory:
     get:
       tags: [Inventory]
-      summary: Listar stock actual
+      summary: Listar stock actual (vista unica de stock)
+      description: >-
+        Una fila por producto ACTIVO de la tienda, ordenada por nombre, con su stock, las entradas y salidas de los
+        ultimos 30 dias, el ultimo movimiento y el estado de stock. Filtros, conteo y paginacion se resuelven en la
+        base (vista `inventory_overview`). Un `skip` mas alla del total responde `200` con `items: []` y el total
+        real. `skip`, `limit`, `minPriceRef`, `maxPriceRef` o `stockStatus` invalidos se ignoran (valor por defecto
+        o sin filtro), no dan error.
       x-permission: inventory.view
       parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Search"
+        - name: productId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Id exacto de un producto (enlace desde `/products`).
+        - name: categoryId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filtra por categoria.
+        - name: stockStatus
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Lista separada por comas de `ok`, `low`, `out` (p. ej. `low,out`). `out` = stock 0; `low` = stock menor
+            o igual al minimo; `ok` = el resto. Los valores desconocidos se descartan.
         - name: lowStock
           in: query
           required: false
           schema:
             type: boolean
+          description: >-
+            `true` deja solo `low` y `out`. Si ademas llega `stockStatus`, se cruzan (con `stockStatus=ok` no casa
+            nada).
+        - name: minPriceRef
+          in: query
+          required: false
+          schema:
+            type: number
+          description: Precio de venta REF minimo (inclusive).
+        - name: maxPriceRef
+          in: query
+          required: false
+          schema:
+            type: number
+          description: Precio de venta REF maximo (inclusive).
       responses:
         "200":
-          description: Productos en inventario
+          description: Lista paginada de productos con sus cifras de inventario
           content:
             application/json:
               schema:
@@ -1270,9 +1314,18 @@ paths:
                 required: [data]
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Product"
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/InventoryOverviewItem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/inventory/movements:
     get:
       tags: [Inventory]
@@ -5585,6 +5638,40 @@ components:
           minLength: 1
         role:
           $ref: "#/components/schemas/UserRole"
+    InventoryOverviewItem:
+      description: Producto del listado de inventario con las cifras del libro `stock_movements`.
+      allOf:
+        - $ref: "#/components/schemas/Product"
+        - type: object
+          required: [entries30d, exits30d, lastMovementAt, lastMovementType, stockStatus]
+          properties:
+            category:
+              $ref: "#/components/schemas/Category"
+            entries30d:
+              type: integer
+              description: Suma de los movimientos positivos de los ultimos 30 dias (30 x 24 h hasta ahora).
+            exits30d:
+              type: integer
+              description: Suma del valor absoluto de los movimientos negativos de los ultimos 30 dias.
+            lastMovementAt:
+              type: string
+              format: date-time
+              nullable: true
+              description: Fecha del ultimo movimiento del producto; `null` si nunca tuvo uno.
+            lastMovementType:
+              allOf:
+                - $ref: "#/components/schemas/StockMovementType"
+              nullable: true
+            stockStatus:
+              type: string
+              enum: [ok, low, out]
+              description: "`out` = stock 0; `low` = stock menor o igual al minimo; `ok` = el resto."
+            reconciliationDiff:
+              type: integer
+              nullable: true
+              description: >-
+                Solo viaja si quien consulta es admin. `current_stock` menos la suma de los movimientos del
+                producto; `null` si cuadra. Para cualquier otro rol la propiedad no existe.
     StockMovement:
       type: object
       required: [id, productId, type, quantityDelta, stockAfter, createdAt]

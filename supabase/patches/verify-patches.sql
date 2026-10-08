@@ -1858,4 +1858,36 @@ select
       and i.indisvalid
       and pg_get_indexdef(i.indexrelid) ilike '%(store_id, client_request_id) where (client_request_id is not null)'
   )
+union all
+select
+  'vista inventory_overview: security_invoker, una fila por producto con entries_30d / exits_30d / last_movement_at / last_movement_type / stock_status, select solo para authenticated / service_role e indice idx_stock_movements_product_seq (product_id, seq desc) (20261011a)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.inventory_overview')
+      and c.relkind = 'v'
+      and c.reloptions @> array['security_invoker=true']
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and has_table_privilege('service_role', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'select')
+      and not has_table_privilege('authenticated', c.oid, 'insert, update, delete')
+  )
+  and (
+    select count(*) = 17
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'inventory_overview'
+      and col.column_name in (
+        'id', 'store_id', 'category_id', 'sku', 'barcode', 'name', 'sale_price_ref', 'current_cost_ref',
+        'current_stock', 'min_stock', 'image_url', 'is_active', 'entries_30d', 'exits_30d',
+        'last_movement_at', 'last_movement_type', 'stock_status'
+      )
+  )
+  and exists (
+    select 1
+    from pg_index i
+    where i.indexrelid = to_regclass('public.idx_stock_movements_product_seq')
+      and i.indrelid = 'public.stock_movements'::regclass
+      and i.indisvalid
+      and pg_get_indexdef(i.indexrelid) ilike '%(product_id, seq desc)'
+  )
 order by 1;

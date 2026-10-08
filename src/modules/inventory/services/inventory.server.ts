@@ -1,6 +1,6 @@
 import { ApiError } from "@/lib/api/apiError";
 import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
-import { paginateList, parsePagination } from "@/lib/api/pagination";
+import { parsePagination } from "@/lib/api/pagination";
 import {
   mapCategory,
   mapProductSummary,
@@ -16,9 +16,10 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import type { StockMovementType } from "@/shared/mocks/erp-data";
 
 import {
-  matchesInventoryListFilters,
   parseInventoryListFilters,
+  type InventoryListQueryFilters,
 } from "../utils/inventoryListFilters";
+import type { InventoryStockStatus } from "../utils/inventoryStockStatus";
 import {
   matchesInventoryMovementFilters,
   parseInventoryMovementFilters,
@@ -27,25 +28,74 @@ import {
   assertPackDistribution,
   type PackDistributionItem,
 } from "@/modules/products/services/packConversionSchemas";
+import { assertListFilterParams } from "@/modules/products/services/listFilterParams";
+import { isRangeNotSatisfiable, listCountOptions } from "@/modules/products/services/listRange";
 import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
+import {
+  canSeeInventoryReconciliation,
+  type InventoryOverviewItem,
+  type ListInventoryOptions,
+} from "./inventoryOverview";
 import { assertReturnAdjustmentHasDocument } from "./returnAdjustmentDocument";
 import { isMissingRpcSignatureError, rpcWithClientRequestId } from "./rpcWithClientRequestId";
 
 const productSummarySelect =
   "id, category_id, sku, barcode, name, sale_price_ref, current_cost_ref, current_stock, min_stock, image_url, is_active";
 
-const productInventorySelect = `
+/** Vista `inventory_overview` (parche 20261011a): producto + cifras del libro + `stock_status`. */
+const inventoryOverviewSelect = `
   ${productSummarySelect},
+  entries_30d,
+  exits_30d,
+  last_movement_at,
+  last_movement_type,
+  stock_status,
   category:categories(id, name, description, is_active, created_at, updated_at)
 `;
 
-function mapInventoryItem(row: DbProductSummaryRow & { category?: CategoryRow | null }) {
+type InventoryOverviewRow = DbProductSummaryRow & {
+  category?: CategoryRow | null;
+  entries_30d?: number | null;
+  exits_30d?: number | null;
+  last_movement_at?: string | null;
+  last_movement_type?: StockMovementType | null;
+  stock_status: InventoryStockStatus;
+};
+
+function mapInventoryOverviewItem(row: InventoryOverviewRow): InventoryOverviewItem {
   return {
     ...mapProductSummary(row),
     category: row.category ? mapCategory(row.category) : undefined,
+    entries30d: row.entries_30d ?? 0,
+    exits30d: row.exits_30d ?? 0,
+    lastMovementAt: row.last_movement_at ?? null,
+    lastMovementType: row.last_movement_type ?? null,
+    stockStatus: row.stock_status,
   };
+}
+
+/** Filtros exactos del listado que viajan tal cual a PostgREST. */
+const INVENTORY_LIST_EXACT_FILTERS = ["categoryId", "productId"] as const;
+
+/** `offset` máximo que se envía a PostgREST; más allá no puede haber filas. */
+const MAX_LIST_SKIP = 2_000_000_000;
+
+/**
+ * Estados de stock que pide la consulta. `lowStock` equivale a "bajo o agotado"
+ * y se cruza con `stockStatus`. `undefined` = sin filtro; lista vacía = nada casa.
+ */
+function resolveStockStatuses(
+  filters: InventoryListQueryFilters,
+): InventoryStockStatus[] | undefined {
+  if (!filters.lowStock) {
+    return filters.stockStatus;
+  }
+
+  return filters.stockStatus
+    ? filters.stockStatus.filter((status) => status !== "ok")
+    : ["low", "out"];
 }
 
 const stockMovementSelect = `
@@ -65,66 +115,135 @@ const stockMovementSelect = `
 const stockCardSelect =
   "id, product_id, sku, product_name, type, quantity_delta, stock_after, sale_id, purchase_id, conversion_id, reason, created_by, created_at";
 
-export async function listInventory(searchParams: URLSearchParams, storeId: string) {
-  const supabase = await createRouteSupabaseClient();
+export async function listInventory(
+  searchParams: URLSearchParams,
+  storeId: string,
+  options: ListInventoryOptions = {},
+) {
+  assertListFilterParams(searchParams, INVENTORY_LIST_EXACT_FILTERS);
+
   const filters = parseInventoryListFilters(searchParams);
-  const needsInMemoryPagination =
-    Boolean(filters.stockStatus?.length) ||
-    filters.minPriceRef !== undefined ||
-    filters.maxPriceRef !== undefined;
-
-  const table = filters.lowStock ? "low_stock_products" : "products";
-  let query = supabase
-    .from(table)
-    .select(productInventorySelect, {
-      count: needsInMemoryPagination ? undefined : "exact",
-    })
-    .eq("store_id", storeId)
-    .order("name", { ascending: true });
-
-  if (!filters.lowStock) {
-    query = query.eq("is_active", true);
-  }
-
-  if (filters.search) {
-    query = query.or(buildProductSearchOrFilter(filters.search));
-  }
-
-  if (filters.categoryId) {
-    query = query.eq("category_id", filters.categoryId);
-  }
-
-  if (needsInMemoryPagination) {
-    const { data, error } = await query;
-
-    throwIfSupabaseError(error);
-
-    const items = (data ?? [])
-      .map((row) =>
-        mapInventoryItem(
-          row as unknown as DbProductSummaryRow & { category?: CategoryRow | null },
-        ),
-      )
-      .filter((item) => matchesInventoryListFilters(item, filters));
-
-    return paginateList(items, searchParams);
-  }
-
   const { limit, skip } = parsePagination(searchParams);
-  const { count, data, error } = await query.range(skip, skip + limit - 1);
+  const stockStatuses = resolveStockStatuses(filters);
+
+  if (stockStatuses?.length === 0) {
+    return { items: [], limit, skip, total: 0 };
+  }
+
+  const supabase = await createRouteSupabaseClient();
+
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    let query = supabase
+      .from("inventory_overview")
+      .select(inventoryOverviewSelect, listCountOptions(head))
+      .eq("store_id", storeId)
+      .eq("is_active", true);
+
+    if (filters.productId) {
+      query = query.eq("id", filters.productId);
+    }
+
+    if (filters.search) {
+      query = query.or(buildProductSearchOrFilter(filters.search));
+    }
+
+    if (filters.categoryId) {
+      query = query.eq("category_id", filters.categoryId);
+    }
+
+    if (stockStatuses) {
+      query = query.in("stock_status", stockStatuses);
+    }
+
+    if (filters.minPriceRef !== undefined) {
+      query = query.gte("sale_price_ref", filters.minPriceRef);
+    }
+
+    if (filters.maxPriceRef !== undefined) {
+      query = query.lte("sale_price_ref", filters.maxPriceRef);
+    }
+
+    return query;
+  };
+
+  /** Página más allá del total: no es un error, es una página vacía con el total real. */
+  const emptyPage = async () => {
+    const total = await buildFilteredQuery(true);
+
+    throwIfSupabaseError(total.error);
+
+    return { items: [], limit, skip, total: total.count ?? 0 };
+  };
+
+  if (skip > MAX_LIST_SKIP) {
+    return emptyPage();
+  }
+
+  const { count, data, error, status } = await buildFilteredQuery(false)
+    .order("name", { ascending: true })
+    .order("id", { ascending: true })
+    .range(skip, skip + limit - 1);
+
+  if (isRangeNotSatisfiable(error, status)) {
+    return emptyPage();
+  }
 
   throwIfSupabaseError(error);
 
+  const items = (data ?? []).map((row) =>
+    mapInventoryOverviewItem(row as unknown as InventoryOverviewRow),
+  );
+
+  if (!canSeeInventoryReconciliation(options.role)) {
+    return { items, limit, skip, total: count ?? 0 };
+  }
+
+  const diffs = await loadReconciliationDiffs(
+    supabase,
+    storeId,
+    items.map((item) => item.id),
+  );
+
   return {
-    items: (data ?? []).map((row) =>
-      mapInventoryItem(
-        row as unknown as DbProductSummaryRow & { category?: CategoryRow | null },
-      ),
-    ),
+    items: items.map((item) => ({
+      ...item,
+      reconciliationDiff: diffs.get(item.id) ?? null,
+    })),
     limit,
     skip,
     total: count ?? 0,
   };
+}
+
+/**
+ * Descuadre `current_stock − Σ movimientos` de los productos de la página
+ * (`stock_reconciliation` solo lista los que no cuadran). Solo se consulta para admin.
+ */
+async function loadReconciliationDiffs(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  storeId: string,
+  productIds: string[],
+) {
+  const diffs = new Map<string, number>();
+
+  if (productIds.length === 0) {
+    return diffs;
+  }
+
+  const { data, error } = await supabase
+    .from("stock_reconciliation")
+    .select("product_id, diff")
+    .eq("store_id", storeId)
+    .in("product_id", productIds);
+
+  throwIfSupabaseError(error);
+
+  for (const row of (data ?? []) as { diff: number; product_id: string }[]) {
+    diffs.set(row.product_id, row.diff);
+  }
+
+  return diffs;
 }
 
 export async function listStockMovements(searchParams: URLSearchParams, storeId: string) {

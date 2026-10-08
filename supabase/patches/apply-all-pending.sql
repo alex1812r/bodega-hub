@@ -552,3 +552,16 @@ notify pgrst, 'reload schema';
 -- ORDEN DE DESPLIEGUE (PRO-F9): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
 -- el parche: el reprecio masivo, el cambio de precio con costo esperado, "Mantener precio" con costo esperado y el alta de
 -- producto con clientRequestId responden error (funcion o columna inexistente); nada queda a medias.
+-- -----------------------------------------------------------------------------
+-- 20261011a — inventory overview (INV-01a): vista public.inventory_overview (una fila por producto con entradas y salidas
+--             de 30 dias, ultimo movimiento por seq y stock_status) para que GET /api/inventory filtre y pagine en la base,
+--             e indice idx_stock_movements_product_seq (product_id, seq desc)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011a-inventory-overview.sql
+-- Requiere 20260716, 20261006a y 20261006h. Idempotente, una transaccion. Solo lectura: no toca stock, dinero, politicas ni
+-- RPC. La vista es security_invoker (RLS de products y stock_movements del que consulta) y solo la leen authenticated y
+-- service_role. low_stock_products sigue existiendo (el BFF nuevo ya no la lee).
+-- OJO: create index sin concurrently: bloquea las escrituras de stock_movements mientras se construye (segundos en un libro
+-- grande). Aplicar fuera de hora pico.
+-- ORDEN DE DESPLIEGUE (INV-01): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: GET /api/inventory responde error (la vista no existe); el resto del inventario no cambia.

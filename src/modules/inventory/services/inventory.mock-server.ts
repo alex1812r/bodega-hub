@@ -29,10 +29,59 @@ import {
   matchesInventoryMovementFilters,
   parseInventoryMovementFilters,
 } from "../utils/inventoryMovementFilters";
+import { getInventoryStockStatus } from "../utils/inventoryStockStatus";
+import {
+  canSeeInventoryReconciliation,
+  inventoryOverviewWindowStart,
+  type InventoryOverviewItem,
+  type ListInventoryOptions,
+} from "./inventoryOverview";
 import { assertReturnAdjustmentHasDocument } from "./returnAdjustmentDocument";
 
-export function listInventory(searchParams: URLSearchParams, storeId: string) {
+/**
+ * Cifras del libro de un producto, con las reglas de la vista
+ * `inventory_overview`: entradas y salidas de la ventana de 30 días y el último
+ * movimiento. El mock no tiene `seq`: el último es el de `createdAt` mayor y, a
+ * igualdad, el que está antes en `mockStockMovements` (los nuevos entran al
+ * principio). `ledgerStock` es Σ de todos sus movimientos.
+ */
+function summarizeProductLedger(productId: string, windowStart: Date) {
+  let entries30d = 0;
+  let exits30d = 0;
+  let ledgerStock = 0;
+  let last: StockMovementMock | undefined;
+
+  for (const movement of mockStockMovements) {
+    if (movement.productId !== productId) {
+      continue;
+    }
+
+    ledgerStock += movement.quantityDelta;
+
+    if (new Date(movement.createdAt) >= windowStart) {
+      if (movement.quantityDelta > 0) {
+        entries30d += movement.quantityDelta;
+      } else {
+        exits30d -= movement.quantityDelta;
+      }
+    }
+
+    if (!last || new Date(movement.createdAt) > new Date(last.createdAt)) {
+      last = movement;
+    }
+  }
+
+  return { entries30d, exits30d, last, ledgerStock };
+}
+
+export function listInventory(
+  searchParams: URLSearchParams,
+  storeId: string,
+  options: ListInventoryOptions = {},
+) {
   const filters = parseInventoryListFilters(searchParams);
+  const windowStart = inventoryOverviewWindowStart();
+  const withReconciliation = canSeeInventoryReconciliation(options.role);
 
   const items = mockProducts
     .filter(
@@ -40,10 +89,21 @@ export function listInventory(searchParams: URLSearchParams, storeId: string) {
         (product.storeId ?? DEFAULT_STORE_ID) === storeId &&
         matchesInventoryListFilters(product, filters),
     )
-    .map((product) => ({
-      ...product,
-      category: mockCategories.find((category) => category.id === product.categoryId),
-    }));
+    .map((product): InventoryOverviewItem => {
+      const ledger = summarizeProductLedger(product.id, windowStart);
+      const diff = product.currentStock - ledger.ledgerStock;
+
+      return {
+        ...product,
+        category: mockCategories.find((category) => category.id === product.categoryId),
+        entries30d: ledger.entries30d,
+        exits30d: ledger.exits30d,
+        lastMovementAt: ledger.last?.createdAt ?? null,
+        lastMovementType: ledger.last?.type ?? null,
+        stockStatus: getInventoryStockStatus(product),
+        ...(withReconciliation ? { reconciliationDiff: diff === 0 ? null : diff } : {}),
+      };
+    });
 
   return paginateList(items, searchParams);
 }
