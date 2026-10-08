@@ -1,8 +1,6 @@
-import { Pencil } from "lucide-react";
 import { type ReactNode } from "react";
 
 import { ContactsStatusBadge } from "@/modules/contacts/contacts-list/components/ContactsStatusBadge";
-import { Button } from "@/shared/components/Button";
 import { PageBackButton } from "@/shared/components/PageBackButton";
 
 type ContactDetailPageHeaderProps = {
@@ -26,20 +24,5 @@ export function ContactDetailPageHeader({
         {actions ?? <PageBackButton href="/contacts" size="sm" />}
       </div>
     </div>
-  );
-}
-
-export function ContactDetailEditButton({
-  children,
-  disabled,
-}: {
-  children: ReactNode;
-  disabled?: boolean;
-}) {
-  return (
-    <Button className="w-full gap-2 sm:w-auto" disabled={disabled} size="sm" type="button">
-      <Pencil aria-hidden className="size-[1.125rem]" />
-      {children}
-    </Button>
   );
 }
