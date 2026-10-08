@@ -359,6 +359,39 @@ export const Mobile: Story = {
   },
 };
 
+/**
+ * Tarjeta de 619 px (la de `/purchases/create` con el viewport a 1280 px): el nombre va
+ * en la columna Producto (175 px) y SKU + chips en una fila propia a todo el ancho, sin
+ * pisar Cantidad, Costo ni Total. Desde 768 px de tarjeta vuelven bajo el nombre.
+ */
+export const NarrowCard: Story = {
+  decorators: [
+    (StoryComponent) => (
+      <div className="w-[619px]">
+        <StoryComponent />
+      </div>
+    ),
+  ],
+  name: "Tarjeta de 619 px (viewport 1280)",
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const chip = canvas.getByRole("button", { name: "Empaque de Cable HDMI 2 m" });
+    const quantity = canvas.getByLabelText("Cantidad de Cable HDMI 2 m");
+
+    await expect(canvas.getByText("ELE-CAB-001")).toBeVisible();
+    await expect(chip.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      quantity.getBoundingClientRect().bottom,
+    );
+  },
+};
+
+/** La misma tarjeta de 619 px con las líneas bloqueadas: SKU y alícuota caben enteros. */
+export const NarrowCardLocked: Story = {
+  args: { locked: true },
+  decorators: NarrowCard.decorators,
+  name: "Tarjeta de 619 px: líneas bloqueadas",
+};
+
 export const Empty: Story = {
   render: () => (
     <PurchaseLineItemsTable

@@ -1,6 +1,7 @@
 "use client";
 
 import { Lock, LockOpen, Package, Trash2 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { ButtonHTMLAttributes, FocusEvent, KeyboardEvent } from "react";
 
 import { TaxRateChips } from "@/shared/components/TaxRateChips";
@@ -18,6 +19,8 @@ import {
   purchaseLineFieldLabelClassName,
   purchaseLineGridClassName,
   purchaseLineInputClassName,
+  purchaseLineMetaRowClassName,
+  purchaseLineProductCellClassName,
 } from "../utils/purchaseCreateStyles";
 import { applyPackPreset, getDefaultPackUnit, toUnitLine } from "../utils/purchaseLinePack";
 import { PURCHASE_LINE_TAX_REQUIRED_MESSAGE } from "../utils/purchaseLineTax";
@@ -91,8 +94,9 @@ function LineChip({
  * porcentaje) y el chip "Empaque" despliega la fila secundaria.
  *
  * Bloqueada (COM-12) es una fila compacta de solo lectura: lo mismo como texto y, como
- * único elemento enfocable, el candado. Se desbloquea con el candado o con doble clic, y
- * no se puede quitar sin desbloquearla.
+ * único elemento enfocable, el candado. Se desbloquea con el candado (que conserva el
+ * foco) o con doble clic (el foco pasa a la Cantidad, o a los Empaques si la línea es por
+ * empaque), y no se puede quitar sin desbloquearla.
  */
 export function PurchaseLineRow({
   editedMark = false,
@@ -119,6 +123,21 @@ export function PurchaseLineRow({
   const needsTaxRate = tax.code === null && !taxCatalog.isLoading && !taxCatalog.error;
   const totalRefText = formatRefUsd(totals.totalRef);
   const totalVesText = formatVesBs(totals.totalVes);
+  const rowRef = useRef<HTMLLIElement>(null);
+  const focusAfterUnlockRef = useRef(false);
+
+  // El doble clic no deja el foco en nada de la fila: al abrirse, lo toma su cantidad.
+  useEffect(() => {
+    if (!focusAfterUnlockRef.current) {
+      return;
+    }
+
+    focusAfterUnlockRef.current = false;
+
+    if (!locked) {
+      rowRef.current?.querySelector<HTMLElement>("[data-line-focus]")?.focus();
+    }
+  });
 
   function handlePackToggle() {
     onUpdate(
@@ -132,6 +151,11 @@ export function PurchaseLineRow({
     if (!event.currentTarget.contains(event.relatedTarget)) {
       onSettle();
     }
+  }
+
+  function handleDoubleClick() {
+    focusAfterUnlockRef.current = true;
+    onLockChange(false);
   }
 
   function handleLockKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
@@ -189,7 +213,8 @@ export function PurchaseLineRow({
         data-line-id={item.id}
         data-locked="true"
         onBlur={handleBlur}
-        onDoubleClick={() => onLockChange(false)}
+        onDoubleClick={handleDoubleClick}
+        ref={rowRef}
       >
         <PurchaseLockedLineCells
           item={normalized}
@@ -213,8 +238,9 @@ export function PurchaseLineRow({
       )}
       data-line-id={item.id}
       onBlur={handleBlur}
+      ref={rowRef}
     >
-      <div className="col-span-2 min-w-0 @xl:col-span-1" key="product">
+      <div className={purchaseLineProductCellClassName} key="product">
         <div className="flex min-w-0 items-center gap-1.5">
           {editedMark ? (
             <span
@@ -231,8 +257,10 @@ export function PurchaseLineRow({
             {meta.name}
           </p>
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 @xl:mt-0.5 @xl:flex-nowrap">
-          <span className="min-w-0 truncate text-xs text-on-surface-variant">{meta.sku}</span>
+        <div className={purchaseLineMetaRowClassName}>
+          <span className="min-w-0 truncate text-xs text-on-surface-variant" title={meta.sku}>
+            {meta.sku}
+          </span>
           <TaxRateChips
             categoryDefaultCode={tax.categoryCode}
             className="shrink-0"
