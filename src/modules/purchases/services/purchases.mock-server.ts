@@ -68,6 +68,36 @@ function matchesPurchaseSearch(
   return number.includes(term) || supplier.includes(term);
 }
 
+/**
+ * Lo pagado de una compra del mock: la suma de sus pagos activos, con la regla
+ * de `purchases.server` (`amountRef` del pago o, si falta, sus Bs a su tasa).
+ * La cabecera de la semilla no trae `paidRef`; en la base la mantiene
+ * `register_payment` y coincide con esta suma, así que aquí vale igual con o
+ * sin permiso para ver los pagos.
+ */
+function mockPaidTotals(purchaseId: string) {
+  const activePayments = mockPayments.filter(
+    (payment) => payment.purchaseId === purchaseId && payment.status !== "anulado",
+  );
+
+  return {
+    paidRef: roundMoney(
+      activePayments.reduce((sum, payment) => {
+        if (payment.amountRef > 0) {
+          return sum + payment.amountRef;
+        }
+
+        if (payment.refRateVes > 0 && payment.amountVes > 0) {
+          return sum + payment.amountVes / payment.refRateVes;
+        }
+
+        return sum;
+      }, 0),
+    ),
+    paidVes: roundMoney(activePayments.reduce((sum, payment) => sum + payment.amountVes, 0)),
+  };
+}
+
 export function listPurchases(searchParams: URLSearchParams, storeId: string) {
   const from = searchParams.get("from");
   const search = searchParams.get("search");
@@ -89,6 +119,7 @@ export function listPurchases(searchParams: URLSearchParams, storeId: string) {
     })
     .map((purchase) => ({
       ...purchase,
+      ...mockPaidTotals(purchase.id),
       itemsCount: mockPurchaseItems.filter((item) => item.purchaseId === purchase.id).length,
       supplier: mockContacts.find((contact) => contact.id === purchase.supplierId),
     }));
@@ -230,8 +261,8 @@ export type PurchaseDetailAccess = {
 
 /**
  * Sin permiso para ver pagos de compras (almacén) el detalle no lleva los pagos
- * individuales: `payments: []`. `paidRef` / `paidVes` son siempre los de la
- * cabecera de la compra, que mantiene `createPayment`.
+ * individuales: `payments: []`. `paidRef` / `paidVes` son los mismos con o sin
+ * permiso: la suma de los pagos activos de la compra (`mockPaidTotals`).
  */
 export function getPurchaseById(
   id: string,
@@ -250,6 +281,7 @@ export function getPurchaseById(
 
   return {
     ...purchase,
+    ...mockPaidTotals(id),
     items,
     payments: access.canViewPayments
       ? mockPayments
