@@ -51,11 +51,11 @@ describe("useStepClickGuard", () => {
     const guard = renderGuard({ stepKey: "form" });
 
     guard.rerender({ stepKey: "preview" });
-    advance(300);
+    advance(STEP_CLICK_GUARD_MS - 100);
     guard.rerender({ stepKey: "form" });
     expect(guard.result.current.isGuarded).toBe(true);
 
-    advance(300);
+    advance(STEP_CLICK_GUARD_MS - 100);
     expect(guard.result.current.isGuarded).toBe(true);
 
     advance(100);
@@ -125,6 +125,120 @@ describe("useStepClickGuard", () => {
 
     fireEvent.pointerDown(document.body);
     expect(guard.result.current.ignoresOutsideClose()).toBe(false);
+  });
+
+  describe("PAG-F10 · una ráfaga de clics nunca atraviesa la guarda", () => {
+    it("el lapso supera el umbral de doble clic del sistema (500 ms)", () => {
+      expect(STEP_CLICK_GUARD_MS).toBeGreaterThan(500);
+    });
+
+    it("un clic a 450 ms del cambio de paso se ignora y rearma el lapso desde ese instante", () => {
+      const guard = renderGuard({ stepKey: "form" });
+
+      guard.rerender({ stepKey: "preview" });
+      advance(450);
+      expect(guard.result.current.isGuarded).toBe(true);
+
+      fireEvent.click(dialog.querySelector("button")!);
+      advance(STEP_CLICK_GUARD_MS - 1);
+      expect(guard.result.current.isGuarded).toBe(true);
+
+      advance(1);
+      expect(guard.result.current.isGuarded).toBe(false);
+    });
+
+    it("clics cada 200 ms: ninguno encuentra la guarda abierta; tras el lapso en calma, sí", () => {
+      const guard = renderGuard({ stepKey: "form" });
+
+      guard.rerender({ stepKey: "preview" });
+
+      for (let click = 0; click < 8; click += 1) {
+        advance(200);
+        expect(guard.result.current.isGuarded).toBe(true);
+        fireEvent.pointerDown(dialog.querySelector("button")!);
+        fireEvent.click(dialog.querySelector("button")!);
+      }
+
+      advance(STEP_CLICK_GUARD_MS - 1);
+      expect(guard.result.current.isGuarded).toBe(true);
+
+      advance(1);
+      expect(guard.result.current.isGuarded).toBe(false);
+    });
+
+    it("una pulsación sobre un botón deshabilitado (sin clic) también rearma", () => {
+      const guard = renderGuard({ stepKey: "form" });
+      const button = dialog.querySelector("button")!;
+
+      button.disabled = true;
+      guard.rerender({ stepKey: "preview" });
+      advance(450);
+      fireEvent.pointerDown(button);
+      advance(450);
+
+      expect(guard.result.current.isGuarded).toBe(true);
+    });
+
+    it("un clic fuera ignorado rearma: el siguiente clic fuera de la ráfaga tampoco cierra", () => {
+      const guard = renderGuard({ stepKey: "form" });
+
+      guard.rerender({ stepKey: "preview" });
+      advance(450);
+      fireEvent.pointerDown(document.body);
+      expect(guard.result.current.ignoresOutsideClose()).toBe(true);
+
+      advance(450);
+      expect(guard.result.current.isGuarded).toBe(true);
+      fireEvent.pointerDown(document.body);
+      expect(guard.result.current.ignoresOutsideClose()).toBe(true);
+
+      advance(STEP_CLICK_GUARD_MS);
+      fireEvent.pointerDown(document.body);
+      expect(guard.result.current.ignoresOutsideClose()).toBe(false);
+    });
+
+    it("sin guarda armada los clics no arman nada", () => {
+      const guard = renderGuard({ stepKey: "form" });
+
+      fireEvent.pointerDown(dialog.querySelector("button")!);
+      fireEvent.click(dialog.querySelector("button")!);
+
+      expect(guard.result.current.isGuarded).toBe(false);
+    });
+
+    it("R5: la auto-repetición de Enter o Espacio sobre un botón de un diálogo se cancela; la primera pulsación no", () => {
+      renderGuard({ stepKey: "form" });
+
+      const button = dialog.querySelector("button")!;
+
+      // `fireEvent` devuelve `false` si alguien canceló el evento (no habrá clic).
+      expect(fireEvent.keyDown(button, { key: "Enter" })).toBe(true);
+      expect(fireEvent.keyDown(button, { key: "Enter", repeat: true })).toBe(false);
+      expect(fireEvent.keyDown(button, { key: " " })).toBe(true);
+      expect(fireEvent.keyDown(button, { key: " ", repeat: true })).toBe(false);
+      // Otras teclas mantenidas (Tab, flechas) siguen su curso.
+      expect(fireEvent.keyDown(button, { key: "Tab", repeat: true })).toBe(true);
+    });
+
+    it("R5: no toca la auto-repetición en campos de texto, fuera de los diálogos ni con el modal cerrado", () => {
+      const input = document.createElement("input");
+      const outsideButton = document.createElement("button");
+
+      dialog.append(input);
+      document.body.append(outsideButton);
+
+      const guard = renderGuard({ enabled: true, stepKey: "form" });
+
+      expect(fireEvent.keyDown(input, { key: "Enter", repeat: true })).toBe(true);
+      expect(fireEvent.keyDown(outsideButton, { key: "Enter", repeat: true })).toBe(true);
+
+      guard.rerender({ enabled: false, stepKey: "form" });
+      expect(
+        fireEvent.keyDown(dialog.querySelector("button")!, { key: "Enter", repeat: true }),
+      ).toBe(true);
+
+      outsideButton.remove();
+    });
   });
 
   it("con el modal cerrado no escucha pulsaciones", () => {

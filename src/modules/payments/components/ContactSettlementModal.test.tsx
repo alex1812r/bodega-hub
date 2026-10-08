@@ -68,6 +68,10 @@ function renderModal(ui: ReactNode) {
   return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
 }
 
+// PAG-F10: los flujos que pulsan varios botones del pie esperan en tiempo real la guarda
+// de doble clic (~700 ms por paso); con la suite completa en paralelo no caben en 5 s.
+jest.setTimeout(20_000);
+
 describe("ContactSettlementModal", () => {
   const fetchMock = jest.fn();
   let documents: ReturnType<typeof document>[];
@@ -169,7 +173,7 @@ describe("ContactSettlementModal", () => {
   }
 
   /**
-   * PAG-F8: tras cada envío las acciones del pie quedan deshabilitadas ~400 ms. Como
+   * PAG-F8: tras cada envío las acciones del pie quedan deshabilitadas ~700 ms. Como
    * haría el usuario, se pulsa el botón cuando ya está habilitado.
    */
   async function press(
@@ -185,7 +189,7 @@ describe("ContactSettlementModal", () => {
   }
 
   /**
-   * PAG-F9: tras cada cambio de paso el pie ignora los clics ~400 ms (el botón lo
+   * PAG-F9: tras cada cambio de paso el pie ignora los clics ~700 ms (el botón lo
    * anuncia con `aria-disabled`). Como haría el usuario, se espera a que pase.
    */
   async function stepSettled(dialog: ReturnType<typeof within>) {
@@ -199,7 +203,7 @@ describe("ContactSettlementModal", () => {
   }
 
   /**
-   * PAG-F9: recién abierta, la confirmación de descarte ignora ~400 ms el clic en su
+   * PAG-F9: recién abierta, la confirmación de descarte ignora ~700 ms el clic en su
    * botón de confirmar y no lo anuncia (es de `ConfirmActionModal`): se deja pasar.
    */
   async function discardGuardSettled() {
@@ -1352,7 +1356,7 @@ describe("ContactSettlementModal", () => {
         const { dialog } = opened;
 
         fireEvent.click(dialog.getByRole("button", { name: "Ver reparto" }));
-        advance(400);
+        advance(STEP_CLICK_GUARD_MS);
         fireEvent.click(dialog.getByRole("button", { name: "Confirmar abono" }));
         await dialog.findByText(UNCERTAIN_TEXT);
         await waitFor(() =>
@@ -1382,7 +1386,8 @@ describe("ContactSettlementModal", () => {
         expect(dialog.getByRole("list", { name: "Reparto del abono" })).toBeInTheDocument();
         expect(posts()).toHaveLength(0);
 
-        advance(100);
+        // PAG-F10: el clic ignorado rearmó la espera; cuenta desde él.
+        advance(STEP_CLICK_GUARD_MS);
         fireEvent.click(dialog.getByRole("button", { name: "Confirmar abono" }));
 
         expect(await dialog.findByText(/Abono registrado: 1 pago por/)).toBeInTheDocument();
@@ -1393,7 +1398,7 @@ describe("ContactSettlementModal", () => {
         const { dialog, onOpenChange } = await openOnForm("100");
 
         fireEvent.click(dialog.getByRole("button", { name: "Ver reparto" }));
-        advance(400);
+        advance(STEP_CLICK_GUARD_MS);
 
         const back = dialog.getByRole("button", { name: "Volver" });
 
@@ -1409,7 +1414,7 @@ describe("ContactSettlementModal", () => {
         expect(dialog.getByRole("button", { name: "Cancelar" })).toHaveFocus();
         expect(dialog.getByRole("button", { name: "Cancelar" })).toBeEnabled();
 
-        advance(400);
+        advance(STEP_CLICK_GUARD_MS);
         fireEvent.click(dialog.getByRole("button", { name: "Cancelar" }));
         advance(1);
         expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -1429,7 +1434,7 @@ describe("ContactSettlementModal", () => {
         advance(1);
         expect(onOpenChange).toHaveBeenCalledTimes(1);
 
-        advance(400);
+        advance(STEP_CLICK_GUARD_MS);
         pressOutside();
         expect(onOpenChange).toHaveBeenCalledTimes(2);
         expect(onOpenChange).toHaveBeenLastCalledWith(false);
@@ -1441,7 +1446,7 @@ describe("ContactSettlementModal", () => {
         const { dialog, onOpenChange } = await openOnForm("100");
 
         fireEvent.click(dialog.getByRole("button", { name: "Ver reparto" }));
-        advance(400);
+        advance(STEP_CLICK_GUARD_MS);
         fireEvent.click(dialog.getByRole("button", { name: "Confirmar abono" }));
         await dialog.findByText(UNCERTAIN_TEXT);
         await waitFor(() =>
@@ -1475,7 +1480,7 @@ describe("ContactSettlementModal", () => {
         // El clic ignorado no deja el botón en «Procesando...».
         expect(confirm.getByRole("button", { name: "Descartar abono" })).toBeEnabled();
 
-        advance(400);
+        advance(STEP_CLICK_GUARD_MS);
         fireEvent.click(confirm.getByRole("button", { name: "Descartar abono" }));
 
         await waitFor(() =>
@@ -1496,12 +1501,192 @@ describe("ContactSettlementModal", () => {
         expect(screen.getByRole("dialog", { name: DISCARD })).toBeInTheDocument();
         expect(window.sessionStorage).toHaveLength(1);
 
-        advance(400);
+        advance(STEP_CLICK_GUARD_MS);
         pressOutside();
         await waitFor(() =>
           expect(screen.queryByRole("dialog", { name: DISCARD })).not.toBeInTheDocument(),
         );
         expect(window.sessionStorage).toHaveLength(1);
+      });
+
+      describe("PAG-F10 · la ráfaga de clics no atraviesa la guarda", () => {
+        /** Clic de ratón completo: la pulsación llega aunque el botón no acepte el clic. */
+        function click(element: HTMLElement) {
+          fireEvent.pointerDown(element);
+          fireEvent.click(element);
+        }
+
+        /**
+         * Enter sobre un botón como lo entrega el navegador: lo activa (clic) en cada
+         * `keydown`, también los de auto-repetición, salvo que alguien lo cancele.
+         */
+        function pressEnter(element: HTMLElement, repeat = false) {
+          if (fireEvent.keyDown(element, { key: "Enter", repeat })) {
+            fireEvent.click(element);
+          }
+        }
+
+        async function settle() {
+          await act(async () => {
+            await Promise.resolve();
+          });
+        }
+
+        it("R1: doble clic a 450 ms en «Ver reparto» no confirma y rearma la espera; tras el lapso en calma «Confirmar abono» registra", async () => {
+          const { dialog } = await openOnForm("100");
+
+          click(dialog.getByRole("button", { name: "Ver reparto" }));
+          advance(450);
+          click(dialog.getByRole("button", { name: "Confirmar abono" }));
+
+          expect(dialog.getByRole("list", { name: "Reparto del abono" })).toBeInTheDocument();
+          expect(posts()).toHaveLength(0);
+
+          // Rearmada desde el clic ignorado: otros 450 ms tampoco bastan.
+          advance(450);
+          click(dialog.getByRole("button", { name: "Confirmar abono" }));
+          expect(dialog.getByRole("list", { name: "Reparto del abono" })).toBeInTheDocument();
+          expect(posts()).toHaveLength(0);
+
+          advance(STEP_CLICK_GUARD_MS - 1);
+          expect(dialog.getByRole("button", { name: "Confirmar abono" })).toHaveAttribute(
+            "aria-disabled",
+            "true",
+          );
+
+          advance(1);
+          click(dialog.getByRole("button", { name: "Confirmar abono" }));
+
+          expect(await dialog.findByText(/Abono registrado: 1 pago por/)).toBeInTheDocument();
+          expect(posts()).toHaveLength(1);
+        });
+
+        it("R1: clics cada 200 ms sobre «Ver reparto»: ninguno confirma el abono", async () => {
+          const { dialog } = await openOnForm("100");
+
+          click(dialog.getByRole("button", { name: "Ver reparto" }));
+
+          for (let extra = 0; extra < 6; extra += 1) {
+            advance(200);
+            click(dialog.getByRole("button", { name: "Confirmar abono" }));
+          }
+
+          await settle();
+          expect(dialog.getByRole("list", { name: "Reparto del abono" })).toBeInTheDocument();
+          expect(posts()).toHaveLength(0);
+        });
+
+        it("R3: el clic a 450 ms cae fuera tras «Ver reparto» y rearma: el siguiente tampoco cierra; tras el lapso en calma, sí", async () => {
+          const { dialog, onOpenChange } = await openOnForm("100");
+
+          click(dialog.getByRole("button", { name: "Ver reparto" }));
+          advance(450);
+          pressOutside();
+          advance(450);
+          pressOutside();
+
+          expect(onOpenChange).not.toHaveBeenCalled();
+          expect(dialog.getByRole("list", { name: "Reparto del abono" })).toBeInTheDocument();
+
+          advance(STEP_CLICK_GUARD_MS);
+          pressOutside();
+          expect(onOpenChange).toHaveBeenCalledWith(false);
+        });
+
+        it("R2: doble clic a 450 ms en «Descartar abono por confirmar» no descarta y rearma; tras el lapso en calma sí descarta", async () => {
+          const { dialog } = await openOnDiscardable();
+
+          click(dialog.getByRole("button", { name: DISCARD }));
+
+          const confirm = within(screen.getByRole("dialog", { name: DISCARD }));
+
+          advance(450);
+          click(confirm.getByRole("button", { name: "Descartar abono" }));
+          await settle();
+          expect(screen.getByRole("dialog", { name: DISCARD })).toBeInTheDocument();
+          expect(window.sessionStorage).toHaveLength(1);
+
+          advance(450);
+          click(confirm.getByRole("button", { name: "Descartar abono" }));
+          await settle();
+          expect(screen.getByRole("dialog", { name: DISCARD })).toBeInTheDocument();
+          expect(window.sessionStorage).toHaveLength(1);
+
+          advance(STEP_CLICK_GUARD_MS);
+          click(confirm.getByRole("button", { name: "Descartar abono" }));
+
+          await waitFor(() =>
+            expect(screen.queryByRole("dialog", { name: DISCARD })).not.toBeInTheDocument(),
+          );
+          expect(window.sessionStorage).toHaveLength(0);
+        });
+
+        it("R2: clics cada 200 ms sobre «Descartar abono por confirmar»: ninguno descarta", async () => {
+          const { dialog } = await openOnDiscardable();
+
+          click(dialog.getByRole("button", { name: DISCARD }));
+
+          const confirm = within(screen.getByRole("dialog", { name: DISCARD }));
+
+          for (let extra = 0; extra < 6; extra += 1) {
+            advance(200);
+            click(confirm.getByRole("button", { name: "Descartar abono" }));
+            await settle();
+          }
+
+          expect(screen.getByRole("dialog", { name: DISCARD })).toBeInTheDocument();
+          expect(window.sessionStorage).toHaveLength(1);
+        });
+
+        it("R3: el clic a 450 ms cae fuera de la confirmación de descarte y rearma: sigue abierta", async () => {
+          const { dialog } = await openOnDiscardable();
+
+          click(dialog.getByRole("button", { name: DISCARD }));
+          advance(450);
+          pressOutside();
+          advance(450);
+          pressOutside();
+
+          expect(screen.getByRole("dialog", { name: DISCARD })).toBeInTheDocument();
+          expect(window.sessionStorage).toHaveLength(1);
+        });
+
+        it("R5: Enter mantenido 1 s sobre «Ver reparto» enseña el reparto y no confirma; soltar y pulsar de nuevo sí", async () => {
+          const { dialog } = await openOnForm("100");
+
+          pressEnter(dialog.getByRole("button", { name: "Ver reparto" }));
+
+          // Auto-repetición del teclado: una cada ~30 ms mientras la tecla sigue pulsada.
+          for (let elapsed = 0; elapsed < 1000; elapsed += 30) {
+            advance(30);
+            pressEnter(dialog.getByRole("button", { name: "Confirmar abono" }), true);
+          }
+
+          await settle();
+          expect(dialog.getByRole("list", { name: "Reparto del abono" })).toBeInTheDocument();
+          expect(posts()).toHaveLength(0);
+
+          pressEnter(dialog.getByRole("button", { name: "Confirmar abono" }));
+          expect(await dialog.findByText(/Abono registrado: 1 pago por/)).toBeInTheDocument();
+          expect(posts()).toHaveLength(1);
+        });
+
+        it("R5: Enter mantenido sobre el confirmar de descarte no descarta", async () => {
+          const { dialog } = await openOnDiscardable();
+
+          pressEnter(dialog.getByRole("button", { name: DISCARD }));
+
+          const confirm = within(screen.getByRole("dialog", { name: DISCARD }));
+
+          for (let elapsed = 0; elapsed < 1000; elapsed += 30) {
+            advance(30);
+            pressEnter(confirm.getByRole("button", { name: "Descartar abono" }), true);
+          }
+
+          await settle();
+          expect(screen.getByRole("dialog", { name: DISCARD })).toBeInTheDocument();
+          expect(window.sessionStorage).toHaveLength(1);
+        });
       });
     });
   });

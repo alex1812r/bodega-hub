@@ -83,6 +83,10 @@ const PURCHASES = [
 
 type Reply = { items: unknown[]; truncated?: boolean } | { error: string; status: number };
 
+// PAG-F10: los flujos que pulsan varios botones del pie esperan en tiempo real la guarda
+// de doble clic (~700 ms por paso); con la suite completa en paralelo no caben en 5 s.
+jest.setTimeout(20_000);
+
 describe("getContactBalanceSections", () => {
   function access(permissions: Permission[], role?: UserRole) {
     return { can: (permission: Permission) => permissions.includes(permission), role };
@@ -271,7 +275,7 @@ describe("ContactBalancesTab", () => {
 
   /**
    * PAG-F8: tras cada envío las acciones del pie del modal quedan deshabilitadas
-   * ~400 ms. Como haría el usuario, se pulsa el botón cuando ya está habilitado.
+   * ~700 ms. Como haría el usuario, se pulsa el botón cuando ya está habilitado.
    */
   async function press(
     dialog: ReturnType<typeof within>,
@@ -285,7 +289,7 @@ describe("ContactBalancesTab", () => {
   }
 
   /**
-   * PAG-F9: recién mostrado el reparto, «Confirmar abono» ignora los clics ~400 ms
+   * PAG-F9: recién mostrado el reparto, «Confirmar abono» ignora los clics ~700 ms
    * (guarda de doble clic) y lo anuncia con `aria-disabled`. Se espera a que pase.
    */
   async function confirmSettlement(

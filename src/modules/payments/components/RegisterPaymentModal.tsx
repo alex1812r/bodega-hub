@@ -77,12 +77,16 @@ import {
  * reintento fallido.
  *
  * Doble clic: tras terminar un envío, y al aparecer o resolverse el intento por
- * confirmar, la acción principal y "Descartar intento" quedan deshabilitadas ~400 ms y
+ * confirmar, la acción principal y "Descartar intento" quedan deshabilitadas ~700 ms y
  * se ignoran los cierres por clic fuera; recién abierta la confirmación de descarte,
  * su botón de confirmar y su cierre por clic fuera esperan lo mismo
- * (`useStepClickGuard`). Así el segundo clic de un doble clic no ejecuta el botón que
- * ocupa el sitio del anterior ni cierra el modal. "Cancelar", Esc y la X no esperan;
- * abrir el modal tampoco arma la espera.
+ * (`useStepClickGuard`). Cada clic hecho durante la espera la rearma, así que ningún
+ * clic de una ráfaga ejecuta el botón que ocupa el sitio del anterior ni cierra el
+ * modal, y mantener Enter pulsado sobre un botón lo activa una sola vez. "Cancelar",
+ * Esc y la X no esperan; abrir el modal y "Completar saldo" tampoco arman la espera.
+ *
+ * Tras un pago registrado, su aviso sigue a la vista hasta que sale el siguiente
+ * envío: enviar el formulario vacío muestra el error de validación junto a él.
  *
  * Salir de la pantalla: con el modal abierto y un pago en vuelo o por confirmar, un
  * guardia de proceso (`ProcessGuard`) pregunta antes de seguir un enlace o de ir
@@ -464,12 +468,15 @@ function RegisterPaymentForm({
 
     if (!isRetry) {
       setHasSubmitted(true);
-      setSuccessBalanceVes(undefined);
     }
 
     if ((!isRetry && !canSubmit) || submitLockRef.current || createPayment.isPending) {
       return;
     }
+
+    // El aviso del pago anterior se retira al salir el siguiente, no antes: un envío
+    // que no pasa la validación lo deja a la vista junto a su error.
+    setSuccessBalanceVes(undefined);
 
     // Clave de idempotencia (PAG-06): una por envío nuevo. El reintento de un intento
     // por confirmar reenvía lo mismo con la misma clave, sin releer el formulario.

@@ -81,10 +81,11 @@ import {
  *
  * Doble clic: tras cada cambio de paso o de estado (formulario ↔ reparto, fin de un
  * envío, abono por confirmar, confirmación de descarte recién abierta) el modal ignora
- * ~400 ms los clics en las acciones del pie y en el botón de confirmar el descarte, y
- * los cierres por clic fuera (`useStepClickGuard`): el segundo clic de un doble clic
- * no ejecuta el botón que ocupa el sitio del anterior ni cierra el modal. Esc y la X
- * no esperan.
+ * ~700 ms los clics en las acciones del pie y en el botón de confirmar el descarte, y
+ * los cierres por clic fuera (`useStepClickGuard`). Cada clic ignorado rearma la
+ * espera: ningún clic de una ráfaga ejecuta el botón que ocupa el sitio del anterior
+ * ni cierra el modal, y mantener Enter pulsado sobre un botón lo activa una sola vez.
+ * Esc y la X no esperan.
  *
  * Tras un rechazo definitivo (4xx) se puede reintentar, continuar con los documentos
  * que no se enviaron o volver a editar: el reparto se recalcula con los saldos recién
