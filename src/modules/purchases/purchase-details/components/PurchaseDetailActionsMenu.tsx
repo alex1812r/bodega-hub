@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { usePermission } from "@/shared/auth/usePermission";
@@ -12,7 +11,7 @@ import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 
-type PurchaseDetailActionId = "cancel" | "payment" | "pdf" | "receive" | "return";
+type PurchaseDetailActionId = "cancel" | "pdf" | "receive" | "return";
 
 type PurchaseDetailActionsMenuProps = {
   isCancelling?: boolean;
@@ -23,7 +22,6 @@ type PurchaseDetailActionsMenuProps = {
   onExportPdf: () => void | Promise<void>;
   onReceive: () => void | Promise<void>;
   onReturn: () => void | Promise<void>;
-  purchaseId: string;
   purchaseNumber: string;
   status: PurchaseStatus;
 };
@@ -42,11 +40,6 @@ const actionConfigs: Record<PurchaseDetailActionId, ActionConfig> = {
     description:
       "La orden quedará cancelada y no modificará el inventario. Los montos pagados deberán conciliarse manualmente.",
     title: "Cancelar compra",
-  },
-  payment: {
-    confirmLabel: "Ir a pagos",
-    description: "Serás redirigido al módulo de pagos para registrar un abono a esta compra.",
-    title: "Registrar pago",
   },
   pdf: {
     confirmLabel: "Descargar PDF",
@@ -78,11 +71,9 @@ export function PurchaseDetailActionsMenu({
   onExportPdf,
   onReceive,
   onReturn,
-  purchaseId,
   purchaseNumber,
   status,
 }: PurchaseDetailActionsMenuProps) {
-  const router = useRouter();
   const { can } = usePermission();
   const [pendingAction, setPendingAction] = useState<PurchaseDetailActionId | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -92,13 +83,6 @@ export function PurchaseDetailActionsMenu({
 
   const actions = useMemo(() => {
     const menuActions: ActionMenuItem[] = [];
-
-    if (can("payments.manage")) {
-      menuActions.push({
-        label: "Registrar pago",
-        onSelect: () => setPendingAction("payment"),
-      });
-    }
 
     if (can("purchases.create") && status === "pedido") {
       menuActions.push({
@@ -151,9 +135,6 @@ export function PurchaseDetailActionsMenu({
       switch (pendingAction) {
         case "cancel":
           await onCancel();
-          break;
-        case "payment":
-          router.push(`/payments?purchaseId=${purchaseId}`);
           break;
         case "pdf":
           await onExportPdf();

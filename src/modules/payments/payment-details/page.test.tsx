@@ -11,7 +11,9 @@ jest.mock("../../../shared/auth/usePermission", () => ({
   usePermission: () => ({ can: () => true, role: "admin" }),
 }));
 jest.mock("../components/RegisterPaymentModal", () => ({
-  RegisterPaymentModal: () => null,
+  RegisterPaymentModal: ({ purchaseId, saleId }: { purchaseId?: string; saleId?: string }) => (
+    <output data-testid="register-payment-modal">{JSON.stringify({ purchaseId, saleId })}</output>
+  ),
 }));
 jest.mock("./components/PaymentDetailPageHeader", () => ({
   PaymentDetailPageHeader: () => null,
@@ -27,7 +29,10 @@ import { PaymentDetailsPage } from "./page";
 
 const REJECTION = "El pago pertenece a una caja ya cerrada y transferida.";
 
-function payment(status: "activo" | "anulado" = "activo") {
+function payment(
+  status: "activo" | "anulado" = "activo",
+  overrides: Record<string, unknown> = {},
+) {
   return {
     amount: 100,
     amountRef: 0.2,
@@ -41,6 +46,7 @@ function payment(status: "activo" | "anulado" = "activo") {
     refRateVes: 510,
     saleId: "sale-002",
     status,
+    ...overrides,
   };
 }
 
@@ -58,9 +64,11 @@ describe("PaymentDetailsPage · anular pago", () => {
   const unhandled = jest.fn();
   let cancelResponse: () => Promise<Response>;
   let currentStatus: "activo" | "anulado";
+  let paymentOverrides: Record<string, unknown>;
 
   beforeEach(() => {
     currentStatus = "activo";
+    paymentOverrides = {};
     cancelResponse = async () =>
       jsonResponse({ error: { code: "CONFLICT", message: REJECTION } }, 409);
     unhandled.mockReset();
@@ -70,7 +78,7 @@ describe("PaymentDetailsPage · anular pago", () => {
         return cancelResponse();
       }
 
-      return jsonResponse({ data: payment(currentStatus) });
+      return jsonResponse({ data: payment(currentStatus, paymentOverrides) });
     });
     global.fetch = fetchMock;
     process.on("unhandledRejection", unhandled);
@@ -109,6 +117,43 @@ describe("PaymentDetailsPage · anular pago", () => {
       </QueryClientProvider>,
     );
   }
+
+  describe("PAG-03b · «Registrar otro pago» siempre lleva el documento del pago", () => {
+    it("pago de una venta: el modal recibe esa venta", async () => {
+      renderPage();
+
+      expect(await screen.findByTestId("register-payment-modal")).toHaveTextContent(
+        JSON.stringify({ saleId: "sale-002" }),
+      );
+    });
+
+    it("pago de una compra: el modal recibe esa compra", async () => {
+      paymentOverrides = { direction: "salida", purchaseId: "purchase-002", saleId: undefined };
+      renderPage();
+
+      expect(await screen.findByTestId("register-payment-modal")).toHaveTextContent(
+        JSON.stringify({ purchaseId: "purchase-002" }),
+      );
+    });
+
+    it("pago sin venta ni compra: no se ofrece el modal (no hay documento que pagar)", async () => {
+      paymentOverrides = { saleId: undefined };
+      renderPage();
+
+      await screen.findByRole("button", { name: "Anular pago" });
+
+      expect(screen.queryByTestId("register-payment-modal")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Registrar otro pago" })).toBeDisabled();
+    });
+
+    it("pago anulado: no se ofrece el modal", async () => {
+      currentStatus = "anulado";
+      renderPage();
+
+      expect(await screen.findByRole("button", { name: "Registrar otro pago" })).toBeDisabled();
+      expect(screen.queryByTestId("register-payment-modal")).not.toBeInTheDocument();
+    });
+  });
 
   it("muestra el rechazo del servidor dentro del modal, que sigue abierto para reintentar", async () => {
     const user = userEvent.setup();

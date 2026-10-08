@@ -15,11 +15,11 @@ import { useUrlListState, withUrlListBoundary } from "@/shared/hooks/useUrlListS
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
 
+import { PaymentDocumentPicker } from "../components/PaymentDocumentPicker";
 import { RegisterPaymentModal } from "../components/RegisterPaymentModal";
 import { PaymentCancelConfirmModal } from "../components/PaymentCancelConfirmModal";
 import {
   type PaymentListItem,
-  type PaymentsFilters,
   useCancelPayment,
   usePayments,
 } from "../hooks/usePayments";
@@ -42,13 +42,8 @@ import {
   toPaymentsFilters,
 } from "./utils/paymentsListState";
 
-type PaymentsListPageProps = {
-  /**
-   * @deprecated Sin efecto: los filtros se leen de la URL (`useUrlListState`).
-   * Sigue en el tipo solo hasta que `src/app/payments/page.tsx` deje de pasarla.
-   */
-  initialFilters?: PaymentsFilters;
-};
+/** Documento que se está pagando: lo fija el enlace profundo o el buscador. */
+type PayingDocument = { id: string; type: "purchase" | "sale" };
 
 const paymentIdCellClass = "min-w-0 w-[5.75rem] max-w-[5.75rem] overflow-hidden";
 const paymentIdHeaderClass = "w-[5.75rem] max-w-[5.75rem]";
@@ -158,6 +153,20 @@ function PaymentsList() {
   const totalPayments = payments.data?.total ?? 0;
   const filterChips = usePaymentsFilterChips(effectiveFilters, payments.isSuccess);
   const columns = useMemo(() => buildColumns(list.href), [list.href]);
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const [payingDocument, setPayingDocument] = useState<PayingDocument | null>(null);
+  const { purchaseId: linkedPurchaseId, saleId: linkedSaleId } = effectiveFilters;
+
+  function handleRegisterPayment() {
+    // Enlace profundo (`?saleId=` o `?purchaseId=`, uno solo): el documento ya está elegido.
+    if (linkedSaleId && !linkedPurchaseId) {
+      setPayingDocument({ id: linkedSaleId, type: "sale" });
+    } else if (linkedPurchaseId && !linkedSaleId) {
+      setPayingDocument({ id: linkedPurchaseId, type: "purchase" });
+    } else {
+      setIsPickerOpen(true);
+    }
+  }
 
   function handleCancelPayment() {
     if (!paymentToCancel) {
@@ -177,17 +186,15 @@ function PaymentsList() {
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
             <PaymentsExportActions exportFilters={effectiveFilters} />
             {canRegisterPayment ? (
-              <RegisterPaymentModal
-                allowPurchaseContext={can("payments.manage") && !salePaymentsOnly}
-                purchaseId={effectiveFilters.purchaseId}
-                saleId={effectiveFilters.saleId}
-                trigger={
-                  <Button className="w-full gap-2 shadow-sm sm:w-auto" size="sm">
-                    <Plus aria-hidden className="size-5" />
-                    Registrar pago
-                  </Button>
-                }
-              />
+              <Button
+                className="w-full gap-2 shadow-sm sm:w-auto"
+                onClick={handleRegisterPayment}
+                size="sm"
+                type="button"
+              >
+                <Plus aria-hidden className="size-5" />
+                Registrar pago
+              </Button>
             ) : null}
           </div>
         }
@@ -234,17 +241,15 @@ function PaymentsList() {
               <EmptyState
                 action={
                   canRegisterPayment ? (
-                    <RegisterPaymentModal
-                      allowPurchaseContext={can("payments.manage") && !salePaymentsOnly}
-                      purchaseId={effectiveFilters.purchaseId}
-                      saleId={effectiveFilters.saleId}
-                      trigger={
-                        <Button className="gap-2" size="sm">
-                          <Plus aria-hidden className="size-5" />
-                          Registrar pago
-                        </Button>
-                      }
-                    />
+                    <Button
+                      className="gap-2"
+                      onClick={handleRegisterPayment}
+                      size="sm"
+                      type="button"
+                    >
+                      <Plus aria-hidden className="size-5" />
+                      Registrar pago
+                    </Button>
                   ) : undefined
                 }
                 description="Registra un pago o ajusta los filtros para ver otros resultados."
@@ -274,6 +279,31 @@ function PaymentsList() {
         </div>
       </EntityListPage>
 
+      {canRegisterPayment ? (
+        <>
+          <PaymentDocumentPicker
+            canPayPurchases={can("payments.manage") && !salePaymentsOnly}
+            onOpenChange={setIsPickerOpen}
+            onSelect={(document) => {
+              setIsPickerOpen(false);
+              setPayingDocument({ id: document.id, type: document.type });
+            }}
+            open={isPickerOpen}
+          />
+          {/* Cerrar el modal, con o sin pago, cierra todo: el buscador no se reabre. */}
+          <RegisterPaymentModal
+            onOpenChange={(open) => {
+              if (!open) {
+                setPayingDocument(null);
+              }
+            }}
+            open={payingDocument !== null}
+            purchaseId={payingDocument?.type === "purchase" ? payingDocument.id : undefined}
+            saleId={payingDocument?.type === "sale" ? payingDocument.id : undefined}
+          />
+        </>
+      ) : null}
+
       <PaymentCancelConfirmModal
         error={cancelPayment.error?.message}
         isConfirming={cancelPayment.isPending}
@@ -292,4 +322,4 @@ function PaymentsList() {
   );
 }
 
-export const PaymentsListPage = withUrlListBoundary<PaymentsListPageProps>(PaymentsList);
+export const PaymentsListPage = withUrlListBoundary(PaymentsList);

@@ -6,9 +6,7 @@ import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { usePurchase } from "@/modules/purchases/hooks/usePurchases";
 import { useSale } from "@/modules/sales/hooks/useSales";
 import { Button } from "@/shared/components/Button";
-import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
-import { SelectField } from "@/shared/components/SelectField";
 import {
   PaymentFormFields,
   type PaymentFormValues,
@@ -30,9 +28,16 @@ import {
 /**
  * Modal para pagar una compra o cobrar una venta sin salir de la pantalla.
  *
- * El documento se fija con `purchaseId` o `saleId` (uno solo): el modal carga su
- * saldo pendiente, ofrece "Completar saldo" y registra el pago con una clave de
- * idempotencia por intento.
+ * El documento lo fija quien lo usa con `purchaseId` o `saleId` (exactamente uno):
+ * el modal carga su saldo pendiente, ofrece "Completar saldo" y registra el pago con
+ * una clave de idempotencia por intento. El usuario nunca elige ni teclea el
+ * documento aquí (para elegirlo está `PaymentDocumentPicker`). Sin documento, o con
+ * los dos, el modal no envía nada.
+ *
+ * Cambio de documento: el formulario y la clave de idempotencia pertenecen al
+ * documento. Si `purchaseId`/`saleId` cambian, el modal se vuelve a montar por dentro
+ * (formulario limpio y clave nueva), así que el consumidor no necesita pasar `key`.
+ * Con `trigger` (apertura no controlada) ese cambio además lo cierra.
  *
  * @example Botón dentro del detalle de una venta
  * <RegisterPaymentModal saleId={sale.id} trigger={<Button>Cobrar saldo</Button>} />
@@ -51,13 +56,6 @@ import {
  */
 export type RegisterPaymentModalProps = {
   /**
-   * @deprecated Solo para el modo genérico (sin `purchaseId` ni `saleId`), donde el
-   * usuario teclea el ID del documento; `false` lo limita a ventas e ignora
-   * `purchaseId`. Ese modo lo usa `/payments` y lo elimina PAG-03b: no usarlo en
-   * código nuevo, pasar siempre `purchaseId` o `saleId`.
-   */
-  allowPurchaseContext?: boolean;
-  /**
    * Se llama al abrirse y al cerrarse el modal por una acción del usuario. Con el
    * pago en vuelo el cierre se ignora y no se llama. Necesaria si se pasa `open`.
    */
@@ -74,9 +72,16 @@ export type RegisterPaymentModalProps = {
    * pinta botón propio. Sin esta prop se abre con `trigger`.
    */
   open?: boolean;
-  /** Compra a pagar (salida de dinero). No combinar con `saleId`. */
+  /**
+   * Compra a pagar (salida de dinero). No combinar con `saleId`. Puede ir `undefined`
+   * mientras el modal está cerrado (apertura por código); abierto sin documento no
+   * registra nada.
+   */
   purchaseId?: string;
-  /** Venta a cobrar (entrada de dinero). No combinar con `purchaseId`. */
+  /**
+   * Venta a cobrar (entrada de dinero). No combinar con `purchaseId`. Puede ir
+   * `undefined` mientras el modal está cerrado; abierto sin documento no registra nada.
+   */
   saleId?: string;
   /** Texto del botón de envío. Por defecto "Registrar pago" (compra) o "Registrar cobro" (venta). */
   submitLabel?: string;
@@ -89,7 +94,7 @@ export type RegisterPaymentModalProps = {
   trigger?: ReactNode;
 };
 
-type ContextType = "purchase" | "sale";
+type DocumentType = "purchase" | "sale";
 
 const DOCUMENT_TEXTS = {
   purchase: { submitLabel: "Registrar pago", title: "Pagar compra" },
@@ -122,8 +127,21 @@ function serverOverpayToleranceVes(
   return currency === "USD" ? Math.max(roundingVes, roundMoney(rateVes)) : roundingVes;
 }
 
-export function RegisterPaymentModal({
-  allowPurchaseContext = true,
+/**
+ * El estado del formulario y el `RequestAttempt` viven en `RegisterPaymentForm`, que
+ * se monta de nuevo con cada documento: la clave de un intento de resultado incierto
+ * (red, 5xx) nunca viaja con otra venta u otra compra.
+ */
+export function RegisterPaymentModal(props: RegisterPaymentModalProps) {
+  return (
+    <RegisterPaymentForm
+      key={`sale:${props.saleId ?? ""}|purchase:${props.purchaseId ?? ""}`}
+      {...props}
+    />
+  );
+}
+
+function RegisterPaymentForm({
   onOpenChange,
   onRegistered,
   open: controlledOpen,
@@ -134,18 +152,13 @@ export function RegisterPaymentModal({
   trigger,
 }: RegisterPaymentModalProps) {
   const formId = useId();
-  const resolvedPurchaseId = allowPurchaseContext ? purchaseId : undefined;
-  const hasFixedContext = Boolean(saleId || resolvedPurchaseId);
-  const fixedDocument: ContextType | undefined =
-    resolvedPurchaseId && !saleId ? "purchase" : saleId && !resolvedPurchaseId ? "sale" : undefined;
+  // Exactamente un documento: sin ninguno, o con los dos, no se envía nada.
+  const fixedDocument: DocumentType | undefined =
+    purchaseId && !saleId ? "purchase" : saleId && !purchaseId ? "sale" : undefined;
   const isControlled = controlledOpen !== undefined;
   const [internalOpen, setInternalOpen] = useState(false);
   const open = isControlled ? controlledOpen : internalOpen;
   const [renderedOpen, setRenderedOpen] = useState(open);
-  const [contextType, setContextType] = useState<ContextType>(
-    resolvedPurchaseId ? "purchase" : "sale",
-  );
-  const [contextId, setContextId] = useState(saleId ?? resolvedPurchaseId ?? "");
   const [storedValues, setValues] = useState<PaymentFormValues>(() =>
     createEmptyPaymentFormValues(),
   );
@@ -168,12 +181,8 @@ export function RegisterPaymentModal({
       ),
     [enabledPaymentMethodsQuery.data],
   );
-  const selectedSaleId = saleId ?? (contextType === "sale" ? contextId : undefined);
-  const selectedPurchaseId =
-    resolvedPurchaseId ??
-    (allowPurchaseContext && contextType === "purchase" ? contextId : undefined);
-  const sale = useSale(selectedSaleId);
-  const purchase = usePurchase(selectedPurchaseId);
+  const sale = useSale(saleId);
+  const purchase = usePurchase(purchaseId);
   const pendingBalanceVes = useMemo(() => {
     if (sale.data) {
       return Math.max(sale.data.totalVes - sale.data.paidVes, 0);
@@ -213,14 +222,15 @@ export function RegisterPaymentModal({
     getPaymentCurrency(method),
     rateVes,
   );
-  const contextIsValid = Boolean(selectedSaleId) !== Boolean(selectedPurchaseId);
+  const hasDocument = fixedDocument !== undefined;
   // Sin el saldo no hay guarda de sobrepago: mientras el documento carga no se envía;
   // si la carga falló se avisa y decide el servidor (`register_payment`).
-  const linkedDocument = selectedSaleId ? sale : selectedPurchaseId ? purchase : undefined;
+  const linkedDocument =
+    fixedDocument === "sale" ? sale : fixedDocument === "purchase" ? purchase : undefined;
   const balanceIsLoading = Boolean(linkedDocument?.isPending);
   const balanceError = linkedDocument?.data === undefined ? linkedDocument?.error : null;
   const canSubmit =
-    contextIsValid &&
+    hasDocument &&
     !balanceIsLoading &&
     isPaymentFormValid(values, {
       overpayToleranceVes,
@@ -255,8 +265,8 @@ export function RegisterPaymentModal({
     // La huella del intento es el pago completo: documento y valores del formulario.
     const input = {
       ...buildPaymentFormPayload(values),
-      purchaseId: selectedPurchaseId,
-      saleId: selectedSaleId,
+      purchaseId,
+      saleId,
     };
     const clientRequestId = requestAttempt.begin(input);
 
@@ -309,9 +319,7 @@ export function RegisterPaymentModal({
       return customer ? `Venta ${number} de ${customer}.` : `Venta ${number}.`;
     }
 
-    return allowPurchaseContext
-      ? "Registra un abono asociado a una venta o compra existente."
-      : "Registra un abono asociado a una venta existente.";
+    return "No hay un documento seleccionado.";
   }
 
   const documentTexts = fixedDocument ? DOCUMENT_TEXTS[fixedDocument] : undefined;
@@ -358,38 +366,6 @@ export function RegisterPaymentModal({
       trigger={trigger ?? (isControlled ? undefined : <Button size="sm">{resolvedTitle}</Button>)}
     >
       <form className="grid gap-4" id={formId} onSubmit={handleSubmit}>
-        {!hasFixedContext ? (
-          <div className="grid gap-4 md:grid-cols-2">
-            {allowPurchaseContext ? (
-              <SelectField
-                label="Contexto"
-                onChange={(event) => {
-                  setContextType(event.target.value as ContextType);
-                  setContextId("");
-                }}
-                options={[
-                  { label: "Venta", value: "sale" },
-                  { label: "Compra", value: "purchase" },
-                ]}
-                value={contextType}
-              />
-            ) : null}
-            <Input
-              error={
-                hasSubmitted && !contextIsValid
-                  ? "Indica una venta."
-                  : undefined
-              }
-              label={contextType === "sale" || !allowPurchaseContext ? "ID venta" : "ID compra"}
-              onChange={(event) => setContextId(event.target.value)}
-              placeholder={
-                contextType === "sale" || !allowPurchaseContext ? "sale-002" : "purchase-002"
-              }
-              value={contextId}
-            />
-          </div>
-        ) : null}
-
         {pendingBalanceVes !== undefined ? (
           <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
             Saldo pendiente actual: {formatVes(pendingBalanceVes)}
@@ -422,7 +398,7 @@ export function RegisterPaymentModal({
           </div>
         ) : null}
 
-        {hasSubmitted && !contextIsValid && hasFixedContext ? (
+        {hasSubmitted && !hasDocument ? (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
             El pago debe estar asociado solo a una venta o solo a una compra.
           </p>

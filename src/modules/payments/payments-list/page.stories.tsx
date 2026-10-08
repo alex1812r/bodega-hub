@@ -7,6 +7,11 @@ import { PaymentsListPage } from "./page";
  * `from`/`to` (día operativo Caracas), `method`, `direction`, `page`, `limit`.
  * `saleId`, `purchaseId` y `contactId` llegan por enlace desde otras pantallas y
  * se muestran como chips quitables, nunca como campos.
+ *
+ * «Registrar pago» abre `PaymentDocumentPicker` (buscador de ventas por cobrar y
+ * compras por pagar) y, al elegir, `RegisterPaymentModal` con ese documento. Si la
+ * URL ya trae `saleId` o `purchaseId`, abre el modal de ese documento directamente.
+ * El buscador tiene sus propias historias (`PaymentDocumentPicker`).
  */
 const meta = {
   component: PaymentsListPage,

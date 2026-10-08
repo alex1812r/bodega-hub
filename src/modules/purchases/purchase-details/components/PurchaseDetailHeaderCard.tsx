@@ -40,8 +40,6 @@ type PurchaseDetailHeaderCardProps = {
 
   primaryAction?: ReactNode;
 
-  purchaseId: string;
-
   purchaseNumber: string;
 
   status: PurchaseStatus;
@@ -69,8 +67,6 @@ export function PurchaseDetailHeaderCard({
   onReturn,
 
   primaryAction,
-
-  purchaseId,
 
   purchaseNumber,
 
@@ -127,8 +123,6 @@ export function PurchaseDetailHeaderCard({
           onReceive={onReceive}
 
           onReturn={onReturn}
-
-          purchaseId={purchaseId}
 
           purchaseNumber={purchaseNumber}
 

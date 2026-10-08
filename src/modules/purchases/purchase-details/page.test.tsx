@@ -185,6 +185,18 @@ describe("PurchaseDetailsPage · Pagar (PAG-01)", () => {
       expect(pay.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
+    it("PAG-03b: el menu de acciones ya no ofrece «Registrar pago» ni lleva a /payments", async () => {
+      const { user } = await renderPage();
+
+      await user.click(screen.getByRole("button", { name: /^Acciones de/ }));
+
+      const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
+
+      expect(items).toContain("Descargar PDF");
+      expect(items).not.toContain("Registrar pago");
+      expect(mockRouterPush).not.toHaveBeenCalled();
+    });
+
     it("sin saldo pendiente no aparece", async () => {
       await renderPage({ paidRef: 40, paidVes: 20000 });
 

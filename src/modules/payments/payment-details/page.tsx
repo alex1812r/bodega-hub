@@ -54,6 +54,9 @@ export function PaymentDetailsPage({
   const data = payment.data;
   const linkedDocument = data.relatedDocument ?? data.documentBalance;
   const isCancelled = data.status === "anulado";
+  // Otro pago solo tiene sentido sobre el mismo documento (una venta o una compra).
+  const canRegisterAnotherPayment =
+    !isCancelled && Boolean(data.saleId) !== Boolean(data.purchaseId);
 
   function handleCancelPayment() {
     // `mutate` no rechaza: si falla, el modal sigue abierto y muestra `cancelPayment.error`.
@@ -80,7 +83,7 @@ export function PaymentDetailsPage({
         onCancel={() => setIsCancelModalOpen(true)}
         paymentId={data.id}
         registerPaymentAction={
-          !isCancelled ? (
+          canRegisterAnotherPayment ? (
             <RegisterPaymentModal
               purchaseId={data.purchaseId}
               saleId={data.saleId}

@@ -264,16 +264,53 @@ describe("RegisterPaymentModal", () => {
     });
   });
 
-  it("sin documento elegido no ofrece atajos de saldo", async () => {
-    const user = userEvent.setup();
+  describe("PAG-03b: sin modo generico", () => {
+    it("con documento no hay selector de contexto ni campo donde teclear un ID", async () => {
+      renderModal(<RegisterPaymentModal saleId="sale-002" />);
+      const { dialog } = await openModal();
 
-    renderModal(<RegisterPaymentModal />);
-    await user.click(screen.getByRole("button", { name: OPEN_BUTTON }));
+      expect(dialog.queryByLabelText("Contexto")).not.toBeInTheDocument();
+      expect(dialog.queryByLabelText(/ID/)).not.toBeInTheDocument();
+      expect(dialog.queryByPlaceholderText(/sale-|purchase-/)).not.toBeInTheDocument();
+    });
 
-    const dialog = within(await screen.findByRole("dialog"));
+    it("sin documento no deja elegirlo, no ofrece atajos de saldo y no envia nada", async () => {
+      const user = userEvent.setup();
 
-    expect(dialog.getByLabelText("ID venta")).toBeInTheDocument();
-    expect(dialog.queryByRole("button", { name: "Completar saldo" })).not.toBeInTheDocument();
+      renderModal(<RegisterPaymentModal />);
+      await user.click(screen.getByRole("button", { name: OPEN_BUTTON }));
+
+      const dialog = within(await screen.findByRole("dialog"));
+
+      expect(dialog.queryByLabelText("Contexto")).not.toBeInTheDocument();
+      expect(dialog.queryByLabelText(/ID/)).not.toBeInTheDocument();
+      expect(dialog.queryByRole("button", { name: "Completar saldo" })).not.toBeInTheDocument();
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+
+      expect(
+        await dialog.findByText("El pago debe estar asociado solo a una venta o solo a una compra."),
+      ).toBeInTheDocument();
+      expect(postedBodies()).toHaveLength(0);
+    });
+
+    it("con venta y compra a la vez no envia nada", async () => {
+      const user = userEvent.setup();
+
+      renderModal(<RegisterPaymentModal purchaseId="purchase-002" saleId="sale-002" />);
+      await user.click(screen.getByRole("button", { name: OPEN_BUTTON }));
+
+      const dialog = within(await screen.findByRole("dialog"));
+
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      await submit(user);
+
+      expect(
+        await dialog.findByText("El pago debe estar asociado solo a una venta o solo a una compra."),
+      ).toBeInTheDocument();
+      expect(postedBodies()).toHaveLength(0);
+    });
   });
 
   it("si el metodo por defecto no esta habilitado usa el primero habilitado", async () => {
@@ -1051,6 +1088,48 @@ describe("RegisterPaymentModal", () => {
 
         expect(second).toEqual(expect.any(String));
         expect(second).not.toBe(first);
+      });
+
+      it("PAG-03b: si el documento cambia tras un fallo incierto, la clave vieja no viaja con el nuevo", async () => {
+        const queryClient = new QueryClient({
+          defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+        });
+        const modalFor = (saleId: string) => (
+          <QueryClientProvider client={queryClient}>
+            <RegisterPaymentModal onOpenChange={() => undefined} open saleId={saleId} />
+          </QueryClientProvider>
+        );
+
+        paymentResponse = jsonResponse({ error: { code: "INTERNAL", message: "Fallo." } }, 500);
+
+        const { rerender } = render(modalFor("sale-002"));
+        const user = userEvent.setup();
+        const dialog = within(await screen.findByRole("dialog"));
+
+        await dialog.findByText(/Saldo pendiente actual/);
+        await user.type(dialog.getByLabelText("Monto"), "100");
+        await submit(user);
+        expect(await dialog.findByText("Fallo.")).toBeInTheDocument();
+
+        // Mismo modal, otra venta: como en `/payments` al elegir otro documento.
+        paymentResponse = jsonResponse({ data: { id: "pay-new", pendingBalanceVes: 1000 } });
+        rerender(modalFor("sale-003"));
+
+        const nextDialog = within(await screen.findByRole("dialog"));
+
+        await nextDialog.findByText(/Saldo pendiente actual/);
+        expect(nextDialog.queryByText("Fallo.")).not.toBeInTheDocument();
+        expect(nextDialog.getByLabelText("Monto")).toHaveValue("");
+        await user.type(nextDialog.getByLabelText("Monto"), "100");
+        await submit(user);
+        await waitFor(() => expect(postedBodies()).toHaveLength(2));
+
+        const [first, second] = postedBodies().map((post) => post.body);
+
+        expect(first.saleId).toBe("sale-002");
+        expect(second.saleId).toBe("sale-003");
+        expect(second.clientRequestId).toEqual(expect.any(String));
+        expect(second.clientRequestId).not.toBe(first.clientRequestId);
       });
 
       it("tras un 400 definitivo, cambiar el monto estrena clave", async () => {

@@ -118,7 +118,6 @@ export function PurchaseDetailsPage({
             </Button>
           ) : null
         }
-        purchaseId={data.id}
         purchaseNumber={data.purchaseNumber}
         status={data.status}
       />
