@@ -67,6 +67,9 @@ export type PurchaseLineRowProps = {
   taxCatalog: PurchaseTaxCatalog;
 };
 
+/** Tiempo tras desbloquear una fila en el que su botón «Quitar» aún no responde. */
+export const REMOVE_GUARD_AFTER_UNLOCK_MS = 400;
+
 const stackedLabelClassName = cn(purchaseLineFieldLabelClassName, "mb-0.5 block @xl:hidden");
 const readOnlyValueClassName =
   "flex h-10 items-center text-sm tabular-nums text-foreground @xl:h-8";
@@ -141,6 +144,8 @@ export function PurchaseLineRow({
   const pendingScans = useRef(0);
   // El foco salió de la fila con un escaneo suyo pendiente: asentar al resolverse.
   const settleAfterScan = useRef(false);
+  // Instante en que esta fila se desbloqueó con su candado o con doble clic.
+  const unlockedAt = useRef(-Infinity);
 
   // El doble clic no deja el foco en nada de la fila: al abrirse, lo toma su cantidad.
   useEffect(() => {
@@ -204,7 +209,24 @@ export function PurchaseLineRow({
 
   function handleDoubleClick() {
     focusAfterUnlockRef.current = true;
+    unlockedAt.current = Date.now();
     onLockChange(false);
+  }
+
+  function handleLockClick() {
+    if (locked) {
+      unlockedAt.current = Date.now();
+    }
+
+    onLockChange(!locked);
+  }
+
+  // Recién desbloqueada, la fila estrena su botón «Quitar»: un clic que llega enseguida es
+  // el segundo de un doble clic (o un rebote), no la intención de quitar la línea.
+  function handleRemoveClick() {
+    if (Date.now() - unlockedAt.current >= REMOVE_GUARD_AFTER_UNLOCK_MS) {
+      onRemove();
+    }
   }
 
   function handleLockKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
@@ -216,7 +238,10 @@ export function PurchaseLineRow({
     onTabPastLock();
   }
 
-  // El candado conserva su sitio (y el foco) al bloquear y desbloquear: mismo `key`.
+  // El candado conserva su sitio (y el foco) al bloquear y desbloquear: mismo `key`, y
+  // bloqueada reserva a su derecha el hueco de «Quitar». Sin él, al desbloquear el candado
+  // se corría a la izquierda y «Quitar» aparecía bajo el cursor: el segundo clic de un
+  // doble clic sobre el candado quitaba la línea.
   const actions = (
     <div
       className="col-start-3 row-start-1 flex items-center justify-end gap-1 justify-self-end @xl:col-start-auto @xl:row-start-auto"
@@ -231,7 +256,9 @@ export function PurchaseLineRow({
             ? "text-primary hover:bg-primary/10"
             : "hover:bg-surface-container hover:text-foreground",
         )}
-        onClick={() => onLockChange(!locked)}
+        onClick={handleLockClick}
+        // Sus dos clics ya alternaron el candado: que no desbloquee además la fila.
+        onDoubleClick={(event) => event.stopPropagation()}
         onKeyDown={handleLockKeyDown}
         title={locked ? "Línea bloqueada: clic para desbloquear" : "Bloquear línea"}
         type="button"
@@ -242,11 +269,13 @@ export function PurchaseLineRow({
           <LockOpen aria-hidden className="size-[1.125rem]" />
         )}
       </button>
-      {locked ? null : (
+      {locked ? (
+        <span aria-hidden className="size-8 shrink-0" />
+      ) : (
         <button
           aria-label={`Quitar ${meta.name}`}
           className={cn(rowActionClassName, "hover:bg-destructive/10 hover:text-destructive")}
-          onClick={onRemove}
+          onClick={handleRemoveClick}
           type="button"
         >
           <Trash2 aria-hidden className="size-[1.125rem]" />

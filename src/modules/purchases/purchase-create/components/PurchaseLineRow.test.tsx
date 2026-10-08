@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
@@ -183,5 +183,93 @@ describe("PurchaseLineRow · reparto de columnas en tarjeta estrecha (COM-F1)", 
     expect(sku).toHaveClass("min-w-0", "truncate");
     expect(screen.getByText(/IVA General 16/)).toHaveClass("shrink-0");
     expect(detail.parentElement).toHaveClass("min-w-0", "@xl:col-span-1");
+  });
+});
+
+describe("PurchaseLineRow · doble clic sobre el candado (COM-F8)", () => {
+  const onRemove = jest.fn();
+
+  function RemovableHarness() {
+    const [locked, setLocked] = useState(true);
+
+    return (
+      <ul>
+        <PurchaseLineRow
+          item={unitItem}
+          locked={locked}
+          meta={switchMeta}
+          onLockChange={setLocked}
+          onRemove={onRemove}
+          onSettle={() => undefined}
+          onTaxChange={() => undefined}
+          onUpdate={() => undefined}
+          rateVes={RATE_VES}
+          tax={tax}
+          taxCatalog={taxCatalog}
+        />
+      </ul>
+    );
+  }
+
+  function lockButton() {
+    return screen.getByRole("button", { name: /^(Desbloquear|Bloquear) Interruptor sencillo$/ });
+  }
+
+  beforeEach(() => {
+    onRemove.mockReset();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("el candado ocupa el mismo hueco bloqueada y desbloqueada: «Quitar» nunca aparece donde estaba el candado", async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    render(<RemovableHarness />);
+
+    const actions = lockButton().parentElement as HTMLElement;
+
+    // Bloqueada: candado y, a su derecha, el hueco reservado de «Quitar».
+    expect(Array.from(actions.children).indexOf(lockButton())).toBe(0);
+    expect(actions.children).toHaveLength(2);
+    expect(actions.children[1]).toHaveAttribute("aria-hidden", "true");
+
+    await user.click(lockButton());
+
+    const unlockedActions = lockButton().parentElement as HTMLElement;
+
+    expect(Array.from(unlockedActions.children).indexOf(lockButton())).toBe(0);
+    expect(unlockedActions.children[1]).toBe(
+      screen.getByRole("button", { name: "Quitar Interruptor sencillo" }),
+    );
+  });
+
+  it("recién desbloqueada, «Quitar» no responde durante 400 ms: el segundo clic de un doble clic no quita la línea", async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    render(<RemovableHarness />);
+
+    await user.click(lockButton());
+    await user.click(screen.getByRole("button", { name: "Quitar Interruptor sencillo" }));
+
+    expect(onRemove).not.toHaveBeenCalled();
+
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+    await user.click(screen.getByRole("button", { name: "Quitar Interruptor sencillo" }));
+
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("el doble clic sobre el candado solo cuenta como sus dos clics: no dispara además el desbloqueo por doble clic de la fila", async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    render(<RemovableHarness />);
+
+    await user.dblClick(lockButton());
+
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(row()).toHaveAttribute("data-locked", "true");
+    expect(lockButton()).toHaveFocus();
   });
 });

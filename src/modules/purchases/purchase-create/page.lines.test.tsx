@@ -2,6 +2,7 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { REMOVE_GUARD_AFTER_UNLOCK_MS } from "./components/PurchaseLineRow";
 import type { PurchaseCatalogProduct } from "./components/PurchaseProductPickerCard";
 
 const mockPush = jest.fn();
@@ -527,16 +528,29 @@ describe("PurchaseCreatePage · líneas bloqueables (COM-12)", () => {
   });
 
   it("una línea bloqueada no se puede quitar: hay que desbloquearla", () => {
-    installFetchStub(() => null);
-    renderPage();
-    addProduct("Cable HDMI");
-    addProduct("Harina PAN");
+    jest.useFakeTimers();
 
-    expect(screen.queryByRole("button", { name: "Quitar Cable HDMI" })).not.toBeInTheDocument();
+    try {
+      installFetchStub(() => null);
+      renderPage();
+      addProduct("Cable HDMI");
+      addProduct("Harina PAN");
 
-    fireEvent.click(lockButton("Cable HDMI"));
-    fireEvent.click(screen.getByRole("button", { name: "Quitar Cable HDMI" }));
-    expect(lineRows()).toHaveLength(1);
+      expect(screen.queryByRole("button", { name: "Quitar Cable HDMI" })).not.toBeInTheDocument();
+
+      fireEvent.click(lockButton("Cable HDMI"));
+      // Recién desbloqueada, «Quitar» aún no responde (COM-F8): el clic inmediato no quita.
+      fireEvent.click(screen.getByRole("button", { name: "Quitar Cable HDMI" }));
+      expect(lineRows()).toHaveLength(2);
+
+      act(() => {
+        jest.advanceTimersByTime(REMOVE_GUARD_AFTER_UNLOCK_MS);
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Quitar Cable HDMI" }));
+      expect(lineRows()).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("con la preferencia apagada no bloquea, y la preferencia se recuerda", () => {
