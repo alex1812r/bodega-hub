@@ -79,10 +79,14 @@ describe("payments hooks · PAG-05", () => {
     result.current.mutate({ amount: 100, method: "efectivo_ves", saleId: "sale-002" });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // Los documentos con saldo cuelgan de la clave de pagos: una sola invalidacion
+    // de `["payments"]` los cubre (dos los pedirian dos veces).
     expect(openDocumentsQueryKeys.all).toEqual(["payments", "open-documents"]);
+    expect(
+      invalidatedKeys().filter((key) => key?.[0] === "payments"),
+    ).toEqual([["payments"]]);
     expect(invalidatedKeys()).toEqual(
       expect.arrayContaining([
-        ["payments", "open-documents"],
         ["sales"],
         ["purchases"],
         ["contacts"],

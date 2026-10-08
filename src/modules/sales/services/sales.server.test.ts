@@ -701,6 +701,50 @@ describe("sales.server", () => {
     });
   });
 
+  it("PAG-F5: returns the status of each payment in the sale detail so voided ones can be told apart", async () => {
+    const paymentRow = {
+      amount: 100,
+      amount_ref: 0.2,
+      amount_ves: 100,
+      bank_name: null,
+      contact_id: saleRow.customer_id,
+      created_at: saleRow.created_at,
+      currency: "VES",
+      direction: "entrada",
+      method: "punto_venta",
+      notes: null,
+      phone: null,
+      reference_code: null,
+      ref_rate_ves: 510,
+      sale_id: saleRow.id,
+    };
+    const builder = createQueryBuilder({
+      data: {
+        ...saleRow,
+        customer: null,
+        payments: [
+          { ...paymentRow, id: "pay-activo", status: "activo" },
+          { ...paymentRow, id: "pay-anulado", status: "anulado" },
+        ],
+        sale_items: [],
+      },
+      error: null,
+    });
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
+      from: jest.fn().mockReturnValue(builder),
+    });
+
+    const sale = await getSaleById(saleRow.id, DEFAULT_STORE_ID);
+
+    expect(
+      sale.payments.map((payment: { id: string; status?: string }) => [payment.id, payment.status]),
+    ).toEqual([
+      ["pay-activo", "activo"],
+      ["pay-anulado", "anulado"],
+    ]);
+  });
+
   it("cancels a sale through cancel_sale RPC", async () => {
     const rpc = jest.fn().mockResolvedValue({
       data: { ...saleRow, status: "cancelada" },

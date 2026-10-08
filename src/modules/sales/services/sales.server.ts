@@ -11,6 +11,7 @@ import { mapBaseEntity, mapNullableString } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { buildPaymentNotes, createPayment } from "@/modules/payments/services/payments.server";
 
+import type { PaymentStatus } from "@/shared/mocks/erp-data";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
 import type { SaleInput, SaleUpdateInput } from "./sales.mock-server";
@@ -84,6 +85,7 @@ type PaymentRow = {
   reference_code: string | null;
   ref_rate_ves: number;
   sale_id: string | null;
+  status?: PaymentStatus | null;
 };
 
 type StockMovementRow = {
@@ -184,6 +186,7 @@ function mapPaymentRow(row: PaymentRow) {
     referenceCode: mapNullableString(row.reference_code),
     refRateVes: Number(row.ref_rate_ves),
     saleId: row.sale_id ?? undefined,
+    status: row.status ?? undefined,
   };
 }
 

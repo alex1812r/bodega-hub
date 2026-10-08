@@ -28,7 +28,6 @@ export type PaymentsFilters = PaginationParams & {
 
 import type { PaymentDocumentBalance } from "../payment-details/types";
 import type { PaymentRelatedDocument } from "../utils/resolvePaymentRelatedDocument";
-import { openDocumentsQueryKeys } from "./useOpenDocuments";
 
 export type { PaymentDocumentBalance, PaymentRelatedDocument };
 
@@ -152,6 +151,11 @@ export function useCreatePayment() {
             };
           });
         });
+      // La fila que devuelve el alta puede venir sin contacto ni documento: la
+      // insercion de arriba la muestra ya y este refetch la completa. La misma clave
+      // cubre los documentos con saldo (`["payments", "open-documents"]`): el
+      // documento abonado cambia de saldo o deja de tenerlo.
+      void queryClient.invalidateQueries({ queryKey: paymentsQueryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["sales"] });
       void queryClient.invalidateQueries({ queryKey: ["purchases"] });
       void queryClient.invalidateQueries({ queryKey: ["contacts"] });
@@ -160,8 +164,6 @@ export function useCreatePayment() {
       // Un pago mueve efectivo: la sesion de caja y el baul muestran saldos que cambian.
       void queryClient.invalidateQueries({ queryKey: cashKeys.all });
       void queryClient.invalidateQueries({ queryKey: vaultKeys.all });
-      // El documento abonado cambia de saldo o deja de tenerlo.
-      void queryClient.invalidateQueries({ queryKey: openDocumentsQueryKeys.all });
     },
   });
 }

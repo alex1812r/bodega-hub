@@ -176,6 +176,51 @@ describe("payments hooks", () => {
       );
     });
 
+    it("PAG-F5: el pago nuevo aparece de inmediato en la lista y ademas la lista se revalida", async () => {
+      // El alta en Supabase devuelve la fila sin `contact` ni `relatedDocument`:
+      // la insercion optimista la muestra al instante y el refetch la completa.
+      const created = { createdAt: "2026-05-18T14:30:00.000Z", id: "pay-new", saleId: "sale-002" };
+      const complete = { ...created, contact: { id: "cont-customer", name: "Cliente" } };
+      let resolveRefetch: (response: Response) => void = () => undefined;
+
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ data: paginated([{ id: "pay-001" }]) }))
+        .mockResolvedValueOnce(jsonResponse({ data: created }, 201))
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) => {
+              resolveRefetch = resolve;
+            }),
+        );
+
+      const { invalidatedKeys, Wrapper } = createClientWrapper();
+      const { result } = renderHook(
+        () => ({ create: useCreatePayment(), list: usePayments() }),
+        { wrapper: Wrapper },
+      );
+
+      await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
+      result.current.create.mutate({ amount: 100, method: "efectivo_ves", saleId: "sale-002" });
+
+      // Antes de que responda el refetch la fila ya esta, tal como la devolvio el alta.
+      await waitFor(() =>
+        expect(result.current.list.data?.items.map((item) => item.id)).toEqual([
+          "pay-new",
+          "pay-001",
+        ]),
+      );
+      expect(result.current.list.data?.total).toBe(2);
+      expect(invalidatedKeys()).toContainEqual(["payments"]);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+      expect(fetchMock.mock.calls[2][0]).toBe("/api/payments");
+
+      resolveRefetch(jsonResponse({ data: paginated([complete, { id: "pay-001" }]) }));
+
+      await waitFor(() =>
+        expect(result.current.list.data?.items[0].contact?.name).toBe("Cliente"),
+      );
+    });
+
     it("si el servidor rechaza el pago no invalida nada", async () => {
       fetchMock.mockResolvedValueOnce(
         jsonResponse({ error: { code: "BAD_REQUEST", message: "Rechazado." } }, 400),

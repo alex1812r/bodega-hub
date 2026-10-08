@@ -2,9 +2,17 @@
  * @jest-environment node
  */
 
-import { mockSales } from "@/shared/mocks/erp-data";
+import { createPayment } from "@/modules/payments/services/payments.mock-server";
+import { mockPayments, mockSales } from "@/shared/mocks/erp-data";
 
 import { GET, POST } from "./route";
+
+// El servicio simulado sigue siendo el real; solo se observa si la ruta lo llama.
+jest.mock("../../../modules/payments/services/payments.mock-server", () => {
+  const actual = jest.requireActual("../../../modules/payments/services/payments.mock-server");
+
+  return { ...actual, createPayment: jest.fn(actual.createPayment) };
+});
 
 describe("/api/payments", () => {
   it("returns payments", async () => {
@@ -373,6 +381,84 @@ describe("/api/payments", () => {
 
       expect(response.status).toBe(400);
       expect(salePaidVes("sale-002")).toBe(before);
+    });
+  });
+
+  describe("PAG-F5: cuerpos que no son un pago valido", () => {
+    beforeEach(() => {
+      jest.mocked(createPayment).mockClear();
+    });
+
+    function postRaw(body: string | undefined) {
+      return POST(
+        new Request("http://localhost/api/payments", {
+          body,
+          headers: {
+            "content-type": "application/json",
+            "x-demo-role": "contador",
+          },
+          method: "POST",
+        }),
+      );
+    }
+
+    it.each([
+      ["vacio", undefined],
+      ["JSON roto", '{"saleId":"sale-002",'],
+      ["amount NaN", '{"saleId":"sale-002","method":"punto_venta","amount":NaN}'],
+      ["amount Infinity", '{"saleId":"sale-002","method":"punto_venta","amount":Infinity}'],
+      ["amount 1e999", '{"saleId":"sale-002","method":"punto_venta","amount":1e999}'],
+    ])("cuerpo %s responde 400 BAD_REQUEST y no registra nada", async (_label, raw) => {
+      const before = mockPayments.length;
+      const response = await postRaw(raw);
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body.error.code).toBe("BAD_REQUEST");
+      expect(createPayment).not.toHaveBeenCalled();
+      expect(mockPayments).toHaveLength(before);
+    });
+
+    it.each(["notes", "referenceCode", "bankName", "phone"])(
+      "un caracter NUL en %s responde 400 en espanol sin llegar al servicio",
+      async (field) => {
+        const response = await postRaw(
+          JSON.stringify({
+            amount: 1,
+            bankName: "Banco Nacional",
+            method: "transferencia",
+            purchaseId: "purchase-001",
+            referenceCode: "TRX-1",
+            [field]: "\u0000nulo",
+          }),
+        );
+        const body = await response.json();
+
+        expect(response.status).toBe(400);
+        expect(body.error.code).toBe("BAD_REQUEST");
+        expect(JSON.stringify(body)).not.toMatch(/unicode/i);
+        expect(body.error.issues).toEqual([
+          expect.objectContaining({
+            message: "El texto contiene caracteres no permitidos.",
+            path: [field],
+          }),
+        ]);
+        expect(createPayment).not.toHaveBeenCalled();
+      },
+    );
+
+    it("unas notas de 2 MB responden 400 sin llegar al servicio", async () => {
+      const response = await postRaw(
+        JSON.stringify({
+          amount: 1,
+          method: "punto_venta",
+          notes: "x".repeat(2_000_000),
+          saleId: "sale-002",
+        }),
+      );
+
+      expect(response.status).toBe(400);
+      expect(createPayment).not.toHaveBeenCalled();
     });
   });
 });

@@ -4102,7 +4102,7 @@ components:
     PaymentCreateInput:
       type: object
       required: [method, amount]
-      description: "Debe incluir saleId o purchaseId, pero no ambos. pago_movil requiere bankName, phone y referenceCode de 4 digitos. transferencia requiere bankName y referenceCode."
+      description: "Debe incluir saleId o purchaseId, pero no ambos. pago_movil requiere bankName, phone y referenceCode de 4 digitos. transferencia requiere bankName y referenceCode. Los textos (bankName, phone, referenceCode, notes) no admiten caracteres de control salvo tabulador y salto de linea."
       properties:
         clientRequestId:
           type: string
@@ -4126,13 +4126,17 @@ components:
           exclusiveMinimum: true
         bankName:
           type: string
+          maxLength: 120
         phone:
           type: string
+          maxLength: 30
         referenceCode:
           type: string
+          maxLength: 100
           description: Referencia bancaria; para pago movil debe tener 4 digitos.
         notes:
           type: string
+          maxLength: 2000
         change:
           $ref: "#/components/schemas/PaymentChangeInput"
         receivedDenominations:
@@ -4166,10 +4170,13 @@ components:
           $ref: "#/components/schemas/PaymentMethod"
         bankName:
           type: string
+          maxLength: 120
         phone:
           type: string
+          maxLength: 30
         referenceCode:
           type: string
+          maxLength: 100
     PaymentUpdateInput:
       type: object
       description: Solo metadatos editables; montos y metodo no se modifican tras el registro.

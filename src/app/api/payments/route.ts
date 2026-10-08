@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ApiError, toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import {
   requireStoreAnyPermission,
   requireStorePermission,
@@ -133,7 +134,7 @@ export async function POST(request: Request) {
       "payments.manage",
       "sales.create",
     ] satisfies Permission[]);
-    const input = createPaymentSchema.parse(await request.json());
+    const input = createPaymentSchema.parse(await readJsonBody(request));
     assertCanCreatePurchasePayment(auth.role, input);
 
     const canManagePayments = auth.permissions.includes("payments.manage");

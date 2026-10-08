@@ -115,17 +115,16 @@ describe("PaymentsListPage · Registrar pago (PAG-03b)", () => {
       const [path, search = ""] = String(url).split("?");
 
       if (init?.method === "POST") {
-        return jsonResponse(
-          {
-            data: {
-              ...listedPayment("pay-new"),
-              pendingBalanceVes: 0,
-              relatedDocument: { href: "/sales/sale-002", label: "F-0002" },
-              saleId: "sale-002",
-            },
-          },
-          201,
-        );
+        const created = {
+          ...listedPayment("pay-new"),
+          relatedDocument: { href: "/sales/sale-002", label: "F-0002" },
+          saleId: "sale-002",
+        };
+
+        // El servidor guarda el pago: la lista que se vuelve a pedir ya lo trae.
+        listItems = [created, ...listItems];
+
+        return jsonResponse({ data: { ...created, pendingBalanceVes: 0 } }, 201);
       }
 
       if (path === "/api/payments") {
@@ -303,6 +302,7 @@ describe("PaymentsListPage · Registrar pago (PAG-03b)", () => {
     const user = await renderPage();
     const picker = await openPicker(user);
     const documentRequestsBefore = pickerDocumentRequests().length;
+    const listRequestsBefore = requestsTo("/api/payments").length;
 
     await user.click(within(picker.getByRole("listbox")).getByRole("option"));
 
@@ -332,7 +332,12 @@ describe("PaymentsListPage · Registrar pago (PAG-03b)", () => {
     await user.click(within(modal).getByRole("button", { name: "Cancelar" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
-    // El pago nuevo ya esta en la lista, sin recargar la pantalla.
+    // El pago nuevo ya esta en la lista, sin recargar la pantalla, y la lista se
+    // volvio a pedir para completar la fila con lo que el alta no devuelve.
+    expect((await screen.findAllByRole("link", { name: "F-0002" })).length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(requestsTo("/api/payments").length).toBeGreaterThan(listRequestsBefore),
+    );
     expect((await screen.findAllByRole("link", { name: "F-0002" })).length).toBeGreaterThan(0);
 
     // La consulta del buscador quedo invalidada: al reabrirlo se vuelve a pedir.
