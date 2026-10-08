@@ -82,12 +82,14 @@ export function ProductDetailInfoCard({
               {formatRefUsd(salePriceRef)}
             </span>
           </div>
-          <div className="flex flex-col gap-1 p-2">
+          <div className="flex min-w-0 flex-col gap-1 p-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-outline">
               Ganancia
             </span>
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <MarginBadge
+                // "Por revisar · 11,11 %" no cabe en la columna: parte en dos líneas en vez de salirse.
+                className="max-w-full flex-wrap whitespace-normal rounded-2xl"
                 cost={costRef}
                 price={salePriceRef}
                 review={underReview}

@@ -31,6 +31,29 @@ function gainBlock() {
 }
 
 describe("ProductDetailInfoCard · ganancia", () => {
+  // PRO-F6: "Por revisar · 11,11 %" no cabe en su columna (45 px fuera a 1280, 29 px
+  // a 390) y la tarjeta lo recortaba: el badge parte en dos líneas dentro de su celda.
+  it("lets the 'Por revisar' badge wrap inside its cell instead of being clipped", () => {
+    render(
+      <ProductDetailInfoCard
+        categoryName="Víveres"
+        costRef={9}
+        isActive
+        salePriceRef={10}
+        underReview
+      />,
+    );
+
+    const badge = screen.getByTitle(MARGIN_BADGE_TITLE);
+
+    expect(badge).toHaveTextContent("Por revisar ·11,11 %");
+    expect(badge).not.toHaveClass("whitespace-nowrap");
+    expect(badge).toHaveClass("max-w-full", "flex-wrap");
+    expect(badge.parentElement).toHaveClass("min-w-0", "flex-wrap");
+    expect(gainBlock()).toHaveClass("min-w-0");
+    expect(gainBlock()).not.toHaveClass("overflow-hidden");
+  });
+
   it("replaces 'Margen (REF)' with the margin badge and the gain in REF", () => {
     renderCard(10, 12.5);
 
