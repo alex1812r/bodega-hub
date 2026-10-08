@@ -1,61 +1,52 @@
 -- =============================================================================
--- 20261010a — vinculo automatico proveedor-producto al comprar (COM-02; plan
---             ux-mejoras, Ola 1; §0b y reglas 7 y 9)
+-- 20261010b — create_purchase rechaza las lineas de un producto inactivo
+--             (COM-15; plan ux-mejoras, Ola 1; §0b "producto inactivo acepta
+--             compras y ajustes", parte de compras)
 -- Proyecto: BodegaHub
--- Requiere: 20261006c / f / h (create_purchase de 14 argumentos, idempotencia,
---           bloqueos ordenados, guardas), 20261007a (tax_rate_code), 20261009d
---           (create_purchase VIGENTE: receta de empaque por componentes) y
---           20261009e (supplier_products.is_preferred y sus triggers).
+-- Requiere: 20261006c / f / h, 20261007a, 20261009d, 20261009e y 20261010a
+--           (create_purchase con el vinculo automatico proveedor-producto).
 --
 -- REDEFINE public.create_purchase (misma firma de 14 argumentos). PARTE DE LA
--- VERSION DE 20261009d: copia literal de su cuerpo (IVA por tax_rate_code de
--- 20261007a, lectura de la receta en modo empaque de 20261009d, idempotencia por
--- p_client_request_id, documento -> productos "order by id for update", guardas
--- de formato y de NaN) mas lo que sigue. No define ninguna otra funcion ni toca
--- tablas, indices, politicas o triggers.
+-- VERSION DE 20261010a: copia literal de su cuerpo (IVA por tax_rate_code,
+-- receta de empaque por componentes, idempotencia por p_client_request_id,
+-- documento -> productos "order by id for update", guardas de formato y de NaN,
+-- proveedor activo con PT400 y vinculo automatico por linea) mas UNA guarda. No
+-- define ninguna otra funcion ni toca tablas, indices, politicas o triggers.
 --
---   1. Vinculo por linea. Hasta hoy el vinculo proveedor-producto solo se creaba
---      (o se reactivaba) al RECIBIR: en create_purchase con estado 'recibido' y
---      en receive_purchase. Un 'pedido' de un producto que el proveedor no tenia
---      quedaba sin vinculo hasta la recepcion. Desde aqui toda compra confirmada
---      deja vinculada cada una de sus lineas, en la misma transaccion:
---        * recibido: sin cambios. insert ... on conflict: crea el vinculo que
---          falte, reactiva el inactivo, registra el costo de la linea (con IVA)
---          y la fecha de ultima compra; historial con origen 'compra'.
---        * pedido, sin vinculo: se crea con el costo de la linea (con IVA) y el
---          supplier_sku enviado; historial con origen 'vinculacion' y nota
---          'Pedido <numero>'; last_purchased_at queda NULL (no se ha recibido).
---        * pedido, vinculo inactivo: se reactiva sin tocar costo ni historial.
---        * pedido, vinculo activo: no se toca.
---      Nunca se duplica: unique (supplier_id, product_id) y el producto esta
---      bloqueado mientras se decide.
---   2. Empaque del proveedor. Si la linea se guarda en modo empaque y su vinculo
---      se creo en esta compra, se inserta su supplier_product_pack_units (label y
---      units_per_pack de la linea); el primero del vinculo queda predeterminado.
---      No se repite si dos lineas traen el mismo empaque. No aplica a la linea
---      sobre un producto EMPAQUE de una receta (se guarda en modo unidad) ni a
---      vinculos que ya existian o que se reactivan: conservan sus empaques.
---   3. Proveedor habitual (20261009e). No se escribe is_preferred: lo decide el
---      trigger trg_supplier_products_preferred_guard. El vinculo nuevo o
---      reactivado queda habitual solo si el producto no tenia ninguno; si ya
---      tenia, se respeta.
---   4. Proveedor inactivo, que no es proveedor / ambos, inexistente o de otra
---      tienda: PT400 en espanol ANTES de crear nada (ni compra, ni lineas, ni
---      movimientos, ni vinculo). El inactivo y el que no es proveedor ya se
---      rechazaban, pero por assert_contact_type, sin errcode (P0001). El contacto
---      se lee con FOR SHARE: desactivarlo espera a que la compra termine.
+--   1. Producto inactivo. Hasta hoy una compra (recibida o en pedido) aceptaba
+--      lineas de un producto con products.is_active = false: entraba stock a un
+--      producto que no se puede vender. Desde aqui, si alguna linea es de un
+--      producto inactivo de la tienda la compra se rechaza entera con PT400,
+--      en espanol y nombrando el producto:
+--        "El producto X está inactivo: no se puede registrar la compra"
+--        "Los productos X, Y están inactivos: no se puede registrar la compra"
+--      Nada se crea: ni compra, ni lineas, ni movimientos, ni vinculo, ni
+--      empaque del proveedor, ni historial de costo.
+--   2. Sin carrera con la desactivacion. La guarda va DESPUES de bloquear todos
+--      los productos de la compra ("order by id for update"): quien desactiva
+--      el producto espera a que la compra termine, y la compra que espera a una
+--      desactivacion en curso ve el producto ya inactivo y se rechaza.
+--   3. PT400 y no PT404. create_sale responde PT404 "Producto no encontrado o
+--      inactivo: <uuid>" porque busca el producto con is_active = true y no
+--      distingue los dos casos. Aqui el producto existe y se nombra: se sigue la
+--      convencion de esta misma funcion para el proveedor inactivo (PT400, "El
+--      proveedor X está inactivo: no se puede registrar la compra"). El producto
+--      inexistente o de otra tienda sigue respondiendo PT404 como hasta hoy.
+--   4. Reintento idempotente. La repeticion de un p_client_request_id ya
+--      guardado devuelve la compra original ANTES de la guarda, aunque el
+--      producto se haya desactivado despues: el reintento no cambia.
+--   5. receive_purchase NO se toca (sigue en la version de 20261006c): recibir un
+--      pedido cuyo producto se desactivo despues de pedirlo se PERMITE (la
+--      mercancia ya viene en camino; rechazarla dejaria el pedido atascado).
 --
--- NO cambia la semantica monetaria ni de stock: para el mismo payload, mismas
--- lineas, quantity_delta, costo del producto y totales que con 20261009d. No
--- escribe el stock de products: lo mueve el trigger del libro.
+-- NO cambia la semantica monetaria ni de stock: para una compra de productos
+-- activos, mismas lineas, quantity_delta, costo del producto, totales y vinculos
+-- que con 20261010a. No escribe el stock de products: lo mueve el trigger del
+-- libro.
 --
--- OJO: si se reaplica 20261006c, 20261006f, 20261006h, 20261007a o 20261009d
--- (todos redefinen create_purchase) HAY QUE REAPLICAR 20261010a y correr
--- verify-patches.sql. Reaplicar 20261009e no lo exige (no toca create_purchase).
--- receive_purchase no se redefine: sigue en la version de 20261006c.
--- OJO: la version VIGENTE de create_purchase es la de 20261010b (COM-15: rechaza
--- el producto inactivo), que parte de esta. Tras reaplicar 20261010a HAY QUE
--- REAPLICAR 20261010b.
+-- OJO: si se reaplica 20261006c, 20261006f, 20261006h, 20261007a, 20261009d o
+-- 20261010a (todos redefinen create_purchase) HAY QUE REAPLICAR 20261010b y
+-- correr verify-patches.sql. Reaplicar 20261009e no lo exige.
 -- Idempotente, una sola transaccion. Ejecutar en SQL Editor o via db-up.
 -- =============================================================================
 
@@ -133,6 +124,8 @@ declare
   v_sp_active boolean;
   v_sp_is_new boolean;
   v_new_sp_ids uuid[] := '{}';
+  v_inactive_names text;
+  v_inactive_count integer;
 begin
   v_store_id := public.assert_store_context();
   -- N4 — NaN / Infinity no son menores que 0 y atravesaban las guardas de abajo.
@@ -335,6 +328,27 @@ begin
     and store_id = v_store_id
   order by id
   for update;
+
+  -- COM-15 — ninguna linea puede ser de un producto inactivo, ni en una compra
+  -- recibida ni en un pedido. Se mira con los productos ya bloqueados: desactivar
+  -- uno espera a que esta compra termine y, si la desactivacion llego antes, aqui
+  -- ya se ve. Al lanzar, la transaccion deshace la compra insertada arriba.
+  select count(*), string_agg(p.name, ', ' order by p.name, p.id)
+  into v_inactive_count, v_inactive_names
+  from public.products p
+  where p.id = any(v_product_ids)
+    and p.store_id = v_store_id
+    and p.is_active is not true;
+
+  if v_inactive_count = 1 then
+    raise exception using
+      errcode = 'PT400',
+      message = format('El producto %s está inactivo: no se puede registrar la compra', v_inactive_names);
+  elsif v_inactive_count > 1 then
+    raise exception using
+      errcode = 'PT400',
+      message = format('Los productos %s están inactivos: no se puede registrar la compra', v_inactive_names);
+  end if;
 
   for v_item in select * from jsonb_array_elements(p_items)
   loop

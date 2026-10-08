@@ -575,3 +575,25 @@ notify pgrst, 'reload schema';
 -- aplicar este parche y correr verify-patches.sql.
 -- ORDEN DE DESPLIEGUE (COM-02): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada y el BFF nuevo
 -- sobre la base sin parche (mismo payload y misma firma); sin el parche, un pedido no deja vinculo hasta recibirlo.
+-- OJO: reaplicar 20261010a reinstala create_purchase sin la guarda de producto inactivo: volver a aplicar 20261010b.
+-- -----------------------------------------------------------------------------
+-- 20261010b — purchase inactive product (COM-15): create_purchase rechaza con PT400 cualquier linea de un producto inactivo
+--             (compra recibida o pedido), nombrando el producto, sin crear nada
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010b-purchase-inactive-product.sql
+-- Requiere 20261006c / f / h, 20261007a, 20261009d, 20261009e y 20261010a. Idempotente, una transaccion. Solo redefine
+-- create_purchase (misma firma de 14 argumentos) a partir del cuerpo de 20261010a; no toca tablas, indices, politicas,
+-- triggers ni receive_purchase. No migra datos.
+-- NO cambia lineas, movimientos (quantity_delta), costo del producto, totales ni vinculos de una compra de productos
+-- activos: para el mismo payload la compra es la misma que con 20261010a.
+-- Nuevo: si alguna linea es de un producto con is_active = false la compra entera responde PT400 ("El producto X está
+-- inactivo: no se puede registrar la compra"; con varios, "Los productos X, Y están inactivos: ..."). Se comprueba con los
+-- productos ya bloqueados (order by id for update): no hay carrera con la desactivacion. El producto inexistente o de otra
+-- tienda sigue respondiendo PT404.
+-- OJO: receive_purchase no cambia: un pedido creado con el producto activo se puede recibir aunque el producto se haya
+-- desactivado despues. El reintento con un clientRequestId ya guardado devuelve la compra original aunque el producto
+-- este hoy inactivo.
+-- OJO: reaplicar 20261006c / f / h, 20261007a, 20261009d o 20261010a reinstala create_purchase sin esta guarda: volver a
+-- aplicar este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (COM-15): parche -> verify -> BFF. Mismo payload y misma firma: el BFF anterior y el nuevo funcionan
+-- sobre la base con o sin parche; sin el parche, la compra de un producto inactivo se sigue aceptando.

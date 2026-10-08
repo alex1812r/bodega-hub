@@ -1882,4 +1882,17 @@ select
     from pg_proc p
     where p.pronamespace = 'public'::regnamespace and p.proname = 'create_purchase'
   )
+union all
+select
+  'rpc create_purchase: producto inactivo en cualquier linea (recibida o pedido) -> PT400 nombrando el producto, comprobado despues de bloquear los productos (order by id for update) y antes de insertar lineas (20261010b)',
+  (
+    select count(*) = 1
+       and bool_and(p.pronargs = 14 and p.prosecdef)
+       and bool_and(p.prosrc ilike '%insert into public.purchases (%where id = any(v_product_ids)%order by id%for update;%where p.id = any(v_product_ids)%and p.store_id = v_store_id%and p.is_active is not true;%if v_inactive_count = 1 then%errcode = ''PT400''%elsif v_inactive_count > 1 then%errcode = ''PT400''%insert into public.purchase_items (%')
+       and bool_and(p.prosrc ilike '%purchase_idempotent_replay%where p.id = any(v_product_ids)%')
+       and bool_and(p.prosrc ilike '%v_sp_is_new := v_sp_id is null;%')
+       and bool_and(p.prosrc not ilike '%current_stock%')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'create_purchase'
+  )
 order by 1;
