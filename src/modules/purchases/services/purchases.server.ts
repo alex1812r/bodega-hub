@@ -20,7 +20,7 @@ import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
 import { normalizePurchaseLine, toRpcPurchaseItem } from "../schemas/purchaseItem.schema";
-import type { PurchaseInput } from "./purchases.mock-server";
+import type { PurchaseDetailAccess, PurchaseInput } from "./purchases.mock-server";
 
 const contactSelect =
   "id, name, type, email, phone, address, tax_id, notes, is_active, created_at, updated_at";
@@ -207,7 +207,17 @@ export async function listPurchases(searchParams: URLSearchParams, storeId: stri
   };
 }
 
-export async function getPurchaseById(id: string, storeId: string) {
+/**
+ * Sin permiso para ver pagos de compras (almacén) no se consulta `payments`
+ * (su RLS tampoco se los daría: parche 20261010c): el detalle lleva
+ * `payments: []` y Pagado sale de la cabecera (`purchases.paid_ref` /
+ * `paid_ves`, que mantiene `register_payment`).
+ */
+export async function getPurchaseById(
+  id: string,
+  storeId: string,
+  access: PurchaseDetailAccess = { canViewPayments: true },
+) {
   await assertSupabaseStoreResource("purchases", id, storeId, "Compra no encontrada.");
   const supabase = await createRouteSupabaseClient();
 
@@ -221,6 +231,15 @@ export async function getPurchaseById(id: string, storeId: string) {
 
   if (!data) {
     throw new ApiError(404, "NOT_FOUND", "Compra no encontrada.");
+  }
+
+  if (!access.canViewPayments) {
+    return {
+      ...mapPurchase(data),
+      items: (data.purchase_items ?? []).map((item) => mapPurchaseDetailItem(item)),
+      payments: [],
+      supplier: data.supplier ? mapContact(data.supplier) : undefined,
+    };
   }
 
   const { data: payments, error: paymentsError } = await supabase

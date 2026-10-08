@@ -219,7 +219,25 @@ export function findMockPurchase(id: string): PurchaseMock | undefined {
   return createdPurchases().get(id)?.purchase ?? mockPurchases.find((item) => item.id === id);
 }
 
-export function getPurchaseById(id: string, storeId: string) {
+/**
+ * Lo que el detalle de una compra puede enseñar a quien lo pide. La ruta lo
+ * calcula con el rol de la sesión (`canViewPurchasePayments`).
+ */
+export type PurchaseDetailAccess = {
+  /** `false`: sin pagos individuales; Pagado sale de la cabecera de la compra. */
+  canViewPayments: boolean;
+};
+
+/**
+ * Sin permiso para ver pagos de compras (almacén) el detalle no lleva los pagos
+ * individuales: `payments: []`. `paidRef` / `paidVes` son siempre los de la
+ * cabecera de la compra, que mantiene `createPayment`.
+ */
+export function getPurchaseById(
+  id: string,
+  storeId: string,
+  access: PurchaseDetailAccess = { canViewPayments: true },
+) {
   const created = createdPurchases().get(id);
   const purchase = created?.purchase ?? mockPurchases.find((item) => item.id === id);
   assertMockStoreResource(purchase, storeId, "Compra no encontrada.");
@@ -233,12 +251,14 @@ export function getPurchaseById(id: string, storeId: string) {
   return {
     ...purchase,
     items,
-    payments: mockPayments
-      .filter((payment) => payment.purchaseId === id)
-      .map((payment) => ({
-        ...payment,
-        contact: mockContacts.find((contact) => contact.id === payment.contactId),
-      })),
+    payments: access.canViewPayments
+      ? mockPayments
+          .filter((payment) => payment.purchaseId === id)
+          .map((payment) => ({
+            ...payment,
+            contact: mockContacts.find((contact) => contact.id === payment.contactId),
+          }))
+      : [],
     supplier: mockContacts.find((contact) => contact.id === purchase.supplierId),
   };
 }

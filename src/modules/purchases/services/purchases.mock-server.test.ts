@@ -8,7 +8,7 @@
 
 import { listPriceReview } from "@/modules/products/services/priceReview.mock-server";
 import { createProduct } from "@/modules/products/services/products.mock-server";
-import { mockProducts } from "@/shared/mocks/erp-data";
+import { mockPayments, mockProducts, mockPurchases } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
@@ -192,5 +192,39 @@ describe("purchases.mock-server · costo al recibir (PRO-10)", () => {
 
     expect(costOf(unitProductId)).toBe(1.5);
     expect(costOf("prod-cigar-pack")).toBe(15);
+  });
+});
+
+/**
+ * COM-16 · paridad con `purchases.server`: sin permiso para ver pagos de compras
+ * el detalle no lleva los pagos individuales; lo pagado es el de la cabecera.
+ */
+describe("purchases.mock-server · pagos del detalle por acceso (COM-16)", () => {
+  const PURCHASE_ID = "purchase-001";
+  const header = () => mockPurchases.find((purchase) => purchase.id === PURCHASE_ID);
+  const seedPaymentIds = () =>
+    mockPayments.filter((payment) => payment.purchaseId === PURCHASE_ID).map((payment) => payment.id);
+
+  it("sin acceso: `payments: []` y Pagado de la cabecera; el resto del detalle no cambia", () => {
+    const full = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID);
+    const restricted = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID, { canViewPayments: false });
+
+    expect(seedPaymentIds().length).toBeGreaterThan(0);
+    expect(restricted.payments).toEqual([]);
+    expect(restricted.paidVes).toBe(header()?.paidVes);
+    expect(restricted.paidVes).toBeGreaterThan(0);
+    expect(restricted.paidRef).toBe(header()?.paidRef);
+    expect({ ...restricted, payments: full.payments }).toEqual(full);
+  });
+
+  it.each([
+    ["acceso explícito", { canViewPayments: true }],
+    ["acceso por defecto", undefined],
+  ] as const)("con %s: los pagos de la compra con su contacto, como antes", (_label, access) => {
+    const detail = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID, access);
+
+    expect(detail.payments.map((payment) => payment.id)).toEqual(seedPaymentIds());
+    expect(detail.payments.every((payment) => payment.contact?.id === payment.contactId)).toBe(true);
+    expect(detail.paidVes).toBe(header()?.paidVes);
   });
 });
