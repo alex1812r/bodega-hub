@@ -273,7 +273,7 @@ describe("purchases.server", () => {
     });
   });
 
-  it("receives a purchase through receive_purchase RPC", async () => {
+  it("receives a purchase through the receive_purchase_and_disassemble RPC", async () => {
     const rpc = jest.fn().mockResolvedValue({
       data: { ...purchaseRow, status: "recibido" },
       error: null,
@@ -307,7 +307,9 @@ describe("purchases.server", () => {
 
     const result = await receivePurchase(purchaseRow.id, DEFAULT_STORE_ID);
 
-    expect(rpc).toHaveBeenCalledWith("receive_purchase", { p_purchase_id: purchaseRow.id });
+    expect(rpc).toHaveBeenCalledWith("receive_purchase_and_disassemble", {
+      p_purchase_id: purchaseRow.id,
+    });
     expect(result.status).toBe("recibido");
   });
 

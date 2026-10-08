@@ -15,7 +15,10 @@ import {
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
-import { rpcWithClientRequestId } from "@/modules/inventory/services/rpcWithClientRequestId";
+import {
+  isMissingRpcSignatureError,
+  rpcWithClientRequestId,
+} from "@/modules/inventory/services/rpcWithClientRequestId";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 import { roundMoney } from "@/shared/utils/currency";
 
@@ -26,6 +29,11 @@ import {
 } from "../purchases-list/utils/purchaseBalance";
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
 import { normalizePurchaseLine, toRpcPurchaseItem } from "../schemas/purchaseItem.schema";
+import {
+  toRpcDisassembleList,
+  type PurchaseLineRecipe,
+  type ReceivePurchaseOptions,
+} from "./purchaseDisassemble";
 import type { PurchaseDetailAccess, PurchaseInput } from "./purchases.mock-server";
 
 const contactSelect =
@@ -80,6 +88,9 @@ const purchaseDetailSelect = `
   updated_at,
   supplier:contacts(${contactSelect}),
   purchase_items(
+    id,
+    disassemble_on_receive,
+    disassembled_conversion_id,
     product_id,
     purchase_id,
     quantity,
@@ -125,17 +136,112 @@ type PurchaseListRow = DbPurchaseRow & {
   supplier?: DbContactRow | null;
 };
 
-type PurchaseDetailItemRow = DbPurchaseItemRow & { tax_rate_code?: string | null };
+type PurchaseDetailItemRow = DbPurchaseItemRow & {
+  disassemble_on_receive?: boolean | null;
+  disassembled_conversion_id?: string | null;
+  id?: string;
+  tax_rate_code?: string | null;
+};
+
+/** Receta activa de un empaque con el stock actual de sus componentes. */
+const lineRecipeSelect = `
+  id,
+  pack_product_id,
+  total_units,
+  components:product_pack_components(
+    unit_product_id,
+    units_per_pack,
+    unit_product:products!unit_product_id(name, current_stock, is_active)
+  )
+`;
+
+type LineRecipeProductRow = { current_stock: number; is_active: boolean; name: string };
+
+type LineRecipeRow = {
+  components?: Array<{
+    unit_product?: LineRecipeProductRow | LineRecipeProductRow[] | null;
+    unit_product_id: string;
+    units_per_pack: number;
+  }> | null;
+  id: string;
+  pack_product_id: string;
+  total_units: number;
+};
+
+function mapLineRecipe(row: LineRecipeRow): PurchaseLineRecipe {
+  return {
+    components: (row.components ?? [])
+      .map((component) => {
+        const product = Array.isArray(component.unit_product)
+          ? component.unit_product[0]
+          : component.unit_product;
+
+        return {
+          currentStock: product?.current_stock ?? 0,
+          isActive: product?.is_active !== false,
+          name: product?.name ?? component.unit_product_id,
+          unitProductId: component.unit_product_id,
+          unitsPerPack: component.units_per_pack,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "es") || (a.unitProductId < b.unitProductId ? -1 : 1)),
+    conversionId: row.id,
+    totalUnits: row.total_units,
+  };
+}
+
+/**
+ * COM-14 · recetas activas de los productos de un PEDIDO, por id de empaque: es lo
+ * que la confirmación de recepción necesita para previsualizar el desarme. Una
+ * sola consulta por compra; una compra ya recibida no la hace.
+ */
+async function loadLineRecipes(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  purchase: PurchaseDetailRow,
+  storeId: string,
+) {
+  const productIds = [...new Set((purchase.purchase_items ?? []).map((item) => item.product_id))];
+
+  if (purchase.status !== "pedido" || productIds.length === 0) {
+    return new Map<string, PurchaseLineRecipe>();
+  }
+
+  const { data, error } = await supabase
+    .from("product_pack_conversions")
+    .select(lineRecipeSelect)
+    .eq("store_id", storeId)
+    .eq("is_active", true)
+    .in("pack_product_id", productIds);
+
+  throwIfSupabaseError(error);
+
+  return new Map(
+    ((data ?? []) as unknown as LineRecipeRow[]).map((row) => [row.pack_product_id, mapLineRecipe(row)]),
+  );
+}
 
 type PurchaseDetailRow = DbPurchaseRow & {
   purchase_items?: PurchaseDetailItemRow[];
   supplier?: DbContactRow | null;
 };
 
-/** Linea con el `code` de su alicuota de IVA; `taxRate` es el porcentaje congelado. */
-function mapPurchaseDetailItem(row: PurchaseDetailItemRow) {
+/**
+ * Linea con el `code` de su alicuota de IVA (`taxRate` es el porcentaje congelado)
+ * y lo del desarme al recibir (COM-14): su id, la marca, si ya se desarmo y, en un
+ * pedido, la receta activa de su producto.
+ */
+function mapPurchaseDetailItem(
+  row: PurchaseDetailItemRow,
+  recipes: ReadonlyMap<string, PurchaseLineRecipe>,
+) {
+  const packRecipe = recipes.get(row.product_id);
+
   return {
     ...mapPurchaseItem(row),
+    disassembled: Boolean(row.disassembled_conversion_id),
+    disassembleOnReceive: row.disassemble_on_receive === true,
+    id: row.id,
+    ...(packRecipe ? { packRecipe } : {}),
     taxRateCode: row.tax_rate_code ?? undefined,
   };
 }
@@ -351,10 +457,12 @@ export async function getPurchaseById(
     throw new ApiError(404, "NOT_FOUND", "Compra no encontrada.");
   }
 
+  const recipes = await loadLineRecipes(supabase, data, storeId);
+
   if (!access.canViewPayments) {
     return {
       ...mapPurchase(data),
-      items: (data.purchase_items ?? []).map((item) => mapPurchaseDetailItem(item)),
+      items: (data.purchase_items ?? []).map((item) => mapPurchaseDetailItem(item, recipes)),
       payments: [],
       supplier: data.supplier ? mapContact(data.supplier) : undefined,
     };
@@ -405,7 +513,7 @@ export async function getPurchaseById(
     // Prefer sums from payment history so the status card stays in sync with the table.
     paidRef: paidRefFromPayments,
     paidVes: paidVesFromPayments,
-    items: (data.purchase_items ?? []).map((item) => mapPurchaseDetailItem(item)),
+    items: (data.purchase_items ?? []).map((item) => mapPurchaseDetailItem(item, recipes)),
     payments: mappedPayments,
     supplier: data.supplier ? mapContact(data.supplier) : undefined,
   };
@@ -444,13 +552,48 @@ export async function createPurchase(input: PurchaseInput, _storeId: string) {
   return mapPurchase(data as DbPurchaseRow);
 }
 
-export async function receivePurchase(id: string, storeId: string) {
+/**
+ * Recibe un pedido y, en la misma transacción, abre los empaques de las líneas
+ * marcadas «Desarmar al recibir» (COM-14, `receive_purchase_and_disassemble`).
+ * - Sin `disassemble`: manda la marca guardada en cada línea y su receta.
+ * - Con `disassemble`: la lista es el conjunto de líneas a desarmar; cada una
+ *   puede traer su reparto real.
+ * - `clientRequestId`: repetir la misma recepción devuelve la compra ya recibida.
+ * Si algo falla la base lo revierte todo: no queda la compra recibida a medias.
+ *
+ * Degradación: si la base aún no tiene la RPC (`PGRST202`, no ejecutó nada) y no
+ * se pidió desarmar ninguna línea, se recibe con `receive_purchase` como siempre.
+ */
+export async function receivePurchase(
+  id: string,
+  storeId: string,
+  options: ReceivePurchaseOptions = {},
+) {
   await assertSupabaseStoreResource("purchases", id, storeId, "Compra no encontrada.");
   const supabase = await createRouteSupabaseClient();
+  const disassemble = options.disassemble;
 
-  const { data, error } = await supabase.rpc("receive_purchase", {
+  let { data, error } = await supabase.rpc("receive_purchase_and_disassemble", {
     p_purchase_id: id,
+    // Solo viajan cuando se enviaron: sin ellos la llamada es la mínima.
+    ...(disassemble ? { p_disassemble: toRpcDisassembleList(disassemble) } : {}),
+    ...(options.clientRequestId ? { p_client_request_id: options.clientRequestId } : {}),
   });
+
+  if (isMissingRpcSignatureError(error)) {
+    if (disassemble && disassemble.length > 0) {
+      throw new ApiError(
+        409,
+        "CONFLICT",
+        "Esta base aún no admite desarmar al recibir. No se recibió la compra.",
+      );
+    }
+
+    console.warn(
+      "[stock] receive_purchase_and_disassemble no existe: la compra se recibe con receive_purchase (falta el parche 20261010d).",
+    );
+    ({ data, error } = await supabase.rpc("receive_purchase", { p_purchase_id: id }));
+  }
 
   throwIfSupabaseError(error);
 

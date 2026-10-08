@@ -5,6 +5,9 @@ export const purchaseCostCurrencySchema = z.enum(["ves", "ref"]);
 
 const purchaseItemBaseSchema = z.object({
   costCurrency: purchaseCostCurrencySchema,
+  // COM-14: al recibir la compra, los empaques de la linea se abren en los
+  // componentes de la receta del producto (que debe ser un empaque con receta activa).
+  disassembleOnReceive: z.boolean().optional(),
   productId: z.string().min(1),
   subtotalRef: z.number().min(0),
   subtotalVes: z.number().min(0),
@@ -98,6 +101,8 @@ export function toRpcPurchaseItem(item: PurchaseItemInput) {
     unit_cost_ref: item.unitCostRef,
     unit_cost_ves: item.unitCostVes,
     ...(item.supplierSku ? { supplier_sku: item.supplierSku } : {}),
+    // Solo cuando es `true`: una linea sin marca produce el payload (y la huella) de siempre.
+    ...(item.disassembleOnReceive === true ? { disassemble_on_receive: true } : {}),
   };
 
   if (item.entryMode === "pack") {

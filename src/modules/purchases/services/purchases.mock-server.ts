@@ -15,6 +15,14 @@ import {
   linkPurchaseLines,
   type PurchaseLinkLine,
 } from "@/modules/contacts/services/supplierProducts.mock-server";
+import {
+  convertPackToUnits,
+  createStockAdjustment,
+} from "@/modules/inventory/services/inventory.mock-server";
+import {
+  assertPackDistribution,
+  type PackDistributionItem,
+} from "@/modules/products/services/packConversionSchemas";
 import { applyMockPurchaseCost } from "@/modules/products/services/priceReview.mock-server";
 import {
   findActiveMockTaxRateByCode,
@@ -30,6 +38,12 @@ import { amountWithTax, roundMoney } from "@/shared/utils/currency";
 import { getPurchasePendingRef, hasPendingBalance } from "../purchases-list/utils/purchaseBalance";
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
 import { normalizePurchaseLine } from "../schemas/purchaseItem.schema";
+import {
+  missingRecipeOnCreateMessage,
+  missingRecipeOnReceiveMessage,
+  type PurchaseLineRecipe,
+  type ReceivePurchaseOptions,
+} from "./purchaseDisassemble";
 
 export type PurchaseInput = Partial<
   Pick<
@@ -260,6 +274,133 @@ function toPurchaseItemMock(
 }
 
 /**
+ * COM-14 · estado del desarme por línea (`purchaseItemId`): la marca «Desarmar al
+ * recibir» y la apertura que hizo la recepción. Vive aparte de las líneas porque
+ * las de la semilla son compartidas; sin entrada, la línea no está marcada.
+ */
+function disassembleState() {
+  return mockState(
+    "purchases:disassemble",
+    () => new Map<string, { conversionId?: string; marked: boolean }>(),
+  );
+}
+
+/** Id de una línea en el mock: su compra y su posición (las líneas no cambian de orden). */
+function purchaseItemId(purchaseId: string, index: number) {
+  return `${purchaseId}:item-${index}`;
+}
+
+/** Receta ACTIVA de la que el producto es el empaque, como la mira `create_purchase`. */
+function findActiveRecipe(productId: string, storeId: string) {
+  return mockProductPackConversions.find(
+    (conversion) =>
+      conversion.isActive &&
+      conversion.storeId === storeId &&
+      conversion.packProductId === productId,
+  );
+}
+
+function toLineRecipe(recipe: NonNullable<ReturnType<typeof findActiveRecipe>>): PurchaseLineRecipe {
+  return {
+    components: recipe.components
+      .map((component) => {
+        const product = mockProducts.find((item) => item.id === component.unitProductId);
+
+        return {
+          currentStock: product?.currentStock ?? 0,
+          isActive: product?.isActive !== false,
+          name: product?.name ?? component.unitProductId,
+          unitProductId: component.unitProductId,
+          unitsPerPack: component.unitsPerPack,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "es") || (a.unitProductId < b.unitProductId ? -1 : 1)),
+    conversionId: recipe.id,
+    totalUnits: recipe.totalUnits,
+  };
+}
+
+/** Nombres (por orden alfabético) de los productos de esas líneas sin receta activa. */
+function productsWithoutRecipe(productIds: readonly string[], storeId: string) {
+  return mockProducts
+    .filter(
+      (product) =>
+        productIds.includes(product.id) &&
+        (product.storeId ?? DEFAULT_STORE_ID) === storeId &&
+        !findActiveRecipe(product.id, storeId),
+    )
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1))
+    .map((product) => product.name);
+}
+
+type DisassembleLine = {
+  distribution?: PackDistributionItem[];
+  item: PurchaseItemMock;
+  itemId: string;
+};
+
+/**
+ * Todo lo que puede fallar al abrir, ANTES de mover nada (la base lo revierte
+ * todo; el mock no tiene transacción): el reparto enviado debe ser de la receta
+ * y sumar las unidades de los empaques de la línea.
+ */
+function assertDisassembleDistributions(lines: readonly DisassembleLine[], storeId: string) {
+  for (const line of lines) {
+    const recipe = findActiveRecipe(line.item.productId, storeId);
+
+    if (recipe && line.distribution) {
+      assertPackDistribution(
+        {
+          componentIds: recipe.components.map((component) => component.unitProductId),
+          totalUnits: recipe.totalUnits,
+        },
+        line.item.quantity,
+        line.distribution,
+      );
+    }
+  }
+}
+
+/**
+ * Abre los empaques de las líneas marcadas de una compra recién recibida, con
+ * las funciones de movimiento del mock de inventario (nunca escribiendo el stock
+ * a mano): entran los empaques de la línea (`compra`) y `convertPackToUnits` los
+ * abre con su receta o con el reparto enviado. La clave de la apertura es la de
+ * la línea: no se abre dos veces.
+ */
+function disassembleReceivedLines(
+  purchase: PurchaseMock,
+  lines: readonly DisassembleLine[],
+  storeId: string,
+) {
+  for (const line of lines) {
+    createStockAdjustment(
+      {
+        clientRequestId: `purchase-receive:${line.itemId}`,
+        productId: line.item.productId,
+        quantityDelta: line.item.quantity,
+        reason: `Recepcion ${purchase.purchaseNumber}`,
+        type: "compra",
+      },
+      storeId,
+    );
+
+    const conversion = convertPackToUnits(
+      {
+        clientRequestId: `purchase-disassemble:${line.itemId}`,
+        ...(line.distribution ? { components: line.distribution } : {}),
+        packProductId: line.item.productId,
+        packQuantity: line.item.quantity,
+        reason: `Desarme al recibir ${purchase.purchaseNumber}`,
+      },
+      storeId,
+    );
+
+    disassembleState().set(line.itemId, { conversionId: conversion.conversionId, marked: true });
+  }
+}
+
+/**
  * La compra tal como la guarda el mock, sea de la semilla o creada en esta
  * ejecucion. Sin control de tienda: quien la expone lo hace con `getPurchaseById`.
  */
@@ -290,11 +431,23 @@ export function getPurchaseById(
   const purchase = created?.purchase ?? mockPurchases.find((item) => item.id === id);
   assertMockStoreResource(purchase, storeId, "Compra no encontrada.");
 
+  // COM-14: cada línea lleva su id, la marca «Desarmar al recibir», si ya se desarmó
+  // y, en un pedido, la receta activa de su producto (para previsualizar la recepción).
   const items = (created?.items ?? mockPurchaseItems.filter((item) => item.purchaseId === id))
-    .map((item) => ({
-      ...item,
-      product: mockProducts.find((product) => product.id === item.productId),
-    }));
+    .map((item, index) => {
+      const itemId = purchaseItemId(id, index);
+      const disassemble = disassembleState().get(itemId);
+      const recipe = purchase.status === "pedido" ? findActiveRecipe(item.productId, storeId) : undefined;
+
+      return {
+        ...item,
+        disassembled: Boolean(disassemble?.conversionId),
+        disassembleOnReceive: disassemble?.marked === true,
+        id: itemId,
+        ...(recipe ? { packRecipe: toLineRecipe(recipe) } : {}),
+        product: mockProducts.find((product) => product.id === item.productId),
+      };
+    });
 
   return {
     ...purchase,
@@ -485,6 +638,17 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
   assertPurchaseSupplier(supplierId);
   assertPurchaseProductsActive(input.items ?? [], storeId);
 
+  // COM-14 · una línea marcada exige receta activa de su producto, en un pedido y
+  // en una compra recibida (regla y texto de `create_purchase`).
+  const withoutRecipe = productsWithoutRecipe(
+    (input.items ?? []).filter((item) => item.disassembleOnReceive === true).map((item) => item.productId),
+    storeId,
+  );
+
+  if (withoutRecipe.length > 0) {
+    throw new ApiError(400, "BAD_REQUEST", missingRecipeOnCreateMessage(withoutRecipe));
+  }
+
   // Antes de crear nada: una linea con IVA invalido rechaza la compra entera.
   const lines = (input.items ?? []).map((item) => ({
     item,
@@ -536,8 +700,20 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
 
   createdPurchases().set(purchase.id, { items, purchase });
 
+  const marked: DisassembleLine[] = items.flatMap((item, index) =>
+    lines[index]?.item.disassembleOnReceive === true
+      ? [{ item, itemId: purchaseItemId(purchase.id, index) }]
+      : [],
+  );
+
+  for (const line of marked) {
+    disassembleState().set(line.itemId, { marked: true });
+  }
+
   if (status === "recibido") {
     applyReceivedCosts(purchase.id, items, storeId);
+    // Con el costo del empaque ya fijado por la recepción, como en la base.
+    disassembleReceivedLines(purchase, marked, storeId);
   }
 
   linkPurchasedProducts(
@@ -553,14 +729,85 @@ export function createPurchase(input: PurchaseInput, storeId: string) {
   return purchase;
 }
 
-export function receivePurchase(id: string, storeId: string) {
+/** Recepciones ya hechas con clave de idempotencia (`storeId:purchaseId`). */
+function receiptsByClientRequest() {
+  return mockState(
+    "purchases:receiveByClientRequest",
+    () => new Map<string, { clientRequestId: string; fingerprint: string }>(),
+  );
+}
+
+/**
+ * Como `receive_purchase_and_disassemble` (COM-14): recibe el pedido y abre los
+ * empaques de las líneas marcadas. `options.disassemble` sustituye las marcas del
+ * pedido; la misma `clientRequestId` con el mismo contenido devuelve la compra ya
+ * recibida. Todo se valida antes de mover nada.
+ */
+export function receivePurchase(id: string, storeId: string, options: ReceivePurchaseOptions = {}) {
   const purchase = getPurchaseById(id, storeId);
+  const receiptKey = `${storeId}:${id}`;
+  const fingerprint = JSON.stringify(options.disassemble ?? null);
+  const previous = receiptsByClientRequest().get(receiptKey);
+
+  if (options.clientRequestId && previous?.clientRequestId === options.clientRequestId) {
+    if (previous.fingerprint !== fingerprint || purchase.status !== "recibido") {
+      throw new ApiError(
+        409,
+        "CONFLICT",
+        "La clave de idempotencia ya se uso en otra recepcion de esta compra. Revisa la compra antes de reintentar.",
+      );
+    }
+
+    return purchase;
+  }
 
   if (purchase.status !== "pedido") {
     throw new ApiError(400, "BAD_REQUEST", "Solo se pueden recibir compras en estado pedido.");
   }
 
+  const requested = options.disassemble;
+
+  if (requested) {
+    const itemIds = purchase.items.map((item) => item.id);
+
+    if (new Set(requested.map((entry) => entry.purchaseItemId)).size !== requested.length) {
+      throw new ApiError(400, "BAD_REQUEST", "La lista de lineas a desarmar repite una linea");
+    }
+
+    if (requested.some((entry) => !itemIds.includes(entry.purchaseItemId))) {
+      throw new ApiError(400, "BAD_REQUEST", "Una linea a desarmar no pertenece a la compra");
+    }
+  }
+
+  // La lista manda sobre la marca guardada con el pedido.
+  const marked: DisassembleLine[] = purchase.items.flatMap((item) => {
+    const entry = requested?.find((candidate) => candidate.purchaseItemId === item.id);
+
+    return (requested ? entry !== undefined : item.disassembleOnReceive)
+      ? [{ distribution: entry?.distribution, item, itemId: item.id }]
+      : [];
+  });
+  const withoutRecipe = productsWithoutRecipe(
+    marked.map((line) => line.item.productId),
+    storeId,
+  );
+
+  if (withoutRecipe.length > 0) {
+    throw new ApiError(409, "CONFLICT", missingRecipeOnReceiveMessage(withoutRecipe));
+  }
+
+  assertDisassembleDistributions(marked, storeId);
+
+  for (const item of purchase.items) {
+    const isMarked = marked.some((line) => line.itemId === item.id);
+
+    if (isMarked || disassembleState().has(item.id)) {
+      disassembleState().set(item.id, { marked: isMarked });
+    }
+  }
+
   applyReceivedCosts(purchase.id, purchase.items, storeId);
+  disassembleReceivedLines(purchase, marked, storeId);
 
   // Como `receive_purchase`: la compra queda recibida y no se puede volver a recibir.
   const stored = findMockPurchase(id);
@@ -569,10 +816,14 @@ export function receivePurchase(id: string, storeId: string) {
     stored.status = "recibido";
   }
 
-  return {
-    ...purchase,
-    status: "recibido",
-  };
+  if (options.clientRequestId) {
+    receiptsByClientRequest().set(receiptKey, {
+      clientRequestId: options.clientRequestId,
+      fingerprint,
+    });
+  }
+
+  return getPurchaseById(id, storeId);
 }
 
 export function cancelPurchase(id: string, storeId: string) {
