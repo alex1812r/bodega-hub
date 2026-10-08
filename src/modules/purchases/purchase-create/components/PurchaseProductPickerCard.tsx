@@ -1,7 +1,14 @@
 "use client";
 
 import { Package, Plus } from "lucide-react";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type Ref,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 
 import { PosCatalogToolbar } from "@/modules/sales/sale-create/components/PosCatalogToolbar";
@@ -52,6 +59,11 @@ export type PurchaseCatalogProduct = {
   unitCostRef: number;
 };
 
+export type PurchaseProductPickerHandle = {
+  /** Un código leído en un campo numérico: se encola y el foco pasa al buscador. */
+  scan: (scan: PurchaseLineScan) => void;
+};
+
 type PurchaseProductPickerCardProps = {
   catalog: PurchaseCatalogProduct[];
   /** Falta una alícuota activa del 0 % (o el catálogo aún no cargó): el toggle no se puede usar. */
@@ -91,6 +103,8 @@ type PurchaseProductPickerCardProps = {
   onSettleItem: (itemId: string) => void;
   onUpdateItem: (itemId: string, input: Partial<PurchaseDraftItem>) => void;
   rateVes: number;
+  /** Para lo que escanea fuera de la tarjeta (el Descuento del resumen): misma cola y mismo foco. */
+  ref?: Ref<PurchaseProductPickerHandle>;
   search: string;
   /** Error de la búsqueda en servidor (`error.message` tal cual). */
   searchError?: string | null;
@@ -192,6 +206,7 @@ export function PurchaseProductPickerCard({
   onSettleItem,
   onUpdateItem,
   rateVes,
+  ref,
   search,
   searchError = null,
   supplierId,
@@ -267,26 +282,6 @@ export function PurchaseProductPickerCard({
     onNewProduct?.(initialValues, opener);
   }
 
-  // Lector o Enter: el código exacto se resuelve en servidor, sin esperar al debounce de la
-  // lista. Se encola y el buscador queda vacío en el mismo Enter: el lector puede teclear el
-  // siguiente código sin esperar la respuesta de este.
-  function handleCodeSubmit(code: string, options?: { closeScanOnSuccess?: boolean }) {
-    if (!enqueueScan({ closeScanOnSuccess: options?.closeScanOnSuccess, codes: [code], searchText: code })) {
-      return;
-    }
-
-    onSearchChange("");
-    setPickerOpen(false);
-  }
-
-  // Lector sobre una celda de línea: el código es uno de los sufijos de lo tecleado. La
-  // celda fija su valor al saber cuál, antes de que agregar el producto la bloquee.
-  // El foco pasa ya al buscador: el siguiente escaneo no debe caer en la celda (D36).
-  function handleLineScan(scan: PurchaseLineScan) {
-    searchInputRef.current?.focus();
-    enqueueScan({ codes: scan.candidates, onResolved: scan.onResolved });
-  }
-
   function enqueueScan(job: PurchaseScanJob) {
     if (!hasSupplier) {
       job.onResolved?.(null);
@@ -297,6 +292,32 @@ export function PurchaseProductPickerCard({
     scanQueue.enqueue(job);
     return true;
   }
+
+  // Lector o Enter: el código exacto se resuelve en servidor, sin esperar al debounce de la
+  // lista. Se encola y el buscador queda vacío en el mismo Enter: el lector puede teclear el
+  // siguiente código sin esperar la respuesta de este.
+  function handleCodeSubmit(code: string, options?: { closeScanOnSuccess?: boolean }) {
+    const queued = enqueueScan({
+      closeScanOnSuccess: options?.closeScanOnSuccess,
+      codes: [code],
+      searchText: code,
+    });
+
+    if (queued) {
+      onSearchChange("");
+      setPickerOpen(false);
+    }
+  }
+
+  // Lector sobre una celda de línea: el código es uno de los sufijos de lo tecleado. La
+  // celda fija su valor al saber cuál, antes de que agregar el producto la bloquee.
+  // El foco pasa ya al buscador: el siguiente escaneo no debe caer en la celda (D36).
+  function handleLineScan(scan: PurchaseLineScan) {
+    searchInputRef.current?.focus();
+    enqueueScan({ codes: scan.candidates, onResolved: scan.onResolved });
+  }
+
+  useImperativeHandle(ref, () => ({ scan: handleLineScan }));
 
   // Resultado de un escaneo de la cola. Agregue o no, el foco es del buscador: para
   // reintentar o para el siguiente escaneo (D36).

@@ -3,7 +3,6 @@
 import { CheckCircle, Receipt } from "lucide-react";
 
 import { Button } from "@/shared/components/Button";
-import { NumberInput } from "@/shared/components/NumberInput";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
 
@@ -14,7 +13,17 @@ import type {
 } from "../types";
 import { purchaseInlineInputClassName } from "../utils/purchaseCreateStyles";
 import { formatEditedLinesCount } from "../utils/purchaseLineReview";
+import type { PurchaseLineScan } from "../utils/purchaseLineScan";
 import { PurchaseCreateSectionCard } from "./PurchaseCreateSectionCard";
+import { PurchaseLineNumberCell } from "./PurchaseLineNumberCell";
+
+/** El servidor no lo impide (deja el total en 0): la pantalla no deja confirmar así. */
+export const PURCHASE_DISCOUNT_OVER_SUBTOTAL_MESSAGE =
+  "El descuento no puede superar el subtotal de la compra.";
+
+export function isPurchaseDiscountOverSubtotal(discountRef: number, subtotalRef: number) {
+  return discountRef > subtotalRef;
+}
 
 type PurchaseSummaryCardProps = {
   /** Moneda en la que se teclean los costos de TODAS las líneas de la compra. */
@@ -27,6 +36,11 @@ type PurchaseSummaryCardProps = {
   onConfirm: () => void;
   onCostCurrencyChange: (currency: PurchaseCostCurrency) => void;
   onDiscountChange: (value: number) => void;
+  /**
+   * Un lector escribió su código en Descuento (8 o más dígitos enteros y Enter): no es
+   * un descuento, se resuelve como un escaneo del buscador.
+   */
+  onDiscountScan?: (scan: PurchaseLineScan) => void;
   subtotalRef: number;
   subtotalVes: number;
   /** Base e IVA por cada alícuota presente en la compra (`buildPurchaseTaxBreakdown`). */
@@ -143,12 +157,14 @@ export function PurchaseSummaryCard({
   onConfirm,
   onCostCurrencyChange,
   onDiscountChange,
+  onDiscountScan,
   subtotalRef,
   subtotalVes,
   taxBreakdown,
   taxRef,
   taxVes,
 }: PurchaseSummaryCardProps) {
+  const discountOverSubtotal = isPurchaseDiscountOverSubtotal(discountRef, subtotalRef);
   const totalRef = Math.max(0, roundMoney(subtotalRef - discountRef + taxRef));
   const totalVes = Math.max(0, roundMoney(subtotalVes - discountVes + taxVes));
 
@@ -168,14 +184,15 @@ export function PurchaseSummaryCard({
             <div className="flex items-center gap-1">
               <span className="text-muted-foreground">-</span>
               <span className="text-xs text-on-surface-variant">ref</span>
-              <NumberInput
+              {/* La misma celda segura que los costos de las líneas: un código leído aquí no queda como descuento. */}
+              <PurchaseLineNumberCell
                 aria-label="Descuento REF"
                 className={cn(
                   purchaseInlineInputClassName,
                   "h-6 w-24 rounded-none border-0 border-b border-border/50 bg-transparent px-1 text-right shadow-none focus:ring-0",
                 )}
-                decimals={2}
-                onValueChange={(value) => onDiscountChange(roundMoney(value ?? 0))}
+                onChange={onDiscountChange}
+                onScan={onDiscountScan}
                 value={discountRef}
               />
             </div>
@@ -184,6 +201,11 @@ export function PurchaseSummaryCard({
             </span>
           </div>
         </div>
+        {discountOverSubtotal ? (
+          <p className="text-right text-xs font-medium text-destructive" role="alert">
+            {PURCHASE_DISCOUNT_OVER_SUBTOTAL_MESSAGE}
+          </p>
+        ) : null}
         {taxBreakdown.length > 0 ? (
           <div
             aria-label="Desglose de IVA por alícuota"

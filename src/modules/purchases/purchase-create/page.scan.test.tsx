@@ -523,3 +523,74 @@ describe("PurchaseCreatePage · la línea no se asienta con el valor provisional
     expect(screen.queryByRole("group", { name: "Líneas editadas" })).not.toBeInTheDocument();
   });
 });
+
+describe("PurchaseCreatePage · el descuento no acepta un código ni supera el subtotal (COM-F8 · 2d)", () => {
+  function discount() {
+    return screen.getByLabelText<HTMLInputElement>("Descuento REF");
+  }
+
+  it("una ráfaga del lector con el foco en Descuento no queda como descuento: entra el producto y el foco pasa al buscador", async () => {
+    resolveWithLatency(20);
+    renderPage();
+    pickTaladro();
+    act(() => discount().focus());
+
+    await scan(CODE_B);
+    expect(searchBox()).toHaveFocus();
+    await settle(500);
+
+    expect(discount()).toHaveValue("0");
+    expect(lineNames()).toEqual(["Cable", "Taladro"]);
+    expect(triedCodes()[0]).toBe(CODE_B);
+  });
+
+  it("8 o más dígitos enteros en Descuento y salir sin Enter: vuelve el descuento anterior", async () => {
+    renderPage();
+    pickTaladro();
+    act(() => discount().focus());
+
+    await press("12345678".split(""), 120);
+    act(() => searchBox().focus());
+
+    expect(discount()).toHaveValue("0");
+    expect(mockResolveByCode).not.toHaveBeenCalled();
+  });
+
+  it("un descuento mayor que el subtotal se avisa junto al campo y no deja confirmar", async () => {
+    const api = installFetchStub(() => null);
+
+    renderPage();
+    pickTaladro();
+    act(() => discount().focus());
+    // Subtotal: 1 × REF 2,00.
+    await press("2.5".split(""), 120);
+    act(() => searchBox().focus());
+
+    const MESSAGE = "El descuento no puede superar el subtotal de la compra.";
+
+    // Junto al campo, sin esperar a confirmar.
+    expect(screen.getByText(MESSAGE, { selector: "[role=alert]" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    await settle(200);
+
+    expect(api.posts).toHaveLength(0);
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.getAllByText(MESSAGE)).toHaveLength(2);
+
+    // Igual al subtotal sí vale: el aviso del campo se va y la compra se envía.
+    act(() => discount().focus());
+    await press("2".split(""), 120);
+    act(() => searchBox().focus());
+
+    expect(screen.queryByText(MESSAGE, { selector: "[role=alert]" })).not.toBeInTheDocument();
+
+    api.respondToNextPost({ data: { id: "purchase-descuento" } });
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    await settle(200);
+
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]?.body).toMatchObject({ discountRef: 2 });
+    expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-descuento");
+  });
+});

@@ -34,6 +34,7 @@ import { PurchasePaymentSection } from "./components/PurchasePaymentSection";
 import {
   PurchaseProductPickerCard,
   type PurchaseCatalogProduct,
+  type PurchaseProductPickerHandle,
 } from "./components/PurchaseProductPickerCard";
 import { usePurchaseDraftStorage } from "./hooks/usePurchaseDraftStorage";
 import { usePurchaseDuplicateSource } from "./hooks/usePurchaseDuplicateSource";
@@ -43,7 +44,11 @@ import { usePurchasePackConversions } from "./hooks/usePurchasePackConversions";
 import { usePurchasePaymentMethods } from "./hooks/usePurchasePaymentMethods";
 import { usePurchaseProductSearch } from "./hooks/usePurchaseProductSearch";
 import { PurchaseStatusNotesCard } from "./components/PurchaseStatusNotesCard";
-import { PurchaseSummaryCard } from "./components/PurchaseSummaryCard";
+import {
+  PURCHASE_DISCOUNT_OVER_SUBTOTAL_MESSAGE,
+  PurchaseSummaryCard,
+  isPurchaseDiscountOverSubtotal,
+} from "./components/PurchaseSummaryCard";
 import { PurchaseSupplierCard } from "./components/PurchaseSupplierCard";
 import type { PurchaseLineItemMeta } from "./components/PurchaseLineItemsTable";
 import { useCreatePurchase, type PurchaseDetails } from "../hooks/usePurchases";
@@ -150,6 +155,8 @@ export function PurchaseCreatePage() {
   const [newProductValues, setNewProductValues] = useState<ProductFormInitialValues | null>(null);
   // Quién abrió el alta rápida: recupera el foco si se cierra sin crear nada.
   const newProductOpenerRef = useRef<HTMLElement | null>(null);
+  // Cola de escaneos del selector: ahí va también un código leído en Descuento.
+  const pickerRef = useRef<PurchaseProductPickerHandle>(null);
   const [lineMetaByProductId, setLineMetaByProductId] = useState(
     () => new Map<string, PurchaseLineItemMeta>(),
   );
@@ -577,6 +584,12 @@ export function PurchaseCreatePage() {
       validLines.map((line) => line.item),
       activeRateVes,
     );
+
+    if (isPurchaseDiscountOverSubtotal(discountRef, submitTotals.subtotalRef)) {
+      setFormError(PURCHASE_DISCOUNT_OVER_SUBTOTAL_MESSAGE);
+      return;
+    }
+
     const submitTotalVes = Math.max(
       0,
       roundMoney(submitTotals.subtotalVes - discountVes + submitTotals.taxVes),
@@ -777,6 +790,7 @@ export function PurchaseCreatePage() {
             onSettleItem={(itemId) => dispatchLines({ itemId, type: "lineSettled" })}
             onUpdateItem={handleUpdateItem}
             rateVes={activeRateVes}
+            ref={pickerRef}
             search={productSearch}
             searchError={productSearchResult.error?.message ?? null}
             supplierId={supplierId}
@@ -819,6 +833,7 @@ export function PurchaseCreatePage() {
             onConfirm={() => void handleSubmit()}
             onCostCurrencyChange={handleCostCurrencyChange}
             onDiscountChange={setDiscountRef}
+            onDiscountScan={(scan) => pickerRef.current?.scan(scan)}
             subtotalRef={totals.subtotalRef}
             subtotalVes={totals.subtotalVes}
             taxBreakdown={taxBreakdown}
