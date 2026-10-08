@@ -3,6 +3,8 @@
 import { Trash2 } from "lucide-react";
 import { type KeyboardEvent, useId } from "react";
 
+import { Can } from "@/shared/auth/Can";
+import type { Permission } from "@/shared/auth/permissions";
 import { Button } from "@/shared/components/Button";
 import {
   type ContactEntityFilters,
@@ -12,6 +14,7 @@ import {
 import { IconButton } from "@/shared/components/IconButton";
 import { Input } from "@/shared/components/Input";
 import { NumberInput, parseNumberInput } from "@/shared/components/NumberInput";
+import { cn } from "@/shared/utils/cn";
 import { formatRefUsd } from "@/shared/utils/currency";
 
 import type { ProductSupplierSaveInput } from "../../hooks/useProducts";
@@ -31,6 +34,10 @@ const ALREADY_LISTED_REASON = "Ya está en la lista";
 const INACTIVE_OPTION_REASON = "Proveedor inactivo";
 const INACTIVE_PREFERRED_REASON = "Proveedor inactivo: no puede ser el habitual.";
 const NO_PREFERRED_NOTICE = "Este producto queda sin proveedor habitual.";
+const NO_CONTACTS_ACCESS_HELP =
+  "Para añadir proveedores necesitas acceso a Contactos. Puedes cambiar el habitual, el costo y el SKU de los ya vinculados.";
+/** El permiso que exige `GET /api/contacts`, de donde salen las opciones del buscador. */
+const SUPPLIER_SEARCH_PERMISSION: Permission = "contacts.view";
 
 // Solo proveedores (o contactos que son cliente y proveedor) activos.
 const SUPPLIER_FILTERS: ContactEntityFilters = {
@@ -380,86 +387,113 @@ export function ProductSuppliersFields({
                   row.initialCostRef !== undefined && row.costRef.trim() === "";
 
                 return (
+                  // La fila vive en un diálogo estrecho (≈ 360–520 px) en cualquier
+                  // pantalla: su reparto depende del ancho del contenedor, nunca
+                  // del de la ventana (sin `sm:` / `md:`).
                   <div
-                    className="grid min-w-0 gap-3 rounded-lg border border-outline-variant/60 bg-surface-container-low p-3 sm:grid-cols-[minmax(0,1fr)_8rem_10rem_auto] sm:items-start"
+                    className="grid min-w-0 gap-2 rounded-lg border border-outline-variant/60 bg-surface-container-low px-3 py-2.5"
                     data-product-supplier-row={row.supplierId}
                     key={row.supplierId}
                   >
-                    <div className="min-w-0 space-y-2">
-                      <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
-                        <span className="min-w-0 break-words">{row.supplierName}</span>
+                    {/* Línea 1: nombre + Habitual + Quitar. Si el nombre no
+                        dispone de 9rem, los controles bajan a su propia línea. */}
+                    <div
+                      className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
+                      data-product-supplier-header
+                    >
+                      <p
+                        className="min-w-0 flex-1 basis-36 break-words text-sm font-medium text-foreground"
+                        data-product-supplier-name
+                      >
+                        {row.supplierName}
                         {row.supplierIsActive ? null : (
-                          <span className="rounded-full bg-surface-container-high px-2 py-0.5 text-xs font-semibold text-on-surface-variant">
+                          <span className="ml-2 inline-block rounded-full bg-surface-container-high px-2 py-0.5 align-middle text-xs font-semibold text-on-surface-variant">
                             Inactivo
                           </span>
                         )}
                       </p>
-                      <label className="inline-flex items-center gap-2 text-sm text-foreground">
-                        <input
-                          aria-describedby={row.supplierIsActive ? undefined : reasonId}
-                          aria-label={`Habitual: ${row.supplierName}`}
-                          checked={isPreferred}
-                          className="size-4 accent-primary disabled:cursor-not-allowed"
-                          disabled={!row.supplierIsActive}
-                          name={radioName}
-                          onChange={() =>
-                            onChange(setPreferredProductSupplier(state, row.supplierId))
-                          }
-                          type="radio"
-                          value={row.supplierId}
+                      <div className="ml-auto flex shrink-0 items-center gap-1">
+                        <label
+                          className={cn(
+                            "inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-2 text-sm text-foreground",
+                            row.supplierIsActive
+                              ? "cursor-pointer hover:bg-surface-container-high"
+                              : "cursor-not-allowed",
+                          )}
+                        >
+                          <input
+                            aria-describedby={row.supplierIsActive ? undefined : reasonId}
+                            aria-label={`Habitual: ${row.supplierName}`}
+                            checked={isPreferred}
+                            className="size-4 shrink-0 cursor-pointer rounded-full accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed"
+                            disabled={!row.supplierIsActive}
+                            name={radioName}
+                            onChange={() =>
+                              onChange(setPreferredProductSupplier(state, row.supplierId))
+                            }
+                            type="radio"
+                            value={row.supplierId}
+                          />
+                          <span className={row.supplierIsActive ? undefined : "opacity-60"}>
+                            Habitual
+                          </span>
+                        </label>
+                        <IconButton
+                          aria-label={`Quitar a ${row.supplierName}`}
+                          className="h-9 w-9 shrink-0"
+                          data-product-supplier-remove
+                          icon={<Trash2 aria-hidden="true" className="size-4" />}
+                          onClick={() => onChange(removeProductSupplier(state, row.supplierId))}
+                          variant="outline"
                         />
-                        <span className={row.supplierIsActive ? undefined : "opacity-60"}>
-                          Habitual
-                        </span>
-                      </label>
-                      {row.supplierIsActive ? null : (
-                        <p className="text-xs text-on-surface-variant" id={reasonId}>
-                          {INACTIVE_PREFERRED_REASON}
-                        </p>
-                      )}
+                      </div>
                     </div>
-                    <div className="min-w-0" data-product-supplier-cost={row.supplierId}>
-                      <NumberInput
-                        aria-label={`Costo REF de ${row.supplierName}`}
-                        decimals={2}
-                        error={showErrors ? errors?.costs[row.supplierId] : undefined}
-                        helperText={
-                          wasCostCleared && row.initialCostRef !== undefined
-                            ? `Vacío: se conserva ${formatRefUsd(row.initialCostRef)}.`
-                            : undefined
-                        }
-                        label="Costo REF"
-                        onChange={(event) =>
-                          patchRow(row.supplierId, {
-                            costRef: event.target.value,
-                          })
-                        }
-                        placeholder="Opcional"
-                        value={row.costRef}
-                      />
+                    {row.supplierIsActive ? null : (
+                      <p className="text-xs text-on-surface-variant" id={reasonId}>
+                        {INACTIVE_PREFERRED_REASON}
+                      </p>
+                    )}
+                    {/* Línea 2: costo y SKU en dos columnas; en una si no caben
+                        8rem para cada una. */}
+                    <div
+                      className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(8rem,1fr))] items-start gap-x-3 gap-y-2"
+                      data-product-supplier-fields
+                    >
+                      <div className="min-w-0" data-product-supplier-cost={row.supplierId}>
+                        <NumberInput
+                          aria-label={`Costo REF de ${row.supplierName}`}
+                          decimals={2}
+                          error={showErrors ? errors?.costs[row.supplierId] : undefined}
+                          helperText={
+                            wasCostCleared && row.initialCostRef !== undefined
+                              ? `Vacío: se conserva ${formatRefUsd(row.initialCostRef)}.`
+                              : undefined
+                          }
+                          label="Costo REF"
+                          onChange={(event) =>
+                            patchRow(row.supplierId, {
+                              costRef: event.target.value,
+                            })
+                          }
+                          placeholder="Opcional"
+                          value={row.costRef}
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <Input
+                          aria-label={`SKU del proveedor ${row.supplierName}`}
+                          label="SKU del proveedor"
+                          maxLength={SUPPLIER_SKU_MAX_LENGTH}
+                          onChange={(event) =>
+                            patchRow(row.supplierId, {
+                              supplierSku: event.target.value,
+                            })
+                          }
+                          placeholder="Opcional"
+                          value={row.supplierSku}
+                        />
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <Input
-                        aria-label={`SKU del proveedor ${row.supplierName}`}
-                        label="SKU del proveedor"
-                        maxLength={SUPPLIER_SKU_MAX_LENGTH}
-                        onChange={(event) =>
-                          patchRow(row.supplierId, {
-                            supplierSku: event.target.value,
-                          })
-                        }
-                        placeholder="Opcional"
-                        value={row.supplierSku}
-                      />
-                    </div>
-                    <IconButton
-                      aria-label={`Quitar a ${row.supplierName}`}
-                      className="justify-self-end sm:mt-7"
-                      data-product-supplier-remove
-                      icon={<Trash2 aria-hidden="true" className="size-4" />}
-                      onClick={() => onChange(removeProductSupplier(state, row.supplierId))}
-                      variant="outline"
-                    />
                   </div>
                 );
               })}
@@ -481,26 +515,34 @@ export function ProductSuppliersFields({
               {errors.list}
             </p>
           ) : null}
-          <EntityAutocomplete
-            entity="contact"
-            fetcher={supplierFetcher}
-            filters={SUPPLIER_FILTERS}
-            getOptionDisabled={(option) =>
-              listedIds.includes(option.id)
-                ? ALREADY_LISTED_REASON
-                : !option.isActive && INACTIVE_OPTION_REASON
-            }
-            helperText="Solo proveedores activos. El primero que añadas queda como habitual."
-            label="Añadir proveedor"
-            onChange={(option) => {
-              if (option) {
-                onChange(addProductSupplier(state, option));
+          {/* El buscador lista contactos (`GET /api/contacts` exige
+              `contacts.view`): quien puede guardar proveedores pero no listar
+              contactos (almacén) no lo ve; el resto de la sección sí. */}
+          <Can
+            fallback={<p className="text-sm text-on-surface-variant">{NO_CONTACTS_ACCESS_HELP}</p>}
+            permission={SUPPLIER_SEARCH_PERMISSION}
+          >
+            <EntityAutocomplete
+              entity="contact"
+              fetcher={supplierFetcher}
+              filters={SUPPLIER_FILTERS}
+              getOptionDisabled={(option) =>
+                listedIds.includes(option.id)
+                  ? ALREADY_LISTED_REASON
+                  : !option.isActive && INACTIVE_OPTION_REASON
               }
-            }}
-            // Un reciente guardado puede haberse desactivado: aquí no se ofrecen.
-            recentsKey={null}
-            value={null}
-          />
+              helperText="Solo proveedores activos. El primero que añadas queda como habitual."
+              label="Añadir proveedor"
+              onChange={(option) => {
+                if (option) {
+                  onChange(addProductSupplier(state, option));
+                }
+              }}
+              // Un reciente guardado puede haberse desactivado: aquí no se ofrecen.
+              recentsKey={null}
+              value={null}
+            />
+          </Can>
         </>
       )}
     </div>

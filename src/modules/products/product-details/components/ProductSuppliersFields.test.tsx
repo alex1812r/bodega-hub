@@ -19,6 +19,19 @@ import {
 
 /** PRO-14 · proveedores en el formulario de producto. */
 
+const mockPermissions = { current: ["products.manage", "contacts.view"] };
+
+jest.mock("../../../../shared/auth/usePermission", () => ({
+  usePermission: () => ({
+    can: (permission: string) => mockPermissions.current.includes(permission),
+    isLoading: false,
+  }),
+}));
+
+beforeEach(() => {
+  mockPermissions.current = ["products.manage", "contacts.view"];
+});
+
 type UserSession = ReturnType<typeof userEvent.setup>;
 
 function contact(id: string, label: string, isActive = true): ContactEntityOption {
@@ -387,5 +400,132 @@ describe("ProductSuppliersFields (PRO-14)", () => {
 
     await user.click(screen.getByRole("button", { name: "Reintentar" }));
     expect(onRetryLoad).toHaveBeenCalledTimes(1);
+  });
+
+  describe("PRO-F8 · fila para el ancho real del diálogo", () => {
+    const initial = createProductSuppliersState([
+      link("sup-polar", "Distribuidora Lab Norte", { isPreferred: true, lastCostRef: 1.2 }),
+      link("sup-viejo", "Proveedor Viejo", {
+        supplier: { isActive: false, name: "Proveedor Viejo" },
+      }),
+    ]);
+
+    function rowOf(supplierId: string) {
+      return document.querySelector<HTMLElement>(`[data-product-supplier-row="${supplierId}"]`)!;
+    }
+
+    it("el nombre va en una primera línea propia con Habitual y Quitar; costo y SKU, en la segunda", () => {
+      renderFields({ initial });
+
+      const row = rowOf("sup-polar");
+      const header = row.querySelector<HTMLElement>("[data-product-supplier-header]")!;
+      const name = header.querySelector<HTMLElement>("[data-product-supplier-name]")!;
+      const fields = row.querySelector<HTMLElement>("[data-product-supplier-fields]")!;
+
+      // La celda del nombre crece y parte la línea: nunca queda en 0 px.
+      expect(name).toHaveTextContent("Distribuidora Lab Norte");
+      expect(name).toHaveClass("min-w-0", "flex-1", "break-words");
+      expect(name.className).toMatch(/\bbasis-/);
+      expect(header).toHaveClass("flex", "flex-wrap", "min-w-0");
+      expect(header).toContainElement(preferredRadio("Distribuidora Lab Norte"));
+      expect(header).toContainElement(
+        screen.getByRole("button", { name: "Quitar a Distribuidora Lab Norte" }),
+      );
+
+      expect(fields).toContainElement(screen.getByLabelText("Costo REF de Distribuidora Lab Norte"));
+      expect(fields).toContainElement(
+        screen.getByLabelText("SKU del proveedor Distribuidora Lab Norte"),
+      );
+      // Costo y SKU nunca comparten línea con el nombre.
+      expect(Array.from(row.children)).toEqual([header, fields]);
+    });
+
+    it("no decide columnas con el ancho de la ventana: el diálogo es estrecho en cualquier pantalla", () => {
+      renderFields({ initial });
+
+      for (const row of [rowOf("sup-polar"), rowOf("sup-viejo")]) {
+        const layout = [
+          row,
+          ...Array.from(
+            row.querySelectorAll<HTMLElement>(
+              "[data-product-supplier-header], [data-product-supplier-name], [data-product-supplier-fields], [data-product-supplier-cost], [data-product-supplier-remove]",
+            ),
+          ),
+        ];
+
+        expect(layout).toHaveLength(6);
+
+        for (const element of layout) {
+          expect(element.className).not.toMatch(/(^|\s)(sm|md|lg|xl|2xl):/);
+        }
+      }
+    });
+
+    it("el chip Inactivo acompaña al nombre y el motivo queda dentro de la fila", () => {
+      renderFields({ initial });
+
+      const row = rowOf("sup-viejo");
+      const name = row.querySelector<HTMLElement>("[data-product-supplier-name]")!;
+
+      expect(within(name).getByText("Inactivo")).toBeVisible();
+      expect(within(row).getByText("Proveedor inactivo: no puede ser el habitual.")).toBeVisible();
+    });
+
+    it("el radio Habitual tiene un objetivo de 36 px de alto con foco visible y su etiqueta es clicable", async () => {
+      const { user } = renderFields({
+        initial: createProductSuppliersState([
+          link("sup-polar", "Alimentos Polar", { isPreferred: true }),
+          link("sup-mavesa", "Mavesa"),
+        ]),
+      });
+
+      const radio = preferredRadio("Mavesa");
+      const target = radio.closest("label")!;
+
+      expect(target).toHaveClass("min-h-9", "cursor-pointer", "shrink-0");
+      expect(radio).toHaveClass("focus-visible:ring-2", "focus-visible:ring-ring");
+
+      await user.click(within(target).getByText("Habitual"));
+
+      expect(radio).toBeChecked();
+      expect(preferredRadio("Alimentos Polar")).not.toBeChecked();
+    });
+  });
+
+  describe("PRO-F8 · sin acceso a Contactos", () => {
+    const initial = createProductSuppliersState([
+      link("sup-polar", "Alimentos Polar", { isPreferred: true, lastCostRef: 1.5 }),
+      link("sup-mavesa", "Mavesa"),
+    ]);
+
+    it("quien no puede listar contactos no ve el buscador, sino cómo conseguirlo; el resto sigue operativo", async () => {
+      // Rol almacén: guarda proveedores (`products.manage`), pero no lista contactos.
+      mockPermissions.current = ["products.manage"];
+
+      const { onState, user } = renderFields({ initial });
+
+      expect(screen.queryByRole("combobox", { name: "Añadir proveedor" })).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Para añadir proveedores necesitas acceso a Contactos. Puedes cambiar el habitual, el costo y el SKU de los ya vinculados.",
+        ),
+      ).toBeVisible();
+
+      await user.click(preferredRadio("Mavesa"));
+      await user.type(screen.getByLabelText("Costo REF de Mavesa"), "2");
+      await user.type(screen.getByLabelText("SKU del proveedor Mavesa"), "mav-1");
+      await user.click(screen.getByRole("button", { name: "Quitar a Alimentos Polar" }));
+
+      expect(buildProductSuppliersPayload(onState.mock.lastCall![0])).toEqual([
+        { costRef: 2, isPreferred: true, supplierId: "sup-mavesa", supplierSku: "mav-1" },
+      ]);
+    });
+
+    it("con acceso a Contactos el buscador sigue ahí y no hay línea de ayuda", () => {
+      renderFields({ initial });
+
+      expect(searchField()).toBeVisible();
+      expect(screen.queryByText(/necesitas acceso a Contactos/)).not.toBeInTheDocument();
+    });
   });
 });

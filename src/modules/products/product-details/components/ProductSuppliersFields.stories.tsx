@@ -71,13 +71,19 @@ type DemoProps = {
   isLoading?: boolean;
   loadError?: string;
   showErrors?: boolean;
+  /** Ancho del contenedor. Por defecto, el de la sección dentro del diálogo en escritorio. */
+  widthClassName?: string;
 };
 
-function Demo({ initialState = EMPTY_PRODUCT_SUPPLIERS_STATE, ...props }: DemoProps) {
+function Demo({
+  initialState = EMPTY_PRODUCT_SUPPLIERS_STATE,
+  widthClassName = "w-[22.25rem]",
+  ...props
+}: DemoProps) {
   const [state, setState] = useState(initialState);
 
   return (
-    <div className="max-w-xl">
+    <div className={widthClassName}>
       <ProductSuppliersFields
         {...props}
         onChange={setState}
@@ -97,6 +103,14 @@ export const Empty: Story = {
 /** Dos proveedores: el habitual marcado y cada uno con su costo y su código. */
 export const TwoSuppliers: Story = {
   render: () => <Demo initialState={twoSuppliers} />,
+};
+
+/**
+ * El contenedor más estrecho (diálogo en un teléfono de 390 px): Habitual y
+ * Quitar bajan a su línea y costo y SKU se apilan; el nombre sigue legible.
+ */
+export const NarrowContainer: Story = {
+  render: () => <Demo initialState={withInactiveSupplier} widthClassName="w-[16.5rem]" />,
 };
 
 /** Un proveedor inactivo sigue en la lista, pero no puede marcarse habitual. */
