@@ -219,7 +219,10 @@ export function createPayment(input: PaymentInput, storeId: string) {
   const previous = requestKey ? paymentsByClientRequest().get(requestKey) : undefined;
 
   if (previous) {
-    if (previous.content !== paymentRequestContent(input)) {
+    const stored = mockPayments.find((item) => item.id === previous.payment.id);
+
+    // Como `payment_idempotent_replay`: otro contenido o un pago ya anulado.
+    if (previous.content !== paymentRequestContent(input) || stored?.status === "anulado") {
       throw new ApiError(
         409,
         "CONFLICT",
@@ -240,6 +243,15 @@ export function createPayment(input: PaymentInput, storeId: string) {
   }
 
   return payment;
+}
+
+/** Secuencia del id: dos pagos en el mismo milisegundo no comparten id. */
+function nextPaymentSequence() {
+  const sequence = mockState("payments:idSequence", () => ({ last: 0 }));
+
+  sequence.last += 1;
+
+  return sequence.last;
 }
 
 function registerMockPayment(input: PaymentInput, storeId: string) {
@@ -272,6 +284,11 @@ function registerMockPayment(input: PaymentInput, storeId: string) {
 
   if (sale) {
     sale.paidVes = Math.round((sale.paidVes + amountVes) * 100) / 100;
+
+    // Regla de `register_payment`, que solo cobra ventas pagadas o pendientes.
+    if (sale.status === "pagada" || sale.status === "pendiente_pago") {
+      sale.status = sale.paidVes >= sale.totalVes ? "pagada" : "pendiente_pago";
+    }
   }
 
   if (purchase) {
@@ -288,7 +305,7 @@ function registerMockPayment(input: PaymentInput, storeId: string) {
       )
     : Math.max(totalVes - paidVes - amountVes, 0);
 
-  return {
+  const payment = {
     amount: input.amount,
     amountRef,
     amountVes,
@@ -297,16 +314,27 @@ function registerMockPayment(input: PaymentInput, storeId: string) {
     createdAt: new Date().toISOString(),
     currency: input.currency,
     direction,
-    id: `pay-mock-${Date.now()}`,
+    id: `pay-mock-${Date.now()}-${nextPaymentSequence()}`,
     method: input.method,
+    notes: input.notes,
+    phone: input.phone,
     purchaseId: input.purchaseId,
     referenceCode: input.referenceCode,
     refRateVes,
     saleId: input.saleId,
     status: "activo",
     storeId,
-    pendingBalanceVes,
   } satisfies PaymentMock;
+
+  // El pago queda guardado, como la fila de `payments`: de aqui leen la lista, el
+  // detalle del documento y la anulacion. Sin documento en la semilla no hay saldo
+  // que abonar ni fila que colgarle. El saldo va solo en la respuesta: en la fila
+  // quedaria viejo con el siguiente pago.
+  if (sale || purchase) {
+    mockPayments.push(payment);
+  }
+
+  return { ...payment, pendingBalanceVes } satisfies PaymentMock;
 }
 
 export function cancelPayment(id: string, storeId: string) {
@@ -333,7 +361,7 @@ export function cancelPayment(id: string, storeId: string) {
       throw new ApiError(400, "BAD_REQUEST", "El monto del pago excede lo registrado en la venta.");
     }
 
-    sale.paidVes -= payment.amountVes;
+    sale.paidVes = Math.round((sale.paidVes - payment.amountVes) * 100) / 100;
 
     if (sale.status !== "borrador") {
       sale.status = sale.paidVes >= sale.totalVes ? "pagada" : "pendiente_pago";
@@ -360,7 +388,7 @@ export function cancelPayment(id: string, storeId: string) {
       );
     }
 
-    purchase.paidVes -= payment.amountVes;
+    purchase.paidVes = Math.round((purchase.paidVes - payment.amountVes) * 100) / 100;
     purchase.paidRef = Math.max(
       0,
       Math.round(((purchase.paidRef ?? 0) - payment.amountRef) * 100) / 100,

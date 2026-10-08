@@ -64,7 +64,11 @@ type Session = { permissions?: readonly Permission[]; role: UserRole };
  * API de prueba con estado: POST /api/payments abona la compra, de modo que el
  * GET que dispara la invalidacion devuelve ya el saldo y el historial nuevos.
  */
-function installApi(initial: Partial<PurchaseDetails>, session: Session) {
+function installApi(
+  initial: Partial<PurchaseDetails>,
+  session: Session,
+  options: { postFailsAfterSaving?: string } = {},
+) {
   let purchase: PurchaseDetails = { ...PURCHASE, ...initial };
   const posts: Array<{ body: Record<string, unknown>; url: string }> = [];
   let purchaseGets = 0;
@@ -96,6 +100,16 @@ function installApi(initial: Partial<PurchaseDetails>, session: Session) {
         paidVes: purchase.paidVes + amountVes,
         payments: [...purchase.payments, payment],
       };
+
+      // Resultado incierto: el pago quedo guardado pero la respuesta es un 500.
+      if (options.postFailsAfterSaving) {
+        return Promise.resolve(
+          jsonResponse(
+            { error: { code: "INTERNAL_ERROR", message: options.postFailsAfterSaving } },
+            500,
+          ),
+        );
+      }
 
       return Promise.resolve(
         jsonResponse(
@@ -135,8 +149,12 @@ function installApi(initial: Partial<PurchaseDetails>, session: Session) {
 }
 
 /** Pinta el detalle y espera a la compra y a los permisos: sin ellos no hay boton. */
-async function renderPage(initial: Partial<PurchaseDetails> = {}, session: Session = { role: "admin" }) {
-  const api = installApi(initial, session);
+async function renderPage(
+  initial: Partial<PurchaseDetails> = {},
+  session: Session = { role: "admin" },
+  options: { postFailsAfterSaving?: string } = {},
+) {
+  const api = installApi(initial, session, options);
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -323,6 +341,36 @@ describe("PurchaseDetailsPage · Pagar (PAG-01)", () => {
     ).not.toBeInTheDocument();
     // Con el modal abierto la pagina queda fuera del arbol accesible.
     expect(screen.getByRole("button", { hidden: true, name: "Pagar" })).toBeInTheDocument();
+  });
+});
+
+describe("PurchaseDetailsPage · pago de resultado incierto (PAG-F3)", () => {
+  it("si el pago quedo guardado y saldo la compra, el modal sigue montado con el error y «Pagar» desaparece", async () => {
+    const message = "Fallo interno al confirmar el pago";
+    const { posts, user } = await renderPage(
+      {},
+      { role: "admin" },
+      { postFailsAfterSaving: message },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Pagar" }));
+    await user.click(await screen.findByRole("button", { name: "Completar saldo" }));
+    await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+
+    // El re-pedido tras el 500 trae la compra ya saldada.
+    expect(await screen.findByText("Pagado", {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(posts).toHaveLength(1);
+
+    const dialog = screen.getByRole("dialog", { name: "Pagar compra" });
+
+    expect(within(dialog).getByText(message)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { hidden: true, name: "Pagar" })).not.toBeInTheDocument();
+
+    // Al cerrarlo ya no queda nada que pagar: el modal se desmonta.
+    await user.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(payButton()).not.toBeInTheDocument();
   });
 });
 

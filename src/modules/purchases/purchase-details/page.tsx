@@ -168,7 +168,9 @@ export function PurchaseDetailsPage({
       />
       <PurchaseDetailPaymentsTable payments={data.payments} />
 
-      {canPay ? (
+      {/* Abierto sigue montado aunque la compra ya no admita pagos: un pago de
+          resultado incierto pudo saldarla y su error tiene que seguir a la vista. */}
+      {canPay || isPaying ? (
         <RegisterPaymentModal
           onOpenChange={setIsPaying}
           // Con la compra saldada no queda nada que abonar: el modal se cierra solo.
