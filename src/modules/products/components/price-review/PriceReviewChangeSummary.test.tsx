@@ -23,5 +23,34 @@ describe("PriceReviewChangeSummary", () => {
     expect(container).toHaveTextContent(/Costo\s*ref 8\.00\s*ref 9\.00/);
     expect(container).toHaveTextContent(/Ganancia\s*25 %\s*11,11 %/);
     expect(screen.getByText(describePriceReviewChange(change))).toHaveClass("sr-only");
+    // Sin `showBands` va en texto: no ensancha la tabla de la lista.
+    expect(container.querySelector("[data-band]")).toBeNull();
+  });
+
+  // PRO-F6: 11,11 % (rojo) y 17,65 % (amarillo) no pueden verse iguales.
+  it.each([
+    [11.11, "low", "11,11 %"],
+    [17.65, "mid", "17,65 %"],
+  ])("with showBands paints the previous and the current %% (%p) with their band", (pct, band, text) => {
+    const shown = { ...change, currentMarginPct: pct };
+    const { container } = render(<PriceReviewChangeSummary change={shown} showBands />);
+    const [previous, current] = Array.from(container.querySelectorAll("[data-band]"));
+
+    expect(previous).toHaveAttribute("data-band", "high");
+    expect(previous).toHaveTextContent("25 %");
+    expect(current).toHaveAttribute("data-band", band);
+    expect(current).toHaveTextContent(text);
+    expect(container).toHaveTextContent(/Costo\s*ref 8\.00\s*ref 9\.00/);
+    expect(screen.getByText(describePriceReviewChange(shown))).toHaveClass("sr-only");
+  });
+
+  it("with showBands uses the thresholds it is given", () => {
+    const { container } = render(
+      <PriceReviewChangeSummary change={change} showBands thresholds={{ high: 30, low: 12 }} />,
+    );
+    const [previous, current] = Array.from(container.querySelectorAll("[data-band]"));
+
+    expect(previous).toHaveAttribute("data-band", "mid");
+    expect(current).toHaveAttribute("data-band", "low");
   });
 });

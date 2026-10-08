@@ -50,6 +50,10 @@ function queueHandlers(initial: ProductPriceReviewItem[], failing = false) {
     http.get("/api/products/price-review", () =>
       HttpResponse.json({ data: { items, limit: 100, skip: 0, total: items.length } }),
     ),
+    // Cortes del semáforo de la tienda: 25 % verde, 19 % amarillo, 11 % rojo.
+    http.get("/api/settings/pricing", () =>
+      HttpResponse.json({ data: { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 } }),
+    ),
     http.post("/api/products/:id/price", resolve),
     http.post("/api/products/:id/keep-price", resolve),
   ];

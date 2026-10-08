@@ -5,13 +5,14 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 
 import { MAX_PAGE_LIMIT } from "@/lib/api/pagination";
+import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { formatMarkupPct } from "@/shared/components/MarginBadge";
 import { useToast } from "@/shared/components/Toast";
 import { formatRefUsd } from "@/shared/utils/currency";
-import { priceFromMarkup } from "@/shared/utils/pricing";
+import { priceFromMarkup, type MarginThresholds } from "@/shared/utils/pricing";
 
 import {
   useKeepProductPrice,
@@ -20,6 +21,7 @@ import {
 } from "../../hooks/usePriceReview";
 import { useUpdateProductPrice } from "../../hooks/useProducts";
 import { buildRepriceReason } from "../../services/priceReview";
+import { getProductMarginThresholds } from "../../services/productMargin";
 import { PriceReviewChangeSummary } from "./PriceReviewChangeSummary";
 
 /** Filas visibles antes de "Mostrar N más". */
@@ -47,9 +49,10 @@ function errorMessage(error: unknown, fallback: string) {
 type PurchaseRepriceRowProps = {
   canManage: boolean;
   item: ProductPriceReviewItem;
+  thresholds: MarginThresholds;
 };
 
-function PurchaseRepriceRow({ canManage, item }: PurchaseRepriceRowProps) {
+function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowProps) {
   const updatePrice = useUpdateProductPrice(item.productId);
   const keepPrice = useKeepProductPrice();
   const { showToast } = useToast();
@@ -139,7 +142,7 @@ function PurchaseRepriceRow({ canManage, item }: PurchaseRepriceRowProps) {
           </Link>{" "}
           <span className="text-on-surface-variant">{item.sku}</span>
         </p>
-        <PriceReviewChangeSummary change={item} />
+        <PriceReviewChangeSummary change={item} showBands thresholds={thresholds} />
         <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm tabular-nums">
           <span className="text-on-surface-variant">PVP {currentPrice}</span>
           <span aria-hidden className="text-on-surface-variant">
@@ -206,6 +209,8 @@ function PurchaseRepriceRow({ canManage, item }: PurchaseRepriceRowProps) {
 
 function PurchaseRepriceList({ canManage, purchaseId }: { canManage: boolean; purchaseId: string }) {
   const review = usePriceReview({ limit: MAX_PAGE_LIMIT, purchaseId });
+  // Semáforo de la tienda; sin datos (cargando o error) valen los cortes por defecto.
+  const pricingSettings = usePricingSettings();
   const [showAll, setShowAll] = useState(false);
 
   if (review.isError) {
@@ -260,7 +265,12 @@ function PurchaseRepriceList({ canManage, purchaseId }: { canManage: boolean; pu
 
       <ul className="mt-2 divide-y divide-border">
         {visibleItems.map((item) => (
-          <PurchaseRepriceRow canManage={canManage} item={item} key={item.productId} />
+          <PurchaseRepriceRow
+            canManage={canManage}
+            item={item}
+            key={item.productId}
+            thresholds={getProductMarginThresholds(pricingSettings.data)}
+          />
         ))}
       </ul>
 

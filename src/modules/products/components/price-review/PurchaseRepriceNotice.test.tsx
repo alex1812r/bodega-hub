@@ -53,6 +53,9 @@ type Call = { body: unknown; method: string; url: string };
 
 const fetchMock = jest.fn();
 
+/** Semáforo de la tienda que sirve `/api/settings/pricing`. */
+let pricing = { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 };
+
 /** `queues`: lo que devuelve cada lectura sucesiva de la cola (la última se repite). */
 function serve(
   queues: ProductPriceReviewItem[][],
@@ -60,7 +63,11 @@ function serve(
 ) {
   let reads = 0;
 
-  fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url.startsWith("/api/settings/pricing")) {
+      return jsonResponse({ data: pricing });
+    }
+
     if ((init?.method ?? "GET") === "GET") {
       const items = queues[Math.min(reads, queues.length - 1)];
       reads += 1;
@@ -106,6 +113,7 @@ beforeEach(() => {
   fetchMock.mockReset();
   global.fetch = fetchMock;
   permissions = ["products.view", "products.manage"];
+  pricing = { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 };
 });
 
 describe("PurchaseRepriceNotice", () => {
@@ -158,7 +166,17 @@ describe("PurchaseRepriceNotice", () => {
     const rowElement = screen.getByTestId("purchase-reprice-row-prod-1");
 
     expect(rowElement).toHaveTextContent(/Costos*ref 8.00s*ref 9.00/);
-    expect(rowElement).toHaveTextContent(/Ganancias*25 %s*11,11 %/);
+    // PRO-F6: los % van con el semáforo (su etiqueta de banda es solo para lectores de pantalla).
+    expect(rowElement).toHaveTextContent(/Ganancia.*25 %.*11,11 %/);
+    expect(
+      Array.from(rowElement.querySelectorAll("[data-band]")).map((badge) => [
+        badge.getAttribute("data-band"),
+        badge.lastElementChild?.textContent,
+      ]),
+    ).toEqual([
+      ["high", "25 %"],
+      ["low", "11,11 %"],
+    ]);
     expect(
       row.getByText("La ganancia bajó de 25 % a 11,11 % al subir el costo de ref 8.00 a ref 9.00"),
     ).toHaveClass("sr-only");
@@ -167,6 +185,52 @@ describe("PurchaseRepriceNotice", () => {
     expect(rowElement).not.toHaveTextContent(/d,dd (→|REF)|REF/);
     expect(row.getByRole("link", { name: "Harina PAN 1 kg" })).toHaveAttribute("href", "/products/prod-1");
     expect(screen.queryByRole("link", { name: "Ver todos en Productos" })).not.toBeInTheDocument();
+  });
+
+  // PRO-F6: el plan pide "ganancia 25 % → 11 % (rojo)": la banda se ve, no solo el número.
+  it("pinta el % anterior y el actual con el semáforo: 11,11 % en rojo y 17,65 % en amarillo", async () => {
+    serve([
+      [
+        reviewItem(),
+        reviewItem({
+          currentBand: "mid",
+          currentCostRef: 8.5,
+          currentMarginPct: 17.647059,
+          name: "Arroz 1 kg",
+          productId: "prod-2",
+          sku: "arroz",
+        }),
+      ],
+    ]);
+    renderNotice();
+
+    const bands = async (productId: string) =>
+      Array.from(
+        (await screen.findByTestId(`purchase-reprice-row-${productId}`)).querySelectorAll("[data-band]"),
+      ).map((badge) => [badge.getAttribute("data-band"), badge.lastElementChild?.textContent]);
+
+    expect(await bands("prod-1")).toEqual([
+      ["high", "25 %"],
+      ["low", "11,11 %"],
+    ]);
+    expect(await bands("prod-2")).toEqual([
+      ["high", "25 %"],
+      ["mid", "17,65 %"],
+    ]);
+  });
+
+  it("el semáforo usa los cortes de la tienda, no los por defecto", async () => {
+    pricing = { chipsPct: [12, 20, 30], greenFromPct: 30, yellowFromPct: 12 };
+    serve([[reviewItem()]]);
+    renderNotice();
+
+    const row = await screen.findByTestId("purchase-reprice-row-prod-1");
+
+    await waitFor(() =>
+      expect(
+        Array.from(row.querySelectorAll("[data-band]")).map((badge) => badge.getAttribute("data-band")),
+      ).toEqual(["mid", "low"]),
+    );
   });
 
   it("Aplicar no cambia nada hasta confirmar; al confirmar envía el precio propuesto y el motivo", async () => {
