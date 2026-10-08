@@ -9,6 +9,11 @@ import { SalePaymentMethodBadge } from "@/modules/sales/sale-details/components/
 import { PurchaseDetailSectionCard } from "./PurchaseDetailSectionCard";
 
 type PurchaseDetailPaymentsTableProps = {
+  /**
+   * `false` cuando el rol no puede ver pagos de compras (almacén): el BFF no
+   * manda los pagos y una lista vacía no significa "sin pagos".
+   */
+  canViewPayments?: boolean;
   payments: Array<PaymentMock & { contact?: ContactMock }>;
 };
 
@@ -28,7 +33,20 @@ function paymentAmountRef(payment: PaymentMock) {
   return 0;
 }
 
-export function PurchaseDetailPaymentsTable({ payments }: PurchaseDetailPaymentsTableProps) {
+export function PurchaseDetailPaymentsTable({
+  canViewPayments = true,
+  payments,
+}: PurchaseDetailPaymentsTableProps) {
+  if (!canViewPayments) {
+    return (
+      <PurchaseDetailSectionCard title="Historial de pagos">
+        <p className="px-6 py-8 text-center text-sm text-on-surface-variant">
+          No tienes permiso para ver los pagos de esta compra.
+        </p>
+      </PurchaseDetailSectionCard>
+    );
+  }
+
   return (
     <PurchaseDetailSectionCard title="Historial de pagos">
       {payments.length === 0 ? (

@@ -65,3 +65,29 @@ describe("PurchaseDetailPaymentsTable", () => {
     expect(screen.getByText(formatVesBs(5000))).not.toHaveClass("line-through");
   });
 });
+
+/**
+ * COM-16 · a quien no puede ver pagos de compras (almacén) el BFF no le manda los
+ * pagos: el historial lo dice en vez de afirmar que la compra no tiene pagos.
+ */
+describe("PurchaseDetailPaymentsTable · sin permiso para ver pagos (COM-16)", () => {
+  it("avisa de que no hay permiso y no dice que la compra no tiene pagos", () => {
+    render(<PurchaseDetailPaymentsTable canViewPayments={false} payments={[]} />);
+
+    expect(screen.getByRole("heading", { name: "Historial de pagos" })).toBeInTheDocument();
+    expect(
+      screen.getByText("No tienes permiso para ver los pagos de esta compra."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No hay pagos registrados para esta compra.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("con permiso y sin pagos sigue diciendo que no hay pagos registrados", () => {
+    render(<PurchaseDetailPaymentsTable payments={[]} />);
+
+    expect(screen.getByText("No hay pagos registrados para esta compra.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("No tienes permiso para ver los pagos de esta compra."),
+    ).not.toBeInTheDocument();
+  });
+});

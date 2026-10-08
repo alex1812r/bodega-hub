@@ -87,13 +87,16 @@ export function PurchaseDetailsPage({
   // es el de bolívares (total − pagado), una compra cancelada o devuelta no admite
   // pagos, y solo paga quien tiene `payments.manage` y no es vendedor.
   const pendingVes = roundMoney(data.totalVes - data.paidVes);
+  // Los pagos individuales de la compra solo llegan a quien puede ver pagos de
+  // compras (admin, contador). A los demás el BFF les manda `payments: []`: no es
+  // "sin pagos", así que el historial lo dice. Pagado / Pendiente vienen de la compra.
+  const canViewPayments = role !== undefined && canViewPurchasePayments(role);
   const canPay =
     pendingVes > 0 &&
     data.status !== "cancelado" &&
     data.status !== "devuelto" &&
     can("payments.manage") &&
-    role !== undefined &&
-    canViewPurchasePayments(role);
+    canViewPayments;
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">
@@ -170,7 +173,10 @@ export function PurchaseDetailsPage({
         totalRef={data.totalRef}
         totalVes={data.totalVes}
       />
-      <PurchaseDetailPaymentsTable payments={data.payments} />
+      {/* Sin rol aún no se sabe cuál de los dos historiales toca: no se pinta ninguno. */}
+      {role === undefined ? null : (
+        <PurchaseDetailPaymentsTable canViewPayments={canViewPayments} payments={data.payments} />
+      )}
 
       {/* Abierto sigue montado aunque la compra ya no admita pagos: un pago de
           resultado incierto pudo saldarla y su error tiene que seguir a la vista. */}
