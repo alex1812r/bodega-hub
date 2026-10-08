@@ -245,11 +245,93 @@ describe("Toast", () => {
     renderWithProvider();
     show({ title: "Guardado" });
 
-    expect(document.querySelector("[data-toast-viewport]")).toHaveClass("z-[80]", "fixed", "top-4");
+    expect(document.querySelector("[data-toast-viewport]")).toHaveClass("z-[80]", "fixed", "sm:top-4");
     expect(screen.getByText("Guardado").closest("[data-toast-tone]")).toHaveClass(
       "motion-reduce:transition-none",
       "pointer-events-auto",
     );
+  });
+
+  describe("pantalla estrecha (< sm) · PRO-F3", () => {
+    // jsdom no aplica media queries: se fijan las clases. QA mide a 390 × 844
+    // con un `Modal` abierto: un solo aviso visible, de ≤ 88 px de alto, que
+    // acaba por encima de la X y del título del modal (y ≈ 101) y no toca el pie.
+    function toastOf(title: string) {
+      return screen.getByText(title).closest("[data-toast-tone]") as HTMLElement;
+    }
+
+    function hiddenOnNarrow(title: string) {
+      return toastOf(title).classList.contains("max-sm:hidden");
+    }
+
+    it("solo deja visible el aviso más reciente; en escritorio siguen los tres", () => {
+      renderWithProvider();
+      ["Uno", "Dos", "Tres"].forEach((title) => show({ durationMs: 0, title }));
+
+      expect(["Uno", "Dos", "Tres"].map(hiddenOnNarrow)).toEqual([true, true, false]);
+      // Ocultar es solo de pantalla estrecha: ninguna clase los quita en escritorio.
+      ["Uno", "Dos", "Tres"].forEach((title) => {
+        expect(toastOf(title)).not.toHaveClass("hidden");
+        expect(toastOf(title)).toBeInTheDocument();
+      });
+    });
+
+    it("un error tiene prioridad sobre avisos posteriores; entre errores, el más reciente", () => {
+      renderWithProvider();
+      show({ title: "Error viejo", tone: "error" });
+      show({ title: "Error nuevo", tone: "error" });
+      show({ durationMs: 0, title: "Guardado", tone: "success" });
+
+      expect(["Error viejo", "Error nuevo", "Guardado"].map(hiddenOnNarrow)).toEqual([
+        true,
+        false,
+        true,
+      ]);
+    });
+
+    it("al cerrar el visible aparece el siguiente, y un oculto sigue su cuenta de autocierre", () => {
+      renderWithProvider();
+      show({ title: "Guardado", tone: "success" });
+      show({ title: "No se pudo guardar", tone: "error" });
+
+      expect(hiddenOnNarrow("Guardado")).toBe(true);
+
+      advance(TOAST_DEFAULT_DURATION_MS - 1);
+      fireEvent.click(
+        within(toastOf("No se pudo guardar")).getByRole("button", { name: "Cerrar aviso" }),
+      );
+      expect(hiddenOnNarrow("Guardado")).toBe(false);
+
+      // No vuelve a empezar sus 6 s por haber estado oculto.
+      advance(1);
+      expect(screen.queryByText("Guardado")).not.toBeInTheDocument();
+    });
+
+    it("acota la altura: título y descripción a 2 líneas, y la acción al lado, no debajo", () => {
+      renderWithProvider();
+      show({
+        action: { href: "/products/prod-1", label: "Ver" },
+        description: "B".repeat(300),
+        durationMs: 0,
+        title: "A".repeat(300),
+      });
+
+      expect(screen.getByText("A".repeat(300))).toHaveClass("line-clamp-2", "sm:line-clamp-none");
+      expect(screen.getByText("B".repeat(300))).toHaveClass("line-clamp-2", "sm:line-clamp-none");
+      expect(toastOf("A".repeat(300))).toHaveClass("p-2", "sm:p-3");
+      // Texto y acción en fila (la acción no suma altura); en escritorio, apilados.
+      expect(screen.getByRole("link", { name: "Ver" }).parentElement).toHaveClass(
+        "flex",
+        "sm:block",
+      );
+      expect(screen.getByRole("link", { name: "Ver" })).toHaveClass("shrink-0", "sm:mt-1");
+    });
+
+    it("va pegado al borde superior, por encima de la hoja del Modal; en escritorio, como antes", () => {
+      renderWithProvider();
+
+      expect(document.querySelector("[data-toast-viewport]")).toHaveClass("top-1", "sm:top-4");
+    });
   });
 
   it("al desmontar con avisos vivos no deja temporizadores", () => {

@@ -16,6 +16,10 @@ import { type ToastOptions, ToastProvider, useToast } from "./Toast";
  * - `action`: `{ label, href }` (enlace interno) o `{ label, onClick }`.
  * - Autocierre a los 6 s (`durationMs`; `0` lo deja fijo), en pausa con el
  *   puntero o el foco encima. Hasta 3 a la vez: el más antiguo se descarta.
+ * - Pantalla estrecha (< `sm`): pegado al borde superior y uno solo visible (el
+ *   error más reciente o, sin errores, el más reciente), con título y
+ *   descripción a 2 líneas y la acción al lado: no tapa la hoja del `Modal`.
+ *   Se ve en `Stack` y `LongText` con el viewport a 390 px.
  * - No mueve el foco. Con un `Modal` abierto se ve y se puede pulsar, pero el
  *   teclado no llega a él mientras el modal retiene el foco.
  */
