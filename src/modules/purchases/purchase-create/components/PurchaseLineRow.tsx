@@ -1,6 +1,6 @@
 "use client";
 
-import { Package, Trash2 } from "lucide-react";
+import { Lock, LockOpen, Package, Trash2 } from "lucide-react";
 import type { ButtonHTMLAttributes, FocusEvent } from "react";
 
 import { TaxRateChips } from "@/shared/components/TaxRateChips";
@@ -23,12 +23,17 @@ import { applyPackPreset, getDefaultPackUnit, toUnitLine } from "../utils/purcha
 import { PURCHASE_LINE_TAX_REQUIRED_MESSAGE } from "../utils/purchaseLineTax";
 import { PurchaseLineNumberCell } from "./PurchaseLineNumberCell";
 import { PurchaseLinePackFields } from "./PurchaseLinePackFields";
+import { PurchaseLockedLineCells } from "./PurchaseLockedLineCells";
 
 export type PurchaseLineRowProps = {
-  /** La línea cambió después de asentarse: muestra el punto "Línea editada". */
-  edited?: boolean;
+  /** Punto "Línea editada" (`PurchaseWebLine.editedMark`); una línea bloqueada no lo muestra. */
+  editedMark?: boolean;
   item: PurchaseDraftItem;
+  /** Fila compacta de solo lectura: sin campos, selectores ni chips en el DOM. */
+  locked?: boolean;
   meta: PurchaseLineCatalogMeta;
+  /** Candado de la fila, o doble clic sobre la fila bloqueada. */
+  onLockChange: (locked: boolean) => void;
   onRemove: () => void;
   /** El foco salió de la fila: la línea deja de ser recién nacida. */
   onSettle: () => void;
@@ -47,6 +52,10 @@ export type PurchaseLineRowProps = {
 const stackedLabelClassName = cn(purchaseLineFieldLabelClassName, "mb-0.5 block @xl:hidden");
 const readOnlyValueClassName =
   "flex h-10 items-center text-sm tabular-nums text-foreground @xl:h-8";
+const rowActionClassName = cn(
+  "flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-outline transition-colors",
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+);
 
 function LineChip({
   active,
@@ -73,11 +82,17 @@ function LineChip({
  * Una línea de la compra. Fila principal: producto, cantidad, costo (en la moneda de la
  * compra) y total. El chip de IVA abre las alícuotas del catálogo (no se teclea un
  * porcentaje) y el chip "Empaque" despliega la fila secundaria.
+ *
+ * Bloqueada (COM-12) es una fila compacta de solo lectura: lo mismo como texto y, como
+ * único elemento enfocable, el candado. Se desbloquea con el candado o con doble clic, y
+ * no se puede quitar sin desbloquearla.
  */
 export function PurchaseLineRow({
-  edited = false,
+  editedMark = false,
   item,
+  locked = false,
   meta,
+  onLockChange,
   onRemove,
   onSettle,
   onTaxChange,
@@ -110,6 +125,66 @@ export function PurchaseLineRow({
     }
   }
 
+  // El candado conserva su sitio (y el foco) al bloquear y desbloquear: mismo `key`.
+  const actions = (
+    <div
+      className="col-start-3 row-start-1 flex items-center justify-end gap-1 justify-self-end @xl:col-start-auto @xl:row-start-auto"
+      key="actions"
+    >
+      <button
+        aria-label={locked ? `Desbloquear ${meta.name}` : `Bloquear ${meta.name}`}
+        aria-pressed={locked}
+        className={cn(
+          rowActionClassName,
+          locked
+            ? "text-primary hover:bg-primary/10"
+            : "hover:bg-surface-container hover:text-foreground",
+        )}
+        onClick={() => onLockChange(!locked)}
+        title={locked ? "Línea bloqueada: clic para desbloquear" : "Bloquear línea"}
+        type="button"
+      >
+        {locked ? (
+          <Lock aria-hidden className="size-[1.125rem]" />
+        ) : (
+          <LockOpen aria-hidden className="size-[1.125rem]" />
+        )}
+      </button>
+      {locked ? null : (
+        <button
+          aria-label={`Quitar ${meta.name}`}
+          className={cn(rowActionClassName, "hover:bg-destructive/10 hover:text-destructive")}
+          onClick={onRemove}
+          type="button"
+        >
+          <Trash2 aria-hidden className="size-[1.125rem]" />
+        </button>
+      )}
+    </div>
+  );
+
+  if (locked) {
+    return (
+      <li
+        className={cn(purchaseLineGridClassName, "bg-surface-container-low py-1.5")}
+        data-line-id={item.id}
+        data-locked="true"
+        onBlur={handleBlur}
+        onDoubleClick={() => onLockChange(false)}
+      >
+        <PurchaseLockedLineCells
+          item={normalized}
+          key="locked"
+          meta={meta}
+          tax={tax}
+          totalRefText={totalRefText}
+          totalVesText={totalVesText}
+        />
+        {actions}
+      </li>
+    );
+  }
+
   return (
     <li
       className={cn(
@@ -117,11 +192,12 @@ export function PurchaseLineRow({
         "py-3 transition-colors hover:bg-surface-container-low/50 motion-reduce:transition-none",
         striped && "bg-surface-bright/50",
       )}
+      data-line-id={item.id}
       onBlur={handleBlur}
     >
-      <div className="col-span-2 min-w-0 @xl:col-span-1">
+      <div className="col-span-2 min-w-0 @xl:col-span-1" key="product">
         <div className="flex min-w-0 items-center gap-1.5">
-          {edited ? (
+          {editedMark ? (
             <span
               aria-label="Línea editada"
               className="size-2 shrink-0 rounded-full bg-primary"
@@ -166,7 +242,7 @@ export function PurchaseLineRow({
         </div>
       </div>
 
-      <div className="min-w-0">
+      <div className="min-w-0" key="quantity">
         <span className={stackedLabelClassName}>Cantidad</span>
         {isPack ? (
           <p className={cn(readOnlyValueClassName, "@xl:justify-center")}>
@@ -176,6 +252,7 @@ export function PurchaseLineRow({
           <PurchaseLineNumberCell
             aria-label={`Cantidad de ${meta.name}`}
             className={cn(purchaseLineInputClassName, "@xl:text-center")}
+            focusTarget
             integer
             onChange={(quantity) => onUpdate({ quantity })}
             value={item.quantity}
@@ -183,7 +260,7 @@ export function PurchaseLineRow({
         )}
       </div>
 
-      <div className="min-w-0">
+      <div className="min-w-0" key="cost">
         <span className={stackedLabelClassName}>Costo {currencyLabel}</span>
         {isPack ? (
           <p className={cn(readOnlyValueClassName, "@xl:justify-end")}>
@@ -199,7 +276,7 @@ export function PurchaseLineRow({
         )}
       </div>
 
-      <div className="min-w-0 text-right">
+      <div className="min-w-0 text-right" key="total">
         <span className={stackedLabelClassName}>Total</span>
         <p className="truncate text-sm leading-tight font-medium tabular-nums text-foreground">
           {isVes ? totalVesText : totalRefText}
@@ -209,24 +286,13 @@ export function PurchaseLineRow({
         </p>
       </div>
 
-      <button
-        aria-label={`Quitar ${meta.name}`}
-        className={cn(
-          "col-start-3 row-start-1 flex size-8 cursor-pointer items-center justify-center justify-self-end rounded-full text-outline transition-colors",
-          "hover:bg-destructive/10 hover:text-destructive",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          "@xl:col-start-auto @xl:row-start-auto",
-        )}
-        onClick={onRemove}
-        type="button"
-      >
-        <Trash2 aria-hidden className="size-[1.125rem]" />
-      </button>
+      {actions}
 
       {isPack ? (
         <PurchaseLinePackFields
           className="col-span-full min-w-0 pt-1"
           item={item}
+          key="pack"
           meta={meta}
           onUpdate={onUpdate}
           rateVes={rateVes}

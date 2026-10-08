@@ -19,6 +19,7 @@ import {
   type PurchaseCatalogProduct,
 } from "./components/PurchaseProductPickerCard";
 import { usePurchaseLines } from "./hooks/usePurchaseLines";
+import { usePurchaseLockOnAdd } from "./hooks/usePurchaseLockOnAdd";
 import { usePurchaseProductSearch } from "./hooks/usePurchaseProductSearch";
 import { PurchaseStatusNotesCard } from "./components/PurchaseStatusNotesCard";
 import { PurchaseSummaryCard } from "./components/PurchaseSummaryCard";
@@ -55,7 +56,9 @@ export function PurchaseCreatePage() {
   const [discountRef, setDiscountRef] = useState(0);
   // `items` es el borrador de core. Su `taxRate` NO es la fuente de verdad: la alícuota de
   // cada línea se deriva de `taxState` en `lines`, que es lo que se pinta y se envía.
-  const [{ items, review, taxState }, dispatchLines] = usePurchaseLines();
+  // Bloqueos, historial de edición y alícuotas son estado de la web: no entran en el payload.
+  const [{ focus, items, locks, review, taxState }, dispatchLines] = usePurchaseLines();
+  const [lockOnAdd, setLockOnAdd] = usePurchaseLockOnAdd();
   // Moneda en la que se teclean los costos: una sola para toda la compra.
   const [costCurrency, setCostCurrency] = useState<PurchaseCostCurrency>("ves");
   const [formError, setFormError] = useState<string | null>(null);
@@ -115,11 +118,12 @@ export function PurchaseCreatePage() {
         getCategoryPct: (productId) => lineMetaByProductId.get(productId)?.taxRate ?? 0,
         items,
         rateVes: activeRateVes,
+        locks,
         rates: taxRates.rates,
         review,
         taxState,
       }),
-    [activeRateVes, items, lineMetaByProductId, review, taxRates.rates, taxState],
+    [activeRateVes, items, lineMetaByProductId, locks, review, taxRates.rates, taxState],
   );
   // Revisión antes de confirmar: qué líneas se tocaron después de agregarlas y qué cambió.
   const editedLines = useMemo(
@@ -198,6 +202,7 @@ export function PurchaseCreatePage() {
         id: nextPurchaseLineId(),
         rateVes: activeRateVes,
       }),
+      lockOthers: lockOnAdd,
       rateVes: activeRateVes,
       type: "productAdded",
     });
@@ -307,9 +312,18 @@ export function PurchaseCreatePage() {
             catalog={catalog}
             exemptDisabled={!findExemptTaxRate(taxRates.rates)}
             exemptPurchase={taxState.exempt}
+            focusRequest={focus}
             getItemMeta={getItemMeta}
             isSearching={productSearchResult.isSearching}
             lines={lines}
+            lockControls={{
+              lockOnAdd,
+              onLockAll: () => dispatchLines({ type: "allLinesLocked" }),
+              onLockOnAddChange: setLockOnAdd,
+              onToggleLine: (itemId, locked) =>
+                dispatchLines({ itemId, locked, type: "lineLockChanged" }),
+              onUnlockAll: () => dispatchLines({ type: "allLinesUnlocked" }),
+            }}
             onAddProduct={handleAddProduct}
             onExemptPurchaseChange={handleExemptPurchaseChange}
             onLineTaxChange={(itemId, code) =>

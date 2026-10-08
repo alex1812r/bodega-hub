@@ -60,8 +60,8 @@ function run(...actions: PurchaseLinesAction[]) {
   return actions.reduce(purchaseLinesReducer, EMPTY_PURCHASE_LINES_STATE);
 }
 
-function add(line: PurchaseDraftItem): PurchaseLinesAction {
-  return { line, rateVes: RATE_VES, type: "productAdded" };
+function add(line: PurchaseDraftItem, lockOthers = false): PurchaseLinesAction {
+  return { line, lockOthers, rateVes: RATE_VES, type: "productAdded" };
 }
 
 function update(itemId: string, input: Partial<PurchaseDraftItem>): PurchaseLinesAction {
@@ -72,11 +72,18 @@ function webLines(state: PurchaseLinesState) {
   return buildPurchaseWebLines({
     getCategoryPct: () => 16,
     items: state.items,
+    locks: state.locks,
     rateVes: RATE_VES,
     rates,
     review: state.review,
     taxState: state.taxState,
   });
+}
+
+function lockedIds(state: PurchaseLinesState) {
+  return webLines(state)
+    .filter((line) => line.locked)
+    .map((line) => line.item.id);
 }
 
 function summary(state: PurchaseLinesState) {
@@ -139,6 +146,7 @@ describe("purchaseLinesReducer · línea editada (COM-13)", () => {
 
     expect(state.items.map((item) => item.id)).toEqual(["line-refresco", "line-cable"]);
     expect(Object.keys(state.review.baselines)).toEqual(["line-cable"]);
+    expect(lockedIds(state)).toEqual([]);
     expect(summary(state)).toEqual(["prod-cable: Cantidad 1 → 2"]);
   });
 

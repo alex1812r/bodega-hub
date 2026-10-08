@@ -88,6 +88,7 @@ export function PurchaseLinePackFields({
         <PurchaseLineNumberCell
           aria-label={`Cantidad de ${packNoun} de ${meta.name}`}
           className={cn(purchaseLineFieldControlClassName, "text-center")}
+          focusTarget
           integer
           onChange={(packCount) => onUpdate(syncLineCostFields({ ...item, packCount }, rateVes))}
           value={item.packCount}

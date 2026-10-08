@@ -32,10 +32,10 @@ export const purchaseLineFieldSelectClassName = [
 /**
  * Columnas de una línea de compra. Depende del ancho de la tarjeta (`@container`), no
  * del viewport: apilada (producto arriba, tres celdas debajo) hasta 36rem y, desde ahí,
- * producto · cantidad · costo · total · quitar en una sola fila.
+ * producto · cantidad · costo · total · acciones (candado y quitar) en una sola fila.
  */
 export const purchaseLineGridClassName =
-  "grid grid-cols-3 items-center gap-x-3 gap-y-2 px-4 @xl:grid-cols-[minmax(0,1fr)_4.5rem_7rem_8rem_2rem]";
+  "grid grid-cols-3 items-center gap-x-3 gap-y-2 px-4 @xl:grid-cols-[minmax(0,1fr)_4.5rem_7rem_8rem_4.25rem]";
 
 /** Input de la fila principal (cantidad, costo): alto táctil apilado, compacto en escritorio. */
 export const purchaseLineInputClassName =

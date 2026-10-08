@@ -5,14 +5,23 @@ import { useReducer } from "react";
 import type {
   PurchaseCostCurrency,
   PurchaseDraftItem,
+  PurchaseLineFocusRequest,
+  PurchaseLineLockState,
   PurchaseLineReviewState,
   PurchaseTaxState,
 } from "../types";
 import { switchCostCurrency, syncLineCostFields } from "../utils/normalizePurchaseLine";
 import {
+  EMPTY_PURCHASE_LOCK_STATE,
+  isPurchaseLineLocked,
+  lockPurchaseLines,
+  unlockPurchaseLines,
+} from "../utils/purchaseLineLocks";
+import {
   clearPurchaseReviewTaxChoices,
   dropPurchaseLineReview,
   EMPTY_PURCHASE_REVIEW_STATE,
+  markPurchaseLinesReviewed,
   settlePurchaseLines,
   switchPurchaseReviewCostCurrency,
 } from "../utils/purchaseLineReview";
@@ -26,12 +35,17 @@ import {
 /**
  * Estado de las líneas de la compra en curso. `items` es el borrador de core (lo
  * único que acaba en el payload); el resto es estado de la web que lo acompaña y
- * NO viaja al backend. Es serializable: el borrador guardado (COM-09 / CNF-16)
- * puede persistirlo tal cual.
+ * NO viaja al backend. `items`, `locks`, `review` y `taxState` son serializables:
+ * el borrador guardado (COM-09 / CNF-16) puede persistirlos tal cual; `focus` es
+ * efímero y no debe guardarse.
  */
 export type PurchaseLinesState = {
+  /** Última petición de foco en la cantidad de una línea (la recién agregada). */
+  focus: PurchaseLineFocusRequest | null;
   /** Líneas en el orden de la tabla: la más reciente primero. */
   items: PurchaseDraftItem[];
+  /** Líneas bloqueadas (COM-12). */
+  locks: PurchaseLineLockState;
   /** Historial de edición por línea (COM-13). */
   review: PurchaseLineReviewState;
   /** Alícuotas elegidas a mano y "Compra exenta" (COM-11). */
@@ -39,23 +53,33 @@ export type PurchaseLinesState = {
 };
 
 export type PurchaseLinesAction =
+  | { type: "allLinesLocked" }
+  | { type: "allLinesUnlocked" }
   | { currency: PurchaseCostCurrency; rateVes: number; type: "costCurrencyChanged" }
   | { exempt: boolean; type: "exemptChanged" }
+  | { itemId: string; locked: boolean; type: "lineLockChanged" }
   /** El foco salió de la fila: la línea deja de ser recién nacida. */
   | { itemId: string; type: "lineSettled" }
+  /** Una línea bloqueada no se quita: la acción se ignora. */
   | { itemId: string; type: "lineRemoved" }
+  /** Una línea bloqueada no cambia de alícuota: la acción se ignora. */
   | { code: string; itemId: string; type: "lineTaxChosen" }
+  /** Una línea bloqueada no se edita: la acción se ignora. */
   | { input: Partial<PurchaseDraftItem>; itemId: string; rateVes: number; type: "lineUpdated" }
   /**
    * `line` es la línea que nacería para ese producto; si el producto ya está en
-   * la compra no se usa: se suma 1 a la existente y sube al principio.
+   * la compra no se usa: se suma 1 a la existente y sube al principio. En ambos
+   * casos esa línea queda desbloqueada y pide el foco en su cantidad; con
+   * `lockOthers` (preferencia "Bloquear al agregar") las demás se bloquean.
    */
-  | { line: PurchaseDraftItem; rateVes: number; type: "productAdded" }
+  | { line: PurchaseDraftItem; lockOthers: boolean; rateVes: number; type: "productAdded" }
   /** Cambió el proveedor: la compra empieza de cero y conserva "Compra exenta". */
   | { type: "supplierChanged" };
 
 export const EMPTY_PURCHASE_LINES_STATE: PurchaseLinesState = {
+  focus: null,
   items: [],
+  locks: EMPTY_PURCHASE_LOCK_STATE,
   review: EMPTY_PURCHASE_REVIEW_STATE,
   taxState: EMPTY_PURCHASE_TAX_STATE,
 };
@@ -69,11 +93,42 @@ function bumpLine(item: PurchaseDraftItem, rateVes: number) {
   );
 }
 
+/**
+ * Bloquea esas líneas: quedan asentadas (lo capturado hasta aquí ya no es
+ * "primera captura") y revisadas (su punto "Línea editada" se apaga).
+ */
+function lockLines(state: PurchaseLinesState, items: PurchaseDraftItem[]): PurchaseLinesState {
+  const pending = items.filter((item) => !isPurchaseLineLocked(state.locks, item.id));
+
+  if (pending.length === 0) {
+    return state;
+  }
+
+  return {
+    ...state,
+    locks: lockPurchaseLines(
+      state.locks,
+      pending.map((item) => item.id),
+    ),
+    review: markPurchaseLinesReviewed(
+      settlePurchaseLines(state.review, pending, state.taxState),
+      pending,
+      state.taxState,
+    ),
+  };
+}
+
 export function purchaseLinesReducer(
   state: PurchaseLinesState,
   action: PurchaseLinesAction,
 ): PurchaseLinesState {
   switch (action.type) {
+    case "allLinesLocked":
+      return lockLines(state, state.items);
+
+    case "allLinesUnlocked":
+      return { ...state, locks: EMPTY_PURCHASE_LOCK_STATE };
+
     case "costCurrencyChanged":
       return {
         ...state,
@@ -90,6 +145,14 @@ export function purchaseLinesReducer(
         taxState: setPurchaseExempt(action.exempt),
       };
 
+    case "lineLockChanged":
+      return action.locked
+        ? lockLines(
+            state,
+            state.items.filter((item) => item.id === action.itemId),
+          )
+        : { ...state, locks: unlockPurchaseLines(state.locks, [action.itemId]) };
+
     case "lineSettled":
       return {
         ...state,
@@ -101,6 +164,10 @@ export function purchaseLinesReducer(
       };
 
     case "lineRemoved":
+      if (isPurchaseLineLocked(state.locks, action.itemId)) {
+        return state;
+      }
+
       return {
         ...state,
         items: state.items.filter((item) => item.id !== action.itemId),
@@ -109,9 +176,17 @@ export function purchaseLinesReducer(
       };
 
     case "lineTaxChosen":
+      if (isPurchaseLineLocked(state.locks, action.itemId)) {
+        return state;
+      }
+
       return { ...state, taxState: chooseLineTax(state.taxState, action.itemId, action.code) };
 
     case "lineUpdated":
+      if (isPurchaseLineLocked(state.locks, action.itemId)) {
+        return state;
+      }
+
       return {
         ...state,
         items: state.items.map((item) =>
@@ -122,22 +197,22 @@ export function purchaseLinesReducer(
       };
 
     case "productAdded": {
+      const existing = state.items.find((item) => item.productId === action.line.productId);
+      const target = existing ? bumpLine(existing, action.rateVes) : action.line;
+      const others = state.items.filter((item) => item.id !== target.id);
       // Agregar asienta todo lo que había: desde aquí cualquier cambio es una edición,
       // también el +1 de volver a agregar el mismo producto.
-      const review = settlePurchaseLines(state.review, state.items, state.taxState);
-      const existing = state.items.find((item) => item.productId === action.line.productId);
-
-      if (!existing) {
-        return { ...state, items: [action.line, ...state.items], review };
-      }
+      const settled = {
+        ...state,
+        review: settlePurchaseLines(state.review, state.items, state.taxState),
+      };
+      const next = action.lockOthers ? lockLines(settled, others) : settled;
 
       return {
-        ...state,
-        items: [
-          bumpLine(existing, action.rateVes),
-          ...state.items.filter((item) => item.id !== existing.id),
-        ],
-        review,
+        ...next,
+        focus: { itemId: target.id, token: (state.focus?.token ?? 0) + 1 },
+        items: [target, ...others],
+        locks: unlockPurchaseLines(next.locks, [target.id]),
       };
     }
 

@@ -12,7 +12,10 @@ import type {
 } from "../types";
 import { switchCostCurrency } from "./normalizePurchaseLine";
 
-export const EMPTY_PURCHASE_REVIEW_STATE: PurchaseLineReviewState = { baselines: {} };
+export const EMPTY_PURCHASE_REVIEW_STATE: PurchaseLineReviewState = {
+  baselines: {},
+  reviewed: {},
+};
 
 export function snapshotPurchaseLine(
   item: PurchaseDraftItem,
@@ -44,6 +47,28 @@ export function settlePurchaseLines(
   return { ...state, baselines };
 }
 
+/**
+ * Las líneas se bloquearon: se dan por revisadas tal como están. Su punto
+ * "Línea editada" se apaga; en el resumen siguen contando si cambiaron respecto
+ * a su foto de `baselines`.
+ */
+export function markPurchaseLinesReviewed(
+  state: PurchaseLineReviewState,
+  items: PurchaseDraftItem[],
+  taxState: PurchaseTaxState,
+): PurchaseLineReviewState {
+  if (items.length === 0) {
+    return state;
+  }
+
+  const reviewed = { ...state.reviewed };
+  for (const item of items) {
+    reviewed[item.id] = snapshotPurchaseLine(item, taxState);
+  }
+
+  return { ...state, reviewed };
+}
+
 function mapSnapshots(
   snapshots: Record<string, PurchaseLineSnapshot>,
   map: (snapshot: PurchaseLineSnapshot) => PurchaseLineSnapshot,
@@ -56,14 +81,16 @@ export function dropPurchaseLineReview(
   state: PurchaseLineReviewState,
   itemId: string,
 ): PurchaseLineReviewState {
-  if (!(itemId in state.baselines)) {
+  if (!(itemId in state.baselines) && !(itemId in state.reviewed)) {
     return state;
   }
 
   const baselines = { ...state.baselines };
+  const reviewed = { ...state.reviewed };
   delete baselines[itemId];
+  delete reviewed[itemId];
 
-  return { ...state, baselines };
+  return { baselines, reviewed };
 }
 
 /**
@@ -74,9 +101,11 @@ export function dropPurchaseLineReview(
 export function clearPurchaseReviewTaxChoices(
   state: PurchaseLineReviewState,
 ): PurchaseLineReviewState {
+  const clear = (snapshot: PurchaseLineSnapshot) => ({ ...snapshot, taxChoice: null });
+
   return {
-    ...state,
-    baselines: mapSnapshots(state.baselines, (snapshot) => ({ ...snapshot, taxChoice: null })),
+    baselines: mapSnapshots(state.baselines, clear),
+    reviewed: mapSnapshots(state.reviewed, clear),
   };
 }
 
@@ -89,12 +118,14 @@ export function switchPurchaseReviewCostCurrency(
   currency: PurchaseCostCurrency,
   rateVes: number,
 ): PurchaseLineReviewState {
+  const convert = (snapshot: PurchaseLineSnapshot) => ({
+    ...snapshot,
+    item: switchCostCurrency(snapshot.item, currency, rateVes),
+  });
+
   return {
-    ...state,
-    baselines: mapSnapshots(state.baselines, (snapshot) => ({
-      ...snapshot,
-      item: switchCostCurrency(snapshot.item, currency, rateVes),
-    })),
+    baselines: mapSnapshots(state.baselines, convert),
+    reviewed: mapSnapshots(state.reviewed, convert),
   };
 }
 

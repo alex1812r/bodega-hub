@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { useReducer } from "react";
+import { useReducer, useState } from "react";
 import { expect, userEvent, within } from "storybook/test";
 
 import type { TaxRate } from "@/shared/hooks/useTaxRates";
@@ -9,9 +9,11 @@ import {
   createUnitDraftItem,
   type PurchaseCostCurrency,
   type PurchaseDraftItem,
+  type PurchaseLineLockControls,
   type PurchaseTaxCatalog,
 } from "../types";
 import { EMPTY_PURCHASE_LINES_STATE, purchaseLinesReducer } from "../hooks/usePurchaseLines";
+import { lockPurchaseLines } from "../utils/purchaseLineLocks";
 import { settlePurchaseLines } from "../utils/purchaseLineReview";
 import {
   buildPurchaseWebLines,
@@ -68,6 +70,14 @@ const metaByProductId: Record<string, PurchaseLineItemMeta> = {
   },
 };
 
+const staticLockControls: PurchaseLineLockControls = {
+  lockOnAdd: true,
+  onLockAll: () => undefined,
+  onLockOnAddChange: () => undefined,
+  onToggleLine: () => undefined,
+  onUnlockAll: () => undefined,
+};
+
 function buildItems(costCurrency: PurchaseCostCurrency): PurchaseDraftItem[] {
   return [
     createUnitDraftItem({
@@ -98,6 +108,8 @@ type LinesHarnessProps = {
   costCurrency: PurchaseCostCurrency;
   /** "Compra exenta" activo: todas las líneas nacen en Exento. */
   exempt?: boolean;
+  /** Las líneas nacen bloqueadas (y por tanto asentadas). */
+  locked?: boolean;
   /** Las líneas ya están asentadas: cualquier cambio las marca como editadas. */
   settled?: boolean;
   /** Añade una línea cuya categoría no tiene alícuota activa. */
@@ -107,10 +119,12 @@ type LinesHarnessProps = {
 function LinesHarness({
   costCurrency,
   exempt = false,
+  locked = false,
   settled = false,
   withUnresolvedLine = false,
 }: LinesHarnessProps) {
-  const [{ items, review, taxState }, dispatch] = useReducer(purchaseLinesReducer, null, () => {
+  const [lockOnAdd, setLockOnAdd] = useState(true);
+  const [{ items, locks, review, taxState }, dispatch] = useReducer(purchaseLinesReducer, null, () => {
     const initialItems = [
       ...buildItems(costCurrency),
       ...(withUnresolvedLine
@@ -131,7 +145,13 @@ function LinesHarness({
     return {
       ...EMPTY_PURCHASE_LINES_STATE,
       items: initialItems,
-      review: settled
+      locks: locked
+        ? lockPurchaseLines(
+            EMPTY_PURCHASE_LINES_STATE.locks,
+            initialItems.map((item) => item.id),
+          )
+        : EMPTY_PURCHASE_LINES_STATE.locks,
+      review: settled || locked
         ? settlePurchaseLines(EMPTY_PURCHASE_LINES_STATE.review, initialItems, initialTaxState)
         : EMPTY_PURCHASE_LINES_STATE.review,
       taxState: initialTaxState,
@@ -140,6 +160,7 @@ function LinesHarness({
   const lines = buildPurchaseWebLines({
     getCategoryPct: (productId) => metaByProductId[productId]?.taxRate ?? 0,
     items,
+    locks,
     rateVes: RATE_VES,
     rates: taxRates,
     review,
@@ -153,6 +174,14 @@ function LinesHarness({
           metaByProductId[productId] ?? { name: "Producto", sku: "—", taxRate: 0 }
         }
         lines={lines}
+        lockControls={{
+          lockOnAdd,
+          onLockAll: () => dispatch({ type: "allLinesLocked" }),
+          onLockOnAddChange: setLockOnAdd,
+          onToggleLine: (itemId, nextLocked) =>
+            dispatch({ itemId, locked: nextLocked, type: "lineLockChanged" }),
+          onUnlockAll: () => dispatch({ type: "allLinesUnlocked" }),
+        }}
         onLineTaxChange={(itemId, code) => dispatch({ code, itemId, type: "lineTaxChosen" })}
         onRemoveItem={(itemId) => dispatch({ itemId, type: "lineRemoved" })}
         onSettleItem={(itemId) => dispatch({ itemId, type: "lineSettled" })}
@@ -238,6 +267,35 @@ export const EditedLine: Story = {
   },
 };
 
+/**
+ * Líneas bloqueadas: filas compactas de solo lectura, sin campos. Se desbloquean
+ * con el candado o con doble clic; "Bloquear todas" las vuelve a cerrar.
+ */
+export const LockedLines: Story = {
+  args: { locked: true },
+  name: "Líneas bloqueadas",
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const list = within(canvas.getByRole("list", { name: "Líneas de la compra" }));
+
+    await expect(list.queryByRole("textbox")).not.toBeInTheDocument();
+    await expect(list.queryByRole("combobox")).not.toBeInTheDocument();
+    await expect(list.getByText("2 × 12 u")).toBeVisible();
+    await expect(canvas.getByRole("button", { name: "Bloquear todas" })).toBeDisabled();
+
+    await userEvent.dblClick(list.getByText("Cable HDMI 2 m"));
+    await expect(canvas.getByLabelText("Cantidad de Cable HDMI 2 m")).toBeVisible();
+
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Desbloquear Refresco Cola 2 L retornable" }),
+    );
+    await expect(list.getAllByRole("textbox")).toHaveLength(4);
+
+    await userEvent.click(canvas.getByRole("button", { name: "Bloquear todas" }));
+    await expect(list.queryByRole("textbox")).not.toBeInTheDocument();
+  },
+};
+
 /** Con "Compra exenta" todas las líneas muestran Exento. */
 export const ExemptPurchase: Story = {
   args: { exempt: true },
@@ -274,6 +332,7 @@ export const TaxRatesLoading: Story = {
         rates: [],
         taxState: EMPTY_PURCHASE_TAX_STATE,
       })}
+      lockControls={staticLockControls}
       onLineTaxChange={() => undefined}
       onRemoveItem={() => undefined}
       onSettleItem={() => undefined}
@@ -305,6 +364,7 @@ export const Empty: Story = {
     <PurchaseLineItemsTable
       getItemMeta={() => ({ name: "Producto", sku: "—", taxRate: 0 })}
       lines={[]}
+      lockControls={staticLockControls}
       onLineTaxChange={() => undefined}
       onRemoveItem={() => undefined}
       onSettleItem={() => undefined}

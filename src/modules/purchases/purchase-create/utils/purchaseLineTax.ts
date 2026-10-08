@@ -5,7 +5,9 @@ import { roundMoney } from "@/shared/utils/currency";
 import type {
   PurchaseDraftItem,
   PurchaseLineChange,
+  PurchaseLineLockState,
   PurchaseLineReviewState,
+  PurchaseLineSnapshot,
   PurchaseLineTax,
   PurchaseTaxBreakdownRow,
   PurchaseTaxState,
@@ -73,13 +75,16 @@ export function resolvePurchaseLineTax(input: {
  * `draftToPurchaseItemInput`) calculen con el porcentaje que ve el usuario.
  *
  * Con `review`, cada línea asentada trae además qué cambió respecto a su foto
- * (`changes`, `edited`); una línea recién nacida nunca está editada.
+ * (`changes`, `edited`); una línea recién nacida nunca está editada. Con
+ * `locks`, si está bloqueada.
  */
 export function buildPurchaseWebLines(input: {
   getCategoryPct: (productId: string) => number;
   items: PurchaseDraftItem[];
   rateVes: number;
   rates: TaxRate[];
+  /** Líneas bloqueadas; sin él ninguna lo está. */
+  locks?: PurchaseLineLockState;
   /** Historial de edición; sin él ninguna línea sale como editada. */
   review?: PurchaseLineReviewState;
   taxState: PurchaseTaxState;
@@ -97,32 +102,45 @@ export function buildPurchaseWebLines(input: {
       choiceCode: input.taxState.choices[item.id],
     });
     const synced = syncLineCostFields({ ...item, taxRate: tax.rate }, input.rateVes);
-    const baseline = review.baselines[item.id];
-    const changes: PurchaseLineChange[] = [];
+    const changesSince = (snapshot: PurchaseLineSnapshot | undefined): PurchaseLineChange[] => {
+      if (!snapshot) {
+        return [];
+      }
 
-    if (baseline) {
       // La alícuota de la foto se resuelve con el catálogo y el toggle de AHORA:
       // así "Compra exenta" o un catálogo que carga tarde no cuentan como edición.
-      const baselineTax = resolvePurchaseLineTax({
+      const snapshotTax = resolvePurchaseLineTax({
         ...taxInput,
-        choiceCode: baseline.taxChoice ?? undefined,
+        choiceCode: snapshot.taxChoice ?? undefined,
       });
-
-      changes.push(
-        ...getPurchaseLineItemChanges(syncLineCostFields(baseline.item, input.rateVes), synced),
+      const changes = getPurchaseLineItemChanges(
+        syncLineCostFields(snapshot.item, input.rateVes),
+        synced,
       );
 
-      if (baselineTax.code !== tax.code) {
-        changes.push({
-          field: "tax",
-          from: formatLineTaxLabel(baselineTax),
-          label: "IVA",
-          to: formatLineTaxLabel(tax),
-        });
-      }
-    }
+      return snapshotTax.code === tax.code
+        ? changes
+        : [
+            ...changes,
+            {
+              field: "tax",
+              from: formatLineTaxLabel(snapshotTax),
+              label: "IVA",
+              to: formatLineTaxLabel(tax),
+            },
+          ];
+    };
+    const changes = changesSince(review.baselines[item.id]);
+    const reviewed = review.reviewed[item.id];
 
-    return { changes, edited: changes.length > 0, item: synced, tax };
+    return {
+      changes,
+      edited: changes.length > 0,
+      editedMark: reviewed ? changesSince(reviewed).length > 0 : changes.length > 0,
+      item: synced,
+      locked: input.locks?.locked[item.id] === true,
+      tax,
+    };
   });
 }
 

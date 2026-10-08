@@ -9,9 +9,16 @@ import { Badge } from "@/shared/components/Badge/Badge";
 import { cn } from "@/shared/utils/cn";
 import { formatRefUsd } from "@/shared/utils/currency";
 
-import type { PurchaseDraftItem, PurchaseTaxCatalog, PurchaseWebLine } from "../types";
+import type {
+  PurchaseDraftItem,
+  PurchaseLineFocusRequest,
+  PurchaseLineLockControls,
+  PurchaseTaxCatalog,
+  PurchaseWebLine,
+} from "../types";
 import { resolvePurchaseProductByCode } from "../services/resolveSupplierCatalogProduct";
 import { PurchaseLineItemsTable, type PurchaseLineItemMeta } from "./PurchaseLineItemsTable";
+import { PurchaseToggleSwitch } from "./PurchaseToggleSwitch";
 
 import type { SupplierProductPackUnit } from "@/modules/contacts/types/supplierProducts";
 
@@ -43,9 +50,12 @@ type PurchaseProductPickerCardProps = {
   exemptDisabled?: boolean;
   /** "Compra exenta": todas las líneas, también las que se agreguen, van a Exento. */
   exemptPurchase: boolean;
+  /** Línea que pide el foco en su cantidad (la recién agregada). */
+  focusRequest?: PurchaseLineFocusRequest | null;
   getItemMeta: (productId: string) => PurchaseLineItemMeta;
   isSearching?: boolean;
   lines: PurchaseWebLine[];
+  lockControls: PurchaseLineLockControls;
   onAddProduct: (product: PurchaseCatalogProduct) => void;
   onExemptPurchaseChange: (exempt: boolean) => void;
   onLineTaxChange: (itemId: string, code: string) => void;
@@ -78,34 +88,12 @@ export function PurchaseExemptToggle({
   onChange,
 }: PurchaseExemptToggleProps) {
   return (
-    <button
-      aria-checked={checked}
-      className={cn(
-        "inline-flex min-h-8 shrink-0 cursor-pointer items-center gap-2 rounded-full text-xs font-medium text-on-surface-variant transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        "disabled:cursor-not-allowed disabled:opacity-50",
-      )}
+    <PurchaseToggleSwitch
+      checked={checked}
       disabled={disabled}
-      onClick={() => onChange(!checked)}
-      role="switch"
-      type="button"
-    >
-      <span
-        aria-hidden
-        className={cn(
-          "flex h-5 w-9 shrink-0 items-center rounded-full border p-0.5 transition-colors",
-          checked ? "border-primary bg-primary" : "border-border bg-surface-container-low",
-        )}
-      >
-        <span
-          className={cn(
-            "size-3.5 rounded-full transition-transform",
-            checked ? "translate-x-4 bg-primary-foreground" : "bg-on-surface-variant",
-          )}
-        />
-      </span>
-      Compra exenta
-    </button>
+      label="Compra exenta"
+      onChange={onChange}
+    />
   );
 }
 
@@ -129,9 +117,11 @@ export function PurchaseProductPickerCard({
   catalog,
   exemptDisabled = false,
   exemptPurchase,
+  focusRequest = null,
   getItemMeta,
   isSearching = false,
   lines,
+  lockControls,
   onAddProduct,
   onExemptPurchaseChange,
   onLineTaxChange,
@@ -194,12 +184,15 @@ export function PurchaseProductPickerCard({
     setIsLookingUp(true);
     setScanError(null);
 
+    // Si el código no agrega nada, el foco vuelve al buscador para reintentar; si
+    // agrega, se lo queda la cantidad de la línea nueva (COM-12).
     void resolvePurchaseProductByCode(supplierId, code)
       .then((resolution) => {
         if (resolution.status !== "found") {
           setScanError(
             resolution.status === "ambiguous" ? SCAN_AMBIGUOUS_MESSAGE : SCAN_NOT_FOUND_MESSAGE,
           );
+          focusSearchInput();
           return;
         }
 
@@ -210,10 +203,10 @@ export function PurchaseProductPickerCard({
       })
       .catch(() => {
         setScanError(SCAN_FAILED_MESSAGE);
+        focusSearchInput();
       })
       .finally(() => {
         setIsLookingUp(false);
-        focusSearchInput();
       });
   }
 
@@ -302,8 +295,10 @@ export function PurchaseProductPickerCard({
 
       <div className="min-h-0 flex-1 overflow-auto">
         <PurchaseLineItemsTable
+          focusRequest={focusRequest}
           getItemMeta={getItemMeta}
           lines={lines}
+          lockControls={lockControls}
           onLineTaxChange={onLineTaxChange}
           onRemoveItem={onRemoveItem}
           onSettleItem={onSettleItem}

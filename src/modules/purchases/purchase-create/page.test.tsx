@@ -66,6 +66,9 @@ jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
 jest.mock("../../../shared/hooks/useTaxRates", () => ({
   useTaxRates: () => mockTaxCatalog,
 }));
+jest.mock("../../../shared/auth/usePermission", () => ({
+  usePermission: () => ({ profile: { storeId: "store-1", user: { id: "user-1" } } }),
+}));
 jest.mock("../../contacts/hooks/useSupplierProducts", () => ({
   useSupplierProducts: () => mockSupplierProducts,
 }));
@@ -96,8 +99,10 @@ jest.mock("./components/PurchaseProductPickerCard", () => {
     PickerProps,
     | "exemptDisabled"
     | "exemptPurchase"
+    | "focusRequest"
     | "getItemMeta"
     | "lines"
+    | "lockControls"
     | "onExemptPurchaseChange"
     | "onLineTaxChange"
     | "onRemoveItem"
@@ -174,8 +179,10 @@ jest.mock("./components/PurchaseProductPickerCard", () => {
         <StubPicker
           exemptDisabled={props.exemptDisabled}
           exemptPurchase={props.exemptPurchase}
+          focusRequest={props.focusRequest}
           getItemMeta={props.getItemMeta}
           lines={props.lines}
+          lockControls={props.lockControls}
           onExemptPurchaseChange={props.onExemptPurchaseChange}
           onLineTaxChange={props.onLineTaxChange}
           onRemoveItem={props.onRemoveItem}
@@ -198,7 +205,17 @@ import {
 } from "@/modules/inventory/utils/requestAttempt.testUtils";
 import { ToastProvider } from "@/shared/components/Toast";
 
+import { purchaseLockOnAddStorageKey } from "./hooks/usePurchaseLockOnAdd";
 import { PurchaseCreatePage } from "./page";
+
+// Estos tests son anteriores al bloqueo de líneas (COM-12, en `page.lines.test.tsx`):
+// con "Bloquear al agregar" apagado, agregar una línea no bloquea las anteriores.
+beforeEach(() => {
+  window.localStorage.setItem(
+    purchaseLockOnAddStorageKey({ storeId: "store-1", userId: "user-1" }),
+    "0",
+  );
+});
 
 function renderWithCart() {
   render(<PurchaseCreatePage />, { wrapper: createQueryWrapper() });

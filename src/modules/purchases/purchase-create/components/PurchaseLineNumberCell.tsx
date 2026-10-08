@@ -12,6 +12,8 @@ export const PURCHASE_CELL_FLASH_MS = 1500;
 type PurchaseLineNumberCellProps = {
   "aria-label": string;
   className?: string;
+  /** Campo que toma el foco cuando la línea lo pide (`data-line-focus`): la cantidad. */
+  focusTarget?: boolean;
   /** Cantidades y empaques: entero, mínimo 1. Sin él es un costo: mínimo 0, dos decimales. */
   integer?: boolean;
   /** Solo recibe valores válidos; lo vacío o a medio escribir se queda en la celda. */
@@ -43,6 +45,7 @@ function isValidValue(value: number | null, integer: boolean): value is number {
  */
 export function PurchaseLineNumberCell({
   className,
+  focusTarget = false,
   integer = false,
   onChange,
   value,
@@ -142,6 +145,7 @@ export function PurchaseLineNumberCell({
         flashing && "border-primary bg-primary/10",
       )}
       data-flash={flashing ? "true" : undefined}
+      data-line-focus={focusTarget ? "true" : undefined}
       decimals={integer ? 0 : 2}
       min={integer ? 1 : 0}
       onBlur={handleBlur}

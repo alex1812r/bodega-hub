@@ -65,9 +65,21 @@ export type PurchaseLineTax = {
 export type PurchaseWebLine = {
   /** Qué cambió respecto a como quedó la línea al asentarse; vacío si no cambió. */
   changes: PurchaseLineChange[];
-  /** `changes.length > 0`: la línea se editó DESPUÉS de haber sido agregada (COM-13). */
+  /**
+   * `changes.length > 0`: la línea se editó DESPUÉS de haber sido agregada (COM-13).
+   * Es lo que cuenta el resumen ("N líneas editadas tras ser agregadas") y NO se
+   * apaga al bloquear: la revisión final las lista todas.
+   */
   edited: boolean;
+  /**
+   * Punto "Línea editada" de la fila. A diferencia de `edited`, se apaga al
+   * bloquear la línea (el usuario ya la dio por revisada) y vuelve a encenderse
+   * si se desbloquea y se cambia otra vez.
+   */
+  editedMark: boolean;
   item: PurchaseDraftItem;
+  /** Línea bloqueada (COM-12): fila de solo lectura, sin campos en el DOM. */
+  locked: boolean;
   tax: PurchaseLineTax;
 };
 
@@ -84,14 +96,47 @@ export type PurchaseLineSnapshot = {
  *
  * Regla de "editada": una línea nace SIN entrada en `baselines` (recién nacida)
  * y lo que se le cambie entonces es su primera captura, no una edición. Se
- * ASIENTA (se guarda su foto) la primera vez que el foco sale de su fila, o
- * cuando se agrega otro producto a la compra (también el mismo: el +1 ya cuenta
- * como edición). Desde ahí, "editada" = la línea es distinta de su foto; si se
+ * ASIENTA (se guarda su foto) la primera vez que el foco sale de su fila, cuando
+ * se agrega otro producto a la compra (también el mismo: el +1 ya cuenta como
+ * edición) o cuando se bloquea. Desde ahí, "editada" = la línea es distinta de su foto; si se
  * deshace el cambio deja de estarlo.
  */
 export type PurchaseLineReviewState = {
   /** `item.id` -> foto de la línea al asentarse. */
   baselines: Record<string, PurchaseLineSnapshot>;
+  /**
+   * `item.id` -> foto de la línea la última vez que se bloqueó. Solo decide el
+   * punto de la fila (`PurchaseWebLine.editedMark`); el resumen sigue comparando
+   * contra `baselines`.
+   */
+  reviewed: Record<string, PurchaseLineSnapshot>;
+};
+
+/**
+ * Líneas bloqueadas (COM-12). Solo existe en la web: no viaja en el payload.
+ * Una línea bloqueada no admite cambios, alícuota ni quitarla: hay que
+ * desbloquearla. La moneda de la compra y "Compra exenta" sí le aplican, porque
+ * son decisiones de toda la compra.
+ */
+export type PurchaseLineLockState = {
+  /** `item.id` -> `true`. Sin entrada, la línea está desbloqueada. */
+  locked: Record<string, true>;
+};
+
+/** Petición de foco en el campo de cantidad de una línea; `token` cambia en cada petición. */
+export type PurchaseLineFocusRequest = {
+  itemId: string;
+  token: number;
+};
+
+/** Lo que la tabla necesita para bloquear y desbloquear líneas. */
+export type PurchaseLineLockControls = {
+  /** Preferencia "Bloquear al agregar". */
+  lockOnAdd: boolean;
+  onLockAll: () => void;
+  onLockOnAddChange: (lockOnAdd: boolean) => void;
+  onToggleLine: (itemId: string, locked: boolean) => void;
+  onUnlockAll: () => void;
 };
 
 export type PurchaseLineChangeField =
