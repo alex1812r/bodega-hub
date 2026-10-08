@@ -637,3 +637,16 @@ notify pgrst, 'reload schema';
 -- ORDEN DE DESPLIEGUE (COM-14): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo
 -- sobre la base sin parche: el detalle de compra responde error (pide las columnas nuevas); la recepcion sin lineas a
 -- desarmar cae a receive_purchase.
+-- -----------------------------------------------------------------------------
+-- 20261010e — pack recipe always disassemble (COM-14): preferencia "Desarmar siempre al recibir compras" en la cabecera de
+--             la receta de apertura (product_pack_conversions.always_disassemble_on_receive)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010e-pack-recipe-always-disassemble.sql
+-- Requiere 20261009d. Idempotente, una transaccion. Solo anade la columna (boolean not null default false); no toca
+-- funciones, triggers, indices ni politicas, y no migra datos (toda receta existente queda en false).
+-- NO cambia stock, costo ni dinero: ninguna RPC lee la columna. Es una preferencia de pantalla: la linea de ese empaque
+-- nace con el chip "Desarmar al recibir" marcado en /purchases/create; la marca que decide sigue viajando por linea.
+-- Se lee y se escribe por tabla directa (PostgREST), como el resto de la receta, con la RLS de la cabecera: lectura de la
+-- tienda, escritura admin / almacen de la tienda.
+-- ORDEN DE DESPLIEGUE: parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sobre la
+-- base sin parche responde error al leer recetas (pide la columna nueva).

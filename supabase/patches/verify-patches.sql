@@ -1981,4 +1981,21 @@ select
     from pg_proc p
     where p.pronamespace = 'public'::regnamespace and p.proname in ('receive_purchase', 'convert_pack_to_units')
   )
+union all
+select
+  'product_pack_conversions.always_disassemble_on_receive (boolean not null default false): preferencia de la receta; ninguna funcion de public la lee (20261010e)',
+  (
+    select count(*) = 1
+       and bool_and(c.data_type = 'boolean' and c.is_nullable = 'NO' and c.column_default = 'false')
+       and not exists (
+         select 1
+         from pg_proc p
+         where p.pronamespace = 'public'::regnamespace
+           and p.prosrc ilike '%always_disassemble_on_receive%'
+       )
+    from information_schema.columns c
+    where c.table_schema = 'public'
+      and c.table_name = 'product_pack_conversions'
+      and c.column_name = 'always_disassemble_on_receive'
+  )
 order by 1;

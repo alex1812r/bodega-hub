@@ -1056,6 +1056,283 @@ describe("payload sin marca · la compra de 20261010b", () => {
   });
 });
 
+describe("20261010e · preferencia «Desarmar siempre al recibir compras» de la receta", () => {
+  const PREFERENCE_PATCH = "20261010e-pack-recipe-always-disassemble.sql";
+  const OTHER_STORE_ADMIN_EMAIL = "admin@example.com";
+  type Actor = LabRoleKey | "otraTienda" | "anon";
+
+  /** Sentencia como cualquier actor (usuario lab, admin de la otra tienda o sin sesión), en un savepoint. */
+  async function runAs(actor: Actor, text: string, params: unknown[] = []): Promise<Outcome> {
+    if (actor !== "otraTienda" && actor !== "anon") return run(text, params, actor);
+    const other =
+      actor === "otraTienda"
+        ? String(
+            (
+              await one(
+                "admin de la otra tienda",
+                "select u.id from auth.users u join public.profiles p on p.id = u.id where u.email = $1 and p.store_id = $2 and p.role = 'admin' and p.is_active",
+                [OTHER_STORE_ADMIN_EMAIL, lab.defaultStoreId],
+              )
+            ).id,
+          )
+        : null;
+    await db.query("savepoint com14pref");
+    try {
+      await actAs(db, other);
+      const res = await db.query<Row>(text, params);
+      await db.query("reset role");
+      await db.query("release savepoint com14pref");
+      return { rows: res.rows, code: null, message: "" };
+    } catch (error) {
+      await db.query("rollback to savepoint com14pref");
+      await db.query("reset role");
+      return { rows: [], ...failure(error) };
+    }
+  }
+
+  const preference = async (recipeId: string): Promise<unknown> =>
+    (await one("preferencia de la receta", "select always_disassemble_on_receive as v from public.product_pack_conversions where id = $1", [recipeId])).v;
+
+  it("el parche es una transacción que solo añade la columna (sin funciones, triggers ni políticas) y recarga PostgREST", () => {
+    const text = readFileSync(resolve(PATCHES, PREFERENCE_PATCH), "utf8");
+    const code = text.replace(/^--.*$/gm, "");
+
+    expect({
+      begins: code.match(/^begin;\r?$/gm)?.length,
+      commits: code.match(/^commit;\r?$/gm)?.length,
+      columna: /add column if not exists always_disassemble_on_receive boolean not null default false;/.test(code),
+      notify: /^notify pgrst, 'reload schema';\r?$/m.test(code),
+      otros: /create (or replace )?(function|trigger|policy|index)|drop |update |insert |delete /i.test(code),
+    }).toEqual({ begins: 1, commits: 1, columna: true, notify: true, otros: false });
+  });
+
+  it("la columna es boolean not null default false, reaplicar el parche no cambia nada y ninguna función de public la lee", async () => {
+    await withRollback(db, async () => {
+      const box = await boxOf(6);
+      await sql("marcar la receta", "update public.product_pack_conversions set always_disassemble_on_receive = true where id = $1", [box.recipeId]);
+      const body = readFileSync(resolve(PATCHES, PREFERENCE_PATCH), "utf8")
+        .replace(/^begin;\r?$/m, "")
+        .replace(/^commit;\r?$/m, "")
+        .replace(/^notify pgrst.*$/m, "");
+      // El alter table no admite eventos pendientes del trigger diferido de la receta recién creada.
+      await sql("cerrar restricciones diferidas", "set constraints all immediate");
+      await sql("reaplicar el parche", body);
+      await sql("reaplicar el parche otra vez", body);
+      await sql("restricciones diferidas", "set constraints all deferred");
+
+      const column = await one(
+        "columna",
+        "select data_type, is_nullable, column_default from information_schema.columns where table_schema = 'public' and table_name = 'product_pack_conversions' and column_name = 'always_disassemble_on_receive'",
+      );
+      const readers = await one("funciones que la nombran", "select count(*)::int as n from pg_proc where pronamespace = 'public'::regnamespace and prosrc ilike '%always_disassemble_on_receive%'");
+      const fresh = await boxOf(6);
+
+      expect({ column, lectores: readers.n, marcada: await preference(box.recipeId), nueva: await preference(fresh.recipeId) }).toEqual({
+        column: { data_type: "boolean", is_nullable: "NO", column_default: "false" },
+        lectores: 0,
+        marcada: true,
+        nueva: false,
+      });
+    });
+  });
+
+  it("se lee y se escribe por la tabla (vía de la receta) con la RLS de la cabecera: la lee toda la tienda, la escriben almacén y admin; otra tienda y anon no ven ni escriben nada", async () => {
+    await withRollback(db, async () => {
+      const box = await boxOf(6);
+      const read = (actor: Actor): Promise<Outcome> =>
+        runAs(actor, "select always_disassemble_on_receive as v from public.product_pack_conversions where id = $1", [box.recipeId]);
+      const write = async (actor: Actor, value: boolean): Promise<string | number> => {
+        const out = await runAs(actor, "update public.product_pack_conversions set always_disassemble_on_receive = $2 where id = $1 returning id", [box.recipeId, value]);
+        return out.code ?? out.rows.length;
+      };
+
+      const denied = {
+        vendedor: await write("vendedor1", true),
+        contador: await write("contador", true),
+        otraTienda: await write("otraTienda", true),
+        anon: await write("anon", true),
+      };
+      const afterDenied = await preference(box.recipeId);
+      const almacen = await write("almacen", true);
+      const reads = {
+        vendedor: (await read("vendedor1")).rows[0]?.v,
+        contador: (await read("contador")).rows[0]?.v,
+        almacen: (await read("almacen")).rows[0]?.v,
+        otraTienda: (await read("otraTienda")).rows.length,
+        anon: (await read("anon")).rows.length,
+      };
+      const admin = await write("admin", false);
+
+      expect({ denied, afterDenied, almacen, reads, admin, final: await preference(box.recipeId) }).toEqual({
+        // El update de quien no puede escribir no afecta filas (RLS), sin error.
+        denied: { vendedor: 0, contador: 0, otraTienda: 0, anon: 0 },
+        afterDenied: false,
+        almacen: 1,
+        reads: { vendedor: true, contador: true, almacen: true, otraTienda: 0, anon: 0 },
+        admin: 1,
+        final: false,
+      });
+    });
+  });
+
+  it("PostgREST expone la columna (esquema recargado): las recetas sembradas del lab la traen en false", async () => {
+    const client = await lab.supa("almacen");
+    const { data, error } = await client.from("product_pack_conversions").select("id, always_disassemble_on_receive").eq("is_active", true).limit(5);
+
+    expect(error).toBeNull();
+    expect((data ?? []).length).toBeGreaterThan(0);
+    expect((data ?? []).every((row) => row.always_disassemble_on_receive === false)).toBe(true);
+  });
+
+  it("escribir solo la preferencia no toca la receta (componentes, total, columnas de compatibilidad) ni mueve stock", async () => {
+    await withRollback(db, async () => {
+      const kit = await assortment();
+      const ids = [kit.pack, kit.a, kit.b, kit.c];
+      const shape = (): Promise<Row> =>
+        one(
+          "forma de la receta",
+          "select c.total_units, c.units_per_pack, c.unit_product_id, c.is_active, (select jsonb_agg(jsonb_build_object('u', pc.unit_product_id, 'n', pc.units_per_pack, 'w', pc.cost_weight::text) order by pc.unit_product_id) from public.product_pack_components pc where pc.conversion_id = c.id) as componentes from public.product_pack_conversions c where c.pack_product_id = $1 and c.is_active",
+          [kit.pack],
+        );
+      const [antes, estadoAntes] = [await shape(), await state(ids)];
+
+      const out = await run("update public.product_pack_conversions set always_disassemble_on_receive = true where pack_product_id = $1 and is_active returning id", [kit.pack]);
+
+      expect({ code: out.code, filas: out.rows.length, receta: await shape(), estado: await state(ids) }).toEqual({ code: null, filas: 1, receta: antes, estado: estadoAntes });
+    });
+  });
+
+  it("la preferencia NO decide el desarme: con ella en true, una línea sin marca entra como empaque y una marcada se abre igual que sin ella", async () => {
+    await withRollback(db, async () => {
+      const s = await supplier();
+      const [con, sin] = [await boxOf(6, { unitStock: 5 }), await boxOf(6, { unitStock: 5 })];
+      await sql("preferencia en true", "update public.product_pack_conversions set always_disassemble_on_receive = true where id = $1", [con.recipeId]);
+
+      const sinMarca = await order(s, [{ product: con.pack, costRef: 9, quantity: 2 }]);
+      await must("recibir sin marca", receive(sinMarca));
+      const trasSinMarca = (await state([con.pack, con.unit])).map((row) => row.stock);
+
+      const [marcadaCon, marcadaSin] = [
+        await order(s, [{ product: con.pack, costRef: 9, quantity: 2, disassemble: true }]),
+        await order(s, [{ product: sin.pack, costRef: 9, quantity: 2, disassemble: true }]),
+      ];
+      await must("recibir marcada (receta con preferencia)", receive(marcadaCon));
+      await must("recibir marcada (receta sin preferencia)", receive(marcadaSin));
+
+      expect(trasSinMarca).toEqual([2, 5]);
+      expect((await state([con.pack, con.unit])).map((row) => row.stock)).toEqual([2, 17]);
+      expect((await state([sin.pack, sin.unit])).map((row) => row.stock)).toEqual([0, 17]);
+      expect(await integrity([con.pack, con.unit, sin.pack, sin.unit])).toEqual({});
+    });
+  });
+});
+
+describe("flujo 11 · 3 cajas de surtido 2-2-2 con una caja ajustada a 3-1-2", () => {
+  /** Caja surtida de 6 (2 Cola + 2 Manzana + 2 Naranja), con stock previo en Cola y Naranja si se pide. */
+  async function flavours(stock: { cola?: number; naranja?: number } = {}): Promise<{ pack: string; cola: string; manzana: string; naranja: string }> {
+    const pack = await product("caja-surtida", { cost: "1.00" });
+    const [cola, manzana, naranja] = [await product("cola", { stock: stock.cola }), await product("manzana"), await product("naranja", { stock: stock.naranja })];
+    await recipe(pack, [
+      { id: cola, units: 2 },
+      { id: manzana, units: 2 },
+      { id: naranja, units: 2 },
+    ]);
+    return { pack, cola, manzana, naranja };
+  }
+
+  it("recibir con el reparto 7 / 5 / 6: −3 cajas (neto 0), +7 Cola, +5 Manzana, +6 Naranja y vistas en 0", async () => {
+    await withRollback(db, async () => {
+      const s = await supplier();
+      const kit = await flavours({ cola: 4, naranja: 1 });
+      const ids = [kit.pack, kit.cola, kit.manzana, kit.naranja];
+      const id = await order(s, [{ product: kit.pack, costRef: 12, quantity: 3, disassemble: true }]);
+      // Dos cajas por receta (2-2-2) y una ajustada a 3-1-2.
+      const reparto = [
+        { unit_product_id: kit.cola, units: 2 + 2 + 3 },
+        { unit_product_id: kit.manzana, units: 2 + 2 + 1 },
+        { unit_product_id: kit.naranja, units: 2 + 2 + 2 },
+      ];
+
+      const out = await receive(id, { disassemble: [{ item: await lineId(id, kit.pack), components: reparto }], key: randomUUID() });
+      const estado = await state(ids);
+      const deltas = estado.map((row) =>
+        (row.movimientos as Array<{ type: string; delta: number }>).filter((move) => move.type !== "inventario_inicial").map((move) => [move.type, move.delta]),
+      );
+
+      expect(out.code).toBeNull();
+      expect({ status: await purchaseStatus(id), lineas: (await lineRows(id)).map((line) => [line.marca, line.desarmada]) }).toEqual({
+        status: "recibido",
+        lineas: [[true, true]],
+      });
+      expect(estado.map((row) => row.stock)).toEqual([0, 4 + 7, 5, 1 + 6]);
+      expect(deltas).toEqual([
+        [
+          ["compra", 3],
+          ["conversion_salida", -3],
+        ],
+        [["conversion_entrada", 7]],
+        [["conversion_entrada", 5]],
+        [["conversion_entrada", 6]],
+      ]);
+      expect(await integrity(ids)).toEqual({});
+    });
+  });
+
+  it("el mismo reparto deja lo mismo que recibir y abrir las 3 cajas a mano con 7 / 5 / 6", async () => {
+    await withRollback(db, async () => {
+      const s = await supplier();
+      const [auto, manual] = [await flavours({ cola: 4, naranja: 1 }), await flavours({ cola: 4, naranja: 1 })];
+      const reparto = (kit: { cola: string; manzana: string; naranja: string }) => [
+        { unit_product_id: kit.cola, units: 7 },
+        { unit_product_id: kit.manzana, units: 5 },
+        { unit_product_id: kit.naranja, units: 6 },
+      ];
+      const idAuto = await order(s, [{ product: auto.pack, costRef: 12, quantity: 3, disassemble: true }]);
+      const idManual = await order(s, [{ product: manual.pack, costRef: 12, quantity: 3 }]);
+
+      await must("recibir desarmando", receive(idAuto, { disassemble: [{ item: await lineId(idAuto, auto.pack), components: reparto(auto) }] }));
+      await must("recibir a mano", receivePlain(idManual));
+      await must("abrir a mano", convert(manual.pack, 3, reparto(manual)));
+
+      expect(await state([auto.pack, auto.cola, auto.manzana, auto.naranja])).toEqual(await state([manual.pack, manual.cola, manual.manzana, manual.naranja]));
+    });
+  });
+
+  it("un reparto que suma 17 responde PT400 sin recibir nada; sin reparto el pedido abre por receta: +6 / +6 / +6", async () => {
+    await withRollback(db, async () => {
+      const s = await supplier();
+      const kit = await flavours();
+      const ids = [kit.pack, kit.cola, kit.manzana, kit.naranja];
+      const id = await order(s, [{ product: kit.pack, costRef: 12, quantity: 3, disassemble: true }]);
+      const antes = await state(ids);
+
+      const rechazado = await receive(id, {
+        disassemble: [
+          {
+            item: await lineId(id, kit.pack),
+            components: [
+              { unit_product_id: kit.cola, units: 7 },
+              { unit_product_id: kit.manzana, units: 5 },
+              { unit_product_id: kit.naranja, units: 5 },
+            ],
+          },
+        ],
+      });
+
+      expect({ code: rechazado.code, mensaje: rechazado.message, status: await purchaseStatus(id), estado: await state(ids) }).toEqual({
+        code: "PT400",
+        mensaje: "La distribucion debe sumar 18 unidades (3 empaques x 6) y suma 17",
+        status: "pedido",
+        estado: antes,
+      });
+
+      await must("recibir por receta", receive(id));
+
+      expect((await state(ids)).map((row) => row.stock)).toEqual([0, 6, 6, 6]);
+    });
+  });
+});
+
 describe("oráculo", () => {
   it("stock_integrity_report de la tienda lab no sube tras recibir desarmando un pedido y crear una compra recibida desarmada", async () => {
     await withRollback(db, async () => {
