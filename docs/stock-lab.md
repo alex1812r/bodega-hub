@@ -268,6 +268,15 @@ reproducido), `finding` (el stock queda bien, pero hay una carencia), `error`
   `os.20260830b_remove.fix_by_api` comprueban ese rechazo y después devuelven
   por el camino ligado, verificando el tope (vendido/recibido − ya devuelto:
   pasarse es 409, el resto exacto pasa, una unidad más es 409).
+- **Compra de un producto inactivo** (COM-15, `20261010b`): las celdas
+  `inactive.purchase_received_*` exigen el rechazo (400, stock y libro
+  intactos); ya no son `finding`. `inactive.purchase_ordered_then_receive`
+  pide con el producto ACTIVO, lo desactiva, exige que la recepción se acepte
+  (entra una vez) y que un pedido nuevo se rechace. El resto de celdas
+  `inactive.purchase_*` (recibir dos veces, cancelar, devolver) compran con el
+  producto activo y lo desactivan justo antes del paso bajo prueba. Los ajustes
+  sobre un inactivo (`inactive.adjust_in` / `adjust_out`) siguen siendo
+  `finding`.
 - **Doble envío de compra, ajuste y conversión**: `h08.dg5_double_submit` manda
   la MISMA `clientRequestId` en los dos POST y exige una sola operación (mismo
   id, un movimiento). `h08.dg5_double_submit_no_key` repite el envío sin clave:

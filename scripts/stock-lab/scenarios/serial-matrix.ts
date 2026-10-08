@@ -213,6 +213,15 @@ export function saleHttp(subject: { active: boolean; stock: number }, quantity: 
   return subject.active && quantity <= subject.stock ? "accept" : "reject";
 }
 
+/**
+ * COM-15 (20261010b): una compra, recibida o en pedido, solo se acepta sobre un producto activo; sobre uno
+ * inactivo se rechaza sin mover nada. `observe` deja la celda en observación (variantes de empaque).
+ */
+export function purchaseHttp(subject: { active: boolean }, observe = false): HttpExpectation {
+  if (observe) return "either";
+  return subject.active ? "accept" : "reject";
+}
+
 /** Un ajuste que deja el stock negativo debe rechazarse; sobre un inactivo se observa. */
 export function adjustHttp(subject: { active: boolean; stock: number }, quantityDelta: number): HttpExpectation {
   if (subject.stock + quantityDelta < 0) return "reject";
@@ -522,7 +531,7 @@ type BuyOptions = {
   productId?: string;
   status?: "pedido" | "recibido";
   label: string;
-  /** Hallazgo si el sistema acepta (variantes observacionales); sin él, un inactivo aceptado queda como nota. */
+  /** Hallazgo si el sistema acepta (variantes observacionales, con `observe`). */
   findingIfAccepted?: string;
   /** Fuerza `either` aunque el producto esté activo (variantes de empaque). */
   observe?: boolean;
@@ -536,7 +545,7 @@ async function buy(c: Ctx, subject: Subject, line: PurchaseLineSpec, options: Bu
   const status = options.status ?? "recibido";
   const units = options.units ?? purchaseUnits(line);
   const received = status === "recibido";
-  const http: HttpExpectation = subject.active && !options.observe ? "accept" : "either";
+  const http = purchaseHttp(subject, options.observe);
   const result = await c.h.op({
     as: STOCKER,
     method: "POST",
@@ -557,7 +566,6 @@ async function buy(c: Ctx, subject: Subject, line: PurchaseLineSpec, options: Bu
     c.h.note(`${options.label}: el sistema rechazó la compra (${result.res.status}) sin mover stock`);
     return null;
   }
-  if (!subject.active && !options.findingIfAccepted) c.h.note(`${options.label}: el sistema acepta la compra sobre un producto inactivo`);
   if (received) applyStock(subject, productId, units);
   c.h.evidence(`compra ${result.id} (${status}, ${units} uds)`);
   return { id: result.id, productId, units };
@@ -859,14 +867,12 @@ export const OPS: OpDef[] = [
   },
   {
     key: "purchase_received_unit",
-    title: "Compra recibido por unidad (10)",
+    title: "Compra recibido por unidad (10); sobre un producto inactivo se rechaza sin mover stock ni libro",
     hypothesis: ["H1"],
     run: async (c) => {
       const subject = await createSubject(c);
-      await buy(c, subject, { mode: "unit", quantity: 10 }, {
-        label: "compra 10 uds",
-        ...(subject.active ? {} : { findingIfAccepted: "se puede comprar un producto inactivo: entra stock a un producto que no se puede vender" }),
-      });
+      // COM-15: con el producto inactivo `buy` exige el rechazo (4xx, stock y movimientos intactos).
+      await buy(c, subject, { mode: "unit", quantity: 10 }, { label: subject.active ? "compra 10 uds" : "compra 10 uds de un producto inactivo" });
     },
   },
   ...PACK_SIZES.map(packPurchaseOp),
@@ -908,17 +914,18 @@ export const OPS: OpDef[] = [
   },
   {
     key: "purchase_ordered_then_receive",
-    title: "Compra pedido (no mueve stock) → recibir (entra una vez)",
+    title: "Compra pedido (no mueve stock) → recibir (entra una vez); si el producto se desactiva tras pedirlo se recibe igual, y un pedido nuevo se rechaza",
     hypothesis: ["H1", "H11"],
     run: async (c) => {
-      const subject = await createSubject(c);
-      const purchase = await buy(c, subject, { mode: "unit", quantity: 10 }, {
-        status: "pedido",
-        label: "compra pedido",
-        ...(subject.active ? {} : { findingIfAccepted: "se puede crear un pedido de compra de un producto inactivo" }),
-      });
+      const subject = await createSubject(c, { keepActive: true });
+      const purchase = await buy(c, subject, { mode: "unit", quantity: 10 }, { status: "pedido", label: "compra pedido" });
       if (!purchase) return;
-      await purchaseStep(c, subject, purchase, "receive", flowHttp(subject), "recibir");
+      await deactivateIfInactiveKind(c, subject);
+      // COM-15: la mercancía ya pedida se recibe aunque el producto se haya desactivado después.
+      const label = subject.active ? "recibir" : "recibir el pedido de un producto desactivado después de pedirlo";
+      c.h.need(await purchaseStep(c, subject, purchase, "receive", "accept", label), "la recepción del pedido");
+      if (subject.active) return;
+      await buy(c, subject, { mode: "unit", quantity: 10 }, { status: "pedido", label: "pedido nuevo de un producto ya inactivo" });
     },
   },
   {
@@ -926,10 +933,11 @@ export const OPS: OpDef[] = [
     title: "Recibir dos veces la misma compra (en serie): la segunda se rechaza sin mover",
     hypothesis: ["H1", "H11"],
     run: async (c) => {
-      const subject = await createSubject(c);
+      const subject = await createSubject(c, { keepActive: true });
       const purchase = await buy(c, subject, { mode: "unit", quantity: 10 }, { status: "pedido", label: "compra pedido" });
       if (!purchase) return;
-      const first = await purchaseStep(c, subject, purchase, "receive", flowHttp(subject), "recibir");
+      await deactivateIfInactiveKind(c, subject);
+      const first = await purchaseStep(c, subject, purchase, "receive", "accept", "recibir");
       if (!first.accepted) return;
       await purchaseStep(c, subject, purchase, "receive", "reject", "recibir por segunda vez");
     },
@@ -939,9 +947,10 @@ export const OPS: OpDef[] = [
     title: "Cancelar compra recibida sin stock vendido, y cancelar dos veces",
     hypothesis: ["H4"],
     run: async (c) => {
-      const subject = await createSubject(c);
+      const subject = await createSubject(c, { keepActive: true });
       const purchase = await buy(c, subject, { mode: "unit", quantity: 10 }, { label: "compra 10 uds" });
       if (!purchase) return;
+      await deactivateIfInactiveKind(c, subject);
       const first = await purchaseStep(c, subject, purchase, "cancel", flowHttp(subject), "cancelar compra");
       if (!first.accepted) return;
       await purchaseStep(c, subject, purchase, "cancel", "reject", "cancelar por segunda vez");
@@ -966,9 +975,10 @@ export const OPS: OpDef[] = [
     title: "Devolución parcial de compra por ajuste devolucion_proveedor: sin documento → 400; ligada a la compra (purchaseId) con tope recibido − ya devuelto",
     hypothesis: ["H4"],
     run: async (c) => {
-      const subject = await createSubject(c);
+      const subject = await createSubject(c, { keepActive: true });
       const purchase = await buy(c, subject, { mode: "unit", quantity: 10 }, { label: "compra 10 uds" });
       if (!purchase) return;
+      await deactivateIfInactiveKind(c, subject);
       // R4 (20261006g): la devolución suelta ya no existe; 400 y ni un movimiento.
       await adjust(c, subject, -3, "devolucion_proveedor", "reject", "devolución de 3 SIN purchaseId (ajuste suelto)");
       const link = { purchaseId: purchase.id };
@@ -986,9 +996,10 @@ export const OPS: OpDef[] = [
     title: "Devolver compra completa, y devolver dos veces",
     hypothesis: ["H4"],
     run: async (c) => {
-      const subject = await createSubject(c);
+      const subject = await createSubject(c, { keepActive: true });
       const purchase = await buy(c, subject, { mode: "unit", quantity: 10 }, { label: "compra 10 uds" });
       if (!purchase) return;
+      await deactivateIfInactiveKind(c, subject);
       const first = await purchaseStep(c, subject, purchase, "return", flowHttp(subject), "devolver compra");
       if (!first.accepted) return;
       await purchaseStep(c, subject, purchase, "return", "reject", "devolver por segunda vez");
