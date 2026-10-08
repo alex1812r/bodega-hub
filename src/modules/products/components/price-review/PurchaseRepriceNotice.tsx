@@ -5,14 +5,13 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 
 import { MAX_PAGE_LIMIT } from "@/lib/api/pagination";
-import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
-import { formatMarkupPct, MarginBadge } from "@/shared/components/MarginBadge";
+import { formatMarkupPct } from "@/shared/components/MarginBadge";
 import { useToast } from "@/shared/components/Toast";
-import { roundMoney } from "@/shared/utils/currency";
-import { priceFromMarkup, type MarginThresholds } from "@/shared/utils/pricing";
+import { formatRefUsd } from "@/shared/utils/currency";
+import { priceFromMarkup } from "@/shared/utils/pricing";
 
 import {
   useKeepProductPrice,
@@ -21,20 +20,12 @@ import {
 } from "../../hooks/usePriceReview";
 import { useUpdateProductPrice } from "../../hooks/useProducts";
 import { buildRepriceReason } from "../../services/priceReview";
-import { getProductMarginThresholds } from "../../services/productMargin";
+import { PriceReviewChangeSummary } from "./PriceReviewChangeSummary";
 
 /** Filas visibles antes de "Mostrar N más". */
 export const PURCHASE_REPRICE_VISIBLE_ROWS = 10;
 
 const PRODUCTS_REVIEW_HREF = "/products?review=1";
-
-/** Monto REF en formato español, sin unidad: "11,25". */
-function formatRefAmount(value: number) {
-  return roundMoney(value).toLocaleString("es-VE", {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-  });
-}
 
 /**
  * Reprecio que se propone para un producto de la cola: el % de ganancia que
@@ -56,10 +47,9 @@ function errorMessage(error: unknown, fallback: string) {
 type PurchaseRepriceRowProps = {
   canManage: boolean;
   item: ProductPriceReviewItem;
-  thresholds: MarginThresholds;
 };
 
-function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowProps) {
+function PurchaseRepriceRow({ canManage, item }: PurchaseRepriceRowProps) {
   const updatePrice = useUpdateProductPrice(item.productId);
   const keepPrice = useKeepProductPrice();
   const { showToast } = useToast();
@@ -72,8 +62,8 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
 
   const proposal = getPurchaseRepriceProposal(item);
   const purchaseNumber = item.purchase?.number.trim() ?? "";
-  const currentPrice = formatRefAmount(item.salePriceRef);
-  const proposedPrice = formatRefAmount(proposal.salePriceRef);
+  const currentPrice = formatRefUsd(item.salePriceRef);
+  const proposedPrice = formatRefUsd(proposal.salePriceRef);
 
   function lock() {
     if (lockedRef.current) {
@@ -105,7 +95,7 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
       });
       setIsConfirmOpen(false);
       showToast({
-        description: `Pasa de ${currentPrice} a ${proposedPrice} REF.`,
+        description: `Pasa de ${currentPrice} a ${proposedPrice}.`,
         title: `Precio actualizado: ${item.name}`,
         tone: "success",
       });
@@ -125,7 +115,7 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
         reason: purchaseNumber ? `Precio mantenido tras compra ${purchaseNumber}` : undefined,
       });
       showToast({
-        description: `Sigue en ${currentPrice} REF.`,
+        description: `Sigue en ${currentPrice}.`,
         title: `Precio mantenido: ${item.name}`,
         tone: "success",
       });
@@ -149,23 +139,15 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
           </Link>{" "}
           <span className="text-on-surface-variant">{item.sku}</span>
         </p>
-        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm tabular-nums text-on-surface-variant">
-          <span>
-            Costo {formatRefAmount(item.previousCostRef)} → {formatRefAmount(item.currentCostRef)} REF
+        <PriceReviewChangeSummary change={item} />
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm tabular-nums">
+          <span className="text-on-surface-variant">PVP {currentPrice}</span>
+          <span aria-hidden className="text-on-surface-variant">
+            ·
           </span>
-          <span aria-hidden>·</span>
-          <span>PVP {currentPrice} REF</span>
-          <span aria-hidden>·</span>
-          <span className="inline-flex flex-wrap items-center gap-1.5">
-            ganancia
-            <MarginBadge pct={item.previousMarginPct} thresholds={thresholds} />
-            <span aria-hidden>→</span>
-            <span className="sr-only">pasa a</span>
-            <MarginBadge pct={item.currentMarginPct} thresholds={thresholds} />
+          <span className="font-medium text-foreground">
+            Reprecio al {formatMarkupPct(proposal.markupPct)} → {proposedPrice}
           </span>
-        </p>
-        <p className="text-sm font-medium tabular-nums text-foreground">
-          Reprecio al {formatMarkupPct(proposal.markupPct)} → {proposedPrice} REF
         </p>
         {error && !isConfirmOpen ? (
           <p className="break-words text-sm text-red-700 dark:text-red-300" role="alert">
@@ -195,11 +177,11 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
       {canManage ? (
         <ConfirmActionModal
           confirmLabel="Aplicar precio"
-          description={`El precio de ${item.name} pasa de ${currentPrice} a ${proposedPrice} REF.`}
+          description={`El precio de ${item.name} pasa de ${currentPrice} a ${proposedPrice}.`}
           effects={[
             {
-              after: `${proposedPrice} REF`,
-              before: `${currentPrice} REF`,
+              after: proposedPrice,
+              before: currentPrice,
               label: "Precio de venta",
               tone: "positive",
             },
@@ -224,7 +206,6 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
 
 function PurchaseRepriceList({ canManage, purchaseId }: { canManage: boolean; purchaseId: string }) {
   const review = usePriceReview({ limit: MAX_PAGE_LIMIT, purchaseId });
-  const pricing = usePricingSettings();
   const [showAll, setShowAll] = useState(false);
 
   if (review.isError) {
@@ -248,7 +229,6 @@ function PurchaseRepriceList({ canManage, purchaseId }: { canManage: boolean; pu
   const visibleItems = showAll ? items : items.slice(0, PURCHASE_REPRICE_VISIBLE_ROWS);
   const hiddenCount = items.length - visibleItems.length;
   const supplierName = items.find((item) => item.purchase?.supplierName)?.purchase?.supplierName;
-  const thresholds = getProductMarginThresholds(pricing.data);
 
   return (
     <section
@@ -280,12 +260,7 @@ function PurchaseRepriceList({ canManage, purchaseId }: { canManage: boolean; pu
 
       <ul className="mt-2 divide-y divide-border">
         {visibleItems.map((item) => (
-          <PurchaseRepriceRow
-            canManage={canManage}
-            item={item}
-            key={item.productId}
-            thresholds={thresholds}
-          />
+          <PurchaseRepriceRow canManage={canManage} item={item} key={item.productId} />
         ))}
       </ul>
 

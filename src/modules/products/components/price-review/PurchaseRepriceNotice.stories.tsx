@@ -66,7 +66,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** El ejemplo del plan: costo 8 → 9, PVP 10, 25 % → 11,11 %, reprecio 11,25. */
+/** El ejemplo del plan: costo ref 8.00 → ref 9.00, PVP ref 10.00, 25 % → 11,11 %, reprecio ref 11.25. */
 export const OneProduct: Story = {
   parameters: { msw: { handlers: queueHandlers([reviewItem(1, { name: "Harina PAN 1 kg" })]) } },
 };

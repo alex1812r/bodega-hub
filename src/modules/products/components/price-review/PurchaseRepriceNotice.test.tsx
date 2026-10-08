@@ -16,11 +16,6 @@ jest.mock("../../../../shared/auth/usePermission", () => ({
   usePermission: () => ({ can: (permission: string) => permissions.includes(permission) }),
 }));
 
-// Sin configuración de la tienda: cortes del semáforo por defecto.
-jest.mock("../../../settings/hooks/useSettings", () => ({
-  usePricingSettings: () => ({ data: undefined }),
-}));
-
 const PURCHASE = { id: "pur-1", number: "C-000123", receivedAt: "2026-10-07T12:00:00.000Z" };
 
 function reviewItem(overrides: Partial<ProductPriceReviewItem> = {}): ProductPriceReviewItem {
@@ -151,6 +146,7 @@ describe("PurchaseRepriceNotice", () => {
     expect(screen.queryByText(TITLE)).not.toBeInTheDocument();
   });
 
+  // PRO-F5: mismos importes (`formatRefUsd`) y misma frase que el resto de la cola "Por revisar".
   it("pinta la fila con las cifras del plan: 8 → 9, PVP 10, 25 % → 11,11 %, reprecio 11,25", async () => {
     serve([[reviewItem({ purchase: { ...PURCHASE, supplierName: "Distribuidora Polar" } })]]);
     renderNotice();
@@ -159,11 +155,16 @@ describe("PurchaseRepriceNotice", () => {
 
     expect(screen.getByRole("heading", { name: TITLE })).toBeInTheDocument();
     expect(screen.getByText("1 producto · Proveedor: Distribuidora Polar")).toBeInTheDocument();
-    expect(row.getByText("Costo 8,00 → 9,00 REF")).toBeInTheDocument();
-    expect(row.getByText("PVP 10,00 REF")).toBeInTheDocument();
-    expect(row.getByText("25 %").closest("[data-band]")).toHaveAttribute("data-band", "high");
-    expect(row.getByText("11,11 %").closest("[data-band]")).toHaveAttribute("data-band", "low");
-    expect(row.getByText("Reprecio al 25 % → 11,25 REF")).toBeInTheDocument();
+    const rowElement = screen.getByTestId("purchase-reprice-row-prod-1");
+
+    expect(rowElement).toHaveTextContent(/Costos*ref 8.00s*ref 9.00/);
+    expect(rowElement).toHaveTextContent(/Ganancias*25 %s*11,11 %/);
+    expect(
+      row.getByText("La ganancia bajó de 25 % a 11,11 % al subir el costo de ref 8.00 a ref 9.00"),
+    ).toHaveClass("sr-only");
+    expect(row.getByText("PVP ref 10.00")).toBeInTheDocument();
+    expect(row.getByText("Reprecio al 25 % → ref 11.25")).toBeInTheDocument();
+    expect(rowElement).not.toHaveTextContent(/d,dd (→|REF)|REF/);
     expect(row.getByRole("link", { name: "Harina PAN 1 kg" })).toHaveAttribute("href", "/products/prod-1");
     expect(screen.queryByRole("link", { name: "Ver todos en Productos" })).not.toBeInTheDocument();
   });
@@ -176,7 +177,7 @@ describe("PurchaseRepriceNotice", () => {
 
     const dialog = within(await screen.findByRole("dialog"));
 
-    expect(dialog.getByText("El precio de Harina PAN 1 kg pasa de 10,00 a 11,25 REF.")).toBeInTheDocument();
+    expect(dialog.getByText("El precio de Harina PAN 1 kg pasa de ref 10.00 a ref 11.25.")).toBeInTheDocument();
     expect(mutations()).toEqual([]);
 
     await user.click(dialog.getByRole("button", { name: "Aplicar precio" }));
@@ -191,6 +192,7 @@ describe("PurchaseRepriceNotice", () => {
       ]),
     );
     expect(await screen.findByText("Precio actualizado: Harina PAN 1 kg")).toBeInTheDocument();
+    expect(screen.getByText("Pasa de ref 10.00 a ref 11.25.")).toBeInTheDocument();
     // Era la última fila: el bloque entero desaparece con el refresco de la cola.
     await waitFor(() => expect(screen.queryByText(TITLE)).not.toBeInTheDocument());
   });
@@ -215,6 +217,7 @@ describe("PurchaseRepriceNotice", () => {
       ]),
     );
     expect(await screen.findByText("Precio mantenido: Harina PAN 1 kg")).toBeInTheDocument();
+    expect(screen.getByText("Sigue en ref 10.00.")).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.queryByTestId("purchase-reprice-row-prod-1")).not.toBeInTheDocument(),
     );
@@ -333,7 +336,7 @@ describe("PurchaseRepriceNotice", () => {
     serve([[reviewItem()]]);
     renderNotice();
 
-    expect(await screen.findByText("Reprecio al 25 % → 11,25 REF")).toBeInTheDocument();
+    expect(await screen.findByText("Reprecio al 25 % → ref 11.25")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Aplicar" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mantener precio" })).not.toBeInTheDocument();
   });
