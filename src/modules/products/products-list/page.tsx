@@ -2,7 +2,7 @@
 
 import { Plus, Tags, Upload } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
@@ -15,15 +15,26 @@ import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
-import { ResponsivePagination, usePaginationState, useSortState } from "@/shared/components/Pagination";
+import { MarginBadge } from "@/shared/components/MarginBadge";
+import {
+  ResponsivePagination,
+  useUrlPaginationState,
+  useUrlSortState,
+} from "@/shared/components/Pagination";
+import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import {
+  URL_LIST_DEBOUNCE_MS,
+  useUrlListState,
+  withUrlListBoundary,
+} from "@/shared/hooks/useUrlListState";
 import { cn } from "@/shared/utils/cn";
+import { withReturnTo } from "@/shared/utils/returnTo";
 
 import { ProductFormModal } from "../product-details/components/ProductFormModal";
 import type { ProductFormSubmitContext } from "../product-details/components/ProductFormModal";
 import { uploadProductImageBlob } from "../services/uploadProductImage";
 import {
   type ProductInput,
-  type ProductsFilters,
   type ProductWithCategory,
   productsQueryKeys,
   useCategories,
@@ -41,15 +52,33 @@ import { ReactivateProductConfirmModal } from "./components/ReactivateProductCon
 import { ProductsListFilters } from "./components/ProductsListFilters";
 import { ProductsStatusBadge } from "./components/ProductsStatusBadge";
 import { normalizeBarcode } from "../services/productSearch";
+import { productsListSchema, toProductsFilters } from "./productsListParams";
 
 const skuHeaderClass = "w-[5.75rem] max-w-[5.75rem]";
 const skuCellClass = "min-w-0 w-[5.75rem] max-w-[5.75rem] overflow-hidden";
+const detailLinkClass =
+  "block min-w-0 rounded-md hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function isLowStock(product: ProductWithCategory) {
   return product.isActive && product.currentStock > 0 && product.currentStock <= product.minStock;
 }
 
-function buildProductColumns(rateVes: number): DataTableColumn<ProductWithCategory>[] {
+function ProductDetailLink({ href, product }: { href: string; product: ProductWithCategory }) {
+  return (
+    <Link className={detailLinkClass} href={href}>
+      <ProductNameWithThumb
+        imageUrl={product.imageUrl}
+        isActive={product.isActive}
+        name={product.name}
+      />
+    </Link>
+  );
+}
+
+function buildProductColumns(
+  rateVes: number,
+  detailHref: (productId: string) => string,
+): DataTableColumn<ProductWithCategory>[] {
   return [
     {
       cellClassName: skuCellClass,
@@ -65,13 +94,7 @@ function buildProductColumns(rateVes: number): DataTableColumn<ProductWithCatego
       header: "Nombre",
       hideInCard: true,
       key: "name",
-      render: (product) => (
-        <ProductNameWithThumb
-          imageUrl={product.imageUrl}
-          isActive={product.isActive}
-          name={product.name}
-        />
-      ),
+      render: (product) => <ProductDetailLink href={detailHref(product.id)} product={product} />,
       sortable: true,
     },
     {
@@ -106,13 +129,35 @@ function buildProductColumns(rateVes: number): DataTableColumn<ProductWithCatego
       header: "PVP",
       key: "salePriceRef",
       render: (product) => (
-        <ProductMoneyCell
-          isActive={product.isActive}
-          rateVes={rateVes}
-          refAmount={product.salePriceRef}
-        />
+        <div className="flex items-center justify-end gap-2">
+          {/* Por debajo de lg no hay columna "Ganancia": el semáforo va junto al precio. */}
+          <MarginBadge
+            className="lg:hidden"
+            cost={product.currentCostRef}
+            price={product.salePriceRef}
+          />
+          <ProductMoneyCell
+            isActive={product.isActive}
+            rateVes={rateVes}
+            refAmount={product.salePriceRef}
+          />
+        </div>
       ),
       sortable: true,
+    },
+    {
+      align: "right",
+      header: "Ganancia",
+      hideInCard: true,
+      key: "marginPct",
+      // currentCostRef ya incluye el IVA: el % se calcula sobre él tal cual.
+      render: (product) => (
+        <div className="flex justify-end">
+          <MarginBadge cost={product.currentCostRef} price={product.salePriceRef} />
+        </div>
+      ),
+      sortable: true,
+      visibility: "lg",
     },
     {
       align: "right",
@@ -147,29 +192,33 @@ function buildProductColumns(rateVes: number): DataTableColumn<ProductWithCatego
   ];
 }
 
-export function ProductsListPage() {
+function ProductsList() {
   const { can } = usePermission();
   const queryClient = useQueryClient();
-  const [filters, setFilters] = useState<
-    Pick<ProductsFilters, "categoryId" | "isActive" | "search">
-  >({});
+  const list = useUrlListState(productsListSchema);
   const [productToDeactivate, setProductToDeactivate] = useState<ProductWithCategory | null>(null);
   const [productToReactivate, setProductToReactivate] = useState<ProductWithCategory | null>(null);
   const [productToAddBarcode, setProductToAddBarcode] = useState<ProductWithCategory | null>(null);
   const [productToEditId, setProductToEditId] = useState<string | null>(null);
-  const { handleSort, sortBy, sortOrder } = useSortState();
-  const { limit, setLimit, setSkip, skip } = usePaginationState([
-    filters.search,
-    filters.categoryId,
-    filters.isActive,
-    sortBy,
-    sortOrder,
-  ]);
-  const products = useProducts({ ...filters, limit, skip, sortBy, sortOrder });
+  const { handleSort, sortBy, sortOrder } = useUrlSortState(list);
+  const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
+  // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
+  const debouncedSearch = useDebouncedValue(list.state.search, URL_LIST_DEBOUNCE_MS);
+  const products = useProducts({
+    ...toProductsFilters(list.state, debouncedSearch),
+    limit,
+    skip,
+  });
   const categories = useCategories();
   const currentRate = useCurrentExchangeRate();
   const rateVes = currentRate.data?.rateVes ?? 0;
-  const columns = useMemo(() => buildProductColumns(rateVes), [rateVes]);
+  // El detalle vuelve a esta URL exacta (filtros, orden y página) con "Volver".
+  const listHref = list.href;
+  const detailHref = useCallback(
+    (productId: string) => withReturnTo(`/products/${productId}`, listHref),
+    [listHref],
+  );
+  const columns = useMemo(() => buildProductColumns(rateVes, detailHref), [detailHref, rateVes]);
   const createProduct = useCreateProduct();
   const productToEditQuery = useProduct(productToEditId ?? "");
   const updateProduct = useUpdateProduct(productToEditId ?? "");
@@ -184,11 +233,6 @@ export function ProductsListPage() {
   const editProduct = productToEditQuery.data ?? editProductFallback;
   const isEditModalOpen = Boolean(productToEditId && editProduct);
   const isSavingEdit = updateProduct.isPending || updateProductPrice.isPending;
-
-  function handleFilterChange(patch: Partial<ProductsFilters>) {
-    setFilters((current) => ({ ...current, ...patch }));
-    setSkip(0);
-  }
 
   async function handleCreateProduct(input: ProductInput, context?: ProductFormSubmitContext) {
     const product = await createProduct.mutateAsync(input);
@@ -253,20 +297,20 @@ export function ProductsListPage() {
       >
         <ProductsListFilters
           categoryOptions={categoryOptions}
-          filters={filters}
-          onChange={handleFilterChange}
+          filters={list.state}
+          onChange={list.setState}
         />
 
         <div className="flex w-full flex-col md:overflow-hidden md:rounded-xl md:border md:border-border md:bg-surface-container-lowest md:shadow-sm dark:md:border-slate-800">
           <DataTable
             actions={(product) => {
               const items: ActionMenuItem[] = [
-                { href: `/products/${product.id}`, label: "Ver detalle" },
+                { href: detailHref(product.id), label: "Ver detalle" },
               ];
 
               if (!normalizeBarcode(product.barcode) && can("products.view")) {
                 items.push({
-                  label: "Agregar codigo de barras",
+                  label: "Agregar código de barras",
                   onSelect: () => setProductToAddBarcode(product),
                 });
               }
@@ -279,7 +323,7 @@ export function ProductsListPage() {
               }
 
               items.push({
-                href: `/products/${product.id}`,
+                href: detailHref(product.id),
                 label: "Historial de precios",
               });
 
@@ -302,11 +346,7 @@ export function ProductsListPage() {
             }}
             cardSubtitle={(product) => product.category?.name ?? "Sin categoría"}
             cardTitle={(product) => (
-              <ProductNameWithThumb
-                imageUrl={product.imageUrl}
-                isActive={product.isActive}
-                name={product.name}
-              />
+              <ProductDetailLink href={detailHref(product.id)} product={product} />
             )}
             columns={columns}
             data={productItems}
@@ -411,3 +451,6 @@ export function ProductsListPage() {
     </div>
   );
 }
+
+/** `useUrlListState` lee la URL: la pantalla lleva su límite de Suspense. */
+export const ProductsListPage = withUrlListBoundary(ProductsList);

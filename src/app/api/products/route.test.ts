@@ -59,6 +59,22 @@ describe("/api/products", () => {
     ).toBe(true);
   });
 
+  it("filters products by margin band and sorts them by margin percentage", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/products?margin=high&sortBy=marginPct&sortOrder=asc&limit=100"),
+    );
+    const body = await response.json();
+    const percentages: number[] = body.data.items.map(
+      (product: { currentCostRef: number; salePriceRef: number }) =>
+        ((product.salePriceRef - product.currentCostRef) / product.currentCostRef) * 100,
+    );
+
+    expect(response.status).toBe(200);
+    expect(percentages.length).toBeGreaterThan(0);
+    expect(percentages.every((pct) => pct >= 25)).toBe(true);
+    expect(percentages).toEqual([...percentages].sort((left, right) => left - right));
+  });
+
   it("filters products by exact barcode", async () => {
     const response = await GET(
       new Request("http://localhost/api/products?barcode=7501234567890&isActive=true"),
@@ -278,9 +294,15 @@ describe("/api/products", () => {
     const mockOrder = jest.fn().mockReturnThis();
     const mockEq = jest.fn().mockReturnThis();
     const mockOr = jest.fn().mockReturnThis();
+    const mockGte = jest.fn().mockReturnThis();
+    const mockLt = jest.fn().mockReturnThis();
+    const mockIs = jest.fn().mockReturnThis();
     const mockSelect = jest.fn(() => ({
       eq: mockEq,
+      gte: mockGte,
       ilike: jest.fn().mockReturnThis(),
+      is: mockIs,
+      lt: mockLt,
       or: mockOr,
       order: mockOrder,
       range: mockRange,
@@ -359,6 +381,37 @@ describe("/api/products", () => {
 
       expect(response.status).toBe(200);
       expect(mockOrder).toHaveBeenCalledWith("current_stock", { ascending: false });
+    });
+
+    it("filters by margin band as a range of margin_pct and sorts by it with nulls last", async () => {
+      const response = await GET(
+        new Request("http://localhost/api/products?margin=mid&sortBy=marginPct&sortOrder=desc"),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockGte).toHaveBeenCalledWith("margin_pct", 15);
+      expect(mockLt).toHaveBeenCalledWith("margin_pct", 25);
+      expect(mockIs).not.toHaveBeenCalled();
+      expect(mockOrder).toHaveBeenCalledWith("margin_pct", { ascending: false, nullsFirst: false });
+      expect(mockEq).toHaveBeenCalledWith("store_id", "00000000-0000-4000-8000-000000000001");
+    });
+
+    it("filters the products without cost with margin=none", async () => {
+      const response = await GET(new Request("http://localhost/api/products?margin=none"));
+
+      expect(response.status).toBe(200);
+      expect(mockIs).toHaveBeenCalledWith("margin_pct", null);
+      expect(mockGte).not.toHaveBeenCalled();
+      expect(mockLt).not.toHaveBeenCalled();
+    });
+
+    it("does not filter by margin with an unknown value", async () => {
+      const response = await GET(new Request("http://localhost/api/products?margin=barata"));
+
+      expect(response.status).toBe(200);
+      expect(mockGte).not.toHaveBeenCalled();
+      expect(mockLt).not.toHaveBeenCalled();
+      expect(mockIs).not.toHaveBeenCalled();
     });
   });
 });

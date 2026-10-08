@@ -432,3 +432,13 @@ notify pgrst, 'reload schema';
 -- purchase_items.tax_rate_code) y llama a tax_rates_for_store y override_tax_rate_for_store: sin los dos parches,
 -- categorias, configuracion, detalle de compra y /api/tax-rates responden error. Los parches si son compatibles con el
 -- BFF anterior (create_purchase sigue aceptando solo tax_rate), asi que el orden seguro es parches -> verify -> BFF.
+-- -----------------------------------------------------------------------------
+-- 20261009a — product margin pct (PRO-07): columna generada almacenada products.margin_pct (% de ganancia sobre el costo
+--             en REF; NULL con costo 0) + indice (store_id, margin_pct) para filtrar y ordenar el listado por ganancia
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009a-product-margin-pct.sql
+-- No requiere otros parches. Idempotente, una transaccion. No migra datos, no toca stock, dinero ni RPC: Postgres calcula
+-- la columna a partir de sale_price_ref y current_cost_ref (que ya incluye IVA) y la mantiene sola.
+-- OJO: reescribe la tabla products con bloqueo exclusivo mientras dura (aplicar fuera de hora pico).
+-- ORDEN DE DESPLIEGUE (PRO-07): aplicar ANTES de desplegar el BFF: GET /api/products?margin=... y sortBy=marginPct
+-- filtran y ordenan por margin_pct; sin el parche esas dos consultas responden error (el resto del listado no la usa).

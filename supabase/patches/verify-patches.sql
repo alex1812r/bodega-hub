@@ -1102,4 +1102,29 @@ select
       and p.prosrc not ilike '%purchase_items%'
       and p.prosrc not ilike '%current_stock%'
   )
+union all
+select
+  'products.margin_pct: columna generada almacenada, numeric, con el calculo de markup sobre current_cost_ref y NULL sin costo (20261009a)',
+  exists (
+    select 1
+    from pg_attribute a
+    join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+    where a.attrelid = to_regclass('public.products')
+      and a.attname = 'margin_pct'
+      and not a.attisdropped
+      and a.attgenerated = 's'
+      and a.atttypid = 'numeric'::regtype
+      and pg_get_expr(d.adbin, d.adrelid) ilike '%current_cost_ref > %sale_price_ref - current_cost_ref%/ current_cost_ref%100%, 6)%'
+  )
+union all
+select
+  'index products_store_margin_pct_idx sobre (store_id, margin_pct) (20261009a)',
+  exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'public'
+      and tablename = 'products'
+      and indexname = 'products_store_margin_pct_idx'
+      and indexdef ilike '%(store_id, margin_pct)%'
+  )
 order by 1;

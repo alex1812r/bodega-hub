@@ -2,6 +2,7 @@
  * @jest-environment node
  */
 
+import { mockProducts, type ProductMock } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { listProducts } from "./products.mock-server";
@@ -99,5 +100,104 @@ describe("products.mock-server listProducts: packLink=none", () => {
 
   it("ignores the links of another store", () => {
     expect(ids("packLink=none", OTHER_STORE_ID)).toEqual(ids("", OTHER_STORE_ID));
+  });
+});
+
+describe("products.mock-server listProducts: margin filter and sort (parity with products.server)", () => {
+  const MARGIN_STORE_ID = "00000000-0000-4000-8000-0000000000aa";
+
+  /** Costo 100: el precio es 100 + %. Costo 0 = sin costo. */
+  function marginProduct(id: string, currentCostRef: number, salePriceRef: number): ProductMock {
+    return {
+      categoryId: "cat-tools",
+      currentCostRef,
+      currentStock: 1,
+      id,
+      isActive: true,
+      minStock: 0,
+      name: id,
+      salePriceRef,
+      sku: id,
+      storeId: MARGIN_STORE_ID,
+    };
+  }
+
+  const fixtures = [
+    marginProduct("m-sin-costo", 0, 5),
+    marginProduct("m-25", 100, 125),
+    marginProduct("m-14.99", 100, 114.99),
+    marginProduct("m-negativo", 100, 80),
+    marginProduct("m-15", 100, 115),
+    marginProduct("m-24.99", 100, 124.99),
+    marginProduct("m-sin-costo-gratis", 0, 0),
+  ];
+
+  function marginIds(queryString: string) {
+    return list(`${queryString}&limit=100`, MARGIN_STORE_ID).items.map((product) => product.id);
+  }
+
+  beforeAll(() => {
+    mockProducts.push(...fixtures);
+  });
+
+  afterAll(() => {
+    for (const fixture of fixtures) {
+      mockProducts.splice(mockProducts.indexOf(fixture), 1);
+    }
+  });
+
+  it("low = below 15 %, including a price under the cost", () => {
+    expect(marginIds("margin=low&sortBy=marginPct")).toEqual(["m-negativo", "m-14.99"]);
+  });
+
+  it("mid = from 15 % up to, not including, 25 %", () => {
+    expect(marginIds("margin=mid&sortBy=marginPct")).toEqual(["m-15", "m-24.99"]);
+  });
+
+  it("high = 25 % or more", () => {
+    expect(marginIds("margin=high")).toEqual(["m-25"]);
+  });
+
+  it("none = products without cost, outside the three bands", () => {
+    expect(marginIds("margin=none&sortBy=sku")).toEqual(["m-sin-costo", "m-sin-costo-gratis"]);
+  });
+
+  it("the four filters split the catalog without overlap", () => {
+    const all = ["low", "mid", "high", "none"].flatMap((band) => marginIds(`margin=${band}`));
+
+    expect([...all].sort()).toEqual(fixtures.map((fixture) => fixture.id).sort());
+  });
+
+  it.each(["margin=", "margin=all", "margin=verde"])("does not filter for [%s]", (queryString) => {
+    expect(marginIds(queryString)).toHaveLength(fixtures.length);
+  });
+
+  it("sorts ascending by percentage with the products without cost last", () => {
+    expect(marginIds("sortBy=marginPct&sortOrder=asc")).toEqual([
+      "m-negativo",
+      "m-14.99",
+      "m-15",
+      "m-24.99",
+      "m-25",
+      "m-sin-costo",
+      "m-sin-costo-gratis",
+    ]);
+  });
+
+  it("sorts descending by percentage with the products without cost still last", () => {
+    expect(marginIds("sortBy=marginPct&sortOrder=desc")).toEqual([
+      "m-25",
+      "m-24.99",
+      "m-15",
+      "m-14.99",
+      "m-negativo",
+      "m-sin-costo",
+      "m-sin-costo-gratis",
+    ]);
+  });
+
+  it("combines with the other filters and never leaves the store", () => {
+    expect(marginIds("margin=high&search=m-25&isActive=true")).toEqual(["m-25"]);
+    expect(list("margin=high&search=m-25").items).toEqual([]);
   });
 });

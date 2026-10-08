@@ -26,6 +26,11 @@ import {
   GENERATED_SKU_EXHAUSTED_MESSAGE,
   GENERATED_SKU_MAX_ATTEMPTS,
 } from "./productSku";
+import {
+  applyProductMarginFilter,
+  getProductMarginThresholds,
+  parseProductMarginFilter,
+} from "./productMargin";
 import { applyProductSort } from "./productSort";
 import { buildProductSearchOrFilter, normalizeBarcode } from "./productSearch";
 import {
@@ -183,6 +188,11 @@ export async function listProducts(searchParams: URLSearchParams, storeId: strin
     .eq("store_id", storeId);
 
   query = applyProductFilters(query, searchParams);
+  query = applyProductMarginFilter(
+    query,
+    parseProductMarginFilter(searchParams),
+    getProductMarginThresholds(),
+  );
 
   if (packLinkedIds.length > 0) {
     query = query.not("id", "in", `(${packLinkedIds.join(",")})`);

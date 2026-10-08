@@ -8,24 +8,38 @@ import {
 } from "@/shared/styles/form-controls";
 import { cn } from "@/shared/utils/cn";
 
-import type { ProductsFilters } from "../../hooks/useProducts";
+import {
+  PRODUCT_MARGIN_FILTER_OPTIONS,
+  PRODUCT_STATUS_FILTERS,
+  type ProductsListFilterState,
+} from "../productsListParams";
 
 type ProductsListFiltersProps = {
-  filters: Pick<ProductsFilters, "categoryId" | "isActive" | "search">;
-  onChange: (patch: Partial<ProductsFilters>) => void;
   categoryOptions: Array<{ label: string; value: string }>;
+  filters: ProductsListFilterState;
+  onChange: (patch: Partial<ProductsListFilterState>) => void;
 };
 
-function isActiveFilterValue(isActive: ProductsFilters["isActive"]) {
-  if (isActive === true || isActive === "true") {
-    return "true";
-  }
+const STATUS_LABELS: Record<ProductsListFilterState["status"], string> = {
+  all: "Estado: Todos",
+  active: "Activo",
+  inactive: "Inactivo",
+};
 
-  if (isActive === false || isActive === "false") {
-    return "false";
-  }
+/** Baja / media / alta = bandas roja / amarilla / verde del semáforo; "Sin costo" queda fuera de las tres. */
+const MARGIN_LABELS: Record<ProductsListFilterState["margin"], string> = {
+  all: "Ganancia: Todas",
+  low: "Baja",
+  mid: "Media",
+  high: "Alta",
+  none: "Sin costo",
+};
 
-  return "";
+function isOneOf<TValue extends string>(
+  options: readonly TValue[],
+  value: string,
+): value is TValue {
+  return options.some((option) => option === value);
 }
 
 export function ProductsListFilters({
@@ -35,8 +49,8 @@ export function ProductsListFilters({
 }: ProductsListFiltersProps) {
   return (
     <section className="w-full min-w-0 rounded-xl border border-border bg-surface-container-lowest p-4 shadow-sm dark:border-slate-800 md:p-5">
-      <div className="flex w-full min-w-0 flex-col gap-4 md:flex-row md:items-end">
-        <div className="min-w-0 md:flex-[5_1_0%]">
+      <div className="grid w-full min-w-0 grid-cols-1 items-end gap-4 md:grid-cols-3 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]">
+        <div className="min-w-0 md:col-span-3 lg:col-span-1">
           <label className={stitchListFilterLabelClassName} htmlFor="products-search">
             Búsqueda
           </label>
@@ -48,27 +62,23 @@ export function ProductsListFilters({
             <input
               className={cn(stitchListFilterFieldClassName, "w-full min-w-0 pl-10")}
               id="products-search"
-              onChange={(event) =>
-                onChange({ search: event.target.value.trim() || undefined })
-              }
-              placeholder="Buscar por nombre, SKU o codigo de barras..."
+              onChange={(event) => onChange({ search: event.target.value })}
+              placeholder="Buscar por nombre, SKU o código de barras..."
               type="search"
-              value={filters.search ?? ""}
+              value={filters.search}
             />
           </div>
         </div>
 
-        <div className="min-w-0 md:max-w-56 md:flex-[4_0_10rem]">
+        <div className="min-w-0">
           <label className={stitchListFilterLabelClassName} htmlFor="products-category">
             Categoría
           </label>
           <select
             className={cn(stitchListFilterFieldClassName, "w-full min-w-0")}
             id="products-category"
-            onChange={(event) =>
-              onChange({ categoryId: event.target.value || undefined })
-            }
-            value={filters.categoryId ?? ""}
+            onChange={(event) => onChange({ category: event.target.value })}
+            value={filters.category}
           >
             <option value="">Todas las categorías</option>
             {categoryOptions.map((option) => (
@@ -79,7 +89,7 @@ export function ProductsListFilters({
           </select>
         </div>
 
-        <div className="min-w-0 md:max-w-48 md:flex-[3_0_9rem]">
+        <div className="min-w-0">
           <label className={stitchListFilterLabelClassName} htmlFor="products-status">
             Estado
           </label>
@@ -87,17 +97,43 @@ export function ProductsListFilters({
             className={cn(stitchListFilterFieldClassName, "w-full min-w-0")}
             id="products-status"
             onChange={(event) => {
-              const value = event.target.value;
-              onChange({
-                isActive:
-                  value === "true" ? true : value === "false" ? false : undefined,
-              });
+              const { value } = event.target;
+
+              if (isOneOf(PRODUCT_STATUS_FILTERS, value)) {
+                onChange({ status: value });
+              }
             }}
-            value={isActiveFilterValue(filters.isActive)}
+            value={filters.status}
           >
-            <option value="">Estado: Todos</option>
-            <option value="true">Activo</option>
-            <option value="false">Inactivo</option>
+            {PRODUCT_STATUS_FILTERS.map((status) => (
+              <option key={status} value={status}>
+                {STATUS_LABELS[status]}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="min-w-0">
+          <label className={stitchListFilterLabelClassName} htmlFor="products-margin">
+            Ganancia
+          </label>
+          <select
+            className={cn(stitchListFilterFieldClassName, "w-full min-w-0")}
+            id="products-margin"
+            onChange={(event) => {
+              const { value } = event.target;
+
+              if (isOneOf(PRODUCT_MARGIN_FILTER_OPTIONS, value)) {
+                onChange({ margin: value });
+              }
+            }}
+            value={filters.margin}
+          >
+            {PRODUCT_MARGIN_FILTER_OPTIONS.map((margin) => (
+              <option key={margin} value={margin}>
+                {MARGIN_LABELS[margin]}
+              </option>
+            ))}
           </select>
         </div>
       </div>

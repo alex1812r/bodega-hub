@@ -35,7 +35,7 @@ export function ProductDetailPageHeader({
         </p>
       </div>
       <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
-        <PageBackButton href="/products" />
+        <PageBackButton fallbackHref="/products" />
         {actions}
       </div>
     </div>

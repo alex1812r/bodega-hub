@@ -22,6 +22,11 @@ import {
   GENERATED_SKU_EXHAUSTED_MESSAGE,
   GENERATED_SKU_MAX_ATTEMPTS,
 } from "./productSku";
+import {
+  getProductMarginThresholds,
+  matchesProductMarginFilter,
+  parseProductMarginFilter,
+} from "./productMargin";
 import { parseProductSort, sortProductItems } from "./productSort";
 import { matchesProductSearch, matchesExactBarcode, normalizeBarcode } from "./productSearch";
 import { buildProductSaleHistoryResult, joinProductSaleItems } from "./productSales";
@@ -178,6 +183,9 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
       : [],
   );
 
+  const marginFilter = parseProductMarginFilter(searchParams);
+  const marginThresholds = getProductMarginThresholds();
+
   const products = mockProducts.filter((product) => {
     const matchesBarcode = !barcode || matchesExactBarcode(product, barcode);
     const matchesSku = !sku || product.sku === sku;
@@ -193,6 +201,7 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
       matchesSearch &&
       matchesCategory &&
       matchesActive &&
+      matchesProductMarginFilter(product, marginFilter, marginThresholds) &&
       !packLinkedIds.has(product.id)
     );
   });

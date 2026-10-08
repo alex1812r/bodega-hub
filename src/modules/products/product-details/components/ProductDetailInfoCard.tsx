@@ -2,7 +2,8 @@ import { Tags } from "lucide-react";
 
 import { PosProductImage } from "@/modules/sales/sale-create/components/PosProductImage";
 import { ProductsStatusBadge } from "@/modules/products/products-list/components/ProductsStatusBadge";
-import { formatRefUsd } from "@/shared/utils/currency";
+import { MarginBadge } from "@/shared/components/MarginBadge";
+import { formatRefUsd, roundMoney } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
 
 import { ProductDetailSectionCard } from "./ProductDetailSectionCard";
@@ -53,14 +54,6 @@ export function ProductDetailInfoCard({
               {categoryName}
             </span>
           </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-outline">
-              Margen (REF)
-            </span>
-            <span className="text-sm text-foreground">
-              {formatRefUsd(Math.max(0, salePriceRef - costRef))}
-            </span>
-          </div>
           <div
             className={cn(
               "flex flex-col gap-1 rounded-lg border border-border/30 bg-surface-container-low p-2 dark:border-slate-800",
@@ -79,6 +72,20 @@ export function ProductDetailInfoCard({
             </span>
             <span className="text-lg font-bold tabular-nums text-primary">
               {formatRefUsd(salePriceRef)}
+            </span>
+          </div>
+          <div className="flex flex-col gap-1 p-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-outline">
+              Ganancia
+            </span>
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <MarginBadge cost={costRef} price={salePriceRef} size="md" />
+              {/* Sin costo no hay ganancia que mostrar: el precio entero no es ganancia. */}
+              {costRef > 0 ? (
+                <span className="text-sm tabular-nums text-on-surface-variant">
+                  {formatRefUsd(roundMoney(salePriceRef - costRef))}
+                </span>
+              ) : null}
             </span>
           </div>
         </div>

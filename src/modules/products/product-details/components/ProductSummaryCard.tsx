@@ -1,7 +1,8 @@
 import { Badge } from "@/shared/components/Badge";
 import { DetailSection } from "@/shared/components/DetailSection";
 import { InfoGrid } from "@/shared/components/InfoGrid";
-import { formatRef } from "@/shared/utils/currency";
+import { MarginBadge } from "@/shared/components/MarginBadge";
+import { formatRef, roundMoney } from "@/shared/utils/currency";
 
 export type ProductSummary = {
   category: string;
@@ -26,11 +27,20 @@ export function ProductSummaryCard({ product }: ProductSummaryCardProps) {
         items={[
           { label: "SKU", value: product.sku },
           { label: "Categoria", value: product.category },
-          { label: "Precio venta", value: formatRef(product.priceRef) },
           { label: "Costo actual", value: formatRef(product.costRef) },
+          { label: "Precio venta", value: formatRef(product.priceRef) },
           {
-            label: "Margen ref",
-            value: formatRef(product.priceRef - product.costRef),
+            label: "Ganancia",
+            value: (
+              <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <MarginBadge cost={product.costRef} price={product.priceRef} />
+                {product.costRef > 0 ? (
+                  <span className="tabular-nums">
+                    {formatRef(roundMoney(product.priceRef - product.costRef))}
+                  </span>
+                ) : null}
+              </span>
+            ),
           },
           {
             label: "Estado",

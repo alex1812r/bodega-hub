@@ -8,6 +8,7 @@ import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import type { SortOrder } from "@/lib/api/sorting";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type { CategoryInput } from "../services/categories.mock-server";
+import type { ProductMarginFilter } from "../services/productMargin";
 import type {
   ProductSaleHistoryResult,
   ProductSaleHistoryRow,
@@ -37,6 +38,8 @@ export type ProductsFilters = PaginationParams & {
   barcode?: string;
   categoryId?: string;
   isActive?: boolean | string;
+  /** Banda de ganancia (`low` / `mid` / `high`) o `none` = productos sin costo. */
+  margin?: ProductMarginFilter;
   search?: string;
   sortBy?: string;
   sortOrder?: SortOrder;

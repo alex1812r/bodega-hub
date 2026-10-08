@@ -173,3 +173,104 @@ describe("products.server listProducts: packLink=none", () => {
     },
   );
 });
+
+describe("products.server listProducts: margin filter and sort", () => {
+  function setup() {
+    const supabase = createMockSupabase();
+
+    for (const method of ["gte", "is", "lt"]) {
+      supabase.chain[method] = jest.fn().mockReturnValue(supabase.chain);
+    }
+
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue(supabase);
+
+    return supabase.chain;
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("sends the low band as margin_pct below the low threshold", async () => {
+    const chain = setup();
+
+    await listProducts(new URLSearchParams("margin=low"), DEFAULT_STORE_ID);
+
+    expect(chain.lt.mock.calls).toEqual([["margin_pct", 15]]);
+    expect(chain.gte).not.toHaveBeenCalled();
+    expect(chain.is).not.toHaveBeenCalled();
+  });
+
+  it("sends the mid band as the range between both thresholds", async () => {
+    const chain = setup();
+
+    await listProducts(new URLSearchParams("margin=mid"), DEFAULT_STORE_ID);
+
+    expect(chain.gte.mock.calls).toEqual([["margin_pct", 15]]);
+    expect(chain.lt.mock.calls).toEqual([["margin_pct", 25]]);
+  });
+
+  it("sends the high band as margin_pct from the high threshold", async () => {
+    const chain = setup();
+
+    await listProducts(new URLSearchParams("margin=high"), DEFAULT_STORE_ID);
+
+    expect(chain.gte.mock.calls).toEqual([["margin_pct", 25]]);
+    expect(chain.lt).not.toHaveBeenCalled();
+  });
+
+  it("sends the products without cost as margin_pct is null", async () => {
+    const chain = setup();
+
+    await listProducts(new URLSearchParams("margin=none"), DEFAULT_STORE_ID);
+
+    expect(chain.is.mock.calls).toEqual([["margin_pct", null]]);
+    expect(chain.gte).not.toHaveBeenCalled();
+    expect(chain.lt).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "margin=", "margin=all", "margin=verde"])(
+    "does not filter by margin for query [%s]",
+    async (queryString) => {
+      const chain = setup();
+
+      await listProducts(new URLSearchParams(queryString), DEFAULT_STORE_ID);
+
+      expect(chain.gte).not.toHaveBeenCalled();
+      expect(chain.lt).not.toHaveBeenCalled();
+      expect(chain.is).not.toHaveBeenCalled();
+    },
+  );
+
+  it("combines with the other filters and keeps the store of the server", async () => {
+    const chain = setup();
+
+    await listProducts(
+      new URLSearchParams("margin=high&categoryId=cat-1&isActive=true&search=taladro"),
+      OTHER_STORE_ID,
+    );
+
+    expect(chain.gte).toHaveBeenCalledWith("margin_pct", 25);
+    expect(chain.eq).toHaveBeenCalledWith("store_id", OTHER_STORE_ID);
+    expect(chain.eq).toHaveBeenCalledWith("category_id", "cat-1");
+    expect(chain.eq).toHaveBeenCalledWith("is_active", true);
+    expect(chain.or).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["asc", true],
+    ["desc", false],
+  ])("orders by margin_pct %s with nulls last and a stable tie-break", async (sortOrder, ascending) => {
+    const chain = setup();
+
+    await listProducts(
+      new URLSearchParams(`sortBy=marginPct&sortOrder=${sortOrder}`),
+      DEFAULT_STORE_ID,
+    );
+
+    expect(chain.order.mock.calls).toEqual([
+      ["margin_pct", { ascending, nullsFirst: false }],
+      ["id", { ascending: true }],
+    ]);
+  });
+});

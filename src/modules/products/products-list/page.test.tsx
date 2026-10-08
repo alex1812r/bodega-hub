@@ -1,0 +1,413 @@
+/**
+ * PRO-07 · lista de productos: semáforo de ganancia en todas las filas, filtro
+ * y orden por ganancia, y todo el estado de la lista en la URL (regla 15).
+ */
+import "@testing-library/jest-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+import { MARGIN_BADGE_TITLE } from "@/shared/components/MarginBadge";
+
+jest.mock("next/navigation", () => ({
+  usePathname: () => "/products",
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}));
+jest.mock("../../../shared/auth/usePermission", () => ({
+  usePermission: () => ({ can: () => true, isLoading: false, role: "admin" }),
+}));
+jest.mock("../product-details/components/ProductFormModal", () => ({
+  ProductFormModal: () => null,
+}));
+
+import { ProductsListPage } from "./page";
+
+type ProductRow = {
+  categoryId: string;
+  currentCostRef: number;
+  currentStock: number;
+  id: string;
+  isActive: boolean;
+  minStock: number;
+  name: string;
+  salePriceRef: number;
+  sku: string;
+};
+
+function product(id: string, name: string, currentCostRef: number, salePriceRef: number): ProductRow {
+  return {
+    categoryId: "cat-1",
+    currentCostRef,
+    currentStock: 10,
+    id,
+    isActive: true,
+    minStock: 2,
+    name,
+    salePriceRef,
+    sku: id,
+  };
+}
+
+const PRODUCTS = [
+  product("p-baja", "Arroz", 10, 11), // 10 %
+  product("p-media", "Harina", 10, 12), // 20 %
+  product("p-alta", "Aceite", 10, 15), // 50 %
+  product("p-perdida", "Azúcar", 10, 8), // −20 %
+  product("p-sin-costo", "Sal", 0, 3),
+];
+
+function jsonResponse(payload: unknown, status = 200) {
+  return {
+    headers: { get: () => "application/json" },
+    json: async () => payload,
+    ok: status >= 200 && status < 300,
+    status,
+  } as unknown as Response;
+}
+
+describe("ProductsListPage · ganancia y estado en la URL", () => {
+  const fetchMock = jest.fn();
+  const originalMatchMedia = window.matchMedia;
+  let productsResponse: () => Response;
+  let isMobile = false;
+
+  beforeEach(() => {
+    isMobile = false;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string) => ({
+        addEventListener: jest.fn(),
+        matches: isMobile,
+        media: query,
+        removeEventListener: jest.fn(),
+      }),
+    });
+    window.history.replaceState(null, "", "/products");
+    productsResponse = () =>
+      jsonResponse({ data: { items: PRODUCTS, limit: 10, skip: 0, total: 45 } });
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).startsWith("/api/products")) {
+        return productsResponse();
+      }
+
+      if (String(url).startsWith("/api/categories")) {
+        return jsonResponse({
+          data: {
+            items: [{ id: "cat-1", isActive: true, name: "Víveres", taxRate: 16 }],
+            limit: 10,
+            skip: 0,
+            total: 1,
+          },
+        });
+      }
+
+      return jsonResponse({ data: { id: "rate-1", rateVes: 50 } });
+    });
+    global.fetch = fetchMock;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: originalMatchMedia,
+    });
+  });
+
+  function renderPage(query = "") {
+    window.history.replaceState(null, "", query ? `/products?${query}` : "/products");
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <ProductsListPage />
+      </QueryClientProvider>,
+    );
+  }
+
+  /** Parámetros de cada `GET /api/products` del listado, en orden. */
+  function productRequests() {
+    return fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.startsWith("/api/products"))
+      .map((url) => new URLSearchParams(url.split("?")[1] ?? ""));
+  }
+
+  function lastProductRequest() {
+    const requests = productRequests();
+
+    return Object.fromEntries(requests[requests.length - 1]);
+  }
+
+  async function findRow(name: string) {
+    const link = await screen.findByRole("link", { name });
+    const row = link.closest("tr");
+
+    if (!row) {
+      throw new Error(`Sin fila para ${name}`);
+    }
+
+    return row;
+  }
+
+  it("shows the margin badge on every row, also without cost and below cost", async () => {
+    renderPage();
+
+    const expected: [string, string, string | null][] = [
+      ["Arroz", "10 %", "low"],
+      ["Harina", "20 %", "mid"],
+      ["Aceite", "50 %", "high"],
+      ["Azúcar", "-20 %", "low"],
+      ["Sal", "Sin costo", null],
+    ];
+
+    for (const [name, text, band] of expected) {
+      const badges = within(await findRow(name)).getAllByTitle(MARGIN_BADGE_TITLE);
+
+      // Columna "Ganancia" (lg) + badge junto al precio (por debajo de lg).
+      expect(badges).toHaveLength(2);
+
+      for (const badge of badges) {
+        expect(badge).toHaveTextContent(text);
+        expect(badge.getAttribute("data-band")).toBe(band);
+      }
+    }
+
+    expect(screen.getByRole("columnheader", { name: /Ganancia/ })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Costo/ })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /PVP/ })).toBeInTheDocument();
+  });
+
+  it("uses the current defaults without URL parameters and writes nothing", async () => {
+    renderPage();
+
+    await findRow("Arroz");
+
+    expect(lastProductRequest()).toEqual({
+      limit: "10",
+      skip: "0",
+      sortBy: "name",
+      sortOrder: "asc",
+    });
+    expect(window.location.search).toBe("");
+    expect(screen.getByLabelText("Ganancia")).toHaveValue("all");
+    expect(screen.getByLabelText("Estado")).toHaveValue("all");
+  });
+
+  it("offers the three bands and the products without cost in the margin filter", async () => {
+    renderPage();
+
+    const options = within(screen.getByLabelText("Ganancia")).getAllByRole("option");
+
+    expect(options.map((option) => option.textContent)).toEqual([
+      "Ganancia: Todas",
+      "Baja",
+      "Media",
+      "Alta",
+      "Sin costo",
+    ]);
+  });
+
+  it("writes the margin filter in the URL and asks the server for that band", async () => {
+    const user = userEvent.setup();
+
+    renderPage("page=3");
+    await findRow("Arroz");
+    await user.selectOptions(screen.getByLabelText("Ganancia"), "Baja");
+
+    // Cambiar un filtro vuelve a la página 1.
+    expect(window.location.search).toBe("?margin=low");
+    await waitFor(() => expect(lastProductRequest()).toMatchObject({ margin: "low", skip: "0" }));
+
+    await user.selectOptions(screen.getByLabelText("Ganancia"), "Sin costo");
+
+    expect(window.location.search).toBe("?margin=none");
+    await waitFor(() => expect(lastProductRequest()).toMatchObject({ margin: "none" }));
+
+    await user.selectOptions(screen.getByLabelText("Ganancia"), "Ganancia: Todas");
+
+    expect(window.location.search).toBe("");
+    await waitFor(() => expect(lastProductRequest()).not.toHaveProperty("margin"));
+  });
+
+  it("writes category and status in the URL", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+    await findRow("Arroz");
+    await user.selectOptions(await screen.findByLabelText("Categoría"), "Víveres");
+    await user.selectOptions(screen.getByLabelText("Estado"), "Inactivo");
+
+    expect(window.location.search).toBe("?category=cat-1&status=inactive");
+    await waitFor(() =>
+      expect(lastProductRequest()).toMatchObject({ categoryId: "cat-1", isActive: "false" }),
+    );
+  });
+
+  it("sorts by margin percentage from the column header, both ways, in the URL", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+    await findRow("Arroz");
+    await user.click(screen.getByRole("button", { name: "Ganancia" }));
+
+    expect(window.location.search).toBe("?sort=marginPct");
+    await waitFor(() =>
+      expect(lastProductRequest()).toMatchObject({ sortBy: "marginPct", sortOrder: "asc" }),
+    );
+    expect(screen.getByRole("columnheader", { name: /Ganancia/ })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Ganancia" }));
+
+    expect(window.location.search).toBe("?sort=marginPct&dir=desc");
+    await waitFor(() =>
+      expect(lastProductRequest()).toMatchObject({ sortBy: "marginPct", sortOrder: "desc" }),
+    );
+  });
+
+  it("writes the search in the URL after the debounce and only then asks the server", async () => {
+    renderPage();
+    await findRow("Arroz");
+
+    const requestsBefore = productRequests().length;
+
+    fireEvent.change(screen.getByLabelText("Búsqueda"), { target: { value: "hari" } });
+    fireEvent.change(screen.getByLabelText("Búsqueda"), { target: { value: "harina pan" } });
+
+    // El campo refleja lo tecleado al instante; URL y consulta esperan.
+    expect(screen.getByLabelText("Búsqueda")).toHaveValue("harina pan");
+    expect(window.location.search).toBe("");
+    expect(productRequests()).toHaveLength(requestsBefore);
+
+    await waitFor(() => expect(window.location.search).toBe("?search=harina+pan"));
+    await waitFor(() => expect(lastProductRequest()).toMatchObject({ search: "harina pan" }));
+    expect(productRequests().some((request) => request.get("search") === "hari")).toBe(false);
+  });
+
+  it("restores search, filters, sort, page and page size from the URL on mount", async () => {
+    renderPage(
+      "search=arroz&category=cat-1&status=inactive&margin=mid&sort=marginPct&dir=desc&page=2&limit=20",
+    );
+
+    await findRow("Arroz");
+
+    expect(productRequests()[0] && Object.fromEntries(productRequests()[0])).toEqual({
+      categoryId: "cat-1",
+      isActive: "false",
+      limit: "20",
+      margin: "mid",
+      search: "arroz",
+      skip: "20",
+      sortBy: "marginPct",
+      sortOrder: "desc",
+    });
+    expect(screen.getByLabelText("Búsqueda")).toHaveValue("arroz");
+    expect(screen.getByLabelText("Estado")).toHaveValue("inactive");
+    expect(screen.getByLabelText("Ganancia")).toHaveValue("mid");
+    await waitFor(() => expect(screen.getByLabelText("Categoría")).toHaveValue("cat-1"));
+    expect(screen.getByRole("columnheader", { name: /Ganancia/ })).toHaveAttribute(
+      "aria-sort",
+      "descending",
+    );
+  });
+
+  it("falls back to the defaults for invalid URL values and keeps foreign parameters", async () => {
+    const user = userEvent.setup();
+
+    renderPage("margin=verde&sort=precio&page=-3&review=1&tab=x");
+    await findRow("Arroz");
+
+    expect(lastProductRequest()).toEqual({
+      limit: "10",
+      skip: "0",
+      sortBy: "name",
+      sortOrder: "asc",
+    });
+
+    await user.selectOptions(screen.getByLabelText("Ganancia"), "Alta");
+
+    // `review` queda reservado para PRO-11: la lista no lo lee ni lo borra.
+    expect(window.location.search).toBe("?review=1&tab=x&margin=high");
+  });
+
+  it("links every row to the detail with a real anchor carrying the exact list URL", async () => {
+    renderPage("margin=low&sort=marginPct&dir=desc&page=2");
+
+    const returnTo = encodeURIComponent("/products?margin=low&sort=marginPct&dir=desc&page=2");
+
+    for (const row of PRODUCTS) {
+      const link = await screen.findByRole("link", { name: row.name });
+
+      expect(link.tagName).toBe("A");
+      expect(link).toHaveAttribute("href", `/products/${row.id}?returnTo=${returnTo}`);
+    }
+  });
+
+  it("keeps the detail link in sync with the filters chosen after mounting", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+    await findRow("Arroz");
+    await user.selectOptions(screen.getByLabelText("Ganancia"), "Media");
+
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Arroz" })).toHaveAttribute(
+        "href",
+        `/products/p-baja?returnTo=${encodeURIComponent("/products?margin=mid")}`,
+      ),
+    );
+  });
+
+  it("moves page and page size through the URL", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+    await findRow("Arroz");
+    await user.click(screen.getByRole("button", { name: /siguiente/i }));
+
+    expect(window.location.search).toBe("?page=2");
+    await waitFor(() => expect(lastProductRequest()).toMatchObject({ skip: "10" }));
+  });
+
+  it("shows the margin badge next to the price on the mobile cards", async () => {
+    isMobile = true;
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "Aceite" });
+    const card = link.closest("li");
+
+    if (!card) {
+      throw new Error("Sin tarjeta para Aceite");
+    }
+
+    const badge = within(card).getByTitle(MARGIN_BADGE_TITLE);
+
+    expect(badge).toHaveTextContent("50 %");
+    expect(badge.getAttribute("data-band")).toBe("high");
+    // Mismo renglón que el precio (PVP).
+    expect(badge.closest("dd")).toHaveTextContent("ref 15.00");
+    expect(screen.getAllByTitle(MARGIN_BADGE_TITLE)).toHaveLength(PRODUCTS.length);
+  });
+
+  it("shows the empty state when the filter leaves no products", async () => {
+    productsResponse = () => jsonResponse({ data: { items: [], limit: 10, skip: 0, total: 0 } });
+    renderPage("margin=high");
+
+    expect(await screen.findByText("No hay productos para mostrar")).toBeInTheDocument();
+    expect(screen.getByLabelText("Ganancia")).toHaveValue("high");
+  });
+
+  it("shows the error state with retry when the list fails", async () => {
+    productsResponse = () =>
+      jsonResponse({ error: { code: "INTERNAL", message: "Falló el listado." } }, 500);
+    renderPage();
+
+    expect(await screen.findByText("No pudimos cargar los datos")).toBeInTheDocument();
+    expect(screen.getByText("Falló el listado.")).toBeInTheDocument();
+  });
+});
