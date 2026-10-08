@@ -24,6 +24,9 @@ export function formatKardexDay(isoDate: string) {
   return `${day}/${month}`;
 }
 
+/** Alto del gráfico en px: el `h-40` de su contenedor. */
+const CHART_HEIGHT = 160;
+
 function formatUnits(value: number) {
   return `${value} ${Math.abs(value) === 1 ? "unidad" : "unidades"}`;
 }
@@ -54,6 +57,10 @@ export function describeKardexSeries(series: ProductKardexPoint[]) {
  * sea menor: un saldo negativo histórico se dibuja bajo la línea de cero. Los
  * días sin dato (`balance: null`) dejan el hueco. Los mismos datos van en una
  * tabla solo para lector de pantalla.
+ *
+ * El alto es fijo (`CHART_HEIGHT`, el `h-40` del contenedor) y solo el ancho se
+ * mide: con alto en porcentaje recharts avisa en consola en el primer render,
+ * cuando aún no midió nada.
  */
 export function ProductKardexBalanceChart({ series }: ProductKardexBalanceChartProps) {
   const balances = series.flatMap((point) => (point.balance === null ? [] : [point.balance]));
@@ -67,7 +74,7 @@ export function ProductKardexBalanceChart({ series }: ProductKardexBalanceChartP
         className="h-40 w-full min-w-0"
         role="img"
       >
-        <ResponsiveContainer height="100%" minHeight={160} minWidth={0} width="100%">
+        <ResponsiveContainer height={CHART_HEIGHT} minWidth={0} width="100%">
           <LineChart
             accessibilityLayer={false}
             data={series}

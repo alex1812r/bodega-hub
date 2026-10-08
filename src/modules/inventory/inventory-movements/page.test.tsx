@@ -531,13 +531,17 @@ describe("InventoryMovementsPage · filtros en servidor y en la URL", () => {
       );
     });
 
-    it("does not chain the returnTo of the list into the document link", async () => {
+    it("chains the returnTo of the list into the document link (INV-F3)", async () => {
       renderPage("returnTo=%2Finventory%3Fsearch%3Dharina");
       await findRowWith("V-0001");
 
-      expect(screen.getByRole("link", { name: "V-0001" })).toHaveAttribute(
-        "href",
-        `/sales/sale-1?returnTo=${encodeURIComponent("/inventory/movements")}`,
+      const href = screen.getByRole("link", { name: "V-0001" }).getAttribute("href");
+      const listUrl = new URLSearchParams(href?.split("?")[1]).get("returnTo");
+
+      expect(href?.split("?")[0]).toBe("/sales/sale-1");
+      expect(listUrl?.split("?")[0]).toBe("/inventory/movements");
+      expect(new URLSearchParams(listUrl?.split("?")[1]).get("returnTo")).toBe(
+        "/inventory?search=harina",
       );
     });
 

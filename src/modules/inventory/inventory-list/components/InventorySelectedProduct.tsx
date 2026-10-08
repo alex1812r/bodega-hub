@@ -95,7 +95,7 @@ export function InventorySelectedProduct({
                   Inactivo
                 </span>
               )}
-              <InventorySkuCell sku={item.sku} />
+              <InventorySkuCell className="w-fit max-w-full" sku={item.sku} />
             </div>
             {clearButton}
           </div>

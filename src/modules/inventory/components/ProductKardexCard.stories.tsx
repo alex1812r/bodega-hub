@@ -157,9 +157,9 @@ const emptyKardex: ProductKardex = {
   entries30d: 0,
   exits30d: 0,
   lastMovements: [],
-  openingBalance: 0,
-  product: { currentStock: 0, id: "prod-cable", minStock: 5, name: "Cable HDMI", sku: "ELE-CAB-001" },
-  series: buildSeries(0, {}),
+  openingBalance: 9,
+  product: { currentStock: 9, id: "prod-cable", minStock: 5, name: "Cable HDMI", sku: "ELE-CAB-001" },
+  series: buildSeries(9, {}),
   truncated: false,
 };
 
@@ -184,7 +184,7 @@ export const Default: Story = {
   parameters: { msw: { handlers: [canView, kardexHandler(normalKardex)] } },
 };
 
-/** Producto sin movimientos. */
+/** Producto sin movimientos: saldo y gráfico plano igualmente; el vacío va solo en la lista. */
 export const Empty: Story = {
   parameters: { msw: { handlers: [canView, kardexHandler(emptyKardex)] } },
 };

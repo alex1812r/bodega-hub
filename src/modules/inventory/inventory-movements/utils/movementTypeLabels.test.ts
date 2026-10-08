@@ -11,8 +11,14 @@ describe("movementTypeLabels", () => {
   it("labels movement types in Spanish", () => {
     expect(getMovementTypeLabel("venta")).toBe("Venta");
     expect(getMovementTypeLabel("ajuste_entrada")).toBe("Ajuste entrada");
-    expect(getMovementTypeLabel("conversion_salida")).toBe("Conversion salida");
-    expect(getMovementTypeLabel("conversion_entrada")).toBe("Conversion entrada");
+    expect(getMovementTypeLabel("conversion_salida")).toBe("Conversión salida");
+    expect(getMovementTypeLabel("conversion_entrada")).toBe("Conversión entrada");
+  });
+
+  it("no deja etiquetas sin tilde", () => {
+    expect(movementTypeOptions.map((option) => option.label).join(" ")).not.toMatch(
+      /Conversion|Devolucion/,
+    );
   });
 
   it("el ajuste libre no ofrece devoluciones, que exigen venta o compra (R4)", () => {

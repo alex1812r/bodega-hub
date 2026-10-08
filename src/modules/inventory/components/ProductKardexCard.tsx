@@ -35,8 +35,9 @@ const stockStatusBadgeVariant: Record<InventoryStockStatus, "danger" | "success"
 
 /**
  * Kardex del producto: saldo actual, saldo diario de 30 días, entradas y
- * salidas del periodo y últimos movimientos. Solo la ve quien tiene
- * `inventory.view`; sin el permiso no se pinta ni consulta nada.
+ * salidas del periodo y últimos movimientos. Un producto sin movimientos muestra
+ * igual su saldo y el gráfico (línea plana); el vacío va solo en la lista. Solo
+ * la ve quien tiene `inventory.view`; sin el permiso no se pinta ni consulta nada.
  */
 export function ProductKardexCard({ productId, returnTo }: ProductKardexCardProps) {
   const { can, isLoading: isPermissionLoading } = usePermission();
@@ -96,10 +97,6 @@ export function ProductKardexCard({ productId, returnTo }: ProductKardexCardProp
         </div>
       ) : !kardex.data ? (
         <KardexSkeleton />
-      ) : kardex.data.lastMovements.length === 0 ? (
-        <p className="px-5 py-8 text-center text-sm text-on-surface-variant">
-          Este producto aún no tiene movimientos.
-        </p>
       ) : (
         <KardexContent kardex={kardex.data} returnTo={returnTo} />
       )}
@@ -185,7 +182,13 @@ function KardexContent({ kardex, returnTo }: { kardex: ProductKardex; returnTo?:
       <h3 className="px-5 pt-5 pb-2 text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
         Últimos movimientos
       </h3>
-      <ProductMovementList movements={kardex.lastMovements} returnTo={returnTo} />
+      {kardex.lastMovements.length === 0 ? (
+        <p className="px-5 pt-2 pb-6 text-center text-sm text-on-surface-variant">
+          Este producto aún no tiene movimientos.
+        </p>
+      ) : (
+        <ProductMovementList movements={kardex.lastMovements} returnTo={returnTo} />
+      )}
     </>
   );
 }

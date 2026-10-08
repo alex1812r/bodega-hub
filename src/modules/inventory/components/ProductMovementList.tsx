@@ -2,10 +2,10 @@ import Link from "next/link";
 
 import type { StockMovementType } from "@/shared/mocks/erp-data";
 import { formatCaracasDateTime } from "@/shared/utils/caracasBusinessDay";
-import { withReturnTo } from "@/shared/utils/returnTo";
 
 import { InventoryMovementQuantityCell } from "../inventory-movements/components/InventoryMovementQuantityCell";
 import { InventoryMovementTypeBadge } from "../inventory-movements/components/InventoryMovementTypeBadge";
+import { withChainedReturnTo } from "../utils/chainedReturnTo";
 import type { MovementDocumentKind } from "../utils/inventoryMovementFilters";
 
 /** Lo que la lista necesita de un movimiento (kardex del producto o `/api/inventory/movements`). */
@@ -25,7 +25,10 @@ export type ProductMovementListItem = {
 
 type ProductMovementListProps = {
   movements: ProductMovementListItem[];
-  /** URL de la pantalla que monta la lista: a ella vuelven los documentos enlazados. */
+  /**
+   * URL de la pantalla que monta la lista: a ella vuelven los documentos
+   * enlazados, con el `returnTo` que esa pantalla traiga.
+   */
   returnTo?: string;
 };
 
@@ -100,7 +103,7 @@ function ProductMovementDocument({
   }
 
   return (
-    <Link className="font-medium text-primary hover:underline" href={withReturnTo(href, returnTo)}>
+    <Link className="font-medium text-primary hover:underline" href={withChainedReturnTo(href, returnTo)}>
       {label}
     </Link>
   );

@@ -38,15 +38,24 @@ export type InventoryMovementRow = {
  */
 export type InventoryMovementsEmptyKind = "filtered" | "invalid-range" | "none";
 
+/**
+ * Ocho columnas de datos + acciones en el ancho que deja el menú lateral a
+ * 1280 px (≈ 940 px): padding lateral de 8 px en vez de 16 (la primera conserva
+ * 16 a la izquierda), como la tabla de `/inventory`.
+ */
+const compactColumnClass = "px-2";
+
 function buildColumns(returnTo?: string): DataTableColumn<InventoryMovementRow>[] {
   return [
     {
       cellClassName: "whitespace-nowrap text-on-surface-variant",
+      className: "px-2 pl-4",
       header: "Fecha",
       key: "createdAt",
       render: (row) => formatDateTimeShort(row.createdAt),
     },
     {
+      className: compactColumnClass,
       header: "Producto",
       key: "product",
       render: (row) => (
@@ -62,6 +71,7 @@ function buildColumns(returnTo?: string): DataTableColumn<InventoryMovementRow>[
     },
     {
       cellClassName: "font-mono text-sm text-on-surface-variant",
+      className: compactColumnClass,
       header: "SKU",
       hideInCard: true,
       key: "productSku",
@@ -69,12 +79,14 @@ function buildColumns(returnTo?: string): DataTableColumn<InventoryMovementRow>[
       visibility: "lg",
     },
     {
+      className: compactColumnClass,
       header: "Tipo",
       key: "type",
       render: (row) => <InventoryMovementTypeBadge type={row.type} />,
     },
     {
       align: "right",
+      className: compactColumnClass,
       header: "Cant.",
       key: "quantity",
       render: (row) => <InventoryMovementQuantityCell quantity={row.quantity} />,
@@ -82,6 +94,7 @@ function buildColumns(returnTo?: string): DataTableColumn<InventoryMovementRow>[
     {
       align: "right",
       cellClassName: "font-semibold tabular-nums",
+      className: compactColumnClass,
       header: "Saldo",
       key: "stockAfter",
       render: (row) => (
@@ -96,12 +109,14 @@ function buildColumns(returnTo?: string): DataTableColumn<InventoryMovementRow>[
     },
     {
       cellClassName: "min-w-[8rem] max-w-[12rem]",
+      className: compactColumnClass,
       header: "Documento",
       key: "document",
       render: (row) => <InventoryMovementDocumentCell movement={row} returnTo={returnTo} />,
     },
     {
       cellClassName: "max-w-[14rem] truncate text-on-surface-variant",
+      className: compactColumnClass,
       header: "Motivo",
       key: "reason",
       render: (row) => row.reason ?? "Sin motivo",

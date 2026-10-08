@@ -34,6 +34,7 @@ import { InventoryAdjustmentModal } from "../inventory-movements/components/Inve
 import { InventoryPackConversionModal } from "../inventory-movements/components/InventoryPackConversionModal";
 import { useInventory, type InventoryOverviewItem } from "../hooks/useInventory";
 import { RestockPurchaseButton } from "../restock";
+import { withChainedReturnTo } from "../utils/chainedReturnTo";
 import { InventoryExportActions } from "./components/InventoryExportActions";
 import { InventoryLastMovementCell } from "./components/InventoryLastMovementCell";
 import { InventoryListFilters } from "./components/InventoryListFilters";
@@ -105,6 +106,7 @@ const figureColumns: DataTableColumn<InventoryOverviewItem>[] = [
     cellClassName: numericCellClass,
     className: compactColumnClass,
     header: "Entradas 30 d",
+    headerClassName: "whitespace-nowrap",
     key: "entries30d",
     render: (item) => item.entries30d,
   },
@@ -113,6 +115,7 @@ const figureColumns: DataTableColumn<InventoryOverviewItem>[] = [
     cellClassName: numericCellClass,
     className: compactColumnClass,
     header: "Salidas 30 d",
+    headerClassName: "whitespace-nowrap",
     key: "exits30d",
     render: (item) => item.exits30d,
   },
@@ -281,26 +284,24 @@ function InventoryList() {
     [selectedProductId, toggleProduct],
   );
 
+  // Los movimientos del producto vuelven a esta lista tal como está, con su `returnTo`.
+  const listHref = list.href;
   const rowActions = useMemo(
     () =>
       function inventoryRowActions(item: InventoryOverviewItem): ActionMenuItem[] {
-        const items: ActionMenuItem[] = [
-          {
-            href: `/inventory/movements?productId=${item.id}`,
-            label: "Kardex / movimientos",
-          },
-        ];
+        const movementsHref = withChainedReturnTo(
+          `/inventory/movements?productId=${encodeURIComponent(item.id)}`,
+          listHref,
+        );
+        const items: ActionMenuItem[] = [{ href: movementsHref, label: "Kardex / movimientos" }];
 
         if (can("inventory.manage")) {
-          items.push({
-            href: `/inventory/movements?productId=${item.id}`,
-            label: "Registrar ajuste",
-          });
+          items.push({ href: movementsHref, label: "Registrar ajuste" });
         }
 
         return items;
       },
-    [can],
+    [can, listHref],
   );
 
   function clearFilters() {

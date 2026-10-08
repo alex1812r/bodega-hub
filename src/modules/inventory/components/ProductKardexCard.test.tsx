@@ -290,16 +290,60 @@ describe("ProductKardexCard", () => {
     );
   });
 
-  it("un producto sin movimientos muestra el estado vacío, sin gráfico ni lista", async () => {
+  it("un producto sin movimientos muestra igual el saldo y el gráfico plano; el vacío va solo en la lista", async () => {
     responses.push(
-      jsonResponse({ data: kardex({ entries30d: 0, exits30d: 0, lastMovements: [] }) }),
+      jsonResponse({
+        data: kardex({
+          entries30d: 0,
+          exits30d: 0,
+          lastMovements: [],
+          openingBalance: 9,
+          product: { currentStock: 9, id: "p-1", minStock: 5, name: "Pintura", sku: "PIN" },
+          series: Array.from({ length: 30 }, (_, index) => ({
+            balance: 9,
+            date: isoDay(index),
+            entries: 0,
+            exits: 0,
+          })),
+        }),
+      }),
     );
     renderCard();
 
     expect(await screen.findByText("Este producto aún no tiene movimientos.")).toBeInTheDocument();
-    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+
+    const balance = screen.getByText("Saldo actual").closest("div") as HTMLElement;
+
+    expect(within(balance).getByText("9")).toBeInTheDocument();
+    expect(within(balance).getByText("Mínimo: 5")).toBeInTheDocument();
+    expect(within(balance).getByText("En Stock")).toBeInTheDocument();
+
+    const chart = screen.getByRole("img");
+    const heights = (chart.querySelector(".recharts-line-curve")?.getAttribute("d") ?? "")
+      .split("L")
+      .map((point) => point.split(",")[1]);
+
+    expect(chart).toHaveAccessibleName(
+      "Saldo de los últimos 30 días: de 9 unidades el 09/09 a 9 unidades el 08/10. Mínimo 9, máximo 9.",
+    );
+    // Línea plana: los 30 puntos a la misma altura.
+    expect(heights).toHaveLength(30);
+    expect(new Set(heights).size).toBe(1);
+    expect(screen.getByText("Últimos movimientos")).toBeInTheDocument();
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Ver kardex completo" })).toBeInTheDocument();
+  });
+
+  it("el enlace a un documento conserva el returnTo con el que se llegó a la pantalla", async () => {
+    const origin = `/products/p-1?returnTo=${encodeURIComponent("/products?page=2")}`;
+
+    renderCard(origin);
+
+    const items = await screen.findAllByRole("listitem");
+    const href = within(items[0]).getByRole("link", { name: "Venta V-000123" }).getAttribute("href");
+
+    expect(href?.split("?")[0]).toBe("/sales/sale-1");
+    expect(new URLSearchParams(href?.split("?")[1]).get("returnTo")).toBe(origin);
   });
 
   it("un saldo histórico negativo se muestra y se resume sin romper el gráfico", async () => {

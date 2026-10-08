@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 
-import { withReturnTo } from "@/shared/utils/returnTo";
-
+import { withChainedReturnTo } from "../../utils/chainedReturnTo";
 import {
   resolveMovementDocument,
   type MovementDocumentSource,
@@ -11,7 +10,10 @@ import {
 
 type InventoryMovementDocumentCellProps = {
   movement: MovementDocumentSource;
-  /** URL de la lista (ruta + query): el detalle del documento vuelve a ella. */
+  /**
+   * URL de la lista (ruta + query): el detalle del documento vuelve a ella, con
+   * el `returnTo` que la lista traiga.
+   */
   returnTo?: string;
 };
 
@@ -32,7 +34,7 @@ export function InventoryMovementDocumentCell({
   return (
     <Link
       className="break-all rounded font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      href={withReturnTo(document.href, returnTo)}
+      href={withChainedReturnTo(document.href, returnTo)}
       title={document.kind === "venta" ? "Ver la venta" : "Ver la compra"}
     >
       {document.label}

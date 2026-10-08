@@ -1069,6 +1069,29 @@ describe("InventoryListPage · vista única de stock", () => {
       });
     });
 
+    it("sends the row actions to the movements with the list URL as returnTo, nested returnTo included", async () => {
+      const user = userEvent.setup();
+
+      renderPage(`status=low&${RETURN_TO}`);
+
+      const row = await findRow("Arroz");
+
+      await user.click(within(row).getByRole("button", { name: "Abrir acciones" }));
+
+      for (const name of ["Kardex / movimientos", "Registrar ajuste"]) {
+        const href = screen.getByRole("menuitem", { name }).getAttribute("href");
+        const listUrl = returnToOf(href);
+
+        expect(href?.split("?")[0]).toBe("/inventory/movements");
+        expect(new URLSearchParams(href?.split("?")[1]).get("productId")).toBe("p-arroz");
+        expect(listUrl?.split("?")[0]).toBe("/inventory");
+        expect(Object.fromEntries(new URLSearchParams(listUrl?.split("?")[1]))).toEqual({
+          returnTo: PRODUCTS_URL,
+          status: "low",
+        });
+      }
+    });
+
     it.each(["", "returnTo=%2F%2Fevil.com", "returnTo=https%3A%2F%2Fevil.com"])(
       "offers no 'Volver' without a safe returnTo (%s)",
       async (query) => {
