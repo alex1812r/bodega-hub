@@ -193,6 +193,8 @@ export function useReceivePurchase(id?: string) {
     onSuccess: (purchase) => {
       queryClient.setQueryData(purchasesQueryKeys.detail(purchase.id), purchase);
       void queryClient.invalidateQueries({ queryKey: purchasesQueryKeys.all });
+      // Recibir sube el costo: productos, su detalle y la cola "Por revisar" (lista y resumen).
+      void queryClient.invalidateQueries({ queryKey: ["products"] });
     },
   });
 }
