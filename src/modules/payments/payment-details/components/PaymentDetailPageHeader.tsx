@@ -12,7 +12,7 @@ export function PaymentDetailPageHeader() {
           Consulta el método, montos y trazabilidad del pago{getPageDataSourceSuffix()}
         </p>
       </div>
-      <PageBackButton className="shrink-0" href="/payments" />
+      <PageBackButton className="shrink-0" fallbackHref="/payments" />
     </div>
   );
 }

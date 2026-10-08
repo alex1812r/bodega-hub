@@ -54,7 +54,7 @@ export function SaleDetailHeaderCard({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <PageBackButton href="/sales" size="sm" />
+        <PageBackButton fallbackHref="/sales" size="sm" />
         {primaryAction}
         <SaleDetailActionsMenu
           invoiceNumber={invoiceNumber}

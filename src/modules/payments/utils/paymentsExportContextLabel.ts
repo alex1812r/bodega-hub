@@ -13,20 +13,16 @@ function formatIsoDay(isoDate: string) {
   return `${day}/${month}/${year}`;
 }
 
-export function buildPaymentsExportContextLabel(filters: PaymentsExportFilters) {
-  const parts = ["Listado de pagos"];
-
-  if (filters.contactId?.trim()) {
-    parts.push(`Contacto: ${filters.contactId.trim()}`);
-  }
-
-  if (filters.saleId?.trim()) {
-    parts.push(`Venta: ${filters.saleId.trim()}`);
-  }
-
-  if (filters.purchaseId?.trim()) {
-    parts.push(`Compra: ${filters.purchaseId.trim()}`);
-  }
+/**
+ * Título del Excel. `filterLabels`: texto humano de los filtros por id (venta,
+ * compra, contacto), los mismos de los chips de la lista. Un filtro por id sin
+ * texto conocido no se menciona: el id nunca se escribe.
+ */
+export function buildPaymentsExportContextLabel(
+  filters: PaymentsExportFilters,
+  filterLabels: readonly string[] = [],
+) {
+  const parts = ["Listado de pagos", ...filterLabels];
 
   if (filters.direction) {
     parts.push(`Tipo: ${directionLabels[filters.direction] ?? filters.direction}`);

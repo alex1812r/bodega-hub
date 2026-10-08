@@ -5,6 +5,8 @@
  *
  * PAG-02 · «Cobrar saldo» en la cabecera abre el modal de cobro sin salir del
  * detalle; solo aparece si la venta admite cobros y el usuario puede registrarlos.
+ *
+ * PAG-F2 · «Volver» regresa a la lista de origen que viaja en `returnTo`.
  */
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -13,6 +15,15 @@ import userEvent from "@testing-library/user-event";
 import type { Permission } from "@/shared/auth/permissions";
 
 let mockPermissions: Permission[] = [];
+/** Query de la URL del detalle, la que lee «Volver». */
+let mockSearch = "";
+const mockRouter = { back: jest.fn(), push: jest.fn(), replace: jest.fn() };
+
+jest.mock("next/navigation", () => ({
+  usePathname: () => "/sales/sale-stk607",
+  useRouter: () => mockRouter,
+  useSearchParams: () => new URLSearchParams(mockSearch),
+}));
 
 jest.mock("../../../shared/auth/usePermission", () => ({
   usePermission: () => ({
@@ -323,4 +334,38 @@ describe("SaleDetailsPage · cobrar saldo (PAG-02)", () => {
       screen.getByRole("button", { hidden: true, name: "Cobrar saldo" }),
     ).toBeInTheDocument();
   });
+});
+
+describe("SaleDetailsPage · «Volver» (PAG-F2)", () => {
+  const PAYMENTS_LIST = "/payments?from=2026-05-01&method=pago_movil";
+
+  beforeEach(() => {
+    mockPermissions = ["sales.create", "payments.manage"];
+  });
+
+  afterEach(() => {
+    mockSearch = "";
+  });
+
+  async function backHref(search: string) {
+    mockSearch = search;
+    await renderSale(PAID_SALE);
+
+    return screen.getByRole("link", { name: "Volver" }).getAttribute("href");
+  }
+
+  it("con returnTo vuelve a la URL exacta de la lista de origen", async () => {
+    expect(await backHref(`returnTo=${encodeURIComponent(PAYMENTS_LIST)}`)).toBe(PAYMENTS_LIST);
+  });
+
+  it("sin returnTo vuelve al listado de ventas", async () => {
+    expect(await backHref("")).toBe("/sales");
+  });
+
+  it.each(["https://evil.example/payments", "//evil.example", "/api/payments"])(
+    "no sigue un returnTo que no es una ruta interna segura (%s)",
+    async (returnTo) => {
+      expect(await backHref(`returnTo=${encodeURIComponent(returnTo)}`)).toBe("/sales");
+    },
+  );
 });

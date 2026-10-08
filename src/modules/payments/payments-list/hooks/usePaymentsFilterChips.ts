@@ -16,6 +16,8 @@ export type PaymentsFilterChip = {
   key: PaymentsFilterChipKey;
   /** Texto humano; mientras no se conoce, un texto neutro (nunca el id). */
   label: string;
+  /** `false` mientras `label` es el texto neutro: aún no se conoce el número o el nombre. */
+  isResolved: boolean;
 };
 
 type DeepLinkFilters = {
@@ -79,6 +81,7 @@ export function usePaymentsFilterChips(
 
   if (filters.saleId) {
     chips.push({
+      isResolved: Boolean(saleNumber),
       key: "saleId",
       label: saleNumber ? `Venta ${saleNumber}` : "Venta seleccionada",
     });
@@ -86,6 +89,7 @@ export function usePaymentsFilterChips(
 
   if (filters.purchaseId) {
     chips.push({
+      isResolved: Boolean(purchaseNumber),
       key: "purchaseId",
       label: purchaseNumber ? `Compra ${purchaseNumber}` : "Compra seleccionada",
     });
@@ -93,6 +97,7 @@ export function usePaymentsFilterChips(
 
   if (filters.contactId) {
     chips.push({
+      isResolved: Boolean(contactName),
       key: "contactId",
       label: contactName ? `Contacto: ${contactName}` : "Contacto seleccionado",
     });

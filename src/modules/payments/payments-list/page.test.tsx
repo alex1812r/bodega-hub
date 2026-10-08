@@ -5,6 +5,10 @@
  * PAG-05 · el estado de la lista vive en la URL, los filtros visibles son fecha,
  * metodo y tipo, los enlaces profundos se ven como chips (nunca un campo de ID)
  * y la columna "Documento" enlaza al detalle con `returnTo`.
+ *
+ * PAG-F2 · «Ver comprobante» lleva `returnTo`, la cabecera «Comprobante» cabe en su
+ * columna, una pagina fuera de rango cae en la ultima valida y la exportacion recibe
+ * los textos humanos de los chips (nunca ids).
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -49,8 +53,17 @@ jest.mock("../../../shared/auth/usePermission", () => ({
   }),
 }));
 jest.mock("./components/PaymentsExportActions", () => ({
-  PaymentsExportActions: ({ exportFilters }: { exportFilters: unknown }) => (
-    <output data-testid="export-filters">{JSON.stringify(exportFilters)}</output>
+  PaymentsExportActions: ({
+    exportFilters,
+    filterLabels,
+  }: {
+    exportFilters: unknown;
+    filterLabels?: readonly string[];
+  }) => (
+    <>
+      <output data-testid="export-filters">{JSON.stringify(exportFilters)}</output>
+      <output data-testid="export-filter-labels">{JSON.stringify(filterLabels ?? null)}</output>
+    </>
   ),
 }));
 jest.mock("../components/RegisterPaymentModal", () => ({
@@ -97,6 +110,8 @@ describe("PaymentsListPage", () => {
   const nativeReplaceState = window.history.replaceState.bind(window.history);
   let cancelResponse: () => Promise<Response>;
   let listItems: ReturnType<typeof payment>[];
+  /** Total que declara el servidor; por defecto, los pagos de `listItems`. */
+  let listTotal: number | undefined;
   let detailResponses: Record<string, () => Promise<Response>>;
   let isMobile: boolean;
 
@@ -111,6 +126,7 @@ describe("PaymentsListPage", () => {
     mockAuth.role = "admin";
     isMobile = false;
     listItems = [payment("pay-001"), payment("pay-002")];
+    listTotal = undefined;
     detailResponses = {};
     openAt("");
     // Lo que hace Next con un `replaceState`: reflejar la URL en `useSearchParams`.
@@ -147,8 +163,18 @@ describe("PaymentsListPage", () => {
         );
       }
 
+      // Como el servidor: mas alla del total no hay filas, y devuelve el `skip` pedido.
+      const query = new URLSearchParams(String(url).split("?")[1] ?? "");
+      const skip = Number(query.get("skip") ?? 0);
+      const total = listTotal ?? listItems.length;
+
       return jsonResponse({
-        data: { items: listItems, limit: 10, skip: 0, total: listItems.length },
+        data: {
+          items: skip < total ? listItems : [],
+          limit: Number(query.get("limit") ?? 10),
+          skip,
+          total,
+        },
       });
     });
     global.fetch = fetchMock;
@@ -287,6 +313,7 @@ describe("PaymentsListPage", () => {
 
   describe("PAG-05 · estado en la URL", () => {
     it("abre con los filtros, la pagina y el tamaño que trae la URL", async () => {
+      listTotal = 60;
       openAt("direction=entrada&method=pago_movil&from=2026-10-01&to=2026-10-06&page=3&limit=25");
       renderPage();
 
@@ -320,6 +347,7 @@ describe("PaymentsListPage", () => {
     it("cambiar metodo, tipo y fechas escribe la URL, vuelve a la pagina 1 y pide la lista filtrada", async () => {
       const user = userEvent.setup();
 
+      listTotal = 25;
       openAt("page=2");
       renderPage();
       await screen.findAllByRole("link", { name: "V-000002" });
@@ -381,6 +409,74 @@ describe("PaymentsListPage", () => {
 
       fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-10-02" } });
       expect(urlParams()).toEqual({ from: "2026-10-02", to: "2026-10-02" });
+    });
+
+    it("una pagina mas alla de la ultima cae en la ultima valida y la URL lo refleja", async () => {
+      listTotal = 25;
+      openAt("page=99&method=efectivo_ves");
+      renderPage();
+
+      await waitFor(() => expect(urlParams()).toEqual({ method: "efectivo_ves", page: "3" }));
+      await waitFor(() =>
+        expect(lastListRequest()).toEqual({ limit: "10", method: "efectivo_ves", skip: "20" }),
+      );
+      expect(await screen.findAllByRole("link", { name: "V-000002" })).not.toHaveLength(0);
+    });
+
+    it("con una sola pagina, ?page=99 vuelve a la primera y no deja «Mostrando 981 a 7»", async () => {
+      listItems = Array.from({ length: 7 }, (_, index) => payment(`pay-00${index + 1}`));
+      openAt("page=99");
+      renderPage();
+
+      await waitFor(() => expect(urlParams()).toEqual({}));
+      await waitFor(() => expect(lastListRequest()).toEqual({ limit: "10", skip: "0" }));
+      expect(await screen.findAllByRole("link", { name: "V-000002" })).toHaveLength(7);
+      expect(screen.queryByText(/981/)).not.toBeInTheDocument();
+      expect(screen.queryByText("No hay pagos para mostrar")).not.toBeInTheDocument();
+    });
+
+    it("sin pagos, una pagina fuera de rango vuelve a la primera", async () => {
+      listItems = [];
+      openAt("page=4&method=pago_movil");
+      renderPage();
+
+      await waitFor(() => expect(urlParams()).toEqual({ method: "pago_movil" }));
+      expect(await screen.findByText("No hay pagos para mostrar")).toBeInTheDocument();
+    });
+
+    it("una pagina valida no se toca", async () => {
+      listTotal = 25;
+      openAt("page=3");
+      renderPage();
+      await screen.findAllByRole("link", { name: "V-000002" });
+      await settle();
+
+      expect(urlParams()).toEqual({ page: "3" });
+      expect(listRequests()).toEqual([{ limit: "10", skip: "20" }]);
+    });
+
+    it("la exportacion recibe los textos humanos de los chips, nunca los ids", async () => {
+      openAt("saleId=sale-002&contactId=cont-customer");
+      renderPage();
+      await filtersPanel().findByText("Venta V-000002");
+
+      expect(JSON.parse(screen.getByTestId("export-filter-labels").textContent ?? "null")).toEqual([
+        "Venta V-000002",
+        "Contacto: Cliente Demo",
+      ]);
+    });
+
+    it("la exportacion omite el filtro cuyo texto aun no se conoce (ni id ni texto neutro)", async () => {
+      listItems = [];
+      openAt("saleId=sale-999&contactId=cont-999");
+      renderPage();
+      await filtersPanel().findByText("Venta seleccionada");
+      await waitFor(() => expect(requestedPaths()).toContain("/api/contacts/cont-999"));
+      await settle();
+
+      expect(JSON.parse(screen.getByTestId("export-filter-labels").textContent ?? "null")).toEqual(
+        [],
+      );
     });
 
     it("la exportacion recibe los mismos filtros que la lista", async () => {
@@ -523,6 +619,7 @@ describe("PaymentsListPage", () => {
           saleId: undefined,
         }),
       ];
+      listTotal = 25;
       openAt("method=efectivo_ves&from=2026-10-01&page=2");
       renderPage();
 
@@ -581,16 +678,33 @@ describe("PaymentsListPage", () => {
       expect(headers).not.toContain("Referencia");
     });
 
-    it("«Ver comprobante» abre el detalle del pago", async () => {
+    it("«Ver comprobante» abre el detalle del pago con la URL exacta de la lista en returnTo", async () => {
       const user = userEvent.setup();
 
+      listTotal = 25;
+      openAt("method=efectivo_ves&from=2026-10-01&page=2");
       renderPage();
       await user.click((await screen.findAllByRole("button", { name: /acciones/i }))[0]);
 
       expect(await screen.findByRole("menuitem", { name: "Ver comprobante" })).toHaveAttribute(
         "href",
-        "/payments/pay-001",
+        `/payments/pay-001?returnTo=${encodeURIComponent(
+          "/payments?from=2026-10-01&method=efectivo_ves&page=2",
+        )}`,
       );
+    });
+
+    it("la columna «Comprobante» es tan ancha como su cabecera: no pisa «Contacto»", async () => {
+      renderPage();
+      await screen.findAllByRole("link", { name: "V-000002" });
+
+      const header = screen.getByRole("columnheader", { name: "Comprobante" });
+      const widthRem = Number(/(?:^|\s)w-\[([\d.]+)rem\]/.exec(header.className)?.[1]);
+
+      // «COMPROBANTE» (12 px, mayusculas, tracking-wider) mide 101 px y la celda
+      // lleva 16 px de relleno a cada lado.
+      expect(widthRem * 16).toBeGreaterThanOrEqual(101 + 2 * 16);
+      expect(header).toHaveClass("whitespace-nowrap");
     });
 
     it("en la tarjeta movil el documento tambien se ve y enlaza con returnTo", async () => {

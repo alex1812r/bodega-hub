@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
@@ -10,10 +10,15 @@ import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
-import { ResponsivePagination, useUrlPaginationState } from "@/shared/components/Pagination";
+import {
+  getTotalPages,
+  ResponsivePagination,
+  useUrlPaginationState,
+} from "@/shared/components/Pagination";
 import { useUrlListState, withUrlListBoundary } from "@/shared/hooks/useUrlListState";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
+import { withReturnTo } from "@/shared/utils/returnTo";
 
 import { PaymentDocumentPicker } from "../components/PaymentDocumentPicker";
 import { RegisterPaymentModal } from "../components/RegisterPaymentModal";
@@ -45,8 +50,9 @@ import {
 /** Documento que se está pagando: lo fija el enlace profundo o el buscador. */
 type PayingDocument = { id: string; type: "purchase" | "sale" };
 
-const paymentIdCellClass = "min-w-0 w-[5.75rem] max-w-[5.75rem] overflow-hidden";
-const paymentIdHeaderClass = "w-[5.75rem] max-w-[5.75rem]";
+// 9rem: la cabecera «COMPROBANTE» mide ~101 px más 32 px de relleno de la celda.
+const paymentIdCellClass = "min-w-0 w-[9rem] max-w-[9rem] overflow-hidden";
+const paymentIdHeaderClass = "w-[9rem] max-w-[9rem] whitespace-nowrap";
 const documentCellClass = "min-w-0 w-[7rem] max-w-[7rem] overflow-hidden";
 const documentHeaderClass = "w-[7rem] max-w-[7rem]";
 
@@ -153,6 +159,17 @@ function PaymentsList() {
   const totalPayments = payments.data?.total ?? 0;
   const filterChips = usePaymentsFilterChips(effectiveFilters, payments.isSuccess);
   const columns = useMemo(() => buildColumns(list.href), [list.href]);
+  const { setState: setListState } = list;
+  const lastPage = getTotalPages(totalPayments, limit);
+  const isPastLastPage = payments.isSuccess && !payments.isFetching && list.state.page > lastPage;
+
+  // Una página más allá de la última (`?page=99`, o un enlace viejo tras anular
+  // pagos) cae en la última que existe, y la URL lo refleja.
+  useEffect(() => {
+    if (isPastLastPage) {
+      setListState({ page: lastPage });
+    }
+  }, [isPastLastPage, lastPage, setListState]);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [payingDocument, setPayingDocument] = useState<PayingDocument | null>(null);
   const { purchaseId: linkedPurchaseId, saleId: linkedSaleId } = effectiveFilters;
@@ -184,7 +201,10 @@ function PaymentsList() {
       <EntityListPage
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
-            <PaymentsExportActions exportFilters={effectiveFilters} />
+            <PaymentsExportActions
+              exportFilters={effectiveFilters}
+              filterLabels={filterChips.filter((chip) => chip.isResolved).map((chip) => chip.label)}
+            />
             {canRegisterPayment ? (
               <Button
                 className="w-full gap-2 shadow-sm sm:w-auto"
@@ -219,7 +239,7 @@ function PaymentsList() {
         <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
           <DataTable
             actions={(payment) => [
-              { href: `/payments/${payment.id}`, label: "Ver comprobante" },
+              { href: withReturnTo(`/payments/${payment.id}`, list.href), label: "Ver comprobante" },
               ...(can("payments.manage")
                 ? [
                     {

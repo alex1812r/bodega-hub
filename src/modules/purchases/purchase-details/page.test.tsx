@@ -2,6 +2,8 @@
  * PAG-01 · pagar una compra desde su detalle: la accion primaria «Pagar» abre el
  * modal de pago sin navegar, en tres clics queda registrado y el saldo y el
  * historial se refrescan sin recargar.
+ *
+ * PAG-F2 · «Volver» regresa a la lista de origen que viaja en `returnTo`.
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -9,11 +11,13 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const mockRouterPush = jest.fn();
+/** Query de la URL del detalle, la que lee «Volver». */
+let mockSearch = "";
 
 jest.mock("next/navigation", () => ({
   usePathname: () => "/purchases/purchase-pag01",
   useRouter: () => ({ back: jest.fn(), push: mockRouterPush, replace: jest.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(mockSearch),
 }));
 
 // jspdf necesita TextEncoder, que jsdom no trae; el PDF no interviene aqui.
@@ -320,4 +324,34 @@ describe("PurchaseDetailsPage · Pagar (PAG-01)", () => {
     // Con el modal abierto la pagina queda fuera del arbol accesible.
     expect(screen.getByRole("button", { hidden: true, name: "Pagar" })).toBeInTheDocument();
   });
+});
+
+describe("PurchaseDetailsPage · «Volver» (PAG-F2)", () => {
+  const PAYMENTS_LIST = "/payments?from=2026-05-01&method=pago_movil";
+
+  afterEach(() => {
+    mockSearch = "";
+  });
+
+  async function backHref(search: string) {
+    mockSearch = search;
+    await renderPage();
+
+    return screen.getByRole("link", { name: "Volver" }).getAttribute("href");
+  }
+
+  it("con returnTo vuelve a la URL exacta de la lista de origen", async () => {
+    expect(await backHref(`returnTo=${encodeURIComponent(PAYMENTS_LIST)}`)).toBe(PAYMENTS_LIST);
+  });
+
+  it("sin returnTo vuelve al listado de compras", async () => {
+    expect(await backHref("")).toBe("/purchases");
+  });
+
+  it.each(["https://evil.example/payments", "//evil.example", "/api/payments"])(
+    "no sigue un returnTo que no es una ruta interna segura (%s)",
+    async (returnTo) => {
+      expect(await backHref(`returnTo=${encodeURIComponent(returnTo)}`)).toBe("/purchases");
+    },
+  );
 });

@@ -2,11 +2,22 @@
  * SHR-19 M4 · en el detalle de pago, el rechazo de «Anular pago» se ve dentro del modal
  * de confirmacion (que sigue abierto para reintentar), no detras, y no deja promesas
  * sin capturar.
+ *
+ * PAG-F2 · «Volver» de la cabecera regresa a la lista de origen que viaja en `returnTo`.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+/** Query de la URL del detalle, la que lee «Volver». */
+let mockSearch = "";
+const mockRouter = { back: jest.fn(), push: jest.fn(), replace: jest.fn() };
+
+jest.mock("next/navigation", () => ({
+  usePathname: () => "/payments/pay-001",
+  useRouter: () => mockRouter,
+  useSearchParams: () => new URLSearchParams(mockSearch),
+}));
 jest.mock("../../../shared/auth/usePermission", () => ({
   usePermission: () => ({ can: () => true, role: "admin" }),
 }));
@@ -234,4 +245,38 @@ describe("PaymentDetailsPage · anular pago", () => {
     await settle();
     expect(unhandled).not.toHaveBeenCalled();
   });
+});
+
+describe("PaymentDetailPageHeader · «Volver» (PAG-F2)", () => {
+  // El resto del archivo sustituye la cabecera por un doble: aqui se pinta la real.
+  const { PaymentDetailPageHeader } = jest.requireActual<
+    typeof import("./components/PaymentDetailPageHeader")
+  >("./components/PaymentDetailPageHeader");
+  const PAYMENTS_LIST = "/payments?from=2026-05-01&method=pago_movil&page=2";
+
+  afterEach(() => {
+    mockSearch = "";
+  });
+
+  function backHref(search: string) {
+    mockSearch = search;
+    render(<PaymentDetailPageHeader />);
+
+    return screen.getByRole("link", { name: "Volver" }).getAttribute("href");
+  }
+
+  it("con returnTo vuelve a la URL exacta de la lista de origen", () => {
+    expect(backHref(`returnTo=${encodeURIComponent(PAYMENTS_LIST)}`)).toBe(PAYMENTS_LIST);
+  });
+
+  it("sin returnTo vuelve al listado de pagos", () => {
+    expect(backHref("")).toBe("/payments");
+  });
+
+  it.each(["https://evil.example/payments", "//evil.example", "/api/payments"])(
+    "no sigue un returnTo que no es una ruta interna segura (%s)",
+    (returnTo) => {
+      expect(backHref(`returnTo=${encodeURIComponent(returnTo)}`)).toBe("/payments");
+    },
+  );
 });

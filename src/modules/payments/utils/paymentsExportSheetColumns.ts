@@ -35,7 +35,7 @@ function resolveCurrency(payment: PaymentListItem) {
 }
 
 export const paymentsListExportColumns: PaymentsExportColumn[] = [
-  { header: "ID Pago", value: (row) => row.id },
+  { header: "Comprobante", value: (row) => row.id },
   { header: "Contacto", value: formatContact },
   {
     header: "Referencia",
