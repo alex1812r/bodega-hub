@@ -46,6 +46,16 @@ function isValidValue(value: number | null, integer: boolean): value is number {
 const LIVE_MAX_DIGITS = 6;
 
 /**
+ * Dígitos que `NumberInput` deja escribir; los siguientes los descarta. Una cantidad de 3
+ * cifras y un EAN-13 son 16: la celda guarda los que no caben para que el código llegue entero.
+ */
+const FIELD_MAX_DIGITS = 15;
+
+function countDigits(text: string) {
+  return text.replace(/\D/g, "").length;
+}
+
+/**
  * Celda numérica de una línea de compra (COM-13), sobre `NumberInput`.
  *
  * - Mientras se escribe, cada valor válido sube al padre (los totales se mueven
@@ -70,6 +80,8 @@ const LIVE_MAX_DIGITS = 6;
  * - Mientras se resuelve, la celda muestra ese valor y otro Enter no hace nada.
  * - En una celda entera, un valor de más de 6 dígitos no sube mientras se escribe
  *   (podría ser un código a medio llegar): sube al salir o con Enter.
+ * - El campo no admite más de `FIELD_MAX_DIGITS` dígitos: los que el lector teclea de
+ *   más no se ven, pero cuentan al leer el escaneo (cantidad de varias cifras + código).
  */
 export function PurchaseLineNumberCell({
   className,
@@ -98,6 +110,8 @@ export function PurchaseLineNumberCell({
   const text = useRef("");
   // Instante en que se tecleó cada carácter del campo (`-Infinity` = ya estaba).
   const stamps = useRef<number[]>([]);
+  // Dígitos tecleados al final que el campo descartó por estar lleno (`FIELD_MAX_DIGITS`).
+  const overflow = useRef("");
   // Valor válido que aún no subió al padre por tener demasiados dígitos.
   const held = useRef<number | null>(null);
   // Hay un escaneo de esta celda resolviéndose: otro Enter no lanza un segundo.
@@ -171,6 +185,7 @@ export function PurchaseLineNumberCell({
   }
 
   function handleBlur() {
+    overflow.current = "";
     sendHeld();
     setTyped(null);
 
@@ -187,21 +202,40 @@ export function PurchaseLineNumberCell({
     if (/^\d$/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const start = field.selectionStart ?? field.value.length;
       const end = field.selectionEnd ?? start;
+      const written = field.value + overflow.current;
       const known =
-        stamps.current.length === field.value.length
+        stamps.current.length === written.length
           ? stamps.current
-          : field.value.split("").map(() => -Infinity);
+          : written.split("").map(() => -Infinity);
 
-      stamps.current = [...known.slice(0, start), Date.now(), ...known.slice(end)];
+      // Campo lleno y sin selección que sustituir: `NumberInput` va a descartar la tecla.
+      if (start === end && countDigits(field.value) >= FIELD_MAX_DIGITS) {
+        if (start === field.value.length) {
+          overflow.current += event.key;
+          stamps.current = [...known, Date.now()];
+        }
+
+        return;
+      }
+
+      overflow.current = "";
+      stamps.current = [
+        ...known.slice(0, start),
+        Date.now(),
+        ...known.slice(end, field.value.length),
+      ];
       return;
     }
+
+    const scanText = field.value + overflow.current;
+
+    overflow.current = "";
 
     if (event.key === "Enter" && scanning.current) {
       event.preventDefault();
       return;
     }
 
-    const scanText = field.value;
     const scan =
       event.key === "Enter" ? readPurchaseLineScan(scanText, stamps.current, Date.now()) : null;
 
