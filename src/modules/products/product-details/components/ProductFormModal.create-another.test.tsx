@@ -101,7 +101,8 @@ describe("ProductFormModal · Guardar y crear otro (PRO-04)", () => {
   it("solo el alta completa lo ofrece, entre Cancelar y el botón principal", () => {
     const { unmount } = render(<ProductFormModal onOpenChange={jest.fn()} open />);
 
-    expect(createAnotherButton()).toHaveAttribute("type", "submit");
+    // PRO-F4: no es un botón de envío, para que Enter nunca lo elija.
+    expect(createAnotherButton()).toHaveAttribute("type", "button");
     expect(
       within(screen.getByRole("dialog"))
         .getAllByRole("button")

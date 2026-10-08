@@ -130,9 +130,6 @@ export type ProductFormModalProps = {
   trigger?: ReactNode;
 };
 
-/** Marca del botón "Guardar y crear otro": el envío lee cuál de los dos lo disparó. */
-const CREATE_ANOTHER_INTENT = "create-another";
-
 function numberFromFormData(formData: FormData, key: string) {
   const value = formData.get(key);
 
@@ -164,6 +161,8 @@ export function ProductFormModal({
   const canCreateAnother = !isEdit && !compact;
   const formId = useId();
   const formRef = useRef<HTMLFormElement | null>(null);
+  /** El envío en curso lo pidió "Guardar y crear otro" (y no Enter ni el botón principal). */
+  const createAnotherRequestedRef = useRef(false);
   // Cambia tras "Guardar y crear otro": el formulario se monta de nuevo y sus
   // campos no controlados (precios, stock, imagen pendiente) vuelven al inicio.
   const [formResetKey, setFormResetKey] = useState(0);
@@ -305,6 +304,21 @@ export function ProductFormModal({
     }
   }
 
+  // "Guardar y crear otro" no es un botón de envío: el navegador elige como
+  // botón por defecto el primer `submit` del formulario, y Enter en un campo (o
+  // un lector de códigos) lo activaría en vez del principal. Pide el envío él
+  // mismo; la marca solo vive durante ese envío, que es síncrono, así que un
+  // intento frenado por la validación nativa no la deja puesta.
+  function submitAndCreateAnother() {
+    createAnotherRequestedRef.current = true;
+
+    try {
+      formRef.current?.requestSubmit();
+    } finally {
+      createAnotherRequestedRef.current = false;
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>, close: () => void) {
     event.preventDefault();
 
@@ -313,9 +327,7 @@ export function ProductFormModal({
     }
 
     const form = event.currentTarget;
-    const submitter = (event.nativeEvent as SubmitEvent).submitter;
-    const createAnother =
-      canCreateAnother && submitter?.dataset.intent === CREATE_ANOTHER_INTENT;
+    const createAnother = canCreateAnother && createAnotherRequestedRef.current;
     const formData = new FormData(form);
 
     // El precio es obligatorio, como cuando el campo era `required`: vacío no
@@ -480,13 +492,7 @@ export function ProductFormModal({
             <Button onClick={close} variant="outline">
               Cancelar
             </Button>
-            <Button
-              data-intent={CREATE_ANOTHER_INTENT}
-              disabled={isSubmitting}
-              form={formId}
-              type="submit"
-              variant="outline"
-            >
+            <Button disabled={isSubmitting} onClick={submitAndCreateAnother} variant="outline">
               Guardar y crear otro
             </Button>
             <Button disabled={isSubmitting} form={formId} type="submit">
