@@ -18,6 +18,7 @@ import {
   attachPackConversionToProduct,
   upsertPackConversionForPackProduct,
 } from "./packConversion.server";
+import { assertListFilterParams } from "./listFilterParams";
 import { parsePackLinkFilter, type PackConversionInput } from "./packConversionSchemas";
 import {
   isPriceReviewFilterOn,
@@ -51,6 +52,7 @@ import {
 import { applyProductSort } from "./productSort";
 import {
   buildProductSearchOrFilter,
+  isUnsearchableSearchTerm,
   normalizeBarcode,
   normalizeProductSearch,
 } from "./productSearch";
@@ -251,9 +253,31 @@ function applyProductFilters<TQuery extends {
   return filteredQuery;
 }
 
+/** Filtros exactos del listado: se validan antes de consultar. */
+export const PRODUCT_LIST_EXACT_FILTERS = ["barcode", "categoryId", "sku"] as const;
+
+/**
+ * La búsqueda parcial trae un término que casaría con todo (solo comodines o
+ * caracteres de control) y ningún filtro exacto la sustituye.
+ */
+export function isProductSearchUnsearchable(searchParams: URLSearchParams) {
+  return (
+    !normalizeBarcode(searchParams.get("barcode")) &&
+    !normalizeSku(searchParams.get("sku") ?? "") &&
+    isUnsearchableSearchTerm(searchParams.get("search"))
+  );
+}
+
 export async function listProducts(searchParams: URLSearchParams, storeId: string) {
-  const supabase = await createRouteSupabaseClient();
+  assertListFilterParams(searchParams, PRODUCT_LIST_EXACT_FILTERS);
+
   const { limit, skip } = parsePagination(searchParams);
+
+  if (isProductSearchUnsearchable(searchParams)) {
+    return { items: [], limit, skip, total: 0 };
+  }
+
+  const supabase = await createRouteSupabaseClient();
   const packLink = parsePackLinkFilter(searchParams);
   const baseSelect = isPriceReviewFilterOn(searchParams) ? productReviewOnlySelect : productSelect;
 

@@ -7,6 +7,7 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import type { CategoryInput } from "./categories.mock-server";
 import { parseCategoryDefaultMarkupPct } from "./categorySchemas";
+import { escapeIlike, isUnsearchableSearchTerm, normalizeProductSearch } from "./productSearch";
 
 const categorySelect =
   "id, name, description, tax_rate, tax_rate_id, default_markup_pct, is_active, created_at, updated_at";
@@ -49,9 +50,16 @@ function toCategoryUpdate(input: CategoryInput) {
 }
 
 export async function listCategories(searchParams: URLSearchParams, storeId: string) {
-  const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
-  const search = searchParams.get("search")?.trim();
+  // Recortado y sin caracteres de control, como la búsqueda de productos.
+  const search = normalizeProductSearch(searchParams.get("search"));
+
+  // Solo comodines: casaría con todas.
+  if (isUnsearchableSearchTerm(searchParams.get("search"))) {
+    return { items: [], limit, skip, total: 0 };
+  }
+
+  const supabase = await createRouteSupabaseClient();
   const isActive = searchParams.get("isActive");
 
   let query = supabase
@@ -68,7 +76,7 @@ export async function listCategories(searchParams: URLSearchParams, storeId: str
   }
 
   if (search) {
-    query = query.ilike("name", `%${search}%`);
+    query = query.ilike("name", `%${escapeIlike(search)}%`);
   }
 
   const { count, data, error } = await query.range(skip, skip + limit - 1);

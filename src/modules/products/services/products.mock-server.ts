@@ -53,8 +53,10 @@ import {
   PRODUCT_CREATE_REQUEST_REUSED_MESSAGE,
   PRODUCT_EDIT_PRICE_REASON,
 } from "./productSchemas";
+import { assertListFilterParams } from "./listFilterParams";
 import { parseProductSort, sortProductItems } from "./productSort";
 import {
+  isUnsearchableSearchTerm,
   matchesProductSearch,
   matchesExactBarcode,
   normalizeBarcode,
@@ -446,10 +448,14 @@ function upsertMockPackConversion(
 }
 
 export function listProducts(searchParams: URLSearchParams, storeId: string) {
+  assertListFilterParams(searchParams, ["barcode", "categoryId", "sku"]);
+
   const barcode = normalizeBarcode(searchParams.get("barcode"));
   const categoryId = searchParams.get("categoryId");
   const isActive = searchParams.get("isActive");
   const search = normalizeProductSearch(searchParams.get("search"));
+  // Como en el servicio real: un término de solo comodines no casa con nada.
+  const unsearchable = isUnsearchableSearchTerm(searchParams.get("search"));
   const sku = normalizeSku(searchParams.get("sku") ?? "");
   // `packLink=not-pack`: fuera los empaques de una receta activa. `packLink=none`:
   // fuera también sus componentes (sin ningún vínculo de empaque).
@@ -471,7 +477,8 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
   const products = mockProducts.filter((product) => {
     const matchesBarcode = !barcode || matchesExactBarcode(product, barcode);
     const matchesSku = !sku || product.sku === sku;
-    const matchesSearch = barcode || sku || !search || matchesProductSearch(product, search);
+    const matchesSearch =
+      barcode || sku || (!unsearchable && (!search || matchesProductSearch(product, search)));
     const matchesCategory = !categoryId || product.categoryId === categoryId;
     const matchesActive =
       isActive === null || product.isActive === (isActive.toLowerCase() === "true");

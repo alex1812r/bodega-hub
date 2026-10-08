@@ -9,6 +9,7 @@ import {
 } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
+import { assertListFilterParams } from "./listFilterParams";
 import {
   buildRepriceReason,
   COST_CHANGED_CODE,
@@ -32,6 +33,8 @@ const PRICE_REVIEW_VIEW = "products_price_review";
  * productos cuyo costo subió esa compra.
  */
 export async function listPriceReview(searchParams: URLSearchParams, storeId: string) {
+  assertListFilterParams(searchParams, ["purchaseId"]);
+
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
   const purchaseId = searchParams.get("purchaseId")?.trim();

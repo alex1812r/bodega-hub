@@ -15,6 +15,7 @@ import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { priceFromMarkup } from "@/shared/utils/pricing";
 
+import { assertListFilterParams } from "./listFilterParams";
 import {
   buildCostChangedMessage,
   buildPriceReview,
@@ -267,6 +268,8 @@ function listStoreReviewItems(storeId: string): ProductPriceReviewItem[] {
 }
 
 export function listPriceReview(searchParams: URLSearchParams, storeId: string) {
+  assertListFilterParams(searchParams, ["purchaseId"]);
+
   const purchaseId = searchParams.get("purchaseId")?.trim();
   const items = listStoreReviewItems(storeId).filter(
     (item) => !purchaseId || item.purchase?.id === purchaseId,

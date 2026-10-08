@@ -53,6 +53,36 @@ async function removeOtherProductImageFormats(productId: string, keepFormat: Pro
   await supabase.storage.from(PRODUCT_IMAGES_BUCKET).remove([...toRemove]);
 }
 
+export const PRODUCT_IMAGE_STORAGE_UNAVAILABLE_MESSAGE =
+  "El almacenamiento de imágenes no está disponible.";
+
+/**
+ * URL firmada de subida y URL pública del objeto, o `null` si el almacenamiento
+ * no sirve para subir: bucket inexistente, Storage caído o URL pública que no
+ * es la del proyecto (entorno mal configurado). El motivo queda en el log del
+ * servidor; quien llama responde 503 con mensaje (antes salía como 500).
+ */
+async function signProductImageUpload(
+  path: string,
+): Promise<Pick<ProductImageUploadUrlResult, "publicUrl" | "uploadUrl"> | null> {
+  try {
+    // Upsert only — do not delete existing covers first (avoids NoSuchKey if PUT fails).
+    const { data, error } = await createAdminSupabaseClient()
+      .storage.from(PRODUCT_IMAGES_BUCKET)
+      .createSignedUploadUrl(path, { upsert: true });
+
+    if (error || !data?.signedUrl) {
+      throw error ?? new Error("Storage no devolvió la URL de subida.");
+    }
+
+    return { publicUrl: resolvePublicUrlForPath(path), uploadUrl: data.signedUrl };
+  } catch (error) {
+    console.error("[product-images] almacenamiento no disponible", error);
+
+    return null;
+  }
+}
+
 export async function createProductImageUploadUrl(
   productId: string,
   format: ProductImageFormat,
@@ -61,28 +91,13 @@ export async function createProductImageUploadUrl(
   await getProductById(productId, storeId);
 
   const path = getProductImageStoragePath(productId, format);
-  const supabase = createAdminSupabaseClient();
+  const upload = await signProductImageUpload(path);
 
-  // Upsert only — do not delete existing covers first (avoids NoSuchKey if PUT fails).
-  const { data, error } = await supabase.storage
-    .from(PRODUCT_IMAGES_BUCKET)
-    .createSignedUploadUrl(path, { upsert: true });
-
-  if (error || !data?.signedUrl) {
-    throw new ApiError(
-      500,
-      "INTERNAL_ERROR",
-      error?.message ?? "No se pudo generar la URL de subida.",
-    );
+  if (!upload) {
+    throw new ApiError(503, "INTERNAL_ERROR", PRODUCT_IMAGE_STORAGE_UNAVAILABLE_MESSAGE);
   }
 
-  const publicUrl = resolvePublicUrlForPath(path);
-
-  return {
-    path,
-    publicUrl,
-    uploadUrl: data.signedUrl,
-  } satisfies ProductImageUploadUrlResult;
+  return { path, ...upload } satisfies ProductImageUploadUrlResult;
 }
 
 /**

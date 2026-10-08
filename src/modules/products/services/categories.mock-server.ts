@@ -6,6 +6,7 @@ import { mockCategories, type CategoryMock } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { parseCategoryDefaultMarkupPct } from "./categorySchemas";
+import { isUnsearchableSearchTerm, normalizeProductSearch } from "./productSearch";
 
 /** `defaultMarkupPct: null` borra el % sugerido; sin el campo, no se toca. */
 export type CategoryInput = Partial<
@@ -34,11 +35,14 @@ function assertActiveNameIsFree(name: string, storeId: string, ignoredId?: strin
 }
 
 export function listCategories(searchParams: URLSearchParams, storeId: string) {
-  const search = searchParams.get("search")?.toLowerCase();
+  const search = normalizeProductSearch(searchParams.get("search")).toLowerCase();
+  // Como en el servicio real: un término de solo comodines no casa con nada.
+  const unsearchable = isUnsearchableSearchTerm(searchParams.get("search"));
   const isActive = searchParams.get("isActive");
 
   const items = mockCategories.filter((category) => {
-    const matchesSearch = !search || category.name.toLowerCase().includes(search);
+    const matchesSearch =
+      !unsearchable && (!search || category.name.toLowerCase().includes(search));
     const matchesActive =
       isActive === null
         ? category.isActive

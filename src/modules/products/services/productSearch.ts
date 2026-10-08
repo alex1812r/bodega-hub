@@ -32,6 +32,20 @@ export function escapeIlike(value: string) {
   return value.replace(/[%_*\\"]/g, "_");
 }
 
+/**
+ * `true` si llegó un término pero no deja nada que buscar: solo caracteres de
+ * control o solo los que `escapeIlike` cambia por comodín (`%`, `_`, `*`, `\`,
+ * `"`). Ese término casaría con todo: el listado responde vacío en vez de
+ * devolver la tienda entera. Sin término (vacío o solo espacios) no aplica.
+ */
+export function isUnsearchableSearchTerm(value: string | null | undefined): boolean {
+  if (!value?.trim()) {
+    return false;
+  }
+
+  return normalizeProductSearch(value).replace(/[%_*\\"\s]/g, "") === "";
+}
+
 export function normalizeBarcode(value: string | null | undefined): string | null {
   if (value === null || value === undefined) {
     return null;
