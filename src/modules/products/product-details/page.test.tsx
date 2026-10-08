@@ -289,6 +289,49 @@ describe("ProductDetailsPage", () => {
     expect(within(rows[2]).getByText(getPriceChangeReason())).toBeInTheDocument();
   });
 
+  // QA PRO-11 (base real): la columna "Usuario" mostraba el UUID de quien cambió el precio.
+  it("el historial muestra el nombre del usuario, nunca su id, y «—» si no hay nombre (PRO-F7)", async () => {
+    const userId = "ecb7f7ff-98e6-487f-ae53-da7a067e1350";
+
+    priceHistory = [
+      {
+        createdAt: "2026-05-19T10:00:00.000Z",
+        id: "h-2",
+        kind: "change",
+        previousSalePriceRef: 12,
+        productId: "p-1",
+        reason: "Ajuste",
+        salePriceRef: 13,
+        userId,
+        userName: "Ana Pérez",
+      },
+      {
+        createdAt: "2026-05-17T10:00:00.000Z",
+        id: "h-1",
+        kind: "baseline",
+        previousSalePriceRef: 12,
+        productId: "p-1",
+        reason: "Línea base de ganancia",
+        salePriceRef: 12,
+        userId,
+        userName: null,
+      },
+    ];
+    renderPage();
+
+    const table = within(
+      (await screen.findByRole("heading", { name: "Historial de precios" })).closest(
+        "section",
+      ) as HTMLElement,
+    );
+    const rows = (await table.findAllByRole("row")).slice(1);
+    const userCell = (row: HTMLElement) => within(row).getAllByRole("cell")[3];
+
+    expect(userCell(rows[0])).toHaveTextContent("Ana Pérez");
+    expect(userCell(rows[1])).toHaveTextContent("—");
+    expect(table.queryByText(userId)).not.toBeInTheDocument();
+  });
+
   it("un cambio rápido de precio fallido sí se avisa en la página: la tarjeta no tiene dónde pintarlo (PRO-F4)", async () => {
     const unhandled = jest.fn();
     const user = renderPage();

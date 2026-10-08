@@ -55,7 +55,8 @@ type ProductDetailsPageProps = {
 
 function mapPriceHistory(rows: ProductPriceHistoryEntry[]): ProductPriceHistoryRow[] {
   return rows.map((row, index) => ({
-    changedBy: row.userId,
+    // Nunca el id: sin nombre (línea base, o un perfil que no puedes ver) queda "—".
+    changedBy: row.userName?.trim() || "—",
     date: formatDate(row.createdAt),
     id: row.id,
     // Entradas anteriores a PRO-11 no traen `kind`: eran todas cambios de precio.

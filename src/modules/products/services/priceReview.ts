@@ -48,6 +48,8 @@ export type ProductPriceHistoryEntry = {
   reason: string | null;
   salePriceRef: number;
   userId: string;
+  /** Nombre de quien la registró; `null` si no hay usuario o su perfil no es visible para quien consulta. */
+  userName: string | null;
 };
 
 /** Sin precio anterior registrado no hay forma de saber que no cambió: es un cambio. */
@@ -172,9 +174,13 @@ export function isPriceReviewFilterOn(searchParams: URLSearchParams) {
 export const PRICE_REVIEW_COLUMNS =
   "product_id, name, sku, sale_price_ref, previous_cost_ref, current_cost_ref, previous_margin_pct, current_margin_pct, previous_band, current_band, snapshot_at, purchase_id, purchase_number, purchase_received_at, supplier_name";
 
-/** Columnas de `product_price_history` que lee el BFF. */
+/**
+ * Columnas de `product_price_history` que lee el BFF. El nombre del usuario
+ * llega en la misma lectura por el embed de `profiles` (como en pagos): lo
+ * filtra la RLS de `profiles`, así que cada rol ve los nombres que ya podía ver.
+ */
 export const PRICE_HISTORY_COLUMNS =
-  "id, product_id, old_sale_price_ref, new_sale_price_ref, reason, changed_by, created_at";
+  "id, product_id, old_sale_price_ref, new_sale_price_ref, reason, changed_by, created_at, changed_by_profile:profiles!product_price_history_changed_by_fkey(id, full_name)";
 
 /** La fila del historial con su motivo (`null` si se registró sin él) y qué registra (`kind`). */
 export function toProductPriceHistoryEntry(row: ProductPriceHistoryRow): ProductPriceHistoryEntry {

@@ -65,6 +65,7 @@ describe("toProductPriceHistoryEntry", () => {
       reason: "Sube el proveedor",
       salePriceRef: 14,
       userId: "user-1",
+      userName: null,
     });
   });
 

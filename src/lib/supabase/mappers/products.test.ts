@@ -108,6 +108,24 @@ describe("mapProductPriceHistory", () => {
       productId: "prod-1",
       salePriceRef: 14,
       userId: "user-1",
+      userName: null,
+    });
+  });
+
+  // PRO-F7: el nombre sale del embed `changed_by_profile` (objeto o lista, según PostgREST).
+  it("maps the embedded profile to the user name and anything else to null", () => {
+    const name = (profile: unknown) =>
+      mapProductPriceHistory({ ...row, changed_by_profile: profile as never }).userName;
+
+    expect(name({ full_name: " Ana Pérez ", id: "user-1" })).toBe("Ana Pérez");
+    expect(name([{ full_name: "Ana Pérez", id: "user-1" }])).toBe("Ana Pérez");
+    expect(name({ full_name: null, id: "user-1" })).toBeNull();
+    expect(name({ full_name: "   ", id: "user-1" })).toBeNull();
+    expect(name([])).toBeNull();
+    expect(name(null)).toBeNull();
+    expect(mapProductPriceHistory({ ...row, changed_by: null })).toMatchObject({
+      userId: "",
+      userName: null,
     });
   });
 

@@ -80,8 +80,12 @@ export type ProductRow = DbProductSummaryRow & {
   updated_at?: string | null;
 };
 
+type ProductPriceHistoryProfile = { full_name?: string | null };
+
 export type ProductPriceHistoryRow = {
   changed_by?: string | null;
+  /** Embed de `profiles` (objeto o lista, según PostgREST); `null` si la RLS no deja verlo. */
+  changed_by_profile?: ProductPriceHistoryProfile | ProductPriceHistoryProfile[] | null;
   created_at?: string | null;
   id: string;
   new_sale_price_ref?: number | string | null;
@@ -189,6 +193,10 @@ export function mapProduct(row: ProductRow) {
 }
 
 export function mapProductPriceHistory(row: ProductPriceHistoryRow) {
+  const profile = Array.isArray(row.changed_by_profile)
+    ? row.changed_by_profile[0]
+    : row.changed_by_profile;
+
   return {
     createdAt: row.created_at ?? "",
     id: row.id,
@@ -200,5 +208,7 @@ export function mapProductPriceHistory(row: ProductPriceHistoryRow) {
     productId: row.product_id,
     salePriceRef: toNumber(row.new_sale_price_ref),
     userId: row.changed_by ?? "",
+    // Nombre de quien registró la fila; `null` sin usuario (línea base) o sin perfil visible.
+    userName: profile?.full_name?.trim() || null,
   };
 }

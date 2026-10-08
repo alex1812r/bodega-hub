@@ -263,6 +263,7 @@ describe("ProductDetailsPage · Por revisar (PRO-11)", () => {
         reason: "Precio mantenido",
         salePriceRef: 16,
         userId: "user-admin",
+        userName: "Admin Demo",
       },
       {
         createdAt: "2026-05-19T10:00:00.000Z",
@@ -273,6 +274,7 @@ describe("ProductDetailsPage · Por revisar (PRO-11)", () => {
         reason: "Ajuste de margen a 30 %",
         salePriceRef: 16,
         userId: "user-admin",
+        userName: "Admin Demo",
       },
       {
         createdAt: "2026-05-18T10:00:00.000Z",
@@ -293,6 +295,7 @@ describe("ProductDetailsPage · Por revisar (PRO-11)", () => {
         reason: "Línea base de ganancia",
         salePriceRef: 14,
         userId: "user-admin",
+        userName: null,
       },
     ];
     renderPage();
@@ -305,21 +308,22 @@ describe("ProductDetailsPage · Por revisar (PRO-11)", () => {
 
     expect(rows).toHaveLength(4);
     // keep: sin precio tachado ni flecha de cambio, y la etiqueta una sola vez.
-    expect(cells(rows[0])).toEqual([expect.any(String), "—", "ref 16.00", "user-admin", "Precio mantenido"]);
+    // La columna "Usuario" lleva el nombre, nunca el id (PRO-F7).
+    expect(cells(rows[0])).toEqual([expect.any(String), "—", "ref 16.00", "Admin Demo", "Precio mantenido"]);
     expect(rows[0].querySelector(".line-through")).toBeNull();
     // change: como hoy, anterior tachado → nuevo.
     expect(cells(rows[1])).toEqual([
       expect.any(String),
       "ref 14.00",
       "ref 16.00",
-      "user-admin",
+      "Admin Demo",
       "Ajuste de margen a 30 %",
     ]);
     expect(within(rows[1]).getByText("ref 14.00")).toHaveClass("line-through");
     // keep con motivo propio: etiqueta + motivo.
     expect(cells(rows[2])[4]).toBe("Precio mantenidoPrecio de la competencia");
     // baseline, la fila más antigua: nunca "14.00 → 14.00".
-    expect(cells(rows[3])).toEqual([expect.any(String), "—", "ref 14.00", "user-admin", "Línea base"]);
+    expect(cells(rows[3])).toEqual([expect.any(String), "—", "ref 14.00", "—", "Línea base"]);
     expect(rows[3].querySelector(".line-through")).toBeNull();
   });
 

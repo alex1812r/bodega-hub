@@ -6,6 +6,7 @@ import {
   mockContacts,
   mockProductPriceHistory,
   mockProducts,
+  mockUserProfiles,
   type ProductMock,
   type ProductPriceHistoryMock,
 } from "@/shared/mocks/erp-data";
@@ -143,6 +144,7 @@ export function toMockPriceHistoryEntry(entry: ProductPriceHistoryMock): Product
     reason,
     salePriceRef: entry.salePriceRef,
     userId: entry.userId,
+    userName: mockUserProfiles.find((profile) => profile.id === entry.userId)?.name ?? null,
   };
 }
 
