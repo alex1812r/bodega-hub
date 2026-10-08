@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { usePackConversions } from "@/modules/inventory/hooks/useInventory";
 import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
@@ -143,6 +143,8 @@ export function PurchaseCreatePage() {
   const [paymentSubmitted, setPaymentSubmitted] = useState(false);
   // Alta rápida de producto (COM-03): `null` = cerrada; si no, con qué se prellena.
   const [newProductValues, setNewProductValues] = useState<ProductFormInitialValues | null>(null);
+  // Quién abrió el alta rápida: recupera el foco si se cierra sin crear nada.
+  const newProductOpenerRef = useRef<HTMLElement | null>(null);
   const [lineMetaByProductId, setLineMetaByProductId] = useState(
     () => new Map<string, PurchaseLineItemMeta>(),
   );
@@ -731,7 +733,14 @@ export function PurchaseCreatePage() {
             onLineTaxChange={(itemId, code) =>
               dispatchLines({ code, itemId, type: "lineTaxChosen" })
             }
-            onNewProduct={can("products.manage") ? setNewProductValues : undefined}
+            onNewProduct={
+              can("products.manage")
+                ? (initialValues, opener) => {
+                    newProductOpenerRef.current = opener;
+                    setNewProductValues(initialValues);
+                  }
+                : undefined
+            }
             onRemoveItem={(itemId) => dispatchLines({ itemId, type: "lineRemoved" })}
             onSearchChange={setProductSearch}
             onSettleItem={(itemId) => dispatchLines({ itemId, type: "lineSettled" })}
@@ -797,6 +806,7 @@ export function PurchaseCreatePage() {
           }
         }}
         open={newProductValues !== null}
+        returnFocusTo={newProductOpenerRef}
       />
       <ProcessGuardModal guard={guard} />
     </div>

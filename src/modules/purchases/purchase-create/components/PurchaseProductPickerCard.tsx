@@ -65,9 +65,11 @@ type PurchaseProductPickerCardProps = {
   onLineTaxChange: (itemId: string, code: string) => void;
   /**
    * "Nuevo producto" (COM-03): abre el alta rápida con esos valores. Sin él (el
-   * rol no puede crear productos) no se ofrece.
+   * rol no puede crear productos) no se ofrece. `opener` es a quién devolver el foco
+   * si el alta se cierra sin crear: el botón fijo, o el buscador cuando se abrió desde
+   * la lista sin resultados (ese botón desaparece con ella).
    */
-  onNewProduct?: (initialValues: ProductFormInitialValues) => void;
+  onNewProduct?: (initialValues: ProductFormInitialValues, opener: HTMLElement | null) => void;
   onRemoveItem: (itemId: string) => void;
   onSearchChange: (value: string) => void;
   onSettleItem: (itemId: string) => void;
@@ -246,9 +248,9 @@ export function PurchaseProductPickerCard({
     setPickerOpen(false);
   }
 
-  function handleNewProduct(initialValues: ProductFormInitialValues) {
+  function handleNewProduct(initialValues: ProductFormInitialValues, opener: HTMLElement | null) {
     setPickerOpen(false);
-    onNewProduct?.(initialValues);
+    onNewProduct?.(initialValues, opener);
   }
 
   // Lector o Enter: el codigo exacto se resuelve en servidor, sin esperar al debounce de la lista.
@@ -385,7 +387,9 @@ export function PurchaseProductPickerCard({
               {onNewProduct ? (
                 <Button
                   className="gap-1"
-                  onClick={() => handleNewProduct(buildNewProductPrefill(search))}
+                  onClick={() =>
+                    handleNewProduct(buildNewProductPrefill(search), searchInputRef.current)
+                  }
                   size="sm"
                 >
                   <Plus aria-hidden className="size-4" />
@@ -398,7 +402,7 @@ export function PurchaseProductPickerCard({
         {hasSupplier && onNewProduct ? (
           <Button
             className="h-12 shrink-0 gap-1"
-            onClick={() => handleNewProduct({})}
+            onClick={(event) => handleNewProduct({}, event.currentTarget)}
             variant="outline"
           >
             <Plus aria-hidden className="size-5" />

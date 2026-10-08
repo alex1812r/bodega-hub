@@ -363,6 +363,7 @@ export function ProductFormModal({
   const showSuppliers = !compact && (isEdit ? Boolean(product) : suppliersOnCreate);
   const formId = useId();
   const formRef = useRef<HTMLFormElement | null>(null);
+  const errorMessageRef = useRef<HTMLParagraphElement | null>(null);
   /** El envío en curso lo pidió "Guardar y crear otro" (y no Enter ni el botón principal). */
   const createAnotherRequestedRef = useRef(false);
   // Cambia tras "Guardar y crear otro": el formulario se monta de nuevo y sus
@@ -443,6 +444,16 @@ export function ProductFormModal({
   /** Alta ya guardada cuyos proveedores fallaron: al reintentar no se vuelve a crear. */
   const [createdProduct, setCreatedProduct] = useState<ProductWithCategory | null>(null);
   const isBusy = isSubmitting || isSavingSuppliers;
+
+  // El aviso va al pie de un cuerpo con scroll: al aparecer se trae a la vista.
+  useEffect(() => {
+    const element = errorMessageRef.current;
+
+    // jsdom no implementa `scrollIntoView`.
+    if (errorMessage && element && typeof element.scrollIntoView === "function") {
+      element.scrollIntoView({ block: "nearest" });
+    }
+  }, [errorMessage]);
 
   useEffect(() => {
     if (isOpen) {
@@ -1139,7 +1150,11 @@ export function ProductFormModal({
           </p>
         ) : null}
         {errorMessage ? (
-          <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+          <p
+            className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300"
+            ref={errorMessageRef}
+            role="alert"
+          >
             {errorMessage}
           </p>
         ) : null}

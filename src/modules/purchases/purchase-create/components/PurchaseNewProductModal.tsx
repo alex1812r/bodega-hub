@@ -1,5 +1,7 @@
 "use client";
 
+import { type RefObject, useEffect, useRef } from "react";
+
 import { getPaginatedItems } from "@/lib/api/pagination";
 import {
   type ProductWithCategory,
@@ -18,6 +20,11 @@ type PurchaseNewProductModalProps = {
   onCreated: (product: ProductWithCategory) => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  /**
+   * Quién abrió el alta. El modal compartido no devuelve el foco al cerrarse: si se
+   * cierra sin crear nada, vuelve aquí. Si se crea, el foco es de la línea nueva.
+   */
+  returnFocusTo?: RefObject<HTMLElement | null>;
 };
 
 /**
@@ -27,14 +34,35 @@ type PurchaseNewProductModalProps = {
  *
  * El vínculo con el proveedor no se crea aquí: lo crea `create_purchase` al
  * confirmar la compra.
+ *
+ * Cerrada sin crear (Esc, Cancelar, la X), el foco vuelve a `returnFocusTo`.
  */
 export function PurchaseNewProductModal({
   initialValues,
   onCreated,
   onOpenChange,
   open,
+  returnFocusTo,
 }: PurchaseNewProductModalProps) {
   const createProduct = useCreateProduct();
+  const wasOpen = useRef(false);
+  const created = useRef(false);
+
+  useEffect(() => {
+    if (open) {
+      wasOpen.current = true;
+      created.current = false;
+      return;
+    }
+
+    if (wasOpen.current) {
+      wasOpen.current = false;
+
+      if (!created.current) {
+        returnFocusTo?.current?.focus();
+      }
+    }
+  }, [open, returnFocusTo]);
   const categories = getPaginatedItems(useAllCategories({}, { enabled: open }).data);
 
   function handleOpenChange(nextOpen: boolean) {
@@ -44,6 +72,7 @@ export function PurchaseNewProductModal({
   }
 
   function handleCreated(product: ProductWithCategory) {
+    created.current = true;
     // El alta devuelve el producto sin su categoría anidada.
     onCreated({
       ...product,

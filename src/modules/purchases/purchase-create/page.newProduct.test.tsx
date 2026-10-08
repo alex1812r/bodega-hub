@@ -350,4 +350,27 @@ describe("PurchaseCreatePage · Nuevo producto desde la compra (COM-03)", () => 
       within(dialog()).queryByText("Ya existe un producto con ese código de barras."),
     ).not.toBeInTheDocument();
   });
+
+  it("al cerrar el alta con Esc el foco vuelve al botón «Nuevo producto» (COM-F3)", async () => {
+    installApi();
+    const user = renderPage();
+
+    await user.click(newProductButton() as HTMLElement);
+    expect(dialog()).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(newProductButton()).toHaveFocus();
+  });
+
+  it("abierta desde «Crear producto nuevo», al cancelar el foco vuelve al buscador: ese botón ya no está (COM-F3)", async () => {
+    installApi();
+    const user = renderPage();
+
+    createFromNoResults("Malta 355");
+    await user.click(within(dialog()).getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(searchBox()).toHaveFocus();
+  });
 });

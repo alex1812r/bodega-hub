@@ -643,6 +643,44 @@ describe("ProductFormModal · modo compact (PRO-01)", () => {
     expect(screen.getByRole("button", { name: "Crear producto" })).toBeInTheDocument();
   });
 
+  it("el error del servidor se anuncia como alerta y se trae a la vista cuando aparece (COM-F3)", () => {
+    const original = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+    const scrollIntoView = jest.fn();
+
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    try {
+      const props = { ...withCategory, compact: true, onOpenChange: jest.fn(), open: true };
+      const { rerender } = render(<ProductFormModal {...props} />);
+
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+
+      rerender(
+        <ProductFormModal {...props} errorMessage="Ya existe un producto con este código de barras." />,
+      );
+
+      const alert = screen.getByRole("alert");
+
+      expect(alert).toHaveTextContent("Ya existe un producto con este código de barras.");
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+      expect(scrollIntoView.mock.contexts[0]).toBe(alert);
+
+      // El mismo aviso en otro render no vuelve a mover el formulario.
+      rerender(
+        <ProductFormModal {...props} errorMessage="Ya existe un producto con este código de barras." />,
+      );
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    } finally {
+      if (original) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", original);
+      } else {
+        Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+      }
+    }
+  });
+
   it("precarga initialValues, envia el alta sin SKU (lo pone el servidor) y entrega el producto creado antes de cerrar", async () => {
     const user = userEvent.setup({ delay: null });
     const created = { id: "prod-9", name: "Harina PAN 1kg", sku: "hari-pan-1kg" } as ProductProp;
