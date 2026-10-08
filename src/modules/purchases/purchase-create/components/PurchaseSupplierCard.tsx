@@ -3,7 +3,10 @@
 import { Building2 } from "lucide-react";
 import { useState } from "react";
 
-import { useContact } from "@/modules/contacts/hooks/useContacts";
+import {
+  fetchPurchaseSupplierOptions,
+  usePurchaseSupplier,
+} from "@/modules/purchases/hooks/usePurchaseSuppliers";
 import {
   type ContactEntityFilters,
   EntityAutocomplete,
@@ -24,22 +27,27 @@ type PurchaseSupplierCardProps = {
    */
   onSupplierChange: (supplierId: string, supplierName?: string) => void;
   selectedSupplierId: string;
-  /** Búsqueda de proveedores; por defecto `GET /api/contacts`. */
+  /**
+   * Búsqueda de proveedores; por defecto `GET /api/purchases/suppliers`, que se
+   * autoriza con `purchases.create` (quien registra compras puede no leer contactos).
+   */
   supplierFetcher?: EntityFetcher<"contact">;
 };
 
 export function PurchaseSupplierCard({
   onSupplierChange,
   selectedSupplierId,
-  supplierFetcher,
+  supplierFetcher = fetchPurchaseSupplierOptions,
 }: PurchaseSupplierCardProps) {
   // Nombre de cada proveedor elegido aquí, por id: si la página retiene un cambio, el
-  // anterior sigue teniendo su nombre sin releer el contacto.
+  // anterior sigue teniendo su nombre sin releer el proveedor.
   const [pickedLabels, setPickedLabels] = useState<Record<string, string>>({});
   const pickedLabel = selectedSupplierId ? pickedLabels[selectedSupplierId] : undefined;
   // El id que llega desde fuera (borrador restaurado, compra duplicada) no trae
-  // nombre: se lee el contacto solo en ese caso.
-  const externalSupplier = useContact(pickedLabel === undefined ? selectedSupplierId : undefined);
+  // nombre: se lee el proveedor solo en ese caso.
+  const externalSupplier = usePurchaseSupplier(
+    pickedLabel === undefined ? selectedSupplierId : undefined,
+  );
   const isResolvingName =
     Boolean(selectedSupplierId) && pickedLabel === undefined && externalSupplier.isPending;
   const value: EntityAutocompleteValue | null = selectedSupplierId
@@ -68,6 +76,8 @@ export function PurchaseSupplierCard({
         placeholder={isResolvingName ? LOADING_SUPPLIER_PLACEHOLDER : undefined}
         // Un reciente guardado puede haberse desactivado: aquí no se ofrecen.
         recentsKey={null}
+        // La búsqueda de compras no trae teléfono ni distingue `ambos`: solo el RIF.
+        renderSecondary={(option) => option.taxId}
         required
         value={value}
       />

@@ -1762,6 +1762,83 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/IdempotencyConflict"
+  /api/purchases/suppliers:
+    get:
+      tags: [Purchases]
+      summary: Buscar proveedores para registrar una compra
+      description: >-
+        Proveedores de la tienda (contactos de tipo `proveedor` o `ambos`) para el
+        formulario de compra. Se autoriza con `purchases.create`, no con
+        `contacts.view`, y por eso solo devuelve `id`, `name`, `taxId` e
+        `isActive`: nunca telefono, direccion, correo, saldos ni notas. Sin `id`
+        lista solo los activos, ordenados por nombre. Con `id` devuelve ese
+        proveedor aunque este inactivo (borrador o compra duplicada) y los demas
+        parametros se ignoran.
+      x-permission: purchases.create
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Texto a buscar en el nombre o el RIF. Hasta 100 caracteres.
+          schema:
+            type: string
+            maxLength: 100
+        - name: limit
+          in: query
+          required: false
+          description: Un valor mayor que 20 se acota a 20; menor que 1 o no entero responde 400.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 8
+        - name: skip
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: id
+          in: query
+          required: false
+          description: Id del proveedor a leer. Vacio o con caracteres no validos responde 400.
+          schema:
+            type: string
+            maxLength: 64
+      responses:
+        "200":
+          description: >-
+            Sin `id`, la pagina de proveedores (`items`, `total`, `skip`, `limit`).
+            Con `id`, el proveedor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    oneOf:
+                      - type: object
+                        required: [items, limit, skip, total]
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/PurchaseSupplier"
+                          limit:
+                            type: integer
+                          skip:
+                            type: integer
+                          total:
+                            type: integer
+                      - $ref: "#/components/schemas/PurchaseSupplier"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/purchases/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -4681,6 +4758,21 @@ components:
           type: number
         totalVes:
           type: number
+    PurchaseSupplier:
+      type: object
+      description: Lo minimo de un contacto proveedor para registrar una compra.
+      additionalProperties: false
+      required: [id, name, taxId, isActive]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        taxId:
+          type: string
+          description: RIF; cadena vacia si el contacto no lo tiene.
+        isActive:
+          type: boolean
     Contact:
       type: object
       required: [id, name, type, isActive]

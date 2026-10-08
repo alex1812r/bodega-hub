@@ -4,7 +4,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
-/** COM-10 · el proveedor de la compra se busca en servidor. */
+/**
+ * COM-10 · el proveedor de la compra se busca en servidor.
+ * COM-F9 · contra `GET /api/purchases/suppliers` (permiso `purchases.create`), nunca
+ * contra `/api/contacts`, que el rol almacén no puede leer.
+ */
 
 const mockApiFetch = jest.fn();
 
@@ -15,14 +19,49 @@ jest.mock("../../../../shared/api/apiFetch", () => ({
 
 import { PurchaseSupplierCard } from "./PurchaseSupplierCard";
 
+const SUPPLIERS_PATH = "/api/purchases/suppliers";
+
 const norte = {
   id: "sup-norte",
   isActive: true,
   name: "Distribuidora Norte C.A.",
-  phone: "0412-0000000",
   taxId: "J-12345678-9",
-  type: "proveedor",
 };
+
+type FetchOptions = { query?: { id?: string } };
+
+/** Como el BFF: con `id` un proveedor, sin él la página de la búsqueda. */
+function respondWith(suppliers: Array<typeof norte>) {
+  mockApiFetch.mockImplementation(async (path: string, options?: FetchOptions) => {
+    if (path !== SUPPLIERS_PATH) {
+      throw new Error(`Petición no esperada: ${path}`);
+    }
+
+    const id = options?.query?.id;
+
+    if (id === undefined) {
+      return { items: suppliers, limit: 8, skip: 0, total: suppliers.length };
+    }
+
+    const supplier = suppliers.find((item) => item.id === id);
+
+    if (!supplier) {
+      throw new Error("Proveedor no encontrado.");
+    }
+
+    return supplier;
+  });
+}
+
+function contactsCalls() {
+  return mockApiFetch.mock.calls.filter(([path]) => String(path).startsWith("/api/contacts"));
+}
+
+function lookupCalls() {
+  return mockApiFetch.mock.calls.filter(
+    ([path, options]) => path === SUPPLIERS_PATH && (options as FetchOptions)?.query?.id,
+  );
+}
 
 function Harness({
   initialId,
@@ -66,12 +105,10 @@ function supplierInput() {
 describe("PurchaseSupplierCard", () => {
   beforeEach(() => {
     mockApiFetch.mockReset();
-    mockApiFetch.mockImplementation(async (path: string) =>
-      path === "/api/contacts" ? { items: [norte], limit: 8, skip: 0, total: 1 } : norte,
-    );
+    respondWith([norte]);
   });
 
-  it("busca en servidor proveedores activos y avisa del id y el nombre elegidos", async () => {
+  it("busca en el endpoint de compras, no en contactos, y avisa del id y el nombre elegidos", async () => {
     const user = userEvent.setup();
     const { onSupplierChange } = renderCard();
 
@@ -84,19 +121,18 @@ describe("PurchaseSupplierCard", () => {
     const option = await screen.findByRole("option", { name: /distribuidora norte/i });
 
     expect(mockApiFetch).toHaveBeenCalledWith(
-      "/api/contacts",
-      expect.objectContaining({
-        query: expect.objectContaining({ isActive: true, search: "nor", type: "proveedor" }),
-      }),
+      SUPPLIERS_PATH,
+      expect.objectContaining({ query: { limit: 8, search: "nor" } }),
     );
-    expect(option).toHaveTextContent("Proveedor · 0412-0000000");
+    expect(contactsCalls()).toEqual([]);
+    expect(option).toHaveTextContent("J-12345678-9");
 
     await user.click(option);
 
     expect(onSupplierChange).toHaveBeenCalledWith("sup-norte", "Distribuidora Norte C.A.");
     expect(supplierInput()).toHaveValue("Distribuidora Norte C.A.");
-    // El nombre ya lo trae la opción elegida: no se relee el contacto.
-    expect(mockApiFetch).not.toHaveBeenCalledWith("/api/contacts/sup-norte");
+    // El nombre ya lo trae la opción elegida: no se relee el proveedor.
+    expect(lookupCalls()).toEqual([]);
   });
 
   it("limpiar la selección avisa con cadena vacía", async () => {
@@ -111,14 +147,12 @@ describe("PurchaseSupplierCard", () => {
     expect(supplierInput()).toHaveValue("");
   });
 
-  it("si la página no acepta el cambio, sigue mostrando el proveedor anterior sin releer el contacto (COM-F3)", async () => {
+  it("si la página no acepta el cambio, sigue mostrando el proveedor anterior sin releerlo (COM-F3)", async () => {
     const user = userEvent.setup();
     const sur = { ...norte, id: "sup-sur", name: "Distribuidora Sur C.A." };
     const { onSupplierChange } = renderCard();
 
-    mockApiFetch.mockImplementation(async (path: string) =>
-      path === "/api/contacts" ? { items: [norte, sur], limit: 8, skip: 0, total: 2 } : norte,
-    );
+    respondWith([norte, sur]);
 
     await user.type(supplierInput(), "dis");
     await user.click(await screen.findByRole("option", { name: /distribuidora norte/i }));
@@ -137,10 +171,11 @@ describe("PurchaseSupplierCard", () => {
     await user.click(screen.getByRole("button", { name: "Limpiar Proveedor" }));
 
     expect(onSupplierChange).toHaveBeenLastCalledWith("", undefined);
-    expect(mockApiFetch).not.toHaveBeenCalledWith("/api/contacts/sup-norte");
+    expect(lookupCalls()).toEqual([]);
+    expect(contactsCalls()).toEqual([]);
   });
 
-  it("muestra el nombre cuando el id llega por props, con estado neutro mientras carga", async () => {
+  it("resuelve por id en el endpoint de compras el nombre del proveedor que llega por props, con estado neutro mientras carga", async () => {
     const resolvers: Array<(value: unknown) => void> = [];
 
     mockApiFetch.mockImplementation(
@@ -152,11 +187,20 @@ describe("PurchaseSupplierCard", () => {
 
     renderCard("sup-norte");
 
-    expect(mockApiFetch).toHaveBeenCalledWith("/api/contacts/sup-norte");
+    expect(mockApiFetch).toHaveBeenCalledTimes(1);
+    expect(mockApiFetch).toHaveBeenCalledWith(SUPPLIERS_PATH, { query: { id: "sup-norte" } });
     expect(supplierInput()).toHaveValue("");
     expect(supplierInput()).toHaveAttribute("placeholder", "Cargando proveedor…");
 
     resolvers[0](norte);
+
+    expect(await screen.findByDisplayValue("Distribuidora Norte C.A.")).toBe(supplierInput());
+  });
+
+  it("muestra el nombre de un proveedor inactivo que llega por props", async () => {
+    respondWith([{ ...norte, isActive: false }]);
+
+    renderCard("sup-norte");
 
     expect(await screen.findByDisplayValue("Distribuidora Norte C.A.")).toBe(supplierInput());
   });
@@ -173,11 +217,10 @@ describe("PurchaseSupplierCard", () => {
   });
 
   it("muestra el error del servidor si el proveedor recibido no se puede leer", async () => {
-    mockApiFetch.mockRejectedValue(new Error("El contacto no existe."));
-
     renderCard("sup-borrado");
 
-    expect(await screen.findByText("El contacto no existe.")).toBeInTheDocument();
+    expect(await screen.findByText("Proveedor no encontrado.")).toBeInTheDocument();
     expect(supplierInput()).toBeInvalid();
+    expect(contactsCalls()).toEqual([]);
   });
 });

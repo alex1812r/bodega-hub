@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { contactsQueryKeys } from "@/modules/contacts/hooks/useContacts";
+import { purchaseSuppliersQueryKeys } from "@/modules/purchases/hooks/usePurchaseSuppliers";
 import type { ContactEntityOption, EntityFetcher } from "@/shared/components/EntityAutocomplete";
 
 import { PurchaseSupplierCard } from "./PurchaseSupplierCard";
@@ -39,11 +39,11 @@ const meta = {
     (Story) => {
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 
-      queryClient.setQueryData(contactsQueryKeys.detail("sup-1"), {
+      queryClient.setQueryData(purchaseSuppliersQueryKeys.detail("sup-1"), {
         id: "sup-1",
         isActive: true,
         name: "Distribuidora Norte C.A.",
-        type: "proveedor",
+        taxId: "J-12345678-9",
       });
 
       return (
