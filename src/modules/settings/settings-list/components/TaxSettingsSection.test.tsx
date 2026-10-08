@@ -220,6 +220,70 @@ describe("TaxSettingsSection · Configuración → Impuestos (PRO-09)", () => {
     expect(api.writes()).toHaveLength(0);
   });
 
+  // PRO-F13: con la etiqueta vacía solo salía el globo del navegador y el % no avisaba.
+  it("añadir con los dos campos vacíos avisa en cada uno, enfoca la etiqueta y no envía", async () => {
+    const api = installServer();
+    const user = renderSection();
+
+    await findRow("General");
+    await user.click(screen.getByRole("button", { name: "Añadir alícuota" }));
+
+    const dialog = within(screen.getByRole("dialog", { name: "Nueva alícuota de IVA" }));
+    const label = dialog.getByLabelText("Etiqueta");
+
+    await user.click(dialog.getByRole("button", { name: "Añadir alícuota" }));
+
+    expect(dialog.getByText("Escribe la etiqueta de la alícuota.")).toBeInTheDocument();
+    expect(dialog.getByText("Escribe el porcentaje de la alícuota.")).toBeInTheDocument();
+    expect(label).toBeInvalid();
+    expect(label).toHaveFocus();
+    expect(api.writes()).toHaveLength(0);
+
+    // Solo espacios tampoco vale; al escribirla el aviso se va.
+    await user.type(label, "   ");
+    await user.click(dialog.getByRole("button", { name: "Añadir alícuota" }));
+
+    expect(dialog.getByText("Escribe la etiqueta de la alícuota.")).toBeInTheDocument();
+    expect(api.writes()).toHaveLength(0);
+
+    await user.type(label, "Licores");
+
+    expect(dialog.queryByText("Escribe la etiqueta de la alícuota.")).not.toBeInTheDocument();
+  });
+
+  // PRO-F13: se podían crear dos alícuotas con el mismo % sin ningún aviso.
+  it("un % que ya tiene una alícuota activa avisa cuál es, sin impedir añadirla", async () => {
+    const api = installServer();
+    const user = renderSection();
+
+    await findRow("General");
+    await user.click(screen.getByRole("button", { name: "Añadir alícuota" }));
+
+    const dialog = within(screen.getByRole("dialog", { name: "Nueva alícuota de IVA" }));
+    const pct = dialog.getByLabelText("Porcentaje (%)");
+
+    await user.type(dialog.getByLabelText("Etiqueta"), "Otra general");
+    // 31 % solo lo tiene una alícuota inactiva: no avisa.
+    await user.type(pct, "31");
+
+    expect(dialog.queryByText(/Ya hay una alícuota activa/)).not.toBeInTheDocument();
+
+    await user.clear(pct);
+    await user.type(pct, "16");
+
+    expect(
+      dialog.getByText(
+        "Ya hay una alícuota activa con ese porcentaje: General (16 %). Puedes añadirla igual.",
+      ),
+    ).toBeInTheDocument();
+    expect(pct).toBeValid();
+
+    await user.click(dialog.getByRole("button", { name: "Añadir alícuota" }));
+
+    await waitFor(() => expect(api.writes()).toHaveLength(1));
+    expect(api.writes()[0]).toMatchObject({ body: { label: "Otra general", pct: 16 } });
+  });
+
   // PRO-F6: 150 no se recorta a 100 en silencio: se avisa y no se envía.
   it("añadir con un porcentaje mayor que 100 no envía y avisa, sin cambiar lo escrito", async () => {
     const api = installServer();
