@@ -32,6 +32,12 @@ type PurchaseSummaryCardProps = {
   discountVes: number;
   /** Líneas editadas tras ser agregadas (`getEditedLinesSummary`): se listan para revisarlas antes de confirmar. */
   editedLines?: PurchaseEditedLineSummary[];
+  /**
+   * La compra ya se creó y la página espera a que la navegación al detalle la desmonte:
+   * el botón queda deshabilitado para no registrar otra.
+   */
+  isConfirmed?: boolean;
+  /** Envío en vuelo: botón deshabilitado y `aria-busy`. */
   isSubmitting?: boolean;
   onConfirm: () => void;
   onCostCurrencyChange: (currency: PurchaseCostCurrency) => void;
@@ -153,6 +159,7 @@ export function PurchaseSummaryCard({
   discountRef,
   discountVes,
   editedLines = [],
+  isConfirmed = false,
   isSubmitting = false,
   onConfirm,
   onCostCurrencyChange,
@@ -261,13 +268,18 @@ export function PurchaseSummaryCard({
       ) : null}
 
       <Button
+        aria-busy={isSubmitting}
         className="mt-4 w-full gap-2"
-        disabled={isSubmitting}
+        disabled={isSubmitting || isConfirmed}
         onClick={onConfirm}
         type="button"
       >
         <CheckCircle aria-hidden className="size-5" />
-        {isSubmitting ? "Confirmando..." : "Confirmar Compra"}
+        {isConfirmed
+          ? "Compra registrada..."
+          : isSubmitting
+            ? "Confirmando..."
+            : "Confirmar Compra"}
       </Button>
     </PurchaseCreateSectionCard>
   );

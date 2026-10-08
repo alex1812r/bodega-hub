@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
@@ -65,6 +64,7 @@ import {
   restorePurchaseDraft,
   type PurchaseDraftContent,
 } from "./utils/purchaseDraftStorage";
+import { PurchaseSubmitAttempt } from "./utils/purchaseSubmitAttempt";
 import {
   InitialPaymentKey,
   buildInitialPaymentFailedNotice,
@@ -104,7 +104,8 @@ export function PurchaseCreatePage() {
   const router = useRouter();
   const exchangeRate = useCurrentExchangeRate();
   const createPurchase = useCreatePurchase();
-  const requestAttempt = useRequestAttempt();
+  // Cerrojo de «Confirmar Compra»: una clave por intento y ninguna tras confirmarla.
+  const [requestAttempt] = useState(() => new PurchaseSubmitAttempt());
   // Clave del pago inicial: una por intento de compra, ligada a la clave de este.
   const [initialPaymentKey] = useState(() => new InitialPaymentKey());
   const { showToast } = useToast();
@@ -627,8 +628,9 @@ export function PurchaseCreatePage() {
       taxRef: submitTotals.taxRef,
       taxVes: submitTotals.taxVes,
     };
-    // Clave de idempotencia del intento; null = ya hay un envio en vuelo (doble clic).
-    // El pago forma parte de la huella: si cambia tras un rechazo, cambian las dos claves.
+    // Clave de idempotencia del intento; null = hay un envío en vuelo (doble clic) o la
+    // compra ya se confirmó y la página espera a que la navegación la desmonte.
+    // El pago forma parte de la huella: si cambia tras un fallo, cambian las dos claves.
     const clientRequestId = requestAttempt.begin({
       ...input,
       initialPayment: initialPayment?.payment ?? null,
@@ -829,6 +831,7 @@ export function PurchaseCreatePage() {
             discountRef={discountRef}
             discountVes={discountVes}
             editedLines={editedLines}
+            isConfirmed={confirmed}
             isSubmitting={createPurchase.isPending}
             onConfirm={() => void handleSubmit()}
             onCostCurrencyChange={handleCostCurrencyChange}

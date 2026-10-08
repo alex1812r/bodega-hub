@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const mockPush = jest.fn();
 const mockRate = { data: { rateVes: 510 }, error: null };
@@ -262,6 +263,74 @@ describe("PurchaseCreatePage · idempotencia (C6)", () => {
     expect(api.posts).toHaveLength(2);
     expect(api.posts[1]?.body.clientRequestId).toBe(api.posts[0]?.body.clientRequestId);
     expect(api.posts[1]?.body.items).toEqual(api.posts[0]?.body.items);
+  });
+
+  // COM-F8 · 7a: la navegación al detalle no desmonta la página al instante (aquí, nunca).
+  it("tras confirmar con éxito, más clics, Enter y Espacio sobre el botón no crean otra compra", async () => {
+    const user = userEvent.setup();
+    const api = installFetchStub(() => null);
+    api.respondToNextPost({ data: { id: "purchase-1" } });
+    api.respondToNextPost({ data: { id: "purchase-2" } });
+    api.respondToNextPost({ data: { id: "purchase-3" } });
+
+    renderWithCart();
+
+    const confirm = screen.getByRole("button", { name: /Confirmar Compra/ });
+    await user.dblClick(confirm);
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
+
+    await user.click(confirm);
+    confirm.focus();
+    await user.keyboard("{Enter}");
+    await user.keyboard(" ");
+    fireEvent.click(confirm);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(api.posts).toHaveLength(1);
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveTextContent("Compra registrada");
+  });
+
+  it("mientras la compra está en vuelo el botón queda deshabilitado y ocupado", async () => {
+    const api = installFetchStub(() => null);
+    const release = api.holdNextPost({ data: { id: "purchase-1" } });
+
+    renderWithCart();
+
+    const confirm = screen.getByRole("button", { name: /Confirmar Compra/ });
+    expect(confirm).not.toHaveAttribute("aria-busy", "true");
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(confirm).toBeDisabled());
+    expect(confirm).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(confirm).toHaveTextContent("Compra registrada"));
+    expect(confirm).not.toHaveAttribute("aria-busy", "true");
+  });
+
+  it("si el contenido cambia tras un error de red, el reintento viaja con una clave nueva", async () => {
+    const api = installFetchStub(() => null);
+    api.networkErrorOnNextPost();
+    api.respondToNextPost({ data: { id: "purchase-1" } });
+
+    renderWithCart();
+
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    await screen.findByText("Failed to fetch");
+
+    fireEvent.click(screen.getByRole("button", { name: "agregar producto con empaque" }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
+
+    expect(api.posts).toHaveLength(2);
+    expect(api.posts[1]?.body.items).not.toEqual(api.posts[0]?.body.items);
+    expect(api.posts[1]?.body.clientRequestId).not.toBe(api.posts[0]?.body.clientRequestId);
   });
 });
 
