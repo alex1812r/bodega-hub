@@ -65,6 +65,8 @@ jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
 }));
 // Sin configuración de la tienda: el formulario usa los chips y el semáforo por defecto.
 jest.mock("../../settings/hooks/useSettings", () => ({
+  // Métodos de pago de la tienda sin cargar: "Pagar ahora" ofrece los de por defecto.
+  useEnabledPaymentMethods: () => ({ data: undefined }),
   usePricingSettings: () => ({ data: undefined }),
 }));
 jest.mock("../../../shared/auth/usePermission", () => ({

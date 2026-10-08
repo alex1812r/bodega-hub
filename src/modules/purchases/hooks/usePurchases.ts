@@ -11,6 +11,7 @@ import {
 } from "@/modules/contacts/hooks/useSupplierProducts";
 import type { SupplierProduct } from "@/modules/contacts/types/supplierProducts";
 import type { PurchaseItemInput } from "@/modules/purchases/schemas/purchaseItem.schema";
+import type { PaymentFormPayload } from "@/shared/payments/PaymentFormFields";
 import type {
   ContactMock,
   PaymentMock,
@@ -46,7 +47,25 @@ export type PurchaseInput = {
   taxRef: number;
   taxVes: number;
   exchangeRateId?: string;
+  /**
+   * Pago inicial opcional: los campos de `POST /api/payments` sin el documento, con
+   * su propia clave de idempotencia. Se registra justo después de crear la compra.
+   */
+  initialPayment?: PaymentFormPayload & { clientRequestId: string };
   purchaseNumber?: string;
+};
+
+/**
+ * Resultado del pago inicial. `failed`: la compra SÍ se creó y quedó pendiente de
+ * pago; `message` es el motivo que dio el servidor.
+ */
+export type PurchaseInitialPaymentResult =
+  | { paymentId: string; status: "registered" }
+  | { message: string; status: "failed" };
+
+/** La compra creada; lleva `initialPayment` solo si se envió un pago inicial. */
+export type CreatedPurchase = PurchaseMock & {
+  initialPayment?: PurchaseInitialPaymentResult;
 };
 
 export type PurchaseListRow = PurchaseMock & {
@@ -123,18 +142,23 @@ export function useCreatePurchase() {
 
   return useMutation({
     mutationFn: (input: PurchaseInput) =>
-      apiFetch<PurchaseMock>("/api/purchases", {
+      apiFetch<CreatedPurchase>("/api/purchases", {
         body: input,
         method: "POST",
       }),
     // Sin reintento automatico: el reintento lo decide el usuario y viaja con la
     // misma clave de idempotencia.
     retry: false,
-    onSuccess: () => {
+    onSuccess: (purchase) => {
       void queryClient.invalidateQueries({ queryKey: purchasesQueryKeys.all });
       // Una compra recibida mueve stock y costo: productos, inventario y movimientos.
       void queryClient.invalidateQueries({ queryKey: ["products"] });
       void queryClient.invalidateQueries({ queryKey: inventoryQueryKeys.all });
+
+      // Con pago inicial, registrado o de resultado dudoso: la lista de pagos cambió.
+      if (purchase.initialPayment) {
+        void queryClient.invalidateQueries({ queryKey: ["payments"] });
+      }
     },
   });
 }

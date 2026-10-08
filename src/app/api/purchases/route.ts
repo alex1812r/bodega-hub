@@ -1,13 +1,43 @@
 import { z } from "zod";
 
-import { toErrorResponse } from "@/lib/api/apiError";
+import { ApiError, toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
 import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
+import {
+  addPaymentLineIssues,
+  paymentLineFields,
+} from "@/modules/payments/services/paymentSchemas";
+import * as paymentsMockServer from "@/modules/payments/services/payments.mock-server";
+import * as paymentsServer from "@/modules/payments/services/payments.server";
 import { purchaseItemInputSchema } from "@/modules/purchases/schemas/purchaseItem.schema";
 import * as purchasesMockServer from "@/modules/purchases/services/purchases.mock-server";
 import * as purchasesServer from "@/modules/purchases/services/purchases.server";
+import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
+
+/**
+ * Pago inicial opcional de la compra: el cuerpo de `POST /api/payments` sin el
+ * documento (`purchaseId` lo pone el servidor con la compra recién creada), con las
+ * mismas reglas por método. Lleva su propia clave de idempotencia, obligatoria: la
+ * compra puede reintentarse y el pago no debe entrar dos veces.
+ */
+const initialPaymentSchema = z
+  .object({
+    ...paymentLineFields,
+    clientRequestId: z.string().uuid(),
+  })
+  .superRefine((value, context) => {
+    addPaymentLineIssues(value, context);
+
+    if (value.change && value.change.amount > 0) {
+      context.addIssue({
+        code: "custom",
+        message: "El vuelto solo aplica a pagos de venta.",
+        path: ["change"],
+      });
+    }
+  });
 
 const createPurchaseSchema = z.object({
   // Clave de idempotencia por intento (C6): con la misma clave en la misma tienda
@@ -17,6 +47,7 @@ const createPurchaseSchema = z.object({
   discountRef: z.number().min(0),
   discountVes: z.number().min(0),
   exchangeRateId: z.string().uuid().optional(),
+  initialPayment: initialPaymentSchema.optional(),
   items: z.array(purchaseItemInputSchema).min(1),
   notes: z.string().optional(),
   purchaseNumber: z.string().optional(),
@@ -85,6 +116,10 @@ function getPurchasesService() {
   return resolveDataSource() === "supabase" ? purchasesServer : purchasesMockServer;
 }
 
+function getPaymentsService() {
+  return resolveDataSource() === "supabase" ? paymentsServer : paymentsMockServer;
+}
+
 export async function GET(request: Request) {
   try {
     const auth = await requireStorePermission(request, "purchases.view");
@@ -96,12 +131,69 @@ export async function GET(request: Request) {
   }
 }
 
+const UNCONFIRMED_INITIAL_PAYMENT_MESSAGE =
+  "No pudimos confirmar si el pago se registró. Revisa los pagos de la compra antes de registrarlo de nuevo.";
+
+/** Resultado del pago inicial que viaja con la compra creada. */
+type PurchaseInitialPaymentResult =
+  | { paymentId: string; status: "registered" }
+  | { message: string; status: "failed" };
+
+/**
+ * Registra el pago inicial de una compra YA creada. Nunca lanza: la compra existe,
+ * así que un pago rechazado (PT4xx de `register_payment`) o de resultado incierto
+ * (red, 5xx) se devuelve como `failed` con su motivo y la compra queda pendiente.
+ */
+async function registerInitialPayment(
+  payment: z.infer<typeof initialPaymentSchema>,
+  purchaseId: string,
+  storeId: string,
+): Promise<PurchaseInitialPaymentResult> {
+  try {
+    const registered = await getPaymentsService().createPayment(
+      { ...payment, purchaseId },
+      storeId,
+    );
+
+    return { paymentId: registered.id, status: "registered" };
+  } catch (error) {
+    return {
+      message:
+        error instanceof ApiError && error.status < 500
+          ? error.message
+          : UNCONFIRMED_INITIAL_PAYMENT_MESSAGE,
+      status: "failed",
+    };
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "purchases.create");
-    const input = createPurchaseSchema.parse(await readJsonBody(request));
+    // Compra y pago se validan juntos: con un pago inválido no se crea nada.
+    const { initialPayment, ...input } = createPurchaseSchema.parse(await readJsonBody(request));
+
+    if (initialPayment) {
+      // Mismos permisos que `POST /api/payments` exige para un pago de compra,
+      // comprobados antes de crear la compra.
+      if (!canViewPurchasePayments(auth.role) || !auth.permissions.includes("payments.manage")) {
+        throw new ApiError(403, "FORBIDDEN", "No tienes permiso para registrar pagos de compras.");
+      }
+    }
+
     const service = getPurchasesService();
-    return jsonCreated(await service.createPurchase(input, auth.storeId));
+    const purchase = await service.createPurchase(input, auth.storeId);
+
+    if (!initialPayment) {
+      return jsonCreated(purchase);
+    }
+
+    // En secuencia y con dos claves: reintentar el mismo intento devuelve la misma
+    // compra y el mismo pago. El pago inicial es un `register_payment` normal.
+    return jsonCreated({
+      ...purchase,
+      initialPayment: await registerInitialPayment(initialPayment, purchase.id, auth.storeId),
+    });
   } catch (error) {
     return toErrorResponse(error);
   }

@@ -9,15 +9,26 @@ import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
+import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import { usePermission } from "@/shared/auth/usePermission";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { useToast } from "@/shared/components/Toast";
 import { useTaxRates } from "@/shared/hooks/useTaxRates";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
+import {
+  type PaymentFormValues,
+  amountForMethodChange,
+  createEmptyPaymentFormValues,
+} from "@/shared/payments/PaymentFormFields";
+import {
+  DEFAULT_ENABLED_PAYMENT_METHODS,
+  filterEnabledPaymentMethods,
+} from "@/shared/payments/paymentMethods";
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
 import { PurchaseCreateHeader } from "./components/PurchaseCreateHeader";
 import { PurchaseNewProductModal } from "./components/PurchaseNewProductModal";
+import { PurchasePaymentSection } from "./components/PurchasePaymentSection";
 import {
   PurchaseProductPickerCard,
   type PurchaseCatalogProduct,
@@ -34,6 +45,11 @@ import type { PurchaseCostCurrency, PurchaseDraftItem } from "./types";
 import { buildUnlinkedCatalogProduct } from "./utils/buildPurchaseCatalog";
 import { buildPurchaseLine, nextPurchaseLineId } from "./utils/buildPurchaseLine";
 import { draftToPurchaseItemInput, sumDraftPurchaseTotals } from "./utils/normalizePurchaseLine";
+import {
+  InitialPaymentKey,
+  buildInitialPaymentFailedNotice,
+  resolveInitialPayment,
+} from "./utils/purchaseInitialPayment";
 import { getEditedLinesSummary } from "./utils/purchaseLineReview";
 import {
   buildExemptOverrideNotice,
@@ -51,6 +67,9 @@ export function PurchaseCreatePage() {
   const exchangeRate = useCurrentExchangeRate();
   const createPurchase = useCreatePurchase();
   const requestAttempt = useRequestAttempt();
+  // Clave del pago inicial: una por intento de compra, ligada a la clave de este.
+  const [initialPaymentKey] = useState(() => new InitialPaymentKey());
+  const enabledPaymentMethodsQuery = useEnabledPaymentMethods();
   const { showToast } = useToast();
   const { can } = usePermission();
   // Catálogo completo: los chips muestran también una alícuota desactivada.
@@ -68,6 +87,13 @@ export function PurchaseCreatePage() {
   // Moneda en la que se teclean los costos: una sola para toda la compra.
   const [costCurrency, setCostCurrency] = useState<PurchaseCostCurrency>("ves");
   const [formError, setFormError] = useState<string | null>(null);
+  // "Pagar ahora" (COM-06): cerrada, la compra se confirma sin pago.
+  const [payNow, setPayNow] = useState(false);
+  const [storedPaymentValues, setPaymentValues] = useState<PaymentFormValues>(() =>
+    createEmptyPaymentFormValues(),
+  );
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [paymentSubmitted, setPaymentSubmitted] = useState(false);
   // Alta rápida de producto (COM-03): `null` = cerrada; si no, con qué se prellena.
   const [newProductValues, setNewProductValues] = useState<ProductFormInitialValues | null>(null);
   const [lineMetaByProductId, setLineMetaByProductId] = useState(
@@ -155,6 +181,36 @@ export function PurchaseCreatePage() {
     [activeRateVes, lines],
   );
   const discountVes = roundMoney(refToVes(discountRef, activeRateVes));
+  const totalVes = Math.max(0, roundMoney(totals.subtotalVes - discountVes + totals.taxVes));
+  // Un pago de compra lo registra quien ve y gestiona pagos (regla de `POST /api/payments`).
+  const canPayNow = can("payments.manage") && can("payments.view");
+  const paymentMethods = useMemo(
+    () =>
+      filterEnabledPaymentMethods(
+        enabledPaymentMethodsQuery.data ?? DEFAULT_ENABLED_PAYMENT_METHODS,
+      ),
+    [enabledPaymentMethodsQuery.data],
+  );
+  // Si la tienda no tiene habilitado el método elegido se usa el primero habilitado,
+  // convirtiendo el monto como en el cambio manual de método (igual que el modal de pago).
+  const paymentValues = useMemo<PaymentFormValues>(() => {
+    const [fallbackMethod] = paymentMethods;
+
+    if (!fallbackMethod || paymentMethods.includes(storedPaymentValues.method)) {
+      return storedPaymentValues;
+    }
+
+    return {
+      ...storedPaymentValues,
+      amount: amountForMethodChange(
+        storedPaymentValues.method,
+        fallbackMethod,
+        storedPaymentValues.amount,
+        activeRateVes,
+      ),
+      method: fallbackMethod,
+    };
+  }, [activeRateVes, paymentMethods, storedPaymentValues]);
   const validLines = lines.filter(({ item }) => {
     if (!item.productId) return false;
     if (item.entryMode === "pack") {
@@ -261,6 +317,24 @@ export function PurchaseCreatePage() {
       validLines.map((line) => line.item),
       activeRateVes,
     );
+    const submitTotalVes = Math.max(
+      0,
+      roundMoney(submitTotals.subtotalVes - discountVes + submitTotals.taxVes),
+    );
+    // Sección abierta = el usuario quiere pagar: incompleta o inválida no se envía nada.
+    const initialPayment =
+      canPayNow && payNow
+        ? resolveInitialPayment(paymentValues, submitTotalVes, activeRateVes)
+        : null;
+
+    if (initialPayment && "error" in initialPayment) {
+      setPaymentSubmitted(true);
+      setPaymentError(initialPayment.error);
+      return;
+    }
+
+    setPaymentError(null);
+
     const input = {
       discountRef,
       discountVes,
@@ -279,16 +353,40 @@ export function PurchaseCreatePage() {
       taxVes: submitTotals.taxVes,
     };
     // Clave de idempotencia del intento; null = ya hay un envio en vuelo (doble clic).
-    const clientRequestId = requestAttempt.begin(input);
+    // El pago forma parte de la huella: si cambia tras un rechazo, cambian las dos claves.
+    const clientRequestId = requestAttempt.begin({
+      ...input,
+      initialPayment: initialPayment?.payment ?? null,
+    });
 
     if (!clientRequestId) {
       return;
     }
 
     try {
-      const purchase = await createPurchase.mutateAsync({ ...input, clientRequestId });
+      const purchase = await createPurchase.mutateAsync({
+        ...input,
+        clientRequestId,
+        ...(initialPayment
+          ? {
+              initialPayment: {
+                ...initialPayment.payment,
+                clientRequestId: initialPaymentKey.for(clientRequestId),
+              },
+            }
+          : {}),
+      });
 
       requestAttempt.succeed();
+
+      // La compra existe aunque el pago no haya entrado: se sale del formulario igual
+      // (quedarse invitaría a crear otra) y el detalle ofrece registrar el pago.
+      if (purchase.initialPayment?.status === "failed") {
+        showToast({
+          ...buildInitialPaymentFailedNotice(purchase.initialPayment.message),
+          tone: "error",
+        });
+      }
       router.push(`/purchases/${purchase.id}`);
     } catch (error) {
       // Error surfaced via createPurchase.error
@@ -364,6 +462,25 @@ export function PurchaseCreatePage() {
             onStatusChange={setStatus}
             status={status}
           />
+          {canPayNow ? (
+            <PurchasePaymentSection
+              error={payNow ? paymentError : null}
+              methods={paymentMethods}
+              onOpenChange={(open) => {
+                setPayNow(open);
+                setPaymentError(null);
+              }}
+              onValuesChange={(values) => {
+                setPaymentValues(values);
+                setPaymentError(null);
+              }}
+              open={payNow}
+              rateVes={activeRateVes}
+              showErrors={paymentSubmitted}
+              totalVes={totalVes}
+              values={paymentValues}
+            />
+          ) : null}
           <PurchaseSummaryCard
             costCurrency={costCurrency}
             discountRef={discountRef}

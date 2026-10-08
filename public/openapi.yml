@@ -1732,6 +1732,15 @@ paths:
     post:
       tags: [Purchases]
       summary: Crear compra
+      description: >-
+        Con `initialPayment` registra ademas un pago de la compra recien creada
+        (un `register_payment` normal, en secuencia tras `create_purchase`). Compra
+        y pago se validan y se autorizan antes de crear nada: un pago invalido
+        responde 400 y sin `payments.manage` responde 403, en ambos casos sin
+        crear la compra. Si la compra se crea y el pago falla, la respuesta sigue
+        siendo 201 con la compra y `initialPayment.status = failed`: la compra queda
+        pendiente de pago. Repetir la peticion con las mismas dos claves de
+        idempotencia devuelve la misma compra y el mismo pago.
       x-permission: purchases.create
       requestBody:
         required: true
@@ -1741,11 +1750,12 @@ paths:
               $ref: "#/components/schemas/PurchaseCreateInput"
       responses:
         "201":
-          description: Compra creada
+          description: >-
+            Compra creada. Lleva `initialPayment` solo si la peticion lo envio.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PurchaseResponse"
+                $ref: "#/components/schemas/PurchaseCreateResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
@@ -4843,10 +4853,84 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/Purchase"
+    PurchaseCreateResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          allOf:
+            - $ref: "#/components/schemas/Purchase"
+            - type: object
+              properties:
+                initialPayment:
+                  $ref: "#/components/schemas/PurchaseInitialPaymentResult"
+    PurchaseInitialPaymentResult:
+      description: >-
+        Resultado del pago inicial. `registered`: el pago quedo registrado.
+        `failed`: la compra SI se creo y quedo pendiente de pago; `message` es el
+        motivo en español (el de `register_payment`, o un aviso de resultado
+        incierto si no hubo respuesta clara).
+      oneOf:
+        - type: object
+          required: [status, paymentId]
+          properties:
+            status:
+              type: string
+              enum: [registered]
+            paymentId:
+              type: string
+        - type: object
+          required: [status, message]
+          properties:
+            status:
+              type: string
+              enum: [failed]
+            message:
+              type: string
+    PurchaseInitialPaymentInput:
+      type: object
+      required: [clientRequestId, method, amount]
+      description: >-
+        Pago inicial de la compra: los campos de `PaymentCreateInput` sin `saleId`
+        ni `purchaseId` (el servidor usa la compra recien creada), con las mismas
+        reglas por metodo. No admite vuelto.
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+          description: >-
+            Clave de idempotencia del pago, obligatoria y distinta de la de la
+            compra: al reintentar el mismo intento el pago no se registra dos veces.
+        method:
+          $ref: "#/components/schemas/PaymentMethod"
+        currency:
+          type: string
+          enum: [USD, VES]
+        amount:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1000000000000
+        bankName:
+          type: string
+          maxLength: 120
+        phone:
+          type: string
+          maxLength: 30
+        referenceCode:
+          type: string
+          maxLength: 100
+        notes:
+          type: string
+          maxLength: 2000
+        receivedDenominations:
+          $ref: "#/components/schemas/PaymentDenominations"
     PurchaseCreateInput:
       type: object
       required: [supplierId, items]
       properties:
+        initialPayment:
+          $ref: "#/components/schemas/PurchaseInitialPaymentInput"
         clientRequestId:
           type: string
           format: uuid

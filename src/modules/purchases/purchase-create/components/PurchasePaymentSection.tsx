@@ -1,67 +1,74 @@
-import { DetailSection } from "@/shared/components/DetailSection";
-import { Input } from "@/shared/components/Input";
-import { SelectField } from "@/shared/components/SelectField";
-import type { PaymentMethod } from "@/shared/mocks/erp-data";
+"use client";
 
-export type PurchaseInitialPayment = {
-  amount: number;
-  method: PaymentMethod | "";
-  referenceCode: string;
-};
+import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
+import type { PaymentMethod } from "@/shared/mocks/erp-data";
+import { PaymentFormFields, type PaymentFormValues } from "@/shared/payments/PaymentFormFields";
+
+import { purchasePaymentBalance } from "../utils/purchaseInitialPayment";
 
 type PurchasePaymentSectionProps = {
-  payment?: PurchaseInitialPayment;
-  onPaymentChange?: (payment: PurchaseInitialPayment) => void;
+  /** Motivo por el que el pago no puede enviarse todavía; se anuncia dentro de la sección. */
+  error?: string | null;
+  /** Métodos de pago habilitados en la tienda. */
+  methods: readonly PaymentMethod[];
+  onOpenChange: (open: boolean) => void;
+  onValuesChange: (values: PaymentFormValues) => void;
+  /** Cerrada (por defecto) la compra se confirma sin pago, aunque haya datos tecleados. */
+  open: boolean;
+  /** Tasa Bs por REF de la compra en curso. */
+  rateVes: number;
+  /** Muestra las validaciones por campo: tras intentar confirmar con la sección abierta. */
+  showErrors?: boolean;
+  /** Total de la compra en curso: es el saldo que ofrece "Completar saldo". */
+  totalVes: number;
+  values: PaymentFormValues;
 };
 
-const defaultPayment: PurchaseInitialPayment = {
-  amount: 0,
-  method: "",
-  referenceCode: "",
-};
-
+/**
+ * "Pagar ahora": pago inicial opcional de la compra que se está creando, con los
+ * mismos campos, métodos y validaciones que el modal de pago (`PaymentFormFields`).
+ * El pago se registra al confirmar la compra, justo después de crearla.
+ */
 export function PurchasePaymentSection({
-  onPaymentChange,
-  payment = defaultPayment,
+  error = null,
+  methods,
+  onOpenChange,
+  onValuesChange,
+  open,
+  rateVes,
+  showErrors = false,
+  totalVes,
+  values,
 }: PurchasePaymentSectionProps) {
-  function updatePayment(input: Partial<PurchaseInitialPayment>) {
-    onPaymentChange?.({ ...payment, ...input });
-  }
+  const balance = purchasePaymentBalance(totalVes, rateVes);
 
   return (
-    <DetailSection
-      description="Pago inicial opcional. El registro contable queda para la ola de Pagos."
-      title="Pago inicial"
+    <CollapsibleSection
+      className="rounded-xl shadow-sm"
+      onOpenChange={onOpenChange}
+      open={open}
+      summary="Opcional: registra el pago al confirmar la compra."
+      title="Pagar ahora"
     >
-      <div className="grid gap-4 md:grid-cols-3">
-        <SelectField
-          label="Metodo"
-          onChange={(event) =>
-            updatePayment({ method: event.target.value as PaymentMethod | "" })
-          }
-          options={[
-            { label: "Efectivo VES", value: "efectivo_ves" },
-            { label: "Efectivo USD", value: "efectivo_usd" },
-            { label: "Transferencia", value: "transferencia" },
-          ]}
-          placeholder="Sin pago inicial"
-          value={payment.method}
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-on-surface-variant">
+          El pago se registra al confirmar la compra, por el total o por una parte.
+        </p>
+        <PaymentFormFields
+          methods={methods}
+          onChange={onValuesChange}
+          overpayToleranceVes={balance.overpayToleranceVes}
+          pendingBalance={balance.pendingBalance}
+          rateVes={balance.rateVes}
+          showErrors={showErrors}
+          values={values}
         />
-        <Input
-          label="Monto"
-          min="0"
-          onChange={(event) => updatePayment({ amount: Number(event.target.value) })}
-          placeholder="0.00"
-          type="number"
-          value={payment.amount}
-        />
-        <Input
-          label="Referencia"
-          onChange={(event) => updatePayment({ referenceCode: event.target.value })}
-          placeholder="Numero o codigo"
-          value={payment.referenceCode}
-        />
+        {error ? (
+          <p className="text-sm font-medium text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
       </div>
-    </DetailSection>
+    </CollapsibleSection>
   );
 }
