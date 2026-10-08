@@ -6,7 +6,15 @@ jest.mock("../../../lib/supabase/route-client", () => ({
   createRouteSupabaseClient: jest.fn(),
 }));
 
+// El proveedor habitual del listado sale de una consulta aparte (probada en
+// supplierProducts.server.preferred.test.ts): aquí solo importa cómo la usa la ruta.
+jest.mock("../../../modules/contacts/services/supplierProducts.server", () => ({
+  ...jest.requireActual("../../../modules/contacts/services/supplierProducts.server"),
+  listPreferredSuppliersByProduct: jest.fn(async () => new Map()),
+}));
+
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { listPreferredSuppliersByProduct } from "@/modules/contacts/services/supplierProducts.server";
 import { applyMockPurchaseCost } from "@/modules/products/services/priceReview.mock-server";
 import { mockPurchases } from "@/shared/mocks/erp-data";
 
@@ -397,6 +405,35 @@ describe("/api/products", () => {
       ]);
       expect(body.data.total).toBe(1);
       expect(mockRange).toHaveBeenCalledWith(0, 9);
+    });
+
+    it("adds preferredSupplier with ONE lookup for the whole page, scoped to the server-resolved store", async () => {
+      (listPreferredSuppliersByProduct as jest.Mock).mockResolvedValueOnce(
+        new Map([["prod-1", { id: "sup-1", name: "Proveedor Uno" }]]),
+      );
+
+      const response = await GET(new Request("http://localhost/api/products?skip=0&limit=10"));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.data.items[0].preferredSupplier).toEqual({ id: "sup-1", name: "Proveedor Uno" });
+      expect((listPreferredSuppliersByProduct as jest.Mock).mock.calls).toEqual([
+        [["prod-1"], "00000000-0000-4000-8000-000000000001"],
+      ]);
+    });
+
+    it("does not look up suppliers for vendedor, who cannot see supplier contacts", async () => {
+      const response = await GET(
+        new Request("http://localhost/api/products?skip=0&limit=10", {
+          headers: { "x-demo-role": "vendedor" },
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.data.items).toHaveLength(1);
+      expect("preferredSupplier" in body.data.items[0]).toBe(false);
+      expect(listPreferredSuppliersByProduct).not.toHaveBeenCalled();
     });
 
     it("filters by exact sku within the server-resolved store", async () => {

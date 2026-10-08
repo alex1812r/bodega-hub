@@ -6,10 +6,16 @@ import type { UseQueryOptions } from "@tanstack/react-query";
 import { fetchAllPaginatedItems } from "@/lib/api/fetchAllPaginatedItems";
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import type { SortOrder } from "@/lib/api/sorting";
+import { supplierProductsQueryKeys } from "@/modules/contacts/hooks/useSupplierProducts";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type { CategoryInput } from "../services/categories.mock-server";
 import type { ProductPriceHistoryEntry, ProductPriceReview } from "../services/priceReview";
 import type { ProductMarginFilter } from "../services/productMargin";
+import type {
+  ProductPreferredSupplier,
+  ProductSupplierLink,
+  SaveProductSuppliersResult,
+} from "../services/productSuppliers";
 import type {
   ProductSaleHistoryResult,
   ProductSaleHistoryRow,
@@ -24,6 +30,7 @@ import type {
 export type { CategoryInput };
 export type { ProductPriceHistoryEntry, ProductPriceReview };
 export type { ProductSaleHistoryResult, ProductSaleHistoryRow };
+export type { ProductPreferredSupplier, ProductSupplierLink, SaveProductSuppliersResult };
 
 export type CategoriesFilters = PaginationParams & {
   isActive?: boolean | string;
@@ -33,6 +40,8 @@ export type CategoriesFilters = PaginationParams & {
 export type ProductWithCategory = ProductMock & {
   category?: CategoryMock;
   packConversion?: ProductPackConversionSummary;
+  /** Proveedor habitual del producto, si tiene. No llega a los roles que no ven proveedores. */
+  preferredSupplier?: ProductPreferredSupplier;
   /** Solo si el producto está en la cola "Por revisar": su costo subió y la ganancia bajó de banda. */
   priceReview?: ProductPriceReview;
 };
@@ -252,12 +261,60 @@ export function useProductSales(productId: string, pagination: PaginationParams 
   });
 }
 
-export function useProductSuppliers(id?: string) {
+/** Filtros de `GET /api/products/[id]/suppliers` (sin filtros: activos e inactivos, 10 por página). */
+export type ProductSuppliersFilters = PaginationParams & {
+  isActive?: boolean | string;
+};
+
+/**
+ * Vínculos proveedor–producto de un producto. Cada fila trae `isPreferred`
+ * (el habitual). El formulario de producto pide los activos:
+ * `useProductSuppliers(id, { isActive: true, limit: 100 })`.
+ */
+export function useProductSuppliers(id?: string, filters?: ProductSuppliersFilters) {
   return useQuery({
     enabled: Boolean(id),
-    queryKey: productsQueryKeys.suppliers(id ?? ""),
+    queryKey: filters
+      ? [...productsQueryKeys.suppliers(id ?? ""), filters]
+      : productsQueryKeys.suppliers(id ?? ""),
     queryFn: () =>
-      apiFetch<PaginatedList<SupplierProductMock>>(`/api/products/${id}/suppliers`),
+      apiFetch<PaginatedList<SupplierProductMock>>(
+        `/api/products/${id}/suppliers`,
+        filters ? { query: filters } : undefined,
+      ),
+  });
+}
+
+/** Una fila del estado deseado de los proveedores de un producto. */
+export type ProductSupplierSaveInput = {
+  /** Costo REF por unidad (≥ 0). Sin él, o `null`, el costo del vínculo no se toca. */
+  costRef?: number | null;
+  /** Como mucho uno en `true`. Si ninguno lo marca, el servidor conserva o reasigna el habitual. */
+  isPreferred?: boolean;
+  supplierId: string;
+  /** Sin la clave el código no se toca; `null` o vacío lo borra. */
+  supplierSku?: string | null;
+};
+
+/**
+ * Guarda los proveedores del producto en una llamada (`PUT`): la lista es el
+ * estado DESEADO completo de sus vínculos activos (lo que no viene se
+ * desactiva). La respuesta dice si el habitual cambió (`preferredChanged`) y
+ * si lo movió o quitó el servidor (`preferredAutoAssigned`).
+ */
+export function useSaveProductSuppliers(id: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (suppliers: ProductSupplierSaveInput[]) =>
+      apiFetch<SaveProductSuppliersResult>(`/api/products/${id}/suppliers`, {
+        body: { suppliers },
+        method: "PUT",
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: supplierProductsQueryKeys.all });
+    },
   });
 }
 

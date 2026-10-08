@@ -1184,10 +1184,51 @@ paths:
     get:
       tags: [Products]
       summary: Listar proveedores de un producto
+      description: >-
+        Vinculos proveedor-producto del producto (activos e inactivos; `isActive=true` deja solo los activos). Cada
+        fila trae `isPreferred`: el proveedor habitual del producto (como mucho uno).
       x-permission: products.view
       responses:
         "200":
           $ref: "#/components/responses/SupplierProductArrayResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Products]
+      summary: Guardar los proveedores de un producto
+      description: >-
+        El cuerpo es el estado DESEADO completo de los vinculos activos del producto, en una sola llamada y una sola
+        transaccion (RPC `save_product_suppliers`): crea los vinculos que faltan (reactiva el que existia inactivo),
+        actualiza costo y codigo, DESACTIVA (no borra) los activos que no vienen y fija el proveedor habitual. El costo
+        pasa por el historial de precios del proveedor. El mismo proveedor repetido se funde en una fila (gana la
+        ultima aparicion; habitual si alguna lo marca). Habitual: el marcado; si ninguno, se conserva el actual si
+        sigue en la lista; si no, pasa al primero de la lista con proveedor activo; lista vacia = sin proveedores ni
+        habitual. 400: proveedor inexistente, de otra tienda o que no es proveedor / ambos; proveedor inactivo en un
+        vinculo nuevo o marcado habitual; mas de un habitual; costo negativo; mas de 50 filas. Requiere ademas acceso a
+        contactos proveedor (el vendedor recibe 403) y, en Supabase, rol admin o almacen. No toca el producto, su costo,
+        su precio ni el stock.
+      x-permission: products.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductSuppliersInput"
+      responses:
+        "200":
+          description: Vinculos activos tras guardar y resultado del proveedor habitual
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProductSuppliersResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -3553,6 +3594,78 @@ components:
             decimales). `null` borra la sugerencia; sin el campo, no se toca.
         isActive:
           type: boolean
+    ProductSuppliersInput:
+      type: object
+      required: [suppliers]
+      properties:
+        suppliers:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [supplierId]
+            properties:
+              supplierId:
+                type: string
+              costRef:
+                type: number
+                nullable: true
+                minimum: 0
+                description: Costo REF por unidad. Sin el (o null) el costo del vinculo no se toca.
+              supplierSku:
+                type: string
+                nullable: true
+                description: Codigo del proveedor. Sin la clave no se toca; null o vacio lo borra.
+              isPreferred:
+                type: boolean
+                description: Como mucho uno en true.
+    ProductSupplierLink:
+      type: object
+      required: [id, supplierId, supplierName, supplierIsActive, costRef, isPreferred]
+      properties:
+        id:
+          type: string
+          description: Id del vinculo proveedor-producto.
+        supplierId:
+          type: string
+        supplierName:
+          type: string
+        supplierIsActive:
+          type: boolean
+        costRef:
+          type: number
+          description: Ultimo costo REF por unidad registrado (0 = sin costo registrado).
+        supplierSku:
+          type: string
+        isPreferred:
+          type: boolean
+        lastPurchasedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProductSuppliersResult:
+      type: object
+      required: [suppliers, preferredSupplierId, previousPreferredSupplierId, preferredChanged, preferredAutoAssigned]
+      properties:
+        suppliers:
+          type: array
+          description: Vinculos activos tras guardar; el habitual primero, despues por nombre.
+          items:
+            $ref: "#/components/schemas/ProductSupplierLink"
+        preferredSupplierId:
+          type: string
+          nullable: true
+        previousPreferredSupplierId:
+          type: string
+          nullable: true
+        preferredChanged:
+          type: boolean
+          description: El habitual final es distinto del que habia antes de guardar.
+        preferredAutoAssigned:
+          type: boolean
+          description: El servidor movio o quito el habitual sin que la lista marcara uno.
     SupplierProduct:
       type: object
       required: [id, supplierId, productId, isActive]
@@ -3563,6 +3676,9 @@ components:
           type: string
         productId:
           type: string
+        isPreferred:
+          type: boolean
+          description: Proveedor habitual del producto (como mucho uno por producto; nunca un vinculo inactivo).
         lastCostRef:
           type: number
           minimum: 0
@@ -3757,6 +3873,17 @@ components:
           allOf:
             - $ref: "#/components/schemas/ProductPriceReview"
           description: Solo si el producto esta en la cola "Por revisar" (listado y detalle).
+        preferredSupplier:
+          type: object
+          required: [id, name]
+          description: >-
+            Proveedor habitual del producto, si tiene (listado y detalle). No se envia a los roles sin acceso a
+            contactos proveedor.
+          properties:
+            id:
+              type: string
+            name:
+              type: string
         packConversion:
           allOf:
             - $ref: "#/components/schemas/ProductPackConversion"

@@ -11,7 +11,15 @@ jest.mock("../../../../lib/api/assertStoreResource", () => ({
   assertSupabaseStoreResource: jest.fn(),
 }));
 
+// El proveedor habitual sale de una consulta aparte (probada en
+// supplierProducts.server.preferred.test.ts): aquí solo importa cómo la usa la ruta.
+jest.mock("../../../../modules/contacts/services/supplierProducts.server", () => ({
+  ...jest.requireActual("../../../../modules/contacts/services/supplierProducts.server"),
+  listPreferredSuppliersByProduct: jest.fn(async () => new Map()),
+}));
+
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { listPreferredSuppliersByProduct } from "@/modules/contacts/services/supplierProducts.server";
 
 import { DELETE, GET, PATCH } from "./route";
 
@@ -166,6 +174,27 @@ describe("/api/products/[id]", () => {
           sku: "sku-001",
         }),
       );
+    });
+
+    it("adds preferredSupplier to the detail, and not for vendedor", async () => {
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
+        from: jest.fn(() => createSupabaseTableChain({ data: productRow, error: null })),
+      });
+      (listPreferredSuppliersByProduct as jest.Mock).mockResolvedValue(
+        new Map([["prod-1", { id: "sup-1", name: "Proveedor Uno" }]]),
+      );
+
+      const admin = await GET(new Request("http://localhost/api/products/prod-1"), context("prod-1"));
+      const vendedor = await GET(
+        new Request("http://localhost/api/products/prod-1", { headers: { "x-demo-role": "vendedor" } }),
+        context("prod-1"),
+      );
+      const calls = (listPreferredSuppliersByProduct as jest.Mock).mock.calls;
+      (listPreferredSuppliersByProduct as jest.Mock).mockResolvedValue(new Map());
+
+      expect((await admin.json()).data.preferredSupplier).toEqual({ id: "sup-1", name: "Proveedor Uno" });
+      expect("preferredSupplier" in (await vendedor.json()).data).toBe(false);
+      expect(calls).toEqual([[["prod-1"], "00000000-0000-4000-8000-000000000001"]]);
     });
 
     it("persists isActive on PATCH", async () => {

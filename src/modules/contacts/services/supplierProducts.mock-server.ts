@@ -1,5 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
-import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
+import { assertMockStoreResource, mockEntityStoreId } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
 import {
   mockCategories,
@@ -15,7 +15,18 @@ import {
 } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
+import {
+  mergeProductSupplierInputs,
+  PRODUCT_SUPPLIERS_MAX,
+  PRODUCT_SUPPLIERS_MESSAGES,
+  sortProductSupplierLinks,
+  type ProductPreferredSupplier,
+  type ProductSupplierInput,
+  type ProductSupplierLink,
+  type SaveProductSuppliersResult,
+} from "@/modules/products/services/productSuppliers";
 import { matchesProductSearch } from "@/modules/products/services/productSearch";
+import { isSupplierContactType } from "@/shared/auth/contactAccess";
 import { normalizeOptionalSku } from "@/shared/utils/skuGeneration";
 import { parseSupplierProductSort, sortSupplierProductItems } from "./supplierProductSort";
 
@@ -30,6 +41,95 @@ import type {
 const supplierProducts = [...mockSupplierProducts];
 const priceHistory = [...mockSupplierProductPriceHistory];
 const packUnits = [...mockSupplierProductPackUnits];
+
+// --- Proveedor habitual: las mismas reglas que los triggers del parche 20261009e ---
+
+function isLinkActive(relation: SupplierProductMock) {
+  return relation.isActive ?? true;
+}
+
+/** Proveedor activo y de tipo proveedor / ambos: el único que puede ser habitual. */
+function isUsableSupplier(supplierId: string) {
+  const contact = mockContacts.find((item) => item.id === supplierId);
+
+  return Boolean(contact?.isActive && isSupplierContactType(contact.type));
+}
+
+function findPreferredLink(productId: string) {
+  return supplierProducts.find((item) => item.productId === productId && item.isPreferred);
+}
+
+/**
+ * Relevo determinista (`supplier_products_next_preferred`): entre los vínculos
+ * activos de proveedores activos, el de compra más reciente; sin compras, el
+ * más antiguo; desempate por id.
+ */
+function pickNextPreferred(productId: string) {
+  return supplierProducts
+    .filter(
+      (item) =>
+        item.productId === productId && isLinkActive(item) && isUsableSupplier(item.supplierId),
+    )
+    .sort(
+      (first, second) =>
+        (second.lastPurchasedAt ?? "").localeCompare(first.lastPurchasedAt ?? "") ||
+        (first.createdAt ?? "").localeCompare(second.createdAt ?? "") ||
+        first.id.localeCompare(second.id),
+    )[0];
+}
+
+/** El producto se quedó sin habitual: pasa al relevo, si lo hay. */
+function handOffPreferred(productId: string) {
+  if (findPreferredLink(productId)) {
+    return;
+  }
+
+  const next = pickNextPreferred(productId);
+
+  if (next) {
+    next.isPreferred = true;
+  }
+}
+
+/** El vínculo deja de ser habitual (se desactiva, se borra o cambia de producto). */
+function releasePreferred(relation: SupplierProductMock, productId = relation.productId) {
+  if (!relation.isPreferred) {
+    return;
+  }
+
+  relation.isPreferred = false;
+  handOffPreferred(productId);
+}
+
+/** Un vínculo que entra a los activos de un producto sin habitual queda habitual. */
+function markPreferredIfFirst(relation: SupplierProductMock) {
+  if (
+    isLinkActive(relation) &&
+    !relation.isPreferred &&
+    !findPreferredLink(relation.productId) &&
+    isUsableSupplier(relation.supplierId)
+  ) {
+    relation.isPreferred = true;
+  }
+}
+
+/**
+ * Un habitual nunca es un vínculo inactivo ni de un proveedor inactivo (trigger
+ * de `contacts` en la base): se suelta y el producto pasa al relevo. Se llama
+ * al entrar a cada operación porque el mock de contactos no avisa.
+ */
+function settlePreferred() {
+  for (const relation of supplierProducts) {
+    if (relation.isPreferred && !(isLinkActive(relation) && isUsableSupplier(relation.supplierId))) {
+      releasePreferred(relation);
+    }
+  }
+}
+
+// Como el backfill del parche: un habitual por producto con vínculos activos.
+for (const productId of new Set(supplierProducts.map((item) => item.productId))) {
+  handOffPreferred(productId);
+}
 
 function computeVariationPercent(oldCostRef: number | undefined, newCostRef: number) {
   if (oldCostRef === undefined || oldCostRef <= 0) {
@@ -72,6 +172,7 @@ function enrichSupplierProduct(relation: SupplierProductMock) {
     ...relation,
     defaultPackUnit,
     isActive: relation.isActive ?? true,
+    isPreferred: relation.isPreferred ?? false,
     lastPriceOrigin: relation.lastPriceOrigin ?? latest[0]?.origin,
     packUnits: relationPackUnits,
     product: product
@@ -188,6 +289,7 @@ function matchesSupplierProductSearch(relation: SupplierProductMock, search: str
 }
 
 export function listSupplierProducts(searchParams: URLSearchParams, storeId: string) {
+  settlePreferred();
   const productId = searchParams.get("productId");
   const supplierId = searchParams.get("supplierId");
   const isActive = searchParams.get("isActive");
@@ -231,12 +333,14 @@ export function listSupplierProductsBySupplier(supplierId: string, searchParams:
 }
 
 export function getSupplierProductById(id: string, storeId: string) {
+  settlePreferred();
   const relation = findRelation(id);
   assertMockStoreResource(relation, storeId, "Relacion proveedor-producto no encontrada.");
   return enrichSupplierProduct(relation);
 }
 
 export function createSupplierProduct(input: SupplierProductCreateInput, storeId: string) {
+  settlePreferred();
   const existing = findLink(input.supplierId, input.productId);
 
   if (existing) {
@@ -252,9 +356,11 @@ export function createSupplierProduct(input: SupplierProductCreateInput, storeId
     }
     if (input.notes !== undefined) existing.notes = input.notes;
     existing.updatedAt = now;
+    markPreferredIfFirst(existing);
 
     applyInitialPrice(existing, input, () => {
       existing.isActive = false;
+      releasePreferred(existing);
     });
 
     return enrichSupplierProduct(existing);
@@ -276,20 +382,38 @@ export function createSupplierProduct(input: SupplierProductCreateInput, storeId
   };
 
   supplierProducts.unshift(relation);
+  markPreferredIfFirst(relation);
 
   applyInitialPrice(relation, input, () => {
     const index = supplierProducts.indexOf(relation);
     if (index >= 0) {
       supplierProducts.splice(index, 1);
     }
+    handOffPreferred(relation.productId);
   });
 
   return enrichSupplierProduct(relation);
 }
 
 export function updateSupplierProduct(id: string, input: SupplierProductMetadataUpdateInput, storeId: string) {
+  settlePreferred();
   const relation = findRelation(id);
   assertMockStoreResource(relation, storeId, "Relacion proveedor-producto no encontrada.");
+  const before = { isActive: isLinkActive(relation), productId: relation.productId };
+
+  if (
+    relation.isPreferred &&
+    input.isActive !== false &&
+    (input.productId ?? relation.productId) === relation.productId &&
+    input.supplierId !== undefined &&
+    !isUsableSupplier(input.supplierId)
+  ) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      "Un proveedor inactivo no puede ser el habitual del producto.",
+    );
+  }
 
   if (input.supplierId && input.productId) {
     assertUniqueActiveLink(input.supplierId, input.productId, id);
@@ -308,11 +432,22 @@ export function updateSupplierProduct(id: string, input: SupplierProductMetadata
   if (input.isActive !== undefined) relation.isActive = input.isActive;
   relation.updatedAt = new Date().toISOString();
 
+  if (relation.productId !== before.productId) {
+    // El habitual no viaja con el vínculo a otro producto.
+    releasePreferred(relation, before.productId);
+    markPreferredIfFirst(relation);
+  } else if (!isLinkActive(relation)) {
+    releasePreferred(relation);
+  } else if (!before.isActive) {
+    markPreferredIfFirst(relation);
+  }
+
   return enrichSupplierProduct(relation);
 }
 
 export function registerSupplierProductPrice(id: string,
   input: SupplierProductRegisterPriceInput, storeId: string) {
+  settlePreferred();
   const relation = findRelation(id);
   assertMockStoreResource(relation, storeId, "Relacion proveedor-producto no encontrada.");
 
@@ -352,12 +487,212 @@ export function registerSupplierProductPrice(id: string,
 }
 
 export function deactivateSupplierProduct(id: string, storeId: string) {
+  settlePreferred();
   const relation = findRelation(id);
   assertMockStoreResource(relation, storeId, "Relacion proveedor-producto no encontrada.");
   relation.isActive = false;
   relation.updatedAt = new Date().toISOString();
+  releasePreferred(relation);
 
   return enrichSupplierProduct(relation);
+}
+
+function toProductSupplierLink(relation: SupplierProductMock): ProductSupplierLink {
+  const supplier = mockContacts.find((contact) => contact.id === relation.supplierId);
+
+  return {
+    costRef: relation.lastCostRef,
+    id: relation.id,
+    isPreferred: relation.isPreferred ?? false,
+    ...(relation.lastPurchasedAt ? { lastPurchasedAt: relation.lastPurchasedAt } : {}),
+    supplierId: relation.supplierId,
+    supplierIsActive: supplier?.isActive ?? false,
+    supplierName: supplier?.name ?? "",
+    ...(relation.supplierSku ? { supplierSku: relation.supplierSku } : {}),
+    ...(relation.updatedAt ? { updatedAt: relation.updatedAt } : {}),
+  };
+}
+
+let savedLinkSequence = 0;
+
+/**
+ * Estado deseado de los vínculos activos de un producto, con las reglas de la
+ * RPC `save_product_suppliers`: crea o reactiva los que faltan, cambia costo
+ * (con su historial) y código, desactiva los que no vienen y fija el habitual.
+ * Valida todo antes de escribir: un rechazo no deja nada a medias.
+ */
+export function saveProductSuppliers(
+  productId: string,
+  input: ProductSupplierInput[],
+  storeId: string,
+): SaveProductSuppliersResult {
+  settlePreferred();
+  assertMockStoreResource(
+    mockProducts.find((item) => item.id === productId),
+    storeId,
+    "Producto no encontrado.",
+  );
+
+  if (input.length > PRODUCT_SUPPLIERS_MAX) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      `Un producto admite como máximo ${PRODUCT_SUPPLIERS_MAX} proveedores.`,
+    );
+  }
+
+  const wanted = mergeProductSupplierInputs(input);
+
+  if (wanted.filter((item) => item.isPreferred).length > 1) {
+    throw new ApiError(400, "BAD_REQUEST", PRODUCT_SUPPLIERS_MESSAGES.manyPreferred);
+  }
+
+  const suppliers = wanted.map((item) => {
+    const contact = mockContacts.find((candidate) => candidate.id === item.supplierId);
+
+    if (!contact || mockEntityStoreId(contact) !== storeId || !isSupplierContactType(contact.type)) {
+      throw new ApiError(400, "BAD_REQUEST", PRODUCT_SUPPLIERS_MESSAGES.supplierNotFound);
+    }
+
+    return contact;
+  });
+
+  const previousPreferredSupplierId = findPreferredLink(productId)?.supplierId ?? null;
+
+  wanted.forEach((item, index) => {
+    const link = findLink(item.supplierId, productId);
+
+    if (!suppliers[index].isActive && !(link && isLinkActive(link))) {
+      throw new ApiError(
+        400,
+        "BAD_REQUEST",
+        PRODUCT_SUPPLIERS_MESSAGES.inactiveLink(suppliers[index].name),
+      );
+    }
+  });
+
+  const markedIndex = wanted.findIndex((item) => item.isPreferred);
+  const previousIndex = wanted.findIndex((item) => item.supplierId === previousPreferredSupplierId);
+  let targetSupplierId: string | null;
+
+  if (markedIndex >= 0) {
+    if (!suppliers[markedIndex].isActive) {
+      throw new ApiError(
+        400,
+        "BAD_REQUEST",
+        PRODUCT_SUPPLIERS_MESSAGES.inactivePreferred(suppliers[markedIndex].name),
+      );
+    }
+
+    targetSupplierId = wanted[markedIndex].supplierId;
+  } else if (previousIndex >= 0 && suppliers[previousIndex].isActive) {
+    targetSupplierId = previousPreferredSupplierId;
+  } else {
+    targetSupplierId = suppliers.find((contact) => contact.isActive)?.id ?? null;
+  }
+
+  const now = new Date().toISOString();
+  const wantedIds = new Set(wanted.map((item) => item.supplierId));
+
+  for (const link of supplierProducts) {
+    if (link.productId !== productId) {
+      continue;
+    }
+
+    // Se apaga el habitual anterior antes de encender el nuevo.
+    if (link.isPreferred && link.supplierId !== targetSupplierId) {
+      link.isPreferred = false;
+    }
+
+    if (isLinkActive(link) && !wantedIds.has(link.supplierId)) {
+      link.isActive = false;
+      link.updatedAt = now;
+    }
+  }
+
+  for (const item of wanted) {
+    const isTarget = item.supplierId === targetSupplierId;
+    let link = findLink(item.supplierId, productId);
+    const isNew = !link || !isLinkActive(link);
+
+    if (!link) {
+      savedLinkSequence += 1;
+      link = {
+        createdAt: now,
+        id: `supp-prod-mock-${Date.now()}-${savedLinkSequence}`,
+        isActive: true,
+        lastCostRef: 0,
+        productId,
+        storeId,
+        supplierId: item.supplierId,
+        updatedAt: now,
+        variationPercent: null,
+      };
+      supplierProducts.unshift(link);
+    }
+
+    if (isNew || (link.isPreferred ?? false) !== isTarget) {
+      link.isActive = true;
+      link.isPreferred = isTarget;
+      link.updatedAt = now;
+    }
+
+    if (item.supplierSku !== undefined && (link.supplierSku ?? null) !== item.supplierSku) {
+      link.supplierSku = item.supplierSku ?? undefined;
+      link.updatedAt = now;
+    }
+
+    // Como `register_supplier_product_price` en modo unidad: historial y sin precio de empaque.
+    if (item.costRef !== undefined && (isNew || item.costRef !== link.lastCostRef)) {
+      const origin: SupplierProductPriceOrigin = isNew ? "vinculacion" : "ajuste";
+      const history = appendHistory({
+        newCostRef: item.costRef,
+        oldCostRef: link.lastCostRef,
+        oldCostVes: link.lastCostVes,
+        origin,
+        supplierProductId: link.id,
+      });
+
+      link.lastCostRef = item.costRef;
+      link.lastCostVes = undefined;
+      link.lastPackCostRef = undefined;
+      link.lastPriceOrigin = origin;
+      link.variationPercent = history.variationPercent ?? null;
+      link.updatedAt = history.createdAt;
+    }
+  }
+
+  const preferredSupplierId = findPreferredLink(productId)?.supplierId ?? null;
+
+  return {
+    preferredAutoAssigned: markedIndex < 0 && preferredSupplierId !== previousPreferredSupplierId,
+    preferredChanged: preferredSupplierId !== previousPreferredSupplierId,
+    preferredSupplierId,
+    previousPreferredSupplierId,
+    suppliers: sortProductSupplierLinks(
+      supplierProducts
+        .filter((link) => link.productId === productId && isLinkActive(link))
+        .map(toProductSupplierLink),
+    ),
+  };
+}
+
+/** Proveedor habitual de cada producto pedido (los que no tienen no aparecen). */
+export function listPreferredSuppliersByProduct(productIds: string[], storeId: string) {
+  settlePreferred();
+
+  const wanted = new Set(productIds);
+  const preferred = new Map<string, ProductPreferredSupplier>();
+
+  for (const link of supplierProducts) {
+    const supplier = mockContacts.find((contact) => contact.id === link.supplierId);
+
+    if (link.isPreferred && wanted.has(link.productId) && supplier && mockEntityStoreId(link) === storeId) {
+      preferred.set(link.productId, { id: supplier.id, name: supplier.name });
+    }
+  }
+
+  return preferred;
 }
 
 export function listSupplierProductPriceHistory(id: string, searchParams: URLSearchParams, storeId: string) {

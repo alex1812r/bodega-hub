@@ -9,6 +9,7 @@ import {
   useProductPriceHistory,
   useProducts,
   useProductSuppliers,
+  useSaveProductSuppliers,
   useUpdateProduct,
   useUpdateProductPrice,
 } from "./useProducts";
@@ -100,6 +101,51 @@ describe("product hooks", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/products?sortBy=currentStock&sortOrder=desc",
       expect.any(Object),
+    );
+  });
+
+  it("loads only the active suppliers of a product when the form asks for them", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ data: paginated([{ id: "supplier-product-001", isPreferred: true }]) }),
+    );
+
+    const { result } = renderHook(
+      () => useProductSuppliers("prod-drill", { isActive: true, limit: 100 }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/products/prod-drill/suppliers?isActive=true&limit=100",
+      expect.any(Object),
+    );
+    expect(result.current.data?.items).toEqual([{ id: "supplier-product-001", isPreferred: true }]);
+  });
+
+  it("saves the product suppliers with one PUT carrying the whole desired list and returns the preferred outcome", async () => {
+    const saved = {
+      preferredAutoAssigned: true,
+      preferredChanged: true,
+      preferredSupplierId: "cont-both",
+      previousPreferredSupplierId: "cont-supplier",
+      suppliers: [],
+    };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: saved }));
+
+    const { result } = renderHook(() => useSaveProductSuppliers("prod-drill"), {
+      wrapper: createWrapper(),
+    });
+    const suppliers = [
+      { costRef: 4.5, supplierId: "cont-both", supplierSku: "dob-01" },
+      { isPreferred: true, supplierId: "cont-supplier" },
+    ];
+
+    await expect(result.current.mutateAsync(suppliers)).resolves.toEqual(saved);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/products/prod-drill/suppliers",
+      expect.objectContaining({ body: JSON.stringify({ suppliers }), method: "PUT" }),
     );
   });
 
