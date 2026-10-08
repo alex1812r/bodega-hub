@@ -160,6 +160,11 @@ export function ProductDetailSuppliersTable({
                       <td className="px-5 py-3 font-medium text-foreground">
                         <div className="flex flex-col gap-1">
                           <span>{row.supplier?.name ?? row.supplierId}</span>
+                          {row.isPreferred ? (
+                            <span className="inline-flex w-fit rounded-full bg-primary/10 px-2 py-0.5 text-[0.625rem] font-bold uppercase text-primary">
+                              Habitual
+                            </span>
+                          ) : null}
                           {row.id === bestPriceId ? (
                             <span className="inline-flex w-fit rounded-full bg-secondary-container px-2 py-0.5 text-[0.625rem] font-bold uppercase text-on-secondary-container">
                               Más económico
