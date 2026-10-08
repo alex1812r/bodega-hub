@@ -474,3 +474,28 @@ notify pgrst, 'reload schema';
 -- ORDEN DE DESPLIEGUE (PRO-11): aplicar ANTES de desplegar el BFF: /api/products (listado y detalle),
 -- /api/products/price-review, /api/products/{id}/keep-price y /api/products/{id}/price-history ya leen la vista y las
 -- columnas nuevas; sin el parche responden error.
+-- -----------------------------------------------------------------------------
+-- 20261009d — assorted pack (PRO-12): la conversion empaque -> unidad pasa a RECETA de N componentes.
+--             product_pack_conversions = cabecera (label, total_units) + product_pack_components (unit_product_id,
+--             units_per_pack, cost_weight); convert_pack_to_units gana p_components (reparto real de la apertura) y
+--             reparte el costo por unidades x cost_weight; conversion_mismatches suma las entradas de los componentes;
+--             vista product_pack_roles + relacion calculada pack_role(products)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261009d-assorted-pack.sql
+-- Requiere 20260811, 20261006a, 20261006c, 20261006d, 20261006i y 20261007a. Idempotente, una transaccion. Migra datos la
+-- primera vez: cada fila de product_pack_conversions queda como cabecera (total_units = units_per_pack) + 1 componente
+-- (cost_weight 1). Con recetas de 1 componente nada cambia: mismo stock, costo, movimientos y resultado al abrir un
+-- empaque, misma compra en modo empaque y mismas filas en conversion_mismatches.
+-- Firmas: convert_pack_to_units pasa de 4 a 5 argumentos (p_components jsonb al final, con default; se elimina la de 4);
+-- create_purchase conserva la de 14 y solo cambia como lee la receta en modo empaque (componentes / total_units).
+-- Se elimina el indice unico uq_product_pack_conversions_unit_active (un producto unidad puede salir de varios empaques);
+-- se mantiene uq_product_pack_conversions_pack_active (una receta activa por empaque).
+-- Compatibilidad: product_pack_conversions.units_per_pack (= total_units) y unit_product_id (componente unico o NULL en un
+-- surtido) se mantienen por trigger; el BFF que aun lee y escribe el par 1 a 1 sigue funcionando sobre la base parcheada.
+-- OJO: una receta ACTIVA debe sumar total_units (trigger diferido, PT400 al commit). Por PostgREST: crear la cabecera
+-- inactiva, insertar los componentes y activarla.
+-- OJO: reaplicar 20261006c deja dos sobrecargas de convert_pack_to_units; reaplicar 20261006c / f / h o 20261007a
+-- reinstala create_purchase sin la lectura de componentes; reaplicar 20261006d reinstala conversion_mismatches del modelo
+-- 1 a 1. En los tres casos: volver a aplicar este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (PRO-12): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada; el BFF que
+-- envia p_components o lee product_pack_components / pack_role necesita el parche.

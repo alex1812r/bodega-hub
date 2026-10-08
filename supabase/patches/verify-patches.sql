@@ -270,7 +270,7 @@ select
     where n.nspname = 'public'
       and p.proname = 'convert_pack_to_units'
       and pg_get_function_identity_arguments(p.oid)
-        = 'p_pack_product_id uuid, p_pack_quantity integer, p_reason text, p_client_request_id uuid'
+        = 'p_pack_product_id uuid, p_pack_quantity integer, p_reason text, p_client_request_id uuid, p_components jsonb'
   )
 union all
 select
@@ -1365,5 +1365,248 @@ select
       and t.tgname in ('trg_zz_reject_non_finite_numeric_ins', 'trg_zz_reject_non_finite_numeric_upd')
       and t.tgrelid = to_regclass('public.product_price_history')
       and pg_get_triggerdef(t.oid) ilike '%cost_ref_snapshot%'
+  )
+union all
+select
+  'product_pack_conversions: cabecera de receta (label text opcional, total_units integer not null > 0, units_per_pack = total_units, unit_product_id opcional) (20261009d)',
+  (
+    select count(*) = 4
+       and bool_and(case c.column_name
+             when 'label' then c.data_type = 'text' and c.is_nullable = 'YES'
+             when 'total_units' then c.data_type = 'integer' and c.is_nullable = 'NO'
+             when 'units_per_pack' then c.data_type = 'integer' and c.is_nullable = 'NO'
+             when 'unit_product_id' then c.data_type = 'uuid' and c.is_nullable = 'YES'
+           end)
+    from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'product_pack_conversions'
+      and c.column_name in ('label', 'total_units', 'units_per_pack', 'unit_product_id')
+  ) and (
+    select count(*) = 2
+    from pg_constraint k
+    where k.conrelid = to_regclass('public.product_pack_conversions') and k.contype = 'c' and k.convalidated
+      and k.conname in ('product_pack_conversions_total_units_check', 'product_pack_conversions_units_mirror_check')
+  )
+union all
+select
+  'product_pack_components: tabla de componentes (conversion_id en cascada, units_per_pack > 0, cost_weight > 0 y finito con default 1, unico por receta y producto) (20261009d)',
+  (
+    select count(*) = 5
+       and bool_and(c.is_nullable = 'NO')
+       and bool_and(case c.column_name
+             when 'units_per_pack' then c.data_type = 'integer'
+             when 'cost_weight' then c.data_type = 'numeric' and c.column_default = '1'
+             else c.data_type = 'uuid'
+           end)
+    from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'product_pack_components'
+      and c.column_name in ('conversion_id', 'store_id', 'unit_product_id', 'units_per_pack', 'cost_weight')
+  ) and (
+    select count(*) = 4
+    from pg_constraint k
+    where k.conrelid = to_regclass('public.product_pack_components') and k.convalidated
+      and (
+        (k.conname = 'product_pack_components_units_per_pack_check' and k.contype = 'c')
+        or (k.conname = 'product_pack_components_cost_weight_check' and k.contype = 'c'
+            and pg_get_constraintdef(k.oid) ilike '%cost_weight > %cost_weight - cost_weight%')
+        or (k.conname = 'product_pack_components_conversion_unit_unique' and k.contype = 'u')
+        or (k.contype = 'f' and k.confrelid = to_regclass('public.product_pack_conversions') and k.confdeltype = 'c')
+      )
+  )
+union all
+select
+  'product_pack_conversions: sin indice unico del lado unidad y con el unico del lado empaque (una receta activa por empaque) (20261009d)',
+  not exists (
+    select 1
+    from pg_index i
+    join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+    where i.indrelid = to_regclass('public.product_pack_conversions')
+      and i.indisunique and a.attname = 'unit_product_id'
+  ) and exists (
+    select 1
+    from pg_indexes x
+    where x.schemaname = 'public' and x.tablename = 'product_pack_conversions'
+      and x.indexname = 'uq_product_pack_conversions_pack_active'
+      and x.indexdef ilike 'create unique index%(pack_product_id) where (is_active = true)'
+  )
+union all
+select
+  'recetas de empaque: la suma de componentes de la receta activa se exige con triggers de restriccion diferidos en cabecera y componentes (20261009d)',
+  (
+    select count(*) = 2
+    from pg_trigger t
+    where not t.tgisinternal and t.tgenabled = 'O'
+      and t.tgconstraint <> 0 and t.tgdeferrable and t.tginitdeferred
+      and t.tgfoid = to_regprocedure('public.assert_pack_recipe_consistent()')
+      and (
+        (t.tgrelid = to_regclass('public.product_pack_conversions') and t.tgname = 'trg_zz_pack_recipe_sum')
+        or (t.tgrelid = to_regclass('public.product_pack_components') and t.tgname = 'trg_zz_pack_recipe_sum')
+      )
+  ) and exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.assert_pack_recipe_consistent()')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=public']
+      and p.prosrc ilike '%not v_header.is_active%sum(pc.units_per_pack)%PT400%v_units <> v_header.total_units%PT400%'
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'recetas de empaque: triggers de validacion y de compatibilidad (cabecera <-> componente unico) activos y no ejecutables por /rpc (20261009d)',
+  (
+    select count(*) = 7
+    from pg_trigger t
+    where not t.tgisinternal and t.tgenabled = 'O'
+      and (
+        (t.tgrelid = to_regclass('public.product_pack_conversions')
+         and (t.tgname, t.tgfoid) in (
+           ('trg_validate_product_pack_conversion', to_regprocedure('public.validate_product_pack_conversion()')::oid),
+           ('trg_product_pack_conversions_sync_component_ins', to_regprocedure('public.product_pack_conversions_sync_component()')::oid),
+           ('trg_product_pack_conversions_sync_component_upd', to_regprocedure('public.product_pack_conversions_sync_component()')::oid)
+         ))
+        or (t.tgrelid = to_regclass('public.product_pack_components')
+         and (t.tgname, t.tgfoid) in (
+           ('trg_validate_product_pack_component', to_regprocedure('public.validate_product_pack_component()')::oid),
+           ('trg_product_pack_components_sync_header_ins', to_regprocedure('public.product_pack_components_sync_header()')::oid),
+           ('trg_product_pack_components_sync_header_upd', to_regprocedure('public.product_pack_components_sync_header()')::oid),
+           ('trg_product_pack_components_sync_header_del', to_regprocedure('public.product_pack_components_sync_header()')::oid)
+         ))
+      )
+  ) and (
+    select count(*) = 3
+    from pg_proc p
+    where p.oid in (
+        to_regprocedure('public.product_pack_conversions_sync_component()'),
+        to_regprocedure('public.validate_product_pack_component()'),
+        to_regprocedure('public.product_pack_components_sync_header()')
+      )
+      and p.prosecdef
+      and p.proconfig @> array['search_path=public']
+      and not has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
+  )
+union all
+select
+  'recetas de empaque: toda receta activa cuadra con sus componentes y la cabecera refleja al componente unico (migracion 1 a 1 de 20261009d)',
+  not exists (
+    select 1
+    from public.product_pack_conversions c
+    left join lateral (
+      select count(*) as n, coalesce(sum(pc.units_per_pack), 0) as units, min(pc.unit_product_id::text)::uuid as only_unit
+      from public.product_pack_components pc
+      where pc.conversion_id = c.id
+    ) s on true
+    where (c.is_active and (s.n = 0 or s.units <> c.total_units))
+       or c.unit_product_id is distinct from (case when s.n = 1 then s.only_unit end)
+       or c.units_per_pack <> c.total_units
+  )
+union all
+select
+  'product_pack_components: RLS por tienda (lectura de la tienda, escritura admin / almacen) y sin privilegios para anon (20261009d)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.product_pack_components')
+      and c.relrowsecurity
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and has_table_privilege('authenticated', c.oid, 'insert')
+      and not has_table_privilege('authenticated', c.oid, 'truncate')
+      and not has_table_privilege('anon', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'insert')
+  ) and (
+    select count(*) = 2
+       and bool_and(pol.roles = '{authenticated}'::name[])
+       and bool_and(pol.qual ilike '%store_id = current_user_store_id()%')
+       and bool_and(pol.cmd = 'SELECT' or (pol.cmd = 'ALL' and pol.qual ilike '%current_user_role()%admin%almacen%'
+                                          and pol.with_check ilike '%store_id = current_user_store_id()%current_user_role()%admin%almacen%'))
+    from pg_policies pol
+    where pol.schemaname = 'public' and pol.tablename = 'product_pack_components'
+  )
+union all
+select
+  'product_pack_components: los triggers de NaN / Infinity cubren cost_weight (20261009d)',
+  (
+    select count(*) = 2
+    from pg_trigger t
+    where not t.tgisinternal
+      and t.tgfoid = to_regprocedure('public.reject_non_finite_numeric()')
+      and t.tgname in ('trg_zz_reject_non_finite_numeric_ins', 'trg_zz_reject_non_finite_numeric_upd')
+      and t.tgrelid = to_regclass('public.product_pack_components')
+      and pg_get_triggerdef(t.oid) ilike '%cost_weight%'
+  )
+union all
+select
+  'rpc convert_pack_to_units: una firma de 5 argumentos (p_components al final), security definer, tienda de la sesion, bloqueo ordenado de empaque y componentes, reparto por unidades x cost_weight y huella con la distribucion (20261009d)',
+  (
+    select count(*) = 1
+       and bool_and(pg_get_function_identity_arguments(p.oid)
+             = 'p_pack_product_id uuid, p_pack_quantity integer, p_reason text, p_client_request_id uuid, p_components jsonb')
+       and bool_and(p.pronargdefaults = 3)
+       and bool_and(p.prosecdef)
+       and bool_and(p.proconfig @> array['search_path=public'])
+       and bool_and(p.prosrc ilike '%v_store_id := public.assert_store_context();%')
+       and bool_and(p.prosrc ilike '%from public.product_pack_components%')
+       and bool_and(p.prosrc ilike '%v_ids := v_component_ids || v_link.pack_product_id%where id = any(v_ids)%and store_id = v_store_id%order by id%for update%')
+       and bool_and(p.prosrc ilike '%v_units[v_index] * v_weights[v_index]%v_shares[v_residual_index] := v_transferred_value - v_allocated%')
+       and bool_and(p.prosrc ilike '%''convert_pack_to_units'', p_pack_product_id, p_pack_quantity, p_reason, p_components%')
+       and bool_and(p.prosrc ilike '%get diagnostics v_rows = row_count%')
+       and bool_and(has_function_privilege('authenticated', p.oid, 'execute'))
+       and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'convert_pack_to_units'
+  )
+union all
+select
+  'rpc create_purchase: el modo empaque lee la receta del modelo de componentes (unidad = componente unico de alguna receta activa; empaque = total_units) (20261009d)',
+  (
+    select count(*) = 1
+       and bool_and(p.prosrc ilike '%from public.product_pack_components pc%pc.units_per_pack = c.total_units%v_units_per_pack = any(v_unit_pack_sizes)%select c.total_units into v_pair_units%')
+       and bool_and(p.prosrc not ilike '%where c.unit_product_id = v_product_id%')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'create_purchase'
+  )
+union all
+select
+  'conversion_mismatches suma las entradas de todos los componentes y exige que cada uno sea de una receta del empaque (20261009d)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.conversion_mismatches')
+      and c.relkind = 'v'
+      and c.reloptions @> array['security_invoker=true']
+      and pg_get_viewdef(c.oid) ilike '%product_pack_components%unlinked_components%'
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'select')
+  ) and (
+    select array_agg(a.attname::text order by a.attnum)
+           = array['conversion_id', 'store_id', 'pack_product_id', 'unit_product_id', 'pack_delta', 'unit_delta',
+                   'units_per_pack', 'issue', 'current_units_per_pack']
+    from pg_attribute a
+    where a.attrelid = to_regclass('public.conversion_mismatches') and a.attnum > 0 and not a.attisdropped
+  )
+union all
+select
+  'view product_pack_roles y pack_role(products): rol de empaque por producto con security_invoker, relacion calculada de una fila y sin acceso anon (20261009d)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.product_pack_roles')
+      and c.relkind = 'v'
+      and c.reloptions @> array['security_invoker=true']
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'select')
+      and not has_table_privilege('authenticated', c.oid, 'insert')
+  ) and exists (
+    select 1
+    from pg_proc p
+    where p.oid = to_regprocedure('public.pack_role(public.products)')
+      and not p.prosecdef
+      and p.proretset
+      and p.prorows = 1
+      and p.provolatile = 's'
+      and p.prorettype = to_regtype('public.product_pack_roles')
+      and has_function_privilege('authenticated', p.oid, 'execute')
+      and not has_function_privilege('anon', p.oid, 'execute')
   )
 order by 1;
