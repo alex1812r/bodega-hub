@@ -63,8 +63,62 @@ export type PurchaseLineTax = {
  * payload leen de aquí y nunca del `taxRate` del borrador guardado.
  */
 export type PurchaseWebLine = {
+  /** Qué cambió respecto a como quedó la línea al asentarse; vacío si no cambió. */
+  changes: PurchaseLineChange[];
+  /** `changes.length > 0`: la línea se editó DESPUÉS de haber sido agregada (COM-13). */
+  edited: boolean;
   item: PurchaseDraftItem;
   tax: PurchaseLineTax;
+};
+
+/** Foto de una línea: lo que se compara para saber si se editó. */
+export type PurchaseLineSnapshot = {
+  item: PurchaseDraftItem;
+  /** Alícuota elegida a mano en ese momento (`PurchaseTaxState.choices`); `null` = la por defecto. */
+  taxChoice: string | null;
+};
+
+/**
+ * Historial de edición de las líneas (COM-13). Solo existe en la web: no viaja
+ * en el payload de la compra.
+ *
+ * Regla de "editada": una línea nace SIN entrada en `baselines` (recién nacida)
+ * y lo que se le cambie entonces es su primera captura, no una edición. Se
+ * ASIENTA (se guarda su foto) la primera vez que el foco sale de su fila, o
+ * cuando se agrega otro producto a la compra (también el mismo: el +1 ya cuenta
+ * como edición). Desde ahí, "editada" = la línea es distinta de su foto; si se
+ * deshace el cambio deja de estarlo.
+ */
+export type PurchaseLineReviewState = {
+  /** `item.id` -> foto de la línea al asentarse. */
+  baselines: Record<string, PurchaseLineSnapshot>;
+};
+
+export type PurchaseLineChangeField =
+  | "pack"
+  | "packCost"
+  | "packCount"
+  | "quantity"
+  | "tax"
+  | "unitCost";
+
+/** Un cambio de una línea editada: "Cantidad 5 → 8". */
+export type PurchaseLineChange = {
+  field: PurchaseLineChangeField;
+  from: string;
+  /** "Cantidad", "Costo", "Empaques", "Costo por empaque", "Empaque", "IVA". */
+  label: string;
+  to: string;
+};
+
+/** Una línea editada tal como la lista el resumen antes de confirmar (`getEditedLinesSummary`). */
+export type PurchaseEditedLineSummary = {
+  changes: PurchaseLineChange[];
+  itemId: string;
+  name: string;
+  productId: string;
+  /** Los cambios ya redactados: "Cantidad 5 → 8 · Costo Bs. 1.020,00 → Bs. 1.100,00". */
+  text: string;
 };
 
 /** Catálogo de alícuotas de `useTaxRates({ activeOnly: false })` para los chips de línea. */

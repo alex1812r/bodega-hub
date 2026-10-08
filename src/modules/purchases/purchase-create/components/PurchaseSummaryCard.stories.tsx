@@ -97,6 +97,38 @@ export const TwoTaxRates: Story = {
   },
 };
 
+/** Antes de confirmar, el resumen lista las líneas que se tocaron después de agregarlas. */
+export const EditedLines: Story = {
+  args: {
+    editedLines: [
+      {
+        changes: [{ field: "quantity", from: "5", label: "Cantidad", to: "8" }],
+        itemId: "line-cable",
+        name: "Cable HDMI 2 m",
+        productId: "prod-cable",
+        text: "Cantidad 5 → 8",
+      },
+      {
+        changes: [
+          { field: "packCost", from: "Bs. 6.120,00", label: "Costo por empaque", to: "Bs. 6.300,00" },
+          { field: "tax", from: "General 16 %", label: "IVA", to: "Reducida 8 %" },
+        ],
+        itemId: "line-refresco",
+        name: "Refresco Cola 2 L retornable",
+        productId: "prod-refresco",
+        text: "Costo por empaque Bs. 6.120,00 → Bs. 6.300,00 · IVA General 16 % → Reducida 8 %",
+      },
+    ],
+  },
+  name: "Líneas editadas",
+  play: async ({ canvasElement }) => {
+    const edited = within(within(canvasElement).getByRole("group", { name: "Líneas editadas" }));
+
+    await expect(edited.getByText("2 líneas editadas tras ser agregadas")).toBeVisible();
+    await expect(edited.getByText(/Cantidad 5 → 8/)).toBeVisible();
+  },
+};
+
 /** Compra sin líneas: no hay desglose, solo subtotal, descuento y total. */
 export const WithoutLines: Story = {
   args: { subtotalRef: 0, subtotalVes: 0, taxBreakdown: [], taxRef: 0, taxVes: 0 },

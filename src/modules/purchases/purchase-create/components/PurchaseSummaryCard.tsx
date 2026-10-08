@@ -3,11 +3,17 @@
 import { CheckCircle, Receipt } from "lucide-react";
 
 import { Button } from "@/shared/components/Button";
+import { NumberInput } from "@/shared/components/NumberInput";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
 
-import type { PurchaseCostCurrency, PurchaseTaxBreakdownRow } from "../types";
+import type {
+  PurchaseCostCurrency,
+  PurchaseEditedLineSummary,
+  PurchaseTaxBreakdownRow,
+} from "../types";
 import { purchaseInlineInputClassName } from "../utils/purchaseCreateStyles";
+import { formatEditedLinesCount } from "../utils/purchaseLineReview";
 import { PurchaseCreateSectionCard } from "./PurchaseCreateSectionCard";
 
 type PurchaseSummaryCardProps = {
@@ -15,6 +21,8 @@ type PurchaseSummaryCardProps = {
   costCurrency: PurchaseCostCurrency;
   discountRef: number;
   discountVes: number;
+  /** Líneas editadas tras ser agregadas (`getEditedLinesSummary`): se listan para revisarlas antes de confirmar. */
+  editedLines?: PurchaseEditedLineSummary[];
   isSubmitting?: boolean;
   onConfirm: () => void;
   onCostCurrencyChange: (currency: PurchaseCostCurrency) => void;
@@ -130,6 +138,7 @@ export function PurchaseSummaryCard({
   costCurrency,
   discountRef,
   discountVes,
+  editedLines = [],
   isSubmitting = false,
   onConfirm,
   onCostCurrencyChange,
@@ -159,18 +168,14 @@ export function PurchaseSummaryCard({
             <div className="flex items-center gap-1">
               <span className="text-muted-foreground">-</span>
               <span className="text-xs text-on-surface-variant">ref</span>
-              <input
+              <NumberInput
                 aria-label="Descuento REF"
                 className={cn(
                   purchaseInlineInputClassName,
-                  "h-6 w-24 border-0 border-b border-border/50 bg-transparent px-1 text-right shadow-none focus:ring-0",
+                  "h-6 w-24 rounded-none border-0 border-b border-border/50 bg-transparent px-1 text-right shadow-none focus:ring-0",
                 )}
-                min={0}
-                onChange={(event) =>
-                  onDiscountChange(Math.max(0, Number(event.target.value) || 0))
-                }
-                step="0.01"
-                type="number"
+                decimals={2}
+                onValueChange={(value) => onDiscountChange(roundMoney(value ?? 0))}
                 value={discountRef}
               />
             </div>
@@ -213,6 +218,25 @@ export function PurchaseSummaryCard({
           />
         </div>
       </div>
+
+      {editedLines.length > 0 ? (
+        <div
+          aria-label="Líneas editadas"
+          className="mt-4 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2"
+          role="group"
+        >
+          <p className="text-xs font-semibold text-foreground">
+            {formatEditedLinesCount(editedLines.length)}
+          </p>
+          <ul className="mt-1 flex flex-col gap-1">
+            {editedLines.map((line) => (
+              <li className="text-xs break-words text-on-surface-variant" key={line.itemId}>
+                <span className="font-medium text-foreground">{line.name}</span> · {line.text}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <Button
         className="mt-4 w-full gap-2"

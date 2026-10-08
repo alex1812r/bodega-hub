@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { useState } from "react";
+import { useReducer } from "react";
 import { expect, userEvent, within } from "storybook/test";
 
 import type { TaxRate } from "@/shared/hooks/useTaxRates";
@@ -11,10 +11,10 @@ import {
   type PurchaseDraftItem,
   type PurchaseTaxCatalog,
 } from "../types";
-import { syncLineCostFields } from "../utils/normalizePurchaseLine";
+import { EMPTY_PURCHASE_LINES_STATE, purchaseLinesReducer } from "../hooks/usePurchaseLines";
+import { settlePurchaseLines } from "../utils/purchaseLineReview";
 import {
   buildPurchaseWebLines,
-  chooseLineTax,
   EMPTY_PURCHASE_TAX_STATE,
   setPurchaseExempt,
 } from "../utils/purchaseLineTax";
@@ -98,6 +98,8 @@ type LinesHarnessProps = {
   costCurrency: PurchaseCostCurrency;
   /** "Compra exenta" activo: todas las líneas nacen en Exento. */
   exempt?: boolean;
+  /** Las líneas ya están asentadas: cualquier cambio las marca como editadas. */
+  settled?: boolean;
   /** Añade una línea cuya categoría no tiene alícuota activa. */
   withUnresolvedLine?: boolean;
 };
@@ -105,31 +107,42 @@ type LinesHarnessProps = {
 function LinesHarness({
   costCurrency,
   exempt = false,
+  settled = false,
   withUnresolvedLine = false,
 }: LinesHarnessProps) {
-  const [items, setItems] = useState(() => [
-    ...buildItems(costCurrency),
-    ...(withUnresolvedLine
-      ? [
-          createUnitDraftItem({
-            costCurrency,
-            id: "line-licor",
-            productId: "prod-licor",
-            rateVes: RATE_VES,
-            taxRate: 31,
-            unitCostRef: 9,
-          }),
-        ]
-      : []),
-  ]);
-  const [taxState, setTaxState] = useState(() =>
-    exempt ? setPurchaseExempt(true) : EMPTY_PURCHASE_TAX_STATE,
-  );
+  const [{ items, review, taxState }, dispatch] = useReducer(purchaseLinesReducer, null, () => {
+    const initialItems = [
+      ...buildItems(costCurrency),
+      ...(withUnresolvedLine
+        ? [
+            createUnitDraftItem({
+              costCurrency,
+              id: "line-licor",
+              productId: "prod-licor",
+              rateVes: RATE_VES,
+              taxRate: 31,
+              unitCostRef: 9,
+            }),
+          ]
+        : []),
+    ];
+    const initialTaxState = exempt ? setPurchaseExempt(true) : EMPTY_PURCHASE_TAX_STATE;
+
+    return {
+      ...EMPTY_PURCHASE_LINES_STATE,
+      items: initialItems,
+      review: settled
+        ? settlePurchaseLines(EMPTY_PURCHASE_LINES_STATE.review, initialItems, initialTaxState)
+        : EMPTY_PURCHASE_LINES_STATE.review,
+      taxState: initialTaxState,
+    };
+  });
   const lines = buildPurchaseWebLines({
     getCategoryPct: (productId) => metaByProductId[productId]?.taxRate ?? 0,
     items,
     rateVes: RATE_VES,
     rates: taxRates,
+    review,
     taxState,
   });
 
@@ -140,16 +153,11 @@ function LinesHarness({
           metaByProductId[productId] ?? { name: "Producto", sku: "—", taxRate: 0 }
         }
         lines={lines}
-        onLineTaxChange={(itemId, code) =>
-          setTaxState((current) => chooseLineTax(current, itemId, code))
-        }
-        onRemoveItem={(itemId) => setItems((current) => current.filter((item) => item.id !== itemId))}
+        onLineTaxChange={(itemId, code) => dispatch({ code, itemId, type: "lineTaxChosen" })}
+        onRemoveItem={(itemId) => dispatch({ itemId, type: "lineRemoved" })}
+        onSettleItem={(itemId) => dispatch({ itemId, type: "lineSettled" })}
         onUpdateItem={(itemId, input) =>
-          setItems((current) =>
-            current.map((item) =>
-              item.id === itemId ? syncLineCostFields({ ...item, ...input }, RATE_VES) : item,
-            ),
-          )
+          dispatch({ input, itemId, rateVes: RATE_VES, type: "lineUpdated" })
         }
         rateVes={RATE_VES}
         taxCatalog={taxCatalog}
@@ -205,6 +213,31 @@ export const TaxRateChange: Story = {
   },
 };
 
+/**
+ * Cambiar un valor de una línea ya asentada: la celda se resalta al salir, la fila
+ * muestra el punto "Línea editada" y `Esc` deshace el cambio.
+ */
+export const EditedLine: Story = {
+  args: { settled: true },
+  name: "Línea editada",
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const quantity = canvas.getByLabelText("Cantidad de Cable HDMI 2 m");
+
+    await userEvent.clear(quantity);
+    await userEvent.type(quantity, "8");
+    await userEvent.tab();
+
+    await expect(quantity).toHaveAttribute("data-flash", "true");
+    await expect(canvas.getByRole("img", { name: "Línea editada" })).toBeVisible();
+
+    await userEvent.click(quantity);
+    await userEvent.keyboard("{Escape}");
+    await expect(quantity).toHaveValue("3");
+    await expect(canvas.queryByRole("img", { name: "Línea editada" })).not.toBeInTheDocument();
+  },
+};
+
 /** Con "Compra exenta" todas las líneas muestran Exento. */
 export const ExemptPurchase: Story = {
   args: { exempt: true },
@@ -243,6 +276,7 @@ export const TaxRatesLoading: Story = {
       })}
       onLineTaxChange={() => undefined}
       onRemoveItem={() => undefined}
+      onSettleItem={() => undefined}
       onUpdateItem={() => undefined}
       rateVes={RATE_VES}
       taxCatalog={{ ...taxCatalog, isLoading: true, rates: [] }}
@@ -273,6 +307,7 @@ export const Empty: Story = {
       lines={[]}
       onLineTaxChange={() => undefined}
       onRemoveItem={() => undefined}
+      onSettleItem={() => undefined}
       onUpdateItem={() => undefined}
       rateVes={RATE_VES}
       taxCatalog={taxCatalog}

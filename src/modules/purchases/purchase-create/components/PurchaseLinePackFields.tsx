@@ -16,6 +16,7 @@ import {
   STANDARD_PACK_LABELS,
 } from "../utils/purchaseLinePack";
 import { PurchaseLineFieldBox } from "./PurchaseLineFieldBox";
+import { PurchaseLineNumberCell } from "./PurchaseLineNumberCell";
 
 type PurchaseLinePackFieldsProps = {
   className?: string;
@@ -84,41 +85,25 @@ export function PurchaseLinePackFields({
         </select>
       </PurchaseLineFieldBox>
       <PurchaseLineFieldBox align="center" label={`${packLabel}s`}>
-        <input
+        <PurchaseLineNumberCell
           aria-label={`Cantidad de ${packNoun} de ${meta.name}`}
           className={cn(purchaseLineFieldControlClassName, "text-center")}
-          min={1}
-          onChange={(event) =>
-            onUpdate(
-              syncLineCostFields(
-                { ...item, packCount: Math.max(1, Number(event.target.value) || 1) },
-                rateVes,
-              ),
-            )
-          }
-          type="number"
+          integer
+          onChange={(packCount) => onUpdate(syncLineCostFields({ ...item, packCount }, rateVes))}
           value={item.packCount}
         />
       </PurchaseLineFieldBox>
       {isCustom ? (
         <PurchaseLineFieldBox align="center" label={`Uds / ${packLabel}`}>
-          <input
+          <PurchaseLineNumberCell
             aria-label={`Unidades por ${packNoun} de ${meta.name}`}
             className={cn(purchaseLineFieldControlClassName, "text-center")}
-            min={1}
-            onChange={(event) =>
+            integer
+            onChange={(unitsPerPack) =>
               onUpdate(
-                syncLineCostFields(
-                  {
-                    ...item,
-                    packUnitId: undefined,
-                    unitsPerPack: Math.max(1, Number(event.target.value) || 1),
-                  },
-                  rateVes,
-                ),
+                syncLineCostFields({ ...item, packUnitId: undefined, unitsPerPack }, rateVes),
               )
             }
-            type="number"
             value={item.unitsPerPack}
           />
         </PurchaseLineFieldBox>
@@ -130,21 +115,17 @@ export function PurchaseLinePackFields({
         </PurchaseLineFieldBox>
       )}
       <PurchaseLineFieldBox align="right" label={`Costo ${packNoun} ${currencyLabel}`}>
-        <input
+        <PurchaseLineNumberCell
           aria-label={`Costo por ${packNoun} ${currencyLabel} de ${meta.name}`}
           className={cn(purchaseLineFieldControlClassName, "text-right")}
-          min={0}
-          onChange={(event) => {
-            const value = Math.max(0, Number(event.target.value) || 0);
+          onChange={(value) =>
             onUpdate(
               syncLineCostFields(
                 isVes ? { ...item, packCostVes: value } : { ...item, packCostRef: value },
                 rateVes,
               ),
-            );
-          }}
-          step="0.01"
-          type="number"
+            )
+          }
           value={isVes ? item.packCostVes : item.packCostRef}
         />
       </PurchaseLineFieldBox>

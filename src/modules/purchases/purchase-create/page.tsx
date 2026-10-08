@@ -18,36 +18,23 @@ import {
   PurchaseProductPickerCard,
   type PurchaseCatalogProduct,
 } from "./components/PurchaseProductPickerCard";
+import { usePurchaseLines } from "./hooks/usePurchaseLines";
 import { usePurchaseProductSearch } from "./hooks/usePurchaseProductSearch";
-import { netCostRef } from "./utils/buildPurchaseCatalog";
 import { PurchaseStatusNotesCard } from "./components/PurchaseStatusNotesCard";
 import { PurchaseSummaryCard } from "./components/PurchaseSummaryCard";
 import { PurchaseSupplierCard } from "./components/PurchaseSupplierCard";
 import type { PurchaseLineItemMeta } from "./components/PurchaseLineItemsTable";
 import { useCreatePurchase } from "../hooks/usePurchases";
-import {
-  createPackDraftItem,
-  createUnitDraftItem,
-  type PurchaseCostCurrency,
-  type PurchaseDraftItem,
-  type PurchaseTaxState,
-} from "./types";
-import {
-  draftToPurchaseItemInput,
-  sumDraftPurchaseTotals,
-  switchCostCurrency,
-  syncLineCostFields,
-} from "./utils/normalizePurchaseLine";
+import type { PurchaseCostCurrency, PurchaseDraftItem } from "./types";
+import { buildPurchaseLine, nextPurchaseLineId } from "./utils/buildPurchaseLine";
+import { draftToPurchaseItemInput, sumDraftPurchaseTotals } from "./utils/normalizePurchaseLine";
+import { getEditedLinesSummary } from "./utils/purchaseLineReview";
 import {
   buildExemptOverrideNotice,
   buildPurchaseTaxBreakdown,
   buildPurchaseWebLines,
-  chooseLineTax,
   countManualLinesLostToExempt,
-  dropLineTax,
-  EMPTY_PURCHASE_TAX_STATE,
   findExemptTaxRate,
-  setPurchaseExempt,
 } from "./utils/purchaseLineTax";
 
 const LINE_TAX_MISSING_MESSAGE = "Elige una alícuota en cada línea antes de confirmar la compra.";
@@ -66,10 +53,9 @@ export function PurchaseCreatePage() {
   const [status, setStatus] = useState<PurchaseStatus>("recibido");
   const [notes, setNotes] = useState("");
   const [discountRef, setDiscountRef] = useState(0);
-  // Borrador de core. Su `taxRate` NO es la fuente de verdad: la alícuota de cada
-  // línea se deriva de `taxState` en `lines`, que es lo que se pinta y se envía.
-  const [items, setItems] = useState<PurchaseDraftItem[]>([]);
-  const [taxState, setTaxState] = useState<PurchaseTaxState>(EMPTY_PURCHASE_TAX_STATE);
+  // `items` es el borrador de core. Su `taxRate` NO es la fuente de verdad: la alícuota de
+  // cada línea se deriva de `taxState` en `lines`, que es lo que se pinta y se envía.
+  const [{ items, review, taxState }, dispatchLines] = usePurchaseLines();
   // Moneda en la que se teclean los costos: una sola para toda la compra.
   const [costCurrency, setCostCurrency] = useState<PurchaseCostCurrency>("ves");
   const [formError, setFormError] = useState<string | null>(null);
@@ -130,9 +116,19 @@ export function PurchaseCreatePage() {
         items,
         rateVes: activeRateVes,
         rates: taxRates.rates,
+        review,
         taxState,
       }),
-    [activeRateVes, items, lineMetaByProductId, taxRates.rates, taxState],
+    [activeRateVes, items, lineMetaByProductId, review, taxRates.rates, taxState],
+  );
+  // Revisión antes de confirmar: qué líneas se tocaron después de agregarlas y qué cambió.
+  const editedLines = useMemo(
+    () =>
+      getEditedLinesSummary(
+        lines,
+        (productId) => lineMetaByProductId.get(productId)?.name ?? "Producto",
+      ),
+    [lineMetaByProductId, lines],
   );
   const totals = useMemo(
     () =>
@@ -175,16 +171,13 @@ export function PurchaseCreatePage() {
   function handleSupplierChange(nextSupplierId: string) {
     setSupplierId(nextSupplierId);
     setProductSearch("");
-    setItems([]);
-    setTaxState((current) => setPurchaseExempt(current.exempt));
+    dispatchLines({ type: "supplierChanged" });
     setLineMetaByProductId(new Map());
   }
 
   function handleCostCurrencyChange(nextCurrency: PurchaseCostCurrency) {
     setCostCurrency(nextCurrency);
-    setItems((current) =>
-      current.map((item) => switchCostCurrency(item, nextCurrency, activeRateVes)),
-    );
+    dispatchLines({ currency: nextCurrency, rateVes: activeRateVes, type: "costCurrencyChanged" });
   }
 
   function handleAddProduct(product: PurchaseCatalogProduct) {
@@ -199,89 +192,25 @@ export function PurchaseCreatePage() {
       return next;
     });
 
-    setItems((current) => {
-      const existing = current.find((item) => item.productId === product.productId);
-
-      if (existing) {
-        const rest = current.filter((item) => item.id !== existing.id);
-        const bumped =
-          existing.entryMode === "pack"
-            ? syncLineCostFields(
-                {
-                  ...existing,
-                  packCount: existing.packCount + 1,
-                },
-                activeRateVes,
-              )
-            : syncLineCostFields(
-                { ...existing, quantity: existing.quantity + 1 },
-                activeRateVes,
-              );
-
-        return [bumped, ...rest];
-      }
-
-      const defaultPack = product.defaultPackUnit ?? product.packUnits[0];
-
-      if (defaultPack) {
-        // Del costo con IVA del bulto, no del unitario ya redondeado: evita arrastrar centimos.
-        const packCostRef = netCostRef(
-          product.costWithTaxRef * defaultPack.unitsPerPack,
-          product.taxRate,
-        );
-
-        return [
-          createPackDraftItem({
-            costCurrency,
-            id: `purchase-item-${Date.now()}`,
-            packCostRef,
-            packLabel: defaultPack.label,
-            packUnitId: defaultPack.id,
-            productId: product.productId,
-            rateVes: activeRateVes,
-            taxRate: product.taxRate,
-            unitCostRef: product.unitCostRef,
-            unitsPerPack: defaultPack.unitsPerPack,
-          }),
-          ...current,
-        ];
-      }
-
-      return [
-        createUnitDraftItem({
-          costCurrency,
-          id: `purchase-item-${Date.now()}`,
-          productId: product.productId,
-          rateVes: activeRateVes,
-          taxRate: product.taxRate,
-          unitCostRef: product.unitCostRef,
-        }),
-        ...current,
-      ];
+    dispatchLines({
+      line: buildPurchaseLine(product, {
+        costCurrency,
+        id: nextPurchaseLineId(),
+        rateVes: activeRateVes,
+      }),
+      rateVes: activeRateVes,
+      type: "productAdded",
     });
   }
 
   function handleUpdateItem(itemId: string, input: Partial<PurchaseDraftItem>) {
-    setItems((current) =>
-      current.map((item) =>
-        item.id === itemId ? syncLineCostFields({ ...item, ...input }, activeRateVes) : item,
-      ),
-    );
-  }
-
-  function handleRemoveItem(itemId: string) {
-    setItems((current) => current.filter((item) => item.id !== itemId));
-    setTaxState((current) => dropLineTax(current, itemId));
-  }
-
-  function handleLineTaxChange(itemId: string, code: string) {
-    setTaxState((current) => chooseLineTax(current, itemId, code));
+    dispatchLines({ input, itemId, rateVes: activeRateVes, type: "lineUpdated" });
   }
 
   function handleExemptPurchaseChange(exempt: boolean) {
     const overridden = exempt ? countManualLinesLostToExempt(lines, taxRates.rates) : 0;
 
-    setTaxState(setPurchaseExempt(exempt));
+    dispatchLines({ exempt, type: "exemptChanged" });
 
     if (overridden > 0) {
       showToast({ title: buildExemptOverrideNotice(overridden) });
@@ -383,9 +312,12 @@ export function PurchaseCreatePage() {
             lines={lines}
             onAddProduct={handleAddProduct}
             onExemptPurchaseChange={handleExemptPurchaseChange}
-            onLineTaxChange={handleLineTaxChange}
-            onRemoveItem={handleRemoveItem}
+            onLineTaxChange={(itemId, code) =>
+              dispatchLines({ code, itemId, type: "lineTaxChosen" })
+            }
+            onRemoveItem={(itemId) => dispatchLines({ itemId, type: "lineRemoved" })}
             onSearchChange={setProductSearch}
+            onSettleItem={(itemId) => dispatchLines({ itemId, type: "lineSettled" })}
             onUpdateItem={handleUpdateItem}
             rateVes={activeRateVes}
             search={productSearch}
@@ -406,6 +338,7 @@ export function PurchaseCreatePage() {
             costCurrency={costCurrency}
             discountRef={discountRef}
             discountVes={discountVes}
+            editedLines={editedLines}
             isSubmitting={createPurchase.isPending}
             onConfirm={() => void handleSubmit()}
             onCostCurrencyChange={handleCostCurrencyChange}

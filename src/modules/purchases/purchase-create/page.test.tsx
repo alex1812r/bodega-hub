@@ -101,6 +101,7 @@ jest.mock("./components/PurchaseProductPickerCard", () => {
     | "onExemptPurchaseChange"
     | "onLineTaxChange"
     | "onRemoveItem"
+    | "onSettleItem"
     | "onUpdateItem"
     | "rateVes"
     | "taxCatalog"
@@ -178,6 +179,7 @@ jest.mock("./components/PurchaseProductPickerCard", () => {
           onExemptPurchaseChange={props.onExemptPurchaseChange}
           onLineTaxChange={props.onLineTaxChange}
           onRemoveItem={props.onRemoveItem}
+          onSettleItem={props.onSettleItem}
           onUpdateItem={props.onUpdateItem}
           rateVes={props.rateVes}
           taxCatalog={props.taxCatalog}
@@ -567,8 +569,8 @@ describe("PurchaseCreatePage · moneda de costo una vez por compra (COM-05)", ()
     fireEvent.click(screen.getByRole("button", { name: "REF" }));
 
     expect(screen.getByRole("button", { name: "REF" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByLabelText("Costo unitario REF de Cable HDMI")).toHaveValue(2);
-    expect(screen.getByLabelText("Costo por caja REF de Refresco Cola")).toHaveValue(12);
+    expect(screen.getByLabelText("Costo unitario REF de Cable HDMI")).toHaveValue("2");
+    expect(screen.getByLabelText("Costo por caja REF de Refresco Cola")).toHaveValue("12");
     expect(screen.queryByLabelText(/Costo .* BS de/)).not.toBeInTheDocument();
     expect(screen.getByText("Bs. 17.258,40")).toBeInTheDocument();
     expect(screen.getByText("ref 33.84")).toBeInTheDocument();
@@ -592,13 +594,13 @@ describe("PurchaseCreatePage · moneda de costo una vez por compra (COM-05)", ()
     fireEvent.click(screen.getByRole("button", { name: "agregar producto" }));
     fireEvent.click(screen.getByRole("button", { name: "agregar producto con empaque" }));
 
-    expect(screen.getByLabelText("Costo unitario REF de Cable HDMI")).toHaveValue(2);
-    expect(screen.getByLabelText("Costo por caja REF de Refresco Cola")).toHaveValue(12);
+    expect(screen.getByLabelText("Costo unitario REF de Cable HDMI")).toHaveValue("2");
+    expect(screen.getByLabelText("Costo por caja REF de Refresco Cola")).toHaveValue("12");
 
     fireEvent.click(screen.getByRole("button", { name: "Bs" }));
 
-    expect(screen.getByLabelText("Costo unitario BS de Cable HDMI")).toHaveValue(1020);
-    expect(screen.getByLabelText("Costo por caja BS de Refresco Cola")).toHaveValue(6120);
+    expect(screen.getByLabelText("Costo unitario BS de Cable HDMI")).toHaveValue("1020");
+    expect(screen.getByLabelText("Costo por caja BS de Refresco Cola")).toHaveValue("6120");
 
     const body = await confirmAndGetBody(api);
     const items = body?.items as Array<Record<string, unknown>>;
@@ -626,7 +628,7 @@ describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
     renderPurchase("agregar producto");
 
     const row = screen.getByRole("listitem");
-    const inputs = within(row).getAllByRole("spinbutton");
+    const inputs = within(row).getAllByRole("textbox");
 
     expect(inputs).toHaveLength(2);
     expect(inputs[0]).toHaveAccessibleName("Cantidad de Cable HDMI");
@@ -731,8 +733,8 @@ describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
     expect(
       within(row).getByRole("combobox", { name: "Tipo de empaque de Refresco Cola" }),
     ).toHaveValue("pack-caja");
-    expect(within(row).getByLabelText("Cantidad de caja de Refresco Cola")).toHaveValue(1);
-    expect(within(row).getByLabelText("Costo por caja BS de Refresco Cola")).toHaveValue(6120);
+    expect(within(row).getByLabelText("Cantidad de caja de Refresco Cola")).toHaveValue("1");
+    expect(within(row).getByLabelText("Costo por caja BS de Refresco Cola")).toHaveValue("6120");
     // Las unidades del empaque guardado no se teclean.
     expect(within(row).queryByLabelText(/Unidades por caja/)).not.toBeInTheDocument();
     expect(within(row).getByText("12 u")).toBeInTheDocument();
@@ -756,8 +758,8 @@ describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
     fireEvent.click(within(row).getByRole("button", { name: "Empaque de Refresco Cola" }));
 
     expect(within(row).queryByRole("combobox")).not.toBeInTheDocument();
-    expect(within(row).getByLabelText("Cantidad de Refresco Cola")).toHaveValue(24);
-    expect(within(row).getByLabelText("Costo unitario BS de Refresco Cola")).toHaveValue(510);
+    expect(within(row).getByLabelText("Cantidad de Refresco Cola")).toHaveValue("24");
+    expect(within(row).getByLabelText("Costo unitario BS de Refresco Cola")).toHaveValue("510");
 
     const body = await confirmAndGetBody(api);
 
@@ -789,8 +791,8 @@ describe("PurchaseCreatePage · línea simple por defecto (COM-04)", () => {
       target: { value: "custom:Manga" },
     });
 
-    expect(within(row).getByLabelText("Unidades por manga de Refresco Cola")).toHaveValue(12);
-    expect(within(row).getByLabelText("Costo por manga BS de Refresco Cola")).toHaveValue(6120);
+    expect(within(row).getByLabelText("Unidades por manga de Refresco Cola")).toHaveValue("12");
+    expect(within(row).getByLabelText("Costo por manga BS de Refresco Cola")).toHaveValue("6120");
   });
 });
 
@@ -1083,7 +1085,7 @@ describe("PurchaseCreatePage · alícuota de IVA por línea (COM-11)", () => {
       expect(name).not.toMatch(/iva|impuesto|al[ií]cuota|%/i);
     }
     expect(
-      within(screen.getByRole("dialog", { name: "IVA de Refresco Cola" })).queryByRole("spinbutton"),
+      within(screen.getByRole("dialog", { name: "IVA de Refresco Cola" })).queryByRole("textbox"),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Impuesto")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Editar impuesto/ })).not.toBeInTheDocument();

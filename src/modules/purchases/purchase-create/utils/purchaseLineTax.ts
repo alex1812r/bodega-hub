@@ -4,12 +4,15 @@ import { roundMoney } from "@/shared/utils/currency";
 
 import type {
   PurchaseDraftItem,
+  PurchaseLineChange,
+  PurchaseLineReviewState,
   PurchaseLineTax,
   PurchaseTaxBreakdownRow,
   PurchaseTaxState,
   PurchaseWebLine,
 } from "../types";
 import { getDraftLineTotals, syncLineCostFields } from "./normalizePurchaseLine";
+import { EMPTY_PURCHASE_REVIEW_STATE, getPurchaseLineItemChanges } from "./purchaseLineReview";
 
 const PCT_TOLERANCE = 0.0001;
 const EXEMPT_PCT = 0;
@@ -68,23 +71,58 @@ export function resolvePurchaseLineTax(input: {
  * Líneas de la compra con su alícuota resuelta y `item.taxRate` igualado a ella,
  * para que los helpers de core (`getDraftLineTotals`, `sumDraftPurchaseTotals`,
  * `draftToPurchaseItemInput`) calculen con el porcentaje que ve el usuario.
+ *
+ * Con `review`, cada línea asentada trae además qué cambió respecto a su foto
+ * (`changes`, `edited`); una línea recién nacida nunca está editada.
  */
 export function buildPurchaseWebLines(input: {
   getCategoryPct: (productId: string) => number;
   items: PurchaseDraftItem[];
   rateVes: number;
   rates: TaxRate[];
+  /** Historial de edición; sin él ninguna línea sale como editada. */
+  review?: PurchaseLineReviewState;
   taxState: PurchaseTaxState;
 }): PurchaseWebLine[] {
+  const review = input.review ?? EMPTY_PURCHASE_REVIEW_STATE;
+
   return input.items.map((item) => {
-    const tax = resolvePurchaseLineTax({
+    const taxInput = {
       categoryPct: input.getCategoryPct(item.productId),
-      choiceCode: input.taxState.choices[item.id],
       exempt: input.taxState.exempt,
       rates: input.rates,
+    };
+    const tax = resolvePurchaseLineTax({
+      ...taxInput,
+      choiceCode: input.taxState.choices[item.id],
     });
+    const synced = syncLineCostFields({ ...item, taxRate: tax.rate }, input.rateVes);
+    const baseline = review.baselines[item.id];
+    const changes: PurchaseLineChange[] = [];
 
-    return { item: syncLineCostFields({ ...item, taxRate: tax.rate }, input.rateVes), tax };
+    if (baseline) {
+      // La alícuota de la foto se resuelve con el catálogo y el toggle de AHORA:
+      // así "Compra exenta" o un catálogo que carga tarde no cuentan como edición.
+      const baselineTax = resolvePurchaseLineTax({
+        ...taxInput,
+        choiceCode: baseline.taxChoice ?? undefined,
+      });
+
+      changes.push(
+        ...getPurchaseLineItemChanges(syncLineCostFields(baseline.item, input.rateVes), synced),
+      );
+
+      if (baselineTax.code !== tax.code) {
+        changes.push({
+          field: "tax",
+          from: formatLineTaxLabel(baselineTax),
+          label: "IVA",
+          to: formatLineTaxLabel(tax),
+        });
+      }
+    }
+
+    return { changes, edited: changes.length > 0, item: synced, tax };
   });
 }
 

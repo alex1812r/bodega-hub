@@ -21,6 +21,8 @@ type PurchaseLineItemsTableProps = {
   lines: PurchaseWebLine[];
   onLineTaxChange: (itemId: string, code: string) => void;
   onRemoveItem: (itemId: string) => void;
+  /** El foco salió de la fila de esa línea. */
+  onSettleItem: (itemId: string) => void;
   onUpdateItem: (itemId: string, input: Partial<PurchaseDraftItem>) => void;
   rateVes: number;
   taxCatalog: PurchaseTaxCatalog;
@@ -34,6 +36,7 @@ export function PurchaseLineItemsTable({
   lines,
   onLineTaxChange,
   onRemoveItem,
+  onSettleItem,
   onUpdateItem,
   rateVes,
   taxCatalog,
@@ -69,12 +72,14 @@ export function PurchaseLineItemsTable({
         <span />
       </div>
       <ul aria-label="Líneas de la compra" className="divide-y divide-border/50">
-        {lines.map(({ item, tax }, index) => (
+        {lines.map(({ edited, item, tax }, index) => (
           <PurchaseLineRow
+            edited={edited}
             item={item}
             key={item.id}
             meta={getItemMeta(item.productId)}
             onRemove={() => onRemoveItem(item.id)}
+            onSettle={() => onSettleItem(item.id)}
             onTaxChange={(code) => onLineTaxChange(item.id, code)}
             onUpdate={(input) => onUpdateItem(item.id, input)}
             rateVes={rateVes}

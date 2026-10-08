@@ -51,6 +51,7 @@ type PurchaseProductPickerCardProps = {
   onLineTaxChange: (itemId: string, code: string) => void;
   onRemoveItem: (itemId: string) => void;
   onSearchChange: (value: string) => void;
+  onSettleItem: (itemId: string) => void;
   onUpdateItem: (itemId: string, input: Partial<PurchaseDraftItem>) => void;
   rateVes: number;
   search: string;
@@ -136,6 +137,7 @@ export function PurchaseProductPickerCard({
   onLineTaxChange,
   onRemoveItem,
   onSearchChange,
+  onSettleItem,
   onUpdateItem,
   rateVes,
   search,
@@ -304,6 +306,7 @@ export function PurchaseProductPickerCard({
           lines={lines}
           onLineTaxChange={onLineTaxChange}
           onRemoveItem={onRemoveItem}
+          onSettleItem={onSettleItem}
           onUpdateItem={onUpdateItem}
           rateVes={rateVes}
           taxCatalog={taxCatalog}

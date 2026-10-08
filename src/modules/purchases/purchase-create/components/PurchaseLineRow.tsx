@@ -1,7 +1,7 @@
 "use client";
 
 import { Package, Trash2 } from "lucide-react";
-import type { ButtonHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, FocusEvent } from "react";
 
 import { TaxRateChips } from "@/shared/components/TaxRateChips";
 import { cn } from "@/shared/utils/cn";
@@ -21,12 +21,17 @@ import {
 } from "../utils/purchaseCreateStyles";
 import { applyPackPreset, getDefaultPackUnit, toUnitLine } from "../utils/purchaseLinePack";
 import { PURCHASE_LINE_TAX_REQUIRED_MESSAGE } from "../utils/purchaseLineTax";
+import { PurchaseLineNumberCell } from "./PurchaseLineNumberCell";
 import { PurchaseLinePackFields } from "./PurchaseLinePackFields";
 
 export type PurchaseLineRowProps = {
+  /** La línea cambió después de asentarse: muestra el punto "Línea editada". */
+  edited?: boolean;
   item: PurchaseDraftItem;
   meta: PurchaseLineCatalogMeta;
   onRemove: () => void;
+  /** El foco salió de la fila: la línea deja de ser recién nacida. */
+  onSettle: () => void;
   /** Alícuota elegida en los chips (`code` del catálogo). */
   onTaxChange: (code: string) => void;
   /** Cambios sobre la línea; la página los fusiona y resincroniza los costos. */
@@ -70,9 +75,11 @@ function LineChip({
  * porcentaje) y el chip "Empaque" despliega la fila secundaria.
  */
 export function PurchaseLineRow({
+  edited = false,
   item,
   meta,
   onRemove,
+  onSettle,
   onTaxChange,
   onUpdate,
   rateVes,
@@ -97,18 +104,38 @@ export function PurchaseLineRow({
     );
   }
 
+  function handleBlur(event: FocusEvent<HTMLLIElement>) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      onSettle();
+    }
+  }
+
   return (
     <li
       className={cn(
         purchaseLineGridClassName,
-        "py-3 transition-colors hover:bg-surface-container-low/50",
+        "py-3 transition-colors hover:bg-surface-container-low/50 motion-reduce:transition-none",
         striped && "bg-surface-bright/50",
       )}
+      onBlur={handleBlur}
     >
       <div className="col-span-2 min-w-0 @xl:col-span-1">
-        <p className="text-sm font-medium break-words text-foreground @xl:truncate" title={meta.name}>
-          {meta.name}
-        </p>
+        <div className="flex min-w-0 items-center gap-1.5">
+          {edited ? (
+            <span
+              aria-label="Línea editada"
+              className="size-2 shrink-0 rounded-full bg-primary"
+              role="img"
+              title="Línea editada"
+            />
+          ) : null}
+          <p
+            className="min-w-0 text-sm font-medium break-words text-foreground @xl:truncate"
+            title={meta.name}
+          >
+            {meta.name}
+          </p>
+        </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 @xl:mt-0.5 @xl:flex-nowrap">
           <span className="min-w-0 truncate text-xs text-on-surface-variant">{meta.sku}</span>
           <TaxRateChips
@@ -146,14 +173,11 @@ export function PurchaseLineRow({
             {normalized.quantity} u
           </p>
         ) : (
-          <input
+          <PurchaseLineNumberCell
             aria-label={`Cantidad de ${meta.name}`}
             className={cn(purchaseLineInputClassName, "@xl:text-center")}
-            min={1}
-            onChange={(event) =>
-              onUpdate({ quantity: Math.max(1, Number(event.target.value) || 1) })
-            }
-            type="number"
+            integer
+            onChange={(quantity) => onUpdate({ quantity })}
             value={item.quantity}
           />
         )}
@@ -166,16 +190,10 @@ export function PurchaseLineRow({
             {isVes ? formatVesBs(normalized.unitCostVes) : formatRefUsd(normalized.unitCostRef)}
           </p>
         ) : (
-          <input
+          <PurchaseLineNumberCell
             aria-label={`Costo unitario ${currencyLabel} de ${meta.name}`}
             className={cn(purchaseLineInputClassName, "@xl:text-right")}
-            min={0}
-            onChange={(event) => {
-              const value = Math.max(0, Number(event.target.value) || 0);
-              onUpdate(isVes ? { unitCostVes: value } : { unitCostRef: value });
-            }}
-            step="0.01"
-            type="number"
+            onChange={(value) => onUpdate(isVes ? { unitCostVes: value } : { unitCostRef: value })}
             value={isVes ? item.unitCostVes : item.unitCostRef}
           />
         )}
