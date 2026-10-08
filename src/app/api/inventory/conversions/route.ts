@@ -6,6 +6,7 @@ import { jsonCreated } from "@/lib/api/jsonResponse";
 import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { convertPackToUnitsSchema } from "@/modules/products/services/packConversionSchemas";
+import { assertStockReasonLength } from "@/modules/inventory/services/assertStockReasonLength";
 import * as inventoryMockServer from "@/modules/inventory/services/inventory.mock-server";
 import * as inventoryServer from "@/modules/inventory/services/inventory.server";
 
@@ -24,6 +25,7 @@ export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "inventory.manage");
     const input = convertPackRequestSchema.parse(await readJsonBody(request));
+    assertStockReasonLength(input.reason);
     const service = getInventoryService();
     return jsonCreated(await service.convertPackToUnits(input, auth.storeId));
   } catch (error) {

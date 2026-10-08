@@ -3,6 +3,7 @@ import type { MovementExportRow } from "../utils/movementExportColumns";
 import { buildMovementsExportFilename } from "../utils/movementExportFilename";
 import { buildMovementsExportWorkbook } from "./buildMovementsExportWorkbook";
 import {
+  describeMovementsExportLimit,
   fetchMovementsForExport,
   type MovementsExportFilters,
 } from "./fetchMovementsForExport";
@@ -33,10 +34,16 @@ export function toMovementExportRow(movement: InventoryMovement): MovementExport
   };
 }
 
-export async function exportMovementsToExcel(filters: MovementsExportFilters) {
+/**
+ * Descarga el Excel de los movimientos filtrados. Devuelve el aviso para el
+ * usuario si la lista superó el tope de filas (`null` si salió entera).
+ */
+export async function exportMovementsToExcel(
+  filters: MovementsExportFilters,
+): Promise<string | null> {
   const exportedAt = new Date().toISOString();
   const movements = await fetchMovementsForExport(filters);
-  const rows = movements.map(toMovementExportRow);
+  const rows = movements.rows.map(toMovementExportRow);
   const buffer = await buildMovementsExportWorkbook(rows, {
     exportedAt,
     filters,
@@ -53,4 +60,6 @@ export async function exportMovementsToExcel(filters: MovementsExportFilters) {
     }),
     filename,
   );
+
+  return describeMovementsExportLimit(movements);
 }

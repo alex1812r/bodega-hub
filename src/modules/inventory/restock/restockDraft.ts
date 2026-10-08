@@ -19,7 +19,8 @@ export const RESTOCK_DRAFT_TTL_MS = 30 * 60 * 1000;
 /** Líneas por precarga (una compra). */
 export const RESTOCK_DRAFT_MAX_LINES = 200;
 
-const MAX_QUANTITY = 999_999;
+/** Mayor cantidad a pedir de un producto en una precarga. */
+export const RESTOCK_DRAFT_MAX_QUANTITY = 999_999;
 const RESTOCK_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
 
 /** Quién guardó la precarga: otra tienda u otro usuario en la misma pestaña no la lee. */
@@ -58,7 +59,7 @@ const lineSchema = z.object({
   name: z.string().min(1).max(300),
   productId: z.string().min(1).max(200),
   sku: z.string().max(200),
-  suggestedQuantity: z.number().int().min(1).max(MAX_QUANTITY),
+  suggestedQuantity: z.number().int().min(1).max(RESTOCK_DRAFT_MAX_QUANTITY),
 });
 
 const payloadSchema = z.object({

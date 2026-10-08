@@ -397,6 +397,22 @@ function applyStockAdjustment(input: StockAdjustmentInput, storeId: string) {
     );
   }
 
+  // Como `adjust_stock`: sin tipo lo decide el signo, y el signo debe casar con el tipo.
+  const type = input.type ?? (input.quantityDelta > 0 ? "ajuste_entrada" : "ajuste_salida");
+  const isExitType = type === "ajuste_salida" || type === "devolucion_proveedor";
+
+  if (isExitType && input.quantityDelta > 0) {
+    throw new ApiError(
+      400,
+      "BAD_REQUEST",
+      "ajuste_salida / devolucion_proveedor requiere quantity_delta negativo",
+    );
+  }
+
+  if (!isExitType && input.quantityDelta < 0) {
+    throw new ApiError(400, "BAD_REQUEST", "Este tipo de ajuste requiere quantity_delta positivo");
+  }
+
   const stockAfter = product.currentStock + input.quantityDelta;
 
   if (stockAfter < 0) {
@@ -415,7 +431,7 @@ function applyStockAdjustment(input: StockAdjustmentInput, storeId: string) {
     ...(input.saleId ? { saleId: input.saleId } : {}),
     stockAfter,
     storeId,
-    type: input.type ?? "ajuste_entrada",
+    type,
   };
 
   mockStockMovements.unshift(movement);

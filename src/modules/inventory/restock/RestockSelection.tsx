@@ -175,7 +175,7 @@ export function RestockSelection({ className, onCreated }: RestockSelectionProps
     selectedItems.length === 0
       ? "Selecciona al menos un producto."
       : invalidQuantities > 0
-        ? "Corrige las cantidades: deben ser enteros de 1 en adelante."
+        ? "Corrige las cantidades: deben ser enteros de 1 a 999.999."
         : pendingSuppliers > 0
           ? "Consultando proveedores…"
           : groups.length === 0
@@ -331,7 +331,7 @@ export function RestockSelection({ className, onCreated }: RestockSelectionProps
                   disabled={!isSelected}
                   error={
                     isSelected && !isValidRestockQuantity(quantity)
-                      ? "Entero de 1 en adelante."
+                      ? "Entero de 1 a 999.999."
                       : undefined
                   }
                   onValueChange={(value) =>

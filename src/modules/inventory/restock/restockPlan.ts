@@ -4,6 +4,8 @@
  * (una compra = un proveedor).
  */
 
+import { RESTOCK_DRAFT_MAX_QUANTITY } from "./restockDraft";
+
 /** Proveedor de una compra de reposición. */
 export type RestockSupplier = {
   id: string;
@@ -73,9 +75,14 @@ export function suggestRestockQuantity(minStock: number, currentStock: number): 
   return Math.max(Math.ceil(needed), 1);
 }
 
-/** Cantidad que se puede enviar a la compra: entero ≥ 1. */
+/** Cantidad que se puede enviar a la compra: entero de 1 al máximo que guarda la precarga. */
 export function isValidRestockQuantity(quantity: number | null | undefined): quantity is number {
-  return typeof quantity === "number" && Number.isInteger(quantity) && quantity >= 1;
+  return (
+    typeof quantity === "number" &&
+    Number.isInteger(quantity) &&
+    quantity >= 1 &&
+    quantity <= RESTOCK_DRAFT_MAX_QUANTITY
+  );
 }
 
 function purchasedAtMs(link: RestockSupplierLink): number | null {

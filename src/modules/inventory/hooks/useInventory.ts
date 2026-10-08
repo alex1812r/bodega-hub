@@ -219,6 +219,15 @@ function invalidateStockQueriesIfUncertain(queryClient: QueryClient, error: unkn
   }
 }
 
+/**
+ * Un envío que mueve stock se intenta siempre, también sin conexión. Con el
+ * modo por defecto (`online`) React Query deja la mutación en pausa sin red y
+ * la envía sola al volver: el movimiento saldría cuando el usuario ya no lo
+ * espera. Con `always` el `fetch` falla al instante y el usuario decide si
+ * reintenta (con la misma clave de idempotencia).
+ */
+const STOCK_MUTATION_NETWORK_MODE = "always";
+
 export function useAdjustInventory() {
   const queryClient = useQueryClient();
 
@@ -231,6 +240,7 @@ export function useAdjustInventory() {
     // Sin reintento automatico: el reintento lo decide el usuario y viaja con la
     // misma clave de idempotencia.
     retry: false,
+    networkMode: STOCK_MUTATION_NETWORK_MODE,
     onSuccess: () => invalidateStockQueries(queryClient),
     onError: (error) => invalidateStockQueriesIfUncertain(queryClient, error),
   });
@@ -256,6 +266,7 @@ export function useConvertPackToUnits() {
         method: "POST",
       }),
     retry: false,
+    networkMode: STOCK_MUTATION_NETWORK_MODE,
     onSuccess: () => invalidateStockQueries(queryClient),
     onError: (error) => invalidateStockQueriesIfUncertain(queryClient, error),
   });

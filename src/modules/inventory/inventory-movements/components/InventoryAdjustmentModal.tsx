@@ -22,6 +22,7 @@ import {
   useInventoryProduct,
 } from "../../hooks/useInventory";
 import { useRequestAttempt } from "../../utils/requestAttempt";
+import { STOCK_REASON_MAX_LENGTH, describeStockReasonLength } from "../../utils/stockReason";
 import { describeStockRequestError } from "../../utils/stockRequestError";
 import {
   getInventoryAdjustmentDelta,
@@ -30,6 +31,9 @@ import {
 } from "../utils/movementTypeLabels";
 
 const formId = "inventory-adjustment-form";
+
+/** Mayor cantidad de un ajuste: por encima es un error de tecleo (la base guarda un `integer`). */
+const MAX_ADJUSTMENT_QUANTITY = 999_999;
 
 /** El ajuste libre solo se ofrece sobre productos activos, como la lista de inventario. */
 const searchFilters: ProductEntityFilters = { active: true };
@@ -127,7 +131,10 @@ export function InventoryAdjustmentModal({
     quantityNumber > 0 ? getInventoryAdjustmentDelta(quantityNumber, type) : 0;
   // Con decimales el propio campo avisa ("Debe ser un número entero."): aquí solo se bloquea el envío.
   const canSubmit =
-    Boolean(productId) && quantityNumber > 0 && Number.isInteger(quantityNumber);
+    Boolean(productId) &&
+    quantityNumber > 0 &&
+    quantityNumber <= MAX_ADJUSTMENT_QUANTITY &&
+    Number.isInteger(quantityNumber);
 
   function setOpen(nextOpen: boolean) {
     if (!isControlled) {
@@ -286,9 +293,11 @@ export function InventoryAdjustmentModal({
             decimals={0}
             disabled={adjustment.isPending}
             error={
-              hasSubmitted && quantityNumber <= 0
-                ? "Indica una cantidad mayor a cero."
-                : undefined
+              quantityNumber > MAX_ADJUSTMENT_QUANTITY
+                ? "La cantidad máxima es 999.999."
+                : hasSubmitted && quantityNumber <= 0
+                  ? "Indica una cantidad mayor a cero."
+                  : undefined
             }
             helperText="Cantidad absoluta; el signo depende del tipo."
             label="Cantidad"
@@ -299,7 +308,9 @@ export function InventoryAdjustmentModal({
 
         <Textarea
           disabled={adjustment.isPending}
+          helperText={describeStockReasonLength(reason)}
           label="Motivo"
+          maxLength={STOCK_REASON_MAX_LENGTH}
           onChange={(event) => setReason(event.target.value)}
           placeholder="Ej. ajuste por conteo físico"
           value={reason}

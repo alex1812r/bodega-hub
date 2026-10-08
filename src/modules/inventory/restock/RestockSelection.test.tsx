@@ -381,9 +381,9 @@ describe("RestockSelection", () => {
     await user.clear(quantityField("Arroz"));
 
     expect(screen.getByRole("button", { name: CREATE })).toBeDisabled();
-    expect(within(row("Arroz")).getByText("Entero de 1 en adelante.")).toBeInTheDocument();
+    expect(within(row("Arroz")).getByText("Entero de 1 a 999.999.")).toBeInTheDocument();
     expect(
-      screen.getByText("Corrige las cantidades: deben ser enteros de 1 en adelante."),
+      screen.getByText("Corrige las cantidades: deben ser enteros de 1 a 999.999."),
     ).toBeInTheDocument();
 
     await user.type(quantityField("Arroz"), "0");

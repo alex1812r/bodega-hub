@@ -152,3 +152,20 @@ export const SinglePack: Story = {
   parameters: { msw: { handlers: [recipesHandler, openedHandler] } },
   play: ({ canvasElement }) => openModal(canvasElement),
 };
+
+/** Las recetas no cargan: error en español con "Reintentar", sin buscador ni envío. */
+export const RecipesError: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get("/api/inventory/pack-conversions", () =>
+          HttpResponse.json(
+            { error: { code: "INTERNAL_ERROR", message: "Ocurrio un error inesperado." } },
+            { status: 500 },
+          ),
+        ),
+      ],
+    },
+  },
+  play: ({ canvasElement }) => openModal(canvasElement),
+};

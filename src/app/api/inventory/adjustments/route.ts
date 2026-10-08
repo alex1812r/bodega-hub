@@ -5,9 +5,13 @@ import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated } from "@/lib/api/jsonResponse";
 import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
+import { assertStockReasonLength } from "@/modules/inventory/services/assertStockReasonLength";
 import * as inventoryMockServer from "@/modules/inventory/services/inventory.mock-server";
 import * as inventoryServer from "@/modules/inventory/services/inventory.server";
 import { assertReturnAdjustmentHasDocument } from "@/modules/inventory/services/returnAdjustmentDocument";
+
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
+const QUANTITY_RANGE_MESSAGE = "La cantidad del ajuste es demasiado grande.";
 
 const stockAdjustmentSchema = z
   .object({
@@ -19,9 +23,15 @@ const stockAdjustmentSchema = z
     // R4: compra a la que se liga una `devolucion_proveedor` (obligatoria para ese
     // tipo). Con el vinculo la base aplica el tope "recibido − ya devuelto".
     purchaseId: z.string().uuid().optional(),
-    quantityDelta: z.number().int().refine((value) => value !== 0, {
-      message: "El ajuste no puede ser cero.",
-    }),
+    // La base guarda la cantidad en un `integer`: fuera de su rango no hay ajuste posible.
+    quantityDelta: z
+      .number()
+      .int()
+      .min(-POSTGRES_INTEGER_MAX, QUANTITY_RANGE_MESSAGE)
+      .max(POSTGRES_INTEGER_MAX, QUANTITY_RANGE_MESSAGE)
+      .refine((value) => value !== 0, {
+        message: "El ajuste no puede ser cero.",
+      }),
     reason: z.string().optional(),
     // R4: venta a la que se liga una `devolucion_cliente` (tope "vendido − ya devuelto").
     saleId: z.string().uuid().optional(),
@@ -63,6 +73,7 @@ export async function POST(request: Request) {
     const input = stockAdjustmentSchema.parse(await readJsonBody(request));
     // R4: fuera del schema para que el 400 lleve su mensaje, no el generico de zod.
     assertReturnAdjustmentHasDocument(input);
+    assertStockReasonLength(input.reason);
     const service = getInventoryService();
     return jsonCreated(await service.createStockAdjustment(input, auth.storeId));
   } catch (error) {

@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 
+import { fitExcelCell } from "../../utils/excelCell";
 import {
   movementExportColumns,
   type MovementExportRow,
@@ -32,7 +33,7 @@ export async function buildMovementsExportWorkbook(
   worksheet.addRow(movementExportColumns.map((column) => column.header));
 
   for (const row of rows) {
-    worksheet.addRow(movementExportColumns.map((column) => column.value(row)));
+    worksheet.addRow(movementExportColumns.map((column) => fitExcelCell(column.value(row))));
   }
 
   const headerRow = worksheet.getRow(3);

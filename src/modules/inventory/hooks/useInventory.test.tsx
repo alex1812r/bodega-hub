@@ -1,5 +1,5 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import {
@@ -275,5 +275,69 @@ describe("stock mutations · invalidación tras un error (INV-F4 · R1)", () => 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: inventoryQueryKeys.all });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["products"] });
+  });
+});
+
+/**
+ * INV-F5 · M1: sin red, React Query pausa por defecto la mutación y la envía
+ * sola al volver la conexión. Un movimiento de stock no puede salir diferido:
+ * el envío se intenta siempre, falla al instante y el usuario decide.
+ */
+describe("stock mutations · sin conexión (INV-F5 · M1)", () => {
+  const fetchMock = jest.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    global.fetch = fetchMock;
+    onlineManager.setOnline(false);
+  });
+
+  afterEach(() => {
+    onlineManager.setOnline(true);
+  });
+
+  async function expectFailsWithoutDeferredSend(result: {
+    current: { isError: boolean; isPaused: boolean };
+  }) {
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isPaused).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      onlineManager.setOnline(true);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // Al volver la red no sale ningún POST que el usuario no haya pedido.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  }
+
+  it("el ajuste no queda en pausa: falla y no se envía solo al volver la red", async () => {
+    const { result } = renderHook(() => useAdjustInventory(), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.mutate({
+        clientRequestId: "5b0c1a52-1111-4222-8333-444455556666",
+        productId: "prod-cable",
+        quantityDelta: 2,
+      });
+    });
+
+    await expectFailsWithoutDeferredSend(result);
+  });
+
+  it("la conversión no queda en pausa: falla y no se envía sola al volver la red", async () => {
+    const { result } = renderHook(() => useConvertPackToUnits(), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.mutate({
+        clientRequestId: "5b0c1a52-1111-4222-8333-444455556667",
+        packProductId: "prod-pack",
+        packQuantity: 1,
+      });
+    });
+
+    await expectFailsWithoutDeferredSend(result);
   });
 });

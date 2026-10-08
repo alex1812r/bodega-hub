@@ -127,6 +127,8 @@ function KardexContent({ kardex, returnTo }: { kardex: ProductKardex; returnTo?:
   const { product } = kardex;
   const stockStatus = getInventoryStockStatus(product);
   const firstKnownDay = kardex.series.find((point) => point.balance !== null)?.date;
+  // Truncado sin ningún día completo: los totales no se conocen, un 0 se leería como dato.
+  const hasPeriodTotals = !kardex.truncated || firstKnownDay !== undefined;
 
   return (
     <>
@@ -146,12 +148,12 @@ function KardexContent({ kardex, returnTo }: { kardex: ProductKardex; returnTo?:
         </KardexFigure>
         <KardexFigure label="Entradas 30 d">
           <span className="text-2xl font-bold tabular-nums text-secondary">
-            +{kardex.entries30d}
+            {hasPeriodTotals ? `+${kardex.entries30d}` : "—"}
           </span>
         </KardexFigure>
         <KardexFigure label="Salidas 30 d">
           <span className="text-2xl font-bold tabular-nums text-error">
-            {kardex.exits30d === 0 ? "0" : `-${kardex.exits30d}`}
+            {!hasPeriodTotals ? "—" : kardex.exits30d === 0 ? "0" : `-${kardex.exits30d}`}
           </span>
         </KardexFigure>
         <KardexFigure label="Saldo hace 30 d">

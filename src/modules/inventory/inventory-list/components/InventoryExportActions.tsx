@@ -15,13 +15,16 @@ type InventoryExportActionsProps = {
 export function InventoryExportActions({ exportFilters }: InventoryExportActionsProps) {
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  // La exportación se cortó en el tope de filas: el archivo se descargó, pero incompleto.
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
 
   async function handleExportExcel() {
     setIsExportingExcel(true);
     setExportError(null);
+    setExportNotice(null);
 
     try {
-      await exportInventoryToExcel(exportFilters);
+      setExportNotice(await exportInventoryToExcel(exportFilters));
     } catch (error) {
       setExportError(
         error instanceof Error
@@ -52,6 +55,11 @@ export function InventoryExportActions({ exportFilters }: InventoryExportActions
       {exportError ? (
         <p className="text-xs text-error" role="alert">
           {exportError}
+        </p>
+      ) : null}
+      {exportNotice ? (
+        <p className="max-w-xs text-xs text-on-surface-variant" role="status">
+          {exportNotice}
         </p>
       ) : null}
     </div>

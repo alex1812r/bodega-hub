@@ -73,9 +73,12 @@ describe("suggestRestockQuantity", () => {
 });
 
 describe("isValidRestockQuantity", () => {
-  it("solo acepta enteros de 1 en adelante", () => {
+  it("solo acepta enteros de 1 al tope de la precarga", () => {
     expect(isValidRestockQuantity(1)).toBe(true);
     expect(isValidRestockQuantity(250)).toBe(true);
+    // INV-F5 · B7: el tope de la precarga también es el del campo.
+    expect(isValidRestockQuantity(999_999)).toBe(true);
+    expect(isValidRestockQuantity(1_000_000)).toBe(false);
     expect(isValidRestockQuantity(0)).toBe(false);
     expect(isValidRestockQuantity(-2)).toBe(false);
     expect(isValidRestockQuantity(1.5)).toBe(false);

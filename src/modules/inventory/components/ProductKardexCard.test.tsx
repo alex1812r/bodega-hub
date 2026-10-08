@@ -434,6 +434,12 @@ describe("ProductKardexCard", () => {
     );
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(4);
+    // INV-F5 · B1: sin ningún día leído, entradas y salidas no son 0: no hay dato.
+    for (const label of ["Entradas 30 d", "Salidas 30 d", "Saldo hace 30 d"]) {
+      expect(
+        within(screen.getByText(label).closest("div") as HTMLElement).getByText("—"),
+      ).toBeInTheDocument();
+    }
   });
 
   it("no avisa de truncado en una respuesta completa", async () => {

@@ -1601,6 +1601,8 @@ paths:
                   minimum: 1
                 reason:
                   type: string
+                  maxLength: 500
+                  description: Sin contar los espacios de los extremos. Mas largo responde 400 "El motivo admite hasta 500 caracteres."
                 components:
                   type: array
                   minItems: 1
@@ -6016,8 +6018,12 @@ components:
             devuelto. Sin el, la devolucion no tiene tope.
         quantityDelta:
           type: integer
+          minimum: -2147483647
+          maximum: 2147483647
         reason:
           type: string
+          maxLength: 500
+          description: Sin contar los espacios de los extremos. Mas largo responde 400 "El motivo admite hasta 500 caracteres."
         saleId:
           type: string
           format: uuid

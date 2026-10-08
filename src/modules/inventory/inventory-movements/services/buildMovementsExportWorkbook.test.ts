@@ -105,4 +105,22 @@ describe("buildMovementsExportWorkbook", () => {
     // El saldo negativo histórico se exporta tal cual.
     expect(sheet?.getRow(7).getCell(6).value).toBe(-1);
   });
+
+  // INV-F5 · M3: un motivo histórico enorme no puede pasar del límite de celda de Excel (32.767).
+  it("trims a reason that does not fit in an Excel cell and marks the cut", async () => {
+    const buffer = await buildMovementsExportWorkbook(
+      [{ ...sampleRows[0], reason: "m".repeat(1_000_000) }, sampleRows[3]],
+      { exportedAt: "2026-05-20T12:00:00.000Z", filters: {} },
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
+
+    const sheet = workbook.getWorksheet("Movimientos");
+    const longReason = String(sheet?.getRow(4).getCell(8).value);
+
+    expect(longReason).toHaveLength(32_000);
+    expect(longReason.endsWith("m…")).toBe(true);
+    expect(sheet?.getRow(5).getCell(8).value).toBe("Conteo físico");
+  });
 });
