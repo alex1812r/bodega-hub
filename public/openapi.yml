@@ -2030,8 +2030,9 @@ paths:
         Crea pago con RPC `register_payment` cuando `API_DATA_SOURCE=supabase`.
         Con `clientRequestId`, repetir la peticion (misma clave, mismo contenido,
         mismo usuario) responde 201 con el pago original sin registrar otro pago ni
-        mover caja, baul o el saldo del documento.
-      x-permission: payments.manage
+        mover caja, baul o el saldo del documento. Las ventas se cobran con
+        `payments.manage` o `sales.create`; las compras exigen `payments.manage`.
+      x-permission: payments.manage | sales.create
       requestBody:
         required: true
         content:
@@ -2088,6 +2089,7 @@ paths:
           description: Cliente de la venta o proveedor de la compra.
           schema:
             type: string
+            maxLength: 120
         - name: from
           in: query
           required: false

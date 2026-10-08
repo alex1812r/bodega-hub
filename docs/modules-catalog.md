@@ -323,6 +323,8 @@ Errores de negocio: SQLSTATE `PT400` / `PT403` / `PT404` / `PT409` (PostgREST re
 
 **UI proveedor/ambos:** tab **Productos** (`ContactSupplierProductsTab`) — vincular (M10 con autocomplete producto/proveedor según contexto), cotizar, historial, editar metadatos, desvincular (modales M10–M14 en `contacts/components/supplier-products/`). Permisos `products.view` / `products.manage`.
 
+**Tab Saldos (`ContactBalancesTab`, PAG-04b):** documentos del contacto con saldo (`useOpenDocuments` con `contactId`), total REF/Bs, enlace a cada documento con `returnTo`, **Abonar** (`ContactSettlementModal`) y **Cobrar**/**Pagar** por documento (`RegisterPaymentModal`). Cliente = "Por cobrar", proveedor = "Por pagar", `ambos` = las dos secciones. Qué secciones se pintan lo decide `getContactBalanceSections` (misma regla que el servidor); sin ninguna, la pestaña no aparece. Detalle en [Pagos](#pagos).
+
 **Pendiente:** `Can` en botón crear; enlaces desde tablas de actividad a detalle venta/compra.
 
 ---
@@ -351,6 +353,8 @@ Errores de negocio: SQLSTATE `PT400` / `PT403` / `PT404` / `PT409` (PostgREST re
 **Estados:** `borrador`, `pendiente_pago`, `pagada`, `cancelada`, `devuelta`.
 
 **Venta y cobro en una sola transacción (patch `20260909-create-sale-with-payments.sql`):** el POS web manda los cobros dentro de `POST /api/sales` (`payments[]`, mismas reglas por método que `POST /api/payments`, esquema compartido en `src/modules/payments/services/paymentSchemas.ts`). El servidor llama al RPC `create_sale_with_payments`, que ejecuta `create_sale` y luego `register_payment` por línea dentro de la misma transacción: si un cobro falla (saldo, vuelto, caja cerrada…) Postgres revierte también la venta y el descuento de stock. Sin `payments` ni `clientRequestId` se sigue usando `create_sale` tal cual (app móvil y scripts cobran aparte). `clientRequestId` (uuid) es la clave de idempotencia por intento de cobro: se guarda en `sales.client_request_id` con índice único por tienda, y repetir la petición con la misma clave devuelve la venta ya creada. El POS la genera al procesar, la conserva mientras el carrito siga cargado y la descarta al vaciarlo. Un candado síncrono (`submitLockRef`) bloquea además el doble clic mientras viaja la petición. Al vender, cancelar o devolver se invalida también la caché de `products` (el catálogo del POS se cachea 5 min; antes el cajero seguía viendo el stock previo y el carrito le dejaba pedir unidades que ya no había). Antecedente: 29-ago-2026, cinco ventas idénticas sin pago creadas en seis minutos por reintentos del cajero cuando venta y cobro eran dos peticiones. **Antes de desplegar la app hay que aplicar el patch en la base**; `verify-patches.sql` lo comprueba.
+
+**Cobrar saldo (`/sales/[id]`, PAG-02):** acción primaria de la cabecera que abre `RegisterPaymentModal` con `saleId` sin salir del detalle. Visible solo con saldo (`roundMoney(totalVes - paidVes) > 0`), venta `pendiente_pago` o `pagada`, y `payments.manage` o `sales.create`. Al cobrar se refrescan el saldo y la tabla de pagos. Las ventas en `pendiente_pago` con 7 días o más se avisan en `/payments` (ver [Pagos](#pagos)).
 
 **Tablas:** `sales`, `sale_items`, `payments`, `stock_movements`.
 
@@ -382,6 +386,8 @@ Errores de negocio: SQLSTATE `PT400` / `PT403` / `PT404` / `PT409` (PostgREST re
 
 **Relaciones proveedor-producto:** GET/POST `/api/supplier-products`, PATCH metadatos `/api/supplier-products/[id]`, POST precios `/api/supplier-products/[id]/prices`, GET historial `/api/supplier-products/[id]/price-history`, PATCH baja `/api/supplier-products/[id]/deactivate`, **empaques** GET/POST `/api/supplier-products/[id]/pack-units`, PATCH/DELETE `/api/supplier-products/[id]/pack-units/[packId]`. Modal M15 `ManageSupplierProductPackUnitsModal` en tab Productos (contacto) y tabla Proveedores (producto).
 
+**Pagar (`/purchases/[id]`, PAG-01b):** acción primaria de la cabecera que abre `RegisterPaymentModal` con `purchaseId` sin navegar. Visible solo con saldo en Bs (`roundMoney(totalVes - paidVes) > 0`), compra ni `cancelado` ni `devuelto`, `payments.manage` y un rol que vea pagos de compra (`canViewPurchasePayments`: no el vendedor). Tras registrar se refrescan saldo y tabla de pagos. Para "Pagar ahora" al crear la compra (COM-06) usar el mismo modal con apertura por código: contrato y ejemplo en [Pagos](#pagos).
+
 **Tablas:** `purchases`, `purchase_items` (metadata `entry_mode`, `pack_*`), `supplier_products`, `supplier_product_price_history`, `supplier_product_pack_units`.
 
 **Migración Supabase remota:** aplicar en SQL Editor los cambios de §3.8–3.8.1 en [`supabase/supabase-schema.sql`](../supabase/supabase-schema.sql) (`notes`, `is_active`, tabla historial, RPCs `register_supplier_product_price` / `deactivate_supplier_product`, append en `create_purchase`/`receive_purchase`). No hay auto-deploy; ver [`supabase-setup.md`](supabase-setup.md).
@@ -397,13 +403,123 @@ Errores de negocio: SQLSTATE `PT400` / `PT403` / `PT404` / `PT409` (PostgREST re
 
 | Hook | Endpoint |
 |------|----------|
-| `usePayments` | GET `/api/payments` — `direction`, `saleId`, `purchaseId`, `contactId` |
+| `usePayments` | GET `/api/payments` — `direction`, `method`, `from`, `to` (día operativo Caracas), `saleId`, `purchaseId`, `contactId` |
 | `usePayment` | GET `/api/payments/[id]` |
-| `useCreatePayment` | POST `/api/payments` → RPC `register_payment` (`payments.manage` o `sales.create` para ventas) |
+| `useCreatePayment` | POST `/api/payments` → RPC `register_payment` (`payments.manage` o `sales.create` para ventas); acepta `clientRequestId` |
+| `useOpenDocuments` | GET `/api/payments/open-documents` — `type`, `search`, `contactId`, `from`, `to`, `olderThanDays` (`payments.manage` o `sales.create`) |
 
 **Métodos:** `efectivo_ves`, `efectivo_usd`, `pago_movil`, `punto_venta`, `transferencia`. Validación por método en API.
 
 **Acceso por rol:** el `vendedor` ve/opera pagos de ventas (`purchase_id` nulo) y puede **crear** cobros de venta en POS/API con `sales.create` (sin necesitar `payments.manage`). Se aplica en `GET/POST /api/payments`, detalle, `GET /api/contacts/[id]/payments` y actividad del contacto. Anular pagos y pagar compras siguen reservados a `payments.manage`. En UI se ocultan filtros de compra/salida.
+
+### Lista `/payments`
+
+- **Estado en la URL** (`useUrlListState` + `paymentsListSchema`, PAG-05): `from`, `to`, `method`, `direction`, `page`, `limit` y los enlaces profundos `saleId`, `purchaseId`, `contactId`. Sobrevive a recarga y a "atrás"; una página fuera de rango se ajusta a la última.
+- **Filtros visibles:** Desde / Hasta, Método y Tipo (Entrada/Salida). El vendedor queda fijo en "Entrada". `saleId`/`purchaseId`/`contactId` nunca son campos: llegan en el enlace de otra pantalla y se muestran como chips quitables. **Ningún input pide un ID.**
+- **Columna Documento** (`PaymentsDocumentCell`): número de la venta o compra enlazado a su detalle con `returnTo` = URL exacta de la lista, para que "Volver" regrese con los mismos filtros. Los detalles de venta, compra y pago respetan `returnTo`.
+- **Export:** respeta los filtros activos y no incluye ids internos.
+- **Registrar pago** (PAG-03b): abre `PaymentDocumentPicker` y, al elegir, `RegisterPaymentModal` con el documento fijo. El modo de teclear el ID del documento se eliminó.
+- **Aviso de ventas pendientes** (`StalePendingSalesNotice`, PAG-07): aviso en `/payments` de ventas en `pendiente_pago` con 7 días o más, con **Cobrar** y enlace al detalle para **Anular**; no cambia ninguna RPC.
+
+`GET /api/payments` valida `method` (uno de los cinco métodos), `from` y `to` (`YYYY-MM-DD`, día operativo Caracas, ambos inclusive): un valor inválido o `from` posterior a `to` responde 400; un parámetro vacío equivale a no enviarlo.
+
+### `RegisterPaymentModal`
+
+[`src/modules/payments/components/RegisterPaymentModal.tsx`](../src/modules/payments/components/RegisterPaymentModal.tsx). Modal para pagar una compra o cobrar una venta sin salir de la pantalla. El documento lo fija quien lo usa con `purchaseId` o `saleId` (exactamente uno); el usuario nunca lo elige ni lo teclea aquí. Lo usan el detalle de compra (**Pagar**), el detalle de venta (**Cobrar saldo**), `/payments` y la pestaña Saldos del contacto.
+
+| Prop | Tipo | Contrato (JSDoc del código) |
+|------|------|-----------------------------|
+| `purchaseId` | `string?` | Compra a pagar (salida de dinero). No combinar con `saleId`. Puede ir `undefined` mientras el modal está cerrado (apertura por código); abierto sin documento no registra nada. |
+| `saleId` | `string?` | Venta a cobrar (entrada de dinero). No combinar con `purchaseId`. Puede ir `undefined` mientras el modal está cerrado; abierto sin documento no registra nada. |
+| `open` | `boolean?` | Apertura controlada: con un booleano el modal se abre y se cierra por código y no pinta botón propio. Sin esta prop se abre con `trigger`. |
+| `onOpenChange` | `(open: boolean) => void` (opcional) | Se llama al abrirse y al cerrarse el modal por una acción del usuario. Con el pago en vuelo el cierre se ignora y no se llama. Necesaria si se pasa `open`. |
+| `onRegistered` | `(payment: PaymentDetail) => void` (opcional) | Se llama una vez por pago registrado con éxito, con el pago que devolvió el servidor (`pendingBalanceVes` trae el saldo que queda). El modal no se cierra solo: muestra el saldo restante y permite otro abono; quien quiera cerrarlo lo hace aquí. |
+| `trigger` | `ReactNode?` | Elemento que abre el modal al hacer clic. Sin `trigger` ni `open` se pinta un botón con el título. |
+| `title` | `string?` | Título del modal. Por defecto "Pagar compra" o "Cobrar saldo" (venta). |
+| `submitLabel` | `string?` | Texto del botón de envío. Por defecto "Registrar pago" (compra) o "Registrar cobro" (venta). |
+
+Comportamiento:
+
+- **Saldo:** cada apertura vuelve a pedir el documento y muestra "Saldo pendiente actual" (Bs). Mientras el saldo carga no se envía; un documento ya saldado no admite otro pago. La venta convierte con su propia tasa; la compra, con la tasa del día de la tienda (igual que `register_payment`), y un pago en USD que supere el saldo de la compra se bloquea antes de enviar.
+- **Completar saldo:** rellena el monto con el saldo pendiente en la moneda del método (REF/Bs).
+- **Clave de idempotencia por apertura:** cada envío lleva `clientRequestId`. Cada apertura estrena clave; con el modal abierto, reintentar sin cambios tras un error de resultado incierto (red, 5xx, 408, 409) conserva la clave y no duplica el pago, y el modal vuelve a pedir documento y pagos para que se vea si entró. Tras un éxito, o tras un 4xx con cambios en el formulario, la clave es nueva.
+- **No cierra con el pago en vuelo:** Esc, X, clic fuera y Cancelar se ignoran mientras viaja la petición, y `onOpenChange` no se llama.
+- **No se cierra solo:** tras registrar muestra el saldo restante y deja hacer otro abono. El consumidor decide en `onRegistered` (cerrar, navegar o nada).
+- **Cambio de documento:** si `purchaseId`/`saleId` cambian, el modal se vuelve a montar por dentro (formulario limpio y clave nueva); no hace falta pasar `key`. Con `trigger`, ese cambio además lo cierra.
+- **Errores:** los de negocio muestran el `error.message` del servidor tal cual; los de red, "No se pudo conectar con el servidor.".
+- **Refresco:** `useCreatePayment` invalida `payments` (incluye documentos con saldo), `sales`, `purchases`, `contacts`, `dashboard`, `reports`, caja y baúl.
+
+Ejemplo **"Pagar ahora" tras crear la compra** (COM-06; apertura por código, sin `trigger`):
+
+```tsx
+const [payingPurchaseId, setPayingPurchaseId] = useState<string>();
+
+// Tras crear la compra: setPayingPurchaseId(purchase.id)
+
+<RegisterPaymentModal
+  onOpenChange={(open) => {
+    if (!open) setPayingPurchaseId(undefined);
+  }}
+  onRegistered={(payment) => router.push(`/purchases/${payment.purchaseId}`)}
+  open={payingPurchaseId !== undefined}
+  purchaseId={payingPurchaseId}
+/>
+```
+
+Montarlo solo para quien puede pagar compras: `can("payments.manage") && canViewPurchasePayments(role)` (`@/shared/auth/paymentAccess`). El modal no comprueba el rol; a un vendedor el servidor le responde 403.
+
+### `PaymentDocumentPicker`
+
+[`src/modules/payments/components/PaymentDocumentPicker.tsx`](../src/modules/payments/components/PaymentDocumentPicker.tsx). Buscador de ventas por cobrar y compras por pagar: el paso previo a `RegisterPaymentModal` cuando la pantalla no sabe todavía qué documento se paga. Solo elige; no registra nada. Busca en servidor (`GET /api/payments/open-documents`) por número de documento o nombre/RIF del contacto, con rango de fechas opcional; con el foco en el buscador, las flechas recorren los resultados y Enter elige el resaltado. Cada apertura empieza sin filtros.
+
+Props: `open`, `onOpenChange(open)` (se llama con `false` al cerrar), `onSelect(document: OpenDocument)` (el buscador no se cierra solo: quien lo usa decide qué abrir después) y `canPayPurchases` (`payments.manage` y un rol que ve pagos de compra; con `false` solo se listan ventas y no se pinta el selector de tipo; el servidor aplica la misma regla).
+
+### `ContactSettlementModal` y `allocatePayment`
+
+[`src/modules/payments/components/ContactSettlementModal.tsx`](../src/modules/payments/components/ContactSettlementModal.tsx) — modal **Abonar** (PAG-04a): un abono de un contacto repartido entre sus documentos con saldo, del más antiguo al más nuevo.
+
+1. El usuario indica método y monto (y banco, teléfono y referencia si el método los pide: valen para todos los pagos del abono).
+2. Antes de confirmar ve el reparto: cuánto recibe cada documento y cuánto le queda.
+3. Al confirmar se registra **un pago por documento, uno tras otro**, cada uno con su propia `clientRequestId`. Si uno falla el abono se detiene: los ya registrados quedan, la UI dice qué quedó pendiente y **Reintentar pendientes** continúa desde el que falló sin reenviar los anteriores ni duplicar.
+
+Nunca paga de más ni da vuelto: un monto mayor que lo abonable no se confirma. Sin documentos pendientes no deja abonar. Props: `contactId`, `contactName`, `type` (`"sale"` cobra ventas del cliente; `"purchase"` paga compras del proveedor), `open`/`onOpenChange`/`trigger` (igual que `RegisterPaymentModal`) y `onSettled(payments)` (una sola vez, cuando **todos** los pagos quedaron registrados; no se llama si el abono queda a medias). Con `type="purchase"` montarlo solo si `canViewPurchasePayments(role)`.
+
+El reparto es la función pura [`allocatePayment`](../src/modules/payments/utils/allocatePayment.ts): recibe `amount`, `currency` (la del método), `documents` (del más antiguo al más nuevo, con `pendingVes` y `rateVes`) y `minPayableVes`; devuelve `allocations` (por documento: `amount`, `appliedVes`, `equivalent`, `remainingVes`), `appliedAmount`, `appliedVes` y `leftover` (`amount = appliedAmount + leftover`). Calcula con enteros para reproducir el `round(…, 2)` de Postgres y respeta el menor saldo que `register_payment` todavía deja pagar (`MIN_PAYABLE_VES_BY_DOCUMENT`: Bs 0,02 en ventas, Bs 0,01 en compras).
+
+### `GET /api/payments/open-documents`
+
+Ventas por cobrar y compras por pagar de la tienda, con el mismo criterio que acepta `register_payment`: venta `pendiente_pago`/`pagada` o compra `pedido`/`recibido`, con `roundMoney(totalVes - paidVes) > 0`. Solo lectura; más antiguo primero. Ruta: [`src/app/api/payments/open-documents/route.ts`](../src/app/api/payments/open-documents/route.ts); servicios `openDocuments.server.ts` / `openDocuments.mock-server.ts` con el remate común `finalizeOpenDocuments`.
+
+| Parámetro | Regla |
+|-----------|-------|
+| `type` | `sale` o `purchase`. Sin valor: ventas y, si el rol puede, también compras |
+| `search` | Número de venta/compra (crudo o como se muestra) o nombre/RIF del contacto; máx. 120 |
+| `contactId` | Cliente de la venta o proveedor de la compra; máx. 120 |
+| `from`, `to` | Fecha Caracas del documento `YYYY-MM-DD`, inclusive; `from` posterior a `to` → 400 |
+| `olderThanDays` | Entero 1–3650: documentos con N días o más (fecha Caracas ≤ hoy − N). Con `to` manda el límite más antiguo |
+| `skip`, `limit` | Paginación estándar (`limit` máx. 100) |
+
+Un parámetro vacío equivale a no enviarlo. `store_id` sale de la sesión.
+
+**Permisos:** `payments.manage` o `sales.create` (misma regla que `POST /api/payments`). Las compras exigen además `payments.manage` y un rol que vea pagos de compra: el vendedor recibe 403 con `type=purchase` y solo ventas si no envía `type`.
+
+**Respuesta** (`data`): `items[]`, `total`, `skip`, `limit` y `totals` del conjunto filtrado completo (no solo de la página): `count`, `pendingVes`, `pendingRef` (si algún documento lo tiene) y `truncated`. Cada `OpenDocument`: `type`, `id`, `number` (`invoice_number` o `purchase_number`), `status`, `createdAt`, `contact?` (`id`, `name`, `taxId?`), `totalVes`, `paidVes`, `pendingVes`, `totalRef`, `refRateVes`, `paidRef?` (solo compras) y `pendingRef?` (compras: `totalRef - paidRef`; ventas: `pendingVes / refRateVes`). Con Supabase el saldo se remata en servidor sobre un tope de filas leídas (3000 ventas `pendiente_pago`, 5000 compras abiertas); si se alcanza, `totals.truncated = true` (el mock nunca trunca).
+
+### Idempotencia de `POST /api/payments`
+
+`clientRequestId` (uuid, opcional) es la clave de idempotencia por intento, única por tienda:
+
+- Misma clave + mismo contenido + mismo usuario → **201 con el pago original**, sin segundo pago ni segundo movimiento de caja, baúl o saldo del documento. El cliente no distingue el replay del alta.
+- Misma clave con otra huella (otro contenido), otro usuario o un pago ya anulado → **409 `CONFLICT`**.
+- Sin clave → comportamiento anterior (app móvil y scripts).
+
+Paridad en `payments.mock-server.ts` (el mock compara contenido y pago anulado; no distingue usuario). Test de laboratorio: `scripts/stock-lab/regression/payments-idempotency.test.ts` (P4-3 en [`stock-integrity.md`](stock-integrity.md)).
+
+**Parche [`supabase/patches/20261008a-register-payment-idempotency.sql`](../supabase/patches/20261008a-register-payment-idempotency.sql):** añade `payments.client_request_id` y `client_request_hash` con índice único por tienda, la función interna `payment_idempotent_replay` y el parámetro `p_client_request_id` en `register_payment` (firma de 13 argumentos; elimina la de 12 para no dejar dos sobrecargas). Dos peticiones simultáneas con la misma clave se serializan con un advisory lock por (tienda, clave). **No cambia la semántica monetaria** de `register_payment` ni toca `create_sale_with_payments`; no migra filas.
+
+- **NO está aplicado en producción.** Hay que aplicarlo **antes de desplegar** el BFF que envía la clave; `verify-patches.sql` lo comprueba.
+- Si falta (PostgREST responde `PGRST202`), el BFF **degrada**: registra el pago una vez **sin idempotencia**, nunca un 500. Es decir, sin el parche la protección contra duplicados no existe aunque la UI envíe la clave.
+- **Reaplicar `20261006b`, `c`, `f`, `g` o `h` reinstala la firma de 12 argumentos: hay que volver a aplicar `20261008a` después.**
 
 **Pendiente:** revisión UX confirmación al anular (endpoint y UI ya existen).
 
@@ -441,6 +557,8 @@ Comisión quincenal de los cajeros. **Sin sueldo fijo:** el cajero cobra un porc
 **Ciclo:** `borrador` (recalculable) → `aprobado` (se consumen las ventas, `commission_pct` congelado) → `pagado` (todos los ítems pagados). Las filas de `payroll_commission_sales` se escriben al **aprobar**, no al calcular, para que recalcular no gaste ventas.
 
 **Pago:** sale del baúl con `vault_movements.type = 'payroll_out'` (cubeta `efectivo` en Bs o USD, `cuenta` para pago móvil y transferencia) y snapshot de tasa. Un ítem de total 0 se marca pagado sin movimiento. Anular restituye el saldo, escribe el asiento contrario (`adjustment`, nunca borra el original — lección de [`cuadre-baul.md`](cuadre-baul.md) §3) y devuelve el periodo a `aprobado`; exige una nota. El monto entregado tiene que ser el del recibo: no hay abonos parciales.
+
+**Moneda del monto (`PayrollPayModal`, PAG-08):** si los métodos habilitados de la tienda llegan después de teclear el monto y el método elegido se sustituye por uno de otra moneda, el monto tecleado se descarta y el campo vuelve al total sugerido (antes Bs 500 se enviaba como USD 500); dentro de la misma moneda se conserva.
 
 **Semáforo:** `comisiones / ganancia bruta` de la quincena. Verde < 25 %, ámbar 25–40 %, rojo > 40 % (umbral configurable). Solo informa, **nunca bloquea el pago**. Sin ganancia bruta muestra "sin datos" en vez de dividir por cero.
 

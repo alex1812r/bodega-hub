@@ -416,9 +416,10 @@ La tasa viene de `useCurrentExchangeRate` (`rateVes`); conversiones con `refToVe
 
 | Hook | Método | Endpoint | Permiso |
 |------|--------|----------|---------|
-| `usePayments` | GET | `/api/payments?direction=&saleId=&purchaseId=&contactId=` | `payments.view` |
+| `usePayments` | GET | `/api/payments?direction=&method=&from=&to=&saleId=&purchaseId=&contactId=` | `payments.view` |
 | `usePayment` | GET | `/api/payments/[id]` | `payments.view` |
 | `useCreatePayment` | POST | `/api/payments` | `payments.manage` **o** `sales.create` (solo pagos de venta) |
+| `useOpenDocuments` | GET | `/api/payments/open-documents?type=&search=&contactId=&from=&to=&olderThanDays=` | `payments.manage` **o** `sales.create` (compras: `payments.manage` y rol que vea pagos de compra) |
 
 Body común:
 
@@ -439,6 +440,7 @@ Reglas:
 - Exactamente uno de `saleId` o `purchaseId`.
 - Respuesta incluye `pendingBalanceVes` respecto al total de la venta/compra.
 - Varios pagos parciales hasta cubrir el total; la venta puede pasar a `pagada`.
+- `clientRequestId` (uuid, opcional): clave de idempotencia por intento. Misma clave y mismo contenido → 201 con el pago original; misma clave con otro contenido → 409. Requiere el parche `20261008a` (ver [`modules-catalog.md`](modules-catalog.md#pagos)).
 
 | Método | Campos obligatorios |
 |--------|---------------------|
@@ -448,7 +450,7 @@ Reglas:
 | `transferencia` | `bankName`, `referenceCode` |
 | `punto_venta` | `referenceCode` opcional |
 
-`useCreatePayment` invalida: `payments`, `sales`, `purchases`, `contacts`, `dashboard`, `reports`.
+`useCreatePayment` invalida: `payments` (incluye `open-documents`), `sales`, `purchases`, `contacts`, `dashboard`, `reports`, caja y baúl.
 
 ### Tasas ref/VES
 
