@@ -13,6 +13,7 @@ jest.mock("../../../../../lib/api/assertStoreResource", () => ({
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
+import { GET } from "../route";
 import { POST } from "./route";
 
 const context = (id: string) => ({
@@ -48,6 +49,28 @@ describe("/api/products/[id]/price", () => {
     expect(response.status).toBe(200);
     expect(body.data.product.salePriceRef).toBe(17);
     expect(body.data.history.productId).toBe("prod-drill");
+  });
+
+  it("persists the new price in mock mode: a later GET returns it (PRO-F2)", async () => {
+    const headers = { "content-type": "application/json", "x-demo-role": "almacen" };
+
+    await POST(
+      new Request("http://localhost/api/products/prod-cable/price", {
+        body: JSON.stringify({ salePriceRef: 4.2 }),
+        headers,
+        method: "POST",
+      }),
+      context("prod-cable"),
+    );
+
+    const response = await GET(
+      new Request("http://localhost/api/products/prod-cable", { headers }),
+      context("prod-cable"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.salePriceRef).toBe(4.2);
   });
 
   describe("supabase data source", () => {

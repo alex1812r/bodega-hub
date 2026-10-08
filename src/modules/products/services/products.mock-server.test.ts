@@ -5,7 +5,7 @@
 import { mockProducts, type ProductMock } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
-import { listProducts } from "./products.mock-server";
+import { getProductById, listProducts, updateProductPrice } from "./products.mock-server";
 
 const OTHER_STORE_ID = "00000000-0000-4000-8000-000000000002";
 
@@ -199,5 +199,39 @@ describe("products.mock-server listProducts: margin filter and sort (parity with
   it("combines with the other filters and never leaves the store", () => {
     expect(marginIds("margin=high&search=m-25&isActive=true")).toEqual(["m-25"]);
     expect(list("margin=high&search=m-25").items).toEqual([]);
+  });
+});
+
+describe("products.mock-server updateProductPrice (parity with the update_product_price RPC)", () => {
+  const original = getProductById("prod-drill", DEFAULT_STORE_ID).salePriceRef;
+
+  afterEach(() => {
+    updateProductPrice("prod-drill", { salePriceRef: original }, DEFAULT_STORE_ID);
+  });
+
+  it("persists the new sale price: later reads and listings return it", () => {
+    const updated = updateProductPrice("prod-drill", { salePriceRef: 17.25 }, DEFAULT_STORE_ID);
+
+    expect(updated.salePriceRef).toBe(17.25);
+    expect(getProductById("prod-drill", DEFAULT_STORE_ID).salePriceRef).toBe(17.25);
+    expect(list("sku=her-tal-001").items[0].salePriceRef).toBe(17.25);
+  });
+
+  it("changes nothing but the sale price", () => {
+    const before = getProductById("prod-drill", DEFAULT_STORE_ID);
+
+    updateProductPrice("prod-drill", { salePriceRef: 17.25 }, DEFAULT_STORE_ID);
+
+    expect(getProductById("prod-drill", DEFAULT_STORE_ID)).toEqual({
+      ...before,
+      salePriceRef: 17.25,
+    });
+  });
+
+  it("does not touch a product of another store", () => {
+    expect(() => updateProductPrice("prod-drill", { salePriceRef: 1 }, OTHER_STORE_ID)).toThrow(
+      /No tienes permisos/,
+    );
+    expect(getProductById("prod-drill", DEFAULT_STORE_ID).salePriceRef).toBe(original);
   });
 });

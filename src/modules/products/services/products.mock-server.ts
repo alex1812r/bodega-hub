@@ -366,13 +366,14 @@ export function addProductBarcode(id: string, barcode: string, storeId: string) 
   return getProductById(id, storeId);
 }
 
+/** Como la RPC `update_product_price`: el precio nuevo queda guardado en el producto. */
 export function updateProductPrice(id: string, input: ProductPriceInput, storeId: string) {
-  const product = getProductById(id, storeId);
+  const product = mockProducts.find((item) => item.id === id);
+  assertMockStoreResource(product, storeId, "Producto no encontrado.");
 
-  return {
-    ...product,
-    salePriceRef: input.salePriceRef,
-  };
+  product.salePriceRef = input.salePriceRef;
+
+  return getProductById(id, storeId);
 }
 
 export function deleteProduct(id: string, storeId: string) {
