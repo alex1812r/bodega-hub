@@ -38,8 +38,18 @@ import {
   getProductMarginThresholds,
   parseProductMarginFilter,
 } from "./productMargin";
+import {
+  PRODUCT_CATEGORY_INACTIVE_MESSAGE,
+  PRODUCT_CATEGORY_NOT_IN_STORE_MESSAGE,
+  PRODUCT_CATEGORY_REQUIRED_MESSAGE,
+  PRODUCT_EDIT_PRICE_REASON,
+} from "./productSchemas";
 import { applyProductSort } from "./productSort";
-import { buildProductSearchOrFilter, normalizeBarcode } from "./productSearch";
+import {
+  buildProductSearchOrFilter,
+  normalizeBarcode,
+  normalizeProductSearch,
+} from "./productSearch";
 import {
   buildProductSaleHistoryResult,
   mapProductSaleHistoryRow,
@@ -60,6 +70,43 @@ function assertProductImageUrlInput(productId: string, imageUrl: string | null |
       error instanceof Error ? error.message : "imageUrl no es valido para este producto.",
     );
   }
+}
+
+/**
+ * Categoría de un alta o de un cambio de categoría: existe, es de la tienda del
+ * servidor y está activa. La FK `products.category_id` no mira la tienda, así
+ * que sin esto se podía guardar la categoría de otra. Una sola lectura.
+ */
+async function assertProductCategory(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  categoryId: string,
+  storeId: string,
+) {
+  if (!categoryId.trim()) {
+    throw new ApiError(400, "BAD_REQUEST", PRODUCT_CATEGORY_REQUIRED_MESSAGE);
+  }
+
+  const { data, error } = await supabase
+    .from("categories")
+    .select("id, is_active")
+    .eq("id", categoryId)
+    .eq("store_id", storeId)
+    .maybeSingle<{ id: string; is_active: boolean }>();
+
+  throwIfSupabaseError(error);
+
+  if (!data) {
+    throw new ApiError(400, "BAD_REQUEST", PRODUCT_CATEGORY_NOT_IN_STORE_MESSAGE);
+  }
+
+  if (!data.is_active) {
+    throw new ApiError(400, "BAD_REQUEST", PRODUCT_CATEGORY_INACTIVE_MESSAGE);
+  }
+}
+
+/** Precio REF a dos decimales, como lo guarda `products.sale_price_ref`. */
+function roundPriceRef(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
 export type ProductInputWithPackConversion = ProductInput & {
@@ -144,7 +191,8 @@ function toProductUpdate(input: ProductInput) {
     ...(input.isActive !== undefined ? { is_active: input.isActive } : {}),
     ...(input.minStock !== undefined ? { min_stock: input.minStock } : {}),
     ...(input.name !== undefined ? { name: input.name } : {}),
-    ...(input.salePriceRef !== undefined ? { sale_price_ref: input.salePriceRef } : {}),
+    // `sale_price_ref` tampoco: el precio solo cambia por `update_product_price`,
+    // que deja la fila de historial y la instantánea de costo y banda.
     ...(sku ? { sku } : {}),
   };
 }
@@ -156,7 +204,7 @@ function applyProductFilters<TQuery extends {
   const barcode = normalizeBarcode(searchParams.get("barcode"));
   const categoryId = searchParams.get("categoryId");
   const isActive = searchParams.get("isActive");
-  const search = searchParams.get("search")?.trim();
+  const search = normalizeProductSearch(searchParams.get("search"));
   const sku = normalizeSku(searchParams.get("sku") ?? "");
 
   let filteredQuery = query;
@@ -382,6 +430,10 @@ export async function createProduct(input: ProductInputWithPackConversion, store
   const supabase = await createRouteSupabaseClient();
   const { packConversion, ...productInput } = input;
 
+  if (productInput.categoryId !== undefined) {
+    await assertProductCategory(supabase, productInput.categoryId, storeId);
+  }
+
   if (packConversion) {
     await assertPackConversionCanBeCreated(storeId, packConversion, {
       name: productInput.name,
@@ -416,6 +468,19 @@ export async function createProduct(input: ProductInputWithPackConversion, store
   return getProductById(data.id, storeId);
 }
 
+/**
+ * Edición de producto. El precio no se escribe con el resto de columnas: si
+ * `salePriceRef` llega distinto del guardado (a dos decimales) se cambia con la
+ * RPC `update_product_price`, la misma vía que `POST …/price`, con el motivo
+ * "Edición del producto"; si es igual, se ignora.
+ *
+ * Orden: 1. validar (categoría, imagen); 2. update de las demás columnas;
+ * 3. receta de empaque; 4. precio. El precio va al final para que la instantánea
+ * de la RPC tome el costo ya guardado por esta misma edición (con el precio
+ * primero quedaría el costo anterior y el producto entraría en "Por revisar"
+ * sin motivo) y para que el historial nunca tenga un cambio de una edición que
+ * después falló. Si la RPC falla, lo anterior queda guardado y el error lo dice.
+ */
 export async function updateProduct(
   id: string,
   input: ProductInputWithPackConversion,
@@ -427,6 +492,35 @@ export async function updateProduct(
   }
   const { packConversion, ...productInput } = input;
   const supabase = await createRouteSupabaseClient();
+  let nextSalePriceRef: number | undefined;
+
+  if (productInput.categoryId !== undefined || productInput.salePriceRef !== undefined) {
+    const { data: current, error: currentError } = await supabase
+      .from("products")
+      .select("category_id, sale_price_ref")
+      .eq("id", id)
+      .maybeSingle<Pick<ProductRow, "category_id" | "sale_price_ref">>();
+
+    throwIfSupabaseError(currentError);
+
+    if (!current) {
+      throw new ApiError(404, "NOT_FOUND", "Producto no encontrado.");
+    }
+
+    // La categoría que el producto ya tiene se puede reenviar tal cual (aunque
+    // hoy esté inactiva); una distinta se valida, y vacía no se admite.
+    if (productInput.categoryId !== undefined && productInput.categoryId !== current.category_id) {
+      await assertProductCategory(supabase, productInput.categoryId, storeId);
+    }
+
+    if (
+      productInput.salePriceRef !== undefined &&
+      roundPriceRef(productInput.salePriceRef) !== roundPriceRef(Number(current.sale_price_ref))
+    ) {
+      nextSalePriceRef = productInput.salePriceRef;
+    }
+  }
+
   const productUpdate = toProductUpdate(productInput);
   // Sin columnas que cambiar (p. ej. solo `packConversion`) no hay update: uno
   // vacío no devuelve fila y la edición respondía 404. Basta leer el producto.
@@ -449,6 +543,29 @@ export async function updateProduct(
         (data.current_cost_ref != null ? Number(data.current_cost_ref) : undefined),
       name: productInput.name ?? data.name,
     });
+  }
+
+  if (nextSalePriceRef !== undefined) {
+    const { data: priced, error: priceError } = await supabase.rpc("update_product_price", {
+      p_new_sale_price_ref: nextSalePriceRef,
+      p_product_id: id,
+      p_reason: PRODUCT_EDIT_PRICE_REASON,
+    });
+
+    if (priceError || !priced) {
+      const failure = priceError
+        ? mapSupabaseError(priceError)
+        : new ApiError(404, "NOT_FOUND", "Producto no encontrado.");
+      const savedOtherChanges = Object.keys(productUpdate).length > 0 || Boolean(packConversion);
+
+      throw savedOtherChanges
+        ? new ApiError(
+            failure.status,
+            failure.code,
+            `${failure.message} Los demás cambios del producto se guardaron; el precio no cambió.`,
+          )
+        : failure;
+    }
   }
 
   return getProductById(id, storeId);

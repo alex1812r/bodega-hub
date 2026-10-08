@@ -43,8 +43,19 @@ import {
   matchesProductMarginFilter,
   parseProductMarginFilter,
 } from "./productMargin";
+import {
+  PRODUCT_CATEGORY_INACTIVE_MESSAGE,
+  PRODUCT_CATEGORY_NOT_IN_STORE_MESSAGE,
+  PRODUCT_CATEGORY_REQUIRED_MESSAGE,
+  PRODUCT_EDIT_PRICE_REASON,
+} from "./productSchemas";
 import { parseProductSort, sortProductItems } from "./productSort";
-import { matchesProductSearch, matchesExactBarcode, normalizeBarcode } from "./productSearch";
+import {
+  matchesProductSearch,
+  matchesExactBarcode,
+  normalizeBarcode,
+  normalizeProductSearch,
+} from "./productSearch";
 import { buildProductSaleHistoryResult, joinProductSaleItems } from "./productSales";
 
 export type ProductInput = Partial<
@@ -71,6 +82,33 @@ export type ProductPriceInput = Pick<ProductMock, "salePriceRef"> & {
 };
 
 export type { ProductPriceHistoryEntry };
+
+/**
+ * Como `assertProductCategory` del server: la categoría de un alta o de un
+ * cambio de categoría existe, es de la tienda y está activa; vacía no se admite.
+ */
+function assertMockProductCategory(categoryId: string, storeId: string) {
+  if (!categoryId.trim()) {
+    throw new ApiError(400, "BAD_REQUEST", PRODUCT_CATEGORY_REQUIRED_MESSAGE);
+  }
+
+  const category = mockCategories.find(
+    (item) => item.id === categoryId && (item.storeId ?? DEFAULT_STORE_ID) === storeId,
+  );
+
+  if (!category) {
+    throw new ApiError(400, "BAD_REQUEST", PRODUCT_CATEGORY_NOT_IN_STORE_MESSAGE);
+  }
+
+  if (!category.isActive) {
+    throw new ApiError(400, "BAD_REQUEST", PRODUCT_CATEGORY_INACTIVE_MESSAGE);
+  }
+}
+
+/** Precio REF a dos decimales, como lo compara el server. */
+function roundPriceRef(value: number) {
+  return Math.round(value * 100) / 100;
+}
 
 function toMockRecipeProduct(product: ProductMock): PackRecipeProduct {
   return {
@@ -403,7 +441,7 @@ export function listProducts(searchParams: URLSearchParams, storeId: string) {
   const barcode = normalizeBarcode(searchParams.get("barcode"));
   const categoryId = searchParams.get("categoryId");
   const isActive = searchParams.get("isActive");
-  const search = searchParams.get("search")?.toLowerCase();
+  const search = normalizeProductSearch(searchParams.get("search"));
   const sku = normalizeSku(searchParams.get("sku") ?? "");
   // `packLink=not-pack`: fuera los empaques de una receta activa. `packLink=none`:
   // fuera también sus componentes (sin ningún vínculo de empaque).
@@ -502,6 +540,10 @@ function resolveCreateSku(input: ProductInput) {
 }
 
 export function createProduct(input: ProductInput, storeId: string) {
+  if (input.categoryId !== undefined) {
+    assertMockProductCategory(input.categoryId, storeId);
+  }
+
   const sku = resolveCreateSku(input);
   const name = input.name ?? "Producto mock";
 
@@ -564,6 +606,12 @@ export function updateProduct(id: string, input: ProductInput, storeId: string) 
 
   const product = mockProducts.find((item) => item.id === id);
   assertMockStoreResource(product, storeId, "Producto no encontrado.");
+
+  // Como el server: la categoría que ya tiene se puede reenviar; otra se valida.
+  if (input.categoryId !== undefined && input.categoryId !== product.categoryId) {
+    assertMockProductCategory(input.categoryId, storeId);
+  }
+
   // La línea base guarda el costo ANTES de esta edición.
   ensureMockPriceBaselines();
 
@@ -575,11 +623,23 @@ export function updateProduct(id: string, input: ProductInput, storeId: string) 
   if (input.isActive !== undefined) product.isActive = input.isActive;
   if (input.minStock !== undefined) product.minStock = input.minStock;
   if (input.name !== undefined) product.name = input.name;
-  if (input.salePriceRef !== undefined) product.salePriceRef = input.salePriceRef;
   if (sku) product.sku = sku;
 
   if (input.packConversion) {
     upsertMockPackConversion(id, storeId, input.packConversion, product);
+  }
+
+  // Como el server: el precio va al final y solo si cambia, por la misma vía que
+  // `POST …/price` (entrada de historial con la instantánea del costo ya guardado).
+  if (
+    input.salePriceRef !== undefined &&
+    roundPriceRef(input.salePriceRef) !== roundPriceRef(product.salePriceRef)
+  ) {
+    recordMockPriceChange(product, {
+      reason: PRODUCT_EDIT_PRICE_REASON,
+      salePriceRef: input.salePriceRef,
+    });
+    product.salePriceRef = input.salePriceRef;
   }
 
   return getProductById(id, storeId);
