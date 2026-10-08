@@ -588,6 +588,32 @@ function resolveCreateSku(input: ProductInput) {
 }
 
 /**
+ * Como el índice `products_store_barcode_unique` de la base: un código de barras no vacío
+ * por tienda. El server guarda el código recortado (`normalizeBarcode`) y responde al
+ * 23505 con este mismo 409. `exceptId` = el producto que se edita (puede reenviar el suyo).
+ */
+function assertMockBarcodeIsFree(
+  barcode: string | null | undefined,
+  storeId: string,
+  exceptId?: string,
+) {
+  const normalized = normalizeBarcode(barcode);
+
+  if (
+    normalized &&
+    mockProducts.some(
+      (product) =>
+        product.id !== exceptId &&
+        // Los productos de la semilla no traen tienda: son de la tienda por defecto.
+        (product.storeId ?? DEFAULT_STORE_ID) === storeId &&
+        normalizeBarcode(product.barcode) === normalized,
+    )
+  ) {
+    throw new ApiError(409, "CONFLICT", "El recurso ya existe.");
+  }
+}
+
+/**
  * Altas ya hechas por clave de idempotencia (`storeId:clientRequestId`), como el
  * índice único `products_store_client_request_unique` de la base.
  */
@@ -625,6 +651,9 @@ export function createProduct(input: ProductInput, storeId: string) {
   if (input.packConversion) {
     assertMockPackConversionCanBeCreated(storeId, input.packConversion, { name, sku });
   }
+
+  // Como el server: lo decide el índice al insertar, después de validar lo demás.
+  assertMockBarcodeIsFree(input.barcode, storeId);
 
   const product: ProductMock = {
     barcode: normalizeBarcode(input.barcode),
@@ -691,6 +720,8 @@ export function updateProduct(id: string, input: ProductInput, storeId: string) 
   if (input.categoryId !== undefined && input.categoryId !== product.categoryId) {
     assertMockProductCategory(input.categoryId, storeId);
   }
+
+  assertMockBarcodeIsFree(input.barcode, storeId, id);
 
   // La línea base guarda el costo ANTES de esta edición.
   ensureMockPriceBaselines();
