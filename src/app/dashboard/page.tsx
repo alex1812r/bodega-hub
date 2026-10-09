@@ -15,9 +15,8 @@ import {
   useDashboardMetrics,
   useDashboardSummary,
 } from "@/modules/dashboard/hooks/useDashboard";
-import { toReportErrorMessage } from "@/modules/reports/reports-list/reportQueryState";
+import { getReportQueryError } from "@/modules/reports/reports-list/reportQueryState";
 import { PriceReviewDashboardCard } from "@/modules/products/components/price-review/PriceReviewDashboardCard";
-import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { Typography } from "@/shared/components/Typography";
 import { withUrlListBoundary } from "@/shared/hooks/useUrlListState";
@@ -31,10 +30,8 @@ function DashboardScreen() {
   });
 
   const isInitialLoading = summary.isLoading;
-  const criticalError = summary.error;
 
-  function refetchDashboard() {
-    void summary.refetch();
+  function refetchMetrics() {
     void metrics.refetch();
     if (period.previousFilters) {
       void previousMetrics.refetch();
@@ -65,26 +62,22 @@ function DashboardScreen() {
           title="Cargando dashboard"
           variant="page"
         />
-      ) : criticalError ? (
-        <ErrorState
-          // Solo un error de negocio enseña su mensaje; el resto trae texto interno.
-          description={toReportErrorMessage(
-            criticalError,
-            "No pudimos cargar el resumen principal.",
-          )}
-          onRetry={refetchDashboard}
-          title="No pudimos cargar el dashboard"
-        />
       ) : (
         <>
+          {/* Un fallo del resumen o de las métricas se queda en sus tarjetas, con
+              «Reintentar»: el resto del dashboard (cada tarjeta con su consulta) sigue vivo. */}
           <DashboardKpiCardsGrid
             comparisonLabel={period.comparisonLabel}
             isMetricsLoading={metrics.isLoading || metrics.isFetching}
             isPreviousLoading={previousMetrics.isLoading || previousMetrics.isFetching}
             metrics={metrics.data}
+            metricsError={getReportQueryError(metrics)}
+            onRetryMetrics={refetchMetrics}
+            onRetrySummary={() => void summary.refetch()}
             previousMetrics={previousMetrics.data}
             preset={period.preset}
             summary={summary.data}
+            summaryError={getReportQueryError(summary)}
           />
 
           <DashboardPaymentMethodsCard

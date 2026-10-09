@@ -21,18 +21,35 @@ import type {
 } from "@/modules/dashboard/hooks/useDashboard";
 import type { DashboardKpiPreset } from "@/modules/dashboard/utils/kpiPeriod";
 import { kpiChangePercent } from "@/modules/dashboard/utils/kpiPeriod";
-import { toFiniteNumber } from "@/modules/reports/reports-list/reportQueryState";
+import {
+  ReportOfflineError,
+  toFiniteNumber,
+  toReportErrorMessage,
+} from "@/modules/reports/reports-list/reportQueryState";
+import { ErrorState } from "@/shared/components/ErrorState";
 import { formatRef, formatVes } from "@/shared/utils/currency";
 
 type DashboardKpiCardsGridProps = {
   comparisonLabel?: string | null;
   isMetricsLoading?: boolean;
   isPreviousLoading?: boolean;
-  metrics?: DashboardMetrics;
-  previousMetrics?: DashboardMetrics;
+  /** `null` = la respuesta llegó sin datos (rota). */
+  metrics?: DashboardMetrics | null;
+  /** Error de la consulta de métricas, ya normalizado con `getReportQueryError`. */
+  metricsError?: Error | null;
+  onRetryMetrics?: () => void;
+  onRetrySummary?: () => void;
+  previousMetrics?: DashboardMetrics | null;
   preset: DashboardKpiPreset;
-  summary?: DashboardSummary;
+  summary?: DashboardSummary | null;
+  /** Error de la consulta del resumen, ya normalizado con `getReportQueryError`. */
+  summaryError?: Error | null;
 };
+
+/** Falló de verdad: sin red la consulta está en pausa y ya tiene su propio aviso. */
+function isQueryFailure(error: Error | null | undefined): error is Error {
+  return Boolean(error) && !(error instanceof ReportOfflineError);
+}
 
 function salesCardLabel(preset: DashboardKpiPreset) {
   if (preset === "hoy") {
@@ -92,9 +109,13 @@ function KpiCardsGrid({
   isMetricsLoading = false,
   isPreviousLoading = false,
   metrics,
+  metricsError,
+  onRetryMetrics,
+  onRetrySummary,
   previousMetrics,
   preset,
   summary,
+  summaryError,
 }: DashboardKpiCardsGridProps) {
   const isToday = preset === "hoy";
   const salesLabel = salesCardLabel(preset);
@@ -105,9 +126,15 @@ function KpiCardsGrid({
   // periodo se pinta «—» y el aviso de conexión, no ceros que parecen reales.
   const queryClient = useContext(QueryClientContext);
   const isOnline = useSyncExternalStore(subscribeToOnline, isOnlineNow, () => true);
-  const isMetricsOffline = !isOnline && !isMetricsLoading && metrics === undefined;
-  const isSummaryOffline = !isOnline && summary === undefined;
-  const isMetricsPending = isMetricsLoading || isMetricsOffline;
+  const isMetricsOffline = !isOnline && !isMetricsLoading && metrics == null;
+  const isSummaryOffline = !isOnline && summary == null;
+  // La consulta falló y no hay datos de este periodo: «—» y el error con
+  // «Reintentar», nunca «ref 0.00 · 0 ventas» como si fueran cifras reales.
+  const isMetricsFailed =
+    !isMetricsLoading && !isMetricsOffline && metrics == null && isQueryFailure(metricsError);
+  const isSummaryFailed = !isSummaryOffline && summary == null && isQueryFailure(summaryError);
+  const isMetricsPending = isMetricsLoading || isMetricsOffline || isMetricsFailed;
+  const isSummaryMissing = isSummaryOffline || isSummaryFailed;
 
   // Una cifra que no llega como número (null, texto) cuenta como 0, no rompe la tarjeta.
   const totalRef = toFiniteNumber(metrics?.totalRef);
@@ -138,6 +165,20 @@ function KpiCardsGrid({
       {isMetricsOffline || isSummaryOffline ? (
         <DashboardOfflineNote
           onRetry={() => void queryClient?.refetchQueries({ queryKey: DASHBOARD_QUERY_KEY, type: "active" })}
+        />
+      ) : null}
+      {isMetricsFailed ? (
+        <ErrorState
+          description={toReportErrorMessage(metricsError, "No pudimos cargar los indicadores del periodo.")}
+          onRetry={onRetryMetrics}
+          title="No pudimos cargar los indicadores de ventas"
+        />
+      ) : null}
+      {isSummaryFailed ? (
+        <ErrorState
+          description={toReportErrorMessage(summaryError, "No pudimos cargar el resumen principal.")}
+          onRetry={onRetrySummary}
+          title="No pudimos cargar el resumen"
         />
       ) : null}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -179,6 +220,8 @@ function KpiCardsGrid({
             <p className="mt-2 text-sm text-muted-foreground">
               {isMetricsOffline ? (
                 "Sin conexión"
+              ) : isMetricsFailed ? (
+                "Sin datos"
               ) : isMetricsLoading ? (
                 "Calculando..."
               ) : (
@@ -203,7 +246,9 @@ function KpiCardsGrid({
           iconClassName="text-emerald-600"
           label="Total clientes"
           trend={
-            isToday ? (
+            isSummaryMissing ? (
+              <p className="mt-2 text-sm text-muted-foreground">Sin datos</p>
+            ) : isToday ? (
               <div className="mt-2 flex items-center gap-1 text-sm">
                 <TrendingUp aria-hidden className="h-4 w-4 text-emerald-600" />
                 <span className="font-medium text-emerald-600">
@@ -215,7 +260,7 @@ function KpiCardsGrid({
               <p className="mt-2 text-sm text-muted-foreground">Clientes activos en catálogo</p>
             )
           }
-          value={isSummaryOffline ? "—" : String(toFiniteNumber(summary?.activeCustomers))}
+          value={isSummaryMissing ? "—" : String(toFiniteNumber(summary?.activeCustomers))}
         />
         <DashboardKpiCard
           accentClassName="bg-red-500/25"
@@ -229,7 +274,7 @@ function KpiCardsGrid({
               <span className="text-xs font-normal text-muted-foreground">requiere acción</span>
             </div>
           }
-          value={isSummaryOffline ? "—" : String(toFiniteNumber(summary?.lowStockCount))}
+          value={isSummaryMissing ? "—" : String(toFiniteNumber(summary?.lowStockCount))}
           variant="alert"
         />
       </div>
