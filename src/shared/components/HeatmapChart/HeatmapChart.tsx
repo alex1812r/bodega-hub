@@ -1,3 +1,7 @@
+"use client";
+
+import { type KeyboardEvent, useRef, useState } from "react";
+
 import { getChartSeriesColor } from "@/shared/components/charts/chartTheme";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { ErrorState } from "@/shared/components/ErrorState";
@@ -35,8 +39,8 @@ export type HeatmapChartProps = {
   /** Texto del valor en la leyenda y en el `title` por defecto. Por defecto, dinero en REF. */
   formatValue?: (value: number) => string;
   /**
-   * Texto exacto de una celda (su `title` y lo que lee el lector de pantalla).
-   * Por defecto: «fila, columna: valor».
+   * Texto exacto de una celda: su `title`, lo que lee el lector de pantalla y lo
+   * que se escribe bajo el mapa al enfocarla o tocarla. Por defecto: «fila, columna: valor».
    */
   describeCell?: (cell: { column: number; row: number; value: number }) => string;
   /** Rotula una de cada N columnas (24 horas en poco ancho no caben todas). Por defecto todas. */
@@ -55,6 +59,29 @@ export type HeatmapChartProps = {
 
 const SKELETON_HEIGHT = 200;
 const LEVELS = Array.from({ length: HEAT_LEVELS }, (_, index) => index + 1);
+const CELL_DETAIL_HINT = "Toca una celda o muévete con las flechas para ver su valor.";
+
+type CellPosition = { column: number; row: number };
+
+/** A qué celda lleva una tecla desde `from`; `null` si la tecla no mueve el foco. */
+function nextCellPosition(key: string, from: CellPosition, rowCount: number, columnCount: number) {
+  switch (key) {
+    case "ArrowRight":
+      return { column: Math.min(columnCount - 1, from.column + 1), row: from.row };
+    case "ArrowLeft":
+      return { column: Math.max(0, from.column - 1), row: from.row };
+    case "ArrowDown":
+      return { column: from.column, row: Math.min(rowCount - 1, from.row + 1) };
+    case "ArrowUp":
+      return { column: from.column, row: Math.max(0, from.row - 1) };
+    case "Home":
+      return { column: 0, row: from.row };
+    case "End":
+      return { column: columnCount - 1, row: from.row };
+    default:
+      return null;
+  }
+}
 
 function HeatSwatch({ level }: { level: number }) {
   return (
@@ -74,6 +101,9 @@ function HeatSwatch({ level }: { level: number }) {
  *
  * - Es una `<table>` real: cada celda lleva su valor exacto en `title` y en
  *   texto para lector de pantalla; el color nunca es el único canal.
+ * - Cada celda es un botón: al enfocarla o tocarla, su valor exacto se escribe
+ *   en una zona fija bajo el mapa (nada depende de pasar el ratón). El mapa es
+ *   un solo alto de tabulación; dentro se navega con flechas, Inicio y Fin.
  * - Las columnas se reparten el ancho disponible (`table-fixed`): no provoca
  *   scroll horizontal. Con muchas columnas y poco ancho, quien lo usa puede
  *   trasponer filas y columnas.
@@ -97,6 +127,9 @@ export function HeatmapChart({
   rows,
   values,
 }: HeatmapChartProps) {
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [activeCell, setActiveCell] = useState<CellPosition | null>(null);
+
   if (loading) {
     return (
       <div aria-label={`Cargando ${ariaLabel}`} className={className} role="status">
@@ -118,10 +151,41 @@ export function HeatmapChart({
   }
 
   const max = maxHeatValue(values);
+  // Si el mapa cambia de tamaño (otro rango, trasponer), la celda activa deja de valer.
+  const active =
+    activeCell && activeCell.row < rows.length && activeCell.column < columns.length
+      ? activeCell
+      : null;
+  const tabStop = active ?? { column: 0, row: 0 };
+
+  function cellText(position: CellPosition) {
+    const row = rows[position.row];
+    const column = columns[position.column];
+    const value = cellValue(values, position.row, position.column);
+
+    return describeCell
+      ? describeCell({ column: position.column, row: position.row, value })
+      : `${row.name ?? row.label}, ${column.name ?? column.label}: ${formatValue(value)}`;
+  }
+
+  function handleCellKeyDown(event: KeyboardEvent<HTMLButtonElement>, from: CellPosition) {
+    const next = nextCellPosition(event.key, from, rows.length, columns.length);
+
+    if (!next) {
+      return;
+    }
+
+    event.preventDefault();
+    tableRef.current
+      ?.querySelector<HTMLButtonElement>(
+        `[data-heat-row="${next.row}"][data-heat-column="${next.column}"]`,
+      )
+      ?.focus();
+  }
 
   return (
     <div className={cn("w-full min-w-0 space-y-3", className)}>
-      <table className="w-full table-fixed border-separate border-spacing-0.5">
+      <table className="w-full table-fixed border-separate border-spacing-0.5" ref={tableRef}>
         <caption className="sr-only">{ariaLabel}</caption>
         <thead>
           <tr>
@@ -151,11 +215,11 @@ export function HeatmapChart({
                 <span aria-hidden="true">{row.label}</span>
               </th>
               {columns.map((column, columnIndex) => {
-                const value = cellValue(values, rowIndex, columnIndex);
-                const level = heatLevel(value, max);
-                const text = describeCell
-                  ? describeCell({ column: columnIndex, row: rowIndex, value })
-                  : `${row.name ?? row.label}, ${column.name ?? column.label}: ${formatValue(value)}`;
+                const position = { column: columnIndex, row: rowIndex };
+                const level = heatLevel(cellValue(values, rowIndex, columnIndex), max);
+                const text = cellText(position);
+                const isActive = active?.row === rowIndex && active.column === columnIndex;
+                const isTabStop = tabStop.row === rowIndex && tabStop.column === columnIndex;
 
                 return (
                   <td
@@ -164,8 +228,22 @@ export function HeatmapChart({
                     key={column.id}
                     title={text}
                   >
-                    <HeatSwatch level={level} />
-                    <span className="sr-only">{text}</span>
+                    <button
+                      className={cn(
+                        "block size-full cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        isActive && "ring-2 ring-ring",
+                      )}
+                      data-heat-column={columnIndex}
+                      data-heat-row={rowIndex}
+                      onClick={() => setActiveCell(position)}
+                      onFocus={() => setActiveCell(position)}
+                      onKeyDown={(event) => handleCellKeyDown(event, position)}
+                      tabIndex={isTabStop ? 0 : -1}
+                      type="button"
+                    >
+                      <HeatSwatch level={level} />
+                      <span className="sr-only">{text}</span>
+                    </button>
                   </td>
                 );
               })}
@@ -173,6 +251,17 @@ export function HeatmapChart({
           ))}
         </tbody>
       </table>
+
+      <p
+        aria-live="polite"
+        className={cn(
+          "min-h-5 text-sm tabular-nums",
+          active ? "font-medium text-on-surface" : "text-on-surface-variant",
+        )}
+        data-testid="heatmap-cell-detail"
+      >
+        {active ? cellText(active) : CELL_DETAIL_HINT}
+      </p>
 
       <div
         className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant"
