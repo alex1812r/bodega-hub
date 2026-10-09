@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { ReportsExportDataset } from "../../services/fetchReportsForExport";
@@ -19,7 +19,14 @@ jest.mock("../../utils/reportExportSections", () => ({
 }));
 
 function section(id: string): ReportExportSection {
-  return { columns: [], id, periodLabel: `Periodo ${id}`, rows: [], title: `Hoja ${id}` };
+  return {
+    columns: [],
+    id,
+    periodLabel: `Periodo ${id}`,
+    // La hoja "b" lleva dos filas: su pestaña muestra el contador.
+    rows: id === "b" ? [{}, {}] : [],
+    title: `Hoja ${id}`,
+  } as ReportExportSection;
 }
 
 function dataset(...ids: string[]) {
@@ -47,6 +54,34 @@ function selectedTab() {
 }
 
 describe("ReportsExportPreviewModal", () => {
+  const originalMatchMedia = window.matchMedia;
+
+  beforeAll(() => {
+    // La paginación de una hoja con filas consulta el ancho de la pantalla.
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string) => ({
+        addEventListener: () => undefined,
+        addListener: () => undefined,
+        dispatchEvent: () => false,
+        matches: false,
+        media: query,
+        onchange: null,
+        removeEventListener: () => undefined,
+        removeListener: () => undefined,
+      }),
+      writable: true,
+    });
+  });
+
+  afterAll(() => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: originalMatchMedia,
+      writable: true,
+    });
+  });
+
   it("opens on the first sheet", () => {
     render(modal(abc));
 
@@ -89,6 +124,53 @@ describe("ReportsExportPreviewModal", () => {
     rerender(modal(abc));
 
     expect(selectedTab()).toHaveTextContent("Hoja b");
+  });
+
+  it("uses the shared Tabs: one tab per sheet with its row count, only the active panel", async () => {
+    const user = userEvent.setup();
+    render(modal(abc));
+
+    const tablist = screen.getByRole("tablist", { name: "Hojas del reporte" });
+    const tabs = within(tablist).getAllByRole("tab");
+
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Hoja a0", "Hoja b2", "Hoja c0"]);
+    // Roving tabindex del componente compartido: solo la pestaña activa entra en el orden de tabulación.
+    expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1]);
+    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName(/Hoja a/);
+
+    await user.click(tabs[1]);
+
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName(/Hoja b/);
+    expect(screen.getByText("Periodo b")).toBeVisible();
+    expect(screen.queryByText("Periodo a")).not.toBeInTheDocument();
+  });
+
+  it("moves between sheets with the arrow keys", async () => {
+    const user = userEvent.setup();
+    render(modal(abc));
+
+    selectedTab().focus();
+    await user.keyboard("{ArrowRight}");
+    expect(selectedTab()).toHaveTextContent("Hoja b");
+
+    await user.keyboard("{End}");
+    expect(selectedTab()).toHaveTextContent("Hoja c");
+    expect(selectedTab()).toHaveFocus();
+  });
+
+  it("does not write the active sheet to the URL", async () => {
+    const user = userEvent.setup();
+    const replaceState = jest.spyOn(window.history, "replaceState");
+    const before = window.location.href;
+    render(modal(abc));
+
+    await user.click(screen.getByRole("tab", { name: /Hoja c/ }));
+
+    expect(selectedTab()).toHaveTextContent("Hoja c");
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(window.location.href).toBe(before);
+    replaceState.mockRestore();
   });
 
   it("shows the empty message without data", () => {

@@ -1,11 +1,12 @@
 "use client";
 
 import { FileSpreadsheet, FileText, Loader2 } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
 import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
+import { Tabs } from "@/shared/components/Tabs";
 import { cn } from "@/shared/utils/cn";
 
 import {
@@ -131,7 +132,6 @@ export function ReportsExportPreviewModal({
   onOpenChange,
   open,
 }: ReportsExportPreviewModalProps) {
-  const tabsId = useId();
   const sections = useMemo(
     () => (data ? buildReportExportSections(data, filters) : []),
     [data, filters],
@@ -261,58 +261,30 @@ export function ReportsExportPreviewModal({
           No hay datos para previsualizar.
         </p>
       ) : (
-        <div className="flex h-full min-h-[28rem] flex-col gap-3">
-          <div
-            aria-label="Hojas del reporte"
-            className="flex shrink-0 overflow-x-auto border-b border-outline-variant"
-            role="tablist"
-          >
-            {sections.map((section) => {
-              const isActive = section.id === activeSection?.id;
-              const tabId = `${tabsId}-${section.id}`;
-
-              return (
-                <button
-                  aria-controls={`${tabId}-panel`}
-                  aria-selected={isActive}
-                  className={cn(
-                    "shrink-0 cursor-pointer whitespace-nowrap px-3 py-2.5 text-sm font-medium transition-colors",
-                    isActive
-                      ? "border-b-2 border-primary font-semibold text-primary"
-                      : "text-on-surface-variant hover:bg-surface-container-low",
-                  )}
-                  id={tabId}
-                  key={section.id}
-                  onClick={() => setActiveSectionId(section.id)}
-                  role="tab"
-                  type="button"
-                >
-                  {section.title}
-                  <span className="ml-1.5 text-xs font-normal text-on-surface-variant">
-                    ({section.rows.length})
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {activeSection ? (
-            <div
-              aria-labelledby={`${tabsId}-${activeSection.id}`}
-              className="flex min-h-0 flex-1 flex-col gap-2"
-              id={`${tabsId}-${activeSection.id}-panel`}
-              role="tabpanel"
-            >
-              <div className="shrink-0 space-y-1">
-                <p className="text-sm text-on-surface-variant">{activeSection.periodLabel}</p>
-                {activeSection.note ? (
-                  <p className="text-xs text-on-surface-variant">{activeSection.note}</p>
-                ) : null}
+        <Tabs
+          ariaLabel="Hojas del reporte"
+          className="flex h-full min-h-[28rem] flex-col"
+          items={sections.map((section) => ({
+            badge: section.rows.length,
+            content: (
+              <div className="flex h-full min-h-0 flex-col gap-2">
+                <div className="shrink-0 space-y-1">
+                  <p className="text-sm text-on-surface-variant">{section.periodLabel}</p>
+                  {section.note ? (
+                    <p className="text-xs text-on-surface-variant">{section.note}</p>
+                  ) : null}
+                </div>
+                <PreviewSheetTable section={section} />
               </div>
-              <PreviewSheetTable section={activeSection} />
-            </div>
-          ) : null}
-        </div>
+            ),
+            label: section.title,
+            value: section.id,
+          }))}
+          onValueChange={setActiveSectionId}
+          panelClassName="min-h-0 flex-1 pt-3"
+          // Controlado y sin `urlParam`: dentro del modal la hoja activa no se escribe en la URL.
+          value={activeSection?.id}
+        />
       )}
     </Modal>
   );
