@@ -6,6 +6,7 @@ import {
   type ReportRequestScope,
   useDailyCloseReport,
 } from "../../hooks/useReports";
+import { getReportQueryError } from "../reportQueryState";
 
 type DailyCloseReportPanelProps = {
   dateFilters: ReportDateRangeFilters;
@@ -18,7 +19,9 @@ export function DailyCloseReportPanel({ dateFilters, scope }: DailyCloseReportPa
   return (
     <DailyClosePanel
       data={query.data}
+      error={getReportQueryError(query)}
       isLoading={query.isLoading || query.isFetching}
+      onRetry={() => void query.refetch()}
       periodLabel={
         dateFilters.from || dateFilters.to
           ? `${dateFilters.from ?? "…"} – ${dateFilters.to ?? "…"}`

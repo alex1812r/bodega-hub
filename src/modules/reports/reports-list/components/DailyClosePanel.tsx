@@ -6,9 +6,16 @@ import type { DailyCloseSummary } from "@/modules/reports/services/dailyCloseSum
 import { paymentMethodLabels } from "@/shared/payments/paymentMethods";
 import { formatRef, formatVes } from "@/shared/utils/currency";
 
+import { ReportQueryError } from "./money/ReportStates";
+
+const REPORT_NAME = "Cierre del día";
+
 type DailyClosePanelProps = {
   data?: DailyCloseSummary;
+  /** Error ya normalizado con `getReportQueryError` (negocio, genérico o sin red). */
+  error?: Error | null;
   isLoading?: boolean;
+  onRetry?: () => void;
   periodLabel?: string;
 };
 
@@ -22,7 +29,22 @@ function Stat({ hint, label, value }: { hint?: string; label: string; value: str
   );
 }
 
-export function DailyClosePanel({ data, isLoading, periodLabel }: DailyClosePanelProps) {
+export function DailyClosePanel({
+  data,
+  error,
+  isLoading,
+  onRetry,
+  periodLabel,
+}: DailyClosePanelProps) {
+  // Sin esto un fallo se quedaba en «Cargando…» para siempre.
+  if (error && !isLoading && !data) {
+    return (
+      <section className="rounded-xl border border-border bg-surface-container-lowest shadow-sm">
+        <ReportQueryError error={error} onRetry={onRetry ?? (() => undefined)} reportName={REPORT_NAME} />
+      </section>
+    );
+  }
+
   if (isLoading || !data) {
     return (
       <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
