@@ -12,16 +12,20 @@ export const STORE_STATUS_FILTER_VALUES = [
 
 /**
  * Estado de `/platform/stores` en la URL (regla 15). Sin parámetros = todas las
- * tiendas. La pantalla no pagina ni ordena: no hay `page`, `limit` ni `sort`.
+ * tiendas, página 1. La pantalla no ordena: no hay `sort`.
  *
  * | Parámetro | Valores                       | Por defecto |
  * |-----------|-------------------------------|-------------|
  * | `search`  | texto (con debounce)          | `""`        |
  * | `status`  | `all` · `active` · `paused`   | `all`       |
+ * | `page`    | base 1                        | `1`         |
+ * | `limit`   | tamaño de página              | `10`        |
  */
 export const storesListSchema = z.object({
   search: listParams.text(),
   status: listParams.oneOf(["all", ...STORE_STATUS_FILTER_VALUES], "all"),
+  page: listParams.page(),
+  limit: listParams.limit(),
 });
 
 export type StoresListState = UrlListStateOf<typeof storesListSchema.shape>;

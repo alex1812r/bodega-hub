@@ -2,9 +2,9 @@
 
 import { Plus, UserRound } from "lucide-react";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
-import { getPaginatedItems } from "@/lib/api/pagination";
+import { getPaginatedItems, MAX_PAGE_LIMIT } from "@/lib/api/pagination";
 import { isUserRole, roleLabels } from "@/shared/auth/permissions";
 import { type ActionMenuItem } from "@/shared/components/ActionsMenu";
 import { Badge } from "@/shared/components/Badge";
@@ -14,6 +14,11 @@ import { EmptyState } from "@/shared/components/EmptyState";
 import { Input } from "@/shared/components/Input";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { PageHeader } from "@/shared/components/PageHeader";
+import {
+  getTotalPages,
+  ResponsivePagination,
+  useUrlPaginationState,
+} from "@/shared/components/Pagination";
 import { SelectField } from "@/shared/components/SelectField";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
 import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
@@ -95,14 +100,31 @@ function buildColumns(listHref: string): DataTableColumn<PlatformUser>[] {
 }
 
 function PlatformUsersList() {
-  // Búsqueda, tienda y rol viven en la URL: recarga, "atrás" y volver del detalle los conservan.
+  // Búsqueda, tienda, rol, página y tamaño viven en la URL: recarga, "atrás" y volver del detalle los conservan.
   const list = useUrlListState(platformUsersListSchema);
+  const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
   // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
   const debouncedSearch = useDebouncedValue(list.state.search, URL_LIST_DEBOUNCE_MS);
-  const stores = useStoresList({ limit: 100 });
-  const users = usePlatformUsersList(toPlatformUsersFilters(list.state, debouncedSearch));
+  // El selector de tienda no pagina: pide el máximo que entrega el BFF, no su página por defecto.
+  const stores = useStoresList({ limit: MAX_PAGE_LIMIT });
+  const users = usePlatformUsersList({
+    ...toPlatformUsersFilters(list.state, debouncedSearch),
+    limit,
+    skip,
+  });
   const items = getPaginatedItems(users.data);
-  const { href: listHref } = list;
+  const totalUsers = users.data?.total ?? 0;
+  const { href: listHref, setState: setListState } = list;
+  const lastPage = getTotalPages(totalUsers, limit);
+  const isPastLastPage = users.isSuccess && !users.isFetching && list.state.page > lastPage;
+
+  // Una página más allá de la última (`?page=9999`, o un enlace viejo) cae en la
+  // última que existe, y la URL lo refleja.
+  useEffect(() => {
+    if (isPastLastPage) {
+      setListState({ page: lastPage });
+    }
+  }, [isPastLastPage, lastPage, setListState]);
   const columns = useMemo(() => buildColumns(listHref), [listHref]);
   const storeOptions = useMemo(
     () => [
@@ -158,7 +180,7 @@ function PlatformUsersList() {
         title="Usuarios"
       />
 
-      {users.isLoading ? (
+      {users.isLoading || isPastLastPage ? (
         <LoadingState
           description="Cargando el directorio de usuarios."
           title="Cargando usuarios..."
@@ -192,6 +214,18 @@ function PlatformUsersList() {
           getRowId={(user) => user.id}
         />
       )}
+
+      {totalUsers > 0 && !isPastLastPage ? (
+        <ResponsivePagination
+          entityLabel="usuarios"
+          isDisabled={users.isFetching}
+          limit={limit}
+          onLimitChange={setLimit}
+          onSkipChange={setSkip}
+          skip={users.data?.skip ?? skip}
+          total={totalUsers}
+        />
+      ) : null}
     </div>
   );
 }

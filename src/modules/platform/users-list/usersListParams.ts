@@ -17,13 +17,15 @@ const STORE_ID_PARAM = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 /**
  * Estado de `/platform/users` en la URL (regla 15). Sin parámetros = todos los
- * usuarios. La pantalla no pagina ni ordena: no hay `page`, `limit` ni `sort`.
+ * usuarios, página 1. La pantalla no ordena: no hay `sort`.
  *
  * | Parámetro | Valores                                               | Por defecto |
  * |-----------|-------------------------------------------------------|-------------|
  * | `search`  | texto (con debounce)                                  | `""`        |
  * | `store`   | id (UUID) de la tienda; vacío = todas                 | `""`        |
  * | `role`    | `all` · `admin` · `vendedor` · `almacen` · `contador` | `all`       |
+ * | `page`    | base 1                                                | `1`         |
+ * | `limit`   | tamaño de página                                      | `10`        |
  */
 export const platformUsersListSchema = z.object({
   search: listParams.text(),
@@ -32,6 +34,8 @@ export const platformUsersListSchema = z.object({
     .refine((value) => value === "" || STORE_ID_PARAM.test(value))
     .default(""),
   role: listParams.oneOf(["all", ...PLATFORM_USER_ROLE_FILTER_VALUES], "all"),
+  page: listParams.page(),
+  limit: listParams.limit(),
 });
 
 export type PlatformUsersListState = UrlListStateOf<typeof platformUsersListSchema.shape>;
