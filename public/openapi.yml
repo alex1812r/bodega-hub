@@ -3363,6 +3363,29 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/settings/cash-close:
+    get:
+      tags: [Settings]
+      summary: Umbral de faltante al cerrar caja de la tienda (solo lectura)
+      description: >-
+        El mismo valor que `cashCloseDiffAlertVes` de /api/settings, para quien opera
+        o ve la caja sin `settings.view` (vendedor). Basta uno de los permisos. Una
+        tienda sin configuracion, o una base sin el parche 20261015a, responde 0
+        (cualquier faltante pide confirmacion). Se cambia con PATCH /api/settings.
+      x-permission: cash.operate | cash.view | settings.view
+      responses:
+        "200":
+          description: Ajustes del cierre de caja de la tienda
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CashCloseSettings"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/settings/payment-methods:
     get:
       tags: [Settings]
@@ -6108,10 +6131,17 @@ components:
           maximum: 100000
     AppSettings:
       type: object
-      required: [businessName, defaultTaxRate, invoicePrefix, lowStockThreshold, pricing]
+      required: [businessName, cashCloseDiffAlertVes, defaultTaxRate, invoicePrefix, lowStockThreshold, pricing]
       properties:
         businessName:
           type: string
+        cashCloseDiffAlertVes:
+          type: number
+          minimum: 0
+          description: >-
+            Faltante en Bs que el cierre de caja debe SUPERAR para pedir confirmacion
+            explicita. 0 (por defecto, y en una base sin el parche 20261015a) = cualquier
+            faltante confirma. Es un aviso de la interfaz: no bloquea ni cambia el cierre.
         defaultTaxRate:
           type: number
           description: Porcentaje de IVA por defecto. Igual al `pct` de `defaultTaxRateId` cuando existe.
@@ -6131,6 +6161,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PaymentMethod"
+    CashCloseSettings:
+      type: object
+      required: [cashCloseDiffAlertVes]
+      properties:
+        cashCloseDiffAlertVes:
+          type: number
+          minimum: 0
+          description: Faltante en Bs que el cierre de caja debe superar para pedir confirmacion (0 = cualquier faltante).
     PricingSettings:
       type: object
       required: [yellowFromPct, greenFromPct, chipsPct]
@@ -6171,6 +6209,14 @@ components:
         businessName:
           type: string
           minLength: 1
+        cashCloseDiffAlertVes:
+          type: number
+          minimum: 0
+          maximum: 999999999999.99
+          description: >-
+            Umbral de faltante al cerrar caja, en Bs (se guarda con dos decimales). Negativo o
+            no numerico responde 400 con el motivo en `error.message`; en una base sin el
+            parche 20261015a responde 409 sin guardar nada.
         defaultTaxRate:
           type: number
           minimum: 0

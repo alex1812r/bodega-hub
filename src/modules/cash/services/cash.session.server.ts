@@ -8,6 +8,14 @@ import type { CashMovement, CashSession } from "../types";
 import { computeCashSessionTotals } from "../utils/cashSessionTotals";
 import type { CloseCashSessionInput, OpenCashSessionInput } from "./cash.session.mock-server";
 
+/**
+ * Un teórico ausente (turno abierto o cierre histórico sin teórico guardado) es
+ * `null`, no 0: con 0 la pantalla mostraba todo lo contado como sobrante.
+ */
+function nullableAmount(value: unknown) {
+  return value == null ? null : Number(value);
+}
+
 function mapSession(row: Record<string, unknown>): CashSession {
   const register = row.cash_registers as Record<string, unknown> | undefined;
   return {
@@ -30,8 +38,8 @@ function mapSession(row: Record<string, unknown>): CashSession {
     },
     registerId: row.register_id as string,
     status: row.status as "open" | "closed",
-    theoreticalClosingRef: Number(row.theoretical_closing_ref ?? 0),
-    theoreticalClosingVes: Number(row.theoretical_closing_ves ?? 0),
+    theoreticalClosingRef: nullableAmount(row.theoretical_closing_ref),
+    theoreticalClosingVes: nullableAmount(row.theoretical_closing_ves),
     vaultTransferredAt: (row.vault_transferred_at as string | null | undefined) ?? null,
   };
 }

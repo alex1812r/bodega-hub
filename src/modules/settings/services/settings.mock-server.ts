@@ -10,6 +10,11 @@ import {
 import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
+import {
+  DEFAULT_CASH_CLOSE_DIFF_ALERT_VES,
+  parseCashCloseDiffAlertVes,
+  type CashCloseSettings,
+} from "./cashCloseSettings.schemas";
 import type { CreateStoreUserInput } from "./createStoreUserSchema";
 import {
   defaultPricingSettings,
@@ -19,7 +24,9 @@ import {
 import { mockTaxRatesForStore } from "./taxRates.mock-server";
 import { DEFAULT_TAX_RATE_UNAVAILABLE_MESSAGE } from "./taxRates.schemas";
 
-export type SettingsInput = Partial<AppSettingsMock>;
+/** Configuración de la tienda tal como la devuelve `/api/settings`. */
+export type AppSettings = AppSettingsMock & CashCloseSettings;
+export type SettingsInput = Partial<AppSettings>;
 export type UserProfileInput = Partial<
   Pick<UserProfileMock, "deniedPermissions" | "grantedPermissions" | "isActive" | "name" | "role">
 >;
@@ -46,6 +53,21 @@ export function getPricingSettings(storeId: string): PricingSettings {
   return { ...pricing, chipsPct: [...pricing.chipsPct] };
 }
 
+/**
+ * Umbral de faltante al cerrar caja en memoria, por tienda (como la columna
+ * `app_settings.cash_close_diff_alert_ves`). Sin configurar vale 0.
+ */
+function cashCloseDiffAlertByStore() {
+  return mockState<Map<string, number>>("settings:cash-close-diff-alert", () => new Map());
+}
+
+export function getCashCloseSettings(storeId: string): CashCloseSettings {
+  return {
+    cashCloseDiffAlertVes:
+      cashCloseDiffAlertByStore().get(storeId) ?? DEFAULT_CASH_CLOSE_DIFF_ALERT_VES,
+  };
+}
+
 /** Misma regla que el servicio real: la alicuota debe verla la tienda y estar activa. */
 function findActiveStoreTaxRate(taxRateId: string, storeId: string) {
   const rate = mockTaxRatesForStore(storeId).find(
@@ -59,22 +81,28 @@ function findActiveStoreTaxRate(taxRateId: string, storeId: string) {
   return rate;
 }
 
-export function getSettings(storeId: string) {
+export function getSettings(storeId: string): AppSettings {
   return {
     ...mockAppSettings,
+    ...getCashCloseSettings(storeId),
     pricing: getPricingSettings(storeId),
     storeId: mockAppSettings.storeId ?? storeId,
   };
 }
 
 /**
- * Persisten en memoria los ajustes de precios (por tienda) y la alicuota por
+ * Persisten en memoria los ajustes de precios y el umbral de faltante al cerrar
+ * caja (por tienda) y la alicuota por
  * defecto (en la tienda demo, de donde la lee el mock de alicuotas). El resto de
  * campos se devuelven con el cambio aplicado, como hasta ahora.
  */
 export function updateSettings(input: SettingsInput, storeId: string) {
   // Todo se valida antes de escribir nada: un rechazo no deja cambios a medias.
   const pricing = input.pricing !== undefined ? parsePricingSettings(input.pricing) : undefined;
+  const cashCloseDiffAlertVes =
+    input.cashCloseDiffAlertVes !== undefined
+      ? parseCashCloseDiffAlertVes(input.cashCloseDiffAlertVes)
+      : undefined;
   const taxRate =
     input.defaultTaxRateId != null
       ? findActiveStoreTaxRate(input.defaultTaxRateId, storeId)
@@ -88,6 +116,10 @@ export function updateSettings(input: SettingsInput, storeId: string) {
     pricingByStore().set(storeId, pricing);
   }
 
+  if (cashCloseDiffAlertVes !== undefined) {
+    cashCloseDiffAlertByStore().set(storeId, cashCloseDiffAlertVes);
+  }
+
   if (taxRate && ownsMockSettings(storeId)) {
     Object.assign(mockAppSettings, defaultTaxRate);
   }
@@ -96,6 +128,7 @@ export function updateSettings(input: SettingsInput, storeId: string) {
     ...getSettings(storeId),
     ...input,
     ...defaultTaxRate,
+    ...getCashCloseSettings(storeId),
     pricing: getPricingSettings(storeId),
     storeId,
   };

@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
+import type { CashCloseSettings } from "@/modules/settings/services/cashCloseSettings.schemas";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
   AppSettingsMock,
@@ -12,10 +13,17 @@ import type {
 import type { StoreUserRole } from "@/shared/auth/permissions";
 
 /**
- * `pricing` se envía completo (umbrales y chips); `defaultTaxRateId` debe ser una
- * alícuota activa de la tienda.
+ * Configuración de la tienda tal como la devuelve `/api/settings`:
+ * `cashCloseDiffAlertVes` es el faltante en Bs (≥ 0, por defecto 0) que el
+ * cierre de caja debe SUPERAR para pedir confirmación explícita.
  */
-export type SettingsInput = Partial<AppSettingsMock>;
+export type AppSettings = AppSettingsMock & CashCloseSettings;
+export type { CashCloseSettings };
+/**
+ * `pricing` se envía completo (umbrales y chips); `defaultTaxRateId` debe ser una
+ * alícuota activa de la tienda; `cashCloseDiffAlertVes` es un monto en Bs ≥ 0.
+ */
+export type SettingsInput = Partial<AppSettings>;
 /** Semáforo de ganancia y chips de % de la tienda. */
 export type PricingSettings = PricingSettingsMock;
 export type UserUpdateInput = Partial<
@@ -33,6 +41,7 @@ export type CreateUserInput = {
 
 export const settingsQueryKeys = {
   all: ["settings"] as const,
+  cashClose: () => [...settingsQueryKeys.all, "cash-close"] as const,
   detail: () => [...settingsQueryKeys.all, "detail"] as const,
   paymentMethods: () => [...settingsQueryKeys.all, "payment-methods"] as const,
   pricing: () => [...settingsQueryKeys.all, "pricing"] as const,
@@ -42,7 +51,20 @@ export const settingsQueryKeys = {
 export function useSettings() {
   return useQuery({
     queryKey: settingsQueryKeys.detail(),
-    queryFn: () => apiFetch<AppSettingsMock>("/api/settings"),
+    queryFn: () => apiFetch<AppSettings>("/api/settings"),
+  });
+}
+
+/**
+ * Umbral de faltante al cerrar caja para quien opera o ve la caja
+ * (`GET /api/settings/cash-close`; el cajero no tiene `settings.view`). Mientras
+ * carga, o si falla, quien lo use debe tratarlo como 0: cualquier faltante confirma.
+ */
+export function useCashCloseSettings() {
+  return useQuery({
+    queryKey: settingsQueryKeys.cashClose(),
+    queryFn: () => apiFetch<CashCloseSettings>("/api/settings/cash-close"),
+    staleTime: 60_000,
   });
 }
 
@@ -78,7 +100,7 @@ export function useUpdateSettings() {
 
   return useMutation({
     mutationFn: (input: SettingsInput) =>
-      apiFetch<AppSettingsMock>("/api/settings", {
+      apiFetch<AppSettings>("/api/settings", {
         body: input,
         method: "PATCH",
       }),
@@ -94,6 +116,13 @@ export function useUpdateSettings() {
       });
       void queryClient.invalidateQueries({
         queryKey: settingsQueryKeys.paymentMethods(),
+        refetchType: "none",
+      });
+      queryClient.setQueryData<CashCloseSettings>(settingsQueryKeys.cashClose(), {
+        cashCloseDiffAlertVes: settings.cashCloseDiffAlertVes,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.cashClose(),
         refetchType: "none",
       });
       queryClient.setQueryData(settingsQueryKeys.pricing(), settings.pricing);

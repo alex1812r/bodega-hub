@@ -13,6 +13,12 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { isStoreUserRole } from "@/shared/auth/permissions";
 
+import {
+  CASH_CLOSE_DIFF_ALERT_UNAVAILABLE_MESSAGE,
+  mapCashCloseDiffAlertVes,
+  parseCashCloseDiffAlertVes,
+  type CashCloseSettings,
+} from "./cashCloseSettings.schemas";
 import type { CreateStoreUserInput } from "./createStoreUserSchema";
 import { parsePricingSettings, type PricingSettings } from "./pricingSettings.schemas";
 import type { SettingsInput, UserProfileInput } from "./settings.mock-server";
@@ -22,21 +28,51 @@ type RouteSupabaseClient = Awaited<ReturnType<typeof createRouteSupabaseClient>>
 
 const pricingSettingsSelect = "margin_yellow_from_pct, margin_green_from_pct, markup_chips_pct";
 
-const appSettingsSelect = `id, business_name, default_tax_rate, default_tax_rate_id, invoice_prefix, low_stock_threshold, enabled_payment_methods, ${pricingSettingsSelect}`;
+/** Umbral de aviso de faltante al cerrar caja (parche 20261015a). */
+const cashCloseDiffAlertColumn = "cash_close_diff_alert_ves";
+
+/** Lo que una base SIN el parche 20261015a sabe responder. */
+const appSettingsBaseSelect = `id, business_name, default_tax_rate, default_tax_rate_id, invoice_prefix, low_stock_threshold, enabled_payment_methods, ${pricingSettingsSelect}`;
+
+const appSettingsSelect = `${appSettingsBaseSelect}, ${cashCloseDiffAlertColumn}`;
+
+type CashCloseSettingsRow = { cash_close_diff_alert_ves?: number | string | null };
 
 type AppSettingsWithTaxRateRow = AppSettingsRow &
-  PricingSettingsRow & { default_tax_rate_id?: string | null };
+  PricingSettingsRow &
+  CashCloseSettingsRow & { default_tax_rate_id?: string | null };
 
 /**
- * Configuracion con su alicuota de IVA por defecto (`tax_rates.id`) y los
- * ajustes de precios (semaforo y chips).
+ * Configuracion con su alicuota de IVA por defecto (`tax_rates.id`), los
+ * ajustes de precios (semaforo y chips) y el umbral de faltante al cerrar caja
+ * (0 si la base aun no tiene la columna).
  */
 function mapAppSettingsWithTaxRate(row: AppSettingsWithTaxRateRow) {
   return {
     ...mapAppSettings(row),
+    cashCloseDiffAlertVes: mapCashCloseDiffAlertVes(row.cash_close_diff_alert_ves),
     defaultTaxRateId: row.default_tax_rate_id ?? undefined,
     pricing: mapPricingSettings(row),
   };
+}
+
+/**
+ * La base aun no tiene `app_settings.cash_close_diff_alert_ves` (parche
+ * 20261015a sin aplicar): Postgres responde 42703 al leerla y PostgREST
+ * PGRST204 al escribirla. Solo cuenta si el error nombra ESA columna: la falta
+ * de cualquier otra sigue siendo un error.
+ */
+function isMissingCashCloseColumn(error: unknown) {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return false;
+  }
+
+  const message = "message" in error && typeof error.message === "string" ? error.message : "";
+
+  return (
+    (error.code === "42703" || error.code === "PGRST204") &&
+    message.includes(cashCloseDiffAlertColumn)
+  );
 }
 
 const profileSelect =
@@ -66,6 +102,9 @@ function toSettingsUpdate(input: SettingsInput) {
     ...(input.pricing !== undefined ? toPricingUpdate(parsePricingSettings(input.pricing)) : {}),
     ...(input.invoicePrefix !== undefined ? { invoice_prefix: input.invoicePrefix } : {}),
     ...(input.lowStockThreshold !== undefined ? { low_stock_threshold: input.lowStockThreshold } : {}),
+    ...(input.cashCloseDiffAlertVes !== undefined
+      ? { [cashCloseDiffAlertColumn]: parseCashCloseDiffAlertVes(input.cashCloseDiffAlertVes) }
+      : {}),
     ...(input.enabledPaymentMethods !== undefined
       ? { enabled_payment_methods: input.enabledPaymentMethods }
       : {}),
@@ -99,11 +138,19 @@ async function loadAuthEmailsById() {
 
 export async function getSettings(storeId: string) {
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase
-    .from("app_settings")
-    .select(appSettingsSelect)
-    .eq("store_id", storeId)
-    .maybeSingle<AppSettingsWithTaxRateRow>();
+  const read = (columns: string) =>
+    supabase
+      .from("app_settings")
+      .select(columns)
+      .eq("store_id", storeId)
+      .maybeSingle<AppSettingsWithTaxRateRow>();
+
+  let { data, error } = await read(appSettingsSelect);
+
+  // Base sin el parche 20261015a: el resto de la configuracion se lee igual y el umbral vale 0.
+  if (isMissingCashCloseColumn(error)) {
+    ({ data, error } = await read(appSettingsBaseSelect));
+  }
 
   throwIfSupabaseError(error);
 
@@ -130,6 +177,26 @@ export async function getPricingSettings(storeId: string): Promise<PricingSettin
   throwIfSupabaseError(error);
 
   return mapPricingSettings(data);
+}
+
+/**
+ * Umbral de faltante al cerrar caja de la tienda. Sin fila de configuracion o
+ * sin la columna (parche 20261015a sin aplicar) vale 0: cualquier faltante pide
+ * confirmacion, y el cierre de caja nunca se queda sin poder abrirse por esto.
+ */
+export async function getCashCloseSettings(storeId: string): Promise<CashCloseSettings> {
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("app_settings")
+    .select(cashCloseDiffAlertColumn)
+    .eq("store_id", storeId)
+    .maybeSingle<CashCloseSettingsRow>();
+
+  if (!isMissingCashCloseColumn(error)) {
+    throwIfSupabaseError(error);
+  }
+
+  return { cashCloseDiffAlertVes: mapCashCloseDiffAlertVes(data?.cash_close_diff_alert_ves) };
 }
 
 /**
@@ -168,15 +235,28 @@ export async function updateSettings(input: SettingsInput, storeId: string) {
     await assertActiveStoreTaxRate(supabase, input.defaultTaxRateId, storeId);
   }
 
-  const { data, error } = await supabase
-    .from("app_settings")
-    .update({
-      ...settingsUpdate,
-      updated_by: user?.id ?? null,
-    })
-    .eq("store_id", storeId)
-    .select(appSettingsSelect)
-    .maybeSingle<AppSettingsWithTaxRateRow>();
+  const write = (columns: string) =>
+    supabase
+      .from("app_settings")
+      .update({
+        ...settingsUpdate,
+        updated_by: user?.id ?? null,
+      })
+      .eq("store_id", storeId)
+      .select(columns)
+      .maybeSingle<AppSettingsWithTaxRateRow>();
+
+  let { data, error } = await write(appSettingsSelect);
+
+  // Base sin el parche 20261015a. La sentencia fallo entera (no escribio nada):
+  // si lo que se queria guardar era el umbral, se dice; si no, se repite sin leerlo.
+  if (isMissingCashCloseColumn(error)) {
+    if (cashCloseDiffAlertColumn in settingsUpdate) {
+      throw new ApiError(409, "CONFLICT", CASH_CLOSE_DIFF_ALERT_UNAVAILABLE_MESSAGE);
+    }
+
+    ({ data, error } = await write(appSettingsBaseSelect));
+  }
 
   throwIfSupabaseError(error);
 

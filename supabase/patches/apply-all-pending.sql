@@ -773,3 +773,15 @@ notify pgrst, 'reload schema';
 -- No depende del BFF (lee las mismas columnas): puede ir antes o despues. El `create index` no es concurrently: bloquea
 -- las escrituras de purchase_items mientras se construye.
 -- OJO: reaplicar 20261009c reinstala la vista sin el enlace: volver a aplicar este parche y correr verify-patches.sql.
+-- -----------------------------------------------------------------------------
+-- 20261015a — cash close diff alert (CNF-10): umbral por tienda del aviso de faltante al cerrar caja
+--             (app_settings.cash_close_diff_alert_ves numeric(14,2) not null default 0, check 0 <= umbral)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261015a-cash-close-diff-alert.sql
+-- Requiere 20260716 y 20261006i. Idempotente, una transaccion. No migra datos (las tiendas existentes reciben 0 por el
+-- default: cualquier faltante pide confirmacion), no toca caja, baul, pagos, cierres, RPC, politicas ni grants: es solo
+-- un aviso de la interfaz (close_cash_session no lee la columna). Regenera los triggers
+-- trg_zz_reject_non_finite_numeric_* de app_settings para cubrir la columna nueva.
+-- Orden con el BFF: indistinto. Sin el parche el BFF lee el umbral como 0 (GET /api/settings y
+-- GET /api/settings/cash-close no fallan) y PATCH /api/settings con `cashCloseDiffAlertVes` responde 409 sin escribir
+-- nada; el resto de ajustes se sigue guardando.

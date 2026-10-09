@@ -2183,4 +2183,34 @@ select
       and i.indpred is not null
       and pg_get_indexdef(i.indexrelid) ilike '%(disassembled_conversion_id)%where%disassembled_conversion_id is not null%'
   )
+union all
+select
+  'app_settings.cash_close_diff_alert_ves: umbral de aviso de faltante al cerrar caja (numeric not null default 0) con check 0 <= umbral <= 999999999999.99 (20261015a)',
+  exists (
+    select 1
+    from pg_attribute a
+    join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+    join pg_constraint c on c.conrelid = a.attrelid and c.conname = 'app_settings_cash_close_diff_alert_check'
+    where a.attrelid = to_regclass('public.app_settings')
+      and a.attname = 'cash_close_diff_alert_ves'
+      and not a.attisdropped
+      and a.attnotnull
+      and a.atttypid = 'numeric'::regtype
+      and pg_get_expr(d.adbin, d.adrelid) = '0'
+      and c.contype = 'c'
+      and c.convalidated
+      and pg_get_constraintdef(c.oid) ilike '%cash_close_diff_alert_ves >= %cash_close_diff_alert_ves <= %999999999999.99%'
+  )
+union all
+select
+  'app_settings: los triggers de NaN / Infinity cubren cash_close_diff_alert_ves (20261015a)',
+  (
+    select count(*) = 2
+    from pg_trigger t
+    where not t.tgisinternal
+      and t.tgfoid = to_regprocedure('public.reject_non_finite_numeric()')
+      and t.tgname in ('trg_zz_reject_non_finite_numeric_ins', 'trg_zz_reject_non_finite_numeric_upd')
+      and t.tgrelid = to_regclass('public.app_settings')
+      and pg_get_triggerdef(t.oid) ilike '%cash_close_diff_alert_ves%'
+  )
 order by 1;
