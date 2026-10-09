@@ -61,13 +61,30 @@ describe("ProductDetailStockCard · Ajustar stock (PRO-03)", () => {
     api.respondToNextPost({ data: { id: "mov-1" } });
     await user.click(dialog.getByLabelText("Cantidad"));
     await user.paste("4");
-    await user.click(dialog.getByRole("button", { name: "Registrar movimiento" }));
+    await user.click(dialog.getByLabelText("Motivo"));
+    await user.paste("Conteo físico");
+    await user.click(dialog.getByRole("button", { name: "Continuar" }));
+
+    // CNF-08: el ajuste se confirma con su efecto antes de registrarse.
+    const confirmation = within(
+      await screen.findByRole("dialog", { name: "Confirmar ajuste de stock" }),
+    );
+
+    expect(confirmation.getByRole("listitem")).toHaveTextContent(
+      /\+4 Caja Cola x6\s*Stock 7\s*pasa a\s*11/,
+    );
+    expect(api.posts).toHaveLength(0);
+    await user.click(confirmation.getByRole("button", { name: "Registrar movimiento" }));
 
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Ajuste de stock" })).not.toBeInTheDocument(),
     );
     expect(api.posts).toHaveLength(1);
-    expect(api.posts[0]?.body).toMatchObject({ productId: "prod-1", quantityDelta: 4 });
+    expect(api.posts[0]?.body).toMatchObject({
+      productId: "prod-1",
+      quantityDelta: 4,
+      reason: "Conteo físico",
+    });
   });
 
   it("sin inventory.manage no muestra el botón", () => {

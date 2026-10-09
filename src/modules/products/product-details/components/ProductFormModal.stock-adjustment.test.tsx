@@ -86,6 +86,20 @@ function adjustmentDialog() {
   return screen.getByRole("dialog", { name: "Ajuste de stock" });
 }
 
+/** CNF-08: el ajuste pide motivo y se confirma con su efecto antes de registrarse. */
+async function continueAndConfirm(user: UserSession, dialog: ReturnType<typeof within>) {
+  await user.click(dialog.getByLabelText("Motivo"));
+  await user.paste("Conteo físico");
+  await user.click(dialog.getByRole("button", { name: "Continuar" }));
+
+  const confirmation = within(
+    await screen.findByRole("dialog", { name: "Confirmar ajuste de stock" }),
+  );
+
+  expect(confirmation.getByText("Conteo físico")).toBeInTheDocument();
+  await user.click(confirmation.getByRole("button", { name: "Registrar movimiento" }));
+}
+
 async function openAdjustment(user: UserSession) {
   await user.click(screen.getByRole("button", { name: "Ajustar stock" }));
 
@@ -174,7 +188,8 @@ describe("ProductFormModal · Ajustar stock (PRO-03)", () => {
     api.respondToNextPost({ data: { id: "mov-1" } });
     await user.click(dialog.getByLabelText("Cantidad"));
     await user.paste("3");
-    await user.click(dialog.getByRole("button", { name: "Registrar movimiento" }));
+    expect(api.posts).toHaveLength(0);
+    await continueAndConfirm(user, dialog);
 
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Ajuste de stock" })).not.toBeInTheDocument(),
@@ -185,6 +200,7 @@ describe("ProductFormModal · Ajustar stock (PRO-03)", () => {
       clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       productId: "prod-1",
       quantityDelta: 3,
+      reason: "Conteo físico",
       type: "ajuste_entrada",
     });
 
@@ -214,7 +230,7 @@ describe("ProductFormModal · Ajustar stock (PRO-03)", () => {
     await user.selectOptions(dialog.getByLabelText("Tipo de movimiento"), "ajuste_salida");
     await user.click(dialog.getByLabelText("Cantidad"));
     await user.paste("2");
-    await user.click(dialog.getByRole("button", { name: "Registrar movimiento" }));
+    await continueAndConfirm(user, dialog);
     await waitFor(() => expect(screen.getByLabelText("Stock actual")).toHaveValue("5"));
     expect(api.posts[0]?.body).toMatchObject({ productId: "prod-1", quantityDelta: -2 });
 

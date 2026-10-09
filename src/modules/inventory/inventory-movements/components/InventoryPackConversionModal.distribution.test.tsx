@@ -276,7 +276,7 @@ describe("InventoryPackConversionModal · reparto del surtido (INV-08)", () => {
     await user.click(await screen.findByRole("option", { name: /Caja cigarros/ }));
 
     expect(screen.queryByLabelText(/Unidades de/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Convertir empaque" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Continuar" })).toBeEnabled();
   });
 });
 
@@ -502,19 +502,24 @@ describe("InventoryPackConversionModal · empaque en negativo (INV-08)", () => {
 });
 
 describe("InventoryPackConversionModal · empaque 1 a 1 (INV-08)", () => {
-  it("sin reparto ni confirmación: envía directo y sin `components`", async () => {
+  it("sin reparto que editar: confirma con su efecto (CNF-08) y envía sin `components`", async () => {
     const api = await renderOpen("prod-cigar-pack");
     api.respondToNextPost({ data: { conversionId: "conv-2", unitQuantity: 20 } });
     setQuantity("2");
 
     expect(screen.queryByText("Reparto de unidades")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Restablecer receta" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Continuar" })).not.toBeInTheDocument();
 
     submitForm();
-    await waitFor(() => expect(document.getElementById(formId)).toBeNull());
+
+    // La confirmación del 1 a 1 es la suya, no la del surtido.
+    const dialog = await screen.findByRole("dialog", { name: "Confirmar conversión de empaque" });
 
     expect(queryConfirm()).not.toBeInTheDocument();
+    expect(api.posts).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Convertir empaque" }));
+    await waitFor(() => expect(document.getElementById(formId)).toBeNull());
+
     expect(api.posts).toHaveLength(1);
     expect(api.posts[0]?.body).toEqual({
       clientRequestId: uuid,

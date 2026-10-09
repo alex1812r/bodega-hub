@@ -60,10 +60,17 @@ async function waitForPreloadedProduct() {
   await waitFor(() => expect(getProductField()).toHaveValue("Cable HDMI (ELE-CAB-001)"));
 }
 
+const REASON = "Conteo físico";
+
+function setReason(value = REASON) {
+  fireEvent.change(screen.getByLabelText("Motivo"), { target: { value } });
+}
+
 async function openAndFill(quantity = "2") {
   fireEvent.click(screen.getByRole("button", { name: "Registrar ajuste" }));
   await waitForPreloadedProduct();
   fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: quantity } });
+  setReason();
 }
 
 function getForm() {
@@ -74,6 +81,37 @@ function getForm() {
   }
 
   return form;
+}
+
+const CONFIRM_TITLE = "Confirmar ajuste de stock";
+
+function queryConfirm() {
+  return screen.queryByRole("dialog", { name: CONFIRM_TITLE });
+}
+
+/** CNF-08: el formulario ya no envía; abre la confirmación con el efecto. */
+async function openConfirm() {
+  fireEvent.submit(getForm());
+
+  return screen.findByRole("dialog", { name: CONFIRM_TITLE });
+}
+
+function confirmButton(dialog: HTMLElement) {
+  return within(dialog).getByRole("button", { name: "Registrar movimiento" });
+}
+
+async function submitAndConfirm() {
+  const dialog = await openConfirm();
+
+  fireEvent.click(confirmButton(dialog));
+
+  return dialog;
+}
+
+async function cancelConfirm(dialog: HTMLElement) {
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeEnabled());
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+  await waitFor(() => expect(queryConfirm()).not.toBeInTheDocument());
 }
 
 describe("InventoryAdjustmentModal · tipos del ajuste libre (R4)", () => {
@@ -139,7 +177,8 @@ describe("InventoryAdjustmentModal · buscador de producto (INV-07)", () => {
     expect(Number(request.searchParams.get("limit"))).toBeLessThanOrEqual(8);
 
     fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "3" } });
-    fireEvent.submit(getForm());
+    setReason();
+    await submitAndConfirm();
     await waitFor(() => expect(document.getElementById("inventory-adjustment-form")).toBeNull());
 
     expect(api.posts).toHaveLength(1);
@@ -147,6 +186,7 @@ describe("InventoryAdjustmentModal · buscador de producto (INV-07)", () => {
       clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       productId: "prod-charger",
       quantityDelta: 3,
+      reason: REASON,
       type: "ajuste_entrada",
     });
   });
@@ -167,10 +207,12 @@ describe("InventoryAdjustmentModal · buscador de producto (INV-07)", () => {
 
     const field = await screen.findByRole("combobox", { name: "Producto" });
     fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "2" } });
+    setReason();
     fireEvent.submit(getForm());
 
     expect(screen.getByText("Selecciona un producto.")).toBeVisible();
     expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(queryConfirm()).not.toBeInTheDocument();
     expect(api.posts).toHaveLength(0);
   });
 
@@ -192,7 +234,8 @@ describe("InventoryAdjustmentModal · buscador de producto (INV-07)", () => {
     await user.type(getProductField(), "carg");
     await user.click(await screen.findByRole("option", { name: /Cargador USB/ }));
     fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "1" } });
-    fireEvent.submit(getForm());
+    setReason();
+    await submitAndConfirm();
     await waitFor(() => expect(api.posts).toHaveLength(1));
 
     expect(api.posts[0]?.body).toMatchObject({ productId: "prod-charger", quantityDelta: 1 });
@@ -257,8 +300,16 @@ describe("InventoryAdjustmentModal · producto bloqueado y apertura controlada (
     expect(screen.queryByRole("button", { name: "Registrar ajuste" })).toBeNull();
 
     fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "2" } });
+    setReason();
     fireEvent.submit(getForm());
     fireEvent.submit(getForm());
+
+    const dialog = await screen.findByRole("dialog", { name: CONFIRM_TITLE });
+
+    // Abrir la confirmación no envía nada.
+    expect(api.posts).toHaveLength(0);
+    fireEvent.click(confirmButton(dialog));
+    fireEvent.click(within(dialog).getByRole("button", { name: /Registrar movimiento|Procesando/ }));
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(onOpenChange).toHaveBeenCalledTimes(1);
@@ -311,10 +362,14 @@ describe("InventoryAdjustmentModal · idempotencia (C6)", () => {
     });
     await openAndFill();
 
-    fireEvent.submit(getForm());
-    fireEvent.submit(getForm());
+    const dialog = await openConfirm();
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Registrando..." })).toBeDisabled());
+    fireEvent.click(confirmButton(dialog));
+    fireEvent.click(within(dialog).getByRole("button", { name: /Registrar movimiento|Procesando/ }));
+
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Procesando..." })).toBeDisabled(),
+    );
     expect(api.posts).toHaveLength(1);
     expect(api.posts[0]?.url).toBe("/api/inventory/adjustments");
     expect(api.posts[0]?.body).toMatchObject({
@@ -342,18 +397,23 @@ describe("InventoryAdjustmentModal · idempotencia (C6)", () => {
     });
     await openAndFill();
 
-    fireEvent.submit(getForm());
-    await screen.findByText(/No pudimos confirmar si el movimiento se registró/);
+    const dialog = await submitAndConfirm();
+
+    // El error se dice dentro de la confirmación, que sigue abierta para reintentar.
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      /No pudimos confirmar si el movimiento se registró/,
+    );
     expect(document.getElementById("inventory-adjustment-form")).not.toBeNull();
 
-    fireEvent.submit(getForm());
+    await waitFor(() => expect(confirmButton(dialog)).toBeEnabled());
+    fireEvent.click(confirmButton(dialog));
     await waitFor(() => expect(document.getElementById("inventory-adjustment-form")).toBeNull());
 
     expect(api.posts).toHaveLength(2);
     expect(api.posts[1]?.body.clientRequestId).toBe(api.posts[0]?.body.clientRequestId);
 
     await openAndFill();
-    fireEvent.submit(getForm());
+    await submitAndConfirm();
     await waitFor(() => expect(api.posts).toHaveLength(3));
 
     expect(api.posts[2]?.body.clientRequestId).not.toBe(api.posts[0]?.body.clientRequestId);
@@ -369,11 +429,13 @@ describe("InventoryAdjustmentModal · idempotencia (C6)", () => {
     });
     await openAndFill("2");
 
-    fireEvent.submit(getForm());
-    await screen.findByText("Dato invalido");
+    const dialog = await submitAndConfirm();
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Dato invalido");
+    await cancelConfirm(dialog);
 
     fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "3" } });
-    fireEvent.submit(getForm());
+    await submitAndConfirm();
     await waitFor(() => expect(api.posts).toHaveLength(2));
 
     expect(api.posts[1]?.body.quantityDelta).toBe(3);
@@ -399,6 +461,8 @@ describe("InventoryAdjustmentModal · cantidad entera (SHR-09J)", () => {
     const api = await renderOpen();
     const quantity = screen.getByLabelText("Cantidad");
 
+    // Con motivo: lo único que frena la confirmación es la cantidad con decimales.
+    setReason();
     await user.type(quantity, `${typed}{Enter}`);
 
     // Antes el separador se perdia: el campo mostraba 25 y se enviaba quantityDelta 25.
@@ -408,8 +472,9 @@ describe("InventoryAdjustmentModal · cantidad entera (SHR-09J)", () => {
 
     // El pie queda fuera del <form>: el envio implicito de Enter se simula aparte.
     fireEvent.submit(getForm());
-    await user.click(screen.getByRole("button", { name: "Registrar movimiento" }));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
 
+    expect(queryConfirm()).not.toBeInTheDocument();
     expect(api.posts).toHaveLength(0);
     expect(quantity).toHaveValue("2.5");
     expect(screen.getByText("Debe ser un número entero.")).toBeVisible();
@@ -420,6 +485,7 @@ describe("InventoryAdjustmentModal · cantidad entera (SHR-09J)", () => {
     const api = await renderOpen();
     api.respondToNextPost({ data: { id: "mov-1" } });
 
+    setReason();
     await user.type(screen.getByLabelText("Cantidad"), "3");
     expect(screen.getByLabelText("Cantidad")).not.toHaveAttribute("aria-invalid");
 
@@ -430,9 +496,10 @@ describe("InventoryAdjustmentModal · cantidad entera (SHR-09J)", () => {
       // y con el buscador ya son dos. El envio implicito se simula aparte.
       fireEvent.submit(getForm());
     } else {
-      await user.click(screen.getByRole("button", { name: "Registrar movimiento" }));
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
     }
 
+    await user.click(confirmButton(await screen.findByRole("dialog", { name: CONFIRM_TITLE })));
     await waitFor(() => expect(document.getElementById("inventory-adjustment-form")).toBeNull());
 
     expect(api.posts).toHaveLength(1);
@@ -440,6 +507,7 @@ describe("InventoryAdjustmentModal · cantidad entera (SHR-09J)", () => {
       clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       productId: "prod-cable",
       quantityDelta: 3,
+      reason: REASON,
       type: "ajuste_entrada",
     });
   });

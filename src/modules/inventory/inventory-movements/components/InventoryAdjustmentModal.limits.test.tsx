@@ -38,12 +38,15 @@ describe("InventoryAdjustmentModal · topes del formulario (INV-F5)", () => {
     const user = userEvent.setup();
     const api = renderModal();
 
+    // Con motivo: lo único que frena la confirmación es la cantidad.
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Conteo" } });
     await user.type(screen.getByLabelText("Cantidad"), "3000000000");
 
     expect(screen.getByText("La cantidad máxima es 999.999.")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Registrar movimiento" }));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
 
+    expect(screen.queryByRole("dialog", { name: "Confirmar ajuste de stock" })).not.toBeInTheDocument();
     expect(api.posts).toHaveLength(0);
   });
 });

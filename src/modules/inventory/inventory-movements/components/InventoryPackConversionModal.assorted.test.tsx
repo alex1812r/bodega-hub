@@ -91,6 +91,17 @@ function submit() {
   fireEvent.submit(document.getElementById("inventory-pack-conversion-form") as HTMLFormElement);
 }
 
+/** CNF-08: el 1 a 1 también pasa por la confirmación antes de enviarse. */
+async function submitAndConfirmSingle() {
+  submit();
+
+  const dialog = await screen.findByRole("dialog", { name: "Confirmar conversión de empaque" });
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "Convertir empaque" }));
+
+  return dialog;
+}
+
 describe("InventoryPackConversionModal · descripción de la receta (PRO-F7)", () => {
   it("surtido: lista los componentes según la receta y los empaques elegidos, con el total", async () => {
     await renderOpen("prod-surtido");
@@ -206,7 +217,7 @@ describe("InventoryPackConversionModal · mensaje de resultado (PRO-F7)", () => 
       },
     });
     setQuantity("2");
-    submit();
+    await submitAndConfirmSingle();
 
     const status = await screen.findByRole("status");
 
@@ -221,9 +232,9 @@ describe("InventoryPackConversionModal · mensaje de resultado (PRO-F7)", () => 
   it("un error del servidor no muestra mensaje de éxito", async () => {
     const api = await renderOpen("prod-cigar-pack");
     api.respondToNextPost({ error: { message: "Stock insuficiente de empaque" } }, 409);
-    submit();
+    const dialog = await submitAndConfirmSingle();
 
-    await screen.findByText("Stock insuficiente de empaque");
+    await within(dialog).findByText("Stock insuficiente de empaque");
     expect(screen.queryByText(/Abriste/)).not.toBeInTheDocument();
   });
 });

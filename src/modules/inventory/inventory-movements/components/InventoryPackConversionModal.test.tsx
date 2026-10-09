@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { createQueryWrapper, installFetchStub } from "../../utils/requestAttempt.testUtils";
@@ -41,6 +41,37 @@ function getForm() {
   }
 
   return form;
+}
+
+const CONFIRM_TITLE = "Confirmar conversión de empaque";
+
+function queryConfirm() {
+  return screen.queryByRole("dialog", { name: CONFIRM_TITLE });
+}
+
+/** CNF-08: el formulario ya no envía; abre la confirmación con las dos caras de la conversión. */
+async function openConfirm() {
+  fireEvent.submit(getForm());
+
+  return screen.findByRole("dialog", { name: CONFIRM_TITLE });
+}
+
+function confirmButton(dialog: HTMLElement) {
+  return within(dialog).getByRole("button", { name: "Convertir empaque" });
+}
+
+async function submitAndConfirm() {
+  const dialog = await openConfirm();
+
+  fireEvent.click(confirmButton(dialog));
+
+  return dialog;
+}
+
+async function cancelConfirm(dialog: HTMLElement) {
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeEnabled());
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+  await waitFor(() => expect(queryConfirm()).not.toBeInTheDocument());
 }
 
 describe("InventoryPackConversionModal · buscador de empaque (INV-07)", () => {
@@ -90,7 +121,7 @@ describe("InventoryPackConversionModal · buscador de empaque (INV-07)", () => {
     // Una sola lectura: las recetas; ninguna petición al catálogo de productos.
     expect(gets).toEqual(["/api/inventory/pack-conversions"]);
 
-    fireEvent.submit(getForm());
+    await submitAndConfirm();
     await waitFor(() => expect(document.getElementById("inventory-pack-conversion-form")).toBeNull());
 
     expect(api.posts).toHaveLength(1);
@@ -135,6 +166,7 @@ describe("InventoryPackConversionModal · buscador de empaque (INV-07)", () => {
 
     expect(screen.getByText("Selecciona un empaque.")).toBeVisible();
     expect(getPackField()).toHaveAttribute("aria-invalid", "true");
+    expect(queryConfirm()).not.toBeInTheDocument();
     expect(api.posts).toHaveLength(0);
   });
 });
@@ -174,6 +206,7 @@ describe("InventoryPackConversionModal · aviso de cantidad (SHR-09G)", () => {
 
     fireEvent.submit(getForm());
 
+    expect(queryConfirm()).not.toBeInTheDocument();
     expect(api.posts).toHaveLength(0);
     expect(screen.getByText("Indica una cantidad mayor a cero.")).toBeVisible();
   });
@@ -190,7 +223,12 @@ describe("InventoryPackConversionModal · aviso de cantidad (SHR-09G)", () => {
     expect(getQuantityInput()).toHaveValue("6");
 
     fireEvent.submit(getForm());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
 
+    // CNF-08: el empaque quedaría en negativo; se frena antes de la confirmación.
+    expect(queryConfirm()).not.toBeInTheDocument();
     expect(api.posts).toHaveLength(0);
   });
 
@@ -204,6 +242,7 @@ describe("InventoryPackConversionModal · aviso de cantidad (SHR-09G)", () => {
     fireEvent.submit(getForm());
 
     expect(screen.getByText("No hay empaques en stock para abrir.")).toBeVisible();
+    expect(queryConfirm()).not.toBeInTheDocument();
     expect(api.posts).toHaveLength(0);
   });
 
@@ -214,7 +253,7 @@ describe("InventoryPackConversionModal · aviso de cantidad (SHR-09G)", () => {
     fireEvent.change(getQuantityInput(), { target: { value: "2" } });
     expect(getQuantityInput()).not.toHaveAttribute("aria-invalid");
 
-    fireEvent.submit(getForm());
+    await submitAndConfirm();
     await waitFor(() => expect(document.getElementById("inventory-pack-conversion-form")).toBeNull());
 
     expect(api.posts).toHaveLength(1);
@@ -240,7 +279,16 @@ describe("InventoryPackConversionModal · idempotencia (C6)", () => {
     fireEvent.submit(getForm());
     fireEvent.submit(getForm());
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Convirtiendo..." })).toBeDisabled());
+    const dialog = await screen.findByRole("dialog", { name: CONFIRM_TITLE });
+
+    // Abrir la confirmación no envía nada.
+    expect(api.posts).toHaveLength(0);
+    fireEvent.click(confirmButton(dialog));
+    fireEvent.click(within(dialog).getByRole("button", { name: /Convertir empaque|Procesando/ }));
+
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Procesando..." })).toBeDisabled(),
+    );
     expect(api.posts).toHaveLength(1);
     expect(api.posts[0]?.url).toBe("/api/inventory/conversions");
     expect(api.posts[0]?.body).toMatchObject({
@@ -266,10 +314,16 @@ describe("InventoryPackConversionModal · idempotencia (C6)", () => {
     });
     await openDialog();
 
-    fireEvent.submit(getForm());
-    await screen.findByText(/No pudimos confirmar si el movimiento se registró/);
+    const dialog = await submitAndConfirm();
 
-    fireEvent.submit(getForm());
+    // El error se dice dentro de la confirmación, que sigue abierta para reintentar.
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      /No pudimos confirmar si el movimiento se registró/,
+    );
+    expect(document.getElementById("inventory-pack-conversion-form")).not.toBeNull();
+
+    await waitFor(() => expect(confirmButton(dialog)).toBeEnabled());
+    fireEvent.click(confirmButton(dialog));
     await waitFor(() => expect(document.getElementById("inventory-pack-conversion-form")).toBeNull());
 
     expect(api.posts).toHaveLength(2);
@@ -286,12 +340,14 @@ describe("InventoryPackConversionModal · idempotencia (C6)", () => {
     });
     await openDialog();
 
-    fireEvent.submit(getForm());
-    // El mensaje del servidor se muestra tal cual.
-    await screen.findByText("Dato inválido");
+    const dialog = await submitAndConfirm();
+
+    // El mensaje del servidor se muestra tal cual, dentro de la confirmación.
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Dato inválido");
+    await cancelConfirm(dialog);
 
     fireEvent.change(screen.getByLabelText("Cantidad de empaques"), { target: { value: "2" } });
-    fireEvent.submit(getForm());
+    await submitAndConfirm();
     await waitFor(() => expect(api.posts).toHaveLength(2));
 
     expect(api.posts[1]?.body.packQuantity).toBe(2);
@@ -324,8 +380,9 @@ describe("InventoryPackConversionModal · cantidad entera (SHR-09J)", () => {
     expect(screen.getByText("Debe ser un número entero.")).toBeVisible();
 
     fireEvent.submit(getForm());
-    await user.click(screen.getByRole("button", { name: "Convertir empaque" }));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
 
+    expect(queryConfirm()).not.toBeInTheDocument();
     expect(api.posts).toHaveLength(0);
     expect(quantity).toHaveValue("2.5");
     expect(screen.getByText("Debe ser un número entero.")).toBeVisible();
@@ -347,9 +404,10 @@ describe("InventoryPackConversionModal · cantidad entera (SHR-09J)", () => {
       // y con el buscador ya son dos. El envio implicito se simula aparte.
       fireEvent.submit(getForm());
     } else {
-      await user.click(screen.getByRole("button", { name: "Convertir empaque" }));
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
     }
 
+    await user.click(confirmButton(await screen.findByRole("dialog", { name: CONFIRM_TITLE })));
     await waitFor(() => expect(document.getElementById("inventory-pack-conversion-form")).toBeNull());
 
     expect(api.posts).toHaveLength(1);

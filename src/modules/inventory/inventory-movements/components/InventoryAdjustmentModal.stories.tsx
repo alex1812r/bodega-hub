@@ -4,6 +4,13 @@ import { Button } from "@/shared/components/Button";
 
 import { InventoryAdjustmentModal } from "./InventoryAdjustmentModal";
 
+/**
+ * Ajuste de stock. El motivo es obligatorio y «Continuar» no envía: abre la
+ * confirmación con el producto, el tipo, el motivo y el stock actual →
+ * resultante (CNF-08). Sin motivo, o con una salida mayor que el stock, el
+ * formulario avisa en el campo y la confirmación no se abre. Un rechazo del
+ * servidor se muestra dentro de la confirmación.
+ */
 const meta = {
   component: InventoryAdjustmentModal,
   tags: ["ai-generated"],

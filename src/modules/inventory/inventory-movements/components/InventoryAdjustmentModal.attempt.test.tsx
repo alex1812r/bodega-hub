@@ -4,7 +4,7 @@
  * error de red se dice en español (F3).
  */
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { createQueryWrapper, installFetchStub } from "../../utils/requestAttempt.testUtils";
 import { UNCERTAIN_STOCK_REQUEST_MESSAGE } from "../../utils/stockRequestError";
@@ -56,10 +56,39 @@ async function openWith(productLabel: string, quantity: string) {
     expect(screen.getByRole("combobox", { name: "Producto" })).toHaveValue(productLabel),
   );
   setQuantity(quantity);
+  // CNF-08: sin motivo no se llega a la confirmación.
+  fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Conteo físico" } });
+}
+
+const CONFIRM_TITLE = "Confirmar ajuste de stock";
+
+function confirmButton(dialog: HTMLElement) {
+  return within(dialog).getByRole("button", { name: "Registrar movimiento" });
+}
+
+/** CNF-08: el formulario abre la confirmación y es ella la que envía. */
+async function submitAndConfirm() {
+  fireEvent.submit(getForm());
+
+  const dialog = await screen.findByRole("dialog", { name: CONFIRM_TITLE });
+
+  fireEvent.click(confirmButton(dialog));
+
+  return dialog;
+}
+
+async function cancelConfirm(dialog: HTMLElement) {
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeEnabled());
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: CONFIRM_TITLE })).not.toBeInTheDocument(),
+  );
 }
 
 async function closeWithEscape() {
-  fireEvent.keyDown(screen.getByRole("dialog", { name: "Ajuste de stock" }), { key: "Escape" });
+  fireEvent.keyDown(await screen.findByRole("dialog", { name: "Ajuste de stock" }), {
+    key: "Escape",
+  });
   await waitFor(() => expect(document.getElementById(formId)).toBeNull());
 }
 
@@ -83,8 +112,11 @@ describe("InventoryAdjustmentModal · clave tras un resultado incierto (INV-F2 �
       </Wrapper>,
     );
     await openWith("Producto A (QA-A)", "1");
-    fireEvent.submit(getForm());
-    await screen.findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    const dialog = await submitAndConfirm();
+    await within(dialog).findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    await cancelConfirm(dialog);
+    // Al cancelar la confirmación el aviso sigue a la vista en el formulario.
+    expect(screen.getByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).toBeVisible();
 
     await closeWithEscape();
     rerender(
@@ -96,7 +128,10 @@ describe("InventoryAdjustmentModal · clave tras un resultado incierto (INV-F2 �
 
     expect(screen.queryByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).not.toBeInTheDocument();
 
-    fireEvent.submit(getForm());
+    const secondDialog = await submitAndConfirm();
+
+    // El error del intento anterior no pertenece a esta confirmación.
+    expect(within(secondDialog).queryByRole("alert")).not.toBeInTheDocument();
     await waitFor(() => expect(api.posts).toHaveLength(2));
 
     expect(api.posts[1]?.body).toMatchObject({ productId: "prod-b", quantityDelta: 7 });
@@ -112,12 +147,13 @@ describe("InventoryAdjustmentModal · clave tras un resultado incierto (INV-F2 �
       wrapper: createQueryWrapper(),
     });
     await openWith("Producto A (QA-A)", "1");
-    fireEvent.submit(getForm());
-    await screen.findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    const dialog = await submitAndConfirm();
+    await within(dialog).findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    await cancelConfirm(dialog);
 
     await closeWithEscape();
     await openWith("Producto A (QA-A)", "1");
-    fireEvent.submit(getForm());
+    await submitAndConfirm();
     await waitFor(() => expect(api.posts).toHaveLength(2));
 
     expect(api.posts[1]?.body.clientRequestId).not.toBe(api.posts[0]?.body.clientRequestId);
@@ -132,11 +168,12 @@ describe("InventoryAdjustmentModal · clave tras un resultado incierto (INV-F2 �
       wrapper: createQueryWrapper(),
     });
     await openWith("Producto A (QA-A)", "1");
-    fireEvent.submit(getForm());
-    await screen.findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    const dialog = await submitAndConfirm();
+    await within(dialog).findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    await cancelConfirm(dialog);
 
     setQuantity("5");
-    fireEvent.submit(getForm());
+    await submitAndConfirm();
     await waitFor(() => expect(api.posts).toHaveLength(2));
 
     expect(api.posts[1]?.body.quantityDelta).toBe(5);
@@ -154,18 +191,17 @@ describe("InventoryAdjustmentModal · clave tras un resultado incierto (INV-F2 �
       wrapper: createQueryWrapper(),
     });
     await openWith("Producto A (QA-A)", "1");
-    fireEvent.submit(getForm());
-    // El 409 trae respuesta del servidor: se muestra tal cual.
-    await screen.findByText("Stock insuficiente");
+    const dialog = await submitAndConfirm();
+    // El 409 trae respuesta del servidor: se muestra tal cual, dentro de la confirmación.
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/^Stock insuficiente$/);
 
-    fireEvent.submit(getForm());
+    await waitFor(() => expect(confirmButton(dialog)).toBeEnabled());
+    fireEvent.click(confirmButton(dialog));
     await waitFor(() => expect(api.posts).toHaveLength(2));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Registrar movimiento" })).toBeEnabled(),
-    );
+    await cancelConfirm(dialog);
 
     fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "conteo" } });
-    fireEvent.submit(getForm());
+    await submitAndConfirm();
     await waitFor(() => expect(api.posts).toHaveLength(3));
 
     expect(api.posts[1]?.body.clientRequestId).toBe(api.posts[0]?.body.clientRequestId);
@@ -183,21 +219,36 @@ describe("InventoryAdjustmentModal · envío en vuelo (INV-F2 · F2)", () => {
       wrapper: createQueryWrapper(),
     });
     await openWith("Producto A (QA-A)", "2");
-    fireEvent.submit(getForm());
-    await waitFor(() => expect(screen.getByRole("button", { name: "Registrando..." })).toBeDisabled());
+    const dialog = await submitAndConfirm();
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Procesando..." })).toBeDisabled(),
+    );
 
-    expect(screen.getByRole("combobox", { name: "Producto" })).toBeDisabled();
-    expect(screen.getByLabelText("Tipo de movimiento")).toBeDisabled();
-    expect(screen.getByLabelText("Cantidad")).toBeDisabled();
-    expect(screen.getByLabelText("Motivo")).toBeDisabled();
+    // El formulario queda debajo de la confirmación, fuera del árbol accesible.
+    const form = within(getForm());
+    const adjustmentModal = getForm().closest<HTMLElement>('[role="dialog"]') as HTMLElement;
 
-    fireEvent.keyDown(screen.getByRole("dialog", { name: "Ajuste de stock" }), { key: "Escape" });
+    expect(form.getByRole("combobox", { hidden: true, name: "Producto" })).toBeDisabled();
+    expect(form.getByLabelText("Tipo de movimiento")).toBeDisabled();
+    expect(form.getByLabelText("Cantidad")).toBeDisabled();
+    expect(form.getByLabelText("Motivo")).toBeDisabled();
+
+    // Ni la confirmación ni el modal de debajo se cierran con el envío en vuelo.
+    fireEvent.keyDown(dialog, { key: "Escape" });
     await flushDeferredClose();
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cerrar modal" }));
     await flushDeferredClose();
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar modal" }));
+    fireEvent.keyDown(adjustmentModal, { key: "Escape" });
+    await flushDeferredClose();
+    fireEvent.click(within(adjustmentModal).getByRole("button", { hidden: true, name: "Cancelar" }));
+    await flushDeferredClose();
+    fireEvent.click(
+      within(adjustmentModal).getByRole("button", { hidden: true, name: "Cerrar modal" }),
+    );
     await flushDeferredClose();
 
+    expect(screen.getByRole("dialog", { name: CONFIRM_TITLE })).toBeInTheDocument();
     expect(document.getElementById(formId)).not.toBeNull();
     expect(screen.getByLabelText("Cantidad")).toHaveValue("2");
     expect(onOpenChange.mock.calls).toEqual([[true]]);
@@ -217,10 +268,12 @@ describe("InventoryAdjustmentModal · envío en vuelo (INV-F2 · F2)", () => {
       wrapper: createQueryWrapper(),
     });
     await openWith("Producto A (QA-A)", "2");
-    fireEvent.submit(getForm());
-    await waitFor(() => expect(screen.getByRole("button", { name: "Registrando..." })).toBeDisabled());
+    const dialog = await submitAndConfirm();
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Procesando..." })).toBeDisabled(),
+    );
 
-    fireEvent.keyDown(screen.getByRole("dialog", { name: "Ajuste de stock" }), { key: "Escape" });
+    fireEvent.keyDown(dialog, { key: "Escape" });
     await flushDeferredClose();
     await act(async () => {
       release();
@@ -240,7 +293,7 @@ describe("InventoryAdjustmentModal · texto del error (INV-F2 · F3)", () => {
       wrapper: createQueryWrapper(),
     });
     await openWith("Producto A (QA-A)", "1");
-    fireEvent.submit(getForm());
+    await submitAndConfirm();
 
     expect(
       await screen.findByText(

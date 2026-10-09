@@ -2,10 +2,10 @@
  * Efecto de mover el stock de un producto en `delta` unidades (positivo = entra,
  * negativo = sale): con cuánto queda y si quedaría en negativo.
  *
- * Aún no la usa ninguna pantalla. Es para CNF-08 (Confirmaciones): el modal de
- * ajuste de stock y la conversión de empaque 1 a 1 pintarán con ella el
- * "antes → después" de su `ConfirmActionModal`. La apertura de un surtido usa
- * `computePackOpeningEffect`.
+ * La usa el modal de ajuste de stock (CNF-08) para la vista previa del
+ * formulario, para frenar una salida que dejaría el stock en negativo y para el
+ * "antes → después" de su `ConfirmActionModal`. La conversión de empaque (1 a 1
+ * y surtido) usa `computePackOpeningEffect`.
  */
 
 export type StockAdjustmentEffect = {
