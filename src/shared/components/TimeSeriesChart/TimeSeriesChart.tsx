@@ -114,6 +114,8 @@ type DrawnSeries = {
   name: string;
   color: string;
   hasPrevious: boolean;
+  /** El periodo anterior llega a verse en el gráfico (y por eso va en la leyenda). */
+  previousIsVisible: boolean;
   /** Valor de cada fila en la moneda activa. */
   values: (number | null)[];
 };
@@ -172,7 +174,7 @@ function ChartLegend({ series }: ChartLegendProps) {
           <span className="truncate">{item.name}</span>
         </li>
       ))}
-      {series.some((item) => item.hasPrevious) ? (
+      {series.some((item) => item.previousIsVisible) ? (
         <li className="flex items-center gap-1.5">
           <span
             aria-hidden="true"
@@ -327,6 +329,8 @@ export function TimeSeriesChart({
         color: getChartSeriesColor(index),
         hasPrevious: hasPreviousPeriod(rows, item.id),
         id: item.id,
+        // La línea del periodo anterior no lleva marcadores: con un solo punto no pinta nada.
+        previousIsVisible: hasPreviousPeriod(rows, item.id) && rows.length > 1,
         name: item.name,
         values: rows.map((row) => pointValue(row.cells.get(item.id)?.current, activeCurrency)),
       })),
@@ -380,7 +384,7 @@ export function TimeSeriesChart({
   }
 
   const showDots = rows.length <= markerLimit;
-  const showLegend = drawn.length > 1 || drawn.some((item) => item.hasPrevious);
+  const showLegend = drawn.length > 1 || drawn.some((item) => item.previousIsVisible);
 
   return (
     <div className={cn("flex min-w-0 flex-col gap-3", className)}>

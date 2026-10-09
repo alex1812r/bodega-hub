@@ -438,6 +438,30 @@ describe("TimeSeriesChart", () => {
       expectCleanRender();
     });
 
+    // REP-F2: una línea discontinua sin marcadores no pinta nada con un solo punto.
+    it("con un solo punto no se ve: no entra en la leyenda", async () => {
+      const point = { key: "2026-05-18", label: "18/05", valueRef: 37.5 };
+
+      render(
+        <TimeSeriesChart
+          ariaLabel="Ventas"
+          series={[
+            {
+              id: "sales",
+              name: "Ventas",
+              points: [point],
+              previousPoints: [{ key: "2026-05-17", label: "17/05", valueRef: 40 }],
+            },
+          ]}
+        />,
+      );
+      await waitFor(() => expect(getChart().querySelector(".recharts-surface")).not.toBeNull());
+
+      expect(getChart().querySelectorAll(".recharts-line-curve")).toHaveLength(0);
+      expect(screen.queryByText("Periodo anterior")).not.toBeInTheDocument();
+      expectCleanRender();
+    });
+
     it("vacío: no se dibuja, no aparece en la leyenda y no rompe", async () => {
       render(
         <TimeSeriesChart ariaLabel="Ventas" series={[{ ...SALES, previousPoints: [] }]} />,
