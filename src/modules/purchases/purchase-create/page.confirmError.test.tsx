@@ -75,6 +75,8 @@ jest.mock("./components/PurchaseProductPickerCard", () => ({
   ),
 }));
 
+import { onlineManager } from "@tanstack/react-query";
+
 import {
   createQueryWrapper,
   installFetchStub,
@@ -245,5 +247,42 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
       release();
     });
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
+  });
+});
+
+// COM-F10 · F-A5: sin conexión el botón quedaba en «Confirmando...» sin mensaje.
+describe("PurchaseCreatePage · confirmar sin conexión (COM-F10 · F-A5)", () => {
+  afterEach(() => {
+    onlineManager.setOnline(true);
+  });
+
+  it("sin red: aviso visible y botón rehabilitado; el reintento reutiliza la clave y nada se envía solo", async () => {
+    const api = installFetchStub(() => null);
+    api.networkErrorOnNextPost();
+    api.respondToNextPost({ data: { id: "purchase-1" } });
+
+    renderPage();
+    addSupplierAndProduct();
+    act(() => onlineManager.setOnline(false));
+    fireEvent.click(confirm());
+
+    await waitFor(() => expect(confirmAlert()).toHaveTextContent(NETWORK_MESSAGE));
+    expect(confirm()).toBeEnabled();
+    expect(confirm()).toHaveTextContent("Confirmar Compra");
+    expect(api.posts).toHaveLength(1);
+
+    // Vuelve la red: no hay envío automático, lo decide el usuario.
+    act(() => onlineManager.setOnline(true));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(api.posts).toHaveLength(1);
+    expect(mockPush).not.toHaveBeenCalled();
+
+    fireEvent.click(confirm());
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
+
+    expect(api.posts).toHaveLength(2);
+    expect(api.posts[1]?.body.clientRequestId).toBe(api.posts[0]?.body.clientRequestId);
   });
 });

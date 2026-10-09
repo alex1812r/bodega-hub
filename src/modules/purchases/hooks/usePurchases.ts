@@ -151,6 +151,9 @@ export function useCreatePurchase() {
         body: input,
         method: "POST",
       }),
+    // Sin conexión el intento falla enseguida en vez de quedar en pausa (el botón se
+    // quedaba en «Confirmando...» sin mensaje) y enviarse solo al volver la red.
+    networkMode: "always",
     // Sin reintento automatico: el reintento lo decide el usuario y viaja con la
     // misma clave de idempotencia.
     retry: false,
@@ -237,6 +240,8 @@ export function useReceivePurchase(id?: string) {
         method: "PATCH",
       });
     },
+    // Sin conexión falla enseguida: el modal de recepción no queda esperando a la red.
+    networkMode: "always",
     // Sin reintento automático: el reintento lo decide el usuario, con la misma clave.
     retry: false,
     onSuccess: (purchase) => {
