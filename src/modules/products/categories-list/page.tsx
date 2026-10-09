@@ -32,10 +32,13 @@ import { categoriesListSchema, toCategoriesFilters } from "./categoriesListParam
 import { CategoriesListFilters } from "./components/CategoriesListFilters";
 import { CategoryFormModal } from "./components/CategoryFormModal";
 import {
+  CategoryStatusConfirmModal,
+  type CategoryStatusAction,
+} from "./components/CategoryStatusConfirmModal";
+import {
   type CategoryInput,
   useCategories,
   useCreateCategory,
-  useDeleteCategory,
   useUpdateCategory,
 } from "../hooks/useProducts";
 
@@ -103,6 +106,11 @@ function CategoriesList() {
   // Búsqueda, estado, página y tamaño viven en la URL: recarga y "atrás" los conservan.
   const list = useUrlListState(categoriesListSchema);
   const [editingCategory, setEditingCategory] = useState<CategoryMock | null>(null);
+  // Desactivar y reactivar se confirman viendo cuántos productos usan la categoría.
+  const [statusChange, setStatusChange] = useState<{
+    action: CategoryStatusAction;
+    category: CategoryMock;
+  } | null>(null);
   const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
   // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
   const debouncedSearch = useDebouncedValue(list.state.search, URL_LIST_DEBOUNCE_MS);
@@ -113,7 +121,6 @@ function CategoriesList() {
   });
   const createCategory = useCreateCategory();
   const updateCategory = useUpdateCategory(editingCategory?.id ?? "");
-  const deleteCategory = useDeleteCategory();
   const categoryItems = getPaginatedItems(categories.data);
   const totalCategories = categories.data?.total ?? 0;
   const { setState: setListState } = list;
@@ -140,32 +147,6 @@ function CategoriesList() {
 
     await updateCategory.mutateAsync(input);
     setEditingCategory(null);
-  }
-
-  async function handleDeactivateCategory(category: CategoryMock) {
-    // eslint-disable-next-line no-restricted-properties -- CNF-12 (Ola 2) reemplaza este confirm por ConfirmActionModal
-    const confirmed = window.confirm(
-      "La categoría dejará de aparecer en selectores. Los productos que la usan no se modifican.",
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    await deleteCategory.mutateAsync(category.id);
-  }
-
-  async function handleReactivateCategory(category: CategoryMock) {
-    // eslint-disable-next-line no-restricted-properties -- CNF-12 (Ola 2) reemplaza este confirm por ConfirmActionModal
-    const confirmed = window.confirm(
-      "La categoría volverá a aparecer en selectores de producto y formularios.",
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    await updateCategory.mutateAsync({ id: category.id, isActive: true });
   }
 
   return (
@@ -217,17 +198,13 @@ function CategoriesList() {
               if (category.isActive) {
                 items.push({
                   label: "Desactivar",
-                  onSelect: () => {
-                    void handleDeactivateCategory(category);
-                  },
+                  onSelect: () => setStatusChange({ action: "deactivate", category }),
                   variant: "danger",
                 });
               } else {
                 items.push({
                   label: "Reactivar",
-                  onSelect: () => {
-                    void handleReactivateCategory(category);
-                  },
+                  onSelect: () => setStatusChange({ action: "reactivate", category }),
                 });
               }
 
@@ -259,12 +236,7 @@ function CategoriesList() {
                 title="No hay categorías para mostrar"
               />
             }
-            error={
-              categories.error ??
-              createCategory.error ??
-              deleteCategory.error ??
-              updateCategory.error
-            }
+            error={categories.error ?? createCategory.error ?? updateCategory.error}
             getRowId={(category) => category.id}
             isFetching={categories.isFetching}
             isLoading={categories.isLoading}
@@ -303,6 +275,17 @@ function CategoriesList() {
           trigger={null}
         />
       ) : null}
+
+      <CategoryStatusConfirmModal
+        action={statusChange?.action ?? "deactivate"}
+        category={statusChange?.category ?? null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setStatusChange(null);
+          }
+        }}
+        open={statusChange !== null}
+      />
     </div>
   );
 }
