@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useCallback, useMemo } from "react";
 import { z } from "zod";
 
@@ -11,6 +12,7 @@ import {
   describeDashboardPeriod,
   normalizeDashboardRange,
 } from "@/modules/dashboard/utils/dashboardPeriod";
+import { sanitizeUrlRange } from "@/modules/reports/reports-list/urlDateRange";
 import {
   type AnyDateRangePreset,
   type DateRangeChange,
@@ -27,6 +29,11 @@ export type DashboardPeriodState = DashboardPeriod & {
   setRange: (next: DateRangeChange<AnyDateRangePreset>) => void;
   /** Día operativo de hoy (fijo en mock). */
   today: string;
+  /**
+   * La URL traía un rango invertido, con el año fuera de rango o mal formado:
+   * se descartó (el periodo es el de por defecto, hoy) y hay que avisarlo.
+   */
+  urlRangeWasInvalid: boolean;
 };
 
 /** Qué periodos ofrece la pantalla: los de tienda, o los de plataforma (con los extendidos). */
@@ -72,6 +79,14 @@ export function useDashboardUrlPeriod(
   const { presets, schema } = PERIOD_CONFIG[variant];
   const { setState, state } = useUrlListState(schema);
   const { from, preset, to } = state;
+  // Un rango de la URL que no se puede usar no llega a pedirse al servidor.
+  const searchParams = useSearchParams();
+  const rawFrom = searchParams.get("from");
+  const rawTo = searchParams.get("to");
+  const urlRange = useMemo(
+    () => sanitizeUrlRange({ from, to }, { from: rawFrom, to: rawTo }, today),
+    [from, rawFrom, rawTo, to, today],
+  );
 
   const setRange = useCallback(
     (next: DateRangeChange<AnyDateRangePreset>) => {
@@ -86,7 +101,11 @@ export function useDashboardUrlPeriod(
     () => ({
       ...describeDashboardPeriod(
         normalizeDashboardRange(
-          parseDateRangeParams<AnyDateRangePreset>({ from, preset, to }, today, presets),
+          parseDateRangeParams<AnyDateRangePreset>(
+            { from: urlRange.from, preset, to: urlRange.to },
+            today,
+            presets,
+          ),
           today,
         ),
         today,
@@ -94,7 +113,8 @@ export function useDashboardUrlPeriod(
       presets,
       setRange,
       today,
+      urlRangeWasInvalid: urlRange.wasInvalid,
     }),
-    [from, preset, presets, setRange, to, today],
+    [preset, presets, setRange, today, urlRange],
   );
 }

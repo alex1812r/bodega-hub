@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useMemo } from "react";
 
 import { getPageDataSourceSuffix } from "@/lib/api/dataSourceUi";
@@ -9,6 +10,7 @@ import { EntityListPage } from "@/shared/components/EntityListPage";
 import { useUrlPaginationState } from "@/shared/components/Pagination";
 import { useUrlListState, withUrlListBoundary } from "@/shared/hooks/useUrlListState";
 
+import { InvalidUrlRangeNotice } from "./components/InvalidUrlRangeNotice";
 import { ReportsCatalog } from "./components/ReportsCatalog";
 import { ReportsExportActions } from "./components/ReportsExportActions";
 import { ReportsListFilters } from "./components/ReportsListFilters";
@@ -26,6 +28,7 @@ import {
   toReportsFilters,
   toReportSwitchPatch,
 } from "./reportsListParams";
+import { sanitizeUrlRange } from "./urlDateRange";
 
 function ReportsList() {
   // Reporte activo, rango, agrupación, comparación, proveedor, estado, producto,
@@ -53,6 +56,15 @@ function ReportsList() {
   } = state;
   const today = getBusinessTodayIsoDate();
   const activeReport = getReportById(report);
+  // Un rango de la URL invertido, con el año fuera de rango o mal formado no se
+  // usa ni viaja al servidor: el reporte abre en su rango por defecto y se avisa.
+  const searchParams = useSearchParams();
+  const rawFrom = searchParams.get("from");
+  const rawTo = searchParams.get("to");
+  const urlRange = useMemo(
+    () => sanitizeUrlRange({ from, to }, { from: rawFrom, to: rawTo }, today),
+    [from, rawFrom, rawTo, to, today],
+  );
   // El catálogo solo ofrece lo que la sesión puede abrir: los reportes de dinero
   // de REP-06 y los de inventario de REP-07 piden permisos propios (misma regla
   // que sus rutas). Mientras la sesión carga no se ofrece ninguno de ellos.
@@ -72,8 +84,8 @@ function ReportsList() {
   // Un `preset` relativo de la URL se recalcula con el hoy operativo. Sin rango
   // en la URL, los reportes con gráfico y fechas abren en sus últimos 30 días.
   const range = useMemo(
-    () => resolveReportsRange({ from, preset, to }, today, activeReport),
-    [activeReport, from, preset, to, today],
+    () => resolveReportsRange({ from: urlRange.from, preset, to: urlRange.to }, today, activeReport),
+    [activeReport, preset, today, urlRange],
   );
   const filters = useMemo(
     () => toReportsFilters({ compare, groupBy, productId, status, supplierId }, range),
@@ -95,6 +107,8 @@ function ReportsList() {
         onSelect={(reportId) => setListState(toReportSwitchPatch(reportId))}
         reports={visibleReports}
       />
+
+      <InvalidUrlRangeNotice show={urlRange.wasInvalid} />
 
       <ReportsListFilters
         dateFilters={filters.dateFilters}

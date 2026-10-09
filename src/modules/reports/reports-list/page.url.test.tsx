@@ -759,6 +759,65 @@ describe("ReportsListPage · REP-03", () => {
     });
   });
 
+  describe("rango inválido en la URL (REP-F8 R-14)", () => {
+    const NOTICE = "El rango de la dirección no era válido; se muestra el rango por defecto.";
+
+    function lastDailySalesFilters() {
+      return hooks.useDailySalesReport.mock.calls.at(-1)?.[0];
+    }
+
+    it.each([
+      ["invertido", "from=2026-05-10&to=2026-05-01"],
+      ["con el año fuera de rango", "from=2026-05-01&to=9999-12-31"],
+      ["anterior a 2000", "from=1900-01-01&to=2026-05-10"],
+      ["mal formado", "from=ayer&to=2026-05-10"],
+    ])("%s: cae al rango por defecto del reporte, avisa y no lo pide al servidor", (_name, query) => {
+      renderPage(`?report=daily-sales&${query}`);
+
+      expect(screen.getByRole("status")).toHaveTextContent(NOTICE);
+      // Últimos 30 días, no «todas las fechas».
+      expect(screen.getByTestId("date-range-label")).toHaveTextContent("19 abr – 18 may 2026");
+      expect(lastDailySalesFilters()).toEqual({
+        from: DEFAULT_FROM,
+        groupBy: "auto",
+        limit: 10,
+        skip: 0,
+        to: TODAY,
+      });
+
+      // Ninguna petición llevó las fechas de la URL.
+      for (const [filters] of hooks.useDailySalesReport.mock.calls) {
+        expect(JSON.stringify(filters)).not.toMatch(/9999|1900|2026-05-10|2026-05-01/);
+      }
+
+      expect(exportFilters()).toMatchObject({ dateFilters: { from: DEFAULT_FROM, to: TODAY } });
+    });
+
+    it("el aviso se descarta, y desaparece solo al elegir otro rango", async () => {
+      const user = userEvent.setup();
+      const view = renderPage("?report=daily-sales&from=2026-05-10&to=2026-05-01");
+
+      await user.click(screen.getByRole("button", { name: "Descartar aviso" }));
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+      view.unmount();
+
+      renderPage("?report=daily-sales&from=2026-05-10&to=2026-05-01");
+      expect(screen.getByText(NOTICE)).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Este mes" }));
+
+      await waitFor(() => expect(urlParams()).toEqual({ preset: "this_month" }));
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    });
+
+    it("un rango válido no avisa", () => {
+      renderPage("?report=daily-sales&from=2026-05-01&to=2026-05-10");
+
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+      expect(lastDailySalesFilters()).toMatchObject({ from: "2026-05-01", to: "2026-05-10" });
+    });
+  });
+
   describe("sin inputs nativos de fecha", () => {
     it.each(REPORT_IDS)("%s: un solo control de rango y ningún input de fecha", (reportId: ReportId) => {
       const { container } = renderPage(`?report=${reportId}&from=2026-05-01&to=2026-05-10`);
