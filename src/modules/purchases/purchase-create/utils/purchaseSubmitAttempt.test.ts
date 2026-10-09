@@ -65,4 +65,55 @@ describe("PurchaseSubmitAttempt", () => {
     // Lo que falló fue `content`: reintentarlo igual conserva su clave.
     expect(attempt.begin(content)).toBe(first);
   });
+
+  // INT-02 · D33: sobre RequestAttempt({ renewOnContentChange, lockAfterSuccess }).
+  it("tras un 409, el contenido cambiado sale con clave nueva y el mismo contenido la conserva", () => {
+    const attempt = new PurchaseSubmitAttempt();
+    const first = attempt.begin(content);
+
+    attempt.fail(new ClientApiError(409, "CONFLICT", "Conflicto"));
+    expect(attempt.begin(content)).toBe(first);
+    attempt.fail(new ClientApiError(409, "CONFLICT", "Conflicto"));
+
+    const second = attempt.begin(changed);
+
+    expect(second).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second).not.toBe(first);
+  });
+
+  it("misma clave ×8: ocho reintentos del mismo contenido tras fallos inciertos viajan con UNA clave", () => {
+    const attempt = new PurchaseSubmitAttempt();
+    const keys = new Set<string | null>();
+
+    for (let retry = 0; retry < 8; retry += 1) {
+      keys.add(attempt.begin(content));
+      attempt.fail(new TypeError("Failed to fetch"));
+    }
+
+    expect(keys.size).toBe(1);
+    expect([...keys][0]).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("discard olvida la clave de un intento fallido (otra compra), pero no reabre una compra confirmada ni libera un envío en vuelo", () => {
+    const failed = new PurchaseSubmitAttempt();
+    const first = failed.begin(content);
+
+    failed.fail(new TypeError("Failed to fetch"));
+    failed.discard();
+    expect(failed.begin(content)).not.toBe(first);
+
+    const inFlight = new PurchaseSubmitAttempt();
+
+    inFlight.begin(content);
+    inFlight.discard();
+    expect(inFlight.begin(content)).toBeNull();
+
+    const confirmed = new PurchaseSubmitAttempt();
+
+    confirmed.begin(content);
+    confirmed.succeed();
+    confirmed.discard();
+    expect(confirmed.begin(content)).toBeNull();
+    expect(confirmed.begin(changed)).toBeNull();
+  });
 });

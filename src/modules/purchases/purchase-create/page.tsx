@@ -534,6 +534,8 @@ export function PurchaseCreatePage() {
 
   /** «Reemplazar por la reposición»: vacía la compra en curso (y su borrador) y precarga. */
   function replaceWithRestock(restockDraft: RestockDraft) {
+    // Otra compra: la clave del intento anterior (si falló) no viaja con esta.
+    requestAttempt.discard();
     draft.clear();
     setSupplierId("");
     setSupplierName(null);

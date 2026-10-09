@@ -416,10 +416,11 @@ export function ProductFormModal({
   // Candado propio: `isSubmitting` llega con el siguiente render, tarde para un
   // segundo Enter o un clic en el mismo tick.
   const isSubmitInFlightRef = useRef(false);
-  // Clave de idempotencia del alta (C6), como en la compra: se conserva mientras
-  // se reintenta el MISMO envío (respuesta perdida, 5xx) y se renueva tras el
-  // éxito (también con "Guardar y crear otro") y al reabrir el formulario.
-  const createAttempt = useRequestAttempt();
+  // Clave de idempotencia del alta (C6), como en la compra (D33): se conserva mientras
+  // se reintenta el MISMO envío (respuesta perdida, 5xx, 409) y se estrena si el
+  // contenido cambió. Tras el éxito el intento queda cerrado: con el formulario aún
+  // montado no sale otro alta hasta reabrirlo o pedir "Guardar y crear otro".
+  const createAttempt = useRequestAttempt({ lockAfterSuccess: true, renewOnContentChange: true });
   // Último alta que terminó sin respuesta del servidor (red, 5xx): pudo crearse.
   const unansweredCreateRef = useRef<{ fingerprint: string; name: string } | null>(null);
   /** Nombre de ese alta mientras se muestra el aviso de posible duplicado; `null` = sin aviso. */
@@ -457,8 +458,8 @@ export function ProductFormModal({
 
   useEffect(() => {
     if (isOpen) {
-      // Apertura nueva = intento nuevo: cierra el anterior para estrenar clave.
-      createAttempt.succeed();
+      // Apertura nueva = intento nuevo: estrena clave y vuelve a aceptar envíos.
+      createAttempt.reopen();
     }
   }, [createAttempt, isOpen]);
 
@@ -821,8 +822,8 @@ export function ProductFormModal({
         return;
       }
 
-      // Otro producto: se cierra el intento anterior para estrenar clave.
-      createAttempt.succeed();
+      // Otro producto: se descarta el intento anterior para estrenar clave.
+      createAttempt.discard();
       unansweredCreateRef.current = null;
     }
 
@@ -937,6 +938,9 @@ export function ProductFormModal({
 
       return;
     }
+
+    // "Guardar y crear otro": el siguiente es otro alta, a propósito.
+    createAttempt.reopen();
 
     flushSync(() => {
       resetFormFields();

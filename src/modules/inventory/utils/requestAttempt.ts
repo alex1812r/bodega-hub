@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ClientApiError } from "@/shared/api/apiFetch";
 
@@ -24,6 +24,14 @@ export type RequestAttemptOptions = {
    * clave solo se renueva al cambiar el contenido tras un 4xx definitivo.
    */
   renewOnContentChange?: boolean;
+  /**
+   * Tras el éxito el intento queda CERRADO: `begin` devuelve `null` hasta
+   * `reopen()`. Para formularios que siguen montados después de confirmar (la
+   * página navega al detalle, el modal aún no terminó de cerrarse): sin la
+   * opción, `succeed()` soltaba el intento y un clic en esa ventana salía con
+   * una clave nueva, es decir, otra operación.
+   */
+  lockAfterSuccess?: boolean;
 };
 
 /**
@@ -51,20 +59,31 @@ export type RequestAttemptOptions = {
  * 4. Por las reglas 2 y 3 el intento anterior de resultado incierto pudo
  *    haberse registrado: el formulario lo avisa con `describeStockRequestError`
  *    (`stockRequestError.ts`) en vez del mensaje del navegador.
+ *
+ * Con `lockAfterSuccess` (INT-02): tras `succeed()` ningún `begin` entrega
+ * clave hasta `reopen()`, que es lo que hace el formulario cuando se cierra o
+ * cuando empieza a propósito otra operación («Guardar y crear otro»).
+ * `discard()` olvida la clave pero NO reabre.
  */
 export class RequestAttempt {
   private clientRequestId: string | null = null;
   private inFlight = false;
   private rejectedFingerprint: string | null = null;
   private sentFingerprint: string | null = null;
+  private succeeded = false;
+  private readonly lockAfterSuccess: boolean;
   private readonly renewOnContentChange: boolean;
 
-  constructor({ renewOnContentChange = false }: RequestAttemptOptions = {}) {
+  constructor({
+    lockAfterSuccess = false,
+    renewOnContentChange = false,
+  }: RequestAttemptOptions = {}) {
+    this.lockAfterSuccess = lockAfterSuccess;
     this.renewOnContentChange = renewOnContentChange;
   }
 
   begin(content: unknown): string | null {
-    if (this.inFlight) {
+    if (this.inFlight || this.succeeded) {
       return null;
     }
 
@@ -89,6 +108,7 @@ export class RequestAttempt {
   succeed() {
     this.inFlight = false;
     this.discard();
+    this.succeeded = this.lockAfterSuccess;
   }
 
   fail(error: unknown) {
@@ -105,6 +125,28 @@ export class RequestAttempt {
     this.rejectedFingerprint = null;
     this.sentFingerprint = null;
   }
+
+  /**
+   * El formulario se cerró o empieza otra operación: descarta el intento y, con
+   * `lockAfterSuccess`, vuelve a aceptar envíos. No libera un envío en vuelo.
+   */
+  reopen() {
+    this.succeeded = false;
+    this.discard();
+  }
+}
+
+/**
+ * Reabre el intento cuando el formulario deja de estar abierto, se cierre como se
+ * cierre (botón, Escape, tras el éxito o porque lo cierra quien lo controla). Con
+ * `lockAfterSuccess`: desde el éxito hasta ese momento no se puede enviar.
+ */
+export function useReleaseAttemptOnClose(attempt: RequestAttempt, open: boolean) {
+  useEffect(() => {
+    if (!open) {
+      attempt.reopen();
+    }
+  }, [attempt, open]);
 }
 
 /** Un `RequestAttempt` por instancia de formulario/dialogo. */
