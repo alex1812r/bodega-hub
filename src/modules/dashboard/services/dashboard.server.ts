@@ -303,7 +303,8 @@ export async function getDashboardSalesTrend(
     .limit(2000);
   query = applyStoreIdsFilter(query, storeIds);
 
-  // daily_sales_summary.sale_date is UTC date_trunc, not Caracas operational day.
+  // daily_sales_summary.sale_date es el día operativo de Caracas desde el parche
+  // 20261013a (antes, día UTC): `from` / `to` se comparan tal cual.
   if (from) {
     query = query.gte("sale_date", from);
   }

@@ -15,6 +15,33 @@
 --    y filtro de estado: los totales de un rango amplio no cambian, solo el dia
 --    al que se asigna cada venta.
 --
+--    CAMBIO DE COMPORTAMIENTO (leer antes de comparar cifras por dia):
+--    a) Desde este parche sale_date es el dia operativo America/Caracas. Antes
+--       era el dia UTC: una fila diaria de antes y otra de despues NO son
+--       comparables entre si (cambia el reparto por dia, no el total del rango).
+--    b) ORDEN DE PARCHES: 20260716b-multi-store-views.sql hace drop + create de
+--       estas dos vistas con date_trunc('day', created_at)::date. REAPLICAR
+--       20260716b las DEVUELVE a dia UTC: despues hay que volver a aplicar este
+--       parche (20261013a). verify-patches.sql lo detecta (fila "agrupan por dia
+--       operativo de Caracas").
+--    c) "Cierre del dia" (dailyCloseSummary.server.ts) y "Depreciacion FX"
+--       (fxDepreciationReport.server.ts) NO leen estas vistas: leen sales,
+--       sale_items, payments y exchange_rates con el rango ya convertido a dia
+--       Caracas. Sus cifras son identicas antes y despues del parche (medido en
+--       la base lab: .notes/ux-mejoras/reportes/lab/no-rompe/, diff vacio).
+--
+--    CRITERIO UNICO DE ESTADOS de los reportes de ventas (vistas existentes y
+--    las de este parche): se excluyen SOLO 'cancelada' y 'devuelta'. Una venta
+--    en 'borrador' CUENTA ('borrador', 'pendiente_pago' y 'pagada' entran).
+--    Es un hallazgo abierto que no se cambia en el plan ux-mejoras: cambiarlo
+--    exige hacerlo a la vez en todas las vistas y en el mock. Los reportes de
+--    inventario (20261013b) no filtran por estado de venta: leen el libro
+--    stock_movements, y una venta cancelada o devuelta aparece alli con su
+--    salida y su reversion; para "que es una venta que cuenta" remiten a esta
+--    definicion. Compras ("Compras por periodo", tabla purchases, sin vista):
+--    por defecto se excluyen 'cancelado' y 'devuelto' en la tabla Y en la serie
+--    (parametro status=all o un estado concreto para verlas).
+--
 -- 1. report_sales_by_hour: ventas no canceladas ni devueltas (criterio de
 --    daily_sales_summary) por tienda, dia Caracas, dia de la semana ISO
 --    (1 = lunes ... 7 = domingo) y hora Caracas (0-23).

@@ -642,14 +642,70 @@ Patch: [`supabase/patches/20260907-payroll.sql`](../supabase/patches/20260907-pa
 | `useStockCardReport` | GET `/api/reports/stock-card` | `stock_card` |
 | `useTopProductsReport` | GET `/api/reports/top-products` | agregado `sale_items` |
 | `useTopCustomersReport` | GET `/api/reports/top-customers` | agregado ventas |
-| `usePurchasesReport` | GET `/api/reports/purchases` | tabla `purchases` |
+| `usePurchasesReport` | GET `/api/reports/purchases` | tabla `purchases`; `supplierId`, `status` (ver "Criterio de estados") |
 | `useFxDepreciationReport` | GET `/api/reports/fx-depreciation` | pagos de venta + tasa vigente (`exchange_rates`) |
 | `usePaymentMethodsReport` | GET `/api/reports/payment-methods` | pagos de venta activos (`status=activo`, `sale_id` not null) por método |
 | `useDailyCloseReport` | GET `/api/reports/daily-close` | composición: ventas Caracas + mix pagos + FX + snapshot caja/baúl |
 
 Rangos `from`/`to` en reportes de fecha usan **día operativo America/Caracas**.
 
-**Pendiente:** filtros fecha en todos los reportes; gráficos. Vista previa modal + export PDF/Excel.
+### Reportes de dinero (parche `20261013a`, hooks en `useMoneyReports.ts`)
+
+Además de `reports.view`, cada ruta aplica `assertMoneyReportAccess` (`services/moneyReports.ts`). Nada por vendedor.
+
+| Hook | Endpoint | Parámetros | Permiso extra | Vista |
+|------|----------|------------|---------------|-------|
+| `useSalesByHourReport` | GET `/api/reports/sales-by-hour` | `from`, `to` (obligatorios) | — | `report_sales_by_hour` |
+| `useSalesByCategoryReport` | GET `/api/reports/sales-by-category` | `from`, `to` (obligatorios) | — | `report_sales_by_category` |
+| `useReceivablesAgingReport` | GET `/api/reports/receivables-aging` | `bucket` (`0-7` \| `8-30` \| `30+`), `contactId`, `skip`, `limit` | `payments.manage` o `sales.create` | `report_open_documents_aging` + `_summary` |
+| `usePayablesAgingReport` | GET `/api/reports/payables-aging` | igual | `payments.manage` y rol que ve pagos de compra | las mismas |
+| `useCashCloseDifferencesReport` | GET `/api/reports/cash-close-differences` | `from`, `to`, `currency`, `skip`, `limit` | `cash.view` | `report_cash_close_differences` (solo lectura) |
+
+La antigüedad de un documento abierto se cuenta en días de calendario Caracas **desde la fecha del documento** (no existe fecha de vencimiento): "vencido" = tramo `30+`. El resumen por tramo (`summary.buckets`) no depende de la página ni de `bucket`. La tarjeta "Cuentas por cobrar vencidas" del dashboard (`DashboardOverdueReceivablesCard`) lee solo ese resumen y enlaza a `/reports?report=receivables-aging&bucket=30%2B`; no se monta ni pide nada para un rol que recibiría 403.
+
+### Reportes de inventario (parche `20261013b`, hooks en `useInventoryReports.ts`)
+
+Exigen `reports.view` **y** `inventory.view` (`assertInventoryReportAccess`): con los roles por defecto, solo admin. Leen el libro `stock_movements` en su orden real (`seq`), nunca `stock_after`.
+
+| Hook | Endpoint | Parámetros | Vista |
+|------|----------|------------|-------|
+| `useDeadStockReport` | GET `/api/reports/dead-stock` | `days` (1–3650, 30 por defecto), `categoryId`, `skip`, `limit` | `report_product_last_movement` |
+| `useStockTurnoverReport` | GET `/api/reports/stock-turnover` | `from`, `to` (obligatorios), `groupBy` (`product` \| `category`), `skip`, `limit` | `report_stock_daily_flow` |
+| `useStockAdjustmentsReport` | GET `/api/reports/stock-adjustments` | `from`, `to` (obligatorios), `groupBy` (`day` \| `week` \| `month` \| `auto`), `skip`, `limit` | `report_stock_adjustments` |
+
+### Series: `groupBy` y `compare`
+
+`daily-sales`, `gross-profit` y `purchases` devuelven, además de la tabla paginada, un bloque `series` cuando llegan `from` + `to` y (`groupBy` o `compare`); sin ellos responden como antes. Lógica pura en `services/reportSeries.ts`.
+
+- `groupBy` = `day` \| `week` (lunes a domingo) \| `month` \| `auto` (≤ 62 días → día; ≤ 370 → semana; más → mes). La respuesta trae el `groupBy` efectivo. Los periodos sin datos van en 0.
+- `compare=1` añade el periodo anterior (mismo nº de días justo antes de `from`), alineado por posición, con totales y `deltaPct` (`null` si el anterior es 0). `payment-methods` acepta `compare=1` y devuelve `comparison`.
+- Fechas mal formadas, `from > to`, `groupBy` desconocido o un rango de más de 10 años → 400 en español.
+- La tabla y la serie salen de las mismas filas: el total del gráfico es la suma de la tabla del rango.
+- En la URL de `/reports` el estado vive en `report`, `from`, `to`, `preset`, `groupBy`, `compare` (`useUrlListState`).
+
+### Día operativo de las vistas diarias (cambio de `20261013a`)
+
+- Desde `20261013a`, `daily_sales_summary` y `gross_profit_summary` agrupan por **día operativo America/Caracas** (`(created_at at time zone 'America/Caracas')::date`). Antes agrupaban por día UTC: una venta de 20:00–23:59 de Caracas caía en el día siguiente. Los totales de un rango no cambian; cambia el reparto por día, así que una fila diaria anterior al parche no es comparable con una posterior.
+- **Orden de parches:** `20260716b-multi-store-views.sql` recrea esas dos vistas con el día UTC. Si se reaplica `20260716b`, hay que volver a aplicar `20261013a` después (`verify-patches.sql` lo detecta).
+- "Cierre del día" (`dailyCloseSummary.server.ts`) y "Depreciación FX" (`fxDepreciationReport.server.ts`) **no leen esas vistas** (leen `sales`, `sale_items`, `payments` y `exchange_rates` con el rango ya en día Caracas): sus cifras son idénticas antes y después del parche. Evidencia en la base lab: `.notes/ux-mejoras/reportes/lab/no-rompe/` (diff vacío).
+
+### Criterio de estados
+
+- **Ventas (todas las vistas y reportes de ventas, existentes y nuevos):** se excluyen solo `cancelada` y `devuelta`. Una venta en `borrador` **cuenta**. Es un hallazgo abierto: no se cambia en el plan ux-mejoras, y cambiarlo exige hacerlo a la vez en todas las vistas y en el mock. Top productos y top clientes aplican el mismo criterio en servidor y mock.
+- **Inventario (`20261013b`):** no filtra por estado de venta; lee el libro `stock_movements`, donde una venta cancelada o devuelta aparece con su salida y su reversión. Para "qué venta cuenta" remite a la definición anterior.
+- **Compras (`/api/reports/purchases`):** la tabla y la serie usan la misma regla. Por defecto se excluyen `cancelado` y `devuelto`; `status=all` las incluye y `status=pedido|recibido|cancelado|devuelto` deja solo ese estado (otro valor → 400). `total` y la paginación respetan el filtro. El exporte (`fetchReportsForExport.ts`) y la herramienta `compras_periodo` del asistente no envían `status`: usan el valor por defecto, así lo exportado cuadra con lo que se ve.
+
+### Componentes compartidos de reportes
+
+En `src/shared/components/`, con tokens del tema (claro / oscuro) y sin librerías nuevas (Recharts):
+
+- `TimeSeriesChart`: serie temporal (ventas, ganancia bruta, compras, flujo del dashboard) con periodo anterior opcional. Único componente para series.
+- `RankingBarChart`: barras horizontales para rankings (top productos, clientes, categorías).
+- `HeatmapChart`: mapa de calor (ventas por hora y día de la semana).
+- `DateRangeField`: único control de rango de fechas (presets + calendario propio, sin inputs nativos de fecha); su valor se lee y se escribe en la URL (`dateRangeUrl.ts`, `dateRangePresets.ts`).
+- `charts/chartTheme.ts`: colores, ejes y rejilla de los gráficos a partir de los tokens `--chart-1..5`; ningún gráfico define colores literales.
+
+**Pendiente:** filtros fecha en todos los reportes. Vista previa modal + export PDF/Excel.
 
 ---
 
