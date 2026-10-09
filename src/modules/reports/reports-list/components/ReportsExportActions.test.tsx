@@ -2,6 +2,8 @@ import "@testing-library/jest-dom";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { ClientApiError } from "@/shared/api/apiFetch";
+
 import { captureChartImage } from "../../services/captureChartImage";
 import {
   fetchReportsForExport,
@@ -168,7 +170,10 @@ describe("ReportsExportActions (REP-08)", () => {
   });
 
   it("si la consulta falla muestra el error y no abre la vista previa", async () => {
-    fetchMock.mockRejectedValue(new Error("No tienes permiso para realizar esta accion."));
+    // Error de negocio del servidor: su mensaje sí se muestra (REP-F8 R-11).
+    fetchMock.mockRejectedValue(
+      new ClientApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion."),
+    );
     const user = userEvent.setup();
     render(<ReportsExportActions exportFilters={storeFilters} />);
 

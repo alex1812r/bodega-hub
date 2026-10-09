@@ -6,13 +6,18 @@ import { useState } from "react";
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 
-import { captureChartImage, type ChartImage } from "../../services/captureChartImage";
+import type { ChartImage } from "../../services/captureChartImage";
+import {
+  captureChartImageWhenReady,
+  type ChartCapture,
+} from "../../services/captureChartImageWhenReady";
 import {
   fetchReportsForExport,
   type ReportsExportDataset,
   type ReportsExportFilters,
 } from "../../services/fetchReportsForExport";
 import { readReportsExportView } from "../../utils/reportExportView";
+import { toReportErrorMessage } from "../reportQueryState";
 import { ReportsExportPreviewModal } from "./ReportsExportPreviewModal";
 
 type ReportsExportActionsProps = {
@@ -22,9 +27,18 @@ type ReportsExportActionsProps = {
 /** Lo que se exporta: se fija al abrir la vista previa y no cambia hasta cerrarla. */
 type ExportPreview = {
   chartImage: ChartImage | null;
+  /** Por qué falta la imagen en un reporte que debería llevarla. */
+  chartMissing: ChartCapture["missing"];
   data: ReportsExportDataset;
   exportedAt: string;
   filters: ReportsExportFilters;
+};
+
+const NO_CHART: ChartCapture = { image: null, missing: null };
+
+const CHART_MISSING_NOTICES: Record<NonNullable<ChartCapture["missing"]>, string> = {
+  failed: "El gráfico no se incluirá: no se pudo capturar la imagen.",
+  loading: "El gráfico no se incluirá: aún se estaba cargando.",
 };
 
 export function ReportsExportActions({ exportFilters }: ReportsExportActionsProps) {
@@ -54,23 +68,45 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
               ...exportFilters,
               view: readReportsExportView(window.location.search, { permissions, role }),
             };
-      // El gráfico se captura ahora, antes de que el modal lo tape.
-      const [data, chartImage] = await Promise.all([
+      // El gráfico se captura ahora, antes de que el modal lo tape. Si aún está
+      // cargando se le espera (plazo acotado): capturar al instante daba un
+      // archivo sin imagen y sin aviso.
+      const [data, chart] = await Promise.all([
         fetchReportsForExport(filters),
-        filters.view && !filters.scope ? captureChartImage() : null,
+        filters.view && !filters.scope ? captureChartImageWhenReady() : NO_CHART,
       ]);
 
-      setPreview({ chartImage, data, exportedAt, filters });
+      setPreview({ chartImage: chart.image, chartMissing: chart.missing, data, exportedAt, filters });
     } catch (error) {
-      setPreviewError(
-        error instanceof Error
-          ? error.message
-          : "No se pudo generar la vista previa de reportes.",
-      );
+      // Solo un error de negocio del servidor enseña su mensaje.
+      setPreviewError(toReportErrorMessage(error, "No se pudo generar la vista previa de reportes."));
     } finally {
       setIsLoadingPreview(false);
     }
   }
+
+  /**
+   * Vuelve a capturar el gráfico con la vista previa abierta (el modal no lo
+   * quita del documento). `timeoutMs` 0 = sin esperar, para el momento de
+   * descargar.
+   */
+  async function retryChartCapture(timeoutMs?: number) {
+    const chart = await captureChartImageWhenReady({ timeoutMs });
+
+    setPreview((current) =>
+      current
+        ? {
+            ...current,
+            chartImage: chart.image ?? current.chartImage,
+            chartMissing: chart.image ? null : chart.missing,
+          }
+        : current,
+    );
+
+    return chart.image;
+  }
+
+  const canCaptureChart = Boolean(preview?.filters.view && !preview.filters.scope);
 
   function handlePreviewOpenChange(open: boolean) {
     if (!open) {
@@ -101,10 +137,12 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
 
       <ReportsExportPreviewModal
         chartImage={preview?.chartImage ?? null}
+        chartNotice={preview?.chartMissing ? CHART_MISSING_NOTICES[preview.chartMissing] : null}
         data={preview?.data ?? null}
         exportedAt={preview?.exportedAt ?? null}
         filters={preview?.filters ?? exportFilters}
         onOpenChange={handlePreviewOpenChange}
+        onRetryChartCapture={canCaptureChart ? retryChartCapture : undefined}
         open={preview !== null}
       />
     </div>

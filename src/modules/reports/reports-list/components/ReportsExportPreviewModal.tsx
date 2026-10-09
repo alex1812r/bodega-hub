@@ -1,7 +1,7 @@
 "use client";
 
 import { FileSpreadsheet, FileText, Loader2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
@@ -25,16 +25,32 @@ import {
   type ReportExportSection,
 } from "../../utils/reportExportSections";
 import { formatReportExportCell } from "../../utils/reportExportSheetColumns";
+import { toReportErrorMessage } from "../reportQueryState";
 
 const PREVIEW_PAGE_SIZE = 25;
+
+type DownloadKind = "excel" | "pdf";
+
+/**
+ * Tras una descarga, su botón queda ocupado este tiempo: el segundo y tercer
+ * clic de un doble o triple clic llegan dentro de él y no generan más archivos.
+ */
+const DOWNLOAD_COOLDOWN_MS = 1000;
 
 type ReportsExportPreviewModalProps = {
   /** Imagen del gráfico del reporte abierto; va en su sección del PDF y del Excel. */
   chartImage?: ChartImage | null;
+  /** Aviso de que el archivo saldrá sin el gráfico, y por qué. */
+  chartNotice?: string | null;
   data: ReportsExportDataset | null;
   exportedAt: string | null;
   filters: ReportsExportFilters;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Vuelve a capturar el gráfico. Lo usa «Reintentar captura» y, sin esperar
+   * (`timeoutMs` 0), cada descarga que aún no tiene imagen.
+   */
+  onRetryChartCapture?: (timeoutMs?: number) => Promise<ChartImage | null>;
   open: boolean;
 };
 
@@ -118,10 +134,12 @@ function PreviewSheetTable({ section }: { section: ReportExportSection }) {
 
 export function ReportsExportPreviewModal({
   chartImage = null,
+  chartNotice = null,
   data,
   exportedAt,
   filters,
   onOpenChange,
+  onRetryChartCapture,
   open,
 }: ReportsExportPreviewModalProps) {
   const sections = useMemo(
@@ -132,6 +150,23 @@ export function ReportsExportPreviewModal({
   const [isDownloadingExcel, setIsDownloadingExcel] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [isCapturingChart, setIsCapturingChart] = useState(false);
+  // Bloqueo de reentradas: el ref corta el clic repetido en el mismo instante
+  // (el estado aún no se ha pintado) y el estado deshabilita el botón.
+  const inFlightRef = useRef(false);
+  const coolingRef = useRef<Record<DownloadKind, boolean>>({ excel: false, pdf: false });
+  const cooldownTimersRef = useRef<number[]>([]);
+  const [cooling, setCooling] = useState<Record<DownloadKind, boolean>>({ excel: false, pdf: false });
+
+  useEffect(() => {
+    const timers = cooldownTimersRef.current;
+
+    return () => {
+      for (const timer of timers) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, []);
 
   // Con el modal abierto, si la hoja elegida ya no existe se vuelve a la primera
   // (ajuste de estado durante el render en lugar de un efecto).
@@ -150,41 +185,71 @@ export function ReportsExportPreviewModal({
   const truncatedSections = sections.filter((section) => section.truncationNotice);
   const chartReportName = chartImage ? getReportExportName(filters.view?.activeReportId) : undefined;
 
-  async function handleDownloadExcel() {
-    if (!data || !exportedAt) {
+  /**
+   * Una descarga a la vez y, por botón, una cada `DOWNLOAD_COOLDOWN_MS`: un
+   * doble o triple clic genera un solo archivo.
+   */
+  async function runDownload(
+    kind: DownloadKind,
+    setIsDownloading: (value: boolean) => void,
+    errorMessage: string,
+    download: (image: ChartImage | null) => Promise<void> | void,
+  ) {
+    if (!data || !exportedAt || inFlightRef.current || coolingRef.current[kind]) {
       return;
     }
 
-    setIsDownloadingExcel(true);
+    inFlightRef.current = true;
+    coolingRef.current[kind] = true;
+    setCooling((current) => ({ ...current, [kind]: true }));
+    setIsDownloading(true);
     setDownloadError(null);
 
     try {
-      await downloadReportsExcelFromDataset(data, filters, exportedAt, chartImage);
+      // Sin imagen se intenta capturar otra vez: el gráfico pudo terminar de
+      // cargar con la vista previa ya abierta.
+      const image = chartImage ?? (onRetryChartCapture ? await onRetryChartCapture(0) : null);
+
+      await download(image);
     } catch (error) {
-      setDownloadError(
-        error instanceof Error ? error.message : "No se pudo descargar el Excel.",
-      );
+      console.error(error);
+      // Un fallo al armar el archivo es interno: no se enseña su mensaje.
+      setDownloadError(toReportErrorMessage(error, errorMessage));
     } finally {
-      setIsDownloadingExcel(false);
+      inFlightRef.current = false;
+      setIsDownloading(false);
+      cooldownTimersRef.current.push(
+        window.setTimeout(() => {
+          coolingRef.current[kind] = false;
+          setCooling((current) => ({ ...current, [kind]: false }));
+        }, DOWNLOAD_COOLDOWN_MS),
+      );
     }
   }
 
+  function handleDownloadExcel() {
+    return runDownload("excel", setIsDownloadingExcel, "No se pudo descargar el Excel.", (image) =>
+      data && exportedAt ? downloadReportsExcelFromDataset(data, filters, exportedAt, image) : undefined,
+    );
+  }
+
   function handleDownloadPdf() {
-    if (!data || !exportedAt) {
+    return runDownload("pdf", setIsDownloadingPdf, "No se pudo descargar el PDF.", (image) =>
+      data && exportedAt ? downloadReportsPdfFromDataset(data, filters, exportedAt, image) : undefined,
+    );
+  }
+
+  async function handleRetryChartCapture() {
+    if (!onRetryChartCapture || isCapturingChart) {
       return;
     }
 
-    setIsDownloadingPdf(true);
-    setDownloadError(null);
+    setIsCapturingChart(true);
 
     try {
-      downloadReportsPdfFromDataset(data, filters, exportedAt, chartImage);
-    } catch (error) {
-      setDownloadError(
-        error instanceof Error ? error.message : "No se pudo descargar el PDF.",
-      );
+      await onRetryChartCapture();
     } finally {
-      setIsDownloadingPdf(false);
+      setIsCapturingChart(false);
     }
   }
 
@@ -201,23 +266,41 @@ export function ReportsExportPreviewModal({
       }
       footer={({ close }) => (
         <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {downloadError ? (
-            <p className="text-sm text-error" role="alert">
-              {downloadError}
-            </p>
-          ) : (
-            <p className="text-sm text-on-surface-variant">
-              {sections.length} hojas · descarga opcional
-              {chartReportName ? ` · incluye el gráfico de «${chartReportName}»` : ""}
-            </p>
-          )}
+          <div className="flex min-w-0 flex-col gap-2">
+            {downloadError ? (
+              <p className="text-sm text-error" role="alert">
+                {downloadError}
+              </p>
+            ) : (
+              <p className="text-sm text-on-surface-variant">
+                {sections.length} hojas · descarga opcional
+                {chartReportName ? ` · incluye el gráfico de «${chartReportName}»` : ""}
+              </p>
+            )}
+            {chartNotice && !chartImage ? (
+              <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground" role="status">
+                <span>{chartNotice}</span>
+                {onRetryChartCapture ? (
+                  <Button
+                    disabled={isCapturingChart || isDownloading}
+                    onClick={() => void handleRetryChartCapture()}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    {isCapturingChart ? "Capturando..." : "Reintentar captura"}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Button disabled={isDownloading} onClick={close} type="button" variant="outline">
               Cerrar
             </Button>
             <Button
               className="gap-2"
-              disabled={!data || isDownloading}
+              disabled={!data || isDownloading || cooling.pdf}
               onClick={() => void handleDownloadPdf()}
               type="button"
               variant="outline"
@@ -231,7 +314,7 @@ export function ReportsExportPreviewModal({
             </Button>
             <Button
               className="gap-2"
-              disabled={!data || isDownloading}
+              disabled={!data || isDownloading || cooling.excel}
               onClick={() => void handleDownloadExcel()}
               type="button"
               variant="primary"
