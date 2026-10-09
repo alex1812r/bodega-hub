@@ -42,14 +42,20 @@ function isSeriesPurchase(status: string) {
 
 /**
  * `series` sigue la regla del servidor: solo con `from` + `to` y (`groupBy` o
- * `compare`), sin ventas canceladas ni devueltas. La tabla (`items`) del mock no
- * cambia.
+ * `compare`), sin ventas canceladas ni devueltas. La tabla (`items`) se filtra
+ * por `from` / `to` igual que el servidor (`sale_date` dentro del rango), para
+ * que tabla y gráfico hablen del mismo periodo.
  */
 export function getDailySalesReport(searchParams: URLSearchParams, storeIdOrIds: string | string[]) {
   const storeIds = toStoreIds(storeIdOrIds);
   const seriesRequest = resolveReportSeriesRequest(parseReportSeriesParams(searchParams));
+  const from = searchParams.get("from");
+  const to = searchParams.get("to");
   const items = mockSales
-    .filter((sale) => matchesStoreIds(sale.storeId, storeIds))
+    .filter(
+      (sale) =>
+        matchesStoreIds(sale.storeId, storeIds) && isWithinDateRange(sale.createdAt, from, to),
+    )
     .map((sale) => ({
       paidVes: sale.paidVes,
       saleDate: toCaracasDateKey(sale.createdAt),
@@ -107,8 +113,13 @@ function toGrossProfitRow(sale: (typeof mockSales)[number]) {
 export function getGrossProfitReport(searchParams: URLSearchParams, storeIdOrIds: string | string[]) {
   const storeIds = toStoreIds(storeIdOrIds);
   const seriesRequest = resolveReportSeriesRequest(parseReportSeriesParams(searchParams));
+  const from = searchParams.get("from");
+  const to = searchParams.get("to");
   const sales = mockSales.filter((sale) => matchesStoreIds(sale.storeId, storeIds));
-  const items = sales.map(toGrossProfitRow);
+  // La tabla, como en el servidor, solo trae las filas del rango pedido.
+  const items = sales
+    .filter((sale) => isWithinDateRange(sale.createdAt, from, to))
+    .map(toGrossProfitRow);
 
   const list: PaginatedList<(typeof items)[number]> & { series?: GrossProfitSeries } = paginateList(
     items,
