@@ -70,6 +70,11 @@ import { roundMoney } from "@/shared/utils/currency";
 
 import { PurchaseCreatePage } from "./page";
 
+/** CNF-01: «Confirmar Compra» abre la confirmación; la compra se envía con el botón del modal. */
+function acceptConfirmation() {
+  fireEvent.click(screen.getByRole("button", { name: /^Registrar (compra|pedido)$/ }));
+}
+
 const BARCODE = "7501234567890";
 const CATEGORY_PCT = 16;
 
@@ -209,6 +214,7 @@ async function buyWithoutTyping(
   }
 
   fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+  acceptConfirmation();
   await waitFor(() => expect(server.posted).toHaveLength(already + 1));
   await waitFor(() => expect(mockPush).toHaveBeenCalledWith(`/purchases/purchase-${already + 1}`));
   cleanup();

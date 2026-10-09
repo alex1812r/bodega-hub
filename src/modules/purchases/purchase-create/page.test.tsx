@@ -201,6 +201,11 @@ import { ToastProvider } from "@/shared/components/Toast";
 import { purchaseLockOnAddStorageKey } from "./hooks/usePurchaseLockOnAdd";
 import { PurchaseCreatePage } from "./page";
 
+/** CNF-01: «Confirmar Compra» abre la confirmación; la compra se envía con el botón del modal. */
+function acceptConfirmation() {
+  fireEvent.click(screen.getByRole("button", { name: /^Registrar (compra|pedido)$/ }));
+}
+
 // Estos tests son anteriores al bloqueo de líneas (COM-12, en `page.lines.test.tsx`):
 // con "Bloquear al agregar" apagado, agregar una línea no bloquea las anteriores.
 beforeEach(() => {
@@ -227,11 +232,13 @@ describe("PurchaseCreatePage · idempotencia (C6)", () => {
 
     renderWithCart();
 
-    const confirm = screen.getByRole("button", { name: /Confirmar Compra/ });
-    fireEvent.click(confirm);
-    fireEvent.click(confirm);
+    // CNF-01: el doble clic que envía es el del botón de la confirmación.
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    const register = screen.getByRole("button", { name: "Registrar compra" });
+    fireEvent.click(register);
+    fireEvent.click(register);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /Confirmando/ })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /Procesando/ })).toBeDisabled());
     expect(api.posts).toHaveLength(1);
     expect(api.posts[0]?.url).toBe("/api/purchases");
     expect(api.posts[0]?.body).toMatchObject({
@@ -255,10 +262,12 @@ describe("PurchaseCreatePage · idempotencia (C6)", () => {
     renderWithCart();
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
-    await screen.findByText(/No pudimos conectar con el servidor/);
+    acceptConfirmation();
+    // CNF-01: el error se lee en la confirmación, que sigue abierta para reintentar.
+    await within(screen.getByRole("dialog")).findByText(/No pudimos conectar con el servidor/);
     expect(mockPush).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    acceptConfirmation();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
 
     expect(api.posts).toHaveLength(2);
@@ -277,7 +286,8 @@ describe("PurchaseCreatePage · idempotencia (C6)", () => {
     renderWithCart();
 
     const confirm = screen.getByRole("button", { name: /Confirmar Compra/ });
-    await user.dblClick(confirm);
+    await user.click(confirm);
+    await user.dblClick(screen.getByRole("button", { name: "Registrar compra" }));
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
 
     await user.click(confirm);
@@ -304,6 +314,7 @@ describe("PurchaseCreatePage · idempotencia (C6)", () => {
     const confirm = screen.getByRole("button", { name: /Confirmar Compra/ });
     expect(confirm).not.toHaveAttribute("aria-busy", "true");
     fireEvent.click(confirm);
+    acceptConfirmation();
 
     await waitFor(() => expect(confirm).toBeDisabled());
     expect(confirm).toHaveAttribute("aria-busy", "true");
@@ -323,10 +334,15 @@ describe("PurchaseCreatePage · idempotencia (C6)", () => {
     renderWithCart();
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    acceptConfirmation();
     await screen.findByText(/No pudimos conectar con el servidor/);
 
+    // CNF-01: para cambiar la compra hay que salir de la confirmación.
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "agregar producto con empaque" }));
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    acceptConfirmation();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
 
     expect(api.posts).toHaveLength(2);
@@ -463,6 +479,7 @@ describe("PurchaseCreatePage · buscador sobre todos los productos activos (COM-
     await screen.findByLabelText("Cantidad de Harina PAN");
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    acceptConfirmation();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
 
     const items = api.posts[0]?.body.items as Array<Record<string, unknown>>;
@@ -500,6 +517,7 @@ describe("PurchaseCreatePage · buscador sobre todos los productos activos (COM-
     expect(urls.some((url) => url.startsWith("/api/suppliers/cont-supplier/products?"))).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    acceptConfirmation();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-2"));
     expect(api.posts[0]?.body.items).toEqual([
       expect.objectContaining({ productId: "prod-suelta", quantity: 1, taxRate: 16, unitCostRef: 1 }),
@@ -534,6 +552,7 @@ describe("PurchaseCreatePage · buscador sobre todos los productos activos (COM-
     expect(await screen.findByLabelText(/^Cantidad de /)).toHaveValue("1");
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    acceptConfirmation();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-3"));
     expect(api.posts[0]?.body.items).toEqual([
       expect.objectContaining({ productId: "prod-suelta", quantity: 1 }),
@@ -627,6 +646,7 @@ function renderTwoLinePurchase() {
 async function confirmAndGetBody(api: ReturnType<typeof installFetchStub>) {
   api.respondToNextPost({ data: { id: "purchase-moneda" } });
   fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+  acceptConfirmation();
   await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-moneda"));
 
   return api.posts[0]?.body;
@@ -1207,6 +1227,8 @@ describe("PurchaseCreatePage · alícuota de IVA por línea (COM-11)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
 
+    // CNF-01: con el formulario inválido la confirmación no se abre.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
       screen.getByText("Elige una alícuota en cada línea antes de confirmar la compra."),
     ).toBeInTheDocument();

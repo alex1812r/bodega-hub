@@ -92,6 +92,11 @@ import { ToastProvider } from "@/shared/components/Toast";
 
 import { PurchaseCreatePage } from "./page";
 
+/** CNF-01: «Confirmar Compra» abre la confirmación; la compra se envía con el botón del modal. */
+function acceptConfirmation() {
+  fireEvent.click(screen.getByRole("button", { name: /^Registrar (compra|pedido)$/ }));
+}
+
 const categories = [
   { id: "cat-bebidas", isActive: true, name: "Bebidas", taxRate: 16 },
   { id: "cat-viveres", isActive: true, name: "Víveres", taxRate: 0 },
@@ -293,6 +298,7 @@ describe("PurchaseCreatePage · Nuevo producto desde la compra (COM-03)", () => 
 
     api.respondToNextPost({ data: { id: "purchase-nueva" } });
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    acceptConfirmation();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
 
     const items = api.posts[1]?.body.items as Array<Record<string, unknown>>;

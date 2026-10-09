@@ -133,6 +133,11 @@ import {
 import { ToastProvider } from "@/shared/components/Toast";
 
 import { PurchaseCreatePage } from "./page";
+
+/** CNF-01: «Confirmar Compra» abre la confirmación; la compra se envía con el botón del modal. */
+function acceptConfirmation() {
+  fireEvent.click(screen.getByRole("button", { name: /^Registrar (compra|pedido)$/ }));
+}
 import { purchaseDraftStorageKey } from "./utils/purchaseDraftStorage";
 
 const SESSION = { storeId: "store-1", userId: "user-1" };
@@ -362,6 +367,7 @@ describe("PurchaseCreatePage · reposición de stock bajo (INV-05, receptor)", (
     });
 
     click(/Confirmar Compra/);
+    acceptConfirmation();
     await waitFor(() => expect(api.posts).toHaveLength(1));
     expect(api.posts[0]).toMatchObject({ status: "recibido", supplierId: "cont-supplier" });
     expect(
@@ -589,10 +595,13 @@ describe("PurchaseCreatePage · reposición con una compra en curso (INV-05 + bo
 
     await waitFor(() => expect(lineTexts()).toHaveLength(1));
 
-    const confirm = screen.getByRole("button", { name: /Confirmar Compra/ });
+    // CNF-01: el doble clic que envía es el del botón de la confirmación.
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
 
-    fireEvent.click(confirm);
-    fireEvent.click(confirm);
+    const register = screen.getByRole("button", { name: "Registrar compra" });
+
+    fireEvent.click(register);
+    fireEvent.click(register);
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
     expect(api.posts).toHaveLength(1);

@@ -86,6 +86,23 @@ import { ToastProvider } from "@/shared/components/Toast";
 
 import { PurchaseCreatePage } from "./page";
 
+/** CNF-01: «Confirmar Compra» abre la confirmación; la compra se envía con el botón del modal. */
+function acceptConfirmation() {
+  fireEvent.click(screen.getByRole("button", { name: /^Registrar (compra|pedido)$/ }));
+}
+
+/**
+ * CNF-01: lo que contesta el servidor se lee primero en la confirmación, que sigue
+ * abierta para reintentar; al cerrarla, el aviso queda junto al botón Confirmar.
+ */
+async function closeConfirmationWithError(message: RegExp | string) {
+  await waitFor(() =>
+    expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent(message),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+}
+
 const TITLE = "No pudimos registrar la compra";
 const NETWORK_MESSAGE =
   "No pudimos conectar con el servidor. Revisa tu conexión y vuelve a intentar; no se duplicará la compra.";
@@ -145,6 +162,8 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
     renderPage();
     addSupplierAndProduct();
     fireEvent.click(confirm());
+    acceptConfirmation();
+    await closeConfirmationWithError(SERVER_MESSAGE);
 
     await waitFor(() => expect(confirmAlert()).toHaveTextContent(TITLE));
     expect(confirmAlert()).toHaveTextContent(SERVER_MESSAGE);
@@ -162,6 +181,8 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
     renderPage();
     addSupplierAndProduct();
     fireEvent.click(confirm());
+    acceptConfirmation();
+    await closeConfirmationWithError("Conflicto.");
 
     await waitFor(() => expect(confirmAlert()).toHaveTextContent("Conflicto."));
 
@@ -176,6 +197,8 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
   });
 
   // COM-F11 · P3-2: el botón se deshabilita durante el envío y el navegador le quita el foco.
+  // CNF-01: el envío ocurre en la confirmación; tras el error su botón queda listo para
+  // reintentar y, al cerrarla, el foco vuelve al botón Confirmar.
   it("tras un error del servidor el foco vuelve al botón Confirmar", async () => {
     const api = installFetchStub(() => null);
     const release = api.holdNextPost({ error: { code: "CONFLICT", message: "Conflicto." } }, 409);
@@ -184,8 +207,9 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
     addSupplierAndProduct();
     confirm().focus();
     fireEvent.click(confirm());
+    acceptConfirmation();
 
-    const submitting = await screen.findByRole("button", { name: "Confirmando..." });
+    const submitting = await screen.findByRole("button", { name: /Procesando/ });
 
     expect(submitting).toBeDisabled();
     // Lo que hace el navegador con el botón deshabilitado: el foco cae al documento. jsdom no
@@ -202,8 +226,13 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
       release();
     });
 
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Registrar compra" })).toBeEnabled(),
+    );
+    await closeConfirmationWithError("Conflicto.");
+
     await waitFor(() => expect(confirmAlert()).toHaveTextContent("Conflicto."));
-    expect(confirm()).toHaveFocus();
+    await waitFor(() => expect(confirm()).toHaveFocus());
   });
 
   it("mientras se corrige el pago no se le quita el foco al campo que se está editando", async () => {
@@ -213,6 +242,8 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
     renderPage();
     addSupplierAndProduct();
     fireEvent.click(confirm());
+    acceptConfirmation();
+    await closeConfirmationWithError("Conflicto.");
     await waitFor(() => expect(confirmAlert()).toHaveTextContent("Conflicto."));
 
     const notes = screen.getByPlaceholderText("Nro. de factura, condiciones...");
@@ -233,6 +264,9 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
     renderPage();
     addSupplierAndProduct();
     fireEvent.click(confirm());
+    acceptConfirmation();
+    // Tal cual también dentro de la confirmación.
+    await closeConfirmationWithError("La compra ya fue registrada con otro contenido.");
 
     await waitFor(() =>
       expect(confirmAlert()).toHaveTextContent("La compra ya fue registrada con otro contenido."),
@@ -246,6 +280,8 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
     renderPage();
     addSupplierAndProduct();
     fireEvent.click(confirm());
+    acceptConfirmation();
+    await closeConfirmationWithError(NETWORK_MESSAGE);
 
     await waitFor(() => expect(confirmAlert()).toHaveTextContent(NETWORK_MESSAGE));
     expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
@@ -256,6 +292,8 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
     renderPage();
 
     fireEvent.click(confirm());
+    // CNF-01: con el formulario inválido la confirmación no se abre.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(confirmAlert()).toHaveTextContent(
       "Selecciona un proveedor antes de confirmar la compra.",
     );
@@ -267,6 +305,7 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
 
     fireEvent.click(screen.getByRole("button", { name: "elegir proveedor" }));
     fireEvent.click(confirm());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(confirmAlert()).toHaveTextContent(
       "Agrega al menos un producto con cantidad y costo válidos.",
     );
@@ -279,6 +318,7 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
     addSupplierAndProduct();
     fireEvent.click(screen.getByRole("button", { name: /Pagar ahora/ }));
     fireEvent.click(confirm());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     const MESSAGE = /Completa los datos del pago o desactiva «Pagar ahora»/;
     const card = confirm().closest("section") as HTMLElement;
@@ -299,6 +339,8 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
     renderPage();
     addSupplierAndProduct();
     fireEvent.click(confirm());
+    acceptConfirmation();
+    await closeConfirmationWithError(NETWORK_MESSAGE);
 
     await waitFor(() => expect(confirmAlert()).toHaveTextContent(NETWORK_MESSAGE));
   });
@@ -311,10 +353,17 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
     renderPage();
     addSupplierAndProduct();
     fireEvent.click(confirm());
-    await waitFor(() => expect(confirmAlert()).toBeInTheDocument());
+    acceptConfirmation();
+    // CNF-01: el aviso y el reintento están en la confirmación.
+    const dialog = screen.getByRole("dialog");
 
-    fireEvent.click(confirm());
-    await waitFor(() => expect(screen.queryByText(TITLE)).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(within(dialog).getByRole("alert")).toHaveTextContent(NETWORK_MESSAGE),
+    );
+
+    acceptConfirmation();
+    await waitFor(() => expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument());
+    expect(screen.queryByText(TITLE)).not.toBeInTheDocument();
 
     await act(async () => {
       release();
@@ -338,6 +387,8 @@ describe("PurchaseCreatePage · confirmar sin conexión (COM-F10 · F-A5)", () =
     addSupplierAndProduct();
     act(() => onlineManager.setOnline(false));
     fireEvent.click(confirm());
+    acceptConfirmation();
+    await closeConfirmationWithError(NETWORK_MESSAGE);
 
     await waitFor(() => expect(confirmAlert()).toHaveTextContent(NETWORK_MESSAGE));
     expect(confirm()).toBeEnabled();
@@ -353,6 +404,7 @@ describe("PurchaseCreatePage · confirmar sin conexión (COM-F10 · F-A5)", () =
     expect(mockPush).not.toHaveBeenCalled();
 
     fireEvent.click(confirm());
+    acceptConfirmation();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
 
     expect(api.posts).toHaveLength(2);

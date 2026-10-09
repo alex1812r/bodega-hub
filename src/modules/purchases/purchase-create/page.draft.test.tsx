@@ -162,6 +162,11 @@ import {
 import { ToastProvider } from "@/shared/components/Toast";
 
 import { PurchaseCreatePage } from "./page";
+
+/** CNF-01: «Confirmar Compra» abre la confirmación; la compra se envía con el botón del modal. */
+function acceptConfirmation() {
+  fireEvent.click(screen.getByRole("button", { name: /^Registrar (compra|pedido)$/ }));
+}
 import {
   purchaseDraftStorageKey,
   purchaseNewDraftStorageKey,
@@ -528,6 +533,7 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
     expect(storedDraft()).not.toBeNull();
 
     click(/Confirmar Compra/);
+    acceptConfirmation();
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
     expect(api.posts).toHaveLength(1);
@@ -554,6 +560,7 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
       expect(banner()).not.toBeInTheDocument();
 
       click(/Confirmar Compra/);
+      acceptConfirmation();
       await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
       expect(api.posts).toHaveLength(1);
     } finally {
@@ -591,6 +598,7 @@ describe("PurchaseCreatePage · ProcessGuard (COM-09, regla 14)", () => {
     click("elegir proveedor");
     click("agregar cable");
     click(/Confirmar Compra/);
+    acceptConfirmation();
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
     expect(mockPush).toHaveBeenCalledTimes(1);
@@ -631,6 +639,7 @@ describe("PurchaseCreatePage · duplicar compra (COM-09)", () => {
     // No copia notas, descuento, estado ni pagos de la compra original.
     expect(screen.getByPlaceholderText("Nro. de factura, condiciones...")).toHaveValue("");
     click(/Confirmar Compra/);
+    acceptConfirmation();
     await waitFor(() => expect(api.posts).toHaveLength(1));
     expect(api.posts[0]).toMatchObject({ discountRef: 0, status: "recibido", supplierId: "cont-supplier" });
     expect(api.posts[0]).not.toHaveProperty("notes");
@@ -989,6 +998,7 @@ describe("PurchaseCreatePage · compra nueva con un borrador guardado sin decidi
 
     startNewPurchaseOverSavedDraft();
     click(/Confirmar Compra/);
+    acceptConfirmation();
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
     expect(api.posts).toHaveLength(1);

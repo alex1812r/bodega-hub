@@ -26,6 +26,7 @@ import {
 } from "@/shared/payments/paymentMethods";
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
+import { PurchaseConfirmModal } from "./components/PurchaseConfirmModal";
 import { PurchaseCreateHeader } from "./components/PurchaseCreateHeader";
 import { PurchaseDraftBanner } from "./components/PurchaseDraftBanner";
 import { PurchaseFormNotices } from "./components/PurchaseFormNotices";
@@ -59,6 +60,7 @@ import { resolvePurchaseProducts } from "./services/resolvePurchaseProducts";
 import type { PurchaseCostCurrency, PurchaseDraftItem } from "./types";
 import { buildUnlinkedCatalogProduct } from "./utils/buildPurchaseCatalog";
 import { buildPurchaseLine, nextPurchaseLineId } from "./utils/buildPurchaseLine";
+import { type PurchaseConfirmInput, purchaseConfirmKey } from "./utils/purchaseConfirmEffect";
 import { describeConfirmError } from "./utils/purchaseConfirmError";
 import {
   buildDuplicatedPurchaseLines,
@@ -96,6 +98,9 @@ import {
 } from "./utils/purchaseLineTax";
 
 const LINE_TAX_MISSING_MESSAGE = "Elige una alícuota en cada línea antes de confirmar la compra.";
+
+const PURCHASE_CHANGED_MESSAGE =
+  "La compra cambió mientras la confirmabas: revisa las líneas y el resumen, y vuelve a confirmar.";
 
 /** Compra de origen cuyo proveedor ya no sirve: sus líneas esperan a que se elija otro. */
 type PendingDuplicate = {
@@ -190,6 +195,8 @@ export function PurchaseCreatePage() {
     id: string;
     name?: string;
   } | null>(null);
+  // Confirmación abierta (CNF-01): la huella de lo que el modal mostraba al abrirse.
+  const [confirmKey, setConfirmKey] = useState<string | null>(null);
   // Compra ya creada: ni se vuelve a guardar el borrador ni se pregunta al salir.
   const [confirmed, setConfirmed] = useState(false);
   const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
@@ -718,52 +725,69 @@ export function PurchaseCreatePage() {
     }
   }
 
-  async function handleSubmit() {
-    setConfirmAttempt((attempt) => attempt + 1);
+  // Mismos helpers que pintan la tabla y el resumen: lo que se envia (y lo que
+  // muestra la confirmación) es exactamente lo que el usuario vio.
+  const submitTotals = sumDraftPurchaseTotals(
+    validLines.map((line) => line.item),
+    activeRateVes,
+  );
+  const submitTotalVes = Math.max(
+    0,
+    roundMoney(submitTotals.subtotalVes - discountVes + submitTotals.taxVes),
+  );
+  // Sección abierta = el usuario quiere pagar: incompleta o inválida no se envía nada.
+  const initialPayment =
+    canPayNow && payNow ? resolveInitialPayment(paymentValues, submitTotalVes, activeRateVes) : null;
+  const confirmInput: PurchaseConfirmInput = {
+    discountRef,
+    getProductName: (productId) => getItemMeta(productId).name,
+    lines: validLines,
+    payment: initialPayment && "payment" in initialPayment ? initialPayment.payment : null,
+    rateVes: activeRateVes,
+    recipes: packConversions.data,
+    status,
+    supplierName,
+  };
 
+  // Una línea que cambia con la confirmación abierta (llegó un escaneo en cola, cambió
+  // la tasa): el modal se cierra, nunca se confirman cifras que ya no son las de la compra.
+  if (
+    confirmKey !== null &&
+    !createPurchase.isPending &&
+    confirmKey !== purchaseConfirmKey(confirmInput)
+  ) {
+    setConfirmKey(null);
+    setFormError(PURCHASE_CHANGED_MESSAGE);
+  }
+
+  /** Validaciones de «Confirmar Compra» y, si pasan, lo que se envía; `null` = queda un aviso. */
+  function prepareSubmission() {
     if (!supplierId) {
       setFormError("Selecciona un proveedor antes de confirmar la compra.");
-      return;
+      return null;
     }
 
     if (validLines.length === 0) {
       setFormError("Agrega al menos un producto con cantidad y costo válidos.");
-      return;
+      return null;
     }
 
     if (lines.some((line) => line.tax.code === null)) {
       setFormError(LINE_TAX_MISSING_MESSAGE);
-      return;
+      return null;
     }
 
     setFormError(null);
 
-    // Mismos helpers que pintan la tabla y el resumen: lo que se envia es
-    // exactamente lo que el usuario vio.
-    const submitTotals = sumDraftPurchaseTotals(
-      validLines.map((line) => line.item),
-      activeRateVes,
-    );
-
     if (isPurchaseDiscountOverSubtotal(discountRef, submitTotals.subtotalRef)) {
       setFormError(PURCHASE_DISCOUNT_OVER_SUBTOTAL_MESSAGE);
-      return;
+      return null;
     }
-
-    const submitTotalVes = Math.max(
-      0,
-      roundMoney(submitTotals.subtotalVes - discountVes + submitTotals.taxVes),
-    );
-    // Sección abierta = el usuario quiere pagar: incompleta o inválida no se envía nada.
-    const initialPayment =
-      canPayNow && payNow
-        ? resolveInitialPayment(paymentValues, submitTotalVes, activeRateVes)
-        : null;
 
     if (initialPayment && "error" in initialPayment) {
       setPaymentSubmitted(true);
       setPaymentError(initialPayment.error);
-      return;
+      return null;
     }
 
     setPaymentError(null);
@@ -787,6 +811,29 @@ export function PurchaseCreatePage() {
       taxRef: submitTotals.taxRef,
       taxVes: submitTotals.taxVes,
     };
+
+    return { initialPayment, input };
+  }
+
+  // «Confirmar Compra»: las validaciones van antes; con el formulario inválido el modal no se abre.
+  function handleReview() {
+    setConfirmAttempt((attempt) => attempt + 1);
+
+    if (prepareSubmission()) {
+      setConfirmKey(purchaseConfirmKey(confirmInput));
+    }
+  }
+
+  // Botón del modal: envía la compra tal como el modal la mostró.
+  async function handleSubmit() {
+    const submission = prepareSubmission();
+
+    if (!submission) {
+      setConfirmKey(null);
+      return;
+    }
+
+    const { initialPayment, input } = submission;
     // Clave de idempotencia del intento; null = hay un envío en vuelo (doble clic) o la
     // compra ya se confirmó y la página espera a que la navegación la desmonte.
     // El pago forma parte de la huella: si cambia tras un fallo, cambian las dos claves.
@@ -816,6 +863,7 @@ export function PurchaseCreatePage() {
       requestAttempt.succeed();
       // La compra ya existe: el borrador sobra y salir no debe preguntar.
       setConfirmed(true);
+      setConfirmKey(null);
       draft.clear();
 
       // La compra existe aunque el pago no haya entrado: se sale del formulario igual
@@ -837,10 +885,9 @@ export function PurchaseCreatePage() {
   const shownPaymentError = canPayNow && payNow ? paymentError : null;
   // Un solo motivo junto al botón: la validación propia, el pago incompleto o lo que
   // contestó (o no) el servidor al último envío.
-  const confirmError =
-    formError ??
-    shownPaymentError ??
-    (createPurchase.error ? describeConfirmError(createPurchase.error) : null);
+  const submitError = createPurchase.error ? describeConfirmError(createPurchase.error) : null;
+  // Con la confirmación abierta, lo que contestó el servidor se lee en el modal.
+  const confirmError = formError ?? shownPaymentError ?? (confirmKey === null ? submitError : null);
 
   // Sin tasa la compra de origen no puede llegar al formulario: no se espera para siempre.
   const duplicateError = duplicate.error ?? (duplicate.isLoading ? exchangeRate.error : null);
@@ -1008,7 +1055,7 @@ export function PurchaseCreatePage() {
             editedLines={editedLines}
             isConfirmed={confirmed}
             isSubmitting={createPurchase.isPending}
-            onConfirm={() => void handleSubmit()}
+            onConfirm={handleReview}
             onCostCurrencyChange={handleCostCurrencyChange}
             onDiscountChange={setDiscountRef}
             onDiscountScan={(scan) => pickerRef.current?.scan(scan)}
@@ -1034,6 +1081,19 @@ export function PurchaseCreatePage() {
           returnFocusTo={newProductOpenerRef}
         />
       ) : null}
+      <PurchaseConfirmModal
+        error={submitError}
+        input={confirmInput}
+        isPending={createPurchase.isPending}
+        onConfirm={handleSubmit}
+        onOpenChange={(open) => {
+          if (!open) {
+            setConfirmKey(null);
+          }
+        }}
+        open={confirmKey !== null}
+        supplierId={supplierId}
+      />
       <ConfirmActionModal
         confirmLabel="Quitar líneas y cambiar"
         description={
