@@ -47,10 +47,14 @@ const stories = jest.requireActual<StoryModule>("./page.stories");
 
 type ReportPage = {
   byHour?: unknown[];
+  byReason?: { reason: string }[];
+  groupBy?: string;
+  inventoryBasis?: string;
+  costBasis?: string;
   items: unknown[];
   matrix?: unknown[][];
   series?: { totals: { current: Record<string, number> } };
-  summary?: { buckets?: unknown[]; paymentCount: number };
+  summary?: { buckets?: unknown[]; paymentCount: number; productsCount?: number };
   total?: number;
   totals?: unknown;
 };
@@ -174,6 +178,81 @@ describe("Storybook · stories de /reports", () => {
 
     it("ventas por hora sin rango responde 400, como la ruta", async () => {
       expect((await mockedGet("/api/reports/sales-by-hour", {})).status).toBe(400);
+    });
+  });
+
+  describe("reportes de inventario (REP-07b)", () => {
+    it("hay una story por reporte nuevo, cada una con su `report` en la URL", () => {
+      const queryOf = (story: Story) => story.parameters?.nextjs?.navigation?.query;
+
+      expect(queryOf(stories.DeadStock)).toEqual({ days: "1", report: "dead-stock" });
+      expect(queryOf(stories.DeadStockEmpty)).toEqual({ report: "dead-stock" });
+      expect(queryOf(stories.DeadStockMobile)).toEqual({ days: "1", report: "dead-stock" });
+      expect(queryOf(stories.StockTurnover)?.report).toBe("stock-turnover");
+      expect(queryOf(stories.StockTurnoverByCategory)).toEqual({
+        preset: "last_30_days",
+        report: "stock-turnover",
+        turnoverBy: "category",
+      });
+      expect(queryOf(stories.StockAdjustments)?.report).toBe("stock-adjustments");
+      expect(queryOf(stories.PurchasesAllStatuses)?.status).toBe("all");
+    });
+
+    it("productos sin movimiento: la story trae productos, la de 30 días es el vacío y `days` se valida", async () => {
+      const { data, status } = await mockedGet("/api/reports/dead-stock", { days: "1", limit: "10", skip: "0" });
+
+      expect(status).toBe(200);
+      expect(data.items.length).toBeLessThanOrEqual(10);
+      expect(data.summary?.productsCount).toBe(data.total);
+      expect(data.total).toBeGreaterThan(0);
+
+      // Sin `days` son 30: los datos de prueba no tienen nada parado tanto tiempo.
+      const byDefault = await mockedGet("/api/reports/dead-stock", {});
+
+      expect(byDefault.status).toBe(200);
+      expect(byDefault.data.total).toBe(0);
+      expect((await mockedGet("/api/reports/dead-stock", { days: "0" })).status).toBe(400);
+      expect((await mockedGet("/api/reports/dead-stock", { days: "2.5" })).status).toBe(400);
+    });
+
+    it("rotación: por producto y por categoría (`groupBy` del endpoint), con totales; sin rango, 400", async () => {
+      const byProduct = await mockedGet("/api/reports/stock-turnover", { ...last30Days, groupBy: "product" });
+      const byCategory = await mockedGet("/api/reports/stock-turnover", { ...last30Days, groupBy: "category" });
+
+      expect(byProduct.status).toBe(200);
+      expect(byProduct.data.groupBy).toBe("product");
+      expect(byProduct.data.inventoryBasis).toBe("average_opening_closing");
+      expect(byProduct.data.items.length).toBeGreaterThan(0);
+      expect(byCategory.status).toBe(200);
+      expect(byCategory.data.groupBy).toBe("category");
+      // Los totales no dependen de la agrupación.
+      expect(byCategory.data.totals).toEqual(byProduct.data.totals);
+      expect((await mockedGet("/api/reports/stock-turnover", {})).status).toBe(400);
+      expect((await mockedGet("/api/reports/stock-turnover", { ...last30Days, groupBy: "week" })).status).toBe(400);
+    });
+
+    it("ajustes y mermas: la story trae movimientos, motivos y una serie sin huecos; sin rango, 400", async () => {
+      const { data, status } = await mockedGet("/api/reports/stock-adjustments", {
+        ...last30Days,
+        groupBy: "auto",
+      });
+
+      expect(status).toBe(200);
+      expect(data.costBasis).toBe("current_cost");
+      expect(data.items.length).toBeGreaterThan(0);
+      expect(data.byReason?.length).toBeGreaterThan(0);
+      // Aquí series es la lista de periodos, no el objeto de los reportes de serie.
+      expect((data.series as unknown as unknown[]).length).toBeGreaterThan(0);
+      expect((await mockedGet("/api/reports/stock-adjustments", {})).status).toBe(400);
+    });
+
+    it("compras con status=all trae al menos las vigentes; un estado inventado es 400", async () => {
+      const byDefault = await mockedGet("/api/reports/purchases", { ...last30Days, groupBy: "auto" });
+      const all = await mockedGet("/api/reports/purchases", { ...last30Days, groupBy: "auto", status: "all" });
+
+      expect(all.status).toBe(200);
+      expect(all.data.total).toBeGreaterThanOrEqual(byDefault.data.total ?? 0);
+      expect((await mockedGet("/api/reports/purchases", { ...last30Days, status: "anulado" })).status).toBe(400);
     });
   });
 

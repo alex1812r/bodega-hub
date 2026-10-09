@@ -11,12 +11,15 @@ import { ReportsListPage } from "./page";
  * plegable.
  *
  * Todo el estado vive en la URL (`report`, `from`, `to`, `preset`, `groupBy`,
- * `compare`, `supplierId`, `productId`, `bucket`, `contactId`, `currency`,
- * `page`, `limit`): cada historia es un enlace distinto a la misma pantalla.
+ * `compare`, `supplierId`, `status`, `productId`, `bucket`, `contactId`,
+ * `currency`, `days`, `categoryId`, `turnoverBy`, `page`, `limit`): cada
+ * historia es un enlace distinto a la misma pantalla.
  *
  * Los cinco reportes de dinero de REP-06 (ventas por hora, ventas por
  * categoría, cuentas por cobrar, cuentas por pagar y diferencias de cierre)
- * solo aparecen en el catálogo si la sesión tiene sus permisos.
+ * solo aparecen en el catálogo si la sesión tiene sus permisos. Lo mismo los
+ * tres de inventario de REP-07 (productos sin movimiento, rotación y ajustes y
+ * mermas), que piden `reports.view` + `inventory.view`.
  */
 const meta = {
   // Los datos de prueba son de mayo de 2026: con el "hoy" en su último día los
@@ -100,6 +103,75 @@ export const PurchasesBySupplier: Story = {
   },
 };
 
+/** Compras con el filtro de estado en «Todas»: incluye canceladas y devueltas, en tabla y gráfico. */
+export const PurchasesAllStatuses: Story = {
+  name: "Compras: todos los estados",
+  parameters: {
+    nextjs: {
+      navigation: {
+        pathname: "/reports",
+        query: { preset: "last_30_days", report: "purchases", status: "all" },
+      },
+    },
+  },
+};
+
+/**
+ * Productos con stock que llevan N días o más sin venderse, con su capital
+ * inmovilizado. Los datos de prueba son recientes: con `days=1` (valor libre)
+ * hay productos que mostrar.
+ */
+export const DeadStock: Story = {
+  name: "Productos sin movimiento",
+  parameters: {
+    nextjs: { navigation: { pathname: "/reports", query: { days: "1", report: "dead-stock" } } },
+  },
+};
+
+/** Sin parámetros (30 días): en los datos de prueba nada lleva tanto parado, así que es el estado vacío. */
+export const DeadStockEmpty: Story = {
+  name: "Productos sin movimiento: vacío",
+  parameters: {
+    nextjs: { navigation: { pathname: "/reports", query: { report: "dead-stock" } } },
+  },
+};
+
+/** Rotación por producto en los últimos 30 días: barras por rotación y totales del reporte. */
+export const StockTurnover: Story = {
+  name: "Rotación de inventario",
+  parameters: {
+    nextjs: {
+      navigation: { pathname: "/reports", query: { preset: "last_30_days", report: "stock-turnover" } },
+    },
+  },
+};
+
+/** La misma rotación agrupada por categoría (`turnoverBy=category`). */
+export const StockTurnoverByCategory: Story = {
+  name: "Rotación de inventario por categoría",
+  parameters: {
+    nextjs: {
+      navigation: {
+        pathname: "/reports",
+        query: { preset: "last_30_days", report: "stock-turnover", turnoverBy: "category" },
+      },
+    },
+  },
+};
+
+/** Ajustes manuales por motivo (barras) y por periodo (entradas y salidas), valorizados a costo actual. */
+export const StockAdjustments: Story = {
+  name: "Ajustes y mermas",
+  parameters: {
+    nextjs: {
+      navigation: {
+        pathname: "/reports",
+        query: { preset: "last_30_days", report: "stock-adjustments" },
+      },
+    },
+  },
+};
+
 /** Métodos de pago con el rango global (sin selector de fechas propio). */
 export const PaymentMethodsToday: Story = {
   parameters: {
@@ -166,6 +238,24 @@ export const SalesByHourMobile: Story = {
     nextjs: {
       navigation: { pathname: "/reports", query: { preset: "last_30_days", report: "sales-by-hour" } },
     },
+    viewport: {
+      options: {
+        mobile390: {
+          name: "Móvil 390 px",
+          styles: { height: "844px", width: "390px" },
+          type: "mobile",
+        },
+      },
+    },
+  },
+};
+
+/** 390 px: chips de días, valor libre y categoría saltan de línea; la tabla abre plegada. */
+export const DeadStockMobile: Story = {
+  globals: { viewport: { isRotated: false, value: "mobile390" } },
+  name: "390 px: productos sin movimiento",
+  parameters: {
+    nextjs: { navigation: { pathname: "/reports", query: { days: "1", report: "dead-stock" } } },
     viewport: {
       options: {
         mobile390: {

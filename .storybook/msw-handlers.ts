@@ -75,6 +75,16 @@ import {
 } from "../src/modules/reports/services/reports.mock-server";
 import { getPaymentMethodsReport } from "../src/modules/reports/services/paymentMethodsReport.mock-server";
 import {
+  parseDeadStockQuery,
+  parseStockAdjustmentsQuery,
+  parseStockTurnoverQuery,
+} from "../src/modules/reports/services/inventoryReports";
+import {
+  getDeadStockReport,
+  getStockAdjustmentsReport,
+  getStockTurnoverReport,
+} from "../src/modules/reports/services/inventoryReports.mock-server";
+import {
   parseAgingQuery,
   parseCashCloseDifferencesQuery,
   parseMoneyReportRange,
@@ -435,6 +445,20 @@ export const mswHandlers = [
         parseCashCloseDifferencesQuery(searchParams(request)),
         DEFAULT_STORE_ID,
       ),
+    ),
+  ),
+  // Reportes de inventario (REP-07): mismos parseos que sus rutas (400 si el parámetro no vale).
+  http.get("/api/reports/dead-stock", ({ request }) =>
+    fromService(() => getDeadStockReport(parseDeadStockQuery(searchParams(request)), DEFAULT_STORE_ID)),
+  ),
+  http.get("/api/reports/stock-turnover", ({ request }) =>
+    fromService(() =>
+      getStockTurnoverReport(parseStockTurnoverQuery(searchParams(request)), DEFAULT_STORE_ID),
+    ),
+  ),
+  http.get("/api/reports/stock-adjustments", ({ request }) =>
+    fromService(() =>
+      getStockAdjustmentsReport(parseStockAdjustmentsQuery(searchParams(request)), DEFAULT_STORE_ID),
     ),
   ),
   http.get("/api/settings", () => fromService(() => getSettings())),
