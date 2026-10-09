@@ -717,3 +717,83 @@ describe("SaleDetailsPage · «Volver» con returnTo encadenado (DET-03)", () =>
     ).toBe("/sales");
   });
 });
+
+describe("SaleDetailsPage · enlaces cruzados (DET-05)", () => {
+  const LIST = "/sales?status=pagada&page=2";
+  const DETAIL_URL = `/sales/sale-stk607?returnTo=${encodeURIComponent(LIST)}`;
+  const SALE_WITH_LINES: SaleDetail = {
+    ...PAID_SALE,
+    items: [
+      {
+        product: { id: "prod-arroz", name: "Arroz Mary 1 kg", sku: "ARR-001" } as NonNullable<
+          SaleDetail["items"][number]["product"]
+        >,
+        productId: "prod-arroz",
+        quantity: 2,
+        saleId: PAID_SALE.id,
+        subtotalRef: 3,
+        subtotalVes: 2617.18,
+        unitCostRefSnapshot: 1,
+        unitPriceRef: 1.5,
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    mockSearch = `returnTo=${encodeURIComponent(LIST)}`;
+  });
+
+  afterEach(() => {
+    mockSearch = "";
+  });
+
+  function movementsLink() {
+    return screen.queryByRole("link", { name: "Ver movimientos de stock" });
+  }
+
+  it("el producto de cada renglón enlaza a su detalle y vuelve a esta venta con su lista", async () => {
+    mockPermissions = ["products.view"];
+    await renderSale(SALE_WITH_LINES);
+
+    expect(screen.getByRole("link", { name: "Arroz Mary 1 kg" })).toHaveAttribute(
+      "href",
+      `/products/prod-arroz?returnTo=${encodeURIComponent(DETAIL_URL)}`,
+    );
+  });
+
+  it("sin products.view el producto va en texto plano", async () => {
+    mockPermissions = ["inventory.view"];
+    await renderSale(SALE_WITH_LINES);
+
+    // El nombre sale también en el recibo: basta con que ninguno enlace.
+    expect(screen.getAllByText("Arroz Mary 1 kg").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: "Arroz Mary 1 kg" })).not.toBeInTheDocument();
+  });
+
+  it.each<SaleDetail["status"]>(["pagada", "pendiente_pago", "devuelta", "cancelada"])(
+    "venta %s con inventory.view: «Ver movimientos de stock» filtra por la venta",
+    async (status) => {
+      mockPermissions = ["inventory.view"];
+      await renderSale({ ...SALE_WITH_LINES, status });
+
+      expect(movementsLink()).toHaveAttribute(
+        "href",
+        `/inventory/movements?saleId=sale-stk607&returnTo=${encodeURIComponent(DETAIL_URL)}`,
+      );
+    },
+  );
+
+  it("un borrador no movió stock: no ofrece el enlace", async () => {
+    mockPermissions = ["inventory.view"];
+    await renderSale({ ...SALE_WITH_LINES, status: "borrador" });
+
+    expect(movementsLink()).not.toBeInTheDocument();
+  });
+
+  it("sin inventory.view no ofrece el enlace", async () => {
+    mockPermissions = ["products.view", "sales.create"];
+    await renderSale(SALE_WITH_LINES);
+
+    expect(movementsLink()).not.toBeInTheDocument();
+  });
+});

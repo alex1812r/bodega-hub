@@ -294,7 +294,9 @@ export function PurchaseDetailsPage({
       <PurchaseRepriceNotice purchaseId={data.id} />
 
       <PurchaseDetailSections
+        canViewInventory={can("inventory.view")}
         canViewPayments={canViewPayments}
+        canViewProducts={can("products.view")}
         detailUrl={detailUrl}
         paidRef={paidRef}
         pendingRef={pendingRef}

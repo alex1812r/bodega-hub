@@ -1,15 +1,25 @@
 import { Package } from "lucide-react";
+import Link from "next/link";
 
 import type { SaleItemWithProduct } from "../../hooks/useSales";
 import { formatRefUsd } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
+import { withChainedReturnTo } from "@/shared/utils/returnTo";
 
 type SaleDetailProductsTableProps = {
+  /** El rol puede ver productos: el nombre de cada renglón enlaza a su detalle. */
+  canViewProducts?: boolean;
+  /** URL actual del detalle de la venta, con su `returnTo`: a ella vuelve el producto. */
+  detailUrl?: string;
   items: SaleItemWithProduct[];
 };
 
 /** Renglones de la venta; va dentro de la sección "Productos" del detalle. */
-export function SaleDetailProductsTable({ items }: SaleDetailProductsTableProps) {
+export function SaleDetailProductsTable({
+  canViewProducts = false,
+  detailUrl,
+  items,
+}: SaleDetailProductsTableProps) {
   return (
     <div className="w-full overflow-x-auto">
       <table className="w-full min-w-[640px] border-collapse text-left text-sm">
@@ -37,7 +47,19 @@ export function SaleDetailProductsTable({ items }: SaleDetailProductsTableProps)
                   </div>
                   <div className="min-w-0">
                     <p className="font-medium text-foreground">
-                      {item.product?.name ?? item.productId}
+                      {canViewProducts && item.productId ? (
+                        <Link
+                          className="rounded hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          href={withChainedReturnTo(
+                            `/products/${encodeURIComponent(item.productId)}`,
+                            detailUrl,
+                          )}
+                        >
+                          {item.product?.name ?? item.productId}
+                        </Link>
+                      ) : (
+                        (item.product?.name ?? item.productId)
+                      )}
                     </p>
                     {item.product?.sku ? (
                       <p className="text-xs text-on-surface-variant">SKU: {item.product.sku}</p>

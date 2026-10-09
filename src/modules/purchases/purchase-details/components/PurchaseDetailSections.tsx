@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { DocumentStockMovementsLink } from "@/modules/inventory/components/DocumentStockMovementsLink";
 import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 import { formatRefUsd } from "@/shared/utils/currency";
 
@@ -28,6 +29,10 @@ type PurchaseDetailSectionsProps = {
    * cargó: aún no se sabe cuál de los dos historiales toca y no se pinta ninguno.
    */
   canViewPayments?: boolean;
+  /** El rol tiene `inventory.view`: se ofrece «Ver movimientos de stock». */
+  canViewInventory?: boolean;
+  /** El rol tiene `products.view`: cada producto enlaza a su detalle. */
+  canViewProducts?: boolean;
   /** URL actual del detalle, con su `returnTo`: a ella vuelven los enlaces salientes. */
   detailUrl: string;
   paidRef: number;
@@ -46,7 +51,9 @@ function paymentsSummary(count: number | null, paidRef: number) {
 
 /** Productos, pagos, proveedor, fechas e información de la compra, en secciones plegables. */
 export function PurchaseDetailSections({
+  canViewInventory = false,
   canViewPayments,
+  canViewProducts = false,
   detailUrl,
   paidRef,
   pendingRef,
@@ -63,6 +70,8 @@ export function PurchaseDetailSections({
   });
   const isClosed = purchase.status === "cancelado" || purchase.status === "devuelto";
   const itemCount = purchase.items.length;
+  // Solo una compra recibida (o devuelta después) movió stock; un pedido aún no.
+  const movedStock = purchase.status === "recibido" || purchase.status === "devuelto";
 
   return (
     <div className="space-y-4">
@@ -73,6 +82,8 @@ export function PurchaseDetailSections({
         title="Productos"
       >
         <PurchaseDetailProductsTable
+          canViewProducts={canViewProducts}
+          detailUrl={detailUrl}
           discountRef={purchase.discountRef}
           discountVes={purchase.discountVes ?? 0}
           items={purchase.items}
@@ -82,6 +93,14 @@ export function PurchaseDetailSections({
           totalRef={purchase.totalRef}
           totalVes={purchase.totalVes}
         />
+        {canViewInventory && movedStock ? (
+          <div className="flex justify-end border-t border-border px-6 py-3 dark:border-slate-800">
+            <DocumentStockMovementsLink
+              currentUrl={detailUrl}
+              document={{ id: purchase.id, kind: "compra" }}
+            />
+          </div>
+        ) : null}
       </CollapsibleSection>
 
       <CollapsibleSection

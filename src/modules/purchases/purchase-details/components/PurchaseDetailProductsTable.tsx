@@ -1,12 +1,14 @@
 "use client";
 
 import { Package } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
 import type { PurchaseItemMock, ProductMock, PurchaseStatus } from "@/shared/mocks/erp-data";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
+import { withChainedReturnTo } from "@/shared/utils/returnTo";
 
 import type { PurchaseItemDisassemble } from "../../services/purchaseDisassemble";
 import { getPurchaseLineDisassembleLabel } from "../utils/purchaseDetailLabels";
@@ -17,6 +19,10 @@ export type PurchaseDetailItemRow = PurchaseItemMock &
   };
 
 type PurchaseDetailProductsTableProps = {
+  /** El rol puede ver productos: el nombre de cada línea enlaza a su detalle. */
+  canViewProducts?: boolean;
+  /** URL actual del detalle de la compra, con su `returnTo`: a ella vuelve el producto. */
+  detailUrl?: string;
   discountRef: number;
   discountVes: number;
   items: PurchaseDetailItemRow[];
@@ -116,6 +122,8 @@ function lineTaxVes(item: PurchaseDetailItemRow): number {
 }
 
 export function PurchaseDetailProductsTable({
+  canViewProducts = false,
+  detailUrl,
   discountRef,
   discountVes,
   items,
@@ -185,7 +193,19 @@ export function PurchaseDetailProductsTable({
                         />
                         <div className="min-w-0">
                           <p className="font-medium text-foreground">
-                            {item.product?.name ?? item.productId}
+                            {canViewProducts && item.productId ? (
+                              <Link
+                                className="rounded hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                href={withChainedReturnTo(
+                                  `/products/${encodeURIComponent(item.productId)}`,
+                                  detailUrl,
+                                )}
+                              >
+                                {item.product?.name ?? item.productId}
+                              </Link>
+                            ) : (
+                              (item.product?.name ?? item.productId)
+                            )}
                           </p>
                           {item.product?.sku ? (
                             <p className="text-xs text-on-surface-variant">

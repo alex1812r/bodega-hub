@@ -48,6 +48,8 @@ describe("inventoryMovementsParams", () => {
       documentKind: undefined,
       from: undefined,
       productId: undefined,
+      purchaseId: undefined,
+      saleId: undefined,
       to: undefined,
       type: undefined,
     });
@@ -57,6 +59,8 @@ describe("inventoryMovementsParams", () => {
           documentKind: "sin_documento",
           from: "2026-10-01",
           productId: "p-1",
+          purchaseId: "",
+          saleId: "",
           to: "2026-10-05",
           type: "ajuste_salida",
         },
@@ -67,9 +71,44 @@ describe("inventoryMovementsParams", () => {
       documentKind: "sin_documento",
       from: "2026-10-01",
       productId: "p-1",
+      purchaseId: undefined,
+      saleId: undefined,
       to: "2026-10-05",
       type: "ajuste_salida",
     });
+  });
+
+  // DET-05: «Ver movimientos de stock» del detalle de una venta o una compra.
+  it("reads the sale and the purchase of the URL and sends them to the server as exact filters", () => {
+    const state = inventoryMovementsSchema.parse({ purchaseId: "purchase-7", saleId: "sale-1" });
+
+    expect(state).toMatchObject({ purchaseId: "purchase-7", saleId: "sale-1" });
+    expect(toMovementFilters(state, "")).toMatchObject({
+      purchaseId: "purchase-7",
+      saleId: "sale-1",
+    });
+    expect(inventoryMovementsSchema.parse({ saleId: "sale-1" })).toMatchObject({
+      purchaseId: "",
+      saleId: "sale-1",
+    });
+  });
+
+  it("rejects a sale or purchase id longer than 64 characters", () => {
+    expect(inventoryMovementsSchema.shape.saleId.safeParse("x".repeat(65)).success).toBe(false);
+    expect(inventoryMovementsSchema.shape.purchaseId.safeParse("x".repeat(65)).success).toBe(
+      false,
+    );
+    expect(inventoryMovementsSchema.shape.saleId.safeParse("x".repeat(64)).success).toBe(true);
+  });
+
+  it("counts the sale and the purchase of the URL as filters, and clearing removes them", () => {
+    expect(
+      hasInventoryMovementsFilters({ ...INVENTORY_MOVEMENTS_NO_FILTERS, saleId: "sale-1" }),
+    ).toBe(true);
+    expect(
+      hasInventoryMovementsFilters({ ...INVENTORY_MOVEMENTS_NO_FILTERS, purchaseId: "purchase-7" }),
+    ).toBe(true);
+    expect(INVENTORY_MOVEMENTS_NO_FILTERS).toMatchObject({ purchaseId: "", saleId: "" });
   });
 
   it("counts a typed document as a filter even before it is sent", () => {

@@ -1,6 +1,10 @@
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
 
+jest.mock("../../../../shared/auth/usePermission", () => ({
+  usePermission: () => ({ can: () => true, isLoading: false, role: "admin" }),
+}));
+
 import type { InventoryMovement } from "../../hooks/useInventory";
 import { InventoryMovementDetailModal } from "./InventoryMovementDetailModal";
 

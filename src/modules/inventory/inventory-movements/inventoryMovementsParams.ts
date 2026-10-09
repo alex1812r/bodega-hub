@@ -30,8 +30,14 @@ const movementTypeParam = () =>
  * | `productId`    | id de producto                                       | `""`         |
  * | `document`     | texto del número de venta o compra (con debounce)    | `""`         |
  * | `documentKind` | `venta` · `compra` · `conversion` · `sin_documento`  | `""` = todos |
+ * | `saleId`       | id de una venta: solo sus movimientos                | `""`         |
+ * | `purchaseId`   | id de una compra: solo sus movimientos               | `""`         |
  * | `page`         | base 1                                               | `1`          |
  * | `limit`        | tamaño de página                                     | `10`         |
+ *
+ * `saleId` y `purchaseId` no tienen campo en el formulario: llegan en el enlace
+ * «Ver movimientos de stock» del detalle de la venta o la compra, y la pantalla
+ * avisa de que están puestos y deja quitarlos.
  *
  * `returnTo` queda reservado para "Volver": no es de este schema, así que
  * `useUrlListState` lo conserva sin tocarlo.
@@ -43,6 +49,8 @@ export const inventoryMovementsSchema = z.object({
   productId: listParams.text(64),
   document: listParams.text(100),
   documentKind: listParams.oneOf(["", "venta", "compra", "conversion", "sin_documento"], ""),
+  saleId: listParams.text(64),
+  purchaseId: listParams.text(64),
   page: listParams.page(),
   limit: listParams.limit(),
 });
@@ -60,6 +68,8 @@ export const INVENTORY_MOVEMENTS_NO_FILTERS: InventoryMovementsFilterState = {
   documentKind: "",
   from: "",
   productId: "",
+  purchaseId: "",
+  saleId: "",
   to: "",
   type: "",
 };
@@ -71,7 +81,9 @@ export function hasInventoryMovementsFilters(state: InventoryMovementsFilterStat
     state.to !== "" ||
     state.productId !== "" ||
     state.document.trim() !== "" ||
-    state.documentKind !== ""
+    state.documentKind !== "" ||
+    state.saleId !== "" ||
+    state.purchaseId !== ""
   );
 }
 
@@ -93,7 +105,10 @@ export function isMovementDocumentTooShort(document: string) {
  * `MOVEMENT_DOCUMENT_MIN_LENGTH` caracteres o más.
  */
 export function toMovementFilters(
-  state: Pick<InventoryMovementsState, "documentKind" | "from" | "productId" | "to" | "type">,
+  state: Pick<
+    InventoryMovementsState,
+    "documentKind" | "from" | "productId" | "purchaseId" | "saleId" | "to" | "type"
+  >,
   document: string,
 ): MovementsExportFilters {
   const term = document.trim();
@@ -103,6 +118,8 @@ export function toMovementFilters(
     documentKind: state.documentKind || undefined,
     from: state.from || undefined,
     productId: state.productId || undefined,
+    purchaseId: state.purchaseId || undefined,
+    saleId: state.saleId || undefined,
     to: state.to || undefined,
     type: state.type || undefined,
   };

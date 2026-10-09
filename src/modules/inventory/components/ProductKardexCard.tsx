@@ -9,7 +9,7 @@ import { usePermission } from "@/shared/auth/usePermission";
 import { Badge } from "@/shared/components/Badge";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { Skeleton } from "@/shared/components/Skeleton";
-import { withReturnTo } from "@/shared/utils/returnTo";
+import { withChainedReturnTo } from "@/shared/utils/returnTo";
 
 import { useProductKardex } from "../hooks/useProductKardex";
 import type { ProductKardex } from "../services/productKardex";
@@ -41,6 +41,8 @@ const stockStatusBadgeVariant: Record<InventoryStockStatus, "danger" | "success"
  */
 export function ProductKardexCard({ productId, returnTo }: ProductKardexCardProps) {
   const { can, isLoading: isPermissionLoading } = usePermission();
+  const canViewSales = can("sales.view");
+  const canViewPurchases = can("purchases.view");
   const canView = !isPermissionLoading && can("inventory.view");
   const kardex = useProductKardex(productId, canView);
   const headingId = useId();
@@ -49,7 +51,7 @@ export function ProductKardexCard({ productId, returnTo }: ProductKardexCardProp
     return null;
   }
 
-  const fullKardexHref = withReturnTo(
+  const fullKardexHref = withChainedReturnTo(
     `/inventory/movements?productId=${encodeURIComponent(productId)}`,
     returnTo,
   );
@@ -98,7 +100,12 @@ export function ProductKardexCard({ productId, returnTo }: ProductKardexCardProp
       ) : !kardex.data ? (
         <KardexSkeleton />
       ) : (
-        <KardexContent kardex={kardex.data} returnTo={returnTo} />
+        <KardexContent
+          canViewPurchases={canViewPurchases}
+          canViewSales={canViewSales}
+          kardex={kardex.data}
+          returnTo={returnTo}
+        />
       )}
     </section>
   );
@@ -123,7 +130,17 @@ function KardexSkeleton() {
   );
 }
 
-function KardexContent({ kardex, returnTo }: { kardex: ProductKardex; returnTo?: string }) {
+function KardexContent({
+  canViewPurchases,
+  canViewSales,
+  kardex,
+  returnTo,
+}: {
+  canViewPurchases: boolean;
+  canViewSales: boolean;
+  kardex: ProductKardex;
+  returnTo?: string;
+}) {
   const { product } = kardex;
   const stockStatus = getInventoryStockStatus(product);
   const firstKnownDay = kardex.series.find((point) => point.balance !== null)?.date;
@@ -189,7 +206,12 @@ function KardexContent({ kardex, returnTo }: { kardex: ProductKardex; returnTo?:
           Este producto aún no tiene movimientos.
         </p>
       ) : (
-        <ProductMovementList movements={kardex.lastMovements} returnTo={returnTo} />
+        <ProductMovementList
+          canViewPurchases={canViewPurchases}
+          canViewSales={canViewSales}
+          movements={kardex.lastMovements}
+          returnTo={returnTo}
+        />
       )}
     </>
   );

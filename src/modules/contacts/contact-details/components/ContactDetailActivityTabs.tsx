@@ -6,6 +6,7 @@ import { useMemo } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { paymentMethodLabels } from "@/modules/payments/payment-details/utils/paymentDetailLabels";
+import { getPaymentDocument } from "@/modules/payments/payments-list/utils/paymentDocument";
 import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
 import type { Permission } from "@/shared/auth/permissions";
 import { usePermission } from "@/shared/auth/usePermission";
@@ -182,6 +183,8 @@ function ContactPaymentsTab({ contactId }: ContactTabProps) {
   const { can } = usePermission();
   const list = useContactPaymentsList(contactId);
   const canOpen = can("payments.view");
+  const canOpenSales = can("sales.view");
+  const canOpenPurchases = can("purchases.view");
   const columns: DataTableColumn<PaymentMock>[] = [
     {
       header: "Fecha",
@@ -199,6 +202,32 @@ function ContactPaymentsTab({ contactId }: ContactTabProps) {
           </Link>
         ) : (
           date
+        );
+      },
+    },
+    {
+      header: "Documento",
+      key: "document",
+      render: (row) => {
+        // La venta o compra que abona el pago. Esta lista no trae su número: se nombra por su tipo.
+        const document = getPaymentDocument(row);
+
+        if (!document) {
+          return <span className="text-on-surface-variant">—</span>;
+        }
+
+        const canOpenDocument = document.kind === "sale" ? canOpenSales : canOpenPurchases;
+
+        return canOpenDocument ? (
+          <Link
+            aria-label={`Ver la ${document.label.toLowerCase()} del pago del ${formatDate(row.createdAt)}`}
+            className={linkClassName}
+            href={withChainedReturnTo(document.href, list.href)}
+          >
+            {document.label}
+          </Link>
+        ) : (
+          document.label
         );
       },
     },

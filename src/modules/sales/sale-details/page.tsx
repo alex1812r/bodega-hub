@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 
+import { DocumentStockMovementsLink } from "@/modules/inventory/components/DocumentStockMovementsLink";
 import { RegisterPaymentModal } from "@/modules/payments/components/RegisterPaymentModal";
 import type { PaymentDetail } from "@/modules/payments/hooks/usePayments";
 import { useSettings } from "@/modules/settings/hooks/useSettings";
@@ -9,6 +10,7 @@ import { usePermission } from "@/shared/auth/usePermission";
 import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { useCurrentUrl } from "@/shared/hooks/useCurrentUrl";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 import {
@@ -38,6 +40,9 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isCollecting, setIsCollecting] = useState(false);
   const { can } = usePermission();
+  // URL del detalle con el `returnTo` con el que se llegó: los enlaces que salen de
+  // aquí la llevan entera, para volver a esta venta sin perder su lista de origen.
+  const detailUrl = useCurrentUrl();
 
   // El modal deja abonar varias veces seguidas; cuando el servidor confirma que el
   // saldo quedó en 0 ya no hay nada que cobrar y se cierra solo.
@@ -102,6 +107,9 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
   // Un pago anulado sigue en el historial, pero no cuenta como cobro.
   const activePayments = data.payments.filter((payment) => payment.status !== "anulado").length;
   const customerName = data.customer?.name ?? data.customerId;
+  // Un borrador aún no descontó stock; una venta anulada o devuelta conserva sus
+  // movimientos (la salida y su reverso).
+  const movedStock = data.status !== "borrador";
   const receipt = {
     cashierName: seller.name,
     companyName,
@@ -165,7 +173,11 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
         title="Productos"
       >
         <div className="space-y-4">
-          <SaleDetailProductsTable items={data.items} />
+          <SaleDetailProductsTable
+            canViewProducts={can("products.view")}
+            detailUrl={detailUrl}
+            items={data.items}
+          />
           <SaleDetailTotals
             discountRef={data.discountRef}
             refRateVes={data.refRateVes}
@@ -174,6 +186,14 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
             totalRef={data.totalRef}
             totalVes={data.totalVes}
           />
+          {can("inventory.view") && movedStock ? (
+            <div className="flex justify-end px-4">
+              <DocumentStockMovementsLink
+                currentUrl={detailUrl}
+                document={{ id: data.id, kind: "venta" }}
+              />
+            </div>
+          ) : null}
         </div>
       </CollapsibleSection>
 

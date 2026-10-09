@@ -150,6 +150,12 @@ describe("ContactDetailsPage · pestañas, resumen y paginación (DET-04)", () =
             direction: "entrada",
             id: `pay-${index + 1}`,
             method: "pago_movil",
+            // pay-1 abona una venta, pay-2 una compra y pay-3 ningún documento.
+            ...(index % 3 === 0
+              ? { saleId: `sale-doc-${index + 1}` }
+              : index % 3 === 1
+                ? { purchaseId: `purchase-doc-${index + 1}` }
+                : {}),
             status: "activo",
           })),
         });
@@ -602,6 +608,52 @@ describe("ContactDetailsPage · pestañas, resumen y paginación (DET-04)", () =
       expect(returnToOf(await findLinkTo("/sales/sale-a001"))).toEqual(
         normalizeUrl(`/contacts/c-1?salesPage=2&${RETURN_TO}`),
       );
+    });
+
+    it("Pagos: la columna Documento enlaza la venta o la compra del pago con returnTo encadenado", async () => {
+      renderPage(`?tab=pagos&${RETURN_TO}`);
+
+      const detailUrl = `/contacts/c-1?tab=pagos&${RETURN_TO}`;
+      const saleLink = await findLinkTo("/sales/sale-doc-1");
+      const purchaseLink = await findLinkTo("/purchases/purchase-doc-2");
+
+      expect(screen.getAllByRole("columnheader", { name: "Documento" })).not.toHaveLength(0);
+      expect(saleLink).toHaveTextContent("Venta");
+      expect(purchaseLink).toHaveTextContent("Compra");
+      expect(saleLink.getAttribute("href")).toBe(
+        `/sales/sale-doc-1?returnTo=${encodeURIComponent(detailUrl)}`,
+      );
+      // El contacto sigue sabiendo volver a su lista de origen.
+      expect(returnToOf(saleLink)).toEqual(normalizeUrl(detailUrl));
+      expect(returnToOf(purchaseLink)).toEqual(normalizeUrl(detailUrl));
+      // pay-3 no abona ningún documento: su celda no enlaza a ninguna venta ni compra.
+      expect(linksTo("/sales/sale-doc-3")).toHaveLength(0);
+      expect(linksTo("/purchases/purchase-doc-3")).toHaveLength(0);
+      expect(await findLinkTo("/payments/pay-3")).toBeInTheDocument();
+    });
+
+    it("Pagos: sin permiso para ver el documento, la columna lo nombra sin enlazarlo", async () => {
+      mockAuth.permissions = ADMIN_PERMISSIONS.filter(
+        (permission) => permission !== "sales.view" && permission !== "purchases.view",
+      );
+      renderPage("?tab=pagos");
+
+      await findLinkTo("/payments/pay-1");
+
+      expect(screen.getAllByText("Venta").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Compra").length).toBeGreaterThan(0);
+      expect(linksTo("/sales/sale-doc-1")).toHaveLength(0);
+      expect(linksTo("/purchases/purchase-doc-2")).toHaveLength(0);
+    });
+
+    it("Pagos: con permiso de ventas y sin el de compras solo enlaza las ventas", async () => {
+      mockAuth.permissions = ADMIN_PERMISSIONS.filter(
+        (permission) => permission !== "purchases.view",
+      );
+      renderPage("?tab=pagos");
+
+      expect(await findLinkTo("/sales/sale-doc-1")).toBeInTheDocument();
+      expect(linksTo("/purchases/purchase-doc-2")).toHaveLength(0);
     });
 
     it("sin permiso para el detalle de destino, la fila no enlaza", async () => {

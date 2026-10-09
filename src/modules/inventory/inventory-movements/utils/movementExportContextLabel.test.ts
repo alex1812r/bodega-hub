@@ -20,6 +20,15 @@ describe("buildMovementsExportContextLabel", () => {
     );
   });
 
+  it("says so when the list is narrowed to the movements of one sale or one purchase", () => {
+    expect(buildMovementsExportContextLabel({ saleId: "sale-1" })).toBe(
+      "Sin filtro de periodo | Solo los movimientos de una venta",
+    );
+    expect(buildMovementsExportContextLabel({ purchaseId: "purchase-7" })).toBe(
+      "Sin filtro de periodo | Solo los movimientos de una compra",
+    );
+  });
+
   it("names the movements without a document 'Ajuste manual'", () => {
     expect(buildMovementsExportContextLabel({ documentKind: "sin_documento" })).toBe(
       "Sin filtro de periodo | Tipo de documento: Ajuste manual",

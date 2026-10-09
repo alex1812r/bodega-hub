@@ -276,6 +276,45 @@ describe("ProductKardexCard", () => {
     );
   });
 
+  it('DET-05: "Ver kardex completo" conserva el returnTo con el que se llegó al producto', async () => {
+    const list = "/products?q=harina&page=2";
+    const origin = `/products/p-1?tab=historial&returnTo=${encodeURIComponent(list)}`;
+
+    renderCard(origin);
+
+    const href = (await screen.findByRole("link", { name: "Ver kardex completo" })).getAttribute(
+      "href",
+    );
+
+    expect(href).toBe(`/inventory/movements?productId=p-1&returnTo=${encodeURIComponent(origin)}`);
+
+    const returnTo = new URLSearchParams(href?.split("?")[1]).get("returnTo") as string;
+
+    // De vuelta en el producto, este sigue sabiendo volver a su lista filtrada.
+    expect(returnTo).toBe(origin);
+    expect(new URLSearchParams(returnTo.split("?")[1]).get("returnTo")).toBe(list);
+  });
+
+  it("DET-05: sin permiso para ver ventas o compras su documento va en texto plano", async () => {
+    const allowAll = mockPermission.can;
+
+    mockPermission.can = (permission) =>
+      permission !== "sales.view" && permission !== "purchases.view";
+
+    try {
+      renderCard();
+
+      const items = await screen.findAllByRole("listitem");
+
+      expect(within(items[0]).getByText("Venta V-000123")).toBeInTheDocument();
+      expect(within(items[0]).queryByRole("link")).not.toBeInTheDocument();
+      expect(within(items[1]).getByText("Compra C-000045")).toBeInTheDocument();
+      expect(within(items[1]).queryByRole("link")).not.toBeInTheDocument();
+    } finally {
+      mockPermission.can = allowAll;
+    }
+  });
+
   it("sin returnTo el enlace al kardex completo solo lleva el producto", async () => {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(

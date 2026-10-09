@@ -799,3 +799,90 @@ describe("PurchaseDetailsPage · returnTo encadenado en los enlaces salientes (D
     expect(supplierLink().returnTo).toBe("/purchases/purchase-pag01");
   });
 });
+
+describe("PurchaseDetailsPage · enlaces cruzados (DET-05)", () => {
+  const LIST = "/purchases?status=recibido&page=2";
+  const DETAIL_URL = `/purchases/purchase-pag01?returnTo=${encodeURIComponent(LIST)}`;
+  const LINES: PurchaseDetails["items"] = [
+    {
+      product: { name: "Harina PAN 1 kg", sku: "HAR-001" } as NonNullable<
+        PurchaseDetails["items"][number]["product"]
+      >,
+      productId: "prod-harina",
+      purchaseId: "purchase-pag01",
+      quantity: 40,
+      subtotalRef: 40,
+      subtotalVes: 20000,
+      unitCostRef: 1,
+      unitCostVes: 500,
+    },
+  ];
+  const WITHOUT = (denied: Permission[]): Session => ({
+    permissions: getRolePermissions("admin").filter((permission) => !denied.includes(permission)),
+    role: "admin",
+  });
+
+  beforeEach(() => {
+    mockSearch = `returnTo=${encodeURIComponent(LIST)}`;
+  });
+
+  afterEach(() => {
+    mockSearch = "";
+  });
+
+  function movementsLink() {
+    return screen.queryByRole("link", { name: "Ver movimientos de stock" });
+  }
+
+  it("el producto de cada línea enlaza a su detalle y vuelve a esta compra con su lista", async () => {
+    await renderPage({ items: LINES });
+
+    expect(screen.getByRole("link", { name: "Harina PAN 1 kg" })).toHaveAttribute(
+      "href",
+      `/products/prod-harina?returnTo=${encodeURIComponent(DETAIL_URL)}`,
+    );
+  });
+
+  it("sin products.view el producto va en texto plano", async () => {
+    await renderPage({ items: LINES }, WITHOUT(["products.view"]));
+
+    expect(screen.getByText("Harina PAN 1 kg")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Harina PAN 1 kg" })).not.toBeInTheDocument();
+  });
+
+  it.each<PurchaseDetails["status"]>(["recibido", "devuelto"])(
+    "compra en estado %s: «Ver movimientos de stock» filtra por la compra",
+    async (status) => {
+      await renderPage({ items: LINES, status });
+
+      expect(movementsLink()).toHaveAttribute(
+        "href",
+        `/inventory/movements?purchaseId=purchase-pag01&returnTo=${encodeURIComponent(DETAIL_URL)}`,
+      );
+    },
+  );
+
+  it.each<PurchaseDetails["status"]>(["pedido", "cancelado"])(
+    "compra en estado %s no movió stock: no ofrece el enlace",
+    async (status) => {
+      await renderPage({ items: LINES, status });
+
+      expect(movementsLink()).not.toBeInTheDocument();
+    },
+  );
+
+  it("sin inventory.view no ofrece el enlace", async () => {
+    await renderPage({ items: LINES }, WITHOUT(["inventory.view"]));
+
+    expect(movementsLink()).not.toBeInTheDocument();
+  });
+
+  it("el aviso de reprecio sigue montado con el id de la compra", async () => {
+    await renderPage({ items: LINES });
+
+    expect(screen.getByTestId("purchase-reprice-notice")).toHaveAttribute(
+      "data-purchase-id",
+      "purchase-pag01",
+    );
+  });
+});
