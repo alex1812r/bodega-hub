@@ -9,6 +9,11 @@ import { ProductFormModal } from "./ProductFormModal";
 /** Clave de idempotencia del alta (PRO-F9): un uuid por intento. */
 const UUID_PATTERN = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
+// El formulario lleva el guardia de cambios sin guardar (`useProcessGuard`), que usa el router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 jest.mock("../../../../shared/auth/Can", () => ({
   Can: () => null,
 }));

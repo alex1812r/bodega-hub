@@ -85,3 +85,18 @@ export const MoreOptionsOpen: Story = {
     await expect(screen.getByText(/Si lo dejas vacío se genera solo\./)).toBeVisible();
   },
 };
+
+/**
+ * CNF-15: con cambios sin guardar, Esc (o clic fuera, Cancelar, la X) no cierra:
+ * pregunta con el guardia de proceso, que nombra el producto. Sin cambios cierra directo.
+ */
+export const UnsavedChangesGuard: Story = {
+  play: async () => {
+    await userEvent.type(await screen.findByLabelText("Nombre"), "Harina PAN");
+    await userEvent.keyboard("{Escape}");
+
+    await expect(
+      await screen.findByRole("dialog", { name: "¿Salir sin terminar?" }),
+    ).toHaveTextContent("Producto nuevo «Harina PAN» sin guardar");
+  },
+};

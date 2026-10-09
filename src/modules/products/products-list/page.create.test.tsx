@@ -189,6 +189,12 @@ describe("ProductsListPage · alta de producto (PRO-04)", () => {
     expect(within(screen.getByRole("dialog")).getByLabelText("Nombre")).toHaveValue("Harina");
 
     await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+    // CNF-15: lo tecleado no se guardó; cerrar pregunta antes y se confirma la salida.
+    await user.click(
+      within(await screen.findByRole("dialog", { name: "¿Salir sin terminar?" })).getByRole("button", {
+        name: "Salir",
+      }),
+    );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
     dialog = await openCreate(user);

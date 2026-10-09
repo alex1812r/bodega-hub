@@ -13,6 +13,11 @@ import { ProductFormModal, type ProductFormModalProps } from "./ProductFormModal
 
 /** PRO-13 · empaque surtido dentro del formulario de producto. */
 
+// El formulario lleva el guardia de cambios sin guardar (`useProcessGuard`), que usa el router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 jest.mock("../../../../shared/auth/Can", () => ({
   Can: ({ children }: { children: React.ReactNode }) => children,
 }));
@@ -385,6 +390,13 @@ describe("ProductFormModal · crear producto unidad desde el surtido (PRO-13)", 
       } else {
         await user.click(dialog.getByRole("button", { name: how }));
       }
+
+      // CNF-15: lo tecleado no se guardó; cerrar pregunta antes y se confirma la salida.
+      await user.click(
+        within(await screen.findByRole("dialog", { name: "¿Salir sin terminar?" })).getByRole("button", {
+          name: "Salir",
+        }),
+      );
 
       await waitFor(() =>
         expect(screen.queryByRole("dialog", { name: "Nuevo producto" })).not.toBeInTheDocument(),

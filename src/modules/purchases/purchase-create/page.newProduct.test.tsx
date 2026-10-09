@@ -350,6 +350,12 @@ describe("PurchaseCreatePage · Nuevo producto desde la compra (COM-03)", () => 
 
     // Al cerrar y reabrir, el error del intento anterior ya no está.
     await user.click(within(dialog()).getByRole("button", { name: "Cancelar" }));
+    // CNF-15: lo tecleado no se guardó; cerrar pregunta antes y se confirma la salida.
+    await user.click(
+      within(await screen.findByRole("dialog", { name: "¿Salir sin terminar?" })).getByRole("button", {
+        name: "Salir",
+      }),
+    );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await user.click(newProductButton() as HTMLElement);
 

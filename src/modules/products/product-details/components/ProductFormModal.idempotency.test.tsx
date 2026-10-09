@@ -13,6 +13,11 @@ import { ProductFormModal } from "./ProductFormModal";
  * producto con su stock inicial (2 productos y 18 u por 9).
  */
 
+// El formulario lleva el guardia de cambios sin guardar (`useProcessGuard`), que usa el router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 jest.mock("../../../../shared/auth/usePermission", () => ({
   usePermission: () => ({ can: () => true }),
 }));

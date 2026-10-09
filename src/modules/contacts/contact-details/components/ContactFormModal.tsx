@@ -1,13 +1,15 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
+import { useFormModalDiscardGuard } from "@/modules/products/product-details/components/useFormModalDiscardGuard";
 import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
+import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
 import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 import { useToast } from "@/shared/components/Toast";
@@ -16,6 +18,21 @@ import type { ContactMock } from "@/shared/mocks/erp-data";
 import type { ContactInput } from "../../hooks/useContacts";
 
 const DEFAULT_CONTACT_TYPE: ContactInput["type"] = "cliente";
+
+const CONTACT_FORM_FIELDS = ["name", "type", "phone", "email", "taxId", "address"] as const;
+
+/** Lo tecleado, campo a campo: volver al valor con el que abrió no cuenta como cambio. */
+function readContactFields(form: HTMLFormElement) {
+  const formData = new FormData(form);
+
+  return JSON.stringify(CONTACT_FORM_FIELDS.map((field) => String(formData.get(field) ?? "")));
+}
+
+function getGuardLabel(isEdit: boolean, name: string) {
+  const quotedName = name.trim() ? ` «${name.trim()}»` : "";
+
+  return isEdit ? `Edición de contacto${quotedName}` : `Contacto nuevo${quotedName} sin guardar`;
+}
 
 /**
  * Formulario de contacto (alta y edición).
@@ -38,6 +55,10 @@ const DEFAULT_CONTACT_TYPE: ContactInput["type"] = "cliente";
  * Tras un alta correcta (con cualquiera de los dos botones) muestra el aviso
  * "Contacto creado: <nombre>" con el enlace "Ver" a su detalle (sin enlace si
  * `onSubmit` no devolvió el contacto). En edición no avisa.
+ *
+ * Con cambios sin guardar, cerrar (Esc, clic fuera, Cancelar, la X) o salir de
+ * la pantalla pregunta antes con el guardia de proceso; sin cambios, o tras
+ * guardar, cierra sin preguntar.
  */
 type ContactFormModalProps = {
   contact?: ContactMock;
@@ -75,6 +96,36 @@ export function ContactFormModal({
   const isOpen = isControlled ? open : internalOpen;
   const isEdit = mode === "edit";
   const formRef = useRef<HTMLFormElement | null>(null);
+  /** Campos tal como se montó el formulario; ver `readContactFields`. */
+  const fieldsBaselineRef = useRef("");
+  const [isDirty, setIsDirty] = useState(false);
+  /** Nombre tecleado en un alta: nombra el proceso en la pregunta del guardia. */
+  const [typedName, setTypedName] = useState("");
+  // El formulario se monta en cada apertura (y tras "Guardar y crear otro"): ahí se fija el punto de partida.
+  const setFormElement = useCallback((form: HTMLFormElement | null) => {
+    formRef.current = form;
+
+    if (form) {
+      fieldsBaselineRef.current = readContactFields(form);
+    }
+  }, []);
+  const [trackedOpen, setTrackedOpen] = useState(isOpen);
+
+  // Apertura nueva: sin cambios, antes de que el guardia vea restos de la anterior.
+  if (trackedOpen !== isOpen) {
+    setTrackedOpen(isOpen);
+
+    if (isOpen) {
+      setIsDirty(false);
+      setTypedName("");
+    }
+  }
+
+  // Mientras guarda no se pregunta: cerrar se comporta como antes del guardia.
+  const { guard, requestClose, trackFocus } = useFormModalDiscardGuard({
+    active: isOpen && isDirty && !isSubmitting,
+    label: getGuardLabel(isEdit, contact?.name ?? typedName),
+  });
   // Cambia tras "Guardar y crear otro": el formulario se monta de nuevo, vacío.
   const [formResetKey, setFormResetKey] = useState(0);
   const [createType, setCreateType] = useState(DEFAULT_CONTACT_TYPE);
@@ -91,13 +142,31 @@ export function ContactFormModal({
     createAnotherRequestedRef.current = false;
   }
 
-  function handleOpenChange(nextOpen: boolean) {
+  function applyOpenChange(nextOpen: boolean) {
     if (!isControlled) {
       setInternalOpen(nextOpen);
     }
 
     onOpenChange?.(nextOpen);
     setCreateType(DEFAULT_CONTACT_TYPE);
+  }
+
+  // Cerrar (Esc, clic fuera, Cancelar, la X) con cambios sin guardar pregunta antes.
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      applyOpenChange(true);
+
+      return;
+    }
+
+    requestClose(() => applyOpenChange(false));
+  }
+
+  function handleFieldsChange(event: FormEvent<HTMLFormElement>) {
+    const form = event.currentTarget;
+
+    setIsDirty(readContactFields(form) !== fieldsBaselineRef.current);
+    setTypedName(String(new FormData(form).get("name") ?? ""));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -144,7 +213,8 @@ export function ContactFormModal({
     }
 
     if (!createAnother) {
-      handleOpenChange(false);
+      // Guardado con éxito: se cierra sin preguntar.
+      applyOpenChange(false);
 
       return;
     }
@@ -152,6 +222,8 @@ export function ContactFormModal({
     flushSync(() => {
       setCreateType(input.type);
       setFormResetKey((key) => key + 1);
+      setIsDirty(false);
+      setTypedName("");
     });
 
     const nameField = formRef.current?.elements.namedItem("name");
@@ -207,8 +279,12 @@ export function ContactFormModal({
         className="grid gap-4"
         id={formId}
         key={`${contact?.id ?? "new"}-${formResetKey}`}
+        // `change` además de `input`: el selector de Tipo puede avisar solo con el primero.
+        onChange={handleFieldsChange}
+        onFocus={trackFocus}
+        onInput={handleFieldsChange}
         onSubmit={(event) => void handleSubmit(event)}
-        ref={formRef}
+        ref={setFormElement}
       >
         <Input defaultValue={contact?.name} label="Nombre" name="name" required />
         <SelectField
@@ -252,6 +328,8 @@ export function ContactFormModal({
           </p>
         ) : null}
       </form>
+      {/* Dentro del modal del formulario: se apila encima y Esc solo cierra la pregunta. */}
+      <ProcessGuardModal guard={guard} />
     </Modal>
   );
 }
