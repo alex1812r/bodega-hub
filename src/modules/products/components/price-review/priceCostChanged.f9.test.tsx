@@ -176,6 +176,13 @@ describe("PurchaseRepriceNotice · costo esperado (ALTA-1, M1)", () => {
         return jsonResponse({ data: { rateVes: 40 } });
       }
 
+      // Relectura del producto tras el 409: sigue en la cola, ya con el costo nuevo.
+      if (url === "/api/products/prod-1") {
+        return jsonResponse({
+          data: { currentCostRef: 14, id: "prod-1", priceReview: { currentCostRef: 14 }, salePriceRef: 10 },
+        });
+      }
+
       queueReads += 1;
 
       return jsonResponse({ data: { items: [item], limit: 100, skip: 0, total: 1 } });
@@ -203,21 +210,32 @@ describe("PurchaseRepriceNotice · costo esperado (ALTA-1, M1)", () => {
     await waitFor(() => expect(queueReads()).toBeGreaterThan(readsBefore));
   });
 
-  it("Mantener precio con el costo cambiado: el 409 se ve en la fila, que sigue ahí con sus acciones", async () => {
+  // CNF-F3: "Mantener precio" confirma con el mismo modal que la lista y el detalle.
+  it("Mantener precio con el costo cambiado: el 409 se ve en el diálogo, con la ganancia del costo nuevo, y la fila sigue ahí", async () => {
     serve();
     const { user } = renderWithClient(<PurchaseRepriceNotice purchaseId="pur-1" />);
     const row = within(await screen.findByTestId("purchase-reprice-row-prod-1"));
 
     await user.click(row.getByRole("button", { name: "Mantener precio" }));
 
-    expect(await row.findByRole("alert")).toHaveTextContent(COST_CHANGED_MESSAGE);
+    const dialog = within(await screen.findByRole("dialog", { name: "Mantener precio" }));
+
+    expect(posts()).toEqual([]);
+    await user.click(dialog.getByRole("button", { name: "Mantener precio" }));
+
+    expect(await dialog.findByRole("alert")).toHaveTextContent(COST_CHANGED_MESSAGE);
+    // 10 sobre un costo de 14: la ganancia que de verdad se aceptaría.
+    expect(await dialog.findByText(/con una ganancia de -28,57 %/)).toBeInTheDocument();
     expect(posts()).toEqual([
       {
         body: { expectedCostRef: 10, reason: "Precio mantenido tras compra C-000123" },
         url: "/api/products/prod-1/keep-price",
       },
     ]);
-    expect(screen.queryByText(/Precio mantenido:/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Precio mantenido")).not.toBeInTheDocument();
+
+    await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(row.getByRole("button", { name: "Mantener precio" })).toBeEnabled();
   });
 });

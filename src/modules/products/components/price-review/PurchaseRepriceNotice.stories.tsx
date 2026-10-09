@@ -29,7 +29,11 @@ function reviewItem(index: number, overrides: Partial<ProductPriceReviewItem> = 
   };
 }
 
-/** La cola vive en el handler: "Aplicar" y "Mantener precio" retiran la fila de verdad. */
+/**
+ * La cola vive en el handler: "Aplicar" y "Mantener precio" retiran la fila de
+ * verdad. Las dos acciones confirman antes: "Mantener precio" con el mismo modal
+ * que la lista y el detalle del producto.
+ */
 function queueHandlers(initial: ProductPriceReviewItem[], failing = false) {
   let items = [...initial];
 
@@ -56,6 +60,21 @@ function queueHandlers(initial: ProductPriceReviewItem[], failing = false) {
     ),
     // Tasa vigente: la confirmación de "Aplicar" muestra el cambio también en Bs (CNF-07).
     http.get("/api/exchange-rates/current", () => HttpResponse.json({ data: { rateVes: 40 } })),
+    // Relectura del producto tras un 409 de "Mantener precio": sigue en la cola.
+    http.get("/api/products/:id", ({ params }) => {
+      const item = items.find((candidate) => candidate.productId === params.id);
+
+      return item
+        ? HttpResponse.json({
+            data: {
+              currentCostRef: item.currentCostRef,
+              id: item.productId,
+              priceReview: { currentCostRef: item.currentCostRef },
+              salePriceRef: item.salePriceRef,
+            },
+          })
+        : HttpResponse.json({ error: { code: "NOT_FOUND", message: "Producto no encontrado." } }, { status: 404 });
+    }),
     http.post("/api/products/:id/price", resolve),
     http.post("/api/products/:id/keep-price", resolve),
   ];
@@ -103,7 +122,7 @@ export const FortyProducts: Story = {
   },
 };
 
-/** El servidor rechaza la acción: el error queda en la fila y las demás siguen operables. */
+/** El servidor rechaza la acción: el error se lee en su confirmación y las demás filas siguen operables. */
 export const ServerError: Story = {
   parameters: { msw: { handlers: queueHandlers([reviewItem(1), reviewItem(2)], true) } },
 };

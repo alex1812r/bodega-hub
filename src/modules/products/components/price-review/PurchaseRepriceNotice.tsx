@@ -18,13 +18,13 @@ import { priceFromMarkup, type MarginThresholds } from "@/shared/utils/pricing";
 import {
   COST_CHANGED_LEFT_QUEUE_TITLE,
   useCostConflictRefresh,
-  useKeepProductPrice,
   usePriceReview,
   type ProductPriceReviewItem,
 } from "../../hooks/usePriceReview";
 import { useUpdateProductPrice } from "../../hooks/useProducts";
 import { buildRepriceReason } from "../../services/priceReview";
 import { getProductMarginThresholds } from "../../services/productMargin";
+import { KeepPriceConfirmModal, type KeepPriceProduct } from "./KeepPriceConfirmModal";
 import { isPriceBelowCost, PriceChangeEffect } from "./PriceChangeEffect";
 import { PriceReviewChangeSummary } from "./PriceReviewChangeSummary";
 
@@ -58,7 +58,6 @@ type PurchaseRepriceRowProps = {
 
 function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowProps) {
   const updatePrice = useUpdateProductPrice(item.productId);
-  const keepPrice = useKeepProductPrice();
   const costConflict = useCostConflictRefresh();
   const { showToast } = useToast();
   // Candado de la fila: bloquea un segundo envío en el mismo tick y, tras el
@@ -66,6 +65,7 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
   const lockedRef = useRef(false);
   const [isLocked, setIsLocked] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isKeepOpen, setIsKeepOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Tasa vigente, solo para mostrar el cambio en Bs: se pide al abrir la confirmación.
   const currentRate = useCurrentExchangeRate({ enabled: isConfirmOpen });
@@ -76,6 +76,15 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
   const proposedPrice = formatRefUsd(proposal.salePriceRef);
   // Motivo que queda en el historial de precios; la confirmación lo muestra tal cual.
   const applyReason = `${buildRepriceReason(proposal.markupPct)}${purchaseNumber ? ` por compra ${purchaseNumber}` : ""}`;
+  // "Mantener precio" pasa por el mismo modal que en la lista y el detalle del
+  // producto; si el usuario no escribe un motivo, queda la compra que lo originó.
+  const keepReason = purchaseNumber ? `Precio mantenido tras compra ${purchaseNumber}` : undefined;
+  const keepProduct: KeepPriceProduct = {
+    currentCostRef: item.currentCostRef,
+    id: item.productId,
+    name: item.name,
+    salePriceRef: item.salePriceRef,
+  };
 
   function lock() {
     if (lockedRef.current) {
@@ -132,27 +141,6 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
     }
   }
 
-  async function handleKeep() {
-    if (!lock()) {
-      return;
-    }
-
-    try {
-      await keepPrice.mutateAsync({
-        expectedCostRef: item.currentCostRef,
-        productId: item.productId,
-        reason: purchaseNumber ? `Precio mantenido tras compra ${purchaseNumber}` : undefined,
-      });
-      showToast({
-        description: `Sigue en ${currentPrice}.`,
-        title: `Precio mantenido: ${item.name}`,
-        tone: "success",
-      });
-    } catch (keepError) {
-      unlock(errorMessage(keepError, "No se pudo mantener el precio."));
-      await warnIfLeftQueue(keepError);
-    }
-  }
 
   return (
     <li
@@ -198,7 +186,15 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
           >
             Aplicar
           </Button>
-          <Button disabled={isLocked} onClick={() => void handleKeep()} size="sm" variant="outline">
+          <Button
+            disabled={isLocked}
+            onClick={() => {
+              setError(null);
+              setIsKeepOpen(true);
+            }}
+            size="sm"
+            variant="outline"
+          >
             Mantener precio
           </Button>
         </div>
@@ -229,6 +225,16 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
           variant={
             isPriceBelowCost(item.currentCostRef, proposal.salePriceRef) ? "danger" : "default"
           }
+        />
+      ) : null}
+
+      {canManage ? (
+        <KeepPriceConfirmModal
+          defaultReason={keepReason}
+          onKept={lock}
+          onOpenChange={setIsKeepOpen}
+          open={isKeepOpen}
+          product={keepProduct}
         />
       ) : null}
     </li>
@@ -314,7 +320,9 @@ function PurchaseRepriceList({ canManage, purchaseId }: { canManage: boolean; pu
 /**
  * Aviso del detalle de una compra (PRO-10): productos cuyo costo subió con ella
  * y cuya ganancia bajó de banda, con "Aplicar" (reprecio al % que tenían) y
- * "Mantener precio". Nunca cambia un precio sin el clic del usuario (regla 10b).
+ * "Mantener precio" (el mismo `KeepPriceConfirmModal` de la lista y el detalle
+ * del producto). Las dos confirman antes de enviar; nunca cambia un precio sin
+ * el clic del usuario (regla 10b).
  *
  * Sin filas, mientras carga o sin permiso `products.view` no pinta nada; las
  * acciones exigen `products.manage`.

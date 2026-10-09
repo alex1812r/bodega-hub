@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 
@@ -9,9 +9,11 @@ import type { PayrollPeriodDetail } from "../types";
 
 import { PayrollPeriodDetailPage } from "./page";
 
+const mockApprove = jest.fn();
+
 // El alias @/ lo reescribe SWC en los imports, no dentro de jest.mock.
 jest.mock("../hooks/usePayroll", () => ({
-  useApprovePayrollPeriod: () => ({ isPending: false, mutateAsync: jest.fn() }),
+  useApprovePayrollPeriod: () => ({ isPending: false, mutateAsync: mockApprove }),
   useCancelPayrollPayment: () => ({ isPending: false, mutateAsync: jest.fn() }),
   usePayPayrollItem: () => ({ isPending: false, mutateAsync: jest.fn(), reset: jest.fn() }),
   usePayrollPeriod: jest.fn(),
@@ -154,6 +156,8 @@ function renderPage() {
 
 describe("PayrollPeriodDetailPage", () => {
   beforeEach(() => {
+    mockApprove.mockReset();
+    mockApprove.mockResolvedValue({});
     mockedUsePayrollPeriod.mockReturnValue({
       data: detail,
       error: null,
@@ -182,6 +186,45 @@ describe("PayrollPeriodDetailPage", () => {
     expect(screen.getByText("ref 459.00")).toBeInTheDocument();
     expect(screen.getByText("ref 204.00")).toBeInTheDocument();
     expect(screen.getByText("ref 357.00")).toBeInTheDocument();
+  });
+
+  // CNF-F3: aprobar es irreversible, así que el botón ya no aprueba directo.
+  it("Aprobar abre la confirmación con las cifras de la quincena y no aprueba hasta confirmar", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Aprobar" }));
+
+    const dialog = within(await screen.findByRole("dialog", { name: "Aprobar quincena" }));
+
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(dialog.getByText("1 recibo · ref 160.00")).toBeInTheDocument();
+    expect(dialog.getByText("24 ventas")).toBeInTheDocument();
+
+    await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mockApprove).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Aprobar" }));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Aprobar quincena" }),
+    );
+
+    await waitFor(() => expect(mockApprove).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("una quincena ya aprobada no ofrece Aprobar", () => {
+    mockedUsePayrollPeriod.mockReturnValue({
+      data: { ...detail, period: { ...detail.period, status: "aprobado" } },
+      error: null,
+      isLoading: false,
+      refetch: jest.fn(),
+    } as unknown as ReturnType<typeof usePayrollPeriod>);
+    renderPage();
+
+    expect(screen.queryByRole("button", { name: "Aprobar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("etiqueta las ventas cobradas tarde y los reversos en el detalle", async () => {

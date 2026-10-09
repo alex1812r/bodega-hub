@@ -222,8 +222,15 @@ describe("PurchaseRepriceNotice · reintento tras el costo cambiado (PRO-F11)", 
     const row = within(await screen.findByTestId("purchase-reprice-row-prod-1"));
 
     await user.click(row.getByRole("button", { name: "Mantener precio" }));
+    // CNF-F3: confirma con el mismo modal que la lista y el detalle del producto.
+    await user.click(
+      within(await screen.findByRole("dialog", { name: "Mantener precio" })).getByRole("button", {
+        name: "Mantener precio",
+      }),
+    );
 
     expect(await screen.findByText(LEFT_QUEUE_TITLE)).toBeInTheDocument();
-    expect(screen.queryByText(/Precio mantenido:/)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.queryByText("Precio mantenido")).not.toBeInTheDocument();
   });
 });

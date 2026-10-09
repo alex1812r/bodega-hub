@@ -73,6 +73,13 @@ function serve(
       return jsonResponse({ data: { rateVes: 40 } });
     }
 
+    // Relectura del producto tras un 409 de "Mantener precio": sigue en la cola.
+    if (/^\/api\/products\/prod-\d+$/.test(url)) {
+      return jsonResponse({
+        data: { currentCostRef: 9, id: "prod-1", priceReview: { currentCostRef: 9 }, salePriceRef: 10 },
+      });
+    }
+
     if ((init?.method ?? "GET") === "GET") {
       const items = queues[Math.min(reads, queues.length - 1)];
       reads += 1;
@@ -271,15 +278,56 @@ describe("PurchaseRepriceNotice", () => {
     await waitFor(() => expect(screen.queryByText(TITLE)).not.toBeInTheDocument());
   });
 
-  it("Mantener precio envía keep-price con su motivo y retira solo esa fila", async () => {
+  /** Abre el modal de "Mantener precio" de la fila y devuelve sus consultas. */
+  async function openKeepDialog(user: ReturnType<typeof renderNotice>, productId = "prod-1") {
+    const row = within(await screen.findByTestId(`purchase-reprice-row-${productId}`));
+
+    await user.click(row.getByRole("button", { name: "Mantener precio" }));
+
+    return within(await screen.findByRole("dialog", { name: "Mantener precio" }));
+  }
+
+  // CNF-F3: el mismo modal y el mismo texto que en la lista y el detalle del producto.
+  it("CNF-F3: Mantener precio no envía nada hasta confirmar y dice que el precio no cambia", async () => {
+    serve([[reviewItem()]]);
+    const user = renderNotice();
+    const dialog = await openKeepDialog(user);
+
+    expect(
+      dialog.getByText(
+        "El precio no cambia: se queda en ref 10.00 con una ganancia de 11,11 %. Saldrá de la lista hasta que el costo vuelva a subir.",
+      ),
+    ).toBeInTheDocument();
+    expect(dialog.getByText("Harina PAN 1 kg")).toBeInTheDocument();
+    expect(dialog.getByLabelText("Motivo (opcional)")).toHaveValue("");
+    expect(
+      dialog.getByText("Si lo dejas vacío se guarda «Precio mantenido tras compra C-000123»."),
+    ).toBeInTheDocument();
+    expect(mutations()).toEqual([]);
+  });
+
+  it("CNF-F3: cancelar Mantener precio no envía nada y deja la fila operable", async () => {
+    serve([[reviewItem()]]);
+    const user = renderNotice();
+    const dialog = await openKeepDialog(user);
+
+    await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mutations()).toEqual([]);
+    expect(screen.getByTestId("purchase-reprice-row-prod-1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mantener precio" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Aplicar" })).toBeEnabled();
+  });
+
+  it("Mantener precio, al confirmar, envía keep-price con el motivo de la compra y retira solo esa fila", async () => {
     const other = reviewItem({ name: "Arroz 1 kg", productId: "prod-2", sku: "arroz" });
 
     serve([[reviewItem(), other], [other]]);
     const user = renderNotice();
+    const dialog = await openKeepDialog(user);
 
-    const row = within(await screen.findByTestId("purchase-reprice-row-prod-1"));
-
-    await user.click(row.getByRole("button", { name: "Mantener precio" }));
+    await user.click(dialog.getByRole("button", { name: "Mantener precio" }));
 
     await waitFor(() =>
       expect(mutations()).toEqual([
@@ -290,32 +338,72 @@ describe("PurchaseRepriceNotice", () => {
         },
       ]),
     );
-    expect(await screen.findByText("Precio mantenido: Harina PAN 1 kg")).toBeInTheDocument();
-    expect(screen.getByText("Sigue en ref 10.00.")).toBeInTheDocument();
+    // El mismo aviso que en la lista y el detalle del producto.
+    expect(await screen.findByText("Precio mantenido")).toBeInTheDocument();
+    expect(screen.getByText('Harina PAN 1 kg salió de "Por revisar".')).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.queryByTestId("purchase-reprice-row-prod-1")).not.toBeInTheDocument(),
     );
     expect(screen.getByTestId("purchase-reprice-row-prod-2")).toBeInTheDocument();
   });
 
-  it("doble clic en Mantener precio envía una sola vez", async () => {
+  it("CNF-F3: el motivo que escribe el usuario manda sobre el de la compra", async () => {
+    serve([[reviewItem()], []]);
+    const user = renderNotice();
+    const dialog = await openKeepDialog(user);
+
+    await user.type(dialog.getByLabelText("Motivo (opcional)"), "  Precio de la competencia ");
+    await user.click(dialog.getByRole("button", { name: "Mantener precio" }));
+
+    await waitFor(() =>
+      expect(mutations()).toEqual([
+        {
+          body: { expectedCostRef: 9, reason: "Precio de la competencia" },
+          method: "POST",
+          url: "/api/products/prod-1/keep-price",
+        },
+      ]),
+    );
+  });
+
+  it("CNF-F3: sin número de compra no hay motivo por defecto (el servidor guarda el suyo)", async () => {
+    serve([[reviewItem({ purchase: { ...PURCHASE, number: " " } })], []]);
+    const user = renderNotice();
+    const dialog = await openKeepDialog(user);
+
+    expect(dialog.queryByText(/Si lo dejas vacío/)).not.toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Mantener precio" }));
+
+    await waitFor(() =>
+      expect(mutations()).toEqual([
+        { body: { expectedCostRef: 9 }, method: "POST", url: "/api/products/prod-1/keep-price" },
+      ]),
+    );
+  });
+
+  it("doble clic al confirmar Mantener precio envía una sola vez y la fila queda bloqueada", async () => {
     let release: (response: Response) => void = () => undefined;
 
     serve([[reviewItem()]], () => new Promise<Response>((resolve) => (release = resolve)));
-    renderNotice();
+    const user = renderNotice();
+    const dialog = await openKeepDialog(user);
+    const confirm = dialog.getByRole("button", { name: "Mantener precio" });
 
-    const keep = await screen.findByRole("button", { name: "Mantener precio" });
-
-    fireEvent.click(keep);
-    fireEvent.click(keep);
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
 
     await waitFor(() => expect(mutations()).toHaveLength(1));
-    expect(keep).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Aplicar" })).toBeDisabled();
+    expect(confirm).toBeDisabled();
 
     release(jsonResponse({ data: {} }));
-    await screen.findByText("Precio mantenido: Harina PAN 1 kg");
+    await screen.findByText("Precio mantenido");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(mutations()).toHaveLength(1);
+    // Cerrojo de la fila: hasta que el refresco de la cola la retira, no admite otro envío.
+    const row = within(screen.getByTestId("purchase-reprice-row-prod-1"));
+
+    expect(row.getByRole("button", { name: "Mantener precio" })).toBeDisabled();
+    expect(row.getByRole("button", { name: "Aplicar" })).toBeDisabled();
   });
 
   it("CNF-07: la confirmación muestra precio en REF y Bs, ganancia con semáforo y el motivo", async () => {
@@ -387,23 +475,34 @@ describe("PurchaseRepriceNotice", () => {
     expect(mutations()).toHaveLength(1);
   });
 
-  it("un error del servidor se ve en su fila, sin perder las demás, y deja reintentar", async () => {
+  it("un error del servidor al mantener se lee tal cual en el modal, sin perder las filas, y deja reintentar", async () => {
     const other = reviewItem({ name: "Arroz 1 kg", productId: "prod-2", sku: "arroz" });
 
     serve([[reviewItem(), other]], () =>
       jsonResponse({ error: { code: "CONFLICT", message: "El producto está inactivo." } }, 409),
     );
     const user = renderNotice();
+    const dialog = await openKeepDialog(user);
 
-    const row = within(await screen.findByTestId("purchase-reprice-row-prod-1"));
+    await user.click(dialog.getByRole("button", { name: "Mantener precio" }));
 
-    await user.click(row.getByRole("button", { name: "Mantener precio" }));
+    expect(await dialog.findByRole("alert")).toHaveTextContent("El producto está inactivo.");
+    expect(screen.queryByText("Precio mantenido")).not.toBeInTheDocument();
+    // Sigue abierto y se puede reintentar.
+    await waitFor(() =>
+      expect(dialog.getByRole("button", { name: "Mantener precio" })).toBeEnabled(),
+    );
+    await user.click(dialog.getByRole("button", { name: "Mantener precio" }));
+    await waitFor(() => expect(mutations()).toHaveLength(2));
 
-    expect(await row.findByRole("alert")).toHaveTextContent("El producto está inactivo.");
-    expect(row.getByRole("button", { name: "Mantener precio" })).toBeEnabled();
+    await waitFor(() => expect(dialog.getByRole("button", { name: "Cancelar" })).toBeEnabled());
+    await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
+    const row = within(screen.getByTestId("purchase-reprice-row-prod-1"));
     const otherRow = within(screen.getByTestId("purchase-reprice-row-prod-2"));
 
+    expect(row.getByRole("button", { name: "Mantener precio" })).toBeEnabled();
     expect(otherRow.queryByRole("alert")).not.toBeInTheDocument();
     expect(otherRow.getByRole("button", { name: "Aplicar" })).toBeEnabled();
   });

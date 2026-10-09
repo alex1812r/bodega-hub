@@ -24,6 +24,13 @@ export type KeepPriceProduct = {
 };
 
 type KeepPriceConfirmModalProps = {
+  /**
+   * Motivo que se guarda si el usuario deja el campo vacío (p. ej. la compra
+   * que originó el aviso). El modal lo dice bajo el campo.
+   */
+  defaultReason?: string;
+  /** Se llama cuando el servidor ya guardó la decisión, antes de cerrar. */
+  onKept?: () => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
   product: KeepPriceProduct | null;
@@ -48,6 +55,8 @@ export function describeKeptPrice(
  * confirma sobre ellos; si el producto ya no está en la cola, se cierra con un aviso.
  */
 export function KeepPriceConfirmModal({
+  defaultReason,
+  onKept,
   onOpenChange,
   open,
   product: openedProduct,
@@ -81,7 +90,7 @@ export function KeepPriceConfirmModal({
       await keepPrice.mutateAsync({
         expectedCostRef: product.currentCostRef,
         productId: product.id,
-        reason: reason.trim() || undefined,
+        reason: reason.trim() || defaultReason || undefined,
       });
     } catch (error) {
       const fresh = await costConflict.fetchProduct(error, product.id);
@@ -110,6 +119,7 @@ export function KeepPriceConfirmModal({
       throw error;
     }
 
+    onKept?.();
     showToast({
       description: `${product.name} salió de "Por revisar".`,
       title: "Precio mantenido",
@@ -137,6 +147,7 @@ export function KeepPriceConfirmModal({
         <p className="font-medium text-foreground [overflow-wrap:anywhere]">{product?.name}</p>
         <Input
           disabled={keepPrice.isPending}
+          helperText={defaultReason ? `Si lo dejas vacío se guarda «${defaultReason}».` : undefined}
           label="Motivo (opcional)"
           maxLength={PRICE_CHANGE_REASON_MAX_LENGTH}
           onChange={(event) => setReason(event.target.value)}

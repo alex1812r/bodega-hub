@@ -24,15 +24,12 @@ import {
   payrollPeriodStatusLabels,
   payrollPeriodStatusVariants,
 } from "../components/payrollLabels";
-import {
-  useApprovePayrollPeriod,
-  usePayrollPeriod,
-  useRecomputePayrollPeriod,
-} from "../hooks/usePayroll";
+import { usePayrollPeriod, useRecomputePayrollPeriod } from "../hooks/usePayroll";
 import { exportPayrollReceiptPdf } from "../payroll-receipt/services/exportPayrollReceiptPdf";
 import type { PayrollItem } from "../types";
 import { formatPeriodLabel } from "../utils/quincena";
 
+import { PayrollApproveConfirmModal } from "./components/PayrollApproveConfirmModal";
 import { PayrollCancelPaymentModal } from "./components/PayrollCancelPaymentModal";
 import { PayrollPayModal } from "./components/PayrollPayModal";
 import { PayrollVaultPanel } from "./components/PayrollVaultPanel";
@@ -44,12 +41,12 @@ type PayrollPeriodDetailPageProps = {
 export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPageProps) {
   const detailQuery = usePayrollPeriod(periodId);
   const recompute = useRecomputePayrollPeriod(periodId);
-  const approve = useApprovePayrollPeriod(periodId);
   const appSettings = useSettings();
   const exchangeRate = useCurrentExchangeRate();
   const [cancelItem, setCancelItem] = useState<PayrollItem | null>(null);
   const [salesItem, setSalesItem] = useState<PayrollItem | null>(null);
   const [payItems, setPayItems] = useState<PayrollItem[]>([]);
+  const [isApproveOpen, setIsApproveOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const detail = detailQuery.data;
@@ -125,11 +122,14 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
                       {recompute.isPending ? "Recalculando..." : "Recalcular"}
                     </Button>
                     <Button
-                      disabled={approve.isPending}
-                      onClick={() => void runAction(() => approve.mutateAsync())}
+                      disabled={recompute.isPending}
+                      onClick={() => {
+                        setActionError(null);
+                        setIsApproveOpen(true);
+                      }}
                       size="sm"
                     >
-                      {approve.isPending ? "Aprobando..." : "Aprobar"}
+                      Aprobar
                     </Button>
                   </>
                 ) : null}
@@ -299,6 +299,13 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
           }
         }}
         open={payItems.length > 0}
+      />
+
+      <PayrollApproveConfirmModal
+        items={items}
+        onOpenChange={setIsApproveOpen}
+        open={isApproveOpen && period.status === "borrador"}
+        period={period}
       />
 
       <PayrollCancelPaymentModal
