@@ -7,6 +7,10 @@
  * detalle; solo aparece si la venta admite cobros y el usuario puede registrarlos.
  *
  * PAG-F2 · «Volver» regresa a la lista de origen que viaja en `returnTo`.
+ *
+ * DET-03 · cabecera con UNA accion primaria segun el estado real de la venta,
+ * secciones colapsables (recibo cerrado por defecto) y «Volver» que conserva el
+ * `returnTo` anidado.
  */
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -37,6 +41,7 @@ jest.mock("./services/exportSaleInvoicePdf", () => ({
 }));
 
 import { createQueryWrapper, jsonResponse } from "@/modules/inventory/utils/requestAttempt.testUtils";
+import { formatVesBs } from "@/shared/utils/currency";
 
 import type { SaleDetail } from "../hooks/useSales";
 import { SaleDetailsPage } from "./page";
@@ -58,6 +63,29 @@ const PAID_SALE: SaleDetail = {
   totalVes: 2617.18,
   userId: "user-seller",
 };
+
+// Cada seccion recuerda abierto/cerrado en localStorage: sin limpiar, un test heredaria el del anterior.
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
+/** Resumen de la cabecera: estado, cifras y accion primaria. */
+function summary() {
+  return within(screen.getByRole("region", { hidden: true, name: "Resumen de la venta" }));
+}
+
+/** Tarjeta de una cifra de la cabecera («Total», «Pagado», «Saldo»). */
+function figure(label: string) {
+  return summary().getByText(label).parentElement as HTMLElement;
+}
+
+/** Boton que abre o cierra una seccion; su nombre incluye el resumen cuando esta cerrada. */
+function sectionToggle(title: string) {
+  return screen.getByRole("button", {
+    hidden: true,
+    name: (name) => name === title || name.startsWith(`${title} `),
+  });
+}
 
 const CANCEL_REJECTION =
   "La venta V-20261006-000013 tiene 1 pago(s) activo(s) por Bs 2617.18. Anula primero los pagos y luego cancela la venta.";
@@ -103,7 +131,7 @@ async function confirmAction(menuItem: string, confirmLabel: string) {
 /** El aviso va despues de la cabecera y antes de cualquier tarjeta del detalle. */
 function expectRightBelowHeader(message: HTMLElement) {
   const header = screen.getByRole("heading", { level: 1 });
-  const firstCard = screen.getByText("Historial de Pagos");
+  const firstCard = sectionToggle("Productos");
 
   expect(header.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(message.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -269,7 +297,7 @@ describe("SaleDetailsPage · cobrar saldo (PAG-02)", () => {
     mockPermissions = ["sales.view", "payments.view"];
     await renderSale(PENDING_SALE);
 
-    expect(screen.getByText("Saldo Pendiente VES")).toBeInTheDocument();
+    expect(figure("Saldo")).toHaveTextContent(formatVesBs(1600));
     expect(collectButton()).not.toBeInTheDocument();
   });
 
@@ -308,7 +336,8 @@ describe("SaleDetailsPage · cobrar saldo (PAG-02)", () => {
     expect(posted).toEqual([
       expect.objectContaining({ amount: 1600, method: "efectivo_ves", saleId: PENDING_SALE.id }),
     ]);
-    expect(screen.queryByText("Saldo Pendiente VES")).not.toBeInTheDocument();
+    expect(figure("Saldo")).toHaveTextContent(formatVesBs(0));
+    expect(summary().getByRole("button", { name: "Recibo" })).toBeInTheDocument();
     expect(screen.queryByText("No hay pagos registrados para esta venta.")).not.toBeInTheDocument();
     expect(screen.getByText("Pagada")).toBeInTheDocument();
   });
@@ -324,7 +353,7 @@ describe("SaleDetailsPage · cobrar saldo (PAG-02)", () => {
       await dialog.findByText(/Pago registrado\. Saldo pendiente:.*1\.000,00/),
     ).toBeInTheDocument();
     await waitFor(() =>
-      expect(screen.getByText("Saldo Pendiente VES").parentElement).toHaveTextContent("1.000,00"),
+      expect(figure("Saldo")).toHaveTextContent(formatVesBs(1000)),
     );
 
     expect(posted).toEqual([expect.objectContaining({ amount: 600, saleId: PENDING_SALE.id })]);
@@ -409,7 +438,7 @@ describe("SaleDetailsPage · re-pedido fallido (PAG-F6 U2)", () => {
       ).toBeInTheDocument();
       expect(screen.getByRole("dialog", { name: "Cobrar saldo" })).toBeInTheDocument();
       expect(screen.queryByText("No pudimos cargar la venta")).not.toBeInTheDocument();
-      expect(screen.getByText("Historial de Pagos")).toBeInTheDocument();
+      expect(sectionToggle("Pagos")).toBeInTheDocument();
     },
   );
 
@@ -424,6 +453,267 @@ describe("SaleDetailsPage · re-pedido fallido (PAG-F6 U2)", () => {
 
     expect(await screen.findByText("No pudimos cargar la venta")).toBeInTheDocument();
     expect(screen.getByText("Fallo interno.")).toBeInTheDocument();
-    expect(screen.queryByText("Historial de Pagos")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Resumen de la venta" })).not.toBeInTheDocument();
+  });
+});
+
+const UNPAID_SALE: SaleDetail = { ...PENDING_SALE, id: "sale-det03-unpaid", paidVes: 0 };
+/** Marcada como pagada pero con saldo: el servidor todavía la deja cobrar. */
+const PAID_WITH_BALANCE_SALE: SaleDetail = { ...PENDING_SALE, id: "sale-det03-short", status: "pagada" };
+
+function payment(id: string, overrides: Partial<SaleDetail["payments"][number]> = {}) {
+  return {
+    amount: 1000,
+    amountRef: 1.15,
+    amountVes: 1000,
+    contactId: PAID_SALE.customerId,
+    createdAt: "2026-10-06T14:00:00.000Z",
+    direction: "entrada" as const,
+    id,
+    method: "efectivo_ves" as const,
+    refRateVes: PAID_SALE.refRateVes,
+    saleId: PAID_SALE.id,
+    ...overrides,
+  };
+}
+
+describe("SaleDetailsPage · acción primaria según el estado (DET-03)", () => {
+  let print: jest.SpyInstance;
+
+  beforeEach(() => {
+    mockPermissions = ["sales.create", "payments.manage"];
+    print = jest.spyOn(window, "print").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    print.mockRestore();
+  });
+
+  it("la cabecera resume total, pagado, saldo y estado", async () => {
+    await renderSale(PENDING_SALE);
+
+    expect(figure("Total")).toHaveTextContent(formatVesBs(2600));
+    expect(figure("Pagado")).toHaveTextContent(formatVesBs(1000));
+    expect(figure("Saldo")).toHaveTextContent(formatVesBs(1600));
+    expect(summary().getByText("Pendiente de Pago")).toBeInTheDocument();
+  });
+
+  it.each<[string, SaleDetail]>([
+    ["pendiente de pago sin abonos", UNPAID_SALE],
+    ["parcialmente pagada", PENDING_SALE],
+    ["pagada con saldo", PAID_WITH_BALANCE_SALE],
+  ])("%s: la única acción primaria es «Cobrar saldo»", async (_name, sale) => {
+    await renderSale(sale);
+
+    expect(summary().getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Cobrar saldo",
+    ]);
+  });
+
+  it("pagada: la única acción primaria es «Recibo», que imprime el recibo", async () => {
+    await renderSale(PAID_SALE);
+
+    expect(summary().getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Recibo",
+    ]);
+    expect(summary().queryByRole("status")).not.toBeInTheDocument();
+
+    fireEvent.click(summary().getByRole("button", { name: "Recibo" }));
+
+    expect(print).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<[string, SaleDetail["status"], string]>([
+    ["anulada", "cancelada", "Venta anulada: no admite cobros."],
+    ["devuelta", "devuelta", "Venta devuelta: no admite cobros."],
+  ])("%s con saldo: nunca «Cobrar», ofrece «Recibo» y avisa del estado", async (_name, status, notice) => {
+    await renderSale({ ...PENDING_SALE, status });
+
+    expect(summary().getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Recibo",
+    ]);
+    expect(summary().getByRole("status")).toHaveTextContent(notice);
+    expect(collectButton()).not.toBeInTheDocument();
+  });
+
+  it("borrador: sin acción primaria, solo el aviso del estado", async () => {
+    await renderSale({ ...PENDING_SALE, status: "borrador" });
+
+    expect(summary().queryByRole("button")).not.toBeInTheDocument();
+    expect(summary().getByRole("status")).toHaveTextContent(
+      "Venta en borrador: todavía no admite cobros.",
+    );
+  });
+
+  it("con saldo pero sin permiso de cobro cae a «Recibo» y lo explica", async () => {
+    mockPermissions = ["sales.view", "payments.view"];
+    await renderSale(PENDING_SALE);
+
+    expect(summary().getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Recibo",
+    ]);
+    expect(summary().getByRole("status")).toHaveTextContent(
+      "Saldo pendiente. No tienes permiso para registrar cobros.",
+    );
+  });
+});
+
+describe("SaleDetailsPage · secciones colapsables (DET-03)", () => {
+  beforeEach(() => {
+    mockPermissions = ["sales.create", "payments.manage"];
+  });
+
+  function screenReceipt() {
+    return document.getElementById("sale-receipt-screen-preview") as HTMLElement;
+  }
+
+  it("la vista previa del recibo abre colapsada y se despliega al pulsarla", async () => {
+    await renderSale(PAID_SALE);
+
+    const toggle = sectionToggle("Vista previa del recibo");
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screenReceipt()).not.toBeVisible();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screenReceipt()).toBeVisible();
+    expect(window.localStorage.getItem("sale-detail:receipt-open")).toBe("open");
+  });
+
+  it("el recibo que se imprime no depende de la sección: sigue fuera de ella, uno solo", async () => {
+    await renderSale(PAID_SALE);
+
+    const printable = document.querySelectorAll("#sale-receipt-preview");
+
+    expect(printable).toHaveLength(1);
+    expect(printable[0].closest("[hidden]")).toBeNull();
+    expect(printable[0]).toHaveTextContent("Factura: #V-20261006-000013");
+    expect(printable[0].innerHTML).toBe(screenReceipt().innerHTML);
+  });
+
+  it("con saldo: Productos y Pagos abiertas, Cliente / Vendedor cerrada con su resumen", async () => {
+    await renderSale(PENDING_SALE);
+
+    expect(sectionToggle("Productos")).toHaveAttribute("aria-expanded", "true");
+    expect(sectionToggle("Pagos")).toHaveAttribute("aria-expanded", "true");
+    expect(sectionToggle("Cliente / Vendedor")).toHaveAttribute("aria-expanded", "false");
+    expect(sectionToggle("Cliente / Vendedor")).toHaveTextContent("cont-customer · vendió Vendedor Demo");
+    expect(screen.getByText("Total (VES)")).toBeVisible();
+  });
+
+  it("sin saldo: Pagos cerrada con el resumen «N pagos · cobrado X» (los anulados no cuentan)", async () => {
+    await renderSale({
+      ...PAID_SALE,
+      payments: [
+        payment("pay-1", { amountVes: 2000 }),
+        payment("pay-2", { amountVes: 617.18 }),
+        payment("pay-void", { status: "anulado" }),
+      ],
+    });
+
+    const toggle = sectionToggle("Pagos");
+
+    expect(sectionToggle("Productos")).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveTextContent(`2 pagos · cobrado ${formatVesBs(2617.18)}`);
+  });
+
+  it("venta con saldo y sin pagos: estado vacío a la vista dentro de Pagos", async () => {
+    await renderSale(UNPAID_SALE);
+
+    expect(sectionToggle("Pagos")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("No hay pagos registrados para esta venta.")).toBeVisible();
+  });
+
+  it("venta sin saldo y sin pagos: Pagos cerrada lo dice en el resumen y conserva el estado vacío", async () => {
+    await renderSale({ ...PAID_SALE, paidVes: 0, totalVes: 0 });
+
+    const toggle = sectionToggle("Pagos");
+
+    expect(toggle).toHaveTextContent("Sin pagos registrados");
+
+    fireEvent.click(toggle);
+
+    expect(screen.getByText("No hay pagos registrados para esta venta.")).toBeVisible();
+  });
+
+  it("recuerda lo que el usuario dejó abierto o cerrado, por sección", async () => {
+    window.localStorage.setItem("sale-detail:products-open", "closed");
+    window.localStorage.setItem("sale-detail:parties-open", "open");
+    await renderSale(PENDING_SALE);
+
+    expect(sectionToggle("Productos")).toHaveAttribute("aria-expanded", "false");
+    expect(sectionToggle("Productos")).toHaveTextContent("0 productos · total");
+    expect(sectionToggle("Cliente / Vendedor")).toHaveAttribute("aria-expanded", "true");
+    expect(sectionToggle("Pagos")).toHaveAttribute("aria-expanded", "true");
+  });
+});
+
+describe("SaleDetailsPage · el menú «…» conserva sus acciones (DET-03)", () => {
+  async function menuItems() {
+    fireEvent.click(screen.getByRole("button", { name: "Acciones de la venta" }));
+    await screen.findByRole("menuitem", { name: "Imprimir factura" });
+
+    return screen.getAllByRole("menuitem").map((item) => item.textContent);
+  }
+
+  it.each<[string, SaleDetail]>([
+    ["con saldo", PENDING_SALE],
+    ["pagada", PAID_SALE],
+    ["anulada", { ...PAID_SALE, status: "cancelada" }],
+    ["devuelta", { ...PAID_SALE, status: "devuelta" }],
+  ])("venta %s con sales.create: imprimir, PDF, devolución y anular", async (_name, sale) => {
+    mockPermissions = ["sales.create", "payments.manage"];
+    await renderSale(sale);
+
+    expect(await menuItems()).toEqual([
+      "Imprimir factura",
+      "Descargar PDF",
+      "Devolucion",
+      "Anular venta",
+    ]);
+  });
+
+  it("sin sales.create: imprimir y PDF", async () => {
+    mockPermissions = ["sales.view"];
+    await renderSale(PAID_SALE);
+
+    expect(await menuItems()).toEqual(["Imprimir factura", "Descargar PDF"]);
+  });
+});
+
+describe("SaleDetailsPage · «Volver» con returnTo encadenado (DET-03)", () => {
+  const PRODUCTS_LIST = "/products?q=harina&page=2";
+  // Kardex del producto, que a su vez sabe volver a la lista de productos con sus filtros.
+  const PRODUCT_DETAIL = `/products/prod-1?tab=historial&returnTo=${encodeURIComponent(PRODUCTS_LIST)}`;
+
+  beforeEach(() => {
+    mockPermissions = ["sales.create", "payments.manage"];
+  });
+
+  afterEach(() => {
+    mockSearch = "";
+  });
+
+  async function backHref(returnTo: string) {
+    mockSearch = `returnTo=${encodeURIComponent(returnTo)}`;
+    await renderSale(PAID_SALE);
+
+    return screen.getByRole("link", { name: "Volver" }).getAttribute("href");
+  }
+
+  it("vuelve al detalle de origen SIN quitarle su returnTo: desde allí se sigue volviendo a la lista filtrada", async () => {
+    const href = await backHref(PRODUCT_DETAIL);
+
+    expect(href).toBe(PRODUCT_DETAIL);
+    expect(new URLSearchParams(href?.split("?")[1]).get("returnTo")).toBe(PRODUCTS_LIST);
+  });
+
+  it("un returnTo anidado inseguro invalida el destino entero", async () => {
+    expect(
+      await backHref(`/products/prod-1?returnTo=${encodeURIComponent("https://evil.example")}`),
+    ).toBe("/sales");
   });
 });

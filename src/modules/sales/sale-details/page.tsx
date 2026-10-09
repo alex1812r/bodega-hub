@@ -6,10 +6,10 @@ import { RegisterPaymentModal } from "@/modules/payments/components/RegisterPaym
 import type { PaymentDetail } from "@/modules/payments/hooks/usePayments";
 import { useSettings } from "@/modules/settings/hooks/useSettings";
 import { usePermission } from "@/shared/auth/usePermission";
-import { Button } from "@/shared/components/Button";
+import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
-import { roundMoney } from "@/shared/utils/currency";
+import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 import {
   useCancelSale,
@@ -18,12 +18,12 @@ import {
 } from "../hooks/useSales";
 import { exportSaleInvoicePdf } from "./services/exportSaleInvoicePdf";
 import { SaleDetailCustomerCard } from "./components/SaleDetailCustomerCard";
-import { SaleDetailFinancialSummary } from "./components/SaleDetailFinancialSummary";
-import { SaleDetailHeaderCard } from "./components/SaleDetailHeaderCard";
+import { SaleDetailHeader } from "./components/SaleDetailHeader";
 import { SaleDetailPaymentsTable } from "./components/SaleDetailPaymentsTable";
 import { SaleDetailProductsTable } from "./components/SaleDetailProductsTable";
 import { SaleDetailReceiptPreview } from "./components/SaleDetailReceiptPreview";
 import { SaleDetailSellerCard } from "./components/SaleDetailSellerCard";
+import { SaleDetailTotals } from "./components/SaleDetailTotals";
 import { resolveSeller } from "./utils/resolveSeller";
 
 type SaleDetailsPageProps = {
@@ -89,36 +89,53 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
 
   const data = sale.data;
   const pendingVes = Math.max(0, data.totalVes - data.paidVes);
+  const hasBalance = roundMoney(pendingVes) > 0;
   const seller = resolveSeller(data.userId);
   const companyName = settings.data?.businessName ?? undefined;
   // Mismas reglas que el servidor: `register_payment` solo cobra ventas pagadas o
   // pendientes (no borrador, anulada ni devuelta) con saldo, y `POST /api/payments`
   // exige `payments.manage` o `sales.create`.
   const canCollectBalance =
-    roundMoney(pendingVes) > 0 &&
+    hasBalance &&
     (data.status === "pendiente_pago" || data.status === "pagada") &&
     (can("payments.manage") || can("sales.create"));
+  // Un pago anulado sigue en el historial, pero no cuenta como cobro.
+  const activePayments = data.payments.filter((payment) => payment.status !== "anulado").length;
+  const customerName = data.customer?.name ?? data.customerId;
+  const receipt = {
+    cashierName: seller.name,
+    companyName,
+    createdAt: data.createdAt,
+    customer: data.customer,
+    discountRef: data.discountRef,
+    invoiceNumber: data.invoiceNumber,
+    items: data.items,
+    refRateVes: data.refRateVes,
+    subtotalRef: data.subtotalRef,
+    taxRef: data.taxRef,
+    totalRef: data.totalRef,
+    totalVes: data.totalVes,
+  };
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6">
-      <SaleDetailHeaderCard
+    <div className="mx-auto w-full max-w-5xl space-y-6">
+      <SaleDetailHeader
+        canCollectBalance={canCollectBalance}
         createdAt={data.createdAt}
         invoiceNumber={data.invoiceNumber}
         isCancelling={cancelSale.isPending}
         isExportingPdf={isExportingPdf}
         isReturning={returnSale.isPending}
         onCancel={() => cancelSale.mutate(saleId)}
+        onCollect={() => setIsCollecting(true)}
         onDownloadPdf={() => void handleDownloadPdf()}
         onPrint={handlePrint}
         onReturn={() => returnSale.mutate(saleId)}
-        primaryAction={
-          canCollectBalance ? (
-            <Button onClick={() => setIsCollecting(true)} size="sm" type="button">
-              Cobrar saldo
-            </Button>
-          ) : null
-        }
+        paidVes={data.paidVes}
+        pendingVes={pendingVes}
         status={data.status}
+        totalRef={data.totalRef}
+        totalVes={data.totalVes}
       />
 
       {canCollectBalance || isCollecting ? (
@@ -141,47 +158,64 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
         />
       ) : null}
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <div className="flex flex-col gap-6 xl:col-span-2">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <SaleDetailCustomerCard
-              customer={data.customer}
-              customerId={data.customerId}
-            />
-            <SaleDetailSellerCard seller={seller} />
-          </div>
-
-          <SaleDetailFinancialSummary
-            discountRef={data.discountRef}
-            paidVes={data.paidVes}
-            pendingVes={pendingVes}
-            refRateVes={data.refRateVes}
-            subtotalRef={data.subtotalRef}
-            taxRef={data.taxRef}
-            totalRef={data.totalRef}
-            totalVes={data.totalVes}
-          />
-
+      <CollapsibleSection
+        defaultOpen
+        storageKey="sale-detail:products-open"
+        summary={`${data.items.length === 1 ? "1 producto" : `${data.items.length} productos`} · total ${formatRefUsd(data.totalRef)}`}
+        title="Productos"
+      >
+        <div className="space-y-4">
           <SaleDetailProductsTable items={data.items} />
-          <SaleDetailPaymentsTable payments={data.payments} />
-        </div>
-
-        <aside className="sale-detail-receipt-aside flex flex-col gap-4 xl:sticky xl:top-[5.5rem] xl:self-start">
-          <SaleDetailReceiptPreview
-            cashierName={seller.name}
-            companyName={companyName}
-            createdAt={data.createdAt}
-            customer={data.customer}
+          <SaleDetailTotals
             discountRef={data.discountRef}
-            invoiceNumber={data.invoiceNumber}
-            items={data.items}
             refRateVes={data.refRateVes}
             subtotalRef={data.subtotalRef}
             taxRef={data.taxRef}
             totalRef={data.totalRef}
             totalVes={data.totalVes}
           />
-        </aside>
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        defaultOpen={hasBalance}
+        storageKey="sale-detail:payments-open"
+        summary={
+          activePayments === 0
+            ? "Sin pagos registrados"
+            : `${activePayments === 1 ? "1 pago" : `${activePayments} pagos`} · cobrado ${formatVesBs(data.paidVes)}`
+        }
+        title="Pagos"
+      >
+        <SaleDetailPaymentsTable payments={data.payments} />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        storageKey="sale-detail:parties-open"
+        summary={`${customerName} · vendió ${seller.name}`}
+        title="Cliente / Vendedor"
+      >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <SaleDetailCustomerCard customer={data.customer} customerId={data.customerId} />
+          <SaleDetailSellerCard seller={seller} />
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        storageKey="sale-detail:receipt-open"
+        summary="Ticket de 80 mm tal como se imprime"
+        title="Vista previa del recibo"
+      >
+        <SaleDetailReceiptPreview {...receipt} id="sale-receipt-screen-preview" />
+      </CollapsibleSection>
+
+      {/*
+        Copia solo para imprimir: las reglas de impresión (globals.css) pintan
+        `#sale-receipt-preview`, y una sección colapsada no se imprime. Así el
+        ticket sale igual con la vista previa abierta o cerrada.
+      */}
+      <div aria-hidden="true" className="sale-detail-receipt-aside hidden print:block">
+        <SaleDetailReceiptPreview {...receipt} />
       </div>
     </div>
   );
