@@ -246,7 +246,7 @@ describe("ProductDetailsPage · Por revisar (PRO-11)", () => {
 
     expect(
       dialog.getByText(
-        "El precio se queda en ref 10.00 con una ganancia de 11,11 %. Saldrá de la lista hasta que el costo vuelva a subir.",
+        "El precio no cambia: se queda en ref 10.00 con una ganancia de 11,11 %. Saldrá de la lista hasta que el costo vuelva a subir.",
       ),
     ).toBeInTheDocument();
     expect(posts).toHaveLength(0);

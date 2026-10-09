@@ -68,6 +68,11 @@ function serve(
       return jsonResponse({ data: pricing });
     }
 
+    // Tasa vigente: la confirmación de "Aplicar" la pide al abrirse (CNF-07).
+    if (url.startsWith("/api/exchange-rates/current")) {
+      return jsonResponse({ data: { rateVes: 40 } });
+    }
+
     if ((init?.method ?? "GET") === "GET") {
       const items = queues[Math.min(reads, queues.length - 1)];
       reads += 1;
@@ -311,6 +316,54 @@ describe("PurchaseRepriceNotice", () => {
     release(jsonResponse({ data: {} }));
     await screen.findByText("Precio mantenido: Harina PAN 1 kg");
     expect(mutations()).toHaveLength(1);
+  });
+
+  it("CNF-07: la confirmación muestra precio en REF y Bs, ganancia con semáforo y el motivo", async () => {
+    serve([[reviewItem()]]);
+    const user = renderNotice();
+
+    await user.click(await screen.findByRole("button", { name: "Aplicar" }));
+
+    const dialog = within(await screen.findByRole("dialog", { name: "Aplicar reprecio" }));
+    const effect = dialog.getByTestId("price-change-effect");
+
+    expect(effect).toHaveAttribute("data-direction", "up");
+    expect(effect).toHaveTextContent(/Precio\s*ref 10\.00\s*pasa a\s*ref 11\.25/);
+    // La tasa vigente (40) llega al abrir: 10 × 40 = 400 y 11,25 × 40 = 450.
+    await waitFor(() =>
+      expect(effect).toHaveTextContent(/Bs\. 400,00\s*pasa a\s*Bs\. 450,00/),
+    );
+
+    const badges = within(effect).getAllByTitle("Ganancia sobre el costo (ya con IVA)");
+
+    expect(badges).toHaveLength(2);
+    expect(badges[0]).toHaveTextContent("11,11 %");
+    expect(badges[0]).toHaveAttribute("data-band", "low");
+    expect(badges[1]).toHaveTextContent("25 %");
+    expect(badges[1]).toHaveAttribute("data-band", "high");
+    // El motivo mostrado es el que viaja en el POST.
+    expect(effect).toHaveTextContent("Motivo: Reprecio al 25 % por compra C-000123");
+    expect(dialog.queryByRole("note")).not.toBeInTheDocument();
+
+    await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // Cancelar no cambia nada.
+    expect(mutations()).toEqual([]);
+  });
+
+  it("CNF-07: si el reprecio propuesto queda por debajo del costo, lo avisa en tono de peligro", async () => {
+    // Ganancia anterior negativa (-5 %): 9 × 0,95 = 8,55 < costo 9.
+    serve([[reviewItem({ currentMarginPct: -11.111111, previousMarginPct: -5, salePriceRef: 8 })]]);
+    const user = renderNotice();
+
+    await user.click(await screen.findByRole("button", { name: "Aplicar" }));
+
+    const warning = within(await screen.findByRole("dialog")).getByRole("note");
+
+    expect(warning).toHaveAttribute("data-tone", "danger");
+    expect(warning).toHaveTextContent(
+      "El precio nuevo queda por debajo del costo (ref 9.00): cada venta sería a pérdida.",
+    );
   });
 
   it("doble clic al confirmar Aplicar envía una sola vez", async () => {

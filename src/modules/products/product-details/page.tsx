@@ -7,6 +7,7 @@ import { useCallback, useRef, useState } from "react";
 import { getPaginatedItems, MAX_PAGE_LIMIT } from "@/lib/api/pagination";
 import { ProductKardexCard } from "@/modules/inventory/components/ProductKardexCard";
 import { withChainedReturnTo } from "@/modules/inventory/utils/chainedReturnTo";
+import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { Can } from "@/shared/auth/Can";
 import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
@@ -67,6 +68,8 @@ function ProductDetails({ productId = "prod-drill" }: ProductDetailsPageProps) {
   const categories = useAllCategories();
   // Semáforo y chips de la tienda; sin datos (cargando o error) valen los por defecto.
   const pricingSettings = usePricingSettings();
+  // Tasa vigente: solo para mostrar en Bs el cambio de precio antes de confirmarlo.
+  const currentRate = useCurrentExchangeRate();
   // La tabla no pagina: sin `limit` el BFF entrega 10 y un producto admite 50 proveedores.
   const suppliers = useProductSuppliers(canSeeSuppliers ? productId : undefined, {
     limit: MAX_PAGE_LIMIT,
@@ -103,12 +106,17 @@ function ProductDetails({ productId = "prod-drill" }: ProductDetailsPageProps) {
     }
   }
 
-  // `mutate`, no `mutateAsync`: la tarjeta no espera el resultado y un fallo
-  // se queda en `quickPriceUpdate.error` (se pinta en el Resumen) en vez de subir
-  // como promesa rechazada sin manejar. `expectedCostRef` es el costo que mostraba
-  // la tarjeta: si ya es otro, el servidor responde 409 y los datos se refrescan.
-  function handleQuickPriceUpdate(salePriceRef: number, reason: string, expectedCostRef: number) {
-    quickPriceUpdate.mutate({ expectedCostRef, reason, salePriceRef });
+  // La tarjeta espera el resultado: su confirmación se cierra con el éxito y, si
+  // falla, muestra el motivo y sigue abierta (el fallo queda además en
+  // `quickPriceUpdate.error`, que se pinta en el Resumen). `expectedCostRef` es el
+  // costo que mostraba la tarjeta: si ya es otro, el servidor responde 409 y los
+  // datos se refrescan.
+  async function handleQuickPriceUpdate(
+    salePriceRef: number,
+    reason: string,
+    expectedCostRef: number,
+  ) {
+    await quickPriceUpdate.mutateAsync({ expectedCostRef, reason, salePriceRef });
   }
 
   if (product.isLoading) {
@@ -206,6 +214,8 @@ function ProductDetails({ productId = "prod-drill" }: ProductDetailsPageProps) {
                 isSubmitting={quickPriceUpdate.isPending}
                 onSubmit={handleQuickPriceUpdate}
                 pricing={pricingSettings.data}
+                productName={data.name}
+                rateVes={currentRate.data?.rateVes}
               />
             </Can>
           </div>

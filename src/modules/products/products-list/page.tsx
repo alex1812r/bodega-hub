@@ -721,6 +721,8 @@ function ProductsList() {
           }}
           open
           products={selectedProducts}
+          rateVes={rateVes}
+          thresholds={marginThresholds}
         />
       ) : null}
       {editProduct ? (

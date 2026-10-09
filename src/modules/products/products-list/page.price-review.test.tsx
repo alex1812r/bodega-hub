@@ -331,7 +331,9 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
       dialog.getByText("Vas a cambiar el precio de 2 productos al 30 % sobre su costo."),
     ).toBeInTheDocument();
 
-    const preview = dialog.getAllByRole("listitem");
+    const preview = within(
+      dialog.getByRole("list", { name: "Precio y ganancia antes y después" }),
+    ).getAllByRole("listitem");
 
     // 9 × 1,30 = 11,70 y 10 × 1,30 = 13,00: el mismo cálculo que el servidor.
     expect(preview[0]).toHaveTextContent(/Arroz.*ref 10\.00.*ref 11\.70/);
@@ -388,7 +390,11 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
       dialog.getByText("Vas a cambiar el precio de 1 producto al 17,5 % sobre su costo."),
     ).toBeInTheDocument();
     // 9 × 1,175 = 10,575 → 10,58 (medio céntimo sube, como en `priceFromMarkup`).
-    expect(dialog.getByRole("listitem")).toHaveTextContent(/ref 10\.00.*ref 10\.58/);
+    expect(
+      within(dialog.getByRole("list", { name: "Precio y ganancia antes y después" })).getByRole(
+        "listitem",
+      ),
+    ).toHaveTextContent(/ref 10\.00.*ref 10\.58/);
   });
 
   it("reports a mixed result row by row, keeps the failed ones selected and refreshes list and counter", async () => {
@@ -560,7 +566,7 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
 
     expect(
       dialog.getByText(
-        "El precio se queda en ref 10.00 con una ganancia de 11,11 %. Saldrá de la lista hasta que el costo vuelva a subir.",
+        "El precio no cambia: se queda en ref 10.00 con una ganancia de 11,11 %. Saldrá de la lista hasta que el costo vuelva a subir.",
       ),
     ).toBeInTheDocument();
 

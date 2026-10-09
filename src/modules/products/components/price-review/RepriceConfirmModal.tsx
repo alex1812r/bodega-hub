@@ -1,13 +1,17 @@
 "use client";
 
-import { ArrowRight } from "lucide-react";
-
 import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { formatMarkupPct } from "@/shared/components/MarginBadge";
-import { formatRefUsd } from "@/shared/utils/currency";
-import { priceFromMarkup } from "@/shared/utils/pricing";
+import { type MarginThresholds, priceFromMarkup } from "@/shared/utils/pricing";
 
 import { type RepriceResult, useRepriceProducts } from "../../hooks/usePriceReview";
+import { buildRepriceReason } from "../../services/priceReview";
+import {
+  PriceBelowCostWarning,
+  type PriceChange,
+  PriceChangeEffect,
+  summarizePriceChanges,
+} from "./PriceChangeEffect";
 
 export type RepriceProduct = {
   currentCostRef: number;
@@ -23,10 +27,15 @@ type RepriceConfirmModalProps = {
   onOpenChange: (open: boolean) => void;
   open: boolean;
   products: RepriceProduct[];
+  /** Tasa vigente (Bs por REF) para mostrar cada cambio también en Bs; sin ella solo en REF. */
+  rateVes?: number | null;
+  /** Cortes del semáforo de la tienda; sin ellos, los por defecto. */
+  thresholds?: MarginThresholds;
 };
 
-/** Filas de la vista previa; el resto se resume en "y N más". */
-export const REPRICE_PREVIEW_ROWS = 5;
+function countLabel(count: number, one: string, many: string) {
+  return `${count} ${count === 1 ? one : many}`;
+}
 
 /** "Vas a cambiar el precio de 3 productos al 30 % sobre su costo." */
 export function describeReprice(count: number, markupPct: number) {
@@ -37,10 +46,14 @@ export function describeReprice(count: number, markupPct: number) {
 
 /**
  * Confirmación del reprecio masivo (PRO-11, CNF-07): nombra cuántos productos
- * cambian y a qué %, con precio actual → nuevo. El precio nuevo se calcula con
- * `priceFromMarkup` de `@bodega/core`, igual que el servidor, que lo aplica solo
- * si el costo sigue siendo el de esta vista previa. Nunca se cambia un precio
- * sin esta confirmación (regla 10b).
+ * cambian y a qué %, resume cuántos suben, bajan y quedan bajo su costo, y lista
+ * TODOS los productos con su precio y ganancia antes → después (la lista hace
+ * scroll dentro del modal; el resumen y los botones quedan siempre a la vista).
+ *
+ * El precio nuevo se calcula con `priceFromMarkup` de `@bodega/core`, igual que
+ * el servidor, que lo aplica solo si el costo sigue siendo el de esta vista
+ * previa. Un producto sin costo no se cambia. Nunca se cambia un precio sin esta
+ * confirmación (regla 10b).
  */
 export function RepriceConfirmModal({
   markupPct,
@@ -48,10 +61,25 @@ export function RepriceConfirmModal({
   onOpenChange,
   open,
   products,
+  rateVes,
+  thresholds,
 }: RepriceConfirmModalProps) {
   const reprice = useRepriceProducts();
-  const preview = products.slice(0, REPRICE_PREVIEW_ROWS);
-  const hidden = products.length - preview.length;
+  const rows = products.map((product) => {
+    const change: PriceChange | null =
+      product.currentCostRef > 0
+        ? {
+            costRef: product.currentCostRef,
+            fromPriceRef: product.salePriceRef,
+            toPriceRef: priceFromMarkup(product.currentCostRef, markupPct),
+          }
+        : null;
+
+    return { change, product };
+  });
+  const changes = rows.flatMap((row) => (row.change ? [row.change] : []));
+  const summary = summarizePriceChanges(changes);
+  const withoutCost = rows.length - changes.length;
 
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
@@ -86,41 +114,55 @@ export function RepriceConfirmModal({
       onOpenChange={handleOpenChange}
       open={open}
       renderEffects={() => (
-        <ul aria-label="Precio actual y precio nuevo" className="divide-y divide-border">
-          {preview.map((product) => (
-            <li
-              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-sm"
-              key={product.id}
-            >
-              <span className="min-w-0 text-foreground [overflow-wrap:anywhere]">
-                {product.name}
-              </span>
-              {product.currentCostRef > 0 ? (
-                <span className="flex items-center gap-1.5 tabular-nums">
-                  <span className="text-muted-foreground">
-                    {formatRefUsd(product.salePriceRef)}
-                  </span>
-                  <ArrowRight aria-hidden className="size-3.5 shrink-0 text-outline" />
-                  <span className="sr-only">pasa a</span>
-                  <span className="font-medium text-foreground">
-                    {formatRefUsd(priceFromMarkup(product.currentCostRef, markupPct))}
-                  </span>
-                </span>
+        <ul aria-label="Precio y ganancia antes y después" className="divide-y divide-border">
+          {rows.map(({ change, product }) => (
+            <li key={product.id}>
+              {change ? (
+                <PriceChangeEffect
+                  change={change}
+                  name={product.name}
+                  rateVes={rateVes}
+                  thresholds={thresholds}
+                />
               ) : (
-                <span className="text-amber-700 dark:text-amber-300">
-                  Sin costo: no se cambiará
-                </span>
+                <p className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-sm">
+                  <span className="min-w-0 font-medium text-foreground [overflow-wrap:anywhere]">
+                    {product.name}
+                  </span>
+                  <span className="text-amber-700 dark:text-amber-300">
+                    Sin costo: no se cambiará
+                  </span>
+                </p>
               )}
             </li>
           ))}
-          {hidden > 0 ? (
-            <li className="py-2 text-sm text-on-surface-variant">
-              y {hidden} más con el mismo % sobre su costo
-            </li>
-          ) : null}
         </ul>
       )}
       title="Confirmar reprecio"
-    />
+      variant={summary.belowCost > 0 ? "danger" : "default"}
+    >
+      <div className="flex flex-col gap-2">
+        <ul
+          aria-label="Resumen del reprecio"
+          className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums text-foreground"
+        >
+          <li>{countLabel(summary.up, "sube", "suben")}</li>
+          <li>{countLabel(summary.down, "baja", "bajan")}</li>
+          <li>{countLabel(summary.belowCost, "queda bajo su costo", "quedan bajo su costo")}</li>
+          {summary.same > 0 ? <li>{countLabel(summary.same, "no cambia", "no cambian")}</li> : null}
+          {withoutCost > 0 ? (
+            <li>{countLabel(withoutCost, "sin costo (no se cambia)", "sin costo (no se cambian)")}</li>
+          ) : null}
+        </ul>
+        <p className="[overflow-wrap:anywhere]">Motivo: {buildRepriceReason(markupPct)}</p>
+        {summary.belowCost > 0 ? (
+          <PriceBelowCostWarning>
+            {summary.belowCost === 1
+              ? "1 producto queda con el precio por debajo de su costo: cada venta sería a pérdida."
+              : `${summary.belowCost} productos quedan con el precio por debajo de su costo: cada venta sería a pérdida.`}
+          </PriceBelowCostWarning>
+        ) : null}
+      </div>
+    </ConfirmActionModal>
   );
 }
