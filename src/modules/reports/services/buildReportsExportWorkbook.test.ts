@@ -41,7 +41,7 @@ describe("buildReportsExportWorkbook", () => {
 
     expect(workbook.worksheets).toHaveLength(reportCatalog.length);
     expect(workbook.getWorksheet("Ventas diarias")?.getCell("A1").value).toBe(
-      "Periodo: 2026-05-01 a 2026-05-18",
+      "Periodo: del 1 may 2026 al 18 may 2026",
     );
     expect(workbook.getWorksheet("Kardex de producto")?.getCell("A2").value).toBe(
       emptyDataset.stockCardNote,

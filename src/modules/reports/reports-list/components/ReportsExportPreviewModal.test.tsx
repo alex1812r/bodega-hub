@@ -82,6 +82,17 @@ describe("ReportsExportPreviewModal", () => {
     });
   });
 
+  // REP-F2: «generada el 15/1/2026, 8:00:00 a. m..» acababa en doble punto.
+  it("dice cuándo se generó con hora de Caracas en 24 h y un solo punto", () => {
+    render(modal(abc));
+
+    const description = screen.getByText(/^Vista previa generada el /);
+
+    expect(description).toHaveTextContent(
+      /^Vista previa generada el 15\/01\/2026,? 08:00\. Revisa las hojas antes de descargar\.$/,
+    );
+  });
+
   it("opens on the first sheet", () => {
     render(modal(abc));
 

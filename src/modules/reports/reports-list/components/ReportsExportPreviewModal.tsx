@@ -7,6 +7,7 @@ import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
 import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
 import { Tabs } from "@/shared/components/Tabs";
+import { formatCaracasDateTime } from "@/shared/utils/caracasBusinessDay";
 import { cn } from "@/shared/utils/cn";
 
 import {
@@ -153,9 +154,8 @@ export function ReportsExportPreviewModal({
 
   const activeSection =
     sections.find((section) => section.id === activeSectionId) ?? sections[0] ?? null;
-  const generatedLabel = exportedAt
-    ? new Date(exportedAt).toLocaleString("es-VE")
-    : null;
+  // Hora de Caracas en 24 h: "a. m." seguido del punto de la frase daba "a. m..".
+  const generatedLabel = exportedAt ? formatCaracasDateTime(exportedAt) : null;
 
   async function handleDownloadExcel() {
     if (!data || !exportedAt) {

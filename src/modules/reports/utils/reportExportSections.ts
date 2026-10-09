@@ -1,3 +1,5 @@
+import { formatDateRangeLabel } from "@/shared/components/DateRangeField";
+
 import { reportCatalog } from "../reports-list/config/reportCatalog";
 import type { ReportsExportDataset, ReportsExportFilters } from "../services/fetchReportsForExport";
 import {
@@ -26,20 +28,31 @@ export type ReportExportSection = {
   title: string;
 };
 
+/** "1 abr 2026". */
+function formatExportDay(day: string) {
+  return formatDateRangeLabel(day, day);
+}
+
+/**
+ * Periodo de una hoja en español: "Periodo: del 1 abr 2026 al 30 abr 2026".
+ * Sin raya (–): las fuentes estándar del PDF solo dibujan Latin-1.
+ */
 export function formatReportExportPeriodLabel(from?: string, to?: string) {
   const start = from?.trim();
   const end = to?.trim();
 
   if (start && end) {
-    return `Periodo: ${start} a ${end}`;
+    return start === end
+      ? `Periodo: ${formatExportDay(start)}`
+      : `Periodo: del ${formatExportDay(start)} al ${formatExportDay(end)}`;
   }
 
   if (start) {
-    return `Desde: ${start}`;
+    return `Desde: ${formatExportDay(start)}`;
   }
 
   if (end) {
-    return `Hasta: ${end}`;
+    return `Hasta: ${formatExportDay(end)}`;
   }
 
   return "Sin filtro de periodo";
