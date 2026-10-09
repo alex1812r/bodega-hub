@@ -13,7 +13,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import * as reportsHooks from "../hooks/useReports";
-import { REPORT_IDS, reportCatalog, type ReportId } from "./config/reportCatalog";
+import { REPORT_IDS, storeReportCatalog as reportCatalog, type ReportId } from "./config/reportCatalog";
 
 type PageRequest = { limit?: number; skip?: number };
 
@@ -107,6 +107,37 @@ jest.mock("../hooks/useReports", () => {
     useTopProductsReport: jest.fn(pagedReport("top-products")),
   };
 });
+
+// Sesión de administrador: ve los 18 reportes (los de dinero piden permisos propios).
+jest.mock("../../../shared/auth/usePermission", () => {
+  const { getRolePermissions } = jest.requireActual("../../../shared/auth/permissions");
+  const permissions = getRolePermissions("admin");
+
+  return { usePermission: () => ({ can: () => true, isLoading: false, permissions, role: "admin" }) };
+});
+
+// Los reportes de dinero (REP-06b) tienen sus pruebas en `page.money.test.tsx`.
+jest.mock("../hooks/useMoneyReports", () => {
+  const idle = () => ({
+    data: undefined,
+    error: null,
+    isFetching: false,
+    isLoading: false,
+    refetch: jest.fn(),
+  });
+
+  return {
+    useCashCloseDifferencesReport: jest.fn(idle),
+    usePayablesAgingReport: jest.fn(idle),
+    useReceivablesAgingReport: jest.fn(idle),
+    useSalesByCategoryReport: jest.fn(idle),
+    useSalesByHourReport: jest.fn(idle),
+  };
+});
+
+jest.mock("../../contacts/hooks/useContacts", () => ({
+  useContact: () => ({ data: undefined, error: null }),
+}));
 
 jest.mock("../../purchases/hooks/usePurchaseSuppliers", () => ({
   fetchPurchaseSupplierOptions: (params: { query: string }) => mockSupplierSearch(params.query),

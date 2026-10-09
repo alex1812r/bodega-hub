@@ -1,12 +1,12 @@
 "use client";
 
 import type { UseQueryResult } from "@tanstack/react-query";
-import { useEffect, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { getPaginatedItems, type PaginatedList, type PaginationParams } from "@/lib/api/pagination";
 import { RestockPurchaseButton } from "@/modules/inventory/restock";
-import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
-import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
+import { usePaginationState } from "@/shared/components/Pagination";
+import type { DataTableColumn } from "@/shared/components/DataTable";
 import { formatDateRangeLabel } from "@/shared/components/DateRangeField";
 import { formatRef, formatVes } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
@@ -43,13 +43,22 @@ import type {
   PurchasesSeriesMeasures,
 } from "../../services/reportSeries";
 import { type ReportDefinition } from "../config/reportCatalog";
-import { toReportDateFilters } from "../reportsListParams";
+import { type MoneyReportFilters, toReportDateFilters } from "../reportsListParams";
 import { DailyCloseReportPanel } from "./DailyCloseReportPanel";
 import { FxDepreciationReportPanel } from "./FxDepreciationReportPanel";
+import { MoneyReportPanel } from "./money/MoneyReportPanel";
 import { PaymentMethodsReportPanel } from "./PaymentMethodsReportPanel";
 import { ReportRankingChart } from "./ReportRankingChart";
 import { ReportSeriesChart, type ReportSeriesChartMeasure } from "./ReportSeriesChart";
+import {
+  formatResultsRange,
+  ReportTable,
+  type ReportPagination,
+  useResetPagePastTheEnd,
+} from "./ReportTable";
 import { ReportTableSection } from "./ReportTableSection";
+
+export type { ReportPagination } from "./ReportTable";
 
 // Una sola medida por gráfico de línea: la misma sobre la que el servicio calcula
 // la variación. Así el periodo anterior y las etiquetas de pico se leen sin ruido.
@@ -174,97 +183,6 @@ const purchasesColumns: DataTableColumn<PurchasesReportRow>[] = [
   { align: "right", header: "Total VES", key: "totalVes", render: (row) => formatVes(row.totalVes) },
 ];
 
-function formatResultsRange(skip: number, limit: number, total: number) {
-  if (total === 0) {
-    return "Sin registros";
-  }
-
-  const start = skip + 1;
-  const end = Math.min(skip + limit, total);
-  return `Mostrando ${start}-${end} de ${total} registros`;
-}
-
-type ReportTableProps<TData> = {
-  /** Acciones de la cabecera del reporte, junto al resumen de resultados. */
-  actions?: ReactNode;
-  columns: DataTableColumn<TData>[];
-  getRowId: (row: TData) => string;
-  limit: number;
-  onLimitChange: (limit: number) => void;
-  onSkipChange: (skip: number) => void;
-  query: Pick<
-    UseQueryResult<PaginatedList<TData>, Error>,
-    "data" | "error" | "isFetching" | "isLoading" | "refetch"
-  >;
-  report: ReportDefinition;
-  skip: number;
-};
-
-function ReportTable<TData>({
-  actions,
-  columns,
-  getRowId,
-  limit,
-  onLimitChange,
-  onSkipChange,
-  query,
-  report,
-  skip,
-}: ReportTableProps<TData>) {
-  const total = query.data?.total ?? 0;
-  const currentSkip = query.data?.skip ?? skip;
-
-  return (
-    <section className="overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest shadow-sm">
-      <div className="flex flex-col gap-2 border-b border-outline-variant bg-surface-container-low px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <h3 className="text-base font-semibold text-on-surface">Resultados: {report.name}</h3>
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-xs text-on-surface-variant">
-            {formatResultsRange(currentSkip, limit, total)}
-          </span>
-          {actions}
-        </div>
-      </div>
-
-      <DataTable
-        columns={columns}
-        data={getPaginatedItems(query.data)}
-        embedded
-        error={query.error}
-        getRowId={getRowId}
-        isFetching={query.isFetching}
-        isLoading={query.isLoading}
-        layout="table"
-        loadingRows={5}
-        onRetry={() => void query.refetch()}
-        variant="stitch"
-      />
-
-      <div className="flex justify-center border-t border-outline-variant px-4 py-3">
-        <ResponsivePagination
-          className="w-full justify-end"
-          isDisabled={query.isFetching}
-          limit={limit}
-          onLimitChange={onLimitChange}
-          onSkipChange={onSkipChange}
-          showSummary={false}
-          skip={currentSkip}
-          total={total}
-          variant="stitch"
-        />
-      </div>
-    </section>
-  );
-}
-
-/** Página y tamaño de la tabla del reporte (misma forma que `usePaginationState`). */
-export type ReportPagination = {
-  limit: number;
-  setLimit: (limit: number) => void;
-  setSkip: (skip: number) => void;
-  skip: number;
-};
-
 function PaginatedReportTable<TData, TResult extends PaginatedList<TData> = PaginatedList<TData>>({
   columns,
   actions,
@@ -309,17 +227,9 @@ function PaginatedReportTable<TData, TResult extends PaginatedList<TData> = Pagi
     },
     scope,
   );
-  const { data, isFetching } = query;
-  // La página pedida ya no existe (el total bajó, o la URL trae una página de más):
-  // se vuelve a la primera en vez de mostrar "No hay registros" con datos disponibles.
-  const isPagePastTheEnd =
-    !isFetching && data !== undefined && data.items.length === 0 && data.total > 0 && skip > 0;
+  const { data } = query;
 
-  useEffect(() => {
-    if (isPagePastTheEnd) {
-      setSkip(0);
-    }
-  }, [isPagePastTheEnd, setSkip]);
+  useResetPagePastTheEnd(query, pagination);
 
   const table = (
     <ReportTable
@@ -355,6 +265,14 @@ type ReportsResultPanelProps = {
   /** Rango global (`from` / `to`) y, para los reportes que los admiten, `groupBy` y `compare`. */
   dateFilters: ReportDateRangeFilters;
   /**
+   * URL actual de la lista (`useUrlListState().href`): los enlaces a un
+   * documento o a un contacto la llevan en `returnTo` para poder volver.
+   */
+  listHref?: string;
+  /** Filtros propios de los reportes de dinero (`bucket`, `contactId`, `currency` de la URL). */
+  moneyFilters?: MoneyReportFilters;
+  onMoneyFiltersChange?: (patch: Partial<MoneyReportFilters>) => void;
+  /**
    * Página y tamaño de la tabla del reporte activo guardados fuera (en la URL):
    * quien los guarda los reinicia al cambiar de reporte o de filtros. Sin esta
    * prop cada reporte lleva su propia paginación.
@@ -369,10 +287,14 @@ type ReportsResultPanelProps = {
 /**
  * Resultado del reporte activo. Los reportes de serie (línea) y de ranking
  * (barras) llevan su gráfico encima y la tabla debajo, plegable; cierre del día,
- * depreciación FX, bajo stock y kardex son solo tabla o panel.
+ * depreciación FX, bajo stock y kardex son solo tabla o panel. Los de dinero de
+ * REP-06 son de la tienda activa: con `scope` (plataforma) no pintan nada.
  */
 export function ReportsResultPanel({
   dateFilters,
+  listHref,
+  moneyFilters,
+  onMoneyFiltersChange,
   pagination,
   purchasesFilters,
   report,
@@ -670,6 +592,22 @@ export function ReportsResultPanel({
         />
       );
     }
+    case "sales-by-hour":
+    case "sales-by-category":
+    case "receivables-aging":
+    case "payables-aging":
+    case "cash-close-differences":
+      return scope ? null : (
+        <MoneyReportPanel
+          dateFilters={reportDateFilters}
+          filters={moneyFilters}
+          key={report.id}
+          listHref={listHref}
+          onFiltersChange={onMoneyFiltersChange}
+          pagination={pagination}
+          report={report}
+        />
+      );
     default:
       return null;
   }
