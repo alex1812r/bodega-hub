@@ -87,19 +87,24 @@ async function seedPayments(customers: string[]) {
   );
 }
 
-/** Cifras de depreciación FX y de cierre del rango, con SQL directo por día operativo de Caracas. */
+/**
+ * Cifras de depreciación FX y de cierre del rango, con SQL directo por día operativo de Caracas.
+ *
+ * El día operativo de la aplicación es UTC-4 fijo. `at time zone 'America/Caracas'` no sirve aquí para un día suelto:
+ * hasta el 1 de mayo de 2016 esa zona era UTC-4:30 y las fechas sembradas en marzo caerían media hora desplazadas.
+ */
 async function fxOracle(from: string, to: string) {
   const [row] = await lab.rows<Record<string, string>>(
     `with in_range as (
        select s.* from public.sales s
-       where s.store_id = $1 and (s.created_at at time zone 'America/Caracas')::date between $2::date and $3::date
+       where s.store_id = $1 and ((s.created_at at time zone 'UTC') - interval '4 hours')::date between $2::date and $3::date
      ), paid as (
        select p.* from public.payments p join in_range s on s.id = p.sale_id
        where p.status = 'activo' and p.store_id = $1 and s.status <> 'cancelada'
      ), pay_range as (
        select p.* from public.payments p
        where p.store_id = $1 and p.status = 'activo' and p.sale_id is not null
-         and (p.created_at at time zone 'America/Caracas')::date between $2::date and $3::date
+         and ((p.created_at at time zone 'UTC') - interval '4 hours')::date between $2::date and $3::date
      )
      select (select count(*) from in_range where status <> 'cancelada')::text as live_sales,
             (select count(*) from in_range where status in ${COUNTED})::text as sales_count,
