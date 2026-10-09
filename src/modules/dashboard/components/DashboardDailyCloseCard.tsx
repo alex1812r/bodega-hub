@@ -5,7 +5,10 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type { DailyCloseSummary } from "@/modules/reports/services/dailyCloseSummary";
 import { DailyClosePanel } from "@/modules/reports/reports-list/components/DailyClosePanel";
-import { isReportQueryOffline } from "@/modules/reports/reports-list/reportQueryState";
+import {
+  getReportQueryError,
+  isReportQueryOffline,
+} from "@/modules/reports/reports-list/reportQueryState";
 
 import { DashboardCardBoundary } from "./DashboardCardBoundary";
 import { DashboardOfflineNote } from "./DashboardOfflineNote";
@@ -47,8 +50,11 @@ function DailyCloseCard({
 
   return (
     <DailyClosePanel
-      data={query.data}
+      // `data: null` es una respuesta rota: se pinta como error, no como «cargando».
+      data={query.data ?? undefined}
+      error={getReportQueryError(query)}
       isLoading={query.isLoading || query.isFetching}
+      onRetry={() => void query.refetch()}
       periodLabel={periodLabel}
     />
   );
