@@ -176,6 +176,44 @@ describe("Storybook · stories de /reports", () => {
       expect((await mockedGet("/api/reports/cash-close-differences", { currency: "usd" })).status).toBe(400);
     });
 
+    // REP-F6: la story salía «Sin cierres» (los datos de prueba no tienen cajas
+    // cerradas) y la línea del acumulado no se podía ver.
+    it("diferencias de cierre: la story trae cierres con sobrantes, faltantes y su acumulado", async () => {
+      type CloseRow = { closeDate: string; currency: string; difference: number; runningDifference: number };
+
+      // Lo que pide la story: sin rango y en la moneda por defecto (Bs).
+      const { data } = await mockedGet("/api/reports/cash-close-differences", { currency: "ves" });
+      const rows = data.items as CloseRow[];
+
+      expect(rows.length).toBeGreaterThanOrEqual(5);
+      expect(new Set(rows.map((row) => row.currency))).toEqual(new Set(["ves"]));
+      expect(rows.some((row) => row.difference > 0)).toBe(true);
+      expect(rows.some((row) => row.difference < 0)).toBe(true);
+      expect(rows.some((row) => row.difference === 0)).toBe(true);
+      // Del más reciente al más antiguo; el acumulado del último es la suma de todas.
+      expect(rows.map((row) => row.closeDate)).toEqual(
+        rows.map((row) => row.closeDate).sort((first, second) => second.localeCompare(first)),
+      );
+      expect(rows[0]!.runningDifference).toBeCloseTo(
+        rows.reduce((total, row) => total + row.difference, 0),
+        2,
+      );
+      expect(rows.every((row) => row.closeDate <= today)).toBe(true);
+
+      const inRef = await mockedGet("/api/reports/cash-close-differences", { currency: "ref" });
+
+      expect((inRef.data.items as CloseRow[]).length).toBeGreaterThan(0);
+
+      // Con rango, solo los cierres de esos días.
+      const oneDay = await mockedGet("/api/reports/cash-close-differences", {
+        currency: "ves",
+        from: rows[0]!.closeDate,
+        to: rows[0]!.closeDate,
+      });
+
+      expect((oneDay.data.items as CloseRow[]).map((row) => row.closeDate)).toEqual([rows[0]!.closeDate]);
+    });
+
     it("ventas por hora sin rango responde 400, como la ruta", async () => {
       expect((await mockedGet("/api/reports/sales-by-hour", {})).status).toBe(400);
     });

@@ -257,14 +257,41 @@ export function getPayablesAgingReport(
 // Diferencias de cierre de caja
 // ---------------------------------------------------------------------------
 
-/** Cierres × moneda de la tienda en orden de cierre, con sus acumulados (como la vista). */
-function cashCloseLedger(storeId: string): CashCloseLedgerRow[] {
-  const sessions = listCashRegisters(storeId)
+/** Una sesión de caja cerrada, con lo que guardó su cierre. */
+export type CashCloseSession = {
+  closedAt: string;
+  closedReason?: CashCloseLedgerRow["closedReason"];
+  closingRef?: number | null;
+  closingVes?: number | null;
+  id: string;
+  register: { name: string };
+  registerId: string;
+  theoreticalClosingRef?: number | null;
+  theoreticalClosingVes?: number | null;
+};
+
+/** Sesiones cerradas de las cajas de la tienda. */
+function closedCashSessions(storeId: string): CashCloseSession[] {
+  return listCashRegisters(storeId)
     .flatMap((register) => listRegisterSessions(register.id, storeId, Number.MAX_SAFE_INTEGER))
-    .filter((session) => session.status === "closed" && session.closedAt)
+    .flatMap((session) =>
+      session.status === "closed" && session.closedAt
+        ? [{ ...session, closedAt: session.closedAt }]
+        : [],
+    );
+}
+
+/**
+ * Cierres × moneda en orden de cierre, con sus acumulados (como la vista). Se
+ * exporta para dar cierres fijos a las stories: los datos de prueba no traen
+ * ninguna caja cerrada.
+ */
+export function buildCashCloseLedger(closed: readonly CashCloseSession[]): CashCloseLedgerRow[] {
+  const sessions = closed
+    .slice()
     .sort(
       (first, second) =>
-        Date.parse(first.closedAt!) - Date.parse(second.closedAt!) || first.id.localeCompare(second.id),
+        Date.parse(first.closedAt) - Date.parse(second.closedAt) || first.id.localeCompare(second.id),
     );
   const running: Record<CashCloseCurrency, { counted: number; difference: number; expected: number }> = {
     ref: { counted: 0, difference: 0, expected: 0 },
@@ -288,8 +315,8 @@ function cashCloseLedger(storeId: string): CashCloseLedgerRow[] {
 
       ledger.push({
         cashSessionId: session.id,
-        closeDate: toCaracasDateKey(session.closedAt!),
-        closedAt: session.closedAt!,
+        closeDate: toCaracasDateKey(session.closedAt),
+        closedAt: session.closedAt,
         closedReason: session.closedReason ?? null,
         counted,
         currency,
@@ -313,11 +340,12 @@ function toRunning(row: CashCloseLedgerRow | undefined) {
     : null;
 }
 
+/** `ledger`: por defecto, el de las cajas cerradas de la tienda en los datos en memoria. */
 export function getCashCloseDifferencesReport(
   query: CashCloseDifferencesQuery,
   storeId: string,
+  ledger: readonly CashCloseLedgerRow[] = buildCashCloseLedger(closedCashSessions(storeId)),
 ): CashCloseDifferencesReport {
-  const ledger = cashCloseLedger(storeId);
   const inRange = ledger.filter(
     (row) => (!query.from || row.closeDate >= query.from) && (!query.to || row.closeDate <= query.to),
   );
