@@ -15,6 +15,10 @@ import { usePermission } from "@/shared/auth/usePermission";
 import { cn } from "@/shared/utils/cn";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 
+import { DashboardCardBoundary } from "./DashboardCardBoundary";
+
+const REPORTS_QUERY_KEY = ["reports"] as const;
+
 /** Tramo "vencido": más de 30 días desde la fecha del documento (las ventas no tienen fecha de vencimiento). */
 export const OVERDUE_RECEIVABLES_BUCKET: AgingBucket = "30+";
 /** Tramo "por vencer": de 8 a 30 días. */
@@ -68,7 +72,15 @@ function findBucket(buckets: readonly AgingBucketSummary[] | undefined, bucket: 
  * con error o sin documentos en esos dos tramos no pinta nada, así nunca deja
  * hueco en la columna.
  */
-export function DashboardOverdueReceivablesCard({ className }: { className?: string }) {
+export function DashboardOverdueReceivablesCard(props: { className?: string }) {
+  return (
+    <DashboardCardBoundary queryKey={REPORTS_QUERY_KEY}>
+      <OverdueReceivablesCard {...props} />
+    </DashboardCardBoundary>
+  );
+}
+
+function OverdueReceivablesCard({ className }: { className?: string }) {
   const { isLoading, permissions, role } = usePermission();
   const canView = !isLoading && canViewOverdueReceivables(permissions, role);
   const report = useReceivablesAgingReport({ limit: MIN_PAGE_LIMIT }, { enabled: canView });

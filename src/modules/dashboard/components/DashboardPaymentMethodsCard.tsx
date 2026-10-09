@@ -4,11 +4,17 @@ import { Wallet } from "lucide-react";
 import Link from "next/link";
 
 import { usePaymentMethodsReport } from "@/modules/reports/hooks/useReports";
+import { isReportQueryOffline } from "@/modules/reports/reports-list/reportQueryState";
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { paymentMethodLabels } from "@/shared/payments/paymentMethods";
 import { formatRef, formatVes } from "@/shared/utils/currency";
+
+import { DashboardCardBoundary } from "./DashboardCardBoundary";
+import { DashboardOfflineNote } from "./DashboardOfflineNote";
+
+const REPORTS_QUERY_KEY = ["reports"] as const;
 
 type DashboardPaymentMethodsCardProps = {
   from?: string;
@@ -20,7 +26,15 @@ type DashboardPaymentMethodsCardProps = {
  * Mix de pagos del periodo. Lee `/api/reports/payment-methods`, que exige
  * `reports.view`: sin ese permiso (almacén, vendedor) ni pide ni pinta nada.
  */
-export function DashboardPaymentMethodsCard({
+export function DashboardPaymentMethodsCard(props: DashboardPaymentMethodsCardProps) {
+  return (
+    <DashboardCardBoundary queryKey={REPORTS_QUERY_KEY}>
+      <PaymentMethodsCard {...props} />
+    </DashboardCardBoundary>
+  );
+}
+
+function PaymentMethodsCard({
   from,
   periodLabel,
   to,
@@ -65,6 +79,8 @@ export function DashboardPaymentMethodsCard({
           <p className="p-2 text-sm text-error" role="alert">
             No pudimos cargar el mix de pagos.
           </p>
+        ) : isReportQueryOffline(query) ? (
+          <DashboardOfflineNote className="p-2" onRetry={() => void query.refetch()} />
         ) : (
           <ul className="divide-y divide-border/60">
             {items.map((row) => (

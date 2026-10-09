@@ -5,6 +5,10 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type { DailyCloseSummary } from "@/modules/reports/services/dailyCloseSummary";
 import { DailyClosePanel } from "@/modules/reports/reports-list/components/DailyClosePanel";
+import { isReportQueryOffline } from "@/modules/reports/reports-list/reportQueryState";
+
+import { DashboardCardBoundary } from "./DashboardCardBoundary";
+import { DashboardOfflineNote } from "./DashboardOfflineNote";
 
 type DashboardDailyCloseCardProps = {
   from?: string;
@@ -12,7 +16,15 @@ type DashboardDailyCloseCardProps = {
   to?: string;
 };
 
-export function DashboardDailyCloseCard({
+export function DashboardDailyCloseCard(props: DashboardDailyCloseCardProps) {
+  return (
+    <DashboardCardBoundary>
+      <DailyCloseCard {...props} />
+    </DashboardCardBoundary>
+  );
+}
+
+function DailyCloseCard({
   from,
   periodLabel,
   to,
@@ -22,6 +34,16 @@ export function DashboardDailyCloseCard({
     queryFn: () =>
       apiFetch<DailyCloseSummary>("/api/dashboard/daily-close", { query: { from, to } }),
   });
+
+  // Sin red la consulta queda en pausa: no es «cargando».
+  if (isReportQueryOffline(query)) {
+    return (
+      <DashboardOfflineNote
+        className="rounded-xl border border-dashed border-border px-4 py-6"
+        onRetry={() => void query.refetch()}
+      />
+    );
+  }
 
   return (
     <DailyClosePanel

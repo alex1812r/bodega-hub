@@ -7,12 +7,18 @@ import {
   type ReportGroupBy,
   toTimeSeriesPoints,
 } from "@/modules/reports/services/reportSeries";
+import {
+  isReportQueryOffline,
+  REPORT_OFFLINE_MESSAGE,
+  toFiniteNumber,
+} from "@/modules/reports/reports-list/reportQueryState";
 import { DATE_RANGE_PRESET_LABELS, formatDateRangeLabel } from "@/shared/components/DateRangeField";
 import { TimeSeriesChart, type TimeSeriesSeries } from "@/shared/components/TimeSeriesChart";
 import { formatRef } from "@/shared/utils/currency";
 
 import { type DashboardRequestScope, useDashboardSalesTrend } from "../hooks/useDashboard";
 import { getBusinessTodayIsoDate } from "../utils/businessDate";
+import { DashboardCardBoundary } from "./DashboardCardBoundary";
 import { DashboardDeltaValue } from "./DashboardKpiTrend";
 import { DASHBOARD_CHART_MIN_DAYS, resolveDashboardChartRange } from "../utils/dashboardPeriod";
 
@@ -60,7 +66,15 @@ function toChartSeries(series: DailySalesSeries | null | undefined): TimeSeriesS
  * últimos 7 que terminan en su último día, para que siempre haya picos que ver.
  * Desde el inicio va del primer día con ventas a hoy, sin periodo anterior.
  */
-export function DashboardSalesChartCard({ range, scope }: DashboardSalesChartCardProps = {}) {
+export function DashboardSalesChartCard(props: DashboardSalesChartCardProps = {}) {
+  return (
+    <DashboardCardBoundary>
+      <SalesChartCard {...props} />
+    </DashboardCardBoundary>
+  );
+}
+
+function SalesChartCard({ range, scope }: DashboardSalesChartCardProps) {
   const today = getBusinessTodayIsoDate();
   const from = range ? range.from : today;
   const to = range?.to ?? today;
@@ -99,10 +113,10 @@ export function DashboardSalesChartCard({ range, scope }: DashboardSalesChartCar
         {series ? (
           <div className="text-right">
             <p className="text-lg font-semibold tabular-nums text-foreground">
-              {formatRef(series.totals.current.totalRef)}
+              {formatRef(toFiniteNumber(series.totals?.current?.totalRef))}
             </p>
             <p className="text-xs text-on-surface-variant">
-              <DashboardDeltaValue deltaPct={series.totals.deltaPct} testId="sales-chart-delta" />{" "}
+              <DashboardDeltaValue deltaPct={series.totals?.deltaPct ?? null} testId="sales-chart-delta" />{" "}
               vs. periodo anterior
             </p>
           </div>
@@ -113,7 +127,13 @@ export function DashboardSalesChartCard({ range, scope }: DashboardSalesChartCar
         ariaLabel="Flujo de ventas"
         emptyDescription="Prueba con otro periodo."
         emptyTitle="Sin ventas en este periodo"
-        error={trend.error ? "No pudimos cargar el flujo de ventas." : null}
+        error={
+          trend.error
+            ? "No pudimos cargar el flujo de ventas."
+            : isReportQueryOffline(trend)
+              ? REPORT_OFFLINE_MESSAGE
+              : null
+        }
         loading={trend.isLoading}
         onRetry={() => void trend.refetch()}
         peakCount={SALES_PEAK_COUNT}
