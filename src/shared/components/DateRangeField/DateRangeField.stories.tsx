@@ -6,7 +6,12 @@ import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
 
 import { DateRangeField, type DateRangeFieldProps } from "./DateRangeField";
-import type { DateRangeValue } from "./dateRangePresets";
+import {
+  type AnyDateRangePreset,
+  DATE_RANGE_PRESETS,
+  type DateRangeValue,
+  EXTENDED_DATE_RANGE_PRESETS,
+} from "./dateRangePresets";
 
 const TODAY = "2026-10-09";
 
@@ -142,6 +147,54 @@ export const SubconjuntoDePresets: Story = {
       presets={["today", "yesterday", "last_30_days", "custom"]}
     />
   ),
+};
+
+/** Los ocho de siempre más los opcionales, con "Personalizado" al final. */
+const EXTENDED_PRESETS: readonly AnyDateRangePreset[] = [
+  ...DATE_RANGE_PRESETS.filter((preset) => preset !== "custom"),
+  ...EXTENDED_DATE_RANGE_PRESETS,
+  "custom",
+];
+
+function ExtendedDemo() {
+  const [value, setValue] = useState<DateRangeValue<AnyDateRangePreset>>({ preset: "last_3_months" });
+
+  return (
+    <DateRangeField
+      label="Periodo"
+      maxDate={TODAY}
+      onChange={setValue}
+      presets={EXTENDED_PRESETS}
+      today={TODAY}
+      value={value}
+    />
+  );
+}
+
+/**
+ * Presets opcionales (`EXTENDED_DATE_RANGE_PRESETS`): solo salen si se pasan en
+ * `presets`. "Desde el inicio" no tiene fecha de inicio.
+ */
+export const PresetsExtendidos: Story = {
+  name: "Presets extendidos",
+  render: () => <ExtendedDemo />,
+  play: async ({ canvas, userEvent }) => {
+    await expect(canvas.getByRole("button", { name: "Últimos 3 meses" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(canvas.getByText("12 jul – 9 oct 2026")).toBeVisible();
+
+    await userEvent.click(canvas.getByRole("button", { name: "Últimos 14 días" }));
+    await expect(canvas.getByText("26 sep – 9 oct 2026")).toBeVisible();
+
+    await userEvent.click(canvas.getByRole("button", { name: "Desde el inicio" }));
+    await expect(canvas.getByRole("button", { name: "Desde el inicio" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(canvas.getByTestId("date-range-label")).toHaveTextContent("Desde el inicio");
+  },
 };
 
 export const TamanoSm: Story = {

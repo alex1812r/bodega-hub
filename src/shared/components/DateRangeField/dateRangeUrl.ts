@@ -1,9 +1,11 @@
 import { getCaracasIsoDate } from "@bodega/core/dates";
 
 import {
-  isDateRangePreset,
+  type AnyDateRangePreset,
+  DATE_RANGE_PRESETS,
+  isAnyDateRangePreset,
   isValidIsoDate,
-  resolveDateRangePreset,
+  resolveDateRangePresetBounds,
   type DateRangeChange,
   type DateRangePreset,
   type DateRangeValue,
@@ -18,7 +20,11 @@ type SearchParamsLike = { get: (name: string) => string | null };
 export type DateRangeParamsRecord = { from?: ParamValue; to?: ParamValue; preset?: ParamValue };
 
 /** Los tres parámetros como texto; cadena vacía = no se escribe en la URL. */
-export type DateRangeParams = { from: string; to: string; preset: DateRangePreset | "" };
+export type DateRangeParams<TPreset extends AnyDateRangePreset = DateRangePreset> = {
+  from: string;
+  to: string;
+  preset: TPreset | "";
+};
 
 function isSearchParamsLike(source: SearchParamsLike | DateRangeParamsRecord): source is SearchParamsLike {
   return "get" in source && typeof source.get === "function";
@@ -41,16 +47,20 @@ function readParam(source: SearchParamsLike | DateRangeParamsRecord, name: "from
  *   rango de hoy es ese mismo; si no, el rango es `custom`.
  * - `preset` relativo sin fechas: el rango se calcula con `today` (un enlace
  *   guardado con `?preset=this_month` sigue siendo "este mes").
+ * - `preset=all_time` sin fechas: sin `from` (desde el inicio) y `to` = `today`.
  * - Fecha mal formada: se ignora. `from` posterior a `to`: se descartan ambas.
+ * - `presets` son los que admite el consumidor (por defecto, los ocho de
+ *   siempre): un `preset` fuera de esa lista se ignora, como uno desconocido.
  */
-export function parseDateRangeParams(
+export function parseDateRangeParams<TPreset extends AnyDateRangePreset = DateRangePreset>(
   source: SearchParamsLike | DateRangeParamsRecord,
   today: string = getCaracasIsoDate(),
-): DateRangeChange {
+  presets: readonly AnyDateRangePreset[] = DATE_RANGE_PRESETS,
+): DateRangeChange<TPreset | "custom"> {
   const rawFrom = readParam(source, "from");
   const rawTo = readParam(source, "to");
   const rawPreset = readParam(source, "preset");
-  const preset = isDateRangePreset(rawPreset) ? rawPreset : undefined;
+  const preset = presets.find((candidate): candidate is TPreset => candidate === rawPreset);
   let from = isValidIsoDate(rawFrom) ? rawFrom : undefined;
   let to = isValidIsoDate(rawTo) ? rawTo : undefined;
 
@@ -60,7 +70,7 @@ export function parseDateRangeParams(
   }
 
   const presetRange =
-    preset && preset !== "custom" ? resolveDateRangePreset(preset, today) : undefined;
+    preset && preset !== "custom" ? resolveDateRangePresetBounds(preset, today) : undefined;
 
   if (from || to) {
     const matchesPreset = presetRange?.from === from && presetRange?.to === to;
@@ -83,8 +93,10 @@ export function parseDateRangeParams(
  * - Rango personalizado: `from` / `to`, sin `preset`.
  * - Sin rango: las tres cadenas vacías.
  */
-export function serializeDateRange(value: DateRangeValue): DateRangeParams {
-  if (value.preset && value.preset !== "custom" && isDateRangePreset(value.preset)) {
+export function serializeDateRange<TPreset extends AnyDateRangePreset = DateRangePreset>(
+  value: DateRangeValue<TPreset>,
+): DateRangeParams<TPreset> {
+  if (value.preset && value.preset !== "custom" && isAnyDateRangePreset(value.preset)) {
     return { from: "", preset: value.preset, to: "" };
   }
 

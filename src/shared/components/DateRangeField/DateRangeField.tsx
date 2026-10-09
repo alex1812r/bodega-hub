@@ -15,6 +15,8 @@ import { createPortal } from "react-dom";
 import { cn } from "@/shared/utils/cn";
 
 import {
+  ALL_DATE_RANGE_PRESETS,
+  type AnyDateRangePreset,
   DATE_RANGE_PRESETS,
   DATE_RANGE_PRESET_LABELS,
   type DateRange,
@@ -23,7 +25,7 @@ import {
   type DateRangeValue,
   findMatchingRelativePreset,
   formatDateRangeLabel,
-  resolveDateRangePreset,
+  resolveDateRangePresetBounds,
 } from "./dateRangePresets";
 import { DATE_RANGE_COLOR_CLASSES } from "./dateRangeTheme";
 import { parseDateRangeParams } from "./dateRangeUrl";
@@ -41,15 +43,21 @@ const chipSizeClassName = {
   md: "h-10 px-3.5 text-sm",
 };
 
-export type DateRangeFieldProps = {
+export type DateRangeFieldProps<TPreset extends AnyDateRangePreset = DateRangePreset> = {
   /** Rango actual. Con solo `preset` relativo (sin fechas) se resuelve con `today`. */
-  value: DateRangeValue;
-  /** Rango elegido: `from` / `to` en `YYYY-MM-DD`, ambos incluidos. */
-  onChange: (next: DateRangeChange) => void;
+  value: DateRangeValue<TPreset>;
+  /**
+   * Rango elegido: `from` / `to` en `YYYY-MM-DD`, ambos incluidos. Con
+   * `all_time` ("Desde el inicio") `from` va `undefined` y `to` es hoy.
+   */
+  onChange: (next: DateRangeChange<TPreset>) => void;
   /** Día operativo `YYYY-MM-DD`. Por defecto, hoy en Caracas. */
   today?: string;
-  /** Chips que se muestran, en este orden. Por defecto, todos. */
-  presets?: readonly DateRangePreset[];
+  /**
+   * Chips que se muestran, en este orden. Por defecto, `DATE_RANGE_PRESETS`;
+   * los de `EXTENDED_DATE_RANGE_PRESETS` solo salen si se pasan aquí.
+   */
+  presets?: readonly TPreset[];
   /** Primer día elegible en el calendario. */
   minDate?: string;
   /** Último día elegible en el calendario (p. ej. `today` para impedir días futuros). */
@@ -96,7 +104,7 @@ function resolveBounds(container: HTMLElement | null): PopoverBounds {
  * Es controlado y no toca la URL: para guardarlo en ella usa
  * `parseDateRangeParams` y `serializeDateRange` con `useUrlListState`.
  */
-export function DateRangeField({
+export function DateRangeField<TPreset extends AnyDateRangePreset = DateRangePreset>({
   className,
   clearable = false,
   disabled = false,
@@ -104,11 +112,14 @@ export function DateRangeField({
   maxDate,
   minDate,
   onChange,
-  presets = DATE_RANGE_PRESETS,
+  presets: presetsProp,
   size = "md",
   today,
   value,
-}: DateRangeFieldProps) {
+}: DateRangeFieldProps<TPreset>) {
+  // Sin `presets`, `TPreset` es el tipo por defecto: los ocho chips de siempre.
+  const presets = presetsProp ?? (DATE_RANGE_PRESETS as readonly AnyDateRangePreset[] as readonly TPreset[]);
+  const customPreset = presets.find((preset) => preset === "custom");
   const [isOpen, setIsOpen] = useState(false);
   const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null);
   const customChipRef = useRef<HTMLButtonElement>(null);
@@ -117,14 +128,18 @@ export function DateRangeField({
   const popoverId = useId();
 
   const businessToday = today ?? getCaracasIsoDate();
-  const effective = parseDateRangeParams(value, businessToday);
+  const effective = parseDateRangeParams<AnyDateRangePreset>(
+    value,
+    businessToday,
+    ALL_DATE_RANGE_PRESETS,
+  );
   const activePreset =
     value.preset === undefined
       ? (findMatchingRelativePreset(effective.from, effective.to, businessToday, presets) ??
         effective.preset)
       : effective.preset;
   const hasRange = effective.from !== undefined || effective.to !== undefined;
-  const isCalendarOpen = isOpen && !disabled && presets.includes("custom");
+  const isCalendarOpen = isOpen && !disabled && customPreset !== undefined;
 
   function closeCalendar({ restoreFocus }: { restoreFocus: boolean }) {
     setIsOpen(false);
@@ -143,7 +158,7 @@ export function DateRangeField({
     setIsOpen(true);
   }
 
-  function handleChipClick(preset: DateRangePreset) {
+  function handleChipClick(preset: TPreset) {
     if (preset === "custom") {
       if (isCalendarOpen) {
         closeCalendar({ restoreFocus: false });
@@ -155,12 +170,12 @@ export function DateRangeField({
     }
 
     setIsOpen(false);
-    onChange({ ...resolveDateRangePreset(preset, businessToday), preset });
+    onChange({ ...resolveDateRangePresetBounds(preset, businessToday), preset });
   }
 
   function handleSelectRange(range: DateRange) {
     closeCalendar({ restoreFocus: true });
-    onChange({ ...range, preset: "custom" });
+    onChange({ ...range, preset: customPreset });
   }
 
   function handleClear() {
@@ -373,7 +388,7 @@ export function DateRangeField({
             )}
             data-testid="date-range-label"
           >
-            {formatDateRangeLabel(effective.from, effective.to)}
+            {formatDateRangeLabel(effective.from, effective.to, activePreset)}
           </span>
           {clearable && hasRange ? (
             <button
