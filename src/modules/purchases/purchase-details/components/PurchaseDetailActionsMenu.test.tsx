@@ -16,16 +16,16 @@ jest.mock("../../../../shared/auth/usePermission", () => ({
 }));
 
 function openMenu(status: PurchaseStatus = "recibido") {
-  render(
-    <PurchaseDetailActionsMenu
-      onCancel={jest.fn()}
-      onExportPdf={jest.fn()}
-      onReturn={jest.fn()}
-      purchaseNumber="COM-0001"
-      status={status}
-    />,
-  );
+  const handlers = { onCancel: jest.fn(), onExportPdf: jest.fn(), onReturn: jest.fn() };
+
+  render(<PurchaseDetailActionsMenu {...handlers} purchaseNumber="COM-0001" status={status} />);
   fireEvent.click(screen.getByRole("button", { name: /^Acciones de/ }));
+
+  return handlers;
+}
+
+function labels() {
+  return screen.getAllByRole("menuitem").map((item) => item.textContent);
 }
 
 beforeEach(() => {
@@ -51,5 +51,44 @@ describe("PurchaseDetailActionsMenu · Duplicar compra (COM-09)", () => {
 
     expect(screen.getByRole("menuitem", { name: "Descargar PDF" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Duplicar compra" })).not.toBeInTheDocument();
+  });
+});
+
+describe("PurchaseDetailActionsMenu · cancelar y devolver según el estado (CNF-05)", () => {
+  it.each<[PurchaseStatus, string[]]>([
+    ["pedido", ["Descargar PDF", "Duplicar compra", "Cancelar"]],
+    ["recibido", ["Descargar PDF", "Duplicar compra", "Devolver", "Cancelar"]],
+    ["cancelado", ["Descargar PDF", "Duplicar compra"]],
+    ["devuelto", ["Descargar PDF", "Duplicar compra"]],
+  ])("en estado %s ofrece %j", (status, expected) => {
+    openMenu(status);
+
+    expect(labels()).toEqual(expected);
+  });
+
+  it("sin permiso de crear compras no ofrece cancelar ni devolver", () => {
+    mockDenied = ["purchases.create"];
+    openMenu();
+
+    expect(labels()).toEqual(["Descargar PDF"]);
+  });
+
+  it("«Cancelar» y «Devolver» solo piden abrir su confirmación; el menú no ejecuta ni confirma nada", () => {
+    const first = openMenu();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Cancelar" }));
+
+    expect(first.onCancel).toHaveBeenCalledTimes(1);
+    expect(first.onReturn).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("«Descargar PDF» descarga directamente, sin diálogo de confirmación (CNF-13)", () => {
+    const { onExportPdf } = openMenu();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Descargar PDF" }));
+
+    expect(onExportPdf).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

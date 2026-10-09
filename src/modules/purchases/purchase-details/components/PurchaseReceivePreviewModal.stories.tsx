@@ -5,6 +5,14 @@ import { fn } from "storybook/test";
 import type { PackDistributionValue } from "@/modules/inventory/inventory-movements/utils/packDistribution";
 
 import {
+  allowedPurchaseImpact,
+  purchaseImpactCostLine,
+  purchaseImpactStockLine,
+  receiveImpactOf,
+  rejectedPurchaseImpact,
+} from "../../components/purchaseImpact.testFixtures";
+import {
+  buildReceiveDisassembleRequest,
   buildReceivePreview,
   findReceiveDistributionError,
   parseReceiveDistribution,
@@ -55,6 +63,10 @@ function AdjustableDistribution({ initial }: { initial: PackDistributionValue })
   return (
     <PurchaseReceivePreviewModal
       distributionValues={values}
+      effect={{
+        impact: receiveImpactOf(assortedOrder, buildReceiveDisassembleRequest(lines)),
+        status: "ready",
+      }}
       error={blocked ? distributionError : null}
       lines={lines}
       onConfirm={() => setBlocked(Boolean(distributionError))}
@@ -67,8 +79,38 @@ function AdjustableDistribution({ initial }: { initial: PackDistributionValue })
   );
 }
 
+/** Efecto de las dos líneas por defecto: la harina sube de costo y baja de banda de ganancia. */
+const defaultImpact = allowedPurchaseImpact("receive", {
+  costs: [
+    purchaseImpactCostLine({ costRefAfter: 2.32, costRefBefore: 1.8 }),
+    purchaseImpactCostLine({
+      costRefAfter: 0.87,
+      costRefBefore: 0.87,
+      isActive: false,
+      productId: "prod-malta",
+      productName: "Malta Maltín 250 ml",
+      sku: "MAL-250",
+    }),
+  ],
+  stock: [
+    purchaseImpactStockLine({ purchasedIn: 5, quantityDelta: 5, stockAfter: 15, stockBefore: 10 }),
+    purchaseImpactStockLine({
+      isActive: false,
+      productId: "prod-malta",
+      productName: "Malta Maltín 250 ml",
+      purchasedIn: 36,
+      quantityDelta: 36,
+      sku: "MAL-250",
+      stockAfter: 40,
+      stockBefore: 4,
+    }),
+  ],
+});
+
 const meta = {
   args: {
+    effect: { impact: defaultImpact, status: "ready" },
+    salePrices: { "prod-harina": 2.6, "prod-malta": 1.2 },
     lines: [
       {
         name: "Harina PAN 1 kg",
@@ -108,6 +150,42 @@ type Story = StoryObj<typeof meta>;
 export const Default: Story = {};
 
 export const Receiving: Story = { args: { isPending: true } };
+
+/** El efecto aún no llegó: se ven las líneas, no hay botón de recibir. */
+export const LoadingEffect: Story = {
+  args: { effect: { impact: null, status: "loading" } },
+};
+
+/** El efecto no se pudo calcular: no se recibe a ciegas; «Reintentar». */
+export const EffectError: Story = {
+  args: {
+    effect: {
+      impact: null,
+      message: "No pudimos conectar con el servidor.",
+      onRetry: fn(),
+      status: "error",
+    },
+  },
+};
+
+/** La RPC rechazaría la recepción: motivo tal cual y sin botón de recibir. */
+export const Blocked: Story = {
+  args: {
+    effect: {
+      impact: rejectedPurchaseImpact(
+        "receive",
+        "Solo se pueden recibir compras en estado pedido",
+        { status: "recibido" },
+      ),
+      status: "blocked",
+    },
+  },
+};
+
+/** Tras cambiar una marca o el reparto: el efecto anterior atenuado y el botón en espera. */
+export const Recalculating: Story = {
+  args: { effect: { impact: defaultImpact, recalculating: true, status: "ready" } },
+};
 
 /** COM-14: una línea que se desarma al recibir, otra que podría y una cuya receta ya no está activa. */
 export const WithDisassemble: Story = {
@@ -170,6 +248,77 @@ export const WithDisassemble: Story = {
         unitCostRef: 6,
       },
     ],
+    effect: {
+      impact: allowedPurchaseImpact("receive", {
+        costs: [
+          purchaseImpactCostLine({
+            costRefAfter: 9,
+            costRefBefore: 8.5,
+            productId: "prod-caja",
+            productName: "Caja surtida de refrescos",
+            sku: null,
+          }),
+          purchaseImpactCostLine({
+            costRefAfter: 0.52,
+            costRefBefore: 0.6,
+            productId: "prod-fresa",
+            productName: "Refresco fresa 355 ml",
+            sku: null,
+            source: "disassemble",
+          }),
+        ],
+        stock: [
+          purchaseImpactStockLine({
+            disassembledOut: 3,
+            productId: "prod-caja",
+            productName: "Caja surtida de refrescos",
+            purchasedIn: 3,
+            quantityDelta: 0,
+            sku: null,
+            stockAfter: 2,
+            stockBefore: 2,
+          }),
+          purchaseImpactStockLine({
+            componentsIn: 12,
+            productId: "prod-fresa",
+            productName: "Refresco fresa 355 ml",
+            quantityDelta: 12,
+            sku: null,
+            stockAfter: 15,
+            stockBefore: 3,
+          }),
+          purchaseImpactStockLine({
+            componentsIn: 6,
+            isActive: false,
+            productId: "prod-uva",
+            productName: "Refresco uva 355 ml",
+            quantityDelta: 6,
+            sku: null,
+            stockAfter: 6,
+            stockBefore: 0,
+          }),
+          purchaseImpactStockLine({
+            productId: "prod-bulto",
+            productName: "Bulto de harina",
+            purchasedIn: 2,
+            quantityDelta: 2,
+            sku: null,
+            stockAfter: 2,
+            stockBefore: 0,
+          }),
+          purchaseImpactStockLine({
+            productId: "prod-galletas",
+            productName: "Caja de galletas",
+            purchasedIn: 1,
+            quantityDelta: 1,
+            sku: null,
+            stockAfter: 1,
+            stockBefore: 0,
+          }),
+        ],
+      }),
+      status: "ready",
+    },
     onDisassembleChange: fn(),
   },
 };

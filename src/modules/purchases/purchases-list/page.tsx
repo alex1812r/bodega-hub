@@ -2,10 +2,11 @@
 
 import { Plus } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Can } from "@/shared/auth/Can";
+import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
 import { usePermission } from "@/shared/auth/usePermission";
 import type { ActionMenuItem } from "@/shared/components/ActionsMenu";
 import { Button } from "@/shared/components/Button";
@@ -29,6 +30,8 @@ import { formatDateTimeShort } from "@/shared/utils/date";
 import { cn } from "@/shared/utils/cn";
 import { withReturnTo } from "@/shared/utils/returnTo";
 
+import { PurchaseCancelConfirmModal } from "../components/PurchaseCancelConfirmModal";
+import { PurchaseReturnConfirmModal } from "../components/PurchaseReturnConfirmModal";
 import {
   type PurchaseListRow,
   useCancelPurchase,
@@ -205,6 +208,11 @@ function PurchasesList() {
   // Las acciones de fila siguen las mismas reglas de permiso y estado que el detalle.
   const access = usePermission();
   const returnPurchase = useReturnPurchase();
+  // Confirmación abierta de cancelar o devolver una fila (CNF-05): nada se ejecuta sin ella.
+  const [confirmation, setConfirmation] = useState<{
+    action: "cancel" | "return";
+    purchaseId: string;
+  } | null>(null);
   const purchaseItems = getPaginatedItems(purchases.data);
   const totalPurchases = purchases.data?.total ?? 0;
   const pendingBalanceRef = purchases.data?.pendingBalanceRef;
@@ -224,6 +232,37 @@ function PurchasesList() {
 
   // Al volver del detalle la lista reaparece a la altura en que se dejó.
   useScrollRestoration(listHref, { ready: !purchases.isLoading });
+
+  function closeConfirmation() {
+    setConfirmation(null);
+    cancelPurchase.reset();
+    returnPurchase.reset();
+  }
+
+  // Si la RPC rechaza (carrera entre el efecto y la ejecución), `mutateAsync`
+  // rechaza: el modal sigue abierto y muestra el mensaje tal cual.
+  async function handleConfirm() {
+    if (!confirmation) {
+      return;
+    }
+
+    if (confirmation.action === "cancel") {
+      await cancelPurchase.mutateAsync(confirmation.purchaseId);
+    } else {
+      await returnPurchase.mutateAsync(confirmation.purchaseId);
+    }
+
+    setConfirmation(null);
+  }
+
+  // Enlace a los pagos de la compra que se confirma, para anular los que lo impiden.
+  const confirmingPaymentsHref =
+    confirmation &&
+    access.can("payments.view") &&
+    access.role !== undefined &&
+    canViewPurchasePayments(access.role)
+      ? withReturnTo(`/payments?purchaseId=${confirmation.purchaseId}`, listHref)
+      : undefined;
 
   // "Volver" de la compra nueva regresa a esta lista con sus filtros.
   const createHref = withReturnTo("/purchases/create", listHref);
@@ -292,21 +331,22 @@ function PurchasesList() {
                 });
               }
 
-              if (allowed.canCancelOrReturn) {
-                rowActions.push(
-                  {
-                    disabled: !allowed.isOpen,
-                    label: "Cancelar",
-                    onSelect: () => void cancelPurchase.mutateAsync(purchase.id),
-                    variant: "danger",
-                  },
-                  {
-                    disabled: !allowed.isOpen,
+              // Solo en los estados que la RPC acepta (cancelar: pedido o recibido;
+              // devolver: recibido), y siempre con su confirmación y su efecto.
+              if (allowed.canCancelOrReturn && allowed.isOpen) {
+                rowActions.push({
+                  label: "Cancelar",
+                  onSelect: () => setConfirmation({ action: "cancel", purchaseId: purchase.id }),
+                  variant: "danger",
+                });
+
+                if (purchase.status === "recibido") {
+                  rowActions.push({
                     label: "Devolver",
-                    onSelect: () => void returnPurchase.mutateAsync(purchase.id),
+                    onSelect: () => setConfirmation({ action: "return", purchaseId: purchase.id }),
                     variant: "danger",
-                  },
-                );
+                  });
+                }
               }
 
               return rowActions;
@@ -353,7 +393,7 @@ function PurchasesList() {
                 />
               )
             }
-            error={purchases.error ?? cancelPurchase.error ?? returnPurchase.error}
+            error={purchases.error}
             getRowId={(purchase) => purchase.id}
             isFetching={purchases.isFetching}
             isLoading={purchases.isLoading}
@@ -375,6 +415,33 @@ function PurchasesList() {
           </div>
         </div>
       </EntityListPage>
+
+      <PurchaseCancelConfirmModal
+        error={cancelPurchase.error?.message}
+        isPending={cancelPurchase.isPending}
+        onConfirm={handleConfirm}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeConfirmation();
+          }
+        }}
+        open={confirmation?.action === "cancel"}
+        paymentsHref={confirmingPaymentsHref}
+        purchaseId={confirmation?.purchaseId}
+      />
+      <PurchaseReturnConfirmModal
+        error={returnPurchase.error?.message}
+        isPending={returnPurchase.isPending}
+        onConfirm={handleConfirm}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeConfirmation();
+          }
+        }}
+        open={confirmation?.action === "return"}
+        paymentsHref={confirmingPaymentsHref}
+        purchaseId={confirmation?.purchaseId}
+      />
     </div>
   );
 }

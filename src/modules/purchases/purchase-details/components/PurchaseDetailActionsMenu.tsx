@@ -1,62 +1,37 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { usePermission } from "@/shared/auth/usePermission";
 import {
   ActionsMenu,
   type ActionMenuItem,
 } from "@/shared/components/ActionsMenu";
-import { Button } from "@/shared/components/Button";
-import { Modal } from "@/shared/components/Modal";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 
 import { getPurchaseActions } from "../../utils/purchaseActions";
-
-type PurchaseDetailActionId = "cancel" | "pdf" | "return";
 
 type PurchaseDetailActionsMenuProps = {
   isCancelling?: boolean;
   isExportingPdf?: boolean;
   isReturning?: boolean;
-  onCancel: () => void | Promise<void>;
+  /** Abre la confirmación de cancelar (con su efecto); no cancela. */
+  onCancel: () => void;
+  /** Descarga el PDF directamente: es inofensivo, no confirma. */
   onExportPdf: () => void | Promise<void>;
-  onReturn: () => void | Promise<void>;
+  /** Abre la confirmación de devolver (con su efecto); no devuelve. */
+  onReturn: () => void;
   purchaseNumber: string;
   status: PurchaseStatus;
 };
 
-type ActionConfig = {
-  confirmLabel: string;
-  confirmVariant?: "danger" | "default";
-  description: string;
-  title: string;
-};
-
-const actionConfigs: Record<PurchaseDetailActionId, ActionConfig> = {
-  cancel: {
-    confirmLabel: "Confirmar anulación",
-    confirmVariant: "danger",
-    description:
-      "La orden quedará cancelada y no modificará el inventario. Los montos pagados deberán conciliarse manualmente.",
-    title: "Cancelar compra",
-  },
-  pdf: {
-    confirmLabel: "Descargar PDF",
-    description:
-      "Se descargará un PDF con los datos actuales de la compra, incluyendo ítems y totales.",
-    title: "Confirmar impresión",
-  },
-  return: {
-    confirmLabel: "Confirmar devolución",
-    confirmVariant: "danger",
-    description:
-      "Se revertirá el stock asociado a esta compra. Verifica inventario y pagos con el proveedor.",
-    title: "Devolver compra",
-  },
-};
-
+/**
+ * Menú "…" del detalle de compra. PDF y duplicar son directos. Cancelar y
+ * devolver solo se ofrecen en los estados que su RPC acepta (cancelar: pedido o
+ * recibido; devolver: recibido) y abren su confirmación con el efecto; una
+ * compra cancelada o devuelta no ofrece ninguna de las dos.
+ */
 export function PurchaseDetailActionsMenu({
   isCancelling = false,
   isExportingPdf = false,
@@ -70,16 +45,11 @@ export function PurchaseDetailActionsMenu({
   const { can, role } = usePermission();
   // El detalle vive en `/purchases/[id]`: el id de la compra es el último tramo de la ruta.
   const purchaseId = usePathname().split("/").filter(Boolean).at(-1);
-  const [pendingAction, setPendingAction] = useState<PurchaseDetailActionId | null>(null);
-  const [isConfirming, setIsConfirming] = useState(false);
 
   // Mismas reglas de permiso y de estado que el menú de fila de la lista.
-  const {
-    canCancelOrReturn,
-    canDuplicate,
-    isOpen: canMutate,
-  } = getPurchaseActions({ status }, { can, role });
-  const pendingConfig = pendingAction ? actionConfigs[pendingAction] : null;
+  const { canCancelOrReturn, canDuplicate, isOpen } = getPurchaseActions({ status }, { can, role });
+  const canCancel = canCancelOrReturn && isOpen;
+  const canReturn = canCancel && status === "recibido";
 
   const actions = useMemo(() => {
     const menuActions: ActionMenuItem[] = [];
@@ -87,7 +57,7 @@ export function PurchaseDetailActionsMenu({
     menuActions.push({
       disabled: isExportingPdf,
       label: isExportingPdf ? "Generando PDF..." : "Descargar PDF",
-      onSelect: () => setPendingAction("pdf"),
+      onSelect: () => void onExportPdf(),
     });
 
     // Duplicar vale en cualquier estado: crea otra compra, no toca esta.
@@ -98,95 +68,37 @@ export function PurchaseDetailActionsMenu({
       });
     }
 
-    if (canCancelOrReturn) {
+    if (canReturn) {
       menuActions.push({
-        disabled: !canMutate || isReturning,
+        disabled: isReturning,
         label: isReturning ? "Procesando..." : "Devolver",
-        onSelect: () => setPendingAction("return"),
+        onSelect: onReturn,
         variant: "danger",
       });
+    }
+
+    if (canCancel) {
       menuActions.push({
-        disabled: !canMutate || isCancelling,
+        disabled: isCancelling,
         label: isCancelling ? "Cancelando..." : "Cancelar",
-        onSelect: () => setPendingAction("cancel"),
+        onSelect: onCancel,
         variant: "danger",
       });
     }
 
     return menuActions;
   }, [
-    canCancelOrReturn,
+    canCancel,
     canDuplicate,
-    canMutate,
+    canReturn,
     isCancelling,
     isExportingPdf,
     isReturning,
+    onCancel,
+    onExportPdf,
+    onReturn,
     purchaseId,
   ]);
 
-  async function handleConfirm() {
-    if (!pendingAction) {
-      return;
-    }
-
-    setIsConfirming(true);
-
-    try {
-      switch (pendingAction) {
-        case "cancel":
-          await onCancel();
-          break;
-        case "pdf":
-          await onExportPdf();
-          break;
-        case "return":
-          await onReturn();
-          break;
-      }
-
-      setPendingAction(null);
-    } finally {
-      setIsConfirming(false);
-    }
-  }
-
-  if (actions.length === 0) {
-    return null;
-  }
-
-  return (
-    <>
-      <ActionsMenu actions={actions} label={`Acciones de ${purchaseNumber}`} />
-
-      <Modal
-        description={pendingConfig?.description}
-        footer={({ close }) => (
-          <>
-            <Button disabled={isConfirming} onClick={close} type="button" variant="outline">
-              Cerrar
-            </Button>
-            <Button
-              disabled={isConfirming}
-              onClick={() => void handleConfirm()}
-              type="button"
-              variant={pendingConfig?.confirmVariant === "danger" ? "danger" : "primary"}
-            >
-              {isConfirming ? "Procesando..." : pendingConfig?.confirmLabel}
-            </Button>
-          </>
-        )}
-        onOpenChange={(open) => {
-          if (!open && !isConfirming) {
-            setPendingAction(null);
-          }
-        }}
-        open={pendingAction !== null}
-        title={pendingConfig?.title ?? "Confirmar acción"}
-      >
-        <p className="text-sm text-slate-600 dark:text-slate-400">
-          Compra {purchaseNumber}
-        </p>
-      </Modal>
-    </>
-  );
+  return <ActionsMenu actions={actions} label={`Acciones de ${purchaseNumber}`} />;
 }

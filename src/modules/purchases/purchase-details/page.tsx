@@ -14,10 +14,14 @@ import { ErrorState } from "@/shared/components/ErrorState";
 import type { PrimaryStateActionConfig } from "@/shared/components/PrimaryStateAction";
 import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { roundMoney } from "@/shared/utils/currency";
+import { withChainedReturnTo } from "@/shared/utils/returnTo";
 import { PurchaseRepriceNotice } from "@/modules/products/components/price-review/PurchaseRepriceNotice";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 
+import { PurchaseCancelConfirmModal } from "../components/PurchaseCancelConfirmModal";
+import { PurchaseReturnConfirmModal } from "../components/PurchaseReturnConfirmModal";
 import {
+  type PurchaseDetails,
   useCancelPurchase,
   usePurchase,
   useReceivePurchase,
@@ -30,7 +34,7 @@ import { PurchaseDetailPageHeader } from "./components/PurchaseDetailPageHeader"
 import { PurchaseDetailSections } from "./components/PurchaseDetailSections";
 import { PurchaseDetailStateHeader } from "./components/PurchaseDetailStateHeader";
 import { PurchasePendingReceiptBanner } from "./components/PurchasePendingReceiptBanner";
-import { PurchaseReceivePreviewModal } from "./components/PurchaseReceivePreviewModal";
+import { PurchaseReceiveConfirmModal } from "./components/PurchaseReceiveConfirmModal";
 import { getPurchasePrimaryAction } from "./components/purchasePrimaryAction";
 import { exportPurchaseDetailPdf } from "./services/exportPurchaseDetailPdf";
 import {
@@ -38,7 +42,6 @@ import {
   buildReceivePreview,
   findReceiveDistributionError,
   parseReceiveDistribution,
-  type ReceivePreviewPurchase,
 } from "./utils/buildReceivePreview";
 
 /** Parámetro (`?receive=1`) con el que la lista pide abrir la previsualización de la recepción. */
@@ -59,9 +62,11 @@ export function PurchaseDetailsPage({
   const { can, isLoading: isPermissionLoading, role } = usePermission();
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isPaying, setIsPaying] = useState(false);
+  // Confirmación abierta de cancelar o devolver (CNF-05): nada se ejecuta sin ella.
+  const [closingAction, setClosingAction] = useState<"cancel" | "return" | null>(null);
   // Compra de la previsualización, fijada al abrir el modal: si la recepción falla
   // y el detalle se refresca, el modal sigue mostrando lo que se intentó recibir.
-  const [receiveSource, setReceiveSource] = useState<ReceivePreviewPurchase | null>(null);
+  const [receiveSource, setReceiveSource] = useState<PurchaseDetails | null>(null);
   // «Desarmar al recibir» marcado o desmarcado en el modal, por línea (COM-14); sin
   // entrada manda la marca guardada con el pedido.
   const [receiveDisassemble, setReceiveDisassemble] = useState<Record<string, boolean>>({});
@@ -86,6 +91,23 @@ export function PurchaseDetailsPage({
   const receiveDistributionError = receivePreview
     ? findReceiveDistributionError(receivePreview)
     : null;
+  // La lista que viajará en la recepción: el efecto del modal se pide para ella.
+  const receiveDisassembleRequest = useMemo(
+    () => (receivePreview ? buildReceiveDisassembleRequest(receivePreview) : undefined),
+    [receivePreview],
+  );
+  // Precio de venta de cada producto de la compra, para avisar de la ganancia que baja de banda.
+  const receiveSalePrices = useMemo(() => {
+    const prices: Record<string, number> = {};
+
+    for (const item of receiveSource?.items ?? []) {
+      if (item.product) {
+        prices[item.productId] = item.product.salePriceRef;
+      }
+    }
+
+    return prices;
+  }, [receiveSource]);
 
   const purchaseData = purchase.data;
   const canReceive = can("purchases.create");
@@ -163,7 +185,7 @@ export function PurchaseDetailsPage({
     }
 
     // Se envía lo que el modal muestra: las líneas que se desarman (si alguna puede).
-    const disassemble = receivePreview ? buildReceiveDisassembleRequest(receivePreview) : undefined;
+    const disassemble = receiveDisassembleRequest;
     // Clave de idempotencia del intento; null = ya hay un envío en vuelo (doble clic).
     const clientRequestId = receiveAttempt.begin({ disassemble: disassemble ?? null, purchaseId });
 
@@ -185,6 +207,24 @@ export function PurchaseDetailsPage({
       // por si la compra ya no está en pedido (p. ej. la recibió otra persona).
       await purchase.refetch();
     }
+  }
+
+  function closeClosingAction() {
+    setClosingAction(null);
+    cancelPurchase.reset();
+    returnPurchase.reset();
+  }
+
+  // Si la RPC rechaza (carrera entre el efecto y la ejecución), `mutateAsync`
+  // rechaza: el modal sigue abierto y muestra el mensaje tal cual.
+  async function handleConfirmClosingAction() {
+    if (closingAction === "cancel") {
+      await cancelPurchase.mutateAsync(purchaseId);
+    } else if (closingAction === "return") {
+      await returnPurchase.mutateAsync(purchaseId);
+    }
+
+    setClosingAction(null);
   }
 
   if (purchase.isLoading) {
@@ -223,6 +263,11 @@ export function PurchaseDetailsPage({
   // "sin pagos", así que el historial lo dice. Pagado / Pendiente vienen de la compra.
   // Sin rol aún no se sabe cuál de los dos historiales toca: no se pinta ninguno.
   const canViewPayments = role === undefined ? undefined : canViewPurchasePayments(role);
+  // Enlace a los pagos de esta compra, para anular los que impiden cancelarla o devolverla.
+  const paymentsHref =
+    canViewPayments && can("payments.view")
+      ? withChainedReturnTo(`/payments?purchaseId=${data.id}`, detailUrl)
+      : undefined;
   // Una sola acción primaria según el estado real y los permisos. «Recibir» vive en
   // el aviso fijo de «Pedido» (COM-07), justo encima de la cabecera: no se repite
   // aquí. Sin permiso para recibir o pagar se cae a la siguiente acción permitida.
@@ -261,13 +306,9 @@ export function PurchaseDetailsPage({
             isCancelling={cancelPurchase.isPending}
             isExportingPdf={isExportingPdf}
             isReturning={returnPurchase.isPending}
-            onCancel={() => {
-              void cancelPurchase.mutateAsync(purchaseId);
-            }}
+            onCancel={() => setClosingAction("cancel")}
             onExportPdf={handleExportPdf}
-            onReturn={() => {
-              void returnPurchase.mutateAsync(purchaseId);
-            }}
+            onReturn={() => setClosingAction("return")}
             purchaseNumber={data.purchaseNumber}
             status={data.status}
           />
@@ -284,17 +325,6 @@ export function PurchaseDetailsPage({
         totalVes={data.totalVes}
       />
 
-      {cancelPurchase.error || returnPurchase.error ? (
-        <ErrorState
-          description={
-            (cancelPurchase.error ?? returnPurchase.error) instanceof Error
-              ? (cancelPurchase.error ?? returnPurchase.error)?.message
-              : "No se pudo completar la acción."
-          }
-          title="No pudimos actualizar la compra"
-        />
-      ) : null}
-
       <PurchaseRepriceNotice purchaseId={data.id} />
 
       <PurchaseDetailSections
@@ -310,7 +340,8 @@ export function PurchaseDetailsPage({
       {/* Sigue montado aunque la compra ya no esté en pedido: el error de una
           recepción repetida tiene que seguir a la vista hasta que se cierre. */}
       {receivePreview ? (
-        <PurchaseReceivePreviewModal
+        <PurchaseReceiveConfirmModal
+          disassemble={receiveDisassembleRequest}
           distributionValues={receiveDistribution}
           error={
             receiveBlocked && receiveDistributionError
@@ -334,10 +365,38 @@ export function PurchaseDetailsPage({
               receivePurchase.reset();
             }
           }}
-          open
+          purchaseId={purchaseId}
           purchaseNumber={data.purchaseNumber}
+          salePrices={receiveSalePrices}
         />
       ) : null}
+
+      <PurchaseCancelConfirmModal
+        error={cancelPurchase.error?.message}
+        isPending={cancelPurchase.isPending}
+        onConfirm={handleConfirmClosingAction}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeClosingAction();
+          }
+        }}
+        open={closingAction === "cancel"}
+        paymentsHref={paymentsHref}
+        purchaseId={purchaseId}
+      />
+      <PurchaseReturnConfirmModal
+        error={returnPurchase.error?.message}
+        isPending={returnPurchase.isPending}
+        onConfirm={handleConfirmClosingAction}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeClosingAction();
+          }
+        }}
+        open={closingAction === "return"}
+        paymentsHref={paymentsHref}
+        purchaseId={purchaseId}
+      />
 
       {/* Abierto sigue montado aunque la compra ya no admita pagos: un pago de
           resultado incierto pudo saldarla y su error tiene que seguir a la vista. */}

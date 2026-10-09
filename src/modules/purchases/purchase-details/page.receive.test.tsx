@@ -32,6 +32,7 @@ import { type Permission, type UserRole, getRolePermissions } from "@/shared/aut
 import type { ProductMock } from "@/shared/mocks/erp-data";
 import { formatRefUsd } from "@/shared/utils/currency";
 
+import { receiveImpactOfUrl } from "../components/purchaseImpact.testFixtures";
 import type { PurchaseDetails } from "../hooks/usePurchases";
 import { PurchaseDetailsPage } from "./page";
 
@@ -153,6 +154,10 @@ function installApi(
       return Promise.resolve(jsonResponse({ data: purchase }));
     }
 
+    if (url.startsWith(`/api/purchases/${PURCHASE.id}/impact`)) {
+      return Promise.resolve(jsonResponse({ data: receiveImpactOfUrl(url, purchase) }));
+    }
+
     if (url === `/api/purchases/${PURCHASE.id}`) {
       purchaseGets += 1;
 
@@ -211,6 +216,18 @@ const WITHOUT_RECEIVE: Session = {
   role: "admin",
 };
 
+/** La fila de «Qué va a pasar» de un producto (efecto real del impact), cuando ya llegó. */
+async function expectProductEffect(dialog: HTMLElement, name: string, expected: string) {
+  await waitFor(() => {
+    const list = within(dialog).getByRole("list", { name: "Stock y costo por producto" });
+    const row = within(list)
+      .getAllByRole("listitem")
+      .find((candidate) => candidate.textContent?.startsWith(name));
+
+    expect(row?.textContent?.replace(/\s+/g, " ")).toContain(expected);
+  });
+}
+
 async function openPreview(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: RECEIVE }));
 
@@ -266,7 +283,7 @@ describe("PurchaseDetailsPage · aviso de pedido sin recibir (COM-07)", () => {
 });
 
 describe("PurchaseDetailsPage · previsualización al recibir (COM-07)", () => {
-  it("lista por línea lo que entra, el stock antes → después y el costo unitario, sin enviar nada", async () => {
+  it("lista por línea lo que entra y el costo unitario y, por producto, el stock antes → después del efecto real, sin enviar nada", async () => {
     const { receiveCalls, user } = await renderPage();
     const dialog = await openPreview(user);
     const [unitLine, packLine] = within(
@@ -276,26 +293,28 @@ describe("PurchaseDetailsPage · previsualización al recibir (COM-07)", () => {
     // Línea por unidad.
     expect(within(unitLine).getByText("Harina PAN")).toBeInTheDocument();
     expect(within(unitLine).getByText("5 un")).toBeInTheDocument();
-    expect(within(unitLine).getByText("10 un")).toBeInTheDocument();
-    expect(within(unitLine).getByText("15 un")).toBeInTheDocument();
     expect(within(unitLine).getByText(formatRefUsd(2))).toBeInTheDocument();
 
     // Línea por empaque: empaques × unidades = unidades totales.
     expect(within(packLine).getByText("Malta Maltín")).toBeInTheDocument();
     expect(within(packLine).getByText("3 × 12 = 36 un")).toBeInTheDocument();
-    expect(within(packLine).getByText("4 un")).toBeInTheDocument();
-    expect(within(packLine).getByText("40 un")).toBeInTheDocument();
     expect(within(packLine).getByText(formatRefUsd(0.75))).toBeInTheDocument();
 
+    // Stock antes → después: del impact, por producto.
+    await expectProductEffect(dialog, "Harina PAN", "+5 unStock10 unpasa a15 un");
+    await expectProductEffect(dialog, "Malta Maltín", "+36 unStock4 unpasa a40 un");
+
     expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: RECEIVE })).toBeInTheDocument();
+    expect(await within(dialog).findByRole("button", { name: RECEIVE })).toBeInTheDocument();
     expect(receiveCalls).toHaveLength(0);
   });
 
   it("avisa solo en la línea cuyo producto está inactivo", async () => {
     const { user } = await renderPage();
     const dialog = await openPreview(user);
-    const [activeLine, inactiveLine] = within(dialog).getAllByRole("listitem");
+    const [activeLine, inactiveLine] = within(
+      within(dialog).getByRole("list", { name: "Mercancía que entra" }),
+    ).getAllByRole("listitem");
 
     expect(within(inactiveLine).getByText(INACTIVE)).toBeInTheDocument();
     expect(within(activeLine).queryByText(INACTIVE)).not.toBeInTheDocument();
@@ -316,7 +335,7 @@ describe("PurchaseDetailsPage · previsualización al recibir (COM-07)", () => {
     const { receiveCalls, user } = await renderPage();
     const dialog = await openPreview(user);
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(receiveCalls).toHaveLength(1);
@@ -334,7 +353,7 @@ describe("PurchaseDetailsPage · previsualización al recibir (COM-07)", () => {
       kind: "deferred",
     });
     const dialog = await openPreview(user);
-    const confirm = within(dialog).getByRole("button", { name: RECEIVE });
+    const confirm = await within(dialog).findByRole("button", { name: RECEIVE });
 
     // Dos clics en el mismo tick, antes de que React deshabilite el botón.
     fireEvent.click(confirm);
@@ -363,7 +382,7 @@ describe("PurchaseDetailsPage · previsualización al recibir (COM-07)", () => {
     const getsBefore = purchaseGets();
     const dialog = await openPreview(user);
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(PT409);
     expect(receiveCalls).toHaveLength(1);
@@ -388,13 +407,13 @@ describe("PurchaseDetailsPage · previsualización al recibir (COM-07)", () => {
     const { receiveCalls, user } = await renderPage({}, { role: "admin" }, { kind: "offline" });
     const dialog = await openPreview(user);
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       "No pudimos conectar con el servidor. Revisa tu conexión y vuelve a intentar; no se duplicará la compra.",
     );
     expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
     expect(receiveCalls).toHaveLength(1);
-    expect(within(dialog).getByRole("button", { name: RECEIVE })).toBeEnabled();
+    expect(await within(dialog).findByRole("button", { name: RECEIVE })).toBeEnabled();
   });
 });

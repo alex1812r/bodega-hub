@@ -30,6 +30,7 @@ import { jsonResponse } from "@/modules/inventory/utils/requestAttempt.testUtils
 import { getRolePermissions } from "@/shared/auth/permissions";
 import type { ProductMock } from "@/shared/mocks/erp-data";
 
+import { receiveImpactOfUrl } from "../components/purchaseImpact.testFixtures";
 import type { PurchaseDetails } from "../hooks/usePurchases";
 import { receivePurchaseBodySchema } from "../services/purchaseDisassemble";
 import { PurchaseDetailsPage } from "./page";
@@ -140,6 +141,10 @@ function installApi() {
       return Promise.resolve(jsonResponse({ data: purchase }));
     }
 
+    if (url.startsWith(`/api/purchases/${PURCHASE.id}/impact`)) {
+      return Promise.resolve(jsonResponse({ data: receiveImpactOfUrl(url, purchase) }));
+    }
+
     if (url === `/api/purchases/${PURCHASE.id}`) {
       return Promise.resolve(jsonResponse({ data: purchase }));
     }
@@ -188,6 +193,18 @@ function effectsOf(dialog: HTMLElement, name: string) {
     .map((row) => row.textContent?.replace(/\s+/g, " ").trim());
 }
 
+/** La fila de «Qué va a pasar» de un producto (efecto real del impact), cuando ya llegó. */
+async function expectProductEffect(dialog: HTMLElement, name: string, expected: string) {
+  await waitFor(() => {
+    const list = within(dialog).getByRole("list", { name: "Stock y costo por producto" });
+    const row = within(list)
+      .getAllByRole("listitem")
+      .find((candidate) => candidate.textContent?.startsWith(name));
+
+    expect(row?.textContent?.replace(/\s+/g, " ")).toContain(expected);
+  });
+}
+
 async function type(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement, name: string, text: string) {
   const field = within(dialog).getByRole("textbox", { name: `Unidades de ${name}` });
 
@@ -206,11 +223,13 @@ describe("PurchaseDetailsPage · reparto ajustable del surtido al recibir (COM-1
       within(dialog).queryByRole("button", { name: "Ajustar reparto de Caja de refrescos" }),
     ).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("group", { name: /Reparto de/ })).not.toBeInTheDocument();
-    expect(effectsOf(dialog, "Caja surtida")).toEqual([
-      "Cola+6 un4 unpasa a10 un",
-      "Manzana+6 un0 unpasa a6 un",
-      "Naranja+6 un1 unpasa a7 un",
-    ]);
+    expect(effectsOf(dialog, "Caja surtida")).toEqual(["Cola+6 un", "Manzana+6 un", "Naranja+6 un"]);
+    // El stock antes → después sale del efecto real, por producto.
+    await expectProductEffect(dialog, "Cola", "+6 unStock4 unpasa a10 un");
+    await expectProductEffect(dialog, "Manzana", "+6 unStock0 unpasa a6 un");
+    await expectProductEffect(dialog, "Naranja", "+6 unStock1 unpasa a7 un");
+    // El surtido entra y vuelve a salir: neto 0.
+    await expectProductEffect(dialog, "Caja surtida", "Stock0 un (no cambia)");
   });
 
   it("abre con el reparto de la receta × empaques de la línea (6 / 6 / 6 de 18)", async () => {
@@ -238,14 +257,14 @@ describe("PurchaseDetailsPage · reparto ajustable del surtido al recibir (COM-1
 
     expect(within(dialog).getByText("18 de 18 unidades")).toBeInTheDocument();
     expect(within(dialog).getAllByText("−3 empaques")).toHaveLength(2);
-    expect(effectsOf(dialog, "Caja surtida")).toEqual([
-      "Cola+7 un4 unpasa a11 un",
-      "Manzana+5 un0 unpasa a5 un",
-      "Naranja+6 un1 unpasa a7 un",
-    ]);
+    expect(effectsOf(dialog, "Caja surtida")).toEqual(["Cola+7 un", "Manzana+5 un", "Naranja+6 un"]);
+    // El efecto se volvió a pedir con el reparto tecleado.
+    await expectProductEffect(dialog, "Cola", "+7 unStock4 unpasa a11 un");
+    await expectProductEffect(dialog, "Manzana", "+5 unStock0 unpasa a5 un");
+    await expectProductEffect(dialog, "Naranja", "+6 unStock1 unpasa a7 un");
     expect(within(dialog).getByText("Reparto ajustado")).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(receiveBodies).toEqual([
@@ -279,7 +298,7 @@ describe("PurchaseDetailsPage · reparto ajustable del surtido al recibir (COM-1
     expect(within(group).getByText(SHORT)).toBeInTheDocument();
     expect(within(group).getByText("17 de 18 unidades")).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     expect(await within(dialog).findByText(`Caja surtida: ${SHORT}`)).toBeInTheDocument();
     expect(receiveBodies).toHaveLength(0);
@@ -295,7 +314,7 @@ describe("PurchaseDetailsPage · reparto ajustable del surtido al recibir (COM-1
     );
     expect(within(group).queryByText(SHORT)).not.toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     await waitFor(() => expect(receiveBodies).toHaveLength(1));
     expect(receiveBodies[0]).toMatchObject({
@@ -327,7 +346,7 @@ describe("PurchaseDetailsPage · reparto ajustable del surtido al recibir (COM-1
       within(dialog).getByText("Las unidades del reparto deben ser enteros mayores o iguales a cero."),
     ).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     expect(receiveBodies).toHaveLength(0);
   });
@@ -339,10 +358,11 @@ describe("PurchaseDetailsPage · reparto ajustable del surtido al recibir (COM-1
     await type(user, dialog, "Cola", "9");
     await user.click(within(dialog).getByRole("button", { name: "Restablecer receta" }));
 
-    expect(effectsOf(dialog, "Caja surtida")[0]).toBe("Cola+6 un4 unpasa a10 un");
+    expect(effectsOf(dialog, "Caja surtida")[0]).toBe("Cola+6 un");
+    await expectProductEffect(dialog, "Cola", "+6 unStock4 unpasa a10 un");
     expect(within(dialog).queryByText("Reparto ajustado")).not.toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     await waitFor(() => expect(receiveBodies).toHaveLength(1));
     expect(receiveBodies[0]).toMatchObject({
@@ -361,7 +381,7 @@ describe("PurchaseDetailsPage · reparto ajustable del surtido al recibir (COM-1
     expect(within(dialog).queryByRole("group", { name: /Reparto de/ })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /reparto de Caja surtida/ })).not.toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     await waitFor(() => expect(receiveBodies).toHaveLength(1));
     expect(receiveBodies[0]).toMatchObject({ disassemble: [{ purchaseItemId: "item-caja" }] });

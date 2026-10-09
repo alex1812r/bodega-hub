@@ -29,6 +29,7 @@ import { jsonResponse } from "@/modules/inventory/utils/requestAttempt.testUtils
 import { getRolePermissions } from "@/shared/auth/permissions";
 import type { ProductMock } from "@/shared/mocks/erp-data";
 
+import { receiveImpactOfUrl } from "../components/purchaseImpact.testFixtures";
 import type { PurchaseDetails } from "../hooks/usePurchases";
 import { PurchaseDetailsPage } from "./page";
 
@@ -148,6 +149,10 @@ function installApi(initial: Partial<PurchaseDetails>, failures: number) {
       return Promise.resolve(jsonResponse({ data: purchase }));
     }
 
+    if (url.startsWith(`/api/purchases/${PURCHASE.id}/impact`)) {
+      return Promise.resolve(jsonResponse({ data: receiveImpactOfUrl(url, purchase) }));
+    }
+
     if (url === `/api/purchases/${PURCHASE.id}`) {
       return Promise.resolve(jsonResponse({ data: purchase }));
     }
@@ -188,6 +193,18 @@ async function openPreview(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: RECEIVE }));
 
   return screen.findByRole("dialog", { name: RECEIVE });
+}
+
+/** La fila de «Qué va a pasar» de un producto (efecto real del impact), cuando ya llegó. */
+async function expectProductEffect(dialog: HTMLElement, name: string, expected: string) {
+  await waitFor(() => {
+    const list = within(dialog).getByRole("list", { name: "Stock y costo por producto" });
+    const row = within(list)
+      .getAllByRole("listitem")
+      .find((candidate) => candidate.textContent?.startsWith(name));
+
+    expect(row?.textContent?.replace(/\s+/g, " ")).toContain(expected);
+  });
 }
 
 function lineOf(dialog: HTMLElement, name: string) {
@@ -234,8 +251,13 @@ describe("PurchaseDetailsPage · confirmación de recepción con desarme (COM-14
 
     expect(within(box).getByRole("switch", { name: SWITCH })).toBeChecked();
     expect(within(box).getByText("−3 empaques")).toBeInTheDocument();
-    // El empaque queda como estaba: 2 → 2.
-    expect(within(box).getAllByText("2 un")).toHaveLength(2);
+    // El empaque queda como estaba: entra y vuelve a salir.
+    await expectProductEffect(dialog, "Caja de refrescos", "Stock2 un (no cambia)");
+    await expectProductEffect(
+      dialog,
+      "Caja de refrescos",
+      "Entran 3 un por la compra · salen 3 un al desarmarse",
+    );
 
     const components = within(box).getByRole("list", {
       name: "Componentes que entran al desarmar Caja de refrescos",
@@ -243,8 +265,7 @@ describe("PurchaseDetailsPage · confirmación de recepción con desarme (COM-14
 
     expect(within(components).getByText("Refresco 355 ml")).toBeInTheDocument();
     expect(within(components).getByText("+18 un")).toBeInTheDocument();
-    expect(within(components).getByText("4 un")).toBeInTheDocument();
-    expect(within(components).getByText("22 un")).toBeInTheDocument();
+    await expectProductEffect(dialog, "Refresco 355 ml", "+18 unStock4 unpasa a22 un");
     expect(
       within(dialog).getByText(/los empaques marcados se abrirán en sus componentes/),
     ).toBeInTheDocument();
@@ -257,7 +278,7 @@ describe("PurchaseDetailsPage · confirmación de recepción con desarme (COM-14
     const { receiveBodies, user } = await renderPage();
     const dialog = await openPreview(user);
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(receiveBodies).toEqual([
@@ -278,12 +299,13 @@ describe("PurchaseDetailsPage · confirmación de recepción con desarme (COM-14
 
     expect(within(box).getByRole("switch", { name: SWITCH })).not.toBeChecked();
     expect(within(box).queryByText("−3 empaques")).not.toBeInTheDocument();
-    expect(within(box).getByText("5 un")).toBeInTheDocument();
+    // El efecto se volvió a pedir sin la línea: el empaque sube 2 → 5.
+    await expectProductEffect(dialog, "Caja de refrescos", "+3 unStock2 unpasa a5 un");
     expect(
       within(dialog).queryByText(/los empaques marcados se abrirán/),
     ).not.toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     await waitFor(() => expect(receiveBodies).toHaveLength(1));
     expect(receiveBodies[0]?.disassemble).toEqual([]);
@@ -302,7 +324,7 @@ describe("PurchaseDetailsPage · confirmación de recepción con desarme (COM-14
 
     expect(within(box).getByText("+18 un")).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     await waitFor(() => expect(receiveBodies).toHaveLength(1));
     expect(receiveBodies[0]?.disassemble).toEqual([{ purchaseItemId: "item-caja" }]);
@@ -312,7 +334,7 @@ describe("PurchaseDetailsPage · confirmación de recepción con desarme (COM-14
     const { receiveBodies, user } = await renderPage({ items: [LOOSE] });
     const dialog = await openPreview(user);
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     await waitFor(() => expect(receiveBodies).toHaveLength(1));
     expect(receiveBodies[0]).toEqual({ clientRequestId: expect.any(String) });
@@ -322,13 +344,13 @@ describe("PurchaseDetailsPage · confirmación de recepción con desarme (COM-14
     const { receiveBodies, user } = await renderPage({}, 1);
     const dialog = await openPreview(user);
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     expect(await within(dialog).findByText(PT409)).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: RECEIVE })).toBeInTheDocument();
 
     await user.click(within(lineOf(dialog, "Caja de refrescos")).getByRole("switch", { name: SWITCH }));
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     await waitFor(() => expect(receiveBodies).toHaveLength(2));
     expect(receiveBodies.map((body) => body?.disassemble)).toEqual([[{ purchaseItemId: "item-caja" }], []]);
@@ -347,7 +369,7 @@ describe("PurchaseDetailsPage · confirmación de recepción con desarme (COM-14
     ).toBeInTheDocument();
     expect(within(box).queryByRole("switch")).not.toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+    await user.click(await within(dialog).findByRole("button", { name: RECEIVE }));
 
     await waitFor(() => expect(receiveBodies).toHaveLength(1));
     expect(receiveBodies[0]?.disassemble).toEqual([]);

@@ -54,6 +54,14 @@ jest.mock("./components/PurchasesExportActions", () => ({
   ),
 }));
 
+import {
+  allowedPurchaseImpact,
+  PURCHASE_PAYMENTS_BLOCKED_REASON,
+  PURCHASE_STOCK_BLOCKED_REASON,
+  purchaseImpactPaymentLine,
+  rejectedPurchaseImpact,
+} from "../components/purchaseImpact.testFixtures";
+import type { PurchaseImpact } from "../services/purchaseImpact";
 import { PurchasesListPage } from "./page";
 
 function purchase(id: string, overrides: Record<string, unknown> = {}) {
@@ -95,6 +103,10 @@ describe("PurchasesListPage", () => {
   /** Total que declara el servidor; por defecto, las compras de `listItems`. */
   let listTotal: number | undefined;
   let listFailure: { message: string; status: number } | null;
+  /** Efecto que devuelve `GET /api/purchases/{id}/impact`. */
+  let rowImpact: PurchaseImpact;
+  /** Mensaje con el que el servidor rechaza cancelar / devolver; `null` = lo acepta. */
+  let mutationFailure: string | null;
 
   /** Deja la pantalla en esa query, como si se hubiera abierto con ese enlace. */
   function openAt(query: string) {
@@ -111,6 +123,8 @@ describe("PurchasesListPage", () => {
     ];
     listTotal = undefined;
     listFailure = null;
+    rowImpact = allowedPurchaseImpact("cancel");
+    mutationFailure = null;
     mockDeniedPermissions.clear();
     mockSession.role = "admin";
     openAt("");
@@ -131,7 +145,27 @@ describe("PurchasesListPage", () => {
       }),
     });
     fetchMock.mockReset();
-    fetchMock.mockImplementation(async (url: string) => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const path = String(url).split("?")[0] ?? "";
+
+      if (path.endsWith("/impact")) {
+        return jsonResponse({ data: rowImpact });
+      }
+
+      if (init?.method === "PATCH" || init?.method === "POST") {
+        if (mutationFailure) {
+          return jsonResponse({ error: { code: "CONFLICT", message: mutationFailure } }, 409);
+        }
+
+        const id = path.split("/")[3] ?? "";
+
+        return jsonResponse({
+          data: path.endsWith("/return")
+            ? { purchase: purchase(id, { status: "devuelto" }) }
+            : purchase(id, { status: "cancelado" }),
+        });
+      }
+
       if (listFailure) {
         return jsonResponse(
           { error: { code: "INTERNAL_ERROR", message: listFailure.message } },
@@ -650,19 +684,14 @@ describe("PurchasesListPage", () => {
       expect(await rowLabels(user)).toEqual(["Ver detalle", "Registrar pago"]);
     });
 
-    it("almacén: no ve Registrar pago (llevaba a «sin permiso») y sí Cancelar y Devolver", async () => {
+    it("almacén: no ve Registrar pago (llevaba a «sin permiso») y sí Cancelar; un pedido no se devuelve", async () => {
       const user = userEvent.setup();
 
       asAlmacen();
       listItems = [purchase("001", { status: "pedido" })];
       renderPage();
 
-      expect(await rowLabels(user)).toEqual([
-        "Ver detalle",
-        "Recibir mercancía…",
-        "Cancelar",
-        "Devolver",
-      ]);
+      expect(await rowLabels(user)).toEqual(["Ver detalle", "Recibir mercancía…", "Cancelar"]);
     });
 
     it("una compra ya pagada no ofrece Registrar pago", async () => {
@@ -675,22 +704,14 @@ describe("PurchasesListPage", () => {
     });
 
     it.each(["cancelado", "devuelto"])(
-      "una compra en estado %s no admite pago, y Cancelar y Devolver quedan deshabilitadas como en el detalle",
+      "una compra en estado %s no admite pago ni ofrece Cancelar o Devolver, como en el detalle",
       async (status) => {
         const user = userEvent.setup();
 
         listItems = [purchase("001", { status })];
         renderPage();
 
-        expect(await rowLabels(user)).toEqual(["Ver detalle", "Cancelar", "Devolver"]);
-        expect(screen.getByRole("menuitem", { name: "Cancelar" })).toBeDisabled();
-        expect(screen.getByRole("menuitem", { name: "Devolver" })).toBeDisabled();
-
-        await user.click(screen.getByRole("menuitem", { name: "Cancelar" }));
-
-        expect(
-          fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method),
-        ).toHaveLength(0);
+        expect(await rowLabels(user)).toEqual(["Ver detalle"]);
       },
     );
 
@@ -702,6 +723,146 @@ describe("PurchasesListPage", () => {
       renderPage();
 
       expect(await rowLabels(user)).toEqual(["Ver detalle"]);
+    });
+  });
+
+  // CNF-05: la fila cancelaba y devolvía sin confirmación.
+  describe("cancelar y devolver desde la fila confirman con su efecto (CNF-05)", () => {
+    async function openRowAction(user: ReturnType<typeof userEvent.setup>, label: string) {
+      await user.click((await screen.findAllByRole("button", { name: /acciones/i }))[0]);
+      await user.click(await screen.findByRole("menuitem", { name: label }));
+    }
+
+    function writeRequests() {
+      return fetchMock.mock.calls
+        .filter(([, init]) => {
+          const method = (init as RequestInit | undefined)?.method;
+
+          return method !== undefined && method !== "GET";
+        })
+        .map(([url, init]) => `${(init as RequestInit).method} ${String(url)}`);
+    }
+
+    function impactRequests() {
+      return fetchMock.mock.calls
+        .map(([url]) => String(url))
+        .filter((url) => url.includes("/impact"));
+    }
+
+    beforeEach(() => {
+      listItems = [purchase("001", { status: "recibido" })];
+    });
+
+    it("«Cancelar» no cancela: abre la confirmación con el efecto de esa compra", async () => {
+      const user = userEvent.setup();
+
+      renderPage();
+      await openRowAction(user, "Cancelar");
+
+      const dialog = within(await screen.findByRole("dialog", { name: "Cancelar compra" }));
+
+      expect(await dialog.findByText("Qué va a pasar")).toBeInTheDocument();
+      expect(impactRequests()).toEqual(["/api/purchases/001/impact?action=cancel"]);
+      expect(
+        within(dialog.getByRole("list", { name: "Productos que salen del inventario" })).getByRole(
+          "listitem",
+        ),
+      ).toHaveTextContent("−5 un");
+      expect(writeRequests()).toEqual([]);
+
+      await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(writeRequests()).toEqual([]);
+    });
+
+    it("confirmar cancela una sola vez aunque haya doble clic y cierra el modal", async () => {
+      const user = userEvent.setup();
+
+      renderPage();
+      await openRowAction(user, "Cancelar");
+
+      const dialog = within(await screen.findByRole("dialog", { name: "Cancelar compra" }));
+      const confirm = await dialog.findByRole("button", { name: "Cancelar compra" });
+
+      fireEvent.click(confirm);
+      fireEvent.click(confirm);
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(writeRequests()).toEqual(["PATCH /api/purchases/001/cancel"]);
+    });
+
+    it("«Devolver» pide el efecto de devolver y, al confirmar, devuelve una sola vez", async () => {
+      const user = userEvent.setup();
+
+      rowImpact = allowedPurchaseImpact("return");
+      renderPage();
+      await openRowAction(user, "Devolver");
+
+      const dialog = within(await screen.findByRole("dialog", { name: "Devolver compra" }));
+      const confirm = await dialog.findByRole("button", { name: "Devolver compra" });
+
+      expect(impactRequests()).toEqual(["/api/purchases/001/impact?action=return"]);
+      expect(writeRequests()).toEqual([]);
+
+      fireEvent.click(confirm);
+      fireEvent.click(confirm);
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(writeRequests()).toEqual(["POST /api/purchases/001/return"]);
+    });
+
+    it("si el servidor rechaza al ejecutar, el mensaje queda tal cual dentro del modal", async () => {
+      const user = userEvent.setup();
+
+      mutationFailure = PURCHASE_STOCK_BLOCKED_REASON;
+      renderPage();
+      await openRowAction(user, "Cancelar");
+
+      const dialog = within(await screen.findByRole("dialog", { name: "Cancelar compra" }));
+
+      await user.click(await dialog.findByRole("button", { name: "Cancelar compra" }));
+
+      expect(await dialog.findByRole("alert")).toHaveTextContent(PURCHASE_STOCK_BLOCKED_REASON);
+      expect(screen.getByRole("dialog", { name: "Cancelar compra" })).toBeInTheDocument();
+      expect(screen.getAllByText(PURCHASE_STOCK_BLOCKED_REASON)).toHaveLength(1);
+    });
+
+    it("con un pago activo: sin botón de cancelar y con enlace a los pagos de la compra que vuelve a la lista", async () => {
+      const user = userEvent.setup();
+
+      rowImpact = rejectedPurchaseImpact("cancel", PURCHASE_PAYMENTS_BLOCKED_REASON, {
+        payments: [purchaseImpactPaymentLine()],
+      });
+      openAt("pendingBalance=1");
+      renderPage();
+      await openRowAction(user, "Cancelar");
+
+      const dialog = within(
+        await screen.findByRole("dialog", { name: "No se puede cancelar la compra" }),
+      );
+
+      expect(dialog.getByRole("alert")).toHaveTextContent(PURCHASE_PAYMENTS_BLOCKED_REASON);
+      expect(dialog.queryByRole("button", { name: "Cancelar compra" })).not.toBeInTheDocument();
+      expect(dialog.getByRole("link", { name: "Ver pagos de la compra" })).toHaveAttribute(
+        "href",
+        `/payments?purchaseId=001&returnTo=${encodeURIComponent("/purchases?pendingBalance=1")}`,
+      );
+      expect(writeRequests()).toEqual([]);
+    });
+
+    it("«Registrar pago» y «Ver detalle» siguen siendo enlaces directos, sin confirmación", async () => {
+      const user = userEvent.setup();
+
+      renderPage();
+      await user.click((await screen.findAllByRole("button", { name: /acciones/i }))[0]);
+
+      expect(await screen.findByRole("menuitem", { name: "Registrar pago" })).toHaveAttribute(
+        "href",
+        "/payments?purchaseId=001",
+      );
+      expect(screen.getByRole("menuitem", { name: "Ver detalle" })).toHaveAttribute("href");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
   });
 

@@ -41,6 +41,33 @@ function getPaymentState(paidRef: number, pendingRef: number): PaymentState {
     : { label: "Pendiente", tone: "default" };
 }
 
+/**
+ * Saldo en bolívares a la tasa de hoy. Si la tasa de hoy es la de la compra, es
+ * el saldo en Bs del documento (total − pagado): recalcularlo desde el saldo REF
+ * redondeado se desviaba un céntimo. Con otra tasa, saldo REF × tasa de hoy.
+ */
+export function getPendingVesToday({
+  currentRateVes,
+  paidVes,
+  pendingRef,
+  refRateVes,
+  totalVes,
+}: {
+  currentRateVes: number;
+  paidVes: number;
+  pendingRef: number;
+  refRateVes: number;
+  totalVes: number;
+}): number | null {
+  if (!(currentRateVes > 0)) {
+    return null;
+  }
+
+  return currentRateVes === refRateVes
+    ? Math.max(0, roundMoney(totalVes - paidVes))
+    : roundMoney(pendingRef * currentRateVes);
+}
+
 /** Cabecera del detalle: número y estado de la compra, sus cifras y la acción que toca. */
 export function PurchaseDetailStateHeader({
   actionsMenu,
@@ -56,7 +83,13 @@ export function PurchaseDetailStateHeader({
   totalVes,
 }: PurchaseDetailStateHeaderProps) {
   const paymentState = getPaymentState(paidRef, pendingRef);
-  const pendingVesToday = currentRateVes > 0 ? roundMoney(pendingRef * currentRateVes) : null;
+  const pendingVesToday = getPendingVesToday({
+    currentRateVes,
+    paidVes,
+    pendingRef,
+    refRateVes,
+    totalVes,
+  });
   const closedNotice = getPurchaseClosedNotice(status);
 
   return (
