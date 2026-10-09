@@ -18,7 +18,9 @@ import { getBusinessTodayIsoDate, shiftIsoDate } from "../utils/businessDate";
 import { parseDashboardMetricsDateParams } from "../utils/kpiPeriod";
 import {
   type DashboardSalesTrend,
+  readSalesTrendFromStartTo,
   salesTrendFromSeries,
+  toSalesTrendFromStartParams,
   toSalesTrendSeriesParams,
 } from "./salesTrend";
 import * as storesMock from "@/modules/platform/services/stores.mock-server";
@@ -132,12 +134,27 @@ function getContactName(contactId: string) {
   return mockContacts.find((contact) => contact.id === contactId)?.name ?? "Sin cliente";
 }
 
-/** Paridad con `dashboard.server`: con `from` + `to`, la serie de ventas diarias de Reportes. */
+/** Primer día con ventas hasta `to` según el reporte de ventas diarias (el más reciente va primero). */
+function findFirstSaleDay(storeIdOrIds: string | string[], to: string) {
+  const page = (skip: number) =>
+    getDailySalesReport(new URLSearchParams({ limit: "1", skip: String(skip), to }), storeIdOrIds);
+  const { total } = page(0);
+
+  return total > 0 ? (page(total - 1).items[0]?.saleDate ?? null) : null;
+}
+
+/**
+ * Paridad con `dashboard.server`: con `from` + `to`, la serie de ventas diarias
+ * de Reportes; con `fromStart` + `to`, desde el primer día con ventas.
+ */
 export function getDashboardSalesTrend(
   searchParams: URLSearchParams,
   storeIdOrIds: string | string[],
 ): DashboardSalesTrend {
-  const seriesParams = toSalesTrendSeriesParams(searchParams);
+  const fromStartTo = readSalesTrendFromStartTo(searchParams);
+  const seriesParams = fromStartTo
+    ? toSalesTrendFromStartParams(fromStartTo, findFirstSaleDay(storeIdOrIds, fromStartTo))
+    : toSalesTrendSeriesParams(searchParams);
 
   if (seriesParams) {
     return salesTrendFromSeries(getDailySalesReport(seriesParams, storeIdOrIds).series);

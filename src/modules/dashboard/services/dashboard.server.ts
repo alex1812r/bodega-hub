@@ -14,7 +14,9 @@ import { shiftIsoDate } from "../utils/businessDate";
 import { parseDashboardMetricsDateParams } from "../utils/kpiPeriod";
 import {
   type DashboardSalesTrend,
+  readSalesTrendFromStartTo,
   salesTrendFromSeries,
+  toSalesTrendFromStartParams,
   toSalesTrendSeriesParams,
 } from "./salesTrend";
 
@@ -239,17 +241,49 @@ function mapRecentSale(row: DbSaleWithCustomer, storeName?: string) {
 }
 
 /**
+ * Primer día con ventas hasta `to`, leído de la misma vista que alimenta la
+ * serie (`daily_sales_summary`), o `null` si no hay ninguna.
+ */
+async function findFirstSaleDay(
+  storeIds: string[],
+  to: string,
+  options?: DashboardQueryOptions,
+): Promise<string | null> {
+  const supabase = await getDashboardClient(options);
+
+  let query = supabase
+    .from("daily_sales_summary")
+    .select("sale_date")
+    .order("sale_date", { ascending: true })
+    .limit(1);
+  query = applyStoreIdsFilter(query, storeIds);
+
+  const { data, error } = await query.lte("sale_date", to);
+  throwIfSupabaseError(error);
+
+  return data?.[0]?.sale_date ?? null;
+}
+
+/**
  * Flujo de ventas. Con `from` + `to` la serie la calcula el servicio de ventas
  * diarias de Reportes (un solo cálculo para dashboard y reportes: sin huecos,
  * paginado sin tope, agrupación automática y, con `compare=1`, el periodo
- * anterior). Sin rango responde como antes: los días con ventas, sin serie.
+ * anterior). Con `fromStart` + `to` la serie va del primer día con ventas a
+ * `to`, sin periodo anterior. Sin rango responde como antes: los días con
+ * ventas, sin serie.
  */
 export async function getDashboardSalesTrend(
   searchParams: URLSearchParams,
   storeIdOrIds: string | string[],
   options?: DashboardQueryOptions,
 ): Promise<DashboardSalesTrend> {
-  const seriesParams = toSalesTrendSeriesParams(searchParams);
+  const fromStartTo = readSalesTrendFromStartTo(searchParams);
+  const seriesParams = fromStartTo
+    ? toSalesTrendFromStartParams(
+        fromStartTo,
+        await findFirstSaleDay(normalizeStoreIds(storeIdOrIds), fromStartTo, options),
+      )
+    : toSalesTrendSeriesParams(searchParams);
 
   if (seriesParams) {
     const report = await getDailySalesReport(seriesParams, storeIdOrIds, options);

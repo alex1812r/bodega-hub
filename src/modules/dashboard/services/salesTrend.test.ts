@@ -24,7 +24,12 @@ import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import { getDashboardSalesTrend as getTrendMock } from "./dashboard.mock-server";
 import { getDashboardSalesTrend as getTrendServer } from "./dashboard.server";
-import { salesTrendFromSeries, toSalesTrendSeriesParams } from "./salesTrend";
+import {
+  readSalesTrendFromStartTo,
+  salesTrendFromSeries,
+  toSalesTrendFromStartParams,
+  toSalesTrendSeriesParams,
+} from "./salesTrend";
 
 function params(query: string) {
   return new URLSearchParams(query);
@@ -168,5 +173,109 @@ describe("flujo de ventas del dashboard", () => {
     });
     expect(getDailySalesReport).not.toHaveBeenCalled();
     expect(getTrendMock(params(""), DEFAULT_STORE_ID).series).toBeNull();
+  });
+
+  describe("desde el inicio (REP-F3)", () => {
+    function firstSaleBuilder(firstDay: string | null) {
+      const result = { data: firstDay ? [{ sale_date: firstDay }] : [], error: null };
+      const builder = {
+        eq: jest.fn().mockReturnThis(),
+        in: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        lte: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        then: (onFulfilled: (value: typeof result) => unknown) =>
+          Promise.resolve(result).then(onFulfilled),
+      };
+
+      return builder;
+    }
+
+    it("solo es «desde el inicio» con fromStart y un to válido", () => {
+      expect(readSalesTrendFromStartTo(params("fromStart=1&to=2026-05-18"))).toBe("2026-05-18");
+      expect(readSalesTrendFromStartTo(params("fromStart=true&from=2026-05-01&to=2026-05-18"))).toBe(
+        "2026-05-18",
+      );
+      expect(readSalesTrendFromStartTo(params("to=2026-05-18"))).toBeNull();
+      expect(readSalesTrendFromStartTo(params("fromStart=0&to=2026-05-18"))).toBeNull();
+      expect(readSalesTrendFromStartTo(params("fromStart=1"))).toBeNull();
+      expect(readSalesTrendFromStartTo(params("fromStart=1&to=2026-13-40"))).toBeNull();
+    });
+
+    it("pide la serie del primer día con ventas a to, automática y sin comparación", () => {
+      expect(Object.fromEntries(toSalesTrendFromStartParams("2026-05-18", "2025-03-02"))).toEqual({
+        from: "2025-03-02",
+        groupBy: "auto",
+        limit: "1",
+        skip: "0",
+        to: "2026-05-18",
+      });
+    });
+
+    it("sin ventas (o con el primer día después de to) la serie es solo el día to", () => {
+      expect(toSalesTrendFromStartParams("2026-05-18", null).get("from")).toBe("2026-05-18");
+      expect(toSalesTrendFromStartParams("2026-05-18", "2026-06-01").get("from")).toBe("2026-05-18");
+    });
+
+    it("una historia más larga que el máximo de la serie se recorta a los últimos 3660 días", () => {
+      const from = toSalesTrendFromStartParams("2026-05-18", "2001-01-01").get("from") ?? "";
+      const days = (Date.parse("2026-05-18T00:00:00Z") - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1;
+
+      expect(days).toBe(3660);
+    });
+
+    it("mock: la serie empieza en el primer día con ventas, sin periodo anterior", () => {
+      const all = getTrendMock(params("from=2020-01-01&to=2026-05-18&groupBy=day"), DEFAULT_STORE_ID);
+      const firstDayWithSales = all.series?.current.find((bucket) => bucket.count > 0)?.key;
+      const { series } = getTrendMock(params("fromStart=1&to=2026-05-18"), DEFAULT_STORE_ID);
+
+      expect(firstDayWithSales).toBeDefined();
+      expect(series?.range).toEqual({ from: firstDayWithSales, to: "2026-05-18" });
+      expect(series?.previous).toBeNull();
+      expect(series?.previousRange).toBeNull();
+      expect(series?.totals.deltaPct).toBeNull();
+      expect(series?.totals.current.totalRef).toBe(all.series?.totals.current.totalRef);
+    });
+
+    it("mock: una tienda sin ventas responde un solo día en cero", () => {
+      const { series } = getTrendMock(params("fromStart=1&to=2026-05-18"), "store-sin-ventas");
+
+      expect(series?.range).toEqual({ from: "2026-05-18", to: "2026-05-18" });
+      expect(series?.totals.current.count).toBe(0);
+    });
+
+    it("servidor: busca el primer día en daily_sales_summary y pide la misma serie que el mock", async () => {
+      const builder = firstSaleBuilder("2026-04-02");
+      const from = jest.fn(() => builder);
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from });
+
+      await getTrendServer(params("fromStart=1&to=2026-05-18&compare=1"), DEFAULT_STORE_ID);
+
+      expect(from).toHaveBeenCalledWith("daily_sales_summary");
+      expect(builder.select).toHaveBeenCalledWith("sale_date");
+      expect(builder.order).toHaveBeenCalledWith("sale_date", { ascending: true });
+      expect(builder.limit).toHaveBeenCalledWith(1);
+      expect(builder.eq).toHaveBeenCalledWith("store_id", DEFAULT_STORE_ID);
+      expect(builder.lte).toHaveBeenCalledWith("sale_date", "2026-05-18");
+
+      const [seriesParams] = (getDailySalesReport as jest.Mock).mock.calls[0];
+
+      expect(Object.fromEntries(seriesParams)).toEqual({
+        from: "2026-04-02",
+        groupBy: "auto",
+        limit: "1",
+        skip: "0",
+        to: "2026-05-18",
+      });
+    });
+
+    it("servidor: sin ventas pide solo el día to", async () => {
+      (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from: () => firstSaleBuilder(null) });
+
+      const { series } = await getTrendServer(params("fromStart=1&to=2026-05-18"), "store-sin-ventas");
+
+      expect(series?.range).toEqual({ from: "2026-05-18", to: "2026-05-18" });
+    });
   });
 });
