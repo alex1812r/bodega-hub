@@ -2155,4 +2155,70 @@ select
     from pg_proc p
     where p.pronamespace = 'public'::regnamespace and p.proname = 'save_pack_recipe'
   )
+union all
+select
+  'daily_sales_summary y gross_profit_summary agrupan por dia operativo de Caracas (created_at at time zone America/Caracas), ya no por dia UTC, con las mismas columnas, security_invoker y select solo para authenticated / service_role (20261013a)',
+  (
+    select count(*) = 2
+      and bool_and(c.relkind = 'v' and c.reloptions @> array['security_invoker=true'])
+      and bool_and(pg_get_viewdef(c.oid) ilike '%at time zone ''America/Caracas''%')
+      and bool_and(pg_get_viewdef(c.oid) not ilike '%date_trunc%')
+      and bool_and(has_table_privilege('authenticated', c.oid, 'select') and has_table_privilege('service_role', c.oid, 'select'))
+      and bool_and(not has_table_privilege('anon', c.oid, 'select'))
+    from pg_class c
+    where c.oid in (to_regclass('public.daily_sales_summary'), to_regclass('public.gross_profit_summary'))
+  )
+  and (
+    select string_agg(col.column_name || ':' || col.data_type, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'daily_sales_summary'
+  ) = 'store_id:uuid,sale_date:date,sales_count:bigint,total_ref:numeric,total_ves:numeric,paid_ves:numeric'
+  and (
+    select string_agg(col.column_name || ':' || col.data_type, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'gross_profit_summary'
+  ) = 'store_id:uuid,sale_date:date,revenue_ref:numeric,cost_ref:numeric,gross_profit_ref:numeric'
+union all
+select
+  'vistas de reportes de dinero report_sales_by_hour, report_sales_by_category, report_open_documents_aging, report_open_documents_aging_summary y report_cash_close_differences: security_invoker, select solo para authenticated / service_role, sin escritura y con sus columnas en orden (20261013a)',
+  (
+    select count(*) = 5
+      and bool_and(c.relkind = 'v' and c.reloptions @> array['security_invoker=true'])
+      and bool_and(has_table_privilege('authenticated', c.oid, 'select') and has_table_privilege('service_role', c.oid, 'select'))
+      and bool_and(not has_table_privilege('anon', c.oid, 'select'))
+      and bool_and(not has_table_privilege('authenticated', c.oid, 'insert, update, delete'))
+    from pg_class c
+    where c.oid in (
+      to_regclass('public.report_sales_by_hour'),
+      to_regclass('public.report_sales_by_category'),
+      to_regclass('public.report_open_documents_aging'),
+      to_regclass('public.report_open_documents_aging_summary'),
+      to_regclass('public.report_cash_close_differences')
+    )
+  )
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_sales_by_hour'
+  ) = 'store_id,sale_date,dow,hour,sales_count,total_ref,total_ves'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_sales_by_category'
+  ) = 'store_id,sale_date,category_id,category_name,units,revenue_ref,cost_ref,gross_profit_ref'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_open_documents_aging'
+  ) = 'store_id,doc_type,document_id,document_number,contact_id,contact_name,created_at,document_date,days,bucket,ref_rate_ves,total_ref,total_ves,paid_ref,paid_ves,pending_ref,pending_ves'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_open_documents_aging_summary'
+  ) = 'store_id,doc_type,contact_id,bucket,documents_count,pending_ref,pending_ves'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_cash_close_differences'
+  ) = 'store_id,cash_session_id,register_id,register_name,closed_at,close_date,closed_reason,currency,expected,counted,difference,running_expected,running_counted,running_difference'
 order by 1;

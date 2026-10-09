@@ -758,3 +758,22 @@ notify pgrst, 'reload schema';
 -- INV-09 (5 argumentos) funciona sobre la base parcheada. El BFF nuevo sin este parche: guardar una receta sin tocar la
 -- casilla funciona (no envia el argumento); tocandola responde 409 ("Esta base aún no admite guardar la receta...") sin
 -- escribir nada. La preferencia se sigue LEYENDO de la cabecera con el select que authenticated conserva.
+-- -----------------------------------------------------------------------------
+-- 20261013a — report money views (REP-06a): daily_sales_summary y gross_profit_summary pasan de dia UTC a dia operativo
+--             de Caracas, y vistas nuevas report_sales_by_hour, report_sales_by_category, report_open_documents_aging,
+--             report_open_documents_aging_summary y report_cash_close_differences para los reportes de dinero
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261013a-report-money-views.sql
+-- Requiere 20260716b, 20260811b, 20260819, 20261006a y 20261006h. Idempotente, una transaccion. SOLO LECTURA: crea /
+-- redefine vistas; no toca tablas, filas, RPC, politicas, stock, dinero, cash_* ni baul. Todas security_invoker (RLS de
+-- las tablas base del que consulta), sin acceso para anon / public.
+-- CAMBIO VISIBLE: en Ventas diarias y Ganancia bruta (y en la tendencia del dashboard) las ventas de 20:00-23:59 Caracas
+-- pasan del dia siguiente a su dia real. El total de un rango no cambia salvo por las ventas que cruzan su borde.
+-- report_open_documents_aging reproduce el criterio de GET /api/payments/open-documents (venta pendiente_pago / compra
+-- pedido o recibido con round(total_ves - paid_ves, 2) > 0); report_cash_close_differences lee el teorico y el contado
+-- que guardo el cierre (theoretical_closing_* / closing_*), no recalcula nada.
+-- OJO: reaplicar 20260716b devuelve los dos resumenes al dia UTC y borra security_invoker: volver a aplicar 20261006a y
+-- este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (REP-06): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: los cinco reportes nuevos (/api/reports/sales-by-hour, sales-by-category, receivables-aging, payables-aging,
+-- cash-close-differences) responden error (la vista no existe); el resto de reportes no cambia.
