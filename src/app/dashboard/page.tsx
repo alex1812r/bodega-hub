@@ -15,6 +15,7 @@ import {
   useDashboardMetrics,
   useDashboardSummary,
 } from "@/modules/dashboard/hooks/useDashboard";
+import { toReportErrorMessage } from "@/modules/reports/reports-list/reportQueryState";
 import { PriceReviewDashboardCard } from "@/modules/products/components/price-review/PriceReviewDashboardCard";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
@@ -66,11 +67,11 @@ function DashboardScreen() {
         />
       ) : criticalError ? (
         <ErrorState
-          description={
-            criticalError instanceof Error
-              ? criticalError.message
-              : "No pudimos cargar el resumen principal."
-          }
+          // Solo un error de negocio enseña su mensaje; el resto trae texto interno.
+          description={toReportErrorMessage(
+            criticalError,
+            "No pudimos cargar el resumen principal.",
+          )}
           onRetry={refetchDashboard}
           title="No pudimos cargar el dashboard"
         />
