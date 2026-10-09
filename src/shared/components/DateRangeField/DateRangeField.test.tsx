@@ -3,6 +3,8 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
+import { Modal } from "@/shared/components/Modal";
+
 import { DateRangeField, type DateRangeFieldProps } from "./DateRangeField";
 import type { DateRangeChange, DateRangeValue } from "./dateRangePresets";
 
@@ -182,6 +184,138 @@ describe("DateRangeField", () => {
     expect(day("miércoles, 7 de octubre de 2026")).toHaveAttribute("aria-pressed", "true");
     expect(day("martes, 6 de octubre de 2026")).toHaveAttribute("data-in-range", "true");
     expect(day("jueves, 8 de octubre de 2026")).not.toHaveAttribute("data-in-range");
+  });
+
+  it("con un rango entre dos meses abre en el mes del fin, con el foco en ese día (REP-F1)", async () => {
+    const { user } = renderField({
+      initialValue: { from: "2026-09-28", preset: "custom", to: "2026-10-06" },
+      maxDate: TODAY,
+    });
+
+    await user.click(chip("Personalizado"));
+
+    expect(screen.getByRole("table", { name: "octubre de 2026" })).toBeInTheDocument();
+    expect(day("martes, 6 de octubre de 2026")).toHaveFocus();
+    expect(day("sábado, 10 de octubre de 2026")).toBeDisabled();
+  });
+
+  it("con solo el inicio del rango abre en ese mes", async () => {
+    const { user } = renderField({ initialValue: { from: "2026-09-28" } });
+
+    await user.click(chip("Personalizado"));
+
+    expect(screen.getByRole("table", { name: "septiembre de 2026" })).toBeInTheDocument();
+  });
+
+  describe("altura disponible (REP-F1)", () => {
+    const originalInnerHeight = window.innerHeight;
+    let rectSpy: jest.SpyInstance;
+
+    /** Chip en y=100–130 y un calendario que mide 366 px de alto sin límite. */
+    function mockLayout(viewportHeight: number) {
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: viewportHeight });
+      rectSpy = jest
+        .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+        .mockImplementation(function measure(this: HTMLElement) {
+          if (this.getAttribute("role") === "dialog") {
+            const limit = parseFloat(this.style.maxHeight);
+            const top = parseFloat(this.style.top) || 0;
+            const height = Number.isNaN(limit) ? 366 : Math.min(366, limit);
+
+            return { bottom: top + height, height, left: 0, right: 320, top, width: 320 } as DOMRect;
+          }
+
+          return { bottom: 130, height: 30, left: 16, right: 140, top: 100, width: 124 } as DOMRect;
+        });
+    }
+
+    afterEach(() => {
+      rectSpy.mockRestore();
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: originalInnerHeight,
+      });
+    });
+
+    it("en un viewport bajo (844×390) limita el alto al hueco y deja scroll interno", async () => {
+      mockLayout(390);
+      const { user } = renderField();
+
+      await user.click(chip("Personalizado"));
+
+      const popover = screen.getByRole("dialog", { name: "Elegir rango personalizado" });
+
+      // Debajo del chip (134) hasta el margen inferior (390 − 8).
+      expect(popover.style.top).toBe("134px");
+      expect(popover.style.maxHeight).toBe("248px");
+      expect(popover).toHaveClass("overflow-y-auto");
+      expect(popover.getBoundingClientRect().bottom).toBeLessThanOrEqual(390);
+    });
+
+    it("si cabe entero no limita el alto", async () => {
+      mockLayout(844);
+      const { user } = renderField();
+
+      await user.click(chip("Personalizado"));
+
+      const popover = screen.getByRole("dialog", { name: "Elegir rango personalizado" });
+
+      expect(popover.style.top).toBe("134px");
+      expect(popover.style.maxHeight).toBe("");
+    });
+
+    it("si solo cabe entero arriba, se coloca arriba sin limitar el alto", async () => {
+      mockLayout(390);
+      rectSpy.mockImplementation(function measure(this: HTMLElement) {
+        if (this.getAttribute("role") === "dialog") {
+          const top = parseFloat(this.style.top) || 0;
+
+          return { bottom: top + 200, height: 200, left: 0, right: 320, top, width: 320 } as DOMRect;
+        }
+
+        return { bottom: 330, height: 30, left: 16, right: 140, top: 300, width: 124 } as DOMRect;
+      });
+      const { user } = renderField();
+
+      await user.click(chip("Personalizado"));
+
+      const popover = screen.getByRole("dialog", { name: "Elegir rango personalizado" });
+
+      expect(popover.style.top).toBe("96px");
+      expect(popover.style.maxHeight).toBe("");
+    });
+  });
+
+  it("dentro de un Modal: el calendario vive en el diálogo, se opera y no lo cierra (REP-F1)", async () => {
+    const onChange = jest.fn<void, [DateRangeChange]>();
+    const user = userEvent.setup();
+
+    render(
+      <Modal open title="Filtros del reporte">
+        <Harness onChange={onChange} />
+      </Modal>,
+    );
+
+    const modal = screen.getByRole("dialog", { name: "Filtros del reporte" });
+
+    await user.click(within(modal).getByRole("button", { name: "Personalizado" }));
+
+    const calendar = within(modal).getByRole("dialog", { name: "Elegir rango personalizado" });
+
+    await user.click(within(calendar).getByRole("button", { name: "lunes, 5 de octubre de 2026" }));
+    await user.click(
+      within(calendar).getByRole("button", { name: "miércoles, 7 de octubre de 2026" }),
+    );
+
+    expect(onChange).toHaveBeenCalledWith({ from: "2026-10-05", preset: "custom", to: "2026-10-07" });
+    expect(screen.getByRole("dialog", { name: "Filtros del reporte" })).toBeInTheDocument();
+    expect(within(modal).getByTestId("date-range-label")).toHaveTextContent("5–7 oct 2026");
+
+    await user.click(within(modal).getByRole("button", { name: "Personalizado" }));
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "Elegir rango personalizado" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Filtros del reporte" })).toBeInTheDocument();
   });
 
   it("navega al mes anterior y al siguiente", async () => {

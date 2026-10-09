@@ -2,6 +2,9 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useState } from "react";
 import { expect, fn, within } from "storybook/test";
 
+import { Button } from "@/shared/components/Button";
+import { Modal } from "@/shared/components/Modal";
+
 import { DateRangeField, type DateRangeFieldProps } from "./DateRangeField";
 import type { DateRangeValue } from "./dateRangePresets";
 
@@ -60,7 +63,69 @@ export const PersonalizadoAbierto: Story = {
     await expect(
       await body.findByRole("dialog", { name: "Elegir rango personalizado" }),
     ).toBeVisible();
+    // El rango va del 28 sep al 6 oct: abre en el mes del fin.
+    await expect(body.getByRole("table", { name: "octubre de 2026" })).toBeVisible();
     await expect(body.getByRole("button", { name: /10 de octubre de 2026/ })).toBeDisabled();
+  },
+};
+
+/** `minDate` y `maxDate`: solo se puede elegir del 5 al 9 de octubre. */
+export const ConFechaMinima: Story = {
+  name: "Con fecha mínima",
+  render: () => (
+    <Demo
+      initialValue={{ from: "2026-10-06", preset: "custom", to: "2026-10-08" }}
+      label="Periodo"
+      maxDate={TODAY}
+      minDate="2026-10-05"
+    />
+  ),
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const body = within(canvasElement.ownerDocument.body);
+
+    await userEvent.click(canvas.getByRole("button", { name: "Personalizado" }));
+    await expect(
+      await body.findByRole("dialog", { name: "Elegir rango personalizado" }),
+    ).toBeVisible();
+    await expect(body.getByRole("button", { name: "domingo, 4 de octubre de 2026" })).toBeDisabled();
+    await expect(body.getByRole("button", { name: "lunes, 5 de octubre de 2026" })).toBeEnabled();
+    await expect(body.getByRole("button", { name: "Mes anterior" })).toBeDisabled();
+  },
+};
+
+/**
+ * Dentro de un `Modal`: el calendario se monta en el propio diálogo (no en
+ * `body`), así que se ve, se puede pulsar y no cierra el modal.
+ */
+export const DentroDeUnModal: Story = {
+  name: "Dentro de un Modal",
+  render: () => (
+    <Modal
+      bodyClassName="min-h-[28rem]"
+      description="El rango se aplica al cerrar."
+      title="Filtros del reporte"
+      trigger={<Button>Abrir filtros</Button>}
+    >
+      <Demo clearable initialValue={{ preset: "this_month" }} label="Periodo" maxDate={TODAY} />
+    </Modal>
+  ),
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const body = within(canvasElement.ownerDocument.body);
+
+    await userEvent.click(canvas.getByRole("button", { name: "Abrir filtros" }));
+
+    const modal = await body.findByRole("dialog", { name: "Filtros del reporte" });
+
+    await userEvent.click(within(modal).getByRole("button", { name: "Personalizado" }));
+
+    const calendar = await within(modal).findByRole("dialog", {
+      name: "Elegir rango personalizado",
+    });
+
+    await expect(calendar).toBeVisible();
+    await expect(
+      within(calendar).getByRole("button", { name: "lunes, 5 de octubre de 2026" }),
+    ).toBeEnabled();
   },
 };
 

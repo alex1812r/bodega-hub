@@ -19,6 +19,7 @@ import {
   startOfIsoMonth,
   startOfIsoWeek,
 } from "./dateRangePresets";
+import { DATE_RANGE_COLOR_CLASSES } from "./dateRangeTheme";
 
 const WEEKS_SHOWN = 6;
 const DAYS_PER_WEEK = 7;
@@ -37,7 +38,10 @@ export type RangeCalendarProps = {
   from?: string;
   /** Fin del rango ya elegido (`YYYY-MM-DD`). */
   to?: string;
-  /** Día operativo: se marca como hoy y es el mes inicial si no hay rango. */
+  /**
+   * Día operativo: se marca como hoy. El calendario abre en el mes de `to`
+   * (o de `from`); sin rango, en el de `today`.
+   */
   today: string;
   /** Primer día elegible. */
   minDate?: string;
@@ -95,8 +99,10 @@ export function RangeCalendar({
   to,
   today,
 }: RangeCalendarProps) {
+  // Abre en el mes del fin del rango: es el extremo más reciente y el que se
+  // suele ajustar; con un rango entre dos meses, el inicio queda a un clic.
   const [focusedDay, setFocusedDay] = useState(() =>
-    clampIsoDate(from ?? to ?? today, minDate, maxDate),
+    clampIsoDate(to ?? from ?? today, minDate, maxDate),
   );
   const [anchorDay, setAnchorDay] = useState<string | null>(null);
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
@@ -243,7 +249,7 @@ export function RangeCalendar({
                   <td
                     className={cn(
                       "h-10 p-0",
-                      isInRange && "bg-surface-container-high",
+                      isInRange && DATE_RANGE_COLOR_CLASSES.rangeBand,
                       isStart && "rounded-l-full",
                       isEnd && "rounded-r-full",
                     )}
@@ -257,8 +263,11 @@ export function RangeCalendar({
                         "relative inline-flex size-10 max-w-full cursor-pointer items-center justify-center rounded-full text-sm tabular-nums transition-colors disabled:cursor-not-allowed disabled:opacity-40",
                         focusRingClassName,
                         isEndpoint
-                          ? "bg-primary font-semibold text-on-primary"
-                          : "text-on-surface enabled:hover:bg-surface-container-highest",
+                          ? cn(DATE_RANGE_COLOR_CLASSES.selected, "font-semibold")
+                          : cn(
+                              DATE_RANGE_COLOR_CLASSES.rangeDayText,
+                              "enabled:hover:bg-surface-container-highest",
+                            ),
                         isToday && !isEndpoint && "border border-outline font-semibold",
                       )}
                       data-in-range={isInRange ? "true" : undefined}

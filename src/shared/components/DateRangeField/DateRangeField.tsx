@@ -25,6 +25,7 @@ import {
   formatDateRangeLabel,
   resolveDateRangePreset,
 } from "./dateRangePresets";
+import { DATE_RANGE_COLOR_CLASSES } from "./dateRangeTheme";
 import { parseDateRangeParams } from "./dateRangeUrl";
 import { RangeCalendar } from "./RangeCalendar";
 
@@ -237,6 +238,9 @@ export function DateRangeField({
         return;
       }
 
+      // Se mide sin el límite de alto de la pasada anterior.
+      popover.style.maxHeight = "";
+
       // Un ancestro con `transform` (el Modal centrado) pasa a ser el bloque
       // contenedor de `position: fixed`: se descuenta su origen.
       const current = popover.getBoundingClientRect();
@@ -244,10 +248,24 @@ export function DateRangeField({
       const originTop = current.top - (parseFloat(popover.style.top) || 0);
       const bounds = resolveBounds(popover.parentElement);
       const below = trigger.bottom + POPOVER_GAP_PX;
-      const above = trigger.top - POPOVER_GAP_PX - current.height;
-      const fitsBelow = below + current.height <= bounds.bottom;
-      const top = fitsBelow || above < bounds.top ? below : above;
+      const spaceBelow = bounds.bottom - below;
+      const spaceAbove = trigger.top - POPOVER_GAP_PX - bounds.top;
       const left = Math.max(bounds.left, Math.min(trigger.left, bounds.right - current.width));
+      let height = current.height;
+      let placeBelow = true;
+
+      if (height > spaceBelow) {
+        placeBelow = height > spaceAbove && spaceBelow >= spaceAbove;
+
+        // No cabe entero en ningún lado (móvil apaisado): se queda en el hueco
+        // mayor, con su alto limitado a él y scroll interno.
+        if (height > spaceAbove) {
+          height = Math.max(0, placeBelow ? spaceBelow : spaceAbove);
+          popover.style.maxHeight = `${height}px`;
+        }
+      }
+
+      const top = placeBelow ? below : trigger.top - POPOVER_GAP_PX - height;
 
       popover.style.left = `${left - originLeft}px`;
       popover.style.top = `${top - originTop}px`;
@@ -266,7 +284,10 @@ export function DateRangeField({
   const popover = isCalendarOpen ? (
     <div
       aria-label="Elegir rango personalizado"
-      className="pointer-events-auto fixed top-0 left-0 z-50 w-[min(20rem,calc(100vw-1rem))] rounded-xl border border-outline-variant bg-surface-container-lowest p-3 shadow-lg"
+      className={cn(
+        "pointer-events-auto fixed top-0 left-0 z-50 w-[min(20rem,calc(100vw-1rem))] overflow-y-auto overscroll-contain rounded-xl border border-outline-variant p-3 shadow-lg",
+        DATE_RANGE_COLOR_CLASSES.popover,
+      )}
       id={popoverId}
       onKeyDown={handlePopoverKeyDown}
       ref={popoverRef}
@@ -312,7 +333,10 @@ export function DateRangeField({
                 focusRingClassName,
                 chipSizeClassName[size],
                 isActive
-                  ? "border-primary bg-primary text-on-primary"
+                  ? cn(
+                      "border-primary dark:border-primary-fixed-dim",
+                      DATE_RANGE_COLOR_CLASSES.selected,
+                    )
                   : "border-outline bg-surface-container-lowest text-on-surface enabled:hover:bg-surface-container-low",
               )}
               disabled={disabled}
