@@ -31,7 +31,7 @@ type DashboardKpiCardsGridProps = {
 
 function salesCardLabel(preset: DashboardKpiPreset) {
   if (preset === "hoy") {
-    return "Ventas del dia";
+    return "Ventas del día";
   }
 
   if (preset === "ayer") {
@@ -99,7 +99,7 @@ export function DashboardKpiCardsGrid({
           <>
             <DashboardKpiTrend
               changePercent={changePercent}
-              comparisonLabel={comparisonLabel ?? "vs periodo anterior"}
+              comparisonLabel={comparisonLabel ?? "vs. periodo anterior"}
               neutralLabel={trendNeutralLabel}
             />
             <p className="mt-1 text-sm text-muted-foreground">
@@ -159,7 +159,7 @@ export function DashboardKpiCardsGrid({
               <span className="text-xs font-normal text-muted-foreground">ventas hoy</span>
             </div>
           ) : (
-            <p className="mt-2 text-sm text-muted-foreground">Clientes activos en catalogo</p>
+            <p className="mt-2 text-sm text-muted-foreground">Clientes activos en catálogo</p>
           )
         }
         value={String(summary?.activeCustomers ?? 0)}
@@ -172,8 +172,8 @@ export function DashboardKpiCardsGrid({
         trend={
           <div className="mt-2 flex items-center gap-1 text-sm text-red-600">
             <ArrowDown aria-hidden className="h-4 w-4" />
-            <span className="font-medium">Critico</span>
-            <span className="text-xs font-normal text-muted-foreground">requiere accion</span>
+            <span className="font-medium">Crítico</span>
+            <span className="text-xs font-normal text-muted-foreground">requiere acción</span>
           </div>
         }
         value={String(summary?.lowStockCount ?? 0)}

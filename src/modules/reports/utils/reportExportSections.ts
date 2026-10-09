@@ -113,12 +113,12 @@ export function buildReportExportSections(
     },
     "customer-purchases": {
       columns: customerPurchasesExportColumns,
-      periodLabel: "Historico de clientes",
+      periodLabel: "Histórico de clientes",
       rows: data.customerPurchases,
     },
     "supplier-purchases": {
       columns: supplierPurchasesExportColumns,
-      periodLabel: "Historico de proveedores",
+      periodLabel: "Histórico de proveedores",
       rows: data.supplierPurchases,
     },
     "stock-card": {

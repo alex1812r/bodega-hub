@@ -46,7 +46,7 @@ export function DashboardRecentSalesCard({
 
       {recentSales.isLoading ? (
         <LoadingState
-          description="Consultando las ultimas ventas registradas."
+          description="Consultando las últimas ventas registradas."
           title="Cargando ventas"
           variant="inline"
         />

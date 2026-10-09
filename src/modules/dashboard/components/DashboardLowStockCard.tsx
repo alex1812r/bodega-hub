@@ -50,7 +50,7 @@ export function DashboardLowStockCard({
         {lowStock.isLoading ? (
           <div className="p-4">
             <LoadingState
-              description="Productos por debajo del minimo configurado."
+              description="Productos por debajo del mínimo configurado."
               title="Cargando inventario"
               variant="inline"
             />
@@ -59,7 +59,7 @@ export function DashboardLowStockCard({
           <p className="p-4 text-sm text-red-600">No pudimos cargar el listado de bajo stock.</p>
         ) : products.length === 0 ? (
           <p className="p-4 text-sm text-muted-foreground">
-            No hay productos por debajo del minimo configurado.
+            No hay productos por debajo del mínimo configurado.
           </p>
         ) : (
           <ul className="space-y-1">
@@ -92,7 +92,7 @@ export function DashboardLowStockCard({
                     >
                       {product.currentStock} unds
                     </span>
-                    <span className="text-xs text-muted-foreground">Min: {product.minStock}</span>
+                    <span className="text-xs text-muted-foreground">Mín: {product.minStock}</span>
                   </div>
                 </li>
               );

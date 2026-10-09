@@ -49,7 +49,7 @@ export const lowStockExportColumns: ReportExportColumn<LowStockReportRow>[] = [
   { header: "Producto", value: (row) => row.name },
   { header: "SKU", value: (row) => row.sku },
   { header: "Stock", value: (row) => row.currentStock },
-  { header: "Minimo", value: (row) => row.minStock },
+  { header: "Mínimo", value: (row) => row.minStock },
 ];
 
 export const customerPurchasesExportColumns: ReportExportColumn<CustomerPurchasesReportRow>[] =
@@ -60,7 +60,7 @@ export const customerPurchasesExportColumns: ReportExportColumn<CustomerPurchase
     { header: "Total VES", value: (row) => row.totalVes },
     { header: "Pendiente VES", value: (row) => row.pendingVes },
     {
-      header: "Ultima compra",
+      header: "Última compra",
       value: (row) => (row.lastPurchaseAt ? formatDate(row.lastPurchaseAt) : "Sin compras"),
     },
   ];
@@ -72,7 +72,7 @@ export const supplierPurchasesExportColumns: ReportExportColumn<SupplierPurchase
     { header: "Total REF", value: (row) => row.totalRef },
     { header: "Pendiente VES", value: (row) => row.pendingVes },
     {
-      header: "Ultima compra",
+      header: "Última compra",
       value: (row) => (row.lastPurchaseAt ? formatDate(row.lastPurchaseAt) : "Sin compras"),
     },
   ];
@@ -115,7 +115,7 @@ export const fxDepreciationExportColumns: ReportExportColumn<FxDepreciationRepor
   { header: "USD REF", value: (row) => row.usdRef },
   { header: "REF al cobrar", value: (row) => row.vesRefAtCollection },
   { header: "REF hoy", value: (row) => row.vesRefToday },
-  { header: "Perdida REF", value: (row) => row.lossRef },
+  { header: "Pérdida REF", value: (row) => row.lossRef },
 ];
 
 export type DailyCloseExportRow = {
@@ -129,7 +129,7 @@ export const dailyCloseExportColumns: ReportExportColumn<DailyCloseExportRow>[] 
 ];
 
 export const paymentMethodsExportColumns: ReportExportColumn<PaymentMethodReportRow>[] = [
-  { header: "Metodo", value: (row) => paymentMethodLabels[row.method] ?? row.method },
+  { header: "Método", value: (row) => paymentMethodLabels[row.method] ?? row.method },
   { header: "Pagos", value: (row) => row.paymentCount },
   { header: "REF", value: (row) => row.amountRef },
   { header: "VES", value: (row) => row.amountVes },
