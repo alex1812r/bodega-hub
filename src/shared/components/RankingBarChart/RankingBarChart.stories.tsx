@@ -127,6 +127,20 @@ export const MobileWithPreviousPeriod: Story = {
   name: "390 px con periodo anterior",
 };
 
+/** Orden natural (`sort="none"`): tramos con orden propio, sin puesto delante del nombre. */
+export const NaturalOrder: Story = {
+  args: {
+    ariaLabel: "Deuda por antigüedad",
+    items: [
+      { id: "0-7", label: "0 a 7 días", value: 120 },
+      { id: "8-30", label: "8 a 30 días", value: 310.5 },
+      { id: "30+", label: "Más de 30 días", value: 84 },
+    ],
+    sort: "none",
+  },
+  name: "Orden natural",
+};
+
 /** Una sola fila. */
 export const SingleRow: Story = {
   args: { items: [PRODUCTS[0]] },

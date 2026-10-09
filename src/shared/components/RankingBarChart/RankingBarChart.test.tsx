@@ -76,6 +76,23 @@ describe("RankingBarChart", () => {
     expectNoNaN();
   });
 
+  it("sort='none' conserva el orden de llegada y no antepone el puesto", () => {
+    render(<RankingBarChart ariaLabel="Deuda por tramo" items={PRODUCTS} sort="none" />);
+
+    expect(valueTexts()).toEqual(["ref 40.00", "ref 120.00", "ref 75.50"]);
+    expect(rows()[0].querySelector("title")).toHaveTextContent(/^Arroz$/);
+    expect(getChart()).toHaveAccessibleName(expect.stringContaining("Arroz: ref 40.00."));
+    expect(getChart()).not.toHaveAccessibleName(expect.stringContaining("1. Arroz"));
+    expectNoNaN();
+  });
+
+  it("sin sort sigue siendo un ranking con el puesto delante (retrocompatible)", () => {
+    render(<RankingBarChart ariaLabel="Top productos" items={PRODUCTS} />);
+
+    expect(rows()[0].querySelector("title")).toHaveTextContent(/^1. Harina/);
+    expect(getChart()).toHaveAccessibleName(expect.stringContaining("3. Arroz: ref 40.00."));
+  });
+
   it("dibuja como máximo topN elementos; por defecto 10", () => {
     const many = Array.from({ length: 14 }, (_, index) => ({
       id: `p${index}`,

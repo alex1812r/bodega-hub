@@ -24,11 +24,18 @@ import {
   summarizeRanking,
   truncateLabel,
   type RankingBarItem,
+  type RankingBarSort,
 } from "./rankingData";
 
 export type RankingBarChartProps = {
-  /** Elementos en cualquier orden: el gráfico los ordena de mayor a menor. */
+  /** Elementos en cualquier orden: el gráfico los ordena de mayor a menor (ver `sort`). */
   items: readonly RankingBarItem[];
+  /**
+   * `value` (por defecto): ranking de mayor a menor, con el puesto delante del
+   * nombre. `none`: se dibujan en el orden de `items` y sin puesto, para
+   * categorías con orden propio (horas, días de la semana, tramos de antigüedad).
+   */
+  sort?: RankingBarSort;
   /** Qué muestra el gráfico («Top productos»). Encabeza el resumen de `aria-label`. */
   ariaLabel: string;
   /** Cuántos elementos se dibujan como máximo. Por defecto 10. */
@@ -127,10 +134,12 @@ export function RankingBarChart({
   loading = false,
   onRetry,
   ref,
+  sort = "value",
   topN = DEFAULT_TOP_N,
 }: RankingBarChartProps) {
   const { setNode, width: measuredWidth } = useMeasuredWidth();
-  const ranked = useMemo(() => rankItems(items, topN), [items, topN]);
+  const ranked = useMemo(() => rankItems(items, topN, sort), [items, sort, topN]);
+  const showRank = sort === "value";
   const withComparison = useMemo(() => hasComparison(items), [items]);
 
   if (loading) {
@@ -179,7 +188,13 @@ export function RankingBarChart({
   const rowHeight = LABEL_LINE_HEIGHT + barsHeight + ROW_GAP;
   const height = rowHeight * rows.length - ROW_GAP;
   const color = getChartSeriesColor(0);
-  const summary = summarizeRanking({ ariaLabel, formatValue, items: ranked, withComparison });
+  const summary = summarizeRanking({
+    ariaLabel,
+    formatValue,
+    items: ranked,
+    showRank,
+    withComparison,
+  });
 
   return (
     <div aria-label={summary} className={cn("w-full min-w-0", className)} ref={ref} role="img">
@@ -208,7 +223,7 @@ export function RankingBarChart({
               item.previousValue === null
                 ? null
                 : barSpan(scale, item.previousValue, MIN_BAR_WIDTH);
-            const fullLabel = `${item.rank}. ${item.label}`;
+            const fullLabel = showRank ? `${item.rank}. ${item.label}` : item.label;
 
             return (
               <g data-rank={item.rank} key={item.id}>

@@ -39,12 +39,20 @@ export function normalizeTopN(topN: number | undefined) {
 }
 
 /**
+ * `value`: de mayor a menor (ranking). `none`: el orden en que llegan, para
+ * categorías con orden propio (horas, días, tramos de antigüedad).
+ */
+export type RankingBarSort = "none" | "value";
+
+/**
  * Ordena de mayor a menor (los empates conservan el orden de llegada) y se
- * queda con los `topN` primeros.
+ * queda con los `topN` primeros. Con `sort: "none"` conserva el orden de
+ * llegada; `rank` es entonces la posición en ese orden.
  */
 export function rankItems(
   items: readonly RankingBarItem[],
   topN: number = DEFAULT_TOP_N,
+  sort: RankingBarSort = "value",
 ): RankedBarItem[] {
   return items
     .map((item, index) => ({
@@ -55,7 +63,11 @@ export function rankItems(
         value: finiteOrZero(item.value),
       },
     }))
-    .sort((first, second) => second.item.value - first.item.value || first.index - second.index)
+    .sort((first, second) =>
+      sort === "none"
+        ? first.index - second.index
+        : second.item.value - first.item.value || first.index - second.index,
+    )
     .slice(0, normalizeTopN(topN))
     .map(({ item }, position) => ({ ...item, rank: position + 1 }));
 }
@@ -152,11 +164,19 @@ type SummaryInput = {
   ariaLabel: string;
   formatValue: (value: number) => string;
   items: readonly RankedBarItem[];
+  /** `false` con orden natural: la posición no es un puesto y no se lee. Por defecto `true`. */
+  showRank?: boolean;
   withComparison: boolean;
 };
 
 /** Resumen para lector de pantalla: cada posición con su nombre completo y su valor. */
-export function summarizeRanking({ ariaLabel, formatValue, items, withComparison }: SummaryInput) {
+export function summarizeRanking({
+  ariaLabel,
+  formatValue,
+  items,
+  showRank = true,
+  withComparison,
+}: SummaryInput) {
   if (items.length === 0) {
     return `${ariaLabel}: sin datos.`;
   }
@@ -166,7 +186,7 @@ export function summarizeRanking({ ariaLabel, formatValue, items, withComparison
       ? ` (antes ${item.previousValue === null ? "sin datos" : formatValue(item.previousValue)}, ${describeDeltaPct(item.deltaPct)})`
       : "";
 
-    return `${item.rank}. ${item.label}: ${formatValue(item.value)}${comparison}.`;
+    return `${showRank ? `${item.rank}. ` : ""}${item.label}: ${formatValue(item.value)}${comparison}.`;
   });
 
   return [`${ariaLabel}: ${items.length} ${items.length === 1 ? "elemento" : "elementos"}.`, ...parts].join(" ");
