@@ -3,6 +3,10 @@
  * 15: reporte, rango, agrupación, comparación, proveedor, producto y página),
  * un solo control de fechas sin inputs nativos y paginación que no se arrastra
  * de un reporte a otro (D20).
+ *
+ * REP-04 · rango por defecto (últimos 30 días, sin escribirlo en la URL) en los
+ * reportes con gráfico y fechas; «todas las fechas» sigue disponible; la
+ * paginación de depreciación FX vive en la URL.
  */
 import "@testing-library/jest-dom";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
@@ -134,6 +138,8 @@ import { ReportsListPage } from "./page";
 const hooks = jest.mocked(reportsHooks);
 // Con datos mock el día operativo es fijo (ver `getBusinessTodayIsoDate`).
 const TODAY = "2026-05-18";
+/** Primer día de «últimos 30 días» contando hoy. */
+const DEFAULT_FROM = "2026-04-19";
 
 function setUrl(search: string) {
   window.history.replaceState(null, "", `/reports${search}`);
@@ -215,17 +221,95 @@ describe("ReportsListPage · REP-03", () => {
   });
 
   describe("estado en la URL", () => {
-    it("sin parámetros abre el reporte por defecto, sin rango y en la primera página", () => {
+    it("sin parámetros abre el reporte por defecto en sus últimos 30 días, sin escribirlos en la URL", () => {
       renderPage();
 
       expect(activeReportName()).toContain("Ventas diarias");
-      expect(screen.getByTestId("date-range-label")).toHaveTextContent("Todas las fechas");
-      expect(hooks.useDailySalesReport).toHaveBeenLastCalledWith({ limit: 10, skip: 0 }, undefined);
+      expect(screen.getByTestId("date-range-label")).toHaveTextContent("19 abr – 18 may 2026");
+      expect(screen.getByRole("button", { name: "Últimos 30 días" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      expect(hooks.useDailySalesReport).toHaveBeenLastCalledWith(
+        { from: DEFAULT_FROM, groupBy: "auto", limit: 10, skip: 0, to: TODAY },
+        undefined,
+      );
+      // Se exporta lo mismo que se ve.
       expect(exportFilters()).toEqual({
-        dateFilters: {},
-        purchasesFilters: {},
+        dateFilters: { from: DEFAULT_FROM, to: TODAY },
+        purchasesFilters: { from: DEFAULT_FROM, to: TODAY },
         stockCardFilters: {},
       });
+      expect(urlParams()).toEqual({});
+      expect(replaceStateUrls.join(" ")).not.toMatch(/from=|to=|preset=/);
+    });
+
+    it.each([
+      ["gross-profit", "useGrossProfitReport", { groupBy: "auto" }],
+      ["purchases", "usePurchasesReport", { groupBy: "auto" }],
+      ["top-products", "useTopProductsReport", {}],
+      ["top-customers", "useTopCustomersReport", {}],
+      ["payment-methods", "usePaymentMethodsReport", {}],
+    ] as const)("%s sin rango en la URL usa los últimos 30 días", (reportId, hookName, extra) => {
+      renderPage(`?report=${reportId}`);
+
+      expect(hooks[hookName]).toHaveBeenLastCalledWith(
+        expect.objectContaining({ ...extra, from: DEFAULT_FROM, to: TODAY }),
+        undefined,
+      );
+      expect(screen.getByRole("button", { name: "Últimos 30 días" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      expect(urlParams()).toEqual({ report: reportId });
+    });
+
+    it.each([
+      ["daily-close", "useDailyCloseReport"],
+      ["fx-depreciation", "useFxDepreciationReport"],
+    ] as const)("%s sin rango en la URL sigue sin rango", (reportId, hookName) => {
+      renderPage(`?report=${reportId}`);
+
+      expect(hooks[hookName]).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ from: expect.anything() }),
+        undefined,
+      );
+      expect(hooks[hookName]).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ to: expect.anything() }),
+        undefined,
+      );
+      expect(screen.getByTestId("date-range-label")).toHaveTextContent("Todas las fechas");
+      expect(screen.getByRole("button", { name: "Últimos 30 días" })).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      );
+    });
+
+    it("quitar el rango deja «todas las fechas» (`preset=custom`) y el reporte responde sin serie", async () => {
+      const user = userEvent.setup();
+      mockTotals["daily-sales"] = 35;
+      renderPage();
+
+      await user.click(screen.getByRole("button", { name: "Quitar rango de fechas" }));
+
+      expect(urlParams()).toEqual({ preset: "custom" });
+      expect(screen.getByTestId("date-range-label")).toHaveTextContent("Todas las fechas");
+      expect(hooks.useDailySalesReport).toHaveBeenLastCalledWith({ limit: 10, skip: 0 }, undefined);
+      expect(screen.getByText("Elige un rango de fechas")).toBeInTheDocument();
+      expect(screen.getByText("Mostrando 1-10 de 35 registros")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Últimos 30 días" }));
+
+      expect(urlParams()).toEqual({ preset: "last_30_days" });
+    });
+
+    it("la paginación de depreciación FX se lee de la URL", () => {
+      renderPage("?report=fx-depreciation&page=3&limit=20");
+
+      expect(hooks.useFxDepreciationReport).toHaveBeenLastCalledWith(
+        { limit: 20, skip: 40 },
+        undefined,
+      );
     });
 
     it("al montar con `report`, `from` y `to` selecciona el reporte y el rango", () => {
@@ -292,7 +376,10 @@ describe("ReportsListPage · REP-03", () => {
       renderPage("?report=no-existe&from=ayer&groupBy=year&compare=si&page=-3&limit=abc");
 
       expect(activeReportName()).toContain("Ventas diarias");
-      expect(hooks.useDailySalesReport).toHaveBeenLastCalledWith({ limit: 10, skip: 0 }, undefined);
+      expect(hooks.useDailySalesReport).toHaveBeenLastCalledWith(
+        { from: DEFAULT_FROM, groupBy: "auto", limit: 10, skip: 0, to: TODAY },
+        undefined,
+      );
       expect(screen.getByRole("button", { name: "Automático" })).toHaveAttribute("aria-pressed", "true");
       expect(screen.getByRole("checkbox", { name: "Comparar con periodo anterior" })).not.toBeChecked();
     });
@@ -302,13 +389,19 @@ describe("ReportsListPage · REP-03", () => {
       mockTotals["daily-sales"] = 35;
       renderPage("?page=2");
 
-      expect(hooks.useDailySalesReport).toHaveBeenLastCalledWith({ limit: 10, skip: 10 }, undefined);
+      expect(hooks.useDailySalesReport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ limit: 10, skip: 10 }),
+        undefined,
+      );
 
       await selectReport(user, /^Top clientes/);
 
       expect(replaceStateUrls.at(-1)).toBe("/reports?report=top-customers");
       expect(urlParams()).toEqual({ report: "top-customers" });
-      expect(hooks.useTopCustomersReport).toHaveBeenLastCalledWith({ limit: 10, skip: 0 }, undefined);
+      expect(hooks.useTopCustomersReport).toHaveBeenLastCalledWith(
+        { from: DEFAULT_FROM, limit: 10, skip: 0, to: TODAY },
+        undefined,
+      );
     });
 
     it("volver al reporte por defecto quita `report` de la URL", async () => {
@@ -353,7 +446,9 @@ describe("ReportsListPage · REP-03", () => {
 
       await user.click(screen.getByRole("button", { name: "Quitar rango de fechas" }));
 
-      expect(urlParams()).toEqual({ report: "top-products" });
+      // «Todas las fechas» a propósito: sin parámetros volvería el rango por defecto.
+      expect(urlParams()).toEqual({ preset: "custom", report: "top-products" });
+      expect(hooks.useTopProductsReport).toHaveBeenLastCalledWith({ limit: 10, skip: 0 }, undefined);
     });
   });
 
@@ -458,7 +553,7 @@ describe("ReportsListPage · REP-03", () => {
       expect(mockSupplierSearch).toHaveBeenCalledWith("Polar");
       expect(urlParams()).toEqual({ report: "purchases", supplierId: "sup-1" });
       expect(hooks.usePurchasesReport).toHaveBeenLastCalledWith(
-        { limit: 10, skip: 0, supplierId: "sup-1" },
+        { from: DEFAULT_FROM, groupBy: "auto", limit: 10, skip: 0, supplierId: "sup-1", to: TODAY },
         undefined,
       );
       expect(screen.getByRole("combobox", { name: "Proveedor" })).toHaveValue("Distribuidora Polar");

@@ -33,6 +33,16 @@ export const REPORT_IDS = [
 
 export type ReportId = (typeof REPORT_IDS)[number];
 
+/**
+ * Gráfico que el reporte lleva encima de la tabla (un solo componente por tipo):
+ * `line` = serie en el tiempo (`TimeSeriesChart`); `ranking` = barras
+ * horizontales ordenadas (`RankingBarChart`). Sin él, el reporte es solo tabla.
+ */
+export type ReportChartKind = "line" | "ranking";
+
+/** Rango que usan los reportes con gráfico y fechas cuando la URL no trae ninguno. */
+export const REPORT_DEFAULT_DATE_PRESET = "last_30_days";
+
 export type ReportGroupId = "ventas" | "compras" | "inventario" | "dinero";
 
 /** Grupos del catálogo, en el orden en que se muestran. */
@@ -49,6 +59,13 @@ export const reportGroups: readonly { id: ReportGroupId; label: string }[] = [
  * (`?report=`) y la barra de filtros se adaptan solos a estos campos.
  */
 export type ReportDefinition = {
+  /** Gráfico encima de la tabla; ver `ReportChartKind`. */
+  chart?: ReportChartKind;
+  /**
+   * Rango por defecto cuando la URL no trae `from`, `to` ni `preset`. Se
+   * calcula con el hoy operativo y no se escribe en la URL.
+   */
+  defaultDatePreset?: typeof REPORT_DEFAULT_DATE_PRESET;
   /** Una sola línea. */
   description: string;
   /** Filtro de entidad que usa el reporte, además del rango. */
@@ -69,6 +86,8 @@ export type ReportDefinition = {
 export const reportCatalog: ReportDefinition[] = [
   {
     id: "daily-sales",
+    chart: "line",
+    defaultDatePreset: REPORT_DEFAULT_DATE_PRESET,
     group: "ventas",
     icon: LineChart,
     name: "Ventas diarias",
@@ -80,6 +99,8 @@ export const reportCatalog: ReportDefinition[] = [
   },
   {
     id: "gross-profit",
+    chart: "line",
+    defaultDatePreset: REPORT_DEFAULT_DATE_PRESET,
     group: "ventas",
     icon: TrendingUp,
     name: "Ganancia bruta",
@@ -91,6 +112,7 @@ export const reportCatalog: ReportDefinition[] = [
   },
   {
     id: "product-profitability",
+    chart: "ranking",
     group: "ventas",
     icon: PieChart,
     name: "Rentabilidad por producto",
@@ -100,6 +122,8 @@ export const reportCatalog: ReportDefinition[] = [
   },
   {
     id: "top-products",
+    chart: "ranking",
+    defaultDatePreset: REPORT_DEFAULT_DATE_PRESET,
     group: "ventas",
     icon: Trophy,
     name: "Top productos",
@@ -109,6 +133,8 @@ export const reportCatalog: ReportDefinition[] = [
   },
   {
     id: "top-customers",
+    chart: "ranking",
+    defaultDatePreset: REPORT_DEFAULT_DATE_PRESET,
     group: "ventas",
     icon: UserRoundCheck,
     name: "Top clientes",
@@ -118,6 +144,7 @@ export const reportCatalog: ReportDefinition[] = [
   },
   {
     id: "customer-purchases",
+    chart: "ranking",
     group: "ventas",
     icon: Users,
     name: "Compras de clientes",
@@ -127,6 +154,8 @@ export const reportCatalog: ReportDefinition[] = [
   },
   {
     id: "purchases",
+    chart: "line",
+    defaultDatePreset: REPORT_DEFAULT_DATE_PRESET,
     group: "compras",
     icon: ShoppingCart,
     name: "Compras",
@@ -139,6 +168,7 @@ export const reportCatalog: ReportDefinition[] = [
   },
   {
     id: "supplier-purchases",
+    chart: "ranking",
     group: "compras",
     icon: Truck,
     name: "Compras a proveedores",
@@ -176,6 +206,8 @@ export const reportCatalog: ReportDefinition[] = [
   },
   {
     id: "payment-methods",
+    chart: "ranking",
+    defaultDatePreset: REPORT_DEFAULT_DATE_PRESET,
     group: "dinero",
     icon: Wallet,
     name: "Métodos de pago",

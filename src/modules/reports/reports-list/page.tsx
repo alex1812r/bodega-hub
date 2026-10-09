@@ -4,7 +4,6 @@ import { useMemo } from "react";
 
 import { getPageDataSourceSuffix } from "@/lib/api/dataSourceUi";
 import { getBusinessTodayIsoDate } from "@/modules/dashboard/utils/businessDate";
-import { serializeDateRange } from "@/shared/components/DateRangeField";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import { useUrlPaginationState } from "@/shared/components/Pagination";
 import { useUrlListState, withUrlListBoundary } from "@/shared/hooks/useUrlListState";
@@ -14,7 +13,12 @@ import { ReportsExportActions } from "./components/ReportsExportActions";
 import { ReportsListFilters } from "./components/ReportsListFilters";
 import { ReportsResultPanel } from "./components/ReportsResultPanel";
 import { getReportById, reportCatalog } from "./config/reportCatalog";
-import { reportsListSchema, resolveReportsRange, toReportsFilters } from "./reportsListParams";
+import {
+  reportsListSchema,
+  resolveReportsRange,
+  serializeReportsRange,
+  toReportsFilters,
+} from "./reportsListParams";
 
 function ReportsList() {
   // Reporte activo, rango, agrupación, comparación, proveedor, producto y página
@@ -25,10 +29,11 @@ function ReportsList() {
   const { compare, from, groupBy, preset, productId, report, supplierId, to } = state;
   const today = getBusinessTodayIsoDate();
   const activeReport = getReportById(report);
-  // Un `preset` relativo de la URL se recalcula con el hoy operativo.
+  // Un `preset` relativo de la URL se recalcula con el hoy operativo. Sin rango
+  // en la URL, los reportes con gráfico y fechas abren en sus últimos 30 días.
   const range = useMemo(
-    () => resolveReportsRange({ from, preset, to }, today),
-    [from, preset, to, today],
+    () => resolveReportsRange({ from, preset, to }, today, activeReport),
+    [activeReport, from, preset, to, today],
   );
   const filters = useMemo(
     () => toReportsFilters({ compare, groupBy, productId, supplierId }, range),
@@ -61,7 +66,7 @@ function ReportsList() {
             setListState({ compare: patch.compare ? "1" : "" });
           }
         }}
-        onDateRangeChange={(next) => setListState(serializeDateRange(next))}
+        onDateRangeChange={(next) => setListState(serializeReportsRange(next, activeReport))}
         onPurchasesChange={(patch) => {
           if ("supplierId" in patch) {
             setListState({ supplierId: patch.supplierId ?? "" });

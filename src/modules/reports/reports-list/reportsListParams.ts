@@ -3,7 +3,11 @@ import { z } from "zod";
 import {
   DATE_RANGE_PRESETS,
   parseDateRangeParams,
+  resolveDateRangePreset,
+  serializeDateRange,
   type DateRangeChange,
+  type DateRangeParams,
+  type DateRangeValue,
 } from "@/shared/components/DateRangeField";
 import { listParams, type UrlListStateOf } from "@/shared/hooks/useUrlListState";
 
@@ -20,19 +24,26 @@ const reportParam = () => z.custom<ReportId>(isReportId).default(defaultReportId
 
 /**
  * Estado de `/reports` en la URL (regla 15). Sin parámetros = reporte por
- * defecto, todas las fechas, agrupación automática, sin comparar, página 1.
+ * defecto, rango por defecto del reporte, agrupación automática, sin comparar,
+ * página 1.
  *
  * | Parámetro    | Valores                                             | Por defecto         |
  * |--------------|-----------------------------------------------------|---------------------|
  * | `report`     | id del catálogo                                     | `daily-sales`       |
- * | `from`, `to` | día de Caracas `YYYY-MM-DD`, inclusive              | `""` = sin rango    |
- * | `preset`     | preset de `DateRangeField` (relativo: se recalcula) | `""`                |
+ * | `from`, `to` | día de Caracas `YYYY-MM-DD`, inclusive              | `""` (ver abajo)    |
+ * | `preset`     | preset de `DateRangeField` (relativo: se recalcula) | `""` (ver abajo)    |
  * | `groupBy`    | `day` · `week` · `month`                            | `""` = automática   |
  * | `compare`    | `1`                                                 | `""` = sin comparar |
  * | `supplierId` | id de proveedor (reporte de compras)                | `""`                |
  * | `productId`  | id de producto (kardex)                             | `""`                |
  * | `page`       | base 1, de la tabla del reporte activo              | `1`                 |
  * | `limit`      | tamaño de página                                    | `10`                |
+ *
+ * Sin `from`, `to` ni `preset`, el rango es el de por defecto del reporte
+ * activo (`defaultDatePreset` del catálogo): últimos 30 días en los reportes con
+ * gráfico y fechas; sin rango en cierre del día y depreciación FX. Ese rango no
+ * se escribe en la URL. `preset=custom` sin fechas es «todas las fechas»
+ * elegido a propósito (ver `serializeReportsRange`).
  *
  * Cambiar cualquier parámetro (también `report`) devuelve `page` a 1.
  */
@@ -79,12 +90,42 @@ export function toReportsFilters(
   };
 }
 
-/** Rango efectivo de la URL: un `preset` relativo se recalcula con el hoy operativo. */
+/**
+ * Rango efectivo: el de la URL (un `preset` relativo se recalcula con el hoy
+ * operativo) o, si la URL no trae `from`, `to` ni `preset`, el rango por
+ * defecto del reporte. Sin `report` no hay rango por defecto.
+ */
 export function resolveReportsRange(
   state: Pick<ReportsListState, "from" | "preset" | "to">,
   today: string,
-) {
+  report?: Pick<ReportDefinition, "defaultDatePreset">,
+): DateRangeChange {
+  const hasRangeParams = state.from !== "" || state.to !== "" || state.preset !== "";
+
+  if (!hasRangeParams && report?.defaultDatePreset) {
+    return {
+      ...resolveDateRangePreset(report.defaultDatePreset, today),
+      preset: report.defaultDatePreset,
+    };
+  }
+
   return parseDateRangeParams(state, today);
+}
+
+/**
+ * Rango elegido → patch de `from` / `to` / `preset` para la URL. Igual que
+ * `serializeDateRange`, salvo al quitar el rango en un reporte con rango por
+ * defecto: ahí «sin parámetros» significa ese rango, así que «todas las
+ * fechas» se guarda como `preset=custom` sin fechas.
+ */
+export function serializeReportsRange(
+  next: DateRangeValue,
+  report?: Pick<ReportDefinition, "defaultDatePreset">,
+): DateRangeParams {
+  const params = serializeDateRange(next);
+  const isCleared = params.from === "" && params.to === "" && params.preset === "";
+
+  return isCleared && report?.defaultDatePreset ? { ...params, preset: "custom" } : params;
 }
 
 /** Parámetros de fecha que un reporte admite, a partir de los filtros globales. */

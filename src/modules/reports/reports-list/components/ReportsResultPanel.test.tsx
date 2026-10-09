@@ -117,14 +117,14 @@ describe("ReportsResultPanel", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    // Escritorio: la paginación muestra los botones de página.
+    // Escritorio: la paginación muestra los botones de página y la tabla abre desplegada.
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: (query: string) => ({
         addEventListener: () => undefined,
         addListener: () => undefined,
         dispatchEvent: () => false,
-        matches: true,
+        matches: !query.includes("max-width"),
         media: query,
         onchange: null,
         removeEventListener: () => undefined,

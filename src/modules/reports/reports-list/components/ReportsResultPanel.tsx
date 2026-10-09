@@ -7,6 +7,7 @@ import { getPaginatedItems, type PaginatedList, type PaginationParams } from "@/
 import { RestockPurchaseButton } from "@/modules/inventory/restock";
 import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
+import { formatDateRangeLabel } from "@/shared/components/DateRangeField";
 import type { StockMovementMock } from "@/shared/mocks/erp-data";
 import { formatRef, formatVes } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
@@ -36,11 +37,53 @@ import {
   useTopCustomersReport,
   useTopProductsReport,
 } from "../../hooks/useReports";
+import type {
+  DailySalesSeriesMeasures,
+  GrossProfitSeriesMeasures,
+  PurchasesSeriesMeasures,
+} from "../../services/reportSeries";
 import { type ReportDefinition } from "../config/reportCatalog";
 import { toReportDateFilters } from "../reportsListParams";
 import { DailyCloseReportPanel } from "./DailyCloseReportPanel";
 import { FxDepreciationReportPanel } from "./FxDepreciationReportPanel";
 import { PaymentMethodsReportPanel } from "./PaymentMethodsReportPanel";
+import { ReportRankingChart } from "./ReportRankingChart";
+import { ReportSeriesChart, type ReportSeriesChartMeasure } from "./ReportSeriesChart";
+import { ReportTableSection } from "./ReportTableSection";
+
+// Una sola medida por gráfico de línea: la misma sobre la que el servicio calcula
+// la variación. Así el periodo anterior y las etiquetas de pico se leen sin ruido.
+const dailySalesMeasure: ReportSeriesChartMeasure<DailySalesSeriesMeasures> = {
+  count: "count",
+  countLabel: "ventas",
+  name: "Ventas",
+  totalLabel: "Total vendido",
+  valueRef: "totalRef",
+  valueVes: "totalVes",
+};
+
+const grossProfitMeasure: ReportSeriesChartMeasure<GrossProfitSeriesMeasures> = {
+  name: "Ganancia bruta",
+  totalLabel: "Ganancia bruta",
+  valueRef: "grossProfitRef",
+};
+
+const purchasesMeasure: ReportSeriesChartMeasure<PurchasesSeriesMeasures> = {
+  count: "count",
+  countLabel: "compras",
+  deltaTone: "neutral",
+  name: "Compras",
+  totalLabel: "Total comprado",
+  valueRef: "totalRef",
+  valueVes: "totalVes",
+};
+
+/** El servicio de rentabilidad ya devuelve el nombre del producto. */
+type ProductProfitabilityChartRow = ProductProfitabilityReportRow & { name?: string };
+
+function formatUnits(value: number) {
+  return `${value.toLocaleString("es-VE", { maximumFractionDigits: 2 })} uds`;
+}
 
 const dailySalesColumns: DataTableColumn<DailySalesReportRow>[] = [
   { header: "Fecha", key: "saleDate", render: (row) => formatDate(row.saleDate) },
@@ -144,7 +187,10 @@ type ReportTableProps<TData> = {
   limit: number;
   onLimitChange: (limit: number) => void;
   onSkipChange: (skip: number) => void;
-  query: UseQueryResult<PaginatedList<TData>, Error>;
+  query: Pick<
+    UseQueryResult<PaginatedList<TData>, Error>,
+    "data" | "error" | "isFetching" | "isLoading" | "refetch"
+  >;
   report: ReportDefinition;
   skip: number;
 };
@@ -214,9 +260,10 @@ export type ReportPagination = {
   skip: number;
 };
 
-function PaginatedReportTable<TData>({
+function PaginatedReportTable<TData, TResult extends PaginatedList<TData> = PaginatedList<TData>>({
   columns,
   actions,
+  chart,
   filters = {},
   getRowId,
   pagination: externalPagination,
@@ -226,6 +273,11 @@ function PaginatedReportTable<TData>({
   useReport,
 }: {
   actions?: ReactNode;
+  /**
+   * Gráfico del reporte, a partir de la misma consulta que la tabla. Con él la
+   * tabla va debajo, en una sección plegable.
+   */
+  chart?: (query: UseQueryResult<TResult, Error>) => ReactNode;
   columns: DataTableColumn<TData>[];
   filters?: PaginationParams;
   getRowId: (row: TData) => string;
@@ -238,7 +290,7 @@ function PaginatedReportTable<TData>({
   useReport: (
     filters: PaginationParams,
     scope?: ReportRequestScope,
-  ) => UseQueryResult<PaginatedList<TData>, Error>;
+  ) => UseQueryResult<TResult, Error>;
 }) {
   // La paginación propia vuelve a la primera página al cambiar de reporte o de filtros.
   const localPagination = usePaginationState([report.id, ...resetDeps]);
@@ -264,7 +316,7 @@ function PaginatedReportTable<TData>({
     }
   }, [isPagePastTheEnd, setSkip]);
 
-  return (
+  const table = (
     <ReportTable
       actions={actions}
       columns={columns}
@@ -276,6 +328,21 @@ function PaginatedReportTable<TData>({
       report={report}
       skip={skip}
     />
+  );
+
+  if (!chart) {
+    return table;
+  }
+
+  return (
+    <div className="min-w-0 space-y-4">
+      {chart(query)}
+      <ReportTableSection
+        summary={formatResultsRange(data?.skip ?? skip, pagination.limit, data?.total ?? 0)}
+      >
+        {table}
+      </ReportTableSection>
+    </div>
   );
 }
 
@@ -294,6 +361,11 @@ type ReportsResultPanelProps = {
   stockCardFilters: StockCardReportFilters;
 };
 
+/**
+ * Resultado del reporte activo. Los reportes de serie (línea) y de ranking
+ * (barras) llevan su gráfico encima y la tabla debajo, plegable; cierre del día,
+ * depreciación FX, bajo stock y kardex son solo tabla o panel.
+ */
 export function ReportsResultPanel({
   dateFilters,
   pagination,
@@ -314,11 +386,24 @@ export function ReportsResultPanel({
     reportDateFilters.compare,
   ];
 
+  const rangeLabel = formatDateRangeLabel(reportDateFilters.from, reportDateFilters.to);
+
   // `key` por reporte: cada tabla monta su propio estado y nada se arrastra de un reporte a otro.
   switch (report.id) {
     case "daily-sales":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportSeriesChart
+              error={query.error}
+              filters={reportDateFilters}
+              isLoading={query.isLoading}
+              measure={dailySalesMeasure}
+              onRetry={() => void query.refetch()}
+              report={report}
+              series={query.data?.series}
+            />
+          )}
           columns={dailySalesColumns}
           filters={reportDateFilters}
           getRowId={(row) => `${row.saleDate}-${row.totalVes}-${row.paidVes}-${row.storeId ?? ""}`}
@@ -333,6 +418,17 @@ export function ReportsResultPanel({
     case "gross-profit":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportSeriesChart
+              error={query.error}
+              filters={reportDateFilters}
+              isLoading={query.isLoading}
+              measure={grossProfitMeasure}
+              onRetry={() => void query.refetch()}
+              report={report}
+              series={query.data?.series}
+            />
+          )}
           columns={grossProfitColumns}
           filters={reportDateFilters}
           getRowId={(row) => `${row.saleDate}-${row.revenueRef}-${row.costRef}-${row.storeId ?? ""}`}
@@ -345,7 +441,13 @@ export function ReportsResultPanel({
         />
       );
     case "fx-depreciation":
-      return <FxDepreciationReportPanel dateFilters={reportDateFilters} scope={scope} />;
+      return (
+        <FxDepreciationReportPanel
+          dateFilters={reportDateFilters}
+          pagination={pagination}
+          scope={scope}
+        />
+      );
     case "daily-close":
       return <DailyCloseReportPanel dateFilters={reportDateFilters} scope={scope} />;
     case "payment-methods":
@@ -353,6 +455,20 @@ export function ReportsResultPanel({
     case "product-profitability":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportRankingChart
+              error={query.error}
+              isLoading={query.isLoading}
+              items={getPaginatedItems(query.data).map((row: ProductProfitabilityChartRow) => ({
+                id: row.productId,
+                label: row.name || row.sku || row.productId,
+                value: row.grossProfitRef,
+              }))}
+              measureLabel="Ganancia bruta en REF"
+              onRetry={() => void query.refetch()}
+              report={report}
+            />
+          )}
           columns={productProfitabilityColumns}
           getRowId={(row) => row.productId}
           key={report.id}
@@ -381,6 +497,20 @@ export function ReportsResultPanel({
     case "customer-purchases":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportRankingChart
+              error={query.error}
+              isLoading={query.isLoading}
+              items={getPaginatedItems(query.data).map((row) => ({
+                id: row.customerId,
+                label: row.name,
+                value: row.totalRef,
+              }))}
+              measureLabel="Total comprado en REF"
+              onRetry={() => void query.refetch()}
+              report={report}
+            />
+          )}
           columns={customerPurchasesColumns}
           getRowId={(row) => row.customerId}
           key={report.id}
@@ -394,6 +524,20 @@ export function ReportsResultPanel({
     case "supplier-purchases":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportRankingChart
+              error={query.error}
+              isLoading={query.isLoading}
+              items={getPaginatedItems(query.data).map((row) => ({
+                id: row.supplierId,
+                label: row.name,
+                value: row.totalRef,
+              }))}
+              measureLabel="Total comprado en REF"
+              onRetry={() => void query.refetch()}
+              report={report}
+            />
+          )}
           columns={supplierPurchasesColumns}
           getRowId={(row) => row.supplierId}
           key={report.id}
@@ -421,6 +565,22 @@ export function ReportsResultPanel({
     case "top-products":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportRankingChart
+              error={query.error}
+              formatValue={formatUnits}
+              isLoading={query.isLoading}
+              items={getPaginatedItems(query.data).map((row) => ({
+                id: row.productId,
+                label: row.sku || row.productId,
+                value: row.unitsSold,
+              }))}
+              measureLabel="Unidades vendidas"
+              onRetry={() => void query.refetch()}
+              rangeLabel={rangeLabel}
+              report={report}
+            />
+          )}
           columns={topProductsColumns}
           filters={reportDateFilters}
           getRowId={(row) => row.productId}
@@ -435,6 +595,21 @@ export function ReportsResultPanel({
     case "top-customers":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportRankingChart
+              error={query.error}
+              isLoading={query.isLoading}
+              items={getPaginatedItems(query.data).map((row) => ({
+                id: row.customerId,
+                label: row.name,
+                value: row.totalRef,
+              }))}
+              measureLabel="Total comprado en REF"
+              onRetry={() => void query.refetch()}
+              rangeLabel={rangeLabel}
+              report={report}
+            />
+          )}
           columns={topCustomersColumns}
           filters={reportDateFilters}
           getRowId={(row) => row.customerId}
@@ -460,6 +635,17 @@ export function ReportsResultPanel({
 
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportSeriesChart
+              error={query.error}
+              filters={purchasesDateFilters}
+              isLoading={query.isLoading}
+              measure={purchasesMeasure}
+              onRetry={() => void query.refetch()}
+              report={report}
+              series={query.data?.series}
+            />
+          )}
           columns={purchasesColumns}
           filters={reportPurchasesFilters}
           getRowId={(row) => row.id}

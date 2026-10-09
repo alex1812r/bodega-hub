@@ -1,9 +1,16 @@
 "use client";
 
+import { useMemo } from "react";
+
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { formatDateRangeLabel } from "@/shared/components/DateRangeField";
 import { EmptyState } from "@/shared/components/EmptyState";
+import {
+  formatDeltaPct,
+  RankingBarChart,
+  type RankingBarItem,
+} from "@/shared/components/RankingBarChart";
 import { paymentMethodLabels } from "@/shared/payments/paymentMethods";
 import { formatRef, formatVes } from "@/shared/utils/currency";
 
@@ -14,6 +21,9 @@ import {
   type ReportRequestScope,
   usePaymentMethodsReport,
 } from "../../hooks/useReports";
+import type { PaymentMethodsReportComparison } from "../../services/paymentMethodsReport";
+import { ReportChartCard } from "./ReportChartCard";
+import { ReportTableSection } from "./ReportTableSection";
 
 const methodColumns: DataTableColumn<PaymentMethodReportRow>[] = [
   {
@@ -40,6 +50,37 @@ const methodColumns: DataTableColumn<PaymentMethodReportRow>[] = [
     render: (row) => formatVes(row.amountVes),
   },
 ];
+
+function getPreviousAmountRef(
+  comparison: PaymentMethodsReportComparison,
+  method: PaymentMethodReportRow["method"],
+) {
+  return comparison.previous?.items.find((row) => row.method === method)?.amountRef ?? null;
+}
+
+/** Con comparación: valor del periodo anterior y variación por método («—» si no hay). */
+function buildComparisonColumns(
+  comparison: PaymentMethodsReportComparison,
+): DataTableColumn<PaymentMethodReportRow>[] {
+  return [
+    {
+      align: "right",
+      header: "REF anterior",
+      key: "previousAmountRef",
+      render: (row) => {
+        const previous = getPreviousAmountRef(comparison, row.method);
+
+        return previous === null ? "—" : formatRef(previous);
+      },
+    },
+    {
+      align: "right",
+      header: "Variación",
+      key: "deltaPct",
+      render: (row) => formatDeltaPct(comparison.deltaPctByMethod[row.method]),
+    },
+  ];
+}
 
 function SummaryStrip({ summary }: { summary: PaymentMethodsReportSummary }) {
   return (
@@ -75,6 +116,11 @@ type PaymentMethodsReportPanelProps = {
   scope?: ReportRequestScope;
 };
 
+/**
+ * Métodos de pago: barras horizontales por método, ordenadas por REF cobrado
+ * (comparan mejor que una dona y reutilizan el gráfico de ranking), y debajo la
+ * tabla plegable. Con `compare`, cada método trae su valor anterior y su variación.
+ */
 export function PaymentMethodsReportPanel({
   dateFilters,
   scope,
@@ -83,45 +129,78 @@ export function PaymentMethodsReportPanel({
   const query = usePaymentMethodsReport(dateFilters, scope);
   const items = getPaginatedItems(query.data);
   const summary = query.data?.summary;
+  const comparison = dateFilters.compare ? query.data?.comparison : undefined;
+  const hasPayments = items.some((row) => row.paymentCount > 0 || row.amountRef !== 0);
+  const chartItems = useMemo<RankingBarItem[]>(
+    () =>
+      items.map((row) => ({
+        id: row.method,
+        label: paymentMethodLabels[row.method] ?? row.method,
+        value: row.amountRef,
+        ...(comparison
+          ? {
+              deltaPct: comparison.deltaPctByMethod[row.method] ?? null,
+              previousValue: getPreviousAmountRef(comparison, row.method),
+            }
+          : {}),
+      })),
+    [comparison, items],
+  );
+  const columns = useMemo(
+    () => (comparison ? [...methodColumns, ...buildComparisonColumns(comparison)] : methodColumns),
+    [comparison],
+  );
+  const isReady = !query.isLoading && !query.error;
 
   return (
-    <section className="space-y-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-5 shadow-sm">
-      <div>
-        <h3 className="text-base font-semibold text-foreground">Métodos de pago</h3>
-        <p className="mt-1 text-sm text-on-surface-variant">
-          Pagos de venta activos agrupados por método ·{" "}
-          {formatDateRangeLabel(dateFilters.from, dateFilters.to)}
-        </p>
-      </div>
+    <div className="min-w-0 space-y-4">
+      <ReportChartCard
+        delta={comparison ? { deltaPct: comparison.deltaPct } : undefined}
+        subtitle={
+          <>
+            Pagos de venta activos agrupados por método ·{" "}
+            {formatDateRangeLabel(dateFilters.from, dateFilters.to)}
+          </>
+        }
+        title="Métodos de pago"
+      >
+        {query.isLoading ? (
+          <p className="text-sm text-on-surface-variant">Cargando métodos de pago…</p>
+        ) : null}
 
-      {query.isLoading ? (
-        <p className="text-sm text-on-surface-variant">Cargando métodos de pago…</p>
+        {query.error ? (
+          <p className="text-sm text-error" role="alert">
+            No se pudo generar el reporte de métodos de pago.
+          </p>
+        ) : null}
+
+        {summary ? <SummaryStrip summary={summary} /> : null}
+
+        {isReady && hasPayments ? (
+          <RankingBarChart ariaLabel="Métodos de pago: REF cobrado" items={chartItems} />
+        ) : null}
+
+        {isReady && query.data && !hasPayments ? (
+          <EmptyState
+            description="No hay pagos de venta en el rango elegido."
+            title="Sin pagos"
+          />
+        ) : null}
+      </ReportChartCard>
+
+      {isReady && items.length > 0 ? (
+        <ReportTableSection
+          summary={`${items.length} ${items.length === 1 ? "método" : "métodos"}`}
+        >
+          <DataTable
+            columns={columns}
+            data={items}
+            embedded
+            getRowId={(row) => row.method}
+            variant="stitch"
+          />
+        </ReportTableSection>
       ) : null}
-
-      {query.error ? (
-        <p className="text-sm text-error" role="alert">
-          No se pudo generar el reporte de métodos de pago.
-        </p>
-      ) : null}
-
-      {summary ? <SummaryStrip summary={summary} /> : null}
-
-      {!query.isLoading && !query.error && items.length > 0 ? (
-        <DataTable
-          columns={methodColumns}
-          data={items}
-          embedded
-          getRowId={(row) => row.method}
-          variant="stitch"
-        />
-      ) : null}
-
-      {!query.isLoading && !query.error && query.data && items.length === 0 ? (
-        <EmptyState
-          description="No hay pagos de venta en el rango elegido."
-          title="Sin pagos"
-        />
-      ) : null}
-    </section>
+    </div>
   );
 }

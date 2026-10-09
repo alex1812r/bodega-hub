@@ -4,6 +4,7 @@ import { defaultReportId, getReportById, REPORT_IDS } from "./config/reportCatal
 import {
   reportsListSchema,
   resolveReportsRange,
+  serializeReportsRange,
   toReportDateFilters,
   toReportsFilters,
 } from "./reportsListParams";
@@ -89,6 +90,85 @@ describe("resolveReportsRange", () => {
       preset: undefined,
       to: undefined,
     });
+  });
+});
+
+describe("rango por defecto del reporte", () => {
+  const empty = { from: "", preset: "", to: "" } as const;
+
+  it.each(["daily-sales", "gross-profit", "purchases", "top-products", "top-customers", "payment-methods"] as const)(
+    "%s sin parámetros usa los últimos 30 días contando hoy",
+    (reportId) => {
+      expect(resolveReportsRange(empty, TODAY, getReportById(reportId))).toEqual({
+        from: "2026-04-19",
+        preset: "last_30_days",
+        to: TODAY,
+      });
+    },
+  );
+
+  it.each(REPORT_IDS.filter((id) => !getReportById(id).defaultDatePreset))(
+    "%s sin parámetros sigue sin rango",
+    (reportId) => {
+      expect(resolveReportsRange(empty, TODAY, getReportById(reportId))).toEqual({
+        from: undefined,
+        preset: undefined,
+        to: undefined,
+      });
+    },
+  );
+
+  it("cierre del día y depreciación FX no tienen rango por defecto", () => {
+    expect(getReportById("daily-close").defaultDatePreset).toBeUndefined();
+    expect(getReportById("fx-depreciation").defaultDatePreset).toBeUndefined();
+  });
+
+  it("lo que trae la URL manda sobre el rango por defecto", () => {
+    const report = getReportById("daily-sales");
+
+    expect(resolveReportsRange({ from: "", preset: "yesterday", to: "" }, TODAY, report)).toEqual({
+      from: "2026-05-17",
+      preset: "yesterday",
+      to: "2026-05-17",
+    });
+    expect(
+      resolveReportsRange({ from: "2026-01-01", preset: "", to: "2026-01-31" }, TODAY, report),
+    ).toEqual({ from: "2026-01-01", preset: "custom", to: "2026-01-31" });
+  });
+
+  it("`preset=custom` sin fechas es «todas las fechas»", () => {
+    expect(
+      resolveReportsRange({ from: "", preset: "custom", to: "" }, TODAY, getReportById("daily-sales")),
+    ).toEqual({ from: undefined, preset: undefined, to: undefined });
+  });
+
+  it("quitar el rango se guarda como `preset=custom` solo donde hay rango por defecto", () => {
+    const cleared = { from: undefined, preset: undefined, to: undefined };
+
+    expect(serializeReportsRange(cleared, getReportById("daily-sales"))).toEqual({
+      from: "",
+      preset: "custom",
+      to: "",
+    });
+    expect(serializeReportsRange(cleared, getReportById("daily-close"))).toEqual({
+      from: "",
+      preset: "",
+      to: "",
+    });
+    expect(serializeReportsRange(cleared)).toEqual({ from: "", preset: "", to: "" });
+  });
+
+  it("un preset o un rango elegidos se guardan como siempre", () => {
+    const report = getReportById("daily-sales");
+
+    expect(serializeReportsRange({ preset: "this_month" }, report)).toEqual({
+      from: "",
+      preset: "this_month",
+      to: "",
+    });
+    expect(
+      serializeReportsRange({ from: "2026-01-01", preset: "custom", to: "2026-01-31" }, report),
+    ).toEqual({ from: "2026-01-01", preset: "", to: "2026-01-31" });
   });
 });
 
