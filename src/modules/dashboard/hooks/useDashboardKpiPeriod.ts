@@ -1,18 +1,19 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { z } from "zod";
 
 import { getBusinessTodayIsoDate } from "@/modules/dashboard/utils/businessDate";
 import {
+  DASHBOARD_PLATFORM_PRESETS,
+  DASHBOARD_STORE_PRESETS,
   type DashboardPeriod,
   describeDashboardPeriod,
   normalizeDashboardRange,
 } from "@/modules/dashboard/utils/dashboardPeriod";
 import {
-  DATE_RANGE_PRESETS,
+  type AnyDateRangePreset,
   type DateRangeChange,
-  type DateRangeValue,
   parseDateRangeParams,
   serializeDateRange,
 } from "@/shared/components/DateRangeField";
@@ -20,51 +21,60 @@ import { listParams, useUrlListState } from "@/shared/hooks/useUrlListState";
 
 /** Periodo del dashboard listo para pintar y para pedir datos. */
 export type DashboardPeriodState = DashboardPeriod & {
+  /** Chips de periodo de esta pantalla, en orden. */
+  presets: readonly AnyDateRangePreset[];
   /** Recibe lo que emite `DateRangeField`. */
-  setRange: (next: DateRangeChange) => void;
+  setRange: (next: DateRangeChange<AnyDateRangePreset>) => void;
   /** Día operativo de hoy (fijo en mock). */
   today: string;
 };
 
-/** Parámetros de URL del dashboard (regla 15): `from`, `to` y `preset`. */
-const dashboardPeriodSchema = z.object({
-  from: listParams.date(),
-  preset: listParams.oneOf(["", ...DATE_RANGE_PRESETS], ""),
-  to: listParams.date(),
-});
-
-const DEFAULT_PERIOD_PARAMS = { from: "", preset: "", to: "" } as const;
+/** Qué periodos ofrece la pantalla: los de tienda, o los de plataforma (con los extendidos). */
+export type DashboardPeriodVariant = "platform" | "store";
 
 /**
- * Periodo del dashboard en estado local, por defecto hoy. Lo usa el dashboard
- * de plataforma, que no guarda el periodo en la URL.
+ * Parámetros de URL del dashboard (regla 15): `from`, `to` y `preset`. Un
+ * `preset` que la pantalla no ofrece no pasa el schema y el periodo es hoy.
  */
-export function useDashboardKpiPeriod(): DashboardPeriodState {
-  const today = getBusinessTodayIsoDate();
-  const [range, setRange] = useState<DateRangeValue>({ preset: "today" });
-
-  return useMemo(
-    () => ({
-      ...describeDashboardPeriod(normalizeDashboardRange(range, today), today),
-      setRange,
-      today,
-    }),
-    [range, today],
-  );
+function createPeriodSchema(presets: readonly AnyDateRangePreset[]) {
+  return z.object({
+    from: listParams.date(),
+    preset: listParams.oneOf(["", ...presets], ""),
+    to: listParams.date(),
+  });
 }
+
+const PERIOD_CONFIG = {
+  platform: {
+    presets: DASHBOARD_PLATFORM_PRESETS,
+    schema: createPeriodSchema(DASHBOARD_PLATFORM_PRESETS),
+  },
+  store: {
+    presets: DASHBOARD_STORE_PRESETS,
+    schema: createPeriodSchema(DASHBOARD_STORE_PRESETS),
+  },
+} as const;
+
+const DEFAULT_PERIOD_PARAMS = { from: "", preset: "", to: "" } as const;
 
 /**
  * Periodo del dashboard guardado en la URL (`from` / `to` / `preset`), por
  * defecto hoy: el periodo por defecto no se escribe. Usa `useUrlListState`, así
  * que la pantalla necesita su límite de Suspense (`withUrlListBoundary`).
+ *
+ * `variant` elige los periodos: `"store"` (por defecto) los de siempre;
+ * `"platform"` añade 14 días, 3 meses, 6 meses y "Desde el inicio".
  */
-export function useDashboardUrlPeriod(): DashboardPeriodState {
+export function useDashboardUrlPeriod(
+  variant: DashboardPeriodVariant = "store",
+): DashboardPeriodState {
   const today = getBusinessTodayIsoDate();
-  const { setState, state } = useUrlListState(dashboardPeriodSchema);
+  const { presets, schema } = PERIOD_CONFIG[variant];
+  const { setState, state } = useUrlListState(schema);
   const { from, preset, to } = state;
 
   const setRange = useCallback(
-    (next: DateRangeChange) => {
+    (next: DateRangeChange<AnyDateRangePreset>) => {
       const isDefault = normalizeDashboardRange(next, today).preset === "today";
 
       setState(isDefault ? DEFAULT_PERIOD_PARAMS : serializeDateRange(next));
@@ -75,12 +85,16 @@ export function useDashboardUrlPeriod(): DashboardPeriodState {
   return useMemo(
     () => ({
       ...describeDashboardPeriod(
-        normalizeDashboardRange(parseDateRangeParams({ from, preset, to }, today), today),
+        normalizeDashboardRange(
+          parseDateRangeParams<AnyDateRangePreset>({ from, preset, to }, today, presets),
+          today,
+        ),
         today,
       ),
+      presets,
       setRange,
       today,
     }),
-    [from, preset, setRange, to, today],
+    [from, preset, presets, setRange, to, today],
   );
 }

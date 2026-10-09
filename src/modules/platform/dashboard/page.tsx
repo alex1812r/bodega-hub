@@ -10,7 +10,7 @@ import { DashboardLowStockCard } from "@/modules/dashboard/components/DashboardL
 import { DashboardPeriodField } from "@/modules/dashboard/components/DashboardPeriodField";
 import { DashboardRecentSalesCard } from "@/modules/dashboard/components/DashboardRecentSalesCard";
 import { DashboardSalesChartCard } from "@/modules/dashboard/components/DashboardSalesChartCard";
-import { useDashboardKpiPeriod } from "@/modules/dashboard/hooks/useDashboardKpiPeriod";
+import { useDashboardUrlPeriod } from "@/modules/dashboard/hooks/useDashboardKpiPeriod";
 import {
   type DashboardRequestScope,
   useDashboardMetrics,
@@ -20,6 +20,7 @@ import { Button } from "@/shared/components/Button";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { Typography } from "@/shared/components/Typography";
+import { withUrlListBoundary } from "@/shared/hooks/useUrlListState";
 
 import { PlatformStoreScopeFilter } from "../components/PlatformStoreScopeFilter";
 import type { PlatformStoreScope } from "../types/reports";
@@ -32,8 +33,8 @@ function scopeSubtitle(scope: PlatformStoreScope, selectedCount: number) {
     : "Selecciona tiendas";
 }
 
-export function PlatformDashboardPage() {
-  const kpiPeriod = useDashboardKpiPeriod();
+function PlatformDashboardScreen() {
+  const kpiPeriod = useDashboardUrlPeriod("platform");
   const [storeScope, setStoreScope] = useState<PlatformStoreScope>("all");
   const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
 
@@ -154,3 +155,6 @@ export function PlatformDashboardPage() {
     </div>
   );
 }
+
+/** El periodo vive en la URL (`useUrlListState`): la pantalla lleva su límite de Suspense. */
+export const PlatformDashboardPage = withUrlListBoundary(PlatformDashboardScreen);

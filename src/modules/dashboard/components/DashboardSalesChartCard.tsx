@@ -7,7 +7,7 @@ import {
   type ReportGroupBy,
   toTimeSeriesPoints,
 } from "@/modules/reports/services/reportSeries";
-import { formatDateRangeLabel } from "@/shared/components/DateRangeField";
+import { DATE_RANGE_PRESET_LABELS, formatDateRangeLabel } from "@/shared/components/DateRangeField";
 import { TimeSeriesChart, type TimeSeriesSeries } from "@/shared/components/TimeSeriesChart";
 import { formatRef } from "@/shared/utils/currency";
 
@@ -28,8 +28,8 @@ const GROUP_BY_LABELS: Record<ReportGroupBy, string> = {
 const SERIES_FIELDS = { count: "count", valueRef: "totalRef", valueVes: "totalVes" } as const;
 
 type DashboardSalesChartCardProps = {
-  /** Periodo del dashboard. Sin él, hoy. */
-  range?: { from: string; to: string };
+  /** Periodo del dashboard. Sin él, hoy. Sin `from`, desde el inicio. */
+  range?: { from?: string; to: string };
   scope?: DashboardRequestScope;
 };
 
@@ -58,18 +58,30 @@ function toChartSeries(series: DailySalesSeries | null | undefined): TimeSeriesS
  * Flujo de ventas del periodo del dashboard: línea con los picos destacados y
  * el periodo anterior atenuado. Con un periodo de menos de 7 días muestra los
  * últimos 7 que terminan en su último día, para que siempre haya picos que ver.
+ * Desde el inicio va del primer día con ventas a hoy, sin periodo anterior.
  */
 export function DashboardSalesChartCard({ range, scope }: DashboardSalesChartCardProps = {}) {
   const today = getBusinessTodayIsoDate();
-  const from = range?.from ?? today;
+  const from = range ? range.from : today;
   const to = range?.to ?? today;
   const chartRange = useMemo(() => resolveDashboardChartRange({ from, to }), [from, to]);
   const trend = useDashboardSalesTrend(
-    { compare: true, from: chartRange.from, to: chartRange.to },
+    chartRange.from === undefined
+      ? { fromStart: true, to: chartRange.to }
+      : { compare: true, from: chartRange.from, to: chartRange.to },
     scope,
   );
   const series = trend.data?.series;
   const chartSeries = useMemo(() => toChartSeries(series), [series]);
+  const rangeLabel =
+    chartRange.from === undefined
+      ? [
+          DATE_RANGE_PRESET_LABELS.all_time,
+          series ? formatDateRangeLabel(series.range.from, series.range.to) : null,
+        ]
+          .filter((part) => part !== null)
+          .join(" · ")
+      : formatDateRangeLabel(chartRange.from, chartRange.to);
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4 rounded-xl border border-border bg-surface-container-lowest p-5 shadow-sm">
@@ -77,7 +89,7 @@ export function DashboardSalesChartCard({ range, scope }: DashboardSalesChartCar
         <div className="min-w-0">
           <h2 className="text-lg font-semibold text-foreground">Flujo de ventas</h2>
           <p className="text-sm text-on-surface-variant">
-            {formatDateRangeLabel(chartRange.from, chartRange.to)}
+            {rangeLabel}
             {series ? ` · ${GROUP_BY_LABELS[series.groupBy]}` : ""}
             {chartRange.widened
               ? ` · últimos ${DASHBOARD_CHART_MIN_DAYS} días (el periodo elegido es más corto)`

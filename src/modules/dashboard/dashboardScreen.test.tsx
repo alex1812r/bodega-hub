@@ -254,6 +254,49 @@ describe("/dashboard · periodo único en la URL y peticiones por rol", () => {
     await waitFor(() => expect(window.location.search).toBe(""));
   });
 
+  describe("REP-F3 · el dashboard de tienda no cambia", () => {
+    it("muestra exactamente los ocho chips de siempre, sin los de plataforma", async () => {
+      renderDashboard();
+      await waitForDashboard();
+
+      const period = screen.getByRole("group", { name: "Periodo" });
+
+      expect(within(period).getAllByRole("button").map((chip) => chip.textContent)).toEqual([
+        "Hoy",
+        "Ayer",
+        "Esta semana",
+        "Semana pasada",
+        "Este mes",
+        "Mes pasado",
+        "Últimos 30 días",
+        "Personalizado",
+      ]);
+
+      for (const name of ["Últimos 14 días", "Últimos 3 meses", "Últimos 6 meses", "Desde el inicio"]) {
+        expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+      }
+    });
+
+    it.each(["all_time", "last_14_days", "last_3_months", "last_6_months"])(
+      "?preset=%s no es un periodo de tienda: el periodo es hoy y nada se pide con fromStart",
+      async (preset) => {
+        window.history.replaceState(null, "", `/dashboard?preset=${preset}`);
+        renderDashboard();
+        await waitForDashboard();
+
+        expect(screen.getByRole("button", { name: "Hoy" })).toHaveAttribute("aria-pressed", "true");
+        expect(requestsTo("/api/dashboard/metrics").sort()).toEqual([
+          "?from=2026-05-17&to=2026-05-17",
+          `?from=${TODAY}&to=${TODAY}`,
+        ]);
+        expect(requestsTo("/api/dashboard/sales-trend")).toEqual([
+          `?compare=1&from=2026-05-12&to=${TODAY}`,
+        ]);
+        expect(requests.filter((request) => request.query.includes("fromStart"))).toEqual([]);
+      },
+    );
+  });
+
   describe("limpieza del módulo", () => {
     function sourceFiles(directory: string): string[] {
       return readdirSync(directory).flatMap((entry) => {

@@ -5,7 +5,9 @@ import { DateRangeField } from "@/shared/components/DateRangeField";
 
 type DashboardPeriodFieldProps = {
   className?: string;
-  period: Pick<DashboardPeriodState, "range" | "setRange" | "today">;
+  /** `presets` son los chips de la pantalla; sin ellos, los de por defecto. */
+  period: Pick<DashboardPeriodState, "range" | "setRange" | "today"> &
+    Partial<Pick<DashboardPeriodState, "presets">>;
 };
 
 /**
@@ -19,6 +21,7 @@ export function DashboardPeriodField({ className, period }: DashboardPeriodField
       label="Periodo"
       maxDate={period.today}
       onChange={period.setRange}
+      presets={period.presets}
       size="sm"
       today={period.today}
       value={period.range}
