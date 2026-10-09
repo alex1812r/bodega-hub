@@ -188,6 +188,13 @@ const purchasesColumns: DataTableColumn<PurchasesReportRow>[] = [
   { header: "Proveedor", key: "supplier", render: (row) => row.supplier?.name ?? row.supplierId },
   { header: "Fecha", key: "createdAt", render: (row) => formatDate(row.createdAt) },
   { align: "right", header: "Items", key: "itemsCount", render: (row) => row.itemsCount },
+  {
+    align: "right",
+    header: "Total REF",
+    key: "totalRef",
+    // El gráfico totaliza en REF: la tabla lo trae para poder cuadrarlo. Una fila sin el dato, «—».
+    render: (row) => (Number.isFinite(row.totalRef) ? formatRef(row.totalRef) : "—"),
+  },
   { align: "right", header: "Total VES", key: "totalVes", render: (row) => formatVes(row.totalVes) },
 ];
 

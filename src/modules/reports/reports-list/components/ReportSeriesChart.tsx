@@ -1,10 +1,14 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { formatDateRangeLabel } from "@/shared/components/DateRangeField";
-import { TimeSeriesChart, type TimeSeriesPoint } from "@/shared/components/TimeSeriesChart";
-import { formatRef } from "@/shared/utils/currency";
+import {
+  TimeSeriesChart,
+  type TimeSeriesCurrency,
+  type TimeSeriesPoint,
+} from "@/shared/components/TimeSeriesChart";
+import { formatRef, formatVesBs } from "@/shared/utils/currency";
 
 import type { ReportDateRangeFilters } from "../../hooks/useReports";
 import {
@@ -43,6 +47,11 @@ export function getGroupingNotice(
 
 function hasMovement(point: TimeSeriesPoint) {
   return point.valueRef !== 0 || Boolean(point.count);
+}
+
+/** Misma regla que el gráfico para ofrecer «Bs»: algún punto trae su importe en bolívares. */
+function hasVesValue(point: TimeSeriesPoint) {
+  return typeof point.valueVes === "number" && Number.isFinite(point.valueVes);
 }
 
 export type ReportSeriesChartMeasure<M extends ReportSeriesMeasures> = {
@@ -111,6 +120,12 @@ export function ReportSeriesChart<M extends ReportSeriesMeasures>({
     ];
   }, [buckets, count, name, previousBuckets, report.id, valueRef, valueVes]);
   const isCompared = Boolean(previousBuckets);
+  // La moneda del gráfico se guarda aquí para que el total de la cabecera la siga.
+  const [currency, setCurrency] = useState<TimeSeriesCurrency>("ref");
+  const canShowVes = chartSeries.some((item) =>
+    [...item.points, ...item.previousPoints].some(hasVesValue),
+  );
+  const totalInVes = currency === "ves" && canShowVes && valueVes !== undefined;
 
   return (
     <ReportChartCard
@@ -128,13 +143,19 @@ export function ReportSeriesChart<M extends ReportSeriesMeasures>({
       title={report.name}
       total={
         series
-          ? { label: measure.totalLabel, value: formatRef(series.totals.current[valueRef]) }
+          ? {
+              label: measure.totalLabel,
+              value: totalInVes
+                ? formatVesBs(series.totals.current[valueVes])
+                : formatRef(series.totals.current[valueRef]),
+            }
           : undefined
       }
     >
       <TimeSeriesChart
         ariaLabel={report.name}
         countLabel={measure.countLabel}
+        currency={currency}
         emptyDescription={
           hasFullRange
             ? "Prueba con otro rango de fechas."
@@ -143,6 +164,7 @@ export function ReportSeriesChart<M extends ReportSeriesMeasures>({
         emptyTitle={hasFullRange ? "Sin datos en este periodo" : "Elige un rango de fechas"}
         error={error?.message}
         loading={isLoading}
+        onCurrencyChange={setCurrency}
         onRetry={onRetry}
         series={chartSeries}
       />

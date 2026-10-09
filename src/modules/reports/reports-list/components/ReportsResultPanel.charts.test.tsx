@@ -10,6 +10,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { paymentMethodLabels } from "@/shared/payments/paymentMethods";
+import { formatRef, formatVesBs } from "@/shared/utils/currency";
 
 import type { ReportDateRangeFilters } from "../../hooks/useReports";
 import {
@@ -787,6 +788,79 @@ describe("ReportsResultPanel · gráficos (REP-04)", () => {
       await user.click(screen.getByRole("button", { name: "Ir a pagina 2" }));
 
       expect(setSkip).toHaveBeenCalledWith(10);
+    });
+  });
+  describe("REP-F6 · moneda del gráfico y REF en la tabla de compras", () => {
+    const request = seriesRequest("from=2026-05-01&to=2026-05-10&groupBy=auto");
+
+    it("el total de la cabecera sigue al conmutador REF / Bs del gráfico", async () => {
+      const user = userEvent.setup();
+
+      mockResponses["daily-sales"] = {
+        data: page([row(1, 100)], {
+          series: buildDailySalesSeries(request, [sale("2026-05-02", 100), sale("2026-05-05", 50)]),
+        }),
+      };
+      renderPanel("daily-sales");
+
+      const region = within(chartRegion("daily-sales"));
+      const total = () => region.getByText(/^Total vendido/);
+
+      expect(total()).toHaveTextContent(`Total vendido ${formatRef(150)}`);
+
+      await user.click(region.getByRole("button", { name: "Bs" }));
+
+      expect(region.getByRole("button", { name: "Bs" })).toHaveAttribute("aria-pressed", "true");
+      expect(total()).toHaveTextContent(`Total vendido ${formatVesBs(6000)}`);
+      expect(total()).not.toHaveTextContent(formatRef(150));
+
+      await user.click(region.getByRole("button", { name: "REF" }));
+
+      expect(total()).toHaveTextContent(`Total vendido ${formatRef(150)}`);
+    });
+
+    it("una serie sin importes en Bs (ganancia bruta) deja el total en REF y sin conmutador", () => {
+      mockResponses["gross-profit"] = {
+        data: page([row(1, 100)], {
+          series: buildGrossProfitSeries(request, [
+            { day: "2026-05-02", values: { costRef: 60, grossProfitRef: 40, revenueRef: 100 } },
+          ]),
+        }),
+      };
+      renderPanel("gross-profit");
+
+      const region = within(chartRegion("gross-profit"));
+
+      expect(region.queryByRole("button", { name: "Bs" })).not.toBeInTheDocument();
+      expect(region.getByText(/^Ganancia bruta/, { selector: "p" })).toHaveTextContent(formatRef(40));
+    });
+
+    it("la tabla de compras muestra el total en REF junto al de VES, o «—» si la fila no lo trae", () => {
+      const withoutRef: Partial<ReturnType<typeof row>> = row(2, 50);
+
+      delete withoutRef.totalRef;
+
+      mockResponses.purchases = {
+        data: page([row(1, 100), withoutRef], {
+          series: buildPurchasesSeries(request, [
+            { day: "2026-05-02", values: { count: 1, totalRef: 100, totalVes: 4000 } },
+          ]),
+        }),
+      };
+      renderPanel("purchases");
+
+      const table = within(screen.getByRole("table"));
+      const headers = table.getAllByRole("columnheader").map((header) => header.textContent);
+
+      expect(headers).toEqual(expect.arrayContaining(["Total REF", "Total VES"]));
+      expect(headers.indexOf("Total REF")).toBeLessThan(headers.indexOf("Total VES"));
+
+      const [first, second] = table.getAllByRole("row").slice(1);
+
+      expect(within(first!).getAllByRole("cell")[headers.indexOf("Total REF")]).toHaveTextContent(
+        formatRef(100),
+      );
+      expect(within(second!).getAllByRole("cell")[headers.indexOf("Total REF")]).toHaveTextContent("—");
     });
   });
 });
