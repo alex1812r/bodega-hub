@@ -821,17 +821,44 @@ describe("MoneyReportPanel · REP-06b", () => {
       expect(container.innerHTML).not.toMatch(/NaN|Infinity/);
     });
 
-    it("en Bs el conmutador del gráfico cambia la misma moneda de la URL, no solo el dibujo", async () => {
+    it("el resumen accesible da el último acumulado, no la suma de los puntos", () => {
+      mockQueries.useCashCloseDifferencesReport = { data: closeReport(rows) };
+      renderPanel("cash-close-differences");
+
+      const chart = screen.getByRole("img");
+
+      // Acumulados 5 · −7,5 · −7,5 · −5: el último es −5 (la suma, −15, no significa nada).
+      expect(chart).toHaveAccessibleName(
+        expect.stringContaining("Diferencia acumulada en Bs: último valor Bs. -5,00 (04/05/2026, 18:00)"),
+      );
+      expect(chart).not.toHaveAccessibleName(expect.stringContaining("total"));
+      expect(chart).not.toHaveAccessibleName(expect.stringContaining("15,00"));
+    });
+
+    it("los puntos llegan al gráfico sin NaN: en Bs no llevan valor en REF", () => {
+      mockQueries.useCashCloseDifferencesReport = { data: closeReport(rows) };
+      renderPanel("cash-close-differences");
+
+      // 4 cierres = 4 marcadores, todos con coordenadas reales.
+      const dots = [...screen.getByRole("img").querySelectorAll(".recharts-line-dot")];
+
+      expect(dots).toHaveLength(4);
+      for (const dot of dots) {
+        expect(Number.isFinite(Number(dot.getAttribute("cy")))).toBe(true);
+      }
+    });
+
+    it("hay un solo control de moneda: el del panel; el gráfico no pinta el suyo", async () => {
       const onFiltersChange = jest.fn();
 
       mockQueries.useCashCloseDifferencesReport = { data: closeReport(rows) };
       renderPanel("cash-close-differences", { onFiltersChange });
 
-      const toggle = within(screen.getByRole("group", { name: "Moneda del gráfico" }));
+      expect(screen.queryByRole("group", { name: "Moneda del gráfico" })).not.toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "REF" })).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: "Bs" })).toHaveLength(1);
 
-      expect(toggle.getByRole("button", { name: "Bs" })).toHaveAttribute("aria-pressed", "true");
-
-      await userEvent.click(toggle.getByRole("button", { name: "REF" }));
+      await userEvent.click(within(screen.getByRole("group", { name: "Moneda" })).getByRole("button", { name: "REF" }));
 
       expect(onFiltersChange).toHaveBeenLastCalledWith({ currency: "ref" });
       // Hasta que la URL cambie y lleguen los cierres en REF, el gráfico sigue en Bs.

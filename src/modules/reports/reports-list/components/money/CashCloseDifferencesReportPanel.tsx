@@ -150,11 +150,11 @@ function TotalsStrip({ totals }: { totals: readonly CashCloseCurrencyTotals[] })
 }
 
 /**
- * Un punto por cierre, en orden de cierre. El gráfico solo recibe la moneda
- * elegida: en Bs el valor va en `valueVes` (y `valueRef` sin dato), en REF solo
- * en `valueRef`; así nunca pinta una moneda con las cifras de la otra.
+ * Un punto por cierre, en orden de cierre. Cada cierre existe en una sola
+ * moneda: en Bs el valor va en `valueVes` (sin valor en REF), en REF solo en
+ * `valueRef`; así el gráfico nunca pinta una moneda con las cifras de la otra.
  */
-function toRunningPoints(rows: readonly CashCloseDifferenceRow[], currency: CashCloseCurrency) {
+function toRunningPoints(rows: readonly CashCloseDifferenceRow[]) {
   return [...rows]
     .sort((first, second) => first.closedAt.localeCompare(second.closedAt))
     .map<TimeSeriesPoint>((row) => {
@@ -164,8 +164,8 @@ function toRunningPoints(rows: readonly CashCloseDifferenceRow[], currency: Cash
         key: row.cashSessionId,
         label: when.slice(0, 5),
         title: row.registerName ? `${when} · ${row.registerName}` : when,
-        ...(currency === "ves"
-          ? { valueRef: Number.NaN, valueVes: row.runningDifference }
+        ...(row.currency === "ves"
+          ? { valueRef: null, valueVes: row.runningDifference }
           : { valueRef: row.runningDifference }),
       };
     });
@@ -208,7 +208,7 @@ export function CashCloseDifferencesReportPanel({
       {
         id: "running-difference",
         name: `Diferencia acumulada en ${CASH_CLOSE_CURRENCY_LABELS[currency]}`,
-        points: toRunningPoints(items ?? [], currency),
+        points: toRunningPoints(items ?? []),
       },
     ],
     [currency, items],
@@ -240,11 +240,13 @@ export function CashCloseDifferencesReportPanel({
               currency={currency}
               emptyDescription="No hay cierres de caja en este rango."
               emptyTitle="Sin cierres"
+              // La moneda se elige arriba (un solo control, el de la URL).
+              hideCurrencyToggle
               loading={query.isLoading}
-              // Un clic en el conmutador del gráfico (solo aparece en Bs) cambia la misma moneda de la URL.
-              onCurrencyChange={onCurrencyChange}
               peakCount={0}
               series={series}
+              // La serie ya es un acumulado: se resume con su último valor, no con la suma.
+              summary="last"
             />
           </>
         )}

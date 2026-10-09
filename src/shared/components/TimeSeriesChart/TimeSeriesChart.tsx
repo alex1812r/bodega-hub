@@ -38,6 +38,7 @@ import {
   type TimeSeriesCurrency,
   type TimeSeriesRow,
   type TimeSeriesSeries,
+  type TimeSeriesSummaryMode,
 } from "./chartData";
 import { findPeaks, layoutPeakLabels } from "./peaks";
 import { computeYScale, formatAxisValue } from "./scale";
@@ -69,6 +70,17 @@ export type TimeSeriesChartProps = {
   /** Moneda inicial en modo no controlado. Por defecto REF. */
   defaultCurrency?: TimeSeriesCurrency;
   onCurrencyChange?: (currency: TimeSeriesCurrency) => void;
+  /**
+   * No dibuja el control REF / Bs: la moneda la elige quien usa el gráfico, con
+   * su propio control, y la pasa en `currency`. Por defecto `false`.
+   */
+  hideCurrencyToggle?: boolean;
+  /**
+   * Cifra de cada serie en el resumen accesible (`aria-label`). `sum` (por
+   * defecto): total de sus puntos. `last`: su último valor, para un acumulado
+   * o un saldo. `none`: solo el rango.
+   */
+  summary?: TimeSeriesSummaryMode;
   loading?: boolean;
   /** Mensaje de error; si viene, sustituye al gráfico. */
   error?: string | null;
@@ -308,6 +320,7 @@ export function TimeSeriesChart({
   emptyTitle = "Sin datos en este periodo",
   error,
   height = DEFAULT_HEIGHT,
+  hideCurrencyToggle = false,
   loading = false,
   markerLimit = DEFAULT_MARKER_LIMIT,
   onCurrencyChange,
@@ -315,6 +328,7 @@ export function TimeSeriesChart({
   peakCount = DEFAULT_PEAK_COUNT,
   ref,
   series,
+  summary: summaryMode = "sum",
 }: TimeSeriesChartProps) {
   const [ownCurrency, setOwnCurrency] = useState<TimeSeriesCurrency>(defaultCurrency);
   const canShowVes = useMemo(() => hasVesValues(series), [series]);
@@ -351,8 +365,8 @@ export function TimeSeriesChart({
   );
 
   const summary = useMemo(
-    () => summarizeChart({ ariaLabel, currency: activeCurrency, rows, series }),
-    [activeCurrency, ariaLabel, rows, series],
+    () => summarizeChart({ ariaLabel, currency: activeCurrency, mode: summaryMode, rows, series }),
+    [activeCurrency, ariaLabel, rows, series, summaryMode],
   );
 
   function handleCurrencyChange(next: TimeSeriesCurrency) {
@@ -385,13 +399,14 @@ export function TimeSeriesChart({
 
   const showDots = rows.length <= markerLimit;
   const showLegend = drawn.length > 1 || drawn.some((item) => item.previousIsVisible);
+  const showCurrencyToggle = canShowVes && !hideCurrencyToggle;
 
   return (
     <div className={cn("flex min-w-0 flex-col gap-3", className)}>
-      {showLegend || canShowVes ? (
+      {showLegend || showCurrencyToggle ? (
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
           {showLegend ? <ChartLegend series={drawn} /> : <span />}
-          {canShowVes ? (
+          {showCurrencyToggle ? (
             <CurrencyToggle onChange={handleCurrencyChange} value={activeCurrency} />
           ) : null}
         </div>

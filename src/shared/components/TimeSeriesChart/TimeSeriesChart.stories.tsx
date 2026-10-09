@@ -24,7 +24,10 @@ function dailyValue(index: number, base: number) {
   return Math.round(base * weekly * (wave + jitter) * 100) / 100;
 }
 
-function makeDays(length: number, start: string, base: number): TimeSeriesPoint[] {
+/** Puntos de las historias: siempre con valor en REF. */
+type RefPoint = TimeSeriesPoint & { valueRef: number };
+
+function makeDays(length: number, start: string, base: number): RefPoint[] {
   return Array.from({ length }, (_, index) => {
     const valueRef = dailyValue(index, base);
 
@@ -253,6 +256,40 @@ export const GrossProfitWithLosses: Story = {
         })),
       },
     ],
+  },
+};
+
+/**
+ * Acumulado en una sola moneda (diferencias de cierre de caja en Bs): la moneda
+ * la elige la pantalla, así que el gráfico no pinta su control REF / Bs
+ * (`hideCurrencyToggle`), y el resumen accesible da el último acumulado, no la
+ * suma de los puntos (`summary="last"`).
+ */
+export const RunningTotalSingleCurrency: Story = {
+  args: {
+    ariaLabel: "Diferencias de cierre de caja: acumulado en Bs",
+    countLabel: "cierres",
+    currency: "ves",
+    hideCurrencyToggle: true,
+    peakCount: 0,
+    series: [
+      {
+        id: "running-difference",
+        name: "Diferencia acumulada en Bs",
+        points: [120, -340.5, -340.5, -90, 45.25, -210].map((valueVes, index) => ({
+          key: `cierre-${index + 1}`,
+          label: `${String(index + 12).padStart(2, "0")}/03`,
+          title: `${String(index + 12).padStart(2, "0")}/03/2024 18:00 · Caja principal`,
+          valueRef: null,
+          valueVes,
+        })),
+      },
+    ],
+    summary: "last",
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.queryByRole("group", { name: "Moneda del gráfico" })).toBeNull();
+    await expect(canvas.getByRole("img")).toHaveAccessibleName(/último valor/);
   },
 };
 

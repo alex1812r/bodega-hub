@@ -576,6 +576,93 @@ describe("TimeSeriesChart", () => {
     });
   });
 
+  describe("moneda elegida fuera y resumen de un acumulado", () => {
+    /** Acumulado de cierres en Bs: los puntos no tienen valor en REF. */
+    const RUNNING: TimeSeriesSeries = {
+      id: "running",
+      name: "Diferencia acumulada",
+      points: [5, -7.5, -7.5, -5].map((valueVes, index) => ({
+        key: `cierre-${index + 1}`,
+        label: `0${index + 1}/05`,
+        title: `cierre ${index + 1}`,
+        valueRef: null,
+        valueVes,
+      })),
+    };
+
+    it("hideCurrencyToggle: sin control REF / Bs; manda la prop currency", async () => {
+      render(
+        <TimeSeriesChart ariaLabel="Ventas" currency="ves" hideCurrencyToggle peakCount={1} series={[SALES]} />,
+      );
+      await waitForLines(1);
+
+      expect(screen.queryByRole("group", { name: "Moneda del gráfico" })).not.toBeInTheDocument();
+      await waitFor(() => expect(peakLabels()).toEqual(["Bs. 3.200,00"]));
+    });
+
+    it("hideCurrencyToggle conserva la leyenda cuando hay varias series", async () => {
+      render(
+        <TimeSeriesChart
+          ariaLabel="Ventas"
+          hideCurrencyToggle
+          series={[SALES, { ...SALES, id: "other", name: "Compras" }]}
+        />,
+      );
+      await waitForLines(2);
+
+      expect(screen.getByText("Compras")).toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: "Moneda del gráfico" })).not.toBeInTheDocument();
+    });
+
+    it("puntos solo en Bs (valueRef null): se dibujan en Bs sin NaN", async () => {
+      render(
+        <TimeSeriesChart
+          ariaLabel="Cierres"
+          currency="ves"
+          hideCurrencyToggle
+          peakCount={0}
+          series={[RUNNING]}
+          summary="last"
+        />,
+      );
+      await waitForLines(1);
+
+      expect(getChart().querySelectorAll(".recharts-line-dot")).toHaveLength(4);
+      expectCleanRender();
+    });
+
+    it('summary="last": el resumen accesible da el último valor, no la suma', async () => {
+      render(
+        <TimeSeriesChart
+          ariaLabel="Cierres"
+          currency="ves"
+          hideCurrencyToggle
+          series={[RUNNING]}
+          summary="last"
+        />,
+      );
+      await waitForLines(1);
+
+      expect(getChart()).toHaveAccessibleName(
+        expect.stringMatching(
+          /^Cierres: 4 puntos, del cierre 1 al cierre 4\. Diferencia acumulada: último valor .*5,00 \(cierre 4\), máximo Bs\. 5,00 \(cierre 1\)\.$/,
+        ),
+      );
+      expect(getChart()).not.toHaveAccessibleName(expect.stringContaining("total"));
+    });
+
+    it('summary="none": solo el rango; por defecto sigue sumando', async () => {
+      const { rerender } = render(<TimeSeriesChart ariaLabel="Ventas" series={[SALES]} summary="none" />);
+      await waitForLines(1);
+
+      expect(getChart()).toHaveAccessibleName(expect.stringMatching(/^Ventas: 7 puntos, del [^.]+\.$/));
+
+      rerender(<TimeSeriesChart ariaLabel="Ventas" series={[SALES]} />);
+
+      expect(getChart()).toHaveAccessibleName(expect.stringContaining("Ventas: total ref 245.00"));
+    });
+  });
+
   describe("varias series", () => {
     const five: TimeSeriesSeries[] = ["Efectivo", "Pago móvil", "Punto", "Zelle", "Crédito"].map(
       (name, index) => ({

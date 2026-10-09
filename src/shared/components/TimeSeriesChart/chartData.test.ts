@@ -189,6 +189,49 @@ describe("summarizeChart", () => {
     ).toContain("máximo Bs. 10.020,00");
   });
 
+  it("mode=last: último valor en vez de la suma, para un acumulado", () => {
+    const rows = buildRows([
+      {
+        id: "running",
+        name: "Diferencia acumulada",
+        points: [
+          { key: "a", title: "cierre 1", valueRef: null, valueVes: 5 },
+          { key: "b", title: "cierre 2", valueRef: null, valueVes: -7.5 },
+          { key: "c", title: "cierre 3", valueRef: null, valueVes: -5 },
+        ],
+      },
+    ]);
+    const running = [{ id: "running", name: "Diferencia acumulada" }];
+    const last = summarizeChart({
+      ariaLabel: "Cierres",
+      currency: "ves",
+      mode: "last",
+      rows,
+      series: running,
+    });
+
+    expect(last).toMatch(
+      /^Cierres: 3 puntos, del cierre 1 al cierre 3\. Diferencia acumulada: último valor .*5,00 \(cierre 3\), máximo Bs\. 5,00 \(cierre 1\)\.$/,
+    );
+    expect(last).not.toContain("total");
+    // Sin `mode` sigue sumando, como siempre.
+    expect(summarizeChart({ ariaLabel: "Cierres", currency: "ves", rows, series: running })).toMatch(
+      /Diferencia acumulada: total .*7,50, máximo/,
+    );
+    // Los puntos solo en Bs no tienen cifra en REF: no se inventa ninguna.
+    expect(
+      summarizeChart({ ariaLabel: "Cierres", currency: "ref", mode: "last", rows, series: running }),
+    ).toBe("Cierres: 3 puntos, del cierre 1 al cierre 3.");
+  });
+
+  it("mode=none: solo el rango", () => {
+    const rows = buildRows([SALES]);
+
+    expect(summarizeChart({ ariaLabel: "Ventas", currency: "ref", mode: "none", rows, series })).toBe(
+      "Ventas: 3 puntos, del martes, 6 de octubre de 2026 al jueves, 8 de octubre de 2026.",
+    );
+  });
+
   it("un solo punto y sin datos", () => {
     const rows = buildRows([{ ...SALES, points: SALES.points.slice(0, 1) }]);
 

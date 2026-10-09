@@ -1,3 +1,8 @@
 export { TimeSeriesChart } from "./TimeSeriesChart";
 export type { TimeSeriesChartProps } from "./TimeSeriesChart";
-export type { TimeSeriesCurrency, TimeSeriesPoint, TimeSeriesSeries } from "./chartData";
+export type {
+  TimeSeriesCurrency,
+  TimeSeriesPoint,
+  TimeSeriesSeries,
+  TimeSeriesSummaryMode,
+} from "./chartData";

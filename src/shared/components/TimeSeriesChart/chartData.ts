@@ -17,7 +17,11 @@ export type TimeSeriesPoint = {
   label?: string;
   /** Título del tooltip. Si falta: la fecha larga en español para un día, o `label`. */
   title?: string;
-  valueRef: number;
+  /**
+   * Valor en REF. `null` = el punto solo existe en Bs (un cierre de caja en
+   * bolívares): no se dibuja en REF ni sale en REF en el tooltip.
+   */
+  valueRef: number | null;
   /** Mismo valor en Bs. Sin él, el punto no se dibuja en Bs. */
   valueVes?: number | null;
   /** Nº de operaciones del punto (ventas, compras…). */
@@ -187,15 +191,28 @@ export function hasPreviousPeriod(rows: readonly TimeSeriesRow[], seriesId: stri
   return rows.some((row) => pointValue(row.cells.get(seriesId)?.previous, "ref") !== null);
 }
 
+/**
+ * Qué cifra resume cada serie para el lector de pantalla. `sum`: el total de
+ * sus puntos (ventas por día). `last`: su último valor, para series que ya son
+ * un acumulado o un saldo, donde sumar los puntos no significa nada. `none`:
+ * solo el rango.
+ */
+export type TimeSeriesSummaryMode = "last" | "none" | "sum";
+
 type SummaryInput = {
   ariaLabel: string;
   currency: TimeSeriesCurrency;
+  /** Por defecto `sum`. */
+  mode?: TimeSeriesSummaryMode;
   rows: readonly TimeSeriesRow[];
   series: readonly Pick<TimeSeriesSeries, "id" | "name">[];
 };
 
-/** Resumen para lector de pantalla: rango, y total y máximo de cada serie. */
-export function summarizeChart({ ariaLabel, currency, rows, series }: SummaryInput) {
+/**
+ * Resumen para lector de pantalla: rango y, por serie, su total (o su último
+ * valor, según `mode`) y su máximo.
+ */
+export function summarizeChart({ ariaLabel, currency, mode = "sum", rows, series }: SummaryInput) {
   if (rows.length === 0) {
     return `${ariaLabel}: sin datos.`;
   }
@@ -205,8 +222,13 @@ export function summarizeChart({ ariaLabel, currency, rows, series }: SummaryInp
       ? `1 punto, ${rows[0].title}`
       : `${rows.length} puntos, del ${rows[0].title} al ${rows[rows.length - 1].title}`;
 
+  if (mode === "none") {
+    return `${ariaLabel}: ${range}.`;
+  }
+
   const parts = series.flatMap((item) => {
     let total = 0;
+    let last: { title: string; value: number } | null = null;
     let highest: { title: string; value: number } | null = null;
 
     for (const row of rows) {
@@ -217,18 +239,25 @@ export function summarizeChart({ ariaLabel, currency, rows, series }: SummaryInp
       }
 
       total += value;
+      last = { title: row.title, value };
 
       if (!highest || value > highest.value) {
         highest = { title: row.title, value };
       }
     }
 
-    return highest
-      ? [
-          `${item.name}: total ${formatMoney(roundMoney(total), currency)}, ` +
-            `máximo ${formatMoney(highest.value, currency)} (${highest.title}).`,
-        ]
-      : [];
+    if (!highest || !last) {
+      return [];
+    }
+
+    const headline =
+      mode === "last"
+        ? `último valor ${formatMoney(last.value, currency)} (${last.title})`
+        : `total ${formatMoney(roundMoney(total), currency)}`;
+
+    return [
+      `${item.name}: ${headline}, máximo ${formatMoney(highest.value, currency)} (${highest.title}).`,
+    ];
   });
 
   return [`${ariaLabel}: ${range}.`, ...parts].join(" ");
