@@ -1,5 +1,7 @@
 import { isIntegerText, parseNumberInput } from "@/shared/components/NumberInput";
 
+import { computePackOpeningEffect } from "./packOpeningEffect";
+
 /**
  * Reparto real de la apertura de un empaque surtido: cuántas unidades recibe
  * cada componente de la receta. Sin React: lo usan el control
@@ -7,6 +9,10 @@ import { isIntegerText, parseNumberInput } from "@/shared/components/NumberInput
  * lo que el usuario tecleó (p. ej. la previsualización de la recepción de una
  * compra). La regla es la de `convert_pack_to_units` (PRO-12): unidades enteras
  * ≥ 0 que suman `unidades por empaque × empaques`.
+ *
+ * La aritmética (totales, diferencia, unidades no válidas) es la de
+ * `computePackOpeningEffect` (INV-08): un solo cálculo para la apertura de
+ * empaque y para «Desarmar al recibir» (INT-02).
  */
 
 /** Lo que el reparto necesita de un componente de la receta. */
@@ -116,14 +122,24 @@ export function checkPackDistribution(
       distribution?.[component.unitProductId] ?? defaults[component.unitProductId] ?? 0,
     ]),
   );
-  const values = Object.values(units);
-  const hasInvalidUnits = values.some((value) => !Number.isInteger(value) || value < 0);
-  const expectedTotal = Object.values(defaults).reduce((total, value) => total + value, 0);
-  const distributedTotal = values.reduce(
-    (total, value) => total + (Number.isFinite(value) ? value : 0),
-    0,
-  );
-  const difference = distributedTotal - expectedTotal;
+  const effect = computePackOpeningEffect({
+    distribution: units,
+    packQuantity,
+    recipe: {
+      components: components.map((component) => ({
+        currentStock: 0,
+        isActive: true,
+        name: "",
+        sku: "",
+        unitProductId: component.unitProductId,
+        unitsPerPack: component.unitsPerPack,
+      })),
+      // El reparto no depende del stock del empaque: aquí nunca queda en negativo.
+      pack: { currentStock: packQuantity, name: "" },
+    },
+  });
+  const { difference, distributedTotal, expectedTotal } = effect;
+  const hasInvalidUnits = effect.issues.includes("invalid_units");
   const message = describeIssue(hasInvalidUnits, difference, expectedTotal);
 
   return {

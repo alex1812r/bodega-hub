@@ -5,6 +5,7 @@ import {
   parsePackDistribution,
   toPackDistributionList,
 } from "@/modules/inventory/inventory-movements/utils/packDistribution";
+import { computePackOpeningEffect } from "@/modules/inventory/inventory-movements/utils/packOpeningEffect";
 import type { ProductMock, PurchaseItemMock } from "@/shared/mocks/erp-data";
 
 import type {
@@ -192,23 +193,38 @@ export function buildReceivePreview(
         isAssorted && item.id ? options.distribution?.[item.id] : undefined,
       );
 
-      line.disassemble = {
-        components: recipe.components.map((component) => {
-          const before = runningStock.get(component.unitProductId) ?? component.currentStock;
-          const typed = distribution.units[component.unitProductId] ?? 0;
-          // Una cantidad que no es un número no suma: el aviso ya dice que el reparto no vale.
-          const quantityIn = Number.isFinite(typed) ? typed : 0;
+      // El mismo cálculo que la apertura de empaque de Inventario (INV-08): cada
+      // componente parte del stock encadenado y sube lo que diga el reparto (una
+      // cantidad que no es un número no suma: el aviso ya dice que no vale).
+      const effect = computePackOpeningEffect({
+        distribution: distribution.units,
+        packQuantity: item.quantity,
+        recipe: {
+          components: recipe.components.map((component) => ({
+            currentStock: runningStock.get(component.unitProductId) ?? component.currentStock,
+            isActive: component.isActive,
+            name: component.name,
+            sku: "",
+            unitProductId: component.unitProductId,
+            unitsPerPack: component.unitsPerPack,
+          })),
+          // Los empaques que se abren son los que acaban de entrar con la línea.
+          pack: { currentStock: item.quantity, name: line.name },
+        },
+      });
 
-          runningStock.set(component.unitProductId, before + quantityIn);
+      line.disassemble = {
+        components: effect.components.map((component, index) => {
+          runningStock.set(component.unitProductId, component.stockAfter);
 
           return {
             name: component.name,
             productId: component.unitProductId,
             productInactive: !component.isActive,
-            quantityIn,
-            stockAfter: before + quantityIn,
-            stockBefore: before,
-            unitsPerPack: component.unitsPerPack,
+            quantityIn: component.units,
+            stockAfter: component.stockAfter,
+            stockBefore: component.stockBefore,
+            unitsPerPack: recipe.components[index].unitsPerPack,
           };
         }),
         packsOut: item.quantity,

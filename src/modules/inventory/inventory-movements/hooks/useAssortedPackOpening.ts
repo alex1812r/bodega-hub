@@ -93,6 +93,15 @@ export function useAssortedPackOpening({
     setEdited({ packId: target.pack.id, values: { ...values, [unitProductId]: text } });
   }
 
+  /** Texto de todos los campos a la vez (lo que emite `PackDistributionFields`). */
+  function setValues(next: Record<string, string>) {
+    if (!target) {
+      return;
+    }
+
+    setEdited({ packId: target.pack.id, values: next });
+  }
+
   function reset() {
     setEdited(null);
     setConfirmOpen(false);
@@ -145,6 +154,8 @@ export function useAssortedPackOpening({
 
   return {
     closeConfirm: () => setConfirmOpen(false),
+    /** Componentes de la receta del surtido elegido (`[]` sin surtido). */
+    components: target?.components ?? [],
     confirm,
     confirmOpen,
     effect,
@@ -155,10 +166,12 @@ export function useAssortedPackOpening({
     isEdited: editedValues !== null,
     isPending: convert.isPending,
     openConfirm,
+    packQuantity,
     /** Limpia reparto, confirmación y error, y descarta el intento (al cerrar el modal anfitrión). */
     reset,
     resetDistribution: () => setEdited(null),
     setUnits,
+    setValues,
     showsDistribution,
     values,
   };

@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/shared/components/Button";
-import { NumberInput } from "@/shared/components/NumberInput";
+import { NumberInput, parseNumberInput } from "@/shared/components/NumberInput";
 
 import {
   buildDefaultPackDistribution,
@@ -10,6 +10,7 @@ import {
   type PackDistributionValue,
   parsePackDistribution,
 } from "../utils/packDistribution";
+import { computePackOpeningEffect } from "../utils/packOpeningEffect";
 
 /** Un componente de la receta tal como lo pinta el control. */
 export type PackDistributionFieldComponent = PackDistributionComponent & {
@@ -88,6 +89,30 @@ export function PackDistributionFields({
     ]),
   );
 
+  // Lo que se pinta (repartido de total) sale del efecto de la apertura de
+  // Inventario: un decimal a medio teclear cuenta en la suma; que no valga lo
+  // dice `check` (y el propio campo).
+  const effect = computePackOpeningEffect({
+    distribution: Object.fromEntries(
+      components.map((component) => [
+        component.unitProductId,
+        parseNumberInput(texts[component.unitProductId] ?? "") ?? 0,
+      ]),
+    ),
+    packQuantity,
+    recipe: {
+      components: components.map((component) => ({
+        currentStock: component.currentStock ?? 0,
+        isActive: component.isActive !== false,
+        name: component.name,
+        sku: component.sku ?? "",
+        unitProductId: component.unitProductId,
+        unitsPerPack: component.unitsPerPack,
+      })),
+      pack: { currentStock: packQuantity, name: "" },
+    },
+  });
+
   return (
     <fieldset className="grid min-w-0 gap-3 rounded-lg border border-outline-variant/30 p-3">
       <legend className="px-1 text-sm font-medium text-on-surface">{legend}</legend>
@@ -126,7 +151,7 @@ export function PackDistributionFields({
       </ul>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium tabular-nums text-on-surface">
-          {check.distributedTotal} de {check.expectedTotal} unidades
+          {effect.distributedTotal} de {effect.expectedTotal} unidades
         </p>
         <Button
           disabled={disabled || !check.isAdjusted}
