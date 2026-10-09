@@ -167,10 +167,17 @@ const popupClassName = `absolute left-0 right-0 top-full ${popupSurfaceClassName
 /**
  * Avisos del buscador (buscando, error, sin resultados): en móvil «Nuevo producto» queda
  * justo bajo el campo y un aviso flotante lo taparía, así que ocupan su sitio y lo
- * desplazan; desde `sm` el botón va al lado y flotan como la lista.
+ * desplazan; desde `sm` el botón va al lado y flotan como la lista. En móvil los tres
+ * reservan la misma altura (la del aviso sin resultados en dos renglones a 360 px): pasar
+ * de uno a otro mientras se escribe no mueve lo que hay debajo.
  */
-const popupNoticeClassName = `sm:absolute sm:left-0 sm:right-0 sm:top-full ${popupSurfaceClassName}`;
-const popupMessageClassName = "px-4 py-2.5 text-sm";
+const popupNoticeClassName = `min-h-[6.625rem] sm:absolute sm:left-0 sm:right-0 sm:top-full sm:min-h-0 ${popupSurfaceClassName}`;
+/**
+ * Aviso que sigue en su sitio en móvil después de pulsar fuera del buscador: desde `sm`,
+ * donde flota, se cierra como la lista.
+ */
+const popupNoticeMobileOnlyClassName = "sm:hidden";
+const popupMessageClassName = "flex items-center px-4 py-2.5 text-sm";
 
 /**
  * Lo buscado sin resultado, como punto de partida del producto nuevo: solo
@@ -237,7 +244,12 @@ export function PurchaseProductPickerCard({
   taxCatalog,
 }: PurchaseProductPickerCardProps) {
   const [scanOpen, setScanOpen] = useState(false);
+  // Lo que flota bajo el campo (la lista y, desde `sm`, los avisos): pulsar fuera lo cierra.
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Los avisos en móvil ocupan sitio: si pulsar fuera los quitara, lo de debajo subiría
+  // entre el `pointerdown` y el `click` y la pulsación caería en otro sitio. Solo los
+  // quita que cambie lo que avisan (texto vacío, resultados, producto agregado, alta abierta).
+  const [noticesOpen, setNoticesOpen] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const scanQueue = usePurchaseScanQueue(supplierId, handleScanSettled);
   const isLookingUp = scanQueue.pending > 0;
@@ -248,7 +260,12 @@ export function PurchaseProductPickerCard({
   const cameFromLastLock = useRef(false);
   const hasSupplier = Boolean(supplierId);
   const trimmedSearch = search.trim();
-  const showResults = pickerOpen && hasSupplier && trimmedSearch.length > 0;
+  const showNotices = noticesOpen && hasSupplier && trimmedSearch.length > 0;
+  const showResults = showNotices && pickerOpen;
+  const noticeClassName = cn(
+    popupNoticeClassName,
+    showResults ? null : popupNoticeMobileOnlyClassName,
+  );
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -292,7 +309,17 @@ export function PurchaseProductPickerCard({
     cameFromLastLock.current = false;
     setScanError(null);
     onSearchChange(value);
+    openPicker();
+  }
+
+  function openPicker() {
     setPickerOpen(true);
+    setNoticesOpen(true);
+  }
+
+  function closePicker() {
+    setPickerOpen(false);
+    setNoticesOpen(false);
   }
 
   // Sin su último costo todavía, la línea no nace con uno provisional: espera en la cola
@@ -306,11 +333,11 @@ export function PurchaseProductPickerCard({
     }
 
     onSearchChange("");
-    setPickerOpen(false);
+    closePicker();
   }
 
   function handleNewProduct(initialValues: ProductFormInitialValues, opener: HTMLElement | null) {
-    setPickerOpen(false);
+    closePicker();
     onNewProduct?.(initialValues, opener);
   }
 
@@ -337,7 +364,7 @@ export function PurchaseProductPickerCard({
 
     if (queued) {
       onSearchChange("");
-      setPickerOpen(false);
+      closePicker();
     }
   }
 
@@ -382,7 +409,7 @@ export function PurchaseProductPickerCard({
         // Pintado ya: si se seleccionara un instante después, el lector podría adelantarse.
         flushSync(() => {
           onSearchChange(text);
-          setPickerOpen(true);
+          openPicker();
         });
 
         if (document.activeElement === searchInputRef.current) {
@@ -449,17 +476,17 @@ export function PurchaseProductPickerCard({
                 : `Buscando ${scanQueue.pending} códigos escaneados...`}
             </p>
           ) : null}
-          {showResults && isSearching ? (
+          {showNotices && isSearching ? (
             <p
-              className={cn(popupNoticeClassName, popupMessageClassName, "text-muted-foreground")}
+              className={cn(noticeClassName, popupMessageClassName, "text-muted-foreground")}
               role="status"
             >
               Buscando...
             </p>
           ) : null}
-          {showResults && !isSearching && searchError ? (
+          {showNotices && !isSearching && searchError ? (
             <p
-              className={cn(popupNoticeClassName, popupMessageClassName, "text-destructive")}
+              className={cn(noticeClassName, popupMessageClassName, "text-destructive")}
               role="alert"
             >
               {searchError}
@@ -493,11 +520,11 @@ export function PurchaseProductPickerCard({
               ))}
             </ul>
           ) : null}
-          {showResults && !isSearching && !searchError && catalog.length === 0 ? (
+          {showNotices && !isSearching && !searchError && catalog.length === 0 ? (
             <div
               className={cn(
-                popupNoticeClassName,
-                "flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5",
+                noticeClassName,
+                "flex flex-wrap content-center items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5",
               )}
             >
               <p className="text-sm text-muted-foreground" role="status">
