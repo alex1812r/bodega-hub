@@ -231,6 +231,7 @@ export const ReturnsFocusToTrigger: Story = {
   render: (args) => <OpenedFromTrigger {...args} />,
 };
 
+/** La lista desborda: su zona con scroll es una parada de Tab y se recorre con el teclado. */
 export const LongEffectsList: Story = {
   args: {
     ...Danger.args,
@@ -241,6 +242,14 @@ export const LongEffectsList: Story = {
       tone: "positive" as const,
     })),
     requireTypedConfirmation: "ANULAR",
+  },
+  play: async ({ canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const effects = await body.findByRole("group", { name: "Qué va a pasar" });
+
+    await expect(effects).toHaveAttribute("tabindex", "0");
+    effects.focus();
+    await expect(effects).toHaveFocus();
   },
 };
 

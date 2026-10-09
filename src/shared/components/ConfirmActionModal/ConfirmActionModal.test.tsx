@@ -860,3 +860,136 @@ describe("ConfirmActionModal · effect status (CNF-S1)", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 });
+
+// CNF-F1 · F1: la zona «Qué va a pasar» con scroll no se alcanzaba con teclado.
+describe("ConfirmActionModal · zona de efectos con scroll y teclado (CNF-F1)", () => {
+  const originalResizeObserver = globalThis.ResizeObserver;
+  const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+  const clientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+  let notifyResize: Array<() => void> = [];
+  let contentHeight = 0;
+
+  const longEffects = Array.from({ length: 30 }, (_, index) => ({
+    after: String(20 + index),
+    before: String(10 + index),
+    label: `Stock del producto ${index + 1}`,
+  }));
+
+  function isEffectsViewport(element: HTMLElement) {
+    return element.classList.contains("overflow-y-auto") && element.closest("section") != null;
+  }
+
+  beforeEach(() => {
+    notifyResize = [];
+    contentHeight = 0;
+
+    globalThis.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) {
+        notifyResize.push(() => callback([], this));
+      }
+
+      disconnect() {}
+
+      observe() {}
+
+      unobserve() {}
+    };
+
+    // jsdom no calcula el layout: 346 px visibles de `contentHeight`, como en el reporte.
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return isEffectsViewport(this) ? contentHeight : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return isEffectsViewport(this) ? 346 : 0;
+      },
+    });
+  });
+
+  afterEach(() => {
+    globalThis.ResizeObserver = originalResizeObserver;
+
+    if (scrollHeight) {
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", scrollHeight);
+    }
+    if (clientHeight) {
+      Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeight);
+    }
+  });
+
+  function layout(height: number) {
+    contentHeight = height;
+    act(() => {
+      notifyResize.forEach((notify) => notify());
+    });
+  }
+
+  it("cuando los efectos desbordan, la zona con scroll es un grupo con nombre al que llega Tab", async () => {
+    const user = userEvent.setup();
+    renderModal({ effects: longEffects });
+    layout(445);
+
+    const viewport = screen.getByRole("group", { name: "Qué va a pasar" });
+
+    expect(viewport).toHaveClass("overflow-y-auto");
+    expect(viewport).toHaveAttribute("tabindex", "0");
+    expect(viewport.className).toMatch(/focus-visible:ring-ring/);
+    expect(within(viewport).getAllByRole("listitem")).toHaveLength(30);
+
+    const stops: Array<Element | null> = [];
+    for (let index = 0; index < 4; index += 1) {
+      await user.tab();
+      stops.push(document.activeElement);
+    }
+
+    expect(stops).toContain(viewport);
+  });
+
+  it("también con efectos a medida (`renderEffects`)", () => {
+    renderModal({ renderEffects: () => <p>Vuelven Bs 1.200,00 a la caja principal.</p> });
+    layout(445);
+
+    const viewport = screen.getByRole("group", { name: "Qué va a pasar" });
+
+    expect(viewport).toHaveAttribute("tabindex", "0");
+    expect(viewport).toHaveTextContent("Vuelven Bs 1.200,00 a la caja principal.");
+  });
+
+  it("si los efectos caben, la zona no añade una parada de Tab", async () => {
+    const user = userEvent.setup();
+    renderModal({ effects: longEffects.slice(0, 2) });
+    layout(120);
+
+    const viewport = screen.getByRole("list", { name: "Qué va a pasar" }).parentElement;
+
+    expect(viewport).toHaveClass("overflow-y-auto");
+    expect(viewport).not.toHaveAttribute("tabindex");
+    expect(screen.queryByRole("group", { name: "Qué va a pasar" })).not.toBeInTheDocument();
+
+    for (let index = 0; index < 4; index += 1) {
+      await user.tab();
+      expect(document.activeElement?.tagName).toBe("BUTTON");
+    }
+  });
+
+  it("deja de ser una parada de Tab cuando el contenido vuelve a caber", () => {
+    renderModal({ effects: longEffects });
+    layout(445);
+    expect(screen.getByRole("group", { name: "Qué va a pasar" })).toHaveAttribute("tabindex", "0");
+
+    layout(300);
+
+    expect(screen.queryByRole("group", { name: "Qué va a pasar" })).not.toBeInTheDocument();
+  });
+
+  it("conserva el foco inicial en el botón de la acción", () => {
+    renderModal({ effects: longEffects });
+    layout(445);
+
+    expect(screen.getByRole("button", { name: "Anular venta" })).toHaveFocus();
+  });
+});

@@ -205,6 +205,52 @@ function FocusOnMount({ targetRef }: { targetRef: RefObject<HTMLElement | null> 
   return null;
 }
 
+/**
+ * Zona con scroll de los efectos. Cuando su contenido desborda pasa a ser una
+ * parada de Tab con nombre, para poder leerla entera con flechas, AvPág y Fin;
+ * si cabe, no añade nada al orden de foco.
+ */
+function EffectsViewport({ children, labelledBy }: { children: ReactNode; labelledBy: string }) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [isScrollable, setIsScrollable] = useState(false);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+
+    if (!viewport || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const measure = () => {
+      setIsScrollable(viewport.scrollHeight > viewport.clientHeight + 1);
+    };
+    // The viewport stops resizing once it reaches its limit, so content that
+    // changes afterwards is only seen through its mutations.
+    const resizeObserver = new ResizeObserver(measure);
+    const mutationObserver = new MutationObserver(measure);
+
+    resizeObserver.observe(viewport);
+    mutationObserver.observe(viewport, { characterData: true, childList: true, subtree: true });
+
+    return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+    };
+  }, []);
+
+  return (
+    <div
+      aria-labelledby={isScrollable ? labelledBy : undefined}
+      className="min-h-0 flex-1 overflow-y-auto px-3 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      ref={viewportRef}
+      role={isScrollable ? "group" : undefined}
+      tabIndex={isScrollable ? 0 : undefined}
+    >
+      {children}
+    </div>
+  );
+}
+
 function EffectItem({ effect }: { effect: ConfirmActionEffect }) {
   const tone = effect.tone ?? "neutral";
   const marker = toneMarker[tone];
@@ -542,7 +588,7 @@ export function ConfirmActionModal({
           >
             Qué va a pasar
           </h3>
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-1">
+          <EffectsViewport labelledBy={effectsTitleId}>
             {renderEffects ? (
               renderEffects()
             ) : (
@@ -552,7 +598,7 @@ export function ConfirmActionModal({
                 ))}
               </ul>
             )}
-          </div>
+          </EffectsViewport>
         </section>
       ) : null}
 
