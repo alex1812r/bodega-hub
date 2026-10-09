@@ -1,4 +1,4 @@
-import { paginateList } from "@/lib/api/pagination";
+import { paginateList, type PaginatedList } from "@/lib/api/pagination";
 import {
   mockContacts,
   mockPurchaseItems,
@@ -9,6 +9,18 @@ import {
   mockStockMovements,
 } from "@/shared/mocks/erp-data";
 
+import {
+  buildDailySalesSeries,
+  buildGrossProfitSeries,
+  buildPurchasesSeries,
+  parseReportSeriesParams,
+  resolveReportSeriesRequest,
+  SERIES_EXCLUDED_PURCHASE_STATUSES,
+  SERIES_EXCLUDED_SALE_STATUSES,
+  type DailySalesSeries,
+  type GrossProfitSeries,
+  type PurchasesSeries,
+} from "./reportSeries";
 import { matchesStoreIds, normalizeStoreIds } from "./storeScope";
 import { isUtcTimestampInCaracasDateRange, toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
@@ -20,8 +32,22 @@ function toStoreIds(storeIdOrIds: string | string[]) {
   return normalizeStoreIds(storeIdOrIds);
 }
 
+function isSeriesSale(status: string) {
+  return !(SERIES_EXCLUDED_SALE_STATUSES as readonly string[]).includes(status);
+}
+
+function isSeriesPurchase(status: string) {
+  return !(SERIES_EXCLUDED_PURCHASE_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * `series` sigue la regla del servidor: solo con `from` + `to` y (`groupBy` o
+ * `compare`), sin ventas canceladas ni devueltas. La tabla (`items`) del mock no
+ * cambia.
+ */
 export function getDailySalesReport(searchParams: URLSearchParams, storeIdOrIds: string | string[]) {
   const storeIds = toStoreIds(storeIdOrIds);
+  const seriesRequest = resolveReportSeriesRequest(parseReportSeriesParams(searchParams));
   const items = mockSales
     .filter((sale) => matchesStoreIds(sale.storeId, storeIds))
     .map((sale) => ({
@@ -33,29 +59,83 @@ export function getDailySalesReport(searchParams: URLSearchParams, storeIdOrIds:
       totalVes: sale.totalVes,
     }));
 
-  return paginateList(items, searchParams);
+  const list: PaginatedList<(typeof items)[number]> & { series?: DailySalesSeries } = paginateList(
+    items,
+    searchParams,
+  );
+
+  if (!seriesRequest) {
+    return list;
+  }
+
+  return {
+    ...list,
+    series: buildDailySalesSeries(
+      seriesRequest,
+      mockSales
+        .filter((sale) => matchesStoreIds(sale.storeId, storeIds) && isSeriesSale(sale.status))
+        .map((sale) => ({
+          day: toCaracasDateKey(sale.createdAt),
+          values: {
+            count: 1,
+            paidVes: sale.paidVes,
+            totalRef: sale.totalRef,
+            totalVes: sale.totalVes,
+          },
+        })),
+    ),
+  };
+}
+
+function toGrossProfitRow(sale: (typeof mockSales)[number]) {
+  const items = mockSaleItems.filter((item) => item.saleId === sale.id);
+  const costRef = items.reduce(
+    (total, item) => total + item.unitCostRefSnapshot * item.quantity,
+    0,
+  );
+  const revenueRef = items.reduce((total, item) => total + item.subtotalRef, 0);
+
+  return {
+    costRef,
+    grossProfitRef: revenueRef - costRef,
+    revenueRef,
+    saleDate: toCaracasDateKey(sale.createdAt),
+    storeId: sale.storeId,
+  };
 }
 
 export function getGrossProfitReport(searchParams: URLSearchParams, storeIdOrIds: string | string[]) {
   const storeIds = toStoreIds(storeIdOrIds);
-  const items = mockSales.filter((sale) => matchesStoreIds(sale.storeId, storeIds)).map((sale) => {
-    const items = mockSaleItems.filter((item) => item.saleId === sale.id);
-    const costRef = items.reduce(
-      (total, item) => total + item.unitCostRefSnapshot * item.quantity,
-      0,
-    );
-    const revenueRef = items.reduce((total, item) => total + item.subtotalRef, 0);
+  const seriesRequest = resolveReportSeriesRequest(parseReportSeriesParams(searchParams));
+  const sales = mockSales.filter((sale) => matchesStoreIds(sale.storeId, storeIds));
+  const items = sales.map(toGrossProfitRow);
 
-    return {
-      costRef,
-      grossProfitRef: revenueRef - costRef,
-      revenueRef,
-      saleDate: toCaracasDateKey(sale.createdAt),
-      storeId: sale.storeId,
-    };
-  });
+  const list: PaginatedList<(typeof items)[number]> & { series?: GrossProfitSeries } = paginateList(
+    items,
+    searchParams,
+  );
 
-  return paginateList(items, searchParams);
+  if (!seriesRequest) {
+    return list;
+  }
+
+  return {
+    ...list,
+    series: buildGrossProfitSeries(
+      seriesRequest,
+      sales
+        .filter((sale) => isSeriesSale(sale.status))
+        .map(toGrossProfitRow)
+        .map((row) => ({
+          day: row.saleDate,
+          values: {
+            costRef: row.costRef,
+            grossProfitRef: row.grossProfitRef,
+            revenueRef: row.revenueRef,
+          },
+        })),
+    ),
+  };
 }
 
 export function getProductProfitabilityReport(
@@ -239,6 +319,7 @@ export function getTopCustomersReport(
 
 export function getPurchasesReport(searchParams: URLSearchParams, storeIdOrIds: string | string[]) {
   const storeIds = toStoreIds(storeIdOrIds);
+  const seriesRequest = resolveReportSeriesRequest(parseReportSeriesParams(searchParams));
   const from = searchParams.get("from");
   const supplierId = searchParams.get("supplierId");
   const to = searchParams.get("to");
@@ -257,7 +338,32 @@ export function getPurchasesReport(searchParams: URLSearchParams, storeIdOrIds: 
       supplier: mockContacts.find((contact) => contact.id === purchase.supplierId),
     }));
 
-  return paginateList(items, searchParams);
+  const list: PaginatedList<(typeof items)[number]> & { series?: PurchasesSeries } = paginateList(
+    items,
+    searchParams,
+  );
+
+  if (!seriesRequest) {
+    return list;
+  }
+
+  return {
+    ...list,
+    series: buildPurchasesSeries(
+      seriesRequest,
+      mockPurchases
+        .filter(
+          (purchase) =>
+            matchesStoreIds(purchase.storeId, storeIds) &&
+            (!supplierId || purchase.supplierId === supplierId) &&
+            isSeriesPurchase(purchase.status),
+        )
+        .map((purchase) => ({
+          day: toCaracasDateKey(purchase.createdAt),
+          values: { count: 1, totalRef: purchase.totalRef, totalVes: purchase.totalVes },
+        })),
+    ),
+  };
 }
 
 export { getFxDepreciationReport } from "./fxDepreciationReport.mock-server";

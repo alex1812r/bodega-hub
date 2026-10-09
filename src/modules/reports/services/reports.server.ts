@@ -3,9 +3,24 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { mapNullableString } from "@/lib/supabase/mappers";
+import { listCountOptions } from "@/modules/products/services/listRange";
 
-import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
+import { applyCreatedAtCaracasRange, toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
+import { fetchAllRows, fetchCountedPage } from "./reportPagination";
+import {
+  buildDailySalesSeries,
+  buildGrossProfitSeries,
+  buildPurchasesSeries,
+  parseReportSeriesParams,
+  resolveReportSeriesRequest,
+  SERIES_EXCLUDED_PURCHASE_STATUSES,
+  seriesFetchRange,
+  type DailySalesSeries,
+  type GrossProfitSeries,
+  type PurchasesSeries,
+  type ReportSeriesRange,
+} from "./reportSeries";
 import { normalizeStoreIds } from "./storeScope";
 
 export type ReportQueryOptions = {
@@ -265,56 +280,178 @@ async function listView<T>(
   const productId = searchParams.get("productId");
   const supabase = await getReportsClient(options);
 
-  let query = supabase.from(view).select("*", { count: "exact" });
-  query = applyStoreIdsFilter(query, options.storeIds);
+  const buildQuery = (head: boolean) => {
+    let query = supabase.from(view).select("*", listCountOptions(head));
+    query = applyStoreIdsFilter(query, options.storeIds);
 
-  if (options.dateColumn) {
-    query = applyDateColumnRange(query, options.dateColumn, from, to);
-  }
+    if (options.dateColumn) {
+      query = applyDateColumnRange(query, options.dateColumn, from, to);
+    }
 
-  if (options.productIdColumn && productId) {
-    query = query.eq(options.productIdColumn, productId);
-  }
+    if (options.productIdColumn && productId) {
+      query = query.eq(options.productIdColumn, productId);
+    }
 
-  if (options.order) {
-    query = query.order(options.order.column, { ascending: options.order.ascending ?? true });
-  }
+    return query;
+  };
 
-  const { data, error, count } = await query.range(skip, skip + limit - 1);
-  throwIfSupabaseError(error);
+  const page = await fetchCountedPage<unknown>({
+    count: () => buildQuery(true),
+    rows: () => {
+      const query = buildQuery(false);
+      const ordered = options.order
+        ? query.order(options.order.column, { ascending: options.order.ascending ?? true })
+        : query;
+
+      return ordered.range(skip, skip + limit - 1);
+    },
+  });
 
   return {
-    items: (data ?? []).map((row) => mapRow(row as never)),
+    items: page.rows.map((row) => mapRow(row as never)),
     limit,
     skip,
-    total: count ?? 0,
+    total: page.total,
   };
 }
 
+type DbDailySalesDayRow = {
+  paid_ves: number | string;
+  sale_date: string;
+  sales_count: number | string;
+  store_id: string;
+  total_ref: number | string;
+  total_ves: number | string;
+};
+
+type DbGrossProfitDayRow = {
+  cost_ref: number | string;
+  gross_profit_ref: number | string;
+  revenue_ref: number | string;
+  sale_date: string;
+  store_id: string;
+};
+
+/**
+ * Todas las filas diarias de una vista de resumen en el rango, leídas en
+ * páginas (2 años son > 1.000 filas con varias tiendas). `(store_id,
+ * sale_date)` es único en la vista: da un orden estable entre páginas.
+ */
+async function fetchSummaryDayRows<Row extends { sale_date: string; store_id: string }>(
+  view: "daily_sales_summary" | "gross_profit_summary",
+  columns: string,
+  storeIds: string[],
+  range: ReportSeriesRange,
+  options?: ReportQueryOptions,
+) {
+  const supabase = await getReportsClient(options);
+
+  return fetchAllRows<Row>(
+    async (rangeFrom, rangeTo) => {
+      let query = supabase.from(view).select(columns, { count: "exact" });
+      query = applyStoreIdsFilter(query, storeIds);
+      query = applyDateColumnRange(query, "sale_date", range.from, range.to);
+
+      const { count, data, error, status } = await query
+        .order("sale_date", { ascending: true })
+        .order("store_id", { ascending: true })
+        .range(rangeFrom, rangeTo);
+
+      return { count, data: data as unknown as Row[] | null, error, status };
+    },
+    { getKey: (row) => `${row.store_id}|${row.sale_date}` },
+  );
+}
+
+/**
+ * Ventas diarias. Con `from` + `to` y (`groupBy` o `compare`) añade `series`:
+ * la serie completa del rango agrupada por día/semana/mes y, con `compare=1`,
+ * el periodo anterior. La tabla (`items`) no cambia.
+ */
 export async function getDailySalesReport(
   searchParams: URLSearchParams,
   storeIdOrIds: string | string[],
   options?: ReportQueryOptions,
-) {
-  return listView("daily_sales_summary", searchParams, mapDailySalesRow, {
+): Promise<PaginatedList<ReturnType<typeof mapDailySalesRow>> & { series?: DailySalesSeries }> {
+  const storeIds = normalizeStoreIds(storeIdOrIds);
+  const seriesRequest = resolveReportSeriesRequest(parseReportSeriesParams(searchParams));
+  const list = await listView("daily_sales_summary", searchParams, mapDailySalesRow, {
     dateColumn: "sale_date",
     order: { column: "sale_date", ascending: false },
-    storeIds: normalizeStoreIds(storeIdOrIds),
+    storeIds,
     useAdmin: options?.useAdmin,
   });
+
+  if (!seriesRequest) {
+    return list;
+  }
+
+  const rows = await fetchSummaryDayRows<DbDailySalesDayRow>(
+    "daily_sales_summary",
+    "store_id, sale_date, sales_count, total_ref, total_ves, paid_ves",
+    storeIds,
+    seriesFetchRange(seriesRequest),
+    options,
+  );
+
+  return {
+    ...list,
+    series: buildDailySalesSeries(
+      seriesRequest,
+      rows.map((row) => ({
+        day: row.sale_date,
+        values: {
+          count: Number(row.sales_count),
+          paidVes: Number(row.paid_ves),
+          totalRef: Number(row.total_ref),
+          totalVes: Number(row.total_ves),
+        },
+      })),
+    ),
+  };
 }
 
+/** Ganancia bruta. `series` con la misma regla que `getDailySalesReport`. */
 export async function getGrossProfitReport(
   searchParams: URLSearchParams,
   storeIdOrIds: string | string[],
   options?: ReportQueryOptions,
-) {
-  return listView("gross_profit_summary", searchParams, mapGrossProfitRow, {
+): Promise<PaginatedList<ReturnType<typeof mapGrossProfitRow>> & { series?: GrossProfitSeries }> {
+  const storeIds = normalizeStoreIds(storeIdOrIds);
+  const seriesRequest = resolveReportSeriesRequest(parseReportSeriesParams(searchParams));
+  const list = await listView("gross_profit_summary", searchParams, mapGrossProfitRow, {
     dateColumn: "sale_date",
     order: { column: "sale_date", ascending: false },
-    storeIds: normalizeStoreIds(storeIdOrIds),
+    storeIds,
     useAdmin: options?.useAdmin,
   });
+
+  if (!seriesRequest) {
+    return list;
+  }
+
+  const rows = await fetchSummaryDayRows<DbGrossProfitDayRow>(
+    "gross_profit_summary",
+    "store_id, sale_date, revenue_ref, cost_ref, gross_profit_ref",
+    storeIds,
+    seriesFetchRange(seriesRequest),
+    options,
+  );
+
+  return {
+    ...list,
+    series: buildGrossProfitSeries(
+      seriesRequest,
+      rows.map((row) => ({
+        day: row.sale_date,
+        values: {
+          costRef: Number(row.cost_ref),
+          grossProfitRef: Number(row.gross_profit_ref),
+          revenueRef: Number(row.revenue_ref),
+        },
+      })),
+    ),
+  };
 }
 
 export async function getProductProfitabilityReport(
@@ -338,20 +475,23 @@ export async function getLowStockReport(
   const { limit, skip } = parsePagination(searchParams);
   const supabase = await getReportsClient(options);
 
-  let query = supabase.from("low_stock_products").select("*", { count: "exact" });
-  query = applyStoreIdsFilter(query, storeIds);
+  const buildQuery = (head: boolean) => {
+    let query = supabase.from("low_stock_products").select("*", listCountOptions(head));
+    query = applyStoreIdsFilter(query, storeIds);
 
-  const { data, error, count } = await query
-    .order("name", { ascending: true })
-    .range(skip, skip + limit - 1);
+    return query;
+  };
 
-  throwIfSupabaseError(error);
+  const page = await fetchCountedPage<DbProduct>({
+    count: () => buildQuery(true),
+    rows: () => buildQuery(false).order("name", { ascending: true }).range(skip, skip + limit - 1),
+  });
 
   return {
-    items: (data ?? []).map((row) => mapProduct(row as DbProduct)),
+    items: page.rows.map(mapProduct),
     limit,
     skip,
-    total: count ?? 0,
+    total: page.total,
   };
 }
 
@@ -526,32 +666,50 @@ export async function getTopCustomersReport(
   return paginateList(ranked, searchParams);
 }
 
+type DbPurchaseSeriesRow = {
+  created_at: string;
+  id: string;
+  total_ref: number | string;
+  total_ves: number | string;
+};
+
+/**
+ * Compras por periodo. La tabla (`items`) lista las compras paginadas como
+ * siempre. Con `from` + `to` y (`groupBy` o `compare`) añade `series` en el
+ * mismo endpoint: total y nº de compras por periodo, respetando `supplierId` y
+ * sin las canceladas ni devueltas (igual que `supplier_purchase_summary`).
+ */
 export async function getPurchasesReport(
   searchParams: URLSearchParams,
   storeIdOrIds: string | string[],
   options?: ReportQueryOptions,
 ) {
   const storeIds = normalizeStoreIds(storeIdOrIds);
+  const seriesRequest = resolveReportSeriesRequest(parseReportSeriesParams(searchParams));
   const from = searchParams.get("from");
   const supplierId = searchParams.get("supplierId");
   const to = searchParams.get("to");
   const { limit, skip } = parsePagination(searchParams);
   const supabase = await getReportsClient(options);
 
-  let query = supabase.from("purchases").select("*", { count: "exact" });
-  query = applyStoreIdsFilter(query, storeIds);
+  const buildQuery = (head: boolean) => {
+    let query = supabase.from("purchases").select("*", listCountOptions(head));
+    query = applyStoreIdsFilter(query, storeIds);
 
-  if (supplierId) {
-    query = query.eq("supplier_id", supplierId);
-  }
+    if (supplierId) {
+      query = query.eq("supplier_id", supplierId);
+    }
 
-  query = applyCreatedAtRange(query, from, to);
-  query = query.order("created_at", { ascending: false });
+    return applyCreatedAtRange(query, from, to);
+  };
 
-  const { data: purchases, error, count } = await query.range(skip, skip + limit - 1);
-  throwIfSupabaseError(error);
+  const page = await fetchCountedPage<DbPurchase>({
+    count: () => buildQuery(true),
+    rows: () =>
+      buildQuery(false).order("created_at", { ascending: false }).range(skip, skip + limit - 1),
+  });
 
-  const purchaseRows = purchases ?? [];
+  const purchaseRows = page.rows;
   const purchaseIds = purchaseRows.map((purchase) => purchase.id);
   const supplierIds = [...new Set(purchaseRows.map((purchase) => purchase.supplier_id))];
 
@@ -582,17 +740,58 @@ export async function getPurchasesReport(
     suppliersById = new Map((suppliers ?? []).map((supplier) => [supplier.id, supplier as DbContact]));
   }
 
-  return {
-    items: purchaseRows.map((row) =>
-      mapPurchaseListItem(
-        row as DbPurchase,
-        suppliersById.get(row.supplier_id),
-        itemsCountByPurchase.get(row.id) ?? 0,
+  const list: PaginatedList<ReturnType<typeof mapPurchaseListItem>> & { series?: PurchasesSeries } =
+    {
+      items: purchaseRows.map((row) =>
+        mapPurchaseListItem(
+          row,
+          suppliersById.get(row.supplier_id),
+          itemsCountByPurchase.get(row.id) ?? 0,
+        ),
       ),
+      limit,
+      skip,
+      total: page.total,
+    };
+
+  if (!seriesRequest) {
+    return list;
+  }
+
+  const fetchRange = seriesFetchRange(seriesRequest);
+  const seriesRows = await fetchAllRows<DbPurchaseSeriesRow>(
+    async (rangeFrom, rangeTo) => {
+      let query = supabase
+        .from("purchases")
+        .select("id, created_at, total_ref, total_ves", { count: "exact" })
+        .not("status", "in", `(${SERIES_EXCLUDED_PURCHASE_STATUSES.join(",")})`);
+      query = applyStoreIdsFilter(query, storeIds);
+
+      if (supplierId) {
+        query = query.eq("supplier_id", supplierId);
+      }
+
+      query = applyCreatedAtRange(query, fetchRange.from, fetchRange.to);
+
+      // `id` es único: el orden no cambia entre páginas.
+      const { count, data, error, status } = await query
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo);
+
+      return { count, data: data as DbPurchaseSeriesRow[] | null, error, status };
+    },
+    { getKey: (row) => row.id },
+  );
+
+  return {
+    ...list,
+    series: buildPurchasesSeries(
+      seriesRequest,
+      seriesRows.map((row) => ({
+        day: toCaracasDateKey(row.created_at),
+        values: { count: 1, totalRef: Number(row.total_ref), totalVes: Number(row.total_ves) },
+      })),
     ),
-    limit,
-    skip,
-    total: count ?? 0,
   };
 }
 
