@@ -65,6 +65,13 @@ type DbMetricsSale = {
   total_ves: number | string;
 };
 
+type DbSummarySale = {
+  created_at: string;
+  id: string;
+  total_ref: number | string | null;
+  total_ves: number | string | null;
+};
+
 function todayIsoDate() {
   return getCaracasIsoDate();
 }
@@ -113,21 +120,33 @@ export async function getDashboardSummary(
   const today = todayIsoDate();
   const yesterday = shiftIsoDate(today, -1);
 
-  let salesQuery = supabase
-    .from("sales")
-    .select("created_at, total_ref, total_ves")
-    .not("status", "in", "(cancelada,devuelta)");
-  salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
-  salesQuery = applyCreatedAtRange(salesQuery, yesterday, today);
+  // Paginado hasta agotar: PostgREST corta cada respuesta en 1.000 filas y con
+  // más ventas entre hoy y ayer el resumen quedaba a medias.
+  const salesRows = await fetchAllRows<DbSummarySale>(
+    async (rangeFrom, rangeTo) => {
+      let salesQuery = supabase
+        .from("sales")
+        .select("id, created_at, total_ref, total_ves", { count: "exact" })
+        .not("status", "in", "(cancelada,devuelta)");
+      salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
+      salesQuery = applyCreatedAtRange(salesQuery, yesterday, today);
 
-  const { data: salesRows, error: salesError } = await salesQuery;
-  throwIfSupabaseError(salesError);
+      // Orden de creación con `id` (único) de desempate: no cambia entre páginas.
+      const { count, data, error, status } = await salesQuery
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo);
+
+      return { count, data: data as DbSummarySale[] | null, error, status };
+    },
+    { getKey: (sale) => sale.id },
+  );
 
   const todayTotals = { salesCount: 0, totalRef: 0, totalVes: 0 };
   let previousDayTotalRef = 0;
 
-  for (const row of salesRows ?? []) {
-    const createdAt = row.created_at as string;
+  for (const row of salesRows) {
+    const createdAt = row.created_at;
     const totalRef = Number(row.total_ref ?? 0);
     const totalVes = Number(row.total_ves ?? 0);
 
