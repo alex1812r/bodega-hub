@@ -8,11 +8,20 @@ import {
   computeFxDepreciationReport,
   type FxDepreciationReportResult,
 } from "./fxDepreciationReport";
-import { fetchAllRowsByIds } from "./reportPagination";
+import { fetchAllRows, fetchAllRowsByIds } from "./reportPagination";
 import { normalizeStoreIds } from "./storeScope";
 
 export type ReportQueryOptions = {
   useAdmin?: boolean;
+};
+
+type DbFxSaleRow = {
+  created_at: string;
+  id: string;
+  invoice_number: string;
+  ref_rate_ves: number | string;
+  store_id: string;
+  total_ref: number | string;
 };
 
 type DbFxPaymentRow = {
@@ -57,23 +66,37 @@ export async function getFxDepreciationReport(
   const to = searchParams.get("to");
   const supabase = await getClient(options);
 
-  let salesQuery = supabase
-    .from("sales")
-    .select("id, invoice_number, created_at, ref_rate_ves, total_ref, store_id, status")
-    .neq("status", "cancelada");
-  salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
-  salesQuery = applyCreatedAtRange(salesQuery, from, to);
-  salesQuery = salesQuery.order("created_at", { ascending: false });
+  // Paginado hasta agotar: PostgREST corta cada respuesta en 1.000 filas y sin
+  // esto solo contaban las 1.000 ventas más recientes del rango.
+  const salesData = await fetchAllRows<DbFxSaleRow>(
+    async (rangeFrom, rangeTo) => {
+      let salesQuery = supabase
+        .from("sales")
+        .select("id, invoice_number, created_at, ref_rate_ves, total_ref, store_id, status", {
+          count: "exact",
+        })
+        .neq("status", "cancelada");
+      salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
+      salesQuery = applyCreatedAtRange(salesQuery, from, to);
 
-  const { data: salesData, error: salesError } = await salesQuery;
-  throwIfSupabaseError(salesError);
+      // El orden de siempre (más recientes primero) con `id` (único) de
+      // desempate: no cambia entre páginas.
+      const { count, data, error, status } = await salesQuery
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo);
 
-  const sales = (salesData ?? []).map((row) => ({
-    createdAt: row.created_at as string,
-    id: row.id as string,
-    invoiceNumber: row.invoice_number as string,
+      return { count, data: data as DbFxSaleRow[] | null, error, status };
+    },
+    { getKey: (row) => row.id },
+  );
+
+  const sales = salesData.map((row) => ({
+    createdAt: row.created_at,
+    id: row.id,
+    invoiceNumber: row.invoice_number,
     refRateVes: Number(row.ref_rate_ves),
-    storeId: row.store_id as string,
+    storeId: row.store_id,
     totalRef: Number(row.total_ref),
   }));
 

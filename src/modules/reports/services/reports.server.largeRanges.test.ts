@@ -190,6 +190,8 @@ describe("getFxDepreciationReport", () => {
     [101, "2 lotes"],
     [334, "4 lotes: antes «URI too long»"],
     [900, "9 lotes"],
+    [1000, "10 lotes"],
+    [1111, "1.000 ventas no canceladas: justo el tope de una respuesta"],
   ])("con %i ventas (%s) da cifras idénticas a la consulta única", async (count) => {
     const fixture = buildSalesFixture(count);
     useDatabase(fixture);
@@ -202,8 +204,91 @@ describe("getFxDepreciationReport", () => {
   });
 });
 
+/**
+ * REP-F10 (N-01): la lectura de `sales` de la depreciación FX no se paginaba y
+ * PostgREST la cortaba en las 1.000 ventas más recientes; el resto del rango no
+ * contaba, sin error ni aviso. 1.212 y 6.061 ventas dejan 1.091 y 5.455 no
+ * canceladas.
+ */
+describe("getFxDepreciationReport con más de 1.000 ventas en el rango (N-01)", () => {
+  it.each([
+    [1212, 1091],
+    [6061, 5455],
+  ])("con %i ventas cuenta las %i no canceladas, no solo las 1.000 más recientes", async (count, live) => {
+    const fixture = buildSalesFixture(count);
+    const database = useDatabase(fixture);
+    const searchParams = new URLSearchParams(`${RANGE}&limit=100`);
+
+    const report = await getFxDepreciationReport(searchParams, FIXTURE_STORE_ID);
+    const expected = expectedFxReport(fixture, searchParams);
+
+    expect(fixture.sales.filter((sale) => sale.status !== "cancelada")).toHaveLength(live);
+    expect(report.total).toBe(expected.total);
+    expect(report.summary.vesExposed).toBe(expected.summary.vesExposed);
+    expect(report.summary.usdHeldRef).toBe(expected.summary.usdHeldRef);
+    expect(withoutGeneratedAt(report)).toEqual(expected);
+    expect(Math.max(...database.requests.map((request) => request.largestInList))).toBeLessThanOrEqual(
+      100,
+    );
+  });
+
+  it("con pocas ventas lee `sales` una sola vez y en el orden de siempre (más recientes primero)", async () => {
+    const fixture = buildSalesFixture(40);
+    const database = useDatabase(fixture);
+    const salesOrders: Array<[string, boolean | undefined]> = [];
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
+      from: (table: string) => {
+        const query = database.client.from(table);
+
+        if (table === "sales") {
+          const order = query.order.bind(query);
+          query.order = (column, options) => {
+            salesOrders.push([column, options?.ascending]);
+            return order(column, options);
+          };
+        }
+
+        return query;
+      },
+    });
+
+    await getFxDepreciationReport(new URLSearchParams(RANGE), FIXTURE_STORE_ID);
+
+    expect(database.requests.filter((request) => request.table === "sales")).toHaveLength(1);
+    // `created_at desc` es el orden de antes; `id` solo desempata para paginar.
+    expect(salesOrders).toEqual([
+      ["created_at", false],
+      ["id", true],
+    ]);
+  });
+});
+
+describe("getDailyCloseSummary con más de 1.000 ventas en el día (N-01)", () => {
+  it.each([1212, 6061])("con %i ventas la parte FX y la de cobros cuentan todo el día", async (count) => {
+    const fixture = buildSalesFixture(count);
+    useDatabase(fixture);
+    const searchParams = new URLSearchParams(RANGE);
+
+    const summary = await getDailyCloseSummary(searchParams, FIXTURE_STORE_ID);
+    const fx = expectedFxReport(fixture, searchParams).summary;
+
+    expect(summary.sales.salesCount).toBe(countedSales(fixture).length);
+    expect(summary.paymentsSummary.paymentCount).toBe(
+      fixture.payments.filter((payment) => payment.status === "activo").length,
+    );
+    expect(summary.fx).toEqual({
+      capitalRefToday: fx.capitalRefToday,
+      depreciationPctOnVes: fx.depreciationPctOnVes,
+      usdHeldRef: fx.usdHeldRef,
+      valuationRateVes: fx.valuationRateVes,
+      vesExposed: fx.vesExposed,
+      vesLossRef: fx.vesLossRef,
+    });
+  });
+});
+
 describe("getDailyCloseSummary", () => {
-  it.each([40, 334])("con %i ventas da las cifras de ventas y FX del cálculo a mano", async (count) => {
+  it.each([40, 334, 1000])("con %i ventas da las cifras de ventas y FX del cálculo a mano", async (count) => {
     const fixture = buildSalesFixture(count);
     useDatabase(fixture);
     const searchParams = new URLSearchParams(RANGE);
