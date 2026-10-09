@@ -4,8 +4,11 @@ import autoTable from "jspdf-autotable";
 import { formatCaracasDateTime } from "@/shared/utils/caracasBusinessDay";
 
 import { buildReportExportSections } from "../utils/reportExportSections";
-import type { ReportExportColumn } from "../utils/reportExportSheetColumns";
-import type { ChartImage } from "./captureChartImage";
+import {
+  formatReportExportCell,
+  type ReportExportColumn,
+} from "../utils/reportExportSheetColumns";
+import { formatChartLegendLine, type ChartImage } from "./captureChartImage";
 import type { ReportsExportDataset, ReportsExportFilters } from "./fetchReportsForExport";
 
 export type ReportsExportPdfMetadata = {
@@ -36,25 +39,8 @@ const MAX_WRAP_COLUMNS = 6;
 const TABLE_HEAD_FILL: [number, number, number] = [41, 58, 74];
 const TABLE_ALT_FILL: [number, number, number] = [245, 247, 250];
 
-function formatPdfCellValue(value: string | number) {
-  if (typeof value === "number") {
-    if (Number.isInteger(value)) {
-      return String(value);
-    }
-
-    return value.toLocaleString("es-VE", {
-      maximumFractionDigits: 2,
-      minimumFractionDigits: 2,
-    });
-  }
-
-  return value;
-}
-
 function buildTableBody(columns: ReportExportColumn<unknown>[], rows: unknown[]) {
-  return rows.map((row) =>
-    columns.map((column) => formatPdfCellValue(column.value(row))),
-  );
+  return rows.map((row) => columns.map((column) => formatReportExportCell(column, row)));
 }
 
 function buildColumnStyles(columns: ReportExportColumn<unknown>[], rows: unknown[]) {
@@ -151,7 +137,26 @@ function drawChartImage(
     "FAST",
   );
 
-  return cursorY + height + CHART_GAP_MM;
+  cursorY += height + CHART_GAP_MM;
+
+  // La leyenda de pantalla es HTML y no sale en la imagen: va como texto.
+  const legendLine = formatChartLegendLine(image.legend);
+
+  if (legendLine) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(90, 98, 110);
+
+    for (const line of doc.splitTextToSize(legendLine, CONTENT_WIDTH_MM) as string[]) {
+      doc.text(line, PAGE_MARGIN_MM, cursorY);
+      cursorY += HEADER_LINE_HEIGHT_MM;
+    }
+
+    doc.setTextColor(20, 24, 31);
+    cursorY += CHART_GAP_MM / 2;
+  }
+
+  return cursorY;
 }
 
 function isUsableImage(image: ChartImage | null | undefined): image is ChartImage {

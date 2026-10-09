@@ -495,7 +495,7 @@ async function fetchFxDepreciationForExport(
   );
   const summary = first.summary;
   const note = summary
-    ? `Tasa valorizacion ${summary.valuationRateVes}; capital hoy REF ${summary.capitalRefToday}; perdida VES REF ${summary.vesLossRef} (${summary.depreciationPctOnVes}%).`
+    ? `Tasa valorización ${summary.valuationRateVes}; capital hoy REF ${summary.capitalRefToday}; pérdida VES REF ${summary.vesLossRef} (${summary.depreciationPctOnVes}%).`
     : undefined;
 
   return { note, rows };
@@ -508,14 +508,14 @@ function flattenDailyClose(summary: DailyCloseSummary): DailyCloseExportRow[] {
     { metric: "Total VES", value: summary.sales.totalVes },
     { metric: "Pagos activos", value: summary.paymentsSummary.paymentCount },
     { metric: "Cobros REF", value: summary.paymentsSummary.totalRef },
-    { metric: "Perdida FX REF", value: summary.fx.vesLossRef },
+    { metric: "Pérdida FX REF", value: summary.fx.vesLossRef },
     { metric: "Capital REF hoy", value: summary.fx.capitalRefToday },
     {
-      metric: "Baul REF",
+      metric: "Baúl REF",
       value: summary.vault ? summary.vault.balanceRef : "N/D",
     },
     {
-      metric: "Caja teorica REF",
+      metric: "Caja teórica REF",
       value: summary.cash ? summary.cash.theoreticalOpenRef : "N/D",
     },
   ];

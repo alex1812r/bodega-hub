@@ -33,23 +33,69 @@ import type {
 } from "../hooks/useReports";
 
 export type ReportExportColumn<T> = {
+  /**
+   * La columna es un importe o una razón: sus números se escriben siempre con
+   * dos decimales. Sin esto son cantidades (sin decimales que no tengan). Una
+   * función decide fila a fila (hojas de indicador / valor).
+   */
+  fixedDecimals?: boolean | ((row: T) => boolean);
   header: string;
   value: (row: T) => string | number;
 };
 
+/** Formato de celda de Excel de un importe (dos decimales fijos). */
+export const EXCEL_AMOUNT_FORMAT = "#,##0.00";
+/** Formato de celda de Excel de una cantidad entera. */
+export const EXCEL_INTEGER_FORMAT = "#,##0";
+
+/** ¿Los números de esta columna, en esta fila, van con dos decimales fijos? */
+export function hasFixedDecimals<T>(column: ReportExportColumn<T>, row: T) {
+  return typeof column.fixedDecimals === "function"
+    ? column.fixedDecimals(row)
+    : column.fixedDecimals === true;
+}
+
+/**
+ * Formato de celda de Excel de un número de la exportación: el valor sigue
+ * siendo un número y Excel lo pinta con miles y los decimales de su columna.
+ */
+export function reportExportNumberFormat<T>(column: ReportExportColumn<T>, row: T, value: number) {
+  return hasFixedDecimals(column, row) || !Number.isInteger(value)
+    ? EXCEL_AMOUNT_FORMAT
+    : EXCEL_INTEGER_FORMAT;
+}
+
+/**
+ * Texto de una celda para el PDF y la vista previa. Único formateador numérico
+ * de la exportación (es-VE: «19.125,00»): los importes siempre con dos
+ * decimales, sean enteros o no; las cantidades con miles y hasta dos decimales.
+ */
+export function formatReportExportCell<T>(column: ReportExportColumn<T>, row: T) {
+  const value = column.value(row);
+
+  if (typeof value !== "number") {
+    return value;
+  }
+
+  return value.toLocaleString("es-VE", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: hasFixedDecimals(column, row) ? 2 : 0,
+  });
+}
+
 export const dailySalesExportColumns: ReportExportColumn<DailySalesReportRow>[] = [
   { header: "Fecha", value: (row) => formatDate(row.saleDate) },
   { header: "Ventas", value: (row) => row.salesCount },
-  { header: "Total REF", value: (row) => row.totalRef },
-  { header: "Total VES", value: (row) => row.totalVes },
-  { header: "Cobrado VES", value: (row) => row.paidVes },
+  { fixedDecimals: true, header: "Total REF", value: (row) => row.totalRef },
+  { fixedDecimals: true, header: "Total VES", value: (row) => row.totalVes },
+  { fixedDecimals: true, header: "Cobrado VES", value: (row) => row.paidVes },
 ];
 
 export const grossProfitExportColumns: ReportExportColumn<GrossProfitReportRow>[] = [
   { header: "Fecha", value: (row) => formatDate(row.saleDate) },
-  { header: "Ingresos REF", value: (row) => row.revenueRef },
-  { header: "Costos REF", value: (row) => row.costRef },
-  { header: "Ganancia REF", value: (row) => row.grossProfitRef },
+  { fixedDecimals: true, header: "Ingresos REF", value: (row) => row.revenueRef },
+  { fixedDecimals: true, header: "Costos REF", value: (row) => row.costRef },
+  { fixedDecimals: true, header: "Ganancia REF", value: (row) => row.grossProfitRef },
 ];
 
 export const productProfitabilityExportColumns: ReportExportColumn<ProductProfitabilityReportRow>[] =
@@ -57,8 +103,8 @@ export const productProfitabilityExportColumns: ReportExportColumn<ProductProfit
     { header: "Producto", value: (row) => row.name || row.sku },
     { header: "SKU", value: (row) => row.sku },
     { header: "Unidades", value: (row) => row.unitsSold },
-    { header: "Costo REF", value: (row) => row.costRef },
-    { header: "Ganancia REF", value: (row) => row.grossProfitRef },
+    { fixedDecimals: true, header: "Costo REF", value: (row) => row.costRef },
+    { fixedDecimals: true, header: "Ganancia REF", value: (row) => row.grossProfitRef },
   ];
 
 export const lowStockExportColumns: ReportExportColumn<LowStockReportRow>[] = [
@@ -72,9 +118,9 @@ export const customerPurchasesExportColumns: ReportExportColumn<CustomerPurchase
   [
     { header: "Cliente", value: (row) => row.name },
     { header: "Ventas", value: (row) => row.salesCount },
-    { header: "Total REF", value: (row) => row.totalRef },
-    { header: "Total VES", value: (row) => row.totalVes },
-    { header: "Pendiente VES", value: (row) => row.pendingVes },
+    { fixedDecimals: true, header: "Total REF", value: (row) => row.totalRef },
+    { fixedDecimals: true, header: "Total VES", value: (row) => row.totalVes },
+    { fixedDecimals: true, header: "Pendiente VES", value: (row) => row.pendingVes },
     {
       header: "Última compra",
       value: (row) => (row.lastPurchaseAt ? formatDate(row.lastPurchaseAt) : "Sin compras"),
@@ -85,8 +131,8 @@ export const supplierPurchasesExportColumns: ReportExportColumn<SupplierPurchase
   [
     { header: "Proveedor", value: (row) => row.name },
     { header: "Compras", value: (row) => row.purchasesCount },
-    { header: "Total REF", value: (row) => row.totalRef },
-    { header: "Pendiente VES", value: (row) => row.pendingVes },
+    { fixedDecimals: true, header: "Total REF", value: (row) => row.totalRef },
+    { fixedDecimals: true, header: "Pendiente VES", value: (row) => row.pendingVes },
     {
       header: "Última compra",
       value: (row) => (row.lastPurchaseAt ? formatDate(row.lastPurchaseAt) : "Sin compras"),
@@ -105,14 +151,14 @@ export const topProductsExportColumns: ReportExportColumn<TopProductsReportRow>[
   { header: "Producto", value: (row) => row.name || row.sku },
   { header: "SKU", value: (row) => row.sku },
   { header: "Unidades", value: (row) => row.unitsSold },
-  { header: "Ingreso REF", value: (row) => row.revenueRef },
+  { fixedDecimals: true, header: "Ingreso REF", value: (row) => row.revenueRef },
 ];
 
 export const topCustomersExportColumns: ReportExportColumn<TopCustomersReportRow>[] = [
   { header: "Cliente", value: (row) => row.name },
   { header: "Ventas", value: (row) => row.salesCount },
-  { header: "Total REF", value: (row) => row.totalRef },
-  { header: "Total VES", value: (row) => row.totalVes },
+  { fixedDecimals: true, header: "Total REF", value: (row) => row.totalRef },
+  { fixedDecimals: true, header: "Total VES", value: (row) => row.totalVes },
 ];
 
 export const purchasesExportColumns: ReportExportColumn<PurchasesReportRow>[] = [
@@ -121,18 +167,18 @@ export const purchasesExportColumns: ReportExportColumn<PurchasesReportRow>[] = 
   { header: "Proveedor", value: (row) => row.supplier?.name ?? "Sin proveedor" },
   { header: "Fecha", value: (row) => formatDate(row.createdAt) },
   { header: "Items", value: (row) => row.itemsCount },
-  { header: "Total VES", value: (row) => row.totalVes },
+  { fixedDecimals: true, header: "Total VES", value: (row) => row.totalVes },
 ];
 
 export const fxDepreciationExportColumns: ReportExportColumn<FxDepreciationReportRow>[] = [
   { header: "Factura", value: (row) => row.invoiceNumber },
   { header: "Fecha", value: (row) => formatDate(row.saleDate) },
-  { header: "Tasa venta", value: (row) => row.rateAtSale },
-  { header: "VES cobrado", value: (row) => row.vesCollected },
-  { header: "USD REF", value: (row) => row.usdRef },
-  { header: "REF al cobrar", value: (row) => row.vesRefAtCollection },
-  { header: "REF hoy", value: (row) => row.vesRefToday },
-  { header: "Pérdida REF", value: (row) => row.lossRef },
+  { fixedDecimals: true, header: "Tasa venta", value: (row) => row.rateAtSale },
+  { fixedDecimals: true, header: "VES cobrado", value: (row) => row.vesCollected },
+  { fixedDecimals: true, header: "USD REF", value: (row) => row.usdRef },
+  { fixedDecimals: true, header: "REF al cobrar", value: (row) => row.vesRefAtCollection },
+  { fixedDecimals: true, header: "REF hoy", value: (row) => row.vesRefToday },
+  { fixedDecimals: true, header: "Pérdida REF", value: (row) => row.lossRef },
 ];
 
 export type DailyCloseExportRow = {
@@ -142,14 +188,19 @@ export type DailyCloseExportRow = {
 
 export const dailyCloseExportColumns: ReportExportColumn<DailyCloseExportRow>[] = [
   { header: "Indicador", value: (row) => row.metric },
-  { header: "Valor", value: (row) => row.value },
+  {
+    // Hoja de indicador / valor: son importes los indicadores en REF o VES.
+    fixedDecimals: (row) => /\b(REF|VES)\b/.test(row.metric),
+    header: "Valor",
+    value: (row) => row.value,
+  },
 ];
 
 export const paymentMethodsExportColumns: ReportExportColumn<PaymentMethodReportRow>[] = [
   { header: "Método", value: (row) => paymentMethodLabels[row.method] ?? row.method },
   { header: "Pagos", value: (row) => row.paymentCount },
-  { header: "REF", value: (row) => row.amountRef },
-  { header: "VES", value: (row) => row.amountVes },
+  { fixedDecimals: true, header: "REF", value: (row) => row.amountRef },
+  { fixedDecimals: true, header: "VES", value: (row) => row.amountVes },
 ];
 
 /** Texto de una medida que no se puede calcular (divisor en cero). */
@@ -173,17 +224,27 @@ export const salesByHourExportColumns: ReportExportColumn<SalesByHourExportRow>[
   { header: "Día", value: (row) => row.weekday },
   { header: "Hora", value: (row) => formatHour(row.hour) },
   { header: "Ventas", value: (row) => row.salesCount },
-  { header: "Total REF", value: (row) => row.totalRef },
-  { header: "Total VES", value: (row) => row.totalVes },
+  { fixedDecimals: true, header: "Total REF", value: (row) => row.totalRef },
+  { fixedDecimals: true, header: "Total VES", value: (row) => row.totalVes },
 ];
 
 export const salesByCategoryExportColumns: ReportExportColumn<SalesByCategoryRow>[] = [
   { header: "Categoría", value: (row) => row.categoryName },
   { header: "Unidades", value: (row) => row.units },
-  { header: "Ingreso REF", value: (row) => row.revenueRef },
-  { header: "Costo REF", value: (row) => row.costRef },
-  { header: "Ganancia REF", value: (row) => row.grossProfitRef },
-  { header: "Margen %", value: (row) => orNotAvailable(row.marginPct) },
+  { fixedDecimals: true, header: "Ingreso REF", value: (row) => row.revenueRef },
+  { fixedDecimals: true, header: "Costo REF", value: (row) => row.costRef },
+  { fixedDecimals: true, header: "Ganancia REF", value: (row) => row.grossProfitRef },
+  // Mismos nombres que las dos columnas de la pantalla.
+  {
+    fixedDecimals: true,
+    header: "Ganancia sobre costo %",
+    value: (row) => orNotAvailable(row.markupPct),
+  },
+  {
+    fixedDecimals: true,
+    header: "Margen sobre venta %",
+    value: (row) => orNotAvailable(row.marginPct),
+  },
 ];
 
 function agingExportColumns(contactHeader: string): ReportExportColumn<AgingDocumentRow>[] {
@@ -193,10 +254,10 @@ function agingExportColumns(contactHeader: string): ReportExportColumn<AgingDocu
     { header: "Fecha", value: (row) => formatDate(row.date) },
     { header: "Días", value: (row) => row.days },
     { header: "Tramo", value: (row) => AGING_BUCKET_LABELS[row.bucket] },
-    { header: "Total REF", value: (row) => row.totalRef },
-    { header: "Pagado REF", value: (row) => row.paidRef },
-    { header: "Pendiente REF", value: (row) => row.pendingRef },
-    { header: "Pendiente VES", value: (row) => row.pendingVes },
+    { fixedDecimals: true, header: "Total REF", value: (row) => row.totalRef },
+    { fixedDecimals: true, header: "Pagado REF", value: (row) => row.paidRef },
+    { fixedDecimals: true, header: "Pendiente REF", value: (row) => row.pendingRef },
+    { fixedDecimals: true, header: "Pendiente VES", value: (row) => row.pendingVes },
   ];
 }
 
@@ -212,10 +273,10 @@ export const cashCloseDifferencesExportColumns: ReportExportColumn<CashCloseDiff
     value: (row) => (row.closedReason ? CASH_CLOSE_REASON_LABELS[row.closedReason] : NOT_AVAILABLE),
   },
   { header: "Moneda", value: (row) => CASH_CLOSE_CURRENCY_LABELS[row.currency] },
-  { header: "Esperado", value: (row) => row.expected },
-  { header: "Contado", value: (row) => row.counted },
-  { header: "Diferencia", value: (row) => row.difference },
-  { header: "Diferencia acumulada", value: (row) => row.runningDifference },
+  { fixedDecimals: true, header: "Esperado", value: (row) => row.expected },
+  { fixedDecimals: true, header: "Contado", value: (row) => row.counted },
+  { fixedDecimals: true, header: "Diferencia", value: (row) => row.difference },
+  { fixedDecimals: true, header: "Diferencia acumulada", value: (row) => row.runningDifference },
 ];
 
 export const deadStockExportColumns: ReportExportColumn<DeadStockRow>[] = [
@@ -223,8 +284,8 @@ export const deadStockExportColumns: ReportExportColumn<DeadStockRow>[] = [
   { header: "SKU", value: (row) => row.product.sku },
   { header: "Categoría", value: (row) => row.category.name },
   { header: "Stock", value: (row) => row.stock },
-  { header: "Costo REF", value: (row) => row.costRef },
-  { header: "Valor inmovilizado REF", value: (row) => row.stockValueRef },
+  { fixedDecimals: true, header: "Costo REF", value: (row) => row.costRef },
+  { fixedDecimals: true, header: "Valor inmovilizado REF", value: (row) => row.stockValueRef },
   { header: "Días sin vender", value: (row) => row.daysIdle },
   {
     header: "Última venta",
@@ -238,12 +299,12 @@ export const stockTurnoverExportColumns: ReportExportColumn<StockTurnoverRow>[] 
   { header: "SKU", value: (row) => row.product?.sku ?? "" },
   { header: "Categoría", value: (row) => row.category.name },
   { header: "Unidades vendidas", value: (row) => row.soldUnits },
-  { header: "Costo de lo vendido REF", value: (row) => row.cogsRef },
-  { header: "Inventario promedio REF", value: (row) => row.averageStockValueRef },
-  { header: "Rotación", value: (row) => orNotAvailable(row.turnover) },
+  { fixedDecimals: true, header: "Costo de lo vendido REF", value: (row) => row.cogsRef },
+  { fixedDecimals: true, header: "Inventario promedio REF", value: (row) => row.averageStockValueRef },
+  { fixedDecimals: true, header: "Rotación", value: (row) => orNotAvailable(row.turnover) },
   { header: "Días de inventario", value: (row) => orNotAvailable(row.daysOfInventory) },
   { header: "Stock", value: (row) => row.stock },
-  { header: "Valor del stock REF", value: (row) => row.stockValueRef },
+  { fixedDecimals: true, header: "Valor del stock REF", value: (row) => row.stockValueRef },
 ];
 
 export const stockAdjustmentsExportColumns: ReportExportColumn<StockAdjustmentRow>[] = [
@@ -253,6 +314,6 @@ export const stockAdjustmentsExportColumns: ReportExportColumn<StockAdjustmentRo
   { header: "Tipo", value: (row) => (row.type === "ajuste_entrada" ? "Entrada" : "Salida") },
   { header: "Motivo", value: (row) => row.reason },
   { header: "Cantidad", value: (row) => row.quantityDelta },
-  { header: "Costo unitario REF", value: (row) => row.unitCostRef },
-  { header: "Valor REF", value: (row) => row.valueRef },
+  { fixedDecimals: true, header: "Costo unitario REF", value: (row) => row.unitCostRef },
+  { fixedDecimals: true, header: "Valor REF", value: (row) => row.valueRef },
 ];

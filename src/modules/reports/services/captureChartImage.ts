@@ -22,8 +22,56 @@
 export type ChartImage = {
   dataUrl: string;
   height: number;
+  /**
+   * Entradas de la leyenda del gráfico, en su orden («Ventas», «Periodo
+   * anterior»). En pantalla la leyenda es HTML fuera del `<svg>`: no sale en la
+   * imagen y se escribe como texto bajo ella (`formatChartLegendLine`).
+   */
+  legend?: string[];
   width: number;
 };
+
+/** Entrada de la leyenda de `TimeSeriesChart` para la serie del periodo anterior. */
+const PREVIOUS_PERIOD_LEGEND = "Periodo anterior";
+
+/**
+ * Línea de texto que hace de leyenda bajo la imagen, o `undefined` si el
+ * gráfico tiene una sola serie. El papel no distingue colores con seguridad:
+ * con periodo anterior se dice qué trazo es cada uno. Solo Latin-1 (PDF).
+ */
+export function formatChartLegendLine(legend: readonly string[] | undefined) {
+  const entries = (legend ?? []).map((entry) => entry.trim()).filter(Boolean);
+
+  if (entries.length < 2) {
+    return undefined;
+  }
+
+  const hasPrevious = entries.includes(PREVIOUS_PERIOD_LEGEND);
+  const described = entries.map((entry) => {
+    if (!hasPrevious) {
+      return entry;
+    }
+
+    return entry === PREVIOUS_PERIOD_LEGEND
+      ? `${entry} (línea discontinua)`
+      : `${entry} (línea continua)`;
+  });
+
+  return `Series: ${described.join(" · ")}`;
+}
+
+/**
+ * Leyenda visible del gráfico: la lista que `TimeSeriesChart` pinta justo
+ * encima del dibujo (hermano anterior de su contenedor `role="img"`).
+ */
+function readChartLegend(svg: Element) {
+  const legend = svg.closest('[role="img"]')?.previousElementSibling;
+  const entries = Array.from(legend?.querySelectorAll("ul > li") ?? [])
+    .map((item) => item.textContent?.trim() ?? "")
+    .filter(Boolean);
+
+  return entries.length > 0 ? entries : undefined;
+}
 
 /** Ancho lógico de la imagen, en px, sea cual sea el ancho de la pantalla. */
 export const CHART_IMAGE_WIDTH = 960;
@@ -334,7 +382,13 @@ export async function captureChartImage(
     // Con un SVG «tainted» `toDataURL` lanza SecurityError: lo recoge el `catch`.
     const dataUrl = canvas.toDataURL("image/png");
 
-    return dataUrl.startsWith(PNG_DATA_URL_PREFIX) ? { dataUrl, height, width } : null;
+    if (!dataUrl.startsWith(PNG_DATA_URL_PREFIX)) {
+      return null;
+    }
+
+    const legend = readChartLegend(svg);
+
+    return legend ? { dataUrl, height, legend, width } : { dataUrl, height, width };
   } catch {
     return null;
   }

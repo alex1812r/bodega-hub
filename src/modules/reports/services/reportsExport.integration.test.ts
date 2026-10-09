@@ -249,15 +249,15 @@ describe("exportación de reportes con los datos del mock (REP-08)", () => {
       { metric: "Total VES", value: summary.sales.totalVes },
       { metric: "Pagos activos", value: summary.paymentsSummary.paymentCount },
       { metric: "Cobros REF", value: summary.paymentsSummary.totalRef },
-      { metric: "Perdida FX REF", value: summary.fx.vesLossRef },
+      { metric: "Pérdida FX REF", value: summary.fx.vesLossRef },
       { metric: "Capital REF hoy", value: summary.fx.capitalRefToday },
-      { metric: "Baul REF", value: summary.vault ? summary.vault.balanceRef : "N/D" },
-      { metric: "Caja teorica REF", value: summary.cash ? summary.cash.theoreticalOpenRef : "N/D" },
+      { metric: "Baúl REF", value: summary.vault ? summary.vault.balanceRef : "N/D" },
+      { metric: "Caja teórica REF", value: summary.cash ? summary.cash.theoreticalOpenRef : "N/D" },
     ]);
     expect(data.fxDepreciation).toHaveLength(fx.total);
     expect(data.fxDepreciation.slice(0, fx.items.length)).toEqual(fx.items);
     expect(data.fxDepreciationNote).toBe(
-      `Tasa valorizacion ${fx.summary.valuationRateVes}; capital hoy REF ${fx.summary.capitalRefToday}; perdida VES REF ${fx.summary.vesLossRef} (${fx.summary.depreciationPctOnVes}%).`,
+      `Tasa valorización ${fx.summary.valuationRateVes}; capital hoy REF ${fx.summary.capitalRefToday}; pérdida VES REF ${fx.summary.vesLossRef} (${fx.summary.depreciationPctOnVes}%).`,
     );
 
     // Y esas cifras son las que quedan escritas en el libro.

@@ -135,7 +135,12 @@ describe("columnas de los reportes de la tienda activa", () => {
         revenueRef: 0,
         units: 0,
       }),
-    ).toMatchObject({ Categoría: "Sin categoría", "Margen %": "N/D" });
+    ).toMatchObject({
+      Categoría: "Sin categoría",
+      // REP-F6: «Margen %» no decía cuál de los dos porcentajes de la pantalla era.
+      "Ganancia sobre costo %": "N/D",
+      "Margen sobre venta %": "N/D",
+    });
   });
 
   it("inventario: producto por nombre, rotación por categoría y ajustes con su tipo", () => {

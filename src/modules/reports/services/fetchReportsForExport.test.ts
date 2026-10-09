@@ -433,14 +433,14 @@ describe("fetchReportsForExport (REP-08)", () => {
       { metric: "Total VES", value: 3650 },
       { metric: "Pagos activos", value: 4 },
       { metric: "Cobros REF", value: 90 },
-      { metric: "Perdida FX REF", value: 2.5 },
+      { metric: "Pérdida FX REF", value: 2.5 },
       { metric: "Capital REF hoy", value: 80 },
-      { metric: "Baul REF", value: 40 },
-      { metric: "Caja teorica REF", value: "N/D" },
+      { metric: "Baúl REF", value: 40 },
+      { metric: "Caja teórica REF", value: "N/D" },
     ]);
     expect(data.fxDepreciation).toEqual([{ saleId: "s1", storeId: null }]);
     expect(data.fxDepreciationNote).toBe(
-      "Tasa valorizacion 36.5; capital hoy REF 80; perdida VES REF 2.5 (3.1%).",
+      "Tasa valorización 36.5; capital hoy REF 80; pérdida VES REF 2.5 (3.1%).",
     );
   });
 

@@ -24,6 +24,7 @@ import {
   getReportExportName,
   type ReportExportSection,
 } from "../../utils/reportExportSections";
+import { formatReportExportCell } from "../../utils/reportExportSheetColumns";
 
 const PREVIEW_PAGE_SIZE = 25;
 
@@ -36,21 +37,6 @@ type ReportsExportPreviewModalProps = {
   onOpenChange: (open: boolean) => void;
   open: boolean;
 };
-
-function formatPreviewCell(value: string | number) {
-  if (typeof value === "number") {
-    if (Number.isInteger(value)) {
-      return String(value);
-    }
-
-    return value.toLocaleString("es-VE", {
-      maximumFractionDigits: 2,
-      minimumFractionDigits: 2,
-    });
-  }
-
-  return value;
-}
 
 function PreviewSheetTable({ section }: { section: ReportExportSection }) {
   const pagination = usePaginationState([section.id, section.rows.length], PREVIEW_PAGE_SIZE);
@@ -101,7 +87,7 @@ function PreviewSheetTable({ section }: { section: ReportExportSection }) {
                         )}
                         key={column.header}
                       >
-                        {formatPreviewCell(value)}
+                        {formatReportExportCell(column, row)}
                       </td>
                     );
                   })}

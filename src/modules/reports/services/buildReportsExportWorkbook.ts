@@ -6,7 +6,8 @@ import {
   buildReportExportSections,
   type ReportExportSection,
 } from "../utils/reportExportSections";
-import type { ChartImage } from "./captureChartImage";
+import { reportExportNumberFormat } from "../utils/reportExportSheetColumns";
+import { formatChartLegendLine, type ChartImage } from "./captureChartImage";
 import type { ReportsExportDataset, ReportsExportFilters } from "./fetchReportsForExport";
 
 export type ReportsExportWorkbookMetadata = {
@@ -82,13 +83,32 @@ function addDataSheet(
     for (let row = 0; row < reservedRows + 1; row += 1) {
       worksheet.addRow([]);
     }
+
+    // La leyenda de pantalla es HTML y no sale en la imagen: va como texto.
+    const legendLine = formatChartLegendLine(chartImage.legend);
+
+    if (legendLine) {
+      worksheet.addRow([legendLine]);
+    }
   }
 
   worksheet.addRow([]);
   worksheet.addRow(section.columns.map((column) => column.header)).font = { bold: true };
 
   for (const row of section.rows) {
-    worksheet.addRow(section.columns.map((column) => fitExcelCell(column.value(row))));
+    const values = section.columns.map((column) => fitExcelCell(column.value(row)));
+    const sheetRow = worksheet.addRow(values);
+
+    // Los números siguen siendo números: el formato es de la celda.
+    values.forEach((value, index) => {
+      if (typeof value === "number") {
+        sheetRow.getCell(index + 1).numFmt = reportExportNumberFormat(
+          section.columns[index]!,
+          row,
+          value,
+        );
+      }
+    });
   }
 
   worksheet.columns = section.columns.map((column, index) => ({
