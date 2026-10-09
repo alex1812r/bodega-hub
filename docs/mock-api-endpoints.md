@@ -109,6 +109,14 @@ Para pantallas, hooks y flujos: [`frontend-api-guide.md`](frontend-api-guide.md)
 | `/api/reports/top-customers` | `GET` | `reports.view` | Agregado Supabase de ventas por cliente |
 | `/api/reports/purchases` | `GET` | `reports.view` | Listado Supabase de compras con filtros |
 | `/api/reports/payment-methods` | `GET` | `reports.view` | Pagos de venta activos agrupados por metodo (`from`, `to`, Caracas) |
+| `/api/reports/sales-by-hour` | `GET` | `reports.view` | Vista `report_sales_by_hour`: matriz dia de la semana x hora (`from`, `to` obligatorios) |
+| `/api/reports/sales-by-category` | `GET` | `reports.view` | Vista `report_sales_by_category`: ventas y margen por categoria (`from`, `to` obligatorios) |
+| `/api/reports/receivables-aging` | `GET` | `reports.view` + (`payments.manage` o `sales.create`) | Ventas por cobrar con antiguedad (`bucket` 0-7\|8-30\|30+, `contactId`, paginacion) + `summary` |
+| `/api/reports/payables-aging` | `GET` | `reports.view` + `payments.manage` y rol que vea pagos de compra | Compras por pagar con antiguedad (`bucket` 0-7\|8-30\|30+, `contactId`, paginacion) + `summary` |
+| `/api/reports/cash-close-differences` | `GET` | `reports.view` + `cash.view` | Vista `report_cash_close_differences`: contado, teorico y diferencia por cierre (`from`, `to`, `currency` ves\|ref, paginacion) + `totals` |
+| `/api/reports/dead-stock` | `GET` | `reports.view` + `inventory.view` | Vista `report_product_last_movement`: productos sin vender en `days` dias (1–3650, default 30; `categoryId`, paginacion) + `summary` |
+| `/api/reports/stock-turnover` | `GET` | `reports.view` + `inventory.view` | Rotacion por producto o categoria (`from`, `to` obligatorios; `groupBy` product\|category, paginacion) + `totals` |
+| `/api/reports/stock-adjustments` | `GET` | `reports.view` + `inventory.view` | Vista `report_stock_adjustments`: ajustes manuales por motivo y periodo (`from`, `to` obligatorios; `groupBy` day\|week\|month\|auto, paginacion) + `byReason`, `series`, `totals` |
 | `/api/exchange-rates` | `GET` | `dashboard.view` | Lista tasas ref/VES (mock o `exchange_rates`) |
 | `/api/exchange-rates/current` | `GET` | `dashboard.view` | Tasa vigente oficial: servidor consulta [DolarAPI](https://ve.dolarapi.com/v1/dolares/oficial) (`promedio` → `rateVes`), cache ~15 min, persistencia diaria en `exchange_rates`. No usa ultimo POST manual. Errores 502/503 si el proveedor falla. |
 | `/api/exchange-rates` | `POST` | `payments.manage` | Registro manual solo historial (no redefine tasa vigente) |

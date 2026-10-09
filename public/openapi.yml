@@ -468,7 +468,11 @@ paths:
     get:
       tags: [Dashboard]
       summary: Obtener tendencia de ventas para el grafico del dashboard
-      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Agrega ventas por dia en el rango `from`/`to`.
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Con `from` y `to` responde la serie de ventas diarias de Reportes
+        (sin huecos, agrupacion automatica salvo `groupBy`) en `series` y sus periodos actuales en `items`. Con `fromStart`
+        y un `to` valido la serie va del primer dia con ventas hasta `to` (maximo 10 anos, sin periodo anterior). Sin
+        `from` o sin `to` agrega `daily_sales_summary` por dia y `series` es `null`.
       x-permission: dashboard.view
       parameters:
         - name: from
@@ -483,9 +487,19 @@ paths:
           schema:
             type: string
             format: date
+        - name: fromStart
+          in: query
+          required: false
+          description: Si es truthy (`1`, `true`) y `to` es valido, ignora `from`, `groupBy` y `compare` y arranca en el primer dia con ventas.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/ReportGroupBy"
+        - $ref: "#/components/parameters/ReportCompare"
       responses:
         "200":
-          $ref: "#/components/responses/ReportObjectResponse"
+          $ref: "#/components/responses/DashboardSalesTrendResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/dashboard/recent-sales:
@@ -2898,20 +2912,67 @@ paths:
     get:
       tags: [Reports]
       summary: Reporte diario de ventas
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee la vista `daily_sales_summary` (dia operativo
+        America/Caracas). Con `from` + `to` y (`groupBy` o `compare`) anade `series`: medidas `count`, `paidVes`,
+        `totalRef`, `totalVes`; `totals.deltaPct` sobre `totalRef`. 400 si una fecha o `groupBy` no son validos,
+        `from > to` o la serie supera 10 anos.
       x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - $ref: "#/components/parameters/ReportGroupBy"
+        - $ref: "#/components/parameters/ReportCompare"
       responses:
         "200":
-          $ref: "#/components/responses/ReportArrayResponse"
+          $ref: "#/components/responses/ReportSeriesListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/reports/gross-profit:
     get:
       tags: [Reports]
       summary: Reporte de ganancia bruta
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee la vista `gross_profit_summary`. Con `from` + `to` y
+        (`groupBy` o `compare`) anade `series`: medidas `costRef`, `grossProfitRef`, `revenueRef`; `totals.deltaPct`
+        sobre `grossProfitRef`. 400 si una fecha o `groupBy` no son validos, `from > to` o la serie supera 10 anos.
       x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - $ref: "#/components/parameters/ReportGroupBy"
+        - $ref: "#/components/parameters/ReportCompare"
       responses:
         "200":
-          $ref: "#/components/responses/ReportArrayResponse"
+          $ref: "#/components/responses/ReportSeriesListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/reports/product-profitability:
@@ -3018,7 +3079,22 @@ paths:
             format: date
       responses:
         "200":
-          $ref: "#/components/responses/ReportArrayResponse"
+          description: Productos mas vendidos, de mayor a menor `unitsSold`
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/TopProductsReportRow"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/reports/top-customers:
@@ -3051,7 +3127,11 @@ paths:
     get:
       tags: [Reports]
       summary: Reporte de compras
-      description: Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lista compras con paginacion y filtros.
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lista compras con paginacion y filtros. Con `from` + `to`
+        y (`groupBy` o `compare`) anade `series`: medidas `count`, `totalRef`, `totalVes`; `totals.deltaPct` sobre
+        `totalRef`. Tabla y serie aplican la misma regla de `status`. 400 si una fecha, `groupBy` o `status` no son
+        validos, `from > to` o la serie supera 10 anos.
       x-permission: reports.view
       parameters:
         - $ref: "#/components/parameters/Skip"
@@ -3073,16 +3153,30 @@ paths:
           schema:
             type: string
             format: date
+        - name: status
+          in: query
+          required: false
+          description: Ausente excluye `cancelado` y `devuelto`; `all` incluye todos; un estado concreto filtra solo ese.
+          schema:
+            type: string
+            enum: [pedido, recibido, cancelado, devuelto, all]
+        - $ref: "#/components/parameters/ReportGroupBy"
+        - $ref: "#/components/parameters/ReportCompare"
       responses:
         "200":
-          $ref: "#/components/responses/ReportArrayResponse"
+          $ref: "#/components/responses/ReportSeriesListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/reports/payment-methods:
     get:
       tags: [Reports]
       summary: Mix de metodos de pago
-      description: Pagos de venta activos agrupados por metodo (cantidad, REF, VES). Rango `from`/`to` en dia operativo America/Caracas.
+      description: >-
+        Pagos de venta activos agrupados por metodo (cantidad, REF, VES). Rango `from`/`to` en dia operativo
+        America/Caracas. Con `compare` anade `comparison` (periodo anterior del mismo numero de dias). 400 si una fecha
+        o `groupBy` no son validos o `from > to`.
       x-permission: reports.view
       parameters:
         - $ref: "#/components/parameters/Skip"
@@ -3099,9 +3193,20 @@ paths:
           schema:
             type: string
             format: date
+        - $ref: "#/components/parameters/ReportCompare"
       responses:
         "200":
-          $ref: "#/components/responses/ReportArrayResponse"
+          description: Mix de metodos de pago
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PaymentMethodsReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/reports/fx-depreciation:
@@ -3157,6 +3262,278 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/ReportObjectResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/sales-by-hour:
+    get:
+      tags: [Reports]
+      summary: Ventas por hora del dia y dia de la semana
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee la vista `report_sales_by_hour` (hora y dia operativo
+        America/Caracas). Permisos (`assertMoneyReportAccess`): solo `reports.view`. `from` y `to` son obligatorios;
+        400 si faltan, estan mal formados, `from > to` o el rango supera 10 anos.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/ReportFromRequired"
+        - $ref: "#/components/parameters/ReportToRequired"
+      responses:
+        "200":
+          description: Matriz dia de la semana x hora, con ceros
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SalesByHourReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/sales-by-category:
+    get:
+      tags: [Reports]
+      summary: Ventas y margen por categoria
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee la vista `report_sales_by_category`. Permisos
+        (`assertMoneyReportAccess`): solo `reports.view`. `from` y `to` son obligatorios; 400 si faltan, estan mal
+        formados, `from > to` o el rango supera 10 anos. Una fila por categoria con ventas, de mayor a menor ingreso.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/ReportFromRequired"
+        - $ref: "#/components/parameters/ReportToRequired"
+      responses:
+        "200":
+          description: Ventas, costo y margen por categoria
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SalesByCategoryReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/receivables-aging:
+    get:
+      tags: [Reports]
+      summary: Cuentas por cobrar con antiguedad
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Ventas con saldo pendiente y sus dias desde el documento (dia
+        operativo America/Caracas). Permisos (`assertMoneyReportAccess`): `reports.view` y ademas `payments.manage` o
+        `sales.create`, como las ventas de `GET /api/payments/open-documents`. `summary` se calcula sobre todo el
+        conjunto (respeta `contactId`, no `bucket`). 400 si `bucket` o `contactId` no son validos.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/AgingBucket"
+        - name: contactId
+          in: query
+          required: false
+          description: Filtra por cliente. Maximo 120 caracteres.
+          schema:
+            type: string
+            maxLength: 120
+      responses:
+        "200":
+          $ref: "#/components/responses/AgingReportResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/payables-aging:
+    get:
+      tags: [Reports]
+      summary: Cuentas por pagar con antiguedad
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Compras con saldo pendiente y sus dias desde el documento (dia
+        operativo America/Caracas). Permisos (`assertMoneyReportAccess`): `reports.view`, `payments.manage` y un rol que
+        vea pagos de compra, como las compras de `GET /api/payments/open-documents`. `summary` se calcula sobre todo el
+        conjunto (respeta `contactId`, no `bucket`). 400 si `bucket` o `contactId` no son validos.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/AgingBucket"
+        - name: contactId
+          in: query
+          required: false
+          description: Filtra por proveedor. Maximo 120 caracteres.
+          schema:
+            type: string
+            maxLength: 120
+      responses:
+        "200":
+          $ref: "#/components/responses/AgingReportResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/cash-close-differences:
+    get:
+      tags: [Reports]
+      summary: Diferencias de cierre de caja
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Solo lectura: contado, teorico y diferencia de cada cierre de turno
+        por moneda, con la diferencia acumulada del rango. Permisos (`assertMoneyReportAccess`): `reports.view` y
+        `cash.view`, como el historial de `GET /api/cash/registers/{id}/sessions`. `from`/`to` opcionales (dia
+        operativo America/Caracas del cierre); `totals` cubre el rango completo. 400 si una fecha, `groupBy` o
+        `currency` no son validos o `from > to`.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: currency
+          in: query
+          required: false
+          description: Efectivo en Bs (`ves`) o en dolares (`ref`). Ausente devuelve ambas.
+          schema:
+            type: string
+            enum: [ves, ref]
+      responses:
+        "200":
+          description: Cierres de caja con su diferencia
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CashCloseDifferencesReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/dead-stock:
+    get:
+      tags: [Reports]
+      summary: Productos sin movimiento (capital inmovilizado)
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee la vista `report_product_last_movement`. Productos
+        activos con stock que llevan al menos `days` dias sin venderse, de mayor a menor valor inmovilizado. Permisos
+        (`assertInventoryReportAccess`): `reports.view` y `inventory.view`. `summary` no depende de la pagina. 400 si
+        `days` o `categoryId` no son validos.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - name: days
+          in: query
+          required: false
+          description: Dias sin vender a partir de los que un producto entra en el reporte.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 3650
+            default: 30
+        - name: categoryId
+          in: query
+          required: false
+          description: Maximo 120 caracteres.
+          schema:
+            type: string
+            maxLength: 120
+      responses:
+        "200":
+          description: Productos sin movimiento con su valor a costo
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/DeadStockReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/stock-turnover:
+    get:
+      tags: [Reports]
+      summary: Rotacion de inventario por producto o categoria
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee las vistas `report_product_last_movement` y
+        `report_stock_daily_flow` (libro `stock_movements`). Rotacion = costo de lo vendido / inventario promedio
+        (apertura y cierre del rango, al costo actual). Permisos (`assertInventoryReportAccess`): `reports.view` y
+        `inventory.view`. `from` y `to` son obligatorios; 400 si faltan, estan mal formados, `from > to`, el rango
+        supera 10 anos o `groupBy` no es valido. Orden: rotacion descendente, sin rotacion al final.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/ReportFromRequired"
+        - $ref: "#/components/parameters/ReportToRequired"
+        - name: groupBy
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [product, category]
+            default: product
+      responses:
+        "200":
+          description: Rotacion por producto o por categoria
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/StockTurnoverReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/reports/stock-adjustments:
+    get:
+      tags: [Reports]
+      summary: Ajustes y mermas por motivo y periodo
+      description: >-
+        Usa mock o Supabase segun `API_DATA_SOURCE`. Supabase lee la vista `report_stock_adjustments`: ajustes manuales
+        del libro (`ajuste_entrada` / `ajuste_salida` sin venta ni compra), valorados al costo ACTUAL del producto
+        (`costBasis`). Permisos (`assertInventoryReportAccess`): `reports.view` y `inventory.view`. `from` y `to` son
+        obligatorios; 400 si faltan, estan mal formados, `from > to`, el rango supera 10 anos o `groupBy` no es valido.
+        `byReason`, `series` y `totals` cubren todo el rango; `items` va del movimiento mas reciente al mas antiguo.
+      x-permission: reports.view
+      parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/ReportFromRequired"
+        - $ref: "#/components/parameters/ReportToRequired"
+        - $ref: "#/components/parameters/ReportGroupBy"
+      responses:
+        "200":
+          description: Ajustes del rango con su resumen por motivo y su serie
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/StockAdjustmentsReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/exchange-rates:
@@ -3625,8 +4002,15 @@ paths:
         - name: to
           in: query
           schema: { type: string, format: date }
+        - name: fromStart
+          in: query
+          description: Si es truthy (`1`, `true`) y `to` es valido, ignora `from`, `groupBy` y `compare` y arranca en el primer dia con ventas.
+          schema: { type: string }
+        - $ref: "#/components/parameters/ReportGroupBy"
+        - $ref: "#/components/parameters/ReportCompare"
       responses:
-        "200": { description: Serie diaria agregada }
+        "200": { $ref: "#/components/responses/DashboardSalesTrendResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
   /api/platform/home/recent-sales:
     get:
@@ -3831,6 +4215,49 @@ components:
         type: integer
         minimum: 10
         default: 10
+    ReportGroupBy:
+      name: groupBy
+      in: query
+      required: false
+      description: >-
+        Agrupacion de la serie. `auto` (igual que no enviarlo): hasta 62 dias por dia, hasta 370 por semana (lunes a
+        domingo), mas por mes. Otro valor responde 400.
+      schema:
+        type: string
+        enum: [day, week, month, auto]
+    ReportCompare:
+      name: compare
+      in: query
+      required: false
+      description: >-
+        Si es truthy (cualquier valor distinto de vacio, `0` y `false`), anade el periodo anterior: el mismo numero de
+        dias inmediatamente antes de `from`. Necesita `from` y `to`.
+      schema:
+        type: string
+    ReportFromRequired:
+      name: from
+      in: query
+      required: true
+      description: Primer dia operativo America/Caracas del rango (incluido).
+      schema:
+        type: string
+        format: date
+    ReportToRequired:
+      name: to
+      in: query
+      required: true
+      description: Ultimo dia operativo America/Caracas del rango (incluido).
+      schema:
+        type: string
+        format: date
+    AgingBucket:
+      name: bucket
+      in: query
+      required: false
+      description: Tramo de antiguedad en dias desde el documento.
+      schema:
+        type: string
+        enum: ["0-7", "8-30", "30+"]
   responses:
     BadRequest:
       description: Solicitud invalida (cuerpo que no es JSON valido, campos que no cumplen el schema o rechazo de negocio)
@@ -3923,6 +4350,41 @@ components:
             properties:
               data:
                 $ref: "#/components/schemas/PaginatedList"
+    ReportSeriesListResponse:
+      description: Lista paginada del reporte; `series` solo si se pidio con `from` + `to` y (`groupBy` o `compare`)
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedList"
+                  - type: object
+                    properties:
+                      series:
+                        $ref: "#/components/schemas/ReportSeries"
+    DashboardSalesTrendResponse:
+      description: Flujo de ventas del dashboard
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: "#/components/schemas/DashboardSalesTrend"
+    AgingReportResponse:
+      description: Documentos con saldo pendiente y su resumen por tramo de antiguedad
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: "#/components/schemas/AgingReport"
     ReportObjectResponse:
       description: Objeto generico
       content:
@@ -4012,6 +4474,638 @@ components:
         total:
           type: integer
           minimum: 0
+    ReportSeriesRange:
+      type: object
+      description: Rango de dias operativos America/Caracas, ambos incluidos.
+      required: [from, to]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+    ReportSeriesBucket:
+      type: object
+      description: Un periodo de la serie. Ademas de estos campos lleva las medidas numericas del reporte (ver cada endpoint).
+      required: [key, label, from, to]
+      properties:
+        key:
+          type: string
+          format: date
+          description: Primer dia del periodo, ya recortado al rango pedido.
+        label:
+          type: string
+          description: "`08/10` (un dia), `06/10–12/10` (varios) u `oct 2026` (mes completo); con ano si la serie cruza de ano."
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+      additionalProperties:
+        type: number
+    ReportSeries:
+      type: object
+      required: [groupBy, range, previousRange, current, previous, totals]
+      properties:
+        groupBy:
+          type: string
+          enum: [day, week, month]
+          description: Agrupacion efectiva (la pedida, o la automatica segun el numero de dias).
+        range:
+          $ref: "#/components/schemas/ReportSeriesRange"
+        previousRange:
+          nullable: true
+          description: "`null` sin `compare`."
+          allOf:
+            - $ref: "#/components/schemas/ReportSeriesRange"
+        current:
+          type: array
+          description: Un periodo por posicion, sin huecos (los periodos sin datos van en 0).
+          items:
+            $ref: "#/components/schemas/ReportSeriesBucket"
+        previous:
+          type: array
+          nullable: true
+          description: Periodo anterior alineado por posicion con `current`; `null` sin `compare`.
+          items:
+            $ref: "#/components/schemas/ReportSeriesBucket"
+        totals:
+          type: object
+          required: [current, previous, deltaPct]
+          properties:
+            current:
+              type: object
+              additionalProperties: { type: number }
+            previous:
+              type: object
+              nullable: true
+              additionalProperties: { type: number }
+            deltaPct:
+              type: number
+              nullable: true
+              description: Variacion % de la medida principal; `null` sin periodo anterior o si su total es 0.
+    DashboardSalesTrend:
+      type: object
+      required: [items, series]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [paidVes, saleDate, salesCount, totalRef, totalVes]
+            properties:
+              paidVes: { type: number }
+              saleDate:
+                type: string
+                format: date
+                description: Dia operativo; con serie agrupada, primer dia del periodo.
+              salesCount: { type: integer }
+              totalRef: { type: number }
+              totalVes: { type: number }
+        series:
+          nullable: true
+          description: Serie de ventas diarias (medidas `count`, `paidVes`, `totalRef`, `totalVes`); `null` si falta `from` o `to`.
+          allOf:
+            - $ref: "#/components/schemas/ReportSeries"
+    TopProductsReportRow:
+      type: object
+      required: [productId, sku, unitsSold, revenueRef]
+      properties:
+        productId: { type: string }
+        name:
+          type: string
+          description: Nombre del producto (opcional); `productId` es solo la clave.
+        sku: { type: string }
+        unitsSold: { type: number }
+        revenueRef: { type: number }
+    PaymentMethodReportRow:
+      type: object
+      required: [amountRef, amountVes, method, paymentCount]
+      properties:
+        amountRef: { type: number }
+        amountVes: { type: number }
+        method: { type: string }
+        paymentCount: { type: integer }
+    PaymentMethodsReportSummary:
+      type: object
+      required: [paymentCount, totalRef, totalVes]
+      properties:
+        paymentCount: { type: integer }
+        totalRef: { type: number }
+        totalVes: { type: number }
+    PaymentMethodsReport:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedList"
+        - type: object
+          required: [summary]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/PaymentMethodReportRow"
+            summary:
+              $ref: "#/components/schemas/PaymentMethodsReportSummary"
+            comparison:
+              type: object
+              description: Solo con `compare`.
+              required: [previousRange, previous, deltaPct, deltaPctByMethod]
+              properties:
+                previousRange:
+                  nullable: true
+                  description: "`null` si falta `from` o `to`."
+                  allOf:
+                    - $ref: "#/components/schemas/ReportSeriesRange"
+                previous:
+                  type: object
+                  nullable: true
+                  description: Totales del periodo anterior, todos los metodos del catalogo, sin paginar.
+                  required: [items, summary]
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/PaymentMethodReportRow"
+                    summary:
+                      $ref: "#/components/schemas/PaymentMethodsReportSummary"
+                deltaPct:
+                  type: number
+                  nullable: true
+                  description: Variacion % de `summary.totalRef`; `null` sin periodo anterior o si su total es 0.
+                deltaPctByMethod:
+                  type: object
+                  description: Variacion % de `amountRef` por metodo de pago, con la misma regla.
+                  additionalProperties:
+                    type: number
+                    nullable: true
+    SalesByHourMeasures:
+      type: object
+      required: [salesCount, totalRef, totalVes]
+      properties:
+        salesCount: { type: integer }
+        totalRef: { type: number }
+        totalVes: { type: number }
+    SalesByHourReport:
+      type: object
+      required: [range, matrix, byHour, byWeekday, totals]
+      properties:
+        range:
+          $ref: "#/components/schemas/ReportSeriesRange"
+        matrix:
+          type: array
+          description: "`matrix[dow - 1][hour]`: 7 filas (lunes primero) x 24 horas, con ceros."
+          items:
+            type: array
+            items:
+              $ref: "#/components/schemas/SalesByHourMeasures"
+        byHour:
+          type: array
+          description: 24 posiciones, hora 0 primero (hora de Caracas).
+          items:
+            allOf:
+              - $ref: "#/components/schemas/SalesByHourMeasures"
+              - type: object
+                required: [hour]
+                properties:
+                  hour: { type: integer, minimum: 0, maximum: 23 }
+        byWeekday:
+          type: array
+          description: 7 posiciones, lunes (`dow` 1) primero.
+          items:
+            allOf:
+              - $ref: "#/components/schemas/SalesByHourMeasures"
+              - type: object
+                required: [dow]
+                properties:
+                  dow: { type: integer, minimum: 1, maximum: 7 }
+        totals:
+          $ref: "#/components/schemas/SalesByHourMeasures"
+    SalesByCategoryTotals:
+      type: object
+      required: [costRef, grossProfitRef, revenueRef, units, marginPct, markupPct]
+      properties:
+        costRef: { type: number }
+        grossProfitRef: { type: number }
+        revenueRef: { type: number }
+        units: { type: number }
+        marginPct:
+          type: number
+          nullable: true
+          description: Ganancia / ingreso x 100; `null` si el ingreso es 0.
+        markupPct:
+          type: number
+          nullable: true
+          description: Ganancia / costo x 100; `null` si el costo es 0.
+    SalesByCategoryReport:
+      type: object
+      required: [range, items, totals]
+      properties:
+        range:
+          $ref: "#/components/schemas/ReportSeriesRange"
+        items:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/SalesByCategoryTotals"
+              - type: object
+                required: [categoryId, categoryName]
+                properties:
+                  categoryId:
+                    type: string
+                    nullable: true
+                    description: "`null` = productos sin categoria."
+                  categoryName: { type: string }
+        totals:
+          $ref: "#/components/schemas/SalesByCategoryTotals"
+    AgingDocumentRow:
+      type: object
+      required:
+        - bucket
+        - contact
+        - createdAt
+        - date
+        - days
+        - document
+        - paidRef
+        - paidVes
+        - pendingRef
+        - pendingVes
+        - refRateVes
+        - totalRef
+        - totalVes
+      properties:
+        bucket:
+          type: string
+          enum: ["0-7", "8-30", "30+"]
+        contact:
+          type: object
+          nullable: true
+          required: [id, name]
+          properties:
+            id: { type: string }
+            name: { type: string }
+        createdAt: { type: string, format: date-time }
+        date:
+          type: string
+          format: date
+          description: Dia operativo Caracas del documento; de aqui se cuentan los dias.
+        days: { type: integer, minimum: 0 }
+        document:
+          type: object
+          required: [href, id, number, type]
+          properties:
+            href:
+              type: string
+              description: "`/sales/<id>` o `/purchases/<id>`."
+            id: { type: string }
+            number: { type: string }
+            type:
+              type: string
+              enum: [sale, purchase]
+        paidRef: { type: number }
+        paidVes: { type: number }
+        pendingRef: { type: number }
+        pendingVes: { type: number }
+        refRateVes: { type: number }
+        totalRef: { type: number }
+        totalVes: { type: number }
+    AgingReport:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedList"
+        - type: object
+          required: [summary]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/AgingDocumentRow"
+            summary:
+              type: object
+              required: [buckets, totals]
+              properties:
+                buckets:
+                  type: array
+                  description: Siempre los tres tramos, en orden, con ceros.
+                  items:
+                    type: object
+                    required: [bucket, documentsCount, pendingRef, pendingVes]
+                    properties:
+                      bucket:
+                        type: string
+                        enum: ["0-7", "8-30", "30+"]
+                      documentsCount: { type: integer }
+                      pendingRef: { type: number }
+                      pendingVes: { type: number }
+                totals:
+                  type: object
+                  required: [documentsCount, pendingRef, pendingVes]
+                  properties:
+                    documentsCount: { type: integer }
+                    pendingRef: { type: number }
+                    pendingVes: { type: number }
+    CashCloseDifferenceRow:
+      type: object
+      required:
+        - cashSessionId
+        - closeDate
+        - closedAt
+        - closedReason
+        - counted
+        - currency
+        - difference
+        - expected
+        - registerId
+        - registerName
+        - runningDifference
+      properties:
+        cashSessionId: { type: string }
+        closeDate:
+          type: string
+          format: date
+          description: Dia operativo Caracas del cierre.
+        closedAt: { type: string, format: date-time }
+        closedReason:
+          type: string
+          nullable: true
+          enum: [manual, end_of_day, max_24h, null]
+          description: "`manual`, o autocierre (`end_of_day` / `max_24h`: se cuenta el teorico)."
+        counted:
+          type: number
+          description: Lo contado al cerrar.
+        currency:
+          type: string
+          enum: [ves, ref]
+        difference:
+          type: number
+          description: "`counted - expected`: positivo = sobrante, negativo = faltante."
+        expected:
+          type: number
+          description: Teorico guardado por el cierre.
+        registerId: { type: string }
+        registerName: { type: string, nullable: true }
+        runningDifference:
+          type: number
+          description: Diferencia acumulada de esa moneda desde el primer cierre del rango hasta este, sin importar la pagina.
+    CashCloseDifferencesReport:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedList"
+        - type: object
+          required: [range, totals]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/CashCloseDifferenceRow"
+            range:
+              type: object
+              required: [from, to]
+              properties:
+                from: { type: string, format: date, nullable: true }
+                to: { type: string, format: date, nullable: true }
+            totals:
+              type: array
+              description: Totales del rango completo, una fila por moneda (`ves`, `ref`), con ceros.
+              items:
+                type: object
+                required: [counted, currency, difference, expected, sessionsCount]
+                properties:
+                  counted: { type: number }
+                  currency:
+                    type: string
+                    enum: [ves, ref]
+                  difference: { type: number }
+                  expected: { type: number }
+                  sessionsCount: { type: integer }
+    InventoryReportProduct:
+      type: object
+      required: [href, id, name, sku]
+      properties:
+        href:
+          type: string
+          description: "`/products/<id>`."
+        id: { type: string }
+        name: { type: string }
+        sku: { type: string }
+    InventoryReportCategory:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, nullable: true }
+        name: { type: string }
+    DeadStockRow:
+      type: object
+      required:
+        - category
+        - costRef
+        - daysIdle
+        - daysSinceLastMovement
+        - idleSince
+        - lastMovementAt
+        - lastSaleAt
+        - product
+        - stock
+        - stockValueRef
+      properties:
+        category:
+          $ref: "#/components/schemas/InventoryReportCategory"
+        costRef: { type: number }
+        daysIdle:
+          type: integer
+          description: Dias de calendario Caracas desde `idleSince` hasta `asOf`.
+        daysSinceLastMovement:
+          type: integer
+          nullable: true
+          description: Dias desde el ultimo movimiento de cualquier tipo; `null` sin movimientos.
+        idleSince:
+          type: string
+          format: date
+          description: Dia de la ultima venta; si nunca se vendio, el de su primer movimiento; sin movimientos, el de su alta.
+        lastMovementAt: { type: string, format: date-time, nullable: true }
+        lastSaleAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: "`null` = nunca se vendio."
+        product:
+          $ref: "#/components/schemas/InventoryReportProduct"
+        stock: { type: number }
+        stockValueRef:
+          type: number
+          description: "Valor inmovilizado: `stock x costRef`."
+    DeadStockReport:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedList"
+        - type: object
+          required: [asOf, days, summary]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/DeadStockRow"
+            asOf:
+              type: string
+              format: date
+              description: Dia operativo Caracas desde el que se cuentan los dias.
+            days: { type: integer }
+            summary:
+              type: object
+              required: [idleValueRef, idleValuePct, inventoryValueRef, productsCount]
+              properties:
+                idleValueRef: { type: number }
+                idleValuePct:
+                  type: number
+                  nullable: true
+                  description: "`idleValueRef / inventoryValueRef x 100`; `null` si el inventario vale 0."
+                inventoryValueRef:
+                  type: number
+                  description: Valor a costo de los productos activos con stock (misma categoria si se filtra).
+                productsCount: { type: integer }
+    StockTurnoverMeasures:
+      type: object
+      required:
+        - averageStockValueRef
+        - closingStock
+        - cogsRef
+        - daysOfInventory
+        - openingStock
+        - soldUnits
+        - stock
+        - stockValueRef
+        - turnover
+      properties:
+        averageStockValueRef:
+          type: number
+          description: "`(openingStock + closingStock) / 2 x costo actual`."
+        closingStock:
+          type: number
+          description: Saldo al cierre del ultimo dia del rango, reconstruido del libro.
+        cogsRef:
+          type: number
+          description: Costo de lo vendido neto de devoluciones en el rango.
+        daysOfInventory:
+          type: number
+          nullable: true
+          description: "`dias del rango / rotacion`; `null` si no se puede calcular."
+        openingStock:
+          type: number
+          description: Saldo antes del primer dia del rango, reconstruido del libro.
+        soldUnits:
+          type: number
+          description: Unidades vendidas netas de devoluciones y anulaciones en el rango.
+        stock:
+          type: number
+          description: Saldo vigente.
+        stockValueRef: { type: number }
+        turnover:
+          type: number
+          nullable: true
+          description: "`cogsRef / averageStockValueRef`; `null` si el inventario promedio no vale nada."
+    StockTurnoverReport:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedList"
+        - type: object
+          required: [groupBy, inventoryBasis, range, rangeDays, totals]
+          properties:
+            items:
+              type: array
+              items:
+                allOf:
+                  - $ref: "#/components/schemas/StockTurnoverMeasures"
+                  - type: object
+                    required: [category, key, product, productsCount]
+                    properties:
+                      category:
+                        $ref: "#/components/schemas/InventoryReportCategory"
+                      key:
+                        type: string
+                        description: Id del producto o de la categoria (cadena vacia = sin categoria).
+                      product:
+                        nullable: true
+                        description: "`null` cuando se agrupa por categoria."
+                        allOf:
+                          - $ref: "#/components/schemas/InventoryReportProduct"
+                      productsCount: { type: integer }
+            groupBy:
+              type: string
+              enum: [product, category]
+            inventoryBasis:
+              type: string
+              enum: [average_opening_closing]
+            range:
+              $ref: "#/components/schemas/ReportSeriesRange"
+            rangeDays: { type: integer }
+            totals:
+              $ref: "#/components/schemas/StockTurnoverMeasures"
+    StockAdjustmentMeasures:
+      type: object
+      required: [movementsCount, netUnits, netValueRef, unitsIn, unitsOut, valueInRef, valueOutRef]
+      properties:
+        movementsCount: { type: integer }
+        netUnits:
+          type: number
+          description: "`unitsIn - unitsOut`."
+        netValueRef:
+          type: number
+          description: "`valueInRef - valueOutRef`."
+        unitsIn: { type: number }
+        unitsOut:
+          type: number
+          description: Unidades que salieron (positivo).
+        valueInRef: { type: number }
+        valueOutRef:
+          type: number
+          description: Valor a costo de lo que salio (positivo).
+    StockAdjustmentRow:
+      type: object
+      required: [createdAt, date, movementId, product, quantityDelta, reason, type, unitCostRef, valueRef]
+      properties:
+        createdAt: { type: string, format: date-time }
+        date: { type: string, format: date }
+        movementId: { type: string }
+        product:
+          $ref: "#/components/schemas/InventoryReportProduct"
+        quantityDelta:
+          type: number
+          description: "Con su signo: negativo = salida."
+        reason:
+          type: string
+          description: Motivo normalizado; `Sin motivo` si viene vacio.
+        type:
+          type: string
+          enum: [ajuste_entrada, ajuste_salida]
+        unitCostRef: { type: number }
+        valueRef:
+          type: number
+          description: "`quantityDelta x unitCostRef`, con su signo."
+    StockAdjustmentsReport:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedList"
+        - type: object
+          required: [byReason, costBasis, groupBy, range, series, totals]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/StockAdjustmentRow"
+            byReason:
+              type: array
+              description: Un motivo por fila, de mayor a menor valor movido (entradas + salidas).
+              items:
+                allOf:
+                  - $ref: "#/components/schemas/StockAdjustmentMeasures"
+                  - type: object
+                    required: [reason]
+                    properties:
+                      reason: { type: string }
+            costBasis:
+              type: string
+              enum: [current_cost]
+            groupBy:
+              type: string
+              enum: [day, week, month]
+              description: Agrupacion efectiva de `series`.
+            range:
+              $ref: "#/components/schemas/ReportSeriesRange"
+            series:
+              type: array
+              description: Un periodo por posicion, sin huecos; cada uno lleva las medidas de `StockAdjustmentMeasures`.
+              items:
+                $ref: "#/components/schemas/ReportSeriesBucket"
+            totals:
+              $ref: "#/components/schemas/StockAdjustmentMeasures"
     OpenDocument:
       type: object
       description: Venta por cobrar o compra por pagar que `register_payment` aun acepta.

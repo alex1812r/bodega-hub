@@ -212,6 +212,16 @@ Este checklist compara el plan funcional del ERP contra los endpoints actuales e
 - `[x]` `GET /api/reports/purchases?from=&to=&supplierId=`.
 - `[x]` `GET /api/reports/purchases`: Supabase lista `purchases` con filtros y paginacion.
 - `[x]` `GET /api/reports/payment-methods?from=&to=`: mix de pagos de venta activos (5 metodos, Caracas).
+- `[x]` `GET /api/reports/daily-sales|gross-profit|purchases?groupBy=&compare=`: campo `series` (day|week|month|auto, periodo anterior con `compare`); `purchases` acepta `status` (ausente excluye cancelado/devuelto, `all`, o un estado).
+- `[x]` `GET /api/reports/payment-methods?compare=`: campo `comparison` con el periodo anterior.
+- `[x]` `GET /api/reports/sales-by-hour?from=&to=`: ventas por hora y dia de la semana (vista `report_sales_by_hour`).
+- `[x]` `GET /api/reports/sales-by-category?from=&to=`: ventas y margen por categoria (vista `report_sales_by_category`).
+- `[x]` `GET /api/reports/receivables-aging?bucket=&contactId=`: cuentas por cobrar con antiguedad (`payments.manage` o `sales.create`).
+- `[x]` `GET /api/reports/payables-aging?bucket=&contactId=`: cuentas por pagar con antiguedad (`payments.manage` y rol que vea pagos de compra).
+- `[x]` `GET /api/reports/cash-close-differences?from=&to=&currency=`: diferencias de cierre de caja (`cash.view`, solo lectura).
+- `[x]` `GET /api/reports/dead-stock?days=&categoryId=`: productos sin movimiento (`inventory.view`).
+- `[x]` `GET /api/reports/stock-turnover?from=&to=&groupBy=`: rotacion por producto o categoria (`inventory.view`).
+- `[x]` `GET /api/reports/stock-adjustments?from=&to=&groupBy=`: ajustes y mermas por motivo y periodo (`inventory.view`).
 - `[~]` Filtros globales `from`, `to`, `groupBy` (parcial: por endpoint, sin `groupBy`).
 - `[ ]` Exportacion PDF/Excel en fase posterior.
 
