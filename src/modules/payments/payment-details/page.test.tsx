@@ -36,6 +36,7 @@ jest.mock("./components/PaymentDetailBalanceCard", () => ({
   PaymentDetailBalanceCard: () => null,
 }));
 
+import { computePaymentImpact } from "../services/paymentImpact";
 import { PaymentDetailsPage } from "./page";
 
 const REJECTION = "El pago pertenece a una caja ya cerrada y transferida.";
@@ -59,6 +60,50 @@ function payment(
     status,
     ...overrides,
   };
+}
+
+/** Impact que serviría el endpoint para un cobro en efectivo de la caja abierta «Caja 1». */
+function cancelImpact(paymentId: string) {
+  return computePaymentImpact({
+    action: "cancel",
+    canCancelPayments: true,
+    document: {
+      contactName: "Cliente Demo",
+      id: "sale-002",
+      kind: "sale",
+      number: "V-000002",
+      paidVes: 100,
+      status: "pagada",
+      totalVes: 100,
+    },
+    ledger: {
+      cashMovements: [
+        {
+          amountRef: 0,
+          amountVes: 100,
+          registerName: "Caja 1",
+          sessionStatus: "open",
+          type: "sale_in",
+          vaultTransferredAt: null,
+        },
+      ],
+      kind: "full",
+      vault: null,
+      vaultMovements: [],
+    },
+    payment: {
+      amount: 100,
+      amountRef: 0.2,
+      amountVes: 100,
+      changeMethod: null,
+      changeRef: 0,
+      changeVes: 0,
+      currency: "VES",
+      id: paymentId,
+      method: "efectivo_ves",
+      status: "activo",
+    },
+  });
 }
 
 function jsonResponse(payload: unknown, status = 200) {
@@ -89,6 +134,10 @@ describe("PaymentDetailsPage · anular pago", () => {
         return cancelResponse();
       }
 
+      if (String(url).startsWith("/api/payments/pay-001/impact")) {
+        return jsonResponse({ data: cancelImpact("pay-001") });
+      }
+
       return jsonResponse({ data: payment(currentStatus, paymentOverrides) });
     });
     global.fetch = fetchMock;
@@ -107,8 +156,11 @@ describe("PaymentDetailsPage · anular pago", () => {
 
   async function openCancelModal(user: ReturnType<typeof userEvent.setup>) {
     await user.click(await screen.findByRole("button", { name: "Anular pago" }));
+    await screen.findByRole("dialog");
+    // El modal calcula primero el efecto; el botón de anular llega con él.
+    await screen.findByRole("button", { name: "Anular pago" });
 
-    return within(await screen.findByRole("dialog"));
+    return within(screen.getByRole("dialog"));
   }
 
   async function settle() {
@@ -164,6 +216,24 @@ describe("PaymentDetailsPage · anular pago", () => {
       expect(await screen.findByRole("button", { name: "Registrar otro pago" })).toBeDisabled();
       expect(screen.queryByTestId("register-payment-modal")).not.toBeInTheDocument();
     });
+  });
+
+  it("CNF-06: confirma con el efecto de ese pago y cancelar no anula nada", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+    const dialog = await openCancelModal(user);
+
+    expect(
+      fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/impact")),
+    ).toEqual(["/api/payments/pay-001/impact?action=cancel"]);
+    expect(dialog.getByText("Sale de la caja «Caja 1»: −Bs. 100,00")).toBeInTheDocument();
+    expect(dialog.getByText("Pendiente de pago")).toBeInTheDocument();
+
+    await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(cancelCalls()).toEqual([]);
   });
 
   it("muestra el rechazo del servidor dentro del modal, que sigue abierto para reintentar", async () => {
