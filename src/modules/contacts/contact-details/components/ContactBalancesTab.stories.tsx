@@ -36,6 +36,8 @@ const meta = {
     sections: ["sale"],
   },
   component: ContactBalancesTab,
+  // El guardia de datos tecleados (CNF-15) usa `useRouter` de `next/navigation`: necesita el App Router simulado.
+  parameters: { nextjs: { appDirectory: true } },
   decorators: [
     (Story) => (
       <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest">

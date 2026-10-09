@@ -14,6 +14,11 @@ import {
   InventoryAdjustmentModal,
 } from "./InventoryAdjustmentModal";
 
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 const lockedProduct = { currentStock: 10, id: "prod-cable", name: "Cable HDMI", sku: "ELE-CAB-001" };
 const formId = "inventory-adjustment-form";
 const CONFIRM_TITLE = "Confirmar ajuste de stock";

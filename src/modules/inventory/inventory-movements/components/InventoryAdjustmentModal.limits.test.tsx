@@ -5,6 +5,11 @@ import userEvent from "@testing-library/user-event";
 import { createQueryWrapper, installFetchStub } from "../../utils/requestAttempt.testUtils";
 import { InventoryAdjustmentModal } from "./InventoryAdjustmentModal";
 
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 const lockedProduct = { currentStock: 10, id: "prod-cable", name: "Cable HDMI", sku: "ELE-CAB-001" };
 
 /** INV-F5 · M3 / B3: el formulario no deja escribir lo que el servidor rechaza. */

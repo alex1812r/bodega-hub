@@ -2317,6 +2317,12 @@ describe("RegisterPaymentModal", () => {
 
       await user.type(dialog.getByLabelText("Monto"), "100");
       await user.click(screen.getByRole("button", { name: "Cancelar" }));
+      // CNF-15: con el monto tecleado, cerrar pregunta; «Salir» lo descarta y cierra.
+      await user.click(
+        within(await screen.findByRole("dialog", { name: LEAVE_DIALOG })).getByRole("button", {
+          name: "Salir",
+        }),
+      );
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
       clickLink();
 
@@ -2341,14 +2347,26 @@ describe("RegisterPaymentModal", () => {
       expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument();
     });
 
-    it("con el formulario a medio llenar no pregunta al salir", async () => {
+    it("CNF-15: con el formulario limpio no pregunta al salir; a medio llenar pregunta nombrando el cobro", async () => {
       renderModal(withLink(<RegisterPaymentModal saleId="sale-002" />));
       const { dialog, user } = await openModal();
+
+      clickLink();
+      expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument();
 
       await user.type(dialog.getByLabelText("Monto"), "100");
       clickLink();
 
-      expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument();
+      const leaveDialog = await screen.findByRole("dialog", { name: LEAVE_DIALOG });
+
+      expect(leaveDialog).toHaveTextContent(/Cobro de Bs\S* 100,00 a Maria Perez sin registrar/);
+      expect(leaveDialog).not.toHaveTextContent("Cobro en curso");
+      await user.click(within(leaveDialog).getByRole("button", { name: "Seguir aquí" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: LEAVE_DIALOG })).not.toBeInTheDocument(),
+      );
+      expect(dialog.getByLabelText("Monto")).toHaveValue("100");
+      expect(mockRouter.push).not.toHaveBeenCalled();
     });
 
     it("con el POST en vuelo pregunta antes de salir y deja de hacerlo al registrarse el pago", async () => {

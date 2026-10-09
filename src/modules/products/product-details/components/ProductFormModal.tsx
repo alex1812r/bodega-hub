@@ -81,7 +81,7 @@ import {
   UNITS_PER_PACK_FIELD_NAME,
   type PackConversionFormState,
 } from "./ProductPackConversionFields";
-import { useFormModalDiscardGuard } from "./useFormModalDiscardGuard";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 
 export type ProductFormSubmitContext = {
   pendingImageBlob?: Blob | null;

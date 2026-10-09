@@ -10,6 +10,11 @@ import { createQueryWrapper, installFetchStub } from "../../utils/requestAttempt
 import { UNCERTAIN_STOCK_REQUEST_MESSAGE } from "../../utils/stockRequestError";
 import { InventoryAdjustmentModal } from "./InventoryAdjustmentModal";
 
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 function product(id: string, name: string, sku: string, currentStock: number) {
   return {
     barcode: null,
@@ -85,10 +90,17 @@ async function cancelConfirm(dialog: HTMLElement) {
   );
 }
 
+/** Con lo tecleado sin registrar, Esc pregunta (CNF-15): se sale descartándolo. */
 async function closeWithEscape() {
   fireEvent.keyDown(await screen.findByRole("dialog", { name: "Ajuste de stock" }), {
     key: "Escape",
   });
+  fireEvent.click(
+    within(await screen.findByRole("dialog", { name: "¿Salir sin terminar?" })).getByRole(
+      "button",
+      { name: "Salir" },
+    ),
+  );
   await waitFor(() => expect(document.getElementById(formId)).toBeNull());
 }
 

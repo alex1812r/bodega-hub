@@ -10,6 +10,11 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { createQueryWrapper, installFetchStub } from "../../utils/requestAttempt.testUtils";
 import { InventoryAdjustmentModal } from "./InventoryAdjustmentModal";
 
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 const productA = {
   barcode: null,
   categoryId: "cat-1",

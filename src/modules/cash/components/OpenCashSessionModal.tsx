@@ -9,6 +9,8 @@ import {
 import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
+import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 
 type OpenCashSessionModalProps = {
   onOpenChange: (open: boolean) => void;
@@ -24,6 +26,16 @@ function amountInputValue(value: number | null | undefined) {
   return String(value);
 }
 
+const EMPTY_AMOUNTS = { ref: "", ves: "" };
+
+/**
+ * Apertura de caja. El fondo se precarga con el último cierre sin transferir.
+ *
+ * Si el usuario cambia un monto respecto a como abrió el modal (vacío o
+ * precargado), cerrar (Esc, clic fuera, Cancelar, la X) o salir de la pantalla
+ * pregunta antes con el guardia de proceso; sin tocar nada, o tras abrir la
+ * caja, cierra sin preguntar.
+ */
 export function OpenCashSessionModal({
   onOpenChange,
   open,
@@ -36,7 +48,15 @@ export function OpenCashSessionModal({
   const [openingRef, setOpeningRef] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [prefilledFromClosure, setPrefilledFromClosure] = useState(false);
+  /** Montos con los que arrancó el formulario: lo precargado no cuenta como tecleado. */
+  const [initialAmounts, setInitialAmounts] = useState(EMPTY_AMOUNTS);
   const didPrefillRef = useRef(false);
+  const hasTypedData = openingVes !== initialAmounts.ves || openingRef !== initialAmounts.ref;
+  // Mientras abre la caja no se pregunta: cerrar se comporta como antes del guardia.
+  const { guard, requestClose, trackFocus } = useFormModalDiscardGuard({
+    active: open && hasTypedData && !openSession.isPending,
+    label: `Apertura de caja «${registerName}» sin terminar`,
+  });
 
   useEffect(() => {
     if (!open) {
@@ -54,18 +74,24 @@ export function OpenCashSessionModal({
       // eslint-disable-next-line react-hooks/set-state-in-effect -- el fondo de apertura se precarga una sola vez por apertura, cuando termina la consulta del ultimo cierre (didPrefillRef); moverlo cambia cuando se inicializa el monto de caja
       setOpeningVes(amountInputValue(closure.closingVes));
       setOpeningRef(amountInputValue(closure.closingRef));
+      setInitialAmounts({
+        ref: amountInputValue(closure.closingRef),
+        ves: amountInputValue(closure.closingVes),
+      });
       setPrefilledFromClosure(true);
       return;
     }
 
     setOpeningVes("");
     setOpeningRef("");
+    setInitialAmounts(EMPTY_AMOUNTS);
     setPrefilledFromClosure(false);
   }, [open, lastClosure.data, lastClosure.isFetching, lastClosure.isLoading]);
 
   function resetForm() {
     setOpeningVes("");
     setOpeningRef("");
+    setInitialAmounts(EMPTY_AMOUNTS);
     setErrorMessage(null);
     setPrefilledFromClosure(false);
     didPrefillRef.current = false;
@@ -101,10 +127,7 @@ export function OpenCashSessionModal({
         <>
           <Button
             disabled={openSession.isPending}
-            onClick={() => {
-              resetForm();
-              close();
-            }}
+            onClick={close}
             type="button"
             variant="outline"
           >
@@ -120,15 +143,21 @@ export function OpenCashSessionModal({
         </>
       )}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) {
-          resetForm();
+        if (nextOpen) {
+          onOpenChange(true);
+          return;
         }
-        onOpenChange(nextOpen);
+
+        // Con un monto cambiado pregunta antes de descartarlo.
+        requestClose(() => {
+          resetForm();
+          onOpenChange(false);
+        });
       }}
       open={open}
       title="Abrir caja"
     >
-      <div className="grid gap-3">
+      <div className="grid gap-3" onFocus={trackFocus}>
         {prefilledFromClosure ? (
           <p className="text-sm text-muted-foreground">
             Se autocompleto con el ultimo cierre pendiente. Al abrir, ese cierre queda absorbido
@@ -149,6 +178,7 @@ export function OpenCashSessionModal({
         />
         {errorMessage ? <p className="text-sm text-destructive">{errorMessage}</p> : null}
       </div>
+      <ProcessGuardModal guard={guard} />
     </Modal>
   );
 }

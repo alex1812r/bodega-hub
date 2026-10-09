@@ -9,7 +9,9 @@ import {
 } from "@/shared/components/ConfirmActionModal";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
+import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
 import { Textarea } from "@/shared/components/Textarea";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 
 import { useVault } from "../../hooks/useVault";
 import { getVaultBalancesState } from "../utils/vaultBalancesState";
@@ -40,6 +42,8 @@ const copy: Record<
     confirmTitle: string;
     description: string;
     fallbackError: string;
+    /** Nombre del proceso en la pregunta del guardia. */
+    guardLabel: string;
     title: string;
   }
 > = {
@@ -49,6 +53,7 @@ const copy: Record<
     confirmTitle: "Confirmar depósito al baúl",
     description: "Ingresa efectivo físico al baúl (Bs. y/o REF). No afecta el saldo de cuenta.",
     fallbackError: "No se pudo registrar el depósito.",
+    guardLabel: "Depósito al baúl",
     title: "Depositar efectivo",
   },
   withdrawal: {
@@ -58,6 +63,7 @@ const copy: Record<
     description:
       "Saca efectivo físico del baúl. No puede superar el saldo de efectivo disponible.",
     fallbackError: "No se pudo registrar el retiro.",
+    guardLabel: "Retiro del baúl",
     title: "Retirar efectivo",
   },
 };
@@ -67,6 +73,10 @@ const INSUFFICIENT_MESSAGE = "El retiro supera el efectivo disponible en el baú
 /**
  * Depósito o retiro de efectivo del baúl: el formulario no envía, abre la
  * confirmación con el saldo actual → resultante de cada cubeta.
+ *
+ * Con un monto o una nota tecleados, cerrar (Esc, clic fuera, Cancelar, la X) o
+ * salir de la pantalla pregunta antes con el guardia de proceso; vacío, o tras
+ * registrar, cierra sin preguntar.
  */
 export function VaultCashMovementModal({
   kind,
@@ -103,6 +113,12 @@ export function VaultCashMovementModal({
   ]
     .filter((part) => part !== null)
     .join(" · ");
+  const hasTypedData = amountVes !== "" || amountRef !== "" || trimmedNotes !== "";
+  // Con la operación en vuelo no se pregunta: el cierre ya está bloqueado.
+  const { guard, requestClose, trackFocus } = useFormModalDiscardGuard({
+    active: open && hasTypedData && !mutation.isPending,
+    label: `${text.guardLabel}${amountSummary ? ` de ${amountSummary}` : ""} sin registrar`,
+  });
 
   function resetForm() {
     setAmountVes("");
@@ -174,16 +190,21 @@ export function VaultCashMovementModal({
           return;
         }
 
-        if (!nextOpen) {
-          resetForm();
+        if (nextOpen) {
+          onOpenChange(true);
+          return;
         }
 
-        onOpenChange(nextOpen);
+        // Con datos tecleados pregunta antes de descartarlos.
+        requestClose(() => {
+          resetForm();
+          onOpenChange(false);
+        });
       }}
       open={open}
       title={text.title}
     >
-      <div className="grid gap-3">
+      <div className="grid gap-3" onFocus={trackFocus}>
         <NumberInput
           decimals={2}
           error={
@@ -237,7 +258,8 @@ export function VaultCashMovementModal({
           }
         }}
         onRetry={() => void vault.refetch()}
-        open={confirmOpen}
+        // La pregunta del guardia (ATRÁS del navegador) no se apila sobre la confirmación.
+        open={confirmOpen && !guard.dialog.open}
         status={confirmStatus}
         statusHint={confirmStatus === "loading" ? undefined : "No se ha registrado nada."}
         statusMessage={confirmStatusMessage}
@@ -253,6 +275,7 @@ export function VaultCashMovementModal({
           </dd>
         </dl>
       </ConfirmActionModal>
+      <ProcessGuardModal guard={guard} />
     </Modal>
   );
 }

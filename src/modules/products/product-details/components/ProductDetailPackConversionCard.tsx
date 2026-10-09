@@ -7,8 +7,10 @@ import { Can } from "@/shared/auth/Can";
 import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
+import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
 import { Textarea } from "@/shared/components/Textarea";
 import { useToast } from "@/shared/components/Toast";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 
 import { AssortedPackOpeningConfirm } from "@/modules/inventory/inventory-movements/components/AssortedPackOpeningConfirm";
@@ -30,6 +32,17 @@ type ProductDetailPackConversionCardProps = {
   onConverted?: () => void;
 };
 
+const DEFAULT_PACK_QUANTITY = "1";
+
+/**
+ * Tarjeta de conversión del detalle del producto. Su modal "Abrir empaque" no
+ * envía: abre la confirmación con el efecto de la apertura.
+ *
+ * Si el usuario cambió la cantidad, el reparto del surtido o el motivo, cerrar
+ * el modal (Esc, clic fuera, Cancelar, la X) o salir de la pantalla pregunta
+ * antes con el guardia de proceso, y al salir se descarta lo tecleado; sin
+ * cambios, o tras abrir el empaque, cierra sin preguntar.
+ */
 export function ProductDetailPackConversionCard({
   packConversion,
   productId,
@@ -38,7 +51,7 @@ export function ProductDetailPackConversionCard({
   onConverted,
 }: ProductDetailPackConversionCardProps) {
   const [open, setOpen] = useState(false);
-  const [packQuantity, setPackQuantity] = useState("1");
+  const [packQuantity, setPackQuantity] = useState(DEFAULT_PACK_QUANTITY);
   const [reason, setReason] = useState("");
   const [quantityTouched, setQuantityTouched] = useState(false);
   const { showToast } = useToast();
@@ -114,6 +127,13 @@ export function ProductDetailPackConversionCard({
     reason,
     target,
   });
+  const hasTypedData =
+    packQuantity !== DEFAULT_PACK_QUANTITY || reason.trim() !== "" || assorted.isEdited;
+  // Con la apertura en vuelo no se pregunta: el cierre ya está bloqueado.
+  const { guard, requestClose, trackFocus } = useFormModalDiscardGuard({
+    active: open && hasTypedData && !assorted.isPending,
+    label: `Apertura de empaque «${productName}» sin registrar`,
+  });
   const unitPreview =
     isPack && quantityNumber > 0 && packConversion
       ? quantityNumber * packConversion.unitsPerPack
@@ -158,11 +178,15 @@ export function ProductDetailPackConversionCard({
     ) : null;
   const openLabel = isAssorted ? "Abrir según la receta" : "Abrir empaque";
 
-  function closeAfterOpening() {
-    setOpen(false);
-    setPackQuantity("1");
+  function resetFields() {
+    setPackQuantity(DEFAULT_PACK_QUANTITY);
     setReason("");
     setQuantityTouched(false);
+  }
+
+  function closeAfterOpening() {
+    setOpen(false);
+    resetFields();
     onConverted?.();
   }
 
@@ -290,11 +314,19 @@ export function ProductDetailPackConversionCard({
                   return;
                 }
 
-                setOpen(nextOpen);
-                if (!nextOpen) {
+                if (nextOpen) {
+                  setOpen(true);
+                  return;
+                }
+
+                // Con cambios pregunta antes de descartarlos.
+                requestClose(() => {
+                  setOpen(false);
+                  // Lo tecleado se descarta: al reabrir el modal no queda nada por lo que preguntar.
+                  resetFields();
                   // Cerrar descarta el intento: al reabrir, clave nueva y sin el error anterior.
                   assorted.reset();
-                }
+                });
               }}
               open={open}
               title="Abrir empaque"
@@ -304,7 +336,12 @@ export function ProductDetailPackConversionCard({
                 </Button>
               }
             >
-              <form className="grid gap-4" id="open-pack-form" onSubmit={handleSubmit}>
+              <form
+                className="grid gap-4"
+                id="open-pack-form"
+                onFocus={trackFocus}
+                onSubmit={handleSubmit}
+              >
                 <NumberInput
                   decimals={0}
                   disabled={assorted.isPending}
@@ -339,7 +376,14 @@ export function ProductDetailPackConversionCard({
                   </p>
                 ) : null}
               </form>
-              <AssortedPackOpeningConfirm opening={assorted} />
+              {/* La pregunta del guardia (ATRÁS del navegador) no se apila sobre la confirmación. */}
+              <AssortedPackOpeningConfirm
+                opening={{
+                  ...assorted,
+                  confirmOpen: assorted.confirmOpen && !guard.dialog.open,
+                }}
+              />
+              <ProcessGuardModal guard={guard} />
             </Modal>
           </div>
         </Can>

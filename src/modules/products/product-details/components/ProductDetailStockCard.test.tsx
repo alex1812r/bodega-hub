@@ -8,6 +8,11 @@ import {
 } from "../../../inventory/utils/requestAttempt.testUtils";
 import { ProductDetailStockCard } from "./ProductDetailStockCard";
 
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 /** PRO-03 · "Ajustar stock" en la tarjeta de stock del detalle. */
 
 const mockGrantedPermissions = new Set<string>();

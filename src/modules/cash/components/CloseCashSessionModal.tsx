@@ -15,6 +15,8 @@ import {
 } from "@/shared/components/ConfirmActionModal";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
+import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 import { cn } from "@/shared/utils/cn";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 
@@ -33,6 +35,8 @@ type CloseCashSessionModalProps = {
 type MoneyFormatter = (value: number) => string;
 
 const FALLBACK_ERROR = "No se pudo cerrar la caja.";
+
+const EMPTY_AMOUNTS = { ref: "", ves: "" };
 
 function amountInputValue(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) {
@@ -121,6 +125,11 @@ function DifferenceRow({
  * - Sobrante: no confirma (no falta dinero y queda asentado en el cierre); se
  *   ve en la fila de diferencia como «(sobra)».
  * - Si el umbral no se pudo leer se usa 0: ante la duda, se confirma.
+ *
+ * Lo contado se precarga con el teórico. Si el usuario cambia un monto, cerrar
+ * (Esc, clic fuera, Cancelar, la X) o salir de la pantalla pregunta antes con
+ * el guardia de proceso; con lo precargado sin tocar, o tras cerrar la caja,
+ * cierra sin preguntar.
  */
 export function CloseCashSessionModal({
   accountVes = 0,
@@ -139,6 +148,8 @@ export function CloseCashSessionModal({
   const [closingRef, setClosingRef] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /** Montos precargados al abrir: lo precargado no cuenta como tecleado. */
+  const [initialAmounts, setInitialAmounts] = useState(EMPTY_AMOUNTS);
   const didPrefillRef = useRef(false);
   // Un doble clic llega antes de que `isPending` deshabilite el botón.
   const inFlightRef = useRef(false);
@@ -155,6 +166,12 @@ export function CloseCashSessionModal({
     theoreticalRef,
     theoreticalVes,
   });
+  const hasTypedData = closingVes !== initialAmounts.ves || closingRef !== initialAmounts.ref;
+  // Con el cierre en vuelo no se pregunta: el cierre del modal ya está bloqueado.
+  const { guard, requestClose, trackFocus } = useFormModalDiscardGuard({
+    active: open && hasTypedData && !closeSession.isPending,
+    label: `Cierre de caja «${registerName}» sin terminar`,
+  });
 
   useEffect(() => {
     if (!open) {
@@ -169,11 +186,16 @@ export function CloseCashSessionModal({
     didPrefillRef.current = true;
     setClosingVes(amountInputValue(theoreticalVes));
     setClosingRef(amountInputValue(theoreticalRef));
+    setInitialAmounts({
+      ref: amountInputValue(theoreticalRef),
+      ves: amountInputValue(theoreticalVes),
+    });
   }, [open, theoreticalRef, theoreticalVes]);
 
   function resetForm() {
     setClosingVes("");
     setClosingRef("");
+    setInitialAmounts(EMPTY_AMOUNTS);
     setErrorMessage(null);
     setConfirmOpen(false);
     didPrefillRef.current = false;
@@ -242,10 +264,7 @@ export function CloseCashSessionModal({
         <>
           <Button
             disabled={closeSession.isPending}
-            onClick={() => {
-              resetForm();
-              close();
-            }}
+            onClick={close}
             type="button"
             variant="outline"
           >
@@ -262,15 +281,21 @@ export function CloseCashSessionModal({
           return;
         }
 
-        if (!nextOpen) {
-          resetForm();
+        if (nextOpen) {
+          onOpenChange(true);
+          return;
         }
-        onOpenChange(nextOpen);
+
+        // Con un monto cambiado pregunta antes de descartarlo.
+        requestClose(() => {
+          resetForm();
+          onOpenChange(false);
+        });
       }}
       open={open}
       title="Cerrar caja"
     >
-      <div className="grid gap-3">
+      <div className="grid gap-3" onFocus={trackFocus}>
         <div className="grid gap-3 rounded-lg border border-border bg-surface-container/40 p-3 sm:grid-cols-2">
           <div>
             <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
@@ -356,7 +381,8 @@ export function CloseCashSessionModal({
             setConfirmOpen(false);
           }
         }}
-        open={confirmOpen}
+        // La pregunta del guardia (ATRÁS del navegador) no se apila sobre la confirmación.
+        open={confirmOpen && !guard.dialog.open}
         title="Cerrar caja con faltante"
         variant="danger"
       >
@@ -365,6 +391,7 @@ export function CloseCashSessionModal({
           transferirse lo contado.
         </p>
       </ConfirmActionModal>
+      <ProcessGuardModal guard={guard} />
     </Modal>
   );
 }

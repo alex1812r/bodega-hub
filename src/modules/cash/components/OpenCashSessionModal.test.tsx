@@ -4,6 +4,11 @@ import userEvent from "@testing-library/user-event";
 
 import { OpenCashSessionModal } from "./OpenCashSessionModal";
 
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 const mutateAsync = jest.fn();
 
 jest.mock("../hooks/useCash", () => ({

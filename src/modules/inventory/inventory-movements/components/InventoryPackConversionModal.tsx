@@ -8,8 +8,10 @@ import { EntityAutocomplete, type EntityFetcher } from "@/shared/components/Enti
 import { ErrorState } from "@/shared/components/ErrorState";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
+import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
 import { Textarea } from "@/shared/components/Textarea";
 import { useToast } from "@/shared/components/Toast";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 
 import { packConversionsQueryOptions, usePackConversions } from "../../hooks/useInventory";
 import { STOCK_REASON_MAX_LENGTH, describeStockReasonLength } from "../../utils/stockReason";
@@ -28,6 +30,8 @@ import { describePackRecipe, searchPackOptions } from "./packProductOptions";
 
 const formId = "inventory-pack-conversion-form";
 
+const DEFAULT_PACK_QUANTITY = "1";
+
 type InventoryPackConversionModalProps = {
   /**
    * Empaque precargado; el usuario puede cambiarlo. Si el producto no es un
@@ -37,13 +41,23 @@ type InventoryPackConversionModalProps = {
   trigger?: ReactNode;
 };
 
+/**
+ * Conversión de empaques en unidades: el formulario no envía, abre la
+ * confirmación con el efecto de la conversión.
+ *
+ * Si el usuario cambió algo respecto a como abrió el modal (otro empaque,
+ * cantidad, reparto del surtido o motivo), cerrar (Esc, clic fuera, Cancelar,
+ * la X) o salir de la pantalla pregunta antes con el guardia de proceso; sin
+ * cambios, o tras convertir, cierra sin preguntar. El empaque precargado y la
+ * cantidad inicial no cuentan.
+ */
 export function InventoryPackConversionModal({
   defaultPackProductId,
   trigger,
 }: InventoryPackConversionModalProps = {}) {
   const [open, setOpen] = useState(false);
   const [packProductId, setPackProductId] = useState("");
-  const [packQuantity, setPackQuantity] = useState("1");
+  const [packQuantity, setPackQuantity] = useState(DEFAULT_PACK_QUANTITY);
   const [reason, setReason] = useState("");
   // Se activa al tocar la cantidad o al intentar enviar; al abrir no hay aviso.
   const [showQuantityError, setShowQuantityError] = useState(false);
@@ -124,6 +138,18 @@ export function InventoryPackConversionModal({
     reason,
     target,
   });
+  const hasTypedData =
+    packProductId !== (defaultPackProductId ?? "") ||
+    packQuantity !== DEFAULT_PACK_QUANTITY ||
+    reason.trim() !== "" ||
+    assorted.isEdited;
+  // Con la conversión en vuelo no se pregunta: el cierre ya está bloqueado.
+  const { guard, requestClose, trackFocus } = useFormModalDiscardGuard({
+    active: open && hasTypedData && !assorted.isPending,
+    label: selected
+      ? `Conversión de «${selected.packProduct.name}» sin registrar`
+      : "Conversión de empaque sin registrar",
+  });
   // Sin `min`/`max` en el input no hay burbuja nativa: el motivo se dice aqui.
   const quantityError = !showQuantityError
     ? undefined
@@ -137,7 +163,7 @@ export function InventoryPackConversionModal({
 
   function resetForm() {
     setPackProductId(defaultPackProductId ?? "");
-    setPackQuantity("1");
+    setPackQuantity(DEFAULT_PACK_QUANTITY);
     setReason("");
     setShowQuantityError(false);
     setShowPackError(false);
@@ -180,15 +206,20 @@ export function InventoryPackConversionModal({
           return;
         }
 
-        setOpen(nextOpen);
         if (nextOpen) {
+          setOpen(true);
           setPackProductId(defaultPackProductId ?? "");
           // El stock del empaque y de sus componentes se lee al abrir: el efecto no se calcula con caché.
           void packConversionsQuery.refetch();
-        } else {
+          return;
+        }
+
+        // Con cambios pregunta antes de descartarlos.
+        requestClose(() => {
+          setOpen(false);
           // Cerrar descarta el intento (`assorted.reset`): al reabrir, clave nueva y sin el error anterior.
           resetForm();
-        }
+        });
       }}
       open={open}
       title="Convertir empaque"
@@ -209,7 +240,7 @@ export function InventoryPackConversionModal({
           />
         </div>
       ) : (
-        <form className="grid gap-4" id={formId} onSubmit={handleSubmit}>
+        <form className="grid gap-4" id={formId} onFocus={trackFocus} onSubmit={handleSubmit}>
           <EntityAutocomplete
             disabled={isLoadingDefaultPack || assorted.isPending}
             entity="product"
@@ -282,7 +313,11 @@ export function InventoryPackConversionModal({
           ) : null}
         </form>
       )}
-      <AssortedPackOpeningConfirm opening={assorted} />
+      {/* La pregunta del guardia (ATRÁS del navegador) no se apila sobre la confirmación. */}
+      <AssortedPackOpeningConfirm
+        opening={{ ...assorted, confirmOpen: assorted.confirmOpen && !guard.dialog.open }}
+      />
+      <ProcessGuardModal guard={guard} />
     </Modal>
   );
 }

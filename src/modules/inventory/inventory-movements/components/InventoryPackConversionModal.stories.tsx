@@ -22,6 +22,8 @@ import { InventoryPackConversionModal } from "./InventoryPackConversionModal";
  */
 const meta = {
   component: InventoryPackConversionModal,
+  // El guardia de datos tecleados (CNF-15) usa `useRouter` de `next/navigation`: necesita el App Router simulado.
+  parameters: { nextjs: { appDirectory: true } },
   tags: ["ai-generated"],
   title: "Modules/Inventory/InventoryPackConversionModal",
 } satisfies Meta<typeof InventoryPackConversionModal>;

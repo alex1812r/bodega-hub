@@ -4,7 +4,7 @@ import { type FormEvent, type ReactNode, useCallback, useId, useRef, useState } 
 import { flushSync } from "react-dom";
 
 import { getFormSaveDescription } from "@/lib/api/dataSourceUi";
-import { useFormModalDiscardGuard } from "@/modules/products/product-details/components/useFormModalDiscardGuard";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";

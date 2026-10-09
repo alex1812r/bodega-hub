@@ -19,6 +19,11 @@ import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 
 import { ProductDetailPackConversionCard } from "./ProductDetailPackConversionCard";
 
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 function recipeComponent(unitProductId: string, name: string, isActive = true) {
   return {
     costWeight: 1,

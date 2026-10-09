@@ -12,6 +12,11 @@ import { createQueryWrapper, installFetchStub } from "../../utils/requestAttempt
 import { UNCERTAIN_STOCK_REQUEST_MESSAGE } from "../../utils/stockRequestError";
 import { InventoryPackConversionModal } from "./InventoryPackConversionModal";
 
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 function product(id: string, name: string, currentStock: number) {
   return { currentCostRef: 1, currentStock, id, name, salePriceRef: 2, sku: `${id}-sku` };
 }
@@ -118,6 +123,19 @@ async function closeWithEscape() {
   await waitFor(() => expect(document.getElementById(formId)).toBeNull());
 }
 
+/** Con lo tecleado sin registrar, Esc pregunta (CNF-15): se sale descartándolo. */
+async function closeWithEscapeDiscarding() {
+  await screen.findByRole("dialog", { name: "Convertir empaque" });
+  fireEvent.keyDown(getModal(), { key: "Escape" });
+  fireEvent.click(
+    within(await screen.findByRole("dialog", { name: "¿Salir sin terminar?" })).getByRole(
+      "button",
+      { name: "Salir" },
+    ),
+  );
+  await waitFor(() => expect(document.getElementById(formId)).toBeNull());
+}
+
 /** Deja pasar el cierre diferido del Modal (setTimeout 0). */
 async function flushDeferredClose() {
   await act(async () => {
@@ -199,7 +217,7 @@ describe("InventoryPackConversionModal · 1 a 1 · clave (INV-F2 · F1)", () => 
     await waitFor(() => expect(screen.getByLabelText("Motivo")).toBeEnabled());
     await cancelSingleConfirm(third);
 
-    await closeWithEscape();
+    await closeWithEscapeDiscarding();
     await openModal();
     expect(screen.queryByText(keyConflict.error.message)).not.toBeInTheDocument();
     setQuantity("2");

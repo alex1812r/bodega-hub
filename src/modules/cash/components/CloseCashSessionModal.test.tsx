@@ -6,6 +6,11 @@ import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 
 import { CloseCashSessionModal } from "./CloseCashSessionModal";
 
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 const mutateAsync = jest.fn();
 const mockCashCloseSettings: { data?: { cashCloseDiffAlertVes: number } } = {};
 

@@ -7,7 +7,9 @@ import type { CashSession } from "@/modules/cash/types";
 import { Button } from "@/shared/components/Button";
 import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { Modal } from "@/shared/components/Modal";
+import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
 import { Textarea } from "@/shared/components/Textarea";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 import { cn } from "@/shared/utils/cn";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 
@@ -32,6 +34,14 @@ function closureLabel(session: CashSession) {
   return `${session.register.name} — cerrado ${closedAt}`;
 }
 
+/**
+ * Transferencia de cierres de caja al baúl: el formulario no envía, abre la
+ * confirmación con los cierres y los saldos resultantes.
+ *
+ * Con cierres seleccionados o una nota tecleada, cerrar (Esc, clic fuera,
+ * Cancelar, la X) o salir de la pantalla pregunta antes con el guardia de
+ * proceso; sin nada, o tras transferir, cierra sin preguntar.
+ */
 export function VaultTransferFromCashModal({
   onOpenChange,
   open,
@@ -56,6 +66,17 @@ export function VaultTransferFromCashModal({
   const effect = computeClosuresTransferEffect({
     closures: selected,
     vault: balances.vault ?? UNKNOWN_BALANCES,
+  });
+  const hasTypedData = selectedIds.length > 0 || trimmedNotes !== "";
+  // Con la transferencia en vuelo no se pregunta: el cierre ya está bloqueado.
+  const { guard, requestClose, trackFocus } = useFormModalDiscardGuard({
+    active: open && hasTypedData && !transfer.isPending,
+    label:
+      selectedIds.length === 0
+        ? "Transferencia al baúl sin registrar"
+        : `Transferencia de ${
+            selectedIds.length === 1 ? "1 cierre" : `${selectedIds.length} cierres`
+          } al baúl sin registrar`,
   });
 
   function resetForm() {
@@ -139,16 +160,21 @@ export function VaultTransferFromCashModal({
           return;
         }
 
-        if (!nextOpen) {
-          resetForm();
+        if (nextOpen) {
+          onOpenChange(true);
+          return;
         }
 
-        onOpenChange(nextOpen);
+        // Con cierres seleccionados o una nota pregunta antes de descartarlos.
+        requestClose(() => {
+          resetForm();
+          onOpenChange(false);
+        });
       }}
       open={open}
       title="Transferir cierres al baúl"
     >
-      <div className="grid gap-3">
+      <div className="grid gap-3" onFocus={trackFocus}>
         <div className="flex items-center justify-between gap-2">
           <p className="text-sm font-medium text-foreground">Cierres pendientes</p>
           <Button
@@ -253,7 +279,8 @@ export function VaultTransferFromCashModal({
           }
         }}
         onRetry={() => void vault.refetch()}
-        open={confirmOpen}
+        // La pregunta del guardia (ATRÁS del navegador) no se apila sobre la confirmación.
+        open={confirmOpen && !guard.dialog.open}
         renderEffects={() => <VaultTransferEffects effect={effect} />}
         status={balances.status}
         statusHint={balances.status === "error" ? "No se ha transferido nada." : undefined}
@@ -267,6 +294,7 @@ export function VaultTransferFromCashModal({
           </dd>
         </dl>
       </ConfirmActionModal>
+      <ProcessGuardModal guard={guard} />
     </Modal>
   );
 }

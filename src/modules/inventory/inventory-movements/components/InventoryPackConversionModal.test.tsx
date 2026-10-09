@@ -5,6 +5,11 @@ import userEvent from "@testing-library/user-event";
 import { createQueryWrapper, installFetchStub } from "../../utils/requestAttempt.testUtils";
 import { InventoryPackConversionModal } from "./InventoryPackConversionModal";
 
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 function linked(id: string, name: string, sku: string, currentStock: number) {
   return { currentCostRef: 1, currentStock, id, name, salePriceRef: 2, sku };
 }
