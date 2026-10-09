@@ -36,6 +36,13 @@ export type PaginationProps = {
   showSummary?: boolean;
 };
 
+/**
+ * Paginación de listas. Por debajo de `sm` (640 px) se compacta para caber en
+ * 390 px (y en 320) sin scroll horizontal: los números de página se sustituyen
+ * por "Página X de Y", "Anterior"/"Siguiente" de la variante `stitch` pasan a
+ * ser flechas (el texto sigue siendo su nombre accesible) y el resumen baja a
+ * su propia línea si no cabe junto a los controles.
+ */
 export function Pagination({
   className,
   isDisabled = false,
@@ -90,7 +97,7 @@ export function Pagination({
       className={cn(
         "flex max-w-full min-w-0 flex-col gap-3",
         isStitch
-          ? "flex-row items-center justify-between gap-4"
+          ? "flex-row flex-wrap items-center justify-between gap-x-4 gap-y-2"
           : isEmbedded
             ? "gap-3 sm:flex-row sm:items-center sm:justify-between"
             : cn(
@@ -103,7 +110,7 @@ export function Pagination({
       {showSummary ? (
         <p
           className={cn(
-            "shrink-0 text-sm",
+            "min-w-0 text-sm",
             isStitch
               ? "text-on-surface-variant"
               : "text-slate-600 dark:text-slate-400",
@@ -131,8 +138,13 @@ export function Pagination({
       <div
         className={cn(
           "flex min-w-0 flex-wrap items-center gap-2",
-          isStitch ? "gap-1" : isCompact ? "justify-between" : "flex-col gap-3 sm:flex-row sm:items-center",
+          isStitch
+            ? "ml-auto gap-1"
+            : isCompact
+              ? "justify-between"
+              : "flex-col gap-3 sm:flex-row sm:items-center",
         )}
+        data-pagination-controls=""
       >
         {showPageSizeSelector && !isStitch ? (
           <label className="flex shrink-0 items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
@@ -165,7 +177,8 @@ export function Pagination({
               size="sm"
               variant="outline"
             >
-              Anterior
+              <ChevronLeft aria-hidden className="size-4 sm:hidden" />
+              <span className="sr-only sm:not-sr-only">Anterior</span>
             </Button>
           ) : (
             <IconButton
@@ -184,7 +197,16 @@ export function Pagination({
               <span className="font-medium text-slate-900 dark:text-slate-100">{totalPages}</span>
             </p>
           ) : (
-            <div className="flex flex-wrap items-center gap-1">
+            <>
+            {isStitch ? (
+              <p
+                className="whitespace-nowrap px-1 text-sm text-on-surface-variant sm:hidden"
+                data-pagination-page-label=""
+              >
+                Página {currentPage} de {totalPages}
+              </p>
+            ) : null}
+            <div className="hidden flex-wrap items-center gap-1 sm:flex" data-pagination-pages="">
               {visiblePages.map((page, index) =>
                 page === -1 ? (
                   <span
@@ -216,6 +238,7 @@ export function Pagination({
                 ),
               )}
             </div>
+            </>
           )}
 
           {isStitch ? (
@@ -226,7 +249,8 @@ export function Pagination({
               size="sm"
               variant="outline"
             >
-              Siguiente
+              <span className="sr-only sm:not-sr-only">Siguiente</span>
+              <ChevronRight aria-hidden className="size-4 sm:hidden" />
             </Button>
           ) : (
             <IconButton

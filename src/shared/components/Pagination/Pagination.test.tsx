@@ -113,6 +113,87 @@ describe("Pagination", () => {
     expect(getByRole("navigation")).not.toHaveClass("shadow-sm");
   });
 
+  describe("ancho de móvil (390 px)", () => {
+    function renderStitch() {
+      return render(
+        <Pagination
+          entityLabel="productos"
+          limit={10}
+          onSkipChange={jest.fn()}
+          skip={90}
+          total={250}
+          variant="stitch"
+        />,
+      );
+    }
+
+    it("stitch: el contenedor envuelve línea en lugar de desbordar", () => {
+      const { getByRole } = renderStitch();
+      const nav = getByRole("navigation");
+
+      expect(nav).toHaveClass("flex-wrap", "max-w-full", "min-w-0");
+      // El resumen ya no impone su ancho: puede partir línea.
+      expect(nav.querySelector("p")).not.toHaveClass("shrink-0");
+    });
+
+    it("stitch: Anterior y Siguiente son flechas en móvil y conservan su nombre accesible", () => {
+      const { getByRole } = renderStitch();
+
+      for (const name of ["Anterior", "Siguiente"]) {
+        const button = getByRole("button", { name });
+
+        expect(button.querySelector("span")).toHaveClass("sr-only", "sm:not-sr-only");
+        expect(button.querySelector("svg")).toHaveClass("sm:hidden");
+        expect(button.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+      }
+    });
+
+    it("stitch: los números de página solo se muestran desde sm; en móvil queda «Página X de Y»", () => {
+      const { container, getByRole } = renderStitch();
+      const pages = container.querySelector("[data-pagination-pages]");
+      const label = container.querySelector("[data-pagination-page-label]");
+
+      expect(pages).toHaveClass("hidden", "sm:flex");
+      expect(pages).toContainElement(getByRole("button", { name: /ir a pagina 10/i }));
+      expect(label).toHaveClass("sm:hidden", "whitespace-nowrap");
+      expect(label).toHaveTextContent("Página 10 de 25");
+    });
+
+    it("stitch: Siguiente sigue navegando", () => {
+      const onSkipChange = jest.fn();
+      const { getByRole } = render(
+        <Pagination limit={10} onSkipChange={onSkipChange} skip={90} total={250} variant="stitch" />,
+      );
+
+      fireEvent.click(getByRole("button", { name: "Siguiente" }));
+      expect(onSkipChange).toHaveBeenCalledWith(100);
+
+      fireEvent.click(getByRole("button", { name: "Anterior" }));
+      expect(onSkipChange).toHaveBeenCalledWith(80);
+    });
+
+    it.each(["default", "embedded"] as const)(
+      "%s: oculta los números en móvil y no duplica el texto de página",
+      (variant) => {
+        const { container, getAllByText } = render(
+          <Pagination
+            limit={10}
+            onLimitChange={jest.fn()}
+            onSkipChange={jest.fn()}
+            skip={90}
+            total={250}
+            variant={variant}
+          />,
+        );
+
+        expect(container.querySelector("[data-pagination-pages]")).toHaveClass("hidden", "sm:flex");
+        expect(container.querySelector("[data-pagination-page-label]")).toBeNull();
+        expect(getAllByText(/^Pagina/)).toHaveLength(1);
+        expect(container.querySelector("[data-pagination-controls]")).toHaveClass("flex-wrap", "min-w-0");
+      },
+    );
+  });
+
   it("renders compact variant without numbered page buttons", () => {
     const { getByRole, queryByRole } = render(
       <Pagination

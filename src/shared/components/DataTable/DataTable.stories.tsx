@@ -53,6 +53,30 @@ export const WithActions: Story = {
   },
 };
 
+/**
+ * Tabla `stitch` (ancho mínimo de 720 px) en un contenedor de 560 px, como en
+ * una ventana de 1024 px con el menú lateral abierto: la tabla hace scroll
+ * horizontal dentro de su contenedor y la columna "Acciones" queda fijada a la
+ * derecha, con el menú "…" siempre a la vista.
+ */
+export const StickyActionsNarrowContainer: Story = {
+  args: {
+    actions: () => [
+      { label: "Ver detalle", onSelect: fn() },
+      { label: "Editar", onSelect: fn() },
+    ],
+    layout: "table",
+    variant: "stitch",
+  },
+  decorators: [
+    (StoryComponent) => (
+      <div className="w-[560px]">
+        <StoryComponent />
+      </div>
+    ),
+  ],
+};
+
 export const Empty: Story = {
   args: {
     data: [],

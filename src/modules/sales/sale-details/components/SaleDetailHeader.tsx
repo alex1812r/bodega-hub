@@ -2,6 +2,7 @@
 
 import { HandCoins, Printer } from "lucide-react";
 
+import { PageBackButton } from "@/shared/components/PageBackButton";
 import {
   PrimaryStateAction,
   type PrimaryStateActionConfig,
@@ -13,7 +14,6 @@ import { formatDateTimeShort } from "@/shared/utils/date";
 
 import { formatInvoiceHeading } from "../utils/saleDetailLabels";
 import { SaleDetailActionsMenu } from "./SaleDetailActionsMenu";
-import { SaleDetailBackButton } from "./SaleDetailBackButton";
 import { SaleDetailStatusBadge } from "./SaleDetailStatusBadge";
 
 type SaleDetailHeaderProps = {
@@ -119,7 +119,7 @@ export function SaleDetailHeader({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <SaleDetailBackButton />
+          <PageBackButton chained fallbackHref="/sales" size="sm" />
           <SaleDetailActionsMenu
             invoiceNumber={invoiceNumber}
             isCancelling={isCancelling}

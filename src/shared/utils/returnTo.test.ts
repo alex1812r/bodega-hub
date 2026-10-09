@@ -2,8 +2,10 @@ import {
   MAX_RETURN_TO_LENGTH,
   RETURN_TO_PARAM,
   isSafeInternalPath,
+  readChainedReturnTo,
   resolveReturnTo,
   safeInternalPath,
+  withChainedReturnTo,
   withReturnTo,
 } from "./returnTo";
 
@@ -270,5 +272,74 @@ describe("safeInternalPath", () => {
     ["next hostil anidado", "/login?next=%2F%5Cevil.example"],
   ])("devuelve el fallback con %s", (_label, value) => {
     expect(safeInternalPath(value, FALLBACK)).toBe(FALLBACK);
+  });
+});
+
+describe("returnTo encadenado", () => {
+  const PRODUCTS_URL = "/products?search=caf&page=2";
+  const LIST_URL = `/inventory?product=p-cafe&returnTo=${encodeURIComponent(PRODUCTS_URL)}`;
+
+  describe("withChainedReturnTo", () => {
+    it("conserva el returnTo de la pantalla actual anidado en el nuevo returnTo", () => {
+      const href = withChainedReturnTo("/inventory/movements?productId=p-cafe", LIST_URL);
+      const params = new URLSearchParams(href.split("?")[1]);
+
+      expect(href.split("?")[0]).toBe("/inventory/movements");
+      expect(params.get("productId")).toBe("p-cafe");
+      expect(params.get("returnTo")).toBe(LIST_URL);
+      expect(new URLSearchParams(LIST_URL.split("?")[1]).get("returnTo")).toBe(PRODUCTS_URL);
+    });
+
+    it("da el mismo enlace que withReturnTo cuando la pantalla actual no trae returnTo", () => {
+      expect(
+        withChainedReturnTo("/inventory/movements?productId=p-cafe", "/inventory?product=p-cafe"),
+      ).toBe(
+        `/inventory/movements?productId=p-cafe&returnTo=${encodeURIComponent("/inventory?product=p-cafe")}`,
+      );
+    });
+
+    it("descarta un returnTo anidado hostil y conserva la pantalla actual", () => {
+      const href = withChainedReturnTo(
+        "/inventory/movements?productId=p-cafe",
+        "/inventory?product=p-cafe&returnTo=https%3A%2F%2Fevil.com",
+      );
+
+      expect(returnToOf(href)).toBe("/inventory?product=p-cafe");
+    });
+
+    it("deja el enlace igual cuando la URL actual no es una ruta interna", () => {
+      expect(withChainedReturnTo("/inventory/movements", "https://evil.com/inventory")).toBe(
+        "/inventory/movements",
+      );
+    });
+  });
+
+  describe("readChainedReturnTo", () => {
+    it("devuelve entero un returnTo seguro, con su returnTo anidado", () => {
+      expect(readChainedReturnTo(LIST_URL)).toBe(LIST_URL);
+      expect(readChainedReturnTo("/products/p-arroz")).toBe("/products/p-arroz");
+    });
+
+    it("la cadena lista → A → B se deshace paso a paso hasta la lista con filtros", () => {
+      const detailA = withReturnTo("/products/p-1?tab=historial", PRODUCTS_URL);
+      const detailB = withChainedReturnTo("/sales/s-9", detailA);
+
+      const backFromB = readChainedReturnTo(returnToOf(detailB));
+
+      expect(backFromB).toBe(detailA);
+      expect(readChainedReturnTo(returnToOf(backFromB ?? ""))).toBe(PRODUCTS_URL);
+    });
+
+    it.each([
+      null,
+      undefined,
+      "",
+      "//evil.com",
+      "https://evil.example",
+      "/api/inventory",
+      "/inventory?returnTo=https%3A%2F%2Fevil.example",
+    ])("devuelve null para %p", (value) => {
+      expect(readChainedReturnTo(value)).toBeNull();
+    });
   });
 });
