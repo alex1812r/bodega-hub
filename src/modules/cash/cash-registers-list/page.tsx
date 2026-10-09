@@ -16,7 +16,9 @@ import { EntityListPage } from "@/shared/components/EntityListPage";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
 import { SelectField } from "@/shared/components/SelectField";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
+import { withReturnTo } from "@/shared/utils/returnTo";
 
 import {
   useCashRegisters,
@@ -29,6 +31,20 @@ import { useCashSessionClock } from "../hooks/useCashSessionClock";
 import type { CashRegister, CashSession } from "../types";
 
 type User = { id: string; name: string; role: string };
+
+/**
+ * `/cash/registers` no tiene búsqueda, filtros, orden ni paginación (lista
+ * corta y fija de cajas): no hay estado que conservar en la URL. El detalle
+ * vuelve a esta misma ruta con "Volver".
+ */
+const CASH_REGISTERS_LIST_HREF = "/cash/registers";
+
+function registerDetailHref(registerId: string) {
+  return withReturnTo(`/cash/registers/${registerId}`, CASH_REGISTERS_LIST_HREF);
+}
+
+const cardTitleLinkClass =
+  "rounded-md hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function openedAtLabel(openedAt: string) {
   return new Date(openedAt).toLocaleTimeString("es-VE", {
@@ -97,6 +113,8 @@ export function CashRegistersListPage() {
   const isLoadingTotals = openSessions.isLoading;
   const activeCount = (registers.data ?? []).filter((item) => item.isActive).length;
 
+  useScrollRestoration(CASH_REGISTERS_LIST_HREF, { ready: !registers.isLoading });
+
   const columns = useMemo<DataTableColumn<CashRegister>[]>(
     () => [
       {
@@ -107,7 +125,7 @@ export function CashRegistersListPage() {
           <div className="min-w-0">
             <Link
               className="font-medium text-primary hover:underline"
-              href={`/cash/registers/${item.id}`}
+              href={registerDetailHref(item.id)}
             >
               {item.name}
             </Link>
@@ -274,7 +292,11 @@ export function CashRegistersListPage() {
           <CardContent className="p-0 sm:px-4 sm:pb-4">
             <DataTable
               cardSubtitle={(item) => item.assignedUserName ?? "Sin vendedor asignado"}
-              cardTitle={(item) => item.name}
+              cardTitle={(item) => (
+                <Link className={cardTitleLinkClass} href={registerDetailHref(item.id)}>
+                  {item.name}
+                </Link>
+              )}
               columns={columns}
               data={registers.data ?? []}
               embedded
@@ -412,7 +434,7 @@ function RegisterRowActions({ register }: { register: CashRegister }) {
   return (
     <ActionsMenu
       actions={[
-        { href: `/cash/registers/${register.id}`, label: "Ver detalle" },
+        { href: registerDetailHref(register.id), label: "Ver detalle" },
         {
           disabled: update.isPending,
           label: register.isActive ? "Desactivar caja" : "Activar caja",

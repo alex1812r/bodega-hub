@@ -188,7 +188,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
   return (
     <div className="space-y-5">
       <PageHeader
-        actions={<PageBackButton href="/cash/registers" label="Volver a cajas" />}
+        actions={<PageBackButton fallbackHref="/cash/registers" label="Volver a cajas" />}
         badge={
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={item.isActive ? "success" : "default"}>

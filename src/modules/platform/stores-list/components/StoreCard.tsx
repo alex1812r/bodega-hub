@@ -11,17 +11,19 @@ import { Typography } from "@/shared/components/Typography";
 import type { PlatformStore } from "../../types/stores";
 
 type StoreCardProps = {
+  /** Enlace al detalle, ya con la URL de la lista en `returnTo`. */
+  detailHref: string;
   onToggleStatus: (store: PlatformStore) => void;
   store: PlatformStore;
 };
 
-export function StoreCard({ onToggleStatus, store }: StoreCardProps) {
+export function StoreCard({ detailHref, onToggleStatus, store }: StoreCardProps) {
   const createdLabel = new Intl.DateTimeFormat("es-VE", {
     dateStyle: "medium",
   }).format(new Date(store.createdAt));
 
   const actions: ActionMenuItem[] = [
-    { href: `/platform/stores/${store.id}`, label: "Ver detalle" },
+    { href: detailHref, label: "Ver detalle" },
     {
       label: store.status === "active" ? "Pausar tienda" : "Activar tienda",
       onSelect: () => onToggleStatus(store),
@@ -40,7 +42,7 @@ export function StoreCard({ onToggleStatus, store }: StoreCardProps) {
             <div className="min-w-0">
               <Link
                 className="block truncate font-semibold text-foreground hover:text-primary hover:underline"
-                href={`/platform/stores/${store.id}`}
+                href={detailHref}
               >
                 {store.name}
               </Link>
