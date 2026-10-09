@@ -18,6 +18,12 @@ import {
 import { SaleCreatePage } from "./page";
 import { saleAttemptStorageKey } from "./utils/saleAttempt";
 
+// El POS monta el guardia de salida (CNF-15), que necesita el router de la app.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 type SalePostBody = {
   clientRequestId?: string;
   customerId?: string;
@@ -231,9 +237,14 @@ async function addCatalogProductToCart() {
   fireEvent.click(card);
 }
 
-/** Carrito con una línea, cliente por defecto y efectivo USD: listo para cobrar. */
-async function prepareCartReadyToCharge() {
-  await addCatalogProductToCart();
+/**
+ * Carrito con una línea, cliente por defecto y efectivo USD: listo para cobrar.
+ * `restored`: tras recargar, el carrito sin cobrar vuelve solo (CNF-16) y no se rearma.
+ */
+async function prepareCartReadyToCharge({ restored = false }: { restored?: boolean } = {}) {
+  if (!restored) {
+    await addCatalogProductToCart();
+  }
   // El cliente por defecto llega por `/api/contacts`; sin él el cobro se corta antes.
   await screen.findAllByText(CUSTOMER.name);
   fireEvent.click(screen.getByRole("button", { name: paymentMethodLabels.efectivo_usd }));
@@ -310,9 +321,9 @@ describe("C3 · respuesta perdida al cobrar en el POS", () => {
     await waitFor(() => expect(visibleAlerts()).not.toBe(""));
     firstLoad.unmount();
 
-    // Recarga / salir y volver: estado de React nuevo; el cajero rearma el mismo carrito.
+    // Recarga / salir y volver: estado de React nuevo; el mismo carrito vuelve recuperado.
     mountPos();
-    fireEvent.click(await prepareCartReadyToCharge());
+    fireEvent.click(await prepareCartReadyToCharge({ restored: true }));
     await waitFor(() => expect(backend.salePosts).toHaveLength(2));
 
     const [first, second] = backend.salePosts;
@@ -669,7 +680,7 @@ describe("C3 · cobro sin confirmar visto desde otra pestaña", () => {
     firstLoad.unmount();
 
     mountPos();
-    fireEvent.click(await prepareCartReadyToCharge());
+    fireEvent.click(await prepareCartReadyToCharge({ restored: true }));
     await screen.findByText("Venta registrada");
     expect(backend.salePosts[1]?.clientRequestId).toBe(backend.salePosts[0]?.clientRequestId);
     expect(backend.lookupRequests).toEqual([]);

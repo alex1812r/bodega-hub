@@ -1,19 +1,24 @@
 "use client";
 
 import { Pencil } from "lucide-react";
-import { useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useRef, useState } from "react";
 
-import { getPriceChangeReason } from "@/lib/api/dataSourceUi";
 import { getPaginatedItems, MAX_PAGE_LIMIT } from "@/lib/api/pagination";
 import { ProductKardexCard } from "@/modules/inventory/components/ProductKardexCard";
+import { withChainedReturnTo } from "@/modules/inventory/utils/chainedReturnTo";
+import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { Can } from "@/shared/auth/Can";
 import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
+import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
-import { formatDate } from "@/shared/utils/date";
+import { type TabItem, Tabs } from "@/shared/components/Tabs";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
+import { withUrlListBoundary } from "@/shared/hooks/useUrlListState";
 
 import { KeepPriceConfirmModal } from "../components/price-review/KeepPriceConfirmModal";
 import { PriceReviewBadge } from "../components/price-review/PriceReviewBadge";
@@ -23,25 +28,20 @@ import {
 } from "../components/price-review/PriceReviewDetailNotice";
 import {
   type ProductInput,
-  type ProductPriceHistoryEntry,
   useAllCategories,
   useProduct,
-  useProductPriceHistory,
   useProductSuppliers,
   useUpdateProduct,
   useUpdateProductPrice,
 } from "../hooks/useProducts";
 import { getProductMarginThresholds } from "../services/productMargin";
 import { PRODUCT_EDIT_PRICE_REASON } from "../services/productSchemas";
-import type { ProductFormSubmitContext } from "./components/ProductFormModal";
-import { ProductDetailPackConversionCard } from "./components/ProductDetailPackConversionCard";
+import { ProductDetailImageCard } from "./components/ProductDetailImageCard";
 import { ProductDetailInfoCard } from "./components/ProductDetailInfoCard";
+import { ProductDetailPackConversionCard } from "./components/ProductDetailPackConversionCard";
 import { ProductDetailPageHeader } from "./components/ProductDetailPageHeader";
 import { ProductDetailPriceChangeCard } from "./components/ProductDetailPriceChangeCard";
-import {
-  ProductDetailPriceHistoryTable,
-  type ProductPriceHistoryRow,
-} from "./components/ProductDetailPriceHistoryTable";
+import { ProductDetailPriceHistoryCard } from "./components/ProductDetailPriceHistoryCard";
 import { ProductDetailSalesHistoryCard } from "./components/ProductDetailSalesHistoryCard";
 import { ProductDetailStockCard } from "./components/ProductDetailStockCard";
 import {
@@ -49,37 +49,27 @@ import {
   type ProductSupplierRow,
 } from "./components/ProductDetailSuppliersTable";
 import { ProductFormModal } from "./components/ProductFormModal";
+import { PRODUCT_DETAIL_TAB_PARAM, type ProductDetailTab } from "./hooks/productDetailParams";
+import { useProductDetailUrl } from "./hooks/useProductDetailUrl";
+
+/** Recuerda si el kardex del Resumen quedó abierto o cerrado. */
+const KARDEX_SECTION_STORAGE_KEY = "product-detail:kardex-open";
 
 type ProductDetailsPageProps = {
   productId?: string;
 };
 
-function mapPriceHistory(rows: ProductPriceHistoryEntry[]): ProductPriceHistoryRow[] {
-  return rows.map((row, index) => ({
-    // Nunca el id: sin nombre (línea base, o un perfil que no puedes ver) queda "—".
-    changedBy: row.userName?.trim() || "—",
-    date: formatDate(row.createdAt),
-    id: row.id,
-    // Entradas anteriores a PRO-11 no traen `kind`: eran todas cambios de precio.
-    kind: row.kind ?? "change",
-    newPriceRef: row.salePriceRef,
-    // El precio anterior es el que guardó la propia fila. Solo si no lo trae se
-    // deduce de la fila vecina; la más antigua sin dato queda sin precio anterior
-    // (antes repetía el suyo: "14.00 → 14.00").
-    oldPriceRef: row.previousSalePriceRef ?? rows[index + 1]?.salePriceRef ?? null,
-    // El motivo guardado; el texto fijo solo si el cambio se registró sin motivo.
-    reason: row.reason?.trim() || getPriceChangeReason(),
-  }));
-}
-
-export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsPageProps) {
+function ProductDetails({ productId = "prod-drill" }: ProductDetailsPageProps) {
   const { can, role } = usePermission();
   const canSeeSuppliers = role ? canViewSupplierContacts(role) : false;
+  // URL del detalle con su pestaña y su `returnTo`: a ella vuelven los enlaces que salen de aquí.
+  const detailUrl = useProductDetailUrl();
   const product = useProduct(productId);
   const categories = useAllCategories();
   // Semáforo y chips de la tienda; sin datos (cargando o error) valen los por defecto.
   const pricingSettings = usePricingSettings();
-  const priceHistory = useProductPriceHistory(productId);
+  // Tasa vigente: solo para mostrar en Bs el cambio de precio antes de confirmarlo.
+  const currentRate = useCurrentExchangeRate();
   // La tabla no pagina: sin `limit` el BFF entrega 10 y un producto admite 50 proveedores.
   const suppliers = useProductSuppliers(canSeeSuppliers ? productId : undefined, {
     limit: MAX_PAGE_LIMIT,
@@ -91,8 +81,21 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
   const quickPriceUpdate = useUpdateProductPrice(productId);
   const priceCardRef = useRef<HTMLDivElement | null>(null);
   const [isKeepPriceOpen, setIsKeepPriceOpen] = useState(false);
+  // Al volver de un enlace del detalle, el scroll queda donde estaba. Se restaura una
+  // vez, con la pestaña de la URL ya pintada: Proveedores e Historial cargan sus listas.
+  const requestedTab = useSearchParams().get(PRODUCT_DETAIL_TAB_PARAM);
+  const [isPriceHistoryReady, setIsPriceHistoryReady] = useState(false);
+  const [isSalesHistoryReady, setIsSalesHistoryReady] = useState(false);
+  const markPriceHistoryReady = useCallback(() => setIsPriceHistoryReady(true), []);
+  const markSalesHistoryReady = useCallback(() => setIsSalesHistoryReady(true), []);
+  const isActiveTabReady =
+    requestedTab === "historial"
+      ? isPriceHistoryReady && isSalesHistoryReady
+      : requestedTab !== "proveedores" || !suppliers.isLoading;
 
-  async function handleUpdateProduct(input: ProductInput, context?: ProductFormSubmitContext) {
+  useScrollRestoration(detailUrl, { ready: Boolean(product.data) && isActiveTabReady });
+
+  async function handleUpdateProduct(input: ProductInput) {
     const currentPrice = product.data?.salePriceRef;
     const { salePriceRef, ...productInput } = input;
 
@@ -103,12 +106,17 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
     }
   }
 
-  // `mutate`, no `mutateAsync`: la tarjeta no espera el resultado y un fallo
-  // se queda en `quickPriceUpdate.error` (se pinta abajo) en vez de subir como
-  // promesa rechazada sin manejar. `expectedCostRef` es el costo que mostraba
-  // la tarjeta: si ya es otro, el servidor responde 409 y los datos se refrescan.
-  function handleQuickPriceUpdate(salePriceRef: number, reason: string, expectedCostRef: number) {
-    quickPriceUpdate.mutate({ expectedCostRef, reason, salePriceRef });
+  // La tarjeta espera el resultado: su confirmación se cierra con el éxito y, si
+  // falla, muestra el motivo y sigue abierta (el fallo queda además en
+  // `quickPriceUpdate.error`, que se pinta en el Resumen). `expectedCostRef` es el
+  // costo que mostraba la tarjeta: si ya es otro, el servidor responde 409 y los
+  // datos se refrescan.
+  async function handleQuickPriceUpdate(
+    salePriceRef: number,
+    reason: string,
+    expectedCostRef: number,
+  ) {
+    await quickPriceUpdate.mutateAsync({ expectedCostRef, reason, salePriceRef });
   }
 
   if (product.isLoading) {
@@ -137,6 +145,14 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
   const reviewTargetPct = data.priceReview
     ? getPriceReviewTargetPct(data.priceReview.previousBand, marginThresholds)
     : null;
+  // Conserva el `returnTo` con el que se llegó al detalle: al volver del kardex sigue ahí.
+  // Solo con `inventory.view`: sin él, `/inventory/movements` responde 403.
+  const movementsHref = can("inventory.view")
+    ? withChainedReturnTo(
+        `/inventory/movements?productId=${encodeURIComponent(data.id)}`,
+        detailUrl,
+      )
+    : undefined;
 
   // "Reprecio" no cambia nada: lleva a la tarjeta de precio, con el foco en el % sugerido.
   function focusPriceCard() {
@@ -145,6 +161,135 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
     card?.scrollIntoView?.({ behavior: "smooth", block: "center" });
     card?.querySelector<HTMLElement>("button, input")?.focus({ preventScroll: true });
   }
+
+  // Resumen: información, stock y precio a la vista (3 bloques); el kardex, plegado.
+  const summaryTab = (
+    <div className="space-y-6">
+      {data.priceReview ? (
+        <PriceReviewDetailNotice
+          canManage={can("products.manage")}
+          onKeepPrice={() => setIsKeepPriceOpen(true)}
+          onReprice={focusPriceCard}
+          review={data.priceReview}
+          thresholds={marginThresholds}
+        />
+      ) : null}
+
+      {quickPriceUpdate.error ? (
+        <ErrorState
+          description={
+            quickPriceUpdate.error instanceof Error
+              ? quickPriceUpdate.error.message
+              : "No se pudo guardar el cambio."
+          }
+          title="No pudimos actualizar el producto"
+        />
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-8">
+          <ProductDetailInfoCard
+            categoryName={data.category?.name ?? "Sin categoría"}
+            costRef={data.currentCostRef}
+            description={data.description}
+            isActive={data.isActive}
+            salePriceRef={data.salePriceRef}
+            thresholds={marginThresholds}
+            underReview={Boolean(data.priceReview)}
+          />
+        </div>
+        <div className="flex flex-col gap-6 lg:col-span-4 lg:row-span-2">
+          <ProductDetailStockCard
+            adjustableProduct={{ id: data.id, name: data.name, sku: data.sku }}
+            currentStock={data.currentStock}
+            minStock={data.minStock}
+            movementsHref={movementsHref}
+          />
+          <div className="empty:hidden" ref={priceCardRef}>
+            <Can permission="products.manage">
+              <ProductDetailPriceChangeCard
+                categoryMarkupPct={reviewTargetPct ?? data.category?.defaultMarkupPct}
+                currentCostRef={data.currentCostRef}
+                currentPriceRef={data.salePriceRef}
+                isSubmitting={quickPriceUpdate.isPending}
+                onSubmit={handleQuickPriceUpdate}
+                pricing={pricingSettings.data}
+                productName={data.name}
+                rateVes={currentRate.data?.rateVes}
+              />
+            </Can>
+          </div>
+        </div>
+        {can("inventory.view") ? (
+          <div className="lg:col-span-8">
+            <CollapsibleSection
+              storageKey={KARDEX_SECTION_STORAGE_KEY}
+              summary="Saldo de 30 días, entradas, salidas y últimos movimientos"
+              title="Kardex del producto"
+            >
+              <ProductKardexCard productId={data.id} returnTo={detailUrl} />
+            </CollapsibleSection>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  const tabs: TabItem<ProductDetailTab>[] = [
+    { content: summaryTab, label: "Resumen", value: "resumen" },
+    ...(canSeeSuppliers
+      ? [
+          {
+            content: (
+              <ProductDetailSuppliersTable
+                error={suppliers.error}
+                isLoading={suppliers.isLoading}
+                onRetry={() => void suppliers.refetch()}
+                productId={productId}
+                productName={data.name}
+                productSku={data.sku}
+                rows={supplierRows}
+                salePriceRef={data.salePriceRef}
+              />
+            ),
+            label: "Proveedores",
+            value: "proveedores" as const,
+          },
+        ]
+      : []),
+    {
+      content: (
+        <div className="space-y-6">
+          <ProductDetailPriceHistoryCard onReady={markPriceHistoryReady} productId={productId} />
+          <ProductDetailSalesHistoryCard onReady={markSalesHistoryReady} productId={productId} />
+        </div>
+      ),
+      label: "Historial",
+      value: "historial",
+    },
+    {
+      content: (
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
+          {data.packConversion ? (
+            <ProductDetailPackConversionCard
+              packConversion={data.packConversion}
+              productId={data.id}
+              productName={data.name}
+              productStock={data.currentStock}
+              onConverted={() => void product.refetch()}
+            />
+          ) : (
+            <p className="rounded-xl border border-border bg-surface-container-lowest p-5 text-sm text-on-surface-variant dark:border-slate-800">
+              Este producto no tiene conversión de empaque.
+            </p>
+          )}
+          <ProductDetailImageCard canManage={can("products.manage")} imageUrl={data.imageUrl} />
+        </div>
+      ),
+      label: "Avanzado",
+      value: "avanzado",
+    },
+  ];
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">
@@ -186,96 +331,12 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
         sku={data.sku}
       />
 
-      {data.priceReview ? (
-        <PriceReviewDetailNotice
-          canManage={can("products.manage")}
-          onKeepPrice={() => setIsKeepPriceOpen(true)}
-          onReprice={focusPriceCard}
-          review={data.priceReview}
-          thresholds={marginThresholds}
-        />
-      ) : null}
-
-      {quickPriceUpdate.error ? (
-        <ErrorState
-          description={
-            quickPriceUpdate.error instanceof Error
-              ? quickPriceUpdate.error.message
-              : "No se pudo guardar el cambio."
-          }
-          title="No pudimos actualizar el producto"
-        />
-      ) : null}
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        <div className="lg:col-span-8">
-          <ProductDetailInfoCard
-            categoryName={data.category?.name ?? "Sin categoría"}
-            costRef={data.currentCostRef}
-            description={data.description}
-            imageUrl={data.imageUrl}
-            isActive={data.isActive}
-            salePriceRef={data.salePriceRef}
-            thresholds={marginThresholds}
-            underReview={Boolean(data.priceReview)}
-          />
-        </div>
-        <div className="lg:col-span-4">
-          <ProductDetailStockCard
-            adjustableProduct={{ id: data.id, name: data.name, sku: data.sku }}
-            currentStock={data.currentStock}
-            minStock={data.minStock}
-          />
-        </div>
-        {data.packConversion ? (
-          <div className="lg:col-span-4">
-            <ProductDetailPackConversionCard
-              packConversion={data.packConversion}
-              productId={data.id}
-              productName={data.name}
-              productStock={data.currentStock}
-              onConverted={() => void product.refetch()}
-            />
-          </div>
-        ) : null}
-        <div className="empty:hidden lg:col-span-12">
-          <ProductKardexCard productId={data.id} returnTo={`/products/${data.id}`} />
-        </div>
-        <div className="lg:col-span-4" ref={priceCardRef}>
-          <Can permission="products.manage">
-            <ProductDetailPriceChangeCard
-              categoryMarkupPct={reviewTargetPct ?? data.category?.defaultMarkupPct}
-              currentCostRef={data.currentCostRef}
-              currentPriceRef={data.salePriceRef}
-              isSubmitting={quickPriceUpdate.isPending}
-              onSubmit={handleQuickPriceUpdate}
-              pricing={pricingSettings.data}
-            />
-          </Can>
-        </div>
-        <div className={can("products.manage") ? "lg:col-span-8" : "lg:col-span-12"}>
-          <ProductDetailPriceHistoryTable
-            rows={mapPriceHistory(getPaginatedItems(priceHistory.data))}
-          />
-        </div>
-        {canSeeSuppliers ? (
-          <div className="lg:col-span-12">
-            <ProductDetailSuppliersTable
-              error={suppliers.error}
-              isLoading={suppliers.isLoading}
-              onRetry={() => void suppliers.refetch()}
-              productId={productId}
-              productName={data.name}
-              productSku={data.sku}
-              rows={supplierRows}
-              salePriceRef={data.salePriceRef}
-            />
-          </div>
-        ) : null}
-        <div className="lg:col-span-12">
-          <ProductDetailSalesHistoryCard productId={productId} />
-        </div>
-      </div>
+      <Tabs
+        ariaLabel="Secciones del producto"
+        defaultValue="resumen"
+        items={tabs}
+        urlParam={PRODUCT_DETAIL_TAB_PARAM}
+      />
 
       <Can permission="products.manage">
         <KeepPriceConfirmModal
@@ -287,3 +348,5 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
     </div>
   );
 }
+
+export const ProductDetailsPage = withUrlListBoundary(ProductDetails);

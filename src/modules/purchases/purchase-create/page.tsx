@@ -26,6 +26,7 @@ import {
 } from "@/shared/payments/paymentMethods";
 import { refToVes, roundMoney } from "@/shared/utils/currency";
 
+import { PurchaseConfirmModal } from "./components/PurchaseConfirmModal";
 import { PurchaseCreateHeader } from "./components/PurchaseCreateHeader";
 import { PurchaseDraftBanner } from "./components/PurchaseDraftBanner";
 import { PurchaseFormNotices } from "./components/PurchaseFormNotices";
@@ -59,16 +60,20 @@ import { resolvePurchaseProducts } from "./services/resolvePurchaseProducts";
 import type { PurchaseCostCurrency, PurchaseDraftItem } from "./types";
 import { buildUnlinkedCatalogProduct } from "./utils/buildPurchaseCatalog";
 import { buildPurchaseLine, nextPurchaseLineId } from "./utils/buildPurchaseLine";
+import { type PurchaseConfirmInput, purchaseConfirmKey } from "./utils/purchaseConfirmEffect";
 import { describeConfirmError } from "./utils/purchaseConfirmError";
 import {
   buildDuplicatedPurchaseLines,
-  type PurchaseDuplicateSourceItem,
+  type PurchaseLineSource,
 } from "./utils/duplicatePurchase";
 import { draftToPurchaseItemInput, sumDraftPurchaseTotals } from "./utils/normalizePurchaseLine";
 import {
+  describeDraftSupplierUnavailable,
   restorePurchaseDraft,
+  storedDraftSourceItems,
   type PurchaseDraftContent,
 } from "./utils/purchaseDraftStorage";
+import { describePurchaseInProgress } from "./utils/purchaseProcessLabel";
 import { PurchaseSubmitAttempt } from "./utils/purchaseSubmitAttempt";
 import {
   InitialPaymentKey,
@@ -97,15 +102,19 @@ import {
 
 const LINE_TAX_MISSING_MESSAGE = "Elige una alícuota en cada línea antes de confirmar la compra.";
 
-/** Compra de origen cuyo proveedor ya no sirve: sus líneas esperan a que se elija otro. */
-type PendingDuplicate = {
-  items: PurchaseDuplicateSourceItem[];
-  supplierName: string | null;
-};
+const PURCHASE_CHANGED_MESSAGE =
+  "La compra cambió mientras la confirmabas: revisa las líneas y el resumen, y vuelve a confirmar.";
 
-function describeLineCount(count: number) {
-  return count === 1 ? "1 línea" : `${count} líneas`;
-}
+/**
+ * Compra de origen (la que se duplica o un borrador restaurado, `fromDraft`) cuyo
+ * proveedor ya no sirve: sus líneas esperan a que se elija otro.
+ */
+type PendingDuplicate = {
+  fromDraft: boolean;
+  items: PurchaseLineSource[];
+  /** Aviso que explica por qué las líneas no están en el formulario. */
+  notice: string;
+};
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : undefined;
@@ -190,6 +199,8 @@ export function PurchaseCreatePage() {
     id: string;
     name?: string;
   } | null>(null);
+  // Confirmación abierta (CNF-01): la huella de lo que el modal mostraba al abrirse.
+  const [confirmKey, setConfirmKey] = useState<string | null>(null);
   // Compra ya creada: ni se vuelve a guardar el borrador ni se pregunta al salir.
   const [confirmed, setConfirmed] = useState(false);
   const productSearchResult = usePurchaseProductSearch(supplierId, productSearch);
@@ -361,31 +372,40 @@ export function PurchaseCreatePage() {
     ],
   );
   const hasPendingDraft = draft.pending !== null;
-  const syncDraft = draft.sync;
-  // Con un borrador anterior sin decidir, esta compra se guarda aparte (segunda ranura).
-  // No hay dónde si localStorage falla o si ya hay dos compras guardadas sin decidir.
-  const isSavedApart = draft.pendingNew !== null && draft.ownsNew;
-  const isNotSaved = hasPendingDraft && !isSavedApart;
+  const { saveBlock, schedule: scheduleDraft, sync: syncDraft } = draft;
+  // Borrador restaurado cuyas líneas esperan otro proveedor: siguen en lo guardado, y el
+  // formulario (aún sin ellas) no lo pisa hasta que entren.
+  const draftLinesAwaitSupplier = pendingDuplicate?.fromDraft === true;
 
-  // Se guarda en cada cambio; dónde lo decide el hook (nunca pisa un borrador sin decidir).
-  // Al restaurar, descartar o seguir con esta el efecto vuelve a correr y guarda lo que haya.
+  // Guardado automático (CNF-16): cada cambio, tras 500 ms sin otro. Dónde escribe lo decide
+  // el hook (nunca pisa un borrador sin decidir: con el aviso sin resolver, esta compra va a
+  // una segunda ranura). Al restaurar, descartar o seguir con esta el efecto vuelve a correr.
   useEffect(() => {
-    if (confirmed) {
+    if (confirmed || draftLinesAwaitSupplier) {
       return;
     }
 
-    syncDraft(draftContent);
-  }, [confirmed, draftContent, hasPendingDraft, syncDraft]);
+    scheduleDraft(draftContent);
+  }, [confirmed, draftContent, draftLinesAwaitSupplier, hasPendingDraft, scheduleDraft]);
 
-  // Regla 14: con líneas, salir pregunta. Si esta compra no se pudo guardar aparte de la
-  // que ya había sin decidir, no se promete guardarla: el aviso es de pérdida.
+  // Regla 14 (CNF-15): con una línea o un proveedor elegido, salir pregunta nombrando la
+  // compra. «Salir» guarda el borrador en el acto, sin esperar al guardado automático. Si
+  // esta compra no tiene dónde guardarse no se promete: el aviso es de pérdida.
   const guard = useProcessGuard({
-    active: items.length > 0 && !confirmed,
-    description: isNotSaved
-      ? "Ya hay otra compra sin terminar guardada: esta no se guardará mientras no restaures o descartes aquella."
-      : undefined,
-    label: `Compra en curso con ${describeLineCount(items.length)}`,
-    onLeave: isNotSaved ? "discard" : "draft",
+    active: (items.length > 0 || supplierId !== "") && !confirmed,
+    description:
+      saveBlock === "two-drafts"
+        ? "Ya hay dos compras sin terminar guardadas: esta no se guardará mientras no restaures o descartes aquellas."
+        : saveBlock === "storage"
+          ? "Este navegador no dejó guardar el borrador (almacenamiento lleno o bloqueado): si sales, esta compra se pierde."
+          : undefined,
+    label: describePurchaseInProgress({
+      lineCount: items.length,
+      supplierId,
+      supplierName,
+      totalRef: Math.max(0, roundMoney(totals.subtotalRef - discountRef + totals.taxRef)),
+    }),
+    onLeave: saveBlock ? "discard" : "draft",
     onSaveDraft: () => syncDraft(draftContent),
   });
 
@@ -395,7 +415,7 @@ export function PurchaseCreatePage() {
    */
   async function prepareDuplicatedLines(
     nextSupplier: { id: string; name: string | null },
-    sourceItems: PurchaseDuplicateSourceItem[],
+    sourceItems: PurchaseLineSource[],
   ) {
     // Como el buscador: el costo sugerido es el de la última compra recibida de cada producto.
     const products = await withLastPurchaseCosts(
@@ -432,7 +452,13 @@ export function PurchaseCreatePage() {
 
     if (!canBuyFromSupplier) {
       return () =>
-        setPendingDuplicate({ items: source.items, supplierName: sourceSupplier?.name ?? null });
+        setPendingDuplicate({
+          fromDraft: false,
+          items: source.items,
+          notice: sourceSupplier?.name
+            ? `El proveedor ${sourceSupplier.name} está inactivo: elige otro proveedor para duplicar la compra.`
+            : "El proveedor de la compra original ya no está disponible: elige otro proveedor para duplicar la compra.",
+        });
     }
 
     return prepareDuplicatedLines(
@@ -563,11 +589,18 @@ export function PurchaseCreatePage() {
     setIsRestoringDraft(true);
 
     try {
-      const products = await resolvePurchaseProducts(
-        stored.supplierId,
-        stored.lines.items.map((item) => item.productId),
-      );
-      const restored = restorePurchaseDraft(stored, { products, rateVes: currentRateVes });
+      // Se revalida contra lo que hay hoy: el proveedor y, si sigue sirviendo, cada producto.
+      const supplier = stored.supplierId ? await fetchPurchaseSupplier(stored.supplierId) : null;
+      const restored =
+        stored.supplierId === "" || supplier?.isActive
+          ? restorePurchaseDraft(stored, {
+              products: await resolvePurchaseProducts(
+                stored.supplierId,
+                stored.lines.items.map((item) => item.productId),
+              ),
+              rateVes: currentRateVes,
+            })
+          : null;
 
       if (which === "new") {
         draft.keepNew();
@@ -575,17 +608,34 @@ export function PurchaseCreatePage() {
         draft.adopt();
       }
 
-      setSupplierId(stored.supplierId);
-      setSupplierName(stored.supplierName ?? null);
       setProductSearch("");
       setStatus(stored.status);
       setNotes(stored.notes);
       setDiscountRef(stored.discountRef);
-      setCostCurrency(restored.costCurrency);
-      setLineMetaByProductId(restored.lineMeta);
-      dispatchLines({ state: restored.lines, type: "linesRestored" });
-      setNotices(restored.notices);
-      setPendingDuplicate(null);
+      setCostCurrency(stored.costCurrency);
+
+      if (restored) {
+        setSupplierId(stored.supplierId);
+        setSupplierName(supplier?.name ?? stored.supplierName ?? null);
+        setLineMetaByProductId(restored.lineMeta);
+        dispatchLines({ state: restored.lines, type: "linesRestored" });
+        setNotices(restored.notices);
+        setPendingDuplicate(null);
+      } else {
+        // Proveedor inactivo o que ya no existe: no se elige, y las líneas (que son de ese
+        // proveedor) esperan a otro como en una compra duplicada. Nunca en silencio.
+        setSupplierId("");
+        setSupplierName(null);
+        setLineMetaByProductId(new Map());
+        dispatchLines({ type: "supplierChanged" });
+        setNotices([]);
+        setPendingDuplicate({
+          fromDraft: true,
+          items: storedDraftSourceItems(stored),
+          notice: describeDraftSupplierUnavailable(stored),
+        });
+      }
+
       // Restaurar una compra guardada sustituye a la reposición que esperaba proveedor.
       if (pendingRestock) {
         consumeRestockDraft(pendingRestock.id);
@@ -718,52 +768,69 @@ export function PurchaseCreatePage() {
     }
   }
 
-  async function handleSubmit() {
-    setConfirmAttempt((attempt) => attempt + 1);
+  // Mismos helpers que pintan la tabla y el resumen: lo que se envia (y lo que
+  // muestra la confirmación) es exactamente lo que el usuario vio.
+  const submitTotals = sumDraftPurchaseTotals(
+    validLines.map((line) => line.item),
+    activeRateVes,
+  );
+  const submitTotalVes = Math.max(
+    0,
+    roundMoney(submitTotals.subtotalVes - discountVes + submitTotals.taxVes),
+  );
+  // Sección abierta = el usuario quiere pagar: incompleta o inválida no se envía nada.
+  const initialPayment =
+    canPayNow && payNow ? resolveInitialPayment(paymentValues, submitTotalVes, activeRateVes) : null;
+  const confirmInput: PurchaseConfirmInput = {
+    discountRef,
+    getProductName: (productId) => getItemMeta(productId).name,
+    lines: validLines,
+    payment: initialPayment && "payment" in initialPayment ? initialPayment.payment : null,
+    rateVes: activeRateVes,
+    recipes: packConversions.data,
+    status,
+    supplierName,
+  };
 
+  // Una línea que cambia con la confirmación abierta (llegó un escaneo en cola, cambió
+  // la tasa): el modal se cierra, nunca se confirman cifras que ya no son las de la compra.
+  if (
+    confirmKey !== null &&
+    !createPurchase.isPending &&
+    confirmKey !== purchaseConfirmKey(confirmInput)
+  ) {
+    setConfirmKey(null);
+    setFormError(PURCHASE_CHANGED_MESSAGE);
+  }
+
+  /** Validaciones de «Confirmar Compra» y, si pasan, lo que se envía; `null` = queda un aviso. */
+  function prepareSubmission() {
     if (!supplierId) {
       setFormError("Selecciona un proveedor antes de confirmar la compra.");
-      return;
+      return null;
     }
 
     if (validLines.length === 0) {
       setFormError("Agrega al menos un producto con cantidad y costo válidos.");
-      return;
+      return null;
     }
 
     if (lines.some((line) => line.tax.code === null)) {
       setFormError(LINE_TAX_MISSING_MESSAGE);
-      return;
+      return null;
     }
 
     setFormError(null);
 
-    // Mismos helpers que pintan la tabla y el resumen: lo que se envia es
-    // exactamente lo que el usuario vio.
-    const submitTotals = sumDraftPurchaseTotals(
-      validLines.map((line) => line.item),
-      activeRateVes,
-    );
-
     if (isPurchaseDiscountOverSubtotal(discountRef, submitTotals.subtotalRef)) {
       setFormError(PURCHASE_DISCOUNT_OVER_SUBTOTAL_MESSAGE);
-      return;
+      return null;
     }
-
-    const submitTotalVes = Math.max(
-      0,
-      roundMoney(submitTotals.subtotalVes - discountVes + submitTotals.taxVes),
-    );
-    // Sección abierta = el usuario quiere pagar: incompleta o inválida no se envía nada.
-    const initialPayment =
-      canPayNow && payNow
-        ? resolveInitialPayment(paymentValues, submitTotalVes, activeRateVes)
-        : null;
 
     if (initialPayment && "error" in initialPayment) {
       setPaymentSubmitted(true);
       setPaymentError(initialPayment.error);
-      return;
+      return null;
     }
 
     setPaymentError(null);
@@ -787,6 +854,29 @@ export function PurchaseCreatePage() {
       taxRef: submitTotals.taxRef,
       taxVes: submitTotals.taxVes,
     };
+
+    return { initialPayment, input };
+  }
+
+  // «Confirmar Compra»: las validaciones van antes; con el formulario inválido el modal no se abre.
+  function handleReview() {
+    setConfirmAttempt((attempt) => attempt + 1);
+
+    if (prepareSubmission()) {
+      setConfirmKey(purchaseConfirmKey(confirmInput));
+    }
+  }
+
+  // Botón del modal: envía la compra tal como el modal la mostró.
+  async function handleSubmit() {
+    const submission = prepareSubmission();
+
+    if (!submission) {
+      setConfirmKey(null);
+      return;
+    }
+
+    const { initialPayment, input } = submission;
     // Clave de idempotencia del intento; null = hay un envío en vuelo (doble clic) o la
     // compra ya se confirmó y la página espera a que la navegación la desmonte.
     // El pago forma parte de la huella: si cambia tras un fallo, cambian las dos claves.
@@ -816,6 +906,7 @@ export function PurchaseCreatePage() {
       requestAttempt.succeed();
       // La compra ya existe: el borrador sobra y salir no debe preguntar.
       setConfirmed(true);
+      setConfirmKey(null);
       draft.clear();
 
       // La compra existe aunque el pago no haya entrado: se sale del formulario igual
@@ -837,10 +928,9 @@ export function PurchaseCreatePage() {
   const shownPaymentError = canPayNow && payNow ? paymentError : null;
   // Un solo motivo junto al botón: la validación propia, el pago incompleto o lo que
   // contestó (o no) el servidor al último envío.
-  const confirmError =
-    formError ??
-    shownPaymentError ??
-    (createPurchase.error ? describeConfirmError(createPurchase.error) : null);
+  const submitError = createPurchase.error ? describeConfirmError(createPurchase.error) : null;
+  // Con la confirmación abierta, lo que contestó el servidor se lee en el modal.
+  const confirmError = formError ?? shownPaymentError ?? (confirmKey === null ? submitError : null);
 
   // Sin tasa la compra de origen no puede llegar al formulario: no se espera para siempre.
   const duplicateError = duplicate.error ?? (duplicate.isLoading ? exchangeRate.error : null);
@@ -853,7 +943,7 @@ export function PurchaseCreatePage() {
           <ErrorState
             actionLabel="Volver a Compras"
             description={duplicateError.message}
-            onRetry={() => router.push("/purchases")}
+            onRetry={() => guard.guardedNavigate("/purchases")}
             title="No pudimos duplicar la compra"
           />
         ) : (
@@ -882,15 +972,7 @@ export function PurchaseCreatePage() {
         />
       ) : null}
 
-      {pendingDuplicate ? (
-        <PurchaseFormNotices
-          messages={[
-            pendingDuplicate.supplierName
-              ? `El proveedor ${pendingDuplicate.supplierName} está inactivo: elige otro proveedor para duplicar la compra.`
-              : "El proveedor de la compra original ya no está disponible: elige otro proveedor para duplicar la compra.",
-          ]}
-        />
-      ) : null}
+      {pendingDuplicate ? <PurchaseFormNotices messages={[pendingDuplicate.notice]} /> : null}
 
       {pendingRestock ? (
         <PurchaseFormNotices
@@ -1008,7 +1090,7 @@ export function PurchaseCreatePage() {
             editedLines={editedLines}
             isConfirmed={confirmed}
             isSubmitting={createPurchase.isPending}
-            onConfirm={() => void handleSubmit()}
+            onConfirm={handleReview}
             onCostCurrencyChange={handleCostCurrencyChange}
             onDiscountChange={setDiscountRef}
             onDiscountScan={(scan) => pickerRef.current?.scan(scan)}
@@ -1034,6 +1116,19 @@ export function PurchaseCreatePage() {
           returnFocusTo={newProductOpenerRef}
         />
       ) : null}
+      <PurchaseConfirmModal
+        error={submitError}
+        input={confirmInput}
+        isPending={createPurchase.isPending}
+        onConfirm={handleSubmit}
+        onOpenChange={(open) => {
+          if (!open) {
+            setConfirmKey(null);
+          }
+        }}
+        open={confirmKey !== null}
+        supplierId={supplierId}
+      />
       <ConfirmActionModal
         confirmLabel="Quitar líneas y cambiar"
         description={

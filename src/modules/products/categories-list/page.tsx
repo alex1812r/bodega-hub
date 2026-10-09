@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Can } from "@/shared/auth/Can";
@@ -13,19 +13,32 @@ import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import { formatMarkupPct } from "@/shared/components/MarginBadge";
 import { PageBackButton } from "@/shared/components/PageBackButton";
-import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
+import {
+  getTotalPages,
+  ResponsivePagination,
+  useUrlPaginationState,
+} from "@/shared/components/Pagination";
+import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import {
+  URL_LIST_DEBOUNCE_MS,
+  useUrlListState,
+  withUrlListBoundary,
+} from "@/shared/hooks/useUrlListState";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 import { cn } from "@/shared/utils/cn";
 
 import { ProductsStatusBadge } from "../products-list/components/ProductsStatusBadge";
+import { categoriesListSchema, toCategoriesFilters } from "./categoriesListParams";
 import { CategoriesListFilters } from "./components/CategoriesListFilters";
 import { CategoryFormModal } from "./components/CategoryFormModal";
 import {
-  type CategoriesFilters,
+  CategoryStatusConfirmModal,
+  type CategoryStatusAction,
+} from "./components/CategoryStatusConfirmModal";
+import {
   type CategoryInput,
   useCategories,
   useCreateCategory,
-  useDeleteCategory,
   useUpdateCategory,
 } from "../hooks/useProducts";
 
@@ -88,27 +101,40 @@ const columns: DataTableColumn<CategoryMock>[] = [
   },
 ];
 
-export function CategoriesListPage() {
+function CategoriesList() {
   const { can } = usePermission();
-  const [filters, setFilters] = useState<Pick<CategoriesFilters, "isActive" | "search">>({
-    isActive: "all",
-  });
+  // Búsqueda, estado, página y tamaño viven en la URL: recarga y "atrás" los conservan.
+  const list = useUrlListState(categoriesListSchema);
   const [editingCategory, setEditingCategory] = useState<CategoryMock | null>(null);
-  const { limit, setLimit, setSkip, skip } = usePaginationState([
-    filters.search,
-    filters.isActive,
-  ]);
-  const categories = useCategories({ ...filters, limit, skip });
+  // Desactivar y reactivar se confirman viendo cuántos productos usan la categoría.
+  const [statusChange, setStatusChange] = useState<{
+    action: CategoryStatusAction;
+    category: CategoryMock;
+  } | null>(null);
+  const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
+  // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
+  const debouncedSearch = useDebouncedValue(list.state.search, URL_LIST_DEBOUNCE_MS);
+  const categories = useCategories({
+    ...toCategoriesFilters(list.state, debouncedSearch),
+    limit,
+    skip,
+  });
   const createCategory = useCreateCategory();
   const updateCategory = useUpdateCategory(editingCategory?.id ?? "");
-  const deleteCategory = useDeleteCategory();
   const categoryItems = getPaginatedItems(categories.data);
   const totalCategories = categories.data?.total ?? 0;
+  const { setState: setListState } = list;
+  const lastPage = getTotalPages(totalCategories, limit);
+  const isPastLastPage =
+    categories.isSuccess && !categories.isFetching && list.state.page > lastPage;
 
-  function handleFilterChange(patch: Partial<CategoriesFilters>) {
-    setFilters((current) => ({ ...current, ...patch }));
-    setSkip(0);
-  }
+  // Una página más allá de la última (`?page=9999`, o un enlace viejo) cae en la
+  // última que existe, y la URL lo refleja.
+  useEffect(() => {
+    if (isPastLastPage) {
+      setListState({ page: lastPage });
+    }
+  }, [isPastLastPage, lastPage, setListState]);
 
   async function handleCreateCategory(input: CategoryInput) {
     await createCategory.mutateAsync(input);
@@ -123,32 +149,6 @@ export function CategoriesListPage() {
     setEditingCategory(null);
   }
 
-  async function handleDeactivateCategory(category: CategoryMock) {
-    // eslint-disable-next-line no-restricted-properties -- CNF-12 (Ola 2) reemplaza este confirm por ConfirmActionModal
-    const confirmed = window.confirm(
-      "La categoría dejará de aparecer en selectores. Los productos que la usan no se modifican.",
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    await deleteCategory.mutateAsync(category.id);
-  }
-
-  async function handleReactivateCategory(category: CategoryMock) {
-    // eslint-disable-next-line no-restricted-properties -- CNF-12 (Ola 2) reemplaza este confirm por ConfirmActionModal
-    const confirmed = window.confirm(
-      "La categoría volverá a aparecer en selectores de producto y formularios.",
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    await updateCategory.mutateAsync({ id: category.id, isActive: true });
-  }
-
   return (
     <div className="mx-auto w-full max-w-7xl">
       <EntityListPage
@@ -156,7 +156,7 @@ export function CategoriesListPage() {
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
             <PageBackButton
               className="shrink-0"
-              href="/products"
+              fallbackHref="/products"
               label="Volver a productos"
               size="sm"
             />
@@ -179,7 +179,7 @@ export function CategoriesListPage() {
         layout="sections"
         title="Categorías"
       >
-        <CategoriesListFilters filters={filters} onChange={handleFilterChange} />
+        <CategoriesListFilters onChange={list.setState} state={list.state} />
 
         <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
           <DataTable
@@ -198,17 +198,13 @@ export function CategoriesListPage() {
               if (category.isActive) {
                 items.push({
                   label: "Desactivar",
-                  onSelect: () => {
-                    void handleDeactivateCategory(category);
-                  },
+                  onSelect: () => setStatusChange({ action: "deactivate", category }),
                   variant: "danger",
                 });
               } else {
                 items.push({
                   label: "Reactivar",
-                  onSelect: () => {
-                    void handleReactivateCategory(category);
-                  },
+                  onSelect: () => setStatusChange({ action: "reactivate", category }),
                 });
               }
 
@@ -240,12 +236,7 @@ export function CategoriesListPage() {
                 title="No hay categorías para mostrar"
               />
             }
-            error={
-              categories.error ??
-              createCategory.error ??
-              deleteCategory.error ??
-              updateCategory.error
-            }
+            error={categories.error ?? createCategory.error ?? updateCategory.error}
             getRowId={(category) => category.id}
             isFetching={categories.isFetching}
             isLoading={categories.isLoading}
@@ -284,6 +275,20 @@ export function CategoriesListPage() {
           trigger={null}
         />
       ) : null}
+
+      <CategoryStatusConfirmModal
+        action={statusChange?.action ?? "deactivate"}
+        category={statusChange?.category ?? null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setStatusChange(null);
+          }
+        }}
+        open={statusChange !== null}
+      />
     </div>
   );
 }
+
+/** `useUrlListState` lee la URL: la pantalla lleva su límite de Suspense. */
+export const CategoriesListPage = withUrlListBoundary(CategoriesList);

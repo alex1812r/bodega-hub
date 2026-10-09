@@ -41,7 +41,8 @@ function describeRate(rate: TaxRate) {
  *
  * El IVA no se teclea en ningún otro sitio: el único % que se escribe es el de
  * una alícuota nueva, al definirla. La alícuota por defecto se elige del
- * catálogo y se guarda al elegirla.
+ * catálogo y se guarda tras confirmar el cambio (anterior → nueva y a qué
+ * afecta); desactivar una alícuota también confirma. Activar no: es inofensivo.
  */
 export function TaxSettingsSection({ canEdit }: TaxSettingsSectionProps) {
   const { showToast } = useToast();
@@ -51,6 +52,8 @@ export function TaxSettingsSection({ canEdit }: TaxSettingsSectionProps) {
   const updateTaxRate = useUpdateTaxRate();
   const [createOpen, setCreateOpen] = useState(false);
   const [deactivating, setDeactivating] = useState<TaxRate | null>(null);
+  // Alícuota elegida como nueva por defecto, a la espera de confirmación.
+  const [pendingDefault, setPendingDefault] = useState<TaxRate | null>(null);
   // Candado propio: `isPending` llega con el siguiente render, tarde para un segundo clic.
   const isChangeInFlightRef = useRef(false);
 
@@ -69,13 +72,14 @@ export function TaxSettingsSection({ canEdit }: TaxSettingsSectionProps) {
 
     try {
       await updateSettings.mutateAsync({ defaultTaxRateId: rate.id });
+      setPendingDefault(null);
       await refetch();
       showToast({
         title: `Alícuota por defecto: ${describeRate(rate)}`,
         tone: "success",
       });
     } catch {
-      // El motivo queda en `updateSettings.error` y se muestra bajo el selector.
+      // El motivo queda en `updateSettings.error` y se muestra en el diálogo.
     } finally {
       isChangeInFlightRef.current = false;
     }
@@ -100,6 +104,16 @@ export function TaxSettingsSection({ canEdit }: TaxSettingsSectionProps) {
     } finally {
       isChangeInFlightRef.current = false;
     }
+  }
+
+  function openDefaultChange(rate: TaxRate) {
+    // Elegir la que ya es por defecto no cambia nada: no hay qué confirmar.
+    if (rate.id === defaultRate?.id) {
+      return;
+    }
+
+    updateSettings.reset();
+    setPendingDefault(rate);
   }
 
   function openDeactivate(rate: TaxRate) {
@@ -218,7 +232,7 @@ export function TaxSettingsSection({ canEdit }: TaxSettingsSectionProps) {
               disabled={!canEdit || isBusy || settings.isLoading}
               isLoading={isLoading || settings.isLoading}
               label="Alícuota por defecto para categorías nuevas"
-              onChange={(_code, rate) => void changeDefaultRate(rate)}
+              onChange={(_code, rate) => openDefaultChange(rate)}
               rates={rates}
               size="md"
               value={defaultRate?.code ?? null}
@@ -227,18 +241,46 @@ export function TaxSettingsSection({ canEdit }: TaxSettingsSectionProps) {
           )}
           <p className={formHelperClassName}>
             {canEdit
-              ? "Se guarda al elegirla. No cambia las categorías que ya existen."
+              ? "Al elegirla se te pedirá confirmar. No cambia las categorías que ya existen."
               : "Solo un administrador puede cambiarla."}
           </p>
-          {updateSettings.error ? (
-            <p className={errorTextClassName} role="alert">
-              {updateSettings.error.message}
-            </p>
-          ) : null}
         </CardContent>
       </Card>
 
       {createOpen ? <TaxRateCreateModal onOpenChange={setCreateOpen} /> : null}
+
+      {pendingDefault ? (
+        <ConfirmActionModal
+          confirmLabel="Cambiar alícuota por defecto"
+          description="Vas a cambiar la alícuota de IVA por defecto de la tienda."
+          effects={[
+            {
+              after: describeRate(pendingDefault),
+              before: defaultRate ? describeRate(defaultRate) : "Sin definir",
+              label: "Alícuota por defecto",
+            },
+          ]}
+          error={updateSettings.error?.message}
+          isPending={updateSettings.isPending}
+          onConfirm={() => changeDefaultRate(pendingDefault)}
+          onOpenChange={(open) => {
+            if (!open) {
+              updateSettings.reset();
+              setPendingDefault(null);
+            }
+          }}
+          open
+          title="¿Cambiar la alícuota por defecto?"
+        >
+          <ul className="list-disc space-y-1 pl-5">
+            <li>Las categorías nuevas abrirán con esta alícuota; cada una puede elegir otra.</li>
+            <li>
+              Las categorías que ya existen, sus productos y las ventas y compras ya registradas
+              no cambian.
+            </li>
+          </ul>
+        </ConfirmActionModal>
+      ) : null}
 
       {deactivating ? (
         <ConfirmActionModal

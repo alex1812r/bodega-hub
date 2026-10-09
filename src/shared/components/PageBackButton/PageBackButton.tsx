@@ -8,7 +8,7 @@ import { Button } from "@/shared/components/Button";
 import { GuardedLink } from "@/shared/components/ProcessGuard";
 import { interceptProcessGuardNavigation } from "@/shared/hooks/useProcessGuard";
 import { cn } from "@/shared/utils/cn";
-import { RETURN_TO_PARAM, resolveReturnTo } from "@/shared/utils/returnTo";
+import { RETURN_TO_PARAM, readChainedReturnTo, resolveReturnTo } from "@/shared/utils/returnTo";
 
 type PageBackButtonBaseProps = {
   className?: string;
@@ -24,11 +24,23 @@ type PageBackButtonBaseProps = {
 export type PageBackButtonProps = PageBackButtonBaseProps &
   (
     | {
+        /**
+         * Retorno encadenado. Por defecto (`false`) el destino es `returnTo` SIN
+         * el `returnTo` que lleve anidado. Con `chained`, el destino es
+         * `returnTo` entero, con su anidado: en la cadena lista → detalle A →
+         * detalle B, "Volver" de B regresa a A tal como estaba y "Volver" de A
+         * sigue regresando a la lista con sus filtros. La validación es la misma
+         * (`isSafeInternalPath`): un `returnTo` externo, o con un anidado
+         * inseguro, se descarta entero y se usa `fallbackHref`.
+         */
+        chained?: boolean;
         /** Destino cuando la URL no trae un `returnTo` válido. */
         fallbackHref: string;
         href?: string;
       }
     | {
+        /** Solo aplica con `fallbackHref`: la forma heredada no lee la URL. */
+        chained?: undefined;
         fallbackHref?: undefined;
         /**
          * Forma heredada: enlace fijo a `href`, como antes. No lee `returnTo` ni
@@ -156,11 +168,15 @@ function BackLink({ className, href, label = "Volver", shortcuts, size }: BackLi
 
 /** Único punto que lee la URL: `useSearchParams` exige el límite de Suspense que pone `PageBackButton`. */
 function ReturnAwareBackButton({
+  chained,
   fallbackHref,
   shortcuts,
   ...props
-}: PageBackButtonBaseProps & { fallbackHref: string }) {
-  const href = resolveReturnTo(useSearchParams().get(RETURN_TO_PARAM), fallbackHref);
+}: PageBackButtonBaseProps & { chained: boolean; fallbackHref: string }) {
+  const returnTo = useSearchParams().get(RETURN_TO_PARAM);
+  const href = chained
+    ? (readChainedReturnTo(returnTo) ?? fallbackHref)
+    : resolveReturnTo(returnTo, fallbackHref);
 
   return (
     <>
@@ -181,11 +197,15 @@ function ReturnAwareBackButton({
  * menú o lista desplegable abiertos, con el foco en un campo editable o si otro
  * manejador ya consumió la tecla. `shortcuts={false}` los desactiva.
  *
+ * Con `chained` el destino conserva el `returnTo` anidado (detalle abierto
+ * desde otro detalle): cada "Volver" de la cadena deshace un paso hasta la lista.
+ *
  * Con solo `href` (forma heredada) es el enlace fijo de siempre: no lee la URL.
  *
  * El límite de Suspense que exige `useSearchParams` lo pone el propio componente.
  */
 export function PageBackButton({
+  chained,
   className,
   fallbackHref,
   href,
@@ -217,6 +237,7 @@ export function PageBackButton({
       }
     >
       <ReturnAwareBackButton
+        chained={chained ?? false}
         className={className}
         fallbackHref={fallbackHref}
         label={label}

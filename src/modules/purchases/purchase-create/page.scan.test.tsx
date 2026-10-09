@@ -50,6 +50,7 @@ const mockTaxCatalog = {
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
   useCurrentExchangeRate: () => ({ data: { rateVes: 510 }, error: null }),
@@ -90,6 +91,11 @@ import { ToastProvider } from "@/shared/components/Toast";
 
 import { purchaseLockOnAddStorageKey } from "./hooks/usePurchaseLockOnAdd";
 import { PurchaseCreatePage } from "./page";
+
+/** CNF-01: «Confirmar Compra» abre la confirmación; la compra se envía con el botón del modal. */
+function acceptConfirmation() {
+  fireEvent.click(screen.getByRole("button", { name: /^Registrar (compra|pedido)$/ }));
+}
 
 const LOCK_ON_ADD_KEY = purchaseLockOnAddStorageKey({ storeId: "store-1", userId: "user-1" });
 const NOT_FOUND_MESSAGE = "No hay un producto activo con ese código de barras o SKU.";
@@ -176,6 +182,9 @@ async function settle(ms: number) {
     await jest.advanceTimersByTimeAsync(ms);
   });
 }
+
+// Each case renders the whole purchase page and types key by key; under a loaded full run it exceeds the 5 s default.
+jest.setTimeout(30000);
 
 beforeEach(() => {
   mockPush.mockReset();
@@ -572,6 +581,8 @@ describe("PurchaseCreatePage · el descuento no acepta un código ni supera el s
     expect(screen.getByText(MESSAGE, { selector: "[role=alert]" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    // CNF-01: con el formulario inválido la confirmación no se abre.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await settle(200);
 
     expect(api.posts).toHaveLength(0);
@@ -587,6 +598,7 @@ describe("PurchaseCreatePage · el descuento no acepta un código ni supera el s
 
     api.respondToNextPost({ data: { id: "purchase-descuento" } });
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    acceptConfirmation();
     await settle(200);
 
     expect(api.posts).toHaveLength(1);
@@ -621,6 +633,7 @@ describe("PurchaseCreatePage · costo con decimales y escaneo en la misma celda 
 
       api.respondToNextPost({ data: { id: "purchase-decimal" } });
       fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+      acceptConfirmation();
       await settle(200);
 
       const items = api.posts[0]?.body.items as Array<{ productId: string; unitCostVes: number }>;

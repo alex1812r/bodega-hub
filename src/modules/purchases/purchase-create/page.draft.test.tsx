@@ -1,9 +1,13 @@
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-/** COM-09 · borrador local de la compra en curso, duplicar compra y ProcessGuard. */
+/**
+ * COM-09 · borrador local de la compra en curso, duplicar compra y ProcessGuard.
+ * CNF-15/16 · guardia de salida que nombra la compra y guardado automático con espera.
+ */
 
 const mockPush = jest.fn();
+const mockLinkNavigate = jest.fn();
 const mockRate: { data: { rateVes: number } | undefined; error: Error | null } = {
   data: { rateVes: 510 },
   error: null,
@@ -35,6 +39,41 @@ const mockTaxCatalog = {
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+// Contrato de `next/link` en el App Router: `onNavigate` corre en la navegación de
+// cliente y puede cancelarla (es por donde `GuardedLink` consulta al guardia).
+jest.mock("next/link", () => ({
+  __esModule: true,
+  default: ({
+    href,
+    onNavigate,
+    ...props
+  }: {
+    children?: React.ReactNode;
+    href: string;
+    onNavigate?: (event: { preventDefault: () => void }) => void;
+  }) => (
+    <a
+      {...props}
+      href={href}
+      onClick={(event) => {
+        event.preventDefault();
+
+        let prevented = false;
+
+        onNavigate?.({
+          preventDefault: () => {
+            prevented = true;
+          },
+        });
+
+        if (!prevented) {
+          mockLinkNavigate(href);
+        }
+      }}
+    />
+  ),
 }));
 jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
   useCurrentExchangeRate: () => mockRate,
@@ -161,6 +200,11 @@ import {
 import { ToastProvider } from "@/shared/components/Toast";
 
 import { PurchaseCreatePage } from "./page";
+
+/** CNF-01: «Confirmar Compra» abre la confirmación; la compra se envía con el botón del modal. */
+function acceptConfirmation() {
+  fireEvent.click(screen.getByRole("button", { name: /^Registrar (compra|pedido)$/ }));
+}
 import {
   purchaseDraftStorageKey,
   purchaseNewDraftStorageKey,
@@ -257,6 +301,8 @@ function sourcePurchase(supplier: Record<string, unknown>) {
 }
 
 const activeSupplier = { id: "cont-supplier", isActive: true, name: "Proveedor Demo", type: "proveedor" };
+const otherSupplier = { id: "cont-otro", isActive: true, name: "Otro Proveedor", type: "proveedor" };
+const SUPPLIER_NOT_FOUND = { error: { code: "NOT_FOUND", message: "Proveedor no encontrado." } };
 const PURCHASE_NOT_FOUND = { error: { code: "NOT_FOUND", message: "Compra no encontrada." } };
 
 type ApiOptions = {
@@ -265,11 +311,18 @@ type ApiOptions = {
   links?: Array<ReturnType<typeof supplierLink>>;
   /** Compra de origen; `null` = el servidor responde 404. */
   purchase?: ReturnType<typeof sourcePurchase> | null;
+  /** Proveedores por id que cambian respecto de los dos activos; `null` = ya no existe (404). */
+  suppliers?: Record<string, typeof activeSupplier | null>;
 };
 
 /** `fetch` de prueba: fichas de producto, vínculos del proveedor, compra de origen y el POST. */
-function installApi({ lastCosts = {}, links = [], purchase }: ApiOptions = {}) {
+function installApi({ lastCosts = {}, links = [], purchase, suppliers = {} }: ApiOptions = {}) {
   const products = [cable, harina, refresco, vieja];
+  const knownSuppliers: Record<string, typeof activeSupplier | null> = {
+    [activeSupplier.id]: activeSupplier,
+    [otherSupplier.id]: otherSupplier,
+    ...suppliers,
+  };
   const posts: Array<Record<string, unknown>> = [];
 
   global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -290,6 +343,14 @@ function installApi({ lastCosts = {}, links = [], purchase }: ApiOptions = {}) {
             : [],
         ),
       });
+    }
+
+    // Un proveedor por id: restaurar un borrador revalida el suyo (CNF-16).
+    if (url.startsWith("/api/purchases/suppliers?")) {
+      const supplier =
+        knownSuppliers[new URL(url, "http://localhost").searchParams.get("id") ?? ""];
+
+      return supplier ? jsonResponse({ data: supplier }) : jsonResponse(SUPPLIER_NOT_FOUND, 404);
     }
 
     if (url.startsWith("/api/purchases/pur-1") && purchase !== undefined) {
@@ -347,6 +408,14 @@ const storedNewDraft = () => {
 
   return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
 };
+/** Deja pasar la espera del guardado automático (CNF-16: 500 ms desde el último cambio). */
+const settleDraft = () =>
+  act(() => {
+    jest.advanceTimersByTime(500);
+  });
+const notesField = () => screen.getByPlaceholderText("Nro. de factura, condiciones...");
+const guardDialog = () => screen.queryByRole("dialog", { name: "¿Salir sin terminar?" });
+const leaveViaMenu = () => fireEvent.click(screen.getByRole("link", { name: "Ventas" }));
 
 /** Deja guardada una compra: proveedor, dos líneas (la primera bloqueada), exenta y en REF. */
 function leaveUnfinishedPurchase() {
@@ -364,22 +433,32 @@ function leaveUnfinishedPurchase() {
 }
 
 beforeEach(() => {
+  jest.useFakeTimers();
   window.localStorage.clear();
   window.history.replaceState({}, "", "/purchases/create");
   mockPush.mockReset();
+  mockLinkNavigate.mockReset();
   mockRate.data = { rateVes: 510 };
   mockRate.error = null;
   installApi();
 });
 
+afterEach(() => {
+  jest.useRealTimers();
+});
+
 describe("PurchaseCreatePage · borrador local (COM-09)", () => {
-  it("no guarda nada con el formulario vacío y guarda al haber una línea, sin pago ni clave de idempotencia", () => {
+  it("no guarda nada con el formulario vacío y guarda al haber proveedor y línea, sin pago ni clave de idempotencia", () => {
     renderPage();
 
-    click("elegir proveedor");
+    fireEvent.change(notesField(), { target: { value: "Solo una nota" } });
+    settleDraft();
     expect(storedDraft()).toBeNull();
 
+    fireEvent.change(notesField(), { target: { value: "" } });
+    click("elegir proveedor");
     click("agregar cable");
+    settleDraft();
 
     const stored = storedDraft();
 
@@ -423,7 +502,7 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
     renderPage();
 
     expect(banner()).toHaveTextContent(
-      "Tienes una compra sin terminar (proveedor Proveedor Demo · 2 líneas · guardada hace un momento)",
+      "Tienes una compra sin terminar (Proveedor Demo, 2 líneas, hace un momento)",
     );
     expect(screen.getByText("proveedor: ninguno")).toBeInTheDocument();
     expect(lineTexts()).toEqual([]);
@@ -479,6 +558,10 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
         return jsonResponse({ error: { code: "NOT_FOUND", message: "Producto no encontrado." } }, 404);
       }
 
+      if (url.startsWith("/api/purchases/suppliers?")) {
+        return jsonResponse({ data: activeSupplier });
+      }
+
       return jsonResponse({ data: { items: [], limit: 100, skip: 0, total: 0 } });
     });
     renderPage();
@@ -512,6 +595,7 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
     renderPage();
     click("elegir otro proveedor");
     click("agregar cable");
+    settleDraft();
 
     expect(window.localStorage.getItem(draftKey)).toBe(before);
     // COM-F10: lo nuevo ya no se pierde; el aviso pide decidir (ver el bloque F-B1).
@@ -524,9 +608,11 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
     renderPage();
     click("elegir proveedor");
     click("agregar cable");
+    settleDraft();
     expect(storedDraft()).not.toBeNull();
 
     click(/Confirmar Compra/);
+    acceptConfirmation();
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
     expect(api.posts).toHaveLength(1);
@@ -553,6 +639,7 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
       expect(banner()).not.toBeInTheDocument();
 
       click(/Confirmar Compra/);
+      acceptConfirmation();
       await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
       expect(api.posts).toHaveLength(1);
     } finally {
@@ -564,20 +651,20 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
 });
 
 describe("PurchaseCreatePage · ProcessGuard (COM-09, regla 14)", () => {
-  const guardDialog = () => screen.queryByRole("dialog", { name: "¿Salir sin terminar?" });
-
-  it("sin líneas salir no pregunta; con una línea pregunta nombrando la compra", () => {
+  it("con el formulario vacío salir no pregunta; con una línea pregunta nombrando la compra", () => {
     renderPage();
-    click("elegir proveedor");
 
-    fireEvent.click(screen.getByRole("link", { name: "Ventas" }));
+    leaveViaMenu();
     expect(guardDialog()).not.toBeInTheDocument();
 
+    click("elegir proveedor");
     click("agregar cable");
-    fireEvent.click(screen.getByRole("link", { name: "Ventas" }));
+    leaveViaMenu();
 
     expect(guardDialog()).toBeInTheDocument();
-    expect(within(guardDialog() as HTMLElement).getByText("Compra en curso con 1 línea")).toBeInTheDocument();
+    expect(
+      within(guardDialog() as HTMLElement).getByText("Compra a Proveedor Demo · 1 línea · ref 2.32"),
+    ).toBeInTheDocument();
     expect(mockPush).not.toHaveBeenCalled();
 
     click("Seguir aquí");
@@ -590,6 +677,7 @@ describe("PurchaseCreatePage · ProcessGuard (COM-09, regla 14)", () => {
     click("elegir proveedor");
     click("agregar cable");
     click(/Confirmar Compra/);
+    acceptConfirmation();
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
     expect(mockPush).toHaveBeenCalledTimes(1);
@@ -630,6 +718,7 @@ describe("PurchaseCreatePage · duplicar compra (COM-09)", () => {
     // No copia notas, descuento, estado ni pagos de la compra original.
     expect(screen.getByPlaceholderText("Nro. de factura, condiciones...")).toHaveValue("");
     click(/Confirmar Compra/);
+    acceptConfirmation();
     await waitFor(() => expect(api.posts).toHaveLength(1));
     expect(api.posts[0]).toMatchObject({ discountRef: 0, status: "recibido", supplierId: "cont-supplier" });
     expect(api.posts[0]).not.toHaveProperty("notes");
@@ -748,6 +837,7 @@ describe("PurchaseCreatePage · duplicar compra (COM-09)", () => {
     renderPage();
 
     await waitFor(() => expect(lineTexts()).toHaveLength(2));
+    settleDraft();
     expect(lineTexts()[0]).toContain("Cable HDMI · 3 u");
     expect(window.localStorage.getItem(draftKey)).toBe(before);
     // COM-F10: la compra duplicada es una compra nueva más; se guarda aparte.
@@ -787,9 +877,11 @@ describe("PurchaseCreatePage · cambiar de proveedor con líneas pregunta antes 
     click("elegir proveedor");
     click("agregar cable");
     click("agregar harina");
+    settleDraft();
 
     const draftBefore = window.localStorage.getItem(draftKey);
 
+    expect(draftBefore).not.toBeNull();
     click("limpiar proveedor");
 
     expect(confirmDialog()).toHaveTextContent(
@@ -804,6 +896,7 @@ describe("PurchaseCreatePage · cambiar de proveedor con líneas pregunta antes 
     await waitFor(() => expect(confirmDialog()).not.toBeInTheDocument());
     expect(lineTexts()).toHaveLength(2);
     expect(screen.getByText("proveedor: cont-supplier")).toBeInTheDocument();
+    settleDraft();
     expect(window.localStorage.getItem(draftKey)).toBe(draftBefore);
   });
 
@@ -858,7 +951,7 @@ describe("PurchaseCreatePage · cambiar de proveedor con líneas pregunta antes 
 
 // COM-F10 · F-B1: con el aviso sin resolver, la compra nueva no se autoguardaba y al recargar se perdía.
 describe("PurchaseCreatePage · compra nueva con un borrador guardado sin decidir (COM-F10 · F-B1)", () => {
-  const SAVED = "proveedor Proveedor Demo · 2 líneas";
+  const SAVED = "Proveedor Demo, 2 líneas";
 
   /** Con una compra guardada sin decidir, empieza otra: otro proveedor y un cable. */
   function startNewPurchaseOverSavedDraft() {
@@ -868,22 +961,28 @@ describe("PurchaseCreatePage · compra nueva con un borrador guardado sin decidi
 
     click("elegir otro proveedor");
     click("agregar cable");
+    settleDraft();
 
     return view;
   }
 
-  it("al agregar la primera línea el aviso pide decidir, y la compra nueva se guarda aparte sin tocar la guardada", () => {
+  it("al empezar una compra nueva el aviso pide decidir, y se guarda aparte sin tocar la guardada", () => {
     leaveUnfinishedPurchase();
 
     const before = window.localStorage.getItem(draftKey);
 
     renderPage();
-    click("elegir otro proveedor");
-    // Solo proveedor: todavía no hay nada que perder.
+    fireEvent.change(notesField(), { target: { value: "Solo una nota" } });
+    settleDraft();
+    // Sin proveedor ni líneas todavía no hay nada que perder.
     expect(banner()).toHaveTextContent("Tienes una compra sin terminar");
     expect(storedNewDraft()).toBeNull();
 
+    click("elegir otro proveedor");
     click("agregar cable");
+    // Hasta que no pasa la espera, el aviso sigue ofreciendo solo la guardada.
+    expect(banner()).toHaveTextContent("Restaurar sustituye lo que hay ahora en el formulario.");
+    settleDraft();
 
     expect(banner()).toHaveTextContent(
       `Empezaste una compra nueva: al seguir se reemplaza el borrador guardado (${SAVED})`,
@@ -897,16 +996,17 @@ describe("PurchaseCreatePage · compra nueva con un borrador guardado sin decidi
     expect(lineTexts()).toHaveLength(2);
   });
 
-  it("proveedor y notas, sin líneas, también cuentan como compra nueva", () => {
+  it("un proveedor elegido, sin líneas, también cuenta como compra nueva, con sus notas", () => {
     leaveUnfinishedPurchase();
     renderPage();
     click("elegir otro proveedor");
-    fireEvent.change(screen.getByPlaceholderText("Nro. de factura, condiciones..."), {
-      target: { value: "Factura nueva" },
-    });
-
+    settleDraft();
     expect(banner()).toHaveTextContent("Empezaste una compra nueva");
-    expect(storedNewDraft()).toMatchObject({ notes: "Factura nueva" });
+
+    fireEvent.change(notesField(), { target: { value: "Factura nueva" } });
+    settleDraft();
+
+    expect(storedNewDraft()).toMatchObject({ notes: "Factura nueva", supplierId: "cont-otro" });
   });
 
   it("al recargar sin decidir no se pierde ninguna: se ofrece elegir, y la nueva vuelve al formulario", async () => {
@@ -914,10 +1014,8 @@ describe("PurchaseCreatePage · compra nueva con un borrador guardado sin decidi
     renderPage();
 
     expect(banner()).toHaveTextContent("Tienes dos compras sin terminar");
-    expect(banner()).toHaveTextContent(`Guardada: ${SAVED} · guardada hace un momento`);
-    expect(banner()).toHaveTextContent(
-      "Nueva: proveedor Otro Proveedor · 1 línea · guardada hace un momento",
-    );
+    expect(banner()).toHaveTextContent(`Guardada: ${SAVED}, hace un momento`);
+    expect(banner()).toHaveTextContent("Nueva: Otro Proveedor, 1 línea, hace un momento");
     expect(lineTexts()).toEqual([]);
 
     click("Restaurar la nueva");
@@ -968,6 +1066,7 @@ describe("PurchaseCreatePage · compra nueva con un borrador guardado sin decidi
 
     // Desde aquí se guarda como cualquier compra en curso.
     click("agregar harina");
+    settleDraft();
     expect((storedDraft()?.lines as { items: unknown[] }).items).toHaveLength(2);
   });
 
@@ -988,6 +1087,7 @@ describe("PurchaseCreatePage · compra nueva con un borrador guardado sin decidi
 
     startNewPurchaseOverSavedDraft();
     click(/Confirmar Compra/);
+    acceptConfirmation();
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
     expect(api.posts).toHaveLength(1);
@@ -1015,5 +1115,396 @@ describe("PurchaseCreatePage · compra nueva con un borrador guardado sin decidi
     const dialog = screen.getByRole("dialog", { name: "¿Salir sin terminar?" });
 
     expect(within(dialog).queryByText(/esta no se guardará/)).not.toBeInTheDocument();
+  });
+});
+
+describe("PurchaseCreatePage · guardia de salida (CNF-15)", () => {
+  it("no pregunta con el formulario vacío, ni con notas y estado tocados sin proveedor ni líneas", () => {
+    renderPage();
+    fireEvent.change(notesField(), { target: { value: "Factura 9" } });
+    fireEvent.change(screen.getByLabelText("Estado de la Compra"), { target: { value: "pedido" } });
+
+    leaveViaMenu();
+
+    expect(guardDialog()).not.toBeInTheDocument();
+  });
+
+  it("con solo el proveedor elegido ya pregunta, y nombra proveedor, líneas y total", () => {
+    renderPage();
+    click("elegir proveedor");
+    leaveViaMenu();
+
+    const dialog = guardDialog() as HTMLElement;
+
+    expect(within(dialog).getByText("Compra a Proveedor Demo · 0 líneas · ref 0.00")).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("Si sales ahora, se guardará un borrador");
+
+    click("Seguir aquí");
+    click("agregar cable");
+    click("agregar harina");
+    leaveViaMenu();
+
+    // Cable REF 2,00 + 16 % y harina REF 1,00 + 8 %.
+    expect(
+      within(guardDialog() as HTMLElement).getByText("Compra a Proveedor Demo · 2 líneas · ref 3.40"),
+    ).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("«Seguir aquí» no pierde líneas, bloqueos ni notas, y no navega", () => {
+    renderPage();
+    click("elegir proveedor");
+    click("agregar cable");
+    click("agregar harina");
+    fireEvent.change(notesField(), { target: { value: "Factura 123" } });
+
+    const before = lineTexts();
+
+    leaveViaMenu();
+    click("Seguir aquí");
+
+    expect(guardDialog()).not.toBeInTheDocument();
+    expect(lineTexts()).toEqual(before);
+    expect(before[1]).toContain("bloqueada");
+    expect(notesField()).toHaveValue("Factura 123");
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("«Salir» guarda el borrador en el acto, sin esperar los 500 ms, y navega al destino", async () => {
+    const setItem = jest.spyOn(Storage.prototype, "setItem");
+
+    try {
+      renderPage();
+      click("elegir proveedor");
+      click("agregar cable");
+      // Aún no pasó la espera: nada guardado.
+      expect(storedDraft()).toBeNull();
+
+      leaveViaMenu();
+      await act(async () => {
+        click("Salir");
+      });
+
+      expect(storedDraft()).toMatchObject({ supplierId: "cont-supplier" });
+      expect((storedDraft()?.lines as { items: unknown[] }).items).toHaveLength(1);
+      expect(mockPush).toHaveBeenCalledWith("/sales");
+
+      // El guardado automático pendiente quedó cancelado: no hay una segunda escritura.
+      const writes = setItem.mock.calls.filter(([key]) => key === draftKey).length;
+
+      settleDraft();
+      expect(setItem.mock.calls.filter(([key]) => key === draftKey)).toHaveLength(writes);
+      expect(writes).toBe(1);
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
+  it("«Volver» de la cabecera pasa por el guardia: vacío sale directo, con una compra en curso pregunta", () => {
+    renderPage();
+
+    fireEvent.click(screen.getByRole("link", { name: "Volver" }));
+    expect(guardDialog()).not.toBeInTheDocument();
+    expect(mockLinkNavigate).toHaveBeenCalledWith("/purchases");
+
+    mockLinkNavigate.mockClear();
+    click("elegir proveedor");
+    click("agregar cable");
+    fireEvent.click(screen.getByRole("link", { name: "Volver" }));
+
+    expect(guardDialog()).toBeInTheDocument();
+    expect(mockLinkNavigate).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("recargar o cerrar la pestaña (beforeunload) avisa y guarda el borrador sin esperar", () => {
+    renderPage();
+    click("elegir proveedor");
+    click("agregar cable");
+    expect(storedDraft()).toBeNull();
+
+    const event = new Event("beforeunload", { cancelable: true });
+
+    act(() => {
+      window.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(storedDraft()).toMatchObject({ supplierId: "cont-supplier" });
+  });
+
+  it("los modales de la pantalla (cambio de proveedor, confirmación) no disparan el guardia", async () => {
+    const supplierDialog = () => screen.queryByRole("dialog", { name: "Cambiar de proveedor" });
+
+    renderPage();
+    click("elegir proveedor");
+    click("agregar cable");
+
+    click("elegir otro proveedor");
+    expect(supplierDialog()).toBeInTheDocument();
+    expect(guardDialog()).not.toBeInTheDocument();
+    click("Cancelar");
+    await waitFor(() => expect(supplierDialog()).not.toBeInTheDocument());
+
+    click(/Confirmar Compra/);
+    expect(screen.getByRole("button", { name: /^Registrar compra$/ })).toBeInTheDocument();
+    expect(guardDialog()).not.toBeInTheDocument();
+  });
+
+  it("confirmar antes de que pase la espera: ni guardia ni borrador, tampoco después", async () => {
+    const api = installApi();
+
+    renderPage();
+    click("elegir proveedor");
+    click("agregar cable");
+    click(/Confirmar Compra/);
+    acceptConfirmation();
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
+    expect(api.posts).toHaveLength(1);
+    expect(guardDialog()).not.toBeInTheDocument();
+
+    // El guardado automático que estuviera pendiente no resucita el borrador.
+    settleDraft();
+    settleDraft();
+    expect(storedDraft()).toBeNull();
+    expect(storedNewDraft()).toBeNull();
+
+    leaveViaMenu();
+    expect(guardDialog()).not.toBeInTheDocument();
+
+    // Recargar tras confirmar: no hay nada que ofrecer.
+    cleanup();
+    renderPage();
+    expect(banner()).not.toBeInTheDocument();
+  });
+
+  it("si el navegador no deja guardar, el guardia no promete un borrador: avisa que la compra se pierde", () => {
+    const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+
+    try {
+      renderPage();
+      click("elegir proveedor");
+      click("agregar cable");
+      settleDraft();
+      // La pantalla sigue funcionando.
+      expect(lineTexts()).toHaveLength(1);
+
+      leaveViaMenu();
+
+      const dialog = guardDialog() as HTMLElement;
+
+      expect(dialog).toHaveTextContent("Si sales ahora, se perderán los cambios.");
+      expect(dialog).toHaveTextContent(/no dejó guardar el borrador.*esta compra se pierde/);
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+});
+
+describe("PurchaseCreatePage · borrador recuperable (CNF-16)", () => {
+  it("guarda 500 ms después del último cambio y una sola vez por ráfaga", () => {
+    const setItem = jest.spyOn(Storage.prototype, "setItem");
+    const draftWrites = () => setItem.mock.calls.filter(([key]) => key === draftKey).length;
+
+    try {
+      renderPage();
+      click("elegir proveedor");
+      click("agregar cable");
+      act(() => {
+        jest.advanceTimersByTime(499);
+      });
+      expect(draftWrites()).toBe(0);
+
+      // Otro cambio antes de cumplirse la espera: vuelve a empezar.
+      fireEvent.change(notesField(), { target: { value: "Factura 123" } });
+      act(() => {
+        jest.advanceTimersByTime(499);
+      });
+      expect(draftWrites()).toBe(0);
+
+      act(() => {
+        jest.advanceTimersByTime(1);
+      });
+      expect(draftWrites()).toBe(1);
+      expect(storedDraft()).toMatchObject({ notes: "Factura 123", supplierId: "cont-supplier" });
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
+  it("guarda proveedor, líneas, bloqueos, estado, notas, descuento y la fecha, y nunca el pago", () => {
+    jest.setSystemTime(new Date("2026-10-09T15:00:00.000Z"));
+    renderPage();
+    click("elegir proveedor");
+    click("agregar cable");
+    click("agregar harina");
+    fireEvent.change(screen.getByLabelText("Estado de la Compra"), { target: { value: "pedido" } });
+    fireEvent.change(notesField(), { target: { value: "Factura 123" } });
+    settleDraft();
+
+    const stored = storedDraft() as {
+      lines: { items: Array<{ id: string; productId: string }>; locks: { locked: object } };
+    };
+
+    expect(stored).toMatchObject({
+      discountRef: 0,
+      notes: "Factura 123",
+      savedAt: "2026-10-09T15:00:00.500Z",
+      status: "pedido",
+      supplierId: "cont-supplier",
+      supplierName: "Proveedor Demo",
+      version: 1,
+    });
+    expect(stored.lines.items.map((item) => item.productId)).toEqual(["prod-harina", "prod-cable"]);
+    // «Bloquear al agregar»: al entrar la harina, el cable quedó bloqueado.
+    expect(stored.lines.locks.locked).toEqual({ [stored.lines.items[1].id]: true });
+    expect(JSON.stringify(stored)).not.toMatch(/payment|reference|clientRequestId/i);
+  });
+
+  it("el aviso dice proveedor, líneas y hace cuánto se guardó, y no restaura solo", () => {
+    leaveUnfinishedPurchase();
+    act(() => {
+      jest.advanceTimersByTime(20 * 60_000);
+    });
+    renderPage();
+
+    expect(banner()).toHaveTextContent(
+      "Tienes una compra sin terminar (Proveedor Demo, 2 líneas, hace 20 min)",
+    );
+    expect(screen.getByRole("button", { name: "Restaurar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Descartar" })).toBeInTheDocument();
+    expect(lineTexts()).toEqual([]);
+    expect(screen.getByText("proveedor: ninguno")).toBeInTheDocument();
+  });
+
+  it("F5 a media compra: tras recargar el aviso lo ofrece todo, con sus líneas bloqueadas", async () => {
+    const view = renderPage();
+
+    click("elegir proveedor");
+    click("agregar cable");
+    click("agregar harina");
+    // Recarga antes de que pase la espera: lo guarda el aviso nativo.
+    act(() => {
+      window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+    });
+    view.unmount();
+
+    renderPage();
+    expect(banner()).toHaveTextContent("Proveedor Demo, 2 líneas");
+    click("Restaurar");
+
+    await waitFor(() => expect(lineTexts()).toHaveLength(2));
+    expect(lineTexts()[0]).toContain("Harina PAN");
+    expect(lineTexts()[0]).toContain("libre");
+    expect(lineTexts()[1]).toContain("Cable HDMI");
+    expect(lineTexts()[1]).toContain("bloqueada");
+  });
+
+  it.each([
+    ["corrupto", "{no es json"],
+    ["de una versión vieja", JSON.stringify({ supplierId: "cont-supplier", version: 0 })],
+    ["de otro usuario", null],
+  ])("un borrador %s se descarta sin romper la pantalla y se puede guardar encima", (_, raw) => {
+    if (raw === null) {
+      leaveUnfinishedPurchase();
+      window.localStorage.setItem(
+        draftKey,
+        JSON.stringify({ ...storedDraft(), userId: "user-2" }),
+      );
+    } else {
+      window.localStorage.setItem(draftKey, raw);
+    }
+
+    renderPage();
+
+    expect(banner()).not.toBeInTheDocument();
+    click("elegir proveedor");
+    click("agregar cable");
+    settleDraft();
+
+    expect(lineTexts()).toHaveLength(1);
+    expect(storedDraft()).toMatchObject({ supplierId: "cont-supplier", userId: "user-1", version: 1 });
+  });
+
+  it.each([
+    ["inactivo", { ...activeSupplier, isActive: false }],
+    ["que ya no existe", null],
+  ])(
+    "restaurar con el proveedor %s: avisa, no lo elige, y las líneas entran al elegir otro sin perder el borrador",
+    async (_, supplier) => {
+      leaveUnfinishedPurchase();
+
+      const before = window.localStorage.getItem(draftKey);
+
+      installApi({ suppliers: { "cont-supplier": supplier } });
+      renderPage();
+      click("Restaurar");
+
+      expect(
+        await screen.findByText(
+          /El proveedor Proveedor Demo de la compra guardada ya no está disponible: sus 2 líneas no se restauraron/,
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByText("proveedor: ninguno")).toBeInTheDocument();
+      expect(lineTexts()).toEqual([]);
+      expect(banner()).not.toBeInTheDocument();
+      // Notas y moneda sí vuelven.
+      expect(notesField()).toHaveValue("Factura 123");
+      // Mientras las líneas esperan proveedor, lo guardado no se toca: recargar lo vuelve a ofrecer.
+      settleDraft();
+      expect(window.localStorage.getItem(draftKey)).toBe(before);
+
+      await act(async () => {
+        click("elegir otro proveedor");
+      });
+
+      await waitFor(() => expect(lineTexts()).toHaveLength(2));
+      expect(lineTexts().map((line) => line?.split(" · ")[0])).toEqual(["Harina PAN", "Cable HDMI"]);
+      expect(screen.queryByText(/ya no está disponible/)).not.toBeInTheDocument();
+      settleDraft();
+      expect(storedDraft()).toMatchObject({ supplierId: "cont-otro" });
+    },
+  );
+
+  it("Descartar: recargar ya no lo ofrece", () => {
+    leaveUnfinishedPurchase();
+
+    const view = renderPage();
+
+    click("Descartar");
+    settleDraft();
+    view.unmount();
+    renderPage();
+
+    expect(banner()).not.toBeInTheDocument();
+    expect(storedDraft()).toBeNull();
+  });
+
+  it("dos pestañas: la segunda no mezcla sus líneas con las de la primera", () => {
+    const first = renderPage();
+
+    fireEvent.click(within(first.container).getByRole("button", { name: "elegir proveedor" }));
+    fireEvent.click(within(first.container).getByRole("button", { name: "agregar cable" }));
+    settleDraft();
+
+    const second = renderPage();
+    const inSecond = within(second.container);
+
+    // La segunda ve la compra de la primera como pendiente; lo suyo va a otra ranura.
+    expect(inSecond.getByRole("status", { name: "Compra sin terminar" })).toBeInTheDocument();
+    fireEvent.click(inSecond.getByRole("button", { name: "elegir otro proveedor" }));
+    fireEvent.click(inSecond.getByRole("button", { name: "agregar harina" }));
+    settleDraft();
+
+    const productIds = (stored: Record<string, unknown> | null) =>
+      (stored?.lines as { items: Array<{ productId: string }> }).items.map((item) => item.productId);
+
+    expect(storedDraft()).toMatchObject({ supplierId: "cont-supplier" });
+    expect(productIds(storedDraft())).toEqual(["prod-cable"]);
+    expect(storedNewDraft()).toMatchObject({ supplierId: "cont-otro" });
+    expect(productIds(storedNewDraft())).toEqual(["prod-harina"]);
   });
 });

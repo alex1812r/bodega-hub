@@ -95,8 +95,9 @@ export function ProductImportStep5Summary({
         ) : null}
         <PageBackButton
           className="gap-2 shadow-sm sm:order-2"
-          href="/products"
+          fallbackHref="/products"
           label="Volver a productos"
+          shortcuts={false}
         />
         <Button
           className="gap-2 sm:order-0"

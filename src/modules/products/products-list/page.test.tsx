@@ -7,6 +7,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { SCROLL_POSITIONS_STORAGE_KEY } from "@/shared/hooks/useScrollRestoration";
+
 import { MARGIN_BADGE_TITLE } from "@/shared/components/MarginBadge";
 
 jest.mock("next/navigation", () => ({
@@ -701,5 +703,93 @@ describe("ProductsListPage · ganancia y estado en la URL", () => {
 
     expect(await screen.findByText("No pudimos cargar los datos")).toBeInTheDocument();
     expect(screen.getByText("Falló el listado.")).toBeInTheDocument();
+  });
+
+  describe("DET-06d · volver con filtros y scroll", () => {
+    /** Posición guardada para `url` y espía del `scrollTo` de la ventana (sin `<main>`, hace scroll ella). */
+    function rememberScroll(url: string, top: number) {
+      const scrollTo = jest.fn();
+
+      Object.defineProperty(window, "scrollTo", { configurable: true, value: scrollTo });
+      window.sessionStorage.setItem(SCROLL_POSITIONS_STORAGE_KEY, JSON.stringify([[url, top]]));
+
+      return scrollTo;
+    }
+
+    afterEach(() => {
+      window.sessionStorage.clear();
+    });
+
+    it("restores the scroll saved for this exact URL once the rows are painted", async () => {
+      const scrollTo = rememberScroll("/products?margin=low&page=2", 640);
+
+      renderPage("margin=low&page=2");
+
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      await findRow("Arroz");
+
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      expect(scrollTo).toHaveBeenCalledWith(0, 640);
+    });
+
+    it("does not move the scroll on a URL without a saved position", async () => {
+      const scrollTo = rememberScroll("/products?margin=low&page=2", 640);
+
+      renderPage("margin=low&page=3");
+      await findRow("Arroz");
+
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("sends 'Categorías' and 'Importar Excel' with the exact list URL as returnTo", async () => {
+      renderPage("margin=low&sort=marginPct&dir=desc&page=2");
+      await findRow("Arroz");
+
+      const returnTo = encodeURIComponent("/products?margin=low&sort=marginPct&dir=desc&page=2");
+
+      expect(screen.getByRole("link", { name: "Categorías" })).toHaveAttribute(
+        "href",
+        `/products/categories?returnTo=${returnTo}`,
+      );
+      expect(screen.getByRole("link", { name: "Importar Excel" })).toHaveAttribute(
+        "href",
+        `/products/import?returnTo=${returnTo}`,
+      );
+    });
+
+    it("keeps those links in sync with a filter chosen after mounting", async () => {
+      const user = userEvent.setup();
+
+      renderPage();
+      await findRow("Arroz");
+      await user.selectOptions(screen.getByLabelText("Ganancia"), "Media");
+
+      await waitFor(() =>
+        expect(screen.getByRole("link", { name: "Categorías" })).toHaveAttribute(
+          "href",
+          `/products/categories?returnTo=${encodeURIComponent("/products?margin=mid")}`,
+        ),
+      );
+    });
+
+    it("asks only once on a filtered URL, already with the filters: no unfiltered first request", async () => {
+      renderPage("search=arroz&margin=mid&status=inactive&sort=sku&dir=desc&page=2");
+      await findRow("Arroz");
+      // Más que el debounce de la búsqueda: si hubiera una segunda petición, aparecería aquí.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      expect(productRequests().map((params) => Object.fromEntries(params))).toEqual([
+        {
+          isActive: "false",
+          limit: "10",
+          margin: "mid",
+          search: "arroz",
+          skip: "10",
+          sortBy: "sku",
+          sortOrder: "desc",
+        },
+      ]);
+    });
   });
 });

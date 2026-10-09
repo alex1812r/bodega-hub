@@ -25,6 +25,7 @@ import {
 } from "@/shared/components/Pagination";
 import { useToast } from "@/shared/components/Toast";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import {
   URL_LIST_DEBOUNCE_MS,
   useUrlListState,
@@ -389,6 +390,10 @@ function ProductsList() {
       setListState({ page: lastPage });
     }
   }, [isPagePastTheEnd, lastPage, setListState]);
+
+  // Al volver del detalle la lista reaparece a la altura en que se dejó.
+  useScrollRestoration(listHref, { ready: !products.isLoading });
+
   const categoryOptions = getPaginatedItems(categories.data).map((category) => ({
     label: category.name,
     value: category.id,
@@ -468,14 +473,15 @@ function ProductsList() {
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
             <Button asChild className="w-full gap-2 sm:w-auto" size="sm" variant="outline">
-              <Link href="/products/categories">
+              {/* "Volver a productos" de Categorías e Importar regresa a esta lista con sus filtros. */}
+              <Link href={withReturnTo("/products/categories", listHref)}>
                 <Tags aria-hidden className="size-[1.125rem]" />
                 Categorías
               </Link>
             </Button>
             <Can permission="products.manage">
               <Button asChild className="w-full gap-2 sm:w-auto" size="sm" variant="outline">
-                <Link href="/products/import">
+                <Link href={withReturnTo("/products/import", listHref)}>
                   <Upload aria-hidden className="size-[1.125rem]" />
                   Importar Excel
                 </Link>
@@ -715,6 +721,8 @@ function ProductsList() {
           }}
           open
           products={selectedProducts}
+          rateVes={rateVes}
+          thresholds={marginThresholds}
         />
       ) : null}
       {editProduct ? (

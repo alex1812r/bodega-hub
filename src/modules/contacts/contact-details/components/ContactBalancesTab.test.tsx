@@ -376,6 +376,27 @@ describe("ContactBalancesTab", () => {
     expect(container.textContent).not.toMatch(/sale-internal|purchase-internal|cont-both/);
   });
 
+  it("DET-05: el enlace conserva el returnTo con el que se llego al contacto", async () => {
+    const list = "/contacts?search=maria&page=2";
+    const detailUrl = `/contacts/cont-both?tab=saldos&returnTo=${encodeURIComponent(list)}`;
+
+    renderTab({ returnHref: detailUrl, sections: ["sale", "purchase"] });
+
+    const saleHref = (await screen.findByRole("link", { name: "F-0001" })).getAttribute("href");
+    const purchaseHref = (await screen.findByRole("link", { name: "#C-000128" })).getAttribute(
+      "href",
+    );
+
+    expect(saleHref).toBe(`/sales/sale-internal-1?returnTo=${encodeURIComponent(detailUrl)}`);
+    expect(purchaseHref).toBe(
+      `/purchases/purchase-internal-1?returnTo=${encodeURIComponent(detailUrl)}`,
+    );
+
+    const returnTo = new URLSearchParams(saleHref?.split("?")[1]).get("returnTo") as string;
+
+    expect(new URLSearchParams(returnTo.split("?")[1]).get("returnTo")).toBe(list);
+  });
+
   it("a 390 px pinta tarjetas con el documento enlazado y su accion", async () => {
     cardsLayout = true;
     renderTab({ sections: ["sale"] });

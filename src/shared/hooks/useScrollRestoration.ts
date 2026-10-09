@@ -8,8 +8,15 @@ export const SCROLL_POSITIONS_STORAGE_KEY = "bodegahub:scroll-positions";
 export const MAX_SCROLL_ENTRIES = 50;
 /** Intervalo mínimo entre escrituras a `sessionStorage` mientras se hace scroll. */
 export const SCROLL_SAVE_THROTTLE_MS = 150;
+/**
+ * Tiempo máximo, desde `ready`, durante el que se vuelve a aplicar la posición
+ * guardada si el alto del contenido sigue cambiando.
+ */
+export const SCROLL_RESTORE_MAX_MS = 1000;
 
 const MAX_SCROLL_KEY_LENGTH = 2000;
+/** Gestos con los que el usuario toma el control del scroll y la restauración se abandona. */
+const USER_SCROLL_EVENTS = ["wheel", "touchstart", "touchmove", "keydown", "pointerdown"] as const;
 
 type ScrollEntry = [key: string, top: number];
 
@@ -102,6 +109,12 @@ function getScrollTop(target: HTMLElement | Window) {
   return target instanceof Window ? target.scrollY : target.scrollTop;
 }
 
+function getScrollHeight(target: HTMLElement | Window) {
+  return target instanceof Window
+    ? target.document.documentElement.scrollHeight
+    : target.scrollHeight;
+}
+
 function setScrollTop(target: HTMLElement | Window, top: number) {
   if (target instanceof Window) {
     target.scrollTo(target.scrollX, top);
@@ -121,6 +134,11 @@ function currentLocationKey() {
  *
  * - `key`: la URL completa de la pantalla (ruta + query). En una lista, pasa
  *   `list.href` de `useUrlListState`. Si se omite, se usa la URL del navegador.
+ * - Si tras `ready` el alto del contenido aún cambia (la tabla pasa a tarjetas,
+ *   una sección crece tarde), vuelve a aplicar la posición guardada durante
+ *   `SCROLL_RESTORE_MAX_MS` como mucho. Lo deja en cuanto el usuario desplaza
+ *   (rueda, tacto, teclado, puntero o un scroll sin cambio de alto) y, mientras
+ *   dura, no sobrescribe la posición guardada.
  * - Guarda con throttle al hacer scroll, al desmontar y en `pagehide`.
  * - Tolera `sessionStorage` bloqueado y guarda como mucho `MAX_SCROLL_ENTRIES` URL.
  * - `container`: ref del elemento que hace scroll o `"window"`. Por defecto se
@@ -160,17 +178,32 @@ export function useScrollRestoration(
     let locationKey = currentLocationKey();
     const resolveKey = () => keyRef.current ?? locationKey;
 
-    if (!restoredRef.current) {
-      restoredRef.current = true;
+    // Posición que se está restaurando; `null` cuando no hay restauración en curso.
+    let pending: number | null = null;
+    let appliedTop = 0;
+    let appliedHeight = 0;
+    let frame: number | null = null;
+    let deadline: number | null = null;
 
-      const stored = readPosition(resolveKey());
-
-      if (stored !== null) {
-        setScrollTop(target, stored);
+    function applyPending() {
+      if (pending === null) {
+        return;
       }
+
+      setScrollTop(target, pending);
+      appliedTop = getScrollTop(target);
+      appliedHeight = getScrollHeight(target);
     }
 
-    let lastTop = getScrollTop(target);
+    if (!restoredRef.current) {
+      restoredRef.current = true;
+      pending = readPosition(resolveKey());
+      applyPending();
+    }
+
+    // Mientras se restaura, lo que se guardaría es la posición pedida, no la
+    // que el layout a medio montar permite alcanzar.
+    let lastTop = pending ?? getScrollTop(target);
     let timer: number | null = null;
 
     function save() {
@@ -182,13 +215,75 @@ export function useScrollRestoration(
       writePosition(resolveKey(), lastTop);
     }
 
+    function stopRestoring() {
+      if (pending === null) {
+        return;
+      }
+
+      pending = null;
+      lastTop = getScrollTop(target);
+
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+        frame = null;
+      }
+
+      if (deadline !== null) {
+        window.clearTimeout(deadline);
+        deadline = null;
+      }
+
+      USER_SCROLL_EVENTS.forEach((type) => window.removeEventListener(type, stopRestoring, true));
+    }
+
+    function watchLayout() {
+      frame = null;
+
+      if (pending === null) {
+        return;
+      }
+
+      if (getScrollHeight(target) !== appliedHeight) {
+        applyPending();
+      }
+
+      frame = window.requestAnimationFrame(watchLayout);
+    }
+
     function handleScroll() {
+      if (pending !== null) {
+        const top = getScrollTop(target);
+
+        // Eco de la propia restauración.
+        if (top === appliedTop) {
+          return;
+        }
+
+        // El alto cambió (tabla → tarjetas, sección que crece tarde) y movió el
+        // scroll: se vuelve a la posición guardada sin registrar la mala.
+        if (getScrollHeight(target) !== appliedHeight) {
+          applyPending();
+          return;
+        }
+
+        // Mismo alto y otra posición: alguien desplazó de verdad.
+        stopRestoring();
+      }
+
       lastTop = getScrollTop(target);
       locationKey = currentLocationKey();
 
       if (timer === null) {
         timer = window.setTimeout(save, SCROLL_SAVE_THROTTLE_MS);
       }
+    }
+
+    if (pending !== null) {
+      frame = window.requestAnimationFrame(watchLayout);
+      deadline = window.setTimeout(stopRestoring, SCROLL_RESTORE_MAX_MS);
+      USER_SCROLL_EVENTS.forEach((type) =>
+        window.addEventListener(type, stopRestoring, { capture: true, passive: true }),
+      );
     }
 
     target.addEventListener("scroll", handleScroll, { passive: true });
@@ -198,6 +293,7 @@ export function useScrollRestoration(
       target.removeEventListener("scroll", handleScroll);
       window.removeEventListener("pagehide", save);
       save();
+      stopRestoring();
     };
   }, [armed, container]);
 }

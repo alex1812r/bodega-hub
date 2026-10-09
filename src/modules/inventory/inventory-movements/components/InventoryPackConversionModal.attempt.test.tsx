@@ -12,6 +12,11 @@ import { createQueryWrapper, installFetchStub } from "../../utils/requestAttempt
 import { UNCERTAIN_STOCK_REQUEST_MESSAGE } from "../../utils/stockRequestError";
 import { InventoryPackConversionModal } from "./InventoryPackConversionModal";
 
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 function product(id: string, name: string, currentStock: number) {
   return { currentCostRef: 1, currentStock, id, name, salePriceRef: 2, sku: `${id}-sku` };
 }
@@ -112,7 +117,22 @@ function setQuantity(value: string) {
 }
 
 async function closeWithEscape() {
+  // Tras cancelar una confirmación, el modal de debajo vuelve al árbol accesible.
+  await screen.findByRole("dialog", { name: "Convertir empaque" });
   fireEvent.keyDown(getModal(), { key: "Escape" });
+  await waitFor(() => expect(document.getElementById(formId)).toBeNull());
+}
+
+/** Con lo tecleado sin registrar, Esc pregunta (CNF-15): se sale descartándolo. */
+async function closeWithEscapeDiscarding() {
+  await screen.findByRole("dialog", { name: "Convertir empaque" });
+  fireEvent.keyDown(getModal(), { key: "Escape" });
+  fireEvent.click(
+    within(await screen.findByRole("dialog", { name: "¿Salir sin terminar?" })).getByRole(
+      "button",
+      { name: "Salir" },
+    ),
+  );
   await waitFor(() => expect(document.getElementById(formId)).toBeNull());
 }
 
@@ -141,6 +161,31 @@ async function cancelConfirm(dialog: HTMLElement) {
   );
 }
 
+const SINGLE_CONFIRM_TITLE = "Confirmar conversión de empaque";
+
+function singleConfirmButton(dialog: HTMLElement) {
+  return within(dialog).getByRole("button", { name: "Convertir empaque" });
+}
+
+/** CNF-08: el 1 a 1 también confirma; el formulario abre la confirmación y ella envía. */
+async function submitAndConfirmSingle() {
+  submitForm();
+
+  const dialog = await screen.findByRole("dialog", { name: SINGLE_CONFIRM_TITLE });
+
+  fireEvent.click(singleConfirmButton(dialog));
+
+  return dialog;
+}
+
+async function cancelSingleConfirm(dialog: HTMLElement) {
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeEnabled());
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: SINGLE_CONFIRM_TITLE })).not.toBeInTheDocument(),
+  );
+}
+
 function keyOf(api: ReturnType<typeof renderModal>, index: number) {
   return api.posts[index]?.body.clientRequestId;
 }
@@ -154,24 +199,29 @@ describe("InventoryPackConversionModal · 1 a 1 · clave (INV-F2 · F1)", () => 
     api.respondToNextPost(converted);
 
     await openModal();
-    submitForm();
-    await screen.findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    const lost = await submitAndConfirmSingle();
+    await within(lost).findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    await cancelSingleConfirm(lost);
+    // Al cancelar la confirmación el aviso sigue a la vista en el formulario.
+    expect(screen.getByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).toBeVisible();
 
     setQuantity("2");
-    submitForm();
+    const conflicted = await submitAndConfirmSingle();
     // Un 409 trae respuesta del servidor: se muestra tal cual.
-    await screen.findByText(keyConflict.error.message);
+    await within(conflicted).findByText(keyConflict.error.message);
+    await cancelSingleConfirm(conflicted);
 
     fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "apertura" } });
-    submitForm();
+    const third = await submitAndConfirmSingle();
     await waitFor(() => expect(api.posts).toHaveLength(3));
     await waitFor(() => expect(screen.getByLabelText("Motivo")).toBeEnabled());
+    await cancelSingleConfirm(third);
 
-    await closeWithEscape();
+    await closeWithEscapeDiscarding();
     await openModal();
     expect(screen.queryByText(keyConflict.error.message)).not.toBeInTheDocument();
     setQuantity("2");
-    submitForm();
+    await submitAndConfirmSingle();
     await waitFor(() => expect(api.posts).toHaveLength(4));
 
     expect(new Set([0, 1, 2, 3].map((index) => keyOf(api, index))).size).toBe(4);
@@ -183,13 +233,14 @@ describe("InventoryPackConversionModal · 1 a 1 · clave (INV-F2 · F1)", () => 
     api.respondToNextPost(converted);
 
     await openModal();
-    submitForm();
-    await screen.findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    const dialog = await submitAndConfirmSingle();
+    await within(dialog).findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    await cancelSingleConfirm(dialog);
 
     await closeWithEscape();
     await openModal();
     expect(screen.queryByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).not.toBeInTheDocument();
-    submitForm();
+    await submitAndConfirmSingle();
     await waitFor(() => expect(api.posts).toHaveLength(2));
 
     expect(api.posts[1]?.body).toMatchObject({ packProductId: "prod-cigar-pack", packQuantity: 1 });
@@ -202,9 +253,12 @@ describe("InventoryPackConversionModal · 1 a 1 · clave (INV-F2 · F1)", () => 
     api.respondToNextPost(converted);
 
     await openModal();
-    submitForm();
-    await screen.findByText("Stock insuficiente de empaque");
-    submitForm();
+    const dialog = await submitAndConfirmSingle();
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Stock insuficiente de empaque",
+    );
+    await waitFor(() => expect(singleConfirmButton(dialog)).toBeEnabled());
+    fireEvent.click(singleConfirmButton(dialog));
     await waitFor(() => expect(api.posts).toHaveLength(2));
 
     expect(keyOf(api, 1)).toBe(keyOf(api, 0));
@@ -217,20 +271,36 @@ describe("InventoryPackConversionModal · 1 a 1 · envío en vuelo (INV-F2 · F2
     const release = api.holdNextPost(converted);
 
     await openModal();
-    submitForm();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Convirtiendo..." })).toBeDisabled());
+    const dialog = await submitAndConfirmSingle();
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Procesando..." })).toBeDisabled(),
+    );
 
-    expect(screen.getByRole("combobox", { name: "Producto empaque" })).toBeDisabled();
-    expect(screen.getByLabelText("Cantidad de empaques")).toBeDisabled();
-    expect(screen.getByLabelText("Motivo")).toBeDisabled();
+    // El formulario queda debajo de la confirmación, fuera del árbol accesible.
+    const formElement = document.getElementById(formId) as HTMLFormElement;
+    const form = within(formElement);
+    const conversionModal = formElement.closest<HTMLElement>('[role="dialog"]') as HTMLElement;
 
-    fireEvent.keyDown(getModal(), { key: "Escape" });
+    expect(form.getByRole("combobox", { hidden: true, name: "Producto empaque" })).toBeDisabled();
+    expect(form.getByLabelText("Cantidad de empaques")).toBeDisabled();
+    expect(form.getByLabelText("Motivo")).toBeDisabled();
+
+    // Ni la confirmación ni el modal de debajo se cierran con el envío en vuelo.
+    fireEvent.keyDown(dialog, { key: "Escape" });
     await flushDeferredClose();
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cerrar modal" }));
     await flushDeferredClose();
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar modal" }));
+    fireEvent.keyDown(conversionModal, { key: "Escape" });
+    await flushDeferredClose();
+    fireEvent.click(within(conversionModal).getByRole("button", { hidden: true, name: "Cancelar" }));
+    await flushDeferredClose();
+    fireEvent.click(
+      within(conversionModal).getByRole("button", { hidden: true, name: "Cerrar modal" }),
+    );
     await flushDeferredClose();
 
+    expect(screen.getByRole("dialog", { name: SINGLE_CONFIRM_TITLE })).toBeInTheDocument();
     expect(document.getElementById(formId)).not.toBeNull();
 
     await act(async () => {
@@ -368,13 +438,13 @@ describe("InventoryPackConversionModal · tras una conversión correcta (INT-02)
     api.respondToNextPost(converted);
 
     await openModal();
-    submitForm();
+    await submitAndConfirmSingle();
     await waitFor(() => expect(api.posts).toHaveLength(1));
     await waitFor(() => expect(document.getElementById(formId)).toBeNull());
     await flushDeferredClose();
 
     await openModal();
-    submitForm();
+    await submitAndConfirmSingle();
     await waitFor(() => expect(api.posts).toHaveLength(2));
     expect(keyOf(api, 1)).not.toBe(keyOf(api, 0));
   });

@@ -15,7 +15,8 @@ const mockAuth: { permissions: string[]; role: string } = {
 
 // PAG-F6 U6: al enviar un pago el modal monta el guardia de proceso, que usa el router de Next.
 jest.mock("next/navigation", () => ({
-  usePathname: () => "/contacts/cont-1",
+  // La ruta real de la prueba: la pestaña activa (`?tab=`) y el `returnTo` salen de la URL.
+  usePathname: () => window.location.pathname,
   useRouter: () => ({ back: jest.fn(), push: jest.fn(), replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
@@ -201,6 +202,7 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
   });
 
   afterEach(() => {
+    window.history.replaceState(null, "", "/");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: originalMatchMedia,
@@ -211,6 +213,8 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
     const queryClient = new QueryClient({
       defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
     });
+
+    window.history.replaceState(null, "", "/contacts/cont-internal");
 
     return render(
       <QueryClientProvider client={queryClient}>
@@ -258,9 +262,10 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
 
       await waitFor(() => expect(metricCard("Por Cobrar (REF)")).toHaveTextContent("ref 10.00"));
       expect(metricCard("Por Pagar (REF)")).toHaveTextContent("ref 30.00");
-      expect(screen.queryByText("ref 628.75")).not.toBeInTheDocument();
+      expect(metricCard("Por Cobrar (REF)")).not.toHaveTextContent("ref 628.75");
       // Las demás métricas siguen saliendo de ventas, compras y pagos del contacto.
-      expect(metricCard("Total Operaciones (REF)")).toHaveTextContent("ref 681.15");
+      expect(metricCard("Total vendido (REF)")).toHaveTextContent("ref 628.75");
+      expect(metricCard("Total comprado (REF)")).toHaveTextContent("ref 52.40");
 
       // Misma consulta que la pestaña (contacto, tipo y límite): una caché, un refresco.
       const queries = requests("/api/payments/open-documents").map((url) => {
@@ -321,11 +326,12 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
 
     expect(await receivable.findByRole("link", { name: "F-0001" })).toHaveAttribute(
       "href",
-      "/sales/sale-internal-1?returnTo=%2Fcontacts%2Fcont-internal",
+      // Al detalle con su pestaña: "Volver" regresa a Saldos, no a Actividad.
+      "/sales/sale-internal-1?returnTo=%2Fcontacts%2Fcont-internal%3Ftab%3Dsaldos",
     );
     expect(await payable.findByRole("link", { name: "#C-000128" })).toHaveAttribute(
       "href",
-      "/purchases/purchase-internal-1?returnTo=%2Fcontacts%2Fcont-internal",
+      "/purchases/purchase-internal-1?returnTo=%2Fcontacts%2Fcont-internal%3Ftab%3Dsaldos",
     );
     expect(screen.getByRole("tabpanel").textContent).not.toMatch(/internal/);
   });
@@ -444,9 +450,11 @@ describe("ContactDetailsPage · edición (PRO-04)", () => {
         ? jsonResponse({ data: contact })
         : jsonResponse({ data: { items: [], limit: 10, skip: 0, total: 0 } });
     }) as unknown as typeof fetch;
+    window.history.replaceState(null, "", "/contacts/cont-1");
   });
 
   afterEach(() => {
+    window.history.replaceState(null, "", "/");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: originalMatchMedia,

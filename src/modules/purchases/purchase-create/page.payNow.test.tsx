@@ -27,6 +27,7 @@ let mockDenied: string[] = [];
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
   useCurrentExchangeRate: () => mockRate,
@@ -83,6 +84,11 @@ import { ToastProvider } from "@/shared/components/Toast";
 
 import { PurchaseCreatePage } from "./page";
 
+/** CNF-01: «Confirmar Compra» abre la confirmación; la compra se envía con el botón del modal. */
+function acceptConfirmation() {
+  fireEvent.click(screen.getByRole("button", { name: /^Registrar (compra|pedido)$/ }));
+}
+
 const UUID = /^[0-9a-f-]{36}$/;
 
 function installApi() {
@@ -136,6 +142,7 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     fireEvent.click(toggle());
 
     fireEvent.click(confirm());
+    acceptConfirmation();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
 
     expect(api.posts).toHaveLength(1);
@@ -214,6 +221,7 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     expect(amountField()).toHaveValue("1020");
 
     fireEvent.click(confirm());
+    acceptConfirmation();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
 
     expect(api.posts).toHaveLength(1);
@@ -246,6 +254,8 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     fireEvent.click(toggle());
     fireEvent.change(screen.getByLabelText("Metodo"), { target: { value: "transferencia" } });
     fireEvent.click(confirm());
+    // CNF-01: con el formulario inválido la confirmación no se abre.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     const section = toggle().closest("section") as HTMLElement;
 
@@ -261,11 +271,13 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     fireEvent.change(screen.getByLabelText("Metodo"), { target: { value: "efectivo_ves" } });
     fireEvent.change(amountField(), { target: { value: "5000" } });
     fireEvent.click(confirm());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(api.posts).toHaveLength(0);
 
     fireEvent.click(screen.getByRole("button", { name: "50 % del saldo" }));
     expect(amountField()).toHaveValue("510");
     fireEvent.click(confirm());
+    acceptConfirmation();
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
     expect(api.posts).toHaveLength(1);
@@ -288,6 +300,7 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     fireEvent.click(toggle());
     fireEvent.click(screen.getByRole("button", { name: "Completar saldo" }));
     fireEvent.click(confirm());
+    acceptConfirmation();
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
 
@@ -313,9 +326,11 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     fireEvent.click(toggle());
     fireEvent.click(screen.getByRole("button", { name: "Completar saldo" }));
     fireEvent.click(confirm());
+    acceptConfirmation();
     await screen.findByText(/No pudimos conectar con el servidor/);
 
-    fireEvent.click(confirm());
+    // CNF-01: el reintento es el botón de la confirmación, que sigue abierta.
+    acceptConfirmation();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
 
     const [first, retry] = api.posts.map(
@@ -340,10 +355,15 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     fireEvent.click(toggle());
     fireEvent.click(screen.getByRole("button", { name: "Completar saldo" }));
     fireEvent.click(confirm());
+    acceptConfirmation();
     await screen.findByText("La solicitud no tiene un formato valido.");
 
+    // CNF-01: para cambiar el pago hay que salir de la confirmación.
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "25 % del saldo" }));
     fireEvent.click(confirm());
+    acceptConfirmation();
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
 
     const [first, second] = api.posts.map(

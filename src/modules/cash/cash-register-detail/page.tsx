@@ -11,6 +11,7 @@ import { LoadingState } from "@/shared/components/LoadingState";
 import { PageBackButton } from "@/shared/components/PageBackButton";
 import { PageHeader } from "@/shared/components/PageHeader";
 import { Typography } from "@/shared/components/Typography";
+import { fromCents, toCents } from "@/shared/impact/impactVerdict";
 import { cn } from "@/shared/utils/cn";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 
@@ -130,8 +131,18 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
           if (item.status === "open") {
             return <span className="text-sm text-on-surface-variant">—</span>;
           }
-          const ves = (item.closingVes ?? 0) - (item.theoreticalClosingVes ?? 0);
-          const ref = (item.closingRef ?? 0) - (item.theoreticalClosingRef ?? 0);
+          // Sin teórico guardado no hay con qué comparar: no se inventa una diferencia.
+          if (item.theoreticalClosingVes == null || item.theoreticalClosingRef == null) {
+            return (
+              <span className="text-sm text-on-surface-variant">Teórico no disponible</span>
+            );
+          }
+          const ves = fromCents(
+            toCents(item.closingVes ?? 0) - toCents(item.theoreticalClosingVes),
+          );
+          const ref = fromCents(
+            toCents(item.closingRef ?? 0) - toCents(item.theoreticalClosingRef),
+          );
           if (ves === 0 && ref === 0) {
             return <Badge variant="success">Cuadrada</Badge>;
           }
@@ -188,7 +199,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
   return (
     <div className="space-y-5">
       <PageHeader
-        actions={<PageBackButton href="/cash/registers" label="Volver a cajas" />}
+        actions={<PageBackButton fallbackHref="/cash/registers" label="Volver a cajas" />}
         badge={
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={item.isActive ? "success" : "default"}>

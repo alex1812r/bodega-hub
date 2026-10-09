@@ -24,6 +24,10 @@ export type ProductMovementListItem = {
 };
 
 type ProductMovementListProps = {
+  /** El rol no puede ver compras (`purchases.view`): su número va en texto plano. */
+  canViewPurchases?: boolean;
+  /** El rol no puede ver ventas (`sales.view`): su número va en texto plano. */
+  canViewSales?: boolean;
   movements: ProductMovementListItem[];
   /**
    * URL de la pantalla que monta la lista: a ella vuelven los documentos
@@ -42,7 +46,12 @@ const documentKindLabels = {
  * Movimientos de un producto, del más reciente al más antiguo: tipo, documento,
  * motivo, fecha, cantidad con signo y saldo tras el movimiento.
  */
-export function ProductMovementList({ movements, returnTo }: ProductMovementListProps) {
+export function ProductMovementList({
+  canViewPurchases = true,
+  canViewSales = true,
+  movements,
+  returnTo,
+}: ProductMovementListProps) {
   return (
     <ul className="divide-y divide-border/50 dark:divide-slate-800">
       {movements.map((movement) => (
@@ -53,7 +62,12 @@ export function ProductMovementList({ movements, returnTo }: ProductMovementList
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <InventoryMovementTypeBadge type={movement.type} />
-              <ProductMovementDocument movement={movement} returnTo={returnTo} />
+              <ProductMovementDocument
+                canViewPurchases={canViewPurchases}
+                canViewSales={canViewSales}
+                movement={movement}
+                returnTo={returnTo}
+              />
             </div>
             {movement.reason ? (
               <p className="break-words text-xs text-on-surface-variant">{movement.reason}</p>
@@ -74,11 +88,19 @@ export function ProductMovementList({ movements, returnTo }: ProductMovementList
   );
 }
 
-/** Documento del movimiento: enlace a la venta o compra; sin documento, "Ajuste manual". */
+/**
+ * Documento del movimiento: enlace a la venta o compra (también el de su
+ * devolución) si el rol puede verla; una conversión no tiene pantalla propia y
+ * sin documento es "Ajuste manual".
+ */
 function ProductMovementDocument({
+  canViewPurchases,
+  canViewSales,
   movement,
   returnTo,
 }: {
+  canViewPurchases: boolean;
+  canViewSales: boolean;
   movement: ProductMovementListItem;
   returnTo?: string;
 }) {
@@ -92,9 +114,9 @@ function ProductMovementDocument({
     ? `${documentKindLabels[documentKind]} ${movement.documentNumber}`
     : documentKindLabels[documentKind];
   const href =
-    documentKind === "venta" && movement.saleId
+    documentKind === "venta" && movement.saleId && canViewSales
       ? `/sales/${movement.saleId}`
-      : documentKind === "compra" && movement.purchaseId
+      : documentKind === "compra" && movement.purchaseId && canViewPurchases
         ? `/purchases/${movement.purchaseId}`
         : null;
 

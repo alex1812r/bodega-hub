@@ -2157,6 +2157,34 @@ select
   )
 union all
 select
+  'view products_price_review atribuye a la compra el costo de los componentes de un empaque desarmado en su recepcion: enlaza la conversion_entrada con purchase_items.disassembled_conversion_id, sigue con security_invoker y sin escritura ni lectura para anon (20261012b)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.products_price_review')
+      and c.relkind = 'v'
+      and c.reloptions @> array['security_invoker=true']
+      and pg_get_viewdef(c.oid) ilike '%coalesce(sm.purchase_id, d.purchase_id)%conversion_entrada%pi.disassembled_conversion_id = sm.conversion_id%sm.seq > s.snapshot_seq%order by sm.seq desc%'
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and has_table_privilege('service_role', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'select')
+      and not has_table_privilege('authenticated', c.oid, 'insert')
+  )
+union all
+select
+  'purchase_items: indice parcial por disassembled_conversion_id para enlazar un desarme con su compra (20261012b)',
+  exists (
+    select 1
+    from pg_index i
+    join pg_class ic on ic.oid = i.indexrelid
+    where i.indrelid = to_regclass('public.purchase_items')
+      and ic.relname = 'idx_purchase_items_disassembled_conversion'
+      and i.indisvalid
+      and i.indpred is not null
+      and pg_get_indexdef(i.indexrelid) ilike '%(disassembled_conversion_id)%where%disassembled_conversion_id is not null%'
+  )
+union all
+select
   'daily_sales_summary y gross_profit_summary agrupan por dia operativo de Caracas (created_at at time zone America/Caracas), ya no por dia UTC, con las mismas columnas, security_invoker y select solo para authenticated / service_role (20261013a)',
   (
     select count(*) = 2
@@ -2253,4 +2281,34 @@ select
     from information_schema.columns col
     where col.table_schema = 'public' and col.table_name = 'report_stock_adjustments'
   ) = 'store_id,movement_id,seq,created_at,movement_date,product_id,sku,product_name,movement_type,quantity_delta,reason,unit_cost_ref,value_ref,cost_basis'
+union all
+select
+  'app_settings.cash_close_diff_alert_ves: umbral de aviso de faltante al cerrar caja (numeric not null default 0) con check 0 <= umbral <= 999999999999.99 (20261015a)',
+  exists (
+    select 1
+    from pg_attribute a
+    join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+    join pg_constraint c on c.conrelid = a.attrelid and c.conname = 'app_settings_cash_close_diff_alert_check'
+    where a.attrelid = to_regclass('public.app_settings')
+      and a.attname = 'cash_close_diff_alert_ves'
+      and not a.attisdropped
+      and a.attnotnull
+      and a.atttypid = 'numeric'::regtype
+      and pg_get_expr(d.adbin, d.adrelid) = '0'
+      and c.contype = 'c'
+      and c.convalidated
+      and pg_get_constraintdef(c.oid) ilike '%cash_close_diff_alert_ves >= %cash_close_diff_alert_ves <= %999999999999.99%'
+  )
+union all
+select
+  'app_settings: los triggers de NaN / Infinity cubren cash_close_diff_alert_ves (20261015a)',
+  (
+    select count(*) = 2
+    from pg_trigger t
+    where not t.tgisinternal
+      and t.tgfoid = to_regprocedure('public.reject_non_finite_numeric()')
+      and t.tgname in ('trg_zz_reject_non_finite_numeric_ins', 'trg_zz_reject_non_finite_numeric_upd')
+      and t.tgrelid = to_regclass('public.app_settings')
+      and pg_get_triggerdef(t.oid) ilike '%cash_close_diff_alert_ves%'
+  )
 order by 1;

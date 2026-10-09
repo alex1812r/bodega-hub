@@ -5,6 +5,7 @@ import { formatVesBs, roundMoney } from "@/shared/utils/currency";
 import type { PurchaseLinesSnapshot } from "../hooks/usePurchaseLines";
 import type { PurchaseProductResolutions } from "../services/resolvePurchaseProducts";
 import type { PurchaseCostCurrency, PurchaseLineCatalogMeta } from "../types";
+import type { PurchaseLineSource } from "./duplicatePurchase";
 import { syncLineCostFields } from "./normalizePurchaseLine";
 import { switchPurchaseReviewCostCurrency } from "./purchaseLineReview";
 
@@ -19,8 +20,12 @@ import { switchPurchaseReviewCostCurrency } from "./purchaseLineReview";
  * Hay dos ranuras con el mismo esquema: la principal (`purchaseDraftStorageKey`) y la
  * de la compra nueva empezada con un borrador sin decidir (`purchaseNewDraftStorageKey`).
  *
- * Nunca se guardan los datos del pago inicial ni la clave de idempotencia.
- * Para extender el esquema (CNF-16): añadir campos OPCIONALES a
+ * Se guarda (CNF-16): proveedor, líneas con todos sus campos (empaque, costo y moneda,
+ * alícuota elegida, «Desarmar al recibir»), líneas bloqueadas, compra exenta, estado,
+ * notas, descuento y la fecha del guardado.
+ * Nunca se guardan los datos del pago inicial («Pagar ahora»: referencias bancarias no
+ * van a `localStorage`) ni la clave de idempotencia.
+ * Para extender el esquema: añadir campos OPCIONALES a
  * `storedPurchaseDraftSchema`; un cambio incompatible sube `PURCHASE_DRAFT_VERSION`
  * (y con ella la clave), y los borradores de la versión anterior se descartan.
  */
@@ -130,12 +135,13 @@ export type PurchaseDraftContent = Omit<
   "savedAt" | "storeId" | "userId" | "version"
 >;
 
-/** Hay "algo que perder": al menos una línea, o proveedor y notas. */
+/**
+ * Hay "algo que perder": al menos una línea o un proveedor elegido. Es la misma
+ * condición que activa el guardia de salida (CNF-15): lo que el guardia promete guardar,
+ * se guarda. Notas, estado y descuento viajan con el borrador, pero solos no lo crean.
+ */
 export function isPurchaseDraftWorthSaving(content: PurchaseDraftContent) {
-  return (
-    content.lines.items.length > 0 ||
-    (content.supplierId !== "" && content.notes.trim() !== "")
-  );
+  return content.lines.items.length > 0 || content.supplierId !== "";
 }
 
 export function serializePurchaseDraft(
@@ -308,19 +314,57 @@ export function formatPurchaseDraftAge(savedAt: string, now: number) {
   return days === 1 ? "hace 1 día" : `hace ${days} días`;
 }
 
-/** "proveedor Distribuidora X · 12 líneas": qué compra es, sin su antigüedad. */
+/** "Distribuidora X, 12 líneas": qué compra es, sin su antigüedad. */
 export function describeStoredPurchaseDraftContent(draft: StoredPurchaseDraft) {
   const lineCount = draft.lines.items.length;
+  const supplier = draft.supplierId
+    ? draft.supplierName?.trim() || "proveedor elegido"
+    : "sin proveedor";
 
-  return [
-    draft.supplierName ? `proveedor ${draft.supplierName}` : null,
-    lineCount === 1 ? "1 línea" : `${lineCount} líneas`,
-  ]
-    .filter((part) => part !== null)
-    .join(" · ");
+  return `${supplier}, ${lineCount === 1 ? "1 línea" : `${lineCount} líneas`}`;
 }
 
-/** "proveedor Distribuidora X · 12 líneas · guardada hace 20 min". */
+/** "Distribuidora X, 12 líneas, hace 20 min". */
 export function describeStoredPurchaseDraft(draft: StoredPurchaseDraft, now: number) {
-  return `${describeStoredPurchaseDraftContent(draft)} · guardada ${formatPurchaseDraftAge(draft.savedAt, now)}`;
+  return `${describeStoredPurchaseDraftContent(draft)}, ${formatPurchaseDraftAge(draft.savedAt, now)}`;
+}
+
+/**
+ * Las líneas guardadas como origen de una precarga (producto, modo, cantidad y costo de
+ * respaldo). Es lo que se puede recuperar cuando el proveedor del borrador ya no está
+ * disponible: los costos y vínculos de una línea son de SU proveedor, así que entran de
+ * nuevo, con el que se elija, por el mismo camino que una compra duplicada.
+ */
+export function storedDraftSourceItems(draft: StoredPurchaseDraft): PurchaseLineSource[] {
+  return draft.lines.items.map((item) => {
+    const name = draft.lineMeta[item.productId]?.name;
+
+    return {
+      entryMode: item.entryMode,
+      packCostRef: item.packCostRef,
+      packCount: item.packCount,
+      packLabel: item.packLabel,
+      productId: item.productId,
+      quantity: item.quantity,
+      unitCostRef: item.unitCostRef,
+      unitsPerPack: item.unitsPerPack,
+      ...(name ? { product: { name } } : {}),
+    };
+  });
+}
+
+/** Aviso al restaurar un borrador cuyo proveedor ya no existe, está inactivo o dejó de serlo. */
+export function describeDraftSupplierUnavailable(draft: StoredPurchaseDraft) {
+  const lineCount = draft.lines.items.length;
+  const supplier = draft.supplierName?.trim()
+    ? `El proveedor ${draft.supplierName.trim()}`
+    : "El proveedor";
+
+  if (lineCount === 0) {
+    return `${supplier} de la compra guardada ya no está disponible: elige otro proveedor.`;
+  }
+
+  return `${supplier} de la compra guardada ya no está disponible: ${
+    lineCount === 1 ? "su línea no se restauró" : `sus ${lineCount} líneas no se restauraron`
+  }. Elige otro proveedor para recuperar productos y cantidades; los costos se toman del último conocido y los bloqueos y alícuotas elegidas no se conservan.`;
 }

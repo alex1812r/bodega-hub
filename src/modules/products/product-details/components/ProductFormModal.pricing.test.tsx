@@ -11,6 +11,11 @@ import userEvent from "@testing-library/user-event";
 
 import { ProductFormModal } from "./ProductFormModal";
 
+// El formulario lleva el guardia de cambios sin guardar (`useProcessGuard`), que usa el router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 jest.mock("../../../../shared/auth/Can", () => ({
   Can: () => null,
 }));

@@ -32,7 +32,11 @@ export type AllocatePaymentInput<TDocument extends AllocationDocument> = {
 export type PaymentAllocation<TDocument extends AllocationDocument> = {
   /** Monto a enviar en `POST /api/payments`, en la moneda del metodo. */
   amount: number;
-  /** Bs que el servidor descontara del saldo del documento. */
+  /**
+   * Bs que el servidor descontara del saldo del documento. Con metodo en USD puede
+   * superar el saldo en Bs 0,01 (medio centimo de la conversion, ver
+   * `maxUsdCentsWithin`); `remainingVes` queda entonces en 0.
+   */
   appliedVes: number;
   document: TDocument;
   /**
@@ -93,19 +97,20 @@ function vesCentsToUsdCents(vesCents: number, rateUnits: number) {
   return Number((BigInt(vesCents) * BigInt(RATE_SCALE) * two + rate) / (two * rate));
 }
 
-/** Mayor monto en USD cuyo equivalente en Bs no supera el saldo. */
+/**
+ * Mayor monto en USD que cabe en el saldo. Cabe mientras su valor en Bs SIN redondear
+ * no pase del saldo en mas de medio centimo: el medio centimo exacto cuenta.
+ *
+ * Es el caso de un documento de ref 10,00 a 875,6505: su total se guardo como
+ * Bs 8.756,50 (8.756,505 hacia abajo) y `register_payment` convierte 10 USD en
+ * Bs 8.756,51. El servidor acepta ese centimo (holgura de la conversion) y deja el
+ * documento saldado, igual que "Completar saldo" desde su detalle; con 9,99 quedaria
+ * un resto de Bs 8,75 que ningun monto en USD puede pagar.
+ */
 function maxUsdCentsWithin(pendingCents: number, rateUnits: number) {
-  let usdCents = Number((BigInt(pendingCents) * BigInt(RATE_SCALE)) / BigInt(rateUnits));
+  const scale = BigInt(RATE_SCALE);
 
-  while (usdCentsToVesCents(usdCents + 1, rateUnits) <= pendingCents) {
-    usdCents += 1;
-  }
-
-  while (usdCents > 0 && usdCentsToVesCents(usdCents, rateUnits) > pendingCents) {
-    usdCents -= 1;
-  }
-
-  return usdCents;
+  return Number((BigInt(pendingCents) * scale + scale / BigInt(2)) / BigInt(rateUnits));
 }
 
 type Part = { appliedVesCents: number; cents: number };
@@ -191,7 +196,9 @@ function distribute<TDocument extends AllocationDocument>(
       appliedVes: part.appliedVesCents / CENTS,
       document,
       equivalent,
-      remainingVes: (pendingCents - part.appliedVesCents) / CENTS,
+      // En USD el servidor puede descontar Bs 0,01 mas que el saldo (medio centimo de
+      // la conversion): el documento queda saldado, no con saldo negativo.
+      remainingVes: Math.max(pendingCents - part.appliedVesCents, 0) / CENTS,
     });
   }
 

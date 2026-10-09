@@ -210,7 +210,25 @@ describe("allocatePayment", () => {
         documents: [doc("a", 99.64, 36.5)],
       });
 
-      // Bs 99,65 superaria el saldo de Bs 99,64: solo caben 2.72 USD.
+      // INT-03: el medio centimo exacto cabe. El servidor descuenta Bs 99,65 (un centimo
+      // sobre el saldo, dentro de su holgura) y el documento queda saldado; antes se
+      // abonaban 2.72 y quedaba un resto de Bs 0,36 impagable en USD.
+      expect(result.allocations[0]).toMatchObject({
+        amount: 2.73,
+        appliedVes: 99.65,
+        remainingVes: 0,
+      });
+      expect(result.leftover).toBe(0);
+    });
+
+    it("pasado el medio centimo ya no cabe: baja un centimo de dolar", () => {
+      // 2.73 * 36.5 = 99,645: con saldo Bs 99,63 serian Bs 0,015 de mas.
+      const result = allocatePayment({
+        amount: 2.73,
+        currency: "USD",
+        documents: [doc("a", 99.63, 36.5)],
+      });
+
       expect(result.allocations[0].amount).toBe(2.72);
       expect(result.leftover).toBe(0.01);
     });
@@ -247,6 +265,112 @@ describe("allocatePayment", () => {
     });
   });
 
+  // INT-03: el total en Bs de una compra de ref 10,00 a 875,6505 se guarda como
+  // 8.756,50 (8.756,505 redondeado hacia abajo); `register_payment` convierte 10 USD
+  // en Bs 8.756,51 y los acepta (holgura de Bs 0,01 de la conversion).
+  describe("INT-03: medio centimo de la conversion", () => {
+    const RATE = 875.6505;
+
+    it("abono de 25 USD: la compra mas antigua recibe 10,00 y queda saldada", () => {
+      const documents = [doc("a", 8756.5, RATE), doc("b", 17513.01, RATE), doc("c", 26269.52, RATE)];
+      const result = allocatePayment({
+        amount: 25,
+        currency: "USD",
+        documents,
+        minPayableVes: MIN_PAYABLE_VES_BY_DOCUMENT.purchase,
+      });
+
+      expect(summary(result)).toEqual([
+        ["a", 10, 0],
+        ["b", 15, 4378.25],
+      ]);
+      // Lo que el servidor descuenta: round(10 * 875.6505, 2), un centimo sobre el saldo.
+      expect(result.allocations[0].appliedVes).toBe(8756.51);
+      expect(result.appliedAmount).toBe(25);
+      expect(result.leftover).toBe(0);
+    });
+
+    it("tres compras de 10, 20 y 30: 60 USD las saldan todas y es el maximo abonable", () => {
+      const documents = [doc("a", 8756.5, RATE), doc("b", 17513.01, RATE), doc("c", 26269.52, RATE)];
+      const input = {
+        currency: "USD" as const,
+        documents,
+        minPayableVes: MIN_PAYABLE_VES_BY_DOCUMENT.purchase,
+      };
+      const result = allocatePayment({ amount: 60, ...input });
+
+      expect(summary(result)).toEqual([
+        ["a", 10, 0],
+        ["b", 20, 0],
+        ["c", 30, 0],
+      ]);
+      expect(result.leftover).toBe(0);
+      expect(maxAllocatableAmount(input)).toBe(60);
+    });
+
+    it("abono que alcanza justo: 10 USD saldan la compra y 9,99 dejan un saldo pagable", () => {
+      const documents = [doc("a", 8756.5, RATE)];
+      const exact = allocatePayment({ amount: 10, currency: "USD", documents });
+      const short = allocatePayment({ amount: 9.99, currency: "USD", documents });
+
+      expect(summary(exact)).toEqual([["a", 10, 0]]);
+      expect(exact.leftover).toBe(0);
+      // 9,99 * 875,6505 = 8.747,748… → 8.747,75; quedan Bs 8,75.
+      expect(summary(short)).toEqual([["a", 9.99, 8.75]]);
+    });
+
+    it("solo cuenta el medio centimo: un centimo de dolar mas ya es pagar de mas", () => {
+      const result = allocatePayment({
+        amount: 10.01,
+        currency: "USD",
+        documents: [doc("a", 8756.5, RATE)],
+      });
+
+      expect(summary(result)).toEqual([["a", 10, 0]]);
+      expect(result.leftover).toBe(0.01);
+    });
+
+    it("venta: el medio centimo tambien salda el documento (el servidor lo acepta)", () => {
+      const result = allocatePayment({
+        amount: 10,
+        currency: "USD",
+        documents: [doc("a", 8756.5, RATE)],
+        minPayableVes: MIN_PAYABLE_VES_BY_DOCUMENT.sale,
+      });
+
+      expect(summary(result)).toEqual([["a", 10, 0]]);
+    });
+
+    it("abono en Bs: no cambia, se abona el saldo exacto", () => {
+      const result = allocatePayment({
+        amount: 9000,
+        currency: "VES",
+        documents: [doc("a", 8756.5, RATE), doc("b", 17513.01, RATE)],
+      });
+
+      expect(summary(result)).toEqual([
+        ["a", 8756.5, 0],
+        ["b", 243.5, 17269.51],
+      ]);
+      expect(result.appliedVes).toBe(9000);
+    });
+
+    it("tasa con 4 decimales sin empate: sigue sin pagar de mas", () => {
+      // 100 / 36.4999 = 2.7397…: 2.74 USD serian Bs 100,0097 (de mas); 2.73 son Bs 99,64.
+      const result = allocatePayment({
+        amount: 5,
+        currency: "USD",
+        documents: [doc("a", 100, 36.4999)],
+      });
+
+      expect(result.allocations[0]).toMatchObject({
+        amount: 2.73,
+        appliedVes: 99.64,
+        remainingVes: 0.36,
+      });
+    });
+  });
+
   describe("invariantes", () => {
     const rates = [36.5, 41.2375, 97.1234, 148.9, 201.0001];
 
@@ -280,9 +404,13 @@ describe("allocatePayment", () => {
             expect(allocation.amount).toBeGreaterThan(0);
             expect(remaining).toBeGreaterThanOrEqual(0);
             expect(remaining === 0 || remaining >= cents(minPayableVes)).toBe(true);
-            expect(cents(allocation.appliedVes) + remaining).toBe(
-              cents(allocation.document.pendingVes),
-            );
+            // INT-03: en USD, el pago que salda un documento puede equivaler a un
+            // centimo de Bs mas que su saldo (holgura de `register_payment`); nunca mas.
+            const overpaid =
+              cents(allocation.appliedVes) + remaining - cents(allocation.document.pendingVes);
+
+            expect(overpaid).toBeGreaterThanOrEqual(0);
+            expect(overpaid).toBeLessThanOrEqual(currency === "USD" && remaining === 0 ? 1 : 0);
           }
         }
       },

@@ -171,6 +171,11 @@ describe("PurchaseRepriceNotice · costo esperado (ALTA-1, M1)", () => {
         return jsonResponse({ data: { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 } });
       }
 
+      // Tasa vigente de la confirmación (CNF-07): no es una lectura de la cola.
+      if (url.startsWith("/api/exchange-rates/current")) {
+        return jsonResponse({ data: { rateVes: 40 } });
+      }
+
       queueReads += 1;
 
       return jsonResponse({ data: { items: [item], limit: 100, skip: 0, total: 1 } });

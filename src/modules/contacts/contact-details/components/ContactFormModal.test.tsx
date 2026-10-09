@@ -6,6 +6,11 @@ import { ToastProvider } from "@/shared/components/Toast";
 
 import { ContactFormModal } from "./ContactFormModal";
 
+// El formulario lleva el guardia de cambios sin guardar (`useProcessGuard`), que usa el router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 /** PRO-04 · "Guardar y crear otro" en el alta de contacto. */
 
 type ModalProps = Parameters<typeof ContactFormModal>[0];

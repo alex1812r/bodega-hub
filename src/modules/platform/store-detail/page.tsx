@@ -6,7 +6,9 @@ import { Badge } from "@/shared/components/Badge";
 import { Button } from "@/shared/components/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/Card";
 import { LoadingState } from "@/shared/components/LoadingState";
+import { PageBackButton } from "@/shared/components/PageBackButton";
 import { Typography } from "@/shared/components/Typography";
+import { withReturnTo } from "@/shared/utils/returnTo";
 
 import { useStoreDetail, useUpdateStore } from "../hooks/useStores";
 
@@ -31,21 +33,21 @@ export function StoreDetailPage({ id }: { id: string }) {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <Link className="text-sm text-primary hover:underline" href="/platform/stores">
-            ← Tiendas
-          </Link>
-          <Typography as="h1" className="mt-2" variant="h1">
+          <Typography as="h1" variant="h1">
             {item.name}
           </Typography>
           <Typography variant="muted">/{item.slug}</Typography>
         </div>
-        <Button
-          disabled={updateStore.isPending}
-          onClick={() => updateStore.mutate({ status: nextStatus })}
-          variant={item.status === "active" ? "outline" : "primary"}
-        >
-          {item.status === "active" ? "Pausar tienda" : "Activar tienda"}
-        </Button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <PageBackButton fallbackHref="/platform/stores" label="Volver a tiendas" />
+          <Button
+            disabled={updateStore.isPending}
+            onClick={() => updateStore.mutate({ status: nextStatus })}
+            variant={item.status === "active" ? "outline" : "primary"}
+          >
+            {item.status === "active" ? "Pausar tienda" : "Activar tienda"}
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -90,7 +92,8 @@ export function StoreDetailPage({ id }: { id: string }) {
                 <div className="min-w-0">
                   <Link
                     className="font-medium text-foreground hover:text-primary hover:underline"
-                    href={`/platform/users/${user.id}`}
+                    // "Volver" del usuario regresa a esta tienda.
+                    href={withReturnTo(`/platform/users/${user.id}`, `/platform/stores/${item.id}`)}
                   >
                     {user.name}
                   </Link>

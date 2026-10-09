@@ -10,7 +10,7 @@ export function PurchaseDetailPageHeader() {
           Consulta proveedor, ítems, pagos y estado de la orden.
         </p>
       </div>
-      <PageBackButton className="shrink-0" fallbackHref="/purchases" />
+      <PageBackButton chained className="shrink-0" fallbackHref="/purchases" />
     </div>
   );
 }

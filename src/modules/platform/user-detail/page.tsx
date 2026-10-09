@@ -6,7 +6,9 @@ import { isUserRole, roleLabels } from "@/shared/auth/permissions";
 import { Badge } from "@/shared/components/Badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/Card";
 import { LoadingState } from "@/shared/components/LoadingState";
+import { PageBackButton } from "@/shared/components/PageBackButton";
 import { Typography } from "@/shared/components/Typography";
+import { withReturnTo } from "@/shared/utils/returnTo";
 
 import { usePlatformUserDetail } from "../hooks/useUsers";
 
@@ -29,14 +31,14 @@ export function PlatformUserDetailPage({ id }: { id: string }) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link className="text-sm text-primary hover:underline" href="/platform/users">
-          ← Usuarios
-        </Link>
-        <Typography as="h1" className="mt-2" variant="h1">
-          {item.name}
-        </Typography>
-        <Typography variant="muted">{item.email}</Typography>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <Typography as="h1" variant="h1">
+            {item.name}
+          </Typography>
+          <Typography variant="muted">{item.email}</Typography>
+        </div>
+        <PageBackButton fallbackHref="/platform/users" label="Volver a usuarios" />
       </div>
 
       <Card>
@@ -64,7 +66,8 @@ export function PlatformUserDetailPage({ id }: { id: string }) {
               <div className="mt-1">
                 <Link
                   className="font-medium text-primary hover:underline"
-                  href={`/platform/stores/${item.store.id}`}
+                  // "Volver" de la tienda regresa a este usuario.
+                  href={withReturnTo(`/platform/stores/${item.store.id}`, `/platform/users/${item.id}`)}
                 >
                   {item.store.name}
                 </Link>

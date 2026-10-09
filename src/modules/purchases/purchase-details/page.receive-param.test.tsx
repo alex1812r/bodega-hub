@@ -27,6 +27,7 @@ import { authQueryKeys } from "@/modules/auth/hooks/useCurrentUser";
 import { jsonResponse } from "@/modules/inventory/utils/requestAttempt.testUtils";
 import { type Permission, getRolePermissions } from "@/shared/auth/permissions";
 
+import { receiveImpactOfUrl } from "../components/purchaseImpact.testFixtures";
 import type { PurchaseDetails } from "../hooks/usePurchases";
 import { PurchaseDetailsPage } from "./page";
 
@@ -96,6 +97,10 @@ async function renderAt(
       receiveCalls.push(url);
     }
 
+    if (url.startsWith(`/api/purchases/${PURCHASE.id}/impact`)) {
+      return Promise.resolve(jsonResponse({ data: receiveImpactOfUrl(url, PURCHASE) }));
+    }
+
     if (url === `/api/purchases/${PURCHASE.id}`) {
       return Promise.resolve(jsonResponse({ data: { ...PURCHASE, status } }));
     }
@@ -135,8 +140,10 @@ describe("PurchaseDetailsPage · llegada con ?receive=1 (COM-F4)", () => {
     const { receiveCalls } = await renderAt(`receive=1&${RETURN_TO}`);
     const dialog = await screen.findByRole("dialog", { name: RECEIVE });
 
-    expect(within(dialog).getByText("Harina PAN")).toBeInTheDocument();
-    expect(within(dialog).getByText("15 un")).toBeInTheDocument();
+    expect(
+      within(within(dialog).getByRole("list", { name: "Mercancía que entra" })).getByText("Harina PAN"),
+    ).toBeInTheDocument();
+    expect(await within(dialog).findByText("15 un")).toBeInTheDocument();
     expect(receiveCalls).toHaveLength(0);
     await waitFor(() => expect(window.location.search).toBe(`?${RETURN_TO}`));
     expect(window.location.pathname).toBe(`/purchases/${PURCHASE.id}`);

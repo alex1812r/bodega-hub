@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ProductDetailPriceChangeCard } from "./ProductDetailPriceChangeCard";
@@ -16,6 +16,15 @@ function pctField() {
 
 function reasonField() {
   return screen.getByLabelText("Motivo");
+}
+
+/** CNF-07: "Actualizar precio" abre la confirmación; el envío ocurre al confirmar. */
+async function confirmDialog() {
+  return within(await screen.findByRole("dialog", { name: "Confirmar cambio de precio" }));
+}
+
+async function confirmPriceChange(user: ReturnType<typeof userEvent.setup>) {
+  await user.click((await confirmDialog()).getByRole("button", { name: "Cambiar precio" }));
 }
 
 describe("ProductDetailPriceChangeCard · NumberInput (SHR-09)", () => {
@@ -39,6 +48,7 @@ describe("ProductDetailPriceChangeCard · NumberInput (SHR-09)", () => {
 
     await user.clear(priceField());
     await user.type(priceField(), "3,125{Enter}");
+    await confirmPriceChange(user);
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0]).toBe(3.13);
@@ -55,6 +65,8 @@ describe("ProductDetailPriceChangeCard · NumberInput (SHR-09)", () => {
     await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
 
     expect(onSubmit).not.toHaveBeenCalled();
+    // Sin cambio no hay nada que confirmar: ni siquiera se abre el modal.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
 
@@ -86,6 +98,7 @@ describe("ProductDetailPriceChangeCard · bloque de precio (PRO-08)", () => {
     expect(reasonField()).toHaveValue("Ajuste de margen a 30 %");
 
     await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+    await confirmPriceChange(user);
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit).toHaveBeenCalledWith(13, "Ajuste de margen a 30 %", 10);
@@ -142,6 +155,7 @@ describe("ProductDetailPriceChangeCard · bloque de precio (PRO-08)", () => {
     expect(reasonField()).toHaveValue("Subió el proveedor");
 
     await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+    await confirmPriceChange(user);
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit).toHaveBeenCalledWith(11.2, "Subió el proveedor", 10);
@@ -163,6 +177,7 @@ describe("ProductDetailPriceChangeCard · bloque de precio (PRO-08)", () => {
     expect(reasonField()).toHaveValue("Ajuste de margen a -10 %");
 
     await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+    await confirmPriceChange(user);
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0]).toBe(9);
@@ -184,6 +199,7 @@ describe("ProductDetailPriceChangeCard · bloque de precio (PRO-08)", () => {
     expect(reasonField()).toHaveValue("");
 
     await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+    await confirmPriceChange(user);
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit).toHaveBeenCalledWith(6, "", 0);
@@ -266,5 +282,189 @@ describe("ProductDetailPriceChangeCard · bloque de precio (PRO-08)", () => {
 
     expect(chips.map((chip) => chip.textContent)).toEqual(["12 %", "20 %", "30 %"]);
     expect(screen.getByTitle(BADGE_TITLE)).toHaveAttribute("data-band", "mid");
+  });
+});
+
+describe("ProductDetailPriceChangeCard · confirmación del cambio (CNF-07)", () => {
+  type CardProps = React.ComponentProps<typeof ProductDetailPriceChangeCard>;
+
+  function renderCard(props: Partial<CardProps> = {}) {
+    const onSubmit = jest.fn<Promise<void>, [number, string, number]>().mockResolvedValue(undefined);
+
+    render(
+      <ProductDetailPriceChangeCard
+        currentCostRef={10}
+        currentPriceRef={12}
+        onSubmit={onSubmit}
+        productName="Harina PAN 1 kg"
+        rateVes={40}
+        {...props}
+      />,
+    );
+
+    return { onSubmit, user: userEvent.setup() };
+  }
+
+  it("muestra precio anterior → nuevo en REF y Bs, ganancia anterior → nueva con semáforo y el motivo", async () => {
+    const { onSubmit, user } = renderCard();
+
+    await user.click(screen.getByRole("button", { name: "30 %" }));
+    await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+
+    const dialog = await confirmDialog();
+
+    expect(
+      dialog.getByText("El precio de Harina PAN 1 kg pasa de ref 12.00 a ref 13.00."),
+    ).toBeInTheDocument();
+
+    const effect = dialog.getByTestId("price-change-effect");
+
+    expect(effect).toHaveAttribute("data-direction", "up");
+    expect(effect).toHaveTextContent(/Precio\s*ref 12\.00\s*pasa a\s*ref 13\.00/);
+    // Bs a la tasa vigente (40): 12 × 40 = 480 y 13 × 40 = 520.
+    expect(effect).toHaveTextContent(/Bs\. 480,00\s*pasa a\s*Bs\. 520,00/);
+
+    const badges = within(effect).getAllByTitle(BADGE_TITLE);
+
+    expect(badges).toHaveLength(2);
+    expect(badges[0]).toHaveTextContent("20 %");
+    expect(badges[0]).toHaveAttribute("data-band", "mid");
+    expect(badges[1]).toHaveTextContent("30 %");
+    expect(badges[1]).toHaveAttribute("data-band", "high");
+    expect(effect).toHaveTextContent("Motivo: Ajuste de margen a 30 %");
+    expect(dialog.queryByRole("note")).not.toBeInTheDocument();
+    // Abrir la confirmación no guarda nada.
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("el semáforo de la confirmación usa los cortes de la tienda", async () => {
+    const { user } = renderCard({ pricing: { chipsPct: [30], greenFromPct: 40, yellowFromPct: 25 } });
+
+    await user.click(screen.getByRole("button", { name: "30 %" }));
+    await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+
+    const badges = within((await confirmDialog()).getByTestId("price-change-effect")).getAllByTitle(
+      BADGE_TITLE,
+    );
+
+    expect(badges[0]).toHaveAttribute("data-band", "low");
+    expect(badges[1]).toHaveAttribute("data-band", "mid");
+  });
+
+  it("sin tasa vigente no inventa el Bs: solo muestra el cambio en REF", async () => {
+    const { user } = renderCard({ rateVes: undefined });
+
+    await user.click(screen.getByRole("button", { name: "30 %" }));
+    await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+
+    const effect = (await confirmDialog()).getByTestId("price-change-effect");
+
+    expect(effect).toHaveTextContent("ref 13.00");
+    expect(effect).not.toHaveTextContent("Bs.");
+  });
+
+  it("cancelar no llama al guardado y deja el formulario como estaba", async () => {
+    const { onSubmit, user } = renderCard();
+
+    await user.click(screen.getByRole("button", { name: "30 %" }));
+    await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+    await user.click((await confirmDialog()).getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(priceField()).toHaveValue("13");
+  });
+
+  it("doble clic en Actualizar precio y doble clic al confirmar: UNA sola llamada, y cierra al terminar", async () => {
+    let finish: () => void = () => undefined;
+    const onSubmit = jest.fn<Promise<void>, [number, string, number]>(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { user } = renderCard({ onSubmit });
+
+    await user.click(screen.getByRole("button", { name: "30 %" }));
+
+    const submit = screen.getByRole("button", { name: "Actualizar precio" });
+
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+
+    expect(await screen.findAllByRole("dialog")).toHaveLength(1);
+    // Abrir la confirmación, aunque sea con doble clic, no envía nada.
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    const confirm = (await confirmDialog()).getByRole("button", { name: "Cambiar precio" });
+
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith(13, "Ajuste de margen a 30 %", 10);
+
+    finish();
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // Guardado y aún sin releer: otro clic no vuelve a abrir ni a enviar el mismo precio.
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar precio" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("un error del servidor se muestra tal cual en el modal, que sigue abierto y deja reintentar", async () => {
+    const onSubmit = jest
+      .fn<Promise<void>, [number, string, number]>()
+      .mockRejectedValueOnce(new Error("El costo cambió de ref 10.00 a ref 11.00."))
+      .mockResolvedValueOnce(undefined);
+    const { user } = renderCard({ onSubmit });
+
+    await user.click(screen.getByRole("button", { name: "30 %" }));
+    await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+
+    const dialog = await confirmDialog();
+
+    await user.click(dialog.getByRole("button", { name: "Cambiar precio" }));
+
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      "El costo cambió de ref 10.00 a ref 11.00.",
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await user.click(dialog.getByRole("button", { name: "Cambiar precio" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("un precio nuevo por debajo del costo se avisa en tono de peligro, sin bloquear", async () => {
+    const { onSubmit, user } = renderCard();
+
+    await user.clear(priceField());
+    await user.type(priceField(), "9");
+    await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+
+    const dialog = await confirmDialog();
+    const warning = dialog.getByRole("note");
+
+    expect(warning).toHaveAttribute("data-tone", "danger");
+    expect(warning).toHaveTextContent(
+      "El precio nuevo queda por debajo del costo (ref 10.00): cada venta sería a pérdida.",
+    );
+    expect(dialog.getByTestId("price-change-effect")).toHaveAttribute("data-direction", "down");
+    // Es un aviso, no un bloqueo (regla 10b): se puede confirmar.
+    await user.click(dialog.getByRole("button", { name: "Cambiar precio" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(9, "Ajuste de margen a -10 %", 10));
+  });
+
+  it("un precio igual al costo no es por debajo del costo", async () => {
+    const { user } = renderCard();
+
+    await user.clear(priceField());
+    await user.type(priceField(), "10");
+    await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+
+    expect((await confirmDialog()).queryByRole("note")).not.toBeInTheDocument();
   });
 });

@@ -2,7 +2,9 @@ import type { PurchaseCatalogProduct } from "../components/PurchaseProductPicker
 import type { PurchaseProductResolutions } from "../services/resolvePurchaseProducts";
 import { createPackDraftItem, createUnitDraftItem } from "../types";
 import {
+  describeDraftSupplierUnavailable,
   describeStoredPurchaseDraft,
+  describeStoredPurchaseDraftContent,
   formatPurchaseDraftAge,
   isPurchaseDraftWorthSaving,
   parseStoredPurchaseDraft,
@@ -10,8 +12,10 @@ import {
   purchaseDraftStorageKey,
   restorePurchaseDraft,
   serializePurchaseDraft,
+  storedDraftSourceItems,
   type PurchaseDraftContent,
 } from "./purchaseDraftStorage";
+import { describePurchaseInProgress } from "./purchaseProcessLabel";
 
 const session = { storeId: "store-1", userId: "user-1" };
 const savedAt = new Date("2026-10-08T14:00:00.000Z");
@@ -172,11 +176,22 @@ describe("isPurchaseDraftWorthSaving", () => {
     expect(isPurchaseDraftWorthSaving(buildContent({ notes: "" }))).toBe(true);
   });
 
-  it("sin líneas solo vale proveedor con notas", () => {
-    expect(isPurchaseDraftWorthSaving(empty)).toBe(false);
-    expect(isPurchaseDraftWorthSaving({ ...empty, notes: "   " })).toBe(false);
-    expect(isPurchaseDraftWorthSaving({ ...empty, notes: "Factura 9", supplierId: "" })).toBe(false);
+  it("sin líneas vale con proveedor elegido (CNF-15: lo mismo que activa el guardia)", () => {
+    expect(isPurchaseDraftWorthSaving(empty)).toBe(true);
     expect(isPurchaseDraftWorthSaving({ ...empty, notes: "Factura 9" })).toBe(true);
+  });
+
+  it("sin líneas ni proveedor no hay nada que perder, aunque haya notas, descuento o estado", () => {
+    expect(isPurchaseDraftWorthSaving({ ...empty, supplierId: "" })).toBe(false);
+    expect(
+      isPurchaseDraftWorthSaving({
+        ...empty,
+        discountRef: 3,
+        notes: "Factura 9",
+        status: "pedido",
+        supplierId: "",
+      }),
+    ).toBe(false);
   });
 });
 
@@ -303,8 +318,109 @@ describe("antigüedad del borrador", () => {
     );
 
     expect(draft && describeStoredPurchaseDraft(draft, at(20))).toBe(
-      "proveedor Proveedor Demo · 2 líneas · guardada hace 20 min",
+      "Proveedor Demo, 2 líneas, hace 20 min",
     );
+  });
+
+  it("sin proveedor lo dice, y con proveedor sin nombre guardado no inventa uno", () => {
+    const read = (content: PurchaseDraftContent) =>
+      parseStoredPurchaseDraft(serializePurchaseDraft(content, session, savedAt), session);
+    const withoutSupplier = read(buildContent({ supplierId: "", supplierName: undefined }));
+    const unnamed = read(
+      buildContent({
+        lines: { ...buildContent().lines, items: [refresco] },
+        supplierName: undefined,
+      }),
+    );
+
+    expect(withoutSupplier && describeStoredPurchaseDraftContent(withoutSupplier)).toBe(
+      "sin proveedor, 2 líneas",
+    );
+    expect(unnamed && describeStoredPurchaseDraftContent(unnamed)).toBe(
+      "proveedor elegido, 1 línea",
+    );
+  });
+});
+
+describe("nombre de la compra en curso para el guardia (CNF-15)", () => {
+  it("nombra proveedor, líneas y total en REF", () => {
+    expect(
+      describePurchaseInProgress({
+        lineCount: 12,
+        supplierId: "cont-supplier",
+        supplierName: "Distribuidora X",
+        totalRef: 240,
+      }),
+    ).toBe("Compra a Distribuidora X · 12 líneas · ref 240.00");
+  });
+
+  it("sin proveedor lo dice; con una línea va en singular", () => {
+    expect(
+      describePurchaseInProgress({ lineCount: 1, supplierId: "", supplierName: null, totalRef: 2.3 }),
+    ).toBe("Compra sin proveedor · 1 línea · ref 2.30");
+    expect(
+      describePurchaseInProgress({
+        lineCount: 0,
+        supplierId: "cont-supplier",
+        supplierName: null,
+        totalRef: 0,
+      }),
+    ).toBe("Compra a proveedor elegido · 0 líneas · ref 0.00");
+  });
+});
+
+describe("borrador cuyo proveedor ya no está disponible (CNF-16)", () => {
+  const read = (content: PurchaseDraftContent) => {
+    const draft = parseStoredPurchaseDraft(
+      serializePurchaseDraft(content, session, savedAt),
+      session,
+    );
+
+    if (!draft) {
+      throw new Error("El borrador de prueba no es válido.");
+    }
+
+    return draft;
+  };
+
+  it("las líneas guardadas sirven de origen: producto, modo, cantidad, empaque y costo de respaldo", () => {
+    expect(storedDraftSourceItems(read(buildContent()))).toEqual([
+      {
+        entryMode: "pack",
+        packCostRef: refresco.packCostRef,
+        packCount: refresco.packCount,
+        packLabel: refresco.packLabel,
+        product: { name: "Refresco Cola" },
+        productId: "prod-refresco",
+        quantity: refresco.quantity,
+        unitCostRef: refresco.unitCostRef,
+        unitsPerPack: refresco.unitsPerPack,
+      },
+      {
+        entryMode: "unit",
+        packCostRef: cable.packCostRef,
+        packCount: cable.packCount,
+        packLabel: cable.packLabel,
+        product: { name: "Cable HDMI" },
+        productId: "prod-cable",
+        quantity: 3,
+        unitCostRef: 2,
+        unitsPerPack: cable.unitsPerPack,
+      },
+    ]);
+  });
+
+  it("el aviso nombra al proveedor, cuántas líneas no se restauraron y qué no se conserva", () => {
+    const notice = describeDraftSupplierUnavailable(read(buildContent()));
+
+    expect(notice).toContain("El proveedor Proveedor Demo de la compra guardada ya no está disponible");
+    expect(notice).toContain("sus 2 líneas no se restauraron");
+    expect(notice).toContain("los bloqueos y alícuotas elegidas no se conservan");
+    expect(
+      describeDraftSupplierUnavailable(
+        read(buildContent({ lines: { ...buildContent().lines, items: [refresco] } })),
+      ),
+    ).toContain("su línea no se restauró");
   });
 });
 

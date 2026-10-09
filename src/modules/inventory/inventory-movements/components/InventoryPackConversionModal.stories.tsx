@@ -8,7 +8,9 @@ import { InventoryPackConversionModal } from "./InventoryPackConversionModal";
 /**
  * Convertir empaque en unidades.
  *
- * - Empaque 1 a 1: cantidad y envío directo.
+ * - Empaque 1 a 1: cantidad y "Continuar", que abre la confirmación con las dos
+ *   caras (−N empaques y +N × u unidades, cada una con su stock antes → después)
+ *   y el motivo (CNF-08).
  * - Empaque surtido: tras elegir empaque y cantidad aparece el reparto (una fila
  *   por componente, precargada con receta × empaques). La suma debe coincidir
  *   con el total para poder continuar; "Restablecer receta" vuelve a la receta.
@@ -20,6 +22,8 @@ import { InventoryPackConversionModal } from "./InventoryPackConversionModal";
  */
 const meta = {
   component: InventoryPackConversionModal,
+  // El guardia de datos tecleados (CNF-15) usa `useRouter` de `next/navigation`: necesita el App Router simulado.
+  parameters: { nextjs: { appDirectory: true } },
   tags: ["ai-generated"],
   title: "Modules/Inventory/InventoryPackConversionModal",
 } satisfies Meta<typeof InventoryPackConversionModal>;
@@ -146,7 +150,7 @@ export const AssortedPackRejected: Story = {
   play: ({ canvasElement }) => openModal(canvasElement),
 };
 
-/** Empaque 1 a 1: sin reparto ni confirmación. */
+/** Empaque 1 a 1: sin reparto; "Continuar" abre la confirmación con las dos caras. */
 export const SinglePack: Story = {
   args: { defaultPackProductId: "prod-cigar-pack" },
   parameters: { msw: { handlers: [recipesHandler, openedHandler] } },

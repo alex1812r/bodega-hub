@@ -22,6 +22,9 @@ import { TaxSettingsSection } from "./TaxSettingsSection";
 const IN_USE_MESSAGE =
   'No se puede desactivar la alicuota "Reducida": la usan 2 categorias activas. Reasignalas a otra alicuota antes de desactivarla.';
 
+const DEFAULT_UNAVAILABLE_MESSAGE =
+  "La alicuota por defecto debe ser una alicuota activa de la tienda.";
+
 function seedRates(): TaxRate[] {
   return [
     buildRate({ code: "exento", label: "Exento", pct: 0 }),
@@ -32,7 +35,7 @@ function seedRates(): TaxRate[] {
 }
 
 /** Servidor de prueba con estado: el catálogo y la alícuota por defecto cambian con cada escritura. */
-function installServer({ rejectDeactivate = false } = {}) {
+function installServer({ rejectDefault = false, rejectDeactivate = false } = {}) {
   const server = { defaultTaxRateId: "tax-general", rates: seedRates() };
 
   const api = installApi(({ body, method, url }) => {
@@ -75,6 +78,10 @@ function installServer({ rejectDeactivate = false } = {}) {
       Object.assign(rate, input);
 
       return apiData(rate);
+    }
+
+    if (url === "/api/settings" && method === "PATCH" && rejectDefault) {
+      return apiError(DEFAULT_UNAVAILABLE_MESSAGE, 400);
     }
 
     if (url === "/api/settings" && method === "PATCH") {
@@ -151,14 +158,84 @@ describe("TaxSettingsSection · Configuración → Impuestos (PRO-09)", () => {
     expect(screen.queryByLabelText(/IVA por defecto/)).not.toBeInTheDocument();
   });
 
-  it("elegir otra alícuota por defecto guarda su id en defaultTaxRateId y avisa", async () => {
+  it("elegir otra alícuota por defecto pide confirmación con anterior → nueva y a qué afecta", async () => {
     const api = installServer();
     const user = renderSection();
 
     await user.click(await findDefaultChip());
     await user.click(screen.getByRole("radio", { name: /Reducida/ }));
 
-    await waitFor(() => expect(api.writes()).toHaveLength(1));
+    const dialog = await screen.findByRole("dialog", {
+      name: "¿Cambiar la alícuota por defecto?",
+    });
+
+    expect(dialog).toHaveTextContent("General (16 %)");
+    expect(dialog).toHaveTextContent("Reducida (8 %)");
+    expect(dialog).toHaveTextContent("Las categorías nuevas abrirán con esta alícuota");
+    expect(dialog).toHaveTextContent(
+      "Las categorías que ya existen, sus productos y las ventas y compras ya registradas no cambian.",
+    );
+    // Nada se escribe hasta confirmar.
+    expect(api.writes()).toHaveLength(0);
+  });
+
+  it("cancelar el cambio de alícuota por defecto no escribe y deja la anterior", async () => {
+    const api = installServer();
+    const user = renderSection();
+
+    await user.click(await findDefaultChip());
+    await user.click(screen.getByRole("radio", { name: /Reducida/ }));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancelar" }),
+    );
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(api.writes()).toHaveLength(0);
+    expect(await findDefaultChip()).toHaveAccessibleName(
+      "Alícuota por defecto para categorías nuevas: IVA 16 %",
+    );
+  });
+
+  it("elegir la alícuota que ya es por defecto no pide confirmación ni escribe", async () => {
+    const api = installServer();
+    const user = renderSection();
+
+    await user.click(await findDefaultChip());
+    await user.click(screen.getByRole("radio", { name: /General/ }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.writes()).toHaveLength(0);
+  });
+
+  it("si el servidor rechaza la alícuota por defecto, muestra su motivo en el diálogo", async () => {
+    const api = installServer({ rejectDefault: true });
+    const user = renderSection();
+
+    await user.click(await findDefaultChip());
+    await user.click(screen.getByRole("radio", { name: /Reducida/ }));
+
+    const dialog = await screen.findByRole("dialog");
+
+    await user.click(within(dialog).getByRole("button", { name: "Cambiar alícuota por defecto" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(DEFAULT_UNAVAILABLE_MESSAGE);
+    expect(api.writes()).toHaveLength(1);
+  });
+
+  it("confirmar la alícuota por defecto guarda su id UNA vez aunque haya doble clic, y avisa", async () => {
+    const api = installServer();
+    const user = renderSection();
+
+    await user.click(await findDefaultChip());
+    await user.click(screen.getByRole("radio", { name: /Reducida/ }));
+    await user.dblClick(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Cambiar alícuota por defecto",
+      }),
+    );
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(api.writes()).toHaveLength(1);
     expect(api.writes()[0]).toEqual({
       body: { defaultTaxRateId: "tax-reducida" },
       method: "PATCH",

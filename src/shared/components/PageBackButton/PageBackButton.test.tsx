@@ -181,6 +181,79 @@ describe("PageBackButton", () => {
     });
   });
 
+  describe("retorno encadenado (chained)", () => {
+    const PRODUCTS_LIST = "/products?search=harina&page=3";
+    const PRODUCT_DETAIL = withReturnTo("/products/p-1?tab=historial", PRODUCTS_LIST);
+
+    function setReturnTo(returnTo: string) {
+      setUrl(new URLSearchParams({ returnTo }).toString());
+    }
+
+    it("con un returnTo seguro sin anidado vuelve a esa URL exacta", () => {
+      setReturnTo(PRODUCTS_LIST);
+      render(<PageBackButton chained fallbackHref="/sales" />);
+
+      expect(backLink()).toHaveAttribute("href", PRODUCTS_LIST);
+    });
+
+    it("conserva el returnTo anidado seguro: desde el detalle de origen se sigue volviendo a la lista", () => {
+      setReturnTo(PRODUCT_DETAIL);
+      render(<PageBackButton chained fallbackHref="/sales" />);
+
+      const href = backLink().getAttribute("href") ?? "";
+
+      expect(href).toBe(PRODUCT_DETAIL);
+      expect(new URLSearchParams(href.split("?")[1]).get("returnTo")).toBe(PRODUCTS_LIST);
+    });
+
+    it("sin chained (por defecto) el mismo returnTo pierde su anidado", () => {
+      setReturnTo(PRODUCT_DETAIL);
+      render(<PageBackButton fallbackHref="/sales" />);
+
+      expect(backLink()).toHaveAttribute("href", "/products/p-1?tab=historial");
+    });
+
+    it("lista → A → B → Volver → A → Volver regresa a la lista con filtros", () => {
+      setReturnTo(PRODUCT_DETAIL);
+      const detailB = render(<PageBackButton chained fallbackHref="/sales" />);
+      const backToA = backLink().getAttribute("href") ?? "";
+
+      detailB.unmount();
+      openDetail(backToA);
+      render(<PageBackButton chained fallbackHref="/products" />);
+
+      expect(backLink()).toHaveAttribute("href", PRODUCTS_LIST);
+    });
+
+    it.each([
+      ["anidado inseguro", `/products/p-1?returnTo=${encodeURIComponent("https://evil.example")}`],
+      ["anidado a la API", `/products/p-1?returnTo=${encodeURIComponent("/api/products")}`],
+      ["origen externo", "https://evil.example"],
+      ["protocolo relativo", "//evil.example"],
+      ["ruta a la API", "/api/products"],
+    ])("con %s usa fallbackHref", (_label, returnTo) => {
+      setReturnTo(returnTo);
+      render(<PageBackButton chained fallbackHref="/sales" />);
+
+      expect(backLink()).toHaveAttribute("href", "/sales");
+    });
+
+    it("sin returnTo usa fallbackHref", () => {
+      render(<PageBackButton chained fallbackHref="/sales" />);
+
+      expect(backLink()).toHaveAttribute("href", "/sales");
+    });
+
+    it("Esc vuelve al destino encadenado", () => {
+      setReturnTo(PRODUCT_DETAIL);
+      render(<PageBackButton chained fallbackHref="/sales" />);
+
+      pressEscape();
+
+      expect(mockPush).toHaveBeenCalledWith(PRODUCT_DETAIL);
+    });
+  });
+
   describe("compatibilidad con href", () => {
     it("href sigue funcionando igual y no emite avisos", () => {
       const error = jest.spyOn(console, "error").mockImplementation(() => undefined);

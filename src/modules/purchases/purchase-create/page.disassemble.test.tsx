@@ -55,6 +55,7 @@ const mockTaxCatalog = {
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
   useCurrentExchangeRate: () => ({ data: { rateVes: 500 }, error: null }),
@@ -87,6 +88,11 @@ import { ToastProvider } from "@/shared/components/Toast";
 
 import { purchaseLockOnAddStorageKey } from "./hooks/usePurchaseLockOnAdd";
 import { PurchaseCreatePage } from "./page";
+
+/** CNF-01: «Confirmar Compra» abre la confirmación; la compra se envía con el botón del modal. */
+function acceptConfirmation() {
+  fireEvent.click(screen.getByRole("button", { name: /^Registrar (compra|pedido)$/ }));
+}
 import { purchaseDraftStorageKey } from "./utils/purchaseDraftStorage";
 
 const SESSION = { storeId: "store-1", userId: "user-1" };
@@ -141,6 +147,7 @@ function chip() {
 async function confirmAndGetItems(api: ReturnType<typeof installFetchStub>) {
   api.respondToNextPost({ data: { id: "purchase-com14" } });
   fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+  acceptConfirmation();
   await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-com14"));
 
   return api.posts[0]?.body.items as Array<Record<string, unknown>>;

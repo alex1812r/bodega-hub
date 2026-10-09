@@ -930,9 +930,17 @@ describe("ContactSettlementModal", () => {
       const { dialog, user } = await openModal();
       const guardDialog = () => screen.queryByRole("dialog", { name: "¿Salir sin terminar?" });
 
-      await user.type(dialog.getByLabelText("Monto"), "100");
       clickLinkToAnotherRoute();
       expect(guardDialog()).not.toBeInTheDocument();
+
+      // CNF-15: con un monto tecleado pregunta el guardia de datos sin registrar, que nombra el cobro.
+      await user.type(dialog.getByLabelText("Monto"), "100");
+      clickLinkToAnotherRoute();
+      expect(
+        await screen.findByRole("dialog", { name: "¿Salir sin terminar?" }),
+      ).toHaveTextContent("Cobro de Bs. 100,00 a Maria Perez sin registrar");
+      await user.click(screen.getByRole("button", { name: "Seguir aquí" }));
+      await waitFor(() => expect(guardDialog()).not.toBeInTheDocument());
 
       let release: (response: Response) => void = () => undefined;
 
@@ -1321,6 +1329,20 @@ describe("ContactSettlementModal", () => {
         advance(1);
       }
 
+      /** CNF-15: con el monto tecleado, cerrar pregunta antes; devuelve la pregunta del guardia. */
+      function leaveQuestion() {
+        return screen.getByRole("dialog", { name: "¿Salir sin terminar?" });
+      }
+
+      /** Responde a la pregunta del guardia y deja pasar su cierre. */
+      async function answerLeaveQuestion(answer: "Salir" | "Seguir aquí") {
+        fireEvent.click(within(leaveQuestion()).getByRole("button", { name: answer }));
+        await act(async () => {
+          await Promise.resolve();
+        });
+        advance(1);
+      }
+
       async function openOnForm(amount: string) {
         documents = [document("sale-internal-1", "F-0001", 8475)];
 
@@ -1417,6 +1439,10 @@ describe("ContactSettlementModal", () => {
         advance(STEP_CLICK_GUARD_MS);
         fireEvent.click(dialog.getByRole("button", { name: "Cancelar" }));
         advance(1);
+        // CNF-15: el botón ya responde; con el monto tecleado, cerrar pregunta antes.
+        expect(leaveQuestion()).toHaveTextContent("Cobro de Bs. 100,00 a Maria Perez sin registrar");
+        expect(onOpenChange).not.toHaveBeenCalled();
+        await answerLeaveQuestion("Salir");
         expect(onOpenChange).toHaveBeenCalledWith(false);
       });
 
@@ -1430,13 +1456,18 @@ describe("ContactSettlementModal", () => {
         expect(onOpenChange).not.toHaveBeenCalled();
         expect(dialog.getByRole("list", { name: "Reparto del abono" })).toBeInTheDocument();
 
+        // Esc no espera: el cierre se atiende y, con el monto tecleado, pregunta (CNF-15).
         fireEvent.keyDown(screen.getByRole("dialog", { name: "Abonar" }), { key: "Escape" });
         advance(1);
-        expect(onOpenChange).toHaveBeenCalledTimes(1);
+        expect(leaveQuestion()).toBeInTheDocument();
+        await answerLeaveQuestion("Seguir aquí");
+        expect(onOpenChange).not.toHaveBeenCalled();
+        expect(dialog.getByRole("list", { name: "Reparto del abono" })).toBeInTheDocument();
 
         advance(STEP_CLICK_GUARD_MS);
         pressOutside();
-        expect(onOpenChange).toHaveBeenCalledTimes(2);
+        await answerLeaveQuestion("Salir");
+        expect(onOpenChange).toHaveBeenCalledTimes(1);
         expect(onOpenChange).toHaveBeenLastCalledWith(false);
       });
 
@@ -1590,6 +1621,8 @@ describe("ContactSettlementModal", () => {
 
           advance(STEP_CLICK_GUARD_MS);
           pressOutside();
+          // CNF-15: el cierre ya se atiende; con el monto tecleado pregunta antes.
+          await answerLeaveQuestion("Salir");
           expect(onOpenChange).toHaveBeenCalledWith(false);
         });
 

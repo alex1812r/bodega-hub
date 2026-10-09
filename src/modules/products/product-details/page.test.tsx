@@ -8,7 +8,7 @@
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 jest.mock("next/navigation", () => ({
@@ -119,6 +119,9 @@ describe("ProductDetailsPage", () => {
   });
 
   afterEach(() => {
+    // DET-01: la pestaña activa va en la URL y el kardex recuerda si quedó abierto.
+    window.history.replaceState(null, "", "/");
+    window.localStorage.clear();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: originalMatchMedia,
@@ -252,6 +255,10 @@ describe("ProductDetailsPage", () => {
     expect(card.getByLabelText("Motivo")).toHaveValue("Ajuste de margen a 30 %");
 
     await user.click(card.getByRole("button", { name: "Actualizar precio" }));
+    // CNF-07: el cambio se confirma en el modal.
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Cambiar precio" }),
+    );
 
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0]).toEqual({
@@ -275,6 +282,10 @@ describe("ProductDetailsPage", () => {
     await user.clear(card.getByLabelText("Motivo"));
     await user.type(card.getByLabelText("Motivo"), "Subió el proveedor");
     await user.click(card.getByRole("button", { name: "Actualizar precio" }));
+    // CNF-07: el cambio se confirma en el modal.
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Cambiar precio" }),
+    );
 
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0].body).toEqual({
@@ -286,6 +297,10 @@ describe("ProductDetailsPage", () => {
     await user.click(card.getByRole("button", { name: "12 %" }));
     await user.clear(card.getByLabelText("Motivo"));
     await user.click(card.getByRole("button", { name: "Actualizar precio" }));
+    // CNF-07: el cambio se confirma en el modal.
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Cambiar precio" }),
+    );
 
     // En blanco viaja vacío: el servidor lo guarda como "sin motivo".
     await waitFor(() => expect(posts).toHaveLength(2));
@@ -319,6 +334,9 @@ describe("ProductDetailsPage", () => {
       },
     ];
     renderPage();
+
+    // DET-01: el historial de precios vive en la pestaña Historial.
+    fireEvent.click(await screen.findByRole("tab", { name: "Historial" }));
 
     const table = within(
       (await screen.findByRole("heading", { name: "Historial de precios" })).closest(
@@ -364,6 +382,9 @@ describe("ProductDetailsPage", () => {
     ];
     renderPage();
 
+    // DET-01: el historial de precios vive en la pestaña Historial.
+    fireEvent.click(await screen.findByRole("tab", { name: "Historial" }));
+
     const table = within(
       (await screen.findByRole("heading", { name: "Historial de precios" })).closest(
         "section",
@@ -377,7 +398,7 @@ describe("ProductDetailsPage", () => {
     expect(table.queryByText(userId)).not.toBeInTheDocument();
   });
 
-  it("un cambio rápido de precio fallido sí se avisa en la página: la tarjeta no tiene dónde pintarlo (PRO-F4)", async () => {
+  it("un cambio rápido de precio fallido se avisa en la confirmación y en la página (PRO-F4, CNF-07)", async () => {
     const unhandled = jest.fn();
     const user = renderPage();
 
@@ -395,6 +416,10 @@ describe("ProductDetailsPage", () => {
     try {
       await user.click(card.getByRole("button", { name: "30 %" }));
       await user.click(card.getByRole("button", { name: "Actualizar precio" }));
+      // CNF-07: el cambio se confirma en el modal.
+      await user.click(
+        within(await screen.findByRole("dialog")).getByRole("button", { name: "Cambiar precio" }),
+      );
 
       expect(await screen.findByText("No pudimos actualizar el producto")).toBeInTheDocument();
       await act(async () => {
@@ -404,14 +429,31 @@ describe("ProductDetailsPage", () => {
       process.off("unhandledRejection", unhandled);
     }
 
-    // El rechazo se queda en la mutación: no sube como promesa sin manejar.
+    // El rechazo lo recoge la tarjeta: no sube como promesa sin manejar.
     expect(unhandled).not.toHaveBeenCalled();
+
+    // CNF-07: el motivo del servidor se ve tal cual en la confirmación, que sigue
+    // abierta, y queda en la página para cuando se cierre.
+    const dialog = within(screen.getByRole("dialog"));
+
+    expect(dialog.getByRole("alert")).toHaveTextContent("No autorizado para cambiar precios");
+    expect(posts).toHaveLength(1);
+
+    await user.click(dialog.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
     expect(screen.getByText("No autorizado para cambiar precios")).toBeInTheDocument();
     expect(card.getByLabelText("Precio REF")).toHaveValue("13");
   });
 
   it("monta el kardex del producto y su enlace vuelve al detalle (INV-03)", async () => {
     renderPage();
+
+    // DET-01: en el Resumen el kardex va en una sección plegada por defecto.
+    const toggle = await screen.findByRole("button", { name: /Kardex del producto/ });
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
 
     const heading = await screen.findByRole("heading", { name: "Kardex" });
     const card = within(heading.closest("section") as HTMLElement);

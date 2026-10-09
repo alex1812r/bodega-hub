@@ -17,6 +17,11 @@ import userEvent from "@testing-library/user-event";
 import { ProductFormModal, type ProductFormModalProps } from "./ProductFormModal";
 
 // Con permiso: el campo de imagen y "+ Nueva categoría" se pintan, como para un administrador.
+// El formulario lleva el guardia de cambios sin guardar (`useProcessGuard`), que usa el router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 jest.mock("../../../../shared/auth/Can", () => ({
   Can: ({ children }: { children: React.ReactNode }) => children,
 }));

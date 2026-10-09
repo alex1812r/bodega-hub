@@ -4,7 +4,7 @@
  * en vuelo (F2) y error de red en español (F3).
  */
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 jest.mock("../../../../shared/auth/Can", () => ({
@@ -20,6 +20,11 @@ import { ToastProvider } from "@/shared/components/Toast";
 import type { ProductPackConversionSummary } from "@/shared/mocks/erp-data";
 
 import { ProductDetailPackConversionCard } from "./ProductDetailPackConversionCard";
+
+// El guardia de datos tecleados (CNF-15) usa el router del App Router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
 
 const packConversion = {
   id: "ppc-cigars",
@@ -60,6 +65,39 @@ function submitForm() {
   fireEvent.submit(document.getElementById(formId) as HTMLFormElement);
 }
 
+/** CNF-F2: el 1 a 1 ya no envía desde el formulario; lo hace el botón de su confirmación. */
+async function findConfirm() {
+  return screen.findByRole("dialog", { name: "Confirmar conversión de empaque" });
+}
+
+async function confirmConversion() {
+  const dialog = await findConfirm();
+
+  await waitFor(() =>
+    expect(within(dialog).getByRole("button", { name: "Convertir empaque" })).toBeEnabled(),
+  );
+  fireEvent.click(within(dialog).getByRole("button", { name: "Convertir empaque" }));
+
+  return dialog;
+}
+
+/** Envía de punta a punta: formulario → confirmación → «Convertir empaque». */
+async function submitAndConfirm() {
+  submitForm();
+
+  return confirmConversion();
+}
+
+async function cancelConfirm(dialog: HTMLElement) {
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeEnabled());
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Confirmar conversión de empaque" }),
+    ).not.toBeInTheDocument(),
+  );
+}
+
 /** Deja pasar el cierre diferido del Modal (setTimeout 0). */
 async function flushDeferredClose() {
   await act(async () => {
@@ -73,9 +111,9 @@ describe("ProductDetailPackConversionCard · intento de envío (INV-F2)", () => 
     api.networkErrorOnNextPost();
 
     await openDialog();
-    submitForm();
+    const dialog = await submitAndConfirm();
 
-    expect(await screen.findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).toBeVisible();
+    expect(await within(dialog).findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).toBeVisible();
     expect(screen.queryByText(/failed to fetch/i)).not.toBeInTheDocument();
   });
 
@@ -85,14 +123,19 @@ describe("ProductDetailPackConversionCard · intento de envío (INV-F2)", () => 
     api.respondToNextPost(converted);
 
     await openDialog();
-    submitForm();
-    await screen.findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    const dialog = await submitAndConfirm();
+    await within(dialog).findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
+    // Al cancelar la confirmación el error sigue a la vista en el formulario.
+    await cancelConfirm(dialog);
+    expect(screen.getByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).toBeVisible();
 
     fireEvent.keyDown(screen.getByRole("dialog", { name: "Abrir empaque" }), { key: "Escape" });
     await waitFor(() => expect(document.getElementById(formId)).toBeNull());
     await openDialog();
     expect(screen.queryByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).not.toBeInTheDocument();
-    submitForm();
+    const reopened = await submitAndConfirm();
+    // La confirmación nueva tampoco arrastra el error del intento descartado.
+    expect(within(reopened).queryByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).not.toBeInTheDocument();
     await waitFor(() => expect(api.posts).toHaveLength(2));
 
     expect(api.posts[1]?.body.clientRequestId).not.toBe(api.posts[0]?.body.clientRequestId);
@@ -104,11 +147,12 @@ describe("ProductDetailPackConversionCard · intento de envío (INV-F2)", () => 
     api.respondToNextPost(converted);
 
     await openDialog();
-    submitForm();
-    await screen.findByText("Clave ya usada");
+    const dialog = await submitAndConfirm();
+    await within(dialog).findByText("Clave ya usada");
+    await cancelConfirm(dialog);
 
     fireEvent.change(screen.getByLabelText("Cantidad de empaques"), { target: { value: "2" } });
-    submitForm();
+    await submitAndConfirm();
     await waitFor(() => expect(api.posts).toHaveLength(2));
 
     expect(api.posts[1]?.body.packQuantity).toBe(2);
@@ -120,16 +164,27 @@ describe("ProductDetailPackConversionCard · intento de envío (INV-F2)", () => 
     const release = api.holdNextPost(converted);
 
     await openDialog();
-    submitForm();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Convirtiendo..." })).toBeDisabled());
+    const dialog = await submitAndConfirm();
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Procesando..." })).toBeDisabled(),
+    );
 
     expect(screen.getByLabelText("Cantidad de empaques")).toBeDisabled();
     expect(screen.getByLabelText("Motivo")).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeDisabled();
 
-    fireEvent.keyDown(screen.getByRole("dialog", { name: "Abrir empaque" }), { key: "Escape" });
+    // Ni la confirmación ni el formulario de debajo se cierran con el envío en vuelo.
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    // Con la confirmación encima, el diálogo del formulario queda oculto para el árbol accesible.
+    const formDialog = document.getElementById(formId)?.closest('[role="dialog"]');
+
+    expect(formDialog).not.toBeNull();
+    fireEvent.keyDown(formDialog as HTMLElement, { key: "Escape" });
     await flushDeferredClose();
 
+    expect(dialog).toBeInTheDocument();
     expect(document.getElementById(formId)).not.toBeNull();
+    expect(api.posts).toHaveLength(1);
 
     await act(async () => {
       release();
@@ -147,13 +202,13 @@ describe("ProductDetailPackConversionCard · tras una apertura correcta (INT-02)
     api.respondToNextPost(converted);
 
     await openDialog();
-    submitForm();
+    await submitAndConfirm();
     await waitFor(() => expect(api.posts).toHaveLength(1));
     await waitFor(() => expect(document.getElementById(formId)).toBeNull());
     await flushDeferredClose();
 
     await openDialog();
-    submitForm();
+    await submitAndConfirm();
     await waitFor(() => expect(api.posts).toHaveLength(2));
     expect(api.posts[1]?.body.clientRequestId).not.toBe(api.posts[0]?.body.clientRequestId);
   });

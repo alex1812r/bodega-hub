@@ -6,6 +6,18 @@ import type { PaymentMethod } from "@bodega/core";
 
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
+import { useVault } from "@/modules/vault/hooks/useVault";
+import { getVaultBalancesState } from "@/modules/vault/vault-home/utils/vaultBalancesState";
+import {
+  buildVaultBucketConfirmEffects,
+  formatVaultAmount,
+  vaultBucketLabels,
+} from "@/modules/vault/vault-home/utils/vaultEffect";
+import {
+  ConfirmActionModal,
+  type ConfirmActionEffect,
+  type ConfirmActionStatus,
+} from "@/shared/components/ConfirmActionModal";
 import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
@@ -22,6 +34,7 @@ import { isKnownBankLabel } from "@/shared/venezuela/banks";
 
 import { usePayPayrollItem } from "../../hooks/usePayroll";
 import type { PayrollItem } from "../../types";
+import { computePayrollVaultEffect } from "../utils/payrollVaultEffect";
 
 /** §3 del plan: la nomina se paga solo por estos cuatro metodos. */
 const PAYROLL_PAYMENT_METHODS: PaymentMethod[] = [
@@ -50,8 +63,14 @@ function isUsdMethod(method: PaymentMethod) {
   return method === "efectivo_usd";
 }
 
+/**
+ * Pago de nómina: el formulario no envía, abre la confirmación con lo que
+ * cobra cada cajero y el saldo actual → resultante de la cubeta del baúl.
+ */
 export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalProps) {
   const formId = useId();
+  const vault = useVault();
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>("efectivo_ves");
   /** `null` = todavia vale el monto sugerido; una cadena = lo que escribio el usuario. */
   const [amountOverride, setAmountOverride] = useState<string | null>(null);
@@ -101,6 +120,7 @@ export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalPr
     setReference("");
     setHasSubmitted(false);
     setErrorMessage(null);
+    setConfirmOpen(false);
     payItem.reset();
   }
 
@@ -118,33 +138,75 @@ export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalPr
     !needsRate &&
     methodOptions.length > 0;
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  /** Monto que viaja por cada recibo, en la moneda del método. */
+  function amountFor(item: PayrollItem) {
+    return isBulk ? Number(suggestedAmount(item).toFixed(2)) : amountNumber;
+  }
+
+  const currency = isUsdMethod(method) ? "ref" : "ves";
+  const balances = getVaultBalancesState(vault);
+  // Un recibo en cero se marca pagado sin mover el baúl (`pay_payroll_item`).
+  const vaultEffect = balances.vault
+    ? computePayrollVaultEffect({
+        amounts: items.map((item) => (item.totalRef > 0 ? amountFor(item) : 0)),
+        direction: "out",
+        method,
+        vault: balances.vault,
+      })
+    : null;
+  const insufficientBucket = vaultEffect?.insufficient
+    ? vaultEffect.buckets.find((bucket) => bucket.key === vaultEffect.bucketKey)
+    : undefined;
+  // El servidor rechaza el pago si supera el saldo de la cubeta: se frena aquí.
+  const confirmStatus: ConfirmActionStatus = insufficientBucket ? "blocked" : balances.status;
+  const confirmStatusMessage =
+    insufficientBucket && vaultEffect
+      ? `El baúl no alcanza: ${insufficientBucket.label} tiene ${formatVaultAmount(insufficientBucket.currency, insufficientBucket.before)} y el pago es de ${formatVaultAmount(vaultEffect.currency, vaultEffect.amount)}.`
+      : balances.statusMessage;
+  const confirmEffects: ConfirmActionEffect[] | undefined = vaultEffect
+    ? [
+        {
+          after: "Pagado",
+          before: "Pendiente",
+          label: isBulk ? `${String(items.length)} recibos` : "Recibo",
+          tone: "positive",
+        },
+        ...buildVaultBucketConfirmEffects(vaultEffect.buckets),
+      ]
+    : undefined;
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setHasSubmitted(true);
     setErrorMessage(null);
 
-    if (!canSubmit) {
+    if (!canSubmit || payItem.isPending) {
       return;
     }
 
+    setConfirmOpen(true);
+  }
+
+  async function handleConfirm() {
     try {
       for (const item of items) {
         await payItem.mutateAsync({
-          amount: isBulk ? Number(suggestedAmount(item).toFixed(2)) : amountNumber,
+          amount: amountFor(item),
           bankName: needsBank(method) ? bankName.trim() : null,
           itemId: item.id,
           method,
           reference: needsReference(method) ? reference.trim() : null,
         });
       }
-
-      onOpenChange(false);
-      resetForm();
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "No pudimos registrar el pago de nomina.",
+        error instanceof Error ? error.message : "No pudimos registrar el pago de nómina.",
       );
+      return;
     }
+
+    onOpenChange(false);
+    resetForm();
   }
 
   return (
@@ -256,12 +318,61 @@ export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalPr
           </p>
         ) : null}
 
-        {errorMessage ? (
+        {/* Con la confirmación abierta el error se dice en ella; al cancelarla sigue a la vista aquí. */}
+        {errorMessage && !confirmOpen ? (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
             {errorMessage}
           </p>
         ) : null}
       </form>
+      <ConfirmActionModal
+        confirmLabel={isBulk ? "Pagar todos" : "Pagar comisión"}
+        description={
+          vaultEffect
+            ? `El dinero sale de ${vaultBucketLabels[vaultEffect.bucketKey]} del baúl por ${paymentMethodLabels[method]}.`
+            : `Pago por ${paymentMethodLabels[method]}.`
+        }
+        effects={confirmEffects}
+        error={errorMessage}
+        isPending={payItem.isPending}
+        onConfirm={handleConfirm}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setConfirmOpen(false);
+          }
+        }}
+        onRetry={() => void vault.refetch()}
+        open={confirmOpen}
+        status={confirmStatus}
+        statusHint={confirmStatus === "loading" ? undefined : "No se ha pagado nada."}
+        statusMessage={confirmStatusMessage}
+        title={isBulk ? "Confirmar pago de la quincena" : "Confirmar pago de comisión"}
+      >
+        <div className="space-y-2">
+          <ul className="max-h-40 space-y-1 overflow-y-auto">
+            {items.map((item) => (
+              <li className="flex items-baseline justify-between gap-3" key={item.id}>
+                <span className="min-w-0 break-words font-medium text-foreground">
+                  {item.fullName}
+                </span>
+                <span className="shrink-0 tabular-nums text-foreground">
+                  {formatVaultAmount(currency, amountFor(item))}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {needsReference(method) ? (
+            <p>
+              {bankName.trim()} · referencia {reference.trim()}
+            </p>
+          ) : null}
+          {isBulk ? (
+            <p>
+              Los pagos se registran uno a uno: si alguno falla, los anteriores quedan pagados.
+            </p>
+          ) : null}
+        </div>
+      </ConfirmActionModal>
     </Modal>
   );
 }

@@ -2,10 +2,11 @@
 
 import { Plus } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Can } from "@/shared/auth/Can";
+import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
 import { usePermission } from "@/shared/auth/usePermission";
 import type { ActionMenuItem } from "@/shared/components/ActionsMenu";
 import { Button } from "@/shared/components/Button";
@@ -18,6 +19,7 @@ import {
   useUrlPaginationState,
 } from "@/shared/components/Pagination";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import {
   URL_LIST_DEBOUNCE_MS,
   useUrlListState,
@@ -28,6 +30,8 @@ import { formatDateTimeShort } from "@/shared/utils/date";
 import { cn } from "@/shared/utils/cn";
 import { withReturnTo } from "@/shared/utils/returnTo";
 
+import { PurchaseCancelConfirmModal } from "../components/PurchaseCancelConfirmModal";
+import { PurchaseReturnConfirmModal } from "../components/PurchaseReturnConfirmModal";
 import {
   type PurchaseListRow,
   useCancelPurchase,
@@ -73,6 +77,10 @@ function formatPurchaseNumber(purchaseNumber: string) {
  */
 const compactColumnClass = "px-2 @6xl:px-3";
 const amountColumnClass = `whitespace-nowrap ${compactColumnClass}`;
+
+/** En la tarjeta móvil el número es el enlace al detalle, como en la tabla. */
+const cardTitleLinkClass =
+  "rounded-md hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 /** Una compra cancelada o devuelta no se debe: ni estado de pago ni saldo. */
 function NotApplicable() {
@@ -200,6 +208,11 @@ function PurchasesList() {
   // Las acciones de fila siguen las mismas reglas de permiso y estado que el detalle.
   const access = usePermission();
   const returnPurchase = useReturnPurchase();
+  // Confirmación abierta de cancelar o devolver una fila (CNF-05): nada se ejecuta sin ella.
+  const [confirmation, setConfirmation] = useState<{
+    action: "cancel" | "return";
+    purchaseId: string;
+  } | null>(null);
   const purchaseItems = getPaginatedItems(purchases.data);
   const totalPurchases = purchases.data?.total ?? 0;
   const pendingBalanceRef = purchases.data?.pendingBalanceRef;
@@ -217,6 +230,43 @@ function PurchasesList() {
     }
   }, [isPastLastPage, lastPage, setListState]);
 
+  // Al volver del detalle la lista reaparece a la altura en que se dejó.
+  useScrollRestoration(listHref, { ready: !purchases.isLoading });
+
+  function closeConfirmation() {
+    setConfirmation(null);
+    cancelPurchase.reset();
+    returnPurchase.reset();
+  }
+
+  // Si la RPC rechaza (carrera entre el efecto y la ejecución), `mutateAsync`
+  // rechaza: el modal sigue abierto y muestra el mensaje tal cual.
+  async function handleConfirm() {
+    if (!confirmation) {
+      return;
+    }
+
+    if (confirmation.action === "cancel") {
+      await cancelPurchase.mutateAsync(confirmation.purchaseId);
+    } else {
+      await returnPurchase.mutateAsync(confirmation.purchaseId);
+    }
+
+    setConfirmation(null);
+  }
+
+  // Enlace a los pagos de la compra que se confirma, para anular los que lo impiden.
+  const confirmingPaymentsHref =
+    confirmation &&
+    access.can("payments.view") &&
+    access.role !== undefined &&
+    canViewPurchasePayments(access.role)
+      ? withReturnTo(`/payments?purchaseId=${confirmation.purchaseId}`, listHref)
+      : undefined;
+
+  // "Volver" de la compra nueva regresa a esta lista con sus filtros.
+  const createHref = withReturnTo("/purchases/create", listHref);
+
   return (
     <div className="mx-auto w-full max-w-7xl">
       <EntityListPage
@@ -225,7 +275,7 @@ function PurchasesList() {
             <PurchasesExportActions exportFilters={filters} />
             <Can permission="purchases.create">
               <Button asChild className="w-full gap-1 sm:w-auto" size="sm">
-                <Link href="/purchases/create">
+                <Link href={createHref}>
                   <Plus aria-hidden className="size-5" />
                   Nueva compra
                 </Link>
@@ -263,7 +313,7 @@ function PurchasesList() {
             actions={(purchase) => {
               const allowed = getPurchaseActions(purchase, access);
               const rowActions: ActionMenuItem[] = [
-                { href: withReturnTo(`/purchases/${purchase.id}`, list.href), label: "Ver detalle" },
+                { href: withReturnTo(`/purchases/${purchase.id}`, listHref), label: "Ver detalle" },
               ];
 
               if (allowed.canPay) {
@@ -276,32 +326,40 @@ function PurchasesList() {
               // No recibe: abre el detalle con la previsualización de la recepción.
               if (allowed.canReceive) {
                 rowActions.push({
-                  href: withReturnTo(`/purchases/${purchase.id}?receive=1`, list.href),
+                  href: withReturnTo(`/purchases/${purchase.id}?receive=1`, listHref),
                   label: "Recibir mercancía…",
                 });
               }
 
-              if (allowed.canCancelOrReturn) {
-                rowActions.push(
-                  {
-                    disabled: !allowed.isOpen,
-                    label: "Cancelar",
-                    onSelect: () => void cancelPurchase.mutateAsync(purchase.id),
-                    variant: "danger",
-                  },
-                  {
-                    disabled: !allowed.isOpen,
+              // Solo en los estados que la RPC acepta (cancelar: pedido o recibido;
+              // devolver: recibido), y siempre con su confirmación y su efecto.
+              if (allowed.canCancelOrReturn && allowed.isOpen) {
+                rowActions.push({
+                  label: "Cancelar",
+                  onSelect: () => setConfirmation({ action: "cancel", purchaseId: purchase.id }),
+                  variant: "danger",
+                });
+
+                if (purchase.status === "recibido") {
+                  rowActions.push({
                     label: "Devolver",
-                    onSelect: () => void returnPurchase.mutateAsync(purchase.id),
+                    onSelect: () => setConfirmation({ action: "return", purchaseId: purchase.id }),
                     variant: "danger",
-                  },
-                );
+                  });
+                }
               }
 
               return rowActions;
             }}
             cardSubtitle={(purchase) => purchase.supplier?.name ?? purchase.supplierId}
-            cardTitle={(purchase) => formatPurchaseNumber(purchase.purchaseNumber)}
+            cardTitle={(purchase) => (
+              <Link
+                className={cardTitleLinkClass}
+                href={withReturnTo(`/purchases/${purchase.id}`, listHref)}
+              >
+                {formatPurchaseNumber(purchase.purchaseNumber)}
+              </Link>
+            )}
             columns={columns}
             data={purchaseItems}
             embedded
@@ -326,7 +384,7 @@ function PurchasesList() {
                   action={
                     <Can permission="purchases.create">
                       <Button asChild size="sm">
-                        <Link href="/purchases/create">Nueva compra</Link>
+                        <Link href={createHref}>Nueva compra</Link>
                       </Button>
                     </Can>
                   }
@@ -335,7 +393,7 @@ function PurchasesList() {
                 />
               )
             }
-            error={purchases.error ?? cancelPurchase.error ?? returnPurchase.error}
+            error={purchases.error}
             getRowId={(purchase) => purchase.id}
             isFetching={purchases.isFetching}
             isLoading={purchases.isLoading}
@@ -357,6 +415,33 @@ function PurchasesList() {
           </div>
         </div>
       </EntityListPage>
+
+      <PurchaseCancelConfirmModal
+        error={cancelPurchase.error?.message}
+        isPending={cancelPurchase.isPending}
+        onConfirm={handleConfirm}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeConfirmation();
+          }
+        }}
+        open={confirmation?.action === "cancel"}
+        paymentsHref={confirmingPaymentsHref}
+        purchaseId={confirmation?.purchaseId}
+      />
+      <PurchaseReturnConfirmModal
+        error={returnPurchase.error?.message}
+        isPending={returnPurchase.isPending}
+        onConfirm={handleConfirm}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeConfirmation();
+          }
+        }}
+        open={confirmation?.action === "return"}
+        paymentsHref={confirmingPaymentsHref}
+        purchaseId={confirmation?.purchaseId}
+      />
     </div>
   );
 }

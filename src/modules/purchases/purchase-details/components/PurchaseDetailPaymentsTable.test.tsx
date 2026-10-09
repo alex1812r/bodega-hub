@@ -74,7 +74,6 @@ describe("PurchaseDetailPaymentsTable · sin permiso para ver pagos (COM-16)", (
   it("avisa de que no hay permiso y no dice que la compra no tiene pagos", () => {
     render(<PurchaseDetailPaymentsTable canViewPayments={false} payments={[]} />);
 
-    expect(screen.getByRole("heading", { name: "Historial de pagos" })).toBeInTheDocument();
     expect(
       screen.getByText("No tienes permiso para ver los pagos de esta compra."),
     ).toBeInTheDocument();

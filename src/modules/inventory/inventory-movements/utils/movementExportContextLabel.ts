@@ -48,5 +48,13 @@ export function buildMovementsExportContextLabel(
     parts.push(`Documento: ${filters.document.trim()}`);
   }
 
+  if (filters.saleId) {
+    parts.push("Solo los movimientos de una venta");
+  }
+
+  if (filters.purchaseId) {
+    parts.push("Solo los movimientos de una compra");
+  }
+
   return parts.join(" | ");
 }

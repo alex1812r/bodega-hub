@@ -38,10 +38,23 @@ export type ConfirmActionEffect = {
   tone?: ConfirmActionEffectTone;
 };
 
+/**
+ * Estado del efecto que se va a confirmar. Solo `ready` ofrece el botón de
+ * confirmar; en los demás el diálogo es el mismo, pero de solo lectura.
+ */
+export type ConfirmActionStatus = "ready" | "loading" | "error" | "blocked";
+
 export type ConfirmActionModalProps = {
+  /**
+   * Solo con `status="blocked"`: salidas alternativas (botones o enlaces) que se
+   * muestran en el pie, después de «Cerrar».
+   */
+  blockedActions?: ReactNode;
   cancelLabel?: string;
   /** Contexto breve de la acción (p. ej. el documento afectado), encima de los efectos. */
   children?: ReactNode;
+  /** Etiqueta del botón de cerrar cuando `status` no es `ready`. Por defecto, «Cerrar». */
+  closeLabel?: string;
   /** Etiqueta explícita de la acción ("Anular venta"). Obligatoria: no hay valor por defecto. */
   confirmLabel: string;
   description: string;
@@ -51,11 +64,28 @@ export type ConfirmActionModalProps = {
   isPending?: boolean;
   onConfirm: () => void | Promise<void>;
   onOpenChange: (open: boolean) => void;
+  /** Solo con `status="error"`: muestra «Reintentar» y lo llama al pulsarlo. */
+  onRetry?: () => void;
   open: boolean;
   /** Alternativa a `effects` para casos a medida. */
   renderEffects?: () => ReactNode;
   /** Palabra que el usuario debe escribir para habilitar el botón (sin distinguir mayúsculas). */
   requireTypedConfirmation?: string;
+  /**
+   * Estado del efecto; por defecto `ready` (el comportamiento de siempre).
+   * - `loading`: tras `children`, una zona de carga en lugar de los efectos.
+   * - `error`: tras `children`, `statusMessage` como alerta y «Reintentar» si hay `onRetry`.
+   * - `blocked`: `statusMessage` (el motivo, tal cual) como alerta, luego `children`
+   *   y `blockedActions` en el pie.
+   *
+   * Fuera de `ready` no hay botón de confirmar, lista de efectos ni palabra
+   * tecleada (lo escrito se borra), y «Cancelar» pasa a ser `closeLabel`.
+   */
+  status?: ConfirmActionStatus;
+  /** Línea secundaria bajo `statusMessage` (p. ej. «No se ha cambiado nada.»). */
+  statusHint?: string;
+  /** Texto de la carga, mensaje del error o motivo del bloqueo, según `status`. */
+  statusMessage?: string | null;
   title: string;
   variant?: "default" | "danger";
 };
@@ -94,6 +124,15 @@ const toneMarker: Record<
     srLabel: "Aviso:",
   },
 };
+
+const DEFAULT_STATUS_MESSAGE: Record<Exclude<ConfirmActionStatus, "ready">, string> = {
+  blocked: "La acción no se puede ejecutar ahora.",
+  error: "No se pudo calcular el efecto de la acción.",
+  loading: "Calculando qué va a pasar…",
+};
+
+const alertClassName =
+  "shrink-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300";
 
 /** Safety net for synchronous handlers that end without any observable signal. */
 const LOCK_SAFETY_TIMEOUT_MS = 1000;
@@ -166,6 +205,68 @@ function FocusOnMount({ targetRef }: { targetRef: RefObject<HTMLElement | null> 
   return null;
 }
 
+export type ConfirmActionScrollAreaProps = {
+  children: ReactNode;
+  /** Límite de alto y relleno de la zona (p. ej. `max-h-56 px-3`). */
+  className?: string;
+  /** Id del título visible que da nombre a la zona cuando desborda. */
+  labelledBy: string;
+};
+
+/**
+ * Zona con scroll propio dentro de una confirmación: la de los efectos y las
+ * listas con alto máximo del contexto (`children`). Cuando su contenido desborda
+ * pasa a ser una parada de Tab con nombre, para poder leerla entera con flechas,
+ * AvPág y Fin; si cabe, no añade nada al orden de foco.
+ */
+export function ConfirmActionScrollArea({
+  children,
+  className,
+  labelledBy,
+}: ConfirmActionScrollAreaProps) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [isScrollable, setIsScrollable] = useState(false);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+
+    if (!viewport || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const measure = () => {
+      setIsScrollable(viewport.scrollHeight > viewport.clientHeight + 1);
+    };
+    // The viewport stops resizing once it reaches its limit, so content that
+    // changes afterwards is only seen through its mutations.
+    const resizeObserver = new ResizeObserver(measure);
+    const mutationObserver = new MutationObserver(measure);
+
+    resizeObserver.observe(viewport);
+    mutationObserver.observe(viewport, { characterData: true, childList: true, subtree: true });
+
+    return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+    };
+  }, []);
+
+  return (
+    <div
+      aria-labelledby={isScrollable ? labelledBy : undefined}
+      className={cn(
+        "overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        className,
+      )}
+      ref={viewportRef}
+      role={isScrollable ? "group" : undefined}
+      tabIndex={isScrollable ? 0 : undefined}
+    >
+      {children}
+    </div>
+  );
+}
+
 function EffectItem({ effect }: { effect: ConfirmActionEffect }) {
   const tone = effect.tone ?? "neutral";
   const marker = toneMarker[tone];
@@ -211,8 +312,10 @@ function EffectItem({ effect }: { effect: ConfirmActionEffect }) {
 }
 
 export function ConfirmActionModal({
+  blockedActions,
   cancelLabel = "Cancelar",
   children,
+  closeLabel = "Cerrar",
   confirmLabel,
   description,
   effects,
@@ -220,9 +323,13 @@ export function ConfirmActionModal({
   isPending = false,
   onConfirm,
   onOpenChange,
+  onRetry,
   open,
   renderEffects,
   requireTypedConfirmation,
+  status = "ready",
+  statusHint,
+  statusMessage,
   title,
   variant = "default",
 }: ConfirmActionModalProps) {
@@ -251,6 +358,7 @@ export function ConfirmActionModal({
   const [previousOpen, setPreviousOpen] = useState(open);
   const [previousPending, setPreviousPending] = useState(isPending);
   const [previousError, setPreviousError] = useState(currentError);
+  const [previousStatus, setPreviousStatus] = useState(status);
 
   if (previousOpen !== open) {
     setPreviousOpen(open);
@@ -275,6 +383,14 @@ export function ConfirmActionModal({
     setPreviousError(currentError);
     if (currentError !== null) {
       setIsLocked(false);
+    }
+  }
+
+  if (previousStatus !== status) {
+    setPreviousStatus(status);
+    // The word was typed against an effect that is no longer on screen.
+    if (status !== "ready") {
+      setTypedValue("");
     }
   }
 
@@ -310,19 +426,22 @@ export function ConfirmActionModal({
     };
   }, [focusReturnTarget, open]);
 
-  const requiredWord = requireTypedConfirmation?.trim() ?? "";
+  const isReady = status === "ready";
+  const requiredWord = isReady ? (requireTypedConfirmation?.trim() ?? "") : "";
   const needsTypedConfirmation = requiredWord !== "";
   const isTypedConfirmed =
     !needsTypedConfirmation ||
     normalizeTypedWord(typedValue) === normalizeTypedWord(requiredWord);
   const isBusy = isPending || isLocked;
   const visibleError = currentError !== staleError ? currentError : null;
-  const hasEffects = renderEffects != null || (effects != null && effects.length > 0);
+  const hasEffects =
+    isReady && (renderEffects != null || (effects != null && effects.length > 0));
+  const statusText = isReady ? null : statusMessage || DEFAULT_STATUS_MESSAGE[status];
 
   let initialFocusRef: RefObject<HTMLElement | null> = confirmRef;
   if (needsTypedConfirmation) {
     initialFocusRef = typedInputRef;
-  } else if (variant === "danger") {
+  } else if (variant === "danger" || !isReady) {
     initialFocusRef = cancelRef;
   }
 
@@ -335,7 +454,7 @@ export function ConfirmActionModal({
   }
 
   function handleConfirm() {
-    if (isPending || lockedRef.current || !isTypedConfirmed) {
+    if (!isReady || isPending || lockedRef.current || !isTypedConfirmed) {
       return;
     }
 
@@ -398,37 +517,80 @@ export function ConfirmActionModal({
         <>
           <Button asChild variant="outline">
             <button disabled={isBusy} onClick={close} ref={cancelRef} type="button">
-              {cancelLabel}
+              {isReady ? cancelLabel : closeLabel}
             </button>
           </Button>
-          <Button asChild variant={variant === "danger" ? "danger" : "primary"}>
-            <button
-              aria-busy={isBusy || undefined}
-              disabled={isBusy || !isTypedConfirmed}
-              onClick={handleConfirm}
-              ref={confirmRef}
-              type="button"
-            >
-              {isBusy ? (
-                <>
-                  <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-                  Procesando...
-                </>
-              ) : (
-                confirmLabel
-              )}
-            </button>
-          </Button>
+          {status === "blocked" ? blockedActions : null}
+          {status === "error" && onRetry ? (
+            <Button disabled={isBusy} onClick={onRetry} type="button">
+              Reintentar
+            </Button>
+          ) : null}
+          {isReady ? (
+            <Button asChild variant={variant === "danger" ? "danger" : "primary"}>
+              <button
+                aria-busy={isBusy || undefined}
+                disabled={isBusy || !isTypedConfirmed}
+                onClick={handleConfirm}
+                ref={confirmRef}
+                type="button"
+              >
+                {isBusy ? (
+                  <>
+                    <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
+                    Procesando...
+                  </>
+                ) : (
+                  confirmLabel
+                )}
+              </button>
+            </Button>
+          ) : null}
         </>
       )}
       onOpenChange={handleOpenChange}
       open={open}
       title={title}
     >
-      <FocusOnMount targetRef={initialFocusRef} />
+      {/* Keyed by status: the control that had focus may be gone in the new state. */}
+      <FocusOnMount key={status} targetRef={initialFocusRef} />
+
+      {status === "blocked" ? (
+        <>
+          <p className={alertClassName} role="alert">
+            {statusText}
+          </p>
+          {statusHint ? (
+            <p className="shrink-0 text-sm text-on-surface-variant">{statusHint}</p>
+          ) : null}
+        </>
+      ) : null}
 
       {children ? (
         <div className="shrink-0 text-sm text-on-surface-variant">{children}</div>
+      ) : null}
+
+      {status === "loading" ? (
+        <div
+          aria-live="polite"
+          className="flex min-h-20 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-border bg-surface-container-low px-3 py-6 text-center text-sm text-on-surface-variant"
+          role="status"
+        >
+          <Loader2 aria-hidden="true" className="mb-1 h-5 w-5 animate-spin" />
+          <p className="font-medium text-foreground">{statusText}</p>
+          {statusHint ? <p>{statusHint}</p> : null}
+        </div>
+      ) : null}
+
+      {status === "error" ? (
+        <>
+          <p className={alertClassName} role="alert">
+            {statusText}
+          </p>
+          {statusHint ? (
+            <p className="shrink-0 text-sm text-on-surface-variant">{statusHint}</p>
+          ) : null}
+        </>
       ) : null}
 
       {hasEffects ? (
@@ -442,7 +604,7 @@ export function ConfirmActionModal({
           >
             Qué va a pasar
           </h3>
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-1">
+          <ConfirmActionScrollArea className="min-h-0 flex-1 px-3 py-1" labelledBy={effectsTitleId}>
             {renderEffects ? (
               renderEffects()
             ) : (
@@ -452,7 +614,7 @@ export function ConfirmActionModal({
                 ))}
               </ul>
             )}
-          </div>
+          </ConfirmActionScrollArea>
         </section>
       ) : null}
 
@@ -488,10 +650,7 @@ export function ConfirmActionModal({
       ) : null}
 
       {visibleError ? (
-        <p
-          className="shrink-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300"
-          role="alert"
-        >
+        <p className={alertClassName} role="alert">
           {visibleError}
         </p>
       ) : null}

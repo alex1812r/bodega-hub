@@ -24,7 +24,7 @@ import { EmptyState } from "@/shared/components/EmptyState";
 import type { ContactType } from "@/shared/mocks/erp-data";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
-import { withReturnTo } from "@/shared/utils/returnTo";
+import { withChainedReturnTo } from "@/shared/utils/returnTo";
 
 type BalanceAccess = {
   can: (permission: Permission) => boolean;
@@ -138,7 +138,7 @@ function ContactBalancesSection({
         render: (row) => (
           <Link
             className="rounded font-mono text-[13px] text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            href={withReturnTo(documentHref(row), returnHref)}
+            href={withChainedReturnTo(documentHref(row), returnHref)}
           >
             {documentNumber(row)}
           </Link>
@@ -257,7 +257,7 @@ function ContactBalancesSection({
           cardTitle={(row) => (
             <Link
               className="rounded font-mono text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              href={withReturnTo(documentHref(row), returnHref)}
+              href={withChainedReturnTo(documentHref(row), returnHref)}
             >
               {documentNumber(row)}
             </Link>

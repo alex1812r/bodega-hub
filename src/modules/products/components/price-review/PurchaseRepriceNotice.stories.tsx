@@ -54,6 +54,8 @@ function queueHandlers(initial: ProductPriceReviewItem[], failing = false) {
     http.get("/api/settings/pricing", () =>
       HttpResponse.json({ data: { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 } }),
     ),
+    // Tasa vigente: la confirmación de "Aplicar" muestra el cambio también en Bs (CNF-07).
+    http.get("/api/exchange-rates/current", () => HttpResponse.json({ data: { rateVes: 40 } })),
     http.post("/api/products/:id/price", resolve),
     http.post("/api/products/:id/keep-price", resolve),
   ];

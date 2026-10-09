@@ -12,7 +12,8 @@ import { Button } from "@/shared/components/Button";
 import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { Modal } from "@/shared/components/Modal";
-import { ProcessGuard } from "@/shared/components/ProcessGuard";
+import { ProcessGuard, ProcessGuardModal } from "@/shared/components/ProcessGuard";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 import {
   PaymentFormFields,
   type PaymentFormCurrency,
@@ -96,6 +97,14 @@ import {
  * siguientes NO se envían: quedan guardados para continuar. Mientras hay pagos en
  * vuelo o un abono por confirmar, un guardia (`ProcessGuard`, "Abono en curso")
  * pregunta antes de salir de la pantalla.
+ *
+ * **Datos tecleados sin registrar.** En el formulario y en el reparto, si el usuario
+ * cambió el método o tecleó un monto, banco, teléfono, referencia o nota, cerrar (Esc,
+ * clic fuera, Cancelar, la X) o salir de la pantalla pregunta antes con otro guardia
+ * que nombra el abono (`useFormModalDiscardGuard`). El monto de "Completar total
+ * pendiente" y el que deja "Volver a editar" no cuentan hasta que se editan. Sin datos,
+ * y con el resultado del abono a la vista, cierra sin preguntar. Con pagos en vuelo o
+ * por confirmar manda el guardia de arriba: este no está activo.
  *
  * **Compras (`type="purchase"`):** montar este modal solo si el usuario puede pagar
  * compras (`canViewPurchasePayments(role)` de `@/shared/auth/paymentAccess`: admin y
@@ -424,6 +433,8 @@ export function ContactSettlementModal({
   const [storedValues, setValues] = useState<PaymentFormValues>(() =>
     createEmptyPaymentFormValues(),
   );
+  /** Valores con los que arrancó el formulario: lo que difiere es lo tecleado. */
+  const [baselineValues, setBaselineValues] = useState<PaymentFormValues>(storedValues);
   const [showErrors, setShowErrors] = useState(false);
   const [run, setRun] = useState<Run | null>(restoredRun);
   const [isRunning, setIsRunning] = useState(false);
@@ -544,6 +555,34 @@ export function ContactSettlementModal({
   );
   // Lo mismo para la confirmación de descarte, que se abre encima del botón pulsado.
   const discardGuard = useStepClickGuard(isDiscardOpen ? "open" : "closed", { enabled: open });
+  // El método de partida pasa por la misma sustitución que el elegido: que la tienda
+  // no tenga habilitado el de por defecto no es un cambio del usuario.
+  const baselineMethod =
+    enabledMethods.length === 0 || enabledMethods.includes(baselineValues.method)
+      ? baselineValues.method
+      : enabledMethods[0];
+  // En el resultado (paso "run") no queda nada tecleado por registrar.
+  const hasTypedData =
+    step !== "run" &&
+    (values.method !== baselineMethod ||
+      values.bankName.trim() !== baselineValues.bankName.trim() ||
+      values.phone.trim() !== baselineValues.phone.trim() ||
+      values.referenceCode.trim() !== baselineValues.referenceCode.trim() ||
+      values.notes.trim() !== baselineValues.notes.trim() ||
+      // "Completar total pendiente" pone el máximo abonable: no es un monto tecleado.
+      (values.amount !== baselineValues.amount && values.amount !== String(maxAmount)));
+  const typedAmount = Number(values.amount);
+  // Con pagos en vuelo o por confirmar no se pregunta aquí: manda "Abono en curso".
+  const { guard, requestClose, trackFocus } = useFormModalDiscardGuard({
+    active: open && hasTypedData && !isRunning && !needsConfirmation,
+    label: [
+      type === "purchase" ? "Pago" : "Cobro",
+      typedAmount > 0 ? `de ${formatAmount(typedAmount, currency)}` : null,
+      `a ${contactName} sin registrar`,
+    ]
+      .filter((part) => part !== null)
+      .join(" "),
+  });
 
   // La sesión llegó después de montar: se retoma lo que esa sesión dejó guardado.
   if (restoredSession !== session) {
@@ -572,8 +611,11 @@ export function ContactSettlementModal({
         setStep("run");
       }
     } else if (!needsConfirmation) {
+      const emptyValues = createEmptyPaymentFormValues(values.method);
+
       setStep("form");
-      setValues(createEmptyPaymentFormValues(values.method));
+      setValues(emptyValues);
+      setBaselineValues(emptyValues);
       setShowErrors(false);
       setRun(null);
     }
@@ -769,8 +811,11 @@ export function ContactSettlementModal({
     }
 
     const unregistered = run.rows.filter((row) => row.status !== "registered");
+    const editValues = { ...run.values, amount: String(sumAmounts(unregistered)) };
 
-    setValues({ ...run.values, amount: String(sumAmounts(unregistered)) });
+    setValues(editValues);
+    // Lo que vuelve del abono a medias es el punto de partida: aún no hay nada tecleado.
+    setBaselineValues(editValues);
     setShowErrors(false);
     setStaleDocumentsAt(openDocuments.dataUpdatedAt);
     setStep("form");
@@ -786,9 +831,12 @@ export function ContactSettlementModal({
     }
 
     clearPendingSettlement({ contactId, session, type });
+    const emptyValues = createEmptyPaymentFormValues(values.method);
+
     setIsDiscardOpen(false);
     setRun(null);
-    setValues(createEmptyPaymentFormValues(values.method));
+    setValues(emptyValues);
+    setBaselineValues(emptyValues);
     setShowErrors(false);
     setStaleDocumentsAt(openDocuments.dataUpdatedAt);
     setStep("form");
@@ -1074,17 +1122,31 @@ export function ContactSettlementModal({
             return;
           }
 
-          if (!isControlled) {
-            setInternalOpen(nextOpen);
+          if (nextOpen) {
+            if (!isControlled) {
+              setInternalOpen(true);
+            }
+
+            onOpenChange?.(true);
+            return;
           }
 
-          onOpenChange?.(nextOpen);
+          // Con datos tecleados sin registrar pregunta antes de descartarlos.
+          requestClose(() => {
+            if (!isControlled) {
+              setInternalOpen(false);
+            }
+
+            onOpenChange?.(false);
+          });
         }}
         open={open}
         title="Abonar"
         trigger={trigger ?? (isControlled ? undefined : <Button size="sm">Abonar</Button>)}
       >
-        {renderBody()}
+        <div onFocus={trackFocus}>{renderBody()}</div>
+        {/* CNF-15: datos tecleados sin registrar. Nunca coincide con "Abono en curso". */}
+        <ProcessGuardModal guard={guard} />
       </Modal>
       {run && canDiscard ? (
         <ConfirmActionModal

@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 
+import { usePermission } from "@/shared/auth/usePermission";
+
 import { withChainedReturnTo } from "../../utils/chainedReturnTo";
 import {
   resolveMovementDocument,
@@ -19,15 +21,20 @@ type InventoryMovementDocumentCellProps = {
 
 /**
  * Documento de un movimiento: número de la venta o compra con enlace a su
- * detalle, "Conversión de empaque" o "Ajuste manual".
+ * detalle, "Conversión de empaque" o "Ajuste manual". Una devolución enlaza a
+ * la venta o compra que devuelve. Sin permiso para ver ese documento
+ * (`sales.view` / `purchases.view`) el número va en texto plano; una conversión
+ * y un ajuste no tienen pantalla propia.
  */
 export function InventoryMovementDocumentCell({
   movement,
   returnTo,
 }: InventoryMovementDocumentCellProps) {
+  const { can } = usePermission();
   const document = resolveMovementDocument(movement);
+  const canOpen = can(document.kind === "venta" ? "sales.view" : "purchases.view");
 
-  if (!document.href) {
+  if (!document.href || !canOpen) {
     return <span className="text-on-surface-variant">{document.label}</span>;
   }
 

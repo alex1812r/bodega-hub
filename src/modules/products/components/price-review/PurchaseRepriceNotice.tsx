@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 
 import { MAX_PAGE_LIMIT } from "@/lib/api/pagination";
+import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
@@ -24,6 +25,7 @@ import {
 import { useUpdateProductPrice } from "../../hooks/useProducts";
 import { buildRepriceReason } from "../../services/priceReview";
 import { getProductMarginThresholds } from "../../services/productMargin";
+import { isPriceBelowCost, PriceChangeEffect } from "./PriceChangeEffect";
 import { PriceReviewChangeSummary } from "./PriceReviewChangeSummary";
 
 /** Filas visibles antes de "Mostrar N más". */
@@ -65,11 +67,15 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
   const [isLocked, setIsLocked] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Tasa vigente, solo para mostrar el cambio en Bs: se pide al abrir la confirmación.
+  const currentRate = useCurrentExchangeRate({ enabled: isConfirmOpen });
 
   const proposal = getPurchaseRepriceProposal(item);
   const purchaseNumber = item.purchase?.number.trim() ?? "";
   const currentPrice = formatRefUsd(item.salePriceRef);
   const proposedPrice = formatRefUsd(proposal.salePriceRef);
+  // Motivo que queda en el historial de precios; la confirmación lo muestra tal cual.
+  const applyReason = `${buildRepriceReason(proposal.markupPct)}${purchaseNumber ? ` por compra ${purchaseNumber}` : ""}`;
 
   function lock() {
     if (lockedRef.current) {
@@ -111,7 +117,7 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
       await updatePrice.mutateAsync({
         // El precio propuesto sale de este costo: si ya es otro, 409 y no se aplica.
         expectedCostRef: item.currentCostRef,
-        reason: `${buildRepriceReason(proposal.markupPct)}${purchaseNumber ? ` por compra ${purchaseNumber}` : ""}`,
+        reason: applyReason,
         salePriceRef: proposal.salePriceRef,
       });
       setIsConfirmOpen(false);
@@ -202,26 +208,27 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
         <ConfirmActionModal
           confirmLabel="Aplicar precio"
           description={`El precio de ${item.name} pasa de ${currentPrice} a ${proposedPrice}.`}
-          effects={[
-            {
-              after: proposedPrice,
-              before: currentPrice,
-              label: "Precio de venta",
-              tone: "positive",
-            },
-            {
-              after: formatMarkupPct(proposal.markupPct),
-              before: formatMarkupPct(item.currentMarginPct),
-              label: "Ganancia sobre el costo",
-              tone: "positive",
-            },
-          ]}
           error={error}
           isPending={updatePrice.isPending}
           onConfirm={handleApply}
           onOpenChange={setIsConfirmOpen}
           open={isConfirmOpen}
+          renderEffects={() => (
+            <PriceChangeEffect
+              change={{
+                costRef: item.currentCostRef,
+                fromPriceRef: item.salePriceRef,
+                toPriceRef: proposal.salePriceRef,
+              }}
+              rateVes={currentRate.data?.rateVes}
+              reason={applyReason}
+              thresholds={thresholds}
+            />
+          )}
           title="Aplicar reprecio"
+          variant={
+            isPriceBelowCost(item.currentCostRef, proposal.salePriceRef) ? "danger" : "default"
+          }
         />
       ) : null}
     </li>

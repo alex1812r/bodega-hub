@@ -45,6 +45,15 @@ export function InventoryMovementsListFilters({
   onClear,
 }: InventoryMovementsListFiltersProps) {
   const isDocumentTooShort = isMovementDocumentTooShort(filters.document);
+  // Filtro que llega en el enlace del detalle de una venta o una compra: no tiene campo.
+  const pinnedDocumentLabel =
+    filters.saleId && filters.purchaseId
+      ? "una venta y una compra"
+      : filters.saleId
+        ? "una venta"
+        : filters.purchaseId
+          ? "una compra"
+          : null;
   const dateFieldClassName = cn(
     stitchListFilterFieldClassName,
     "w-full min-w-0",
@@ -56,6 +65,21 @@ export function InventoryMovementsListFilters({
       aria-label="Filtros"
       className="w-full min-w-0 rounded-xl border border-border bg-surface-container-lowest p-4 shadow-sm dark:border-slate-800 md:p-5"
     >
+      {pinnedDocumentLabel ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-container-low px-3 py-2 dark:border-slate-800">
+          <p className="min-w-0 text-sm text-foreground" role="status">
+            Solo se muestran los movimientos de {pinnedDocumentLabel}.
+          </p>
+          <Button
+            onClick={() => onChange({ purchaseId: "", saleId: "" })}
+            size="sm"
+            variant="ghost"
+          >
+            Ver todos los documentos
+          </Button>
+        </div>
+      ) : null}
+
       <div className="grid w-full min-w-0 grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <div className="min-w-0">
           <InventoryMovementsProductFilter

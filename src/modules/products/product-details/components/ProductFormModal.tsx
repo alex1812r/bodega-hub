@@ -4,6 +4,7 @@ import {
   type FormEvent,
   type ReactNode,
   type Ref,
+  useCallback,
   useEffect,
   useEffectEvent,
   useId,
@@ -26,6 +27,7 @@ import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 import { FormActions } from "@/shared/components/FormActions";
 import { Modal } from "@/shared/components/Modal";
 import { getNumberInputError } from "@/shared/components/NumberInput";
+import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
 import { useToast } from "@/shared/components/Toast";
 import { ClientApiError } from "@/shared/api/apiFetch";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
@@ -79,6 +81,7 @@ import {
   UNITS_PER_PACK_FIELD_NAME,
   type PackConversionFormState,
 } from "./ProductPackConversionFields";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 
 export type ProductFormSubmitContext = {
   pendingImageBlob?: Blob | null;
@@ -336,6 +339,58 @@ function numberFromFormData(formData: FormData, key: string) {
   return value === null || value === "" ? undefined : Number(value);
 }
 
+/** Lo que el formulario guarda en estado y cuenta como cambio sin guardar. */
+type ProductFormTrackedState = {
+  categoryId: string;
+  description: string;
+  name: string;
+  packConversion: PackConversionFormState;
+  salePriceRef: number | null;
+  sku: string;
+};
+
+function getInitialTrackedState(
+  product: ProductWithCategory | undefined,
+  createDefaults: ProductFormInitialValues | undefined,
+  categoryId = product?.categoryId ?? createDefaults?.categoryId ?? "",
+): ProductFormTrackedState {
+  return {
+    categoryId,
+    description: product?.description ?? "",
+    name: product?.name ?? createDefaults?.name ?? "",
+    packConversion: createDefaultPackConversionFormState(product?.packConversion),
+    salePriceRef: (product ?? createDefaults)?.salePriceRef ?? null,
+    sku: product?.sku ?? "",
+  };
+}
+
+const UNCONTROLLED_NUMBER_FIELDS = ["currentCostRef", "currentStock", "minStock"] as const;
+
+/**
+ * Campos no controlados, leídos como los lee el envío: salir de un campo
+ * numérico sin tocarlo solo lo redondea ("5" → "5.00") y no cuenta como cambio.
+ */
+function readUncontrolledFields(form: HTMLFormElement) {
+  const formData = new FormData(form);
+
+  return JSON.stringify([
+    normalizeBarcode(String(formData.get("barcode") ?? "")) ?? null,
+    ...UNCONTROLLED_NUMBER_FIELDS.map((field) => numberFromFormData(formData, field) ?? null),
+  ]);
+}
+
+function getGuardLabel(isEdit: boolean, hasCreatedProduct: boolean, name: string) {
+  const quotedName = name.trim() ? ` «${name.trim()}»` : "";
+
+  if (isEdit) {
+    return `Edición de producto${quotedName}`;
+  }
+
+  return hasCreatedProduct
+    ? `Proveedores del producto${quotedName} sin guardar`
+    : `Producto nuevo${quotedName} sin guardar`;
+}
+
 export function ProductFormModal({
   categories = [],
   compact = false,
@@ -363,6 +418,17 @@ export function ProductFormModal({
   const showSuppliers = !compact && (isEdit ? Boolean(product) : suppliersOnCreate);
   const formId = useId();
   const formRef = useRef<HTMLFormElement | null>(null);
+  /** Campos no controlados tal como se montaron; ver `readUncontrolledFields`. */
+  const uncontrolledBaselineRef = useRef("");
+  const [uncontrolledDirty, setUncontrolledDirty] = useState(false);
+  // El formulario se monta en cada apertura (y tras "Guardar y crear otro"): ahí se fija el punto de partida.
+  const setFormElement = useCallback((form: HTMLFormElement | null) => {
+    formRef.current = form;
+
+    if (form) {
+      uncontrolledBaselineRef.current = readUncontrolledFields(form);
+    }
+  }, []);
   const errorMessageRef = useRef<HTMLParagraphElement | null>(null);
   /** El envío en curso lo pidió "Guardar y crear otro" (y no Enter ni el botón principal). */
   const createAnotherRequestedRef = useRef(false);
@@ -372,12 +438,15 @@ export function ProductFormModal({
   const isControlled = open !== undefined;
   const [internalOpen, setInternalOpen] = useState(false);
   const isOpen = isControlled ? open : internalOpen;
-  const [name, setName] = useState(product?.name ?? createDefaults?.name ?? "");
-  const [sku, setSku] = useState(product?.sku ?? "");
-  const [description, setDescription] = useState(product?.description ?? "");
-  const [categoryId, setCategoryId] = useState(
-    product?.categoryId ?? createDefaults?.categoryId ?? "",
-  );
+  const [initialTracked] = useState(() => getInitialTrackedState(product, createDefaults));
+  /** Punto de partida de lo que vive en estado: lo que dejó el último reinicio del formulario. */
+  const [trackedBaseline, setTrackedBaseline] = useState(() => JSON.stringify(initialTracked));
+  const [name, setName] = useState(initialTracked.name);
+  const [sku, setSku] = useState(initialTracked.sku);
+  const [description, setDescription] = useState(initialTracked.description);
+  const [categoryId, setCategoryId] = useState(initialTracked.categoryId);
+  /** Copia del precio que guarda `ProductFormBasicFields`, solo para saber si cambió. */
+  const [salePriceRef, setSalePriceRef] = useState(initialTracked.salePriceRef);
   // Categorías creadas desde aquí: se ofrecen sin esperar a que el consumidor
   // vuelva a pasar `categories` con la lista refrescada.
   const [createdCategories, setCreatedCategories] = useState<CategoryMock[]>([]);
@@ -403,7 +472,7 @@ export function ProductFormModal({
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [packConversionState, setPackConversionState] = useState<PackConversionFormState>(
-    createDefaultPackConversionFormState(product?.packConversion),
+    initialTracked.packConversion,
   );
   const [showSubmitErrors, setShowSubmitErrors] = useState(false);
   const [showPriceRequired, setShowPriceRequired] = useState(false);
@@ -438,6 +507,8 @@ export function ProductFormModal({
   });
   /** Cuerpo del `PUT` que dejaría los proveedores como están guardados: si coincide, no se llama. */
   const suppliersBaselineRef = useRef("[]");
+  /** Copia de `suppliersBaselineRef` para comparar durante el render. */
+  const [suppliersBaseline, setSuppliersBaseline] = useState("[]");
   /** Los proveedores ya se cargaron en esta apertura: un refresco posterior no pisa lo editado. */
   const suppliersLoadedRef = useRef(false);
   const [isSavingSuppliers, setIsSavingSuppliers] = useState(false);
@@ -445,6 +516,42 @@ export function ProductFormModal({
   /** Alta ya guardada cuyos proveedores fallaron: al reintentar no se vuelve a crear. */
   const [createdProduct, setCreatedProduct] = useState<ProductWithCategory | null>(null);
   const isBusy = isSubmitting || isSavingSuppliers;
+  const [trackedOpen, setTrackedOpen] = useState(isOpen);
+
+  // Apertura controlada desde fuera: lo que cuenta como cambio vuelve al inicio
+  // en este mismo render, antes de que el guardia vea restos de la apertura anterior.
+  if (trackedOpen !== isOpen) {
+    setTrackedOpen(isOpen);
+
+    if (isOpen) {
+      resetTrackedState();
+      setSuppliersState(EMPTY_PRODUCT_SUPPLIERS_STATE);
+      setSuppliersBaseline("[]");
+    }
+  }
+
+  const suppliersSnapshot = useMemo(
+    () => JSON.stringify(buildProductSuppliersPayload(suppliersState)),
+    [suppliersState],
+  );
+  const trackedState: ProductFormTrackedState = {
+    categoryId,
+    description,
+    name,
+    packConversion: packConversionState,
+    salePriceRef,
+    sku,
+  };
+  const isDirty =
+    uncontrolledDirty ||
+    pendingImageBlob !== null ||
+    JSON.stringify(trackedState) !== trackedBaseline ||
+    (showSuppliers && suppliersLoad.status === "ready" && suppliersSnapshot !== suppliersBaseline);
+  // Mientras guarda no se pregunta: cerrar se comporta como antes del guardia.
+  const { guard, requestClose, trackFocus } = useFormModalDiscardGuard({
+    active: isOpen && isDirty && !isBusy,
+    label: getGuardLabel(isEdit, Boolean(createdProduct), isEdit ? (product?.name ?? name) : name),
+  });
 
   // El aviso va al pie de un cuerpo con scroll: al aparecer se trae a la vista.
   useEffect(() => {
@@ -484,6 +591,7 @@ export function ProductFormModal({
   function resetSuppliers() {
     suppliersLoadedRef.current = false;
     suppliersBaselineRef.current = "[]";
+    setSuppliersBaseline("[]");
     setSuppliersOpen(false);
     setSuppliersState(EMPTY_PRODUCT_SUPPLIERS_STATE);
     setSuppliersLoad({ status: isEdit ? "idle" : "ready" });
@@ -515,6 +623,7 @@ export function ProductFormModal({
 
     suppliersLoadedRef.current = true;
     suppliersBaselineRef.current = JSON.stringify(buildProductSuppliersPayload(loaded));
+    setSuppliersBaseline(suppliersBaselineRef.current);
     setSuppliersState(loaded);
     setSuppliersLoad({ status: "ready" });
   }
@@ -524,22 +633,33 @@ export function ProductFormModal({
     suppliersBridgeRef.current?.reload();
   }
 
-  function resetFormFields() {
-    setName(product?.name ?? createDefaults?.name ?? "");
-    setSku(product?.sku ?? "");
-    setDescription(product?.description ?? "");
-    setCategoryId(product?.categoryId ?? createDefaults?.categoryId ?? "");
-    setMoreOptionsOpen(false);
+  /** Deja en su valor inicial lo que cuenta como cambio sin guardar y fija ese punto de partida. */
+  function resetTrackedState(keepCategoryId?: string) {
+    const initial = getInitialTrackedState(product, createDefaults, keepCategoryId);
+
+    setName(initial.name);
+    setSku(initial.sku);
+    setDescription(initial.description);
+    setCategoryId(initial.categoryId);
+    setSalePriceRef(initial.salePriceRef);
+    setPackConversionState(initial.packConversion);
     setPendingImageBlob(null);
+    setTrackedBaseline(JSON.stringify(initial));
+    setUncontrolledDirty(false);
+  }
+
+  /** `keepCategoryId`: categoría con la que arranca el siguiente alta ("Guardar y crear otro"). */
+  function resetFormFields(keepCategoryId?: string) {
+    resetTrackedState(keepCategoryId);
+    setMoreOptionsOpen(false);
     setImageError(null);
-    setPackConversionState(createDefaultPackConversionFormState(product?.packConversion));
     setShowSubmitErrors(false);
     setShowPriceRequired(false);
     unansweredCreateRef.current = null;
     setPossibleDuplicateName(null);
   }
 
-  function handleOpenChange(nextOpen: boolean) {
+  function applyOpenChange(nextOpen: boolean) {
     if (!isControlled) {
       setInternalOpen(nextOpen);
     }
@@ -547,6 +667,17 @@ export function ProductFormModal({
     if (nextOpen) {
       resetFormFields();
     }
+  }
+
+  // Cerrar (Esc, clic fuera, Cancelar, la X) con cambios sin guardar pregunta antes.
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      applyOpenChange(true);
+
+      return;
+    }
+
+    requestClose(() => applyOpenChange(false));
   }
 
   function openStockAdjustment(trigger: HTMLButtonElement) {
@@ -913,6 +1044,7 @@ export function ProductFormModal({
           }
 
           suppliersBaselineRef.current = suppliersSnapshot;
+          setSuppliersBaseline(suppliersSnapshot);
 
           // El servidor dejó un habitual distinto del que mostraba el formulario.
           if (result.preferredSupplierId !== suppliersState.preferredSupplierId) {
@@ -943,9 +1075,8 @@ export function ProductFormModal({
     createAttempt.reopen();
 
     flushSync(() => {
-      resetFormFields();
+      resetFormFields(input.categoryId ?? "");
       resetSuppliers();
-      setCategoryId(input.categoryId ?? "");
       setFormResetKey((key) => key + 1);
     });
 
@@ -1040,9 +1171,16 @@ export function ProductFormModal({
         className="grid gap-4"
         id={formId}
         key={formResetKey}
+        onFocus={trackFocus}
+        onInput={(event) =>
+          setUncontrolledDirty(
+            readUncontrolledFields(event.currentTarget) !== uncontrolledBaselineRef.current,
+          )
+        }
         onInvalidCapture={handleInvalidCapture}
-        onSubmit={(event) => handleSubmit(event, () => handleOpenChange(false))}
-        ref={formRef}
+        // Guardado con éxito: se cierra sin preguntar.
+        onSubmit={(event) => handleSubmit(event, () => applyOpenChange(false))}
+        ref={setFormElement}
       >
         {/* Alta ya guardada: lo básico queda inerte, el producto no se vuelve a enviar. */}
         <div className="contents" inert={Boolean(createdProduct)}>
@@ -1068,6 +1206,7 @@ export function ProductFormModal({
             onCategoryChange={setCategoryId}
             onCreateCategory={openCategoryCreate}
             onNameChange={setName}
+            onPriceChange={setSalePriceRef}
             pricingChips={pricingChips ?? pricingOptions.chips}
             showPriceRequired={showPriceRequired}
             suggestedMarkupPct={
@@ -1214,6 +1353,8 @@ export function ProductFormModal({
           onOpenChange={handlePackUnitCreateOpenChange}
         />
       ) : null}
+      {/* Dentro del modal del formulario: se apila encima y Esc solo cierra la pregunta. */}
+      <ProcessGuardModal guard={guard} />
     </Modal>
   );
 }

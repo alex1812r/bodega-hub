@@ -17,6 +17,7 @@ import { useEnabledPaymentMethods } from "@/modules/settings/hooks/useSettings";
 import { ClientApiError } from "@/shared/api/apiFetch";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { PageBackButton } from "@/shared/components/PageBackButton";
+import { ProcessGuardModal, useProcessGuard } from "@/shared/components/ProcessGuard";
 import type { PaymentMethod, SaleMock } from "@/shared/mocks/erp-data";
 import {
   DEFAULT_ENABLED_PAYMENT_METHODS,
@@ -41,6 +42,7 @@ import { PosSingleMethodDetailsModal } from "./components/PosSingleMethodDetails
 import { PosWorkspace } from "./components/PosWorkspace";
 import { posCatalogQueryOptions } from "./constants/posCatalogCache";
 import { usePosCart } from "./hooks/usePosCart";
+import { usePosCartDraft } from "./hooks/usePosCartDraft";
 import { toDenominationsPayload } from "./utils/denominations";
 import {
   getPaymentCurrency,
@@ -50,6 +52,7 @@ import {
   type PosCheckout,
   type PosSinglePaymentDetails,
 } from "./utils/mixedPayments";
+import { describeSaleInProgress } from "./utils/posCartDraft";
 import {
   clearSaleAttempt,
   isDefinitiveRejection,
@@ -241,6 +244,47 @@ function SaleCreatePosWorkspace() {
       setCustomerId(defaultCustomerId);
     }
   }, [customerId, defaultCustomerId]);
+
+  // Carrito recuperable (CNF-16): se guarda solo, fuera del camino de escaneo y cobro, y
+  // vuelve revalidado contra el catalogo al reentrar con la misma caja abierta.
+  const draftCatalog = useMemo(
+    () =>
+      products.data && contacts.data
+        ? { customers, products: getPaginatedItems(products.data) }
+        : null,
+    [contacts.data, customers, products.data],
+  );
+  const cartDraft = usePosCartDraft({
+    cashSessionId: cashSession.data?.id,
+    catalog: draftCatalog,
+    customerId,
+    items: cart.items,
+    onDiscard: () => void handleClearOrder(),
+    onRestore: (restoration) => {
+      cart.restoreItems(restoration.items);
+      if (restoration.customerId) {
+        setCustomerId(restoration.customerId);
+      }
+    },
+    registerId: cashSession.data?.registerId,
+    storeId: currentUser.data?.storeId,
+    userId: currentUser.data?.user.id,
+  });
+  // Guardia de salida (CNF-15): solo pregunta al SALIR del POS con lineas en el carrito.
+  // Abrir el cobro, el cliente o el escaner no navega, y al cobrar el carrito queda vacio.
+  const guard = useProcessGuard({
+    active: cart.items.length > 0,
+    description: cartDraft.saveFailed
+      ? "Este navegador no dejó guardar el carrito (almacenamiento lleno o bloqueado): si sales, esta venta se pierde."
+      : undefined,
+    label: describeSaleInProgress({
+      customerName: customers.find((customer) => customer.id === customerId)?.name,
+      lineCount: cart.items.length,
+      totalRef,
+    }),
+    onLeave: cartDraft.saveFailed ? "discard" : "draft",
+    onSaveDraft: cartDraft.saveNow,
+  });
 
   const cartQuantitiesByProductId = useMemo(() => {
     const quantities = new Map<string, number>();
@@ -913,6 +957,7 @@ function SaleCreatePosWorkspace() {
         onOpenChange={setPaymentDetailsModalOpen}
         open={paymentDetailsModalOpen}
       />
+      <ProcessGuardModal guard={guard} />
     </div>
   );
 }

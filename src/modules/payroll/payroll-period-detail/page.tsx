@@ -308,6 +308,7 @@ export function PayrollPeriodDetailPage({ periodId }: PayrollPeriodDetailPagePro
             setCancelItem(null);
           }
         }}
+        periodStatus={period.status}
       />
     </div>
   );

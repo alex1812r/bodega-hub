@@ -6,7 +6,7 @@ import {
   purchaseNewDraftStorageKey,
   type PurchaseDraftContent,
 } from "../utils/purchaseDraftStorage";
-import { usePurchaseDraftStorage } from "./usePurchaseDraftStorage";
+import { PURCHASE_DRAFT_SAVE_DELAY_MS, usePurchaseDraftStorage } from "./usePurchaseDraftStorage";
 
 let mockProfile: { storeId: string | null; user: { id: string } } | null = {
   storeId: "store-1",
@@ -129,14 +129,14 @@ describe("usePurchaseDraftStorage", () => {
   it("sin algo que perder no guarda, y borra lo que esta visita había guardado", () => {
     const { result } = renderHook(() => usePurchaseDraftStorage());
 
-    act(() => result.current.sync(buildContent({ lines: emptyLines })));
+    act(() => result.current.sync(buildContent({ lines: emptyLines, supplierId: "" })));
     expect(window.localStorage.getItem(key)).toBeNull();
 
     act(() => result.current.sync(buildContent()));
     expect(window.localStorage.getItem(key)).not.toBeNull();
 
-    // Cambió de proveedor: la compra quedó sin líneas.
-    act(() => result.current.sync(buildContent({ lines: emptyLines })));
+    // Quitó el proveedor: la compra quedó sin proveedor ni líneas.
+    act(() => result.current.sync(buildContent({ lines: emptyLines, supplierId: "" })));
     expect(window.localStorage.getItem(key)).toBeNull();
   });
 
@@ -315,7 +315,7 @@ describe("usePurchaseDraftStorage · segunda ranura para la compra nueva (COM-F1
     const { result } = renderHook(() => usePurchaseDraftStorage());
 
     act(() => result.current.sync(buildContent({ notes: "nueva" })));
-    act(() => result.current.sync(buildContent({ lines: emptyLines })));
+    act(() => result.current.sync(buildContent({ lines: emptyLines, supplierId: "" })));
 
     expect(window.localStorage.getItem(newKey)).toBeNull();
     expect(result.current.pendingNew).toBeNull();
@@ -348,6 +348,194 @@ describe("usePurchaseDraftStorage · segunda ranura para la compra nueva (COM-F1
     expect(result.current.pendingNew).toBeNull();
 
     act(() => result.current.sync(buildContent({ notes: "nueva" })));
+    expect(window.localStorage.getItem(newKey)).toContain("nueva");
+  });
+});
+
+describe("usePurchaseDraftStorage · guardado automático con espera (CNF-16)", () => {
+  const stored = (slot = key) => {
+    const raw = window.localStorage.getItem(slot);
+
+    return raw ? (JSON.parse(raw) as { notes: string; savedAt: string }) : null;
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("schedule espera 500 ms desde el último cambio y escribe una sola vez, con la fecha del guardado", () => {
+    const setItem = jest.spyOn(Storage.prototype, "setItem");
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    expect(PURCHASE_DRAFT_SAVE_DELAY_MS).toBe(500);
+    jest.setSystemTime(new Date("2026-10-09T15:00:00.000Z"));
+    act(() => result.current.schedule(buildContent({ notes: "a" })));
+    act(() => {
+      jest.advanceTimersByTime(499);
+    });
+    expect(stored()).toBeNull();
+
+    // Otro cambio antes de cumplirse: la espera vuelve a empezar.
+    act(() => result.current.schedule(buildContent({ notes: "ab" })));
+    act(() => {
+      jest.advanceTimersByTime(499);
+    });
+    expect(stored()).toBeNull();
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    expect(stored()).toMatchObject({ notes: "ab", savedAt: "2026-10-09T15:00:00.999Z" });
+    expect(setItem).toHaveBeenCalledTimes(1);
+  });
+
+  it("flush escribe ya lo pendiente, y sin nada pendiente no hace nada", () => {
+    const setItem = jest.spyOn(Storage.prototype, "setItem");
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => result.current.flush());
+    expect(setItem).not.toHaveBeenCalled();
+
+    act(() => result.current.schedule(buildContent({ notes: "pendiente" })));
+    act(() => result.current.flush());
+    expect(stored()).toMatchObject({ notes: "pendiente" });
+
+    // El temporizador ya no existe: no hay segunda escritura.
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+    expect(setItem).toHaveBeenCalledTimes(1);
+  });
+
+  it("sync guarda en el acto y cancela lo pendiente: lo último que se pidió es lo que queda", () => {
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => result.current.schedule(buildContent({ notes: "viejo" })));
+    act(() => result.current.sync(buildContent({ notes: "al salir" })));
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+
+    expect(stored()).toMatchObject({ notes: "al salir" });
+  });
+
+  it("al desmontar se escribe lo pendiente, y la siguiente visita lo ofrece", () => {
+    const visit = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => visit.result.current.schedule(buildContent({ notes: "a medias" })));
+    visit.unmount();
+
+    expect(stored()).toMatchObject({ notes: "a medias" });
+    expect(renderHook(() => usePurchaseDraftStorage()).result.current.pending).toMatchObject({
+      notes: "a medias",
+    });
+  });
+
+  it("clear cancela lo pendiente: una compra confirmada no vuelve a guardarse", () => {
+    const visit = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => visit.result.current.sync(buildContent()));
+    act(() => visit.result.current.schedule(buildContent({ notes: "tras confirmar" })));
+    act(() => visit.result.current.clear());
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+    expect(stored()).toBeNull();
+
+    visit.unmount();
+    expect(stored()).toBeNull();
+  });
+
+  it("adopt cancela lo pendiente: lo que había en el formulario no pisa el borrador restaurado", () => {
+    const previous = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => previous.result.current.sync(buildContent({ notes: "anterior" })));
+    previous.unmount();
+
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => result.current.schedule(buildContent({ notes: "tecleado" })));
+    act(() => result.current.adopt());
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+
+    expect(stored()).toMatchObject({ notes: "anterior" });
+    expect(stored(newKey)).toBeNull();
+  });
+
+  it("dos pestañas: la segunda no mezcla ni pisa el borrador de la primera sin decidir", () => {
+    const first = renderHook(() => usePurchaseDraftStorage());
+    const second = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => first.result.current.schedule(buildContent({ notes: "pestaña 1" })));
+    act(() => {
+      jest.advanceTimersByTime(500);
+    });
+    // La segunda ve la compra de la primera como pendiente y guarda la suya aparte.
+    expect(second.result.current.pending).toMatchObject({ notes: "pestaña 1" });
+    act(() => second.result.current.schedule(buildContent({ notes: "pestaña 2" })));
+    act(() => {
+      jest.advanceTimersByTime(500);
+    });
+
+    expect(stored()).toMatchObject({ notes: "pestaña 1" });
+    expect(stored(newKey)).toMatchObject({ notes: "pestaña 2" });
+
+    // «Seguir con esta» en la segunda: gana entera la última decisión, sin mezclar líneas.
+    act(() => second.result.current.keepNew());
+    expect(stored()).toMatchObject({ notes: "pestaña 2" });
+    expect(stored(newKey)).toBeNull();
+  });
+});
+
+describe("usePurchaseDraftStorage · lo que no se pudo guardar (CNF-15)", () => {
+  it("guardando con normalidad saveBlock es null, también sin nada que guardar", () => {
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => result.current.sync(buildContent()));
+    expect(result.current.saveBlock).toBeNull();
+
+    act(() => result.current.sync(buildContent({ lines: emptyLines, supplierId: "" })));
+    expect(result.current.saveBlock).toBeNull();
+  });
+
+  it("localStorage lleno: saveBlock dice «storage» hasta que se pueda escribir", () => {
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+    const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+
+    act(() => result.current.sync(buildContent()));
+    expect(result.current.saveBlock).toBe("storage");
+
+    setItem.mockRestore();
+    act(() => result.current.sync(buildContent()));
+    expect(result.current.saveBlock).toBeNull();
+    expect(window.localStorage.getItem(key)).not.toBeNull();
+  });
+
+  it("con dos compras de otras visitas sin decidir no hay dónde guardar: «two-drafts»", () => {
+    const previous = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => previous.result.current.sync(buildContent({ notes: "anterior" })));
+    previous.unmount();
+
+    const other = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => other.result.current.sync(buildContent({ notes: "nueva" })));
+    expect(other.result.current.saveBlock).toBeNull();
+    other.unmount();
+
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    expect(result.current.saveBlock).toBe("two-drafts");
+    act(() => result.current.sync(buildContent({ notes: "tercera" })));
+    expect(window.localStorage.getItem(key)).toContain("anterior");
     expect(window.localStorage.getItem(newKey)).toContain("nueva");
   });
 });

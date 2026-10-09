@@ -32,9 +32,11 @@ type AssortedPackOpeningConfirmProps = {
 };
 
 /**
- * Confirmación de la apertura de un surtido con el efecto del reparto. Se
- * monta dentro del modal del formulario; mientras el envío está en vuelo no se
- * cierra, y un error del servidor se muestra tal cual para reintentar.
+ * Confirmación de la apertura de un empaque con su efecto: las dos caras de un
+ * 1 a 1 (−N empaques, +N × u unidades) o el reparto de un surtido, y el motivo
+ * tecleado. Se monta dentro del modal del formulario; mientras el envío está en
+ * vuelo no se cierra, y un error del servidor se muestra tal cual para
+ * reintentar sin perder el formulario de debajo.
  */
 export function AssortedPackOpeningConfirm({ opening }: AssortedPackOpeningConfirmProps) {
   const { effect } = opening;
@@ -45,8 +47,12 @@ export function AssortedPackOpeningConfirm({ opening }: AssortedPackOpeningConfi
 
   return (
     <ConfirmActionModal
-      confirmLabel="Abrir empaque"
-      description={`Vas a abrir ${effect.packQuantity} empaque(s) de ${effect.pack.name} con este reparto.`}
+      confirmLabel={opening.isSingle ? "Convertir empaque" : "Abrir empaque"}
+      description={
+        opening.isSingle
+          ? `Vas a convertir ${effect.packQuantity} empaque(s) de ${effect.pack.name} en ${effect.distributedTotal} unidad(es) sueltas.`
+          : `Vas a abrir ${effect.packQuantity} empaque(s) de ${effect.pack.name} con este reparto.`
+      }
       effects={buildPackOpeningConfirmEffects(effect)}
       error={opening.error}
       isPending={opening.isPending}
@@ -57,7 +63,15 @@ export function AssortedPackOpeningConfirm({ opening }: AssortedPackOpeningConfi
         }
       }}
       open={opening.confirmOpen}
-      title="Abrir empaque surtido"
-    />
+      title={opening.isSingle ? "Confirmar conversión de empaque" : "Abrir empaque surtido"}
+    >
+      {opening.reason ? (
+        <p className="whitespace-pre-wrap break-words">
+          Motivo: <span className="font-medium text-foreground">{opening.reason}</span>
+        </p>
+      ) : (
+        <p>Sin motivo.</p>
+      )}
+    </ConfirmActionModal>
   );
 }

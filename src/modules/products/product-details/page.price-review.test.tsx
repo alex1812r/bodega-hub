@@ -4,7 +4,7 @@
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 let mockPermissions: string[] = [];
@@ -134,6 +134,9 @@ describe("ProductDetailsPage · Por revisar (PRO-11)", () => {
   });
 
   afterEach(() => {
+    // DET-01: la pestaña activa va en la URL y el kardex recuerda si quedó abierto.
+    window.history.replaceState(null, "", "/");
+    window.localStorage.clear();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: originalMatchMedia,
@@ -156,6 +159,9 @@ describe("ProductDetailsPage · Por revisar (PRO-11)", () => {
     within(await screen.findByRole("region", { name: "Precio por revisar" }));
 
   async function historyRows() {
+    // DET-01: el historial de precios vive en la pestaña Historial.
+    fireEvent.click(await screen.findByRole("tab", { name: "Historial" }));
+
     const table = within(
       (await screen.findByRole("heading", { name: "Historial de precios" })).closest(
         "section",
@@ -240,7 +246,7 @@ describe("ProductDetailsPage · Por revisar (PRO-11)", () => {
 
     expect(
       dialog.getByText(
-        "El precio se queda en ref 10.00 con una ganancia de 11,11 %. Saldrá de la lista hasta que el costo vuelva a subir.",
+        "El precio no cambia: se queda en ref 10.00 con una ganancia de 11,11 %. Saldrá de la lista hasta que el costo vuelva a subir.",
       ),
     ).toBeInTheDocument();
     expect(posts).toHaveLength(0);

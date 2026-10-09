@@ -87,6 +87,85 @@ describe("DataTable", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
+  describe("columna Acciones fijada", () => {
+    const rows = [
+      { id: "1", name: "Aceite 1L" },
+      { id: "2", name: "Harina PAN" },
+    ];
+    const actions = () => [{ label: "Ver detalle", onSelect: jest.fn() }];
+
+    function renderTable(variant?: "default" | "stitch" | "stitch-sales" | "stitch-purchases") {
+      return render(
+        <DataTable
+          actions={actions}
+          columns={columns}
+          data={rows}
+          getRowId={(row) => row.id}
+          layout="table"
+          variant={variant}
+        />,
+      );
+    }
+
+    it.each([undefined, "stitch", "stitch-sales", "stitch-purchases"] as const)(
+      "variante %s: el contenedor hace su propio scroll y la celda de acciones queda pegada a la derecha con fondo opaco",
+      (variant) => {
+        const { container, getAllByRole } = renderTable(variant);
+        const cells = container.querySelectorAll("[data-table-actions-cell]");
+
+        expect(container.querySelector("[data-table-scroll]")).toHaveClass("overflow-x-auto", "w-full");
+        expect(container.querySelector("[data-table-scroll] > table")).not.toBeNull();
+        expect(cells).toHaveLength(rows.length);
+
+        cells.forEach((cell) => {
+          expect(cell).toHaveClass(
+            "sticky",
+            "right-0",
+            "bg-surface-container-lowest",
+            "dark:bg-slate-900",
+          );
+          expect(cell.querySelector("button")).not.toBeNull();
+        });
+
+        expect(getAllByRole("button", { name: /abrir acciones/i })).toHaveLength(rows.length);
+      },
+    );
+
+    it("el encabezado Acciones también queda fijado, con el fondo de la cabecera", () => {
+      const { getByRole } = renderTable("stitch");
+
+      expect(getByRole("columnheader", { name: "Acciones" })).toHaveClass(
+        "sticky",
+        "right-0",
+        "bg-surface-container",
+      );
+    });
+
+    it("la celda fijada repite el rayado y el hover de su fila", () => {
+      const { container } = renderTable("stitch");
+      const [even, odd] = Array.from(container.querySelectorAll("[data-table-actions-cell]"));
+
+      expect(even).toHaveClass("group-hover:before:bg-surface-container-low");
+      expect(even).not.toHaveClass("before:bg-surface-bright");
+      expect(odd).toHaveClass("before:bg-surface-bright", "dark:before:bg-slate-800/40");
+      expect(odd.closest("tr")).toHaveClass("group", "bg-surface-bright");
+    });
+
+    it("las tablas stitch conservan su ancho mínimo y las demás no lo tienen", () => {
+      expect(renderTable("stitch").container.querySelector("table")).toHaveClass("min-w-[720px]");
+      expect(renderTable().container.querySelector("table")).not.toHaveClass("min-w-[720px]");
+    });
+
+    it("sin acciones no hay columna fijada", () => {
+      const { container, queryByRole } = render(
+        <DataTable columns={columns} data={rows} getRowId={(row) => row.id} layout="table" />,
+      );
+
+      expect(container.querySelector("[data-table-actions-cell]")).toBeNull();
+      expect(queryByRole("columnheader", { name: "Acciones" })).toBeNull();
+    });
+  });
+
   describe("renderExpandedRow", () => {
     const rows: Row[] = [
       { id: "1", name: "Aceite 1L" },

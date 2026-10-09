@@ -18,11 +18,14 @@ import { ClientApiError } from "@/shared/api/apiFetch";
 import { Button } from "@/shared/components/Button";
 import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { Modal } from "@/shared/components/Modal";
-import { ProcessGuard } from "@/shared/components/ProcessGuard";
+import { ProcessGuard, ProcessGuardModal } from "@/shared/components/ProcessGuard";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 import {
+  PENDING_BALANCE_SHARES,
   PaymentFormFields,
   type PaymentFormValues,
   amountForMethodChange,
+  amountForPendingShare,
   buildPaymentFormPayload,
   createEmptyPaymentFormValues,
   getPaymentCurrency,
@@ -91,7 +94,15 @@ import {
  * Salir de la pantalla: con el modal abierto y un pago en vuelo o por confirmar, un
  * guardia de proceso (`ProcessGuard`) pregunta antes de seguir un enlace o de ir
  * ATRÁS. Usa `useRouter` de `next/navigation`, así que el modal necesita el App Router
- * (en tests, simular `next/navigation` si se llega a enviar un pago).
+ * (en tests, simular `next/navigation`).
+ *
+ * Datos tecleados sin registrar: si el usuario cambió el método o tecleó un monto,
+ * banco, teléfono, referencia o nota, cerrar (Esc, clic fuera, Cancelar, la X) o salir
+ * de la pantalla pregunta antes con otro guardia que nombra el pago
+ * (`useFormModalDiscardGuard`). Un monto puesto por "Completar saldo" o por un atajo de
+ * porcentaje no cuenta hasta que se edita. Sin datos, y tras registrar el pago (el
+ * formulario queda limpio), cierra sin preguntar. Con el pago en vuelo o por confirmar
+ * manda el comportamiento de arriba: este guardia no está activo.
  *
  * @example Botón dentro del detalle de una venta
  * <RegisterPaymentModal saleId={sale.id} trigger={<Button>Cobrar saldo</Button>} />
@@ -324,6 +335,8 @@ function RegisterPaymentForm({
   const [storedValues, setValues] = useState<PaymentFormValues>(
     () => unconfirmedAttempt?.values ?? createEmptyPaymentFormValues(),
   );
+  /** Valores con los que arrancó el formulario limpio: lo que difiere es lo tecleado. */
+  const [baselineValues, setBaselineValues] = useState<PaymentFormValues>(storedValues);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [successBalanceVes, setSuccessBalanceVes] = useState<number | undefined>();
   const [submitError, setSubmitError] = useState<Error | null>(null);
@@ -429,9 +442,46 @@ function RegisterPaymentForm({
       rateVes,
     }) &&
     enabledMethods.includes(method);
+  // El método de partida pasa por la misma sustitución que el elegido: que la tienda
+  // no tenga habilitado el de por defecto no es un cambio del usuario.
+  const baselineMethod =
+    enabledMethods.length === 0 || enabledMethods.includes(baselineValues.method)
+      ? baselineValues.method
+      : enabledMethods[0];
+  // Montos que ponen "Completar saldo" y los atajos de porcentaje: no son tecleados.
+  const shortcutAmounts = PENDING_BALANCE_SHARES.map((percent) =>
+    amountForPendingShare(method, pendingBalanceVes, percent, rateVes),
+  ).flatMap((amount) => (amount === null ? [] : [String(amount)]));
+  const hasTypedData =
+    method !== baselineMethod ||
+    values.bankName.trim() !== baselineValues.bankName ||
+    values.phone.trim() !== baselineValues.phone ||
+    values.referenceCode.trim() !== baselineValues.referenceCode ||
+    values.notes.trim() !== baselineValues.notes ||
+    (values.amount !== baselineValues.amount && !shortcutAmounts.includes(values.amount));
+  const typedAmount = Number(values.amount);
+  const guardContactName =
+    fixedDocument === "purchase" ? purchase.data?.supplier?.name : sale.data?.customer?.name;
+  // Con el pago en vuelo o por confirmar no se pregunta aquí: manda el guardia de U6.
+  const { guard, requestClose, trackFocus } = useFormModalDiscardGuard({
+    active: open && hasTypedData && !createPayment.isPending && unconfirmedAttempt === null,
+    label: [
+      fixedDocument === "sale" ? "Cobro" : "Pago",
+      typedAmount > 0
+        ? `de ${getPaymentCurrency(method) === "USD" ? formatRefUsd(typedAmount) : formatVes(typedAmount)}`
+        : null,
+      guardContactName ? `a ${guardContactName}` : null,
+      "sin registrar",
+    ]
+      .filter((part) => part !== null)
+      .join(" "),
+  });
 
   function clearFields() {
-    setValues(createEmptyPaymentFormValues(method));
+    const emptyValues = createEmptyPaymentFormValues(method);
+
+    setValues(emptyValues);
+    setBaselineValues(emptyValues);
     setHasSubmitted(false);
   }
 
@@ -648,17 +698,29 @@ function RegisterPaymentForm({
           return;
         }
 
-        if (!isControlled) {
-          setInternalOpen(nextOpen);
+        if (nextOpen) {
+          if (!isControlled) {
+            setInternalOpen(true);
+          }
+
+          onOpenChange?.(true);
+          return;
         }
 
-        onOpenChange?.(nextOpen);
+        // Con datos tecleados sin registrar pregunta antes de descartarlos.
+        requestClose(() => {
+          if (!isControlled) {
+            setInternalOpen(false);
+          }
+
+          onOpenChange?.(false);
+        });
       }}
       open={open}
       title={resolvedTitle}
       trigger={trigger ?? (isControlled ? undefined : <Button size="sm">{resolvedTitle}</Button>)}
     >
-      <form className="grid gap-4" id={formId} onSubmit={handleSubmit}>
+      <form className="grid gap-4" id={formId} onFocus={trackFocus} onSubmit={handleSubmit}>
         {pendingBalanceVes !== undefined && !balanceIsLoading ? (
           <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
             Saldo pendiente actual: {formatVes(pendingBalanceVes)}
@@ -804,6 +866,9 @@ function RegisterPaymentForm({
           onLeave="discard"
         />
       ) : null}
+
+      {/* CNF-15: datos tecleados sin registrar. Nunca coincide con el guardia de U6. */}
+      <ProcessGuardModal guard={guard} />
     </Modal>
   );
 }

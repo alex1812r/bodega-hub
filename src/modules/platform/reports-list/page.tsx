@@ -1,116 +1,147 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useMemo } from "react";
 
 import { getPageDataSourceSuffix } from "@/lib/api/dataSourceUi";
+import { getBusinessTodayIsoDate } from "@/modules/dashboard/utils/businessDate";
+import { parseDateRangeParams, serializeDateRange } from "@/shared/components/DateRangeField";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import { SelectField } from "@/shared/components/SelectField";
+import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import {
+  URL_LIST_DEBOUNCE_MS,
+  useUrlListState,
+  withUrlListBoundary,
+} from "@/shared/hooks/useUrlListState";
+import { InvalidUrlRangeNotice } from "@/modules/reports/reports-list/components/InvalidUrlRangeNotice";
 import { ReportsCatalogTable } from "@/modules/reports/reports-list/components/ReportsCatalogTable";
 import { ReportsExportActions } from "@/modules/reports/reports-list/components/ReportsExportActions";
 import { ReportsListFilters } from "@/modules/reports/reports-list/components/ReportsListFilters";
 import { ReportsResultPanel } from "@/modules/reports/reports-list/components/ReportsResultPanel";
 import {
-  defaultReportId,
   getReportById,
   reportCatalog,
-  type ReportId,
 } from "@/modules/reports/reports-list/config/reportCatalog";
-import type {
-  PurchasesReportFilters,
-  ReportDateRangeFilters,
-  ReportRequestScope,
-  StockCardReportFilters,
-} from "@/modules/reports/hooks/useReports";
+import { sanitizeUrlRange } from "@/modules/reports/reports-list/urlDateRange";
 
-import type { PlatformStoreScope } from "../types/reports";
 import { PlatformStoreScopeFilter } from "../components/PlatformStoreScopeFilter";
+import {
+  isPlatformReportId,
+  PLATFORM_REPORTS_TEXT_FIELDS,
+  platformReportsListSchema,
+  toPlatformReportFilters,
+  toPlatformReportScope,
+  toSelectedStoreIds,
+} from "./reportsListParams";
 
-export function PlatformReportsListPage() {
-  const [activeReportId, setActiveReportId] = useState<ReportId>(defaultReportId);
-  const [dateFilters, setDateFilters] = useState<ReportDateRangeFilters>({});
-  const [stockCardFilters, setStockCardFilters] = useState<StockCardReportFilters>({});
-  const [purchasesFilters, setPurchasesFilters] = useState<PurchasesReportFilters>({});
-  const [storeScope, setStoreScope] = useState<PlatformStoreScope>("all");
-  const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
-  const activeReport = getReportById(activeReportId);
-
-  const scopeReady =
-    storeScope === "all" ||
-    (storeScope === "one" && selectedStoreIds.length === 1) ||
-    (storeScope === "selected" && selectedStoreIds.length > 0);
-
-  const reportScope: ReportRequestScope = useMemo(
-    () => ({
-      enabled: scopeReady,
-      pathPrefix: "/api/platform/reports",
-      storeIds: selectedStoreIds.join(","),
-      storeScope,
-    }),
-    [scopeReady, selectedStoreIds, storeScope],
+function PlatformReportsList() {
+  // Reporte activo, rango, proveedor, producto y alcance de tiendas viven en la
+  // URL: recarga, "atrás" y un enlace compartido abren el mismo reporte.
+  const list = useUrlListState(platformReportsListSchema, {
+    textFields: PLATFORM_REPORTS_TEXT_FIELDS,
+  });
+  const { setState: setListState, state } = list;
+  const { from, preset, product, report, scope, store, supplier, to } = state;
+  const today = getBusinessTodayIsoDate();
+  // Un rango de la URL invertido, con el año fuera de 2000..actual+1 o mal formado
+  // no se usa ni viaja al servidor (que lo rechazaría con 400): se avisa.
+  const searchParams = useSearchParams();
+  const rawFrom = searchParams.get("from");
+  const rawTo = searchParams.get("to");
+  const urlRange = useMemo(
+    () => sanitizeUrlRange({ from, to }, { from: rawFrom, to: rawTo }, today),
+    [from, rawFrom, rawTo, to, today],
   );
+  // Rango efectivo: un `preset` relativo se recalcula con el hoy operativo.
+  const range = useMemo(
+    () => parseDateRangeParams({ from: urlRange.from, preset, to: urlRange.to }, today),
+    [preset, today, urlRange],
+  );
+  // Los campos reflejan lo tecleado al instante; los reportes esperan lo mismo que la URL.
+  const debouncedSupplier = useDebouncedValue(supplier, URL_LIST_DEBOUNCE_MS);
+  const debouncedProduct = useDebouncedValue(product, URL_LIST_DEBOUNCE_MS);
+  const activeReport = getReportById(report);
+  const selectedStoreIds = useMemo(() => toSelectedStoreIds({ scope, store }), [scope, store]);
+  const reportScope = useMemo(() => toPlatformReportScope({ scope, store }), [scope, store]);
+  const typedFilters = useMemo(
+    () => toPlatformReportFilters(range, supplier, product),
+    [product, range, supplier],
+  );
+  const filters = useMemo(
+    () => toPlatformReportFilters(range, debouncedSupplier, debouncedProduct),
+    [debouncedProduct, debouncedSupplier, range],
+  );
+
+  function selectReport(reportId: string) {
+    // Solo los reportes multi-tienda existen aquí: cualquier otro id anula el cambio.
+    if (isPlatformReportId(reportId)) {
+      setListState({ report: reportId });
+    }
+  }
 
   return (
     <EntityListPage
-      actions={
-        <ReportsExportActions
-          exportFilters={{
-            dateFilters,
-            purchasesFilters,
-            scope: reportScope,
-            stockCardFilters,
-          }}
-        />
-      }
+      actions={<ReportsExportActions exportFilters={{ ...filters, scope: reportScope }} />}
       description={`Reportes de plataforma con alcance multi-tienda${getPageDataSourceSuffix()}`}
       layout="sections"
       title="Reportes"
     >
       <PlatformStoreScopeFilter
         description="Genera el reporte para una tienda, varias seleccionadas o todas."
-        onScopeChange={setStoreScope}
-        onSelectedStoreIdsChange={setSelectedStoreIds}
-        scope={storeScope}
+        onScopeChange={(nextScope) => setListState({ scope: nextScope })}
+        onSelectedStoreIdsChange={(storeIds) => setListState({ store: storeIds })}
+        scope={scope}
         selectedStoreIds={selectedStoreIds}
       />
 
+      <InvalidUrlRangeNotice show={urlRange.wasInvalid} />
+
       <ReportsListFilters
-        dateFilters={dateFilters}
-        onDateChange={(patch) => setDateFilters((current) => ({ ...current, ...patch }))}
-        onPurchasesChange={(patch) =>
-          setPurchasesFilters((current) => ({ ...current, ...patch }))
-        }
-        onStockCardChange={(patch) =>
-          setStockCardFilters((current) => ({ ...current, ...patch }))
-        }
-        purchasesFilters={purchasesFilters}
-        stockCardFilters={stockCardFilters}
+        dateFilters={typedFilters.dateFilters}
+        datePreset={range.preset}
+        // Sin `report` la barra no ofrece agrupación ni comparación: nada que guardar.
+        onDateChange={() => undefined}
+        onDateRangeChange={(next) => setListState(serializeDateRange(next))}
+        onPurchasesChange={(patch) => {
+          // El rango ya lo escribe `onDateRangeChange`; de compras solo queda el proveedor.
+          if ("supplierId" in patch) {
+            setListState({ supplier: patch.supplierId ?? "" });
+          }
+        }}
+        onStockCardChange={(patch) => {
+          if ("productId" in patch) {
+            setListState({ product: patch.productId ?? "" });
+          }
+        }}
+        purchasesFilters={typedFilters.purchasesFilters}
+        stockCardFilters={typedFilters.stockCardFilters}
+        today={today}
       />
 
       <div className="lg:hidden">
         <SelectField
           label="Reporte activo"
-          onChange={(event) => setActiveReportId(event.target.value as ReportId)}
-          options={reportCatalog.map((report) => ({
-            label: report.name,
-            value: report.id,
+          onChange={(event) =>
+            selectReport(event.target.value)
+          }
+          options={reportCatalog.map((item) => ({
+            label: item.name,
+            value: item.id,
           }))}
-          value={activeReportId}
+          value={report}
         />
       </div>
 
-      <ReportsCatalogTable
-        activeReportId={activeReportId}
-        onSelect={setActiveReportId}
-        reports={reportCatalog}
-      />
+      <ReportsCatalogTable activeReportId={report} onSelect={selectReport} reports={reportCatalog} />
 
-      {scopeReady ? (
+      {reportScope.enabled ? (
         <ReportsResultPanel
-          dateFilters={dateFilters}
-          purchasesFilters={purchasesFilters}
+          dateFilters={filters.dateFilters}
+          purchasesFilters={filters.purchasesFilters}
           report={activeReport}
           scope={reportScope}
-          stockCardFilters={stockCardFilters}
+          stockCardFilters={filters.stockCardFilters}
         />
       ) : (
         <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
@@ -120,3 +151,6 @@ export function PlatformReportsListPage() {
     </EntityListPage>
   );
 }
+
+/** `useUrlListState` lee la URL: la pantalla lleva su límite de Suspense. */
+export const PlatformReportsListPage = withUrlListBoundary(PlatformReportsList);

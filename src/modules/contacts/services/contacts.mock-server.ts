@@ -116,13 +116,18 @@ export function updateContact(id: string, input: ContactInput, storeId: string) 
   return current;
 }
 
+/** Mismo orden que el servidor real (`created_at` descendente): las páginas coinciden. */
+function newestFirst<T extends { createdAt: string }>(items: T[]) {
+  return [...items].sort((first, second) => second.createdAt.localeCompare(first.createdAt));
+}
+
 export function getContactSales(id: string, searchParams: URLSearchParams, storeId: string) {
   getContactById(id, storeId);
   const items = mockSales.filter(
     (sale) => sale.customerId === id && (sale.storeId ?? DEFAULT_STORE_ID) === storeId,
   );
 
-  return paginateList(items, searchParams);
+  return paginateList(newestFirst(items), searchParams);
 }
 
 export function getContactPurchases(id: string, searchParams: URLSearchParams, storeId: string) {
@@ -132,7 +137,7 @@ export function getContactPurchases(id: string, searchParams: URLSearchParams, s
       purchase.supplierId === id && (purchase.storeId ?? DEFAULT_STORE_ID) === storeId,
   );
 
-  return paginateList(items, searchParams);
+  return paginateList(newestFirst(items), searchParams);
 }
 
 export function getContactPayments(
@@ -150,7 +155,7 @@ export function getContactPayments(
         (!payment.purchaseId && payment.direction !== "salida")),
   );
 
-  return paginateList(items, searchParams);
+  return paginateList(newestFirst(items), searchParams);
 }
 
 export function getContactActivity(
@@ -199,9 +204,8 @@ export function getContactActivity(
       type: "payment" as const,
     }));
 
-  const items = [...sales, ...purchases, ...payments].sort((first, second) =>
-    first.createdAt.localeCompare(second.createdAt),
-  );
+  // Lo más reciente primero: la página 1 es la actividad reciente, no la más antigua.
+  const items = newestFirst([...sales, ...purchases, ...payments]);
 
   return paginateList(items, searchParams);
 }

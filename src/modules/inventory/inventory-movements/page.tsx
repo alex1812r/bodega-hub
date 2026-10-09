@@ -15,15 +15,15 @@ import {
   useUrlPaginationState,
 } from "@/shared/components/Pagination";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import {
   URL_LIST_DEBOUNCE_MS,
   useUrlListState,
   withUrlListBoundary,
 } from "@/shared/hooks/useUrlListState";
-import { RETURN_TO_PARAM } from "@/shared/utils/returnTo";
+import { RETURN_TO_PARAM, isSafeInternalPath } from "@/shared/utils/returnTo";
 
 import { useInventoryMovements, type InventoryMovement } from "../hooks/useInventory";
-import { readChainedReturnTo } from "../utils/chainedReturnTo";
 import { InventoryAdjustmentModal } from "./components/InventoryAdjustmentModal";
 import { InventoryMovementDetailModal } from "./components/InventoryMovementDetailModal";
 import { InventoryMovementsExportActions } from "./components/InventoryMovementsExportActions";
@@ -70,17 +70,19 @@ function InventoryMovements() {
   });
   const { href: listHref, setState: setListState, state } = list;
   const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
-  const returnTo = readChainedReturnTo(useSearchParams().get(RETURN_TO_PARAM));
+  // Se llegó desde otra pantalla (`/inventory`, un producto…): "Volver" regresa a ella.
+  const hasReturnTo = isSafeInternalPath(useSearchParams().get(RETURN_TO_PARAM));
   const [selectedMovement, setSelectedMovement] = useState<InventoryMovement | null>(null);
 
   // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
   const debouncedDocument = useDebouncedValue(state.document, URL_LIST_DEBOUNCE_MS);
   // Al limpiar el campo no se espera: no se consulta otra vez con el texto anterior.
   const document = state.document.trim() === "" ? "" : debouncedDocument;
-  const { documentKind, from, productId, to, type } = state;
+  const { documentKind, from, productId, purchaseId, saleId, to, type } = state;
   const filters = useMemo(
-    () => toMovementFilters({ documentKind, from, productId, to, type }, document),
-    [document, documentKind, from, productId, to, type],
+    () =>
+      toMovementFilters({ documentKind, from, productId, purchaseId, saleId, to, type }, document),
+    [document, documentKind, from, productId, purchaseId, saleId, to, type],
   );
   const isRangeInverted = isMovementsRangeInverted(state);
   const hasFilters = hasInventoryMovementsFilters(state);
@@ -107,6 +109,9 @@ function InventoryMovements() {
       setListState({ page: lastPage });
     }
   }, [isPagePastTheEnd, lastPage, setListState]);
+
+  // Al volver de una venta o una compra la lista reaparece a la altura en que se dejó.
+  useScrollRestoration(listHref, { ready: !movementsQuery.isLoading });
 
   function clearFilters() {
     setListState(INVENTORY_MOVEMENTS_NO_FILTERS);
@@ -139,7 +144,7 @@ function InventoryMovements() {
             </>
           )
         }
-        returnTo={returnTo}
+        hasReturnTo={hasReturnTo}
       />
 
       {isForbidden ? (

@@ -63,4 +63,52 @@ describe("DeactivateProductConfirmModal", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onSuccess).toHaveBeenCalled();
   });
+
+  it("dice cuánto stock queda inmovilizado y su valor al costo (CNF-13)", () => {
+    render(
+      <DeactivateProductConfirmModal
+        onOpenChange={jest.fn()}
+        open
+        product={{ ...product, currentCostRef: 8.5, currentStock: 12 }}
+      />,
+    );
+
+    const effects = screen.getByRole("list", { name: "Qué va a pasar" });
+
+    expect(effects).toHaveTextContent(/No podrá venderse/);
+    expect(effects).toHaveTextContent(
+      /Stock que queda inmovilizado.*12 unidades · ref 102[.,]00 al costo/,
+    );
+  });
+
+  it("sin stock lo dice en vez de inventar una cifra (CNF-13)", () => {
+    render(
+      <DeactivateProductConfirmModal
+        onOpenChange={jest.fn()}
+        open
+        product={{ ...product, currentStock: 0 }}
+      />,
+    );
+
+    expect(screen.getByRole("list", { name: "Qué va a pasar" })).toHaveTextContent(
+      "No tiene stock que quede inmovilizado",
+    );
+  });
+
+  it("cancelar no desactiva y un doble clic desactiva una sola vez (CNF-13)", async () => {
+    const user = userEvent.setup();
+    const view = render(
+      <DeactivateProductConfirmModal onOpenChange={jest.fn()} open product={product} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(mockMutateAsync).not.toHaveBeenCalled();
+
+    view.rerender(
+      <DeactivateProductConfirmModal onOpenChange={jest.fn()} open product={product} />,
+    );
+    await user.dblClick(screen.getByRole("button", { name: /desactivar producto/i }));
+
+    await waitFor(() => expect(mockMutateAsync).toHaveBeenCalledTimes(1));
+  });
 });

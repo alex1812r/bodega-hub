@@ -29,12 +29,12 @@ type KeepPriceConfirmModalProps = {
   product: KeepPriceProduct | null;
 };
 
-/** "El precio se queda en ref 10.00 con una ganancia de 11 %." (sin costo no hay %). */
+/** "El precio no cambia: se queda en ref 10.00 con una ganancia de 11 %." (sin costo no hay %). */
 export function describeKeptPrice(
   product: Pick<KeepPriceProduct, "currentCostRef" | "salePriceRef">,
 ) {
   const pct = markupPct(product.currentCostRef, product.salePriceRef);
-  const price = `El precio se queda en ${formatRefUsd(product.salePriceRef)}`;
+  const price = `El precio no cambia: se queda en ${formatRefUsd(product.salePriceRef)}`;
 
   return pct === null ? `${price}.` : `${price} con una ganancia de ${formatMarkupPct(pct)}.`;
 }

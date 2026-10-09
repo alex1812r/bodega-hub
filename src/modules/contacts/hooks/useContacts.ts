@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryOptions } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
@@ -41,13 +41,17 @@ export type ContactActivityApiRow = {
 
 export const contactsQueryKeys = {
   all: ["contacts"] as const,
-  activity: (id: string) => [...contactsQueryKeys.detail(id), "activity"] as const,
+  activity: (id: string, pagination: PaginationParams = {}) =>
+    [...contactsQueryKeys.detail(id), "activity", pagination] as const,
   detail: (id: string) => [...contactsQueryKeys.all, "detail", id] as const,
   list: (filters: ContactsFilters = {}) =>
     [...contactsQueryKeys.all, "list", filters] as const,
-  payments: (id: string) => [...contactsQueryKeys.detail(id), "payments"] as const,
-  purchases: (id: string) => [...contactsQueryKeys.detail(id), "purchases"] as const,
-  sales: (id: string) => [...contactsQueryKeys.detail(id), "sales"] as const,
+  payments: (id: string, pagination: PaginationParams = {}) =>
+    [...contactsQueryKeys.detail(id), "payments", pagination] as const,
+  purchases: (id: string, pagination: PaginationParams = {}) =>
+    [...contactsQueryKeys.detail(id), "purchases", pagination] as const,
+  sales: (id: string, pagination: PaginationParams = {}) =>
+    [...contactsQueryKeys.detail(id), "sales", pagination] as const,
 };
 
 type ContactsListQueryOptions = Pick<
@@ -77,37 +81,54 @@ export function useContact(id?: string) {
   });
 }
 
-export function useContactActivity(id?: string) {
+/**
+ * Sublistas del detalle de un contacto, paginadas en servidor (`skip`/`limit`).
+ * Sin `pagination` el BFF entrega la primera página de 10. Al cambiar de página
+ * se conserva la anterior a la vista hasta que llega la nueva.
+ */
+export function useContactActivity(id?: string, pagination: PaginationParams = {}) {
   return useQuery({
     enabled: Boolean(id),
-    queryKey: contactsQueryKeys.activity(id ?? ""),
+    placeholderData: keepPreviousData,
+    queryKey: contactsQueryKeys.activity(id ?? "", pagination),
     queryFn: () =>
-      apiFetch<PaginatedList<ContactActivityApiRow>>(`/api/contacts/${id}/activity`),
+      apiFetch<PaginatedList<ContactActivityApiRow>>(`/api/contacts/${id}/activity`, {
+        query: pagination,
+      }),
   });
 }
 
-export function useContactSales(id?: string) {
+export function useContactSales(id?: string, pagination: PaginationParams = {}) {
   return useQuery({
     enabled: Boolean(id),
-    queryKey: contactsQueryKeys.sales(id ?? ""),
-    queryFn: () => apiFetch<PaginatedList<SaleMock>>(`/api/contacts/${id}/sales`),
-  });
-}
-
-export function useContactPurchases(id?: string) {
-  return useQuery({
-    enabled: Boolean(id),
-    queryKey: contactsQueryKeys.purchases(id ?? ""),
+    placeholderData: keepPreviousData,
+    queryKey: contactsQueryKeys.sales(id ?? "", pagination),
     queryFn: () =>
-      apiFetch<PaginatedList<PurchaseMock>>(`/api/contacts/${id}/purchases`),
+      apiFetch<PaginatedList<SaleMock>>(`/api/contacts/${id}/sales`, { query: pagination }),
   });
 }
 
-export function useContactPayments(id?: string) {
+export function useContactPurchases(id?: string, pagination: PaginationParams = {}) {
   return useQuery({
     enabled: Boolean(id),
-    queryKey: contactsQueryKeys.payments(id ?? ""),
-    queryFn: () => apiFetch<PaginatedList<PaymentMock>>(`/api/contacts/${id}/payments`),
+    placeholderData: keepPreviousData,
+    queryKey: contactsQueryKeys.purchases(id ?? "", pagination),
+    queryFn: () =>
+      apiFetch<PaginatedList<PurchaseMock>>(`/api/contacts/${id}/purchases`, {
+        query: pagination,
+      }),
+  });
+}
+
+export function useContactPayments(id?: string, pagination: PaginationParams = {}) {
+  return useQuery({
+    enabled: Boolean(id),
+    placeholderData: keepPreviousData,
+    queryKey: contactsQueryKeys.payments(id ?? "", pagination),
+    queryFn: () =>
+      apiFetch<PaginatedList<PaymentMock>>(`/api/contacts/${id}/payments`, {
+        query: pagination,
+      }),
   });
 }
 

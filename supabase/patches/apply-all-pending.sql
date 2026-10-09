@@ -759,6 +759,21 @@ notify pgrst, 'reload schema';
 -- casilla funciona (no envia el argumento); tocandola responde 409 ("Esta base aún no admite guardar la receta...") sin
 -- escribir nada. La preferencia se sigue LEYENDO de la cabecera con el select que authenticated conserva.
 -- -----------------------------------------------------------------------------
+-- 20261012b — price review disassemble (INT-04): la cola "Por revisar" atribuye a la compra el costo que suben los
+--             componentes de un empaque desarmado en su recepcion ("Desarmar al recibir"), para que el aviso de reprecio
+--             del detalle de ESA compra los liste
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261012b-price-review-disassemble.sql
+-- Requiere 20261009c (la vista) y 20261010d (purchase_items.disassembled_conversion_id). Idempotente, una transaccion.
+-- Solo redefine la vista products_price_review (mismas columnas, tipos y orden; security_invoker) y crea el indice
+-- parcial idx_purchase_items_disassembled_conversion. La compra causante pasa a ser la del movimiento mas reciente
+-- posterior a la ultima instantanea de precio que sea una `compra` o una `conversion_entrada` cuya apertura es la que
+-- guardo una linea de compra al desarmarse. No cambia QUE productos estan en la cola ni toca stock, costos, precios,
+-- dinero, filas, politicas, grants ni RPC. Una apertura a mano sigue sin compra.
+-- No depende del BFF (lee las mismas columnas): puede ir antes o despues. El `create index` no es concurrently: bloquea
+-- las escrituras de purchase_items mientras se construye.
+-- OJO: reaplicar 20261009c reinstala la vista sin el enlace: volver a aplicar este parche y correr verify-patches.sql.
+-- -----------------------------------------------------------------------------
 -- 20261013a — report money views (REP-06a): daily_sales_summary y gross_profit_summary pasan de dia UTC a dia operativo
 --             de Caracas, y vistas nuevas report_sales_by_hour, report_sales_by_category, report_open_documents_aging,
 --             report_open_documents_aging_summary y report_cash_close_differences para los reportes de dinero
@@ -794,3 +809,15 @@ notify pgrst, 'reload schema';
 -- ORDEN DE DESPLIEGUE (REP-07): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
 -- el parche: /api/reports/dead-stock, stock-turnover y stock-adjustments responden error (la vista no existe); el resto
 -- de reportes no cambia. Ningun otro parche redefine estas vistas: puede reaplicarse solo.
+-- -----------------------------------------------------------------------------
+-- 20261015a — cash close diff alert (CNF-10): umbral por tienda del aviso de faltante al cerrar caja
+--             (app_settings.cash_close_diff_alert_ves numeric(14,2) not null default 0, check 0 <= umbral)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261015a-cash-close-diff-alert.sql
+-- Requiere 20260716 y 20261006i. Idempotente, una transaccion. No migra datos (las tiendas existentes reciben 0 por el
+-- default: cualquier faltante pide confirmacion), no toca caja, baul, pagos, cierres, RPC, politicas ni grants: es solo
+-- un aviso de la interfaz (close_cash_session no lee la columna). Regenera los triggers
+-- trg_zz_reject_non_finite_numeric_* de app_settings para cubrir la columna nueva.
+-- Orden con el BFF: indistinto. Sin el parche el BFF lee el umbral como 0 (GET /api/settings y
+-- GET /api/settings/cash-close no fallan) y PATCH /api/settings con `cashCloseDiffAlertVes` responde 409 sin escribir
+-- nada; el resto de ajustes se sigue guardando.

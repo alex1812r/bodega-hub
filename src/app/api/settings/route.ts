@@ -5,6 +5,7 @@ import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
 import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
+import { cashCloseDiffAlertVesSchema } from "@/modules/settings/services/cashCloseSettings.schemas";
 import { pricingSettingsSchema } from "@/modules/settings/services/pricingSettings.schemas";
 import * as settingsMockServer from "@/modules/settings/services/settings.mock-server";
 import * as settingsServer from "@/modules/settings/services/settings.server";
@@ -19,6 +20,8 @@ const paymentMethodSchema = z.enum([
 
 const settingsSchema = z.object({
   businessName: z.string().min(1).optional(),
+  /** Faltante en Bs que el cierre de caja debe superar para pedir confirmación (≥ 0). */
+  cashCloseDiffAlertVes: cashCloseDiffAlertVesSchema.optional(),
   defaultTaxRate: z.number().min(0).optional(),
   /** Alícuota por defecto para categorías nuevas (`tax_rates.id`); el servicio exige que esté activa. */
   defaultTaxRateId: z.string().trim().min(1).optional(),
@@ -32,10 +35,13 @@ const settingsSchema = z.object({
   pricing: pricingSettingsSchema.optional(),
 });
 
+/** Campos cuyo rechazo responde 400 con su motivo en español como mensaje. */
+const fieldsWithOwnMessage: ReadonlyArray<PropertyKey> = ["pricing", "cashCloseDiffAlertVes"];
+
 /**
- * Un rechazo de `pricing` responde 400 con su motivo en español como mensaje
- * (umbrales invertidos, chips repetidos…); el resto conserva la respuesta
- * genérica de validación.
+ * Un rechazo de `pricing` (umbrales invertidos, chips repetidos…) o de
+ * `cashCloseDiffAlertVes` (negativo, no numérico) responde 400 con su motivo en
+ * español como mensaje; el resto conserva la respuesta genérica de validación.
  */
 function parseSettingsInput(body: unknown) {
   const parsed = settingsSchema.safeParse(body);
@@ -44,10 +50,12 @@ function parseSettingsInput(body: unknown) {
     return parsed.data;
   }
 
-  const pricingIssue = parsed.error.issues.find((issue) => issue.path[0] === "pricing");
+  const ownMessageIssue = parsed.error.issues.find((issue) =>
+    fieldsWithOwnMessage.includes(issue.path[0]),
+  );
 
-  if (pricingIssue) {
-    throw new ApiError(400, "BAD_REQUEST", pricingIssue.message, { issues: parsed.error.issues });
+  if (ownMessageIssue) {
+    throw new ApiError(400, "BAD_REQUEST", ownMessageIssue.message, { issues: parsed.error.issues });
   }
 
   throw parsed.error;

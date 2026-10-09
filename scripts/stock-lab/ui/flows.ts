@@ -554,6 +554,44 @@ async function measureMessage(page: Page, message: Locator): Promise<SeenMessage
   return { text: (await target.innerText()).replace(/\s+/g, " ").trim(), box: await target.boundingBox(), viewport };
 }
 
+/** Una confirmación (`ConfirmActionModal`) ya con su efecto calculado, o de solo lectura. */
+type ConfirmationGate = {
+  /** Botón de la acción; solo existe con `ready`. Mientras envía dice «Procesando...». */
+  confirm: Locator;
+  /** Ofrece confirmar. `false` = bloqueada o sin efecto calculado: solo deja «Cerrar». */
+  ready: boolean;
+  text: string;
+};
+
+/**
+ * Toda acción que mueve stock o dinero pasa por una confirmación con su efecto
+ * (módulo Confirmaciones): se espera a que deje de calcular (aparece el botón de
+ * la acción o, si no se puede ejecutar, la alerta con el motivo), se transcribe
+ * lo que dice y, si pide palabra tecleada, se escribe.
+ */
+async function awaitConfirmation(
+  rec: CaseRec,
+  where: string,
+  dialog: Locator,
+  confirmName: RegExp,
+  typedWord?: string,
+): Promise<ConfirmationGate> {
+  await dialog.waitFor({ state: "visible", timeout: NAV_TIMEOUT });
+  const confirm = dialog.getByRole("button", { name: confirmName });
+  await confirm.or(dialog.getByRole("alert")).first().waitFor({ state: "visible", timeout: NAV_TIMEOUT });
+  const ready = await confirm.isVisible();
+  const text = await dialogText(dialog);
+  rec.say(where, text);
+  if (ready && typedWord) {
+    const typed = dialog.getByLabel("Palabra de confirmación");
+    if (await typed.isVisible().catch(() => false)) {
+      await typed.fill(typedWord);
+      rec.say(`${where} · palabra de confirmación`, typedWord);
+    }
+  }
+  return { confirm, ready, text };
+}
+
 async function sayScreen(rec: CaseRec, page: Page, where: string): Promise<string[]> {
   const texts = await screenTexts(page);
   if (texts.length === 0) rec.say(where, "(sin alertas ni diálogos visibles)");
@@ -1478,9 +1516,16 @@ async function uiCreatePackPurchase(
     { timeout: NAV_TIMEOUT },
   );
   await page.getByRole("button", { name: "Confirmar Compra" }).click();
+  // «Confirmar Compra» no envía: abre la confirmación con el efecto («Confirmar pedido»
+  // si queda por recibir, «Confirmar compra» si entra ya) y su botón es quien registra.
+  const confirmation = page.getByRole("dialog", { name: /^Confirmar (pedido|compra)$/ });
+  const gate = await awaitConfirmation(rec, "Compra · confirmación", confirmation, /^Registrar (pedido|compra)$|Procesando/);
+  await rec.shot(page, "compra-confirmacion");
+  if (!gate.ready) throw new Error(`La confirmación de la compra no ofrece registrarla: ${gate.text.slice(0, 300)}`);
+  await gate.confirm.click();
   const response = await created;
   const body = (await response.json().catch(() => null)) as { data?: JsonRecord; error?: JsonRecord } | null;
-  rec.step("UI Confirmar Compra → POST /api/purchases", { as: "admin", status: response.status(), response_id: body?.data ? String(body.data.id) : null });
+  rec.step("UI Confirmar Compra → confirmación → Registrar pedido → POST /api/purchases", { as: "admin", status: response.status(), response_id: body?.data ? String(body.data.id) : null });
   if (!response.ok() || !body?.data) {
     await sayScreen(rec, page, "Compra · error al confirmar");
     throw new Error(`La UI no pudo crear la compra: ${response.status()} ${JSON.stringify(body?.error ?? body)}`);
@@ -1502,7 +1547,7 @@ async function flow04(lab: Lab): Promise<void> {
   const units = packUnits(packCount, unitsPerPack);
   for (const variant of [
     { sub: "receive", key: "F4-BULTO", scope: "plan" as CaseScope, title: "Compra en modo empaque (3 × 12) como pedido → recibir por UI → +36 unidades", double: false },
-    { sub: "receive_double_click", key: "F4-DOBLE", scope: "extra" as CaseScope, title: "Compra en modo empaque → doble clic en «Confirmar recepción» → una sola entrada", double: true },
+    { sub: "receive_double_click", key: "F4-DOBLE", scope: "extra" as CaseScope, title: "Compra en modo empaque → doble clic en «Recibir mercancía» de la confirmación → una sola entrada", double: true },
   ]) {
     await runCase(lab, { n: 4, sub: variant.sub, scope: variant.scope, title: variant.title, hypothesis: ["H2", "H8", "H11"] }, async (rec) => {
       const product = await createProduct(lab, variant.key, { stock: 0, price: 2, supplier: variant.double ? "linked_with_pack_x12" : "linked" });
@@ -1520,15 +1565,16 @@ async function flow04(lab: Lab): Promise<void> {
           receives.push(response.status());
         }
       });
-      await page.getByRole("button", { name: `Acciones de ${purchase.number}` }).click();
-      await page.getByRole("menuitem", { name: "Recibir pedido" }).click();
-      const dialog = page.getByRole("dialog");
-      await dialog.waitFor({ state: "visible" });
-      rec.say("Diálogo Recibir pedido", await dialog.innerText());
+      // Recibir ya no está en el menú Acciones: es el botón del aviso «Pedido sin recibir».
+      // Abre la confirmación con el efecto real (stock y costo por producto); mientras se
+      // calcula no hay botón de recibir.
+      await page.getByRole("button", { name: "Recibir mercancía", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Recibir mercancía", exact: true });
+      const gate = await awaitConfirmation(rec, "Diálogo Recibir mercancía", dialog, /^Recibir mercancía$|Procesando/);
       await rec.shot(page, "dialogo-recibir");
-      const confirm = dialog.getByRole("button", { name: /Confirmar recepción|Procesando/ });
-      if (variant.double) await confirm.dblclick();
-      else await confirm.click();
+      if (!gate.ready) throw new Error(`La confirmación no ofrece «Recibir mercancía»: ${gate.text.slice(0, 300)}`);
+      if (variant.double) await gate.confirm.dblclick();
+      else await gate.confirm.click();
       await dialog.waitFor({ state: "hidden", timeout: NAV_TIMEOUT }).catch(() => undefined);
       await page.waitForLoadState("networkidle").catch(() => undefined);
       await page.waitForTimeout(1_000);
@@ -1536,7 +1582,7 @@ async function flow04(lab: Lab): Promise<void> {
       const header = (await page.locator("main").innerText()).replace(/\s+/g, " ").slice(0, 260);
       rec.say("Detalle tras recibir · cabecera", header);
       await rec.shot(page, "recibido-detalle");
-      rec.step(`UI ${variant.double ? "doble clic" : "clic"} Confirmar recepción`, { as: "admin", status: receives[0], note: `PATCH receive enviados=${receives.length} (${receives.join(",")})` });
+      rec.step(`UI Recibir mercancía → confirmación → ${variant.double ? "doble clic" : "clic"} en «Recibir mercancía»`, { as: "admin", status: receives[0], note: `PATCH receive enviados=${receives.length} (${receives.join(",")})` });
 
       const diff = diffSnapshots(before, await snapshot(lab.db, [product.id]));
       const uiRows = await uiMovements(rec, page, product, "movimientos");
@@ -1664,7 +1710,17 @@ async function flow05(lab: Lab): Promise<void> {
 // F6 · Ajuste desde inventario
 // ---------------------------------------------------------------------------
 
-type AdjustOutcome = { claim: UiClaim; text: string; projected: string; status: number | null; productListed: boolean; typeOptions: string[] };
+type AdjustOutcome = {
+  claim: UiClaim;
+  text: string;
+  projected: string;
+  status: number | null;
+  /** El buscador «Producto» llegó precargado con el producto de la fila. */
+  productPreloaded: boolean;
+  /** Se abrió la confirmación con el efecto (el formulario no envía por su cuenta). */
+  confirmationShown: boolean;
+  typeOptions: string[];
+};
 
 async function uiAdjust(
   rec: CaseRec,
@@ -1689,60 +1745,90 @@ async function uiAdjust(
   await page.waitForURL((url) => url.pathname === "/inventory/movements", { timeout: NAV_TIMEOUT });
   await page.waitForLoadState("networkidle").catch(() => undefined);
   await page.getByRole("button", { name: "Ajustar stock" }).click();
-  const dialog = page.getByRole("dialog");
+  // Con la confirmación encima el formulario queda oculto para el árbol accesible:
+  // cada diálogo se busca por su título.
+  const dialog = page.getByRole("dialog", { name: "Ajuste de stock", exact: true });
+  const confirmation = page.getByRole("dialog", { name: "Confirmar ajuste de stock", exact: true });
   await dialog.waitFor({ state: "visible" });
-  const select = dialog.getByLabel("Producto", { exact: true });
-  await dialog.locator("select option").nth(1).waitFor({ state: "attached", timeout: NAV_TIMEOUT });
-  const option = select.locator("option", { hasText: product.name });
-  let productListed = true;
-  if ((await select.inputValue()) !== product.id) {
-    if ((await option.count()) === 0) {
-      // El selector solo carga 100 productos: el nuestro no está entre las opciones.
-      productListed = false;
-      const total = await select.locator("option").count();
-      const shownOption = (await select.locator("option:checked").innerText().catch(() => "")).trim();
-      rec.say(
-        "Ajuste de stock · selector Producto",
-        `no lista «${product.name}» (${total} opciones); muestra «${shownOption}» aunque se llegó desde la fila del producto`,
-      );
-    } else {
-      await select.selectOption({ label: (await option.first().innerText()).trim() });
-    }
+  // «Producto» es un buscador que llega precargado con el producto de la URL
+  // («Nombre (SKU)»); mientras lo lee está deshabilitado.
+  const picker = dialog.getByLabel("Producto", { exact: true });
+  await picker.waitFor({ state: "visible" });
+  let shownProduct = "";
+  for (let i = 0; i < 40; i += 1) {
+    shownProduct = (await picker.inputValue().catch(() => "")).trim();
+    if (shownProduct.toLowerCase().includes(product.sku)) break;
+    await page.waitForTimeout(250);
+  }
+  const productPreloaded = shownProduct.toLowerCase().includes(product.sku);
+  if (!productPreloaded) {
+    rec.say(
+      "Ajuste de stock · buscador Producto",
+      `no llega precargado con «${product.name}»; muestra «${shownProduct}» aunque se llegó desde la fila del producto`,
+    );
+    await picker.fill(product.name);
+    await page.getByRole("option").filter({ hasText: product.name }).first().click();
   }
   const typeSelect = dialog.getByLabel("Tipo de movimiento");
   const typeOptions = (await typeSelect.locator("option").allInnerTexts()).map((text) => text.trim());
   rec.say("Ajuste de stock · opciones de «Tipo de movimiento»", typeOptions.join(" / "));
   await typeSelect.selectOption({ label: typeLabel });
   await dialog.getByLabel("Cantidad").fill(String(quantity));
+  // El motivo del ajuste es obligatorio: sin él «Continuar» no abre la confirmación.
   await dialog.getByLabel("Motivo").fill(`STK-404 ${rec.lab.run}`);
   const projected = await dialogText(dialog);
   const projection = /Después del movimiento:[^A-Z]*/.exec(projected)?.[0]?.trim() ?? "";
   rec.say(`Ajuste ${typeLabel} ${quantity} · proyección`, projection || "(sin proyección)");
   await rec.shot(page, `${shotName}-formulario`);
-  const posted = page
-    .waitForResponse(
-      (response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/inventory/adjustments",
-      { timeout: 8_000 },
-    )
-    .catch(() => null);
-  const submit = page.getByRole("button", { name: /Registrar movimiento|Registrando/ });
-  const submitDisabled = await submit.isDisabled();
-  if (submitDisabled) rec.say(`Ajuste ${typeLabel} ${quantity} · botón`, "Registrar movimiento (deshabilitado)");
-  else await submit.click();
-  const response = submitDisabled ? null : await posted;
+  // El formulario no envía: «Continuar» abre la confirmación con el efecto (stock antes →
+  // después) y «Registrar movimiento» es quien manda el POST. Una salida que dejaría el
+  // stock en negativo se frena en el formulario y la confirmación no llega a abrirse.
+  const proceed = dialog.getByRole("button", { name: "Continuar", exact: true });
+  const proceedDisabled = await proceed.isDisabled();
+  if (proceedDisabled) rec.say(`Ajuste ${typeLabel} ${quantity} · botón`, "Continuar (deshabilitado)");
+  else await proceed.click();
+  const confirmationShown =
+    !proceedDisabled && (await confirmation.waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false));
+  let response: Awaited<ReturnType<Page["waitForResponse"]>> | null = null;
+  if (confirmationShown) {
+    const gate = await awaitConfirmation(rec, `Ajuste ${typeLabel} ${quantity} · confirmación`, confirmation, /^Registrar movimiento$|Procesando/);
+    await rec.shot(page, `${shotName}-confirmacion`);
+    if (gate.ready) {
+      const posted = page
+        .waitForResponse(
+          (candidate) => candidate.request().method() === "POST" && new URL(candidate.url()).pathname === "/api/inventory/adjustments",
+          { timeout: 8_000 },
+        )
+        .catch(() => null);
+      await gate.confirm.click();
+      response = await posted;
+    }
+  } else {
+    rec.say(`Ajuste ${typeLabel} ${quantity} · confirmación`, "(no se abrió: el formulario frenó el ajuste)");
+  }
   await page.waitForTimeout(700);
-  const stillOpen = await dialog.isVisible().catch(() => false);
+  // Un rechazo del servidor se queda en la confirmación; uno del formulario, en el formulario.
+  const confirmationOpen = await confirmation.isVisible().catch(() => false);
+  const stillOpen = confirmationOpen || (await dialog.isVisible().catch(() => false));
   let text = "";
   if (stillOpen) {
-    text = await dialogText(dialog);
-    rec.say(`Ajuste ${typeLabel} ${quantity} · diálogo tras enviar`, text);
+    text = await dialogText(confirmationOpen ? confirmation : dialog);
+    rec.say(`Ajuste ${typeLabel} ${quantity} · ${confirmationOpen ? "confirmación" : "formulario"} tras enviar`, text);
   } else {
-    rec.say(`Ajuste ${typeLabel} ${quantity} · diálogo tras enviar`, "(el diálogo se cerró sin mensaje)");
+    rec.say(`Ajuste ${typeLabel} ${quantity} · diálogo tras enviar`, "(los diálogos se cerraron sin mensaje)");
   }
   await rec.shot(page, `${shotName}-resultado`);
-  rec.step(`UI Ajuste de stock: ${typeLabel} ${quantity}`, { as: "admin", status: response?.status(), note: response ? "" : "no salió ningún POST" });
+  rec.step(`UI Ajuste de stock: ${typeLabel} ${quantity} → Continuar${confirmationShown ? " → confirmación → Registrar movimiento" : " (sin confirmación)"}`, {
+    as: "admin",
+    status: response?.status(),
+    note: response ? "" : "no salió ningún POST",
+  });
+  if (confirmationOpen) {
+    await confirmation.getByRole("button", { name: "Cancelar", exact: true }).click().catch(() => undefined);
+    await confirmation.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => undefined);
+  }
   if (stillOpen) await page.keyboard.press("Escape");
-  return { claim: stillOpen ? "error" : "success", text, projected: projection, status: response?.status() ?? null, productListed, typeOptions };
+  return { claim: stillOpen ? "error" : "success", text, projected: projection, status: response?.status() ?? null, productPreloaded, confirmationShown, typeOptions };
 }
 
 async function flow06(lab: Lab): Promise<void> {
@@ -1763,11 +1849,14 @@ async function flow06(lab: Lab): Promise<void> {
       rec.expected = {
         stock_delta: { [product.sku]: step.delta },
         movements: expectMove ? [{ type: step.type, quantity_delta: step.delta }] : [],
-        ui: expectMove ? "cierra el diálogo y la fila aparece en movimientos" : "mensaje de stock insuficiente, sin movimiento",
+        ui: expectMove
+          ? "«Continuar» abre la confirmación con el efecto, «Registrar movimiento» cierra los diálogos y la fila aparece en movimientos"
+          : "mensaje de stock insuficiente en el formulario, sin confirmación y sin movimiento",
+        confirmation_shown: expectMove,
         type_options: "solo Ajuste entrada, Ajuste salida e Inventario inicial (ninguna devolución)",
       };
-      if (!outcome.productListed) {
-        rec.note("el selector «Producto» del diálogo «Ajuste de stock» solo carga 100 productos y no muestra el producto elegido desde su fila (el ajuste se envía igualmente con el producto de la URL)");
+      if (!outcome.productPreloaded) {
+        rec.note("el buscador «Producto» del diálogo «Ajuste de stock» no llegó precargado con el producto elegido desde su fila (hubo que buscarlo)");
       }
       const uiRows = await uiMovements(rec, page, product, "movimientos");
       const uiMatch = uiRows.filter((row) => row.type.toLowerCase() === step.label.toLowerCase());
@@ -1777,6 +1866,7 @@ async function flow06(lab: Lab): Promise<void> {
         ui_claim: outcome.claim,
         ui_text: outcome.text,
         http_status: outcome.status,
+        confirmation_shown: outcome.confirmationShown,
         type_options: outcome.typeOptions,
         stock_delta: { [product.sku]: diff.stockDelta[product.id] ?? 0 },
         movements: diff.movements.map((m) => ({ type: m.type, quantity_delta: m.quantity_delta, stock_after: m.stock_after })),
@@ -1787,6 +1877,8 @@ async function flow06(lab: Lab): Promise<void> {
       const judged = judgeUiVsDb({ what: "movimiento(s)", uiClaim: outcome.claim, expectedDocs: expectMove ? 1 : 0, createdDocs: diff.movements.length });
       if (judged.verdict === "fail") problems.push(judged.detail);
       problems.push(...adjustmentTypeProblems(outcome.typeOptions));
+      if (expectMove && !outcome.confirmationShown) problems.push("el ajuste no pasó por la confirmación con su efecto");
+      if (!expectMove && outcome.confirmationShown) problems.push("una salida mayor que el stock llegó a la confirmación en vez de frenarse en el formulario");
       if ((diff.stockDelta[product.id] ?? 0) !== step.delta) problems.push(`stock: esperado ${step.delta}, real ${diff.stockDelta[product.id] ?? 0}`);
       if (expectMove && (diff.movements[0]?.type !== step.type || diff.movements[0]?.quantity_delta !== step.delta)) problems.push(`movimiento en base: ${JSON.stringify(diff.movements.map((m) => [m.type, m.quantity_delta]))}`);
       if (uiMatch.length !== (expectMove ? 1 : 0) || (expectMove && uiMatch[0]?.quantity !== step.delta)) problems.push(`la UI muestra ${uiMatch.length} fila(s) «${step.label}» (${uiMatch.map((r) => r.quantity).join(",")})`);
@@ -1821,8 +1913,8 @@ async function flow07(lab: Lab): Promise<void> {
       const before = await snapshot(lab.db, ids);
       const page = await rec.open("admin");
       await rec.goto(page, `/products/${pack.id}`);
-      const card = page.locator("section,div").filter({ has: page.getByRole("heading", { name: "Conversion empaque" }) }).last();
-      rec.say("Detalle empaque · tarjeta Conversion empaque", await card.innerText());
+      const card = page.locator("section,div").filter({ has: page.getByRole("heading", { name: "Conversión de empaque" }) }).last();
+      rec.say("Detalle empaque · tarjeta Conversión de empaque", await card.innerText());
       const trigger = page.getByRole("button", { name: "Abrir empaque" });
       await trigger.waitFor({ state: "visible" });
       await rec.shot(page, "detalle-empaque");
@@ -1830,6 +1922,7 @@ async function flow07(lab: Lab): Promise<void> {
       let text = "";
       let status: number | null = null;
       let nativeMessage = "";
+      let confirmationShown = false;
       // null = la acción no se ofreció (botón deshabilitado): no hay mensaje que medir.
       let seen: SeenMessage | null = null;
       if (await trigger.isDisabled()) {
@@ -1838,37 +1931,69 @@ async function flow07(lab: Lab): Promise<void> {
         rec.say("Detalle empaque · botón", text);
       } else {
         await trigger.click();
-        const dialog = page.getByRole("dialog");
+        // Con la confirmación encima el formulario queda oculto para el árbol accesible:
+        // cada diálogo se busca por su título.
+        const dialog = page.getByRole("dialog", { name: "Abrir empaque", exact: true });
+        const confirmation = page.getByRole("dialog", { name: "Confirmar conversión de empaque", exact: true });
         await dialog.waitFor({ state: "visible" });
         await dialog.getByLabel("Cantidad de empaques").fill(String(variant.packs));
         await dialog.getByLabel("Motivo").fill(`STK-404 ${lab.run}`).catch(() => undefined);
         rec.say("Diálogo Abrir empaque", await dialog.innerText());
         await rec.shot(page, "dialogo");
-        const posted = page
-          .waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/inventory/conversions", { timeout: 8_000 })
-          .catch(() => null);
-        const submit = dialog.getByRole("button", { name: /Abrir empaque|Abriendo|Convirtiendo|Procesando/ });
-        if (await submit.isDisabled()) rec.say("Diálogo Abrir empaque · botón", "deshabilitado");
-        else await submit.click();
-        const response = await posted;
-        status = response?.status() ?? null;
+        // El formulario no envía: «Continuar» abre la confirmación con las dos caras
+        // (−N empaques, +N × u unidades, con su stock antes → después) y «Convertir empaque»
+        // es quien manda el POST. Sin empaques suficientes la confirmación no llega a abrirse.
+        const proceed = dialog.getByRole("button", { name: "Continuar", exact: true });
+        const proceedDisabled = await proceed.isDisabled();
+        if (proceedDisabled) rec.say("Diálogo Abrir empaque · botón", "Continuar (deshabilitado)");
+        else await proceed.click();
+        confirmationShown =
+          !proceedDisabled && (await confirmation.waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false));
+        if (confirmationShown) {
+          const gate = await awaitConfirmation(rec, "Confirmación de la conversión", confirmation, /^Convertir empaque$|Procesando/);
+          await rec.shot(page, "confirmacion");
+          if (gate.ready) {
+            const posted = page
+              .waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/inventory/conversions", { timeout: 8_000 })
+              .catch(() => null);
+            await gate.confirm.click();
+            status = (await posted)?.status() ?? null;
+          }
+        } else {
+          rec.say("Confirmación de la conversión", "(no se abrió: el formulario frenó la conversión)");
+        }
         await page.waitForTimeout(800);
-        nativeMessage = await dialog.getByLabel("Cantidad de empaques").evaluate((element) => (element as HTMLInputElement).validationMessage).catch(() => "");
-        if (nativeMessage) rec.say("Diálogo Abrir empaque · validación nativa del navegador", nativeMessage);
-        if (await dialog.isVisible().catch(() => false)) {
+        // Un rechazo del servidor se queda en la confirmación; uno del formulario, en el formulario.
+        const confirmationOpen = await confirmation.isVisible().catch(() => false);
+        const formOpen = !confirmationOpen && (await dialog.isVisible().catch(() => false));
+        if (formOpen) {
+          nativeMessage = await dialog.getByLabel("Cantidad de empaques").evaluate((element) => (element as HTMLInputElement).validationMessage).catch(() => "");
+          if (nativeMessage) rec.say("Diálogo Abrir empaque · validación nativa del navegador", nativeMessage);
+        }
+        if (confirmationOpen || formOpen) {
+          const open = confirmationOpen ? confirmation : dialog;
+          const where = confirmationOpen ? "Confirmación de la conversión" : "Diálogo Abrir empaque";
           claim = "error";
-          text = await dialogText(dialog);
-          rec.say("Diálogo Abrir empaque tras enviar", text);
-          seen = await measureMessage(page, dialog.getByText(NO_STOCK_MESSAGE));
-          rec.say("Diálogo Abrir empaque · mensaje de stock", seen.text ? `«${seen.text}» en ${JSON.stringify(seen.box)}` : "(ninguno)");
+          text = await dialogText(open);
+          rec.say(`${where} tras enviar`, text);
+          seen = await measureMessage(page, open.getByText(NO_STOCK_MESSAGE));
+          rec.say(`${where} · mensaje de stock`, seen.text ? `«${seen.text}» en ${JSON.stringify(seen.box)}` : "(ninguno)");
         } else {
           claim = "success";
-          rec.say("Diálogo Abrir empaque tras enviar", "(se cerró sin mensaje)");
+          rec.say("Diálogo Abrir empaque tras enviar", "(los diálogos se cerraron sin mensaje)");
         }
         await rec.shot(page, "resultado");
+        if (confirmationOpen) {
+          await confirmation.getByRole("button", { name: "Cancelar", exact: true }).click().catch(() => undefined);
+          await confirmation.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => undefined);
+        }
         if (claim === "error") await page.keyboard.press("Escape");
       }
-      rec.step(`UI Abrir empaque × ${variant.packs}`, { as: "admin", status: status ?? undefined, note: status === null ? "no salió ningún POST" : "" });
+      rec.step(`UI Abrir empaque × ${variant.packs} → Continuar${confirmationShown ? " → confirmación → Convertir empaque" : " (sin confirmación)"}`, {
+        as: "admin",
+        status: status ?? undefined,
+        note: status === null ? "no salió ningún POST" : "",
+      });
       const diff = diffSnapshots(before, await snapshot(lab.db, ids));
       const uiPackRows = await uiMovements(rec, page, pack, "movimientos-empaque");
       const uiUnitRows = await uiMovements(rec, page, unit, "movimientos-unidad");
@@ -1882,11 +2007,13 @@ async function flow07(lab: Lab): Promise<void> {
         movements: variant.ok
           ? [{ type: "conversion_salida", quantity_delta: wantPack }, { type: "conversion_entrada", quantity_delta: wantUnit }]
           : [],
+        confirmation_shown: variant.ok,
       };
       rec.actual = {
         ui_claim: claim,
         ui_text: text,
         http_status: status,
+        confirmation_shown: confirmationShown,
         ui_message: seen,
         native_validation: nativeMessage,
         stock_delta: { [pack.sku]: diff.stockDelta[pack.id] ?? 0, [unit.sku]: diff.stockDelta[unit.id] ?? 0 },
@@ -1898,6 +2025,8 @@ async function flow07(lab: Lab): Promise<void> {
       const problems = diffNumberMaps({ [pack.id]: wantPack, [unit.id]: wantUnit }, diff.stockDelta, labels).map((d) => `stock · ${d}`);
       const judged = judgeUiVsDb({ what: "movimiento(s) de conversión", uiClaim: claim, expectedDocs: variant.ok ? 2 : 0, createdDocs: diff.movements.length });
       if (judged.verdict === "fail") problems.unshift(judged.detail);
+      if (variant.ok && !confirmationShown) problems.push("la conversión no pasó por la confirmación con su efecto");
+      if (!variant.ok && confirmationShown) problems.push("una conversión sin empaques suficientes llegó a la confirmación en vez de frenarse en el formulario");
       if (variant.ok) {
         const out = diff.movements.find((m) => m.type === "conversion_salida");
         const inn = diff.movements.find((m) => m.type === "conversion_entrada");
@@ -1926,9 +2055,12 @@ async function flow07(lab: Lab): Promise<void> {
 // F8 · Cancelar venta desde su detalle
 // ---------------------------------------------------------------------------
 
-/** El ErrorState de las acciones del detalle de venta: título + motivo del servidor. */
-function saleActionError(page: Page): Locator {
-  return page.getByText("No pudimos actualizar la venta", { exact: true }).locator("xpath=..");
+/**
+ * El motivo por el que una venta no se anula se lee en la propia confirmación: su
+ * alerta dice por qué no se puede (bloqueada antes de enviar) o el rechazo del servidor.
+ */
+function saleCancelAlert(page: Page): Locator {
+  return page.getByRole("dialog").getByRole("alert");
 }
 
 async function uiCancelSale(rec: CaseRec, page: Page, saleId: string, double: boolean): Promise<{ claim: UiClaim; text: string; statuses: number[]; rejection: SeenMessage }> {
@@ -1948,36 +2080,52 @@ async function uiCancelSale(rec: CaseRec, page: Page, saleId: string, double: bo
   const item = page.getByRole("menuitem", { name: "Anular venta" });
   if ((await item.count()) === 0 || (await item.isDisabled().catch(() => false)) || (await item.getAttribute("aria-disabled")) === "true") {
     await rec.shot(page, "menu-sin-anular");
-    return { claim: "error", text: "la opción «Anular venta» no está disponible", statuses, rejection: await measureMessage(page, saleActionError(page)) };
+    return { claim: "error", text: "la opción «Anular venta» no está disponible", statuses, rejection: await measureMessage(page, saleCancelAlert(page)) };
   }
   await item.click();
+  // «Anular venta» abre la confirmación con el efecto real (stock que vuelve, pagos). Mientras
+  // lo calcula no hay botón; con un pago activo queda bloqueada («No se puede anular la venta»)
+  // con el motivo y sin botón de anular; con dinero cobrado pide teclear ANULAR.
   const dialog = page.getByRole("dialog");
-  await dialog.waitFor({ state: "visible" });
-  rec.say("Diálogo Confirmar anulacion", await dialog.innerText());
+  const gate = await awaitConfirmation(rec, "Diálogo Anular venta", dialog, /^Anular venta$|Procesando/, "ANULAR");
   await rec.shot(page, "dialogo-anular");
-  const confirm = dialog.getByRole("button", { name: /Anular venta|Procesando/ });
-  if (double) await confirm.dblclick();
-  else await confirm.click();
-  await page.waitForLoadState("networkidle").catch(() => undefined);
-  await page.waitForTimeout(1_200);
-  const texts = await sayScreen(rec, page, "Detalle de venta tras confirmar la anulación");
-  const main = (await page.locator("main").innerText()).replace(/\s+/g, " ");
-  rec.say("Detalle de venta tras anular · cabecera", main.slice(0, 300));
-  await rec.shot(page, "tras-anular");
-  // El aviso (título + motivo) se mide ANTES de cualquier scroll: es lo que ve el cajero.
-  const rejection = await measureMessage(page, saleActionError(page));
+  const blocked = !gate.ready;
+  if (gate.ready) {
+    if (double) await gate.confirm.dblclick();
+    else await gate.confirm.click();
+    await page.waitForLoadState("networkidle").catch(() => undefined);
+    await page.waitForTimeout(1_200);
+  }
+  // El aviso se mide ANTES de cualquier scroll y de cerrar el diálogo: es lo que ve el cajero.
+  const dialogOpen = await dialog.isVisible().catch(() => false);
+  const rejection = await measureMessage(page, saleCancelAlert(page));
+  const dialogAfter = dialogOpen ? await dialogText(dialog) : "";
   if (rejection.text) {
-    rec.say("Detalle de venta · aviso del rechazo", `«${rejection.text}» en ${JSON.stringify(rejection.box)} con ventana ${rejection.viewport.width}×${rejection.viewport.height}`);
+    rec.say(
+      `Diálogo Anular venta · ${blocked ? "motivo del bloqueo" : "rechazo del servidor"}`,
+      `«${rejection.text}» en ${JSON.stringify(rejection.box)} con ventana ${rejection.viewport.width}×${rejection.viewport.height}`,
+    );
     const top = rejection.box?.y ?? -1;
     if (top < 0 || top >= rejection.viewport.height) {
-      await saleActionError(page).first().scrollIntoViewIfNeeded();
+      await saleCancelAlert(page).first().scrollIntoViewIfNeeded();
       await rec.shot(page, "error-fuera-de-la-vista");
     }
   }
-  const errorShown = /No pudimos actualizar la venta/i.test(main) || texts.some((t) => /no pudimos|error|no se puede|pagos/i.test(t));
+  if (dialogOpen) {
+    if (!blocked) rec.say("Diálogo Anular venta tras confirmar", dialogAfter);
+    await rec.shot(page, blocked ? "anular-bloqueada" : "anular-rechazada");
+    // Bloqueada solo deja «Cerrar»; tras un rechazo del servidor sigue «Cancelar».
+    await dialog.getByRole("button", { name: /^(Cerrar|Cancelar)$/ }).first().click().catch(() => undefined);
+    await dialog.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => undefined);
+  }
+  const texts = await sayScreen(rec, page, "Detalle de venta tras la anulación");
+  const main = (await page.locator("main").innerText()).replace(/\s+/g, " ");
+  rec.say("Detalle de venta tras anular · cabecera", main.slice(0, 300));
+  await rec.shot(page, "tras-anular");
+  const errorShown = dialogOpen || texts.some((t) => /no pudimos|error|no se puede/i.test(t));
   const cancelledShown = /cancelada|anulada/i.test(main.slice(0, 400));
-  const shownError = /No pudimos actualizar la venta.{0,260}/i.exec(main)?.[0]?.trim() ?? texts.join(" · ");
-  return { claim: errorShown ? "error" : cancelledShown ? "success" : "none", text: errorShown ? shownError : cancelledShown ? "estado Cancelada" : "", statuses, rejection };
+  const shownError = rejection.text ?? (dialogAfter || texts.join(" · "));
+  return { claim: errorShown ? "error" : cancelledShown ? "success" : "none", text: errorShown ? shownError : cancelledShown ? "estado Anulada" : "", statuses, rejection };
 }
 
 async function flow08(lab: Lab): Promise<void> {
@@ -1993,7 +2141,7 @@ async function flow08(lab: Lab): Promise<void> {
       const before = await snapshot(lab.db, [product.id]);
       const page = await rec.open(lab.sellerKey);
       const outcome = await uiCancelSale(rec, page, sale.id, true);
-      rec.step("UI doble clic Anular venta", { as: lab.sellerKey, status: outcome.statuses[0], note: `PATCH cancel enviados=${outcome.statuses.length} (${outcome.statuses.join(",")})` });
+      rec.step("UI Anular venta → confirmación → doble clic en «Anular venta»", { as: lab.sellerKey, status: outcome.statuses[0], note: `PATCH cancel enviados=${outcome.statuses.length} (${outcome.statuses.join(",")})` });
       const diff = diffSnapshots(before, await snapshot(lab.db, [product.id]));
       const adminPage = await rec.open("admin");
       const uiRows = await uiMovements(rec, adminPage, product, "movimientos");
@@ -2052,7 +2200,7 @@ async function flow08(lab: Lab): Promise<void> {
       rec.step("UI POS venta pagada", { as: lab.sellerKey, response_id: sale.id, note: `${sale.invoice_number} ${sale.status}` });
 
       const outcome = await uiCancelSale(rec, posPage, sale.id, false);
-      rec.step("UI Anular venta (pagada)", { as: lab.sellerKey, status: outcome.statuses[0], note: `PATCH cancel=${outcome.statuses.join(",") || "ninguno"}` });
+      rec.step("UI Anular venta (pagada) → confirmación", { as: lab.sellerKey, status: outcome.statuses[0], note: `PATCH cancel=${outcome.statuses.join(",") || "ninguno"}` });
       const diff = diffSnapshots(before, await snapshot(lab.db, [product.id]));
       const adminPage = await rec.open("admin");
       const uiRows = await uiMovements(rec, adminPage, product, "movimientos");
@@ -2061,7 +2209,7 @@ async function flow08(lab: Lab): Promise<void> {
       const cancelled = diff.statusChanges[sale.id]?.endsWith("cancelada") ?? false;
       rec.expected = {
         either: [
-          "la UI rechaza con un mensaje a la vista sin hacer scroll que explica qué hacer (anular pagos / devolución) y la base no cambia",
+          "la confirmación queda bloqueada (sin botón de anular ni PATCH) con el motivo a la vista sin hacer scroll, que explica qué hacer (anular pagos / devolución), y la base no cambia",
           `la venta queda cancelada con un único movimiento inverso +${quantity} y los pagos anulados`,
         ],
       };

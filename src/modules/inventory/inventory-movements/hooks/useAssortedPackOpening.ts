@@ -16,8 +16,17 @@ import {
 } from "../utils/packOpeningEffect";
 
 export type AssortedPackOpeningTarget = {
-  /** Componentes de la receta (`packConversion.components`). */
+  /**
+   * Componentes de la receta (`packConversion.components`). En un 1 a 1, su
+   * único producto unidad.
+   */
   components: PackOpeningRecipeComponent[];
+  /**
+   * `assorted` (por defecto): reparto editable, que viaja en `components`.
+   * `single`: empaque 1 a 1; sin reparto que editar y la petición no lleva
+   * `components` (el cuerpo de siempre). Los dos confirman con su efecto.
+   */
+  kind?: "assorted" | "single";
   pack: { currentStock: number; id: string; name: string };
 };
 
@@ -35,15 +44,18 @@ type UseAssortedPackOpeningInput = {
   /** Cantidad de empaques tal como la interpreta el anfitrión (0 si el campo está vacío). */
   packQuantity: number;
   reason: string;
-  /** `null` si el empaque elegido no es un surtido: el hook no hace nada. */
+  /** `null` si no hay empaque que abrir: el hook no hace nada. */
   target: AssortedPackOpeningTarget | null;
 };
 
 /**
- * Apertura de un empaque surtido con reparto editable: estado de la
- * distribución, efecto calculado, confirmación y envío con `components`. Lo
- * comparten el modal de Inventario y el del detalle del producto, junto con
- * `AssortedPackOpeningFields` y `AssortedPackOpeningConfirm`.
+ * Apertura de un empaque con confirmación: efecto calculado (lo que sale del
+ * empaque y lo que entra a cada producto, con su stock antes → después),
+ * confirmación y envío. En un surtido lleva además el reparto editable, que
+ * viaja en `components`; en un 1 a 1 (`kind: "single"`, CNF-08) no hay reparto
+ * y el cuerpo no cambia. Lo comparten el modal de Inventario y el del detalle
+ * del producto, junto con `AssortedPackOpeningFields` y
+ * `AssortedPackOpeningConfirm`.
  *
  * Mientras el usuario no toca el reparto, sigue a la receta × empaques. Al
  * editar un campo se conserva lo tecleado en todos aunque cambie la cantidad de
@@ -65,8 +77,10 @@ export function useAssortedPackOpening({
   useReleaseAttemptOnClose(attempt, isOpen);
   const convert = useConvertPackToUnits();
 
-  // Un reparto tecleado para otro empaque no vale para este.
-  const editedValues = target && edited?.packId === target.pack.id ? edited.values : null;
+  const isSingle = target?.kind === "single";
+  // Un reparto tecleado para otro empaque no vale para este; un 1 a 1 no tiene reparto que teclear.
+  const editedValues =
+    target && !isSingle && edited?.packId === target.pack.id ? edited.values : null;
   const defaults = target ? buildDefaultPackOpeningDistribution(target.components, packQuantity) : {};
   const values: Record<string, string> = Object.fromEntries(
     (target?.components ?? []).map((component) => [
@@ -85,7 +99,8 @@ export function useAssortedPackOpening({
       })
     : null;
   // Sin una cantidad de empaques válida no hay total contra el que repartir.
-  const showsDistribution = Boolean(effect) && !effect?.issues.includes("invalid_quantity");
+  const showsDistribution =
+    Boolean(effect) && !isSingle && !effect?.issues.includes("invalid_quantity");
   const hasDistributionIssue =
     showsDistribution &&
     Boolean(effect?.issues.some((issue) => issue === "sum_mismatch" || issue === "invalid_units"));
@@ -133,7 +148,8 @@ export function useAssortedPackOpening({
     }
 
     const input = {
-      components: toPackOpeningRequestComponents(effect),
+      // El 1 a 1 no envía reparto: el servidor aplica la receta.
+      ...(isSingle ? {} : { components: toPackOpeningRequestComponents(effect) }),
       packProductId: target.pack.id,
       packQuantity,
       reason: reason.trim() || undefined,
@@ -170,8 +186,12 @@ export function useAssortedPackOpening({
     hasDistributionIssue,
     isEdited: editedValues !== null,
     isPending: convert.isPending,
+    /** Empaque 1 a 1: la confirmación lo dice con sus textos. */
+    isSingle,
     openConfirm,
     packQuantity,
+    /** Motivo tecleado, sin los espacios de los extremos ("" si no hay): la confirmación lo muestra. */
+    reason: reason.trim(),
     /** Limpia reparto, confirmación y error, y descarta el intento (al cerrar el modal anfitrión). */
     reset,
     resetDistribution: () => setEdited(null),

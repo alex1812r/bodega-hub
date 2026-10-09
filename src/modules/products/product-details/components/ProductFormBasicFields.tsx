@@ -62,6 +62,8 @@ type ProductFormBasicFieldsProps = {
    */
   onCreateCategory?: (trigger: HTMLButtonElement) => void;
   onNameChange: (name: string) => void;
+  /** El precio cambió (chip, % o tecleado). El valor sigue viajando en `salePriceRef`. */
+  onPriceChange?: (price: number | null) => void;
   /** % recomendados; sin ellos, los por defecto de `getProductPricingOptions`. */
   pricingChips?: readonly number[];
   /** Se intentó guardar: un precio vacío muestra su aviso. */
@@ -99,6 +101,7 @@ export function ProductFormBasicFields({
   onCategoryChange,
   onCreateCategory,
   onNameChange,
+  onPriceChange,
   pricingChips,
   showPriceRequired = false,
   suggestedMarkupPct,
@@ -198,7 +201,10 @@ export function ProductFormBasicFields({
           customPct="onDemand"
           error={showPriceRequired && price === null ? SALE_PRICE_REQUIRED_MESSAGE : undefined}
           hideCost
-          onPriceChange={setPrice}
+          onPriceChange={(nextPrice) => {
+            setPrice(nextPrice);
+            onPriceChange?.(nextPrice);
+          }}
           price={price}
           suggestedPct={suggestedMarkupPct}
           thresholds={thresholds ?? pricingOptions.thresholds}

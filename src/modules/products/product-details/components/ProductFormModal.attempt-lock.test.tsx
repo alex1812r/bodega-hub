@@ -15,6 +15,11 @@ import { ProductFormModal } from "./ProductFormModal";
  *   controla aún no lo cerró), otro «Crear producto» no crea un segundo producto.
  */
 
+// El formulario lleva el guardia de cambios sin guardar (`useProcessGuard`), que usa el router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 jest.mock("../../../../shared/auth/usePermission", () => ({
   usePermission: () => ({ can: () => true }),
 }));

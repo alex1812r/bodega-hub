@@ -1,6 +1,5 @@
 import { Tags } from "lucide-react";
 
-import { PosProductImage } from "@/modules/sales/sale-create/components/PosProductImage";
 import { ProductsStatusBadge } from "@/modules/products/products-list/components/ProductsStatusBadge";
 import { MarginBadge } from "@/shared/components/MarginBadge";
 import { formatRefUsd, roundMoney } from "@/shared/utils/currency";
@@ -16,7 +15,6 @@ type ProductDetailInfoCardProps = {
   costRef: number;
   /** Descripción del producto; sin ella se muestra "Sin descripción". */
   description?: string | null;
-  imageUrl?: string | null;
   isActive: boolean;
   salePriceRef: number;
   /** Cortes del semáforo de la tienda; sin ellos, los por defecto. */
@@ -29,7 +27,6 @@ export function ProductDetailInfoCard({
   categoryName,
   costRef,
   description,
-  imageUrl,
   isActive,
   salePriceRef,
   thresholds,
@@ -45,14 +42,9 @@ export function ProductDetailInfoCard({
       title="Información general"
     >
       <div className="flex flex-col gap-4 p-5">
-        <div className="flex flex-col gap-4 md:flex-row">
-          <div className="relative aspect-[4/3] w-full max-w-xs overflow-hidden rounded-xl border border-border bg-surface-container">
-            <PosProductImage alt="Imagen del producto" imageUrl={imageUrl ?? undefined} />
-          </div>
-          <p className="min-w-0 max-w-2xl whitespace-pre-line text-sm text-on-surface-variant [overflow-wrap:anywhere]">
-            {displayDescription}
-          </p>
-        </div>
+        <p className="min-w-0 max-w-2xl whitespace-pre-line text-sm text-on-surface-variant [overflow-wrap:anywhere]">
+          {displayDescription}
+        </p>
 
         <div className="grid grid-cols-2 gap-4 border-t border-border/50 pt-4 md:grid-cols-4 dark:border-slate-800">
           <div className="flex flex-col gap-1">

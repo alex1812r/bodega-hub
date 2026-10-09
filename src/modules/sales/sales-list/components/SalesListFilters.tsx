@@ -8,14 +8,14 @@ import {
 } from "@/shared/styles/form-controls";
 import { cn } from "@/shared/utils/cn";
 
-import type { SalesFilters } from "../../hooks/useSales";
+import type { SalesListFilterState } from "../salesListParams";
 
 type SalesListFiltersProps = {
-  filters: SalesFilters;
-  onChange: (patch: Partial<SalesFilters>) => void;
+  onChange: (patch: Partial<SalesListFilterState>) => void;
+  state: SalesListFilterState;
 };
 
-export function SalesListFilters({ filters, onChange }: SalesListFiltersProps) {
+export function SalesListFilters({ onChange, state }: SalesListFiltersProps) {
   return (
     <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface-container-lowest p-5 shadow-sm dark:border-slate-800 md:flex-row">
       <div className="min-w-0 flex-1">
@@ -30,12 +30,10 @@ export function SalesListFilters({ filters, onChange }: SalesListFiltersProps) {
           <input
             className={cn(stitchListFilterFieldClassName, "pl-10")}
             id="sales-search"
-            onChange={(event) =>
-              onChange({ search: event.target.value.trim() || undefined })
-            }
+            onChange={(event) => onChange({ search: event.target.value })}
             placeholder="Buscar por N° factura o cliente..."
             type="search"
-            value={filters.search ?? ""}
+            value={state.search}
           />
         </div>
       </div>
@@ -48,11 +46,11 @@ export function SalesListFilters({ filters, onChange }: SalesListFiltersProps) {
           className={stitchListFilterFieldClassName}
           id="sales-status"
           onChange={(event) =>
-            onChange({ status: event.target.value || undefined })
+            onChange({ status: event.target.value as SalesListFilterState["status"] })
           }
-          value={filters.status ?? ""}
+          value={state.status}
         >
-          <option value="">Todos los estados</option>
+          <option value="all">Todos los estados</option>
           <option value="borrador">Borrador</option>
           <option value="pendiente_pago">Pendiente pago</option>
           <option value="pagada">Pagada</option>
@@ -69,11 +67,9 @@ export function SalesListFilters({ filters, onChange }: SalesListFiltersProps) {
           <input
             className={stitchListFilterFieldClassName}
             id="sales-from"
-            onChange={(event) =>
-              onChange({ from: event.target.value || undefined })
-            }
+            onChange={(event) => onChange({ from: event.target.value })}
             type="date"
-            value={filters.from ?? ""}
+            value={state.from}
           />
         </div>
         <div className="w-1/2 md:w-36">
@@ -83,11 +79,9 @@ export function SalesListFilters({ filters, onChange }: SalesListFiltersProps) {
           <input
             className={stitchListFilterFieldClassName}
             id="sales-to"
-            onChange={(event) =>
-              onChange({ to: event.target.value || undefined })
-            }
+            onChange={(event) => onChange({ to: event.target.value })}
             type="date"
-            value={filters.to ?? ""}
+            value={state.to}
           />
         </div>
       </div>

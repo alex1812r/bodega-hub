@@ -4,6 +4,7 @@ import { ArrowRight } from "lucide-react";
 import { type FormEvent, type ReactNode, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
+import { type ConfirmActionEffect, ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import {
   EntityAutocomplete,
   type ProductEntityFilters,
@@ -12,8 +13,10 @@ import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
+import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
 import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
+import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 import { cn } from "@/shared/utils/cn";
 
 import {
@@ -26,11 +29,18 @@ import { STOCK_REASON_MAX_LENGTH, describeStockReasonLength } from "../../utils/
 import { describeStockRequestError } from "../../utils/stockRequestError";
 import {
   getInventoryAdjustmentDelta,
+  getMovementTypeLabel,
   inventoryAdjustmentTypeOptions,
   type FreeInventoryAdjustmentType,
 } from "../utils/movementTypeLabels";
+import {
+  computeStockAdjustmentEffect,
+  type StockAdjustmentEffect,
+} from "../utils/stockAdjustmentEffect";
 
 const formId = "inventory-adjustment-form";
+
+const DEFAULT_ADJUSTMENT_TYPE: FreeInventoryAdjustmentType = "ajuste_entrada";
 
 /** Mayor cantidad de un ajuste: por encima es un error de tecleo (la base guarda un `integer`). */
 const MAX_ADJUSTMENT_QUANTITY = 999_999;
@@ -63,13 +73,13 @@ type InventoryAdjustmentModalProps = {
 };
 
 type AdjustmentStockPreviewProps = {
-  currentStock: number;
-  /** Con signo; 0 mientras no haya una cantidad mayor a cero. */
-  quantityDelta: number;
+  /** Con `delta` 0 (aún sin una cantidad mayor a cero) solo se pinta el stock actual. */
+  effect: StockAdjustmentEffect;
 };
 
-function AdjustmentStockPreview({ currentStock, quantityDelta }: AdjustmentStockPreviewProps) {
-  const projectedStock = quantityDelta !== 0 ? currentStock + quantityDelta : undefined;
+function AdjustmentStockPreview({ effect }: AdjustmentStockPreviewProps) {
+  const currentStock = effect.stockBefore;
+  const projectedStock = effect.delta !== 0 ? effect.stockAfter : undefined;
 
   return (
     <div
@@ -99,6 +109,32 @@ function AdjustmentStockPreview({ currentStock, quantityDelta }: AdjustmentStock
   );
 }
 
+/** "+3 Cable HDMI" o "−4 Cable HDMI", con el stock antes → después. */
+export function buildStockAdjustmentConfirmEffects(
+  productName: string,
+  effect: StockAdjustmentEffect,
+): ConfirmActionEffect[] {
+  const isEntry = effect.delta > 0;
+
+  return [
+    {
+      after: String(effect.stockAfter),
+      before: `Stock ${effect.stockBefore}`,
+      label: `${isEntry ? "+" : "−"}${Math.abs(effect.delta)} ${productName}`,
+      tone: isEntry ? "positive" : "warning",
+    },
+  ];
+}
+
+/**
+ * Ajuste manual de stock: el formulario no envía, abre la confirmación con el
+ * efecto sobre el stock.
+ *
+ * Si el usuario cambió algo respecto a como abrió el modal (otro producto, tipo,
+ * cantidad o motivo), cerrar (Esc, clic fuera, Cancelar, la X) o salir de la
+ * pantalla pregunta antes con el guardia de proceso; sin cambios, o tras
+ * registrar el ajuste, cierra sin preguntar. El producto precargado no cuenta.
+ */
 export function InventoryAdjustmentModal({
   defaultProductId,
   lockedProduct,
@@ -120,10 +156,12 @@ export function InventoryAdjustmentModal({
   const selectedProduct =
     lockedProduct ?? (usesDefaultProduct ? defaultProduct : pickedProduct) ?? null;
   const productId = selectedProduct?.id ?? "";
-  const [type, setType] = useState<FreeInventoryAdjustmentType>("ajuste_entrada");
+  const [type, setType] = useState<FreeInventoryAdjustmentType>(DEFAULT_ADJUSTMENT_TYPE);
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState("");
   const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [previousOpen, setPreviousOpen] = useState(open);
   const adjustment = useAdjustInventory();
   const requestAttempt = useRequestAttempt({ lockAfterSuccess: true, renewOnContentChange: true });
   // Tras el éxito no sale otro ajuste hasta que el modal se cierre (INT-02).
@@ -132,11 +170,46 @@ export function InventoryAdjustmentModal({
   const quantityDelta =
     quantityNumber > 0 ? getInventoryAdjustmentDelta(quantityNumber, type) : 0;
   // Con decimales el propio campo avisa ("Debe ser un número entero."): aquí solo se bloquea el envío.
-  const canSubmit =
-    Boolean(productId) &&
+  const isQuantityValid =
     quantityNumber > 0 &&
     quantityNumber <= MAX_ADJUSTMENT_QUANTITY &&
     Number.isInteger(quantityNumber);
+  const effect = selectedProduct
+    ? computeStockAdjustmentEffect({
+        currentStock: selectedProduct.currentStock,
+        delta: quantityDelta,
+      })
+    : null;
+  // La base rechaza cualquier saldo negativo (PT409): la salida se frena antes de confirmar.
+  const hasInsufficientStock = isQuantityValid && Boolean(effect?.wouldBeNegative);
+  const trimmedReason = reason.trim();
+  const canConfirm =
+    Boolean(productId) && isQuantityValid && !hasInsufficientStock && trimmedReason !== "";
+  // Elegir otro producto (o quitar el precargado) cuenta; volver al precargado, no.
+  const hasChangedProduct =
+    !lockedProduct &&
+    !usesDefaultProduct &&
+    (pickedProduct?.id ?? "") !== (defaultProduct?.id ?? "");
+  const hasTypedData =
+    hasChangedProduct ||
+    type !== DEFAULT_ADJUSTMENT_TYPE ||
+    quantity !== "" ||
+    trimmedReason !== "";
+  // Con el ajuste en vuelo no se pregunta: el cierre ya está bloqueado.
+  const { guard, requestClose, trackFocus } = useFormModalDiscardGuard({
+    active: open && hasTypedData && !adjustment.isPending,
+    label: selectedProduct
+      ? `Ajuste de stock de «${selectedProduct.name}» sin registrar`
+      : "Ajuste de stock sin registrar",
+  });
+
+  // Quien controla el modal lo cerró con la confirmación abierta: no debe reaparecer al reabrir.
+  if (previousOpen !== open) {
+    setPreviousOpen(open);
+    if (!open) {
+      setConfirmOpen(false);
+    }
+  }
 
   function setOpen(nextOpen: boolean) {
     if (!isControlled) {
@@ -153,24 +226,35 @@ export function InventoryAdjustmentModal({
 
   function resetForm() {
     resetProduct();
-    setType("ajuste_entrada");
+    setType(DEFAULT_ADJUSTMENT_TYPE);
     setQuantity("");
     setReason("");
     setHasSubmitted(false);
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  /** El formulario no envía: abre la confirmación con el efecto del ajuste. */
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setHasSubmitted(true);
 
-    if (!canSubmit) {
+    if (!canConfirm || adjustment.isPending) {
+      return;
+    }
+
+    // Un error de un intento anterior no pertenece a esta confirmación.
+    adjustment.reset();
+    setConfirmOpen(true);
+  }
+
+  async function handleConfirm() {
+    if (!canConfirm) {
       return;
     }
 
     const input = {
       productId,
       quantityDelta,
-      reason: reason.trim() || undefined,
+      reason: trimmedReason,
       type,
     };
     // Clave de idempotencia del intento; null = ya hay un envio en vuelo (doble clic).
@@ -189,6 +273,7 @@ export function InventoryAdjustmentModal({
 
     requestAttempt.succeed();
 
+    setConfirmOpen(false);
     resetForm();
     setOpen(false);
   }
@@ -202,7 +287,7 @@ export function InventoryAdjustmentModal({
           isSubmitting={adjustment.isPending}
           onCancel={close}
           submitFormId={formId}
-          submitLabel="Registrar movimiento"
+          submitLabel="Continuar"
           submittingLabel="Registrando..."
         />
       )}
@@ -212,24 +297,29 @@ export function InventoryAdjustmentModal({
           return;
         }
 
-        setOpen(nextOpen);
-
         if (nextOpen) {
+          setOpen(true);
           setHasSubmitted(false);
           adjustment.reset();
           resetProduct();
-        } else {
+          return;
+        }
+
+        // Con cambios pregunta antes de descartarlos.
+        requestClose(() => {
+          setOpen(false);
+          setConfirmOpen(false);
           resetForm();
           // Cerrar descarta el intento: al reabrir, clave nueva y sin el error anterior.
           requestAttempt.discard();
           adjustment.reset();
-        }
+        });
       }}
       open={open}
       title="Ajuste de stock"
       trigger={trigger ?? (isControlled ? undefined : <Button size="sm">Registrar ajuste</Button>)}
     >
-      <form className="grid gap-5" id={formId} onSubmit={handleSubmit}>
+      <form className="grid gap-5" id={formId} onFocus={trackFocus} onSubmit={handleSubmit}>
         {lockedProduct ? (
           <Input
             disabled
@@ -273,12 +363,7 @@ export function InventoryAdjustmentModal({
             }
           />
         )}
-        {selectedProduct ? (
-          <AdjustmentStockPreview
-            currentStock={selectedProduct.currentStock}
-            quantityDelta={quantityDelta}
-          />
-        ) : null}
+        {effect ? <AdjustmentStockPreview effect={effect} /> : null}
 
         <div className="grid gap-5 md:grid-cols-2 md:items-start">
           <SelectField
@@ -299,7 +384,9 @@ export function InventoryAdjustmentModal({
                 ? "La cantidad máxima es 999.999."
                 : hasSubmitted && quantityNumber <= 0
                   ? "Indica una cantidad mayor a cero."
-                  : undefined
+                  : hasSubmitted && hasInsufficientStock
+                    ? `Stock insuficiente: hay ${effect?.stockBefore ?? 0} en stock.`
+                    : undefined
             }
             helperText="Cantidad absoluta; el signo depende del tipo."
             label="Cantidad"
@@ -309,7 +396,9 @@ export function InventoryAdjustmentModal({
         </div>
 
         <Textarea
+          aria-required
           disabled={adjustment.isPending}
+          error={hasSubmitted && trimmedReason === "" ? "Indica el motivo del ajuste." : undefined}
           helperText={describeStockReasonLength(reason)}
           label="Motivo"
           maxLength={STOCK_REASON_MAX_LENGTH}
@@ -318,12 +407,48 @@ export function InventoryAdjustmentModal({
           value={reason}
         />
 
-        {adjustment.error ? (
-          <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+        {/* Con la confirmación abierta el error se dice en ella; al cancelarla sigue a la vista aquí. */}
+        {adjustment.error && !confirmOpen ? (
+          <p
+            className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300"
+            role="alert"
+          >
             {describeStockRequestError(adjustment.error)}
           </p>
         ) : null}
       </form>
+      {selectedProduct && effect ? (
+        <ConfirmActionModal
+          confirmLabel="Registrar movimiento"
+          description="Revisa el efecto sobre el stock antes de registrar el movimiento."
+          effects={buildStockAdjustmentConfirmEffects(selectedProduct.name, effect)}
+          error={adjustment.error ? describeStockRequestError(adjustment.error) : null}
+          isPending={adjustment.isPending}
+          onConfirm={handleConfirm}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) {
+              setConfirmOpen(false);
+            }
+          }}
+          // La pregunta del guardia (ATRÁS del navegador) no se apila sobre la confirmación.
+          open={confirmOpen && !guard.dialog.open}
+          title="Confirmar ajuste de stock"
+        >
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+            <dt>Producto</dt>
+            <dd className="break-words font-medium text-foreground">
+              {selectedProduct.name} ({selectedProduct.sku})
+            </dd>
+            <dt>Tipo</dt>
+            <dd className="font-medium text-foreground">{getMovementTypeLabel(type)}</dd>
+            <dt>Motivo</dt>
+            <dd className="whitespace-pre-wrap break-words font-medium text-foreground">
+              {trimmedReason}
+            </dd>
+          </dl>
+        </ConfirmActionModal>
+      ) : null}
+      <ProcessGuardModal guard={guard} />
     </Modal>
   );
 }

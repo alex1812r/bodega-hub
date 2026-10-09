@@ -624,3 +624,372 @@ describe("ConfirmActionModal", () => {
     expect(screen.getByRole("button", { name: "Anular venta" })).toBeDisabled();
   });
 });
+
+describe("ConfirmActionModal · effect status (CNF-S1)", () => {
+  it("loading: announces the wait, offers no confirm button and closes with «Cerrar» or Escape", async () => {
+    const user = userEvent.setup();
+    const { onConfirm, onOpenChange } = renderModal({
+      effects: [{ label: "Stock de Harina PAN" }],
+      requireTypedConfirmation: "ANULAR",
+      status: "loading",
+      statusHint: "Hasta conocerlo no se puede anular.",
+      statusMessage: "Calculando el efecto…",
+      variant: "danger",
+    });
+    const dialog = within(screen.getByRole("dialog"));
+    const status = dialog.getByRole("status");
+
+    expect(status).toHaveTextContent("Calculando el efecto…");
+    expect(status).toHaveTextContent("Hasta conocerlo no se puede anular.");
+    expect(status).toHaveAttribute("aria-live", "polite");
+    expect(dialog.queryByRole("button", { name: "Anular venta" })).not.toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Cancelar" })).not.toBeInTheDocument();
+    expect(dialog.queryByText("Qué va a pasar")).not.toBeInTheDocument();
+    expect(dialog.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Cerrar" })).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("loading: uses a default message and a custom close label", () => {
+    renderModal({ closeLabel: "Volver", status: "loading" });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Calculando qué va a pasar…");
+    expect(screen.getByRole("button", { name: "Volver" })).toBeInTheDocument();
+  });
+
+  it("error: shows the message as is, never a confirm button, and retries on demand", async () => {
+    const user = userEvent.setup();
+    const onRetry = jest.fn();
+    const { onConfirm, onOpenChange } = renderModal({
+      onRetry,
+      status: "error",
+      statusHint: "No se ha cambiado nada.",
+      statusMessage: "Venta no encontrada",
+    });
+    const dialog = within(screen.getByRole("dialog"));
+
+    expect(dialog.getByRole("alert").textContent).toBe("Venta no encontrada");
+    expect(dialog.getByText("No se ha cambiado nada.")).toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Anular venta" })).not.toBeInTheDocument();
+
+    await user.click(dialog.getByRole("button", { name: "Reintentar" }));
+
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it("error: without onRetry there is no «Reintentar», and Escape closes", async () => {
+    const user = userEvent.setup();
+    const { onOpenChange } = renderModal({ status: "error" });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No se pudo calcular el efecto de la acción.",
+    );
+    expect(screen.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it("blocked: shows the reason as is, the content and actions passed in, and no confirm button", async () => {
+    const user = userEvent.setup();
+    const onAlternative = jest.fn();
+    const { onConfirm, onOpenChange } = renderModal({
+      blockedActions: (
+        <button onClick={onAlternative} type="button">
+          Devolver la venta
+        </button>
+      ),
+      children: <p>Venta V-0012 de Cliente Demo</p>,
+      effects: [{ label: "Stock de Harina PAN" }],
+      onRetry: jest.fn(),
+      requireTypedConfirmation: "ANULAR",
+      status: "blocked",
+      statusMessage: "La venta tiene 1 pago(s) activo(s).",
+    });
+    const dialog = within(screen.getByRole("dialog"));
+
+    expect(dialog.getByRole("alert").textContent).toBe("La venta tiene 1 pago(s) activo(s).");
+    expect(dialog.getByText("Venta V-0012 de Cliente Demo")).toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Anular venta" })).not.toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+    expect(dialog.queryByText("Qué va a pasar")).not.toBeInTheDocument();
+    expect(dialog.queryByRole("textbox")).not.toBeInTheDocument();
+
+    await user.click(dialog.getByRole("button", { name: "Devolver la venta" }));
+
+    expect(onAlternative).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it("blockedActions are only offered while blocked", () => {
+    renderModal({ blockedActions: <button type="button">Ver pagos</button> });
+
+    expect(screen.queryByRole("button", { name: "Ver pagos" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Anular venta" })).toBeEnabled();
+  });
+
+  it.each(["loading", "error", "blocked"] as const)(
+    "%s: stays locked while pending, as in the ready state",
+    async (status) => {
+      const user = userEvent.setup();
+      const { onOpenChange } = renderModal({ isPending: true, onRetry: jest.fn(), status });
+
+      expect(screen.getByRole("button", { name: "Cerrar" })).toBeDisabled();
+
+      await user.keyboard("{Escape}");
+      await flushDeferredClose();
+
+      expect(onOpenChange).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps one dialog from loading to ready and moves focus to the control of each state", async () => {
+    const user = userEvent.setup();
+    const onConfirm = jest.fn();
+    const view = render(modalElement({ status: "loading", variant: "danger" }, onConfirm));
+    const dialog = screen.getByRole("dialog");
+
+    expect(screen.getByRole("button", { name: "Cerrar" })).toHaveFocus();
+
+    view.rerender(
+      modalElement({ onRetry: jest.fn(), status: "error", variant: "danger" }, onConfirm),
+    );
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(screen.getByRole("button", { name: "Cerrar" })).toHaveFocus();
+
+    view.rerender(
+      modalElement(
+        {
+          effects: [{ label: "Stock de Harina PAN" }],
+          requireTypedConfirmation: "ANULAR",
+          status: "ready",
+          variant: "danger",
+        },
+        onConfirm,
+      ),
+    );
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(screen.getByText("Qué va a pasar")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Palabra de confirmación" })).toHaveFocus();
+
+    await user.keyboard("anular");
+    await user.dblClick(screen.getByRole("button", { name: "Anular venta" }));
+
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the typed word when the status stops being ready", async () => {
+    const user = userEvent.setup();
+    const onConfirm = jest.fn();
+    const ready = { requireTypedConfirmation: "ANULAR", status: "ready" } as const;
+    const view = render(modalElement(ready, onConfirm));
+
+    await user.type(screen.getByRole("textbox", { name: "Palabra de confirmación" }), "anular");
+    expect(screen.getByRole("button", { name: "Anular venta" })).toBeEnabled();
+
+    view.rerender(modalElement({ ...ready, status: "loading" }, onConfirm));
+    expect(screen.queryByRole("button", { name: "Anular venta" })).not.toBeInTheDocument();
+
+    view.rerender(modalElement(ready, onConfirm));
+
+    expect(screen.getByRole("textbox", { name: "Palabra de confirmación" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "Palabra de confirmación" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Anular venta" })).toBeDisabled();
+
+    await user.keyboard("{Enter}");
+
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("returns focus to the trigger when it opened loading and closes in another state", async () => {
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      const [status, setStatus] = useState<"loading" | "blocked">("loading");
+
+      return (
+        <>
+          <button onClick={() => setOpen(true)} type="button">
+            Anular
+          </button>
+          <ConfirmActionModal
+            confirmLabel="Anular venta"
+            description="La venta quedará anulada."
+            onConfirm={jest.fn()}
+            onOpenChange={setOpen}
+            open={open}
+            status={status}
+            title="Anular venta V-0012"
+            variant="danger"
+          >
+            <button onClick={() => setStatus("blocked")} type="button">
+              Llega el efecto
+            </button>
+          </ConfirmActionModal>
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    const trigger = screen.getByRole("button", { name: "Anular" });
+
+    await user.click(trigger);
+    await user.click(await screen.findByRole("button", { name: "Llega el efecto" }));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cerrar" })).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "Cerrar" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+});
+
+// CNF-F1 · F1: la zona «Qué va a pasar» con scroll no se alcanzaba con teclado.
+describe("ConfirmActionModal · zona de efectos con scroll y teclado (CNF-F1)", () => {
+  const originalResizeObserver = globalThis.ResizeObserver;
+  const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+  const clientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+  let notifyResize: Array<() => void> = [];
+  let contentHeight = 0;
+
+  const longEffects = Array.from({ length: 30 }, (_, index) => ({
+    after: String(20 + index),
+    before: String(10 + index),
+    label: `Stock del producto ${index + 1}`,
+  }));
+
+  function isEffectsViewport(element: HTMLElement) {
+    return element.classList.contains("overflow-y-auto") && element.closest("section") != null;
+  }
+
+  beforeEach(() => {
+    notifyResize = [];
+    contentHeight = 0;
+
+    globalThis.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) {
+        notifyResize.push(() => callback([], this));
+      }
+
+      disconnect() {}
+
+      observe() {}
+
+      unobserve() {}
+    };
+
+    // jsdom no calcula el layout: 346 px visibles de `contentHeight`, como en el reporte.
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return isEffectsViewport(this) ? contentHeight : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return isEffectsViewport(this) ? 346 : 0;
+      },
+    });
+  });
+
+  afterEach(() => {
+    globalThis.ResizeObserver = originalResizeObserver;
+
+    if (scrollHeight) {
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", scrollHeight);
+    }
+    if (clientHeight) {
+      Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeight);
+    }
+  });
+
+  function layout(height: number) {
+    contentHeight = height;
+    act(() => {
+      notifyResize.forEach((notify) => notify());
+    });
+  }
+
+  it("cuando los efectos desbordan, la zona con scroll es un grupo con nombre al que llega Tab", async () => {
+    const user = userEvent.setup();
+    renderModal({ effects: longEffects });
+    layout(445);
+
+    const viewport = screen.getByRole("group", { name: "Qué va a pasar" });
+
+    expect(viewport).toHaveClass("overflow-y-auto");
+    expect(viewport).toHaveAttribute("tabindex", "0");
+    expect(viewport.className).toMatch(/focus-visible:ring-ring/);
+    expect(within(viewport).getAllByRole("listitem")).toHaveLength(30);
+
+    const stops: Array<Element | null> = [];
+    for (let index = 0; index < 4; index += 1) {
+      await user.tab();
+      stops.push(document.activeElement);
+    }
+
+    expect(stops).toContain(viewport);
+  });
+
+  it("también con efectos a medida (`renderEffects`)", () => {
+    renderModal({ renderEffects: () => <p>Vuelven Bs 1.200,00 a la caja principal.</p> });
+    layout(445);
+
+    const viewport = screen.getByRole("group", { name: "Qué va a pasar" });
+
+    expect(viewport).toHaveAttribute("tabindex", "0");
+    expect(viewport).toHaveTextContent("Vuelven Bs 1.200,00 a la caja principal.");
+  });
+
+  it("si los efectos caben, la zona no añade una parada de Tab", async () => {
+    const user = userEvent.setup();
+    renderModal({ effects: longEffects.slice(0, 2) });
+    layout(120);
+
+    const viewport = screen.getByRole("list", { name: "Qué va a pasar" }).parentElement;
+
+    expect(viewport).toHaveClass("overflow-y-auto");
+    expect(viewport).not.toHaveAttribute("tabindex");
+    expect(screen.queryByRole("group", { name: "Qué va a pasar" })).not.toBeInTheDocument();
+
+    for (let index = 0; index < 4; index += 1) {
+      await user.tab();
+      expect(document.activeElement?.tagName).toBe("BUTTON");
+    }
+  });
+
+  it("deja de ser una parada de Tab cuando el contenido vuelve a caber", () => {
+    renderModal({ effects: longEffects });
+    layout(445);
+    expect(screen.getByRole("group", { name: "Qué va a pasar" })).toHaveAttribute("tabindex", "0");
+
+    layout(300);
+
+    expect(screen.queryByRole("group", { name: "Qué va a pasar" })).not.toBeInTheDocument();
+  });
+
+  it("conserva el foco inicial en el botón de la acción", () => {
+    renderModal({ effects: longEffects });
+    layout(445);
+
+    expect(screen.getByRole("button", { name: "Anular venta" })).toHaveFocus();
+  });
+});

@@ -11,7 +11,7 @@ import {
 /** Los filtros del listado de movimientos: la exportación usa los mismos que la pantalla. */
 export type MovementsExportFilters = Pick<
   InventoryMovementFilters,
-  "document" | "documentKind" | "from" | "productId" | "to" | "type"
+  "document" | "documentKind" | "from" | "productId" | "purchaseId" | "saleId" | "to" | "type"
 >;
 
 function pickMovementsQuery(filters: MovementsExportFilters) {
@@ -20,6 +20,8 @@ function pickMovementsQuery(filters: MovementsExportFilters) {
     documentKind: filters.documentKind,
     from: filters.from,
     productId: filters.productId,
+    purchaseId: filters.purchaseId,
+    saleId: filters.saleId,
     to: filters.to,
     type: filters.type,
   };

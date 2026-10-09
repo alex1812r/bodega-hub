@@ -23,12 +23,19 @@ type ProductDetailStockCardProps = {
   adjustableProduct?: Omit<InventoryAdjustmentLockedProduct, "currentStock">;
   currentStock: number;
   minStock: number;
+  /**
+   * Destino de "Ver movimientos de inventario": `/inventory/movements` filtrado
+   * por el producto y con `returnTo` a la URL del detalle. Sin él no hay enlace:
+   * la página solo lo pasa a quien tiene `inventory.view`.
+   */
+  movementsHref?: string;
 };
 
 export function ProductDetailStockCard({
   adjustableProduct,
   currentStock,
   minStock,
+  movementsHref,
 }: ProductDetailStockCardProps) {
   const stock = { currentStock, minStock };
   const levelLabel = getStockLevelLabel(stock);
@@ -87,12 +94,14 @@ export function ProductDetailStockCard({
           />
         </Can>
       ) : null}
-      <Link
-        className="mt-3 text-center text-xs font-medium text-primary hover:underline"
-        href="/inventory/movements"
-      >
-        Ver movimientos de inventario
-      </Link>
+      {movementsHref ? (
+        <Link
+          className="mt-3 text-center text-xs font-medium text-primary hover:underline"
+          href={movementsHref}
+        >
+          Ver movimientos de inventario
+        </Link>
+      ) : null}
     </section>
   );
 }

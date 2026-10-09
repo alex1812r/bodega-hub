@@ -385,13 +385,25 @@ export function applyMockPurchaseCost(productId: string, costRef: number, purcha
   product.currentCostRef = costRef;
 
   if (purchaseId) {
-    ledger().costEvents.push({
-      productId,
-      purchaseId,
-      receivedAt: new Date().toISOString(),
-      seq: nextSeq(),
-    });
+    recordMockPurchaseCostEvent(productId, purchaseId);
   }
 
   return product;
+}
+
+/**
+ * Deja a `purchaseId` como la compra que fijó el costo de `productId`, sin tocar
+ * el costo: lo que en la base hace el movimiento `compra` o, para el componente de
+ * un empaque desarmado al recibir, la `conversion_entrada` de la apertura que la
+ * línea de compra guarda en `disassembled_conversion_id` (20261012b). Quien la
+ * llame debe haber asegurado antes la línea base (`ensureMockPriceBaselines`),
+ * con el costo previo al cambio.
+ */
+export function recordMockPurchaseCostEvent(productId: string, purchaseId: string) {
+  ledger().costEvents.push({
+    productId,
+    purchaseId,
+    receivedAt: new Date().toISOString(),
+    seq: nextSeq(),
+  });
 }

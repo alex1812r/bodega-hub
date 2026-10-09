@@ -17,6 +17,34 @@ import {
 
 const mockPermissions = new Set<string>();
 
+/** URL simulada: `useSearchParams` la sigue como hace Next tras un `history.replaceState`. */
+const mockNavigation = {
+  listeners: new Set<() => void>(),
+  query: "",
+};
+
+jest.mock("next/navigation", () => {
+  const react = jest.requireActual<typeof import("react")>("react");
+
+  return {
+    usePathname: () => "/settings",
+    useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+    useSearchParams: () =>
+      new URLSearchParams(
+        react.useSyncExternalStore(
+          (listener: () => void) => {
+            mockNavigation.listeners.add(listener);
+
+            return () => {
+              mockNavigation.listeners.delete(listener);
+            };
+          },
+          () => mockNavigation.query,
+        ),
+      ),
+  };
+});
+
 jest.mock("../../../shared/auth/usePermission", () => ({
   usePermission: () => ({
     can: (permission: string) => mockPermissions.has(permission),
@@ -86,8 +114,18 @@ function numericInputs() {
 }
 
 const originalMatchMedia = window.matchMedia;
+const nativeReplaceState = window.history.replaceState.bind(window.history);
 
 beforeEach(() => {
+  // La pestaña activa vive en `?tab=`: cada test parte de la URL limpia.
+  nativeReplaceState(null, "", "/settings");
+  mockNavigation.query = "";
+  // Lo que hace Next con un `replaceState`: reflejar la URL en `useSearchParams`.
+  window.history.replaceState = (data: unknown, unused: string, url?: string | URL | null) => {
+    nativeReplaceState(data, unused, url);
+    mockNavigation.query = window.location.search.slice(1);
+    mockNavigation.listeners.forEach((listener) => listener());
+  };
   // jsdom no trae matchMedia y la tabla del historial de tasas lo consulta.
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -103,6 +141,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.history.replaceState = nativeReplaceState;
   Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
 });
 

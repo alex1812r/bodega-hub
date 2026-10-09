@@ -5,16 +5,17 @@ import { PageBackButton } from "@/shared/components/PageBackButton";
 type InventoryMovementsPageHeaderProps = {
   actions?: ReactNode;
   /**
-   * `returnTo` válido de la URL (se llegó desde `/inventory` o desde el detalle
-   * de un producto): "Volver" regresa a esa pantalla tal como estaba, con el
-   * `returnTo` propio que traiga (`readChainedReturnTo`). `null` = no hay.
+   * La URL trae un `returnTo` válido (se llegó desde `/inventory` o desde el
+   * detalle de un producto): el botón dice "Volver" y lleva atajos. Sin él dice
+   * "Volver a Inventario", sin atajos. El destino lo resuelve `PageBackButton`
+   * (`chained`: regresa a esa pantalla con el `returnTo` propio que traiga).
    */
-  returnTo?: string | null;
+  hasReturnTo?: boolean;
 };
 
 export function InventoryMovementsPageHeader({
   actions,
-  returnTo = null,
+  hasReturnTo = false,
 }: InventoryMovementsPageHeaderProps) {
   return (
     // El título conserva al menos 20rem; si las acciones no caben a su lado bajan a su propia línea.
@@ -29,11 +30,12 @@ export function InventoryMovementsPageHeader({
         </p>
       </div>
       <div className="flex w-full flex-col gap-2 sm:w-auto sm:max-w-full sm:flex-row sm:flex-wrap">
-        {returnTo ? (
-          <PageBackButton href={returnTo} shortcuts />
-        ) : (
-          <PageBackButton href="/inventory" label="Volver a Inventario" />
-        )}
+        <PageBackButton
+          chained
+          fallbackHref="/inventory"
+          label={hasReturnTo ? undefined : "Volver a Inventario"}
+          shortcuts={hasReturnTo}
+        />
         {actions}
       </div>
     </div>

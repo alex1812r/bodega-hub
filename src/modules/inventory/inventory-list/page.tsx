@@ -21,20 +21,20 @@ import {
 } from "@/shared/components/Pagination";
 import { Typography } from "@/shared/components/Typography";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import {
   URL_LIST_DEBOUNCE_MS,
   useUrlListState,
   withUrlListBoundary,
 } from "@/shared/hooks/useUrlListState";
 import { cn } from "@/shared/utils/cn";
-import { RETURN_TO_PARAM, isSafeInternalPath } from "@/shared/utils/returnTo";
+import { RETURN_TO_PARAM, isSafeInternalPath, withChainedReturnTo } from "@/shared/utils/returnTo";
 
 import { useAllCategories } from "../../products/hooks/useProducts";
 import { InventoryAdjustmentModal } from "../inventory-movements/components/InventoryAdjustmentModal";
 import { InventoryPackConversionModal } from "../inventory-movements/components/InventoryPackConversionModal";
 import { useInventory, type InventoryOverviewItem } from "../hooks/useInventory";
 import { RestockPurchaseButton } from "../restock";
-import { withChainedReturnTo } from "../utils/chainedReturnTo";
 import { InventoryExportActions } from "./components/InventoryExportActions";
 import { InventoryLastMovementCell } from "./components/InventoryLastMovementCell";
 import { InventoryListFilters } from "./components/InventoryListFilters";
@@ -187,6 +187,9 @@ function InventoryList() {
     }
   }, [isPagePastTheEnd, lastPage, setListState]);
 
+  // Al volver de los movimientos o de un documento la lista reaparece a la altura en que se dejó.
+  useScrollRestoration(list.href, { ready: !inventoryQuery.isLoading });
+
   const isSelectedInPage =
     selectedProductId !== "" && inventory.some((item) => item.id === selectedProductId);
   // El producto de la URL no está en la página visible: se pide aparte y se fija
@@ -328,7 +331,7 @@ function InventoryList() {
           </Typography>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:max-w-full">
-          {hasReturnTo ? <PageBackButton fallbackHref="/inventory" size="sm" /> : null}
+          {hasReturnTo ? <PageBackButton chained fallbackHref="/inventory" size="sm" /> : null}
           <InventoryExportActions exportFilters={filters} />
           {state.lowStock ? <RestockPurchaseButton size="sm" variant="primary" /> : null}
           <Can permission="inventory.manage">
@@ -336,7 +339,9 @@ function InventoryList() {
               <InventoryPackConversionModal />
               <InventoryAdjustmentModal />
               <Button asChild size="sm" variant="outline">
-                <Link href="/inventory/movements">Ver todos los movimientos</Link>
+                <Link href={withChainedReturnTo("/inventory/movements", listHref)}>
+                  Ver todos los movimientos
+                </Link>
               </Button>
             </div>
           </Can>
