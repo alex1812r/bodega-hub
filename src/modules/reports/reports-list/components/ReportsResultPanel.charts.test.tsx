@@ -526,6 +526,51 @@ describe("ReportsResultPanel · gráficos (REP-04)", () => {
       expect(region.innerHTML).not.toMatch(/NaN|Infinity/);
     });
 
+    // REP-F2: el id interno (un UUID con datos reales) no se enseña nunca.
+    it.each(["top-products", "product-profitability"] as const)(
+      "%s rotula con el nombre del producto (SKU secundario) y no muestra el id interno",
+      (id) => {
+        mockResponses[id] = { data: page([row(1, 20), row(2, 90)]) };
+        renderPanel(id);
+
+        const region = chartRegion(id);
+
+        expect(within(region).getByRole("img")).toHaveAccessibleName(
+          expect.stringMatching(/1. Nombre 2: .*2. Nombre 1: /),
+        );
+
+        const table = screen.getByRole("table");
+
+        expect(within(table).getByRole("cell", { name: "Nombre 2" })).toBeInTheDocument();
+        expect(within(table).getByRole("cell", { name: "SKU-2" })).toBeInTheDocument();
+        expect(document.body).not.toHaveTextContent(/id-[12]/);
+      },
+    );
+
+    it("un producto sin nombre cae al SKU, no al id interno", () => {
+      mockResponses["top-products"] = { data: page([{ ...row(1, 20), name: undefined }]) };
+      renderPanel("top-products");
+
+      expect(within(chartRegion("top-products")).getByRole("img")).toHaveAccessibleName(
+        expect.stringContaining("1. SKU-1: "),
+      );
+      expect(within(screen.getByRole("table")).getAllByRole("cell", { name: "SKU-1" })).toHaveLength(2);
+      expect(document.body).not.toHaveTextContent("id-1");
+    });
+
+    it("el kardex muestra el nombre del producto, no su id interno", () => {
+      mockResponses["stock-card"] = {
+        data: page([{ ...row(1, 20), productName: "Cable THW 12" }, { ...row(2, 5), id: "mov-2" }]),
+      };
+      renderPanel("stock-card");
+
+      const table = screen.getByRole("table");
+
+      expect(within(table).getByRole("cell", { name: "Cable THW 12" })).toBeInTheDocument();
+      expect(within(table).getByRole("cell", { name: "SKU-2" })).toBeInTheDocument();
+      expect(document.body).not.toHaveTextContent(/id-[12]/);
+    });
+
     it("con más de 10 filas en la página dibuja solo las 10 mayores", () => {
       mockResponses["top-customers"] = {
         data: page(

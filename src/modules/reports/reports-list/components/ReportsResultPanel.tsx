@@ -8,7 +8,6 @@ import { RestockPurchaseButton } from "@/modules/inventory/restock";
 import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { formatDateRangeLabel } from "@/shared/components/DateRangeField";
-import type { StockMovementMock } from "@/shared/mocks/erp-data";
 import { formatRef, formatVes } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
 
@@ -23,6 +22,7 @@ import {
   type ReportDateRangeFilters,
   type ReportRequestScope,
   type StockCardReportFilters,
+  type StockCardReportRow,
   type SupplierPurchasesReportRow,
   type TopCustomersReportRow,
   type TopProductsReportRow,
@@ -78,8 +78,13 @@ const purchasesMeasure: ReportSeriesChartMeasure<PurchasesSeriesMeasures> = {
   valueVes: "totalVes",
 };
 
-/** El servicio de rentabilidad ya devuelve el nombre del producto. */
-type ProductProfitabilityChartRow = ProductProfitabilityReportRow & { name?: string };
+/**
+ * Cómo se nombra un producto a la vista: su nombre y, si falta, el SKU. El id
+ * interno (un UUID) no se muestra nunca.
+ */
+function productLabel(name: string | undefined, sku: string | undefined) {
+  return name || sku || "—";
+}
 
 function formatUnits(value: number) {
   return `${value.toLocaleString("es-VE", { maximumFractionDigits: 2 })} uds`;
@@ -101,7 +106,7 @@ const grossProfitColumns: DataTableColumn<GrossProfitReportRow>[] = [
 ];
 
 const productProfitabilityColumns: DataTableColumn<ProductProfitabilityReportRow>[] = [
-  { header: "Producto", key: "productId", render: (row) => row.productId },
+  { header: "Producto", key: "name", render: (row) => productLabel(row.name, row.sku) },
   { header: "SKU", key: "sku", render: (row) => row.sku },
   { align: "right", header: "Unidades", key: "unitsSold", render: (row) => row.unitsSold },
   { align: "right", header: "Costo", key: "costRef", render: (row) => formatRef(row.costRef) },
@@ -139,16 +144,16 @@ const supplierPurchasesColumns: DataTableColumn<SupplierPurchasesReportRow>[] = 
   },
 ];
 
-const stockCardColumns: DataTableColumn<StockMovementMock>[] = [
+const stockCardColumns: DataTableColumn<StockCardReportRow>[] = [
   { header: "Fecha", key: "createdAt", render: (row) => formatDate(row.createdAt) },
-  { header: "Producto", key: "productId", render: (row) => row.productId },
+  { header: "Producto", key: "productName", render: (row) => productLabel(row.productName, row.sku) },
   { header: "Tipo", key: "type", render: (row) => row.type },
   { align: "right", header: "Movimiento", key: "quantityDelta", render: (row) => row.quantityDelta },
   { align: "right", header: "Stock final", key: "stockAfter", render: (row) => row.stockAfter },
 ];
 
 const topProductsColumns: DataTableColumn<TopProductsReportRow>[] = [
-  { header: "Producto", key: "productId", render: (row) => row.productId },
+  { header: "Producto", key: "name", render: (row) => productLabel(row.name, row.sku) },
   { header: "SKU", key: "sku", render: (row) => row.sku },
   { align: "right", header: "Unidades", key: "unitsSold", render: (row) => row.unitsSold },
   { align: "right", header: "Ingreso ref", key: "revenueRef", render: (row) => formatRef(row.revenueRef) },
@@ -459,9 +464,9 @@ export function ReportsResultPanel({
             <ReportRankingChart
               error={query.error}
               isLoading={query.isLoading}
-              items={getPaginatedItems(query.data).map((row: ProductProfitabilityChartRow) => ({
+              items={getPaginatedItems(query.data).map((row) => ({
                 id: row.productId,
-                label: row.name || row.sku || row.productId,
+                label: productLabel(row.name, row.sku),
                 value: row.grossProfitRef,
               }))}
               measureLabel="Ganancia bruta en REF"
@@ -572,7 +577,7 @@ export function ReportsResultPanel({
               isLoading={query.isLoading}
               items={getPaginatedItems(query.data).map((row) => ({
                 id: row.productId,
-                label: row.sku || row.productId,
+                label: productLabel(row.name, row.sku),
                 value: row.unitsSold,
               }))}
               measureLabel="Unidades vendidas"

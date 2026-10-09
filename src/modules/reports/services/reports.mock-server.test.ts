@@ -4,11 +4,16 @@
  * por día operativo de Caracas, sin ventas canceladas ni devueltas, filtrada por
  * `from` / `to`. Así la suma de la tabla es el total del gráfico.
  */
-import { mockSaleItems, mockSales } from "@/shared/mocks/erp-data";
+import { mockProducts, mockSaleItems, mockSales } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
-import { getDailySalesReport, getGrossProfitReport } from "./reports.mock-server";
+import {
+  getDailySalesReport,
+  getGrossProfitReport,
+  getStockCard,
+  getTopProductsReport,
+} from "./reports.mock-server";
 
 // Una venta mock sin `storeId` pertenece a la tienda por defecto.
 const STORE_ID = DEFAULT_STORE_ID;
@@ -72,6 +77,32 @@ describe.each([
 
     expect(report.total).toBe(0);
     expect(report.series?.current).toHaveLength(7);
+  });
+});
+
+describe("mock de reportes de producto: traen el nombre (REP-F2)", () => {
+  const nameById = new Map(mockProducts.map((product) => [product.id, product.name]));
+
+  it("top productos devuelve nombre y SKU", () => {
+    const { items } = getTopProductsReport(params(""), STORE_ID);
+
+    expect(items.length).toBeGreaterThan(0);
+
+    for (const item of items) {
+      expect(item.name).toBe(nameById.get(item.productId));
+      expect(item.sku).not.toBe("");
+    }
+  });
+
+  it("el kardex devuelve nombre y SKU del producto, como la vista stock_card", () => {
+    const { items } = getStockCard(params(""), STORE_ID);
+
+    expect(items.length).toBeGreaterThan(0);
+
+    for (const item of items) {
+      expect(item.productName).toBe(nameById.get(item.productId));
+      expect(item.sku).not.toBe("");
+    }
   });
 });
 

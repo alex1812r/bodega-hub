@@ -607,6 +607,29 @@ describe("paridad exacta servidor / mock", () => {
   });
 });
 
+describe("servidor: top productos (REP-F2)", () => {
+  it("devuelve el nombre y el SKU de cada producto del ranking", async () => {
+    useTables({
+      products: [
+        { id: "uuid-a", name: "Interruptor sencillo", sku: "ele-int-001" },
+        { id: "uuid-b", name: "Tubo PVC 1/2", sku: "plo-pvc-012" },
+      ],
+      sale_items: [
+        { product_id: "uuid-a", quantity: 3, sale_id: "s1", subtotal_ref: 9 },
+        { product_id: "uuid-b", quantity: 5, sale_id: "s1", subtotal_ref: 10 },
+      ],
+      sales: [{ created_at: "2026-05-04T15:00:00.000Z", id: "s1", status: "pagada", store_id: DEFAULT_STORE_ID }],
+    });
+
+    const result = await reportsServer.getTopProductsReport(q(RANGE), DEFAULT_STORE_ID);
+
+    expect(result.items).toEqual([
+      { name: "Tubo PVC 1/2", productId: "uuid-b", revenueRef: 10, sku: "plo-pvc-012", unitsSold: 5 },
+      { name: "Interruptor sencillo", productId: "uuid-a", revenueRef: 9, sku: "ele-int-001", unitsSold: 3 },
+    ]);
+  });
+});
+
 describe("servidor: series por encima de 1.000 filas", () => {
   function shiftDay(day: string, days: number) {
     return new Date(Date.parse(`${day}T12:00:00.000Z`) + days * 86_400_000).toISOString().slice(0, 10);

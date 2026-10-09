@@ -256,11 +256,18 @@ export function getLowStockReport(searchParams: URLSearchParams, storeIdOrIds: s
 export function getStockCard(searchParams: URLSearchParams, storeIdOrIds: string | string[]) {
   const storeIds = toStoreIds(storeIdOrIds);
   const productId = searchParams.get("productId");
-  const items = mockStockMovements.filter(
-    (movement) =>
-      matchesStoreIds(movement.storeId, storeIds) &&
-      (!productId || movement.productId === productId),
-  );
+  // Como la vista `stock_card`: cada movimiento lleva el nombre y el SKU del producto.
+  const items = mockStockMovements
+    .filter(
+      (movement) =>
+        matchesStoreIds(movement.storeId, storeIds) &&
+        (!productId || movement.productId === productId),
+    )
+    .map((movement) => {
+      const product = mockProducts.find((item) => item.id === movement.productId);
+
+      return { ...movement, productName: product?.name ?? "", sku: product?.sku ?? "" };
+    });
 
   return paginateList(items, searchParams);
 }
@@ -343,6 +350,7 @@ export function getTopProductsReport(searchParams: URLSearchParams, storeIdOrIds
       );
 
       return {
+        name: product.name,
         productId: product.id,
         revenueRef: saleItems.reduce((total, item) => total + item.subtotalRef, 0),
         sku: product.sku,

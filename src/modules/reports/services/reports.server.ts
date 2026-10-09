@@ -583,18 +583,19 @@ export async function getTopProductsReport(
 
   const { data: products, error: productsError } = await supabase
     .from("products")
-    .select("id, sku")
+    .select("id, sku, name")
     .in("id", productIds);
 
   throwIfSupabaseError(productsError);
 
-  const skuById = new Map((products ?? []).map((product) => [product.id, product.sku]));
+  const productById = new Map((products ?? []).map((product) => [product.id, product]));
 
   const ranked = productIds
     .map((productId) => ({
+      name: productById.get(productId)?.name ?? "",
       productId,
       revenueRef: totals.get(productId)?.revenueRef ?? 0,
-      sku: skuById.get(productId) ?? "",
+      sku: productById.get(productId)?.sku ?? "",
       unitsSold: totals.get(productId)?.unitsSold ?? 0,
     }))
     .filter((item) => item.unitsSold > 0)

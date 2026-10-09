@@ -72,6 +72,8 @@ export type GrossProfitReportRow = {
 export type ProductProfitabilityReportRow = {
   costRef: number;
   grossProfitRef: number;
+  /** Nombre del producto: es lo que se muestra; `productId` es solo la clave. */
+  name?: string;
   productId: string;
   sku: string;
   storeId?: string | null;
@@ -108,11 +110,19 @@ export type SupplierPurchasesReportRow = {
 };
 
 export type TopProductsReportRow = {
+  /** Nombre del producto: es lo que se muestra; `productId` es solo la clave. */
+  name?: string;
   productId: string;
   revenueRef: number;
   sku: string;
   storeId?: string | null;
   unitsSold: number;
+};
+
+/** Movimiento del kardex con el nombre y el SKU del producto (vista `stock_card`). */
+export type StockCardReportRow = StockMovementMock & {
+  productName?: string;
+  sku?: string;
 };
 
 export type TopCustomersReportRow = {
@@ -421,7 +431,7 @@ export function useStockCardReport(
     enabled: scope?.enabled ?? true,
     queryKey: reportsQueryKeys.stockCard(filters, scope),
     queryFn: () =>
-      apiFetch<PaginatedList<StockMovementMock>>(reportPath("stock-card", scope), {
+      apiFetch<PaginatedList<StockCardReportRow>>(reportPath("stock-card", scope), {
         query: withScopeQuery(filters, scope),
       }),
   });

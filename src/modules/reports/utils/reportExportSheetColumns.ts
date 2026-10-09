@@ -1,4 +1,3 @@
-import type { StockMovementMock } from "@/shared/mocks/erp-data";
 import { paymentMethodLabels } from "@/shared/payments/paymentMethods";
 import { formatDate } from "@/shared/utils/date";
 
@@ -11,6 +10,7 @@ import type {
   PaymentMethodReportRow,
   ProductProfitabilityReportRow,
   PurchasesReportRow,
+  StockCardReportRow,
   SupplierPurchasesReportRow,
   TopCustomersReportRow,
   TopProductsReportRow,
@@ -38,7 +38,7 @@ export const grossProfitExportColumns: ReportExportColumn<GrossProfitReportRow>[
 
 export const productProfitabilityExportColumns: ReportExportColumn<ProductProfitabilityReportRow>[] =
   [
-    { header: "Producto", value: (row) => row.productId },
+    { header: "Producto", value: (row) => row.name || row.sku },
     { header: "SKU", value: (row) => row.sku },
     { header: "Unidades", value: (row) => row.unitsSold },
     { header: "Costo REF", value: (row) => row.costRef },
@@ -77,16 +77,16 @@ export const supplierPurchasesExportColumns: ReportExportColumn<SupplierPurchase
     },
   ];
 
-export const stockCardExportColumns: ReportExportColumn<StockMovementMock>[] = [
+export const stockCardExportColumns: ReportExportColumn<StockCardReportRow>[] = [
   { header: "Fecha", value: (row) => formatDate(row.createdAt) },
-  { header: "Producto", value: (row) => row.productId },
+  { header: "Producto", value: (row) => row.productName || row.sku || "" },
   { header: "Tipo", value: (row) => row.type },
   { header: "Movimiento", value: (row) => row.quantityDelta },
   { header: "Stock final", value: (row) => row.stockAfter },
 ];
 
 export const topProductsExportColumns: ReportExportColumn<TopProductsReportRow>[] = [
-  { header: "Producto", value: (row) => row.productId },
+  { header: "Producto", value: (row) => row.name || row.sku },
   { header: "SKU", value: (row) => row.sku },
   { header: "Unidades", value: (row) => row.unitsSold },
   { header: "Ingreso REF", value: (row) => row.revenueRef },
