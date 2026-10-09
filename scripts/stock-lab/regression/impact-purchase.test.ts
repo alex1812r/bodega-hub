@@ -120,15 +120,23 @@ async function mkRecipe(pack: string, components: Array<{ id: string; units: num
   const id = randomUUID();
   const total = components.reduce((sum, component) => sum + component.units, 0);
   recipeIds.push(id);
-  await lab.db.query(
-    "insert into public.product_pack_conversions (id, store_id, pack_product_id, total_units, label, is_active) values ($1, $2, $3, $4, $5, true)",
-    [id, lab.storeId, pack, total, TAG],
-  );
-  for (const component of components) {
+  // Una transacción: el trigger diferido de 20261009d exige cabecera y componentes completos al confirmar.
+  await lab.db.query("begin");
+  try {
     await lab.db.query(
-      "insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack, cost_weight) values ($1, $2, $3, $4, $5::numeric)",
-      [id, lab.storeId, component.id, component.units, String(component.weight ?? 1)],
+      "insert into public.product_pack_conversions (id, store_id, pack_product_id, total_units, label, is_active) values ($1, $2, $3, $4, $5, true)",
+      [id, lab.storeId, pack, total, TAG],
     );
+    for (const component of components) {
+      await lab.db.query(
+        "insert into public.product_pack_components (conversion_id, store_id, unit_product_id, units_per_pack, cost_weight) values ($1, $2, $3, $4, $5::numeric)",
+        [id, lab.storeId, component.id, component.units, String(component.weight ?? 1)],
+      );
+    }
+    await lab.db.query("commit");
+  } catch (error) {
+    await lab.db.query("rollback");
+    throw error;
   }
 }
 
@@ -641,7 +649,8 @@ describe("CNF-14 · impact de devolver una compra = lo que aplica return_purchas
         p_customer_id: lab.customerId,
         p_exchange_rate_id: null,
         p_invoice_number: `${TAG}-V${seq}`,
-        p_items: [{ product_id: id, quantity: 2, unit_price_ref: 1 }],
+        // Precio de lista de `mkProduct`: por debajo, `create_sale` rechaza la venta de un vendedor.
+        p_items: [{ product_id: id, quantity: 2, unit_price_ref: 9 }],
         p_ref_rate_ves: await rate(),
       });
       return { product: id, purchaseId: purchase };

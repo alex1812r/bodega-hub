@@ -249,12 +249,14 @@ async function paidSale(
 ): Promise<{ productIds: [string, string]; saleId: string }> {
   await ensureCashSession(role);
   const first = await mkProduct(`${key}-a`, 10);
-  const second = await mkProduct(`${key}-b`, 6, false);
+  const second = await mkProduct(`${key}-b`, 6);
   const sale = await mkSale(role, [
     { product_id: first, quantity: 2 },
     { product_id: second, quantity: 1 },
     { product_id: first, quantity: 1 },
   ]);
+  // Se desactiva después de venderlo: `create_sale` rechaza un producto inactivo, la reversión no.
+  await lab.db.query("update public.products set is_active = false where id = $1", [second]);
   await rpcOk(role, "register_payment", { p_sale_id: sale.id, ...payment(sale) });
   const status = (await one("select status::text as status from public.sales where id = $1", [sale.id])).status;
   if (status !== "pagada") throw new Error(`SETUP la venta ${key} no quedó pagada (${String(status)})`);

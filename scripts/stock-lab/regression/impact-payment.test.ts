@@ -418,7 +418,7 @@ describe("CNF-14 · impact de anular un cobro de venta = lo que aplica cancel_pa
         p_amount: Number(sale.total_ves),
         p_bank_name: `Banco ${TAG}`,
         p_phone: "04140000000",
-        p_reference_code: "004455",
+        p_reference_code: "4455",
       })),
     );
 
