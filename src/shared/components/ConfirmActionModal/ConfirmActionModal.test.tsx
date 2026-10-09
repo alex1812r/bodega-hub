@@ -624,3 +624,239 @@ describe("ConfirmActionModal", () => {
     expect(screen.getByRole("button", { name: "Anular venta" })).toBeDisabled();
   });
 });
+
+describe("ConfirmActionModal · effect status (CNF-S1)", () => {
+  it("loading: announces the wait, offers no confirm button and closes with «Cerrar» or Escape", async () => {
+    const user = userEvent.setup();
+    const { onConfirm, onOpenChange } = renderModal({
+      effects: [{ label: "Stock de Harina PAN" }],
+      requireTypedConfirmation: "ANULAR",
+      status: "loading",
+      statusHint: "Hasta conocerlo no se puede anular.",
+      statusMessage: "Calculando el efecto…",
+      variant: "danger",
+    });
+    const dialog = within(screen.getByRole("dialog"));
+    const status = dialog.getByRole("status");
+
+    expect(status).toHaveTextContent("Calculando el efecto…");
+    expect(status).toHaveTextContent("Hasta conocerlo no se puede anular.");
+    expect(status).toHaveAttribute("aria-live", "polite");
+    expect(dialog.queryByRole("button", { name: "Anular venta" })).not.toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Cancelar" })).not.toBeInTheDocument();
+    expect(dialog.queryByText("Qué va a pasar")).not.toBeInTheDocument();
+    expect(dialog.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Cerrar" })).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("loading: uses a default message and a custom close label", () => {
+    renderModal({ closeLabel: "Volver", status: "loading" });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Calculando qué va a pasar…");
+    expect(screen.getByRole("button", { name: "Volver" })).toBeInTheDocument();
+  });
+
+  it("error: shows the message as is, never a confirm button, and retries on demand", async () => {
+    const user = userEvent.setup();
+    const onRetry = jest.fn();
+    const { onConfirm, onOpenChange } = renderModal({
+      onRetry,
+      status: "error",
+      statusHint: "No se ha cambiado nada.",
+      statusMessage: "Venta no encontrada",
+    });
+    const dialog = within(screen.getByRole("dialog"));
+
+    expect(dialog.getByRole("alert").textContent).toBe("Venta no encontrada");
+    expect(dialog.getByText("No se ha cambiado nada.")).toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Anular venta" })).not.toBeInTheDocument();
+
+    await user.click(dialog.getByRole("button", { name: "Reintentar" }));
+
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it("error: without onRetry there is no «Reintentar», and Escape closes", async () => {
+    const user = userEvent.setup();
+    const { onOpenChange } = renderModal({ status: "error" });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No se pudo calcular el efecto de la acción.",
+    );
+    expect(screen.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it("blocked: shows the reason as is, the content and actions passed in, and no confirm button", async () => {
+    const user = userEvent.setup();
+    const onAlternative = jest.fn();
+    const { onConfirm, onOpenChange } = renderModal({
+      blockedActions: (
+        <button onClick={onAlternative} type="button">
+          Devolver la venta
+        </button>
+      ),
+      children: <p>Venta V-0012 de Cliente Demo</p>,
+      effects: [{ label: "Stock de Harina PAN" }],
+      onRetry: jest.fn(),
+      requireTypedConfirmation: "ANULAR",
+      status: "blocked",
+      statusMessage: "La venta tiene 1 pago(s) activo(s).",
+    });
+    const dialog = within(screen.getByRole("dialog"));
+
+    expect(dialog.getByRole("alert").textContent).toBe("La venta tiene 1 pago(s) activo(s).");
+    expect(dialog.getByText("Venta V-0012 de Cliente Demo")).toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Anular venta" })).not.toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+    expect(dialog.queryByText("Qué va a pasar")).not.toBeInTheDocument();
+    expect(dialog.queryByRole("textbox")).not.toBeInTheDocument();
+
+    await user.click(dialog.getByRole("button", { name: "Devolver la venta" }));
+
+    expect(onAlternative).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it("blockedActions are only offered while blocked", () => {
+    renderModal({ blockedActions: <button type="button">Ver pagos</button> });
+
+    expect(screen.queryByRole("button", { name: "Ver pagos" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Anular venta" })).toBeEnabled();
+  });
+
+  it.each(["loading", "error", "blocked"] as const)(
+    "%s: stays locked while pending, as in the ready state",
+    async (status) => {
+      const user = userEvent.setup();
+      const { onOpenChange } = renderModal({ isPending: true, onRetry: jest.fn(), status });
+
+      expect(screen.getByRole("button", { name: "Cerrar" })).toBeDisabled();
+
+      await user.keyboard("{Escape}");
+      await flushDeferredClose();
+
+      expect(onOpenChange).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps one dialog from loading to ready and moves focus to the control of each state", async () => {
+    const user = userEvent.setup();
+    const onConfirm = jest.fn();
+    const view = render(modalElement({ status: "loading", variant: "danger" }, onConfirm));
+    const dialog = screen.getByRole("dialog");
+
+    expect(screen.getByRole("button", { name: "Cerrar" })).toHaveFocus();
+
+    view.rerender(
+      modalElement({ onRetry: jest.fn(), status: "error", variant: "danger" }, onConfirm),
+    );
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(screen.getByRole("button", { name: "Cerrar" })).toHaveFocus();
+
+    view.rerender(
+      modalElement(
+        {
+          effects: [{ label: "Stock de Harina PAN" }],
+          requireTypedConfirmation: "ANULAR",
+          status: "ready",
+          variant: "danger",
+        },
+        onConfirm,
+      ),
+    );
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(screen.getByText("Qué va a pasar")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Palabra de confirmación" })).toHaveFocus();
+
+    await user.keyboard("anular");
+    await user.dblClick(screen.getByRole("button", { name: "Anular venta" }));
+
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the typed word when the status stops being ready", async () => {
+    const user = userEvent.setup();
+    const onConfirm = jest.fn();
+    const ready = { requireTypedConfirmation: "ANULAR", status: "ready" } as const;
+    const view = render(modalElement(ready, onConfirm));
+
+    await user.type(screen.getByRole("textbox", { name: "Palabra de confirmación" }), "anular");
+    expect(screen.getByRole("button", { name: "Anular venta" })).toBeEnabled();
+
+    view.rerender(modalElement({ ...ready, status: "loading" }, onConfirm));
+    expect(screen.queryByRole("button", { name: "Anular venta" })).not.toBeInTheDocument();
+
+    view.rerender(modalElement(ready, onConfirm));
+
+    expect(screen.getByRole("textbox", { name: "Palabra de confirmación" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "Palabra de confirmación" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Anular venta" })).toBeDisabled();
+
+    await user.keyboard("{Enter}");
+
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("returns focus to the trigger when it opened loading and closes in another state", async () => {
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      const [status, setStatus] = useState<"loading" | "blocked">("loading");
+
+      return (
+        <>
+          <button onClick={() => setOpen(true)} type="button">
+            Anular
+          </button>
+          <ConfirmActionModal
+            confirmLabel="Anular venta"
+            description="La venta quedará anulada."
+            onConfirm={jest.fn()}
+            onOpenChange={setOpen}
+            open={open}
+            status={status}
+            title="Anular venta V-0012"
+            variant="danger"
+          >
+            <button onClick={() => setStatus("blocked")} type="button">
+              Llega el efecto
+            </button>
+          </ConfirmActionModal>
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    const trigger = screen.getByRole("button", { name: "Anular" });
+
+    await user.click(trigger);
+    await user.click(await screen.findByRole("button", { name: "Llega el efecto" }));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cerrar" })).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "Cerrar" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+});

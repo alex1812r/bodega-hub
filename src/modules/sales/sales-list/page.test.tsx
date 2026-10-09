@@ -38,8 +38,15 @@ jest.mock("next/navigation", () => {
       ),
   };
 });
+/** Permisos que el usuario NO tiene; vacío = los tiene todos. */
+const mockDeniedPermissions = new Set<string>();
+
 jest.mock("../../../shared/auth/usePermission", () => ({
-  usePermission: () => ({ can: () => true, isLoading: false, role: "admin" }),
+  usePermission: () => ({
+    can: (permission: string) => !mockDeniedPermissions.has(permission),
+    isLoading: false,
+    role: "admin",
+  }),
 }));
 jest.mock("./components/SalesExportActions", () => ({
   SalesExportActions: ({ exportFilters }: { exportFilters: unknown }) => (
@@ -113,6 +120,7 @@ describe("SalesListPage · estado en la URL (DET-06a)", () => {
         removeEventListener: jest.fn(),
       }),
     });
+    mockDeniedPermissions.clear();
     fetchMock.mockReset();
     fetchMock.mockImplementation(async (url: string) => {
       // Como el servidor: más allá del total no hay filas, y devuelve el `skip` pedido.
@@ -475,6 +483,36 @@ describe("SalesListPage · estado en la URL (DET-06a)", () => {
       for (const label of ["Ver detalle", "Registrar pago", "Ver recibo"]) {
         expect(screen.getByRole("menuitem", { name: label })).toBeInTheDocument();
       }
+    });
+
+    it("sin `sales.create` la fila no ofrece «Anular» ni «Devolver», como el detalle (CNF-S1)", async () => {
+      const user = userEvent.setup();
+      const { impacts } = installRowApi([sale("001", "pagada")]);
+
+      mockDeniedPermissions.add("sales.create");
+      renderPage();
+      await user.click((await screen.findAllByRole("button", { name: /acciones/i }))[0]);
+
+      // Las acciones que no exigen ese permiso siguen ahí.
+      for (const label of ["Ver detalle", "Registrar pago", "Ver recibo"]) {
+        expect(await screen.findByRole("menuitem", { name: label })).toBeInTheDocument();
+      }
+      expect(screen.queryByRole("menuitem", { name: "Anular" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: "Devolver" })).not.toBeInTheDocument();
+      expect(impacts).toEqual([]);
+    });
+
+    it("con `sales.create` pero sin otros permisos la fila sigue ofreciendo «Anular» y «Devolver»", async () => {
+      const user = userEvent.setup();
+
+      installRowApi([sale("001", "pagada")]);
+      mockDeniedPermissions.add("payments.view");
+      mockDeniedPermissions.add("payments.manage");
+      renderPage();
+      await user.click((await screen.findAllByRole("button", { name: /acciones/i }))[0]);
+
+      expect(await screen.findByRole("menuitem", { name: "Anular" })).toBeEnabled();
+      expect(screen.getByRole("menuitem", { name: "Devolver" })).toBeEnabled();
     });
   });
 });

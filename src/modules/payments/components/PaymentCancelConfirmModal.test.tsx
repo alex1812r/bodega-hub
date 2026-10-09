@@ -146,16 +146,21 @@ describe("PaymentCancelConfirmModal", () => {
       });
     renderModal();
 
-    const dialog = within(await screen.findByRole("dialog"));
+    const loadingDialog = await screen.findByRole("dialog");
+    const dialog = within(loadingDialog);
 
     expect(dialog.getByRole("status")).toHaveTextContent("Calculando el efecto de anular el pago");
+    expect(dialog.getByRole("status")).toHaveTextContent("Hasta conocerlo no se puede anular.");
     expect(dialog.queryByRole("button", { name: "Anular pago" })).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Cerrar" })).toHaveFocus();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toBe("/api/payments/pay-001/impact?action=cancel");
 
     resolveImpact(jsonResponse({ data: impactOf() }));
 
     expect(await screen.findByRole("button", { name: "Anular pago" })).toBeEnabled();
+    // CNF-S1: el mismo diálogo de principio a fin, no uno de carga y otro de confirmación.
+    expect(screen.getByRole("dialog")).toBe(loadingDialog);
   });
 
   it("cobro en efectivo: documento, método, monto, la caja de la que sale y la venta antes → después", async () => {
@@ -420,5 +425,10 @@ describe("PaymentCancelConfirmModal", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("El pago ya fue anulado");
     expect(screen.queryByRole("button", { name: "Anular pago" })).not.toBeInTheDocument();
+
+    // CNF-S1: también bloqueado (abrió cargando) el foco vuelve a quien lo abrió.
+    await user.click(screen.getByRole("button", { name: "Cerrar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Abrir" })).toHaveFocus());
   });
 });

@@ -1,14 +1,16 @@
 "use client";
 
-import { ArrowRight, Loader2, TriangleAlert } from "lucide-react";
+import { ArrowRight, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { paymentMethodLabels } from "@/modules/payments/payment-details/utils/paymentDetailLabels";
 import { Badge } from "@/shared/components/Badge";
 import { Button } from "@/shared/components/Button";
-import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
-import { Modal } from "@/shared/components/Modal";
+import {
+  ConfirmActionModal,
+  type ConfirmActionStatus,
+} from "@/shared/components/ConfirmActionModal";
 import type {
   ImpactMethodAmount,
   ImpactMoneyEffect,
@@ -49,8 +51,6 @@ const PAYMENT_OUTCOME_BADGE: Record<
 
 const noticeClassName =
   "flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300";
-const alertClassName =
-  "rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300";
 const sectionTitleClassName =
   "pt-2 text-xs font-semibold uppercase tracking-wide text-on-surface-variant";
 
@@ -392,135 +392,99 @@ function ImpactGate({
   const query = useSaleImpact({ action, enabled: true, saleId });
   // Solo vale una respuesta al día: mientras se reintenta no hay efecto que confirmar.
   const impact = query.isSuccess && !query.isFetching ? query.data : null;
+  const blocking =
+    impact && !impact.allowed
+      ? impact.payments.filter((payment) => payment.outcome === "blocks_action")
+      : [];
+  const hasBlockingPayments = blocking.length > 0;
 
-  if (impact?.allowed) {
-    return (
-      <ConfirmActionModal
-        confirmLabel={confirmLabel}
-        description={description}
-        error={error}
-        isPending={isPending}
-        onConfirm={onConfirm}
-        onOpenChange={onOpenChange}
-        open
-        renderEffects={() => <SaleImpactEffects impact={impact} />}
-        requireTypedConfirmation={impact.paidVes > 0 ? typedWord : undefined}
-        title={title}
-        variant="danger"
-      >
-        <SaleImpactDocumentSummary impact={impact} />
-      </ConfirmActionModal>
-    );
+  let status: ConfirmActionStatus = "loading";
+  let statusMessage = "Calculando qué va a pasar con el stock y los pagos…";
+
+  if (impact) {
+    status = impact.allowed ? "ready" : "blocked";
+    statusMessage = impact.reason ?? "";
+  } else if (query.isError && !query.isFetching) {
+    status = "error";
+    statusMessage = query.error instanceof Error ? query.error.message : "";
   }
 
-  // Sin efecto permitido a la vista no existe botón de confirmar: solo lectura.
-  if (impact) {
-    const blocking = impact.payments.filter((payment) => payment.outcome === "blocks_action");
-
-    return (
-      <Modal
-        bodyClassName="flex flex-col gap-4"
-        description="La acción no se puede ejecutar ahora. No se ha cambiado nada."
-        footer={({ close }) => (
+  // Un solo diálogo de principio a fin: sin efecto permitido a la vista no hay
+  // botón de confirmar (lo decide `status`).
+  return (
+    <ConfirmActionModal
+      blockedActions={
+        hasBlockingPayments ? (
           <>
-            <Button onClick={close} type="button" variant="outline">
-              Cerrar
-            </Button>
-            {blockedAlternative && blocking.length > 0 ? (
+            {blockedAlternative ? (
               <Button onClick={blockedAlternative.onSelect} type="button" variant="outline">
                 {blockedAlternative.label}
               </Button>
             ) : null}
-            {paymentsHref && blocking.length > 0 ? (
+            {paymentsHref ? (
               <Button asChild>
                 <Link href={paymentsHref}>Ver pagos de la venta</Link>
               </Button>
             ) : null}
           </>
-        )}
-        onOpenChange={onOpenChange}
-        open
-        title={blockedTitle}
-      >
-        <p className={alertClassName} role="alert">
-          {impact.reason}
-        </p>
-        <div className="shrink-0 text-sm">
-          <SaleImpactDocumentSummary impact={impact} />
-        </div>
-        {blocking.length > 0 ? (
-          <section
-            aria-label="Pagos que lo impiden"
-            className="flex min-h-20 shrink flex-col overflow-hidden rounded-md border border-border bg-surface-container-low"
-          >
-            <h3 className="shrink-0 border-b border-border px-3 py-2 text-xs font-semibold uppercase tracking-wide text-on-surface-variant">
-              Pagos que lo impiden
-            </h3>
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-1">
-              <SaleImpactPayments payments={blocking} />
-            </div>
-          </section>
-        ) : null}
-        {blockedAlternative && blocking.length > 0 ? (
-          <p className="shrink-0 text-sm text-on-surface-variant">{blockedAlternative.hint}</p>
-        ) : null}
-      </Modal>
-    );
-  }
-
-  const failed = query.isError && !query.isFetching;
-
-  return (
-    <Modal
-      description={description}
-      footer={({ close }) => (
-        <>
-          <Button onClick={close} type="button" variant="outline">
-            Cerrar
-          </Button>
-          {failed ? (
-            <Button onClick={() => void query.refetch()} type="button">
-              Reintentar
-            </Button>
-          ) : null}
-        </>
-      )}
+        ) : undefined
+      }
+      confirmLabel={confirmLabel}
+      description={
+        status === "blocked"
+          ? "La acción no se puede ejecutar ahora. No se ha cambiado nada."
+          : description
+      }
+      error={error}
+      isPending={isPending}
+      onConfirm={onConfirm}
       onOpenChange={onOpenChange}
+      onRetry={() => void query.refetch()}
       open
-      title={title}
+      renderEffects={impact ? () => <SaleImpactEffects impact={impact} /> : undefined}
+      requireTypedConfirmation={impact && impact.paidVes > 0 ? typedWord : undefined}
+      status={status}
+      statusHint={
+        status === "error"
+          ? "Sin el efecto a la vista no se puede confirmar. No se ha cambiado nada."
+          : undefined
+      }
+      statusMessage={statusMessage}
+      title={status === "blocked" ? blockedTitle : title}
+      variant="danger"
     >
-      {failed ? (
-        <div className="space-y-2">
-          <p className={alertClassName} role="alert">
-            {query.error instanceof Error && query.error.message
-              ? query.error.message
-              : "No se pudo calcular el efecto de la acción."}
-          </p>
-          <p className="text-sm text-on-surface-variant">
-            Sin el efecto a la vista no se puede confirmar. No se ha cambiado nada.
-          </p>
+      {impact ? (
+        <div className="flex flex-col gap-4">
+          <SaleImpactDocumentSummary impact={impact} />
+          {hasBlockingPayments ? (
+            <section
+              aria-label="Pagos que lo impiden"
+              className="overflow-hidden rounded-md border border-border bg-surface-container-low"
+            >
+              <h3 className="border-b border-border px-3 py-2 text-xs font-semibold uppercase tracking-wide text-on-surface-variant">
+                Pagos que lo impiden
+              </h3>
+              <div className="px-3 py-1">
+                <SaleImpactPayments payments={blocking} />
+              </div>
+            </section>
+          ) : null}
+          {hasBlockingPayments && blockedAlternative ? (
+            <p>{blockedAlternative.hint}</p>
+          ) : null}
         </div>
-      ) : (
-        <p
-          aria-live="polite"
-          className="flex items-center gap-2 py-6 text-sm text-on-surface-variant"
-          role="status"
-        >
-          <Loader2 aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin" />
-          Calculando qué va a pasar con el stock y los pagos…
-        </p>
-      )}
-    </Modal>
+      ) : null}
+    </ConfirmActionModal>
   );
 }
 
 /**
  * Confirmación de una acción sobre una venta con su efecto real (CNF-02/03).
  *
- * Pide el impact al abrirse (cada apertura lo recalcula) y solo monta el
- * `ConfirmActionModal` —el único sitio con botón de confirmar— cuando el efecto
- * llegó y la RPC lo permitiría. Mientras carga, si falla o si la RPC lo
- * rechazaría, muestra un modal de solo lectura: no hay botón que vaya a fallar.
+ * Pide el impact al abrirse (cada apertura lo recalcula). Es un único
+ * `ConfirmActionModal` de principio a fin: solo ofrece confirmar cuando el
+ * efecto llegó y la RPC lo permitiría; mientras carga, si falla o si la RPC lo
+ * rechazaría, queda de solo lectura (no hay botón que vaya a fallar).
  */
 export function SaleImpactConfirmModal({ open, ...props }: SaleImpactConfirmShellProps) {
   return open ? <ImpactGate {...props} /> : null;

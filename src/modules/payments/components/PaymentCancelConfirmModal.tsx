@@ -1,14 +1,12 @@
 "use client";
 
-import { type ReactNode, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 
-import { Button } from "@/shared/components/Button";
 import {
   ConfirmActionModal,
   type ConfirmActionEffect,
+  type ConfirmActionStatus,
 } from "@/shared/components/ConfirmActionModal";
-import { LoadingState } from "@/shared/components/LoadingState";
-import { Modal } from "@/shared/components/Modal";
 import type { ImpactMoneyEffect, ImpactMoneyTarget } from "@/shared/impact/types";
 import type { PaymentStatus, PurchaseStatus, SaleStatus } from "@/shared/mocks/erp-data";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
@@ -54,9 +52,6 @@ const vaultLabels: Record<Exclude<ImpactMoneyTarget, "caja">, string> = {
   baul_efectivo_ves: "baúl (efectivo Bs)",
   baul_ref: "baúl (efectivo REF)",
 };
-
-const dangerNoticeClassName =
-  "rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300";
 
 function formatMoney(value: number, currency: "USD" | "VES") {
   return currency === "USD" ? formatRefUsd(value) : formatVesBs(value);
@@ -227,79 +222,11 @@ function PaymentImpactSummary({ impact }: { impact: PaymentImpact }) {
   );
 }
 
-type FocusReturnTarget = {
-  element: HTMLElement | null;
-  /** Botón que abrió el menú de `element`: sigue en pantalla cuando el menú se cierra. */
-  menuOpener: HTMLElement | null;
-};
-
-const noFocusReturnTarget: FocusReturnTarget = { element: null, menuOpener: null };
-
-function captureFocusReturnTarget(): FocusReturnTarget {
-  if (typeof document === "undefined") {
-    return noFocusReturnTarget;
-  }
-
-  const element = document.activeElement;
-
-  if (!(element instanceof HTMLElement) || element === document.body) {
-    return noFocusReturnTarget;
-  }
-
-  const menu = element.closest('[role="menu"]');
-  const labelledBy = menu?.getAttribute("aria-labelledby");
-  const menuOpener = menu
-    ? ((labelledBy ? document.getElementById(labelledBy) : null) ??
-      document.querySelector('[aria-haspopup="menu"][aria-expanded="true"]'))
-    : null;
-
-  return { element, menuOpener: menuOpener instanceof HTMLElement ? menuOpener : null };
-}
-
-/**
- * Al cerrar devuelve el foco a quien abrió el modal. `ConfirmActionModal` ya lo
- * hace, pero aquí se monta después del estado de carga y lo que captura es un
- * botón de ese estado, que ya no existe al cerrar.
- */
-function useFocusReturn(open: boolean) {
-  const [previousOpen, setPreviousOpen] = useState(open);
-  const [target, setTarget] = useState(() =>
-    open ? captureFocusReturnTarget() : noFocusReturnTarget,
-  );
-
-  if (previousOpen !== open) {
-    setPreviousOpen(open);
-
-    if (open) {
-      setTarget(captureFocusReturnTarget());
-    }
-  }
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    return () => {
-      window.setTimeout(() => {
-        const active = document.activeElement;
-
-        // Solo si el cierre dejó el foco en ninguna parte.
-        if (active != null && active !== document.body && active.isConnected) {
-          return;
-        }
-
-        [target.element, target.menuOpener].find((candidate) => candidate?.isConnected)?.focus();
-      }, 0);
-    };
-  }, [open, target]);
-}
-
 /**
  * Confirmación de «Anular pago» con su efecto exacto (CNF-06). Pide el impact
  * (`GET /api/payments/{id}/impact`) mientras está abierto y solo ofrece el botón
  * de anular cuando el efecto está calculado y la RPC lo permitiría: cargando,
- * con error o con la anulación bloqueada es un modal de solo lectura.
+ * con error o con la anulación bloqueada es el mismo diálogo, de solo lectura.
  */
 export function PaymentCancelConfirmModal({
   error,
@@ -310,91 +237,45 @@ export function PaymentCancelConfirmModal({
   paymentId,
 }: PaymentCancelConfirmModalProps) {
   const impact = usePaymentImpact({ enabled: open, paymentId });
-
-  useFocusReturn(open);
-
   // Cada apertura recalcula: mientras llega, las cifras de la anterior no valen.
-  if (impact.isFetching || !impact.data) {
-    const isLoading = impact.isFetching || !impact.isError;
+  const data = impact.isFetching ? undefined : impact.data;
 
-    return (
-      <Modal
-        bodyClassName="flex flex-col gap-4"
-        description={`Pago ${formatPaymentHeading(paymentId)}`}
-        footer={({ close }) => (
-          <>
-            <Button onClick={close} type="button" variant="outline">
-              Cerrar
-            </Button>
-            {isLoading ? null : (
-              <Button onClick={() => void impact.refetch()} type="button">
-                Reintentar
-              </Button>
-            )}
-          </>
-        )}
-        onOpenChange={onOpenChange}
-        open={open}
-        title={MODAL_TITLE}
-      >
-        {isLoading ? (
-          <LoadingState
-            className="border-border bg-surface-container-low"
-            description="Hasta conocerlo no se puede anular."
-            title="Calculando el efecto de anular el pago..."
-          />
-        ) : (
-          <>
-            <p className={dangerNoticeClassName} role="alert">
-              {impact.error?.message}
-            </p>
-            <p className="text-sm text-on-surface-variant">
-              No pudimos calcular el efecto de anular este pago, así que no se puede confirmar.
-            </p>
-          </>
-        )}
-      </Modal>
-    );
-  }
+  let status: ConfirmActionStatus = "loading";
+  let statusMessage = "Calculando el efecto de anular el pago...";
+  let statusHint: string | undefined = "Hasta conocerlo no se puede anular.";
+  let description = `Pago ${formatPaymentHeading(paymentId)}`;
 
-  const data = impact.data;
-
-  if (!data.allowed) {
-    return (
-      <Modal
-        bodyClassName="flex flex-col gap-4"
-        description={data.description}
-        footer={({ close }) => (
-          <Button onClick={close} type="button" variant="outline">
-            Cerrar
-          </Button>
-        )}
-        onOpenChange={onOpenChange}
-        open={open}
-        title="No se puede anular el pago"
-      >
-        <PaymentImpactSummary impact={data} />
-        <p className={dangerNoticeClassName} role="alert">
-          {data.reason}
-        </p>
-      </Modal>
-    );
+  if (data) {
+    status = data.allowed ? "ready" : "blocked";
+    statusMessage = data.reason ?? "";
+    statusHint = undefined;
+    description = data.allowed
+      ? `${data.description} Esta acción no se puede deshacer.`
+      : data.description;
+  } else if (impact.isError && !impact.isFetching) {
+    status = "error";
+    statusMessage = impact.error?.message ?? "";
+    statusHint = "No pudimos calcular el efecto de anular este pago, así que no se puede confirmar.";
   }
 
   return (
     <ConfirmActionModal
       confirmLabel="Anular pago"
-      description={`${data.description} Esta acción no se puede deshacer.`}
-      effects={buildEffects(data)}
+      description={description}
+      effects={data ? buildEffects(data) : undefined}
       error={error}
       isPending={isConfirming}
       onConfirm={onConfirm}
       onOpenChange={onOpenChange}
+      onRetry={() => void impact.refetch()}
       open={open}
-      title={MODAL_TITLE}
+      status={status}
+      statusHint={statusHint}
+      statusMessage={statusMessage}
+      title={status === "blocked" ? "No se puede anular el pago" : MODAL_TITLE}
       variant="danger"
     >
-      <PaymentImpactSummary impact={data} />
+      {data ? <PaymentImpactSummary impact={data} /> : null}
     </ConfirmActionModal>
   );
 }

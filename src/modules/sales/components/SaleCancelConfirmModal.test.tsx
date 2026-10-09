@@ -4,8 +4,8 @@
  * ofrece anular).
  */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { type ComponentProps, useState } from "react";
 
 import { createQueryWrapper, jsonResponse } from "@/modules/inventory/utils/requestAttempt.testUtils";
 
@@ -232,6 +232,107 @@ describe("SaleCancelConfirmModal", () => {
     expect(dialog.queryByRole("button", { name: "Anular venta" })).not.toBeInTheDocument();
     expect(dialog.getByRole("button", { name: "Cerrar" })).toBeInTheDocument();
     expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("es un solo diálogo de la carga al efecto y, al cerrar, el foco vuelve a quien lo abrió", async () => {
+    let resolveImpact: (response: Response) => void = () => undefined;
+
+    fetchMock.mockReturnValue(
+      new Promise<Response>((resolve) => {
+        resolveImpact = resolve;
+      }),
+    );
+
+    function Host() {
+      const [open, setOpen] = useState(false);
+
+      return (
+        <>
+          <button onClick={() => setOpen(true)} type="button">
+            Abrir
+          </button>
+          <SaleCancelConfirmModal
+            onConfirm={jest.fn()}
+            onOpenChange={setOpen}
+            open={open}
+            saleId={IMPACT_SALE_ID}
+          />
+        </>
+      );
+    }
+
+    render(<Host />, { wrapper: createQueryWrapper() });
+
+    const trigger = screen.getByRole("button", { name: "Abrir" });
+
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    const loadingDialog = await screen.findByRole("dialog", { name: "Anular venta" });
+
+    expect(within(loadingDialog).getByRole("status")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(loadingDialog).getByRole("button", { name: "Cerrar" })).toHaveFocus(),
+    );
+
+    await act(async () => {
+      resolveImpact(jsonResponse({ data: allowedSaleImpact("cancel") }));
+    });
+
+    const dialog = await effectDialog();
+
+    // El mismo nodo: no se desmontó un diálogo para montar otro.
+    expect(screen.getByRole("dialog")).toBe(loadingDialog);
+    await waitFor(() => expect(dialog.getByRole("button", { name: "Cancelar" })).toHaveFocus());
+
+    fireEvent.click(dialog.getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("bloqueada: el foco también vuelve a quien abrió el modal al cerrarlo", async () => {
+    respondWith(
+      rejectedSaleImpact("cancel", CANCEL_BLOCKED_REASON, {
+        paidVes: 7650,
+        payments: [blockingPaymentLine()],
+      }),
+    );
+
+    function Host() {
+      const [open, setOpen] = useState(false);
+
+      return (
+        <>
+          <button onClick={() => setOpen(true)} type="button">
+            Abrir
+          </button>
+          <SaleCancelConfirmModal
+            onConfirm={jest.fn()}
+            onOpenChange={setOpen}
+            open={open}
+            saleId={IMPACT_SALE_ID}
+          />
+        </>
+      );
+    }
+
+    render(<Host />, { wrapper: createQueryWrapper() });
+
+    const trigger = screen.getByRole("button", { name: "Abrir" });
+
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "No se puede anular la venta" }),
+    );
+
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    fireEvent.click(dialog.getByRole("button", { name: "Cerrar" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
   it("si el efecto falla muestra el error, no deja confirmar a ciegas y permite reintentar", async () => {

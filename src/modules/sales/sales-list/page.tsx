@@ -172,6 +172,7 @@ function SalesList() {
   // Anular y devolver se confirman con su efecto a la vista (CNF-02/03).
   const [confirmation, setConfirmation] = useState<SaleConfirmation | null>(null);
   const { can } = usePermission();
+  const canCancelAndReturn = can("sales.create");
   const { showToast } = useToast();
   const confirmingSale = confirmation?.sale;
 
@@ -238,17 +239,22 @@ function SalesList() {
               { href: withReturnTo(`/sales/${sale.id}`, listHref), label: "Ver detalle" },
               { href: `/payments?saleId=${sale.id}`, label: "Registrar pago" },
               { href: withReturnTo(`/sales/${sale.id}`, listHref), label: "Ver recibo" },
-              {
-                disabled: cancelSale.isPending || !canCancelOrReturn(sale),
-                label: "Anular",
-                onSelect: () => openConfirmation("cancel", sale),
-                variant: "danger",
-              },
-              {
-                disabled: returnSale.isPending || !canCancelOrReturn(sale),
-                label: "Devolver",
-                onSelect: () => openConfirmation("return", sale),
-              },
+              // Como en el detalle: anular y devolver exigen `sales.create`.
+              ...(canCancelAndReturn
+                ? [
+                    {
+                      disabled: cancelSale.isPending || !canCancelOrReturn(sale),
+                      label: "Anular",
+                      onSelect: () => openConfirmation("cancel", sale),
+                      variant: "danger" as const,
+                    },
+                    {
+                      disabled: returnSale.isPending || !canCancelOrReturn(sale),
+                      label: "Devolver",
+                      onSelect: () => openConfirmation("return", sale),
+                    },
+                  ]
+                : []),
             ]}
             cardSubtitle={(sale) => sale.customer?.name ?? sale.customerId}
             cardTitle={(sale) => (

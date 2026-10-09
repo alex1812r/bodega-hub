@@ -44,6 +44,19 @@ function ErrorAfterOpening({ error, ...props }: ComponentProps<typeof ConfirmAct
   return <ConfirmActionModal {...props} error={hasFailed ? error : null} />;
 }
 
+/** Simula un efecto que tarda 1,2 s en llegar. */
+function LoadsThenReady(props: ComponentProps<typeof ConfirmActionModal>) {
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setIsLoaded(true), 1200);
+
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  return <ConfirmActionModal {...props} status={isLoaded ? "ready" : "loading"} />;
+}
+
 function OpenedFromTrigger({
   onOpenChange,
   open: initiallyOpen,
@@ -243,6 +256,83 @@ export const CustomEffects: Story = {
     title: "Anular pago",
     variant: "danger",
   },
+};
+
+/** El efecto aún se está calculando: mismo diálogo, sin botón de confirmar. */
+export const EffectLoading: Story = {
+  args: {
+    ...Danger.args,
+    status: "loading",
+    statusHint: "Hasta conocerlo no se puede anular.",
+    statusMessage: "Calculando el efecto de anular la venta…",
+  },
+  play: async ({ canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+
+    await expect(await body.findByRole("status")).toHaveTextContent("Calculando el efecto");
+    await expect(body.queryByRole("button", { name: "Anular venta" })).toBeNull();
+    await expect(body.getByRole("button", { name: "Cerrar" })).toHaveFocus();
+  },
+};
+
+/** El efecto no se pudo calcular: se dice el error y solo se puede reintentar o cerrar. */
+export const EffectError: Story = {
+  args: {
+    ...Danger.args,
+    onRetry: fn(),
+    status: "error",
+    statusHint: "Sin el efecto a la vista no se puede confirmar. No se ha cambiado nada.",
+    statusMessage: "Venta no encontrada",
+  },
+  play: async ({ args, canvasElement, userEvent }) => {
+    const body = within(canvasElement.ownerDocument.body);
+
+    await expect(await body.findByRole("alert")).toHaveTextContent("Venta no encontrada");
+    await expect(body.queryByRole("button", { name: "Anular venta" })).toBeNull();
+    await userEvent.click(body.getByRole("button", { name: "Reintentar" }));
+    await expect(args.onRetry).toHaveBeenCalledTimes(1);
+  },
+};
+
+/** La acción no se puede ejecutar: motivo tal cual y las salidas que pasa quien lo usa. */
+export const EffectBlocked: Story = {
+  args: {
+    ...Danger.args,
+    blockedActions: <Button variant="outline">Devolver la venta</Button>,
+    children: "Venta V-0012 · Cliente Demo · Cobrado Bs 7.650,00",
+    description: "La acción no se puede ejecutar ahora. No se ha cambiado nada.",
+    status: "blocked",
+    statusMessage: "La venta V-0012 tiene 1 pago(s) activo(s) por Bs 7.650,00.",
+    title: "No se puede anular la venta",
+  },
+  play: async ({ canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+
+    await expect(await body.findByRole("alert")).toHaveTextContent("1 pago(s) activo(s)");
+    await expect(body.queryByRole("button", { name: "Anular venta" })).toBeNull();
+    await expect(body.getByRole("button", { name: "Devolver la venta" })).toBeVisible();
+  },
+};
+
+/** De la carga al efecto listo sin cambiar de diálogo: el foco pasa a la palabra tecleada. */
+export const LoadingThenReady: Story = {
+  args: {
+    ...Danger.args,
+    effects: [...saleCancelEffects],
+    requireTypedConfirmation: "ANULAR",
+  },
+  play: async ({ canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+
+    await expect(body.getByRole("status")).toBeVisible();
+    await waitFor(
+      () => expect(body.getByRole("textbox", { name: "Palabra de confirmación" })).toHaveFocus(),
+      { timeout: 4000 },
+    );
+    await expect(body.getByRole("dialog")).toBe(dialog);
+  },
+  render: (args) => <LoadsThenReady {...args} />,
 };
 
 export const Mobile390: Story = {
