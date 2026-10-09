@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import type { PaginatedList } from "@/lib/api/pagination";
 import type { PurchaseSupplier } from "@/modules/purchases/services/purchaseSuppliers.mock-server";
-import { apiFetch } from "@/shared/api/apiFetch";
+import { apiFetch, ClientApiError } from "@/shared/api/apiFetch";
 import type { ContactEntityOption, EntityFetcher } from "@/shared/components/EntityAutocomplete";
 
 const PURCHASE_SUPPLIERS_PATH = "/api/purchases/suppliers";
@@ -47,6 +47,22 @@ export const fetchPurchaseSupplierOptions: EntityFetcher<"contact"> = async ({
 
   return page.items.map(toSupplierEntityOption);
 };
+
+/**
+ * Un proveedor por id, activo o no (`isActive` lo dice); `null` si ya no existe o
+ * dejó de ser proveedor (404). Para decidir si una precarga puede elegirlo.
+ */
+export async function fetchPurchaseSupplier(id: string): Promise<PurchaseSupplier | null> {
+  try {
+    return await apiFetch<PurchaseSupplier>(PURCHASE_SUPPLIERS_PATH, { query: { id } });
+  } catch (error) {
+    if (error instanceof ClientApiError && error.status === 404) {
+      return null;
+    }
+
+    throw error;
+  }
+}
 
 /** Un proveedor por id, activo o no, para mostrar el nombre de uno ya elegido. */
 export function usePurchaseSupplier(id?: string) {

@@ -314,7 +314,9 @@ Versión vigente = último parche de la columna. Ninguna escribe `products.curre
 
 Errores de negocio: SQLSTATE `PT400` / `PT403` / `PT404` / `PT409` (PostgREST responde con ese HTTP).
 
-**Pendiente:** anular movimiento; receptor de `?restock=` en `/purchases/create` y botón de reposición en el reporte de stock bajo; aplicar y probar en el laboratorio los parches `20261011a`…`c` (ver [`stock-integrity.md`](stock-integrity.md) §7).
+**Receptor de la reposición (INT-02).** `/purchases/create?restock=<id>` lee la precarga con `readRestockDraft` (`purchase-create/hooks/usePurchaseRestockSource.ts`) y arma las líneas con `buildRestockPurchaseLines`: en el orden del payload, por unidad, con la cantidad sugerida y el costo e IVA del catálogo (nunca los del payload). Con proveedor activo lo elige; sin proveedor (o con uno inactivo o borrado, que además avisa) muestra «Elige el proveedor para cargar N productos de la reposición» y las líneas entran al elegirlo. Los productos inactivos o inexistentes se omiten con un aviso. Si hay una compra en curso (líneas, proveedor elegido o un borrador de COM-09 sin decidir) pregunta con «Tienes una compra en curso»: «Reemplazar por la reposición» descarta la compra y su borrador; «Conservar la compra actual» (o cerrar) no toca nada. La precarga se borra (`clearRestockDraft` + `restock` fuera de la URL) cuando las líneas entran en la compra —desde ahí las guarda el borrador de COM-09— o cuando el usuario decide no usarla. Una precarga caducada, de otra sesión o ya usada avisa y deja la compra vacía. El botón también está en la cabecera del reporte de stock bajo de la tienda (`ReportsResultPanel`; no en los reportes de plataforma).
+
+**Pendiente:** anular movimiento.
 
 ---
 

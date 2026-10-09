@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import type { RestockDraft } from "@/modules/inventory/restock";
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
 import type { ProductFormInitialValues } from "@/modules/products/product-details/components/ProductFormModal";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
@@ -42,6 +43,7 @@ import { usePurchaseLockOnAdd } from "./hooks/usePurchaseLockOnAdd";
 import { usePurchasePackConversions } from "./hooks/usePurchasePackConversions";
 import { usePurchasePaymentMethods } from "./hooks/usePurchasePaymentMethods";
 import { usePurchaseProductSearch } from "./hooks/usePurchaseProductSearch";
+import { consumeRestockDraft, usePurchaseRestockSource } from "./hooks/usePurchaseRestockSource";
 import { PurchaseStatusNotesCard } from "./components/PurchaseStatusNotesCard";
 import {
   PURCHASE_DISCOUNT_OVER_SUBTOTAL_MESSAGE,
@@ -51,6 +53,7 @@ import {
 import { PurchaseSupplierCard } from "./components/PurchaseSupplierCard";
 import type { PurchaseLineItemMeta } from "./components/PurchaseLineItemsTable";
 import { useCreatePurchase, type PurchaseDetails } from "../hooks/usePurchases";
+import { fetchPurchaseSupplier } from "../hooks/usePurchaseSuppliers";
 import { withLastPurchaseCosts } from "./services/purchaseLastCosts";
 import { resolvePurchaseProducts } from "./services/resolvePurchaseProducts";
 import type { PurchaseCostCurrency, PurchaseDraftItem } from "./types";
@@ -78,6 +81,12 @@ import {
   withPurchaseLineDisassemble,
 } from "./utils/purchaseLineDisassemble";
 import { getEditedLinesSummary } from "./utils/purchaseLineReview";
+import {
+  RESTOCK_UNAVAILABLE_MESSAGE,
+  buildRestockPurchaseLines,
+  describeRestockAwaitingSupplier,
+  describeRestockOmitted,
+} from "./utils/restockPurchase";
 import {
   buildExemptOverrideNotice,
   buildPurchaseTaxBreakdown,
@@ -172,6 +181,10 @@ export function PurchaseCreatePage() {
   const [notices, setNotices] = useState<string[]>([]);
   const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null);
   const [isLoadingDuplicateLines, setIsLoadingDuplicateLines] = useState(false);
+  // Reposición de stock bajo (INV-05) cuyas líneas esperan a que se elija el proveedor.
+  const [pendingRestock, setPendingRestock] = useState<RestockDraft | null>(null);
+  // Reposición que llegó con una compra en curso: espera a que el usuario decida.
+  const [restockConflict, setRestockConflict] = useState<RestockDraft | null>(null);
   // Proveedor pedido (o `id: ""` = quitarlo) con líneas en la compra: espera la confirmación.
   const [supplierChangeRequest, setSupplierChangeRequest] = useState<{
     id: string;
@@ -433,6 +446,109 @@ export function PurchaseCreatePage() {
     ready: currentRateVes !== undefined,
   });
 
+  /** Pone en el formulario las líneas de la reposición para `nextSupplier` (sustituyen las que hubiera). */
+  async function loadRestockLines(
+    restockDraft: RestockDraft,
+    nextSupplier: { id: string; name: string | null },
+  ) {
+    const products = await withLastPurchaseCosts(
+      nextSupplier.id,
+      await resolvePurchaseProducts(
+        nextSupplier.id,
+        restockDraft.lines.map((line) => line.productId),
+      ),
+    );
+    const built = buildRestockPurchaseLines(restockDraft.lines, products, {
+      costCurrency,
+      nextId: nextPurchaseLineId,
+      rateVes: activeRateVes,
+    });
+
+    // Antes de que entren las líneas: el formulario (y su `ProcessGuard`) queda sobre la
+    // URL limpia, y la precarga ya vive en el borrador de la compra (COM-09).
+    consumeRestockDraft(restockDraft.id);
+    setSupplierId(nextSupplier.id);
+    setSupplierName(nextSupplier.name);
+    setProductSearch("");
+    setLineMetaByProductId(built.lineMeta);
+    dispatchLines({ state: built.lines, type: "linesRestored" });
+    setNotices([]);
+    setPendingDuplicate(null);
+    setPendingRestock(null);
+    setFormError(null);
+
+    if (built.omitted > 0) {
+      showToast({ title: describeRestockOmitted(built.omitted), tone: "error" });
+    }
+  }
+
+  /**
+   * Precarga la reposición sobre una compra VACÍA. Con proveedor en el payload (y aún
+   * activo) entran las líneas; sin él no se inventa: esperan a que se elija uno.
+   */
+  async function startRestock(restockDraft: RestockDraft) {
+    setIsLoadingDuplicateLines(true);
+
+    try {
+      const supplier = restockDraft.supplier
+        ? await fetchPurchaseSupplier(restockDraft.supplier.id)
+        : null;
+
+      if (restockDraft.supplier && !supplier?.isActive) {
+        showToast({ title: "El proveedor de la reposición ya no está disponible", tone: "error" });
+      }
+
+      if (supplier?.isActive) {
+        await loadRestockLines(restockDraft, { id: supplier.id, name: supplier.name });
+      } else {
+        setPendingRestock(restockDraft);
+      }
+    } catch (error) {
+      showToast({
+        description: errorMessage(error),
+        title: "No pudimos cargar la reposición",
+        tone: "error",
+      });
+    } finally {
+      setIsLoadingDuplicateLines(false);
+    }
+  }
+
+  // Compra en curso = líneas, proveedor elegido, una compra duplicada a medias o un
+  // borrador guardado sin decidir (COM-09): la reposición no la pisa, pregunta.
+  const hasPurchaseInProgress =
+    items.length > 0 || supplierId !== "" || pendingDuplicate !== null || draft.pending !== null;
+  usePurchaseRestockSource({
+    onDraft: (restockDraft) => {
+      if (hasPurchaseInProgress) {
+        setRestockConflict(restockDraft);
+        return;
+      }
+
+      void startRestock(restockDraft);
+    },
+    onUnavailable: () => showToast({ title: RESTOCK_UNAVAILABLE_MESSAGE, tone: "error" }),
+    // Sin tasa no se pueden calcular las líneas; con una compra por duplicar manda esa.
+    ready: currentRateVes !== undefined && !duplicate.isLoading,
+  });
+
+  /** «Reemplazar por la reposición»: vacía la compra en curso (y su borrador) y precarga. */
+  function replaceWithRestock(restockDraft: RestockDraft) {
+    draft.clear();
+    setSupplierId("");
+    setSupplierName(null);
+    setProductSearch("");
+    setNotes("");
+    setDiscountRef(0);
+    setStatus("recibido");
+    dispatchLines({ type: "supplierChanged" });
+    setLineMetaByProductId(new Map());
+    setNotices([]);
+    setPendingDuplicate(null);
+    setFormError(null);
+    void startRestock(restockDraft);
+  }
+
   // `saved`: el borrador guardado; `new`: la compra nueva de la segunda ranura (tras
   // recargar sin decidir). La que no se restaura se descarta.
   async function handleRestoreDraft(which: "new" | "saved") {
@@ -468,6 +584,11 @@ export function PurchaseCreatePage() {
       dispatchLines({ state: restored.lines, type: "linesRestored" });
       setNotices(restored.notices);
       setPendingDuplicate(null);
+      // Restaurar una compra guardada sustituye a la reposición que esperaba proveedor.
+      if (pendingRestock) {
+        consumeRestockDraft(pendingRestock.id);
+        setPendingRestock(null);
+      }
       setFormError(null);
     } catch (error) {
       showToast({
@@ -508,6 +629,21 @@ export function PurchaseCreatePage() {
     setProductSearch("");
     dispatchLines({ type: "supplierChanged" });
     setLineMetaByProductId(new Map());
+
+    // Reposición sin proveedor: sus líneas entran con el que se elija.
+    if (pendingRestock && nextSupplierId) {
+      setIsLoadingDuplicateLines(true);
+      void loadRestockLines(pendingRestock, { id: nextSupplierId, name: nextSupplierName ?? null })
+        .catch((error: unknown) => {
+          showToast({
+            description: errorMessage(error),
+            title: "No pudimos cargar la reposición",
+            tone: "error",
+          });
+        })
+        .finally(() => setIsLoadingDuplicateLines(false));
+      return;
+    }
 
     // Compra duplicada de un proveedor inactivo: sus líneas entran con el que se elija.
     if (pendingDuplicate && nextSupplierId) {
@@ -754,6 +890,12 @@ export function PurchaseCreatePage() {
         />
       ) : null}
 
+      {pendingRestock ? (
+        <PurchaseFormNotices
+          messages={[describeRestockAwaitingSupplier(pendingRestock.lines.length)]}
+        />
+      ) : null}
+
       {isLoadingDuplicateLines ? (
         <LoadingState title="Cargando las líneas de la compra..." variant="inline" />
       ) : null}
@@ -911,6 +1053,36 @@ export function PurchaseCreatePage() {
         }}
         open={supplierChangeRequest !== null}
         title="Cambiar de proveedor"
+        variant="danger"
+      />
+      <ConfirmActionModal
+        cancelLabel="Conservar la compra actual"
+        confirmLabel="Reemplazar por la reposición"
+        description={
+          restockConflict
+            ? `Ya hay una compra sin terminar. Reemplazarla la descarta, junto con su borrador guardado, y carga ${
+                restockConflict.lines.length === 1
+                  ? "el producto"
+                  : `los ${restockConflict.lines.length} productos`
+              } de la reposición. Si la conservas, la reposición se descarta.`
+            : ""
+        }
+        onConfirm={() => {
+          if (restockConflict) {
+            replaceWithRestock(restockConflict);
+          }
+
+          setRestockConflict(null);
+        }}
+        onOpenChange={(open) => {
+          // Cerrar sin elegir = conservar: la compra actual no se toca y la reposición se consume.
+          if (!open && restockConflict) {
+            consumeRestockDraft(restockConflict.id);
+            setRestockConflict(null);
+          }
+        }}
+        open={restockConflict !== null}
+        title="Tienes una compra en curso"
         variant="danger"
       />
       <ProcessGuardModal guard={guard} />

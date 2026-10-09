@@ -1,8 +1,10 @@
 "use client";
 
 import type { UseQueryResult } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 
 import { getPaginatedItems, type PaginatedList, type PaginationParams } from "@/lib/api/pagination";
+import { RestockPurchaseButton } from "@/modules/inventory/restock";
 import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import type { StockMovementMock } from "@/shared/mocks/erp-data";
@@ -134,6 +136,8 @@ function formatResultsRange(skip: number, limit: number, total: number) {
 }
 
 type ReportTableProps<TData> = {
+  /** Acciones de la cabecera del reporte, junto al resumen de resultados. */
+  actions?: ReactNode;
   columns: DataTableColumn<TData>[];
   getRowId: (row: TData) => string;
   limit: number;
@@ -145,6 +149,7 @@ type ReportTableProps<TData> = {
 };
 
 function ReportTable<TData>({
+  actions,
   columns,
   getRowId,
   limit,
@@ -170,9 +175,12 @@ function ReportTable<TData>({
             </p>
           ) : null}
         </div>
-        <span className="text-xs text-on-surface-variant">
-          {formatResultsRange(currentSkip, limit, total)}
-        </span>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs text-on-surface-variant">
+            {formatResultsRange(currentSkip, limit, total)}
+          </span>
+          {actions}
+        </div>
       </div>
 
       <DataTable
@@ -212,6 +220,7 @@ function useReportPagination(resetDeps: readonly unknown[] = []) {
 
 function PaginatedReportTable<TData>({
   columns,
+  actions,
   filters = {},
   getRowId,
   report,
@@ -219,6 +228,7 @@ function PaginatedReportTable<TData>({
   scope,
   useReport,
 }: {
+  actions?: ReactNode;
   columns: DataTableColumn<TData>[];
   filters?: PaginationParams;
   getRowId: (row: TData) => string;
@@ -243,6 +253,7 @@ function PaginatedReportTable<TData>({
 
   return (
     <ReportTable
+      actions={actions}
       columns={columns}
       getRowId={getRowId}
       limit={pagination.limit}
@@ -315,6 +326,8 @@ export function ReportsResultPanel({
     case "low-stock":
       return (
         <PaginatedReportTable
+          // INV-05: la reposición es una compra de ESTA tienda; en plataforma (varias tiendas) no se ofrece.
+          actions={scope ? undefined : <RestockPurchaseButton size="sm" />}
           columns={lowStockColumns}
           getRowId={(row) => row.id}
           report={report}
