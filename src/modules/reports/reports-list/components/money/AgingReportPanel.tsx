@@ -128,25 +128,42 @@ function ContactFilter({
   contactId,
   kind,
   onChange,
+  reportName,
+  reportSettled,
 }: {
   contactId: string | undefined;
   kind: AgingReportKind;
   onChange: (contactId: string | undefined) => void;
+  /** Nombre del contacto según las filas del reporte, si alguna es suya. */
+  reportName: string | undefined;
+  /** El reporte ya respondió (con datos o con error): se sabe si trae el nombre. */
+  reportSettled: boolean;
 }) {
   const text = KIND_TEXT[kind];
   const [picked, setPicked] = useState<EntityAutocompleteValue | null>(null);
   const pickedLabel = picked && picked.id === contactId ? picked.label : undefined;
-  // Lo elegido en el buscador ya trae su nombre: solo se lee el que vino en la URL.
-  const contactQuery = useContact(pickedLabel === undefined ? contactId : undefined);
+  // El nombre sale, por este orden, de lo elegido en el buscador y de las filas
+  // del reporte (un rol sin acceso a Contactos también las ve). Solo si el
+  // reporte ya respondió sin ninguna fila del contacto se lee el contacto.
+  // Al paginar el reporte se queda un momento sin filas: se conserva el nombre ya visto.
+  const [seen, setSeen] = useState<EntityAutocompleteValue | null>(null);
+
+  if (contactId && reportName && (seen?.id !== contactId || seen.label !== reportName)) {
+    setSeen({ id: contactId, label: reportName });
+  }
+
+  const knownLabel = pickedLabel ?? reportName ?? (seen?.id === contactId ? seen?.label : undefined);
+  const needsLookup = knownLabel === undefined && reportSettled;
+  const contactQuery = useContact(needsLookup ? contactId : undefined);
   const label =
-    pickedLabel ??
+    knownLabel ??
     contactQuery.data?.name ??
     (contactQuery.error ? "Contacto no disponible" : "Cargando contacto…");
 
   return (
     <EntityAutocomplete
       entity="contact"
-      error={pickedLabel === undefined ? contactQuery.error?.message : undefined}
+      error={knownLabel === undefined ? contactQuery.error?.message : undefined}
       filters={{ type: text.contactTypes }}
       label={text.contactHeader}
       onChange={(option) => {
@@ -254,6 +271,10 @@ export function AgingReportPanel({
 
   const summary = data?.summary ?? lastSummary;
   const hasDebt = Boolean(summary && summary.totals.documentsCount > 0);
+  // Con `contactId` todas las filas son de ese contacto: su nombre ya viene en ellas.
+  const contactName = contactId
+    ? data?.items.find((row) => row.contact?.id === contactId)?.contact?.name
+    : undefined;
   const columns = useMemo(() => buildColumns(kind, listHref), [kind, listHref]);
   const chartItems = useMemo<RankingBarItem[]>(
     () =>
@@ -280,6 +301,8 @@ export function AgingReportPanel({
             contactId={contactId}
             kind={kind}
             onChange={(nextContactId) => onFiltersChange({ contactId: nextContactId })}
+            reportName={contactName}
+            reportSettled={data !== undefined || Boolean(query.error)}
           />
         </div>
 

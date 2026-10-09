@@ -34,6 +34,12 @@ let mockIsLoading = false;
 let mockRemoved: Permission[] = [];
 const mockQueries: Partial<Record<keyof typeof moneyHooks, QueryState>> = {};
 const mockRefetch = jest.fn();
+/** Lectura de `GET /api/contacts/:id`; un rol sin acceso a Contactos recibe error. */
+let mockContactError: Error | null = null;
+const mockUseContact = jest.fn((id?: string) => ({
+  data: id && !mockContactError ? { id, name: `Contacto ${id}` } : undefined,
+  error: id ? mockContactError : null,
+}));
 
 function mockPermissions(): Permission[] {
   const all: Permission[] = mockRole
@@ -73,7 +79,7 @@ jest.mock("../../../hooks/useMoneyReports", () => {
 });
 
 jest.mock("../../../../contacts/hooks/useContacts", () => ({
-  useContact: (id?: string) => ({ data: id ? { id, name: `Contacto ${id}` } : undefined, error: null }),
+  useContact: (id?: string) => mockUseContact(id),
 }));
 
 // El buscador real (búsqueda en servidor, recientes, lector) tiene sus pruebas.
@@ -251,6 +257,7 @@ describe("MoneyReportPanel · REP-06b", () => {
     mockRole = "admin";
     mockIsLoading = false;
     mockRemoved = [];
+    mockContactError = null;
 
     for (const key of Object.keys(mockQueries)) {
       delete mockQueries[key as keyof typeof mockQueries];
@@ -546,6 +553,45 @@ describe("MoneyReportPanel · REP-06b", () => {
       expect(buckets.map((button) => button.getAttribute("aria-pressed"))).toEqual(["false", "false", "false"]);
       expect(screen.getByRole("note")).toHaveTextContent("La antigüedad se cuenta desde la fecha del documento.");
       expect(screen.getByTestId("contact-filter")).toHaveAttribute("data-contact-types", contactTypes);
+    });
+
+    it("con contactId en la URL el nombre sale de las filas del reporte, sin pedir el contacto", () => {
+      // Un rol que ve el reporte pero no puede leer `GET /api/contacts/:id`.
+      mockContactError = new Error("No tienes permiso para realizar esta accion.");
+      mockQueries[hookName] = { data: agingReport([agingRow(3, "8-30", type)]) };
+      renderPanel(id, { filters: { contactId: "contacto-3", currency: "ves" } });
+
+      const filter = screen.getByTestId("contact-filter");
+
+      expect(filter).toHaveTextContent("Contacto 3");
+      expect(filter).not.toHaveTextContent("Contacto no disponible");
+      expect(filter).not.toHaveTextContent("Cargando contacto");
+      // Ninguna petición de contacto: el hook solo se llama sin id.
+      expect(mockUseContact.mock.calls.every(([contactId]) => contactId === undefined)).toBe(true);
+    });
+
+    it("mientras el reporte carga no pide el contacto; si no trae filas suyas, entonces sí", () => {
+      mockQueries[hookName] = { isLoading: true };
+      const loading = renderPanel(id, { filters: { contactId: "cli-1", currency: "ves" } });
+
+      expect(screen.getByTestId("contact-filter")).toHaveTextContent("Cargando contacto…");
+      expect(mockUseContact.mock.calls.every(([contactId]) => contactId === undefined)).toBe(true);
+      loading.unmount();
+
+      // El reporte ya respondió y ninguna fila es de ese contacto (no tiene saldo).
+      mockQueries[hookName] = { data: agingReport([]) };
+      renderPanel(id, { filters: { contactId: "cli-1", currency: "ves" } });
+
+      expect(mockUseContact).toHaveBeenLastCalledWith("cli-1");
+      expect(screen.getByTestId("contact-filter")).toHaveTextContent("Contacto cli-1");
+    });
+
+    it("sin filas del contacto y sin acceso a Contactos sigue diciendo que no está disponible", () => {
+      mockContactError = new Error("No tienes permiso para realizar esta accion.");
+      mockQueries[hookName] = { data: agingReport([]) };
+      renderPanel(id, { filters: { contactId: "cli-1", currency: "ves" } });
+
+      expect(screen.getByTestId("contact-filter")).toHaveTextContent("Contacto no disponible");
     });
 
     it("el gráfico lleva una barra por tramo en su orden natural, no por valor", () => {
