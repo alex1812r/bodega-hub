@@ -14,7 +14,7 @@ import {
   type ReportRequestScope,
   useFxDepreciationReport,
 } from "../../hooks/useReports";
-import { isReportQueryOffline, ReportOfflineError } from "../reportQueryState";
+import { getReportQueryError } from "../reportQueryState";
 import { formatCaracasDay } from "./inventory/inventoryReportText";
 import { ReportQueryError } from "./money/ReportStates";
 
@@ -192,8 +192,9 @@ export function FxDepreciationReportPanel({
   );
   const items = getPaginatedItems(query.data);
   const summary = query.data?.summary;
-  // Sin red la consulta queda en pausa: no es un reporte vacío.
-  const isOffline = isReportQueryOffline(query);
+  // Error de negocio, genérico (5xx, respuesta rota) o sin red (consulta en
+  // pausa: no es un reporte vacío).
+  const queryError = query.isLoading ? null : getReportQueryError(query);
 
   return (
     <section className="space-y-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-5 shadow-sm">
@@ -209,13 +210,9 @@ export function FxDepreciationReportPanel({
         <p className="text-sm text-on-surface-variant">Cargando depreciación FX…</p>
       ) : null}
 
-      {query.error ? (
-        <p className="text-sm text-error">No se pudo generar el reporte de depreciación FX.</p>
-      ) : null}
-
-      {isOffline ? (
+      {queryError ? (
         <ReportQueryError
-          error={new ReportOfflineError()}
+          error={queryError}
           onRetry={() => void query.refetch()}
           reportName="Depreciación FX"
         />
@@ -223,7 +220,7 @@ export function FxDepreciationReportPanel({
 
       {summary ? <FxSummary summary={summary} /> : null}
 
-      {!query.isLoading && !query.error && !isOffline && items.length === 0 ? (
+      {!query.isLoading && !queryError && items.length === 0 ? (
         <EmptyState
           description="No hay pagos de venta en el rango seleccionado."
           title="Sin movimientos"

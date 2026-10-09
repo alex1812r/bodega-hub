@@ -22,7 +22,7 @@ import {
   usePaymentMethodsReport,
 } from "../../hooks/useReports";
 import type { PaymentMethodsReportComparison } from "../../services/paymentMethodsReport";
-import { isReportQueryOffline, ReportOfflineError } from "../reportQueryState";
+import { getReportQueryError } from "../reportQueryState";
 import { ReportQueryError } from "./money/ReportStates";
 import { ReportChartCard } from "./ReportChartCard";
 import { ReportTableSection } from "./ReportTableSection";
@@ -152,9 +152,10 @@ export function PaymentMethodsReportPanel({
     () => (comparison ? [...methodColumns, ...buildComparisonColumns(comparison)] : methodColumns),
     [comparison],
   );
-  // Sin red la consulta queda en pausa: no es un reporte vacío.
-  const isOffline = isReportQueryOffline(query);
-  const isReady = !query.isLoading && !query.error && !isOffline;
+  // Error de negocio, genérico (5xx, respuesta rota) o sin red (consulta en
+  // pausa: no es un reporte vacío).
+  const queryError = query.isLoading ? null : getReportQueryError(query);
+  const isReady = !query.isLoading && !queryError;
 
   return (
     <div className="min-w-0 space-y-4">
@@ -169,18 +170,14 @@ export function PaymentMethodsReportPanel({
         title="Métodos de pago"
       >
         {query.isLoading ? (
-          <p className="text-sm text-on-surface-variant">Cargando métodos de pago…</p>
+          // El mismo indicador de carga que los demás gráficos: es la señal que
+          // espera la captura de imagen del exporte.
+          <RankingBarChart ariaLabel="Métodos de pago" items={[]} loading />
         ) : null}
 
-        {query.error ? (
-          <p className="text-sm text-error" role="alert">
-            No se pudo generar el reporte de métodos de pago.
-          </p>
-        ) : null}
-
-        {isOffline ? (
+        {queryError ? (
           <ReportQueryError
-            error={new ReportOfflineError()}
+            error={queryError}
             onRetry={() => void query.refetch()}
             reportName="Métodos de pago"
           />
