@@ -594,3 +594,53 @@ describe("PurchaseCreatePage · el descuento no acepta un código ni supera el s
     expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-descuento");
   });
 });
+
+describe("PurchaseCreatePage · costo con decimales y escaneo en la misma celda (COM-F10 · F-A1)", () => {
+  function cost() {
+    return screen.getByLabelText<HTMLInputElement>("Costo unitario BS de Taladro");
+  }
+
+  it.each(["55.5", "55,5"])(
+    "Costo unitario «%s» y, sin salir, un EAN-13: el costo queda en 55,50, entra el producto y así se confirma",
+    async (typed) => {
+      const api = installFetchStub(() => null);
+
+      resolveWithLatency(20);
+      renderPage();
+      pickTaladro();
+      act(() => cost().focus());
+      await press(typed.split(""), 130);
+      await settle(400);
+
+      await scan(CODE_B);
+      await settle(500);
+
+      expect(lineNames()).toEqual(["Cable", "Taladro"]);
+      expect(cost()).toHaveValue("55.50");
+      expect(triedCodes()).toEqual([CODE_B]);
+
+      api.respondToNextPost({ data: { id: "purchase-decimal" } });
+      fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+      await settle(200);
+
+      const items = api.posts[0]?.body.items as Array<{ productId: string; unitCostVes: number }>;
+
+      expect(items.find((item) => item.productId === "prod-a")?.unitCostVes).toBe(55.5);
+    },
+  );
+
+  it("Descuento «0,25» y un EAN-13 en la misma celda: el descuento queda en 0,25 y entra el producto", async () => {
+    resolveWithLatency(20);
+    renderPage();
+    pickTaladro();
+    act(() => screen.getByLabelText("Descuento REF").focus());
+    await press("0,25".split(""), 130);
+    await settle(400);
+
+    await scan(CODE_B);
+    await settle(500);
+
+    expect(screen.getByLabelText("Descuento REF")).toHaveValue("0.25");
+    expect(lineNames()).toEqual(["Cable", "Taladro"]);
+  });
+});

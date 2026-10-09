@@ -1,3 +1,5 @@
+import { roundMoney } from "@/shared/utils/currency";
+
 /**
  * Longitud mínima de un código de barras (EAN-8). Ninguna cantidad ni costo unitario
  * real llega a ocho dígitos enteros: en una celda de línea, un texto así es un escaneo.
@@ -37,8 +39,16 @@ export type PurchaseLineScan = {
 /** Lo que un Enter encuentra en una celda cuyo texto mide como un escaneo. */
 export type PurchaseLineScanReading = {
   candidates: string[];
-  /** Lo tecleado a mano antes del escaneo, o `null` si no hay o no vale. */
+  /**
+   * Lo tecleado a mano antes del escaneo según el tiempo entre teclas, con su separador
+   * decimal y sus decimales; `null` si no hay o no vale.
+   */
   typedValue: number | null;
+  /**
+   * Hay un valor con decimales delante del código y el tiempo entre teclas no dice dónde
+   * termina: si ningún candidato existe, `typedValue` es solo su parte segura y hay que avisar.
+   */
+  typedUnclear: boolean;
 };
 
 export function isScannedCode(text: string) {
@@ -46,27 +56,48 @@ export function isScannedCode(text: string) {
 }
 
 /**
- * Los dígitos de `text` entre los que está un código leído, o `null` si el texto es un
- * valor normal. Además del texto entero de 8 o más dígitos, cuenta el de un costo con
- * 8 o más decimales («1020.00» + código): nadie teclea tantos, es un lector que escribió
- * detrás de los decimales que ya mostraba la celda.
+ * Parte el texto de una celda en lo que va hasta el separador decimal (con él) y la zona
+ * donde puede estar un código. Un lector no teclea separadores: si hay uno, el código solo
+ * puede ir detrás. `null` = el texto no es «dígitos» ni «dígitos.dígitos».
  */
-export function readScanDigits(text: string) {
-  if (isScannedCode(text)) {
-    return text;
-  }
+function splitScanText(text: string) {
+  const match = /^(\d*\.)?(\d*)$/.exec(text);
 
-  const decimals = /^\d*\.(\d+)$/.exec(text)?.[1] ?? "";
-
-  return isScannedCode(decimals) ? decimals : null;
+  return match ? { head: match[1] ?? "", zone: match[2] } : null;
 }
 
+/**
+ * Los dígitos de `text` entre los que está un código leído, o `null` si el texto es un
+ * valor normal. Además del texto entero de 8 o más dígitos, cuenta el de un costo con
+ * 8 o más decimales («1020.00» + código, «55.5» + código): nadie teclea tantos, es un
+ * lector que escribió detrás de los decimales de la celda.
+ */
+export function readScanDigits(text: string) {
+  const zone = splitScanText(text)?.zone ?? "";
+
+  return isScannedCode(zone) ? zone : null;
+}
+
+/**
+ * Un valor tecleado a mano delante de un código: un entero mayor que 0 de hasta 6 dígitos
+ * o, con separador decimal («55.5», «0.75», «12.» = 12), ese número a dos decimales.
+ */
 function readTypedValue(text: string) {
-  if (!/^\d+$/.test(text) || text.length > TYPED_VALUE_MAX_DIGITS) {
+  const parts = splitScanText(text);
+
+  if (!parts || text === "" || text === ".") {
     return null;
   }
 
-  const value = Number(text);
+  const integerPart = parts.head ? parts.head.slice(0, -1) : parts.zone;
+
+  if (integerPart.length > TYPED_VALUE_MAX_DIGITS) {
+    return null;
+  }
+
+  const value = roundMoney(
+    Number(parts.head ? `${integerPart || "0"}.${parts.zone || "0"}` : integerPart),
+  );
 
   return value > 0 ? value : null;
 }
@@ -127,41 +158,60 @@ function readHandTypedPrefix(text: string, stamps: number[], now: number) {
 }
 
 /**
- * Enter en una celda de línea. `null` = el texto no es un escaneo (menos de
- * `PURCHASE_SCAN_MIN_DIGITS` dígitos, o no son solo dígitos).
+ * Enter en una celda de línea. `null` = el texto no es un escaneo: sin separador decimal,
+ * menos de `PURCHASE_SCAN_MIN_DIGITS` dígitos; con él, menos de esos decimales.
+ * `stamps` trae el instante de cada DÍGITO de `text` (el separador no lleva).
  *
- * El texto es «valor opcional + código», y el código es un SUFIJO. Candidatos, sin
- * repetir y hasta `PURCHASE_SCAN_MAX_CANDIDATES`: los sufijos de 13, 12, 14 y 8 dígitos,
- * en ese orden. Si el texto es tan corto que no dan cuatro, cierra la lista el corte que
- * sugiere el tiempo entre teclas (un código de otro largo, p. ej. 10 dígitos). Ningún
- * otro sufijo se consulta: un código inexistente no puede costar una docena de peticiones.
+ * El texto es «valor opcional + código», y el código es un SUFIJO de la zona de dígitos
+ * que sigue al separador decimal (de todo el texto si no hay). Candidatos, sin repetir y
+ * hasta `PURCHASE_SCAN_MAX_CANDIDATES`: los sufijos de 13, 12, 14 y 8 dígitos, en ese
+ * orden. Si la zona es tan corta que no dan cuatro, cierra la lista el corte que sugiere
+ * el tiempo entre teclas (un código de otro largo, p. ej. 10 dígitos). Ningún otro sufijo
+ * se consulta: un código inexistente no puede costar una docena de peticiones.
  */
 export function readPurchaseLineScan(
   text: string,
   stamps: number[],
   now: number,
 ): PurchaseLineScanReading | null {
-  if (!isScannedCode(text)) {
+  const parts = splitScanText(text);
+
+  if (!parts || !isScannedCode(parts.zone)) {
     return null;
   }
 
-  const suffixes = TYPICAL_CODE_LENGTHS.filter((length) => length <= text.length).map((length) =>
-    text.slice(text.length - length),
+  const { head, zone } = parts;
+  const digitCount = text.length - (head ? 1 : 0);
+  const timed = stamps.length === digitCount;
+  const zoneStamps = timed ? stamps.slice(digitCount - zone.length) : [];
+  const suffixes = TYPICAL_CODE_LENGTHS.filter((length) => length <= zone.length).map((length) =>
+    zone.slice(zone.length - length),
   );
+  // Con separador, lo que hay hasta él se tecleó a mano seguro; de los decimales, los que
+  // van seguidos de una pausa.
+  const typedDecimals = readHandTypedPrefix(zone, zoneStamps, now);
+  const rest = zone.slice(typedDecimals.length);
 
   return {
-    candidates: [...new Set([...suffixes, readTimedCode(text, stamps, now)])].slice(
+    candidates: [...new Set([...suffixes, readTimedCode(zone, zoneStamps, now)])].slice(
       0,
       PURCHASE_SCAN_MAX_CANDIDATES,
     ),
-    typedValue: readTypedValue(readHandTypedPrefix(text, stamps, now)),
+    // Detrás de los decimales tecleados debe quedar un código entero; y si no hay ninguno
+    // con pausa, lo que queda no puede ser más largo que el código más habitual.
+    typedUnclear:
+      head !== "" &&
+      (!timed ||
+        !isScannedCode(rest) ||
+        (typedDecimals === "" && rest.length > TYPICAL_CODE_LENGTHS[0])),
+    typedValue: readTypedValue(`${head}${typedDecimals}`),
   };
 }
 
 /**
  * El valor de la celda cuando `code` (un sufijo de `text`) resultó ser el código: lo que
- * queda delante, si es un entero mayor que 0 de hasta 6 dígitos. `null` = no se tecleó
- * ninguno que valga y la celda conserva el que tenía.
+ * queda delante, si es un entero mayor que 0 de hasta 6 dígitos o un decimal («55.5»;
+ * «12.» = 12). `null` = no se tecleó ninguno que valga.
  */
 export function readValueBeforeCode(text: string, code: string) {
   return readTypedValue(text.slice(0, text.length - code.length));

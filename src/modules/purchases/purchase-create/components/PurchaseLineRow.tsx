@@ -411,6 +411,7 @@ export function PurchaseLineRow({
             className={cn(purchaseLineInputClassName, "@xl:text-right")}
             onChange={(value) => onUpdate(isVes ? { unitCostVes: value } : { unitCostRef: value })}
             onScan={scanHandler}
+            scanNoticeSubject={`el costo de ${meta.name}`}
             value={isVes ? item.unitCostVes : item.unitCostRef}
           />
         )}

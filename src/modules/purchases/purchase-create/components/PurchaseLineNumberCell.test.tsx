@@ -3,6 +3,8 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
+import { ToastProvider } from "@/shared/components/Toast";
+
 import type { PurchaseLineScan } from "../utils/purchaseLineScan";
 import { PURCHASE_CELL_FLASH_MS, PurchaseLineNumberCell } from "./PurchaseLineNumberCell";
 
@@ -463,5 +465,171 @@ describe("PurchaseLineNumberCell · un costo se muestra con dos decimales (COM-F
     expect(onScan).not.toHaveBeenCalled();
     expect(onChange).not.toHaveBeenCalled();
     expect(cell()).toHaveValue("1020.00");
+  });
+});
+
+// COM-F10 · F-A1: «55.5» tecleado en un costo y un escaneo en la misma celda dejaba el costo anterior.
+describe("PurchaseLineNumberCell · decimal tecleado y escaneo en la misma celda (COM-F10 · F-A1)", () => {
+  const onScan = jest.fn();
+  const CODE = "7598765432101";
+  const NOTICE = "Revisa el costo de Taladro: se escaneó un código mientras lo editabas.";
+
+  function CostHarness({ initial }: { initial: number }) {
+    const [value, setValue] = useState(initial);
+
+    return (
+      <ToastProvider>
+        <PurchaseLineNumberCell
+          aria-label="Celda"
+          onChange={(next) => {
+            onChange(next);
+            setValue(next);
+          }}
+          onScan={onScan}
+          scanNoticeSubject="el costo de Taladro"
+          value={value}
+        />
+        <output data-testid="cost">{value}</output>
+      </ToastProvider>
+    );
+  }
+
+  /** Teclea carácter a carácter dejando pasar `gapMs` antes de cada tecla. */
+  async function press(keys: string[], gapMs: number) {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime, delay: null });
+
+    for (const key of keys) {
+      act(() => {
+        jest.advanceTimersByTime(gapMs);
+      });
+      await user.keyboard(key);
+    }
+  }
+
+  /** Entra en la celda (el valor queda seleccionado), teclea `typed` a mano y espera. */
+  async function typeByHand(typed: string) {
+    render(<CostHarness initial={3738.3} />);
+    act(() => cell().focus());
+    await press(typed.split(""), 130);
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+  }
+
+  function resolve(code: string | null) {
+    const [scan] = onScan.mock.calls[0] as [PurchaseLineScan];
+
+    act(() => scan.onResolved(code));
+  }
+
+  function shownValue() {
+    return screen.getByTestId("cost").textContent;
+  }
+
+  beforeEach(() => {
+    onScan.mockReset();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it.each([
+    ["55.5", "55.5"],
+    ["55,5", "55.5"],
+    ["0,75", "0.75"],
+    ["1200.50", "1200.5"],
+    ["12.", "12"],
+  ])("«%s» + escaneo: el costo queda en %s y sale solo el código", async (typed, expected) => {
+    await typeByHand(typed);
+    await press([...CODE.split(""), "{Enter}"], 4);
+
+    expect(onScan).toHaveBeenCalledTimes(1);
+    expect(firstCandidate(onScan)).toBe(CODE);
+    // Ya antes de la respuesta: lo tecleado a mano, no el costo que había.
+    expect(shownValue()).toBe(expected);
+
+    resolve(CODE);
+
+    expect(shownValue()).toBe(expected);
+    expect(cell()).toHaveValue(Number(expected).toFixed(2));
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+  });
+
+  it("«55.5» + ráfaga partida por un atasco: el costo queda en 55.5", async () => {
+    await typeByHand("55.5");
+    await press(CODE.slice(0, 5).split(""), 4);
+    await press([CODE[5]], 110);
+    await press([...CODE.slice(6).split(""), "{Enter}"], 4);
+
+    expect(firstCandidate(onScan)).toBe(CODE);
+    resolve(CODE);
+
+    expect(shownValue()).toBe("55.5");
+  });
+
+  it("si el código no existe, queda igualmente lo tecleado a mano", async () => {
+    await typeByHand("55.5");
+    await press([...CODE.split(""), "{Enter}"], 4);
+    resolve(null);
+
+    expect(shownValue()).toBe("55.5");
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+  });
+
+  it("decimales a ritmo de ráfaga y el código existe: el código dice dónde acaba el costo", async () => {
+    render(<CostHarness initial={3738.3} />);
+    act(() => cell().focus());
+    await press(["5", "5", "."], 130);
+    await press(["5", ...CODE.split(""), "{Enter}"], 4);
+    resolve(CODE);
+
+    expect(shownValue()).toBe("55.5");
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+  });
+
+  it("decimales a ritmo de ráfaga y el código no existe: avisa y la celda queda resaltada, nunca en silencio", async () => {
+    render(<CostHarness initial={3738.3} />);
+    act(() => cell().focus());
+    await press(["5", "5", "."], 130);
+    await press(["5", ...CODE.split(""), "{Enter}"], 4);
+    resolve(null);
+
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    expect(cell()).toHaveAttribute("data-review", "true");
+    // Lo seguro de lo tecleado a mano: hasta el separador.
+    expect(shownValue()).toBe("55");
+
+    // Al volver a la celda para revisarla deja de estar resaltada.
+    act(() => cell().blur());
+    act(() => cell().focus());
+    expect(cell()).not.toHaveAttribute("data-review");
+  });
+
+  it("delante del código queda algo que no vale para la celda (decimal en una cantidad): avisa", async () => {
+    render(
+      <ToastProvider>
+        <PurchaseLineNumberCell
+          aria-label="Cantidad de Taladro"
+          integer
+          onChange={onChange}
+          onScan={onScan}
+          value={3}
+        />
+      </ToastProvider>,
+    );
+    act(() => screen.getByLabelText("Cantidad de Taladro").focus());
+    await press(["2", ".", "5"], 130);
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+    await press([...CODE.split(""), "{Enter}"], 4);
+    resolve(CODE);
+
+    expect(
+      screen.getByText("Revisa «Cantidad de Taladro»: se escaneó un código mientras lo editabas."),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Cantidad de Taladro")).toHaveValue("3");
   });
 });

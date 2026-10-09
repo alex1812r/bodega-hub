@@ -200,6 +200,7 @@ export function PurchaseSummaryCard({
                 )}
                 onChange={onDiscountChange}
                 onScan={onDiscountScan}
+                scanNoticeSubject="el descuento"
                 value={discountRef}
               />
             </div>

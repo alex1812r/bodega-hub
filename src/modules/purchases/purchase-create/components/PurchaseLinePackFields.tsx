@@ -134,6 +134,7 @@ export function PurchaseLinePackFields({
             )
           }
           onScan={onScanCode}
+          scanNoticeSubject={`el costo por ${packNoun} de ${meta.name}`}
           value={isVes ? item.packCostVes : item.packCostRef}
         />
       </PurchaseLineFieldBox>

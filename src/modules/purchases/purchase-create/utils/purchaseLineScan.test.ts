@@ -32,6 +32,7 @@ describe("readPurchaseLineScan", () => {
 
     expect(readPurchaseLineScan(text, stamps, now)).toEqual({
       candidates: [CODE, text.slice(-12), text, text.slice(-8)],
+      typedUnclear: false,
       typedValue: 2,
     });
   });
@@ -51,6 +52,7 @@ describe("readPurchaseLineScan", () => {
 
     expect(readPurchaseLineScan(CODE, stamps, now)).toEqual({
       candidates: [CODE, CODE.slice(-12), CODE.slice(-8)],
+      typedUnclear: false,
       typedValue: null,
     });
   });
@@ -58,6 +60,7 @@ describe("readPurchaseLineScan", () => {
   it("sin tiempos (pegado) propone los mismos sufijos, y no hay valor tecleado", () => {
     expect(readPurchaseLineScan(`3${CODE}`, [], 0)).toEqual({
       candidates: [CODE, CODE.slice(-12), `3${CODE}`, CODE.slice(-8)],
+      typedUnclear: false,
       typedValue: null,
     });
   });
@@ -112,5 +115,71 @@ describe("readValueBeforeCode", () => {
     expect(readValueBeforeCode(CODE, CODE)).toBeNull();
     expect(readValueBeforeCode(`0${CODE}`, CODE)).toBeNull();
     expect(readValueBeforeCode(`1234567${CODE}`, CODE)).toBeNull();
+  });
+});
+
+// COM-F10 · F-A1: un costo con decimales tecleado antes del escaneo se perdía.
+describe("valor con decimales delante del código (COM-F10 · F-A1)", () => {
+  const slow = (length: number) => Array.from({ length }, () => 130);
+
+  /** `typed` a mano (130 ms por tecla) y luego el código en ráfaga. Los instantes son solo de los dígitos. */
+  function read(typed: string, codeGaps = burst(13, 400)) {
+    const digits = typed.replace(".", "").length;
+    const { now, stamps } = timeline([...slow(digits), ...codeGaps]);
+
+    return readPurchaseLineScan(`${typed}${CODE}`, stamps, now);
+  }
+
+  it("«55.5» + código: el código sale de los decimales y lo tecleado es 55.5", () => {
+    expect(read("55.5")).toEqual({
+      candidates: [CODE, CODE.slice(-12), `5${CODE}`, CODE.slice(-8)],
+      typedUnclear: false,
+      typedValue: 55.5,
+    });
+  });
+
+  it("«0.75», «1200.50» y «12.» (separador colgando = 12)", () => {
+    expect(read("0.75")?.typedValue).toBe(0.75);
+    expect(read("1200.50")?.typedValue).toBe(1200.5);
+    expect(read("12.")).toMatchObject({ typedUnclear: false, typedValue: 12 });
+    expect(read("12.")?.candidates[0]).toBe(CODE);
+  });
+
+  it("ráfaga partida por un atasco: los decimales tecleados despacio siguen siendo el valor", () => {
+    const reading = read("55.5", [...burst(5, 400), ...burst(8, 110)]);
+
+    expect(reading?.candidates[0]).toBe(CODE);
+    expect(reading).toMatchObject({ typedUnclear: false, typedValue: 55.5 });
+  });
+
+  it("decimales tecleados a ritmo de ráfaga: no se sabe dónde acaba el valor", () => {
+    const { now, stamps } = timeline([130, 130, ...burst(14, 130)]);
+
+    expect(readPurchaseLineScan(`55.5${CODE}`, stamps, now)).toMatchObject({
+      candidates: [CODE, CODE.slice(-12), `5${CODE}`, CODE.slice(-8)],
+      typedUnclear: true,
+    });
+  });
+
+  it("sin instantes de tecla y con separador tampoco se sabe", () => {
+    expect(readPurchaseLineScan(`55.5${CODE}`, [], 0)?.typedUnclear).toBe(true);
+  });
+
+  it("un costo que ya estaba en la celda («1020.00») y el código detrás: el valor es el que estaba", () => {
+    const { now, stamps } = timeline(burst(13));
+    const there = Array.from({ length: 6 }, () => -Infinity);
+
+    expect(readPurchaseLineScan(`1020.00${CODE}`, [...there, ...stamps], now)).toMatchObject({
+      typedUnclear: false,
+      typedValue: 1020,
+    });
+  });
+
+  it("readValueBeforeCode lee el decimal que queda delante del código que existía", () => {
+    expect(readValueBeforeCode(`55.5${CODE}`, CODE)).toBe(55.5);
+    expect(readValueBeforeCode(`0.75${CODE}`, CODE)).toBe(0.75);
+    expect(readValueBeforeCode(`12.${CODE}`, CODE)).toBe(12);
+    expect(readValueBeforeCode(`55.555${CODE}`, CODE)).toBe(55.56);
+    expect(readValueBeforeCode(`.${CODE}`, CODE)).toBeNull();
   });
 });

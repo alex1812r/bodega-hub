@@ -4,6 +4,7 @@ import { type KeyboardEvent, type Ref, useEffect, useRef, useState } from "react
 import { flushSync } from "react-dom";
 
 import { NumberInput } from "@/shared/components/NumberInput";
+import { useToast } from "@/shared/components/Toast";
 import { cn } from "@/shared/utils/cn";
 import { roundMoney } from "@/shared/utils/currency";
 
@@ -32,6 +33,11 @@ type PurchaseLineNumberCellProps = {
    */
   onScan?: (scan: PurchaseLineScan) => void;
   ref?: Ref<HTMLInputElement>;
+  /**
+   * Cómo nombra a esta celda el aviso «Revisa … : se escaneó un código mientras lo
+   * editabas» («el costo de Taladro»). Sin él, su `aria-label` entre comillas.
+   */
+  scanNoticeSubject?: string;
   value: number;
 };
 
@@ -75,9 +81,15 @@ function countDigits(text: string) {
  * - El texto es «valor opcional + código». Dónde empieza el código no lo decide solo
  *   el tiempo entre teclas (un atasco de la página parte la ráfaga del lector): la
  *   celda propone los sufijos posibles y `onScan` contesta cuál existe. Lo que queda
- *   delante de ese código es el valor tecleado; si no hay o no vale, se conserva el
- *   que tenía la celda. Si ninguno existe queda lo tecleado a mano antes de la
- *   ráfaga o, si no hay, el valor que tenía.
+ *   delante de ese código es el valor tecleado, con su separador decimal y sus
+ *   decimales («55.5» + código = 55.5; «12.» + código = 12); si no hay o no vale, se
+ *   conserva el que tenía la celda. Si ninguno existe queda lo tecleado a mano antes de
+ *   la ráfaga o, si no hay, el valor que tenía.
+ * - Un valor tecleado nunca se pierde callando: si el código no existe y el tiempo entre
+ *   teclas no dice dónde acababan los decimales, o lo que queda delante del código no
+ *   vale para la celda (un decimal en una cantidad), avisa con «Revisa … : se escaneó un
+ *   código mientras lo editabas» y la celda queda resaltada (`data-review`) hasta que se
+ *   vuelve a entrar en ella.
  * - El escaneo se encola y el foco pasa al buscador (D36); mientras se resuelve, la
  *   celda muestra ese valor. Otro escaneo aquí antes de la respuesta también se encola.
  * - En una celda entera, un valor de más de 6 dígitos no sube mientras se escribe
@@ -91,6 +103,7 @@ export function PurchaseLineNumberCell({
   integer = false,
   onChange,
   onScan,
+  scanNoticeSubject,
   value,
   ...props
 }: PurchaseLineNumberCellProps) {
@@ -101,6 +114,9 @@ export function PurchaseLineNumberCell({
     value: number | string | null;
   } | null>(null);
   const [flashing, setFlashing] = useState(false);
+  // Un escaneo dejó en duda el valor de la celda: resaltada hasta que se vuelva a entrar en ella.
+  const [needsReview, setNeedsReview] = useState(false);
+  const { showToast } = useToast();
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Último valor que tiene el padre, también dentro del mismo evento (blur normaliza y sale).
   const latest = useRef(value);
@@ -146,6 +162,14 @@ export function PurchaseLineNumberCell({
 
     setFlashing(true);
     flashTimer.current = setTimeout(() => setFlashing(false), PURCHASE_CELL_FLASH_MS);
+  }
+
+  function askReview() {
+    setNeedsReview(true);
+    showToast({
+      title: `Revisa ${scanNoticeSubject ?? `«${props["aria-label"]}»`}: se escaneó un código mientras lo editabas.`,
+      tone: "error",
+    });
   }
 
   function send(next: number) {
@@ -211,14 +235,16 @@ export function PurchaseLineNumberCell({
     if (/^\d$/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const start = field.selectionStart ?? field.value.length;
       const end = field.selectionEnd ?? start;
-      const written = field.value + overflow.current;
+      const fieldDigits = countDigits(field.value);
+      const writtenDigits = fieldDigits + overflow.current.length;
+      // Un instante por DÍGITO: el separador decimal no lleva (un lector no lo teclea).
       const known =
-        stamps.current.length === written.length
+        stamps.current.length === writtenDigits
           ? stamps.current
-          : written.split("").map(() => -Infinity);
+          : Array.from({ length: writtenDigits }, () => -Infinity);
 
       // Campo lleno y sin selección que sustituir: `NumberInput` va a descartar la tecla.
-      if (start === end && countDigits(field.value) >= FIELD_MAX_DIGITS) {
+      if (start === end && fieldDigits >= FIELD_MAX_DIGITS) {
         if (start === field.value.length) {
           overflow.current += event.key;
           stamps.current = [...known, Date.now()];
@@ -229,9 +255,9 @@ export function PurchaseLineNumberCell({
 
       overflow.current = "";
       stamps.current = [
-        ...known.slice(0, start),
+        ...known.slice(0, countDigits(field.value.slice(0, start))),
         Date.now(),
-        ...known.slice(end, field.value.length),
+        ...known.slice(countDigits(field.value.slice(0, end)), fieldDigits),
       ];
       return;
     }
@@ -240,19 +266,12 @@ export function PurchaseLineNumberCell({
 
     overflow.current = "";
 
-    const scanDigits = event.key === "Enter" ? readScanDigits(scanText) : null;
-    // Detrás de los decimales de un costo no hay tiempos de tecla que casen con el código.
     const scan =
-      scanDigits === null
-        ? null
-        : readPurchaseLineScan(
-            scanDigits,
-            scanDigits === scanText ? stamps.current : [],
-            Date.now(),
-          );
+      event.key === "Enter" ? readPurchaseLineScan(scanText, stamps.current, Date.now()) : null;
 
     if (scan) {
       const before = committed.current;
+      const typedValue = isValidValue(scan.typedValue, integer) ? scan.typedValue : null;
 
       // Sin esto NumberInput normalizaría el código como si fuera el valor de la celda.
       event.preventDefault();
@@ -261,18 +280,39 @@ export function PurchaseLineNumberCell({
       // al salir se normalizaría el código como si fuera lo escrito.
       flushSync(() => {
         setTyped(null);
-        send(scan.typedValue ?? before);
+        send(typedValue ?? before);
       });
 
+      const settle = (code: string | null) => {
+        if (code === null) {
+          // Ningún candidato existe: queda lo tecleado a mano según el tiempo entre teclas.
+          if (scan.typedUnclear) {
+            askReview();
+          }
+
+          return;
+        }
+
+        const typedText = scanText.slice(0, scanText.length - code.length);
+        const valueBeforeCode = readValueBeforeCode(scanText, code);
+
+        if (isValidValue(valueBeforeCode, integer)) {
+          send(valueBeforeCode);
+          return;
+        }
+
+        send(before);
+
+        // Un decimal delante del código que no vale para esta celda: no se descarta callando.
+        if (typedText.includes(".")) {
+          askReview();
+        }
+      };
+
       if (onScan) {
-        onScan({
-          candidates: scan.candidates,
-          onResolved: (code) => {
-            if (code !== null) {
-              send(readValueBeforeCode(scanText, code) ?? before);
-            }
-          },
-        });
+        onScan({ candidates: scan.candidates, onResolved: settle });
+      } else {
+        settle(null);
       }
 
       return;
@@ -313,9 +353,10 @@ export function PurchaseLineNumberCell({
       className={cn(
         className,
         "motion-reduce:transition-none",
-        flashing && "border-primary bg-primary/10",
+        (flashing || needsReview) && "border-primary bg-primary/10",
       )}
       data-flash={flashing ? "true" : undefined}
+      data-review={needsReview ? "true" : undefined}
       data-line-focus={focusTarget ? "true" : undefined}
       decimals={integer ? 0 : 2}
       min={integer ? 1 : 0}
@@ -329,6 +370,7 @@ export function PurchaseLineNumberCell({
       }}
       onFocus={() => {
         committed.current = value;
+        setNeedsReview(false);
       }}
       onKeyDown={handleKeyDown}
       onValueChange={handleValueChange}
