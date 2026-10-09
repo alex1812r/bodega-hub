@@ -18,10 +18,17 @@ jest.mock("../../../../shared/auth/Can", () => ({
 }));
 
 const product = { id: "prod-1", name: "Caja Cola x6", sku: "caja-cola" };
+const MOVEMENTS_HREF = "/inventory/movements?productId=prod-1&returnTo=%2Fproducts%2Fprod-1";
 
 function renderCard(props: Partial<Parameters<typeof ProductDetailStockCard>[0]> = {}) {
   return render(
-    <ProductDetailStockCard adjustableProduct={product} currentStock={7} minStock={2} {...props} />,
+    <ProductDetailStockCard
+      adjustableProduct={product}
+      currentStock={7}
+      minStock={2}
+      movementsHref={MOVEMENTS_HREF}
+      {...props}
+    />,
     { wrapper: createQueryWrapper() },
   );
 }
@@ -68,7 +75,10 @@ describe("ProductDetailStockCard · Ajustar stock (PRO-03)", () => {
     renderCard();
 
     expect(screen.queryByRole("button", { name: "Ajustar stock" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Ver movimientos de inventario" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Ver movimientos de inventario" })).toHaveAttribute(
+      "href",
+      MOVEMENTS_HREF,
+    );
   });
 
   it("sin producto la tarjeta queda como antes, sin botón", () => {

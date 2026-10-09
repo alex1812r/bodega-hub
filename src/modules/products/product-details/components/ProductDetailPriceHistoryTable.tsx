@@ -1,3 +1,5 @@
+import { type ReactNode } from "react";
+
 import { Badge } from "@/shared/components/Badge";
 import { formatRefUsd } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
@@ -50,15 +52,27 @@ function HistoryReason({ kind, reason }: Pick<ProductPriceHistoryRow, "kind" | "
 }
 
 type ProductDetailPriceHistoryTableProps = {
+  /** Paginación de la lista, bajo la tabla. */
+  footer?: ReactNode;
+  /** La primera fila es el precio vigente (solo en la primera página). Por defecto, sí. */
+  highlightFirst?: boolean;
+  isLoading?: boolean;
   rows: ProductPriceHistoryRow[];
 };
 
 export function ProductDetailPriceHistoryTable({
+  footer,
+  highlightFirst = true,
+  isLoading = false,
   rows,
 }: ProductDetailPriceHistoryTableProps) {
   return (
     <ProductDetailSectionCard title="Historial de precios">
-      {rows.length === 0 ? (
+      {isLoading ? (
+        <p className="px-5 py-8 text-center text-sm text-on-surface-variant">
+          Cargando historial de precios...
+        </p>
+      ) : rows.length === 0 ? (
         <p className="px-5 py-8 text-center text-sm text-on-surface-variant">
           Aún no hay cambios de precio registrados para este producto.
         </p>
@@ -76,7 +90,7 @@ export function ProductDetailPriceHistoryTable({
             </thead>
             <tbody className="divide-y divide-border/50 dark:divide-slate-800">
               {rows.map((row, index) => {
-                const isLatest = index === 0;
+                const isLatest = highlightFirst && index === 0;
 
                 return (
                   <tr
@@ -112,6 +126,7 @@ export function ProductDetailPriceHistoryTable({
           </table>
         </div>
       )}
+      {footer}
     </ProductDetailSectionCard>
   );
 }

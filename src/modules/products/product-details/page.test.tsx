@@ -8,7 +8,7 @@
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 jest.mock("next/navigation", () => ({
@@ -119,6 +119,9 @@ describe("ProductDetailsPage", () => {
   });
 
   afterEach(() => {
+    // DET-01: la pestaña activa va en la URL y el kardex recuerda si quedó abierto.
+    window.history.replaceState(null, "", "/");
+    window.localStorage.clear();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: originalMatchMedia,
@@ -320,6 +323,9 @@ describe("ProductDetailsPage", () => {
     ];
     renderPage();
 
+    // DET-01: el historial de precios vive en la pestaña Historial.
+    fireEvent.click(await screen.findByRole("tab", { name: "Historial" }));
+
     const table = within(
       (await screen.findByRole("heading", { name: "Historial de precios" })).closest(
         "section",
@@ -363,6 +369,9 @@ describe("ProductDetailsPage", () => {
       },
     ];
     renderPage();
+
+    // DET-01: el historial de precios vive en la pestaña Historial.
+    fireEvent.click(await screen.findByRole("tab", { name: "Historial" }));
 
     const table = within(
       (await screen.findByRole("heading", { name: "Historial de precios" })).closest(
@@ -412,6 +421,12 @@ describe("ProductDetailsPage", () => {
 
   it("monta el kardex del producto y su enlace vuelve al detalle (INV-03)", async () => {
     renderPage();
+
+    // DET-01: en el Resumen el kardex va en una sección plegada por defecto.
+    const toggle = await screen.findByRole("button", { name: /Kardex del producto/ });
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
 
     const heading = await screen.findByRole("heading", { name: "Kardex" });
     const card = within(heading.closest("section") as HTMLElement);

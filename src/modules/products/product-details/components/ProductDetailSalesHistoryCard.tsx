@@ -2,7 +2,7 @@
 
 import { Receipt } from "lucide-react";
 
-import { getPaginatedItems } from "@/lib/api/pagination";
+import { DEFAULT_PAGE_LIMIT, getPaginatedItems } from "@/lib/api/pagination";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { ResponsivePagination } from "@/shared/components/Pagination";
 import { formatCaracasDateTime } from "@/shared/utils/caracasBusinessDay";
@@ -39,7 +39,8 @@ export function ProductDetailSalesHistoryCard({
   const sales = useProductSalesHistory(productId);
   const rows = getPaginatedItems(sales.data);
   const total = sales.data?.total ?? 0;
-  const showPagination = total > sales.limit;
+  // Con el tamaño por defecto como corte: al agrandar la página no desaparece el selector.
+  const showPagination = total > DEFAULT_PAGE_LIMIT;
 
   return (
     <ProductDetailSectionCard

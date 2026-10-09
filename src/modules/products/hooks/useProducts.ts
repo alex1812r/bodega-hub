@@ -286,12 +286,14 @@ export function useDeleteCategory() {
   });
 }
 
-export function useProductPriceHistory(id: string) {
+export function useProductPriceHistory(id: string, pagination: PaginationParams = {}) {
   return useQuery({
     enabled: Boolean(id),
-    queryKey: productsQueryKeys.priceHistory(id),
+    queryKey: [...productsQueryKeys.priceHistory(id), pagination],
     queryFn: () =>
-      apiFetch<PaginatedList<ProductPriceHistoryEntry>>(`/api/products/${id}/price-history`),
+      apiFetch<PaginatedList<ProductPriceHistoryEntry>>(`/api/products/${id}/price-history`, {
+        query: pagination,
+      }),
   });
 }
 
