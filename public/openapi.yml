@@ -1856,6 +1856,30 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/sales/{id}/impact:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Sales]
+      summary: Calcular el efecto de anular o devolver una venta
+      description: Solo lectura. Devuelve lo que `cancel_sale` o `return_sale` aplicarian (stock, pagos, caja y baul) sin escribir.
+      x-permission: sales.create
+      parameters:
+        - name: action
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [cancel, return]
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/sales/{id}/receipt:
     parameters:
       - $ref: "#/components/parameters/Id"
