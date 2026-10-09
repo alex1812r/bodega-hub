@@ -657,3 +657,146 @@ describe("PurchaseCreatePage · costo con decimales y escaneo en la misma celda 
     expect(lineNames()).toEqual(["Cable", "Taladro"]);
   });
 });
+
+describe("PurchaseCreatePage · un escaneo con la confirmación abierta nunca registra la compra (CNF-F5 · B4)", () => {
+  const CHANGED_MESSAGE = /La compra cambió mientras la confirmabas/;
+
+  function registerButton() {
+    return screen.getByRole("button", { name: "Registrar compra" });
+  }
+
+  async function openConfirmation() {
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
+    await settle(100);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  }
+
+  it("ráfaga del lector + Enter con el modal recién abierto: no hay POST, el modal se cierra, entra la línea y se avisa", async () => {
+    const api = installFetchStub(() => null);
+
+    resolveWithLatency(20);
+    renderPage();
+    pickTaladro();
+    await openConfirmation();
+
+    await scan(CODE_B);
+    await settle(1000);
+
+    expect(api.posts).toHaveLength(0);
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(lineNames()).toEqual(["Cable", "Taladro"]);
+    expect(triedCodes()).toEqual([CODE_B]);
+    expect(screen.getByText(CHANGED_MESSAGE)).toBeInTheDocument();
+    // El siguiente escaneo cae en el buscador, no en un botón.
+    expect(searchBox()).toHaveFocus();
+  });
+
+  it("ráfaga del lector con el foco YA en «Registrar compra»: el Enter del lector no lo pulsa", async () => {
+    const api = installFetchStub(() => null);
+
+    resolveWithLatency(20);
+    renderPage();
+    pickTaladro();
+    await openConfirmation();
+    act(() => registerButton().focus());
+
+    await scan(CODE_B);
+    await settle(1000);
+
+    expect(api.posts).toHaveLength(0);
+    expect(lineNames()).toEqual(["Cable", "Taladro"]);
+  });
+
+  it("un código que no existe: tampoco hay POST, el modal se cierra y el aviso es el del código, no el de compra cambiada", async () => {
+    const api = installFetchStub(() => null);
+
+    resolveWithLatency(20);
+    renderPage();
+    pickTaladro();
+    await openConfirmation();
+
+    await scan("1111111111116");
+    await settle(1000);
+
+    expect(api.posts).toHaveLength(0);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(lineNames()).toEqual(["Taladro"]);
+    expect(screen.getByText(NOT_FOUND_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(CHANGED_MESSAGE)).not.toBeInTheDocument();
+  });
+
+  it("una ráfaga que no mide como un código (con el foco en «Registrar compra»): no registra, el modal sigue y se avisa", async () => {
+    const api = installFetchStub(() => null);
+
+    resolveWithLatency(20);
+    renderPage();
+    pickTaladro();
+    await openConfirmation();
+    act(() => registerButton().focus());
+
+    await scan("AB-12");
+    await settle(1000);
+
+    expect(api.posts).toHaveLength(0);
+    expect(mockResolveByCode).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Lectura del escáner ignorada")).toBeInTheDocument();
+  });
+
+  it("un lector lento con el foco en «Registrar compra» (8 o más dígitos seguidos): tampoco registra y el código entra", async () => {
+    const api = installFetchStub(() => null);
+
+    resolveWithLatency(20);
+    renderPage();
+    pickTaladro();
+    await openConfirmation();
+    act(() => registerButton().focus());
+
+    await press([...CODE_B.split(""), "{Enter}"], 80);
+    await settle(1000);
+
+    expect(api.posts).toHaveLength(0);
+    expect(lineNames()).toEqual(["Cable", "Taladro"]);
+  });
+
+  it("un lector lento (teclas a más de 50 ms): el Enter no encuentra el botón de registrar enfocado", async () => {
+    const api = installFetchStub(() => null);
+
+    resolveWithLatency(20);
+    renderPage();
+    pickTaladro();
+    await openConfirmation();
+
+    expect(registerButton()).not.toHaveFocus();
+
+    await press([...CODE_B.split(""), "{Enter}"], 80);
+    await settle(1000);
+
+    expect(api.posts).toHaveLength(0);
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("un Enter humano sobre «Registrar compra» enfocado con Tab sigue registrando, una sola vez", async () => {
+    const api = installFetchStub(() => null);
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime, delay: null });
+
+    api.respondToNextPost({ data: { id: "purchase-enter" } });
+    renderPage();
+    pickTaladro();
+    await openConfirmation();
+
+    for (let step = 0; step < 10 && document.activeElement !== registerButton(); step += 1) {
+      await settle(300);
+      await user.tab();
+    }
+
+    expect(registerButton()).toHaveFocus();
+
+    await press(["{Enter}"], 300);
+    await settle(500);
+
+    expect(api.posts).toHaveLength(1);
+    expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-enter");
+  });
+});

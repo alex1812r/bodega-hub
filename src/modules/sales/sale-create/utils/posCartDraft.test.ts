@@ -5,16 +5,21 @@ import {
   describePosCartRestoration,
   describeSaleInProgress,
   findPosCartDraft,
+  findSettledPosCart,
   parseStoredPosCartDraft,
   POS_CART_DRAFT_VERSION,
+  POS_CART_SETTLED_MAX,
+  POS_CART_SETTLED_TTL_MS,
   posCartDraftStorageKey,
   posCartRestorationHasChanges,
+  posCartSettledStorageKey,
   prunePosCartDrafts,
   purgePosCartDrafts,
   readPosCartTabId,
   restorePosCartDraft,
   rotatePosCartTabId,
   serializePosCartDraft,
+  settlePosCart,
   writePosCartDraft,
   type PosCartDraftScope,
 } from "./posCartDraft";
@@ -316,5 +321,121 @@ describe("nombre de la venta en curso", () => {
     expect(describeSaleInProgress({ customerName: " ", lineCount: 1, totalRef: 2 })).toBe(
       `Venta en curso · 1 producto · ${formatRefUsd(2)}`,
     );
+  });
+});
+
+describe("carrito cobrado o vaciado: identidad y marca (CNF-F5 · B3)", () => {
+  const NOW = Date.parse("2026-10-09T12:00:00.000Z");
+
+  function saveCart(tabId: string, cartId: string | undefined, scope = SCOPE) {
+    const key = posCartDraftStorageKey(scope, tabId);
+
+    window.localStorage.setItem(
+      key,
+      serializePosCartDraft({ cartId, customerId: "cont-1", items: [item()] }, scope, new Date(NOW)),
+    );
+
+    return key;
+  }
+
+  it("el carrito guardado lleva su identidad, y uno guardado antes (sin ella) se sigue leyendo", () => {
+    const withId = saveCart("tab-a", "cart-1");
+    const legacy = saveCart("tab-b", undefined);
+
+    expect(parseStoredPosCartDraft(window.localStorage.getItem(withId), SCOPE)?.cartId).toBe("cart-1");
+    expect(parseStoredPosCartDraft(window.localStorage.getItem(legacy), SCOPE)).toMatchObject({
+      customerId: "cont-1",
+    });
+    expect(window.localStorage.getItem(legacy)).not.toContain("cartId");
+  });
+
+  it("cerrar un carrito borra TODAS sus copias de la caja y deja intactos los demás carritos", () => {
+    const copyA = saveCart("tab-a", "cart-1");
+    const copyB = saveCart("tab-b", "cart-1");
+    const other = saveCart("tab-c", "cart-2");
+    const legacy = saveCart("tab-d", undefined);
+    const otherRegister = saveCart("tab-a", "cart-1", { ...SCOPE, registerId: "reg-2" });
+
+    settlePosCart(SCOPE, "cart-1", "cobrado", NOW);
+
+    expect(window.localStorage.getItem(copyA)).toBeNull();
+    expect(window.localStorage.getItem(copyB)).toBeNull();
+    expect(window.localStorage.getItem(other)).not.toBeNull();
+    expect(window.localStorage.getItem(legacy)).not.toBeNull();
+    expect(window.localStorage.getItem(otherRegister)).not.toBeNull();
+    expect(findSettledPosCart(SCOPE, "cart-1", NOW)).toBe("cobrado");
+    expect(findSettledPosCart(SCOPE, "cart-2", NOW)).toBeNull();
+    expect(findSettledPosCart({ ...SCOPE, registerId: "reg-2" }, "cart-1", NOW)).toBeNull();
+  });
+
+  it("una copia reescrita después del cierre ni se encuentra ni sobrevive a la poda", () => {
+    settlePosCart(SCOPE, "cart-1", "cobrado");
+
+    const own = saveCart("tab-a", "cart-1");
+    const orphan = saveCart("tab-b", "cart-1");
+
+    expect(findPosCartDraft(SCOPE, "tab-a")).toBeNull();
+    expect(findPosCartDraft(SCOPE, "tab-nueva")).toBeNull();
+
+    prunePosCartDrafts(SCOPE);
+
+    expect(window.localStorage.getItem(own)).toBeNull();
+    expect(window.localStorage.getItem(orphan)).toBeNull();
+  });
+
+  it("la marca caduca: vigente hasta el último milisegundo y fuera después, y al escribir se van las vencidas", () => {
+    settlePosCart(SCOPE, "cart-1", "cobrado", NOW);
+
+    expect(findSettledPosCart(SCOPE, "cart-1", NOW + POS_CART_SETTLED_TTL_MS - 1)).toBe("cobrado");
+    expect(findSettledPosCart(SCOPE, "cart-1", NOW + POS_CART_SETTLED_TTL_MS)).toBeNull();
+
+    settlePosCart(SCOPE, "cart-2", "vaciado", NOW + POS_CART_SETTLED_TTL_MS);
+
+    const stored = JSON.parse(
+      window.localStorage.getItem(posCartSettledStorageKey(SCOPE)) ?? "[]",
+    ) as Array<{ cartId: string }>;
+
+    expect(stored.map((entry) => entry.cartId)).toEqual(["cart-2"]);
+  });
+
+  it("solo se conservan las marcas más recientes, y «cobrado» no pasa a «vaciado»", () => {
+    for (let index = 0; index <= POS_CART_SETTLED_MAX; index += 1) {
+      settlePosCart(SCOPE, `cart-${index}`, "cobrado", NOW + index);
+    }
+
+    expect(findSettledPosCart(SCOPE, "cart-0", NOW + POS_CART_SETTLED_MAX)).toBeNull();
+    expect(findSettledPosCart(SCOPE, "cart-1", NOW + POS_CART_SETTLED_MAX)).toBe("cobrado");
+
+    settlePosCart(SCOPE, "cart-1", "vaciado", NOW + POS_CART_SETTLED_MAX);
+
+    expect(findSettledPosCart(SCOPE, "cart-1", NOW + POS_CART_SETTLED_MAX)).toBe("cobrado");
+  });
+
+  it("la marca no es un carrito (la poda no la toca) y cerrar caja la borra", () => {
+    settlePosCart(SCOPE, "cart-1", "cobrado");
+    settlePosCart({ ...SCOPE, userId: "user-2" }, "cart-9", "cobrado");
+
+    prunePosCartDrafts(SCOPE);
+    expect(findSettledPosCart(SCOPE, "cart-1")).toBe("cobrado");
+
+    purgePosCartDrafts(SCOPE);
+
+    expect(window.localStorage.getItem(posCartSettledStorageKey(SCOPE))).toBeNull();
+    expect(findSettledPosCart({ ...SCOPE, userId: "user-2" }, "cart-9")).toBe("cobrado");
+  });
+
+  it("con localStorage roto o una marca ilegible no lanza y no hay nada cerrado", () => {
+    window.localStorage.setItem(posCartSettledStorageKey(SCOPE), "{roto");
+    expect(findSettledPosCart(SCOPE, "cart-1")).toBeNull();
+
+    jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("bloqueado");
+    });
+    jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("bloqueado");
+    });
+
+    expect(() => settlePosCart(SCOPE, "cart-1", "cobrado")).not.toThrow();
+    expect(findSettledPosCart(SCOPE, "cart-1")).toBeNull();
   });
 });

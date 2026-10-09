@@ -276,13 +276,15 @@ function SaleCreatePosWorkspace() {
     active: cart.items.length > 0,
     description: cartDraft.saveFailed
       ? "Este navegador no dejó guardar el carrito (almacenamiento lleno o bloqueado): si sales, esta venta se pierde."
-      : undefined,
+      : cartDraft.settledElsewhere
+        ? "Este carrito es copia de uno que ya se cobró o se vació en otra pestaña: no se guarda y, si sales, se pierde."
+        : undefined,
     label: describeSaleInProgress({
       customerName: customers.find((customer) => customer.id === customerId)?.name,
       lineCount: cart.items.length,
       totalRef,
     }),
-    onLeave: cartDraft.saveFailed ? "discard" : "draft",
+    onLeave: cartDraft.saveFailed || cartDraft.settledElsewhere ? "discard" : "draft",
     onSaveDraft: cartDraft.saveNow,
   });
 
@@ -463,6 +465,8 @@ function SaleCreatePosWorkspace() {
     paymentsSent: boolean,
   ) {
     clearSaleAttempt(attemptStorageKey);
+    // Solo anota (sin leer ni escribir) que este carrito se vendió, para sus copias en otras pestañas.
+    cartDraft.markCharged();
     resetAfterSuccessfulSale();
     setFormError(undefined);
     setNeedsVerification(false);

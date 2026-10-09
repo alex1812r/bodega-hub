@@ -5,6 +5,7 @@ import { ToastProvider } from "@/shared/components/Toast";
 
 import {
   posCartDraftStorageKey,
+  posCartSettledStorageKey,
   readPosCartTabId,
   serializePosCartDraft,
   type PosCartDraftScope,
@@ -429,5 +430,245 @@ describe("localStorage roto", () => {
 
     expect(onRestore).not.toHaveBeenCalled();
     expect(draftKeys()).toEqual([]);
+  });
+});
+
+describe("carrito cobrado o vaciado con copias en otras pestañas (CNF-F5 · B3)", () => {
+  /** Lo que el navegador avisa a las DEMÁS pestañas cuando una escribe o borra `key`. */
+  function announce(key: string) {
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", { key, newValue: window.localStorage.getItem(key) }),
+      );
+    });
+  }
+
+  /** Abre el POS en otra pestaña: su propio `sessionStorage`, el mismo `localStorage`. */
+  function openTab(overrides: Partial<UsePosCartDraftOptions> = {}) {
+    window.sessionStorage.clear();
+
+    const onRestore = jest.fn<void, [PosCartRestoration]>();
+    const tab = mount({ onRestore, ...overrides });
+
+    return { ...tab, key: posCartDraftStorageKey(SCOPE, readPosCartTabId()), onRestore };
+  }
+
+  it("secuencia de QA: la pestaña 2 copia el carrito y se cierra, la 1 cobra, y una pestaña nueva no recupera lo vendido", () => {
+    const tab1 = openTab();
+
+    tab1.rerender(baseOptions({ items: [item()] }));
+    wait();
+
+    // Pestaña 2: recoge el carrito de la 1 («Carrito recuperado») y la 1 reescribe el suyo.
+    const tab2 = openTab();
+
+    expect(tab2.onRestore).toHaveBeenCalledTimes(1);
+    tab2.rerender(baseOptions({ items: [item()], onRestore: tab2.onRestore }));
+    announce(tab1.key);
+    expect(draftKeys()).toHaveLength(2);
+    tab2.unmount();
+
+    // Pestaña 1: cobra (el carrito queda vacío).
+    tab1.rerender(baseOptions({ items: [] }));
+
+    expect(draftKeys()).toEqual([]);
+
+    const tab3 = openTab();
+
+    expect(tab3.onRestore).not.toHaveBeenCalled();
+    expect(screen.queryByText("Carrito recuperado")).not.toBeInTheDocument();
+  });
+
+  const SETTLED_KEY = posCartSettledStorageKey(SCOPE);
+  const CHARGED_ELSEWHERE = "Este carrito ya se cobró en otra pestaña";
+  const EMPTIED_ELSEWHERE = "Este carrito se vació en otra pestaña";
+  const AZUCAR_ITEM = item({ productId: AZUCAR.id, productName: AZUCAR.name, unitPriceRef: 2 });
+
+  /** Pestaña 1 con un carrito guardado y pestaña 2, VIVA, con una copia en pantalla. */
+  function openOriginalAndLiveCopy() {
+    const tab1 = openTab();
+
+    tab1.rerender(baseOptions({ items: [item()] }));
+    wait();
+
+    const onDiscard = jest.fn();
+    const tab2 = openTab({ onDiscard });
+    const copy = (items: PosCartItem[]) =>
+      tab2.rerender(baseOptions({ items, onDiscard, onRestore: tab2.onRestore }));
+
+    copy([item()]);
+    announce(tab1.key);
+    expect(draftKeys()).toHaveLength(2);
+
+    return { copy, onDiscard, tab1, tab2 };
+  }
+
+  it("copia viva: al cobrarse en la otra pestaña avisa con «Vaciar», no borra la pantalla y no vuelve a guardarse", () => {
+    const { copy, onDiscard, tab1, tab2 } = openOriginalAndLiveCopy();
+
+    act(() => tab1.result.current.markCharged());
+    tab1.rerender(baseOptions({ items: [] }));
+    expect(draftKeys()).toEqual([]);
+
+    // Lo que el navegador le avisa a la pestaña 2: la marca y el borrado de su copia.
+    announce(SETTLED_KEY);
+    announce(tab2.key);
+
+    expect(screen.getByText(CHARGED_ELSEWHERE)).toBeInTheDocument();
+    expect(screen.queryByText("Carrito recuperado")).not.toBeInTheDocument();
+    expect(tab2.result.current.settledElsewhere).toBe(true);
+    expect(tab1.result.current.settledElsewhere).toBe(false);
+    // No se vacía sola: lo decide el cajero.
+    expect(onDiscard).not.toHaveBeenCalled();
+    expect(draftKeys()).toEqual([]);
+
+    // El cajero sigue tocando la copia: ni el guardado automático, ni «salir», ni desmontar la resucitan.
+    copy([item({ quantity: 2 }), AZUCAR_ITEM]);
+    wait();
+    act(() => tab2.result.current.saveNow());
+    expect(draftKeys()).toEqual([]);
+
+    // El aviso no se cierra solo.
+    wait(60_000);
+    act(() => screen.getByRole("button", { name: "Vaciar" }).click());
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+
+    copy([]);
+    expect(screen.queryByText(CHARGED_ELSEWHERE)).not.toBeInTheDocument();
+    expect(tab2.result.current.settledElsewhere).toBe(false);
+
+    // Lo siguiente que se escanee es un carrito nuevo y se guarda con normalidad.
+    copy([AZUCAR_ITEM]);
+    wait();
+    expect(storedLines(tab2.key)).toEqual([expect.objectContaining({ productId: AZUCAR.id })]);
+    expect(screen.queryByText(CHARGED_ELSEWHERE)).not.toBeInTheDocument();
+
+    // Y una pestaña nueva recupera ESE carrito, no el vendido.
+    tab2.unmount();
+
+    const tab3 = openTab();
+
+    expect(tab3.onRestore.mock.calls[0]?.[0].items).toEqual([
+      expect.objectContaining({ productId: AZUCAR.id }),
+    ]);
+  });
+
+  it("copia viva que no recibe el aviso: al ir a guardar no reescribe y avisa; pasada la caducidad sigue sin guardarse", () => {
+    const { copy, tab1, tab2 } = openOriginalAndLiveCopy();
+
+    act(() => tab1.result.current.markCharged());
+    tab1.rerender(baseOptions({ items: [] }));
+
+    // Sin evento `storage`: la pestaña 2 cambia su copia y el guardado automático se dispara.
+    copy([item({ quantity: 3 })]);
+    wait();
+
+    expect(draftKeys()).toEqual([]);
+    expect(screen.getByText(CHARGED_ELSEWHERE)).toBeInTheDocument();
+
+    jest.setSystemTime(Date.now() + 13 * 60 * 60 * 1000);
+    copy([item({ quantity: 4 })]);
+    wait();
+    act(() => tab2.result.current.saveNow());
+
+    expect(draftKeys()).toEqual([]);
+  });
+
+  it("copia viva en segundo plano: se entera al volver a verse", () => {
+    const { tab1 } = openOriginalAndLiveCopy();
+
+    act(() => tab1.result.current.markCharged());
+    tab1.rerender(baseOptions({ items: [] }));
+    expect(screen.queryByText(CHARGED_ELSEWHERE)).not.toBeInTheDocument();
+
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(screen.getByText(CHARGED_ELSEWHERE)).toBeInTheDocument();
+  });
+
+  it("si la otra pestaña lo vació sin cobrarlo, el aviso no dice que se cobró", () => {
+    const { tab1, tab2 } = openOriginalAndLiveCopy();
+
+    tab1.rerender(baseOptions({ items: [] }));
+    announce(SETTLED_KEY);
+    announce(tab2.key);
+
+    expect(screen.getByText(EMPTIED_ELSEWHERE)).toBeInTheDocument();
+    expect(screen.queryByText(CHARGED_ELSEWHERE)).not.toBeInTheDocument();
+    expect(draftKeys()).toEqual([]);
+  });
+
+  it("vaciar la copia cierra también el original guardado en la otra pestaña", () => {
+    const { copy, tab1 } = openOriginalAndLiveCopy();
+
+    copy([]);
+    announce(SETTLED_KEY);
+    announce(tab1.key);
+
+    expect(draftKeys()).toEqual([]);
+    expect(screen.getByText(EMPTIED_ELSEWHERE)).toBeInTheDocument();
+    expect(tab1.result.current.settledElsewhere).toBe(true);
+  });
+
+  it("dos carritos distintos en dos pestañas: cobrar uno no invalida ni avisa al otro", () => {
+    const tab1 = openTab();
+    const tab2 = openTab();
+
+    tab1.rerender(baseOptions({ items: [item()] }));
+    tab2.rerender(baseOptions({ items: [AZUCAR_ITEM], onRestore: tab2.onRestore }));
+    wait();
+    expect(tab2.onRestore).not.toHaveBeenCalled();
+    expect(draftKeys()).toHaveLength(2);
+
+    act(() => tab1.result.current.markCharged());
+    tab1.rerender(baseOptions({ items: [] }));
+    announce(SETTLED_KEY);
+    announce(tab1.key);
+
+    expect(storedLines(tab2.key)).toEqual([expect.objectContaining({ productId: AZUCAR.id })]);
+    expect(screen.queryByText(CHARGED_ELSEWHERE)).not.toBeInTheDocument();
+    expect(tab2.result.current.settledElsewhere).toBe(false);
+
+    // La pestaña 2 sigue guardando su carrito.
+    tab2.rerender(baseOptions({ items: [{ ...AZUCAR_ITEM, quantity: 5 }], onRestore: tab2.onRestore }));
+    wait();
+    expect(storedLines(tab2.key)).toEqual([expect.objectContaining({ quantity: 5 })]);
+  });
+
+  it("carrito leído al entrar y cobrado en otra pestaña antes de cargar el catálogo: no se restaura", () => {
+    const tab1 = openTab();
+
+    tab1.rerender(baseOptions({ items: [item()] }));
+    wait();
+
+    const tab2 = openTab({ catalog: null });
+
+    act(() => tab1.result.current.markCharged());
+    tab1.rerender(baseOptions({ items: [] }));
+    tab2.rerender(baseOptions({ onRestore: tab2.onRestore }));
+
+    expect(tab2.onRestore).not.toHaveBeenCalled();
+    expect(screen.queryByText("Carrito recuperado")).not.toBeInTheDocument();
+    expect(draftKeys()).toEqual([]);
+  });
+
+  it("un carrito cobrado sin copias no deja nada recuperable ni avisa a nadie", () => {
+    const tab1 = openTab();
+
+    tab1.rerender(baseOptions({ items: [item()] }));
+    wait();
+    act(() => tab1.result.current.markCharged());
+    tab1.rerender(baseOptions({ items: [] }));
+    announce(SETTLED_KEY);
+
+    // La misma pestaña arma la venta siguiente: se guarda y no se la confunde con la anterior.
+    tab1.rerender(baseOptions({ items: [AZUCAR_ITEM] }));
+    wait();
+
+    expect(storedLines(tab1.key)).toEqual([expect.objectContaining({ productId: AZUCAR.id })]);
+    expect(screen.queryByText(CHARGED_ELSEWHERE)).not.toBeInTheDocument();
+    expect(screen.queryByText(EMPTIED_ELSEWHERE)).not.toBeInTheDocument();
   });
 });

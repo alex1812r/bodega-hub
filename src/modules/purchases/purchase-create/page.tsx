@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import type { RestockDraft } from "@/modules/inventory/restock";
 import type { ProductWithCategory } from "@/modules/products/hooks/useProducts";
@@ -858,6 +859,33 @@ export function PurchaseCreatePage() {
     return { initialPayment, input };
   }
 
+  // Lector con la confirmación abierta (CNF-F5): su Enter no llega al botón del modal. Como
+  // cualquier línea que llega con el modal abierto, lo cierra: el código se resuelve en la
+  // cola de escaneos y, si entra, hay que volver a confirmar.
+  function handleConfirmScan(candidates: string[] | null) {
+    if (createPurchase.isPending || !candidates) {
+      showToast({
+        description: createPurchase.isPending
+          ? "La compra se está registrando: lo escaneado no se agregó."
+          : "Cierra la confirmación para escanear o buscar productos.",
+        title: "Lectura del escáner ignorada",
+        tone: "error",
+      });
+      return;
+    }
+
+    // El modal se retira antes de encolar: el foco pasa al buscador y ahí debe quedarse.
+    flushSync(() => setConfirmKey(null));
+    pickerRef.current?.scan({
+      candidates,
+      onResolved: (code) => {
+        if (code !== null) {
+          setFormError(PURCHASE_CHANGED_MESSAGE);
+        }
+      },
+    });
+  }
+
   // «Confirmar Compra»: las validaciones van antes; con el formulario inválido el modal no se abre.
   function handleReview() {
     setConfirmAttempt((attempt) => attempt + 1);
@@ -1126,6 +1154,7 @@ export function PurchaseCreatePage() {
             setConfirmKey(null);
           }
         }}
+        onScan={handleConfirmScan}
         open={confirmKey !== null}
         supplierId={supplierId}
       />

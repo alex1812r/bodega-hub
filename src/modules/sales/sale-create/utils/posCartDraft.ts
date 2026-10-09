@@ -30,6 +30,12 @@ import type { PosCartItem } from "../hooks/usePosCart";
  * - Si quedan varios carritos de pestañas cerradas, cada entrada al POS con el
  *   carrito vacío recupera uno, del más reciente al más antiguo.
  *
+ * Identidad (CNF-F5): cada carrito lleva un `cartId` que nace con su primer guardado y
+ * se conserva al pasar de una pestaña a otra, así que todas sus copias lo comparten. Al
+ * cobrarlo o vaciarlo en una pestaña (`settlePosCart`) se borran TODAS sus copias de la
+ * caja y queda una marca con caducidad: una copia que otra pestaña aún tenga en pantalla
+ * ni se vuelve a guardar ni se restaura, y esa pestaña avisa (`usePosCartDraft`).
+ *
  * Un carrito de otra sesión de caja no se restaura nunca: se borra al leerlo y al
  * detectar la caja cerrada o vencida (`purgePosCartDrafts`).
  * Para extender el esquema: campos OPCIONALES; un cambio incompatible sube
@@ -40,6 +46,13 @@ export const POS_CART_DRAFT_VERSION = 1;
 const KEY_FAMILY = "bodegahub:pos:carrito";
 const KEY_PREFIX = `${KEY_FAMILY}:v${POS_CART_DRAFT_VERSION}`;
 const TAB_ID_STORAGE_KEY = `${KEY_FAMILY}:pestana`;
+// Fuera de la familia `v<n>`: ni se lee como carrito ni lo borra `prunePosCartDrafts`.
+const SETTLED_KEY_PREFIX = `${KEY_FAMILY}:cerrados`;
+
+/** Lo que dura la marca de un carrito cobrado o vaciado: más que un turno de caja. */
+export const POS_CART_SETTLED_TTL_MS = 12 * 60 * 60 * 1000;
+/** Marcas que se conservan como mucho: las más recientes. */
+export const POS_CART_SETTLED_MAX = 200;
 
 export type PosCartDraftScope = {
   cashSessionId: string;
@@ -58,6 +71,8 @@ const lineSchema = z.object({
 });
 
 const storedPosCartDraftSchema = z.object({
+  /** Identidad del carrito, común a todas sus copias. Falta en lo guardado antes de CNF-F5. */
+  cartId: z.string().min(1).optional(),
   cashSessionId: z.string().min(1),
   customerId: z.string(),
   lines: z.array(lineSchema).min(1),
@@ -74,6 +89,7 @@ export type StoredPosCartDraft = z.infer<typeof storedPosCartDraftSchema>;
 
 /** Lo que aporta la pantalla; la sesión, la versión y la fecha las pone quien guarda. */
 export type PosCartDraftContent = {
+  cartId?: string;
   customerId: string;
   items: PosCartItem[];
 };
@@ -136,6 +152,7 @@ export function serializePosCartDraft(
   savedAt: Date,
 ) {
   const draft: StoredPosCartDraft = {
+    ...(content.cartId ? { cartId: content.cartId } : {}),
     cashSessionId: scope.cashSessionId,
     customerId: content.customerId,
     lines: content.items.map((item) => ({
@@ -228,6 +245,92 @@ export function removePosCartDraft(key: string) {
   }
 }
 
+/** Cómo terminó un carrito: de eso depende lo que se le dice a quien tenga una copia. */
+export type PosCartSettledReason = "cobrado" | "vaciado";
+
+const settledPosCartsSchema = z.array(
+  z.object({
+    /** Milisegundos (`Date.now()`) en que se cobró o vació. */
+    at: z.number(),
+    cartId: z.string().min(1),
+    reason: z.enum(["cobrado", "vaciado"]),
+  }),
+);
+
+type SettledPosCart = z.infer<typeof settledPosCartsSchema>[number];
+
+/** Clave de las marcas de carritos cobrados o vaciados de esa tienda, usuario y caja. */
+export function posCartSettledStorageKey(scope: PosCartDraftScope) {
+  return `${SETTLED_KEY_PREFIX}:${ownerSegments(scope)}:${encodeURIComponent(scope.registerId)}`;
+}
+
+/** Marcas vigentes a `now`. Sin `localStorage`, o con contenido ilegible, ninguna. */
+function readSettledPosCarts(scope: PosCartDraftScope, now: number): SettledPosCart[] {
+  let value: unknown;
+
+  try {
+    value = JSON.parse(window.localStorage.getItem(posCartSettledStorageKey(scope)) ?? "[]");
+  } catch {
+    return [];
+  }
+
+  const parsed = settledPosCartsSchema.safeParse(value);
+
+  return parsed.success
+    ? parsed.data.filter((entry) => now - entry.at < POS_CART_SETTLED_TTL_MS)
+    : [];
+}
+
+/** Si ese carrito ya se cobró o vació (en cualquier pestaña) y la marca sigue vigente, cómo. */
+export function findSettledPosCart(
+  scope: PosCartDraftScope,
+  cartId: string,
+  now = Date.now(),
+): PosCartSettledReason | null {
+  return readSettledPosCarts(scope, now).find((entry) => entry.cartId === cartId)?.reason ?? null;
+}
+
+/**
+ * Cierra un carrito en TODAS las pestañas: deja la marca (antes que nada, para que una
+ * copia viva no lo reescriba) y borra todas sus copias guardadas en esa caja.
+ * Un carrito ya marcado como cobrado no pasa a «vaciado».
+ */
+export function settlePosCart(
+  scope: PosCartDraftScope,
+  cartId: string,
+  reason: PosCartSettledReason,
+  now = Date.now(),
+) {
+  const settled = readSettledPosCarts(scope, now);
+  const previous = settled.find((entry) => entry.cartId === cartId);
+  const next = [
+    ...settled.filter((entry) => entry.cartId !== cartId),
+    { at: now, cartId, reason: previous?.reason === "cobrado" ? previous.reason : reason },
+  ].slice(-POS_CART_SETTLED_MAX);
+
+  try {
+    window.localStorage.setItem(posCartSettledStorageKey(scope), JSON.stringify(next));
+  } catch {
+    // Sin poder marcar, al menos se borran las copias guardadas.
+  }
+
+  const prefix = scopePrefix(scope);
+
+  for (const key of listStorageKeys((candidate) => candidate.startsWith(prefix))) {
+    let raw: string | null = null;
+
+    try {
+      raw = window.localStorage.getItem(key);
+    } catch {
+      return;
+    }
+
+    if (parseStoredPosCartDraft(raw, scope)?.cartId === cartId) {
+      removePosCartDraft(key);
+    }
+  }
+}
+
 export type FoundPosCartDraft = {
   draft: StoredPosCartDraft;
   /** Clave donde está: la de esta pestaña o la de otra (carrito huérfano). */
@@ -236,22 +339,29 @@ export type FoundPosCartDraft = {
 
 /**
  * Carrito que le toca a esta pestaña: el suyo y, si no tiene, el más reciente de
- * los guardados para la misma tienda, usuario, caja y sesión de caja. Solo lee.
+ * los guardados para la misma tienda, usuario, caja y sesión de caja. Una copia de un
+ * carrito ya cobrado o vaciado no cuenta. Solo lee.
  */
 export function findPosCartDraft(scope: PosCartDraftScope, tabId: string): FoundPosCartDraft | null {
   const ownKey = posCartDraftStorageKey(scope, tabId);
   const prefix = scopePrefix(scope);
+  const settledIds = new Set(readSettledPosCarts(scope, Date.now()).map((entry) => entry.cartId));
+  const readLive = (key: string) => {
+    const draft = parseStoredPosCartDraft(window.localStorage.getItem(key), scope);
+
+    return draft && !(draft.cartId && settledIds.has(draft.cartId)) ? draft : null;
+  };
   let found: FoundPosCartDraft | null = null;
 
   try {
-    const own = parseStoredPosCartDraft(window.localStorage.getItem(ownKey), scope);
+    const own = readLive(ownKey);
 
     if (own) {
       return { draft: own, key: ownKey };
     }
 
     for (const key of listStorageKeys((candidate) => candidate.startsWith(prefix))) {
-      const draft = parseStoredPosCartDraft(window.localStorage.getItem(key), scope);
+      const draft = readLive(key);
 
       if (draft && (!found || Date.parse(draft.savedAt) > Date.parse(found.draft.savedAt))) {
         found = { draft, key };
@@ -278,10 +388,12 @@ function isDraftKeyOf(key: string, owner: PosCartDraftOwner, registerId?: string
 
 /**
  * Borra lo que ya no se puede restaurar en esta caja: guardados corruptos, de otra
- * sesión de caja o de una versión anterior del esquema.
+ * sesión de caja, de una versión anterior del esquema o copias de un carrito ya cobrado
+ * o vaciado.
  */
 export function prunePosCartDrafts(scope: PosCartDraftScope) {
   const prefix = scopePrefix(scope);
+  const settledIds = new Set(readSettledPosCarts(scope, Date.now()).map((entry) => entry.cartId));
 
   for (const key of listStorageKeys((candidate) =>
     isDraftKeyOf(candidate, scope, scope.registerId),
@@ -294,15 +406,24 @@ export function prunePosCartDrafts(scope: PosCartDraftScope) {
       return;
     }
 
-    if (!key.startsWith(prefix) || !parseStoredPosCartDraft(raw, scope)) {
+    const draft = key.startsWith(prefix) ? parseStoredPosCartDraft(raw, scope) : null;
+
+    if (!draft || (draft.cartId && settledIds.has(draft.cartId))) {
       removePosCartDraft(key);
     }
   }
 }
 
-/** Caja cerrada o vencida: se borran todos los carritos guardados del usuario en la tienda. */
+/**
+ * Caja cerrada o vencida: se borran todos los carritos guardados del usuario en la tienda
+ * y las marcas de los ya cobrados o vaciados.
+ */
 export function purgePosCartDrafts(owner: PosCartDraftOwner) {
-  for (const key of listStorageKeys((candidate) => isDraftKeyOf(candidate, owner))) {
+  const settledPrefix = `${SETTLED_KEY_PREFIX}:${ownerSegments(owner)}:`;
+
+  for (const key of listStorageKeys(
+    (candidate) => isDraftKeyOf(candidate, owner) || candidate.startsWith(settledPrefix),
+  )) {
     removePosCartDraft(key);
   }
 }

@@ -18,6 +18,7 @@ import {
 import { formatRefUsd } from "@/shared/utils/currency";
 
 import { SaleCreatePage } from "./page";
+import { posCartSettledStorageKey, settlePosCart } from "./utils/posCartDraft";
 
 const mockPush = jest.fn();
 const mockLinkNavigate = jest.fn();
@@ -633,6 +634,98 @@ describe("CNF-16 · carrito recuperable del POS", () => {
     expect(backend.salePosts[0]?.clientRequestId).toEqual(expect.any(String));
     expect(backend.salePosts[1]?.clientRequestId).toEqual(expect.any(String));
     expect(backend.salePosts[1]?.clientRequestId).not.toBe(backend.salePosts[0]?.clientRequestId);
+  });
+});
+
+describe("CNF-F5 · un carrito cobrado no reaparece por una copia de otra pestaña", () => {
+  const SCOPE = {
+    cashSessionId: "session-1",
+    registerId: REGISTER.id,
+    storeId: "store-1",
+    userId: "user-1",
+  };
+
+  function storedCartId(key: string) {
+    return (JSON.parse(window.localStorage.getItem(key) ?? "{}") as { cartId?: string }).cartId;
+  }
+
+  it("cobrar borra también la copia que dejó otra pestaña, la marca como cobrada y una pestaña nueva no recupera nada", async () => {
+    const backend = mountBackend();
+    const firstTab = mountPos();
+
+    await addToCart(HARINA);
+    await expectCartCount("1 item");
+    await flush(600);
+
+    const [ownKey] = draftKeys();
+
+    // La copia que dejó una segunda pestaña ya cerrada: mismo carrito, otra clave.
+    window.localStorage.setItem(
+      `${ownKey.slice(0, ownKey.lastIndexOf(":"))}:pestana-cerrada`,
+      window.localStorage.getItem(ownKey) ?? "",
+    );
+    expect(draftKeys()).toHaveLength(2);
+
+    const cartId = storedCartId(ownKey);
+
+    await chargeInCashUsd();
+    await screen.findByText("Venta registrada");
+
+    expect(backend.salePosts).toHaveLength(1);
+    expect(draftKeys()).toEqual([]);
+    expect(JSON.parse(window.localStorage.getItem(posCartSettledStorageKey(SCOPE)) ?? "[]")).toEqual([
+      { at: expect.any(Number), cartId, reason: "cobrado" },
+    ]);
+
+    firstTab.unmount();
+    window.sessionStorage.clear();
+    mountPos();
+
+    await screen.findAllByText(HARINA.name);
+    await flush();
+    expect(screen.getByText("Carrito vacio")).toBeInTheDocument();
+    expect(screen.queryByText("Carrito recuperado")).not.toBeInTheDocument();
+  });
+
+  it("con el carrito en pantalla y cobrado en otra pestaña: avisa sin vaciarlo, salir dice que no se guarda y «Vaciar» lo quita", async () => {
+    mountBackend();
+    mountPos();
+    await addToCart(HARINA);
+    await expectCartCount("1 item");
+    await flush(600);
+
+    const [ownKey] = draftKeys();
+    const settledKey = posCartSettledStorageKey(SCOPE);
+
+    // La otra pestaña cobra su copia: el navegador avisa a esta de la marca.
+    settlePosCart(SCOPE, storedCartId(ownKey) ?? "", "cobrado");
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: settledKey,
+          newValue: window.localStorage.getItem(settledKey),
+        }),
+      );
+    });
+
+    expect(await screen.findByText("Este carrito ya se cobró en otra pestaña")).toBeInTheDocument();
+    expect(screen.getByText("1 item")).toBeInTheDocument();
+    expect(draftKeys()).toEqual([]);
+
+    fireEvent.click(screen.getByRole("link", { name: "Volver a ventas" }));
+
+    const dialog = await screen.findByRole("dialog");
+
+    expect(within(dialog).getByText(/ya se cobró o se vació en otra pestaña/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Seguir aquí" }));
+    await waitFor(() => expect(guardDialog()).not.toBeInTheDocument());
+    expect(draftKeys()).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Vaciar" }));
+
+    await screen.findByText("Carrito vacio");
+    expect(screen.queryByText("Este carrito ya se cobró en otra pestaña")).not.toBeInTheDocument();
+    expect(beforeUnloadIsBlocked()).toBe(false);
   });
 });
 

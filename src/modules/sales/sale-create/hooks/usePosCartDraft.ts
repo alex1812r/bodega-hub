@@ -7,17 +7,21 @@ import { useToast } from "@/shared/components/Toast";
 import {
   describePosCartRestoration,
   findPosCartDraft,
+  findSettledPosCart,
   posCartDraftStorageKey,
   posCartRestorationHasChanges,
+  posCartSettledStorageKey,
   prunePosCartDrafts,
   readPosCartTabId,
   removePosCartDraft,
   restorePosCartDraft,
   rotatePosCartTabId,
   serializePosCartDraft,
+  settlePosCart,
   writePosCartDraft,
   type PosCartDraftScope,
   type PosCartRestoration,
+  type PosCartSettledReason,
 } from "../utils/posCartDraft";
 import type { PosCartItem } from "./usePosCart";
 
@@ -48,11 +52,33 @@ export type UsePosCartDraftOptions = {
   userId?: string | null;
 };
 
+const SETTLED_ELSEWHERE_NOTICE: Record<PosCartSettledReason, { description: string; title: string }> = {
+  cobrado: {
+    description:
+      "Lo que ves aquí es una copia de esa venta y ya no se guarda. Vacíalo si es la misma venta: no lo cobres otra vez.",
+    title: "Este carrito ya se cobró en otra pestaña",
+  },
+  vaciado: {
+    description: "Lo que ves aquí es una copia y ya no se guarda. Vacíalo si ya no hace falta.",
+    title: "Este carrito se vació en otra pestaña",
+  },
+};
+
 export type PosCartDraftController = {
+  /**
+   * La venta de este carrito quedó registrada: al vaciarse, sus copias en otras pestañas
+   * se cierran como «cobrado» y no como «vaciado». No lee ni escribe nada.
+   */
+  markCharged: () => void;
   /** `localStorage` no dejó escribir: lo que hay en el carrito no está guardado. */
   saveFailed: boolean;
   /** Guarda YA el carrito (salir, recargar), sin esperar al guardado automático. */
   saveNow: () => void;
+  /**
+   * El carrito en pantalla es copia de uno que otra pestaña ya cobró o vació: se avisó,
+   * sigue en pantalla hasta que el cajero lo vacíe y ya no se guarda.
+   */
+  settledElsewhere: boolean;
 };
 
 /**
@@ -67,6 +93,10 @@ export type PosCartDraftController = {
  *   avisa con «Carrito recuperado». Hasta entonces no guarda, para no pisarlo.
  * - Si otra pestaña se lleva el carrito de esta, lo vuelve a escribir; si otra
  *   pestaña comparte su identificador (pestaña duplicada), estrena uno.
+ * - Al vaciarse un carrito guardado (venta cobrada u orden limpiada) se cierran TODAS
+ *   sus copias (`settlePosCart`). La pestaña que tenga una en pantalla se entera (evento
+ *   `storage`, al volver a verse o al ir a guardar), deja de guardarla y avisa con
+ *   «Vaciar»; no la borra de la pantalla.
  * - Sin `localStorage`, lleno, o con contenido ilegible, el POS funciona igual.
  */
 export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftController {
@@ -84,7 +114,14 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
   // Lo guardado al entrar: PosCashSessionGate ya esperó por la caja y el usuario.
   const [found] = useState(() => (scope ? findPosCartDraft(scope, tabId) : null));
   const [saveFailed, setSaveFailed] = useState(false);
+  const [settledElsewhere, setSettledElsewhere] = useState(false);
   const saveFailedRef = useRef(false);
+  /** Identidad del carrito en pantalla; `null` mientras no se haya guardado nunca. */
+  const cartIdRef = useRef<string | null>(null);
+  /** El carrito en pantalla se vendió: lo anota `markCharged` justo antes de vaciarse. */
+  const chargedRef = useRef(false);
+  /** `cartId` del carrito en pantalla si otra pestaña ya lo cerró. */
+  const settledElsewhereRef = useRef<string | null>(null);
   const awaitingRestoreRef = useRef(found !== null);
   const latestRef = useRef({ key, options, scope });
   const timerRef = useRef<number | null>(null);
@@ -101,6 +138,50 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+  }, []);
+
+  /**
+   * `true` si el carrito en pantalla ya se cobró o vació en otra pestaña. La primera vez
+   * que lo ve, avisa: sin bloquear y sin tocar lo que hay en pantalla.
+   */
+  const checkSettledElsewhere = useCallback(() => {
+    const { scope: currentScope } = latestRef.current;
+    const cartId = cartIdRef.current;
+
+    if (!currentScope || !cartId) {
+      return false;
+    }
+
+    if (settledElsewhereRef.current === cartId) {
+      return true;
+    }
+
+    const reason = findSettledPosCart(currentScope, cartId);
+
+    if (!reason) {
+      return false;
+    }
+
+    settledElsewhereRef.current = cartId;
+    cancelScheduled();
+    setSettledElsewhere(true);
+
+    if (toastIdRef.current) {
+      dismiss(toastIdRef.current);
+    }
+
+    toastIdRef.current = showToast({
+      action: { label: "Vaciar", onClick: () => latestRef.current.options.onDiscard() },
+      ...SETTLED_ELSEWHERE_NOTICE[reason],
+      durationMs: 0,
+      tone: "error",
+    });
+
+    return true;
+  }, [cancelScheduled, dismiss, showToast]);
+
+  const markCharged = useCallback(() => {
+    chargedRef.current = true;
   }, []);
 
   const saveNow = useCallback(() => {
@@ -122,10 +203,21 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
       return;
     }
 
+    // Copia de un carrito que otra pestaña ya cobró o vació: no se vuelve a guardar.
+    if (checkSettledElsewhere()) {
+      return;
+    }
+
+    cartIdRef.current ??= crypto.randomUUID();
+
     const saved = writePosCartDraft(
       current.key,
       serializePosCartDraft(
-        { customerId: current.options.customerId, items: current.options.items },
+        {
+          cartId: cartIdRef.current,
+          customerId: current.options.customerId,
+          items: current.options.items,
+        },
         current.scope,
         new Date(),
       ),
@@ -140,7 +232,7 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
       saveFailedRef.current = !saved;
       setSaveFailed(!saved);
     }
-  }, [cancelScheduled]);
+  }, [cancelScheduled, checkSettledElsewhere]);
 
   useEffect(() => {
     if (scope) {
@@ -158,6 +250,17 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
       // Venta cobrada u orden limpiada: lo guardado se borra ya, y «Vaciar» deja de ofrecerse.
       saveNow();
 
+      const cartId = cartIdRef.current;
+
+      // Y con él todas sus copias en otras pestañas, salvo que ya lo cerrara otra.
+      if (cartId && scope && settledElsewhereRef.current !== cartId) {
+        settlePosCart(scope, cartId, chargedRef.current ? "cobrado" : "vaciado");
+      }
+
+      cartIdRef.current = null;
+      chargedRef.current = false;
+      settledElsewhereRef.current = null;
+
       if (toastIdRef.current) {
         dismiss(toastIdRef.current);
         toastIdRef.current = null;
@@ -171,7 +274,7 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
       timerRef.current = null;
       saveNow();
     }, POS_CART_DRAFT_SAVE_DELAY_MS);
-  }, [cancelScheduled, customerId, dismiss, items, key, saveNow]);
+  }, [cancelScheduled, customerId, dismiss, items, key, saveNow, scope]);
 
   useEffect(() => {
     if (!found || !catalog || !awaitingRestoreRef.current) {
@@ -181,17 +284,29 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
     awaitingRestoreRef.current = false;
 
     const current = latestRef.current;
+    const foundCartId = found.draft.cartId;
+
+    // Entre leerlo y tener catálogo, otra pestaña lo cobró o lo vació: no hay nada que recuperar.
+    if (current.scope && foundCartId && findSettledPosCart(current.scope, foundCartId)) {
+      removePosCartDraft(found.key);
+      return;
+    }
+
     const restoration = restorePosCartDraft(found.draft, {
       customerIds: new Set(catalog.customers.map((customer) => customer.id)),
       products: catalog.products,
     });
 
-    // El carrito pasa a la clave de esta pestaña ANTES de borrar la de origen.
+    // El carrito pasa a la clave de esta pestaña ANTES de borrar la de origen, con su
+    // misma identidad: si la pestaña de origen sigue abierta, las dos tienen una copia.
     if (current.key && current.scope && restoration.items.length > 0) {
+      cartIdRef.current = foundCartId ?? crypto.randomUUID();
+
       const saved = writePosCartDraft(
         current.key,
         serializePosCartDraft(
           {
+            cartId: cartIdRef.current,
             customerId: restoration.customerId ?? current.options.customerId,
             items: restoration.items,
           },
@@ -235,7 +350,15 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
       return;
     }
 
+    const settledKey = scope ? posCartSettledStorageKey(scope) : null;
+
     function handleStorage(event: StorageEvent) {
+      if (event.key === settledKey) {
+        // Otra pestaña cobró o vació un carrito: puede ser el que esta tiene en pantalla.
+        checkSettledElsewhere();
+        return;
+      }
+
       if (event.key !== key || awaitingRestoreRef.current) {
         return;
       }
@@ -254,10 +377,21 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
       setTabId(rotatePosCartTabId());
     }
 
-    window.addEventListener("storage", handleStorage);
+    // Una pestaña en segundo plano puede no recibir `storage`: al volver a verse, mira.
+    function handleVisibility() {
+      if (document.visibilityState === "visible") {
+        checkSettledElsewhere();
+      }
+    }
 
-    return () => window.removeEventListener("storage", handleStorage);
-  }, [key, saveNow]);
+    window.addEventListener("storage", handleStorage);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [checkSettledElsewhere, key, saveNow, scope]);
 
   // Salir de la pantalla dentro de la espera: lo pendiente se escribe.
   useEffect(
@@ -269,5 +403,13 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
     [saveNow],
   );
 
-  return useMemo(() => ({ saveFailed, saveNow }), [saveFailed, saveNow]);
+  // Con el carrito vacío ya no hay copia en pantalla de la que avisar.
+  if (settledElsewhere && items.length === 0) {
+    setSettledElsewhere(false);
+  }
+
+  return useMemo(
+    () => ({ markCharged, saveFailed, saveNow, settledElsewhere }),
+    [markCharged, saveFailed, saveNow, settledElsewhere],
+  );
 }

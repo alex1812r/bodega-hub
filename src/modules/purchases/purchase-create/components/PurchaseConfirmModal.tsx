@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Link2, Loader2, TriangleAlert } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 
 import { fetchAllPaginatedItems } from "@/lib/api/fetchAllPaginatedItems";
 import type { SupplierProduct } from "@/modules/contacts/types/supplierProducts";
@@ -17,6 +17,7 @@ import { MarginBadge } from "@/shared/components/MarginBadge/MarginBadge";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 
 import { purchasesQueryKeys } from "../../hooks/usePurchases";
+import { usePurchaseConfirmScanGuard } from "../hooks/usePurchaseConfirmScanGuard";
 import {
   buildPurchaseConfirmEffect,
   type PurchaseConfirmEffect,
@@ -160,9 +161,23 @@ function ConfirmSummary({
   factsStatus: PurchaseConfirmFactsStatus;
 }) {
   const { payment } = effect;
+  const summaryRef = useRef<HTMLDivElement | null>(null);
+
+  // El foco inicial va al resumen, no a «Registrar compra» (CNF-F5): esta pantalla se usa
+  // con lector, y un Enter que llegue sin querer no debe encontrar el botón enfocado. Este
+  // efecto corre después del foco inicial de `ConfirmActionModal` (va detrás en el árbol).
+  useEffect(() => {
+    summaryRef.current?.focus();
+  }, []);
 
   return (
-    <div className="space-y-3">
+    <div
+      aria-label="Resumen de la compra"
+      className="space-y-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      ref={summaryRef}
+      role="group"
+      tabIndex={-1}
+    >
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
         <SummaryRow label="Proveedor">{effect.supplierName ?? "Proveedor elegido"}</SummaryRow>
         <SummaryRow label="Líneas">{describeLineCount(effect.lines.length)}</SummaryRow>
@@ -361,6 +376,11 @@ export type PurchaseConfirmModalViewProps = {
   isPending?: boolean;
   onConfirm: () => void | Promise<void>;
   onOpenChange: (open: boolean) => void;
+  /**
+   * El lector de códigos disparó con la confirmación abierta: los códigos posibles, o
+   * `null` si la ráfaga no medía como un código. Ese Enter nunca llega a «Registrar».
+   */
+  onScan?: (candidates: string[] | null) => void;
   open: boolean;
 };
 
@@ -377,9 +397,12 @@ export function PurchaseConfirmModalView({
   isPending = false,
   onConfirm,
   onOpenChange,
+  onScan,
   open,
 }: PurchaseConfirmModalViewProps) {
   const receivesNow = effect?.receivesNow ?? true;
+
+  usePurchaseConfirmScanGuard(open && effect !== null, onScan);
 
   return (
     <ConfirmActionModal
