@@ -2,10 +2,13 @@
  * DET-06a · lista de ventas: búsqueda, estado, rango de fechas, página y tamaño
  * viven en la URL (regla 15) y el detalle se abre con la URL exacta de la lista
  * en `returnTo`.
+ *
+ * CNF-02/03 · «Anular» y «Devolver» del menú de fila abren la confirmación con
+ * su efecto y no ejecutan hasta confirmar.
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 /** URL simulada: `useSearchParams` la sigue como hace Next tras un `history.replaceState`. */
@@ -44,9 +47,10 @@ jest.mock("./components/SalesExportActions", () => ({
   ),
 }));
 
+import { allowedSaleImpact } from "../components/saleImpact.testFixtures";
 import { SalesListPage } from "./page";
 
-function sale(id: string) {
+function sale(id: string, status = "pendiente_pago") {
   return {
     createdAt: "2026-10-06T13:32:00.000Z",
     customer: { id: "cont-customer", name: `Cliente ${id}`, type: "cliente" },
@@ -56,7 +60,7 @@ function sale(id: string) {
     invoiceNumber: `F-${id}`,
     paidVes: 0,
     refRateVes: 510,
-    status: "pendiente_pago",
+    status,
     subtotalRef: 20,
     taxRef: 0,
     totalRef: 20,
@@ -335,5 +339,142 @@ describe("SalesListPage · estado en la URL (DET-06a)", () => {
     expect(screen.getByLabelText("Estado")).toHaveValue("all");
     expect(screen.getByLabelText("Desde")).toHaveValue("");
     expect(listRequests()).toEqual([{ limit: "10", skip: "0", to: "2026-10-06" }]);
+  });
+
+  describe("anular y devolver desde la fila (CNF-02/03)", () => {
+    type Mutation = { method: string; url: string };
+
+    /**
+     * Lista con esas ventas, el impact de cualquiera de ellas y las mutaciones:
+     * sin `rejection` se aplican; con él, la RPC responde 409 con ese mensaje.
+     */
+    function installRowApi(items: Array<ReturnType<typeof sale>>, rejection?: string) {
+      const mutations: Mutation[] = [];
+      const impacts: string[] = [];
+
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        const path = String(url);
+        const method = init?.method ?? "GET";
+
+        if (method !== "GET") {
+          mutations.push({ method, url: path });
+
+          return rejection
+            ? jsonResponse({ error: { code: "CONFLICT", message: rejection } }, 409)
+            : jsonResponse({
+                data: path.endsWith("/return") ? { sale: items[0], stockMovements: [] } : items[0],
+              });
+        }
+
+        if (path.includes("/impact?action=")) {
+          impacts.push(path);
+
+          return jsonResponse({
+            data: allowedSaleImpact(path.endsWith("=cancel") ? "cancel" : "return"),
+          });
+        }
+
+        return jsonResponse({ data: { items, limit: 10, skip: 0, total: items.length } });
+      });
+
+      return { impacts, mutations };
+    }
+
+    async function openRowAction(label: string) {
+      const user = userEvent.setup();
+
+      await user.click((await screen.findAllByRole("button", { name: /acciones/i }))[0]);
+      await user.click(await screen.findByRole("menuitem", { name: label }));
+    }
+
+    /** El modal ya con el efecto calculado (antes hay otro, de carga). */
+    async function effectDialog(name: string) {
+      await screen.findByText("Qué va a pasar");
+
+      return within(screen.getByRole("dialog", { name }));
+    }
+
+    it.each<[string, string, string, Mutation]>([
+      ["Anular", "Anular venta", "cancel", { method: "PATCH", url: "/api/sales/001/cancel" }],
+      ["Devolver", "Devolver venta", "return", { method: "POST", url: "/api/sales/001/return" }],
+    ])(
+      "«%s» abre la confirmación con el efecto, no ejecuta al cancelar y ejecuta una vez al confirmar",
+      async (menuLabel, title, action, mutation) => {
+        const { impacts, mutations } = installRowApi([sale("001"), sale("002")]);
+
+        renderPage();
+        await openRowAction(menuLabel);
+
+        const dialog = await effectDialog(title);
+
+        expect(impacts).toEqual([`/api/sales/001/impact?action=${action}`]);
+        expect(dialog.getByText("Harina PAN 1 kg")).toBeInTheDocument();
+        expect(dialog.getByText("+3 und")).toBeInTheDocument();
+        expect(mutations).toEqual([]);
+
+        fireEvent.click(dialog.getByRole("button", { name: "Cancelar" }));
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(mutations).toEqual([]);
+
+        // Cada apertura recalcula el efecto.
+        await openRowAction(menuLabel);
+
+        const confirm = (await effectDialog(title)).getByRole("button", { name: title });
+
+        expect(impacts).toHaveLength(2);
+
+        fireEvent.click(confirm);
+        fireEvent.click(confirm);
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(mutations).toEqual([mutation]);
+      },
+    );
+
+    it("el rechazo de la RPC se muestra dentro del modal, que no se cierra, y no como error de la lista", async () => {
+      const rejection = "La venta F-001 tiene 1 pago(s) activo(s) por Bs 100.00.";
+      const { mutations } = installRowApi([sale("001")], rejection);
+
+      renderPage();
+      await openRowAction("Anular");
+
+      const dialog = await effectDialog("Anular venta");
+
+      fireEvent.click(dialog.getByRole("button", { name: "Anular venta" }));
+
+      expect(await dialog.findByRole("alert")).toHaveTextContent(rejection);
+      expect(mutations).toHaveLength(1);
+      expect(screen.getByRole("dialog", { name: "Anular venta" })).toBeInTheDocument();
+      expect(screen.getAllByText(rejection)).toHaveLength(1);
+    });
+
+    it.each<[string, boolean]>([
+      ["pendiente_pago", true],
+      ["pagada", true],
+      ["cancelada", false],
+      ["devuelta", false],
+      ["borrador", false],
+    ])("venta %s: «Anular» y «Devolver» habilitadas = %s", async (status, enabled) => {
+      const user = userEvent.setup();
+
+      installRowApi([sale("001", status)]);
+      renderPage();
+      await user.click((await screen.findAllByRole("button", { name: /acciones/i }))[0]);
+
+      for (const label of ["Anular", "Devolver"]) {
+        const item = await screen.findByRole("menuitem", { name: label });
+
+        if (enabled) {
+          expect(item).toBeEnabled();
+        } else {
+          expect(item).toBeDisabled();
+        }
+      }
+      // Las demás acciones de la fila siguen ahí.
+      for (const label of ["Ver detalle", "Registrar pago", "Ver recibo"]) {
+        expect(screen.getByRole("menuitem", { name: label })).toBeInTheDocument();
+      }
+    });
   });
 });

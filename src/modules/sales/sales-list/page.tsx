@@ -2,10 +2,11 @@
 
 import { Plus } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Can } from "@/shared/auth/Can";
+import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
@@ -15,6 +16,7 @@ import {
   ResponsivePagination,
   useUrlPaginationState,
 } from "@/shared/components/Pagination";
+import { useToast } from "@/shared/components/Toast";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
 import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import {
@@ -26,6 +28,8 @@ import { formatDateTimeShort } from "@/shared/utils/date";
 import { cn } from "@/shared/utils/cn";
 import { withReturnTo } from "@/shared/utils/returnTo";
 
+import { SaleCancelConfirmModal } from "../components/SaleCancelConfirmModal";
+import { SaleReturnConfirmModal } from "../components/SaleReturnConfirmModal";
 import {
   type SaleListItem,
   useCancelSale,
@@ -52,6 +56,13 @@ function isPartiallyPaid(sale: SaleListItem) {
     sale.paidVes < sale.totalVes
   );
 }
+
+/** `cancel_sale` y `return_sale` solo aceptan ventas vivas: ni borrador, ni anulada, ni devuelta. */
+function canCancelOrReturn(sale: SaleListItem) {
+  return sale.status === "pagada" || sale.status === "pendiente_pago";
+}
+
+type SaleConfirmation = { action: "cancel" | "return"; sale: SaleListItem };
 
 /** Columna del número; `detailHref` lleva a la venta con la URL de la lista en `returnTo`. */
 function buildInvoiceColumn(
@@ -158,13 +169,46 @@ function SalesList() {
 
   useScrollRestoration(listHref, { ready: !sales.isLoading });
 
-  async function handleCancelSale(saleId: string) {
-    await cancelSale.mutateAsync(saleId);
+  // Anular y devolver se confirman con su efecto a la vista (CNF-02/03).
+  const [confirmation, setConfirmation] = useState<SaleConfirmation | null>(null);
+  const { can } = usePermission();
+  const { showToast } = useToast();
+  const confirmingSale = confirmation?.sale;
+
+  function openConfirmation(action: SaleConfirmation["action"], sale: SaleListItem) {
+    // Un rechazo de otra venta o de un intento anterior no pertenece a esta apertura.
+    cancelSale.reset();
+    returnSale.reset();
+    setConfirmation({ action, sale });
   }
 
-  async function handleReturnSale(saleId: string) {
-    await returnSale.mutateAsync(saleId);
+  // Si la RPC rechaza (carrera entre el efecto y la ejecución), `mutateAsync`
+  // rechaza: el modal sigue abierto y muestra el mensaje.
+  async function handleConfirm() {
+    if (!confirmation) {
+      return;
+    }
+
+    const { action, sale } = confirmation;
+
+    await (action === "cancel" ? cancelSale : returnSale).mutateAsync(sale.id);
+    setConfirmation(null);
+    showToast({
+      title: `Venta ${formatInvoiceNumber(sale.invoiceNumber)} ${action === "cancel" ? "anulada" : "devuelta"}`,
+      tone: "success",
+    });
   }
+
+  function closeConfirmation(open: boolean) {
+    if (!open) {
+      setConfirmation(null);
+    }
+  }
+
+  const confirmingPaymentsHref =
+    confirmingSale && can("payments.view")
+      ? withReturnTo(`/payments?saleId=${confirmingSale.id}`, listHref)
+      : undefined;
 
   return (
     <div className="mx-auto w-full max-w-7xl">
@@ -195,15 +239,15 @@ function SalesList() {
               { href: `/payments?saleId=${sale.id}`, label: "Registrar pago" },
               { href: withReturnTo(`/sales/${sale.id}`, listHref), label: "Ver recibo" },
               {
-                disabled: cancelSale.isPending || sale.status === "cancelada",
+                disabled: cancelSale.isPending || !canCancelOrReturn(sale),
                 label: "Anular",
-                onSelect: () => void handleCancelSale(sale.id),
+                onSelect: () => openConfirmation("cancel", sale),
                 variant: "danger",
               },
               {
-                disabled: returnSale.isPending || sale.status === "devuelta",
+                disabled: returnSale.isPending || !canCancelOrReturn(sale),
                 label: "Devolver",
-                onSelect: () => void handleReturnSale(sale.id),
+                onSelect: () => openConfirmation("return", sale),
               },
             ]}
             cardSubtitle={(sale) => sale.customer?.name ?? sale.customerId}
@@ -228,7 +272,7 @@ function SalesList() {
                 title="No hay ventas para mostrar"
               />
             }
-            error={sales.error ?? cancelSale.error ?? returnSale.error}
+            error={sales.error}
             getRowId={(sale) => sale.id}
             isFetching={sales.isFetching}
             isLoading={sales.isLoading}
@@ -250,6 +294,30 @@ function SalesList() {
           </div>
         </div>
       </EntityListPage>
+
+      <SaleCancelConfirmModal
+        error={cancelSale.error?.message}
+        isPending={cancelSale.isPending}
+        onConfirm={handleConfirm}
+        onOpenChange={closeConfirmation}
+        onUseReturn={() => {
+          if (confirmingSale) {
+            openConfirmation("return", confirmingSale);
+          }
+        }}
+        open={confirmation?.action === "cancel"}
+        paymentsHref={confirmingPaymentsHref}
+        saleId={confirmingSale?.id}
+      />
+      <SaleReturnConfirmModal
+        error={returnSale.error?.message}
+        isPending={returnSale.isPending}
+        onConfirm={handleConfirm}
+        onOpenChange={closeConfirmation}
+        open={confirmation?.action === "return"}
+        paymentsHref={confirmingPaymentsHref}
+        saleId={confirmingSale?.id}
+      />
     </div>
   );
 }

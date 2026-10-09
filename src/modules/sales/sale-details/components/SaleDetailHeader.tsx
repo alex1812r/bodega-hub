@@ -24,13 +24,15 @@ type SaleDetailHeaderProps = {
   isCancelling?: boolean;
   isExportingPdf?: boolean;
   isReturning?: boolean;
-  onCancel: () => void | Promise<void>;
+  /** Pide anular: la página abre la confirmación con el efecto (no ejecuta). */
+  onCancel: () => void;
   /** Abre el modal de cobro. */
   onCollect: () => void;
   onDownloadPdf: () => void | Promise<void>;
   /** Imprime el recibo: la misma acción final que "Imprimir factura" del menú. */
   onPrint: () => void;
-  onReturn: () => void | Promise<void>;
+  /** Pide devolver: la página abre la confirmación con el efecto (no ejecuta). */
+  onReturn: () => void;
   paidVes: number;
   pendingVes: number;
   status: SaleStatus;
@@ -121,7 +123,6 @@ export function SaleDetailHeader({
         <div className="flex flex-wrap items-center gap-2">
           <PageBackButton chained fallbackHref="/sales" size="sm" />
           <SaleDetailActionsMenu
-            invoiceNumber={invoiceNumber}
             isCancelling={isCancelling}
             isExportingPdf={isExportingPdf}
             isReturning={isReturning}

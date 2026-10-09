@@ -10,9 +10,14 @@ import { usePermission } from "@/shared/auth/usePermission";
 import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { useToast } from "@/shared/components/Toast";
 import { useCurrentUrl } from "@/shared/hooks/useCurrentUrl";
 import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
+import { withChainedReturnTo } from "@/shared/utils/returnTo";
+
+import { SaleCancelConfirmModal } from "../components/SaleCancelConfirmModal";
+import { SaleReturnConfirmModal } from "../components/SaleReturnConfirmModal";
 
 import {
   useCancelSale,
@@ -28,6 +33,7 @@ import { SaleDetailReceiptPreview } from "./components/SaleDetailReceiptPreview"
 import { SaleDetailSellerCard } from "./components/SaleDetailSellerCard";
 import { SaleDetailTotals } from "./components/SaleDetailTotals";
 import { resolveSeller } from "./utils/resolveSeller";
+import { formatInvoiceHeading } from "./utils/saleDetailLabels";
 
 type SaleDetailsPageProps = {
   saleId?: string;
@@ -40,7 +46,10 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
   const returnSale = useReturnSale(saleId);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isCollecting, setIsCollecting] = useState(false);
+  // Anular y devolver se confirman con su efecto a la vista (CNF-02/03).
+  const [confirming, setConfirming] = useState<"cancel" | "return" | null>(null);
   const { can } = usePermission();
+  const { showToast } = useToast();
   // URL del detalle con el `returnTo` con el que se llegó: los enlaces que salen de
   // aquí la llevan entera, para volver a esta venta sin perder su lista de origen.
   const detailUrl = useCurrentUrl();
@@ -55,6 +64,13 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
       setIsCollecting(false);
     }
   }, []);
+
+  function openConfirmation(action: "cancel" | "return") {
+    // Un rechazo de un intento anterior no pertenece a esta apertura.
+    cancelSale.reset();
+    returnSale.reset();
+    setConfirming(action);
+  }
 
   const handlePrint = useCallback(() => {
     window.print();
@@ -114,6 +130,25 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
   // Un borrador aún no descontó stock; una venta anulada o devuelta conserva sus
   // movimientos (la salida y su reverso).
   const movedStock = data.status !== "borrador";
+  const invoiceHeading = formatInvoiceHeading(data.invoiceNumber);
+  const paymentsHref = can("payments.view")
+    ? withChainedReturnTo(`/payments?saleId=${data.id}`, detailUrl)
+    : undefined;
+
+  // Si la RPC rechaza (carrera entre el efecto y la ejecución), `mutateAsync`
+  // rechaza: el modal sigue abierto y muestra el mensaje.
+  async function handleConfirmCancel() {
+    await cancelSale.mutateAsync(data.id);
+    setConfirming(null);
+    showToast({ title: `Venta ${invoiceHeading} anulada`, tone: "success" });
+  }
+
+  async function handleConfirmReturn() {
+    await returnSale.mutateAsync(data.id);
+    setConfirming(null);
+    showToast({ title: `Venta ${invoiceHeading} devuelta`, tone: "success" });
+  }
+
   const receipt = {
     cashierName: seller.name,
     companyName,
@@ -138,11 +173,11 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
         isCancelling={cancelSale.isPending}
         isExportingPdf={isExportingPdf}
         isReturning={returnSale.isPending}
-        onCancel={() => cancelSale.mutate(saleId)}
+        onCancel={() => openConfirmation("cancel")}
         onCollect={() => setIsCollecting(true)}
         onDownloadPdf={() => void handleDownloadPdf()}
         onPrint={handlePrint}
-        onReturn={() => returnSale.mutate(saleId)}
+        onReturn={() => openConfirmation("return")}
         paidVes={data.paidVes}
         pendingVes={pendingVes}
         status={data.status}
@@ -159,16 +194,25 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
         />
       ) : null}
 
-      {cancelSale.error || returnSale.error ? (
-        <ErrorState
-          description={
-            (cancelSale.error ?? returnSale.error) instanceof Error
-              ? (cancelSale.error ?? returnSale.error)?.message
-              : "No se pudo completar la acción."
-          }
-          title="No pudimos actualizar la venta"
-        />
-      ) : null}
+      <SaleCancelConfirmModal
+        error={cancelSale.error?.message}
+        isPending={cancelSale.isPending}
+        onConfirm={handleConfirmCancel}
+        onOpenChange={(open) => setConfirming(open ? "cancel" : null)}
+        onUseReturn={() => openConfirmation("return")}
+        open={confirming === "cancel"}
+        paymentsHref={paymentsHref}
+        saleId={data.id}
+      />
+      <SaleReturnConfirmModal
+        error={returnSale.error?.message}
+        isPending={returnSale.isPending}
+        onConfirm={handleConfirmReturn}
+        onOpenChange={(open) => setConfirming(open ? "return" : null)}
+        open={confirming === "return"}
+        paymentsHref={paymentsHref}
+        saleId={data.id}
+      />
 
       <CollapsibleSection
         defaultOpen

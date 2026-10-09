@@ -1,7 +1,7 @@
 /**
- * STK-607 · el rechazo de una accion del detalle (anular / devolver) debe quedar
- * a la vista en el momento del fallo: junto a la cabecera, que es donde esta el
- * menu «Acciones», y no al final de la pagina (bajo el pliegue).
+ * CNF-02/03 · anular y devolver confirman con su efecto real (impact) antes de
+ * ejecutar. El rechazo de la RPC (STK-607) queda a la vista en el momento del
+ * fallo: dentro del modal de confirmación, que no se cierra.
  *
  * PAG-02 · «Cobrar saldo» en la cabecera abre el modal de cobro sin salir del
  * detalle; solo aparece si la venta admite cobros y el usuario puede registrarlos.
@@ -44,7 +44,9 @@ import { createQueryWrapper, jsonResponse } from "@/modules/inventory/utils/requ
 import { formatVesBs } from "@/shared/utils/currency";
 
 import type { SaleDetail } from "../hooks/useSales";
+import type { SaleImpact, SaleImpactAction } from "../services/saleImpact";
 import { SaleDetailsPage } from "./page";
+import { exportSaleInvoicePdf } from "./services/exportSaleInvoicePdf";
 
 const PAID_SALE: SaleDetail = {
   createdAt: "2026-10-06T13:32:00.000Z",
@@ -87,24 +89,88 @@ function sectionToggle(title: string) {
   });
 }
 
+// Carrera entre el efecto y la ejecución: al abrir el modal la venta no tenía
+// pagos activos; al confirmar, la RPC ya los encuentra y rechaza.
 const CANCEL_REJECTION =
   "La venta V-20261006-000013 tiene 1 pago(s) activo(s) por Bs 2617.18. Anula primero los pagos y luego cancela la venta.";
 const RETURN_REJECTION = "La venta V-20261006-000013 ya no tiene unidades por devolver.";
 
-function installSaleApi() {
+function saleImpact(action: SaleImpactAction, overrides: Partial<SaleImpact> = {}): SaleImpact {
+  return {
+    action,
+    allowed: true,
+    document: {
+      contactName: "Cliente de mostrador",
+      id: PAID_SALE.id,
+      number: PAID_SALE.invoiceNumber,
+      status: "pagada",
+      statusAfter: action === "cancel" ? "cancelada" : "devuelta",
+    },
+    inexact: null,
+    paidVes: 0,
+    paidVesAfter: 0,
+    payments: [],
+    reason: null,
+    reasonCode: null,
+    refund: action === "return" ? { byMethod: [], changeToRecover: [], netVes: 0 } : null,
+    stock: [
+      {
+        inexact: null,
+        isActive: true,
+        productId: "prod-harina",
+        productName: "Harina PAN 1 kg",
+        quantityDelta: 3,
+        sku: "HAR-1",
+        stockAfter: 10,
+        stockBefore: 7,
+      },
+    ],
+    ...overrides,
+  } as SaleImpact;
+}
+
+/**
+ * API del detalle: la venta, su impact (`impactFor`) y las mutaciones. Sin
+ * `saleAfterMutation` la RPC rechaza con 409; con él, la acción se aplica y la
+ * venta queda así también para los re-pedidos.
+ */
+function installSaleApi(
+  options: {
+    impactFor?: (action: SaleImpactAction) => SaleImpact;
+    saleAfterMutation?: SaleDetail;
+  } = {},
+) {
   const mutations: Array<{ method: string; url: string }> = [];
+  const impacts: string[] = [];
+  let sale = PAID_SALE;
 
   global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
 
+    if (method === "GET" && url.startsWith(`/api/sales/${PAID_SALE.id}/impact?action=`)) {
+      const action = url.endsWith("=cancel") ? "cancel" : "return";
+
+      impacts.push(url);
+
+      return Promise.resolve(
+        jsonResponse({ data: (options.impactFor ?? saleImpact)(action) }),
+      );
+    }
+
     if (method === "GET") {
       return Promise.resolve(
-        jsonResponse({ data: url === `/api/sales/${PAID_SALE.id}` ? PAID_SALE : {} }),
+        jsonResponse({ data: url === `/api/sales/${PAID_SALE.id}` ? sale : {} }),
       );
     }
 
     mutations.push({ method, url });
+
+    if (options.saleAfterMutation) {
+      sale = options.saleAfterMutation;
+
+      return Promise.resolve(jsonResponse({ data: sale }));
+    }
 
     return Promise.resolve(
       jsonResponse(
@@ -119,57 +185,158 @@ function installSaleApi() {
     );
   }) as unknown as typeof fetch;
 
-  return mutations;
+  return { impacts, mutations };
 }
 
-async function confirmAction(menuItem: string, confirmLabel: string) {
+async function openAction(menuItem: string) {
   fireEvent.click(await screen.findByRole("button", { name: "Acciones de la venta" }));
   fireEvent.click(await screen.findByRole("menuitem", { name: menuItem }));
-  fireEvent.click(await screen.findByRole("button", { name: confirmLabel }));
 }
 
-/** El aviso va despues de la cabecera y antes de cualquier tarjeta del detalle. */
-function expectRightBelowHeader(message: HTMLElement) {
-  const header = screen.getByRole("heading", { level: 1 });
-  const firstCard = sectionToggle("Productos");
+/** El modal de confirmación ya con el efecto calculado (antes hay otro, de carga). */
+async function effectDialog(name: string) {
+  await screen.findByText("Qué va a pasar");
 
-  expect(header.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(message.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(
-    message.compareDocumentPosition(screen.getByText("Total (VES)")) &
-      Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
+  return within(screen.getByRole("dialog", { name }));
 }
 
-describe("SaleDetailsPage · errores de las acciones (STK-607)", () => {
+describe("SaleDetailsPage · anular y devolver confirman con su efecto (CNF-02/03)", () => {
   beforeEach(() => {
-    mockPermissions = ["sales.create", "payments.manage"];
+    mockPermissions = ["sales.create", "payments.manage", "payments.view"];
   });
 
-  it("anular una venta pagada: el 409 se muestra junto a la cabecera, no al final", async () => {
-    const mutations = installSaleApi();
+  it("«Anular venta» abre la confirmación con el efecto y no anula hasta confirmar", async () => {
+    const { impacts, mutations } = installSaleApi();
 
     render(<SaleDetailsPage saleId={PAID_SALE.id} />, { wrapper: createQueryWrapper() });
-    await confirmAction("Anular venta", "Anular venta");
+    await openAction("Anular venta");
 
-    const message = await screen.findByText(CANCEL_REJECTION);
+    const dialog = await effectDialog("Anular venta");
 
+    expect(await dialog.findByText("Harina PAN 1 kg")).toBeInTheDocument();
+    expect(dialog.getByText("+3 und")).toBeInTheDocument();
+    expect(impacts).toEqual([`/api/sales/${PAID_SALE.id}/impact?action=cancel`]);
+    expect(mutations).toEqual([]);
+
+    fireEvent.click(dialog.getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mutations).toEqual([]);
+  });
+
+  it("anular rechazado por la RPC: el 409 se muestra tal cual dentro del modal, que no se cierra", async () => {
+    const { mutations } = installSaleApi();
+
+    render(<SaleDetailsPage saleId={PAID_SALE.id} />, { wrapper: createQueryWrapper() });
+    await openAction("Anular venta");
+
+    const dialog = await effectDialog("Anular venta");
+    const confirm = await dialog.findByRole("button", { name: "Anular venta" });
+
+    // Doble clic: una sola petición.
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+
+    expect(await dialog.findByRole("alert")).toHaveTextContent(CANCEL_REJECTION);
     expect(mutations).toEqual([{ method: "PATCH", url: `/api/sales/${PAID_SALE.id}/cancel` }]);
-    expect(screen.getByText("No pudimos actualizar la venta")).toBeInTheDocument();
-    expect(screen.getByText("Pagada")).toBeInTheDocument();
-    expectRightBelowHeader(message);
+    expect(screen.getByRole("dialog", { name: "Anular venta" })).toBeInTheDocument();
+    expect(summary().getByText("Pagada")).toBeInTheDocument();
   });
 
-  it("devolucion rechazada: mismo aviso, mismo sitio", async () => {
-    const mutations = installSaleApi();
+  it("devolución rechazada por la RPC: mismo aviso, dentro de su modal", async () => {
+    const { impacts, mutations } = installSaleApi();
 
     render(<SaleDetailsPage saleId={PAID_SALE.id} />, { wrapper: createQueryWrapper() });
-    await confirmAction("Devolucion", "Registrar devolucion");
+    await openAction("Devolución");
 
-    const message = await screen.findByText(RETURN_REJECTION);
+    const dialog = await effectDialog("Devolver venta");
 
+    fireEvent.click(await dialog.findByRole("button", { name: "Devolver venta" }));
+
+    expect(await dialog.findByRole("alert")).toHaveTextContent(RETURN_REJECTION);
+    expect(impacts).toEqual([`/api/sales/${PAID_SALE.id}/impact?action=return`]);
     expect(mutations).toEqual([{ method: "POST", url: `/api/sales/${PAID_SALE.id}/return` }]);
-    expectRightBelowHeader(message);
+    expect(screen.getByRole("dialog", { name: "Devolver venta" })).toBeInTheDocument();
+  });
+
+  it("anular con éxito: cierra el modal y el detalle queda anulado", async () => {
+    const { mutations } = installSaleApi({
+      saleAfterMutation: { ...PAID_SALE, status: "cancelada" },
+    });
+
+    render(<SaleDetailsPage saleId={PAID_SALE.id} />, { wrapper: createQueryWrapper() });
+    await openAction("Anular venta");
+
+    const dialog = await effectDialog("Anular venta");
+
+    fireEvent.click(await dialog.findByRole("button", { name: "Anular venta" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mutations).toEqual([{ method: "PATCH", url: `/api/sales/${PAID_SALE.id}/cancel` }]);
+    expect(await summary().findByText("Anulada")).toBeInTheDocument();
+  });
+
+  it("con un pago activo no ofrece anular: motivo, pago culpable, enlace a los pagos y «Devolver la venta»", async () => {
+    const blocked = (action: SaleImpactAction) =>
+      action === "return"
+        ? saleImpact("return")
+        : saleImpact("cancel", {
+            allowed: false,
+            document: {
+              contactName: "Cliente de mostrador",
+              id: PAID_SALE.id,
+              number: PAID_SALE.invoiceNumber,
+              status: "pagada",
+              statusAfter: "pagada",
+            },
+            paidVes: 2617.18,
+            paidVesAfter: 2617.18,
+            payments: [
+              {
+                amount: 2617.18,
+                amountRef: 3,
+                amountVes: 2617.18,
+                changeVes: 0,
+                currency: "VES",
+                description: "Sigue activo: hay que anularlo antes de anular la venta.",
+                effects: [],
+                inexact: null,
+                method: "pago_movil",
+                netVes: 2617.18,
+                outcome: "blocks_action",
+                paymentId: "pay-1",
+                status: "activo",
+                statusAfter: "activo",
+              },
+            ],
+            reason: CANCEL_REJECTION,
+            reasonCode: "CONFLICT",
+          } as Partial<SaleImpact>);
+    const { mutations } = installSaleApi({ impactFor: blocked });
+
+    render(<SaleDetailsPage saleId={PAID_SALE.id} />, { wrapper: createQueryWrapper() });
+    await openAction("Anular venta");
+
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "No se puede anular la venta" }),
+    );
+
+    expect(dialog.getByRole("alert")).toHaveTextContent(CANCEL_REJECTION);
+    expect(dialog.queryByRole("button", { name: "Anular venta" })).not.toBeInTheDocument();
+
+    const paymentsLink = new URL(
+      dialog.getByRole("link", { name: "Ver pagos de la venta" }).getAttribute("href") ?? "",
+      "http://localhost",
+    );
+
+    expect(paymentsLink.pathname).toBe("/payments");
+    expect(paymentsLink.searchParams.get("saleId")).toBe(PAID_SALE.id);
+    expect(paymentsLink.searchParams.get("returnTo")).toBe("/sales/sale-stk607");
+
+    fireEvent.click(dialog.getByRole("button", { name: "Devolver la venta" }));
+
+    expect(await screen.findByRole("dialog", { name: "Devolver venta" })).toBeInTheDocument();
+    expect(mutations).toEqual([]);
   });
 });
 
@@ -671,9 +838,55 @@ describe("SaleDetailsPage · el menú «…» conserva sus acciones (DET-03)", (
     expect(await menuItems()).toEqual([
       "Imprimir factura",
       "Descargar PDF",
-      "Devolucion",
+      "Devolución",
       "Anular venta",
     ]);
+  });
+
+  it.each<[string, SaleDetail["status"], boolean]>([
+    ["con saldo", "pendiente_pago", true],
+    ["pagada", "pagada", true],
+    ["anulada", "cancelada", false],
+    ["devuelta", "devuelta", false],
+    ["en borrador", "borrador", false],
+  ])(
+    "venta %s: «Devolución» y «Anular venta» habilitadas = %s (CNF-02/03)",
+    async (_name, status, enabled) => {
+      mockPermissions = ["sales.create", "payments.manage"];
+      await renderSale({ ...PAID_SALE, status });
+      await menuItems();
+
+      for (const label of ["Devolución", "Anular venta"]) {
+        const item = screen.getByRole("menuitem", { name: label });
+
+        if (enabled) {
+          expect(item).toBeEnabled();
+        } else {
+          expect(item).toBeDisabled();
+        }
+      }
+      expect(screen.getByRole("menuitem", { name: "Imprimir factura" })).toBeEnabled();
+      expect(screen.getByRole("menuitem", { name: "Descargar PDF" })).toBeEnabled();
+    },
+  );
+
+  it("«Imprimir factura» y «Descargar PDF» se ejecutan directo, sin confirmación (CNF-13)", async () => {
+    const print = jest.spyOn(window, "print").mockImplementation(() => undefined);
+
+    mockPermissions = ["sales.create"];
+    await renderSale(PAID_SALE);
+    await menuItems();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Imprimir factura" }));
+
+    expect(print).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await menuItems();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Descargar PDF" }));
+
+    await waitFor(() => expect(exportSaleInvoicePdf).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    print.mockRestore();
   });
 
   it("sin sales.create: imprimir y PDF", async () => {
