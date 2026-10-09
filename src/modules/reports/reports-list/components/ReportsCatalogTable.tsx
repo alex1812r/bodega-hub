@@ -23,7 +23,7 @@ export function ReportsCatalogTable({
             <tr className="border-b border-outline-variant bg-surface-container-low text-xs font-medium text-on-surface-variant">
               <th className="px-4 py-3 font-medium">Nombre del reporte</th>
               <th className="px-4 py-3 font-medium">Periodo sugerido</th>
-              <th className="px-4 py-3 font-medium">Descripcion</th>
+              <th className="px-4 py-3 font-medium">Descripción</th>
               <th className="px-4 py-3 font-medium">Estado</th>
             </tr>
           </thead>

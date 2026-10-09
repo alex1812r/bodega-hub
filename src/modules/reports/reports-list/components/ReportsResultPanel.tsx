@@ -1,7 +1,7 @@
 "use client";
 
 import type { UseQueryResult } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import { getPaginatedItems, type PaginatedList, type PaginationParams } from "@/lib/api/pagination";
 import { RestockPurchaseButton } from "@/modules/inventory/restock";
@@ -37,6 +37,7 @@ import {
   useTopProductsReport,
 } from "../../hooks/useReports";
 import { type ReportDefinition } from "../config/reportCatalog";
+import { toReportDateFilters } from "../reportsListParams";
 import { DailyCloseReportPanel } from "./DailyCloseReportPanel";
 import { FxDepreciationReportPanel } from "./FxDepreciationReportPanel";
 import { PaymentMethodsReportPanel } from "./PaymentMethodsReportPanel";
@@ -68,7 +69,7 @@ const lowStockColumns: DataTableColumn<LowStockReportRow>[] = [
   { header: "Producto", key: "name", render: (row) => row.name },
   { header: "SKU", key: "sku", render: (row) => row.sku },
   { align: "right", header: "Stock", key: "currentStock", render: (row) => row.currentStock },
-  { align: "right", header: "Minimo", key: "minStock", render: (row) => row.minStock },
+  { align: "right", header: "Mínimo", key: "minStock", render: (row) => row.minStock },
 ];
 
 const customerPurchasesColumns: DataTableColumn<CustomerPurchasesReportRow>[] = [
@@ -77,7 +78,7 @@ const customerPurchasesColumns: DataTableColumn<CustomerPurchasesReportRow>[] = 
   { align: "right", header: "Total ref", key: "totalRef", render: (row) => formatRef(row.totalRef) },
   { align: "right", header: "Pendiente VES", key: "pendingVes", render: (row) => formatVes(row.pendingVes) },
   {
-    header: "Ultima compra",
+    header: "Última compra",
     key: "lastPurchaseAt",
     render: (row) => (row.lastPurchaseAt ? formatDate(row.lastPurchaseAt) : "Sin compras"),
   },
@@ -89,7 +90,7 @@ const supplierPurchasesColumns: DataTableColumn<SupplierPurchasesReportRow>[] = 
   { align: "right", header: "Total ref", key: "totalRef", render: (row) => formatRef(row.totalRef) },
   { align: "right", header: "Pendiente VES", key: "pendingVes", render: (row) => formatVes(row.pendingVes) },
   {
-    header: "Ultima compra",
+    header: "Última compra",
     key: "lastPurchaseAt",
     render: (row) => (row.lastPurchaseAt ? formatDate(row.lastPurchaseAt) : "Sin compras"),
   },
@@ -165,16 +166,7 @@ function ReportTable<TData>({
   return (
     <section className="overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest shadow-sm">
       <div className="flex flex-col gap-2 border-b border-outline-variant bg-surface-container-low px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h3 className="text-base font-semibold text-on-surface">
-            Resultados: {report.name}
-          </h3>
-          {report.ignoresGlobalFilters ? (
-            <p className="mt-0.5 text-xs text-on-surface-variant">
-              Los filtros globales no aplican a este reporte.
-            </p>
-          ) : null}
-        </div>
+        <h3 className="text-base font-semibold text-on-surface">Resultados: {report.name}</h3>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-on-surface-variant">
             {formatResultsRange(currentSkip, limit, total)}
@@ -214,15 +206,20 @@ function ReportTable<TData>({
   );
 }
 
-function useReportPagination(resetDeps: readonly unknown[] = []) {
-  return usePaginationState(resetDeps);
-}
+/** Página y tamaño de la tabla del reporte (misma forma que `usePaginationState`). */
+export type ReportPagination = {
+  limit: number;
+  setLimit: (limit: number) => void;
+  setSkip: (skip: number) => void;
+  skip: number;
+};
 
 function PaginatedReportTable<TData>({
   columns,
   actions,
   filters = {},
   getRowId,
+  pagination: externalPagination,
   report,
   resetDeps = [],
   scope,
@@ -232,6 +229,8 @@ function PaginatedReportTable<TData>({
   columns: DataTableColumn<TData>[];
   filters?: PaginationParams;
   getRowId: (row: TData) => string;
+  /** Paginación guardada fuera (URL). Sin ella la tabla lleva la suya. */
+  pagination?: ReportPagination;
   report: ReportDefinition;
   resetDeps?: readonly unknown[];
   scope?: ReportRequestScope;
@@ -241,15 +240,29 @@ function PaginatedReportTable<TData>({
     scope?: ReportRequestScope,
   ) => UseQueryResult<PaginatedList<TData>, Error>;
 }) {
-  const pagination = useReportPagination(resetDeps);
+  // La paginación propia vuelve a la primera página al cambiar de reporte o de filtros.
+  const localPagination = usePaginationState([report.id, ...resetDeps]);
+  const pagination = externalPagination ?? localPagination;
+  const { setSkip, skip } = pagination;
   const query = useReport(
     {
       ...filters,
       limit: pagination.limit,
-      skip: pagination.skip,
+      skip,
     },
     scope,
   );
+  const { data, isFetching } = query;
+  // La página pedida ya no existe (el total bajó, o la URL trae una página de más):
+  // se vuelve a la primera en vez de mostrar "No hay registros" con datos disponibles.
+  const isPagePastTheEnd =
+    !isFetching && data !== undefined && data.items.length === 0 && data.total > 0 && skip > 0;
+
+  useEffect(() => {
+    if (isPagePastTheEnd) {
+      setSkip(0);
+    }
+  }, [isPagePastTheEnd, setSkip]);
 
   return (
     <ReportTable
@@ -258,16 +271,23 @@ function PaginatedReportTable<TData>({
       getRowId={getRowId}
       limit={pagination.limit}
       onLimitChange={pagination.setLimit}
-      onSkipChange={pagination.setSkip}
+      onSkipChange={setSkip}
       query={query}
       report={report}
-      skip={pagination.skip}
+      skip={skip}
     />
   );
 }
 
 type ReportsResultPanelProps = {
+  /** Rango global (`from` / `to`) y, para los reportes que los admiten, `groupBy` y `compare`. */
   dateFilters: ReportDateRangeFilters;
+  /**
+   * Página y tamaño de la tabla del reporte activo guardados fuera (en la URL):
+   * quien los guarda los reinicia al cambiar de reporte o de filtros. Sin esta
+   * prop cada reporte lleva su propia paginación.
+   */
+  pagination?: ReportPagination;
   purchasesFilters: PurchasesReportFilters;
   report: ReportDefinition;
   scope?: ReportRequestScope;
@@ -276,21 +296,36 @@ type ReportsResultPanelProps = {
 
 export function ReportsResultPanel({
   dateFilters,
+  pagination,
   purchasesFilters,
   report,
   scope,
   stockCardFilters,
 }: ReportsResultPanelProps) {
   const scopeResetDeps = [scope?.pathPrefix, scope?.storeScope, scope?.storeIds, scope?.enabled];
+  // Solo lo que este reporte admite: rango, y `groupBy` / `compare` en los de serie.
+  // Con `groupBy` o `compare` la respuesta trae `series` (la consume el gráfico).
+  const reportDateFilters = toReportDateFilters(report, dateFilters);
+  const dateResetDeps = [
+    ...scopeResetDeps,
+    reportDateFilters.from,
+    reportDateFilters.to,
+    reportDateFilters.groupBy,
+    reportDateFilters.compare,
+  ];
 
+  // `key` por reporte: cada tabla monta su propio estado y nada se arrastra de un reporte a otro.
   switch (report.id) {
     case "daily-sales":
       return (
         <PaginatedReportTable
           columns={dailySalesColumns}
+          filters={reportDateFilters}
           getRowId={(row) => `${row.saleDate}-${row.totalVes}-${row.paidVes}-${row.storeId ?? ""}`}
+          key={report.id}
+          pagination={pagination}
           report={report}
-          resetDeps={scopeResetDeps}
+          resetDeps={dateResetDeps}
           scope={scope}
           useReport={useDailySalesReport}
         />
@@ -299,24 +334,29 @@ export function ReportsResultPanel({
       return (
         <PaginatedReportTable
           columns={grossProfitColumns}
+          filters={reportDateFilters}
           getRowId={(row) => `${row.saleDate}-${row.revenueRef}-${row.costRef}-${row.storeId ?? ""}`}
+          key={report.id}
+          pagination={pagination}
           report={report}
-          resetDeps={scopeResetDeps}
+          resetDeps={dateResetDeps}
           scope={scope}
           useReport={useGrossProfitReport}
         />
       );
     case "fx-depreciation":
-      return <FxDepreciationReportPanel dateFilters={dateFilters} scope={scope} />;
+      return <FxDepreciationReportPanel dateFilters={reportDateFilters} scope={scope} />;
     case "daily-close":
-      return <DailyCloseReportPanel dateFilters={dateFilters} scope={scope} />;
+      return <DailyCloseReportPanel dateFilters={reportDateFilters} scope={scope} />;
     case "payment-methods":
-      return <PaymentMethodsReportPanel dateFilters={dateFilters} scope={scope} />;
+      return <PaymentMethodsReportPanel dateFilters={reportDateFilters} scope={scope} />;
     case "product-profitability":
       return (
         <PaginatedReportTable
           columns={productProfitabilityColumns}
           getRowId={(row) => row.productId}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={scopeResetDeps}
           scope={scope}
@@ -330,6 +370,8 @@ export function ReportsResultPanel({
           actions={scope ? undefined : <RestockPurchaseButton size="sm" />}
           columns={lowStockColumns}
           getRowId={(row) => row.id}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={scopeResetDeps}
           scope={scope}
@@ -341,6 +383,8 @@ export function ReportsResultPanel({
         <PaginatedReportTable
           columns={customerPurchasesColumns}
           getRowId={(row) => row.customerId}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={scopeResetDeps}
           scope={scope}
@@ -352,6 +396,8 @@ export function ReportsResultPanel({
         <PaginatedReportTable
           columns={supplierPurchasesColumns}
           getRowId={(row) => row.supplierId}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={scopeResetDeps}
           scope={scope}
@@ -364,6 +410,8 @@ export function ReportsResultPanel({
           columns={stockCardColumns}
           filters={stockCardFilters}
           getRowId={(row) => row.id}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={[...scopeResetDeps, stockCardFilters.productId]}
           scope={scope}
@@ -374,10 +422,12 @@ export function ReportsResultPanel({
       return (
         <PaginatedReportTable
           columns={topProductsColumns}
-          filters={dateFilters}
+          filters={reportDateFilters}
           getRowId={(row) => row.productId}
+          key={report.id}
+          pagination={pagination}
           report={report}
-          resetDeps={[...scopeResetDeps, dateFilters.from, dateFilters.to]}
+          resetDeps={dateResetDeps}
           scope={scope}
           useReport={useTopProductsReport}
         />
@@ -386,31 +436,49 @@ export function ReportsResultPanel({
       return (
         <PaginatedReportTable
           columns={topCustomersColumns}
-          filters={dateFilters}
+          filters={reportDateFilters}
           getRowId={(row) => row.customerId}
+          key={report.id}
+          pagination={pagination}
           report={report}
-          resetDeps={[...scopeResetDeps, dateFilters.from, dateFilters.to]}
+          resetDeps={dateResetDeps}
           scope={scope}
           useReport={useTopCustomersReport}
         />
       );
-    case "purchases":
+    case "purchases": {
+      // El rango de compras llega en `purchasesFilters`; `groupBy` y `compare`, en los globales.
+      const purchasesDateFilters = toReportDateFilters(report, {
+        ...dateFilters,
+        from: purchasesFilters.from,
+        to: purchasesFilters.to,
+      });
+      const reportPurchasesFilters: PurchasesReportFilters = {
+        ...purchasesDateFilters,
+        supplierId: purchasesFilters.supplierId,
+      };
+
       return (
         <PaginatedReportTable
           columns={purchasesColumns}
-          filters={purchasesFilters}
+          filters={reportPurchasesFilters}
           getRowId={(row) => row.id}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={[
             ...scopeResetDeps,
-            purchasesFilters.from,
-            purchasesFilters.to,
+            purchasesDateFilters.from,
+            purchasesDateFilters.to,
+            purchasesDateFilters.groupBy,
+            purchasesDateFilters.compare,
             purchasesFilters.supplierId,
           ]}
           scope={scope}
           useReport={usePurchasesReport}
         />
       );
+    }
     default:
       return null;
   }
