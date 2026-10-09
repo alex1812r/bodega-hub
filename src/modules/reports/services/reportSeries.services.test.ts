@@ -440,6 +440,53 @@ describe.each(sources)("series de reportes (%s)", (_name, services) => {
     expect(series?.totals.deltaPct).toBe(262.75);
   });
 
+  // REP-F2: el total del gráfico tiene que ser la suma de la tabla que lleva debajo.
+  it.each([
+    RANGE,
+    "from=2026-05-12&to=2026-05-13",
+    "from=2026-05-10&to=2026-05-11",
+    "from=2026-04-27&to=2026-05-13",
+    "from=2026-01-01&to=2026-01-31",
+  ])("la suma de la tabla del rango es el total de la serie (%s)", async (range) => {
+    const sum = <Row>(rows: Row[], pick: (row: Row) => number) =>
+      Math.round(rows.reduce((total, row) => total + pick(row), 0) * 100) / 100;
+    const sales = await services.dailySales(`${range}&groupBy=day&compare=1&limit=100`);
+    const profit = await services.grossProfit(`${range}&groupBy=day&compare=1&limit=100`);
+
+    expect(sales.items).toHaveLength(sales.total);
+    expect({
+      count: sum(sales.items, (row) => row.salesCount),
+      paidVes: sum(sales.items, (row) => row.paidVes),
+      totalRef: sum(sales.items, (row) => row.totalRef),
+      totalVes: sum(sales.items, (row) => row.totalVes),
+    }).toEqual(sales.series?.totals.current);
+
+    expect(profit.items).toHaveLength(profit.total);
+    expect({
+      costRef: sum(profit.items, (row) => row.costRef),
+      grossProfitRef: sum(profit.items, (row) => row.grossProfitRef),
+      revenueRef: sum(profit.items, (row) => row.revenueRef),
+    }).toEqual(profit.series?.totals.current);
+  });
+
+  it("la tabla de ventas diarias y de ganancia bruta trae una fila por día, sin canceladas ni devueltas", async () => {
+    const sales = await services.dailySales(`${RANGE}&limit=100`);
+    const profit = await services.grossProfit(`${RANGE}&limit=100`);
+
+    expect(sales.items.map((row) => [row.saleDate, row.salesCount, row.totalRef])).toEqual([
+      ["2026-05-12", 1, 30],
+      ["2026-05-10", 1, 7],
+      ["2026-05-06", 1, 20],
+      ["2026-05-04", 2, 15.55],
+    ]);
+    expect(profit.items.map((row) => [row.saleDate, row.revenueRef])).toEqual([
+      ["2026-05-12", 30],
+      ["2026-05-10", 7],
+      ["2026-05-06", 20],
+      ["2026-05-04", 15.55],
+    ]);
+  });
+
   it("compras por periodo: sin canceladas, con filtro de proveedor, sin romper la tabla", async () => {
     const all = await services.purchases(`${RANGE}&groupBy=week&compare=1`);
 

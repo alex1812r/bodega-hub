@@ -23,6 +23,7 @@ import {
 } from "./reportSeries";
 import { matchesStoreIds, normalizeStoreIds } from "./storeScope";
 import { isUtcTimestampInCaracasDateRange, toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
+import { roundMoney } from "@/shared/utils/currency";
 
 function isWithinDateRange(createdAt: string, from?: string | null, to?: string | null) {
   return isUtcTimestampInCaracasDateRange(createdAt, from, to);
@@ -40,30 +41,117 @@ function isSeriesPurchase(status: string) {
   return !(SERIES_EXCLUDED_PURCHASE_STATUSES as readonly string[]).includes(status);
 }
 
+function isDayWithinRange(day: string, from: string | null, to: string | null) {
+  return (!from || day >= from) && (!to || day <= to);
+}
+
 /**
- * `series` sigue la regla del servidor: solo con `from` + `to` y (`groupBy` o
- * `compare`), sin ventas canceladas ni devueltas. La tabla (`items`) se filtra
- * por `from` / `to` igual que el servidor (`sale_date` dentro del rango), para
- * que tabla y gráfico hablen del mismo periodo.
+ * Lo que devuelve la vista `daily_sales_summary`: una fila por tienda y día
+ * operativo de Caracas, sin ventas canceladas ni devueltas.
+ */
+function dailySalesSummaryRows(storeIds: string[]) {
+  const byDay = new Map<
+    string,
+    {
+      paidVes: number;
+      saleDate: string;
+      salesCount: number;
+      storeId: (typeof mockSales)[number]["storeId"];
+      totalRef: number;
+      totalVes: number;
+    }
+  >();
+
+  for (const sale of mockSales) {
+    if (!matchesStoreIds(sale.storeId, storeIds) || !isSeriesSale(sale.status)) {
+      continue;
+    }
+
+    const saleDate = toCaracasDateKey(sale.createdAt);
+    const key = `${sale.storeId ?? ""}|${saleDate}`;
+    const row = byDay.get(key) ?? {
+      paidVes: 0,
+      saleDate,
+      salesCount: 0,
+      storeId: sale.storeId,
+      totalRef: 0,
+      totalVes: 0,
+    };
+
+    byDay.set(key, {
+      ...row,
+      paidVes: roundMoney(row.paidVes + sale.paidVes),
+      salesCount: row.salesCount + 1,
+      totalRef: roundMoney(row.totalRef + sale.totalRef),
+      totalVes: roundMoney(row.totalVes + sale.totalVes),
+    });
+  }
+
+  return [...byDay.values()].sort((first, second) => second.saleDate.localeCompare(first.saleDate));
+}
+
+/**
+ * Lo que devuelve la vista `gross_profit_summary`: una fila por tienda y día
+ * operativo de Caracas con las líneas de las ventas no canceladas ni devueltas
+ * (una venta sin líneas no aporta fila).
+ */
+function grossProfitSummaryRows(storeIds: string[]) {
+  const byDay = new Map<
+    string,
+    {
+      costRef: number;
+      grossProfitRef: number;
+      revenueRef: number;
+      saleDate: string;
+      storeId: (typeof mockSales)[number]["storeId"];
+    }
+  >();
+
+  for (const sale of mockSales) {
+    if (!matchesStoreIds(sale.storeId, storeIds) || !isSeriesSale(sale.status)) {
+      continue;
+    }
+
+    const saleDate = toCaracasDateKey(sale.createdAt);
+    const key = `${sale.storeId ?? ""}|${saleDate}`;
+
+    for (const item of mockSaleItems) {
+      if (item.saleId !== sale.id) {
+        continue;
+      }
+
+      const row = byDay.get(key) ?? {
+        costRef: 0,
+        grossProfitRef: 0,
+        revenueRef: 0,
+        saleDate,
+        storeId: sale.storeId,
+      };
+      const costRef = item.unitCostRefSnapshot * item.quantity;
+
+      byDay.set(key, {
+        ...row,
+        costRef: roundMoney(row.costRef + costRef),
+        grossProfitRef: roundMoney(row.grossProfitRef + item.subtotalRef - costRef),
+        revenueRef: roundMoney(row.revenueRef + item.subtotalRef),
+      });
+    }
+  }
+
+  return [...byDay.values()].sort((first, second) => second.saleDate.localeCompare(first.saleDate));
+}
+
+/**
+ * Tabla (`items`) y `series` salen de las mismas filas diarias, como en el
+ * servidor (vista `daily_sales_summary`): el total del gráfico es la suma de la
+ * tabla del rango. `series` solo con `from` + `to` y (`groupBy` o `compare`).
  */
 export function getDailySalesReport(searchParams: URLSearchParams, storeIdOrIds: string | string[]) {
-  const storeIds = toStoreIds(storeIdOrIds);
   const seriesRequest = resolveReportSeriesRequest(parseReportSeriesParams(searchParams));
   const from = searchParams.get("from");
   const to = searchParams.get("to");
-  const items = mockSales
-    .filter(
-      (sale) =>
-        matchesStoreIds(sale.storeId, storeIds) && isWithinDateRange(sale.createdAt, from, to),
-    )
-    .map((sale) => ({
-      paidVes: sale.paidVes,
-      saleDate: toCaracasDateKey(sale.createdAt),
-      salesCount: 1,
-      storeId: sale.storeId,
-      totalRef: sale.totalRef,
-      totalVes: sale.totalVes,
-    }));
+  const dayRows = dailySalesSummaryRows(toStoreIds(storeIdOrIds));
+  const items = dayRows.filter((row) => isDayWithinRange(row.saleDate, from, to));
 
   const list: PaginatedList<(typeof items)[number]> & { series?: DailySalesSeries } = paginateList(
     items,
@@ -78,48 +166,26 @@ export function getDailySalesReport(searchParams: URLSearchParams, storeIdOrIds:
     ...list,
     series: buildDailySalesSeries(
       seriesRequest,
-      mockSales
-        .filter((sale) => matchesStoreIds(sale.storeId, storeIds) && isSeriesSale(sale.status))
-        .map((sale) => ({
-          day: toCaracasDateKey(sale.createdAt),
-          values: {
-            count: 1,
-            paidVes: sale.paidVes,
-            totalRef: sale.totalRef,
-            totalVes: sale.totalVes,
-          },
-        })),
+      dayRows.map((row) => ({
+        day: row.saleDate,
+        values: {
+          count: row.salesCount,
+          paidVes: row.paidVes,
+          totalRef: row.totalRef,
+          totalVes: row.totalVes,
+        },
+      })),
     ),
   };
 }
 
-function toGrossProfitRow(sale: (typeof mockSales)[number]) {
-  const items = mockSaleItems.filter((item) => item.saleId === sale.id);
-  const costRef = items.reduce(
-    (total, item) => total + item.unitCostRefSnapshot * item.quantity,
-    0,
-  );
-  const revenueRef = items.reduce((total, item) => total + item.subtotalRef, 0);
-
-  return {
-    costRef,
-    grossProfitRef: revenueRef - costRef,
-    revenueRef,
-    saleDate: toCaracasDateKey(sale.createdAt),
-    storeId: sale.storeId,
-  };
-}
-
+/** Ganancia bruta: misma regla que `getDailySalesReport`, sobre `gross_profit_summary`. */
 export function getGrossProfitReport(searchParams: URLSearchParams, storeIdOrIds: string | string[]) {
-  const storeIds = toStoreIds(storeIdOrIds);
   const seriesRequest = resolveReportSeriesRequest(parseReportSeriesParams(searchParams));
   const from = searchParams.get("from");
   const to = searchParams.get("to");
-  const sales = mockSales.filter((sale) => matchesStoreIds(sale.storeId, storeIds));
-  // La tabla, como en el servidor, solo trae las filas del rango pedido.
-  const items = sales
-    .filter((sale) => isWithinDateRange(sale.createdAt, from, to))
-    .map(toGrossProfitRow);
+  const dayRows = grossProfitSummaryRows(toStoreIds(storeIdOrIds));
+  const items = dayRows.filter((row) => isDayWithinRange(row.saleDate, from, to));
 
   const list: PaginatedList<(typeof items)[number]> & { series?: GrossProfitSeries } = paginateList(
     items,
@@ -134,17 +200,14 @@ export function getGrossProfitReport(searchParams: URLSearchParams, storeIdOrIds
     ...list,
     series: buildGrossProfitSeries(
       seriesRequest,
-      sales
-        .filter((sale) => isSeriesSale(sale.status))
-        .map(toGrossProfitRow)
-        .map((row) => ({
-          day: row.saleDate,
-          values: {
-            costRef: row.costRef,
-            grossProfitRef: row.grossProfitRef,
-            revenueRef: row.revenueRef,
-          },
-        })),
+      dayRows.map((row) => ({
+        day: row.saleDate,
+        values: {
+          costRef: row.costRef,
+          grossProfitRef: row.grossProfitRef,
+          revenueRef: row.revenueRef,
+        },
+      })),
     ),
   };
 }
