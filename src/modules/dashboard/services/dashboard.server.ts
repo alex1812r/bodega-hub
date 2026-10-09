@@ -2,6 +2,7 @@ import { parsePagination, type PaginatedList } from "@/lib/api/pagination";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { getDailySalesReport } from "@/modules/reports/services/reports.server";
 import { normalizeStoreIds } from "@/modules/reports/services/storeScope";
 import {
   applyCreatedAtCaracasRange,
@@ -11,6 +12,11 @@ import {
 
 import { shiftIsoDate } from "../utils/businessDate";
 import { parseDashboardMetricsDateParams } from "../utils/kpiPeriod";
+import {
+  type DashboardSalesTrend,
+  salesTrendFromSeries,
+  toSalesTrendSeriesParams,
+} from "./salesTrend";
 
 type DbSale = {
   created_at: string;
@@ -232,11 +238,25 @@ function mapRecentSale(row: DbSaleWithCustomer, storeName?: string) {
   };
 }
 
+/**
+ * Flujo de ventas. Con `from` + `to` la serie la calcula el servicio de ventas
+ * diarias de Reportes (un solo cálculo para dashboard y reportes: sin huecos,
+ * paginado sin tope, agrupación automática y, con `compare=1`, el periodo
+ * anterior). Sin rango responde como antes: los días con ventas, sin serie.
+ */
 export async function getDashboardSalesTrend(
   searchParams: URLSearchParams,
   storeIdOrIds: string | string[],
   options?: DashboardQueryOptions,
-) {
+): Promise<DashboardSalesTrend> {
+  const seriesParams = toSalesTrendSeriesParams(searchParams);
+
+  if (seriesParams) {
+    const report = await getDailySalesReport(seriesParams, storeIdOrIds, options);
+
+    return salesTrendFromSeries(report.series);
+  }
+
   const storeIds = normalizeStoreIds(storeIdOrIds);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
@@ -286,6 +306,7 @@ export async function getDashboardSalesTrend(
     items: [...byDate.values()].sort((first, second) =>
       first.saleDate.localeCompare(second.saleDate),
     ),
+    series: null,
   };
 }
 

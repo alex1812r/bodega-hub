@@ -1,147 +1,132 @@
 "use client";
 
-import { Filter } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { useMemo } from "react";
 
-import { IconButton } from "@/shared/components/IconButton";
-import { LoadingState } from "@/shared/components/LoadingState";
+import {
+  type DailySalesSeries,
+  type ReportGroupBy,
+  toTimeSeriesPoints,
+} from "@/modules/reports/services/reportSeries";
+import { formatDateRangeLabel } from "@/shared/components/DateRangeField";
+import { TimeSeriesChart, type TimeSeriesSeries } from "@/shared/components/TimeSeriesChart";
+import { cn } from "@/shared/utils/cn";
 import { formatRef } from "@/shared/utils/currency";
 
-import {
-  type DashboardRequestScope,
-  useDashboardSalesTrend,
-} from "../hooks/useDashboard";
-import {
-  DASHBOARD_CHART_PERIODS,
-  type DashboardChartPeriodDays,
-  getChartDateRange,
-  getChartPeriodLabel,
-} from "../utils/chartPeriod";
-import { buildChartSeries } from "../utils/chartSeries";
-import { DashboardPeriodFilterModal } from "./DashboardPeriodFilterModal";
+import { type DashboardRequestScope, useDashboardSalesTrend } from "../hooks/useDashboard";
+import { getBusinessTodayIsoDate } from "../utils/businessDate";
+import { DASHBOARD_CHART_MIN_DAYS, resolveDashboardChartRange } from "../utils/dashboardPeriod";
 
-const CHART_PRIMARY = "#4f46e5";
+/** Picos de venta que el gráfico destaca. */
+const SALES_PEAK_COUNT = 3;
+
+const GROUP_BY_LABELS: Record<ReportGroupBy, string> = {
+  day: "por día",
+  month: "por mes",
+  week: "por semana",
+};
+
+const SERIES_FIELDS = { count: "count", valueRef: "totalRef", valueVes: "totalVes" } as const;
 
 type DashboardSalesChartCardProps = {
+  /** Periodo del dashboard. Sin él, hoy. */
+  range?: { from: string; to: string };
   scope?: DashboardRequestScope;
 };
 
-export function DashboardSalesChartCard({ scope }: DashboardSalesChartCardProps = {}) {
-  const [periodDays, setPeriodDays] = useState<DashboardChartPeriodDays>(7);
-  const [periodModalOpen, setPeriodModalOpen] = useState(false);
-  const [draftPeriodDays, setDraftPeriodDays] = useState<DashboardChartPeriodDays>(7);
-  const [chartReady, setChartReady] = useState(false);
-  const range = useMemo(() => getChartDateRange(periodDays), [periodDays]);
-  const trendQuery = useDashboardSalesTrend(range, scope);
-
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setChartReady(true));
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
-  const chartData = useMemo(
-    () => buildChartSeries(trendQuery.data?.items ?? [], range.from, range.to),
-    [range.from, range.to, trendQuery.data?.items],
-  );
-
-  const maxValue = useMemo(
-    () => Math.max(...chartData.map((point) => point.totalRef), 1),
-    [chartData],
-  );
-
-  function openPeriodModal() {
-    setDraftPeriodDays(periodDays);
-    setPeriodModalOpen(true);
+/** "+12.5%", "-3.0%" o "—" si no hay periodo anterior con el que comparar. */
+export function formatSalesDelta(deltaPct: number | null | undefined) {
+  if (deltaPct == null || !Number.isFinite(deltaPct)) {
+    return "—";
   }
 
-  function applyPeriod() {
-    setPeriodDays(draftPeriodDays);
-    setPeriodModalOpen(false);
+  return `${deltaPct > 0 ? "+" : ""}${deltaPct.toFixed(1)}%`;
+}
+
+function hasSales(series: DailySalesSeries) {
+  const { current, previous } = series.totals;
+
+  return current.count > 0 || current.totalRef !== 0 || (previous?.count ?? 0) > 0;
+}
+
+function toChartSeries(series: DailySalesSeries | null | undefined): TimeSeriesSeries[] {
+  if (!series || !hasSales(series)) {
+    return [];
   }
+
+  return [
+    {
+      id: "sales",
+      name: "Ventas",
+      points: toTimeSeriesPoints(series.current, SERIES_FIELDS),
+      previousPoints: toTimeSeriesPoints(series.previous, SERIES_FIELDS),
+    },
+  ];
+}
+
+/**
+ * Flujo de ventas del periodo del dashboard: línea con los picos destacados y
+ * el periodo anterior atenuado. Con un periodo de menos de 7 días muestra los
+ * últimos 7 que terminan en su último día, para que siempre haya picos que ver.
+ */
+export function DashboardSalesChartCard({ range, scope }: DashboardSalesChartCardProps = {}) {
+  const today = getBusinessTodayIsoDate();
+  const from = range?.from ?? today;
+  const to = range?.to ?? today;
+  const chartRange = useMemo(() => resolveDashboardChartRange({ from, to }), [from, to]);
+  const trend = useDashboardSalesTrend(
+    { compare: true, from: chartRange.from, to: chartRange.to },
+    scope,
+  );
+  const series = trend.data?.series;
+  const chartSeries = useMemo(() => toChartSeries(series), [series]);
+  const deltaPct = series?.totals.deltaPct;
+  const delta = formatSalesDelta(deltaPct);
+  const hasDelta = delta !== "—";
 
   return (
-    <div className="flex w-full min-w-0 flex-col rounded-xl border border-border bg-surface-container-lowest p-5 shadow-sm">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-foreground">
-          Flujo de ventas ({getChartPeriodLabel(periodDays)})
-        </h2>
-        <IconButton
-          aria-label="Filtrar periodo del grafico"
-          className="text-muted-foreground hover:bg-surface-container hover:text-primary"
-          icon={<Filter className="h-5 w-5" />}
-          onClick={openPeriodModal}
-          variant="ghost"
-        />
-      </div>
-
-      <div className="h-64 min-h-64 w-full min-w-0 rounded-lg border border-border/30 bg-surface">
-        {trendQuery.isLoading || !chartReady ? (
-          <div className="flex h-full min-h-64 items-center justify-center">
-            <LoadingState
-              description="Cargando ventas del periodo seleccionado."
-              title="Cargando grafico"
-              variant="inline"
-            />
-          </div>
-        ) : trendQuery.error ? (
-          <p className="flex h-full min-h-64 items-center justify-center px-4 text-center text-sm text-red-600">
-            No pudimos cargar el grafico de ventas.
+    <div className="flex w-full min-w-0 flex-col gap-4 rounded-xl border border-border bg-surface-container-lowest p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-foreground">Flujo de ventas</h2>
+          <p className="text-sm text-on-surface-variant">
+            {formatDateRangeLabel(chartRange.from, chartRange.to)}
+            {series ? ` · ${GROUP_BY_LABELS[series.groupBy]}` : ""}
+            {chartRange.widened
+              ? ` · últimos ${DASHBOARD_CHART_MIN_DAYS} días (el periodo elegido es más corto)`
+              : ""}
           </p>
-        ) : (
-          <div className="h-64 w-full min-w-0">
-            <ResponsiveContainer height="100%" minHeight={256} minWidth={0} width="100%">
-              <BarChart data={chartData} margin={{ bottom: 8, left: 4, right: 8, top: 16 }}>
-                <CartesianGrid stroke="#c7c4d8" strokeDasharray="3 3" vertical={false} />
-                <XAxis
-                  axisLine={false}
-                  dataKey="label"
-                  tick={{ fill: "#464555", fontSize: 12 }}
-                  tickLine={false}
-                />
-                <YAxis
-                  axisLine={false}
-                  domain={[0, maxValue]}
-                  tick={{ fill: "#464555", fontSize: 12 }}
-                  tickFormatter={(value) => formatRef(Number(value))}
-                  tickLine={false}
-                  width={72}
-                />
-                <Tooltip
-                  cursor={{ fill: "rgba(79, 70, 229, 0.08)" }}
-                  formatter={(value) => [formatRef(Number(value)), "Ventas"]}
-                  labelFormatter={(label) => `Dia ${label}`}
-                />
-                <Bar
-                  dataKey="totalRef"
-                  fill={CHART_PRIMARY}
-                  maxBarSize={48}
-                  minPointSize={2}
-                  radius={[4, 4, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+        </div>
+        {series ? (
+          <div className="text-right">
+            <p className="text-lg font-semibold tabular-nums text-foreground">
+              {formatRef(series.totals.current.totalRef)}
+            </p>
+            <p className="text-xs text-on-surface-variant">
+              <span
+                className={cn(
+                  "font-semibold tabular-nums",
+                  hasDelta && (deltaPct ?? 0) < 0 && "text-error",
+                  hasDelta && (deltaPct ?? 0) >= 0 && "text-emerald-700 dark:text-emerald-300",
+                )}
+                data-testid="sales-chart-delta"
+              >
+                {delta}
+              </span>{" "}
+              vs periodo anterior
+            </p>
           </div>
-        )}
+        ) : null}
       </div>
 
-      <DashboardPeriodFilterModal
-        description="Selecciona el rango para el flujo de ventas."
-        draftPeriodKey={String(draftPeriodDays)}
-        onApply={applyPeriod}
-        onDraftPeriodKeyChange={(key) => setDraftPeriodDays(Number(key) as DashboardChartPeriodDays)}
-        onOpenChange={setPeriodModalOpen}
-        open={periodModalOpen}
-        periods={DASHBOARD_CHART_PERIODS}
-        title="Periodo del grafico"
+      <TimeSeriesChart
+        ariaLabel="Flujo de ventas"
+        emptyDescription="Prueba con otro periodo."
+        emptyTitle="Sin ventas en este periodo"
+        error={trend.error ? "No pudimos cargar el flujo de ventas." : null}
+        loading={trend.isLoading}
+        onRetry={() => void trend.refetch()}
+        peakCount={SALES_PEAK_COUNT}
+        series={chartSeries}
       />
     </div>
   );

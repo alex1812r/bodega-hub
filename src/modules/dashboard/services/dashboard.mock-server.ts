@@ -1,4 +1,3 @@
-import { isMockDataSource } from "@/lib/api/dataSourceUi";
 import { paginateList } from "@/lib/api/pagination";
 import {
   mockContacts,
@@ -7,6 +6,7 @@ import {
   mockSales,
 } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
+import { getDailySalesReport } from "@/modules/reports/services/reports.mock-server";
 import { matchesStoreIds, normalizeStoreIds } from "@/modules/reports/services/storeScope";
 import {
   isUtcTimestampInCaracasDate,
@@ -16,7 +16,11 @@ import {
 
 import { getBusinessTodayIsoDate, shiftIsoDate } from "../utils/businessDate";
 import { parseDashboardMetricsDateParams } from "../utils/kpiPeriod";
-import { buildDemoSalesTrend } from "../utils/demoChartSeries";
+import {
+  type DashboardSalesTrend,
+  salesTrendFromSeries,
+  toSalesTrendSeriesParams,
+} from "./salesTrend";
 import * as storesMock from "@/modules/platform/services/stores.mock-server";
 
 function isWithinDateRange(createdAt: string, from?: string | null, to?: string | null) {
@@ -128,17 +132,20 @@ function getContactName(contactId: string) {
   return mockContacts.find((contact) => contact.id === contactId)?.name ?? "Sin cliente";
 }
 
+/** Paridad con `dashboard.server`: con `from` + `to`, la serie de ventas diarias de Reportes. */
 export function getDashboardSalesTrend(
   searchParams: URLSearchParams,
   storeIdOrIds: string | string[],
-) {
+): DashboardSalesTrend {
+  const seriesParams = toSalesTrendSeriesParams(searchParams);
+
+  if (seriesParams) {
+    return salesTrendFromSeries(getDailySalesReport(seriesParams, storeIdOrIds).series);
+  }
+
   const storeIds = toStoreIds(storeIdOrIds);
   const from = searchParams.get("from") ?? getBusinessTodayIsoDate();
   const to = searchParams.get("to") ?? getBusinessTodayIsoDate();
-
-  if (isMockDataSource() && storeIds.length === 1 && storeIds[0] === DEFAULT_STORE_ID) {
-    return { items: buildDemoSalesTrend(from, to) };
-  }
 
   const byDate = new Map<
     string,
@@ -170,6 +177,7 @@ export function getDashboardSalesTrend(
     items: [...byDate.values()].sort((first, second) =>
       first.saleDate.localeCompare(second.saleDate),
     ),
+    series: null,
   };
 }
 

@@ -1,91 +1,86 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { z } from "zod";
 
 import { getBusinessTodayIsoDate } from "@/modules/dashboard/utils/businessDate";
 import {
-  DASHBOARD_KPI_PERIODS,
-  type DashboardKpiPreset,
-  getKpiComparisonLabel,
-  getKpiPeriodLabel,
-  resolveKpiMetricsFilters,
-  resolvePreviousKpiMetricsFilters,
-} from "@/modules/dashboard/utils/kpiPeriod";
+  type DashboardPeriod,
+  describeDashboardPeriod,
+  normalizeDashboardRange,
+} from "@/modules/dashboard/utils/dashboardPeriod";
+import {
+  DATE_RANGE_PRESETS,
+  type DateRangeChange,
+  type DateRangeValue,
+  parseDateRangeParams,
+  serializeDateRange,
+} from "@/shared/components/DateRangeField";
+import { listParams, useUrlListState } from "@/shared/hooks/useUrlListState";
 
-export function useDashboardKpiPeriod() {
+/** Periodo del dashboard listo para pintar y para pedir datos. */
+export type DashboardPeriodState = DashboardPeriod & {
+  /** Recibe lo que emite `DateRangeField`. */
+  setRange: (next: DateRangeChange) => void;
+  /** Día operativo de hoy (fijo en mock). */
+  today: string;
+};
+
+/** Parámetros de URL del dashboard (regla 15): `from`, `to` y `preset`. */
+const dashboardPeriodSchema = z.object({
+  from: listParams.date(),
+  preset: listParams.oneOf(["", ...DATE_RANGE_PRESETS], ""),
+  to: listParams.date(),
+});
+
+const DEFAULT_PERIOD_PARAMS = { from: "", preset: "", to: "" } as const;
+
+/**
+ * Periodo del dashboard en estado local, por defecto hoy. Lo usa el dashboard
+ * de plataforma, que no guarda el periodo en la URL.
+ */
+export function useDashboardKpiPeriod(): DashboardPeriodState {
   const today = getBusinessTodayIsoDate();
-  const [preset, setPreset] = useState<DashboardKpiPreset>("hoy");
-  const [customFrom, setCustomFrom] = useState(today);
-  const [customTo, setCustomTo] = useState(today);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [draftPreset, setDraftPreset] = useState<DashboardKpiPreset>("hoy");
-  const [draftFrom, setDraftFrom] = useState(today);
-  const [draftTo, setDraftTo] = useState(today);
+  const [range, setRange] = useState<DateRangeValue>({ preset: "today" });
 
-  const customRange = useMemo(
-    () => ({ from: customFrom, to: customTo }),
-    [customFrom, customTo],
+  return useMemo(
+    () => ({
+      ...describeDashboardPeriod(normalizeDashboardRange(range, today), today),
+      setRange,
+      today,
+    }),
+    [range, today],
+  );
+}
+
+/**
+ * Periodo del dashboard guardado en la URL (`from` / `to` / `preset`), por
+ * defecto hoy: el periodo por defecto no se escribe. Usa `useUrlListState`, así
+ * que la pantalla necesita su límite de Suspense (`withUrlListBoundary`).
+ */
+export function useDashboardUrlPeriod(): DashboardPeriodState {
+  const today = getBusinessTodayIsoDate();
+  const { setState, state } = useUrlListState(dashboardPeriodSchema);
+  const { from, preset, to } = state;
+
+  const setRange = useCallback(
+    (next: DateRangeChange) => {
+      const isDefault = normalizeDashboardRange(next, today).preset === "today";
+
+      setState(isDefault ? DEFAULT_PERIOD_PARAMS : serializeDateRange(next));
+    },
+    [setState, today],
   );
 
-  const currentFilters = useMemo(
-    () => resolveKpiMetricsFilters(preset, customRange),
-    [customRange, preset],
+  return useMemo(
+    () => ({
+      ...describeDashboardPeriod(
+        normalizeDashboardRange(parseDateRangeParams({ from, preset, to }, today), today),
+        today,
+      ),
+      setRange,
+      today,
+    }),
+    [from, preset, setRange, to, today],
   );
-  const previousFilters = useMemo(
-    () => resolvePreviousKpiMetricsFilters(preset, customRange),
-    [customRange, preset],
-  );
-
-  const applyDisabled =
-    draftPreset === "rango" && (!draftFrom || !draftTo || draftFrom > draftTo);
-
-  function openModal() {
-    setDraftPreset(preset);
-    setDraftFrom(customFrom || today);
-    setDraftTo(customTo || today);
-    setModalOpen(true);
-  }
-
-  function apply() {
-    if (applyDisabled) {
-      return;
-    }
-
-    setPreset(draftPreset);
-    if (draftPreset === "rango") {
-      setCustomFrom(draftFrom);
-      setCustomTo(draftTo);
-    }
-    setModalOpen(false);
-  }
-
-  function changeDraftPreset(key: string) {
-    const next = key as DashboardKpiPreset;
-    setDraftPreset(next);
-    if (next === "rango" && (!draftFrom || !draftTo)) {
-      setDraftFrom(today);
-      setDraftTo(today);
-    }
-  }
-
-  return {
-    apply,
-    applyDisabled,
-    changeDraftPreset,
-    comparisonLabel: getKpiComparisonLabel(preset),
-    currentFilters,
-    draftFrom,
-    draftPreset,
-    draftTo,
-    kpiPeriodLabel: getKpiPeriodLabel(preset, customRange),
-    modalOpen,
-    openModal,
-    periods: DASHBOARD_KPI_PERIODS,
-    preset,
-    previousFilters,
-    setDraftFrom,
-    setDraftTo,
-    setModalOpen,
-    today,
-  };
 }

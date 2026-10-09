@@ -8,27 +8,19 @@ import { DailyClosePanel } from "@/modules/reports/reports-list/components/Daily
 
 type DashboardDailyCloseCardProps = {
   from?: string;
-  fromStart?: boolean;
   periodLabel?: string;
   to?: string;
 };
 
 export function DashboardDailyCloseCard({
   from,
-  fromStart,
   periodLabel,
   to,
 }: DashboardDailyCloseCardProps) {
   const query = useQuery({
-    queryKey: ["dashboard", "daily-close", { from, fromStart, to }] as const,
+    queryKey: ["dashboard", "daily-close", { from, to }] as const,
     queryFn: () =>
-      apiFetch<DailyCloseSummary>("/api/dashboard/daily-close", {
-        query: {
-          from: fromStart ? undefined : from,
-          fromStart: fromStart ? 1 : undefined,
-          to,
-        },
-      }),
+      apiFetch<DailyCloseSummary>("/api/dashboard/daily-close", { query: { from, to } }),
   });
 
   return (

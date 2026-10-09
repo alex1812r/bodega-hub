@@ -3,16 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
+import type { DashboardSalesTrend } from "@/modules/dashboard/services/salesTrend";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type { ProductMock } from "@/shared/mocks/erp-data";
-
-export type DashboardSalesTrendPoint = {
-  paidVes: number;
-  saleDate: string;
-  salesCount: number;
-  totalRef: number;
-  totalVes: number;
-};
 
 export type DashboardRecentSale = {
   createdAt: string;
@@ -62,6 +55,8 @@ export type DashboardLowStockProduct = Pick<
 };
 
 export type DashboardSalesTrendFilters = {
+  /** Pide también el periodo anterior (mismo nº de días justo antes de `from`). */
+  compare?: boolean;
   from?: string;
   to?: string;
 };
@@ -161,8 +156,11 @@ export function useDashboardSalesTrend(
     enabled: scope?.enabled ?? true,
     queryKey: dashboardQueryKeys.salesTrend(filters, scope),
     queryFn: () =>
-      apiFetch<{ items: DashboardSalesTrendPoint[] }>(dashboardPath("sales-trend", scope), {
-        query: withScopeQuery(filters, scope),
+      apiFetch<DashboardSalesTrend>(dashboardPath("sales-trend", scope), {
+        query: withScopeQuery(
+          { compare: filters.compare ? 1 : undefined, from: filters.from, to: filters.to },
+          scope,
+        ),
       }),
   });
 }

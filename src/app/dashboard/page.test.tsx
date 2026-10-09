@@ -20,12 +20,15 @@ jest.mock("../../shared/auth/usePermission", () => ({
   }),
 }));
 jest.mock("../../modules/dashboard/hooks/useDashboardKpiPeriod", () => ({
-  useDashboardKpiPeriod: () => ({
+  useDashboardUrlPeriod: () => ({
+    comparisonLabel: "vs ayer",
     currentFilters: {},
     kpiPeriodLabel: "Hoy",
-    periods: [],
     preset: "hoy",
     previousFilters: null,
+    range: { from: "2026-05-18", preset: "today", to: "2026-05-18" },
+    setRange: jest.fn(),
+    today: "2026-05-18",
   }),
 }));
 jest.mock("../../modules/dashboard/hooks/useDashboard", () => {
@@ -42,8 +45,8 @@ jest.mock("../../modules/dashboard/components/DashboardPaymentMethodsCard", () =
 jest.mock("../../modules/dashboard/components/DashboardDailyCloseCard", () => ({
   DashboardDailyCloseCard: () => null,
 }));
-jest.mock("../../modules/dashboard/components/DashboardPeriodFilterModal", () => ({
-  DashboardPeriodFilterModal: () => null,
+jest.mock("../../modules/dashboard/components/DashboardPeriodField", () => ({
+  DashboardPeriodField: () => null,
 }));
 jest.mock("../../modules/dashboard/components/DashboardSalesChartCard", () => ({
   DashboardSalesChartCard: () => null,
