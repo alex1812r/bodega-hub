@@ -4286,13 +4286,6 @@ paths:
             application/yaml:
               schema:
                 type: string
-  /api/docs:
-    get:
-      tags: [Docs]
-      summary: Redirigir a Swagger UI
-      responses:
-        "307":
-          description: Redireccion temporal a `/api-docs`.
 components:
   securitySchemes:
     DemoRole:
