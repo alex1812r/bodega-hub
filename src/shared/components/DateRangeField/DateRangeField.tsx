@@ -238,7 +238,10 @@ export function DateRangeField({
         return;
       }
 
-      // Se mide sin el límite de alto de la pasada anterior.
+      // Se mide sin el límite de alto de la pasada anterior. Al quitarlo el
+      // navegador recorta `scrollTop` a 0: se guarda y se repone al final.
+      const scrollTop = popover.scrollTop;
+
       popover.style.maxHeight = "";
 
       // Un ancestro con `transform` (el Modal centrado) pasa a ser el bloque
@@ -269,15 +272,26 @@ export function DateRangeField({
 
       popover.style.left = `${left - originLeft}px`;
       popover.style.top = `${top - originTop}px`;
+      popover.scrollTop = scrollTop;
+    }
+
+    // El listener va en captura y también recibe el scroll interno del propio
+    // calendario: ese no mueve el chip, así que no se reposiciona.
+    function handleScroll(event: Event) {
+      if (event.target instanceof Node && popoverRef.current?.contains(event.target)) {
+        return;
+      }
+
+      updatePosition();
     }
 
     updatePosition();
     window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("scroll", handleScroll, true);
 
     return () => {
       window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("scroll", handleScroll, true);
     };
   }, [isCalendarOpen]);
 

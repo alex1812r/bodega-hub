@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
@@ -250,6 +250,38 @@ describe("DateRangeField", () => {
       expect(popover.style.maxHeight).toBe("248px");
       expect(popover).toHaveClass("overflow-y-auto");
       expect(popover.getBoundingClientRect().bottom).toBeLessThanOrEqual(390);
+    });
+
+    it("el scroll interno del calendario no se reinicia (REP-F2)", async () => {
+      mockLayout(390);
+      // Como el navegador: medir sin límite de alto deja el contenido sin
+      // desbordar y recorta `scrollTop` a 0.
+      const measure = rectSpy.getMockImplementation() as (this: HTMLElement) => DOMRect;
+
+      rectSpy.mockImplementation(function measureLikeBrowser(this: HTMLElement) {
+        if (this.getAttribute("role") === "dialog" && this.style.maxHeight === "") {
+          this.scrollTop = 0;
+        }
+
+        return measure.call(this);
+      });
+      const { user } = renderField();
+
+      await user.click(chip("Personalizado"));
+
+      const popover = screen.getByRole("dialog", { name: "Elegir rango personalizado" });
+
+      // Rueda o dedo dentro del calendario: el scroll llega en captura a window.
+      popover.scrollTop = 118;
+      fireEvent.scroll(popover);
+      expect(popover.scrollTop).toBe(118);
+      expect(popover.style.maxHeight).toBe("248px");
+
+      // Un scroll de fuera o un cambio de tamaño sí reposiciona, sin perder el desplazamiento.
+      fireEvent.scroll(document);
+      fireEvent(window, new Event("resize"));
+      expect(popover.scrollTop).toBe(118);
+      expect(popover.style.maxHeight).toBe("248px");
     });
 
     it("si cabe entero no limita el alto", async () => {
