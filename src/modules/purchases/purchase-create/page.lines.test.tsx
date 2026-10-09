@@ -1029,7 +1029,7 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
     expect(triedCodes()).toEqual([CODE]);
   });
 
-  it("si ningún sufijo es de un producto, la cantidad vuelve a la anterior, avisa y no pasa de 4 consultas", async () => {
+  it("si ningún sufijo es de un producto, la cantidad vuelve a la anterior, avisa y no pasa de 2 códigos consultados", async () => {
     onlyTheseCodesExist();
     renderPage();
     addProduct("Cable HDMI");
@@ -1039,8 +1039,8 @@ describe("PurchaseCreatePage · ráfaga del lector partida por un atasco de la p
     expect(await screen.findByText(NOT_FOUND_MESSAGE)).toBeInTheDocument();
     expect(quantity("Cable HDMI")).toHaveValue("1");
     expect(lineRows()).toHaveLength(1);
-    // Sufijos de 13, 12 y 8; como no dan cuatro, cierra el corte que sugiere el tiempo.
-    expect(triedCodes()).toEqual([CODE, CODE.slice(-12), CODE.slice(-8), "765432101"]);
+    // COM-F10 · F-A2: dos códigos como mucho (cada uno, código de barras y SKU: 4 peticiones).
+    expect(triedCodes()).toEqual([CODE, CODE.slice(-12)]);
   });
 
   it("si ningún sufijo existe y antes se tecleó «2» despacio, queda 2 y ningún trozo del código", async () => {

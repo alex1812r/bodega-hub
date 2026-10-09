@@ -12,8 +12,11 @@ export const PURCHASE_SCAN_MIN_DIGITS = 8;
  */
 export const PURCHASE_SCAN_KEY_GAP_MS = 50;
 
-/** Códigos que se consultan como mucho por escaneo, uno tras otro. */
-export const PURCHASE_SCAN_MAX_CANDIDATES = 4;
+/**
+ * Códigos que se consultan como mucho por escaneo, uno tras otro. Cada uno son dos
+ * peticiones (por código de barras y por SKU): un código inexistente cuesta 4 como mucho.
+ */
+export const PURCHASE_SCAN_MAX_CANDIDATES = 2;
 
 /** EAN-13, UPC-A, ITF-14 y EAN-8: los largos que se prueban, en este orden. */
 const TYPICAL_CODE_LENGTHS = [13, 12, 14, 8];
@@ -164,10 +167,13 @@ function readHandTypedPrefix(text: string, stamps: number[], now: number) {
  *
  * El texto es «valor opcional + código», y el código es un SUFIJO de la zona de dígitos
  * que sigue al separador decimal (de todo el texto si no hay). Candidatos, sin repetir y
- * hasta `PURCHASE_SCAN_MAX_CANDIDATES`: los sufijos de 13, 12, 14 y 8 dígitos, en ese
- * orden. Si la zona es tan corta que no dan cuatro, cierra la lista el corte que sugiere
- * el tiempo entre teclas (un código de otro largo, p. ej. 10 dígitos). Ningún otro sufijo
- * se consulta: un código inexistente no puede costar una docena de peticiones.
+ * hasta `PURCHASE_SCAN_MAX_CANDIDATES`:
+ * 1. el sufijo del largo más habitual que quepa (13, 12, 14 u 8 dígitos, en ese orden);
+ * 2. el corte que sugiere el tiempo entre teclas, si es toda la zona o mide como un
+ *    código habitual (el que acierta con un UPC-A detrás de una cantidad, un ITF-14 o
+ *    un código de otro largo);
+ * 3. si ese coincide con el primero, el sufijo del siguiente largo habitual.
+ * Ningún otro sufijo se consulta: un código inexistente no cuesta más de 4 peticiones.
  */
 export function readPurchaseLineScan(
   text: string,
@@ -184,19 +190,22 @@ export function readPurchaseLineScan(
   const digitCount = text.length - (head ? 1 : 0);
   const timed = stamps.length === digitCount;
   const zoneStamps = timed ? stamps.slice(digitCount - zone.length) : [];
-  const suffixes = TYPICAL_CODE_LENGTHS.filter((length) => length <= zone.length).map((length) =>
-    zone.slice(zone.length - length),
-  );
+  const [likeliest, ...otherSuffixes] = TYPICAL_CODE_LENGTHS.filter(
+    (length) => length <= zone.length,
+  ).map((length) => zone.slice(zone.length - length));
+  const timedCode = readTimedCode(zone, zoneStamps, now);
+  // Un tramo final de un largo raro es una ráfaga partida por un atasco, no un código.
+  const timedCandidates =
+    timedCode === zone || TYPICAL_CODE_LENGTHS.includes(timedCode.length) ? [timedCode] : [];
   // Con separador, lo que hay hasta él se tecleó a mano seguro; de los decimales, los que
   // van seguidos de una pausa.
   const typedDecimals = readHandTypedPrefix(zone, zoneStamps, now);
   const rest = zone.slice(typedDecimals.length);
 
   return {
-    candidates: [...new Set([...suffixes, readTimedCode(zone, zoneStamps, now)])].slice(
-      0,
-      PURCHASE_SCAN_MAX_CANDIDATES,
-    ),
+    candidates: [
+      ...new Set([likeliest, ...timedCandidates, ...otherSuffixes]),
+    ].slice(0, PURCHASE_SCAN_MAX_CANDIDATES),
     // Detrás de los decimales tecleados debe quedar un código entero; y si no hay ninguno
     // con pausa, lo que queda no puede ser más largo que el código más habitual.
     typedUnclear:

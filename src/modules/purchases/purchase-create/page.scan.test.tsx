@@ -487,7 +487,7 @@ describe("PurchaseCreatePage · consultas por un código que no existe (COM-F8 �
     expect(triedCodes()).toEqual(["1111111111116"]);
   });
 
-  it("en una celda, con «4» tecleado delante: como mucho los sufijos de 13, 12, 14 y 8 dígitos, en ese orden", async () => {
+  it("en una celda, con «4» tecleado delante: como mucho los sufijos de 13 y 12 dígitos, en ese orden (COM-F10 · F-A2)", async () => {
     resolveWithLatency(20);
     renderPage();
     pickTaladro();
@@ -497,7 +497,7 @@ describe("PurchaseCreatePage · consultas por un código que no existe (COM-F8 �
     await scan("1111111111116");
     await settle(1000);
 
-    expect(triedCodes()).toEqual(["1111111111116", "111111111116", "41111111111116", "11111116"]);
+    expect(triedCodes()).toEqual(["1111111111116", "111111111116"]);
     expect(screen.getByText(NOT_FOUND_MESSAGE)).toBeInTheDocument();
     expect(quantity("Taladro")).toHaveValue("4");
     expect(lineNames()).toEqual(["Taladro"]);

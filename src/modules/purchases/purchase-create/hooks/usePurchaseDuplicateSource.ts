@@ -5,6 +5,10 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { usePurchase, type PurchaseDetails } from "../../hooks/usePurchases";
 
 const DUPLICATE_PARAM = "duplicate";
+/** Forma de un id de compra: lo demás (barras, puntos, espacios) no llega a pedirse. */
+const PURCHASE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+/** El mismo mensaje que da el servidor para una compra que no existe. */
+const PURCHASE_NOT_FOUND_ERROR = new Error("Compra no encontrada.");
 
 const listeners = new Set<() => void>();
 
@@ -53,11 +57,13 @@ export function usePurchaseDuplicateSource(input: {
   ready: boolean;
 }) {
   const sourceId = useSyncExternalStore(subscribe, readDuplicateParam, () => null);
-  const sourceQuery = usePurchase(sourceId ?? undefined);
+  // Un valor que no tiene forma de id (`../products`) no se pide: iría a otra ruta de /api.
+  const isValidId = sourceId !== null && PURCHASE_ID_PATTERN.test(sourceId);
+  const sourceQuery = usePurchase(isValidId ? sourceId : undefined);
   const [loadError, setLoadError] = useState<Error | null>(null);
   const handledIdRef = useRef<string | null>(null);
   const loadRef = useRef(input.load);
-  const source = sourceId ? sourceQuery.data : undefined;
+  const source = isValidId ? sourceQuery.data : undefined;
 
   useEffect(() => {
     loadRef.current = input.load;
@@ -80,7 +86,11 @@ export function usePurchaseDuplicateSource(input: {
     );
   }, [input.ready, source]);
 
-  const error = sourceId ? (sourceQuery.error ?? loadError) : null;
+  const error = !sourceId
+    ? null
+    : isValidId
+      ? (sourceQuery.error ?? loadError)
+      : PURCHASE_NOT_FOUND_ERROR;
 
   return {
     error,

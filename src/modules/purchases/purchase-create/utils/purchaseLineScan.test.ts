@@ -26,12 +26,13 @@ describe("readPurchaseLineScan", () => {
   });
 
   // COM-F8 · 2c: antes iba primero el corte del tiempo y se consultaban hasta 8 sufijos.
-  it("«2» a mano y la ráfaga entera: los sufijos de 13, 12, 14 y 8 dígitos, en ese orden y nada más", () => {
+  // COM-F10 · F-A2: dos candidatos como mucho (cada uno son dos peticiones).
+  it("«2» a mano y la ráfaga entera: el sufijo de 13 y el de 12, en ese orden y nada más", () => {
     const text = `2${CODE}`;
     const { now, stamps } = timeline([300, ...burst(13, 400)]);
 
     expect(readPurchaseLineScan(text, stamps, now)).toEqual({
-      candidates: [CODE, text.slice(-12), text, text.slice(-8)],
+      candidates: [CODE, text.slice(-12)],
       typedUnclear: false,
       typedValue: 2,
     });
@@ -42,24 +43,24 @@ describe("readPurchaseLineScan", () => {
     const { now, stamps } = timeline([300, ...burst(4, 400), ...burst(9, 80)]);
     const scan = readPurchaseLineScan(text, stamps, now);
 
-    expect(scan?.candidates).toEqual([CODE, text.slice(-12), text, text.slice(-8)]);
+    expect(scan?.candidates).toEqual([CODE, text.slice(-12)]);
     // «7598» llegó a ritmo de ráfaga: no es parte de lo tecleado a mano.
     expect(scan?.typedValue).toBe(2);
   });
 
-  it("un EAN-13 solo: él mismo, sus sufijos de 12 y 8, y nada más", () => {
+  it("un EAN-13 solo: él mismo, su sufijo de 12, y nada más", () => {
     const { now, stamps } = timeline([...burst(9), ...burst(4, 80)]);
 
     expect(readPurchaseLineScan(CODE, stamps, now)).toEqual({
-      candidates: [CODE, CODE.slice(-12), CODE.slice(-8)],
+      candidates: [CODE, CODE.slice(-12)],
       typedUnclear: false,
       typedValue: null,
     });
   });
 
-  it("sin tiempos (pegado) propone los mismos sufijos, y no hay valor tecleado", () => {
+  it("sin tiempos (pegado) propone el sufijo de 13 y el texto entero, y no hay valor tecleado", () => {
     expect(readPurchaseLineScan(`3${CODE}`, [], 0)).toEqual({
-      candidates: [CODE, CODE.slice(-12), `3${CODE}`, CODE.slice(-8)],
+      candidates: [CODE, `3${CODE}`],
       typedUnclear: false,
       typedValue: null,
     });
@@ -74,17 +75,38 @@ describe("readPurchaseLineScan", () => {
     ]);
   });
 
-  it("nunca propone más de 4 códigos ni uno de menos de 8 dígitos", () => {
+  it("nunca propone más de 2 códigos ni uno de menos de 8 dígitos", () => {
     const text = "12345678901234567890";
     const scan = readPurchaseLineScan(text, [], 0);
 
-    expect(scan?.candidates).toEqual([
-      text.slice(-13),
-      text.slice(-12),
-      text.slice(-14),
-      text.slice(-8),
-    ]);
+    expect(scan?.candidates).toEqual([text.slice(-13), text]);
     expect(scan?.candidates).toHaveLength(PURCHASE_SCAN_MAX_CANDIDATES);
+    expect(PURCHASE_SCAN_MAX_CANDIDATES).toBe(2);
+  });
+
+  // COM-F10 · F-A2: con dos candidatos, el segundo lo da el tiempo entre teclas.
+  it("un UPC-A detrás de una cantidad: el sufijo de 13 no es, el corte del tiempo (12) sí", () => {
+    const upc = "012345678905";
+    const { now, stamps } = timeline([300, ...burst(12, 400)]);
+
+    expect(readPurchaseLineScan(`2${upc}`, stamps, now)?.candidates).toEqual([`2${upc}`, upc]);
+  });
+
+  it("un ITF-14 solo se consulta entero después de su sufijo de 13", () => {
+    const itf = "17598765432108";
+    const { now, stamps } = timeline(burst(14));
+
+    expect(readPurchaseLineScan(itf, stamps, now)?.candidates).toEqual([itf.slice(-13), itf]);
+  });
+
+  it("un EAN-8 detrás de una cantidad de cinco cifras: lo encuentra el corte del tiempo", () => {
+    const ean8 = "12345670";
+    const { now, stamps } = timeline([300, 300, 300, 300, 300, ...burst(8, 400)]);
+
+    expect(readPurchaseLineScan(`10000${ean8}`, stamps, now)?.candidates).toEqual([
+      `10000${ean8}`,
+      ean8,
+    ]);
   });
 
   it("lo tecleado a mano solo vale hasta 6 dígitos y mayor que 0", () => {
@@ -132,7 +154,7 @@ describe("valor con decimales delante del código (COM-F10 · F-A1)", () => {
 
   it("«55.5» + código: el código sale de los decimales y lo tecleado es 55.5", () => {
     expect(read("55.5")).toEqual({
-      candidates: [CODE, CODE.slice(-12), `5${CODE}`, CODE.slice(-8)],
+      candidates: [CODE, CODE.slice(-12)],
       typedUnclear: false,
       typedValue: 55.5,
     });
@@ -156,7 +178,7 @@ describe("valor con decimales delante del código (COM-F10 · F-A1)", () => {
     const { now, stamps } = timeline([130, 130, ...burst(14, 130)]);
 
     expect(readPurchaseLineScan(`55.5${CODE}`, stamps, now)).toMatchObject({
-      candidates: [CODE, CODE.slice(-12), `5${CODE}`, CODE.slice(-8)],
+      candidates: [CODE, `5${CODE}`],
       typedUnclear: true,
     });
   });

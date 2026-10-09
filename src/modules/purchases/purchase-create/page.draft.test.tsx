@@ -671,6 +671,30 @@ describe("PurchaseCreatePage · duplicar compra (COM-09)", () => {
     expect(mockPush).toHaveBeenCalledWith("/purchases");
   });
 
+  // COM-F10 · F-C1: `?duplicate=..%2Fproducts` hacía GET a otra ruta de /api.
+  it.each([
+    ["../products", "..%2Fproducts"],
+    ["../contacts?limit=100", "..%2Fcontacts%3Flimit%3D100"],
+    ["pur-1/cancel", "pur-1%2Fcancel"],
+    ["un id de más de 64 caracteres", "a".repeat(65)],
+    ["un id con espacios", "pur%201"],
+  ])("un id que no tiene forma de id (%s) no se pide: «Compra no encontrada»", async (_case, value) => {
+    window.history.replaceState({}, "", `/purchases/create?duplicate=${value}`);
+    installApi({ purchase: sourcePurchase(activeSupplier) });
+    renderPage();
+
+    expect(await screen.findByText("No pudimos duplicar la compra")).toBeInTheDocument();
+    expect(screen.getByText("Compra no encontrada.")).toBeInTheDocument();
+    // Solo lo que la pantalla pide siempre: nada que salga del parámetro.
+    expect((global.fetch as jest.Mock).mock.calls.map(([url]) => String(url)).sort()).toEqual([
+      "/api/inventory/pack-conversions",
+      "/api/settings/payment-methods",
+    ]);
+
+    click("Volver a Compras");
+    expect(mockPush).toHaveBeenCalledWith("/purchases");
+  });
+
   it("con un borrador pendiente manda lo duplicado, el borrador no se toca y Restaurar lo sustituye", async () => {
     window.history.replaceState({}, "", "/purchases/create");
     leaveUnfinishedPurchase();

@@ -24,7 +24,7 @@ async function readOptionalBody(request: Request): Promise<unknown> {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new ApiError(400, "BAD_REQUEST", "El cuerpo de la solicitud no es un JSON valido.");
+    throw new ApiError(400, "BAD_REQUEST", "El cuerpo de la solicitud no es un JSON válido.");
   }
 }
 
