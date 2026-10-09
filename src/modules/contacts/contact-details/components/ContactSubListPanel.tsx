@@ -8,6 +8,7 @@ import { ClientApiError } from "@/shared/api/apiFetch";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { ResponsivePagination } from "@/shared/components/Pagination";
+import { cn } from "@/shared/utils/cn";
 
 import type { ContactSubList } from "../hooks/useContactSubLists";
 
@@ -31,7 +32,7 @@ type ContactSubListPaginationProps = {
   entityLabel: string;
   list: Pick<
     ContactSubList<unknown>,
-    "data" | "isFetching" | "limit" | "setLimit" | "setSkip" | "skip"
+    "data" | "isFetching" | "isPlaceholderData" | "limit" | "setLimit" | "setSkip" | "skip"
   >;
 };
 
@@ -52,7 +53,8 @@ export function ContactSubListPagination({ entityLabel, list }: ContactSubListPa
         limit={list.limit}
         onLimitChange={list.setLimit}
         onSkipChange={list.setSkip}
-        skip={list.data?.skip ?? list.skip}
+        // Con la página anterior aún a la vista, el control marca la página pedida.
+        skip={list.isPlaceholderData ? list.skip : (list.data?.skip ?? list.skip)}
         total={total}
         variant="stitch"
       />
@@ -93,19 +95,25 @@ export function ContactSubListPanel<TRow>({
 
   return (
     <>
-      <DataTable
-        columns={columns}
-        data={getPaginatedItems(list.data)}
-        embedded
-        emptyState={<EmptyState description={emptyDescription} icon={icon} title={emptyTitle} />}
-        error={list.error}
-        getRowId={getRowId}
-        isFetching={list.isFetching}
-        isLoading={list.isLoading}
-        loadingRows={3}
-        onRetry={() => void list.refetch()}
-        variant="stitch-purchases"
-      />
+      {/* Mientras llega la página pedida se ven las filas de la anterior: atenuadas y ocupadas. */}
+      <div
+        aria-busy={list.isPlaceholderData || undefined}
+        className={cn("transition-opacity", list.isPlaceholderData && "opacity-60")}
+      >
+        <DataTable
+          columns={columns}
+          data={getPaginatedItems(list.data)}
+          embedded
+          emptyState={<EmptyState description={emptyDescription} icon={icon} title={emptyTitle} />}
+          error={list.error}
+          getRowId={getRowId}
+          isFetching={list.isFetching}
+          isLoading={list.isLoading}
+          loadingRows={3}
+          onRetry={() => void list.refetch()}
+          variant="stitch-purchases"
+        />
+      </div>
       <ContactSubListPagination entityLabel={entityLabel} list={list} />
     </>
   );

@@ -424,6 +424,77 @@ describe("ContactDetailsPage · pestañas, resumen y paginación (DET-04)", () =
       expect(window.location.search).toBe("?tab=pagos&paymentsPage=2");
     });
 
+    it("DET-F3: con la API lenta, la página anterior queda atenuada y ocupada y el paginador marca la pedida", async () => {
+      const respond = global.fetch;
+      let releaseSecondPage = () => {};
+
+      global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes("/api/contacts/c-1/payments?limit=10&skip=10")) {
+          await new Promise<void>((resolve) => {
+            releaseSecondPage = resolve;
+          });
+        }
+
+        return respond(input, init);
+      }) as unknown as typeof fetch;
+
+      renderPage("?tab=pagos");
+      await findLinkTo("/payments/pay-1");
+
+      const busyRegion = () => screen.getByRole("table").closest("[aria-busy='true']");
+      const currentPage = () =>
+        document.querySelector("nav [aria-current='page']")?.textContent?.trim();
+
+      expect(busyRegion()).toBeNull();
+      expect(currentPage()).toBe("1");
+
+      clickNextPage();
+
+      // La respuesta sigue en vuelo: la URL ya es la página 2 y aún se ven las filas de la 1.
+      await waitFor(() => expect(window.location.search).toBe("?tab=pagos&paymentsPage=2"));
+      await waitFor(() => expect(busyRegion()).not.toBeNull());
+      expect(linksTo("/payments/pay-1")).not.toHaveLength(0);
+      expect(busyRegion()).toHaveClass("opacity-60");
+      expect(currentPage()).toBe("2");
+      expect(screen.getByText("Mostrando 11 a 20 de 25 pagos")).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Siguiente" })[0]).toBeDisabled();
+
+      releaseSecondPage();
+
+      expect(await findLinkTo("/payments/pay-11")).toBeInTheDocument();
+      expect(busyRegion()).toBeNull();
+      expect(currentPage()).toBe("2");
+    });
+
+    it("DET-F3: Actividad también se marca ocupada mientras llega la página pedida", async () => {
+      const respond = global.fetch;
+      let releaseSecondPage = () => {};
+
+      global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes("/api/contacts/c-1/activity?limit=10&skip=10")) {
+          await new Promise<void>((resolve) => {
+            releaseSecondPage = resolve;
+          });
+        }
+
+        return respond(input, init);
+      }) as unknown as typeof fetch;
+
+      renderPage();
+
+      const firstLink = await findLinkTo("/sales/sale-a001");
+
+      clickNextPage();
+
+      await waitFor(() => expect(firstLink.closest("[aria-busy='true']")).not.toBeNull());
+      expect(document.querySelector("nav [aria-current='page']")).toHaveTextContent("2");
+
+      releaseSecondPage();
+
+      expect(await findLinkTo("/sales/sale-a011")).toBeInTheDocument();
+      expect(document.querySelector("[aria-busy='true']")).toBeNull();
+    });
+
     it("la URL con paymentsPage=3 abre directamente la tercera página", async () => {
       renderPage("?tab=pagos&paymentsPage=3");
 

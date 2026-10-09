@@ -83,6 +83,7 @@ export function ContactActivityTimeline({
 
   return (
     <div
+      aria-busy={isFetching || undefined}
       className={cn(
         "relative ml-4 flex flex-col gap-8 border-l-2 border-outline-variant/30 py-2",
         isFetching && "opacity-70",
