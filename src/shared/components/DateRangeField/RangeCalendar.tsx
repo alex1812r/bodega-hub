@@ -11,6 +11,7 @@ import {
   WEEKDAY_NAMES,
   type DateRange,
   daysInMonth,
+  formatDateRangeLabel,
   formatLongIsoDate,
   isoDateParts,
   isoWeekdayIndex,
@@ -295,8 +296,16 @@ export function RangeCalendar({
         </tbody>
       </table>
 
-      <p aria-live="polite" className="mt-2 text-center text-xs text-on-surface-variant">
-        {anchorDay ? "Elige el día de fin." : "Elige el día de inicio."}
+      <p
+        aria-live="polite"
+        className="mt-2 text-center text-xs text-on-surface-variant"
+        data-testid="range-calendar-hint"
+      >
+        {anchorDay
+          ? "Elige el día de fin."
+          : from && to
+            ? `Rango elegido: ${formatDateRangeLabel(from, to)}. Elige un día para cambiarlo.`
+            : "Elige el día de inicio."}
       </p>
     </div>
   );
