@@ -21,7 +21,7 @@ import {
   useAdjustInventory,
   useInventoryProduct,
 } from "../../hooks/useInventory";
-import { useRequestAttempt } from "../../utils/requestAttempt";
+import { useReleaseAttemptOnClose, useRequestAttempt } from "../../utils/requestAttempt";
 import { STOCK_REASON_MAX_LENGTH, describeStockReasonLength } from "../../utils/stockReason";
 import { describeStockRequestError } from "../../utils/stockRequestError";
 import {
@@ -125,7 +125,9 @@ export function InventoryAdjustmentModal({
   const [reason, setReason] = useState("");
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const adjustment = useAdjustInventory();
-  const requestAttempt = useRequestAttempt({ renewOnContentChange: true });
+  const requestAttempt = useRequestAttempt({ lockAfterSuccess: true, renewOnContentChange: true });
+  // Tras el éxito no sale otro ajuste hasta que el modal se cierre (INT-02).
+  useReleaseAttemptOnClose(requestAttempt, open);
   const quantityNumber = Number(quantity);
   const quantityDelta =
     quantityNumber > 0 ? getInventoryAdjustmentDelta(quantityNumber, type) : 0;

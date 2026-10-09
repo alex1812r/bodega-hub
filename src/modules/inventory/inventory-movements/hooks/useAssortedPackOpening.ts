@@ -5,7 +5,7 @@ import { useState } from "react";
 import { parseNumberInput } from "@/shared/components/NumberInput";
 
 import { type ConvertPackToUnitsResult, useConvertPackToUnits } from "../../hooks/useInventory";
-import { useRequestAttempt } from "../../utils/requestAttempt";
+import { useReleaseAttemptOnClose, useRequestAttempt } from "../../utils/requestAttempt";
 import { describeStockRequestError } from "../../utils/stockRequestError";
 import {
   buildDefaultPackOpeningDistribution,
@@ -28,6 +28,8 @@ type EditedDistribution = {
 };
 
 type UseAssortedPackOpeningInput = {
+  /** El modal anfitrión está abierto: al cerrarse se reabre el intento (ver `lockAfterSuccess`). */
+  isOpen: boolean;
   /** Tras la respuesta 201: el anfitrión avisa, cierra su modal y limpia su formulario. */
   onOpened: (result: ConvertPackToUnitsResult, effect: PackOpeningEffect) => void;
   /** Cantidad de empaques tal como la interpreta el anfitrión (0 si el campo está vacío). */
@@ -49,6 +51,7 @@ type UseAssortedPackOpeningInput = {
  * vuelve a la receta.
  */
 export function useAssortedPackOpening({
+  isOpen,
   onOpened,
   packQuantity,
   reason,
@@ -57,7 +60,9 @@ export function useAssortedPackOpening({
   const [edited, setEdited] = useState<EditedDistribution | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   // Otro reparto estrena clave: "misma clave + otro reparto" es un 409 en el servidor.
-  const attempt = useRequestAttempt({ renewOnContentChange: true });
+  // Tras abrirse el surtido no sale otra apertura hasta que el modal anfitrión se cierre.
+  const attempt = useRequestAttempt({ lockAfterSuccess: true, renewOnContentChange: true });
+  useReleaseAttemptOnClose(attempt, isOpen);
   const convert = useConvertPackToUnits();
 
   // Un reparto tecleado para otro empaque no vale para este.

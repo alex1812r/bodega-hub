@@ -359,3 +359,40 @@ describe("InventoryPackConversionModal · stock tras un resultado incierto (INV-
     expect(await screen.findByText(/Stock empaque: 8\./)).toBeInTheDocument();
   });
 });
+
+// INT-02 · B3: el intento usa `lockAfterSuccess` y se reabre al cerrarse el modal.
+describe("InventoryPackConversionModal · tras una conversión correcta (INT-02)", () => {
+  it("1 a 1 · convertir, reabrir y convertir otra vez: dos envíos con claves distintas", async () => {
+    const api = renderModal("prod-cigar-pack");
+    api.respondToNextPost(converted);
+    api.respondToNextPost(converted);
+
+    await openModal();
+    submitForm();
+    await waitFor(() => expect(api.posts).toHaveLength(1));
+    await waitFor(() => expect(document.getElementById(formId)).toBeNull());
+    await flushDeferredClose();
+
+    await openModal();
+    submitForm();
+    await waitFor(() => expect(api.posts).toHaveLength(2));
+    expect(keyOf(api, 1)).not.toBe(keyOf(api, 0));
+  });
+
+  it("surtido · abrir, reabrir y abrir otra vez: dos envíos con claves distintas", async () => {
+    const api = renderModal("prod-surtido");
+    api.respondToNextPost(opened);
+    api.respondToNextPost(opened);
+
+    await openModal();
+    fireEvent.click(confirmButton(await openConfirm()));
+    await waitFor(() => expect(api.posts).toHaveLength(1));
+    await waitFor(() => expect(document.getElementById(formId)).toBeNull());
+    await flushDeferredClose();
+
+    await openModal();
+    fireEvent.click(confirmButton(await openConfirm()));
+    await waitFor(() => expect(api.posts).toHaveLength(2));
+    expect(keyOf(api, 1)).not.toBe(keyOf(api, 0));
+  });
+});

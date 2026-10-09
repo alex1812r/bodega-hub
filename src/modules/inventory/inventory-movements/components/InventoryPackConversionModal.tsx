@@ -17,7 +17,7 @@ import {
   useConvertPackToUnits,
   usePackConversions,
 } from "../../hooks/useInventory";
-import { useRequestAttempt } from "../../utils/requestAttempt";
+import { useReleaseAttemptOnClose, useRequestAttempt } from "../../utils/requestAttempt";
 import { STOCK_REASON_MAX_LENGTH, describeStockReasonLength } from "../../utils/stockReason";
 import { describeStockRequestError } from "../../utils/stockRequestError";
 import { useAssortedPackOpening } from "../hooks/useAssortedPackOpening";
@@ -56,7 +56,9 @@ export function InventoryPackConversionModal({
   const queryClient = useQueryClient();
   const packConversionsQuery = usePackConversions();
   const convert = useConvertPackToUnits();
-  const requestAttempt = useRequestAttempt({ renewOnContentChange: true });
+  const requestAttempt = useRequestAttempt({ lockAfterSuccess: true, renewOnContentChange: true });
+  // Tras el éxito no sale otra conversión hasta que el modal se cierre (INT-02).
+  useReleaseAttemptOnClose(requestAttempt, open);
   const { showToast } = useToast();
 
   const recipesByPackId = useMemo(
@@ -102,6 +104,7 @@ export function InventoryPackConversionModal({
       resetForm();
       setOpen(false);
     },
+    isOpen: open,
     packQuantity: quantityNumber,
     reason,
     target:

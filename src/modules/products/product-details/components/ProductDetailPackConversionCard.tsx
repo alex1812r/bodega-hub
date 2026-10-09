@@ -20,7 +20,10 @@ import {
 } from "@/modules/inventory/inventory-movements/components/AssortedPackOpeningFields";
 import { buildPackOpeningToast } from "@/modules/inventory/inventory-movements/components/packOpeningText";
 import { useAssortedPackOpening } from "@/modules/inventory/inventory-movements/hooks/useAssortedPackOpening";
-import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
+import {
+  useReleaseAttemptOnClose,
+  useRequestAttempt,
+} from "@/modules/inventory/utils/requestAttempt";
 import { describeStockRequestError } from "@/modules/inventory/utils/stockRequestError";
 
 type ProductDetailPackConversionCardProps = {
@@ -43,7 +46,9 @@ export function ProductDetailPackConversionCard({
   const [reason, setReason] = useState("");
   const [quantityTouched, setQuantityTouched] = useState(false);
   const convert = useConvertPackToUnits();
-  const requestAttempt = useRequestAttempt({ renewOnContentChange: true });
+  const requestAttempt = useRequestAttempt({ lockAfterSuccess: true, renewOnContentChange: true });
+  // Tras el éxito no sale otra apertura hasta que el diálogo se cierre (INT-02).
+  useReleaseAttemptOnClose(requestAttempt, open);
   const { showToast } = useToast();
 
   const isPack = packConversion?.role === "pack";
@@ -86,6 +91,7 @@ export function ProductDetailPackConversionCard({
       }
       closeAfterOpening();
     },
+    isOpen: open,
     packQuantity: quantityNumber,
     reason,
     target: isAssorted

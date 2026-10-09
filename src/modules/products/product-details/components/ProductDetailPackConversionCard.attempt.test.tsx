@@ -138,3 +138,23 @@ describe("ProductDetailPackConversionCard · intento de envío (INV-F2)", () => 
     expect(api.posts).toHaveLength(1);
   });
 });
+
+// INT-02 · B3: el intento usa `lockAfterSuccess` y se reabre al cerrarse el diálogo.
+describe("ProductDetailPackConversionCard · tras una apertura correcta (INT-02)", () => {
+  it("abrir, reabrir y abrir otra vez: dos envíos con claves distintas", async () => {
+    const api = renderCard();
+    api.respondToNextPost(converted);
+    api.respondToNextPost(converted);
+
+    await openDialog();
+    submitForm();
+    await waitFor(() => expect(api.posts).toHaveLength(1));
+    await waitFor(() => expect(document.getElementById(formId)).toBeNull());
+    await flushDeferredClose();
+
+    await openDialog();
+    submitForm();
+    await waitFor(() => expect(api.posts).toHaveLength(2));
+    expect(api.posts[1]?.body.clientRequestId).not.toBe(api.posts[0]?.body.clientRequestId);
+  });
+});
