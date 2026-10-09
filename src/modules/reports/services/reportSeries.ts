@@ -5,6 +5,10 @@ import { ApiError } from "@/lib/api/apiError";
 import type { TimeSeriesPoint } from "@/shared/components/TimeSeriesChart";
 import { roundMoney } from "@/shared/utils/currency";
 
+import { assertReportDay, isoDayNumber } from "./reportParams";
+
+export { isIsoDay } from "./reportParams";
+
 /**
  * Serie agrupada de un reporte (REP-05): lógica pura, la misma para el
  * servidor (Supabase) y el mock.
@@ -93,8 +97,6 @@ export type ReportSeriesParams = {
   requested: boolean;
 };
 
-const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
-
 const MONTH_LABELS = [
   "ene",
   "feb",
@@ -124,29 +126,12 @@ function badRequest(message: string) {
   return new ApiError(400, "BAD_REQUEST", message);
 }
 
-/** `yyyy-mm-dd` que además es una fecha real del calendario. */
-export function isIsoDay(value: string) {
-  const match = ISO_DAY.exec(value);
-
-  if (!match) {
-    return false;
-  }
-
-  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  const date = new Date(Date.UTC(year, month - 1, day));
-
-  return (
-    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-  );
-}
-
 function parseDayParam(searchParams: URLSearchParams, name: "from" | "to") {
   const value = blankToNull(searchParams.get(name));
 
-  if (value !== null && !isIsoDay(value)) {
-    throw badRequest(
-      `La fecha "${name === "from" ? "desde" : "hasta"}" no es válida. Usa el formato AAAA-MM-DD.`,
-    );
+  if (value !== null) {
+    // Fecha real y año razonable: el validador común de Reportes y dashboard.
+    assertReportDay(value, name === "from" ? "desde" : "hasta");
   }
 
   return value;
@@ -244,32 +229,53 @@ function lastDayOfMonth(day: string) {
   return `${day.slice(0, 8)}${String(last).padStart(2, "0")}`;
 }
 
-function minDay(first: string, second: string) {
-  return first < second ? first : second;
+/**
+ * Nº de días de `range` (ambos extremos incluidos), o 0 si `from` o `to` no son
+ * fechas `yyyy-mm-dd` reales o el rango está invertido.
+ */
+function rangeDayCount(range: ReportSeriesRange) {
+  const from = isoDayNumber(range.from);
+  const to = isoDayNumber(range.to);
+
+  return from === null || to === null || to < from ? 0 : to - from + 1;
 }
 
 /**
  * Ventanas consecutivas que cubren `range` sin huecos. Semana = lunes a domingo;
  * la semana o el mes parciales de los extremos se recortan al rango.
+ *
+ * Los días se comparan por su nº de día, no como texto (`"10000-01-01"` es
+ * menor que `"9999-12-31"` como texto), y nunca salen más ventanas que días
+ * tiene el rango. Un rango que no son dos fechas reales no tiene ventanas.
  */
 export function buildBucketWindows(
   range: ReportSeriesRange,
   groupBy: ReportGroupBy,
 ): ReportSeriesRange[] {
+  const maxWindows = rangeDayCount(range);
+  const lastDay = isoDayNumber(range.to);
   const windows: ReportSeriesRange[] = [];
   let start = range.from;
+  let startDay = isoDayNumber(start);
 
-  while (start <= range.to) {
+  while (
+    windows.length < maxWindows &&
+    startDay !== null &&
+    lastDay !== null &&
+    startDay <= lastDay
+  ) {
     const naturalEnd =
       groupBy === "day"
         ? start
         : groupBy === "week"
           ? shiftIsoDate(mondayOf(start), 6)
           : lastDayOfMonth(start);
-    const end = minDay(naturalEnd, range.to);
+    const naturalEndDay = isoDayNumber(naturalEnd);
+    const end = naturalEndDay !== null && naturalEndDay <= lastDay ? naturalEnd : range.to;
 
     windows.push({ from: start, to: end });
     start = shiftIsoDate(end, 1);
+    startDay = isoDayNumber(start);
   }
 
   return windows;
@@ -371,8 +377,11 @@ function buildBuckets<M extends ReportSeriesMeasures>(
   return windows.map((window) => {
     const totals = emptyMeasures<ReportSeriesMeasures>(measures);
 
-    for (let day = window.from; day <= window.to; day = shiftIsoDate(day, 1)) {
-      const dayTotals = byDay.get(day);
+    // Tantas vueltas como días tiene la ventana: no depende de comparar fechas como texto.
+    const dayCount = rangeDayCount(window);
+
+    for (let offset = 0; offset < dayCount; offset += 1) {
+      const dayTotals = byDay.get(shiftIsoDate(window.from, offset));
 
       if (dayTotals) {
         for (const measure of measures) {

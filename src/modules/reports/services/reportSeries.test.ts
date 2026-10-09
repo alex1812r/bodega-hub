@@ -160,11 +160,11 @@ describe("resolveReportSeriesRequest", () => {
 
   it("rechaza un rango de más de 10 años", () => {
     expectBadRequest(
-      () => assertReportSeriesParams(new URLSearchParams("from=1990-01-01&to=2026-01-01&groupBy=day")),
+      () => assertReportSeriesParams(new URLSearchParams("from=2005-01-01&to=2026-01-01&groupBy=day")),
       /no puede superar 10 años/,
     );
     expect(() =>
-      assertReportSeriesParams(new URLSearchParams("from=1990-01-01&to=2026-01-01")),
+      assertReportSeriesParams(new URLSearchParams("from=2005-01-01&to=2026-01-01")),
     ).not.toThrow();
   });
 });
