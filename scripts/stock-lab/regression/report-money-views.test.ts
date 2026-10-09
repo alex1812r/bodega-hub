@@ -765,12 +765,18 @@ describe("20261013a · diferencias de cierre de caja", () => {
         openedBy: lab.uids.vendedor1,
         registerId: first.id,
       });
+      // Una caja admite una sola sesión abierta: si otro test dejó la suya, sirve esa.
       await sql(
         "sesión abierta",
         `insert into public.cash_sessions (store_id, register_id, opened_by, status, opening_ves, opened_at)
-         values ($1, $2, $3, 'open', 50, timestamptz '2019-06-05 12:00:00+00')`,
+         select $1, $2, $3, 'open', 50, timestamptz '2019-06-05 12:00:00+00'
+         where not exists (select 1 from public.cash_sessions where register_id = $2 and status = 'open')`,
         [lab.storeId, first.id, lab.uids.vendedor1],
       );
+      const open = await sql("sesiones abiertas", "select id::text as id from public.cash_sessions where register_id = $1 and status = 'open'", [
+        first.id,
+      ]);
+      expect(open).toHaveLength(1);
 
       const rows = await read(
         "contador",
@@ -793,6 +799,13 @@ describe("20261013a · diferencias de cierre de caja", () => {
         { session: over, register_name: second.name, day: "2019-06-02", closed_reason: "manual", currency: "ref", expected: 5.5, counted: 7, difference: 1.5, running_expected: 25.5, running_counted: 27, running_difference: 1.5 },
         { session: auto, register_name: first.name, day: "2019-06-03", closed_reason: "end_of_day", currency: "ref", expected: 0, counted: 0, difference: 0, running_expected: 25.5, running_counted: 27, running_difference: 1.5 },
       ]);
+
+      const openRows = await read(
+        "contador",
+        "select count(*)::int as rows from public.report_cash_close_differences where cash_session_id = $1",
+        [open[0].id],
+      );
+      expect(openRows).toEqual([{ rows: 0 }]);
 
       // Filtrar un rango no corta el acumulado: la fila conserva el de toda la historia.
       const ranged = await read(
