@@ -162,14 +162,14 @@ describe("fetchReportsForExport (REP-08)", () => {
   });
 
   it("no pide los reportes que la sesión no puede ver (darían 403)", async () => {
-    // Contador: `reports.view` sin `inventory.view`.
-    const api = installApi({}, { forbidden: INVENTORY_SLUGS });
+    // Contador: `reports.view` sin `inventory.view` ni `settings.view`
+    // (REP-F6: `GET /api/settings` le contestaba 403 en cada exportación).
+    const api = installApi({}, { forbidden: [...INVENTORY_SLUGS, "settings"] });
 
     const data = await fetchReportsForExport(storeFilters(viewFor("contador")));
 
-    expect(api.paths()).toEqual(
-      ["/api/settings", ...storePaths([...MULTI_STORE_SLUGS, ...MONEY_SLUGS])].sort(),
-    );
+    expect(api.paths()).toEqual(storePaths([...MULTI_STORE_SLUGS, ...MONEY_SLUGS]));
+    expect(data.storeName).toBeUndefined();
     expect(data.salesByCategory).toEqual([]);
     expect(data.deadStock).toBeUndefined();
     expect(data.stockTurnover).toBeUndefined();
@@ -177,13 +177,13 @@ describe("fetchReportsForExport (REP-08)", () => {
   });
 
   it("mientras la sesión carga (sin rol) solo salen los 13 multi-tienda", async () => {
-    const api = installApi({}, { forbidden: [...MONEY_SLUGS, ...INVENTORY_SLUGS] });
+    const api = installApi({}, { forbidden: [...MONEY_SLUGS, ...INVENTORY_SLUGS, "settings"] });
 
     const data = await fetchReportsForExport(
       storeFilters({ activeReportId: "daily-sales", compare: false, viewer: { permissions: [], role: undefined } }),
     );
 
-    expect(api.paths()).toEqual(["/api/settings", ...storePaths(MULTI_STORE_SLUGS)].sort());
+    expect(api.paths()).toEqual(storePaths(MULTI_STORE_SLUGS));
     expect(data.salesByHour).toBeUndefined();
     expect(data.cashCloseDifferences).toBeUndefined();
   });

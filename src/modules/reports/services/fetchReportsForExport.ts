@@ -306,7 +306,16 @@ function flattenSalesByHour(report: SalesByHourReport): SalesByHourExportRow[] {
   );
 }
 
-async function fetchStoreName() {
+/**
+ * Nombre de la tienda para el encabezado. Sale de `GET /api/settings`, que
+ * exige `settings.view`: sin ese permiso no se pide (daría 403 en la red) y el
+ * archivo sale sin la línea «Tienda».
+ */
+async function fetchStoreName(viewer: ReportsExportView["viewer"]) {
+  if (!viewer.permissions.includes("settings.view")) {
+    return undefined;
+  }
+
   try {
     const settings = await apiFetch<Pick<AppSettingsMock, "businessName">>("/api/settings");
 
@@ -367,7 +376,7 @@ async function fetchStoreReportsForExport(
     stockTurnover,
     stockAdjustments,
   ] = await Promise.all([
-    fetchStoreName(),
+    fetchStoreName(view.viewer),
     // Las rutas con rango obligatorio no se piden sin él: la hoja sale vacía con su aviso.
     canViewMoney("sales-by-hour")
       ? range
