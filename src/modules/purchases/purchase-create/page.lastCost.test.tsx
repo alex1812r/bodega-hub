@@ -220,6 +220,9 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
+// Each case drives three full purchases through the page; under a loaded full run it exceeds the 5 s default.
+jest.setTimeout(30000);
+
 describe("PurchaseCreatePage · costo sugerido = último costo neto recibido (COM-F11)", () => {
   it("sugiere 2.494,41 a un producto de categoría 16 % cuya última compra fue exenta a 2.494,41", async () => {
     installServer({ currentCostRef: 2494.41, lastLine: { taxRate: 0, unitCostRef: 2494.41 } });
