@@ -28,6 +28,7 @@ import { cn } from "@/shared/utils/cn";
 import { Badge } from "../Badge";
 import { Button } from "../Button";
 import { Modal } from "../Modal";
+import { type ScannerInputHandler, useScannerBurstGuard } from "./useScannerBurstGuard";
 
 export type ConfirmActionEffectTone = "neutral" | "positive" | "warning" | "danger";
 
@@ -66,6 +67,12 @@ export type ConfirmActionModalProps = {
   onOpenChange: (open: boolean) => void;
   /** Solo con `status="error"`: muestra «Reintentar» y lo llama al pulsarlo. */
   onRetry?: () => void;
+  /**
+   * Un lector de códigos disparó con el diálogo abierto y el foco fuera de un campo de
+   * texto. Su Enter nunca pulsa un botón (ver `useScannerBurstGuard`); aquí llega lo
+   * leído, por si la pantalla quiere hacer algo con ello. Sin esta prop, se ignora.
+   */
+  onScannerInput?: ScannerInputHandler;
   open: boolean;
   /** Alternativa a `effects` para casos a medida. */
   renderEffects?: () => ReactNode;
@@ -324,6 +331,7 @@ export function ConfirmActionModal({
   onConfirm,
   onOpenChange,
   onRetry,
+  onScannerInput,
   open,
   renderEffects,
   requireTypedConfirmation,
@@ -345,6 +353,8 @@ export function ConfirmActionModal({
   const lockGenerationRef = useRef(0);
   const sawPendingRef = useRef(false);
   const safetyTimerRef = useRef<number | null>(null);
+
+  useScannerBurstGuard(open, onScannerInput);
 
   const currentError = error || null;
 

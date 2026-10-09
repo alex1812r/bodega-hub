@@ -402,7 +402,7 @@ export function PurchaseConfirmModalView({
 }: PurchaseConfirmModalViewProps) {
   const receivesNow = effect?.receivesNow ?? true;
 
-  usePurchaseConfirmScanGuard(open && effect !== null, onScan);
+  const onScannerInput = usePurchaseConfirmScanGuard(onScan);
 
   return (
     <ConfirmActionModal
@@ -416,6 +416,7 @@ export function PurchaseConfirmModalView({
       isPending={isPending}
       onConfirm={onConfirm}
       onOpenChange={onOpenChange}
+      onScannerInput={onScannerInput}
       open={open && effect !== null}
       renderEffects={() =>
         effect ? (

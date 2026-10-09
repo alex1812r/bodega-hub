@@ -462,8 +462,11 @@ describe("SalesListPage · estado en la URL (DET-06a)", () => {
         if (path.includes("/impact?action=")) {
           impacts.push(path);
 
+          const impact = allowedSaleImpact(path.endsWith("=cancel") ? "cancel" : "return");
+
+          // Como el endpoint: el efecto es el de la venta pedida.
           return jsonResponse({
-            data: allowedSaleImpact(path.endsWith("=cancel") ? "cancel" : "return"),
+            data: { ...impact, document: { ...impact.document, id: path.split("/")[3] } },
           });
         }
 

@@ -1,4 +1,14 @@
-export { impactQueryKey, impactQueryOptions } from "./impactQuery";
+export {
+  fetchImpact,
+  hasImpactShape,
+  IMPACT_TIMEOUT_MS,
+  IMPACT_UNAVAILABLE_MESSAGE,
+  impactQueryKey,
+  impactQueryOptions,
+  ImpactUnavailableError,
+  isImpactRecord,
+} from "./impactQuery";
+export type { ImpactShape } from "./impactQuery";
 export { firstInexact, fromCents, impactAllowed, impactRejected, toCents } from "./impactVerdict";
 export type {
   ImpactDocument,

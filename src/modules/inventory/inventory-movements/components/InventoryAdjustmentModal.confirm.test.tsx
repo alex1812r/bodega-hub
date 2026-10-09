@@ -179,7 +179,14 @@ describe("InventoryAdjustmentModal · confirmación con el efecto (CNF-08)", () 
 });
 
 describe("InventoryAdjustmentModal · lo que no llega a la confirmación (CNF-08)", () => {
-  it.each(["", "   "])("motivo %p: avisa en el campo y no abre la confirmación", async (reason) => {
+  // Los tres últimos (CNF-F7 · CAOS-11): caracteres que no se ven tampoco son un motivo.
+  it.each([
+    "",
+    "   ",
+    "​​",
+    " ​ ‍⁠ ",
+    "﻿ ",
+  ])("motivo %p: avisa en el campo y no abre la confirmación", async (reason) => {
     const api = renderModal();
     fill({ quantity: "3", reason });
 

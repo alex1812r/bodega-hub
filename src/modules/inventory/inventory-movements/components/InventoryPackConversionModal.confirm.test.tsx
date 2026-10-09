@@ -193,6 +193,31 @@ describe("InventoryPackConversionModal · confirmación del 1 a 1 (CNF-08)", () 
     expect(screen.queryByText("Sin motivo.")).not.toBeInTheDocument();
   });
 
+  it.each([
+    ["ancho cero", "​​"],
+    ["ancho cero entre espacios", " ​ ‍⁠ "],
+    ["BOM y espacio duro", "﻿ "],
+  ])(
+    "un motivo de solo caracteres invisibles (%s) no es un motivo (CNF-F7 · CAOS-11)",
+    async (_label, reason) => {
+      const api = await renderOpen();
+      setQuantity("2");
+      setReason(reason);
+
+      submitForm();
+      await flush();
+
+      expect(queryConfirm()).not.toBeInTheDocument();
+      expect(screen.getByText(REASON_REQUIRED)).toBeVisible();
+      expect(api.posts).toHaveLength(0);
+
+      // Con texto alrededor, lo invisible de los extremos no viaja ni se muestra.
+      setReason("​Reposición​ ");
+
+      expect(within(await openConfirm()).getByText("Reposición")).toBeVisible();
+    },
+  );
+
   it("abrir todos los empaques deja el empaque en 0", async () => {
     await renderOpen();
     setQuantity("5");

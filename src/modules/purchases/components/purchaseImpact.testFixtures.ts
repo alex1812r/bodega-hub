@@ -273,12 +273,20 @@ export function receiveImpactOf(
   });
 }
 
-/** `receiveImpactOf` para la URL que pidió el modal: lee de ella la lista `disassemble`. */
+/**
+ * `receiveImpactOf` para la URL que pidió el modal: lee de ella la lista `disassemble` y,
+ * como el endpoint, responde con el id de la compra pedida (`/api/purchases/{id}/impact`).
+ */
 export function receiveImpactOfUrl(url: string, purchase: ReceiveFixturePurchase): PurchaseImpact {
-  const list = new URL(url, "http://localhost").searchParams.get("disassemble");
-
-  return receiveImpactOf(
+  const { pathname, searchParams } = new URL(url, "http://localhost");
+  const list = searchParams.get("disassemble");
+  const impact = receiveImpactOf(
     purchase,
     list === null ? null : (JSON.parse(list) as PurchaseImpactDisassembleEntry[]),
   );
+
+  return {
+    ...impact,
+    document: { ...impact.document, id: pathname.split("/")[3] ?? impact.document.id },
+  };
 }

@@ -321,4 +321,22 @@ describe("SettingsListPage · usuarios (CNF-11)", () => {
     expect(screen.getByRole("button", { name: "Guardar cambios de Ana Pérez" })).toBeInTheDocument();
     expect(api.writes()).toHaveLength(0);
   });
+
+  it("un lector de códigos con la confirmación del cambio de rol abierta no guarda nada (CNF-F7 · CAOS-01)", async () => {
+    mockNavigation.query = "tab=usuarios";
+
+    const api = installServer();
+    const user = renderPage();
+
+    await user.selectOptions(await screen.findByLabelText("Rol"), "admin");
+    await user.click(screen.getByRole("button", { name: "Guardar cambios de Ana Pérez" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "¿Guardar los cambios de Ana Pérez?" });
+
+    await user.keyboard("7591234567895{Enter}");
+    await user.keyboard("HER-TAL-001{Enter}");
+
+    expect(api.writes()).toHaveLength(0);
+    expect(dialog).toBeInTheDocument();
+  });
 });

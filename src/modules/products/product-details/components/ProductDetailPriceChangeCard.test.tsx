@@ -467,4 +467,20 @@ describe("ProductDetailPriceChangeCard · confirmación del cambio (CNF-07)", ()
 
     expect((await confirmDialog()).queryByRole("note")).not.toBeInTheDocument();
   });
+
+  it("un lector de códigos con la confirmación abierta no cambia el precio (CNF-F7 · CAOS-01)", async () => {
+    const { onSubmit, user } = renderCard();
+
+    await user.click(screen.getByRole("button", { name: "30 %" }));
+    await user.click(screen.getByRole("button", { name: "Actualizar precio" }));
+
+    const dialog = await confirmDialog();
+
+    expect(dialog.getByRole("button", { name: "Cambiar precio" })).toHaveFocus();
+
+    await userEvent.setup({ delay: null }).keyboard("7591234567895{Enter}");
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(dialog.getByRole("button", { name: "Cambiar precio" })).toBeEnabled();
+  });
 });

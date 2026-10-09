@@ -6,6 +6,7 @@ import { parseNumberInput } from "@/shared/components/NumberInput";
 
 import { type ConvertPackToUnitsResult, useConvertPackToUnits } from "../../hooks/useInventory";
 import { useReleaseAttemptOnClose, useRequestAttempt } from "../../utils/requestAttempt";
+import { trimStockReason } from "../../utils/stockReason";
 import { describeStockRequestError } from "../../utils/stockRequestError";
 import {
   buildDefaultPackOpeningDistribution,
@@ -80,7 +81,7 @@ export function useAssortedPackOpening({
   const convert = useConvertPackToUnits();
 
   const isSingle = target?.kind === "single";
-  const trimmedReason = reason.trim();
+  const trimmedReason = trimStockReason(reason);
   // Un reparto tecleado para otro empaque no vale para este; un 1 a 1 no tiene reparto que teclear.
   const editedValues =
     target && !isSingle && edited?.packId === target.pack.id ? edited.values : null;

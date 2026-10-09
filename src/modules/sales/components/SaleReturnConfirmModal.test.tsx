@@ -370,4 +370,37 @@ describe("SaleReturnConfirmModal", () => {
     expect(dialog.queryByRole("button", { name: "Devolver venta" })).not.toBeInTheDocument();
     expect(dialog.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
   });
+
+  it.each([
+    [
+      "un 200 sin `document`",
+      Object.fromEntries(
+        Object.entries(allowedSaleImpact("return")).filter(([key]) => key !== "document"),
+      ),
+    ],
+    ["un 200 con `data: null`", null],
+    [
+      "el efecto de OTRA venta",
+      {
+        ...allowedSaleImpact("return"),
+        document: { ...allowedSaleImpact("return").document, id: "sale-otra" },
+      },
+    ],
+  ])(
+    "%s (CNF-F7 · CAOS-05): no rompe la pantalla ni se queda calculando; error, «Reintentar» y sin confirmar",
+    async (_label, data) => {
+      fetchMock.mockResolvedValue(jsonResponse({ data }));
+      renderModal();
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "No se pudo calcular el efecto. Reintenta.",
+      );
+
+      const dialog = within(screen.getByRole("dialog", { name: "Devolver venta" }));
+
+      expect(dialog.queryByRole("button", { name: "Devolver venta" })).not.toBeInTheDocument();
+      expect(dialog.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
+      expect(dialog.queryByText("Qué va a pasar")).not.toBeInTheDocument();
+    },
+  );
 });

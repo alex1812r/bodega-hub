@@ -7,8 +7,15 @@ import type {
   PurchaseImpactAction,
   PurchaseImpactDisassembleEntry,
 } from "@/modules/purchases/services/purchaseImpact";
-import { apiFetch } from "@/shared/api/apiFetch";
-import { impactQueryKey, impactQueryOptions } from "@/shared/impact/impactQuery";
+import {
+  fetchImpact,
+  hasImpactShape,
+  impactQueryKey,
+  impactQueryOptions,
+} from "@/shared/impact/impactQuery";
+
+/** Listas que los modales de compra recorren sin comprobar. */
+const PURCHASE_IMPACT_ARRAYS = ["blockingProducts", "costs", "disassemble", "payments", "stock"];
 
 export type UsePurchaseImpactOptions = {
   action: PurchaseImpactAction;
@@ -28,7 +35,8 @@ export type UsePurchaseImpactOptions = {
  * (`GET /api/purchases/{id}/impact`), para el modal de confirmación. Solo pide
  * mientras `enabled` (modal abierto) y no guarda caché: cada apertura vuelve a
  * calcular el efecto. Mientras `isPending` o con `isError`, el modal no debe
- * dejar confirmar.
+ * dejar confirmar. Una respuesta que no llega a tiempo, sin la forma esperada o
+ * de otra compra también acaba en `isError`.
  */
 export function usePurchaseImpact({
   action,
@@ -42,7 +50,13 @@ export function usePurchaseImpact({
     ...impactQueryOptions,
     enabled: enabled && Boolean(purchaseId),
     queryFn: () =>
-      apiFetch<PurchaseImpact>(`/api/purchases/${purchaseId}/impact`, {
+      fetchImpact<PurchaseImpact>(`/api/purchases/${purchaseId}/impact`, {
+        isExpected: (data) =>
+          hasImpactShape(data, {
+            action,
+            arrays: PURCHASE_IMPACT_ARRAYS,
+            documentId: purchaseId,
+          }),
         query: list === null ? { action } : { action, disassemble: list },
       }),
     queryKey: [...impactQueryKey("purchases", purchaseId ?? "", action), list] as const,

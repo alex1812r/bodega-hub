@@ -760,6 +760,39 @@ describe("PurchaseCreatePage · un escaneo con la confirmación abierta nunca re
     expect(lineNames()).toEqual(["Cable", "Taladro"]);
   });
 
+  it.each([
+    ["13 dígitos a 300 ms", CODE_B, 300, true],
+    ["5 dígitos a 80 ms", "12345", 80, false],
+    ["SKU con letras y guiones a 80 ms", "HER-TAL-001", 80, false],
+  ])(
+    "lector lento, corto o alfanumérico con el foco puesto a mano en «Registrar compra» (CNF-F7 · CAOS-07) · %s: no registra",
+    async (_label, code, gapMs, isCode) => {
+      const api = installFetchStub(() => null);
+
+      resolveWithLatency(20);
+      renderPage();
+      pickTaladro();
+      await openConfirmation();
+      act(() => registerButton().focus());
+
+      await press([...code.split(""), "{Enter}"], gapMs);
+      await settle(1000);
+
+      expect(api.posts).toHaveLength(0);
+      expect(mockPush).not.toHaveBeenCalled();
+
+      if (isCode) {
+        // Mide como un código: la confirmación se cierra y el producto entra.
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(lineNames()).toEqual(["Cable", "Taladro"]);
+      } else {
+        expect(mockResolveByCode).not.toHaveBeenCalled();
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByText("Lectura del escáner ignorada")).toBeInTheDocument();
+      }
+    },
+  );
+
   it("un lector lento (teclas a más de 50 ms): el Enter no encuentra el botón de registrar enfocado", async () => {
     const api = installFetchStub(() => null);
 

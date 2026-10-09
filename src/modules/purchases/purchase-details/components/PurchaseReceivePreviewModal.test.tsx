@@ -5,6 +5,7 @@
  */
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 
 import { formatRefUsd } from "@/shared/utils/currency";
@@ -222,6 +223,19 @@ describe("PurchaseReceivePreviewModal · efecto real de la recepción (CNF-04)",
     fireEvent.click(confirm);
 
     expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("un lector de códigos con la confirmación abierta no recibe la mercancía (CNF-F7 · CAOS-01)", async () => {
+    const { dialog, onConfirm, onOpenChange } = renderModal();
+    const user = userEvent.setup({ delay: null });
+
+    expect(dialog.getByRole("button", { name: RECEIVE })).toHaveFocus();
+
+    await user.keyboard("7591234567895{Enter}");
+    await user.keyboard("HER-TAL-001{Enter}");
+
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 
   it("«Cancelar» cierra sin recibir", async () => {

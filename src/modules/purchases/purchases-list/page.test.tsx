@@ -158,7 +158,10 @@ describe("PurchasesListPage", () => {
       const path = String(url).split("?")[0] ?? "";
 
       if (path.endsWith("/impact")) {
-        return jsonResponse({ data: rowImpact });
+        // Como el endpoint: el efecto es el de la compra pedida.
+        return jsonResponse({
+          data: { ...rowImpact, document: { ...rowImpact.document, id: path.split("/")[3] } },
+        });
       }
 
       if (init?.method === "PATCH" || init?.method === "POST") {

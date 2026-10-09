@@ -9,3 +9,14 @@ export const STOCK_REASON_INVALID_CHARACTERS_MESSAGE = "El motivo contiene carac
 export function describeStockReasonLength(reason: string) {
   return `${reason.length} de ${STOCK_REASON_MAX_LENGTH} caracteres.`;
 }
+
+/** Espacios y caracteres que no se ven (ancho cero, BOM, guion opcional) en un extremo del motivo. */
+const REASON_EDGE_PADDING = /^[\s­​-‍⁠﻿]+|[\s­​-‍⁠﻿]+$/g;
+
+/**
+ * El motivo sin lo que no se lee en sus extremos. Un motivo hecho solo de espacios o de
+ * caracteres invisibles queda en "": no cuenta como motivo.
+ */
+export function trimStockReason(reason: string) {
+  return reason.replace(REASON_EDGE_PADDING, "");
+}

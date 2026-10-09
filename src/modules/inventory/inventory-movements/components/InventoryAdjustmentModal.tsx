@@ -25,7 +25,11 @@ import {
   useInventoryProduct,
 } from "../../hooks/useInventory";
 import { useReleaseAttemptOnClose, useRequestAttempt } from "../../utils/requestAttempt";
-import { STOCK_REASON_MAX_LENGTH, describeStockReasonLength } from "../../utils/stockReason";
+import {
+  STOCK_REASON_MAX_LENGTH,
+  describeStockReasonLength,
+  trimStockReason,
+} from "../../utils/stockReason";
 import { describeStockRequestError } from "../../utils/stockRequestError";
 import {
   getInventoryAdjustmentDelta,
@@ -182,7 +186,7 @@ export function InventoryAdjustmentModal({
     : null;
   // La base rechaza cualquier saldo negativo (PT409): la salida se frena antes de confirmar.
   const hasInsufficientStock = isQuantityValid && Boolean(effect?.wouldBeNegative);
-  const trimmedReason = reason.trim();
+  const trimmedReason = trimStockReason(reason);
   const canConfirm =
     Boolean(productId) && isQuantityValid && !hasInsufficientStock && trimmedReason !== "";
   // Elegir otro producto (o quitar el precargado) cuenta; volver al precargado, no.
