@@ -754,6 +754,9 @@ En `src/shared/components/`, con tokens del tema (claro / oscuro) y sin librerí
 - `RankingBarChart`: barras horizontales para rankings (top productos, clientes, categorías).
 - `HeatmapChart`: mapa de calor (ventas por hora y día de la semana).
 - `DateRangeField`: único control de rango de fechas (presets + calendario propio, sin inputs nativos de fecha); su valor se lee y se escribe en la URL (`dateRangeUrl.ts`, `dateRangePresets.ts`).
+  - Lo usan `/reports`, `/platform/reports`, los dashboards y los listados de ventas, compras, pagos y movimientos de inventario (parámetros `from` / `to` / `preset`), además de `PaymentDocumentPicker`, el buscador de documentos previo a `RegisterPaymentModal` (estado local). La consulta usa siempre el rango de `parseDateRangeParams`, nunca `state.from/to`: un `preset` relativo (`preset=last_month`) no trae fechas y se recalcula con el día operativo. Helpers de test: `DateRangeField/testing.ts`.
+  - Fechas nativas que quedan (una sola fecha, no un rango): `PayrollSettingsForm` («Las comisiones cuentan desde»).
+- Impresión: las reglas `@media print` de `globals.css` son solo del ticket de 80 mm y cuelgan de `:has(#sale-receipt-preview)`; el `@page` del ticket lo monta `SaleReceiptPrintPageStyle` junto al recibo. Cualquier otra pantalla se imprime con la hoja y los márgenes del navegador.
 - `charts/chartTheme.ts`: colores, ejes y rejilla de los gráficos a partir de los tokens `--chart-1..5`; ningún gráfico define colores literales.
 
 **Pendiente:** filtros fecha en todos los reportes. Vista previa modal + export PDF/Excel.
