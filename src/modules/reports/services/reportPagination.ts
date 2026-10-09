@@ -83,6 +83,50 @@ export async function fetchAllRows<Row>(
 }
 
 /**
+ * Nº de ids por petición de un filtro `in`: 100 uuid son ~3,7 kB de URL. Con
+ * todos los ids de un rango en una sola URL PostgREST responde "URI too long"
+ * a partir de unos 220–334.
+ */
+export const REPORT_ID_CHUNK_SIZE = 100;
+/** Lotes de ids que se piden a la vez. */
+const REPORT_ID_CHUNK_CONCURRENCY = 4;
+
+/**
+ * Lee TODAS las filas de una consulta filtrada por una lista de ids
+ * (`.in(columna, ids)`), troceando los ids en lotes para que quepan en la URL.
+ * Cada lote se lee entero con `fetchAllRows` (misma regla: orden estable por
+ * columna única + `.range`), con pocos lotes en paralelo, y el resultado es la
+ * concatenación en el orden de `ids`. Sin ids no se consulta nada.
+ */
+export async function fetchAllRowsByIds<Row>(
+  ids: readonly string[],
+  fetchPage: (idChunk: string[], from: number, to: number) => PromiseLike<RowsPage<Row>>,
+  options: { getKey?: (row: Row) => string } = {},
+): Promise<Row[]> {
+  const chunks: string[][] = [];
+
+  for (let start = 0; start < ids.length; start += REPORT_ID_CHUNK_SIZE) {
+    chunks.push(ids.slice(start, start + REPORT_ID_CHUNK_SIZE));
+  }
+
+  const rows: Row[] = [];
+
+  for (let start = 0; start < chunks.length; start += REPORT_ID_CHUNK_CONCURRENCY) {
+    const group = await Promise.all(
+      chunks
+        .slice(start, start + REPORT_ID_CHUNK_CONCURRENCY)
+        .map((chunk) => fetchAllRows<Row>((from, to) => fetchPage(chunk, from, to), options)),
+    );
+
+    for (const chunkRows of group) {
+      rows.push(...chunkRows);
+    }
+  }
+
+  return rows;
+}
+
+/**
  * Página de una lista con conteo exacto. Una página más allá del total
  * (PostgREST 416 / `PGRST103`) no es un error: se vuelve a contar con los
  * mismos filtros y se responde `items: []` con el `total` real, para que la UI

@@ -7,7 +7,7 @@ import { listCountOptions } from "@/modules/products/services/listRange";
 
 import { applyCreatedAtCaracasRange, toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
-import { fetchAllRows, fetchCountedPage } from "./reportPagination";
+import { fetchAllRows, fetchAllRowsByIds, fetchCountedPage } from "./reportPagination";
 import {
   buildDailySalesSeries,
   buildGrossProfitSeries,
@@ -532,6 +532,55 @@ export async function getSupplierPurchasesReport(
   });
 }
 
+type DbTopProductItem = {
+  id: string;
+  product_id: string;
+  quantity: number;
+  subtotal_ref: number | string;
+};
+
+type DbTopCustomerSale = {
+  created_at: string;
+  customer_id: string;
+  id: string;
+  total_ref: number | string;
+  total_ves: number | string;
+};
+
+type ReportsClient = Awaited<ReturnType<typeof getReportsClient>>;
+
+/**
+ * Todas las ventas que cuentan (ni canceladas ni devueltas) del rango, leídas
+ * en páginas: PostgREST corta cada respuesta en 1.000 filas. Van en orden de
+ * creación, con `id` (único) de desempate para que no cambie entre páginas.
+ */
+async function fetchRangeSales<Row extends { id: string }>(
+  supabase: ReportsClient,
+  columns: string,
+  storeIds: string[],
+  from: string | null,
+  to: string | null,
+) {
+  return fetchAllRows<Row>(
+    async (rangeFrom, rangeTo) => {
+      let query = supabase
+        .from("sales")
+        .select(columns, { count: "exact" })
+        .in("status", ["borrador", "pagada", "pendiente_pago"]);
+      query = applyStoreIdsFilter(query, storeIds);
+      query = applyCreatedAtRange(query, from, to);
+
+      const { count, data, error, status } = await query
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo);
+
+      return { count, data: data as unknown as Row[] | null, error, status };
+    },
+    { getKey: (sale) => sale.id },
+  );
+}
+
 export async function getTopProductsReport(
   searchParams: URLSearchParams,
   storeIdOrIds: string | string[],
@@ -542,32 +591,35 @@ export async function getTopProductsReport(
   const to = searchParams.get("to");
   const supabase = await getReportsClient(options);
 
-  let salesQuery = supabase
-    .from("sales")
-    .select("id")
-    .in("status", ["borrador", "pagada", "pendiente_pago"]);
-  salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
-  salesQuery = applyCreatedAtRange(salesQuery, from, to);
-
-  const { data: sales, error: salesError } = await salesQuery;
-  throwIfSupabaseError(salesError);
-
-  const saleIds = (sales ?? []).map((sale) => sale.id);
+  const sales = await fetchRangeSales<{ created_at: string; id: string }>(
+    supabase,
+    "id, created_at",
+    storeIds,
+    from,
+    to,
+  );
+  const saleIds = sales.map((sale) => sale.id);
 
   if (saleIds.length === 0) {
     return paginateList([], searchParams);
   }
 
-  const { data: items, error: itemsError } = await supabase
-    .from("sale_items")
-    .select("product_id, quantity, subtotal_ref")
-    .in("sale_id", saleIds);
-
-  throwIfSupabaseError(itemsError);
+  // Las líneas se piden por lotes de ventas: todos los ids en una URL dan "URI too long".
+  const items = await fetchAllRowsByIds<DbTopProductItem>(
+    saleIds,
+    async (saleIdChunk, rangeFrom, rangeTo) =>
+      supabase
+        .from("sale_items")
+        .select("id, product_id, quantity, subtotal_ref", { count: "exact" })
+        .in("sale_id", saleIdChunk)
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo),
+    { getKey: (item) => item.id },
+  );
 
   const totals = new Map<string, { revenueRef: number; unitsSold: number }>();
 
-  for (const item of items ?? []) {
+  for (const item of items) {
     const current = totals.get(item.product_id) ?? { revenueRef: 0, unitsSold: 0 };
     totals.set(item.product_id, {
       revenueRef: current.revenueRef + Number(item.subtotal_ref),
@@ -581,14 +633,19 @@ export async function getTopProductsReport(
     return paginateList([], searchParams);
   }
 
-  const { data: products, error: productsError } = await supabase
-    .from("products")
-    .select("id, sku, name")
-    .in("id", productIds);
+  const products = await fetchAllRowsByIds<{ id: string; name: string; sku: string }>(
+    productIds,
+    async (productIdChunk, rangeFrom, rangeTo) =>
+      supabase
+        .from("products")
+        .select("id, sku, name", { count: "exact" })
+        .in("id", productIdChunk)
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo),
+    { getKey: (product) => product.id },
+  );
 
-  throwIfSupabaseError(productsError);
-
-  const productById = new Map((products ?? []).map((product) => [product.id, product]));
+  const productById = new Map(products.map((product) => [product.id, product]));
 
   const ranked = productIds
     .map((productId) => ({
@@ -614,22 +671,20 @@ export async function getTopCustomersReport(
   const to = searchParams.get("to");
   const supabase = await getReportsClient(options);
 
-  let salesQuery = supabase
-    .from("sales")
-    .select("customer_id, total_ref, total_ves")
-    .in("status", ["borrador", "pagada", "pendiente_pago"]);
-  salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
-  salesQuery = applyCreatedAtRange(salesQuery, from, to);
-
-  const { data: sales, error: salesError } = await salesQuery;
-  throwIfSupabaseError(salesError);
+  const sales = await fetchRangeSales<DbTopCustomerSale>(
+    supabase,
+    "id, created_at, customer_id, total_ref, total_ves",
+    storeIds,
+    from,
+    to,
+  );
 
   const totals = new Map<
     string,
     { salesCount: number; totalRef: number; totalVes: number }
   >();
 
-  for (const sale of sales ?? []) {
+  for (const sale of sales) {
     const current = totals.get(sale.customer_id) ?? { salesCount: 0, totalRef: 0, totalVes: 0 };
     totals.set(sale.customer_id, {
       salesCount: current.salesCount + 1,
@@ -644,14 +699,19 @@ export async function getTopCustomersReport(
     return paginateList([], searchParams);
   }
 
-  const { data: contacts, error: contactsError } = await supabase
-    .from("contacts")
-    .select("id, name")
-    .in("id", customerIds);
+  const contacts = await fetchAllRowsByIds<DbContact>(
+    customerIds,
+    async (customerIdChunk, rangeFrom, rangeTo) =>
+      supabase
+        .from("contacts")
+        .select("id, name", { count: "exact" })
+        .in("id", customerIdChunk)
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo),
+    { getKey: (contact) => contact.id },
+  );
 
-  throwIfSupabaseError(contactsError);
-
-  const nameById = new Map((contacts ?? []).map((contact) => [contact.id, contact.name]));
+  const nameById = new Map(contacts.map((contact) => [contact.id, contact.name]));
 
   const ranked = customerIds
     .map((customerId) => ({

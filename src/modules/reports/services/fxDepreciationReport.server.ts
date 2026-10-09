@@ -8,10 +8,20 @@ import {
   computeFxDepreciationReport,
   type FxDepreciationReportResult,
 } from "./fxDepreciationReport";
+import { fetchAllRowsByIds } from "./reportPagination";
 import { normalizeStoreIds } from "./storeScope";
 
 export type ReportQueryOptions = {
   useAdmin?: boolean;
+};
+
+type DbFxPaymentRow = {
+  amount_ref: number | string;
+  amount_ves: number | string;
+  id: string;
+  method: string;
+  sale_id: string;
+  store_id: string;
 };
 
 async function getClient(options?: ReportQueryOptions) {
@@ -77,23 +87,35 @@ export async function getFxDepreciationReport(
   }> = [];
 
   if (saleIds.length > 0) {
-    let paymentsQuery = supabase
-      .from("payments")
-      .select("sale_id, method, amount_ves, amount_ref, store_id, status")
-      .eq("status", "activo")
-      .not("sale_id", "is", null);
-    if (storeIds.length === 1) {
-      paymentsQuery = paymentsQuery.eq("store_id", storeIds[0]!);
-    } else {
-      paymentsQuery = paymentsQuery.in("store_id", storeIds);
-    }
-    const { data: paymentsData, error: paymentsError } = await paymentsQuery.in(
-      "sale_id",
+    // Los ids se piden por lotes: todos en una URL dan "URI too long" con ~220 ventas.
+    const paymentsData = await fetchAllRowsByIds<DbFxPaymentRow>(
       saleIds,
-    );
-    throwIfSupabaseError(paymentsError);
+      async (saleIdChunk, rangeFrom, rangeTo) => {
+        let paymentsQuery = supabase
+          .from("payments")
+          .select("id, sale_id, method, amount_ves, amount_ref, store_id, status", {
+            count: "exact",
+          })
+          .eq("status", "activo")
+          .not("sale_id", "is", null);
+        if (storeIds.length === 1) {
+          paymentsQuery = paymentsQuery.eq("store_id", storeIds[0]!);
+        } else {
+          paymentsQuery = paymentsQuery.in("store_id", storeIds);
+        }
 
-    payments = (paymentsData ?? []).map((row) => ({
+        // `id` es único: el orden no cambia entre páginas.
+        const { count, data, error, status } = await paymentsQuery
+          .in("sale_id", saleIdChunk)
+          .order("id", { ascending: true })
+          .range(rangeFrom, rangeTo);
+
+        return { count, data: data as DbFxPaymentRow[] | null, error, status };
+      },
+      { getKey: (row) => row.id },
+    );
+
+    payments = paymentsData.map((row) => ({
       amountRef: Number(row.amount_ref),
       amountVes: Number(row.amount_ves),
       method: row.method as string,

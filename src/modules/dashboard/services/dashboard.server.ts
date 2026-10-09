@@ -2,6 +2,7 @@ import { parsePagination, type PaginatedList } from "@/lib/api/pagination";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { fetchAllRows, fetchAllRowsByIds } from "@/modules/reports/services/reportPagination";
 import { getDailySalesReport } from "@/modules/reports/services/reports.server";
 import { normalizeStoreIds } from "@/modules/reports/services/storeScope";
 import {
@@ -56,6 +57,13 @@ export type DashboardQueryOptions = {
 };
 
 const METRICS_SALE_STATUSES = ["borrador", "pagada", "pendiente_pago"] as const;
+
+type DbMetricsSale = {
+  id: string;
+  paid_ves: number | string;
+  total_ref: number | string;
+  total_ves: number | string;
+};
 
 function todayIsoDate() {
   return getCaracasIsoDate();
@@ -180,29 +188,40 @@ export async function getDashboardMetrics(
   const { from, to } = parseDashboardMetricsDateParams(searchParams);
   const supabase = await getDashboardClient(options);
 
-  let salesQuery = supabase
-    .from("sales")
-    .select("id, total_ref, total_ves, paid_ves")
-    .in("status", [...METRICS_SALE_STATUSES]);
-  salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
-  salesQuery = applyCreatedAtRange(salesQuery, from, to);
+  // Paginado hasta agotar: PostgREST corta cada respuesta en 1.000 filas.
+  const salesRows = await fetchAllRows<DbMetricsSale>(
+    async (rangeFrom, rangeTo) => {
+      let salesQuery = supabase
+        .from("sales")
+        .select("id, total_ref, total_ves, paid_ves", { count: "exact" })
+        .in("status", [...METRICS_SALE_STATUSES]);
+      salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
+      salesQuery = applyCreatedAtRange(salesQuery, from, to);
 
-  const { data: sales, error: salesError } = await salesQuery;
-  throwIfSupabaseError(salesError);
+      // Orden de creación con `id` (único) de desempate: no cambia entre páginas.
+      const { count, data, error, status } = await salesQuery
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo);
 
-  const salesRows = sales ?? [];
-  const saleIds = salesRows.map((sale) => sale.id);
-  let unitsSold = 0;
+      return { count, data: data as DbMetricsSale[] | null, error, status };
+    },
+    { getKey: (sale) => sale.id },
+  );
 
-  if (saleIds.length > 0) {
-    const { data: items, error: itemsError } = await supabase
-      .from("sale_items")
-      .select("quantity")
-      .in("sale_id", saleIds);
-
-    throwIfSupabaseError(itemsError);
-    unitsSold = (items ?? []).reduce((total, item) => total + item.quantity, 0);
-  }
+  // Las líneas se piden por lotes de ventas: todos los ids en una URL dan "URI too long".
+  const items = await fetchAllRowsByIds<{ id: string; quantity: number }>(
+    salesRows.map((sale) => sale.id),
+    async (saleIdChunk, rangeFrom, rangeTo) =>
+      supabase
+        .from("sale_items")
+        .select("id, quantity", { count: "exact" })
+        .in("sale_id", saleIdChunk)
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo),
+    { getKey: (item) => item.id },
+  );
+  const unitsSold = items.reduce((total, item) => total + item.quantity, 0);
 
   const totalRef = salesRows.reduce((total, sale) => total + Number(sale.total_ref), 0);
   const totalVes = salesRows.reduce((total, sale) => total + Number(sale.total_ves), 0);
