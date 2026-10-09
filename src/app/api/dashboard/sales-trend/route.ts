@@ -4,11 +4,14 @@ import { jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getDashboardSalesTrend as getDashboardSalesTrendMock } from "@/modules/dashboard/services/dashboard.mock-server";
 import { getDashboardSalesTrend as getDashboardSalesTrendServer } from "@/modules/dashboard/services/dashboard.server";
+import { assertReportDateParams } from "@/modules/reports/services/reportParams";
 
 export async function GET(request: Request) {
   try {
     const auth = await requireStorePermission(request, "dashboard.view");
     const searchParams = new URL(request.url).searchParams;
+    // 400 si `from`/`to`/`date` no son fechas válidas o `from > to`.
+    assertReportDateParams(searchParams);
     const data =
       resolveDataSource() === "supabase"
         ? await getDashboardSalesTrendServer(searchParams, auth.storeId)
