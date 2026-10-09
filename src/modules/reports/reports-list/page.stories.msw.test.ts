@@ -46,9 +46,13 @@ type StoryModule = Record<string, Story> & {
 const stories = jest.requireActual<StoryModule>("./page.stories");
 
 type ReportPage = {
+  byHour?: unknown[];
   items: unknown[];
+  matrix?: unknown[][];
   series?: { totals: { current: Record<string, number> } };
-  summary?: { paymentCount: number };
+  summary?: { buckets?: unknown[]; paymentCount: number };
+  total?: number;
+  totals?: unknown;
 };
 
 async function mockedGet(pathname: string, query: Record<string, string>) {
@@ -115,6 +119,62 @@ describe("Storybook · stories de /reports", () => {
     });
 
     expect(data.items.length).toBeGreaterThan(0);
+  });
+
+  describe("reportes de dinero (REP-06b)", () => {
+    it("hay una story por reporte nuevo, cada una con su `report` en la URL", () => {
+      const reportOf = (story: Story) => story.parameters?.nextjs?.navigation?.query?.report;
+
+      expect(reportOf(stories.SalesByHour)).toBe("sales-by-hour");
+      expect(reportOf(stories.SalesByCategory)).toBe("sales-by-category");
+      expect(reportOf(stories.ReceivablesAging)).toBe("receivables-aging");
+      expect(reportOf(stories.PayablesAging)).toBe("payables-aging");
+      expect(reportOf(stories.CashCloseDifferences)).toBe("cash-close-differences");
+    });
+
+    it("ventas por hora: matriz 7 × 24 con ventas en los últimos 30 días", async () => {
+      const { data, status } = await mockedGet("/api/reports/sales-by-hour", last30Days);
+
+      expect(status).toBe(200);
+      expect(data.matrix).toHaveLength(7);
+      expect(data.matrix?.[0]).toHaveLength(24);
+      expect(data.byHour).toHaveLength(24);
+      expect((data.totals as { salesCount: number }).salesCount).toBeGreaterThan(0);
+    });
+
+    it("ventas por categoría: trae categorías con ingreso", async () => {
+      const { data, status } = await mockedGet("/api/reports/sales-by-category", last30Days);
+
+      expect(status).toBe(200);
+      expect(data.items.length).toBeGreaterThan(0);
+      expect((data.totals as { revenueRef: number }).revenueRef).toBeGreaterThan(0);
+    });
+
+    it.each(["receivables-aging", "payables-aging"])("%s: página y resumen de tres tramos", async (slug) => {
+      const { data, status } = await mockedGet(`/api/reports/${slug}`, { limit: "10", skip: "0" });
+
+      expect(status).toBe(200);
+      expect(data.summary?.buckets).toHaveLength(3);
+      expect(data.items.length).toBeLessThanOrEqual(10);
+      expect(typeof data.total).toBe("number");
+    });
+
+    it("cuentas por pagar acepta el tramo de la story y rechaza uno inventado", async () => {
+      expect((await mockedGet("/api/reports/payables-aging", { bucket: "30+" })).status).toBe(200);
+      expect((await mockedGet("/api/reports/payables-aging", { bucket: "31-60" })).status).toBe(400);
+    });
+
+    it("diferencias de cierre: totales por moneda, y una moneda inventada es 400", async () => {
+      const { data, status } = await mockedGet("/api/reports/cash-close-differences", { currency: "ves" });
+
+      expect(status).toBe(200);
+      expect(data.totals).toHaveLength(2);
+      expect((await mockedGet("/api/reports/cash-close-differences", { currency: "usd" })).status).toBe(400);
+    });
+
+    it("ventas por hora sin rango responde 400, como la ruta", async () => {
+      expect((await mockedGet("/api/reports/sales-by-hour", {})).status).toBe(400);
+    });
   });
 
   it("métodos de pago tiene handler y trae pagos (antes 404)", async () => {

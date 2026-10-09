@@ -75,6 +75,18 @@ import {
 } from "../src/modules/reports/services/reports.mock-server";
 import { getPaymentMethodsReport } from "../src/modules/reports/services/paymentMethodsReport.mock-server";
 import {
+  parseAgingQuery,
+  parseCashCloseDifferencesQuery,
+  parseMoneyReportRange,
+} from "../src/modules/reports/services/moneyReports";
+import {
+  getCashCloseDifferencesReport,
+  getPayablesAgingReport,
+  getReceivablesAgingReport,
+  getSalesByCategoryReport,
+  getSalesByHourReport,
+} from "../src/modules/reports/services/moneyReports.mock-server";
+import {
   cancelSale,
   createSale,
   getSaleById,
@@ -395,6 +407,35 @@ export const mswHandlers = [
   ),
   http.get("/api/reports/payment-methods", ({ request }) =>
     fromService(() => getPaymentMethodsReport(searchParams(request), DEFAULT_STORE_ID)),
+  ),
+  // Reportes de dinero (REP-06): mismos parseos que sus rutas (400 si el parámetro no vale).
+  http.get("/api/reports/sales-by-hour", ({ request }) =>
+    fromService(() =>
+      getSalesByHourReport(parseMoneyReportRange(searchParams(request)), DEFAULT_STORE_ID),
+    ),
+  ),
+  http.get("/api/reports/sales-by-category", ({ request }) =>
+    fromService(() =>
+      getSalesByCategoryReport(parseMoneyReportRange(searchParams(request)), DEFAULT_STORE_ID),
+    ),
+  ),
+  http.get("/api/reports/receivables-aging", ({ request }) =>
+    fromService(() =>
+      getReceivablesAgingReport(parseAgingQuery(searchParams(request)), DEFAULT_STORE_ID),
+    ),
+  ),
+  http.get("/api/reports/payables-aging", ({ request }) =>
+    fromService(() =>
+      getPayablesAgingReport(parseAgingQuery(searchParams(request)), DEFAULT_STORE_ID),
+    ),
+  ),
+  http.get("/api/reports/cash-close-differences", ({ request }) =>
+    fromService(() =>
+      getCashCloseDifferencesReport(
+        parseCashCloseDifferencesQuery(searchParams(request)),
+        DEFAULT_STORE_ID,
+      ),
+    ),
   ),
   http.get("/api/settings", () => fromService(() => getSettings())),
   // Semáforo de ganancia y chips de % de la tienda demo (formulario, lista y detalle de producto).
