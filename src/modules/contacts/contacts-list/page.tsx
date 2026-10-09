@@ -2,7 +2,8 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { apiFetch } from "@/shared/api/apiFetch";
@@ -14,14 +15,25 @@ import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
-import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
+import {
+  getTotalPages,
+  ResponsivePagination,
+  useUrlPaginationState,
+} from "@/shared/components/Pagination";
+import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
+import {
+  URL_LIST_DEBOUNCE_MS,
+  useUrlListState,
+  withUrlListBoundary,
+} from "@/shared/hooks/useUrlListState";
 import type { ContactMock } from "@/shared/mocks/erp-data";
+import { withReturnTo } from "@/shared/utils/returnTo";
 
 import { ContactFormModal } from "../contact-details/components/ContactFormModal";
 import {
   contactsQueryKeys,
   type ContactInput,
-  type ContactsFilters,
   useContacts,
   useCreateContact,
   useUpdateContact,
@@ -32,14 +44,24 @@ import { ContactsExportActions } from "./components/ContactsExportActions";
 import { ContactsListFilters } from "./components/ContactsListFilters";
 import { ContactsStatusBadge } from "./components/ContactsStatusBadge";
 import { ContactsTypeBadge } from "./components/ContactsTypeBadge";
+import { contactsListSchema, toContactsFilters } from "./contactsListParams";
 
-const columns: DataTableColumn<ContactMock>[] = [
-  {
+const cardTitleLinkClass =
+  "rounded-md hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+/** Columna del nombre; `detailHref` lleva al perfil con la URL de la lista en `returnTo`. */
+function buildNameColumn(
+  detailHref: (contactId: string) => string,
+): DataTableColumn<ContactMock> {
+  return {
     header: "Nombre / Razón Social",
     hideInCard: true,
     key: "name",
-    render: (contact) => <ContactNameCell name={contact.name} />,
-  },
+    render: (contact) => <ContactNameCell href={detailHref(contact.id)} name={contact.name} />,
+  };
+}
+
+const staticColumns: DataTableColumn<ContactMock>[] = [
   {
     align: "center",
     header: "Tipo",
@@ -77,38 +99,43 @@ const columns: DataTableColumn<ContactMock>[] = [
   },
 ];
 
-export function ContactsListPage() {
+function ContactsList() {
   const queryClient = useQueryClient();
   const { can, role } = usePermission();
   const customersOnly = role ? !canViewSupplierContacts(role) : false;
-  const [filters, setFilters] = useState<
-    Pick<ContactsFilters, "isActive" | "search" | "type">
-  >({});
+  // Búsqueda, filtros, página y tamaño viven en la URL: recarga, "atrás" y volver del perfil los conservan.
+  const list = useUrlListState(contactsListSchema);
   const [editingContact, setEditingContact] = useState<ContactMock | null>(null);
-  const { limit, setLimit, setSkip, skip } = usePaginationState([
-    filters.search,
-    filters.type,
-    filters.isActive,
-  ]);
-  const effectiveFilters = customersOnly
-    ? { ...filters, type: undefined }
-    : filters;
+  const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
+  // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
+  const debouncedSearch = useDebouncedValue(list.state.search, URL_LIST_DEBOUNCE_MS);
+  const effectiveFilters = toContactsFilters(list.state, debouncedSearch, customersOnly);
   const contacts = useContacts({ ...effectiveFilters, limit, skip });
   const createContact = useCreateContact();
   const updateContact = useUpdateContact(editingContact?.id ?? "");
   const contactItems = getPaginatedItems(contacts.data);
   const totalContacts = contacts.data?.total ?? 0;
+  const { href: listHref, setState: setListState } = list;
+  // El perfil vuelve a esta URL exacta (filtros y página) con "Volver".
+  const columns = useMemo(
+    () => [
+      buildNameColumn((contactId) => withReturnTo(`/contacts/${contactId}`, listHref)),
+      ...staticColumns,
+    ],
+    [listHref],
+  );
+  const lastPage = getTotalPages(totalContacts, limit);
+  const isPastLastPage = contacts.isSuccess && !contacts.isFetching && list.state.page > lastPage;
 
-  function handleFilterChange(patch: Partial<ContactsFilters>) {
-    setFilters((current) => {
-      const next = { ...current, ...patch };
-      if (customersOnly) {
-        next.type = undefined;
-      }
-      return next;
-    });
-    setSkip(0);
-  }
+  // Una página más allá de la última (`?page=9999`, o un enlace viejo) cae en la
+  // última que existe, y la URL lo refleja.
+  useEffect(() => {
+    if (isPastLastPage) {
+      setListState({ page: lastPage });
+    }
+  }, [isPastLastPage, lastPage, setListState]);
+
+  useScrollRestoration(listHref, { ready: !contacts.isLoading });
 
   async function handleCreateContact(input: ContactInput) {
     return createContact.mutateAsync(input);
@@ -176,15 +203,15 @@ export function ContactsListPage() {
       >
         <ContactsListFilters
           customersOnly={customersOnly}
-          filters={filters}
-          onChange={handleFilterChange}
+          onChange={list.setState}
+          state={list.state}
         />
 
         <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
           <DataTable
             actions={(contact) => {
               const items: ActionMenuItem[] = [
-                { href: `/contacts/${contact.id}`, label: "Ver perfil" },
+                { href: withReturnTo(`/contacts/${contact.id}`, listHref), label: "Ver perfil" },
               ];
 
               if (can("contacts.manage")) {
@@ -214,7 +241,14 @@ export function ContactsListPage() {
               return items;
             }}
             cardSubtitle={(contact) => contact.taxId || "Sin documento"}
-            cardTitle={(contact) => contact.name}
+            cardTitle={(contact) => (
+              <Link
+                className={cardTitleLinkClass}
+                href={withReturnTo(`/contacts/${contact.id}`, listHref)}
+              >
+                {contact.name}
+              </Link>
+            )}
             columns={columns}
             data={contactItems}
             embedded
@@ -284,3 +318,6 @@ export function ContactsListPage() {
     </div>
   );
 }
+
+/** `useUrlListState` lee la URL: la pantalla lleva su límite de Suspense. */
+export const ContactsListPage = withUrlListBoundary(ContactsList);

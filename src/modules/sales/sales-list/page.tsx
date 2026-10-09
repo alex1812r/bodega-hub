@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Can } from "@/shared/auth/Can";
@@ -10,13 +10,24 @@ import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
-import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
+import {
+  getTotalPages,
+  ResponsivePagination,
+  useUrlPaginationState,
+} from "@/shared/components/Pagination";
+import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
+import {
+  URL_LIST_DEBOUNCE_MS,
+  useUrlListState,
+  withUrlListBoundary,
+} from "@/shared/hooks/useUrlListState";
 import { formatDateTimeShort } from "@/shared/utils/date";
 import { cn } from "@/shared/utils/cn";
+import { withReturnTo } from "@/shared/utils/returnTo";
 
 import {
   type SaleListItem,
-  type SalesFilters,
   useCancelSale,
   useReturnSale,
   useSales,
@@ -25,6 +36,10 @@ import { SalesExportActions } from "./components/SalesExportActions";
 import { SalesListFilters } from "./components/SalesListFilters";
 import { estimatePaidRef, SalesMoneyCell } from "./components/SalesMoneyCell";
 import { SalesStatusBadge } from "./components/SalesStatusBadge";
+import { salesListSchema, toSalesFilters } from "./salesListParams";
+
+const detailLinkClass =
+  "rounded-md hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function formatInvoiceNumber(invoiceNumber: string) {
   return invoiceNumber.startsWith("#") ? invoiceNumber : `#${invoiceNumber}`;
@@ -38,14 +53,24 @@ function isPartiallyPaid(sale: SaleListItem) {
   );
 }
 
-const columns: DataTableColumn<SaleListItem>[] = [
-  {
+/** Columna del número; `detailHref` lleva a la venta con la URL de la lista en `returnTo`. */
+function buildInvoiceColumn(
+  detailHref: (saleId: string) => string,
+): DataTableColumn<SaleListItem> {
+  return {
     cellClassName: "font-medium text-primary",
     header: "N° Factura",
     hideInCard: true,
     key: "invoice",
-    render: (sale) => formatInvoiceNumber(sale.invoiceNumber),
-  },
+    render: (sale) => (
+      <Link className={detailLinkClass} href={detailHref(sale.id)}>
+        {formatInvoiceNumber(sale.invoiceNumber)}
+      </Link>
+    ),
+  };
+}
+
+const staticColumns: DataTableColumn<SaleListItem>[] = [
   {
     cellClassName: "text-on-surface-variant",
     header: "Fecha y Hora",
@@ -99,24 +124,39 @@ const columns: DataTableColumn<SaleListItem>[] = [
   },
 ];
 
-export function SalesListPage() {
-  const [filters, setFilters] = useState<SalesFilters>({});
-  const { limit, setLimit, setSkip, skip } = usePaginationState([
-    filters.search,
-    filters.status,
-    filters.from,
-    filters.to,
-  ]);
+function SalesList() {
+  // Búsqueda, filtros, página y tamaño viven en la URL: recarga, "atrás" y volver del detalle los conservan.
+  const list = useUrlListState(salesListSchema);
+  const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
+  // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
+  const debouncedSearch = useDebouncedValue(list.state.search, URL_LIST_DEBOUNCE_MS);
+  const filters = toSalesFilters(list.state, debouncedSearch);
   const sales = useSales({ ...filters, limit, skip });
   const cancelSale = useCancelSale();
   const returnSale = useReturnSale();
   const salesItems = getPaginatedItems(sales.data);
   const totalSales = sales.data?.total ?? 0;
+  const { href: listHref, setState: setListState } = list;
+  // El detalle vuelve a esta URL exacta (filtros y página) con "Volver".
+  const columns = useMemo(
+    () => [
+      buildInvoiceColumn((saleId) => withReturnTo(`/sales/${saleId}`, listHref)),
+      ...staticColumns,
+    ],
+    [listHref],
+  );
+  const lastPage = getTotalPages(totalSales, limit);
+  const isPastLastPage = sales.isSuccess && !sales.isFetching && list.state.page > lastPage;
 
-  function handleFilterChange(patch: Partial<SalesFilters>) {
-    setFilters((current) => ({ ...current, ...patch }));
-    setSkip(0);
-  }
+  // Una página más allá de la última (`?page=9999`, o un enlace viejo) cae en la
+  // última que existe, y la URL lo refleja.
+  useEffect(() => {
+    if (isPastLastPage) {
+      setListState({ page: lastPage });
+    }
+  }, [isPastLastPage, lastPage, setListState]);
+
+  useScrollRestoration(listHref, { ready: !sales.isLoading });
 
   async function handleCancelSale(saleId: string) {
     await cancelSale.mutateAsync(saleId);
@@ -131,14 +171,7 @@ export function SalesListPage() {
       <EntityListPage
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-start">
-            <SalesExportActions
-              exportFilters={{
-                from: filters.from,
-                search: filters.search,
-                status: filters.status,
-                to: filters.to,
-              }}
-            />
+            <SalesExportActions exportFilters={filters} />
             <Can permission="sales.create">
               <Button asChild className="w-full gap-1 sm:w-auto" size="sm">
                 <Link href="/sales/create">
@@ -153,14 +186,14 @@ export function SalesListPage() {
         layout="sections"
         title="Ventas"
       >
-        <SalesListFilters filters={filters} onChange={handleFilterChange} />
+        <SalesListFilters onChange={list.setState} state={list.state} />
 
         <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
           <DataTable
             actions={(sale) => [
-              { href: `/sales/${sale.id}`, label: "Ver detalle" },
+              { href: withReturnTo(`/sales/${sale.id}`, listHref), label: "Ver detalle" },
               { href: `/payments?saleId=${sale.id}`, label: "Registrar pago" },
-              { href: `/sales/${sale.id}`, label: "Ver recibo" },
+              { href: withReturnTo(`/sales/${sale.id}`, listHref), label: "Ver recibo" },
               {
                 disabled: cancelSale.isPending || sale.status === "cancelada",
                 label: "Anular",
@@ -174,7 +207,11 @@ export function SalesListPage() {
               },
             ]}
             cardSubtitle={(sale) => sale.customer?.name ?? sale.customerId}
-            cardTitle={(sale) => formatInvoiceNumber(sale.invoiceNumber)}
+            cardTitle={(sale) => (
+              <Link className={detailLinkClass} href={withReturnTo(`/sales/${sale.id}`, listHref)}>
+                {formatInvoiceNumber(sale.invoiceNumber)}
+              </Link>
+            )}
             columns={columns}
             data={salesItems}
             embedded
@@ -216,3 +253,6 @@ export function SalesListPage() {
     </div>
   );
 }
+
+/** `useUrlListState` lee la URL: la pantalla lleva su límite de Suspense. */
+export const SalesListPage = withUrlListBoundary(SalesList);

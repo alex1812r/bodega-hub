@@ -8,30 +8,18 @@ import {
 } from "@/shared/styles/form-controls";
 import { cn } from "@/shared/utils/cn";
 
-import type { ContactsFilters } from "../../hooks/useContacts";
+import type { ContactsListFilterState } from "../contactsListParams";
 
 type ContactsListFiltersProps = {
   customersOnly?: boolean;
-  filters: Pick<ContactsFilters, "isActive" | "search" | "type">;
-  onChange: (patch: Partial<ContactsFilters>) => void;
+  onChange: (patch: Partial<ContactsListFilterState>) => void;
+  state: ContactsListFilterState;
 };
-
-function isActiveFilterValue(isActive: ContactsFilters["isActive"]) {
-  if (isActive === true || isActive === "true") {
-    return "true";
-  }
-
-  if (isActive === false || isActive === "false") {
-    return "false";
-  }
-
-  return "";
-}
 
 export function ContactsListFilters({
   customersOnly = false,
-  filters,
   onChange,
+  state,
 }: ContactsListFiltersProps) {
   return (
     <section className="flex flex-wrap items-end gap-4 rounded-xl border border-border bg-surface-container-lowest p-4 shadow-sm dark:border-slate-800 md:p-5">
@@ -47,12 +35,10 @@ export function ContactsListFilters({
           <input
             className={cn(stitchListFilterFieldClassName, "w-full pl-10")}
             id="contacts-search"
-            onChange={(event) =>
-              onChange({ search: event.target.value.trim() || undefined })
-            }
+            onChange={(event) => onChange({ search: event.target.value })}
             placeholder="Nombre, RIF o Cédula..."
             type="search"
-            value={filters.search ?? ""}
+            value={state.search}
           />
         </div>
       </div>
@@ -66,13 +52,11 @@ export function ContactsListFilters({
             className={cn(stitchListFilterFieldClassName, "w-full")}
             id="contacts-type"
             onChange={(event) =>
-              onChange({
-                type: (event.target.value || undefined) as ContactsFilters["type"],
-              })
+              onChange({ type: event.target.value as ContactsListFilterState["type"] })
             }
-            value={filters.type ?? ""}
+            value={state.type}
           >
-            <option value="">Todos los tipos</option>
+            <option value="all">Todos los tipos</option>
             <option value="cliente">Cliente</option>
             <option value="proveedor">Proveedor</option>
             <option value="ambos">Ambos</option>
@@ -87,18 +71,14 @@ export function ContactsListFilters({
         <select
           className={cn(stitchListFilterFieldClassName, "w-full")}
           id="contacts-status"
-          onChange={(event) => {
-            const value = event.target.value;
-            onChange({
-              isActive:
-                value === "true" ? true : value === "false" ? false : undefined,
-            });
-          }}
-          value={isActiveFilterValue(filters.isActive)}
+          onChange={(event) =>
+            onChange({ status: event.target.value as ContactsListFilterState["status"] })
+          }
+          value={state.status}
         >
-          <option value="">Todos los estados</option>
-          <option value="true">Activo</option>
-          <option value="false">Inactivo</option>
+          <option value="all">Todos los estados</option>
+          <option value="active">Activo</option>
+          <option value="inactive">Inactivo</option>
         </select>
       </div>
     </section>
