@@ -9,11 +9,11 @@ import {
 } from "@/modules/reports/services/reportSeries";
 import { formatDateRangeLabel } from "@/shared/components/DateRangeField";
 import { TimeSeriesChart, type TimeSeriesSeries } from "@/shared/components/TimeSeriesChart";
-import { cn } from "@/shared/utils/cn";
 import { formatRef } from "@/shared/utils/currency";
 
 import { type DashboardRequestScope, useDashboardSalesTrend } from "../hooks/useDashboard";
 import { getBusinessTodayIsoDate } from "../utils/businessDate";
+import { DashboardDeltaValue } from "./DashboardKpiTrend";
 import { DASHBOARD_CHART_MIN_DAYS, resolveDashboardChartRange } from "../utils/dashboardPeriod";
 
 /** Picos de venta que el gráfico destaca. */
@@ -32,15 +32,6 @@ type DashboardSalesChartCardProps = {
   range?: { from: string; to: string };
   scope?: DashboardRequestScope;
 };
-
-/** "+12.5%", "-3.0%" o "—" si no hay periodo anterior con el que comparar. */
-export function formatSalesDelta(deltaPct: number | null | undefined) {
-  if (deltaPct == null || !Number.isFinite(deltaPct)) {
-    return "—";
-  }
-
-  return `${deltaPct > 0 ? "+" : ""}${deltaPct.toFixed(1)}%`;
-}
 
 function hasSales(series: DailySalesSeries) {
   const { current, previous } = series.totals;
@@ -79,9 +70,6 @@ export function DashboardSalesChartCard({ range, scope }: DashboardSalesChartCar
   );
   const series = trend.data?.series;
   const chartSeries = useMemo(() => toChartSeries(series), [series]);
-  const deltaPct = series?.totals.deltaPct;
-  const delta = formatSalesDelta(deltaPct);
-  const hasDelta = delta !== "—";
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4 rounded-xl border border-border bg-surface-container-lowest p-5 shadow-sm">
@@ -102,17 +90,8 @@ export function DashboardSalesChartCard({ range, scope }: DashboardSalesChartCar
               {formatRef(series.totals.current.totalRef)}
             </p>
             <p className="text-xs text-on-surface-variant">
-              <span
-                className={cn(
-                  "font-semibold tabular-nums",
-                  hasDelta && (deltaPct ?? 0) < 0 && "text-error",
-                  hasDelta && (deltaPct ?? 0) >= 0 && "text-emerald-700 dark:text-emerald-300",
-                )}
-                data-testid="sales-chart-delta"
-              >
-                {delta}
-              </span>{" "}
-              vs periodo anterior
+              <DashboardDeltaValue deltaPct={series.totals.deltaPct} testId="sales-chart-delta" />{" "}
+              vs. periodo anterior
             </p>
           </div>
         ) : null}

@@ -28,7 +28,7 @@ jest.mock("../../../shared/components/TimeSeriesChart", () => ({
   },
 }));
 
-import { DashboardSalesChartCard, formatSalesDelta } from "./DashboardSalesChartCard";
+import { DashboardSalesChartCard } from "./DashboardSalesChartCard";
 
 type Bucket = { count: number; totalRef: number };
 
@@ -134,7 +134,7 @@ describe("DashboardSalesChartCard", () => {
     expect(series.previousPoints).toHaveLength(7);
     expect(series.previousPoints?.[0]).toMatchObject({ key: "2026-05-05", valueRef: 20 });
     // 200 frente a 160 del periodo anterior.
-    expect(screen.getByTestId("sales-chart-delta")).toHaveTextContent("+25.0%");
+    expect(screen.getByTestId("sales-chart-delta")).toHaveTextContent(/^↑ 25 %$/);
     expect(screen.getByText(/12–18 may 2026 · por día$/)).toBeInTheDocument();
     // Una sola petición: actual y anterior llegan en la misma respuesta.
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -143,11 +143,11 @@ describe("DashboardSalesChartCard", () => {
     );
   });
 
-  it("una caída se muestra con signo negativo", async () => {
+  it("una caída se muestra con flecha hacia abajo, en el mismo formato que Reportes", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ data: seriesPayload(PREVIOUS_WEEK, WEEK) }));
     renderCard({ range: { from: "2026-05-12", to: "2026-05-18" } });
 
-    expect(await screen.findByTestId("sales-chart-delta")).toHaveTextContent("-20.0%");
+    expect(await screen.findByTestId("sales-chart-delta")).toHaveTextContent(/^↓ 20 %$/);
   });
 
   it.each([
@@ -164,16 +164,16 @@ describe("DashboardSalesChartCard", () => {
     expect(lastChartProps().series).toHaveLength(1);
   });
 
-  it.each([
-    [NaN, "—"],
-    [Infinity, "—"],
-    [null, "—"],
-    [undefined, "—"],
-    [0, "0.0%"],
-    [12.345, "+12.3%"],
-    [-100, "-100.0%"],
-  ])("formatSalesDelta(%p) = %s", (value, expected) => {
-    expect(formatSalesDelta(value)).toBe(expected);
+  // REP-F2: un solo formato de variación en dashboard y Reportes (coma decimal, espacio antes de %).
+  it("la variación usa coma decimal y espacio antes de %", async () => {
+    const payload = seriesPayload(WEEK, PREVIOUS_WEEK);
+
+    payload.series.totals.deltaPct = 106.67;
+    fetchMock.mockResolvedValue(jsonResponse({ data: payload }));
+    renderCard({ range: { from: "2026-05-12", to: "2026-05-18" } });
+
+    expect(await screen.findByTestId("sales-chart-delta")).toHaveTextContent(/^↑ 106,7 %$/);
+    expect(screen.getByText(/sube 106,7 %/)).toHaveClass("sr-only");
   });
 
   it("un periodo de menos de 7 días amplía la ventana a los últimos 7 y lo dice", async () => {
