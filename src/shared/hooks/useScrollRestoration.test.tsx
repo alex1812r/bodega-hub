@@ -5,6 +5,7 @@ import { useRef } from "react";
 import {
   MAX_SCROLL_ENTRIES,
   SCROLL_POSITIONS_STORAGE_KEY,
+  SCROLL_RESTORE_MAX_MS,
   SCROLL_SAVE_THROTTLE_MS,
   useScrollRestoration,
 } from "./useScrollRestoration";
@@ -243,6 +244,165 @@ describe("useScrollRestoration", () => {
       view.unmount();
 
       expect(stored()).toEqual([["/sales?estado=paid", 90]]);
+    });
+  });
+
+  // DET-F4: por debajo de 768 px la lista monta primero la tabla y luego las
+  // tarjetas; el alto cambia después de `ready` y el navegador mueve el scroll.
+  describe("el alto cambia después de ready", () => {
+    const FRAME_MS = 16;
+
+    /** Da al elemento un alto de contenido y recorta `scrollTop` como el navegador. */
+    function fakeLayout(element: HTMLElement, maxScroll: number) {
+      const layout = { maxScroll, top: 0 };
+
+      Object.defineProperty(element, "scrollHeight", {
+        configurable: true,
+        get: () => layout.maxScroll + 844,
+      });
+      Object.defineProperty(element, "scrollTop", {
+        configurable: true,
+        get: () => layout.top,
+        set: (top: number) => {
+          layout.top = Math.min(Math.max(0, top), layout.maxScroll);
+        },
+      });
+
+      return layout;
+    }
+
+    function frames(count: number) {
+      act(() => {
+        jest.advanceTimersByTime(FRAME_MS * count);
+      });
+    }
+
+    function mountNotReady() {
+      const view = render(<Screen ready={false} url={LIST_URL} />);
+      const main = view.getByTestId("main");
+
+      return { main, view };
+    }
+
+    it("alcanza la posición guardada cuando el contenido crece y antes no cabía", () => {
+      store([[LIST_URL, 700]]);
+
+      const { main, view } = mountNotReady();
+      const layout = fakeLayout(main, 306);
+
+      view.rerender(<Screen ready url={LIST_URL} />);
+      expect(main.scrollTop).toBe(306);
+
+      // Las tarjetas sustituyen a la tabla: ahora la posición sí cabe.
+      layout.maxScroll = 1429;
+      frames(2);
+
+      expect(main.scrollTop).toBe(700);
+
+      view.unmount();
+      expect(stored()).toEqual([[LIST_URL, 700]]);
+    });
+
+    it("vuelve a la posición guardada si el cambio de alto mueve el scroll, sin guardar la mala", () => {
+      store([[LIST_URL, 700]]);
+
+      const { main, view } = mountNotReady();
+      const layout = fakeLayout(main, 900);
+
+      view.rerender(<Screen ready url={LIST_URL} />);
+      expect(main.scrollTop).toBe(700);
+
+      // El navegador ancla el scroll al paginador y lo lleva al fondo.
+      layout.maxScroll = 2505;
+      layout.top = 2505;
+      fireEvent.scroll(main);
+
+      act(() => {
+        jest.advanceTimersByTime(SCROLL_SAVE_THROTTLE_MS * 2);
+      });
+
+      expect(main.scrollTop).toBe(700);
+      expect(stored()).toEqual([[LIST_URL, 700]]);
+
+      view.unmount();
+      expect(stored()).toEqual([[LIST_URL, 700]]);
+    });
+
+    it("al salir antes de alcanzarla conserva la posición guardada", () => {
+      store([[LIST_URL, 700]]);
+
+      const { main, view } = mountNotReady();
+
+      fakeLayout(main, 306);
+      view.rerender(<Screen ready url={LIST_URL} />);
+      frames(2);
+      fireEvent(window, new Event("pagehide"));
+
+      expect(stored()).toEqual([[LIST_URL, 700]]);
+
+      view.unmount();
+      expect(stored()).toEqual([[LIST_URL, 700]]);
+    });
+
+    it.each([
+      ["rueda", () => fireEvent.wheel(window)],
+      ["tacto", () => fireEvent.touchStart(window)],
+      ["teclado", () => fireEvent.keyDown(window, { key: "PageDown" })],
+      ["puntero", () => fireEvent.pointerDown(window)],
+    ])("deja de restaurar si el usuario se desplaza con %s", (_label, interact) => {
+      store([[LIST_URL, 700]]);
+
+      const { main, view } = mountNotReady();
+      const layout = fakeLayout(main, 306);
+
+      view.rerender(<Screen ready url={LIST_URL} />);
+      interact();
+
+      layout.maxScroll = 1429;
+      frames(4);
+      expect(main.scrollTop).toBe(306);
+
+      scrollTo(main, 400);
+      view.unmount();
+
+      expect(stored()).toEqual([[LIST_URL, 400]]);
+    });
+
+    it("un scroll sin cambio de alto es del usuario: no se pelea y se guarda", () => {
+      store([[LIST_URL, 700]]);
+
+      const { main, view } = mountNotReady();
+      const layout = fakeLayout(main, 2000);
+
+      view.rerender(<Screen ready url={LIST_URL} />);
+      scrollTo(main, 150);
+
+      layout.maxScroll = 2600;
+      frames(4);
+      expect(main.scrollTop).toBe(150);
+
+      view.unmount();
+      expect(stored()).toEqual([[LIST_URL, 150]]);
+    });
+
+    it("pasado el tope de tiempo deja de restaurar y guarda la posición real", () => {
+      store([[LIST_URL, 700]]);
+
+      const { main, view } = mountNotReady();
+      const layout = fakeLayout(main, 306);
+
+      view.rerender(<Screen ready url={LIST_URL} />);
+
+      act(() => {
+        jest.advanceTimersByTime(SCROLL_RESTORE_MAX_MS + FRAME_MS);
+      });
+
+      layout.maxScroll = 1429;
+      frames(4);
+      expect(main.scrollTop).toBe(306);
+
+      view.unmount();
+      expect(stored()).toEqual([[LIST_URL, 306]]);
     });
   });
 
