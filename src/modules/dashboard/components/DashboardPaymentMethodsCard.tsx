@@ -4,6 +4,7 @@ import { Wallet } from "lucide-react";
 import Link from "next/link";
 
 import { usePaymentMethodsReport } from "@/modules/reports/hooks/useReports";
+import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { paymentMethodLabels } from "@/shared/payments/paymentMethods";
@@ -11,20 +12,28 @@ import { formatRef, formatVes } from "@/shared/utils/currency";
 
 type DashboardPaymentMethodsCardProps = {
   from?: string;
-  fromStart?: boolean;
   periodLabel?: string;
   to?: string;
 };
 
+/**
+ * Mix de pagos del periodo. Lee `/api/reports/payment-methods`, que exige
+ * `reports.view`: sin ese permiso (almacén, vendedor) ni pide ni pinta nada.
+ */
 export function DashboardPaymentMethodsCard({
   from,
-  fromStart,
   periodLabel,
   to,
 }: DashboardPaymentMethodsCardProps) {
-  const query = usePaymentMethodsReport({ from, fromStart, to });
+  const { can, isLoading } = usePermission();
+  const canView = !isLoading && can("reports.view");
+  const query = usePaymentMethodsReport({ from, to }, { enabled: canView });
   const items = query.data?.items ?? [];
   const summary = query.data?.summary;
+
+  if (!canView) {
+    return null;
+  }
 
   return (
     <div className="rounded-xl border border-border bg-surface-container-lowest shadow-sm">
@@ -48,12 +57,14 @@ export function DashboardPaymentMethodsCard({
       <div className="p-3">
         {query.isLoading ? (
           <LoadingState
-            description="Cobros de venta por metodo."
+            description="Cobros de venta por método."
             title="Cargando mix de pagos"
             variant="inline"
           />
         ) : query.error ? (
-          <p className="p-2 text-sm text-red-600">No pudimos cargar el mix de pagos.</p>
+          <p className="p-2 text-sm text-error" role="alert">
+            No pudimos cargar el mix de pagos.
+          </p>
         ) : (
           <ul className="divide-y divide-border/60">
             {items.map((row) => (
