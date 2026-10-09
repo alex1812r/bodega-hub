@@ -5,7 +5,7 @@ import { ApiError } from "@/lib/api/apiError";
 import type { TimeSeriesPoint } from "@/shared/components/TimeSeriesChart";
 import { roundMoney } from "@/shared/utils/currency";
 
-import { assertReportDay, isoDayNumber } from "./reportParams";
+import { isoDayNumber, readReportDayParam } from "./reportParams";
 
 export { isIsoDay } from "./reportParams";
 
@@ -127,14 +127,8 @@ function badRequest(message: string) {
 }
 
 function parseDayParam(searchParams: URLSearchParams, name: "from" | "to") {
-  const value = blankToNull(searchParams.get(name));
-
-  if (value !== null) {
-    // Fecha real y año razonable: el validador común de Reportes y dashboard.
-    assertReportDay(value, name === "from" ? "desde" : "hasta");
-  }
-
-  return value;
+  // Fecha real, año razonable y sin recortar: el lector común de Reportes y dashboard.
+  return readReportDayParam(searchParams, name, name === "from" ? "desde" : "hasta");
 }
 
 /**

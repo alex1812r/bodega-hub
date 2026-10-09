@@ -89,6 +89,13 @@ describe.each(DATE_ROUTES)("/api/reports/%s: fechas", (name, handler) => {
     ["from=2026-05-01&to=2026-5-18", /"hasta" no es válida/],
     ["from=2026-05-19&to=2026-05-18", /no puede ser posterior/],
     [`from=${TEN_KB}&to=2026-05-18`, /"desde" no es válida/],
+    // REP-F10 (N-08): una fecha con espacios alrededor no se recorta en ninguna ruta
+    // (antes las rutas con serie la aceptaban y las demás respondían 400).
+    ["from=%202026-05-01&to=2026-05-18", /"desde" no es válida/],
+    ["from=2026-05-01%20&to=2026-05-18", /"desde" no es válida/],
+    ["from=2026-05-01&to=2026-05-18%0a", /"hasta" no es válida/],
+    ["from=2026-05-01&to=%092026-05-18", /"hasta" no es válida/],
+    ["from=%20&to=2026-05-18", /"desde" no es válida/],
   ])("400 en español con %s", async (query, message) => {
     await expectBadRequest(await call(handler, name, query), message);
   });

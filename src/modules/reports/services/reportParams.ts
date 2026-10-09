@@ -93,6 +93,25 @@ export function assertReportDay(value: string, label: string) {
   }
 }
 
+/**
+ * Lee un parámetro de fecha de la URL. Ausente o vacío → `null` (no se
+ * valida). Si llega, debe ser exactamente un día válido (`assertReportDay`):
+ * NO se recorta, así que ` 2026-01-01` o `2026-01-01%0a` responden 400 en
+ * todas las rutas. Es el único lector de fechas de Reportes y del dashboard:
+ * antes las rutas con serie recortaban y aceptaban lo que las demás rechazaban.
+ */
+export function readReportDayParam(searchParams: URLSearchParams, name: string, label: string) {
+  const value = searchParams.get(name);
+
+  if (value === null || value === "") {
+    return null;
+  }
+
+  assertReportDay(value, label);
+
+  return value;
+}
+
 function isTruthyParam(value: string | null) {
   const normalized = value?.trim().toLowerCase() ?? "";
   return normalized !== "" && normalized !== "0" && normalized !== "false";
@@ -108,17 +127,10 @@ const DATE_PARAM_LABELS = { date: "día", from: "desde", to: "hasta" } as const;
  */
 export function assertReportDateParams(searchParams: URLSearchParams) {
   const fromStart = isTruthyParam(searchParams.get("fromStart"));
-  const read = (name: keyof typeof DATE_PARAM_LABELS) => {
-    const value = searchParams.get(name);
-
-    if (value === null || value === "" || (name === "from" && fromStart)) {
-      return null;
-    }
-
-    assertReportDay(value, DATE_PARAM_LABELS[name]);
-
-    return value;
-  };
+  const read = (name: keyof typeof DATE_PARAM_LABELS) =>
+    name === "from" && fromStart
+      ? null
+      : readReportDayParam(searchParams, name, DATE_PARAM_LABELS[name]);
 
   const from = read("from");
   const to = read("to");
