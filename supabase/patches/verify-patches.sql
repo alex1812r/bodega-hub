@@ -2155,4 +2155,32 @@ select
     from pg_proc p
     where p.pronamespace = 'public'::regnamespace and p.proname = 'save_pack_recipe'
   )
+union all
+select
+  'view products_price_review atribuye a la compra el costo de los componentes de un empaque desarmado en su recepcion: enlaza la conversion_entrada con purchase_items.disassembled_conversion_id, sigue con security_invoker y sin escritura ni lectura para anon (20261012b)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.products_price_review')
+      and c.relkind = 'v'
+      and c.reloptions @> array['security_invoker=true']
+      and pg_get_viewdef(c.oid) ilike '%coalesce(sm.purchase_id, d.purchase_id)%conversion_entrada%pi.disassembled_conversion_id = sm.conversion_id%sm.seq > s.snapshot_seq%order by sm.seq desc%'
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and has_table_privilege('service_role', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'select')
+      and not has_table_privilege('authenticated', c.oid, 'insert')
+  )
+union all
+select
+  'purchase_items: indice parcial por disassembled_conversion_id para enlazar un desarme con su compra (20261012b)',
+  exists (
+    select 1
+    from pg_index i
+    join pg_class ic on ic.oid = i.indexrelid
+    where i.indrelid = to_regclass('public.purchase_items')
+      and ic.relname = 'idx_purchase_items_disassembled_conversion'
+      and i.indisvalid
+      and i.indpred is not null
+      and pg_get_indexdef(i.indexrelid) ilike '%(disassembled_conversion_id)%where%disassembled_conversion_id is not null%'
+  )
 order by 1;
