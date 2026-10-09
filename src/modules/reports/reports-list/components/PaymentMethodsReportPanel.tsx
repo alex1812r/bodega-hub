@@ -22,6 +22,8 @@ import {
   usePaymentMethodsReport,
 } from "../../hooks/useReports";
 import type { PaymentMethodsReportComparison } from "../../services/paymentMethodsReport";
+import { isReportQueryOffline, ReportOfflineError } from "../reportQueryState";
+import { ReportQueryError } from "./money/ReportStates";
 import { ReportChartCard } from "./ReportChartCard";
 import { ReportTableSection } from "./ReportTableSection";
 
@@ -150,7 +152,9 @@ export function PaymentMethodsReportPanel({
     () => (comparison ? [...methodColumns, ...buildComparisonColumns(comparison)] : methodColumns),
     [comparison],
   );
-  const isReady = !query.isLoading && !query.error;
+  // Sin red la consulta queda en pausa: no es un reporte vacío.
+  const isOffline = isReportQueryOffline(query);
+  const isReady = !query.isLoading && !query.error && !isOffline;
 
   return (
     <div className="min-w-0 space-y-4">
@@ -172,6 +176,14 @@ export function PaymentMethodsReportPanel({
           <p className="text-sm text-error" role="alert">
             No se pudo generar el reporte de métodos de pago.
           </p>
+        ) : null}
+
+        {isOffline ? (
+          <ReportQueryError
+            error={new ReportOfflineError()}
+            onRetry={() => void query.refetch()}
+            reportName="Métodos de pago"
+          />
         ) : null}
 
         {summary ? <SummaryStrip summary={summary} /> : null}

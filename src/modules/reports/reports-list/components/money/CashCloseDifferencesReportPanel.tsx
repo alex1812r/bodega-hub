@@ -19,6 +19,7 @@ import {
   type CashCloseDifferenceRow,
 } from "../../../services/moneyReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { getReportQueryError } from "../../reportQueryState";
 import { ReportChartCard } from "../ReportChartCard";
 import {
   formatResultsRange,
@@ -201,6 +202,7 @@ export function CashCloseDifferencesReportPanel({
     to: range.to,
   };
   const query = useCashCloseDifferencesReport(filters);
+  const queryError = getReportQueryError(query);
   const { data } = query;
   const items = data?.items;
   const series = useMemo(
@@ -225,9 +227,9 @@ export function CashCloseDifferencesReportPanel({
       >
         <CurrencySelector onChange={onCurrencyChange} value={currency} />
 
-        {query.error ? (
+        {queryError ? (
           <ReportQueryError
-            error={query.error}
+            error={queryError}
             onRetry={() => void query.refetch()}
             reportName={report.name}
           />
@@ -252,7 +254,7 @@ export function CashCloseDifferencesReportPanel({
         )}
       </ReportChartCard>
 
-      {!query.error ? (
+      {!queryError ? (
         <ReportTableSection
           summary={formatResultsRange(data?.skip ?? pagination.skip, pagination.limit, data?.total ?? 0)}
         >

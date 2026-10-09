@@ -4,6 +4,8 @@ import { ClientApiError } from "@/shared/api/apiFetch";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { ErrorState } from "@/shared/components/ErrorState";
 
+import { ReportOfflineError, toReportErrorMessage } from "../../reportQueryState";
+
 const frameClassName =
   "rounded-lg border border-outline-variant bg-surface-container-lowest shadow-sm";
 
@@ -31,13 +33,24 @@ type ReportQueryErrorProps = {
   reportName: string;
 };
 
-/** Error de la consulta de un reporte: 403 → sin permiso; el resto, con «Reintentar». */
+/**
+ * Error de la consulta de un reporte: 403 → sin permiso; sin red → aviso de
+ * conexión; el resto, con «Reintentar». Solo un error de negocio enseña su mensaje.
+ */
 export function ReportQueryError({ error, onRetry, reportName }: ReportQueryErrorProps) {
   if (isForbiddenError(error)) {
     return <ReportForbiddenState reportName={reportName} />;
   }
 
+  if (error instanceof ReportOfflineError) {
+    return <ErrorState onRetry={onRetry} title={error.message} />;
+  }
+
   return (
-    <ErrorState description={error.message} onRetry={onRetry} title="No se pudo generar el reporte" />
+    <ErrorState
+      description={toReportErrorMessage(error)}
+      onRetry={onRetry}
+      title="No se pudo generar el reporte"
+    />
   );
 }

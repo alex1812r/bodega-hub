@@ -14,6 +14,9 @@ import {
   type ReportRequestScope,
   useFxDepreciationReport,
 } from "../../hooks/useReports";
+import { isReportQueryOffline, ReportOfflineError } from "../reportQueryState";
+import { formatCaracasDay } from "./inventory/inventoryReportText";
+import { ReportQueryError } from "./money/ReportStates";
 
 const methodLabels: Record<string, string> = {
   efectivo_usd: "Efectivo USD",
@@ -89,7 +92,7 @@ function FxSummary({ summary }: { summary: FxDepreciationReportSummary }) {
         <SummaryCard
           hint={
             summary.valuationRateAt
-              ? `Registrada ${formatDate(summary.valuationRateAt)}`
+              ? `Registrada ${formatCaracasDay(summary.valuationRateAt)}`
               : "Sin tasa registrada"
           }
           label="Tasa de valorización"
@@ -189,6 +192,8 @@ export function FxDepreciationReportPanel({
   );
   const items = getPaginatedItems(query.data);
   const summary = query.data?.summary;
+  // Sin red la consulta queda en pausa: no es un reporte vacío.
+  const isOffline = isReportQueryOffline(query);
 
   return (
     <section className="space-y-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-5 shadow-sm">
@@ -208,9 +213,17 @@ export function FxDepreciationReportPanel({
         <p className="text-sm text-error">No se pudo generar el reporte de depreciación FX.</p>
       ) : null}
 
+      {isOffline ? (
+        <ReportQueryError
+          error={new ReportOfflineError()}
+          onRetry={() => void query.refetch()}
+          reportName="Depreciación FX"
+        />
+      ) : null}
+
       {summary ? <FxSummary summary={summary} /> : null}
 
-      {!query.isLoading && !query.error && items.length === 0 ? (
+      {!query.isLoading && !query.error && !isOffline && items.length === 0 ? (
         <EmptyState
           description="No hay pagos de venta en el rango seleccionado."
           title="Sin movimientos"

@@ -28,6 +28,7 @@ import type {
   AgingDocumentRow,
 } from "../../../services/moneyReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { getReportQueryError } from "../../reportQueryState";
 import { ReportChartCard } from "../ReportChartCard";
 import {
   formatResultsRange,
@@ -259,6 +260,7 @@ export function AgingReportPanel({
     skip: pagination.skip,
   };
   const query = useAgingReport(filters);
+  const queryError = getReportQueryError(query);
   const { data } = query;
   // Cada tramo, contacto o página es otra consulta. Mientras llega se conserva el
   // último resumen: las tarjetas no desaparecen (ni pierde el foco la pulsada).
@@ -302,13 +304,13 @@ export function AgingReportPanel({
             kind={kind}
             onChange={(nextContactId) => onFiltersChange({ contactId: nextContactId })}
             reportName={contactName}
-            reportSettled={data !== undefined || Boolean(query.error)}
+            reportSettled={data !== undefined || Boolean(queryError)}
           />
         </div>
 
-        {query.error ? (
+        {queryError ? (
           <ReportQueryError
-            error={query.error}
+            error={queryError}
             onRetry={() => void query.refetch()}
             reportName={report.name}
           />
@@ -335,7 +337,7 @@ export function AgingReportPanel({
         )}
       </ReportChartCard>
 
-      {!query.error && hasDebt ? (
+      {!queryError && hasDebt ? (
         <ReportTableSection
           summary={formatResultsRange(data?.skip ?? pagination.skip, pagination.limit, data?.total ?? 0)}
         >

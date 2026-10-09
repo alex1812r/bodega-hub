@@ -16,6 +16,7 @@ import {
   type SalesByHourReport,
 } from "../../../services/moneyReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { getReportQueryError } from "../../reportQueryState";
 import { useIsNarrowViewport } from "../../hooks/useIsNarrowViewport";
 import { ReportChartCard } from "../ReportChartCard";
 import { ReportTableSection } from "../ReportTableSection";
@@ -156,6 +157,7 @@ type SalesByHourReportPanelProps = {
 export function SalesByHourReportPanel({ range, report }: SalesByHourReportPanelProps) {
   const hasRange = Boolean(range.from && range.to);
   const query = useSalesByHourReport(range);
+  const queryError = getReportQueryError(query);
   const { data } = query;
   const hasSales = Boolean(data && data.totals.salesCount > 0);
   const peakHour = data ? findPeakIndex(data.byHour) : null;
@@ -188,9 +190,9 @@ export function SalesByHourReportPanel({ range, report }: SalesByHourReportPanel
           />
         ) : query.isLoading ? (
           <HeatmapChart ariaLabel={report.name} columns={[]} loading rows={[]} values={[]} />
-        ) : query.error ? (
+        ) : queryError ? (
           <ReportQueryError
-            error={query.error}
+            error={queryError}
             onRetry={() => void query.refetch()}
             reportName={report.name}
           />

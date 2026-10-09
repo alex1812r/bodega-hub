@@ -458,11 +458,13 @@ describe("MoneyReportPanel · REP-06b", () => {
       expect(screen.getByRole("status", { name: /Cargando/ })).toBeInTheDocument();
       view.unmount();
 
-      mockQueries.useSalesByHourReport = { error: new Error("Sin conexión") };
+      mockQueries.useSalesByHourReport = { error: new Error("Failed to fetch") };
       renderPanel("sales-by-hour");
 
       expect(screen.getByText("No se pudo generar el reporte")).toBeInTheDocument();
-      expect(screen.getByText("Sin conexión")).toBeInTheDocument();
+      // REP-F8 R-11: un fallo que no es de negocio no enseña su mensaje interno.
+      expect(screen.getByText("No pudimos cargar el reporte.")).toBeInTheDocument();
+      expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
       await userEvent.click(screen.getByRole("button", { name: /reintentar/i }));
       expect(mockRefetch).toHaveBeenCalledTimes(1);
     });

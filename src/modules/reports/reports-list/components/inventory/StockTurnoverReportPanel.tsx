@@ -14,6 +14,7 @@ import { type StockTurnoverFilters, useStockTurnoverReport } from "../../../hook
 import type { StockTurnoverGroupBy, StockTurnoverRow } from "../../../services/inventoryReports";
 import type { MoneyReportRange } from "../../../services/moneyReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { getReportQueryError } from "../../reportQueryState";
 import { ReportQueryError } from "../money/ReportStates";
 import { ReportChartCard } from "../ReportChartCard";
 import { ReportChipGroup, type ReportChipOption } from "../ReportChipGroup";
@@ -155,6 +156,7 @@ export function StockTurnoverReportPanel({
     to: range.to,
   };
   const query = useStockTurnoverReport(filters);
+  const queryError = getReportQueryError(query);
   const { data } = query;
   const items = data?.items;
   const total = data?.total ?? 0;
@@ -210,9 +212,9 @@ export function StockTurnoverReportPanel({
             description="Este reporte necesita un rango con fecha de inicio y de fin."
             title="Elige un rango de fechas"
           />
-        ) : query.error ? (
+        ) : queryError ? (
           <ReportQueryError
-            error={query.error}
+            error={queryError}
             onRetry={() => void query.refetch()}
             reportName={report.name}
           />
@@ -259,7 +261,7 @@ export function StockTurnoverReportPanel({
         )}
       </ReportChartCard>
 
-      {hasRange && !query.error && !isEmpty ? (
+      {hasRange && !queryError && !isEmpty ? (
         <ReportTableSection
           summary={formatResultsRange(data?.skip ?? pagination.skip, pagination.limit, total)}
         >

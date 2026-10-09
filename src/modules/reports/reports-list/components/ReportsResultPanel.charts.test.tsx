@@ -467,12 +467,14 @@ describe("ReportsResultPanel · gráficos (REP-04)", () => {
       expect(screen.getByRole("status", { name: "Cargando Ventas diarias" })).toBeInTheDocument();
       unmount();
 
-      mockResponses["daily-sales"] = { error: new Error("REPORT_UNAVAILABLE") };
+      mockResponses["daily-sales"] = { error: new Error("Failed to fetch") };
       renderPanel("daily-sales");
 
       const region = chartRegion("daily-sales");
 
-      expect(within(region).getByText("REPORT_UNAVAILABLE")).toBeInTheDocument();
+      // REP-F8 R-11: un fallo que no es de negocio no enseña su mensaje interno.
+      expect(within(region).getByText("No pudimos cargar el reporte.")).toBeInTheDocument();
+      expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
       await userEvent.click(within(region).getByRole("button", { name: /reintentar/i }));
       expect(mockRefetch).toHaveBeenCalledTimes(1);
     });

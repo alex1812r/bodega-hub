@@ -23,6 +23,7 @@ import type {
 import type { MoneyReportRange } from "../../../services/moneyReports";
 import { toTimeSeriesPoints, type ReportGroupBy } from "../../../services/reportSeries";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { getReportQueryError } from "../../reportQueryState";
 import { ReportQueryError } from "../money/ReportStates";
 import { ReportChartCard } from "../ReportChartCard";
 import { getGroupingNotice, GROUP_BY_LABELS } from "../ReportSeriesChart";
@@ -127,6 +128,7 @@ export function StockAdjustmentsReportPanel({
     to: range.to,
   };
   const query = useStockAdjustmentsReport(filters);
+  const queryError = getReportQueryError(query);
   const { data } = query;
   const byReason = data?.byReason;
   const buckets = data?.series;
@@ -174,9 +176,9 @@ export function StockAdjustmentsReportPanel({
             description="Este reporte necesita un rango con fecha de inicio y de fin."
             title="Elige un rango de fechas"
           />
-        ) : query.error ? (
+        ) : queryError ? (
           <ReportQueryError
-            error={query.error}
+            error={queryError}
             onRetry={() => void query.refetch()}
             reportName={report.name}
           />
@@ -242,7 +244,7 @@ export function StockAdjustmentsReportPanel({
         )}
       </ReportChartCard>
 
-      {hasRange && !query.error && !isEmpty ? (
+      {hasRange && !queryError && !isEmpty ? (
         <ReportTableSection
           summary={formatResultsRange(data?.skip ?? pagination.skip, pagination.limit, data?.total ?? 0)}
         >

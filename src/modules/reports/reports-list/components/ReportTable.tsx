@@ -8,6 +8,7 @@ import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { ResponsivePagination } from "@/shared/components/Pagination";
 
 import type { ReportDefinition } from "../config/reportCatalog";
+import { getReportQueryError, toFiniteNumber } from "../reportQueryState";
 
 /** Página y tamaño de la tabla del reporte (misma forma que `usePaginationState`). */
 export type ReportPagination = {
@@ -30,7 +31,9 @@ export function formatResultsRange(skip: number, limit: number, total: number) {
 type PagedQuery<TData> = Pick<
   UseQueryResult<PaginatedList<TData>, Error>,
   "data" | "error" | "isFetching" | "isLoading" | "refetch"
->;
+> &
+  // Sin red la consulta queda en pausa: la tabla no la toma por «sin registros».
+  Partial<Pick<UseQueryResult<PaginatedList<TData>, Error>, "isPaused" | "isPlaceholderData">>;
 
 /**
  * La página pedida ya no existe (el total bajó, o la URL trae una página de
@@ -81,8 +84,11 @@ export function ReportTable<TData>({
   report,
   skip,
 }: ReportTableProps<TData>) {
-  const total = query.data?.total ?? 0;
+  // Un total que no llega como número (null, texto) cuenta como 0: nada de «1-NaN».
+  const total = toFiniteNumber(query.data?.total);
   const currentSkip = query.data?.skip ?? skip;
+  // Error de negocio tal cual; cualquier otro, texto genérico; sin red, su aviso.
+  const queryError = getReportQueryError(query);
 
   return (
     <section className="overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest shadow-sm">
@@ -90,7 +96,7 @@ export function ReportTable<TData>({
         <h3 className="text-base font-semibold text-on-surface">Resultados: {report.name}</h3>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-on-surface-variant">
-            {formatResultsRange(currentSkip, limit, total)}
+            {queryError ? null : formatResultsRange(currentSkip, limit, total)}
           </span>
           {actions}
         </div>
@@ -101,7 +107,7 @@ export function ReportTable<TData>({
         data={getPaginatedItems(query.data)}
         embedded
         emptyState={emptyState}
-        error={query.error}
+        error={queryError}
         getRowId={getRowId}
         isFetching={query.isFetching}
         isLoading={query.isLoading}

@@ -17,6 +17,7 @@ import { formatRef } from "@/shared/utils/currency";
 import { useSalesByCategoryReport } from "../../../hooks/useMoneyReports";
 import type { MoneyReportRange, SalesByCategoryTotals } from "../../../services/moneyReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { getReportQueryError } from "../../reportQueryState";
 import { ReportChartCard } from "../ReportChartCard";
 import { ReportTableSection } from "../ReportTableSection";
 import { ReportQueryError } from "./ReportStates";
@@ -79,6 +80,7 @@ type SalesByCategoryReportPanelProps = {
 export function SalesByCategoryReportPanel({ range, report }: SalesByCategoryReportPanelProps) {
   const hasRange = Boolean(range.from && range.to);
   const query = useSalesByCategoryReport(range);
+  const queryError = getReportQueryError(query);
   const { data } = query;
   const items = data?.items;
   const hasSales = Boolean(items && items.length > 0);
@@ -127,9 +129,9 @@ export function SalesByCategoryReportPanel({ range, report }: SalesByCategoryRep
             description="Este reporte necesita un rango con fecha de inicio y de fin."
             title="Elige un rango de fechas"
           />
-        ) : query.error ? (
+        ) : queryError ? (
           <ReportQueryError
-            error={query.error}
+            error={queryError}
             onRetry={() => void query.refetch()}
             reportName={report.name}
           />

@@ -18,6 +18,7 @@ import {
   type ReportSeriesMeasures,
 } from "../../services/reportSeries";
 import type { ReportDefinition } from "../config/reportCatalog";
+import { toFiniteNumber } from "../reportQueryState";
 import { ReportChartCard, type ReportDeltaTone } from "./ReportChartCard";
 
 export const GROUP_BY_LABELS: Record<ReportGroupBy, string> = {
@@ -120,6 +121,9 @@ export function ReportSeriesChart<M extends ReportSeriesMeasures>({
     ];
   }, [buckets, count, name, previousBuckets, report.id, valueRef, valueVes]);
   const isCompared = Boolean(previousBuckets);
+  const groupByLabel = series ? GROUP_BY_LABELS[series.groupBy] : undefined;
+  // Un total que no llega como número (null, texto) se pinta como 0, no rompe el panel.
+  const currentTotals: Partial<Record<string, unknown>> | undefined = series?.totals?.current;
   // La moneda del gráfico se guarda aquí para que el total de la cabecera la siga.
   const [currency, setCurrency] = useState<TimeSeriesCurrency>("ref");
   const canShowVes = chartSeries.some((item) =>
@@ -131,13 +135,13 @@ export function ReportSeriesChart<M extends ReportSeriesMeasures>({
     <ReportChartCard
       delta={
         series && isCompared
-          ? { deltaPct: series.totals.deltaPct, tone: measure.deltaTone }
+          ? { deltaPct: series.totals?.deltaPct ?? null, tone: measure.deltaTone }
           : undefined
       }
       notice={getGroupingNotice(filters.groupBy, series?.groupBy)}
       subtitle={
-        series
-          ? `${formatDateRangeLabel(filters.from, filters.to)} · por ${GROUP_BY_LABELS[series.groupBy]}`
+        groupByLabel
+          ? `${formatDateRangeLabel(filters.from, filters.to)} · por ${groupByLabel}`
           : formatDateRangeLabel(filters.from, filters.to)
       }
       title={report.name}
@@ -146,8 +150,8 @@ export function ReportSeriesChart<M extends ReportSeriesMeasures>({
           ? {
               label: measure.totalLabel,
               value: totalInVes
-                ? formatVesBs(series.totals.current[valueVes])
-                : formatRef(series.totals.current[valueRef]),
+                ? formatVesBs(toFiniteNumber(currentTotals?.[valueVes]))
+                : formatRef(toFiniteNumber(currentTotals?.[valueRef])),
             }
           : undefined
       }

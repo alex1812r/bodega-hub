@@ -702,11 +702,13 @@ describe("InventoryReportPanel · REP-07b", () => {
       expect(screen.getByRole("status", { name: /Cargando Productos sin movimiento/ })).toBeInTheDocument();
       loading.unmount();
 
-      mockQueries.useDeadStockReport = { error: new Error("Sin conexión") };
+      mockQueries.useDeadStockReport = { error: new Error("Failed to fetch") };
       renderPanel("dead-stock");
 
       expect(screen.getByText("No se pudo generar el reporte")).toBeInTheDocument();
-      expect(screen.getByText("Sin conexión")).toBeInTheDocument();
+      // REP-F8 R-11: un fallo que no es de negocio no enseña su mensaje interno.
+      expect(screen.getByText("No pudimos cargar el reporte.")).toBeInTheDocument();
+      expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
       expect(screen.queryByRole("table")).not.toBeInTheDocument();
       await userEvent.click(screen.getByRole("button", { name: /reintentar/i }));
       expect(mockRefetch).toHaveBeenCalledTimes(1);

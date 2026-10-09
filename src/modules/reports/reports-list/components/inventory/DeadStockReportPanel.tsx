@@ -20,6 +20,7 @@ import { withReturnTo } from "@/shared/utils/returnTo";
 import { type DeadStockFilters, useDeadStockReport } from "../../../hooks/useInventoryReports";
 import { DEAD_STOCK_MAX_DAYS, type DeadStockRow } from "../../../services/inventoryReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { getReportQueryError } from "../../reportQueryState";
 import { ReportQueryError } from "../money/ReportStates";
 import { ReportChartCard } from "../ReportChartCard";
 import { ReportChipGroup, type ReportChipOption } from "../ReportChipGroup";
@@ -211,6 +212,7 @@ export function DeadStockReportPanel({
     skip: pagination.skip,
   };
   const query = useDeadStockReport(filters);
+  const queryError = getReportQueryError(query);
   const { data } = query;
   const items = data?.items;
   const total = data?.total ?? 0;
@@ -275,9 +277,9 @@ export function DeadStockReportPanel({
           />
         </div>
 
-        {query.error ? (
+        {queryError ? (
           <ReportQueryError
-            error={query.error}
+            error={queryError}
             onRetry={() => void query.refetch()}
             reportName={report.name}
           />
@@ -313,7 +315,7 @@ export function DeadStockReportPanel({
         )}
       </ReportChartCard>
 
-      {!query.error && !isEmpty ? (
+      {!queryError && !isEmpty ? (
         <ReportTableSection
           summary={formatResultsRange(data?.skip ?? pagination.skip, pagination.limit, total)}
         >
