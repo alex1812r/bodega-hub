@@ -164,7 +164,8 @@ function ContactFilter({
   return (
     <EntityAutocomplete
       entity="contact"
-      error={knownLabel === undefined ? contactQuery.error?.message : undefined}
+      // Solo un error de negocio enseña su mensaje; sin red, el aviso de conexión.
+      error={knownLabel === undefined ? getReportQueryError(contactQuery)?.message : undefined}
       filters={{ type: text.contactTypes }}
       label={text.contactHeader}
       onChange={(option) => {
