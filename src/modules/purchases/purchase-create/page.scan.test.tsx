@@ -178,6 +178,9 @@ async function settle(ms: number) {
   });
 }
 
+// Each case renders the whole purchase page and types key by key; under a loaded full run it exceeds the 5 s default.
+jest.setTimeout(30000);
+
 beforeEach(() => {
   mockPush.mockReset();
   mockResolveByCode.mockReset();
