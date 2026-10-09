@@ -4,11 +4,14 @@ import { jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getPaymentMethodsReport as getPaymentMethodsReportMock } from "@/modules/reports/services/paymentMethodsReport.mock-server";
 import { getPaymentMethodsReport as getPaymentMethodsReportServer } from "@/modules/reports/services/paymentMethodsReport.server";
+import { parseReportSeriesParams } from "@/modules/reports/services/reportSeries";
 
 export async function GET(request: Request) {
   try {
     const auth = await requireStorePermission(request, "reports.view");
     const searchParams = new URL(request.url).searchParams;
+    // 400 si `from`/`to` no son fechas válidas o `from > to`.
+    parseReportSeriesParams(searchParams);
     const data =
       resolveDataSource() === "supabase"
         ? await getPaymentMethodsReportServer(searchParams, [auth.storeId])
