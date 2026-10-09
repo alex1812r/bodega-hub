@@ -82,6 +82,10 @@ function storedLines(key: string) {
     : null;
 }
 
+function storedCartId(key: string) {
+  return (JSON.parse(window.localStorage.getItem(key) ?? "{}") as { cartId?: string }).cartId;
+}
+
 function draftKeys() {
   return Object.keys(window.localStorage).filter((key) => key.includes(":pos:carrito:v"));
 }
@@ -600,16 +604,143 @@ describe("carrito cobrado o vaciado con copias en otras pestañas (CNF-F5 · B3)
     expect(draftKeys()).toEqual([]);
   });
 
-  it("vaciar la copia cierra también el original guardado en la otra pestaña", () => {
-    const { copy, tab1 } = openOriginalAndLiveCopy();
+  // CNF-F8 · CAOS-06: antes, vaciar la copia cerraba el carrito para la pestaña que lo creó.
+  it("vaciar la COPIA solo afecta a su pestaña: el original sigue guardado, sin marca ni aviso", () => {
+    const { copy, tab1, tab2 } = openOriginalAndLiveCopy();
 
+    copy([]);
+    announce(SETTLED_KEY);
+    announce(tab2.key);
+
+    expect(draftKeys()).toEqual([tab1.key]);
+    expect(storedLines(tab1.key)).toEqual([expect.objectContaining({ productId: HARINA.id })]);
+    expect(window.localStorage.getItem(SETTLED_KEY)).toBeNull();
+    expect(screen.queryByText(EMPTIED_ELSEWHERE)).not.toBeInTheDocument();
+    expect(tab1.result.current.settledElsewhere).toBe(false);
+
+    // La pestaña 1 sigue guardando su venta, y lo siguiente de la 2 es un carrito aparte.
+    tab1.rerender(baseOptions({ items: [item({ quantity: 4 })] }));
+    copy([AZUCAR_ITEM]);
+    wait();
+
+    expect(storedLines(tab1.key)).toEqual([expect.objectContaining({ quantity: 4 })]);
+    expect(storedLines(tab2.key)).toEqual([expect.objectContaining({ productId: AZUCAR.id })]);
+    expect(storedCartId(tab2.key)).not.toBe(storedCartId(tab1.key));
+  });
+
+  it("cobrar la copia sí cierra el carrito para todas las pestañas", () => {
+    const { copy, tab1, tab2 } = openOriginalAndLiveCopy();
+
+    act(() => tab2.result.current.markCharged());
     copy([]);
     announce(SETTLED_KEY);
     announce(tab1.key);
 
     expect(draftKeys()).toEqual([]);
+    expect(screen.getByText(CHARGED_ELSEWHERE)).toBeInTheDocument();
+    expect(tab1.result.current.chargedElsewhere).toBe(true);
+  });
+
+  // CNF-F8 · CAOS-02.
+  it("dos pestañas con el mismo carrito: solo una pasa a cobrar; si su cobro falla, la otra queda libre", () => {
+    const { tab1, tab2 } = openOriginalAndLiveCopy();
+
+    expect(tab1.result.current.beginCharge()).toBe("libre");
+    expect(tab2.result.current.beginCharge()).toBe("cobrando");
+    // La que ya está cobrando puede reintentar.
+    expect(tab1.result.current.beginCharge()).toBe("libre");
+
+    tab1.result.current.endCharge();
+
+    expect(tab2.result.current.beginCharge()).toBe("libre");
+    expect(tab1.result.current.beginCharge()).toBe("cobrando");
+  });
+
+  it("la copia de un carrito ya cobrado no pasa a cobrar hasta «Es una venta nueva», que le da otra identidad y la guarda", () => {
+    const { tab1, tab2 } = openOriginalAndLiveCopy();
+    const soldCartId = storedCartId(tab1.key);
+
+    act(() => tab1.result.current.markCharged());
+    tab1.rerender(baseOptions({ items: [] }));
+
+    // A la pestaña 2 no le llegó ningún evento: lo ve al ir a cobrar.
+    let gate = "";
+
+    act(() => {
+      gate = tab2.result.current.beginCharge();
+    });
+
+    expect(gate).toBe("cobrado");
+    expect(tab2.result.current.chargedElsewhere).toBe(true);
+    expect(screen.getByText(CHARGED_ELSEWHERE)).toBeInTheDocument();
+    expect(tab2.result.current.beginCharge()).toBe("cobrado");
+
+    act(() => tab2.result.current.startNewSale());
+
+    expect(tab2.result.current.chargedElsewhere).toBe(false);
+    expect(tab2.result.current.settledElsewhere).toBe(false);
+    expect(screen.queryByText(CHARGED_ELSEWHERE)).not.toBeInTheDocument();
+    expect(storedLines(tab2.key)).toEqual([expect.objectContaining({ productId: HARINA.id })]);
+    expect(storedCartId(tab2.key)).not.toBe(soldCartId);
+    expect(tab2.result.current.beginCharge()).toBe("libre");
+  });
+
+  it("un carrito vaciado en la pestaña original se puede cobrar en la copia, y eso lo cierra como cobrado", () => {
+    const { copy, tab1, tab2 } = openOriginalAndLiveCopy();
+    const cartId = storedCartId(tab1.key);
+
+    tab1.rerender(baseOptions({ items: [] }));
+    announce(SETTLED_KEY);
     expect(screen.getByText(EMPTIED_ELSEWHERE)).toBeInTheDocument();
-    expect(tab1.result.current.settledElsewhere).toBe(true);
+    expect(tab2.result.current.chargedElsewhere).toBe(false);
+    expect(tab2.result.current.beginCharge()).toBe("libre");
+
+    act(() => tab2.result.current.markCharged());
+    copy([]);
+
+    expect(JSON.parse(window.localStorage.getItem(SETTLED_KEY) ?? "[]")).toEqual([
+      { at: expect.any(Number), cartId, reason: "cobrado" },
+    ]);
+  });
+
+  it("un carrito que nunca se guardó (venta rápida) pasa a cobrar sin leer ni escribir", () => {
+    const tab = openTab();
+
+    tab.rerender(baseOptions({ items: [item()] }));
+
+    const getItem = jest.spyOn(Storage.prototype, "getItem");
+    const setItem = jest.spyOn(Storage.prototype, "setItem");
+
+    expect(tab.result.current.beginCharge()).toBe("libre");
+    tab.result.current.endCharge();
+    expect(getItem).not.toHaveBeenCalled();
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it("un carrito guardado pasa a cobrar con una lectura y una escritura, y sin volver a pintar", () => {
+    let renders = 0;
+
+    window.sessionStorage.clear();
+
+    const { rerender, result } = renderHook(
+      (props: UsePosCartDraftOptions) => {
+        renders += 1;
+        return usePosCartDraft(props);
+      },
+      { initialProps: baseOptions(), wrapper },
+    );
+
+    rerender(baseOptions({ items: [item()] }));
+    wait();
+
+    const getItem = jest.spyOn(Storage.prototype, "getItem");
+    const setItem = jest.spyOn(Storage.prototype, "setItem");
+    const rendersBefore = renders;
+
+    expect(result.current.beginCharge()).toBe("libre");
+    expect(getItem.mock.calls).toEqual([[SETTLED_KEY]]);
+    expect(setItem.mock.calls).toEqual([[SETTLED_KEY, expect.any(String)]]);
+    expect(renders).toBe(rendersBefore);
   });
 
   it("dos carritos distintos en dos pestañas: cobrar uno no invalida ni avisa al otro", () => {

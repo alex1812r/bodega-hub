@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/shared/components/Toast";
 
 import {
+  beginPosCartCharge,
   describePosCartRestoration,
+  endPosCartCharge,
   findPosCartDraft,
   findSettledPosCart,
   posCartDraftStorageKey,
@@ -19,6 +21,7 @@ import {
   serializePosCartDraft,
   settlePosCart,
   writePosCartDraft,
+  type PosCartChargeGate,
   type PosCartDraftScope,
   type PosCartRestoration,
   type PosCartSettledReason,
@@ -55,7 +58,7 @@ export type UsePosCartDraftOptions = {
 const SETTLED_ELSEWHERE_NOTICE: Record<PosCartSettledReason, { description: string; title: string }> = {
   cobrado: {
     description:
-      "Lo que ves aquí es una copia de esa venta y ya no se guarda. Vacíalo si es la misma venta: no lo cobres otra vez.",
+      "Lo que ves aquí es una copia de esa venta: ya no se guarda ni se puede cobrar. Vacíalo si es la misma venta.",
     title: "Este carrito ya se cobró en otra pestaña",
   },
   vaciado: {
@@ -65,6 +68,24 @@ const SETTLED_ELSEWHERE_NOTICE: Record<PosCartSettledReason, { description: stri
 };
 
 export type PosCartDraftController = {
+  /**
+   * Justo antes de enviar el cobro (CNF-F8). «libre»: se cobra, y si el carrito tiene
+   * copias posibles queda marcado como «cobrando» para las demás pestañas. «cobrado»: es
+   * copia de una venta ya registrada en otra pestaña (queda avisado y bloqueado).
+   * «cobrando»: otra pestaña lo está cobrando ahora. Un carrito que nunca se guardó no lee
+   * ni escribe; uno guardado, una lectura y una escritura. No vuelve a pintar si es «libre».
+   */
+  beginCharge: () => PosCartChargeGate;
+  /**
+   * El carrito en pantalla es copia de uno que otra pestaña YA COBRÓ: no se puede cobrar
+   * hasta que el cajero lo vacíe o elija `startNewSale`.
+   */
+  chargedElsewhere: boolean;
+  /**
+   * El servidor confirmó que el cobro iniciado con `beginCharge` no dejó venta: retira la
+   * marca «cobrando». Sin marca propia no hace nada. Un cobro sin confirmar NO la retira.
+   */
+  endCharge: () => void;
   /**
    * La venta de este carrito quedó registrada: al vaciarse, sus copias en otras pestañas
    * se cierran como «cobrado» y no como «vaciado». No lee ni escribe nada.
@@ -79,6 +100,11 @@ export type PosCartDraftController = {
    * sigue en pantalla hasta que el cajero lo vacíe y ya no se guarda.
    */
   settledElsewhere: boolean;
+  /**
+   * «Es una venta nueva»: el carrito en pantalla deja de ser copia. Estrena identidad,
+   * vuelve a guardarse y se puede cobrar.
+   */
+  startNewSale: () => void;
 };
 
 /**
@@ -93,10 +119,13 @@ export type PosCartDraftController = {
  *   avisa con «Carrito recuperado». Hasta entonces no guarda, para no pisarlo.
  * - Si otra pestaña se lleva el carrito de esta, lo vuelve a escribir; si otra
  *   pestaña comparte su identificador (pestaña duplicada), estrena uno.
- * - Al vaciarse un carrito guardado (venta cobrada u orden limpiada) se cierran TODAS
- *   sus copias (`settlePosCart`). La pestaña que tenga una en pantalla se entera (evento
- *   `storage`, al volver a verse o al ir a guardar), deja de guardarla y avisa con
- *   «Vaciar»; no la borra de la pantalla.
+ * - Al cobrarse un carrito guardado, o al vaciarse en la pestaña que lo creó, se cierran
+ *   TODAS sus copias (`settlePosCart`). La pestaña que tenga una en pantalla se entera
+ *   (evento `storage`, al volver a verse, al ir a guardar o al ir a cobrar), deja de
+ *   guardarla y avisa con «Vaciar»; no la borra de la pantalla. Si se cobró, además no
+ *   deja cobrarla (`chargedElsewhere`) hasta «Vaciar» o «Es una venta nueva».
+ * - Vaciar una COPIA (un carrito recogido de otra pestaña) solo borra la de esta pestaña:
+ *   la pestaña que lo creó conserva su carrito guardado (CNF-F8).
  * - Sin `localStorage`, lleno, o con contenido ilegible, el POS funciona igual.
  */
 export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftController {
@@ -114,23 +143,27 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
   // Lo guardado al entrar: PosCashSessionGate ya esperó por la caja y el usuario.
   const [found] = useState(() => (scope ? findPosCartDraft(scope, tabId) : null));
   const [saveFailed, setSaveFailed] = useState(false);
-  const [settledElsewhere, setSettledElsewhere] = useState(false);
+  const [settledElsewhere, setSettledElsewhere] = useState<PosCartSettledReason | null>(null);
   const saveFailedRef = useRef(false);
   /** Identidad del carrito en pantalla; `null` mientras no se haya guardado nunca. */
   const cartIdRef = useRef<string | null>(null);
   /** El carrito en pantalla se vendió: lo anota `markCharged` justo antes de vaciarse. */
   const chargedRef = useRef(false);
-  /** `cartId` del carrito en pantalla si otra pestaña ya lo cerró. */
-  const settledElsewhereRef = useRef<string | null>(null);
+  /** El carrito en pantalla, si otra pestaña ya lo cerró, y cómo. */
+  const settledElsewhereRef = useRef<{ cartId: string; reason: PosCartSettledReason } | null>(null);
+  /** El carrito en pantalla se recogió de otra pestaña, que puede seguir teniéndolo. */
+  const copyRef = useRef(false);
+  /** `cartId` para el que esta pestaña dejó la marca «cobrando». */
+  const chargingRef = useRef<string | null>(null);
   const awaitingRestoreRef = useRef(found !== null);
-  const latestRef = useRef({ key, options, scope });
+  const latestRef = useRef({ key, options, scope, tabId });
   const timerRef = useRef<number | null>(null);
   /** Clave en la que esta pestaña tiene algo escrito. */
   const savedKeyRef = useRef<string | null>(null);
   const toastIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    latestRef.current = { key, options, scope };
+    latestRef.current = { key, options, scope, tabId };
   });
 
   const cancelScheduled = useCallback(() => {
@@ -140,9 +173,30 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
     }
   }, []);
 
+  /** Otra pestaña cerró el carrito en pantalla: deja de guardarse y se avisa, sin tocar la pantalla. */
+  const noteSettledElsewhere = useCallback(
+    (cartId: string, reason: PosCartSettledReason) => {
+      settledElsewhereRef.current = { cartId, reason };
+      cancelScheduled();
+      setSettledElsewhere(reason);
+
+      if (toastIdRef.current) {
+        dismiss(toastIdRef.current);
+      }
+
+      toastIdRef.current = showToast({
+        action: { label: "Vaciar", onClick: () => latestRef.current.options.onDiscard() },
+        ...SETTLED_ELSEWHERE_NOTICE[reason],
+        durationMs: 0,
+        tone: "error",
+      });
+    },
+    [cancelScheduled, dismiss, showToast],
+  );
+
   /**
    * `true` si el carrito en pantalla ya se cobró o vació en otra pestaña. La primera vez
-   * que lo ve, avisa: sin bloquear y sin tocar lo que hay en pantalla.
+   * que lo ve (o si de «vaciado» pasó a «cobrado»), avisa.
    */
   const checkSettledElsewhere = useCallback(() => {
     const { scope: currentScope } = latestRef.current;
@@ -152,36 +206,64 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
       return false;
     }
 
-    if (settledElsewhereRef.current === cartId) {
+    const known =
+      settledElsewhereRef.current?.cartId === cartId ? settledElsewhereRef.current.reason : null;
+
+    if (known === "cobrado") {
       return true;
     }
 
     const reason = findSettledPosCart(currentScope, cartId);
 
-    if (!reason) {
-      return false;
+    if (!reason || reason === known) {
+      // Una marca caducada no devuelve la copia al guardado.
+      return known !== null;
     }
 
-    settledElsewhereRef.current = cartId;
-    cancelScheduled();
-    setSettledElsewhere(true);
-
-    if (toastIdRef.current) {
-      dismiss(toastIdRef.current);
-    }
-
-    toastIdRef.current = showToast({
-      action: { label: "Vaciar", onClick: () => latestRef.current.options.onDiscard() },
-      ...SETTLED_ELSEWHERE_NOTICE[reason],
-      durationMs: 0,
-      tone: "error",
-    });
+    noteSettledElsewhere(cartId, reason);
 
     return true;
-  }, [cancelScheduled, dismiss, showToast]);
+  }, [noteSettledElsewhere]);
 
   const markCharged = useCallback(() => {
     chargedRef.current = true;
+  }, []);
+
+  const beginCharge = useCallback((): PosCartChargeGate => {
+    const { scope: currentScope, tabId: currentTabId } = latestRef.current;
+    const cartId = cartIdRef.current;
+
+    // Sin identidad el carrito nunca se guardó: ninguna otra pestaña tiene una copia.
+    if (!currentScope || !cartId) {
+      return "libre";
+    }
+
+    const known = settledElsewhereRef.current;
+
+    if (known?.cartId === cartId && known.reason === "cobrado") {
+      return "cobrado";
+    }
+
+    const gate = beginPosCartCharge(currentScope, cartId, currentTabId);
+
+    if (gate === "cobrado") {
+      noteSettledElsewhere(cartId, "cobrado");
+    } else if (gate === "libre") {
+      chargingRef.current = cartId;
+    }
+
+    return gate;
+  }, [noteSettledElsewhere]);
+
+  const endCharge = useCallback(() => {
+    const { scope: currentScope, tabId: currentTabId } = latestRef.current;
+    const cartId = chargingRef.current;
+
+    chargingRef.current = null;
+
+    if (currentScope && cartId) {
+      endPosCartCharge(currentScope, cartId, currentTabId);
+    }
   }, []);
 
   const saveNow = useCallback(() => {
@@ -252,14 +334,22 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
 
       const cartId = cartIdRef.current;
 
-      // Y con él todas sus copias en otras pestañas, salvo que ya lo cerrara otra.
-      if (cartId && scope && settledElsewhereRef.current !== cartId) {
-        settlePosCart(scope, cartId, chargedRef.current ? "cobrado" : "vaciado");
+      if (cartId && scope) {
+        if (chargedRef.current) {
+          // Vendido: se cierran todas sus copias, en todas las pestañas.
+          settlePosCart(scope, cartId, "cobrado");
+        } else if (!copyRef.current && settledElsewhereRef.current?.cartId !== cartId) {
+          // Vaciado en la pestaña que lo creó: sus copias ya no valen. Vaciar una COPIA no
+          // cierra nada: la pestaña de origen conserva su carrito.
+          settlePosCart(scope, cartId, "vaciado");
+        }
       }
 
       cartIdRef.current = null;
       chargedRef.current = false;
       settledElsewhereRef.current = null;
+      copyRef.current = false;
+      chargingRef.current = null;
 
       if (toastIdRef.current) {
         dismiss(toastIdRef.current);
@@ -301,6 +391,7 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
     // misma identidad: si la pestaña de origen sigue abierta, las dos tienen una copia.
     if (current.key && current.scope && restoration.items.length > 0) {
       cartIdRef.current = foundCartId ?? crypto.randomUUID();
+      copyRef.current = foundCartId !== undefined && found.key !== current.key;
 
       const saved = writePosCartDraft(
         current.key,
@@ -403,13 +494,38 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
     [saveNow],
   );
 
+  const startNewSale = useCallback(() => {
+    // Sin identidad, el guardado le da una nueva: ya no comparte nada con la venta cobrada.
+    cartIdRef.current = null;
+    settledElsewhereRef.current = null;
+    copyRef.current = false;
+    chargingRef.current = null;
+    setSettledElsewhere(null);
+
+    if (toastIdRef.current) {
+      dismiss(toastIdRef.current);
+      toastIdRef.current = null;
+    }
+
+    saveNow();
+  }, [dismiss, saveNow]);
+
   // Con el carrito vacío ya no hay copia en pantalla de la que avisar.
-  if (settledElsewhere && items.length === 0) {
-    setSettledElsewhere(false);
+  if (settledElsewhere !== null && items.length === 0) {
+    setSettledElsewhere(null);
   }
 
   return useMemo(
-    () => ({ markCharged, saveFailed, saveNow, settledElsewhere }),
-    [markCharged, saveFailed, saveNow, settledElsewhere],
+    () => ({
+      beginCharge,
+      chargedElsewhere: settledElsewhere === "cobrado",
+      endCharge,
+      markCharged,
+      saveFailed,
+      saveNow,
+      settledElsewhere: settledElsewhere !== null,
+      startNewSale,
+    }),
+    [beginCharge, endCharge, markCharged, saveFailed, saveNow, settledElsewhere, startNewSale],
   );
 }

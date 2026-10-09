@@ -18,7 +18,12 @@ import {
 import { formatRefUsd } from "@/shared/utils/currency";
 
 import { SaleCreatePage } from "./page";
-import { posCartSettledStorageKey, settlePosCart } from "./utils/posCartDraft";
+import {
+  beginPosCartCharge,
+  endPosCartCharge,
+  posCartSettledStorageKey,
+  settlePosCart,
+} from "./utils/posCartDraft";
 
 const mockPush = jest.fn();
 const mockLinkNavigate = jest.fn();
@@ -726,6 +731,181 @@ describe("CNF-F5 · un carrito cobrado no reaparece por una copia de otra pesta�
     await screen.findByText("Carrito vacio");
     expect(screen.queryByText("Este carrito ya se cobró en otra pestaña")).not.toBeInTheDocument();
     expect(beforeUnloadIsBlocked()).toBe(false);
+  });
+});
+
+describe("CNF-F8 · la copia de un carrito no se cobra dos veces (CAOS-02) y el restaurado respeta la existencia (CAOS-09)", () => {
+  const SCOPE = {
+    cashSessionId: "session-1",
+    registerId: REGISTER.id,
+    storeId: "store-1",
+    userId: "user-1",
+  };
+  const SETTLED_KEY = posCartSettledStorageKey(SCOPE);
+  const CHARGED_ELSEWHERE = "Este carrito ya se cobró en otra pestaña";
+
+  function storedCartId(key: string) {
+    return (JSON.parse(window.localStorage.getItem(key) ?? "{}") as { cartId?: string }).cartId ?? "";
+  }
+
+  function storedMarks() {
+    return JSON.parse(window.localStorage.getItem(SETTLED_KEY) ?? "[]") as Array<{
+      cartId: string;
+      reason: string;
+    }>;
+  }
+
+  /** Carrito con una línea ya guardado (tiene identidad) y el cobro en efectivo elegido. */
+  async function mountSavedCartReadyToCharge(options?: BackendOptions) {
+    const backend = mountBackend(options);
+
+    mountPos();
+    await addToCart(HARINA);
+    await expectCartCount("1 item");
+    await flush(600);
+    await screen.findAllByText(CUSTOMER.name);
+    fireEvent.click(screen.getByRole("button", { name: paymentMethodLabels.efectivo_usd }));
+
+    const chargeButton = screen.getByRole("button", { name: "Procesar venta" });
+
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+
+    return { backend, cartId: storedCartId(draftKeys()[0] ?? ""), chargeButton };
+  }
+
+  it("con el aviso de «ya se cobró» a la vista no deja cobrar; «Es una venta nueva» le da otra identidad y la cobra", async () => {
+    const { backend, cartId, chargeButton } = await mountSavedCartReadyToCharge();
+
+    // La otra pestaña cobra su copia y el navegador avisa a esta.
+    settlePosCart(SCOPE, cartId, "cobrado");
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: SETTLED_KEY,
+          newValue: window.localStorage.getItem(SETTLED_KEY),
+        }),
+      );
+    });
+    await screen.findByText(CHARGED_ELSEWHERE);
+
+    expect(chargeButton).toBeDisabled();
+    fireEvent.click(chargeButton);
+    await flush();
+    expect(backend.salePosts).toEqual([]);
+    expect(screen.getByText("1 item")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Es una venta nueva" }));
+
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+    expect(screen.queryByText(CHARGED_ELSEWHERE)).not.toBeInTheDocument();
+    // Vuelve a guardarse, con una identidad que ya no es la del carrito cobrado.
+    expect(draftKeys()).toHaveLength(1);
+    expect(storedCartId(draftKeys()[0] ?? "")).not.toBe(cartId);
+    expect(storedCartId(draftKeys()[0] ?? "")).not.toBe("");
+
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+    expect(backend.salePosts).toHaveLength(1);
+  });
+
+  it("sin haber recibido el aviso, el intento se corta antes del POST al ver la marca de cobrado", async () => {
+    const { backend, cartId, chargeButton } = await mountSavedCartReadyToCharge();
+
+    // La otra pestaña ya cobró; a esta no le llegó el evento `storage`.
+    settlePosCart(SCOPE, cartId, "cobrado");
+    fireEvent.click(chargeButton);
+
+    await screen.findByText(CHARGED_ELSEWHERE);
+    await flush();
+    expect(backend.salePosts).toEqual([]);
+    expect(chargeButton).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Es una venta nueva" })).toBeInTheDocument();
+  });
+
+  it("si la otra pestaña lo está cobrando se detiene; cuando aquel cobro falla, esta puede cobrar", async () => {
+    const { backend, cartId, chargeButton } = await mountSavedCartReadyToCharge();
+
+    expect(beginPosCartCharge(SCOPE, cartId, "otra-pestana")).toBe("libre");
+    fireEvent.click(chargeButton);
+
+    expect(
+      (await screen.findAllByText(/Este carrito se está cobrando en otra pestaña/)).length,
+    ).toBeGreaterThan(0);
+    await flush();
+    expect(backend.salePosts).toEqual([]);
+
+    endPosCartCharge(SCOPE, cartId, "otra-pestana");
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+    fireEvent.click(chargeButton);
+
+    await screen.findByText("Venta registrada");
+    expect(backend.salePosts).toHaveLength(1);
+  });
+
+  it("mientras el cobro viaja queda la marca «cobrando»; un rechazo la retira y la misma pestaña reintenta", async () => {
+    const marksDuringPost: string[][] = [];
+    const { backend, cartId, chargeButton } = await mountSavedCartReadyToCharge({
+      onSalePost: (attempt) => {
+        marksDuringPost.push(storedMarks().map((mark) => `${mark.cartId}:${mark.reason}`));
+
+        return attempt === 1
+          ? jsonResponse({ error: { code: "BAD_REQUEST", message: "Stock insuficiente." } }, 400)
+          : jsonResponse({ data: { id: "sale-2", invoiceNumber: "V-CNF-2", status: "pagada" } }, 201);
+      },
+    });
+
+    fireEvent.click(chargeButton);
+    await screen.findAllByText(/stock insuficiente/i);
+
+    expect(marksDuringPost[0]).toEqual([`${cartId}:cobrando`]);
+    // El servidor dijo que no hubo venta: otra pestaña con la copia ya puede cobrarla.
+    expect(storedMarks()).toEqual([]);
+    expect(beginPosCartCharge(SCOPE, cartId, "otra-pestana")).toBe("libre");
+    endPosCartCharge(SCOPE, cartId, "otra-pestana");
+
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+
+    expect(backend.salePosts).toHaveLength(2);
+    expect(backend.salePosts[1]?.clientRequestId).toBe(backend.salePosts[0]?.clientRequestId);
+    expect(storedMarks()).toEqual([{ at: expect.any(Number), cartId, reason: "cobrado" }]);
+  });
+
+  it("CAOS-09 · el carrito restaurado se ajusta a la existencia actual y avisa de qué línea cambió", async () => {
+    mountBackend();
+
+    const firstVisit = mountPos();
+
+    await addToCart(HARINA);
+    await addToCart(HARINA);
+    await addToCart(HARINA);
+    await addToCart(AZUCAR);
+    await expectCartCount("4 items");
+    firstVisit.unmount();
+
+    // Mientras tanto se vendió casi toda la harina y todo el azúcar.
+    const backend = mountBackend({
+      products: [
+        { ...HARINA, currentStock: 2 },
+        { ...AZUCAR, currentStock: 0 },
+      ],
+    });
+
+    mountPos();
+
+    await screen.findByText("Carrito recuperado");
+    await expectCartCount("2 items");
+    expect(
+      screen.getByText(new RegExp(`Cantidad ajustada a la existencia: ${HARINA.name} 3 → 2\\.`)),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`Sin existencia, se quitaron: ${AZUCAR.name}\\.`)),
+    ).toBeInTheDocument();
+
+    await chargeInCashUsd();
+    await screen.findByText("Venta registrada");
+    expect(backend.salePosts[0]?.items).toEqual([{ productId: HARINA.id, quantity: 2 }]);
   });
 });
 

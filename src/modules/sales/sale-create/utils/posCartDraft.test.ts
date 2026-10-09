@@ -2,11 +2,14 @@ import { formatRefUsd } from "@/shared/utils/currency";
 
 import type { PosCartItem } from "../hooks/usePosCart";
 import {
+  beginPosCartCharge,
   describePosCartRestoration,
   describeSaleInProgress,
+  endPosCartCharge,
   findPosCartDraft,
   findSettledPosCart,
   parseStoredPosCartDraft,
+  POS_CART_CHARGING_TTL_MS,
   POS_CART_DRAFT_VERSION,
   POS_CART_SETTLED_MAX,
   POS_CART_SETTLED_TTL_MS,
@@ -253,10 +256,14 @@ describe("revalidación contra el catálogo", () => {
     { currentStock: 0, id: "prod-azucar", imageUrl: "a.png", name: "Azúcar", salePriceRef: 2.5 },
   ];
 
-  it("quita lo que ya no se vende, toma precio y nombre del catálogo y conserva la cantidad", () => {
+  it("quita lo que ya no se vende o no tiene existencia, toma precio y nombre del catálogo y conserva la cantidad que cabe", () => {
     const restoration = restorePosCartDraft(draft, {
       customerIds: new Set(["cont-1"]),
-      products,
+      products: [
+        products[0],
+        { ...products[1], currentStock: 5 },
+        { currentStock: 0, id: "prod-sal", name: "Sal", salePriceRef: 1 },
+      ],
     });
 
     expect(restoration.items).toEqual([
@@ -273,11 +280,13 @@ describe("revalidación contra el catálogo", () => {
         productId: "prod-azucar",
         productName: "Azúcar",
         quantity: 3,
-        stock: 0,
+        stock: 5,
         unitPriceRef: 2.5,
       },
     ]);
     expect(restoration.removed).toEqual(["Café descontinuado"]);
+    expect(restoration.outOfStock).toEqual([]);
+    expect(restoration.stockAdjusted).toEqual([]);
     expect(restoration.repriced).toEqual([{ fromRef: 2, name: "Azúcar", toRef: 2.5 }]);
     expect(restoration.customerId).toBe("cont-1");
     expect(posCartRestorationHasChanges(restoration)).toBe(true);
@@ -287,6 +296,54 @@ describe("revalidación contra el catálogo", () => {
     expect(text).toContain("Volvieron 2 productos");
     expect(text).toContain("Café descontinuado");
     expect(text).toContain(`Azúcar ${formatRefUsd(2)} → ${formatRefUsd(2.5)}`);
+  });
+
+  // CNF-F8 · CAOS-09: el carrito restaurado se vendía por encima de la existencia.
+  it("aplica el tope de existencia de `usePosCart`: recorta, junta líneas repetidas y quita lo que no tiene existencia, avisando", () => {
+    const restoration = restorePosCartDraft(
+      {
+        ...draft,
+        lines: [
+          { productId: "prod-harina", productName: "Harina PAN", quantity: 20, unitPriceRef: 1.5 },
+          { productId: "prod-harina", productName: "Harina PAN", quantity: 20, unitPriceRef: 1.5 },
+          { productId: "prod-azucar", productName: "Azúcar", quantity: 2, unitPriceRef: 2.5 },
+          { productId: "prod-harina", productName: "Harina PAN", quantity: 20, unitPriceRef: 1.5 },
+          { productId: "prod-sal", productName: "Sal", quantity: 1, unitPriceRef: 1 },
+        ],
+      },
+      {
+        customerIds: new Set(["cont-1"]),
+        products: [
+          { ...products[0], currentStock: 30 },
+          products[1],
+          { currentStock: -4, id: "prod-sal", name: "Sal", salePriceRef: 1 },
+        ],
+      },
+    );
+
+    expect(restoration.items).toEqual([
+      expect.objectContaining({ productId: "prod-harina", quantity: 30, stock: 30 }),
+    ]);
+    expect(restoration.stockAdjusted).toEqual([{ from: 60, name: "Harina PAN 1 kg", to: 30 }]);
+    expect(restoration.outOfStock).toEqual(["Azúcar", "Sal"]);
+    expect(restoration.repriced).toEqual([]);
+    expect(posCartRestorationHasChanges(restoration)).toBe(true);
+
+    const text = describePosCartRestoration(restoration);
+
+    expect(text).toContain("Volvió 1 producto");
+    expect(text).toContain("Cantidad ajustada a la existencia: Harina PAN 1 kg 60 → 30.");
+    expect(text).toContain("Sin existencia, se quitaron: Azúcar, Sal.");
+  });
+
+  it("una cantidad dentro de la existencia no se toca ni se avisa", () => {
+    const restoration = restorePosCartDraft(
+      { ...draft, lines: [{ productId: "prod-harina", productName: "Harina", quantity: 8, unitPriceRef: 1.5 }] },
+      { customerIds: new Set(["cont-1"]), products },
+    );
+
+    expect(restoration.items).toEqual([expect.objectContaining({ quantity: 8, stock: 8 })]);
+    expect(posCartRestorationHasChanges(restoration)).toBe(false);
   });
 
   it("un cliente que ya no existe no se restaura y se avisa", () => {
@@ -422,6 +479,92 @@ describe("carrito cobrado o vaciado: identidad y marca (CNF-F5 · B3)", () => {
 
     expect(window.localStorage.getItem(posCartSettledStorageKey(SCOPE))).toBeNull();
     expect(findSettledPosCart({ ...SCOPE, userId: "user-2" }, "cart-9")).toBe("cobrado");
+  });
+
+  describe("marca «cobrando» (CNF-F8 · CAOS-02)", () => {
+    const SETTLED_KEY = posCartSettledStorageKey(SCOPE);
+
+    it("la primera pestaña pasa y deja la marca; otra pestaña se detiene; la misma puede reintentar", () => {
+      expect(beginPosCartCharge(SCOPE, "cart-1", "tab-a", NOW)).toBe("libre");
+      expect(beginPosCartCharge(SCOPE, "cart-1", "tab-b", NOW + 1)).toBe("cobrando");
+      expect(beginPosCartCharge(SCOPE, "cart-1", "tab-a", NOW + 2)).toBe("libre");
+      // Otro carrito no se ve afectado.
+      expect(beginPosCartCharge(SCOPE, "cart-2", "tab-b", NOW + 3)).toBe("libre");
+    });
+
+    it("cuesta una lectura y una escritura de una sola clave", () => {
+      const getItem = jest.spyOn(Storage.prototype, "getItem");
+      const setItem = jest.spyOn(Storage.prototype, "setItem");
+
+      beginPosCartCharge(SCOPE, "cart-1", "tab-a", NOW);
+
+      expect(getItem.mock.calls).toEqual([[SETTLED_KEY]]);
+      expect(setItem.mock.calls).toEqual([[SETTLED_KEY, expect.any(String)]]);
+    });
+
+    it("un carrito ya cobrado no pasa y no se escribe nada; uno vaciado sí pasa", () => {
+      settlePosCart(SCOPE, "cart-1", "cobrado", NOW);
+      settlePosCart(SCOPE, "cart-2", "vaciado", NOW);
+
+      const before = window.localStorage.getItem(SETTLED_KEY);
+
+      expect(beginPosCartCharge(SCOPE, "cart-1", "tab-a", NOW)).toBe("cobrado");
+      expect(window.localStorage.getItem(SETTLED_KEY)).toBe(before);
+      expect(beginPosCartCharge(SCOPE, "cart-2", "tab-a", NOW)).toBe("libre");
+      expect(findSettledPosCart(SCOPE, "cart-2", NOW)).toBe("vaciado");
+    });
+
+    it("retirarla libera a la otra pestaña; solo la retira quien la puso", () => {
+      beginPosCartCharge(SCOPE, "cart-1", "tab-a", NOW);
+
+      endPosCartCharge(SCOPE, "cart-1", "tab-b", NOW);
+      expect(beginPosCartCharge(SCOPE, "cart-1", "tab-b", NOW)).toBe("cobrando");
+
+      endPosCartCharge(SCOPE, "cart-1", "tab-a", NOW);
+      expect(beginPosCartCharge(SCOPE, "cart-1", "tab-b", NOW)).toBe("libre");
+    });
+
+    it("caduca sola si la pestaña que cobraba desaparece", () => {
+      beginPosCartCharge(SCOPE, "cart-1", "tab-a", NOW);
+
+      expect(beginPosCartCharge(SCOPE, "cart-1", "tab-b", NOW + POS_CART_CHARGING_TTL_MS - 1)).toBe(
+        "cobrando",
+      );
+      expect(beginPosCartCharge(SCOPE, "cart-1", "tab-b", NOW + POS_CART_CHARGING_TTL_MS)).toBe("libre");
+    });
+
+    it("no cuenta como carrito cerrado: su copia guardada se sigue encontrando y la poda no la borra", () => {
+      const own = saveCart("tab-a", "cart-1");
+
+      beginPosCartCharge(SCOPE, "cart-1", "tab-a");
+
+      expect(findSettledPosCart(SCOPE, "cart-1")).toBeNull();
+      expect(findPosCartDraft(SCOPE, "tab-a")?.key).toBe(own);
+      prunePosCartDrafts(SCOPE);
+      expect(window.localStorage.getItem(own)).not.toBeNull();
+    });
+
+    it("cobrar el carrito la sustituye por «cobrado» para todas las pestañas", () => {
+      beginPosCartCharge(SCOPE, "cart-1", "tab-a", NOW);
+      settlePosCart(SCOPE, "cart-1", "cobrado", NOW + 5);
+
+      expect(JSON.parse(window.localStorage.getItem(SETTLED_KEY) ?? "[]")).toEqual([
+        { at: NOW + 5, cartId: "cart-1", reason: "cobrado" },
+      ]);
+      expect(beginPosCartCharge(SCOPE, "cart-1", "tab-b", NOW + 6)).toBe("cobrado");
+    });
+
+    it("sin localStorage deja cobrar: el POS funciona igual", () => {
+      jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new Error("bloqueado");
+      });
+      jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new Error("bloqueado");
+      });
+
+      expect(beginPosCartCharge(SCOPE, "cart-1", "tab-a")).toBe("libre");
+      expect(() => endPosCartCharge(SCOPE, "cart-1", "tab-a")).not.toThrow();
+    });
   });
 
   it("con localStorage roto o una marca ilegible no lanza y no hay nada cerrado", () => {

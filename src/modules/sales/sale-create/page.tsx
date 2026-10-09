@@ -67,6 +67,10 @@ const UNRESOLVED_SALE_MESSAGE =
   "La venta pudo haberse registrado; verifica antes de volver a cobrar.";
 const SALE_NOT_REGISTERED_MESSAGE =
   "El servidor confirmo que ese cobro no quedo guardado. Puedes volver a pulsar «Procesar venta».";
+const CART_CHARGED_ELSEWHERE_MESSAGE =
+  "Este carrito ya se cobró en otra pestaña y no se puede cobrar otra vez. Vacíalo si es la misma venta; si es otra venta con los mismos productos, pulsa «Es una venta nueva».";
+const CART_CHARGING_ELSEWHERE_MESSAGE =
+  "Este carrito se está cobrando en otra pestaña. Espera a que termine: si allí queda cobrado, aquí no hay que cobrarlo otra vez.";
 
 type AttemptLookup =
   | { kind: "absent" }
@@ -531,11 +535,13 @@ function SaleCreatePosWorkspace() {
         return "stop";
       case "voided":
         clearSaleAttempt(attemptStorageKey);
+        cartDraft.endCharge();
         setNeedsVerification(false);
         return "continue";
       case "absent":
         // Se conserva la clave: si aquel envio llegara tarde, el servidor la reconoce.
         writeSaleAttempt(attemptStorageKey, { ...attempt, unresolved: false });
+        cartDraft.endCharge();
         setNeedsVerification(false);
         return "continue";
     }
@@ -733,6 +739,16 @@ function SaleCreatePosWorkspace() {
         attempt = null;
       }
 
+      // Justo antes de enviar (CNF-F8): la copia de un carrito que otra pestaña ya cobró, o
+      // que está cobrando ahora, no se cobra aquí. Un carrito sin copias posibles no lee nada.
+      const chargeGate = cartDraft.beginCharge();
+      if (chargeGate !== "libre") {
+        if (chargeGate === "cobrando") {
+          setFormError(CART_CHARGING_ELSEWHERE_MESSAGE);
+        }
+        return;
+      }
+
       const clientRequestId = attempt?.clientRequestId ?? crypto.randomUUID();
       const sentBefore = attempt?.sent ?? [];
       const sent = sentBefore.includes(fingerprint) ? sentBefore : [...sentBefore, fingerprint];
@@ -758,6 +774,7 @@ function SaleCreatePosWorkspace() {
             sent: sentBefore,
             unresolved: false,
           });
+          cartDraft.endCharge();
           setFormError(error instanceof Error ? error.message : "No pudimos procesar la venta.");
           return;
         }
@@ -777,6 +794,7 @@ function SaleCreatePosWorkspace() {
               // 409 con venta en esa clave (C4): la venta existente NO es este cobro.
               // Se muestra como error, nunca como «Venta registrada».
               clearSaleAttempt(attemptStorageKey);
+              cartDraft.endCharge();
               lastAttemptRef.current = null;
               setFormError(
                 `${conflictMessage} Ya existe la venta ${outcome.sale.invoiceNumber} con ese intento de cobro: verificala en Ventas antes de volver a cobrar.`,
@@ -787,6 +805,7 @@ function SaleCreatePosWorkspace() {
             return;
           case "voided":
             clearSaleAttempt(attemptStorageKey);
+            cartDraft.endCharge();
             setFormError(
               conflictMessage ??
                 `El cobro no se completo y la venta ${outcome.sale.invoiceNumber} quedo anulada. Puedes volver a cobrar.`,
@@ -794,6 +813,7 @@ function SaleCreatePosWorkspace() {
             return;
           case "absent":
             writeSaleAttempt(attemptStorageKey, { clientRequestId, sent, unresolved: false });
+            cartDraft.endCharge();
             setFormError(conflictMessage ?? SALE_NOT_REGISTERED_MESSAGE);
             return;
         }
@@ -860,6 +880,14 @@ function SaleCreatePosWorkspace() {
           className="min-h-0 flex-1"
           cart={({ onRequestClose }) => (
             <PosCartPanel
+              chargeBlock={
+                cartDraft.chargedElsewhere
+                  ? {
+                      message: CART_CHARGED_ELSEWHERE_MESSAGE,
+                      onStartNewSale: cartDraft.startNewSale,
+                    }
+                  : undefined
+              }
               checkout={checkout}
               className="h-full border-t lg:border-t-0"
               customerId={customerId}

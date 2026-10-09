@@ -32,9 +32,15 @@ import type { PosCartItem } from "../hooks/usePosCart";
  *
  * Identidad (CNF-F5): cada carrito lleva un `cartId` que nace con su primer guardado y
  * se conserva al pasar de una pestaña a otra, así que todas sus copias lo comparten. Al
- * cobrarlo o vaciarlo en una pestaña (`settlePosCart`) se borran TODAS sus copias de la
- * caja y queda una marca con caducidad: una copia que otra pestaña aún tenga en pantalla
- * ni se vuelve a guardar ni se restaura, y esa pestaña avisa (`usePosCartDraft`).
+ * cobrarlo en cualquier pestaña, o al vaciarlo en la que lo creó (`settlePosCart`), se
+ * borran TODAS sus copias de la caja y queda una marca con caducidad: una copia que otra
+ * pestaña aún tenga en pantalla ni se vuelve a guardar ni se restaura, y esa pestaña avisa
+ * (`usePosCartDraft`). Vaciar una COPIA solo borra la de esa pestaña (CNF-F8).
+ *
+ * Cobro (CNF-F8): la copia de un carrito ya cobrado no se cobra, y mientras una pestaña
+ * cobra un carrito deja la marca «cobrando» (`beginPosCartCharge`) para que otra pestaña
+ * con una copia no lo cobre a la vez. Solo los carritos guardados tienen identidad: una
+ * venta que se cobra antes de su primer guardado no tiene copias y no lee ni escribe nada.
  *
  * Un carrito de otra sesión de caja no se restaura nunca: se borra al leerlo y al
  * detectar la caja cerrada o vencida (`purgePosCartDrafts`).
@@ -51,6 +57,11 @@ const SETTLED_KEY_PREFIX = `${KEY_FAMILY}:cerrados`;
 
 /** Lo que dura la marca de un carrito cobrado o vaciado: más que un turno de caja. */
 export const POS_CART_SETTLED_TTL_MS = 12 * 60 * 60 * 1000;
+/**
+ * Lo que dura la marca «cobrando» si nadie la retira (la pestaña que cobraba se cerró o
+ * su cobro quedó sin confirmar): más que un cobro lento, menos que la espera de un cliente.
+ */
+export const POS_CART_CHARGING_TTL_MS = 2 * 60 * 1000;
 /** Marcas que se conservan como mucho: las más recientes. */
 export const POS_CART_SETTLED_MAX = 200;
 
@@ -248,24 +259,35 @@ export function removePosCartDraft(key: string) {
 /** Cómo terminó un carrito: de eso depende lo que se le dice a quien tenga una copia. */
 export type PosCartSettledReason = "cobrado" | "vaciado";
 
-const settledPosCartsSchema = z.array(
+/**
+ * Marcas de los carritos de una caja, todas en UNA clave: las de cierre («cobrado»,
+ * «vaciado») y la de un cobro en curso («cobrando»), que no cierra nada.
+ */
+const posCartMarksSchema = z.array(
   z.object({
-    /** Milisegundos (`Date.now()`) en que se cobró o vació. */
+    /** Milisegundos (`Date.now()`) en que se cobró, se vació o se empezó a cobrar. */
     at: z.number(),
     cartId: z.string().min(1),
-    reason: z.enum(["cobrado", "vaciado"]),
+    reason: z.enum(["cobrado", "vaciado", "cobrando"]),
+    /** Solo en «cobrando»: la pestaña que está cobrando. */
+    tabId: z.string().optional(),
   }),
 );
 
-type SettledPosCart = z.infer<typeof settledPosCartsSchema>[number];
+type PosCartMark = z.infer<typeof posCartMarksSchema>[number];
+type SettledPosCart = PosCartMark & { reason: PosCartSettledReason };
+
+function isSettledMark(mark: PosCartMark): mark is SettledPosCart {
+  return mark.reason !== "cobrando";
+}
 
 /** Clave de las marcas de carritos cobrados o vaciados de esa tienda, usuario y caja. */
 export function posCartSettledStorageKey(scope: PosCartDraftScope) {
   return `${SETTLED_KEY_PREFIX}:${ownerSegments(scope)}:${encodeURIComponent(scope.registerId)}`;
 }
 
-/** Marcas vigentes a `now`. Sin `localStorage`, o con contenido ilegible, ninguna. */
-function readSettledPosCarts(scope: PosCartDraftScope, now: number): SettledPosCart[] {
+/** Marcas vigentes a `now` (una lectura). Sin `localStorage`, o con contenido ilegible, ninguna. */
+function readPosCartMarks(scope: PosCartDraftScope, now: number): PosCartMark[] {
   let value: unknown;
 
   try {
@@ -274,11 +296,32 @@ function readSettledPosCarts(scope: PosCartDraftScope, now: number): SettledPosC
     return [];
   }
 
-  const parsed = settledPosCartsSchema.safeParse(value);
+  const parsed = posCartMarksSchema.safeParse(value);
 
   return parsed.success
-    ? parsed.data.filter((entry) => now - entry.at < POS_CART_SETTLED_TTL_MS)
+    ? parsed.data.filter(
+        (entry) =>
+          now - entry.at <
+          (entry.reason === "cobrando" ? POS_CART_CHARGING_TTL_MS : POS_CART_SETTLED_TTL_MS),
+      )
     : [];
+}
+
+/** Guarda las marcas (una escritura). Sin `localStorage` no queda marca y el POS sigue igual. */
+function writePosCartMarks(scope: PosCartDraftScope, marks: PosCartMark[]) {
+  try {
+    window.localStorage.setItem(
+      posCartSettledStorageKey(scope),
+      JSON.stringify(marks.slice(-POS_CART_SETTLED_MAX)),
+    );
+  } catch {
+    // Bloqueado o lleno: sin marca, cada pestaña se comporta como si estuviera sola.
+  }
+}
+
+/** Marcas de cierre vigentes a `now`: un cobro en curso no cierra el carrito. */
+function readSettledPosCarts(scope: PosCartDraftScope, now: number): SettledPosCart[] {
+  return readPosCartMarks(scope, now).filter(isSettledMark);
 }
 
 /** Si ese carrito ya se cobró o vació (en cualquier pestaña) y la marca sigue vigente, cómo. */
@@ -293,7 +336,8 @@ export function findSettledPosCart(
 /**
  * Cierra un carrito en TODAS las pestañas: deja la marca (antes que nada, para que una
  * copia viva no lo reescriba) y borra todas sus copias guardadas en esa caja.
- * Un carrito ya marcado como cobrado no pasa a «vaciado».
+ * Un carrito ya marcado como cobrado no pasa a «vaciado». La marca «cobrando» de ese
+ * carrito se va con el cierre.
  */
 export function settlePosCart(
   scope: PosCartDraftScope,
@@ -301,18 +345,16 @@ export function settlePosCart(
   reason: PosCartSettledReason,
   now = Date.now(),
 ) {
-  const settled = readSettledPosCarts(scope, now);
-  const previous = settled.find((entry) => entry.cartId === cartId);
-  const next = [
-    ...settled.filter((entry) => entry.cartId !== cartId),
-    { at: now, cartId, reason: previous?.reason === "cobrado" ? previous.reason : reason },
-  ].slice(-POS_CART_SETTLED_MAX);
+  const marks = readPosCartMarks(scope, now);
+  const alreadyCharged = marks.some(
+    (entry) => entry.cartId === cartId && entry.reason === "cobrado",
+  );
 
-  try {
-    window.localStorage.setItem(posCartSettledStorageKey(scope), JSON.stringify(next));
-  } catch {
-    // Sin poder marcar, al menos se borran las copias guardadas.
-  }
+  // Si no se puede marcar, al menos se borran las copias guardadas.
+  writePosCartMarks(scope, [
+    ...marks.filter((entry) => entry.cartId !== cartId),
+    { at: now, cartId, reason: alreadyCharged ? "cobrado" : reason },
+  ]);
 
   const prefix = scopePrefix(scope);
 
@@ -328,6 +370,66 @@ export function settlePosCart(
     if (parseStoredPosCartDraft(raw, scope)?.cartId === cartId) {
       removePosCartDraft(key);
     }
+  }
+}
+
+/** Si esta pestaña puede cobrar ese carrito: ya se cobró, o lo está cobrando otra. */
+export type PosCartChargeGate = "cobrado" | "cobrando" | "libre";
+
+/**
+ * Justo antes de enviar el cobro de un carrito guardado (CNF-F8): UNA lectura y, si se
+ * puede cobrar, UNA escritura. Si el carrito ya se cobró en otra pestaña, o si otra lo
+ * está cobrando ahora, no se cobra aquí; si no, esta pestaña deja su marca «cobrando».
+ * La misma pestaña puede repetir (reintento). Sin `localStorage` se cobra como siempre.
+ *
+ * Leer y escribir no es atómico entre pestañas: dos clics con milisegundos de diferencia
+ * pueden pasar los dos. Esa ventana no se cierra desde `localStorage`.
+ */
+export function beginPosCartCharge(
+  scope: PosCartDraftScope,
+  cartId: string,
+  tabId: string,
+  now = Date.now(),
+): PosCartChargeGate {
+  const marks = readPosCartMarks(scope, now);
+  const ofCart = marks.filter((entry) => entry.cartId === cartId);
+
+  if (ofCart.some((entry) => entry.reason === "cobrado")) {
+    return "cobrado";
+  }
+
+  if (ofCart.some((entry) => entry.reason === "cobrando" && entry.tabId !== tabId)) {
+    return "cobrando";
+  }
+
+  writePosCartMarks(scope, [
+    ...marks.filter((entry) => !(entry.cartId === cartId && entry.reason === "cobrando")),
+    { at: now, cartId, reason: "cobrando", tabId },
+  ]);
+
+  return "libre";
+}
+
+/**
+ * Retira la marca «cobrando» que puso esta pestaña: el servidor confirmó que ese cobro
+ * no dejó venta. Un cobro registrado no pasa por aquí (`settlePosCart` la sustituye) y
+ * uno sin confirmar tampoco: su marca caduca sola.
+ */
+export function endPosCartCharge(
+  scope: PosCartDraftScope,
+  cartId: string,
+  tabId: string,
+  now = Date.now(),
+) {
+  const marks = readPosCartMarks(scope, now);
+  const isOwn = (entry: PosCartMark) =>
+    entry.cartId === cartId && entry.reason === "cobrando" && entry.tabId === tabId;
+
+  if (marks.some(isOwn)) {
+    writePosCartMarks(
+      scope,
+      marks.filter((entry) => !isOwn(entry)),
+    );
   }
 }
 
@@ -441,18 +543,23 @@ export type PosCartRestoration = {
   customerId: string | null;
   /** El cliente guardado ya no está entre los clientes del POS. */
   customerMissing: boolean;
-  /** Líneas ya revalidadas: nombre, precio y existencia son los del catálogo actual. */
+  /** Líneas ya revalidadas: nombre, precio, existencia y tope de cantidad son los del catálogo actual. */
   items: PosCartItem[];
+  /** Productos que siguen a la venta pero ya no tienen existencia: se quitaron. */
+  outOfStock: string[];
   /** Nombres de los productos guardados que ya no se venden (desactivados o borrados). */
   removed: string[];
   /** Productos cuyo precio cambió desde que se guardó el carrito. */
   repriced: Array<{ fromRef: number; name: string; toRef: number }>;
+  /** Líneas cuya cantidad se recortó a la existencia actual. */
+  stockAdjusted: Array<{ from: number; name: string; to: number }>;
 };
 
 /**
  * Revalida un carrito guardado contra el catálogo ACTUAL (solo productos activos):
  * lo que ya no está se quita y el precio es siempre el del catálogo, nunca el
- * guardado. La cantidad se conserva: la existencia se valida al cobrar, como siempre.
+ * guardado. La cantidad lleva el mismo tope que al agregar a mano (`usePosCart`): una
+ * línea por producto, como mucho la existencia actual, y sin existencia no entra (CNF-F8).
  */
 export function restorePosCartDraft(
   draft: StoredPosCartDraft,
@@ -463,9 +570,16 @@ export function restorePosCartDraft(
     customerId: null,
     customerMissing: false,
     items: [],
+    outOfStock: [],
     removed: [],
     repriced: [],
+    stockAdjusted: [],
   };
+  // Una línea por producto, en el orden guardado: las repetidas suman antes del tope.
+  const saved = new Map<
+    string,
+    { product: CatalogProduct; quantity: number; unitPriceRef: number }
+  >();
 
   for (const line of draft.lines) {
     const product = productsById.get(line.productId);
@@ -475,9 +589,32 @@ export function restorePosCartDraft(
       continue;
     }
 
-    if (product.salePriceRef !== line.unitPriceRef) {
+    const repeated = saved.get(product.id);
+
+    if (repeated) {
+      repeated.quantity += line.quantity;
+    } else {
+      saved.set(product.id, { product, quantity: line.quantity, unitPriceRef: line.unitPriceRef });
+    }
+  }
+
+  for (const { product, quantity: savedQuantity, unitPriceRef } of saved.values()) {
+    const stock = Math.max(product.currentStock, 0);
+
+    if (stock < 1) {
+      restoration.outOfStock.push(product.name);
+      continue;
+    }
+
+    const quantity = Math.min(stock, savedQuantity);
+
+    if (quantity !== savedQuantity) {
+      restoration.stockAdjusted.push({ from: savedQuantity, name: product.name, to: quantity });
+    }
+
+    if (product.salePriceRef !== unitPriceRef) {
       restoration.repriced.push({
-        fromRef: line.unitPriceRef,
+        fromRef: unitPriceRef,
         name: product.name,
         toRef: product.salePriceRef,
       });
@@ -487,8 +624,8 @@ export function restorePosCartDraft(
       imageUrl: product.imageUrl ?? undefined,
       productId: product.id,
       productName: product.name,
-      quantity: line.quantity,
-      stock: Math.max(product.currentStock, 0),
+      quantity,
+      stock,
       unitPriceRef: product.salePriceRef,
     });
   }
@@ -508,6 +645,8 @@ export function restorePosCartDraft(
 export function posCartRestorationHasChanges(restoration: PosCartRestoration) {
   return (
     restoration.removed.length > 0 ||
+    restoration.outOfStock.length > 0 ||
+    restoration.stockAdjusted.length > 0 ||
     restoration.repriced.length > 0 ||
     restoration.customerMissing
   );
@@ -526,6 +665,18 @@ export function describePosCartRestoration(restoration: PosCartRestoration) {
 
   if (restoration.removed.length > 0) {
     parts.push(`Ya no se venden y se quitaron: ${restoration.removed.join(", ")}.`);
+  }
+
+  if (restoration.outOfStock.length > 0) {
+    parts.push(`Sin existencia, se quitaron: ${restoration.outOfStock.join(", ")}.`);
+  }
+
+  if (restoration.stockAdjusted.length > 0) {
+    parts.push(
+      `Cantidad ajustada a la existencia: ${restoration.stockAdjusted
+        .map((change) => `${change.name} ${change.from} → ${change.to}`)
+        .join("; ")}.`,
+    );
   }
 
   if (restoration.repriced.length > 0) {
