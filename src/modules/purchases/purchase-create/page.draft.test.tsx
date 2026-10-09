@@ -260,13 +260,15 @@ const activeSupplier = { id: "cont-supplier", isActive: true, name: "Proveedor D
 const PURCHASE_NOT_FOUND = { error: { code: "NOT_FOUND", message: "Compra no encontrada." } };
 
 type ApiOptions = {
+  /** Unitario sin IVA de la última compra recibida, por producto; sin entrada = nunca comprado. */
+  lastCosts?: Record<string, number>;
   links?: Array<ReturnType<typeof supplierLink>>;
   /** Compra de origen; `null` = el servidor responde 404. */
   purchase?: ReturnType<typeof sourcePurchase> | null;
 };
 
 /** `fetch` de prueba: fichas de producto, vínculos del proveedor, compra de origen y el POST. */
-function installApi({ links = [], purchase }: ApiOptions = {}) {
+function installApi({ lastCosts = {}, links = [], purchase }: ApiOptions = {}) {
   const products = [cable, harina, refresco, vieja];
   const posts: Array<Record<string, unknown>> = [];
 
@@ -276,6 +278,18 @@ function installApi({ links = [], purchase }: ApiOptions = {}) {
     if (init?.method === "POST") {
       posts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
       return jsonResponse({ data: { id: "purchase-nueva" } }, 201);
+    }
+
+    if (url.startsWith("/api/purchases/last-costs")) {
+      const ids = new URL(url, "http://localhost").searchParams.get("productIds")?.split(",") ?? [];
+
+      return jsonResponse({
+        data: ids.flatMap((productId) =>
+          productId in lastCosts
+            ? [{ productId, source: "supplier", taxRate: 0, unitCostRef: lastCosts[productId] }]
+            : [],
+        ),
+      });
     }
 
     if (url.startsWith("/api/purchases/pur-1") && purchase !== undefined) {
@@ -620,6 +634,34 @@ describe("PurchaseCreatePage · duplicar compra (COM-09)", () => {
     expect(api.posts[0]).toMatchObject({ discountRef: 0, status: "recibido", supplierId: "cont-supplier" });
     expect(api.posts[0]).not.toHaveProperty("notes");
     expect(api.posts[0]).not.toHaveProperty("initialPayment");
+  });
+
+  // COM-F11 · la última compra del cable fue EXENTA a REF 2,32: el vínculo guarda 2,32 y
+  // dividirlo entre el 16 % de la categoría daba REF 2,00.
+  it("usa el costo neto de la última compra recibida de cada producto, por unidad y por empaque", async () => {
+    installApi({
+      lastCosts: { "prod-cable": 2.32, "prod-refresco": 1.25 },
+      links: [supplierLink(cable, 2.32)],
+      purchase: sourcePurchase(activeSupplier),
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(lineTexts()).toHaveLength(2));
+    expect(lineTexts()).toEqual([
+      "Cable HDMI · 3 u a REF 2.32 / Bs 1183.2 · en ves · IVA general · libre · sin editar",
+      "Refresco Cola · 2 Caja de 12 a REF 15 · en ves · IVA general · libre · sin editar",
+    ]);
+
+    const lastCostRequests = (global.fetch as jest.Mock).mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.startsWith("/api/purchases/last-costs"));
+
+    // Una petición para todos los productos activos de la compra; el inactivo no se pide.
+    expect(lastCostRequests).toHaveLength(1);
+    expect(new URL(lastCostRequests[0], "http://localhost").searchParams.get("productIds")).toBe(
+      "prod-cable,prod-refresco",
+    );
   });
 
   it("proveedor inactivo: avisa, no lo preselecciona y las líneas entran al elegir otro", async () => {

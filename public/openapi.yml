@@ -1839,6 +1839,55 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/purchases/last-costs:
+    get:
+      tags: [Purchases]
+      summary: Ultimo costo de compra de unos productos
+      description: >-
+        Costo unitario SIN IVA de la ultima linea de compra de cada producto, para
+        sugerir el costo de una linea nueva en el formulario de compra. Solo cuentan
+        compras en estado `recibido` (ni `pedido`, ni `cancelado`, ni `devuelto`);
+        la mas reciente es la de mayor fecha de creacion de la compra. Primero se
+        busca entre las compras de `supplierId` (`source: supplier`); si ese
+        proveedor nunca vendio el producto, entre las de cualquier proveedor
+        (`source: any`). Un producto sin ninguna linea recibida, o que no existe,
+        no aparece en la respuesta. En una linea por empaque el costo es el de la
+        unidad. Se autoriza con `purchases.create`.
+      x-permission: purchases.create
+      parameters:
+        - name: supplierId
+          in: query
+          required: true
+          description: Proveedor de la compra. Vacio o con caracteres no validos responde 400.
+          schema:
+            type: string
+            maxLength: 64
+        - name: productIds
+          in: query
+          required: true
+          description: >-
+            Ids de producto separados por coma, entre 1 y 50. Mas de 50, uno vacio
+            o con caracteres no validos responde 400.
+          schema:
+            type: string
+          example: prod-drill,prod-cable
+      responses:
+        "200":
+          description: Un elemento por producto con alguna linea de compra recibida.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PurchaseLastCost"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/purchases/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -4773,6 +4822,24 @@ components:
           description: RIF; cadena vacia si el contacto no lo tiene.
         isActive:
           type: boolean
+    PurchaseLastCost:
+      type: object
+      description: Ultima linea de compra recibida de un producto.
+      additionalProperties: false
+      required: [productId, unitCostRef, taxRate, source]
+      properties:
+        productId:
+          type: string
+        unitCostRef:
+          type: number
+          description: Costo por unidad en REF, sin IVA.
+        taxRate:
+          type: number
+          description: Porcentaje de IVA que llevo esa linea (0 si fue exenta).
+        source:
+          type: string
+          enum: [supplier, any]
+          description: supplier = compra del proveedor consultado; any = de otro proveedor.
     Contact:
       type: object
       required: [id, name, type, isActive]

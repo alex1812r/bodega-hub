@@ -383,6 +383,14 @@ const harinaSuelta = storeProduct("prod-suelta", {
 });
 const harinaVieja = storeProduct("prod-vieja", { isActive: false, name: "Harina Vieja" });
 
+/**
+ * Lo que responde `GET /api/purchases/last-costs` (COM-F11) cuando ningún producto se ha
+ * comprado antes: lista vacía, y el costo sugerido sale del costo guardado con IVA.
+ */
+function isLastCostsRequest(url: string) {
+  return url.startsWith("/api/purchases/last-costs");
+}
+
 function renderWithRealPicker() {
   render(<PurchaseCreatePage />, { wrapper: createQueryWrapper() });
   fireEvent.click(screen.getByRole("button", { name: "elegir proveedor" }));
@@ -406,7 +414,7 @@ describe("PurchaseCreatePage · buscador sobre todos los productos activos (COM-
     const urls: string[] = [];
     installFetchStub((url) => {
       urls.push(url);
-      return page([harinaSuelta, harinaJuana, harinaPan, harinaVieja]);
+      return isLastCostsRequest(url) ? [] : page([harinaSuelta, harinaJuana, harinaPan, harinaVieja]);
     });
     mockSupplierProducts.data = page([
       supplierLink(harinaJuana),
@@ -436,7 +444,9 @@ describe("PurchaseCreatePage · buscador sobre todos los productos activos (COM-
   });
 
   it("un no vinculado entra por unidad con el costo actual sin IVA, igual base que el vinculado", async () => {
-    const api = installFetchStub(() => page([harinaSuelta, harinaPan]));
+    const api = installFetchStub((url) =>
+      isLastCostsRequest(url) ? [] : page([harinaSuelta, harinaPan]),
+    );
     api.respondToNextPost({ data: { id: "purchase-1" } });
     mockSupplierProducts.data = page([
       supplierLink(harinaPan, { isPreferred: true, lastCostRef: 1.16 }),
@@ -445,8 +455,11 @@ describe("PurchaseCreatePage · buscador sobre todos los productos activos (COM-
     const input = renderWithRealPicker();
     fireEvent.change(input, { target: { value: "harina" } });
     fireEvent.click(await screen.findByRole("button", { name: /Harina Suelta/ }));
+    // La línea nace al saberse si el producto tiene una compra previa (COM-F11).
+    await screen.findByLabelText("Cantidad de Harina Suelta");
     fireEvent.change(input, { target: { value: "harina" } });
     fireEvent.click(await screen.findByRole("button", { name: /Harina PAN/ }));
+    await screen.findByLabelText("Cantidad de Harina PAN");
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));
@@ -464,6 +477,9 @@ describe("PurchaseCreatePage · buscador sobre todos los productos activos (COM-
     const urls: string[] = [];
     const api = installFetchStub((url) => {
       urls.push(url);
+      if (isLastCostsRequest(url)) {
+        return [];
+      }
       if (url.startsWith("/api/products?") && url.includes("barcode=7591234567890")) {
         return page([harinaSuelta]);
       }
@@ -476,6 +492,7 @@ describe("PurchaseCreatePage · buscador sobre todos los productos activos (COM-
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(input).toHaveValue(""));
+    await screen.findByLabelText("Cantidad de Harina Suelta");
     expect(
       urls.some((url) => url.includes("barcode=7591234567890") && url.includes("isActive=true")),
     ).toBe(true);
@@ -489,11 +506,15 @@ describe("PurchaseCreatePage · buscador sobre todos los productos activos (COM-
   });
 
   it("Enter con un SKU exacto también agrega; un código que no existe avisa y no agrega", async () => {
-    const api = installFetchStub((url) =>
-      url.startsWith("/api/products?") && url.includes("sku=HAR-SUE")
+    const api = installFetchStub((url) => {
+      if (isLastCostsRequest(url)) {
+        return [];
+      }
+
+      return url.startsWith("/api/products?") && url.includes("sku=HAR-SUE")
         ? page([harinaSuelta])
-        : page([]),
-    );
+        : page([]);
+    });
     api.respondToNextPost({ data: { id: "purchase-3" } });
 
     const input = renderWithRealPicker();

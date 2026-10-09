@@ -1,3 +1,5 @@
+import { roundMoney } from "@/shared/utils/currency";
+
 import type { PurchaseCatalogProduct } from "../components/PurchaseProductPickerCard";
 import {
   createPackDraftItem,
@@ -27,11 +29,12 @@ export function buildPurchaseLine(
   const defaultPack = product.defaultPackUnit ?? product.packUnits[0];
 
   if (defaultPack) {
-    // Del costo con IVA del bulto, no del unitario ya redondeado: evita arrastrar centimos.
-    const packCostRef = netCostRef(
-      product.costWithTaxRef * defaultPack.unitsPerPack,
-      product.taxRate,
-    );
+    // Con compra previa, el último unitario neto por las unidades del bulto. Sin ella, del
+    // costo con IVA del bulto y no del unitario ya redondeado: evita arrastrar centimos.
+    const packCostRef =
+      product.lastPurchaseUnitCostRef === undefined
+        ? netCostRef(product.costWithTaxRef * defaultPack.unitsPerPack, product.taxRate)
+        : roundMoney(product.lastPurchaseUnitCostRef * defaultPack.unitsPerPack);
 
     return createPackDraftItem({
       costCurrency: input.costCurrency,

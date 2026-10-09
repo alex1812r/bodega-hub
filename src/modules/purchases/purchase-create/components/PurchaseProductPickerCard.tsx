@@ -49,13 +49,27 @@ export type PurchaseCatalogProduct = {
   costWithTaxRef: number;
   currentStock: number;
   defaultPackUnit?: SupplierProductPackUnit;
+  /**
+   * El buscador aún no sabe el último costo de compra de este producto (su consulta sigue
+   * en vuelo o falló): al elegirlo, la línea espera a consultarlo antes de crearse.
+   */
+  lastCostPending?: boolean;
+  /**
+   * Costo unitario SIN IVA de la última línea de compra recibida del producto. Cuando
+   * existe, `unitCostRef` es este valor y el costo por empaque sale de él.
+   */
+  lastPurchaseUnitCostRef?: number;
   link: PurchaseCatalogLink;
   name: string;
   packUnits: SupplierProductPackUnit[];
   productId: string;
   sku: string;
   taxRate: number;
-  /** Costo sugerido de la línea, por unidad y SIN IVA (la línea suma su alícuota). */
+  /**
+   * Costo sugerido de la línea, por unidad y SIN IVA (la línea suma su alícuota): el de la
+   * última compra recibida y, si el producto nunca se compró, `costWithTaxRef` sin el IVA
+   * de su categoría.
+   */
   unitCostRef: number;
 };
 
@@ -96,9 +110,10 @@ type PurchaseProductPickerCardProps = {
   onRemoveItem: (itemId: string) => void;
   /**
    * Un escaneo no agregó nada y detrás hay más en la cola: su aviso junto al buscador
-   * dura un instante, así que la página lo muestra aparte con el código que no entró.
+   * dura un instante, así que la página lo muestra aparte con el código que no entró
+   * (o el nombre, si era un producto elegido en la lista cuyo último costo no se pudo leer).
    */
-  onScanMissed?: (notice: { code: string; message: string }) => void;
+  onScanMissed?: (notice: { code: string; message: string } | { message: string; productName: string }) => void;
   onSearchChange: (value: string) => void;
   onSettleItem: (itemId: string) => void;
   onUpdateItem: (itemId: string, input: Partial<PurchaseDraftItem>) => void;
@@ -144,6 +159,7 @@ const SCAN_MISS_MESSAGES = {
   failed: "No se pudo buscar el producto.",
   not_found: "No hay un producto activo con ese código de barras o SKU.",
 };
+const PICK_FAILED_MESSAGE = "No se pudo consultar el último costo del producto. Vuelve a elegirlo.";
 const popupClassName =
   "absolute left-0 right-0 top-full z-20 mt-1 rounded-lg border border-border bg-surface-container-lowest shadow-lg";
 const popupMessageClassName = "px-4 py-2.5 text-sm";
@@ -271,8 +287,16 @@ export function PurchaseProductPickerCard({
     setPickerOpen(true);
   }
 
+  // Sin su último costo todavía, la línea no nace con uno provisional: espera en la cola
+  // (en orden con los escaneos) a consultarlo. La lista ya se cerró: no se retrasa.
   function handleAdd(product: PurchaseCatalogProduct) {
-    onAddProduct(product);
+    if (product.lastCostPending) {
+      setScanError(null);
+      scanQueue.enqueue({ codes: [], picked: product });
+    } else {
+      onAddProduct(product);
+    }
+
     onSearchChange("");
     setPickerOpen(false);
   }
@@ -324,19 +348,24 @@ export function PurchaseProductPickerCard({
   function handleScanSettled({ hasMore, job, resolution }: PurchaseScanOutcome) {
     if (resolution.status === "found") {
       setScanError(null);
-      onAddProduct(resolution.product, { scanned: true });
+      // Elegido en la lista: su línea sí pide el foco en Cantidad, como al elegirlo sin espera.
+      onAddProduct(resolution.product, job.picked ? undefined : { scanned: true });
 
       if (job.closeScanOnSuccess) {
         setScanOpen(false);
       }
     } else {
-      const message = SCAN_MISS_MESSAGES[resolution.status];
+      const message = job.picked ? PICK_FAILED_MESSAGE : SCAN_MISS_MESSAGES[resolution.status];
 
       setScanError(message);
 
       if (hasMore) {
         // El aviso junto al buscador lo pisará el siguiente escaneo: este queda aparte.
-        onScanMissed?.({ code: job.codes[0], message });
+        onScanMissed?.(
+          job.picked
+            ? { message, productName: job.picked.name }
+            : { code: job.codes[0], message },
+        );
       } else if (job.searchText && searchInputRef.current?.value === "") {
         // Nada detrás y el buscador sigue vacío: vuelve lo buscado, para corregirlo o crear
         // el producto. Queda seleccionado: el siguiente escaneo lo sustituye, no se le pega.

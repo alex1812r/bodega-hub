@@ -238,3 +238,95 @@ describe("buildDuplicatedPurchaseLines", () => {
     ]);
   });
 });
+
+// COM-F11 · el costo de la línea duplicada es el neto de la última compra recibida.
+describe("buildDuplicatedPurchaseLines · último costo neto recibido (COM-F11)", () => {
+  it("línea por unidad: usa el último neto, no el costo con IVA del vínculo entre la alícuota de la categoría", () => {
+    const { lines } = build(
+      [sourceItem({ productId: "prod-taladro", quantity: 3, unitCostRef: 9 })],
+      new Map([
+        [
+          "prod-taladro",
+          {
+            // Última compra exenta a 2.494,41: el vínculo guarda 2.494,41 y la categoría es 16 %.
+            product: product({
+              costWithTaxRef: 2494.41,
+              lastPurchaseUnitCostRef: 2494.41,
+              link: "preferred",
+              productId: "prod-taladro",
+              taxRate: 16,
+              unitCostRef: 2494.41,
+            }),
+            status: "active",
+          },
+        ],
+      ]),
+    );
+
+    expect(lines.items).toHaveLength(1);
+    expect(lines.items[0]).toMatchObject({ quantity: 3, taxRate: 16, unitCostRef: 2494.41 });
+  });
+
+  it("línea por empaque: último unitario neto por las unidades del empaque", () => {
+    const { lines } = build(
+      [
+        sourceItem({
+          entryMode: "pack",
+          packCostRef: 99,
+          packCount: 2,
+          packLabel: "Caja",
+          productId: "prod-refresco",
+          quantity: 24,
+          unitsPerPack: 12,
+        }),
+      ],
+      new Map([
+        [
+          "prod-refresco",
+          {
+            product: product({
+              costWithTaxRef: 1.48,
+              lastPurchaseUnitCostRef: 1.48,
+              link: "linked",
+              packUnits: [cajaPack],
+              productId: "prod-refresco",
+              taxRate: 16,
+              unitCostRef: 1.48,
+            }),
+            status: "active",
+          },
+        ],
+      ]),
+    );
+
+    expect(lines.items[0]).toMatchObject({
+      entryMode: "pack",
+      packCostRef: 17.76,
+      packCount: 2,
+      unitsPerPack: 12,
+    });
+  });
+
+  it("sin vínculo pero comprado antes a otro proveedor: el último neto gana a la línea de origen", () => {
+    const { lines } = build(
+      [sourceItem({ productId: "prod-lija", quantity: 1, unitCostRef: 9 })],
+      new Map([
+        [
+          "prod-lija",
+          {
+            product: product({
+              costWithTaxRef: 4.64,
+              lastPurchaseUnitCostRef: 4,
+              productId: "prod-lija",
+              taxRate: 16,
+              unitCostRef: 4,
+            }),
+            status: "active",
+          },
+        ],
+      ]),
+    );
+
+    expect(lines.items[0]).toMatchObject({ unitCostRef: 4 });
+  });
+});

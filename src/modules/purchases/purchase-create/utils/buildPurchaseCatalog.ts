@@ -20,6 +20,27 @@ export function netCostRef(costWithTaxRef: number, taxRate: number) {
   return roundMoney(cost / (1 + rate / 100));
 }
 
+/**
+ * El producto con el costo sugerido que le corresponde una vez consultada su última
+ * compra recibida (`lastUnitCostRef`, unitario SIN IVA): ese costo tal cual. El costo
+ * guardado con IVA lleva la alícuota de la línea que lo fijó, no la de la categoría, así
+ * que dividirlo entre esta lo bajaba tras una compra exenta. Sin compras previas
+ * (`undefined`) se conserva `netCostRef(costo con IVA, alícuota de la categoría)`.
+ */
+export function applyLastPurchaseCost(
+  product: PurchaseCatalogProduct,
+  lastUnitCostRef: number | undefined,
+): PurchaseCatalogProduct {
+  const resolved: PurchaseCatalogProduct = { ...product };
+
+  delete resolved.lastCostPending;
+  delete resolved.lastPurchaseUnitCostRef;
+
+  return lastUnitCostRef === undefined
+    ? { ...resolved, unitCostRef: netCostRef(product.costWithTaxRef, product.taxRate) }
+    : { ...resolved, lastPurchaseUnitCostRef: lastUnitCostRef, unitCostRef: lastUnitCostRef };
+}
+
 /** Productos vinculados al proveedor, con el habitual primero. Nunca ofrece inactivos. */
 export function buildPurchaseCatalog(
   supplierId: string,

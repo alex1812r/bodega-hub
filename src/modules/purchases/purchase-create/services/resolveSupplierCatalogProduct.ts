@@ -5,6 +5,7 @@ import { apiFetch } from "@/shared/api/apiFetch";
 
 import type { PurchaseCatalogProduct } from "../components/PurchaseProductPickerCard";
 import { buildPurchaseCatalog, buildUnlinkedCatalogProduct } from "../utils/buildPurchaseCatalog";
+import { withLastPurchaseCost } from "./purchaseLastCosts";
 
 export async function resolveSupplierCatalogProduct(
   supplierId: string,
@@ -37,7 +38,8 @@ function findActiveProductsByCode(filter: { barcode: string } | { sku: string })
 /**
  * Código leído o tecleado + Enter: producto ACTIVO de la tienda cuyo código de
  * barras (o, si no hay, SKU) coincide exacto. Con vínculo al proveedor sale con
- * su último costo y sus empaques; sin vínculo, con el costo actual del producto.
+ * sus empaques. El costo sugerido es el de su última compra recibida; si nunca se
+ * compró, el último costo del vínculo o el costo actual del producto, sin IVA.
  */
 export async function resolvePurchaseProductByCode(
   supplierId: string,
@@ -67,5 +69,8 @@ export async function resolvePurchaseProductByCode(
 
   const linked = await resolveSupplierCatalogProduct(supplierId, product.id);
 
-  return { product: linked ?? buildUnlinkedCatalogProduct(product), status: "found" };
+  return {
+    product: await withLastPurchaseCost(supplierId, linked ?? buildUnlinkedCatalogProduct(product)),
+    status: "found",
+  };
 }

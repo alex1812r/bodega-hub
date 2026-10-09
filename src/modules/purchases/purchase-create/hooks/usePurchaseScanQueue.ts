@@ -2,15 +2,26 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import type { PurchaseCatalogProduct } from "../components/PurchaseProductPickerCard";
+import { withLastPurchaseCost } from "../services/purchaseLastCosts";
 import {
   type PurchaseCodeResolution,
   resolvePurchaseProductByCode,
 } from "../services/resolveSupplierCatalogProduct";
 
-/** Un escaneo en espera: los códigos posibles (uno desde el buscador, varios desde una celda). */
+/**
+ * Un producto en espera de entrar a la compra: un escaneo (los códigos posibles: uno desde
+ * el buscador, varios desde una celda) o un producto elegido en la lista del buscador
+ * antes de que llegara su último costo.
+ */
 export type PurchaseScanJob = {
   /** Códigos a consultar en este orden; el primero que sea de un producto es el escaneado. */
   codes: string[];
+  /**
+   * Elegido en la lista con `lastCostPending`: no se busca por código, solo se consulta su
+   * último costo de compra. La línea se crea al tenerlo, en su turno de la cola.
+   */
+  picked?: PurchaseCatalogProduct;
   /**
    * Se llama una vez, ANTES de `onSettled` (que puede agregar el producto y bloquear la
    * línea): el código que existía, o `null` si ninguno, falló la consulta o se descartó.
@@ -49,6 +60,19 @@ async function resolveFirstKnownCode(
   }
 
   return { code: null, resolution: { status: "not_found" } };
+}
+
+function resolveJob(supplierId: string, job: PurchaseScanJob) {
+  if (!job.picked) {
+    return resolveFirstKnownCode(supplierId, job.codes);
+  }
+
+  return withLastPurchaseCost(supplierId, job.picked).then(
+    (product): { code: string | null; resolution: PurchaseCodeResolution } => ({
+      code: null,
+      resolution: { product, status: "found" },
+    }),
+  );
 }
 
 /**
@@ -93,7 +117,7 @@ export function usePurchaseScanQueue(
 
     for (let next = queue.current[0]; next; next = queue.current[0]) {
       const { job, supplierId: jobSupplierId } = next;
-      const result = await resolveFirstKnownCode(jobSupplierId, job.codes).catch(() => null);
+      const result = await resolveJob(jobSupplierId, job).catch(() => null);
 
       if (!alive.current) {
         break;

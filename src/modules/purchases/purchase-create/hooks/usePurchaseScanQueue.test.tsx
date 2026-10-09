@@ -73,3 +73,62 @@ describe("usePurchaseScanQueue · consultas por un código inexistente leído en
     ]);
   });
 });
+
+// COM-F11 · un producto elegido en la lista antes de saber su último costo espera en la cola.
+describe("usePurchaseScanQueue · producto elegido sin su último costo (COM-F11)", () => {
+  const picked = {
+    costWithTaxRef: 2494.41,
+    currentStock: 1,
+    lastCostPending: true,
+    link: "none" as const,
+    name: "Taladro",
+    packUnits: [],
+    productId: "prod-drill",
+    sku: "ELE-TAL-001",
+    taxRate: 16,
+    unitCostRef: 2150.35,
+  };
+
+  function renderQueue() {
+    const settled: PurchaseScanOutcome[] = [];
+    const { result } = renderHook(() =>
+      usePurchaseScanQueue("cont-supplier", (outcome) => settled.push(outcome)),
+    );
+
+    return { result, settled };
+  }
+
+  it("consulta solo su último costo (sin buscar por código) y lo entrega con el neto recibido", async () => {
+    const fetchMock = jest.fn(async (url: RequestInfo | URL) =>
+      jsonResponse({
+        data: [{ productId: "prod-drill", source: "supplier", taxRate: 0, unitCostRef: 2494.41 }],
+        url: String(url),
+      }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { result, settled } = renderQueue();
+
+    act(() => result.current.enqueue({ codes: [], picked }));
+    await waitFor(() => expect(settled).toHaveLength(1));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/purchases/last-costs?");
+    expect(settled[0]?.resolution).toMatchObject({
+      product: { lastPurchaseUnitCostRef: 2494.41, productId: "prod-drill", unitCostRef: 2494.41 },
+      status: "found",
+    });
+    expect(settled[0]?.resolution).not.toHaveProperty("product.lastCostPending");
+  });
+
+  it("si la consulta falla, el producto no entra con un costo provisional", async () => {
+    global.fetch = jest.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+    const { result, settled } = renderQueue();
+
+    act(() => result.current.enqueue({ codes: [], picked }));
+    await waitFor(() => expect(settled).toHaveLength(1));
+
+    expect(settled[0]?.resolution).toEqual({ status: "failed" });
+  });
+});

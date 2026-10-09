@@ -30,10 +30,11 @@ function samePackLabel(left: string, right: string) {
 /**
  * Líneas de una compra duplicada (COM-09): mismo producto, mismo modo (unidad o
  * empaque, con su etiqueta y sus unidades por empaque) y misma cantidad que el
- * origen, con el costo AL ÚLTIMO CONOCIDO: el del vínculo proveedor–producto
- * actual, llevado a base sin IVA igual que el buscador, y solo si no hay vínculo
- * con costo, el de la línea de origen (que ya es sin IVA). La alícuota es la de
- * la categoría actual del producto.
+ * origen, con el costo AL ÚLTIMO CONOCIDO, igual que el buscador: el unitario sin
+ * IVA de la última compra recibida del producto; si no se conoce, el del vínculo
+ * proveedor–producto actual llevado a base sin IVA, y solo si no hay vínculo con
+ * costo, el de la línea de origen (que ya es sin IVA). La alícuota es la de la
+ * categoría actual del producto.
  *
  * Nacen desbloqueadas y asentadas (sin marca de "editada"). Los productos
  * inactivos o que ya no existen se omiten y se listan en `notices`.
@@ -57,6 +58,7 @@ export function buildDuplicatedPurchaseLines(
     }
 
     const { product } = resolution;
+    const lastUnitCostRef = product.lastPurchaseUnitCostRef;
     const hasLinkCost = product.link !== "none" && product.costWithTaxRef > 0;
     const base = {
       costCurrency: input.costCurrency,
@@ -85,9 +87,12 @@ export function buildDuplicatedPurchaseLines(
         createPackDraftItem({
           ...base,
           // Del costo con IVA del empaque, no del unitario ya redondeado: evita arrastrar céntimos.
-          packCostRef: hasLinkCost
-            ? netCostRef(product.costWithTaxRef * unitsPerPack, product.taxRate)
-            : (source.packCostRef ?? roundMoney(source.unitCostRef * unitsPerPack)),
+          packCostRef:
+            lastUnitCostRef !== undefined
+              ? roundMoney(lastUnitCostRef * unitsPerPack)
+              : hasLinkCost
+                ? netCostRef(product.costWithTaxRef * unitsPerPack, product.taxRate)
+                : (source.packCostRef ?? roundMoney(source.unitCostRef * unitsPerPack)),
           packCount: source.packCount ?? 1,
           packLabel,
           packUnitId: packUnit?.id,
@@ -100,7 +105,8 @@ export function buildDuplicatedPurchaseLines(
       createUnitDraftItem({
         ...base,
         quantity: source.quantity,
-        unitCostRef: hasLinkCost ? product.unitCostRef : source.unitCostRef,
+        unitCostRef:
+          lastUnitCostRef ?? (hasLinkCost ? product.unitCostRef : source.unitCostRef),
       }),
     ];
   });

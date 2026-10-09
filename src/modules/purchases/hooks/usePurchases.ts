@@ -111,6 +111,9 @@ export type PurchaseReturnResult = {
 export const purchasesQueryKeys = {
   all: ["purchases"] as const,
   detail: (id: string) => [...purchasesQueryKeys.all, "detail", id] as const,
+  /** Bajo `all`: registrar o recibir una compra los invalida (cambia el último costo). */
+  lastCosts: (supplierId: string, productIds: string[]) =>
+    [...purchasesQueryKeys.all, "last-costs", supplierId, productIds] as const,
   list: (filters: PurchasesFilters = {}) =>
     [...purchasesQueryKeys.all, "list", filters] as const,
   supplierProducts: (supplierId: string) =>

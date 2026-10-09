@@ -51,6 +51,7 @@ import {
 import { PurchaseSupplierCard } from "./components/PurchaseSupplierCard";
 import type { PurchaseLineItemMeta } from "./components/PurchaseLineItemsTable";
 import { useCreatePurchase, type PurchaseDetails } from "../hooks/usePurchases";
+import { withLastPurchaseCosts } from "./services/purchaseLastCosts";
 import { resolvePurchaseProducts } from "./services/resolvePurchaseProducts";
 import type { PurchaseCostCurrency, PurchaseDraftItem } from "./types";
 import { buildUnlinkedCatalogProduct } from "./utils/buildPurchaseCatalog";
@@ -394,9 +395,13 @@ export function PurchaseCreatePage() {
     nextSupplier: { id: string; name: string | null },
     sourceItems: PurchaseDuplicateSourceItem[],
   ) {
-    const products = await resolvePurchaseProducts(
+    // Como el buscador: el costo sugerido es el de la última compra recibida de cada producto.
+    const products = await withLastPurchaseCosts(
       nextSupplier.id,
-      sourceItems.map((item) => item.productId),
+      await resolvePurchaseProducts(
+        nextSupplier.id,
+        sourceItems.map((item) => item.productId),
+      ),
     );
     const duplicated = buildDuplicatedPurchaseLines(sourceItems, products, {
       costCurrency,
@@ -812,10 +817,13 @@ export function PurchaseCreatePage() {
                 : undefined
             }
             onRemoveItem={(itemId) => dispatchLines({ itemId, type: "lineRemoved" })}
-            onScanMissed={({ code, message }) =>
+            onScanMissed={(missed) =>
               showToast({
-                description: message,
-                title: `No se agregó el código ${code}`,
+                description: missed.message,
+                title:
+                  "productName" in missed
+                    ? `No se agregó ${missed.productName}`
+                    : `No se agregó el código ${missed.code}`,
                 tone: "error",
               })
             }
