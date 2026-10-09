@@ -65,13 +65,10 @@ export function AssortedPackOpeningConfirm({ opening }: AssortedPackOpeningConfi
       open={opening.confirmOpen}
       title={opening.isSingle ? "Confirmar conversión de empaque" : "Abrir empaque surtido"}
     >
-      {opening.reason ? (
-        <p className="whitespace-pre-wrap break-words">
-          Motivo: <span className="font-medium text-foreground">{opening.reason}</span>
-        </p>
-      ) : (
-        <p>Sin motivo.</p>
-      )}
+      {/* Sin motivo no se llega aquí: `openConfirm` lo exige. */}
+      <p className="whitespace-pre-wrap break-words">
+        Motivo: <span className="font-medium text-foreground">{opening.reason}</span>
+      </p>
     </ConfirmActionModal>
   );
 }

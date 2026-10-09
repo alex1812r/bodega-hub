@@ -109,8 +109,8 @@ export function CreateStoreUserModal({ onOpenChange, open }: CreateStoreUserModa
         />
         <Input
           className="sm:col-span-2"
-          helperText="Minimo 8 caracteres. El usuario debera cambiarla despues."
-          label="Contrasena temporal"
+          helperText="Mínimo 8 caracteres. El usuario deberá cambiarla después."
+          label="Contraseña temporal"
           minLength={8}
           onChange={(event) =>
             setForm((current) => ({ ...current, password: event.target.value }))

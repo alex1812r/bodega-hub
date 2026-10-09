@@ -150,7 +150,7 @@ export function InventoryPackConversionModal({
       ? `Conversión de «${selected.packProduct.name}» sin registrar`
       : "Conversión de empaque sin registrar",
   });
-  // Sin `min`/`max` en el input no hay burbuja nativa: el motivo se dice aqui.
+  // Sin `min`/`max` en el input no hay burbuja nativa: el motivo se dice aquí.
   const quantityError = !showQuantityError
     ? undefined
     : !(quantityNumber > 0)
@@ -290,16 +290,16 @@ export function InventoryPackConversionModal({
             value={packQuantity}
           />
           <p className="text-sm text-on-surface-variant">
-            Preview: −{quantityNumber || 0} empaque(s) / +{unitPreview} unidad(es).
+            Vista previa: −{quantityNumber || 0} empaque(s) / +{unitPreview} unidad(es).
           </p>
           <AssortedPackOpeningFields opening={assorted} />
           <Textarea
             disabled={assorted.isPending}
+            error={assorted.reasonError}
             helperText={describeStockReasonLength(reason)}
             label="Motivo"
             maxLength={STOCK_REASON_MAX_LENGTH}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="Opcional"
             value={reason}
           />
           {/* Con la confirmación abierta el error se dice en ella; al cancelarla sigue a la vista aquí. */}

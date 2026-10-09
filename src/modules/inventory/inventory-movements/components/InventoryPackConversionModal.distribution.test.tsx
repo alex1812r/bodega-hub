@@ -117,7 +117,15 @@ function queryConfirm() {
   return screen.queryByRole("dialog", { name: "Abrir empaque surtido" });
 }
 
+const REASON = "Reposición de mostrador";
+
+/** CNF-F4: el motivo es obligatorio; sin él la confirmación no se abre. */
+function fillReason() {
+  fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: REASON } });
+}
+
 async function openConfirm() {
+  fillReason();
   submitForm();
 
   return screen.findByRole("dialog", { name: "Abrir empaque surtido" });
@@ -341,6 +349,7 @@ describe("InventoryPackConversionModal · confirmación del surtido (INV-08)", (
       ],
       packProductId: "prod-surtido",
       packQuantity: 1,
+      reason: REASON,
     });
     expect(
       within(await screen.findByRole("status")).getByText("Abriste 1 Surtido A: +4 Cola, +2 Manzana"),
@@ -467,6 +476,7 @@ describe("InventoryPackConversionModal · confirmación del surtido (INV-08)", (
     await renderOpen();
     setUnits("Cola", "4");
     setUnits("Manzana", "0");
+    fillReason();
 
     const continueButton = screen.getByRole("button", { name: "Continuar" });
 
@@ -515,6 +525,7 @@ describe("InventoryPackConversionModal · empaque 1 a 1 (INV-08)", () => {
     expect(screen.queryByText("Reparto de unidades")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Restablecer receta" })).not.toBeInTheDocument();
 
+    fillReason();
     submitForm();
 
     // La confirmación del 1 a 1 es la suya, no la del surtido.
@@ -530,6 +541,7 @@ describe("InventoryPackConversionModal · empaque 1 a 1 (INV-08)", () => {
       clientRequestId: uuid,
       packProductId: "prod-cigar-pack",
       packQuantity: 2,
+      reason: REASON,
     });
   });
 });

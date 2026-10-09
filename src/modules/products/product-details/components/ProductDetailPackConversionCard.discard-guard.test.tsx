@@ -180,6 +180,7 @@ describe("ProductDetailPackConversionCard · guardia de datos tecleados (CNF-15)
     const { api, user } = await renderOpen();
 
     await setQuantity(user, "2");
+    await user.type(screen.getByLabelText("Motivo"), "apertura");
     submitForm();
     await user.click(
       within(await screen.findByRole("dialog", { name: CONFIRM_TITLE })).getByRole("button", {
@@ -198,6 +199,7 @@ describe("ProductDetailPackConversionCard · guardia de datos tecleados (CNF-15)
     const { user } = await renderOpen();
 
     await setQuantity(user, "2");
+    await user.type(screen.getByLabelText("Motivo"), "apertura");
     submitForm();
     await screen.findByRole("dialog", { name: CONFIRM_TITLE });
     clickLinkToAnotherRoute();
@@ -215,6 +217,7 @@ describe("ProductDetailPackConversionCard · guardia de datos tecleados (CNF-15)
 
     api.respondToNextPost({ data: { conversionId: "conv-1", unitQuantity: 20 } });
     await setQuantity(user, "2");
+    await user.type(screen.getByLabelText("Motivo"), "apertura");
     submitForm();
     await user.click(
       within(await screen.findByRole("dialog", { name: CONFIRM_TITLE })).getByRole("button", {

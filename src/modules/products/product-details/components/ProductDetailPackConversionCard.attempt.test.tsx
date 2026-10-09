@@ -61,7 +61,15 @@ async function openDialog() {
   await screen.findByLabelText("Cantidad de empaques");
 }
 
+const REASON = "Reposición de mostrador";
+
+/** CNF-F4: el motivo es obligatorio; sin él la confirmación no se abre. */
+function fillReason() {
+  fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: REASON } });
+}
+
 function submitForm() {
+  fillReason();
   fireEvent.submit(document.getElementById(formId) as HTMLFormElement);
 }
 
@@ -130,6 +138,12 @@ describe("ProductDetailPackConversionCard · intento de envío (INV-F2)", () => 
     expect(screen.getByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).toBeVisible();
 
     fireEvent.keyDown(screen.getByRole("dialog", { name: "Abrir empaque" }), { key: "Escape" });
+    // Con el motivo tecleado, cerrar pregunta (CNF-15): se sale descartándolo.
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "¿Salir sin terminar?" })).getByRole("button", {
+        name: "Salir",
+      }),
+    );
     await waitFor(() => expect(document.getElementById(formId)).toBeNull());
     await openDialog();
     expect(screen.queryByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).not.toBeInTheDocument();

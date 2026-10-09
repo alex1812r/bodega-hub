@@ -1,8 +1,9 @@
 /**
  * CNF-08 · conversión de empaque 1 a 1: el formulario no envía; abre una
  * confirmación con las dos caras (−N empaques y +N × u unidades, cada una con
- * su stock actual → resultante) y el motivo. El surtido ya confirmaba (INV-08)
- * y ahora muestra también el motivo. Un empaque que quedaría en negativo no
+ * su stock actual → resultante) y el motivo, que es obligatorio (CNF-F4): sin
+ * él la confirmación no se abre. El surtido ya confirmaba (INV-08) y ahora
+ * muestra también el motivo. Un empaque que quedaría en negativo no
  * llega a la confirmación, y el error del servidor se dice dentro de ella sin
  * perder lo tecleado en el formulario de debajo.
  */
@@ -84,6 +85,7 @@ const assorted = {
 const converted = { data: { conversionId: "conv-1", unitQuantity: 20 } };
 const formId = "inventory-pack-conversion-form";
 const CONFIRM_TITLE = "Confirmar conversión de empaque";
+const REASON_REQUIRED = "Indica el motivo de la conversión.";
 const uuid = expect.stringMatching(/^[0-9a-f-]{36}$/);
 
 async function renderOpen(packProductId = "prod-cigar-pack") {
@@ -165,18 +167,45 @@ describe("InventoryPackConversionModal · confirmación del 1 a 1 (CNF-08)", () 
     expect(within(dialog).getByText("Reposición de mostrador")).toBeVisible();
   });
 
-  it("sin motivo (es opcional) lo dice; abrir todos los empaques deja el empaque en 0", async () => {
+  it("sin motivo no abre la confirmación: avisa en el campo y, al escribirlo, deja continuar", async () => {
+    const api = await renderOpen();
+    setQuantity("2");
+
+    submitForm();
+    await flush();
+
+    expect(queryConfirm()).not.toBeInTheDocument();
+    expect(screen.getByText(REASON_REQUIRED)).toBeVisible();
+    expect(api.posts).toHaveLength(0);
+
+    // Solo espacios tampoco es un motivo.
+    setReason("   ");
+    submitForm();
+    await flush();
+
+    expect(queryConfirm()).not.toBeInTheDocument();
+    expect(screen.getByText(REASON_REQUIRED)).toBeVisible();
+
+    setReason("Reposición");
+
+    expect(screen.queryByText(REASON_REQUIRED)).not.toBeInTheDocument();
+    expect(within(await openConfirm()).getByText("Reposición")).toBeVisible();
+    expect(screen.queryByText("Sin motivo.")).not.toBeInTheDocument();
+  });
+
+  it("abrir todos los empaques deja el empaque en 0", async () => {
     await renderOpen();
     setQuantity("5");
+    setReason("Reposición");
 
     const dialog = await openConfirm();
 
-    expect(within(dialog).getByText("Sin motivo.")).toBeVisible();
     expect(within(dialog).getAllByRole("listitem")[0]).toHaveTextContent(/Stock 5\s*pasa a\s*0$/);
   });
 
   it("receta de un servidor anterior (sin `components`): las dos caras salen de la unidad vinculada", async () => {
     await renderOpen("prod-water-pack");
+    setReason("Reposición");
 
     const effects = within(await openConfirm()).getAllByRole("listitem");
 
@@ -187,6 +216,7 @@ describe("InventoryPackConversionModal · confirmación del 1 a 1 (CNF-08)", () 
 
   it("unidad inactiva: se marca en la confirmación, sin bloquear", async () => {
     await renderOpen("prod-old-pack");
+    setReason("Reposición");
 
     const effects = within(await openConfirm()).getAllByRole("listitem");
 
@@ -300,5 +330,16 @@ describe("InventoryPackConversionModal · motivo en la confirmación del surtido
 
     expect(within(dialog).getByText("Apertura para el mostrador")).toBeVisible();
     expect(within(dialog).getAllByRole("listitem")).toHaveLength(3);
+  });
+
+  it("el surtido sin motivo tampoco abre la confirmación y avisa en el campo", async () => {
+    const api = await renderOpen("prod-surtido");
+
+    submitForm();
+    await flush();
+
+    expect(screen.queryByRole("dialog", { name: "Abrir empaque surtido" })).not.toBeInTheDocument();
+    expect(screen.getByText(REASON_REQUIRED)).toBeVisible();
+    expect(api.posts).toHaveLength(0);
   });
 });

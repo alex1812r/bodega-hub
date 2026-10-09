@@ -259,7 +259,7 @@ export function CloseCashSessionModal({
 
   return (
     <Modal
-      description={`Cuenta TODO el efectivo fisico en ${registerName}: fondo de apertura + efectivo de ventas. El pago movil no se cuenta aqui.`}
+      description={`Cuenta TODO el efectivo físico en ${registerName}: fondo de apertura + efectivo de ventas. El pago móvil no se cuenta aquí.`}
       footer={({ close }) => (
         <>
           <Button
@@ -303,7 +303,7 @@ export function CloseCashSessionModal({
             </p>
             <MoneyPair refAmount={openingRef} vesAmount={openingVes} />
             <p className="mt-1 text-xs text-on-surface-variant">
-              Efectivo con el que se abrio la caja
+              Efectivo con el que se abrió la caja
             </p>
           </div>
           <div>
@@ -312,40 +312,40 @@ export function CloseCashSessionModal({
             </p>
             <MoneyPair refAmount={salesCashRef} vesAmount={salesCashVes} />
             <p className="mt-1 text-xs text-on-surface-variant">
-              Solo efectivo Bs/USD. Sin pago movil
+              Solo efectivo Bs/USD. Sin pago móvil
             </p>
           </div>
           <div className="sm:col-span-2 rounded-md border border-border bg-background/60 p-3">
             <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-              3. Debes contar en el cajon (apertura + ventas)
+              3. Debes contar en el cajón (apertura + ventas)
             </p>
             <MoneyPair refAmount={theoreticalRef} vesAmount={theoreticalVes} />
           </div>
           <div className="sm:col-span-2">
             <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-              Cuenta Bs. del turno (pago movil / transferencia / punto)
+              Cuenta Bs. del turno (pago móvil / transferencia / punto)
             </p>
             <p className="font-semibold tabular-nums text-emerald-700">{formatVesBs(accountVes)}</p>
             <p className="text-xs text-on-surface-variant">
-              No entra al cajon ni al cierre fisico
+              No entra al cajón ni al cierre físico
             </p>
           </div>
         </div>
 
         <p className="text-sm text-on-surface-variant">
-          Indica lo que realmente hay en efectivo. Por defecto se prellena con el total del cajon
-          (paso 3), no solo con las ventas del dia.
+          Indica lo que realmente hay en efectivo. Por defecto se prellena con el total del cajón
+          (paso 3), no solo con las ventas del día.
         </p>
 
         <NumberInput
           decimals={2}
-          label="Efectivo contado Bs. (cajon completo)"
+          label="Efectivo contado Bs. (cajón completo)"
           onChange={(event) => setClosingVes(event.target.value)}
           value={closingVes}
         />
         <NumberInput
           decimals={2}
-          label="Efectivo contado REF (cajon completo)"
+          label="Efectivo contado REF (cajón completo)"
           onChange={(event) => setClosingRef(event.target.value)}
           value={closingRef}
         />

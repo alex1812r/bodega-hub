@@ -48,7 +48,7 @@ export function GeneralSettingsCard({ settings }: GeneralSettingsCardProps) {
     <Card>
       <CardHeader>
         <CardTitle>Datos generales</CardTitle>
-        <CardDescription>Valores usados por facturacion, inventario y reportes.</CardDescription>
+        <CardDescription>Valores usados por facturación, inventario y reportes.</CardDescription>
       </CardHeader>
       <CardContent>
         <form

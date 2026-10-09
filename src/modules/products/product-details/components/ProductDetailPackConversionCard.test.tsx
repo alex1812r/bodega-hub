@@ -59,6 +59,13 @@ function getForm() {
   return form;
 }
 
+const REASON = "Reposición de mostrador";
+
+/** CNF-F4: el motivo es obligatorio; sin él la confirmación no se abre. */
+function fillReason() {
+  fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: REASON } });
+}
+
 /** CNF-F2: el 1 a 1 ya no envía desde el formulario; lo hace el botón de su confirmación. */
 async function findConfirm() {
   return screen.findByRole("dialog", { name: "Confirmar conversión de empaque" });
@@ -82,6 +89,7 @@ describe("ProductDetailPackConversionCard · idempotencia (C6)", () => {
     const onConverted = renderCard();
 
     await openDialog();
+    fillReason();
     fireEvent.submit(getForm());
     fireEvent.submit(getForm());
 
@@ -102,6 +110,7 @@ describe("ProductDetailPackConversionCard · idempotencia (C6)", () => {
       clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       packProductId: "prod-cigar-pack",
       packQuantity: 1,
+      reason: REASON,
     });
     expect(onConverted).not.toHaveBeenCalled();
 
@@ -120,6 +129,7 @@ describe("ProductDetailPackConversionCard · idempotencia (C6)", () => {
     const onConverted = renderCard();
 
     await openDialog();
+    fillReason();
     fireEvent.submit(getForm());
     const dialog = await confirmConversion();
     await within(dialog).findByText(/No pudimos confirmar si el movimiento se registró/);
@@ -174,6 +184,7 @@ describe("ProductDetailPackConversionCard · aviso de cantidad (SHR-09G)", () =>
     fireEvent.change(getQuantityInput(), { target: { value: "2" } });
     expect(getQuantityInput()).not.toHaveAttribute("aria-invalid");
 
+    fillReason();
     fireEvent.submit(getForm());
     await findConfirm();
     expect(api.posts).toHaveLength(0);
@@ -186,6 +197,7 @@ describe("ProductDetailPackConversionCard · aviso de cantidad (SHR-09G)", () =>
       clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       packProductId: "prod-cigar-pack",
       packQuantity: 2,
+      reason: REASON,
     });
   });
 });
@@ -268,6 +280,7 @@ describe("ProductDetailPackConversionCard · cantidad entera (SHR-09J)", () => {
 
     await user.clear(quantity);
     await user.type(quantity, "3");
+    fillReason();
 
     if (how === "Enter") {
       await user.keyboard("{Enter}");
@@ -286,6 +299,7 @@ describe("ProductDetailPackConversionCard · cantidad entera (SHR-09J)", () => {
       clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       packProductId: "prod-cigar-pack",
       packQuantity: 3,
+      reason: REASON,
     });
   });
 });
@@ -406,6 +420,7 @@ describe("ProductDetailPackConversionCard · surtido y orígenes (PRO-13)", () =
     expect(screen.getByLabelText("Unidades de Naranja")).toHaveValue("2");
     expect(screen.getByText("6 de 6 unidades")).toBeVisible();
 
+    fillReason();
     fireEvent.submit(getForm());
 
     const dialog = await screen.findByRole("dialog", { name: "Abrir empaque surtido" });
@@ -428,6 +443,7 @@ describe("ProductDetailPackConversionCard · surtido y orígenes (PRO-13)", () =
       ],
       packProductId: "prod-sabores",
       packQuantity: 1,
+      reason: REASON,
     });
   });
 
@@ -453,6 +469,7 @@ describe("ProductDetailPackConversionCard · surtido y orígenes (PRO-13)", () =
     fireEvent.change(screen.getByLabelText("Unidades de Cola"), { target: { value: "9" } });
     fireEvent.change(screen.getByLabelText("Unidades de Manzana"), { target: { value: "0" } });
     fireEvent.change(screen.getByLabelText("Unidades de Naranja"), { target: { value: "3" } });
+    fillReason();
     fireEvent.submit(getForm());
 
     const dialog = await screen.findByRole("dialog", { name: "Abrir empaque surtido" });

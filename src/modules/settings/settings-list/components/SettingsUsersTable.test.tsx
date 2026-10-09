@@ -276,8 +276,8 @@ describe("SettingsUsersTable · rol y estado con confirmación (CNF-11)", () => 
 
     const dialog = await screen.findByRole("dialog");
 
-    expect(dialog).toHaveTextContent("Rol: Contador → Almacen");
-    expect(dialog).toHaveTextContent("Recupera los permisos de su rol: Almacen.");
+    expect(dialog).toHaveTextContent("Rol: Contador → Almacén");
+    expect(dialog).toHaveTextContent("Recupera los permisos de su rol: Almacén.");
 
     await user.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
 

@@ -49,7 +49,7 @@ type UseAssortedPackOpeningInput = {
 };
 
 /**
- * Apertura de un empaque con confirmación: efecto calculado (lo que sale del
+ * Apertura de un empaque con confirmación y motivo obligatorio: efecto calculado (lo que sale del
  * empaque y lo que entra a cada producto, con su stock antes → después),
  * confirmación y envío. En un surtido lleva además el reparto editable, que
  * viaja en `components`; en un 1 a 1 (`kind: "single"`, CNF-08) no hay reparto
@@ -71,6 +71,8 @@ export function useAssortedPackOpening({
 }: UseAssortedPackOpeningInput) {
   const [edited, setEdited] = useState<EditedDistribution | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Se activa al intentar continuar sin motivo; al abrir el formulario no hay aviso.
+  const [showReasonError, setShowReasonError] = useState(false);
   // Otro reparto estrena clave: "misma clave + otro reparto" es un 409 en el servidor.
   // Tras abrirse el surtido no sale otra apertura hasta que el modal anfitrión se cierre.
   const attempt = useRequestAttempt({ lockAfterSuccess: true, renewOnContentChange: true });
@@ -78,6 +80,7 @@ export function useAssortedPackOpening({
   const convert = useConvertPackToUnits();
 
   const isSingle = target?.kind === "single";
+  const trimmedReason = reason.trim();
   // Un reparto tecleado para otro empaque no vale para este; un 1 a 1 no tiene reparto que teclear.
   const editedValues =
     target && !isSingle && edited?.packId === target.pack.id ? edited.values : null;
@@ -125,12 +128,19 @@ export function useAssortedPackOpening({
   function reset() {
     setEdited(null);
     setConfirmOpen(false);
+    setShowReasonError(false);
     convert.reset();
     attempt.discard();
   }
 
-  /** Abre la confirmación si el reparto se puede enviar. */
+  /** Abre la confirmación si hay motivo y el reparto se puede enviar. */
   function openConfirm() {
+    // El motivo es obligatorio (CNF-08): sin él no se llega a confirmar y el campo lo dice.
+    if (trimmedReason === "") {
+      setShowReasonError(true);
+      return false;
+    }
+
     if (!effect?.isValid) {
       return false;
     }
@@ -143,7 +153,7 @@ export function useAssortedPackOpening({
   }
 
   async function confirm() {
-    if (!target || !effect?.isValid) {
+    if (!target || !effect?.isValid || trimmedReason === "") {
       return;
     }
 
@@ -152,7 +162,7 @@ export function useAssortedPackOpening({
       ...(isSingle ? {} : { components: toPackOpeningRequestComponents(effect) }),
       packProductId: target.pack.id,
       packQuantity,
-      reason: reason.trim() || undefined,
+      reason: trimmedReason,
     };
     // null = ya hay un envío en vuelo (doble clic).
     const clientRequestId = attempt.begin(input);
@@ -166,6 +176,7 @@ export function useAssortedPackOpening({
       attempt.succeed();
       setConfirmOpen(false);
       setEdited(null);
+      setShowReasonError(false);
       onOpened(result, effect);
     } catch (error) {
       // El mensaje llega por `error`; la confirmación sigue abierta para reintentar.
@@ -191,7 +202,10 @@ export function useAssortedPackOpening({
     openConfirm,
     packQuantity,
     /** Motivo tecleado, sin los espacios de los extremos ("" si no hay): la confirmación lo muestra. */
-    reason: reason.trim(),
+    reason: trimmedReason,
+    /** Aviso para el campo Motivo tras intentar continuar sin él. */
+    reasonError:
+      showReasonError && trimmedReason === "" ? "Indica el motivo de la conversión." : undefined,
     /** Limpia reparto, confirmación y error, y descarta el intento (al cerrar el modal anfitrión). */
     reset,
     resetDistribution: () => setEdited(null),

@@ -92,7 +92,9 @@ function setQuantity(value: string) {
   fireEvent.change(screen.getByLabelText("Cantidad de empaques"), { target: { value } });
 }
 
+/** CNF-F4: el motivo es obligatorio; sin él la confirmación no se abre. */
 function submit() {
+  fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Reposición de mostrador" } });
   fireEvent.submit(document.getElementById("inventory-pack-conversion-form") as HTMLFormElement);
 }
 
@@ -121,7 +123,7 @@ describe("InventoryPackConversionModal · descripción de la receta (PRO-F7)", (
     expect(screen.getByLabelText("Unidades de Manzana")).toHaveValue("6");
     expect(screen.getByLabelText("Unidades de Naranja")).toHaveValue("6");
     expect(screen.getByText("Naranja (inactivo)")).toBeVisible();
-    expect(screen.getByText(/Preview: −3 empaque\(s\) \/ \+18 unidad\(es\)\./)).toBeVisible();
+    expect(screen.getByText(/Vista previa: −3 empaque\(s\) \/ \+18 unidad\(es\)\./)).toBeVisible();
     // Nada que se lea como "18 Colas".
     expect(screen.queryByText(/Unidad: Cola/)).not.toBeInTheDocument();
   });
@@ -154,7 +156,7 @@ describe("InventoryPackConversionModal · descripción de la receta (PRO-F7)", (
       "Caja cigarros (x10)",
     );
     expect(screen.getByText("Stock empaque: 5. Unidad: Cigarro suelto (stock 3).")).toBeVisible();
-    expect(screen.getByText("Preview: −2 empaque(s) / +20 unidad(es).")).toBeVisible();
+    expect(screen.getByText("Vista previa: −2 empaque(s) / +20 unidad(es).")).toBeVisible();
     expect(screen.queryByText(/Se abrirá en/)).not.toBeInTheDocument();
   });
 });

@@ -72,6 +72,7 @@ const legacySingle: ProductPackConversionSummary = {
 const converted = { data: { conversionId: "conv-1", unitQuantity: 20 } };
 const formId = "open-pack-form";
 const CONFIRM_TITLE = "Confirmar conversión de empaque";
+const REASON_REQUIRED = "Indica el motivo de la conversión.";
 const uuid = expect.stringMatching(/^[0-9a-f-]{36}$/);
 
 async function renderOpen(conversion: ProductPackConversionSummary = single, productStock = 5) {
@@ -166,6 +167,7 @@ describe("ProductDetailPackConversionCard · confirmación del 1 a 1 (CNF-F2)", 
 
   it("el pie del formulario dice «Continuar», no envía y lleva a la confirmación", async () => {
     const { api } = await renderOpen();
+    setReason("Reposición");
 
     fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
 
@@ -173,18 +175,45 @@ describe("ProductDetailPackConversionCard · confirmación del 1 a 1 (CNF-F2)", 
     expect(api.posts).toHaveLength(0);
   });
 
-  it("sin motivo (es opcional) lo dice; abrir todos los empaques deja el empaque en 0", async () => {
+  it("sin motivo no abre la confirmación: avisa en el campo y, al escribirlo, deja continuar", async () => {
+    const { api } = await renderOpen();
+    setQuantity("2");
+
+    submitForm();
+    await flush();
+
+    expect(queryConfirm()).not.toBeInTheDocument();
+    expect(screen.getByText(REASON_REQUIRED)).toBeVisible();
+    expect(api.posts).toHaveLength(0);
+
+    // Solo espacios tampoco es un motivo.
+    setReason("   ");
+    submitForm();
+    await flush();
+
+    expect(queryConfirm()).not.toBeInTheDocument();
+    expect(screen.getByText(REASON_REQUIRED)).toBeVisible();
+
+    setReason("Reposición");
+
+    expect(screen.queryByText(REASON_REQUIRED)).not.toBeInTheDocument();
+    expect(within(await openConfirm()).getByText("Reposición")).toBeVisible();
+    expect(screen.queryByText("Sin motivo.")).not.toBeInTheDocument();
+  });
+
+  it("abrir todos los empaques deja el empaque en 0", async () => {
     await renderOpen();
     setQuantity("5");
+    setReason("Reposición");
 
     const dialog = await openConfirm();
 
-    expect(within(dialog).getByText("Sin motivo.")).toBeVisible();
     expect(within(dialog).getAllByRole("listitem")[0]).toHaveTextContent(/Stock 5\s*pasa a\s*0$/);
   });
 
   it("vínculo de un servidor anterior (sin `components`): las dos caras salen de la unidad vinculada", async () => {
     await renderOpen(legacySingle);
+    setReason("Reposición");
 
     const effects = within(await openConfirm()).getAllByRole("listitem");
 
@@ -195,6 +224,7 @@ describe("ProductDetailPackConversionCard · confirmación del 1 a 1 (CNF-F2)", 
 
   it("unidad inactiva: se marca en la confirmación, sin bloquear", async () => {
     await renderOpen({ ...single, components: [unitComponent(false)] });
+    setReason("Reposición");
 
     const effects = within(await openConfirm()).getAllByRole("listitem");
 

@@ -124,6 +124,8 @@ describe("ProductDetailPackConversionCard · resultado de abrir (PRO-F7)", () =>
     expect(screen.getByText("Naranja (inactivo)")).toBeVisible();
     expect(screen.getByText(/Entrada: \+12 unidad\(es\)/)).toBeVisible();
 
+    // CNF-F4: sin motivo la confirmación no se abre.
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Reposición de mostrador" } });
     fireEvent.submit(getForm());
     // INV-08: un surtido pasa por la confirmación antes de enviarse.
     fireEvent.click(
@@ -171,6 +173,8 @@ describe("ProductDetailPackConversionCard · resultado de abrir (PRO-F7)", () =>
     ).toBeVisible();
     expect(screen.queryByText(/Se abrirá en/)).not.toBeInTheDocument();
 
+    // CNF-F4: sin motivo la confirmación no se abre.
+    fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Reposición de mostrador" } });
     fireEvent.submit(getForm());
 
     // CNF-F2: el 1 a 1 también pasa por la confirmación antes de enviarse.

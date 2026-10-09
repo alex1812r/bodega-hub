@@ -108,7 +108,19 @@ function getModal() {
   return screen.getByRole("dialog", { name: "Convertir empaque" });
 }
 
+const REASON = "Reposición de mostrador";
+
+/** CNF-F4: el motivo es obligatorio; se teclea uno si el caso no puso ya el suyo. */
+function fillReasonIfEmpty() {
+  const field = screen.getByLabelText<HTMLTextAreaElement>("Motivo");
+
+  if (field.value === "") {
+    fireEvent.change(field, { target: { value: REASON } });
+  }
+}
+
 function submitForm() {
+  fillReasonIfEmpty();
   fireEvent.submit(document.getElementById(formId) as HTMLFormElement);
 }
 
@@ -237,13 +249,17 @@ describe("InventoryPackConversionModal · 1 a 1 · clave (INV-F2 · F1)", () => 
     await within(dialog).findByText(UNCERTAIN_STOCK_REQUEST_MESSAGE);
     await cancelSingleConfirm(dialog);
 
-    await closeWithEscape();
+    await closeWithEscapeDiscarding();
     await openModal();
     expect(screen.queryByText(UNCERTAIN_STOCK_REQUEST_MESSAGE)).not.toBeInTheDocument();
     await submitAndConfirmSingle();
     await waitFor(() => expect(api.posts).toHaveLength(2));
 
-    expect(api.posts[1]?.body).toMatchObject({ packProductId: "prod-cigar-pack", packQuantity: 1 });
+    expect(api.posts[1]?.body).toMatchObject({
+      packProductId: "prod-cigar-pack",
+      packQuantity: 1,
+      reason: REASON,
+    });
     expect(keyOf(api, 1)).not.toBe(keyOf(api, 0));
   });
 
@@ -337,7 +353,7 @@ describe("InventoryPackConversionModal · surtido (INV-F2 · F1 y F3)", () => {
     await within(dialog).findByRole("alert");
     await cancelConfirm(dialog);
 
-    await closeWithEscape();
+    await closeWithEscapeDiscarding();
     await openModal();
     const secondDialog = await openConfirm();
     fireEvent.click(confirmButton(secondDialog));
@@ -405,7 +421,7 @@ describe("InventoryPackConversionModal · stock tras un resultado incierto (INV-
     await within(dialog).findByRole("alert");
     await cancelConfirm(dialog);
 
-    await closeWithEscape();
+    await closeWithEscapeDiscarding();
     await openModal();
     await screen.findByText(/Stock empaque: 8\./);
     const secondDialog = await openConfirm();

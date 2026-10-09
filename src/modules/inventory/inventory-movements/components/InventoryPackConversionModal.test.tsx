@@ -49,6 +49,12 @@ function getForm() {
 }
 
 const CONFIRM_TITLE = "Confirmar conversión de empaque";
+const REASON = "Reposición de mostrador";
+
+/** CNF-F4: el motivo es obligatorio; sin él la confirmación no se abre. */
+function fillReason() {
+  fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: REASON } });
+}
 
 function queryConfirm() {
   return screen.queryByRole("dialog", { name: CONFIRM_TITLE });
@@ -56,6 +62,7 @@ function queryConfirm() {
 
 /** CNF-08: el formulario ya no envía; abre la confirmación con las dos caras de la conversión. */
 async function openConfirm() {
+  fillReason();
   fireEvent.submit(getForm());
 
   return screen.findByRole("dialog", { name: CONFIRM_TITLE });
@@ -134,6 +141,7 @@ describe("InventoryPackConversionModal · buscador de empaque (INV-07)", () => {
       clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       packProductId: "prod-water-pack",
       packQuantity: 1,
+      reason: REASON,
     });
   });
 
@@ -267,6 +275,7 @@ describe("InventoryPackConversionModal · aviso de cantidad (SHR-09G)", () => {
       clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       packProductId: "prod-cigar-pack",
       packQuantity: 2,
+      reason: REASON,
     });
   });
 });
@@ -281,6 +290,7 @@ describe("InventoryPackConversionModal · idempotencia (C6)", () => {
     });
     await openDialog();
 
+    fillReason();
     fireEvent.submit(getForm());
     fireEvent.submit(getForm());
 
@@ -300,6 +310,7 @@ describe("InventoryPackConversionModal · idempotencia (C6)", () => {
       clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       packProductId: "prod-cigar-pack",
       packQuantity: 1,
+      reason: REASON,
     });
 
     await act(async () => {
@@ -401,6 +412,7 @@ describe("InventoryPackConversionModal · cantidad entera (SHR-09J)", () => {
 
     await user.clear(quantity);
     await user.type(quantity, "3");
+    fillReason();
 
     if (how === "Enter") {
       await user.keyboard("{Enter}");
@@ -420,6 +432,7 @@ describe("InventoryPackConversionModal · cantidad entera (SHR-09J)", () => {
       clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       packProductId: "prod-cigar-pack",
       packQuantity: 3,
+      reason: REASON,
     });
   });
 });

@@ -203,6 +203,7 @@ describe("InventoryPackConversionModal · guardia de datos tecleados (CNF-15)", 
     const { api, user } = await renderModal();
 
     await setQuantity(user, "2");
+    await user.type(screen.getByLabelText("Motivo"), "apertura");
     submitForm();
     await user.click(
       within(await screen.findByRole("dialog", { name: CONFIRM_TITLE })).getByRole("button", {
@@ -221,6 +222,7 @@ describe("InventoryPackConversionModal · guardia de datos tecleados (CNF-15)", 
     const { user } = await renderModal();
 
     await setQuantity(user, "2");
+    await user.type(screen.getByLabelText("Motivo"), "apertura");
     submitForm();
     await screen.findByRole("dialog", { name: CONFIRM_TITLE });
     clickLinkToAnotherRoute();

@@ -46,11 +46,11 @@ function renderModal(
 }
 
 function vesInput() {
-  return screen.getByLabelText("Efectivo contado Bs. (cajon completo)");
+  return screen.getByLabelText("Efectivo contado Bs. (cajón completo)");
 }
 
 function refInput() {
-  return screen.getByLabelText("Efectivo contado REF (cajon completo)");
+  return screen.getByLabelText("Efectivo contado REF (cajón completo)");
 }
 
 async function count(user: User, input: HTMLElement, value: string) {

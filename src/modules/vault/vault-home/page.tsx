@@ -21,8 +21,8 @@ import { vaultBucketLabels } from "./utils/vaultEffect";
 
 const movementTypeLabels: Record<VaultMovement["type"], string> = {
   adjustment: "Ajuste",
-  deposit: "Deposito efectivo",
-  payroll_out: "Nomina",
+  deposit: "Depósito efectivo",
+  payroll_out: "Nómina",
   purchase_out: "Pago compra",
   sale_in: "Ingreso cuenta",
   transfer_in: "Transferencia caja",
@@ -103,14 +103,14 @@ export function VaultHomePage() {
                   onSelect: () => setActiveModal("transfer"),
                 },
               ]}
-              label="Operaciones del baul"
+              label="Operaciones del baúl"
               variant="secondary"
             />
           </Can>
         }
-        description="Centro financiero: efectivo fisico, saldo de cuenta y REF."
+        description="Centro financiero: efectivo físico, saldo de cuenta y REF."
         layout="sections"
-        title="Baul"
+        title="Baúl"
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <DashboardKpiCard
@@ -144,7 +144,7 @@ export function VaultHomePage() {
             emptyState={
               <EmptyState
                 className="py-10"
-                description="Las operaciones del menu se reflejaran aqui."
+                description="Las operaciones del menú se reflejarán aquí."
                 title="Sin movimientos"
               />
             }

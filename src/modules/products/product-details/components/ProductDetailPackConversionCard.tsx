@@ -361,9 +361,9 @@ export function ProductDetailPackConversionCard({
                 <AssortedPackOpeningFields opening={assorted} />
                 <Textarea
                   disabled={assorted.isPending}
+                  error={assorted.reasonError}
                   label="Motivo"
                   onChange={(event) => setReason(event.target.value)}
-                  placeholder="Opcional"
                   value={reason}
                 />
                 {/* Con la confirmación abierta el error se dice en ella; al cancelarla sigue a la vista aquí. */}

@@ -210,9 +210,9 @@ function SettingsList() {
   return (
     <EntityListPage
       actions={headerActions}
-      description={`Administra los parametros generales de BodegaHub${getPageDataSourceSuffix()}`}
+      description={`Administra los parámetros generales de BodegaHub${getPageDataSourceSuffix()}`}
       layout="sections"
-      title="Configuracion del sistema"
+      title="Configuración del sistema"
     >
       <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
         <Tabs<SettingsTab>
