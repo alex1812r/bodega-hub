@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { usePermission } from "@/shared/auth/usePermission";
 
@@ -14,6 +21,15 @@ import {
   type PurchaseDraftSession,
   type StoredPurchaseDraft,
 } from "../utils/purchaseDraftStorage";
+
+/** Espera del guardado automático (CNF-16): un cambio tras otro escribe una sola vez. */
+export const PURCHASE_DRAFT_SAVE_DELAY_MS = 500;
+
+/**
+ * Por qué la compra del formulario no queda guardada: ya hay dos de otras visitas sin
+ * decidir (`two-drafts`) o `localStorage` no dejó escribir (`storage`: lleno o bloqueado).
+ */
+export type PurchaseDraftSaveBlock = "storage" | "two-drafts";
 
 const listeners = new Set<() => void>();
 /**
@@ -77,6 +93,8 @@ export type PurchaseDraftStorage = {
   adopt: () => void;
   /** Borra las dos ranuras (Descartar, o compra confirmada) y deja de ofrecerlas. */
   clear: () => void;
+  /** Escribe ya lo que `schedule` tuviera pendiente (no hace nada si no hay nada). */
+  flush: () => void;
   /**
    * La visita se queda con la compra NUEVA (`pendingNew`): pasa a ser el borrador, el
    * `pending` anterior se borra y `sync` vuelve a guardar en la ranura principal. Es
@@ -101,14 +119,26 @@ export type PurchaseDraftStorage = {
    */
   pendingNew: StoredPurchaseDraft | null;
   /**
-   * Guarda el estado actual del formulario. Llamar en cada cambio relevante.
+   * `null` si lo que hay en el formulario se puede guardar; si no, el motivo. El guardia
+   * de salida lo usa para no prometer un borrador que no va a existir.
+   */
+  saveBlock: PurchaseDraftSaveBlock | null;
+  /**
+   * Guardado automático (CNF-16): como `sync`, pero espera `PURCHASE_DRAFT_SAVE_DELAY_MS`
+   * desde el último cambio. Llamar en cada cambio del formulario. Lo pendiente se escribe
+   * solo al desmontar la pantalla; `sync`, `adopt`, `keepNew` y `clear` lo cancelan.
+   */
+  schedule: (content: PurchaseDraftContent) => void;
+  /**
+   * Guarda YA el estado actual del formulario (salir, recargar), sin esperar al guardado
+   * automático.
    * - Con un borrador `pending` sin decidir NO lo pisa: escribe en la segunda ranura
    *   (queda en `pendingNew`, con `ownsNew`), para que al recargar no se pierda ninguna
    *   de las dos. Si esa ranura ya guarda la compra nueva de otra visita, no escribe:
    *   hay dos sin decidir y no existe una tercera ranura.
    * - Sin "algo que perder" (`isPurchaseDraftWorthSaving`) no escribe, y borra lo
    *   que esta misma visita hubiera guardado antes.
-   * - Si `localStorage` no está disponible o está lleno, no hace nada.
+   * - Si `localStorage` no está disponible o está lleno, no escribe (queda en `saveBlock`).
    */
   sync: (content: PurchaseDraftContent) => void;
 };
@@ -137,6 +167,9 @@ export function usePurchaseDraftStorage(): PurchaseDraftStorage {
   const key = session ? purchaseDraftStorageKey(session) : null;
   const newKey = session ? purchaseNewDraftStorageKey(session) : null;
   const [visit] = useState(() => Symbol("purchase-draft-visit"));
+  const [writeFailed, setWriteFailed] = useState(false);
+  // Guardado automático pendiente: lo último que pidió `schedule` y su temporizador.
+  const scheduledRef = useRef<{ content: PurchaseDraftContent; timer: number } | null>(null);
   const stored = useSyncExternalStore(
     subscribe,
     () => readStoredDraft(key, session),
@@ -158,17 +191,13 @@ export function usePurchaseDraftStorage(): PurchaseDraftStorage {
     () => false,
   );
 
-  // Al salir de la pantalla lo guardado deja de ser "de esta visita": la siguiente lo ofrece.
-  useEffect(
-    () => () => {
-      for (const slot of [key, newKey]) {
-        if (slot && owners.get(slot) === visit) {
-          owners.delete(slot);
-        }
-      }
-    },
-    [key, newKey, visit],
-  );
+  /** Olvida el guardado automático pendiente: lo que venga después manda sobre él. */
+  const cancelScheduled = useCallback(() => {
+    if (scheduledRef.current) {
+      window.clearTimeout(scheduledRef.current.timer);
+      scheduledRef.current = null;
+    }
+  }, []);
 
   /** La segunda ranura pasa a la principal (si tiene algo) y la visita se queda con esta. */
   const promoteNew = useCallback(() => {
@@ -192,6 +221,8 @@ export function usePurchaseDraftStorage(): PurchaseDraftStorage {
   }, [key, newKey, visit]);
 
   const adopt = useCallback(() => {
+    cancelScheduled();
+
     if (!key || !newKey || !session) {
       return;
     }
@@ -211,18 +242,23 @@ export function usePurchaseDraftStorage(): PurchaseDraftStorage {
     }
 
     notify();
-  }, [key, newKey, promoteNew, session, visit]);
+  }, [cancelScheduled, key, newKey, promoteNew, session, visit]);
 
   const keepNew = useCallback(() => {
     if (!readStoredDraft(newKey, session)) {
       return;
     }
 
+    cancelScheduled();
     promoteNew();
     notify();
-  }, [newKey, promoteNew, session]);
+  }, [cancelScheduled, newKey, promoteNew, session]);
 
   const clear = useCallback(() => {
+    // Aunque no haya dónde borrar: una compra confirmada no debe volver a guardarse.
+    cancelScheduled();
+    setWriteFailed(false);
+
     if (!key || !newKey) {
       return;
     }
@@ -237,9 +273,9 @@ export function usePurchaseDraftStorage(): PurchaseDraftStorage {
     owners.delete(newKey);
     owners.set(key, visit);
     notify();
-  }, [key, newKey, visit]);
+  }, [cancelScheduled, key, newKey, visit]);
 
-  const sync = useCallback(
+  const write = useCallback(
     (content: PurchaseDraftContent) => {
       if (!key || !newKey || !session) {
         return;
@@ -261,6 +297,7 @@ export function usePurchaseDraftStorage(): PurchaseDraftStorage {
         if (isPurchaseDraftWorthSaving(content)) {
           window.localStorage.setItem(slot, serializePurchaseDraft(content, session, new Date()));
           owners.set(slot, visit);
+          setWriteFailed(false);
         } else if (undecided ? ownsNewSlot : isOwner) {
           window.localStorage.removeItem(slot);
 
@@ -272,6 +309,7 @@ export function usePurchaseDraftStorage(): PurchaseDraftStorage {
         }
       } catch {
         // `localStorage` bloqueado o lleno: la compra sigue, solo que sin borrador.
+        setWriteFailed(isPurchaseDraftWorthSaving(content));
         return;
       }
 
@@ -280,19 +318,82 @@ export function usePurchaseDraftStorage(): PurchaseDraftStorage {
     [key, newKey, session, visit],
   );
 
+  const sync = useCallback(
+    (content: PurchaseDraftContent) => {
+      cancelScheduled();
+      write(content);
+    },
+    [cancelScheduled, write],
+  );
+
+  const flush = useCallback(() => {
+    const scheduled = scheduledRef.current;
+
+    if (scheduled) {
+      cancelScheduled();
+      write(scheduled.content);
+    }
+  }, [cancelScheduled, write]);
+
+  const schedule = useCallback(
+    (content: PurchaseDraftContent) => {
+      cancelScheduled();
+      scheduledRef.current = {
+        content,
+        timer: window.setTimeout(() => {
+          scheduledRef.current = null;
+          write(content);
+        }, PURCHASE_DRAFT_SAVE_DELAY_MS),
+      };
+    },
+    [cancelScheduled, write],
+  );
+
+  // Al salir de la pantalla (o al cambiar de sesión) se escribe lo pendiente y lo guardado
+  // deja de ser "de esta visita": la siguiente lo ofrece. En ese orden: `write` decide la
+  // ranura según de quién es lo guardado.
+  useEffect(
+    () => () => {
+      flush();
+
+      for (const slot of [key, newKey]) {
+        if (slot && owners.get(slot) === visit) {
+          owners.delete(slot);
+        }
+      }
+    },
+    [flush, key, newKey, visit],
+  );
+
   return useMemo(() => {
     // Sin principal, una segunda ranura que dejó otra visita es lo que se ofrece.
     const pending = owned ? null : (stored ?? (ownedNew ? null : storedNew));
     const pendingNew = pending !== null && stored !== null ? storedNew : null;
+    const ownsNew = pendingNew !== null && ownedNew;
 
     return {
       adopt,
       clear,
+      flush,
       keepNew,
-      ownsNew: pendingNew !== null && ownedNew,
+      ownsNew,
       pending,
       pendingNew,
+      saveBlock: pendingNew !== null && !ownsNew ? "two-drafts" : writeFailed ? "storage" : null,
+      schedule,
       sync,
     };
-  }, [adopt, clear, keepNew, owned, ownedNew, stored, storedNew, sync]);
+  }, [
+    adopt,
+    clear,
+    flush,
+    keepNew,
+    owned,
+    ownedNew,
+    schedule,
+    stored,
+    storedNew,
+    sync,
+    writeFailed,
+  ]);
 }

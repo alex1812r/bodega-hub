@@ -74,12 +74,8 @@ describe("withPurchaseLineDisassemble · preferencia «Desarmar siempre al recib
       [
         {
           productId: "prod-caja",
-          purchaseId: "purchase-1",
           quantity: 3,
-          subtotalRef: 27,
-          subtotalVes: 13500,
           unitCostRef: 9,
-          unitCostVes: 4500,
         },
       ],
       new Map([

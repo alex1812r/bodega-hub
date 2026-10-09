@@ -16,6 +16,22 @@ import { EMPTY_PURCHASE_TAX_STATE } from "./purchaseLineTax";
 
 export type PurchaseDuplicateSourceItem = PurchaseDetails["items"][number];
 
+/**
+ * Lo que se lee de cada línea de origen: una línea de la compra a duplicar o, con el
+ * proveedor de un borrador ya inactivo, una línea guardada (`storedDraftSourceItems`).
+ */
+export type PurchaseLineSource = Pick<
+  PurchaseDuplicateSourceItem,
+  | "entryMode"
+  | "packCostRef"
+  | "packCount"
+  | "packLabel"
+  | "productId"
+  | "quantity"
+  | "unitCostRef"
+  | "unitsPerPack"
+> & { product?: { name: string } };
+
 export type DuplicatedPurchaseLines = {
   lineMeta: Map<string, PurchaseLineCatalogMeta>;
   lines: PurchaseLinesSnapshot;
@@ -40,7 +56,7 @@ function samePackLabel(left: string, right: string) {
  * inactivos o que ya no existen se omiten y se listan en `notices`.
  */
 export function buildDuplicatedPurchaseLines(
-  sourceItems: PurchaseDuplicateSourceItem[],
+  sourceItems: PurchaseLineSource[],
   products: PurchaseProductResolutions,
   input: { costCurrency: PurchaseCostCurrency; nextId: () => string; rateVes: number },
 ): DuplicatedPurchaseLines {

@@ -209,6 +209,8 @@ function acceptConfirmation() {
 // Estos tests son anteriores al bloqueo de líneas (COM-12, en `page.lines.test.tsx`):
 // con "Bloquear al agregar" apagado, agregar una línea no bloquea las anteriores.
 beforeEach(() => {
+  // El borrador que deja un test (COM-09) no debe ofrecerse en el siguiente.
+  window.localStorage.clear();
   window.localStorage.setItem(
     purchaseLockOnAddStorageKey({ storeId: "store-1", userId: "user-1" }),
     "0",

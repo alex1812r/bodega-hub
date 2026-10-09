@@ -362,9 +362,11 @@ describe("PurchaseCreatePage · reposición de stock bajo (INV-05, receptor)", (
     // Un solo uso: las líneas ya están en el borrador de la compra (COM-09).
     expect(restockKeys()).toEqual([]);
     expect(location()).toBe("/purchases/create");
-    expect(JSON.parse(window.localStorage.getItem(draftKey) ?? "{}")).toMatchObject({
-      supplierId: "cont-supplier",
-    });
+    await waitFor(() =>
+      expect(JSON.parse(window.localStorage.getItem(draftKey) ?? "{}")).toMatchObject({
+        supplierId: "cont-supplier",
+      }),
+    );
 
     click(/Confirmar Compra/);
     acceptConfirmation();
@@ -561,6 +563,8 @@ describe("PurchaseCreatePage · reposición con una compra en curso (INV-05 + bo
     expect(conflictModal()).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: "Compra sin terminar" })).not.toBeInTheDocument();
     // El borrador de la compra es ahora la reposición (una sola línea: el cable).
+    await waitFor(() => expect(window.localStorage.getItem(draftKey)).not.toBeNull());
+
     const stored = JSON.parse(window.localStorage.getItem(draftKey) ?? "{}") as {
       lines: { items: Array<{ productId: string }> };
     };
