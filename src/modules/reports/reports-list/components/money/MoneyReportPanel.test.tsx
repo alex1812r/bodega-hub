@@ -487,6 +487,10 @@ describe("MoneyReportPanel · REP-06b", () => {
         expect.stringContaining("1. Bebidas: ref 200.00. 2. Víveres: ref 100.00. 3. Sin categoría: ref 10.00."),
       );
       expect(screen.getByRole("note")).toHaveTextContent("La categoría es la actual del producto.");
+      // REP-F6: por qué este total no es el de «Ventas diarias» (116 frente a 115 en QA).
+      expect(screen.getByRole("note")).toHaveTextContent(
+        "antes del descuento y los impuestos de cada venta: puede diferir del total de «Ventas diarias»",
+      );
       expect(
         within(screen.getByRole("region", { name: "Gráfico: Ventas y margen por categoría" })).getByText(
           "ref 310.00",

@@ -21,7 +21,12 @@ import { ReportChartCard } from "../ReportChartCard";
 import { ReportTableSection } from "../ReportTableSection";
 import { ReportQueryError } from "./ReportStates";
 
-const CATEGORY_NOTE = "La categoría es la actual del producto.";
+/**
+ * El ingreso suma las líneas de venta (como la ganancia bruta); «Ventas diarias»
+ * suma el total de cada documento. Con descuentos o impuestos no dan lo mismo.
+ */
+const CATEGORY_NOTE =
+  "La categoría es la actual del producto. El ingreso suma las líneas de venta, antes del descuento y los impuestos de cada venta: puede diferir del total de «Ventas diarias».";
 
 const TOTAL_ROW_ID = "__total__";
 const UNCATEGORIZED_ROW_ID = "__sin-categoria__";
