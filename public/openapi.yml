@@ -2165,6 +2165,44 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/purchases/{id}/impact:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Purchases]
+      summary: Calcular el efecto de recibir, cancelar o devolver una compra
+      description: >-
+        Solo lectura. Devuelve lo que `receive_purchase_and_disassemble`,
+        `cancel_purchase` o `return_purchase` aplicarian (stock por producto,
+        costo que se fija, desarme de empaques y pagos que bloquean la accion)
+        sin escribir. Las lineas de pago solo viajan a quien puede ver pagos de
+        compras; el veredicto es el mismo para todos.
+      x-permission: purchases.create
+      parameters:
+        - name: action
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [receive, cancel, return]
+        - name: disassemble
+          in: query
+          required: false
+          description: >-
+            Solo con `action=receive`. JSON de la lista `disassemble` que viajara
+            en el cuerpo de `PATCH /api/purchases/{id}/receive` (mismo esquema).
+            Ausente = se usan las marcas guardadas con el pedido.
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/purchases/{id}/receive:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -2914,6 +2952,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PaymentResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/payments/{id}/impact:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Payments]
+      summary: Calcular el efecto de anular un pago
+      description: Solo lectura. Devuelve lo que `cancel_payment` aplicaria (saldo y estado del documento, caja y baul) sin escribir.
+      x-permission: payments.manage
+      parameters:
+        - name: action
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [cancel]
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportObjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
