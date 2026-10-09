@@ -44,7 +44,7 @@ type UseAssortedPackOpeningInput = {
   /** Cantidad de empaques tal como la interpreta el anfitrión (0 si el campo está vacío). */
   packQuantity: number;
   reason: string;
-  /** `null` si no hay empaque elegido o el anfitrión envía por su cuenta: el hook no hace nada. */
+  /** `null` si no hay empaque que abrir: el hook no hace nada. */
   target: AssortedPackOpeningTarget | null;
 };
 

@@ -144,7 +144,7 @@ describe("ProductDetailPackConversionCard · resultado de abrir (PRO-F7)", () =>
     await waitFor(() => expect(document.getElementById("open-pack-form")).toBeNull());
   });
 
-  it("1 a 1: el modal queda como estaba y el aviso confirma las unidades", async () => {
+  it("1 a 1: el formulario queda como estaba y, tras confirmar, el aviso dice las unidades", async () => {
     const api = installFetchStub(() => null);
     api.respondToNextPost({
       data: {
@@ -168,11 +168,19 @@ describe("ProductDetailPackConversionCard · resultado de abrir (PRO-F7)", () =>
 
     fireEvent.submit(getForm());
 
+    // CNF-F2: el 1 a 1 también pasa por la confirmación antes de enviarse.
+    const dialog = await screen.findByRole("dialog", { name: "Confirmar conversión de empaque" });
+
+    expect(api.posts).toHaveLength(0);
+    expect(screen.queryByText(/Abriste/)).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Convertir empaque" }));
+
     const status = await screen.findByRole("status");
 
     await waitFor(() =>
       expect(within(status).getByText("Abriste 1 Caja Cola x6: +6 Cola")).toBeInTheDocument(),
     );
+    expect(api.posts).toHaveLength(1);
     expect(screen.queryByText(/producto inactivo/)).not.toBeInTheDocument();
   });
 });

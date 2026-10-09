@@ -9,6 +9,7 @@ import { Button } from "@/shared/components/Button";
 
 import {
   ConfirmActionModal,
+  ConfirmActionScrollArea,
   type ConfirmActionStatus,
 } from "@/shared/components/ConfirmActionModal";
 import { MarginBadge } from "@/shared/components/MarginBadge";
@@ -537,6 +538,7 @@ export function PurchaseReceivePreviewModal({
   salePrices,
   thresholds,
 }: PurchaseReceivePreviewModalProps) {
+  const linesTitleId = useId();
   const disassembles = lines.some((line) => line.disassemble);
   const distributionInvalid = lines.some((line) => line.disassemble?.distributionError);
   const { impact } = effect;
@@ -602,26 +604,29 @@ export function PurchaseReceivePreviewModal({
           <p>Esta compra no tiene productos registrados.</p>
         ) : (
           <section className="overflow-hidden rounded-md border border-border">
-            <h3 className={cn(sectionTitleClassName, "border-b border-border px-3 py-2")}>
+            <h3
+              className={cn(sectionTitleClassName, "border-b border-border px-3 py-2")}
+              id={linesTitleId}
+            >
               Mercancía que entra
             </h3>
-            <ul
-              aria-label="Mercancía que entra"
-              className="max-h-64 divide-y divide-border overflow-y-auto px-3"
-            >
-              {lines.map((line, index) => (
-                <PreviewLine
-                  disabled={isPending}
-                  distributionValue={
-                    line.purchaseItemId ? distributionValues?.[line.purchaseItemId] : undefined
-                  }
-                  key={line.purchaseItemId ?? `${line.productId}-${index}`}
-                  line={line}
-                  onDisassembleChange={onDisassembleChange}
-                  onDistributionChange={onDistributionChange}
-                />
-              ))}
-            </ul>
+            {/* Con scroll propio: al desbordar se alcanza y se lee con teclado. */}
+            <ConfirmActionScrollArea className="max-h-64 px-3" labelledBy={linesTitleId}>
+              <ul aria-label="Mercancía que entra" className="divide-y divide-border">
+                {lines.map((line, index) => (
+                  <PreviewLine
+                    disabled={isPending}
+                    distributionValue={
+                      line.purchaseItemId ? distributionValues?.[line.purchaseItemId] : undefined
+                    }
+                    key={line.purchaseItemId ?? `${line.productId}-${index}`}
+                    line={line}
+                    onDisassembleChange={onDisassembleChange}
+                    onDistributionChange={onDistributionChange}
+                  />
+                ))}
+              </ul>
+            </ConfirmActionScrollArea>
           </section>
         )}
 

@@ -2,13 +2,14 @@
 
 import { ArrowRight, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 
 import { paymentMethodLabels } from "@/modules/payments/payment-details/utils/paymentDetailLabels";
 import { Badge } from "@/shared/components/Badge";
 import { Button } from "@/shared/components/Button";
 import {
   ConfirmActionModal,
+  ConfirmActionScrollArea,
   type ConfirmActionStatus,
 } from "@/shared/components/ConfirmActionModal";
 import type { ImpactPaymentLine } from "@/shared/impact/types";
@@ -170,42 +171,46 @@ export function PurchaseImpactBlockingProducts({
 }: {
   products: PurchaseImpactBlockingProduct[];
 }) {
+  const titleId = useId();
+
   return (
     <section aria-label="Productos que lo impiden" className={blockedSectionClassName}>
-      <h3 className={blockedSectionTitleClassName}>Productos que lo impiden</h3>
-      <ul
-        aria-label="Productos sin stock suficiente"
-        className="max-h-56 divide-y divide-border overflow-y-auto px-3"
-      >
-        {products.map((product) => {
-          const hasFigures = product.available !== null && product.required !== null;
-          const missing = hasFigures ? (product.required ?? 0) - (product.available ?? 0) : 0;
+      <h3 className={blockedSectionTitleClassName} id={titleId}>
+        Productos que lo impiden
+      </h3>
+      {/* Con scroll propio: al desbordar se alcanza y se lee con teclado. */}
+      <ConfirmActionScrollArea className="max-h-56 px-3" labelledBy={titleId}>
+        <ul aria-label="Productos sin stock suficiente" className="divide-y divide-border">
+          {products.map((product) => {
+            const hasFigures = product.available !== null && product.required !== null;
+            const missing = hasFigures ? (product.required ?? 0) - (product.available ?? 0) : 0;
 
-          return (
-            <li className="space-y-1 py-2 text-sm" key={product.productId}>
-              <ProductName name={product.productName} sku={product.sku} />
-              {hasFigures ? (
-                <p className="break-words text-xs tabular-nums text-on-surface-variant">
-                  Hay {product.available} un y tienen que salir {product.required} un
-                  {missing > 0 ? (
-                    <>
-                      :{" "}
-                      <span className="font-semibold text-foreground">
-                        {missing === 1 ? "falta 1 un" : `faltan ${missing} un`}
-                      </span>
-                    </>
-                  ) : null}
-                  .
-                </p>
-              ) : (
-                <p className="text-xs text-on-surface-variant">
-                  No se puede leer su stock en esta tienda.
-                </p>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+            return (
+              <li className="space-y-1 py-2 text-sm" key={product.productId}>
+                <ProductName name={product.productName} sku={product.sku} />
+                {hasFigures ? (
+                  <p className="break-words text-xs tabular-nums text-on-surface-variant">
+                    Hay {product.available} un y tienen que salir {product.required} un
+                    {missing > 0 ? (
+                      <>
+                        :{" "}
+                        <span className="font-semibold text-foreground">
+                          {missing === 1 ? "falta 1 un" : `faltan ${missing} un`}
+                        </span>
+                      </>
+                    ) : null}
+                    .
+                  </p>
+                ) : (
+                  <p className="text-xs text-on-surface-variant">
+                    No se puede leer su stock en esta tienda.
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </ConfirmActionScrollArea>
     </section>
   );
 }
@@ -333,6 +338,7 @@ function ImpactGate({
   purchaseId,
   title,
 }: Omit<PurchaseImpactConfirmShellProps, "open">) {
+  const blockingPaymentsTitleId = useId();
   const query = usePurchaseImpact({ action, enabled: true, purchaseId });
   // Solo vale una respuesta al día: mientras se reintenta no hay efecto que confirmar.
   const impact = query.isSuccess && !query.isFetching ? (query.data ?? null) : null;
@@ -394,10 +400,16 @@ function ImpactGate({
           {hasBlockingPayments ? (
             <>
               <section aria-label="Pagos que lo impiden" className={blockedSectionClassName}>
-                <h3 className={blockedSectionTitleClassName}>Pagos que hay que anular antes</h3>
-                <div className="max-h-56 overflow-y-auto px-3 py-1">
+                <h3 className={blockedSectionTitleClassName} id={blockingPaymentsTitleId}>
+                  Pagos que hay que anular antes
+                </h3>
+                {/* Con scroll propio: al desbordar se alcanza y se lee con teclado. */}
+                <ConfirmActionScrollArea
+                  className="max-h-56 px-3 py-1"
+                  labelledBy={blockingPaymentsTitleId}
+                >
                   <PurchaseImpactPayments label="Pagos que lo impiden" payments={blocking} />
-                </div>
+                </ConfirmActionScrollArea>
               </section>
               <p>
                 Esta acción no revierte pagos. Anula antes cada pago activo y vuelve a intentarlo.

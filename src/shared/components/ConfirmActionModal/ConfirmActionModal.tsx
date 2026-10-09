@@ -205,12 +205,25 @@ function FocusOnMount({ targetRef }: { targetRef: RefObject<HTMLElement | null> 
   return null;
 }
 
+export type ConfirmActionScrollAreaProps = {
+  children: ReactNode;
+  /** Límite de alto y relleno de la zona (p. ej. `max-h-56 px-3`). */
+  className?: string;
+  /** Id del título visible que da nombre a la zona cuando desborda. */
+  labelledBy: string;
+};
+
 /**
- * Zona con scroll de los efectos. Cuando su contenido desborda pasa a ser una
- * parada de Tab con nombre, para poder leerla entera con flechas, AvPág y Fin;
- * si cabe, no añade nada al orden de foco.
+ * Zona con scroll propio dentro de una confirmación: la de los efectos y las
+ * listas con alto máximo del contexto (`children`). Cuando su contenido desborda
+ * pasa a ser una parada de Tab con nombre, para poder leerla entera con flechas,
+ * AvPág y Fin; si cabe, no añade nada al orden de foco.
  */
-function EffectsViewport({ children, labelledBy }: { children: ReactNode; labelledBy: string }) {
+export function ConfirmActionScrollArea({
+  children,
+  className,
+  labelledBy,
+}: ConfirmActionScrollAreaProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [isScrollable, setIsScrollable] = useState(false);
 
@@ -241,7 +254,10 @@ function EffectsViewport({ children, labelledBy }: { children: ReactNode; labell
   return (
     <div
       aria-labelledby={isScrollable ? labelledBy : undefined}
-      className="min-h-0 flex-1 overflow-y-auto px-3 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      className={cn(
+        "overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        className,
+      )}
       ref={viewportRef}
       role={isScrollable ? "group" : undefined}
       tabIndex={isScrollable ? 0 : undefined}
@@ -588,7 +604,7 @@ export function ConfirmActionModal({
           >
             Qué va a pasar
           </h3>
-          <EffectsViewport labelledBy={effectsTitleId}>
+          <ConfirmActionScrollArea className="min-h-0 flex-1 px-3 py-1" labelledBy={effectsTitleId}>
             {renderEffects ? (
               renderEffects()
             ) : (
@@ -598,7 +614,7 @@ export function ConfirmActionModal({
                 ))}
               </ul>
             )}
-          </EffectsViewport>
+          </ConfirmActionScrollArea>
         </section>
       ) : null}
 

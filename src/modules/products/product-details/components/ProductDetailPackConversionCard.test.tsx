@@ -54,6 +54,22 @@ function getForm() {
   return form;
 }
 
+/** CNF-F2: el 1 a 1 ya no envía desde el formulario; lo hace el botón de su confirmación. */
+async function findConfirm() {
+  return screen.findByRole("dialog", { name: "Confirmar conversión de empaque" });
+}
+
+async function confirmConversion() {
+  const dialog = await findConfirm();
+
+  await waitFor(() =>
+    expect(within(dialog).getByRole("button", { name: "Convertir empaque" })).toBeEnabled(),
+  );
+  fireEvent.click(within(dialog).getByRole("button", { name: "Convertir empaque" }));
+
+  return dialog;
+}
+
 describe("ProductDetailPackConversionCard · idempotencia (C6)", () => {
   it("doble envio = un solo POST, con clave, y el boton queda deshabilitado", async () => {
     const api = installFetchStub(() => null);
@@ -64,7 +80,17 @@ describe("ProductDetailPackConversionCard · idempotencia (C6)", () => {
     fireEvent.submit(getForm());
     fireEvent.submit(getForm());
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Convirtiendo..." })).toBeDisabled());
+    // El formulario, aunque se envíe dos veces, no manda nada: abre UNA confirmación.
+    const dialog = await findConfirm();
+    expect(screen.getAllByRole("dialog", { name: "Confirmar conversión de empaque" })).toHaveLength(1);
+    expect(api.posts).toHaveLength(0);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Convertir empaque" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /Convertir empaque|Procesando/ }));
+
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Procesando..." })).toBeDisabled(),
+    );
     expect(api.posts).toHaveLength(1);
     expect(api.posts[0]?.url).toBe("/api/inventory/conversions");
     expect(api.posts[0]?.body).toMatchObject({
@@ -90,10 +116,12 @@ describe("ProductDetailPackConversionCard · idempotencia (C6)", () => {
 
     await openDialog();
     fireEvent.submit(getForm());
-    await screen.findByText(/No pudimos confirmar si el movimiento se registró/);
+    const dialog = await confirmConversion();
+    await within(dialog).findByText(/No pudimos confirmar si el movimiento se registró/);
     expect(onConverted).not.toHaveBeenCalled();
 
-    fireEvent.submit(getForm());
+    // El reintento se hace desde la misma confirmación, que sigue abierta con el error.
+    await confirmConversion();
     await waitFor(() => expect(onConverted).toHaveBeenCalledTimes(1));
 
     expect(api.posts).toHaveLength(2);
@@ -142,6 +170,9 @@ describe("ProductDetailPackConversionCard · aviso de cantidad (SHR-09G)", () =>
     expect(getQuantityInput()).not.toHaveAttribute("aria-invalid");
 
     fireEvent.submit(getForm());
+    await findConfirm();
+    expect(api.posts).toHaveLength(0);
+    await confirmConversion();
     await waitFor(() => expect(onConverted).toHaveBeenCalledTimes(1));
 
     expect(api.posts).toHaveLength(1);
@@ -211,10 +242,13 @@ describe("ProductDetailPackConversionCard · cantidad entera (SHR-09J)", () => {
     expect(screen.getByText("Debe ser un número entero.")).toBeVisible();
 
     fireEvent.submit(getForm());
-    await user.click(screen.getByRole("button", { name: "Abrir empaque" }));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
 
     expect(api.posts).toHaveLength(0);
     expect(onConverted).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("dialog", { name: "Confirmar conversión de empaque" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Debe ser un número entero.")).toBeVisible();
   });
 
@@ -233,10 +267,13 @@ describe("ProductDetailPackConversionCard · cantidad entera (SHR-09J)", () => {
     if (how === "Enter") {
       await user.keyboard("{Enter}");
     } else {
-      // El disparador del dialogo se llama igual: se pulsa el del pie.
-      await user.click(screen.getAllByRole("button", { name: "Abrir empaque" }).at(-1) as HTMLElement);
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
     }
 
+    // Ni Enter ni el botón del formulario envían: llevan a la confirmación.
+    await findConfirm();
+    expect(api.posts).toHaveLength(0);
+    await confirmConversion();
     await waitFor(() => expect(onConverted).toHaveBeenCalledTimes(1));
 
     expect(api.posts).toHaveLength(1);
