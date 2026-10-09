@@ -11,9 +11,14 @@
  * los textos humanos de los chips (nunca ids).
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import {
+  dateRangeChip,
+  dateRangeLabel,
+  pickCustomDateRange,
+} from "@/shared/components/DateRangeField/testing";
 import { SCROLL_POSITIONS_STORAGE_KEY } from "@/shared/hooks/useScrollRestoration";
 
 /** URL simulada: `useSearchParams` la sigue como hace Next tras un `history.replaceState`. */
@@ -47,6 +52,10 @@ jest.mock("next/navigation", () => {
       ),
   };
 });
+// Hoy operativo fijo: los presets relativos del rango se calculan con él.
+jest.mock("../../dashboard/utils/businessDate", () => ({
+  getBusinessTodayIsoDate: () => "2026-10-09",
+}));
 jest.mock("../../../shared/auth/usePermission", () => ({
   usePermission: () => ({
     can: (permission: string) =>
@@ -431,8 +440,9 @@ describe("PaymentsListPage", () => {
         skip: "50",
         to: "2026-10-06",
       });
-      expect(screen.getByLabelText("Desde")).toHaveValue("2026-10-01");
-      expect(screen.getByLabelText("Hasta")).toHaveValue("2026-10-06");
+      expect(dateRangeLabel()).toHaveTextContent("1–6 oct 2026");
+      expect(dateRangeChip("Personalizado")).toHaveAttribute("aria-pressed", "true");
+      expect(document.querySelector('input[type="date"]')).toBeNull();
       expect(screen.getByLabelText("Método")).toHaveValue("pago_movil");
       expect(screen.getByLabelText("Tipo")).toHaveValue("entrada");
     });
@@ -445,7 +455,7 @@ describe("PaymentsListPage", () => {
 
       expect(lastListRequest()).toEqual({ limit: "10", skip: "0" });
       expect(screen.getByLabelText("Método")).toHaveValue("all");
-      expect(screen.getByLabelText("Desde")).toHaveValue("");
+      expect(dateRangeLabel()).toHaveTextContent("Todas las fechas");
     });
 
     it("cambiar metodo, tipo y fechas escribe la URL, vuelve a la pagina 1 y pide la lista filtrada", async () => {
@@ -464,8 +474,7 @@ describe("PaymentsListPage", () => {
       );
 
       await user.selectOptions(screen.getByLabelText("Tipo"), "salida");
-      fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-10-01" } });
-      fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-10-06" } });
+      await pickCustomDateRange(user, "1 de octubre de 2026", "6 de octubre de 2026");
 
       expect(urlParams()).toEqual({
         direction: "salida",
@@ -503,17 +512,83 @@ describe("PaymentsListPage", () => {
       ]);
     });
 
-    it("un rango invertido no se puede dejar: el otro extremo acompaña a la fecha movida", async () => {
+    it("un rango invertido no se puede dejar: el calendario ordena los dos dias", async () => {
+      const user = userEvent.setup();
+
       openAt("from=2026-10-01&to=2026-10-05");
       renderPage();
       await screen.findAllByRole("link", { name: "V-000002" });
 
-      fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-10-08" } });
-      expect(urlParams()).toEqual({ from: "2026-10-08", to: "2026-10-08" });
-
-      fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-10-02" } });
-      expect(urlParams()).toEqual({ from: "2026-10-02", to: "2026-10-02" });
+      await pickCustomDateRange(user, "8 de octubre de 2026", "2 de octubre de 2026");
+      expect(urlParams()).toEqual({ from: "2026-10-02", to: "2026-10-08" });
     });
+
+    it("INT-05 · «Mes pasado» guarda solo `preset`, pide sus fechas de hoy y vuelve a la pagina 1", async () => {
+      const user = userEvent.setup();
+
+      listTotal = 25;
+      openAt("method=efectivo_ves&page=2");
+      renderPage();
+      await screen.findAllByRole("link", { name: "V-000002" });
+
+      await user.click(dateRangeChip("Mes pasado"));
+
+      expect(urlParams()).toEqual({ method: "efectivo_ves", preset: "last_month" });
+      await waitFor(() =>
+        expect(lastListRequest()).toEqual({
+          from: "2026-09-01",
+          limit: "10",
+          method: "efectivo_ves",
+          skip: "0",
+          to: "2026-09-30",
+        }),
+      );
+
+      await user.click(screen.getByRole("button", { name: "Quitar rango de fechas" }));
+
+      expect(urlParams()).toEqual({ method: "efectivo_ves" });
+    });
+
+    it.each([
+      ["preset", "preset=last_month", "1–30 sep 2026", "Mes pasado", "2026-09-01", "2026-09-30"],
+      ["rango", "from=2026-10-01&to=2026-10-06", "1–6 oct 2026", "Personalizado", "2026-10-01", "2026-10-06"],
+    ])(
+      "INT-05 · filtrar con %s → documento → Volver (o la URL pegada en otra pestaña) deja los mismos filtros",
+      async (_kind, rangeQuery, label, chip, from, to) => {
+        listTotal = 25;
+        openAt(`method=efectivo_ves&${rangeQuery}&page=2`);
+        const first = renderPage();
+        const [link] = await screen.findAllByRole("link", { name: "V-000002" });
+        const returnTo = new URL(link.getAttribute("href") ?? "", "http://localhost").searchParams.get(
+          "returnTo",
+        );
+
+        expect(returnTo).not.toBeNull();
+        expect(Object.fromEntries(new URLSearchParams((returnTo ?? "").split("?")[1]))).toEqual({
+          ...Object.fromEntries(new URLSearchParams(rangeQuery)),
+          method: "efectivo_ves",
+          page: "2",
+        });
+        first.unmount();
+        fetchMock.mockClear();
+
+        // «Volver» del detalle (y un enlace pegado) abren exactamente esa URL.
+        openAt((returnTo ?? "").split("?")[1]);
+        renderPage();
+        await screen.findAllByRole("link", { name: "V-000002" });
+
+        expect(dateRangeLabel()).toHaveTextContent(label);
+        expect(dateRangeChip(chip)).toHaveAttribute("aria-pressed", "true");
+        expect(screen.getByLabelText("Método")).toHaveValue("efectivo_ves");
+        expect(lastListRequest()).toEqual({
+          from,
+          limit: "10",
+          method: "efectivo_ves",
+          skip: "10",
+          to,
+        });
+      },
+    );
 
     it("una pagina mas alla de la ultima cae en la ultima valida y la URL lo refleja", async () => {
       listTotal = 25;
@@ -693,12 +768,12 @@ describe("PaymentsListPage", () => {
       expect(screen.queryByRole("button", { name: "Limpiar filtros" })).not.toBeInTheDocument();
 
       await user.selectOptions(screen.getByLabelText("Método"), "pago_movil");
-      fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-10-01" } });
+      await user.click(dateRangeChip("Mes pasado"));
       act(() => {
         window.history.replaceState(
           null,
           "",
-          "/payments?limit=25&method=pago_movil&from=2026-10-01&saleId=sale-002&page=2",
+          "/payments?limit=25&method=pago_movil&preset=last_month&saleId=sale-002&page=2",
         );
       });
 
@@ -706,7 +781,7 @@ describe("PaymentsListPage", () => {
 
       expect(urlParams()).toEqual({ limit: "25" });
       expect(screen.getByLabelText("Método")).toHaveValue("all");
-      expect(screen.getByLabelText("Desde")).toHaveValue("");
+      expect(dateRangeLabel()).toHaveTextContent("Todas las fechas");
       expect(screen.queryByRole("button", { name: "Limpiar filtros" })).not.toBeInTheDocument();
       await waitFor(() => expect(lastListRequest()).toEqual({ limit: "25", skip: "0" }));
     });

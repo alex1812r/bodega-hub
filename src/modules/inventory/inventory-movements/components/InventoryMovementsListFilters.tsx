@@ -2,6 +2,11 @@
 
 import { Button } from "@/shared/components/Button";
 import {
+  DateRangeField,
+  serializeDateRange,
+  type DateRangeChange,
+} from "@/shared/components/DateRangeField";
+import {
   formHelperClassName,
   stitchListFilterFieldClassName,
   stitchListFilterLabelClassName,
@@ -31,6 +36,10 @@ type InventoryMovementsListFiltersProps = {
   isRangeInverted: boolean;
   onChange: (patch: Partial<InventoryMovementsFilterState>) => void;
   onClear: () => void;
+  /** Rango efectivo (`parseDateRangeParams` sobre el estado de la URL). */
+  range: DateRangeChange;
+  /** Día operativo `YYYY-MM-DD`. */
+  today: string;
 };
 
 /**
@@ -43,6 +52,8 @@ export function InventoryMovementsListFilters({
   isRangeInverted,
   onChange,
   onClear,
+  range,
+  today,
 }: InventoryMovementsListFiltersProps) {
   const isDocumentTooShort = isMovementDocumentTooShort(filters.document);
   // Filtro que llega en el enlace del detalle de una venta o una compra: no tiene campo.
@@ -54,11 +65,6 @@ export function InventoryMovementsListFilters({
         : filters.purchaseId
           ? "una compra"
           : null;
-  const dateFieldClassName = cn(
-    stitchListFilterFieldClassName,
-    "w-full min-w-0",
-    isRangeInverted && "border-error focus:border-error focus:ring-error/25 dark:border-error",
-  );
 
   return (
     <section
@@ -158,43 +164,25 @@ export function InventoryMovementsListFilters({
             </p>
           ) : null}
         </div>
+      </div>
 
-        <div className="min-w-0">
-          <label className={stitchListFilterLabelClassName} htmlFor="movements-from">
-            Desde
-          </label>
-          <input
-            aria-describedby={isRangeInverted ? rangeErrorId : undefined}
-            aria-invalid={isRangeInverted || undefined}
-            className={dateFieldClassName}
-            id="movements-from"
-            onChange={(event) => onChange({ from: event.target.value })}
-            type="date"
-            value={filters.from}
-          />
-        </div>
-
-        <div className="min-w-0">
-          <label className={stitchListFilterLabelClassName} htmlFor="movements-to">
-            Hasta
-          </label>
-          <input
-            aria-describedby={isRangeInverted ? rangeErrorId : undefined}
-            aria-invalid={isRangeInverted || undefined}
-            className={dateFieldClassName}
-            id="movements-to"
-            onChange={(event) => onChange({ to: event.target.value })}
-            type="date"
-            value={filters.to}
-          />
-        </div>
+      <div className="mt-4">
+        <DateRangeField
+          clearable
+          label="Rango de fechas"
+          maxDate={today}
+          onChange={(next) => onChange(serializeDateRange(next))}
+          size="sm"
+          today={today}
+          value={range}
+        />
       </div>
 
       {isRangeInverted || hasFilters ? (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {isRangeInverted ? (
             <p className="min-w-0 text-sm text-error" id={rangeErrorId} role="alert">
-              {MOVEMENTS_RANGE_INVERTED_MESSAGE} Corrige las fechas para ver los movimientos.
+              {MOVEMENTS_RANGE_INVERTED_MESSAGE} Elige otro rango para ver los movimientos.
             </p>
           ) : null}
           {hasFilters ? (

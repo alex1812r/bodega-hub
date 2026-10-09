@@ -1,3 +1,5 @@
+import { parseDateRangeParams } from "@/shared/components/DateRangeField";
+
 import {
   getPurchaseBalanceRef,
   getPurchasePaymentStatus,
@@ -5,6 +7,7 @@ import {
   hasPendingBalance,
 } from "./purchaseBalance";
 import {
+  CLEARED_PURCHASES_FILTERS,
   hasActivePurchasesFilters,
   purchasesListSchema,
   toPurchasesFilters,
@@ -53,12 +56,13 @@ describe("purchasesListState", () => {
       limit: 10,
       page: 1,
       pendingBalance: "",
+      preset: "",
       search: "",
       status: "all",
       to: "",
     });
     expect(hasActivePurchasesFilters(defaults)).toBe(false);
-    expect(toPurchasesFilters(defaults, "")).toEqual({
+    expect(toPurchasesFilters(defaults, "", parseDateRangeParams(defaults, "2026-10-09"))).toEqual({
       from: undefined,
       pendingBalance: undefined,
       search: undefined,
@@ -78,13 +82,26 @@ describe("purchasesListState", () => {
     };
 
     expect(hasActivePurchasesFilters(state)).toBe(true);
-    expect(toPurchasesFilters(state, state.search)).toEqual({
+    expect(
+      toPurchasesFilters(state, state.search, parseDateRangeParams(state, "2026-10-09")),
+    ).toEqual({
       from: "2026-05-01",
       pendingBalance: "1",
       search: "acme",
       status: "recibido",
       to: "2026-05-31",
     });
+  });
+
+  it("INT-05 · un `preset` relativo viaja como sus fechas de hoy y cuenta como filtro activo", () => {
+    const state = { ...defaults, preset: "last_month" as const };
+
+    expect(hasActivePurchasesFilters(state)).toBe(true);
+    expect(hasActivePurchasesFilters({ ...state, ...CLEARED_PURCHASES_FILTERS })).toBe(false);
+    expect(
+      toPurchasesFilters(state, "", parseDateRangeParams(state, "2026-10-09")),
+    ).toMatchObject({ from: "2026-09-01", to: "2026-09-30" });
+    expect(purchasesListSchema.safeParse({ preset: "siempre" }).success).toBe(false);
   });
 
   it("rechaza fechas y valores que no existen", () => {

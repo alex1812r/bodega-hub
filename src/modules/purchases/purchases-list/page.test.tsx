@@ -7,6 +7,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import {
+  dateRangeChip,
+  dateRangeLabel,
+  pickCustomDateRange,
+} from "@/shared/components/DateRangeField/testing";
 import { SCROLL_POSITIONS_STORAGE_KEY } from "@/shared/hooks/useScrollRestoration";
 
 /** URL simulada: `useSearchParams` la sigue como hace Next tras un `history.replaceState`. */
@@ -36,6 +41,10 @@ jest.mock("next/navigation", () => {
       ),
   };
 });
+// Hoy operativo fijo: los presets relativos del rango se calculan con él.
+jest.mock("../../dashboard/utils/businessDate", () => ({
+  getBusinessTodayIsoDate: () => "2026-10-09",
+}));
 /** Permisos que la sesión simulada NO tiene; vacío = admin. */
 const mockDeniedPermissions = new Set<string>();
 /** Rol de la sesión simulada: decide quién ve los pagos de una compra. */
@@ -343,12 +352,14 @@ describe("PurchasesListPage", () => {
   });
 
   describe("rango de fechas", () => {
-    it("Desde y Hasta escriben `from` / `to` en la URL y filtran en servidor", async () => {
+    it("un rango personalizado escribe `from` / `to` en la URL y filtra en servidor", async () => {
+      const user = userEvent.setup();
+
       renderPage();
       await screen.findByText("Proveedor 001");
 
-      fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-10-01" } });
-      fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-10-06" } });
+      expect(document.querySelector('input[type="date"]')).toBeNull();
+      await pickCustomDateRange(user, "1 de octubre de 2026", "6 de octubre de 2026");
 
       expect(urlParams()).toEqual({ from: "2026-10-01", to: "2026-10-06" });
       await waitFor(() =>
@@ -357,16 +368,84 @@ describe("PurchasesListPage", () => {
       expect(screen.getByTestId("export-filters")).toHaveTextContent('"from":"2026-10-01"');
     });
 
-    it("un rango invertido no se puede elegir: el otro extremo acompaña", async () => {
+    it("un rango invertido no se puede elegir: el calendario ordena los dos días", async () => {
+      const user = userEvent.setup();
+
       openAt("from=2026-10-01&to=2026-10-05");
       renderPage();
       await screen.findByText("Proveedor 001");
 
-      fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-10-08" } });
-      expect(urlParams()).toEqual({ from: "2026-10-08", to: "2026-10-08" });
+      await pickCustomDateRange(user, "8 de octubre de 2026", "2 de octubre de 2026");
+      expect(urlParams()).toEqual({ from: "2026-10-02", to: "2026-10-08" });
+    });
 
-      fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-10-02" } });
-      expect(urlParams()).toEqual({ from: "2026-10-02", to: "2026-10-02" });
+    it("«Mes pasado» guarda solo `preset`, pide sus fechas de hoy y «Limpiar filtros» lo quita", async () => {
+      const user = userEvent.setup();
+
+      listTotal = 40;
+      openAt("status=recibido&page=2");
+      renderPage();
+      await screen.findByText("Proveedor 001");
+
+      await user.click(dateRangeChip("Mes pasado"));
+
+      expect(urlParams()).toEqual({ preset: "last_month", status: "recibido" });
+      await waitFor(() =>
+        expect(lastListRequest()).toEqual({
+          from: "2026-09-01",
+          limit: "10",
+          skip: "0",
+          status: "recibido",
+          to: "2026-09-30",
+        }),
+      );
+      expect(screen.getByTestId("export-filters")).toHaveTextContent('"from":"2026-09-01"');
+
+      await user.click(screen.getByRole("button", { name: "Limpiar filtros" }));
+
+      expect(urlParams()).toEqual({});
+      await waitFor(() => expect(lastListRequest()).toEqual({ limit: "10", skip: "0" }));
+      expect(dateRangeLabel()).toHaveTextContent("Todas las fechas");
+    });
+
+    it.each([
+      ["preset", "preset=last_month", "1–30 sep 2026", "Mes pasado", "2026-09-01", "2026-09-30"],
+      ["rango", "from=2026-10-01&to=2026-10-06", "1–6 oct 2026", "Personalizado", "2026-10-01", "2026-10-06"],
+    ])(
+      "filtrar con %s → detalle → Volver (o la URL pegada en otra pestaña) deja los mismos filtros",
+      async (_kind, rangeQuery, label, chip, from, to) => {
+        listTotal = 40;
+        openAt(`status=recibido&${rangeQuery}&page=2`);
+        const first = renderPage();
+        const link = await screen.findByRole("link", { name: "#C-001" });
+        const returnTo = new URL(link.getAttribute("href") ?? "", "http://localhost").searchParams.get(
+          "returnTo",
+        );
+
+        expect(returnTo).toBe(`/purchases?status=recibido&${rangeQuery}&page=2`);
+        first.unmount();
+        fetchMock.mockClear();
+
+        // «Volver» del detalle (y un enlace pegado) abren exactamente esa URL.
+        openAt((returnTo ?? "").split("?")[1]);
+        renderPage();
+        await screen.findByText("Proveedor 001");
+
+        expect(dateRangeLabel()).toHaveTextContent(label);
+        expect(dateRangeChip(chip)).toHaveAttribute("aria-pressed", "true");
+        expect(screen.getByLabelText("Estado")).toHaveValue("recibido");
+        expect(listRequests()).toEqual([{ from, limit: "10", skip: "10", status: "recibido", to }]);
+        expect(window.location.search).toBe(`?status=recibido&${rangeQuery}&page=2`);
+      },
+    );
+
+    it("un `preset` desconocido de la URL se ignora sin romper el resto", async () => {
+      openAt("status=recibido&preset=siempre");
+      renderPage();
+      await screen.findByText("Proveedor 001");
+
+      expect(dateRangeLabel()).toHaveTextContent("Todas las fechas");
+      expect(listRequests()).toEqual([{ limit: "10", skip: "0", status: "recibido" }]);
     });
   });
 
@@ -382,8 +461,8 @@ describe("PurchasesListPage", () => {
       expect(screen.getByLabelText("Búsqueda")).toHaveValue("acme");
       expect(screen.getByLabelText("Estado")).toHaveValue("recibido");
       expect(pendingToggle()).toHaveAttribute("aria-pressed", "true");
-      expect(screen.getByLabelText("Desde")).toHaveValue("2026-10-01");
-      expect(screen.getByLabelText("Hasta")).toHaveValue("2026-10-06");
+      expect(dateRangeLabel()).toHaveTextContent("1–6 oct 2026");
+      expect(dateRangeChip("Personalizado")).toHaveAttribute("aria-pressed", "true");
       expect(listRequests()).toEqual([
         {
           from: "2026-10-01",
@@ -403,7 +482,7 @@ describe("PurchasesListPage", () => {
       await screen.findByText("Proveedor 001");
 
       expect(screen.getByLabelText("Estado")).toHaveValue("all");
-      expect(screen.getByLabelText("Desde")).toHaveValue("");
+      expect(dateRangeChip("Personalizado")).toHaveAttribute("aria-pressed", "true");
       expect(pendingToggle()).toHaveAttribute("aria-pressed", "false");
       expect(listRequests()).toEqual([{ limit: "10", skip: "0", to: "2026-10-06" }]);
     });

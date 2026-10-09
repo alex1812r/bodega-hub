@@ -4,6 +4,11 @@ import { Search } from "lucide-react";
 
 import { Button } from "@/shared/components/Button";
 import {
+  DateRangeField,
+  serializeDateRange,
+  type DateRangeChange,
+} from "@/shared/components/DateRangeField";
+import {
   stitchListFilterFieldClassName,
   stitchListFilterLabelClassName,
 } from "@/shared/styles/form-controls";
@@ -15,32 +20,29 @@ type PurchasesListFiltersProps = {
   hasActiveFilters: boolean;
   onChange: (patch: Partial<PurchasesListFilterState>) => void;
   onClear: () => void;
+  /** Rango efectivo (`parseDateRangeParams` sobre el estado de la URL). */
+  range: DateRangeChange;
   state: PurchasesListFilterState;
+  /** Día operativo `YYYY-MM-DD`. */
+  today: string;
 };
 
 export function PurchasesListFilters({
   hasActiveFilters,
   onChange,
   onClear,
+  range,
   state,
+  today,
 }: PurchasesListFiltersProps) {
   const onlyPendingBalance = state.pendingBalance === "1";
-
-  // Un rango invertido no se puede elegir: el otro extremo acompaña al que se mueve.
-  function handleFromChange(from: string) {
-    onChange(from && state.to && from > state.to ? { from, to: from } : { from });
-  }
-
-  function handleToChange(to: string) {
-    onChange(to && state.from && to < state.from ? { from: to, to } : { to });
-  }
 
   return (
     <section
       aria-label="Filtros de compras"
       className="flex flex-col gap-3 rounded-xl border border-border bg-surface-container-lowest p-4 shadow-sm dark:border-slate-800 md:p-5"
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(0,1fr)_12rem_9rem_9rem] md:gap-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-[minmax(0,1fr)_12rem] md:gap-4">
         <div className="col-span-2 min-w-0 md:col-span-1">
           <label className={stitchListFilterLabelClassName} htmlFor="purchases-search">
             Búsqueda
@@ -80,35 +82,17 @@ export function PurchasesListFilters({
             <option value="devuelto">Devuelto</option>
           </select>
         </div>
-
-        <div className="min-w-0">
-          <label className={stitchListFilterLabelClassName} htmlFor="purchases-from">
-            Desde
-          </label>
-          <input
-            className={stitchListFilterFieldClassName}
-            id="purchases-from"
-            max={state.to || undefined}
-            onChange={(event) => handleFromChange(event.target.value)}
-            type="date"
-            value={state.from}
-          />
-        </div>
-
-        <div className="min-w-0">
-          <label className={stitchListFilterLabelClassName} htmlFor="purchases-to">
-            Hasta
-          </label>
-          <input
-            className={stitchListFilterFieldClassName}
-            id="purchases-to"
-            min={state.from || undefined}
-            onChange={(event) => handleToChange(event.target.value)}
-            type="date"
-            value={state.to}
-          />
-        </div>
       </div>
+
+      <DateRangeField
+        clearable
+        label="Rango de fechas"
+        maxDate={today}
+        onChange={(next) => onChange(serializeDateRange(next))}
+        size="sm"
+        today={today}
+        value={range}
+      />
 
       <div className="flex flex-wrap items-center gap-2">
         <button

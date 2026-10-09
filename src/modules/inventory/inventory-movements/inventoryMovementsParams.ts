@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { DATE_RANGE_PRESETS } from "@/shared/components/DateRangeField";
 import { listParams, type UrlListStateOf } from "@/shared/hooks/useUrlListState";
 import type { StockMovementType } from "@/shared/mocks/erp-data";
 
@@ -26,7 +27,8 @@ const movementTypeParam = () =>
  * | Parámetro      | Valores                                              | Por defecto  |
  * |----------------|------------------------------------------------------|--------------|
  * | `type`         | tipo de movimiento                                   | `""` = todos |
- * | `from`, `to`   | día de Caracas `YYYY-MM-DD`, inclusive               | `""`         |
+ * | `from`, `to`   | día de Caracas `YYYY-MM-DD`, inclusive (rango propio) | `""`         |
+ * | `preset`       | preset de `DateRangeField` (relativo: se recalcula)  | `""`         |
  * | `productId`    | id de producto                                       | `""`         |
  * | `document`     | texto del número de venta o compra (con debounce)    | `""`         |
  * | `documentKind` | `venta` · `compra` · `conversion` · `sin_documento`  | `""` = todos |
@@ -46,6 +48,7 @@ export const inventoryMovementsSchema = z.object({
   type: movementTypeParam(),
   from: listParams.date(),
   to: listParams.date(),
+  preset: listParams.oneOf(["", ...DATE_RANGE_PRESETS], ""),
   productId: listParams.text(64),
   document: listParams.text(100),
   documentKind: listParams.oneOf(["", "venta", "compra", "conversion", "sin_documento"], ""),
@@ -67,6 +70,7 @@ export const INVENTORY_MOVEMENTS_NO_FILTERS: InventoryMovementsFilterState = {
   document: "",
   documentKind: "",
   from: "",
+  preset: "",
   productId: "",
   purchaseId: "",
   saleId: "",
@@ -79,6 +83,7 @@ export function hasInventoryMovementsFilters(state: InventoryMovementsFilterStat
     state.type !== "" ||
     state.from !== "" ||
     state.to !== "" ||
+    state.preset !== "" ||
     state.productId !== "" ||
     state.document.trim() !== "" ||
     state.documentKind !== "" ||
@@ -102,25 +107,28 @@ export function isMovementDocumentTooShort(document: string) {
 /**
  * Estado de la URL → filtros de `GET /api/inventory/movements`, los mismos que
  * usa la exportación. `document` llega ya con su debounce y solo se envía con
- * `MOVEMENT_DOCUMENT_MIN_LENGTH` caracteres o más.
+ * `MOVEMENT_DOCUMENT_MIN_LENGTH` caracteres o más. Las fechas salen de `range`
+ * (`parseDateRangeParams`), nunca de `state.from/to`: un `preset` relativo no
+ * las trae.
  */
 export function toMovementFilters(
   state: Pick<
     InventoryMovementsState,
-    "documentKind" | "from" | "productId" | "purchaseId" | "saleId" | "to" | "type"
+    "documentKind" | "productId" | "purchaseId" | "saleId" | "type"
   >,
   document: string,
+  range: { from?: string; to?: string },
 ): MovementsExportFilters {
   const term = document.trim();
 
   return {
     document: term.length >= MOVEMENT_DOCUMENT_MIN_LENGTH ? term : undefined,
     documentKind: state.documentKind || undefined,
-    from: state.from || undefined,
+    from: range.from,
     productId: state.productId || undefined,
     purchaseId: state.purchaseId || undefined,
     saleId: state.saleId || undefined,
-    to: state.to || undefined,
+    to: range.to,
     type: state.type || undefined,
   };
 }

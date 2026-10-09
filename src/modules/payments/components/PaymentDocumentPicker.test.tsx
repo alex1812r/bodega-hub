@@ -3,10 +3,15 @@
  * `/payments`. Busca en servidor, nunca pide un ID y solo devuelve el documento elegido.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
+import {
+  dateRangeChip,
+  dateRangeLabel,
+  pickCustomDateRange,
+} from "@/shared/components/DateRangeField/testing";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
 
@@ -16,6 +21,11 @@ import {
   PAYMENT_DOCUMENT_PICKER_PAGE_SIZE,
   PaymentDocumentPicker,
 } from "./PaymentDocumentPicker";
+
+// Hoy operativo fijo: los presets relativos del rango se calculan con él.
+jest.mock("../../dashboard/utils/businessDate", () => ({
+  getBusinessTodayIsoDate: () => "2026-10-09",
+}));
 
 function sale(index: number, overrides: Partial<OpenDocument> = {}): OpenDocument {
   return {
@@ -183,7 +193,9 @@ describe("PaymentDocumentPicker", () => {
       (label) => label.textContent,
     );
 
-    expect(labels).toEqual(["Buscar documento", "Tipo de documento", "Desde", "Hasta"]);
+    expect(labels).toEqual(["Buscar documento", "Tipo de documento"]);
+    expect(dialog.getByRole("group", { name: "Rango de fechas" })).toBeInTheDocument();
+    expect(dialogElement.querySelector('input[type="date"]')).toBeNull();
     expect(dialog.queryByLabelText(/ID/)).not.toBeInTheDocument();
     expect(dialogElement).not.toHaveTextContent("sale-1");
   });
@@ -215,18 +227,30 @@ describe("PaymentDocumentPicker", () => {
   });
 
   it("el rango de fechas viaja como from/to y no se puede dejar invertido", async () => {
-    const { dialog } = await renderPicker();
+    const { dialog, dialogElement, user } = await renderPicker();
 
     await findResults(dialog);
-    fireEvent.change(dialog.getByLabelText("Desde"), { target: { value: "2026-10-05" } });
-    await waitFor(() => expect(lastRequest()).toMatchObject({ from: "2026-10-05" }));
-    expect(lastRequest().to).toBeUndefined();
+    expect(lastRequest().from).toBeUndefined();
 
-    fireEvent.change(dialog.getByLabelText("Hasta"), { target: { value: "2026-10-01" } });
+    await pickCustomDateRange(user, "5 de octubre de 2026", "1 de octubre de 2026", dialogElement);
     await waitFor(() =>
-      expect(lastRequest()).toMatchObject({ from: "2026-10-01", to: "2026-10-01" }),
+      expect(lastRequest()).toMatchObject({ from: "2026-10-01", to: "2026-10-05" }),
     );
-    expect(dialog.getByLabelText("Desde")).toHaveValue("2026-10-01");
+    expect(dateRangeLabel(dialogElement)).toHaveTextContent("1–5 oct 2026");
+  });
+
+  it("INT-05 · «Mes pasado» pide su rango en un clic y quitarlo vuelve a pedir sin fechas", async () => {
+    const { dialog, dialogElement, user } = await renderPicker();
+
+    await findResults(dialog);
+    await user.click(dateRangeChip("Mes pasado", dialogElement));
+    await waitFor(() =>
+      expect(lastRequest()).toMatchObject({ from: "2026-09-01", limit: "20", to: "2026-09-30" }),
+    );
+
+    await user.click(dialog.getByRole("button", { name: "Quitar rango de fechas" }));
+    await waitFor(() => expect(lastRequest().from).toBeUndefined());
+    expect(lastRequest().to).toBeUndefined();
   });
 
   it("vendedor: sin selector de tipo y solo pide ventas", async () => {

@@ -5,10 +5,12 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
+import { getBusinessTodayIsoDate } from "@/modules/dashboard/utils/businessDate";
 import { Can } from "@/shared/auth/Can";
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
+import { parseDateRangeParams } from "@/shared/components/DateRangeField";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import {
@@ -141,7 +143,14 @@ function SalesList() {
   const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
   // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
   const debouncedSearch = useDebouncedValue(list.state.search, URL_LIST_DEBOUNCE_MS);
-  const filters = toSalesFilters(list.state, debouncedSearch);
+  const today = getBusinessTodayIsoDate();
+  const { from: urlFrom, preset: urlPreset, to: urlTo } = list.state;
+  // Rango efectivo: un `preset` relativo de la URL se recalcula con el hoy operativo.
+  const range = useMemo(
+    () => parseDateRangeParams({ from: urlFrom, preset: urlPreset, to: urlTo }, today),
+    [today, urlFrom, urlPreset, urlTo],
+  );
+  const filters = toSalesFilters(list.state, debouncedSearch, range);
   const sales = useSales({ ...filters, limit, skip });
   const cancelSale = useCancelSale();
   const returnSale = useReturnSale();
@@ -231,7 +240,7 @@ function SalesList() {
         layout="sections"
         title="Ventas"
       >
-        <SalesListFilters onChange={list.setState} state={list.state} />
+        <SalesListFilters onChange={list.setState} range={range} state={list.state} today={today} />
 
         <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
           <DataTable

@@ -3,7 +3,9 @@
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 
 import { Badge } from "@/shared/components/Badge";
+import { getBusinessTodayIsoDate } from "@/modules/dashboard/utils/businessDate";
 import { Button } from "@/shared/components/Button";
+import { DateRangeField, type DateRangeChange } from "@/shared/components/DateRangeField";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { Input } from "@/shared/components/Input";
@@ -28,6 +30,9 @@ export const PAYMENT_DOCUMENT_PICKER_PAGE_SIZE = 20;
 const MAX_VISIBLE_DOCUMENTS = 100;
 /** El mismo tope que valida `GET /api/payments/open-documents`. */
 const MAX_SEARCH_LENGTH = 120;
+
+/** Cada apertura empieza sin rango: el buscador no guarda nada en la URL. */
+const NO_DATE_RANGE: DateRangeChange = { from: undefined, preset: undefined, to: undefined };
 
 const TYPE_TEXTS = {
   purchase: { badge: "Compra", noContact: "Sin proveedor", option: "Compras por pagar" },
@@ -114,21 +119,22 @@ function DocumentSearch({ canPayPurchases, onSelect }: DocumentSearchProps) {
   const listId = useId();
   const [search, setSearch] = useState("");
   const [selectedType, setSelectedType] = useState<OpenDocumentType>("sale");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [range, setRange] = useState<DateRangeChange>(NO_DATE_RANGE);
+  const { from, to } = range;
+  const today = getBusinessTodayIsoDate();
   const [pages, setPages] = useState(1);
   const [activeIndex, setActiveIndex] = useState(0);
   const activeOptionRef = useRef<HTMLLIElement | null>(null);
   const debouncedSearch = useDebouncedValue(search.trim(), PAYMENT_DOCUMENT_PICKER_DEBOUNCE_MS);
   const type: OpenDocumentType = canPayPurchases ? selectedType : "sale";
   const limit = Math.min(pages * PAYMENT_DOCUMENT_PICKER_PAGE_SIZE, MAX_VISIBLE_DOCUMENTS);
-  const filterKey = JSON.stringify([type, debouncedSearch, from, to]);
+  const filterKey = JSON.stringify([type, debouncedSearch, from ?? "", to ?? ""]);
   const documents = useOpenDocuments({
-    from: from || undefined,
+    from,
     limit,
     search: debouncedSearch || undefined,
     skip: 0,
-    to: to || undefined,
+    to,
     type,
   });
   // "Ver más" pide la misma búsqueda con más filas: mientras llega, se sigue viendo
@@ -158,24 +164,8 @@ function DocumentSearch({ canPayPurchases, onSelect }: DocumentSearchProps) {
     setActiveIndex(0);
   }
 
-  // Un rango invertido no se puede elegir: el otro extremo acompaña al que se mueve.
-  function handleFromChange(nextFrom: string) {
-    setFrom(nextFrom);
-
-    if (nextFrom && to && nextFrom > to) {
-      setTo(nextFrom);
-    }
-
-    restartList();
-  }
-
-  function handleToChange(nextTo: string) {
-    setTo(nextTo);
-
-    if (nextTo && from && nextTo < from) {
-      setFrom(nextTo);
-    }
-
+  function handleRangeChange(next: DateRangeChange) {
+    setRange(next);
     restartList();
   }
 
@@ -235,20 +225,17 @@ function DocumentSearch({ canPayPurchases, onSelect }: DocumentSearchProps) {
             value={selectedType}
           />
         ) : null}
-        <Input
-          label="Desde"
-          max={to || undefined}
-          onChange={(event) => handleFromChange(event.target.value)}
-          type="date"
-          value={from}
-        />
-        <Input
-          label="Hasta"
-          min={from || undefined}
-          onChange={(event) => handleToChange(event.target.value)}
-          type="date"
-          value={to}
-        />
+        <div className="sm:col-span-2">
+          <DateRangeField
+            clearable
+            label="Rango de fechas"
+            maxDate={today}
+            onChange={handleRangeChange}
+            size="sm"
+            today={today}
+            value={range}
+          />
+        </div>
       </div>
 
       {documents.error && !list ? (

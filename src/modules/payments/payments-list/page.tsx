@@ -4,10 +4,12 @@ import { Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
+import { getBusinessTodayIsoDate } from "@/modules/dashboard/utils/businessDate";
 import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
+import { parseDateRangeParams } from "@/shared/components/DateRangeField";
 import { EmptyState } from "@/shared/components/EmptyState";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import {
@@ -154,7 +156,14 @@ function PaymentsList() {
   const list = useUrlListState(paymentsListSchema);
   const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
   const [paymentToCancel, setPaymentToCancel] = useState<string | null>(null);
-  const effectiveFilters = toPaymentsFilters(list.state, salePaymentsOnly);
+  const today = getBusinessTodayIsoDate();
+  const { from: urlFrom, preset: urlPreset, to: urlTo } = list.state;
+  // Rango efectivo: un `preset` relativo de la URL se recalcula con el hoy operativo.
+  const range = useMemo(
+    () => parseDateRangeParams({ from: urlFrom, preset: urlPreset, to: urlTo }, today),
+    [today, urlFrom, urlPreset, urlTo],
+  );
+  const effectiveFilters = toPaymentsFilters(list.state, salePaymentsOnly, range);
   const payments = usePayments({ ...effectiveFilters, limit, skip });
   const cancelPayment = useCancelPayment();
   const paymentItems = getPaginatedItems(payments.data);
@@ -240,8 +249,10 @@ function PaymentsList() {
           onChange={list.setState}
           onClear={() => list.setState(CLEARED_PAYMENTS_FILTERS)}
           onRemoveChip={(key) => list.setField(key, "")}
+          range={range}
           salePaymentsOnly={salePaymentsOnly}
           state={list.state}
+          today={today}
         />
 
         <div className="flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
