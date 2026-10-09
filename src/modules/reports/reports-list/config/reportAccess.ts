@@ -1,7 +1,13 @@
 import type { Permission, UserRole } from "@/shared/auth/permissions";
 
+import { assertInventoryReportAccess } from "../../services/inventoryReports";
 import { assertMoneyReportAccess } from "../../services/moneyReports";
-import { isMoneyReportId, type ReportDefinition, type ReportId } from "./reportCatalog";
+import {
+  isInventoryReportId,
+  isMoneyReportId,
+  type ReportDefinition,
+  type ReportId,
+} from "./reportCatalog";
 
 /** Lo que el cliente sabe de la sesión (`usePermission`); `role` falta mientras carga. */
 export type ReportViewer = {
@@ -10,15 +16,19 @@ export type ReportViewer = {
 };
 
 /**
- * ¿Puede esta sesión ver el reporte? Los de dinero de REP-06 usan la MISMA regla
- * que su ruta (`assertMoneyReportAccess`: no se copia ninguna lista de permisos
- * ni de roles). El resto no se filtra aquí: solo exige `reports.view`, que ya
- * pide la pantalla entera.
+ * ¿Puede esta sesión ver el reporte? Los de dinero de REP-06 y los de inventario
+ * de REP-07 usan la MISMA regla que su ruta (`assertMoneyReportAccess`,
+ * `assertInventoryReportAccess`: no se copia ninguna lista de permisos ni de
+ * roles). El resto no se filtra aquí: solo exige `reports.view`, que ya pide la
+ * pantalla entera.
  *
- * Sin sesión cargada (`role` ausente) ninguno de dinero es visible.
+ * Sin sesión cargada (`role` ausente) ninguno de dinero ni de inventario es
+ * visible.
  */
 export function canViewReport(reportId: ReportId, viewer: ReportViewer) {
-  if (!isMoneyReportId(reportId)) {
+  const isMoney = isMoneyReportId(reportId);
+
+  if (!isMoney && !isInventoryReportId(reportId)) {
     return true;
   }
 
@@ -27,7 +37,11 @@ export function canViewReport(reportId: ReportId, viewer: ReportViewer) {
   }
 
   try {
-    assertMoneyReportAccess(reportId, { permissions: viewer.permissions, role: viewer.role });
+    if (isMoney) {
+      assertMoneyReportAccess(reportId, { permissions: viewer.permissions, role: viewer.role });
+    } else {
+      assertInventoryReportAccess({ permissions: viewer.permissions });
+    }
 
     return true;
   } catch {

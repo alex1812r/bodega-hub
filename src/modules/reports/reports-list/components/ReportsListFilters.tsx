@@ -28,14 +28,33 @@ import type {
   ReportDateRangeFilters,
   StockCardReportFilters,
 } from "../../hooks/useReports";
-import type { ReportGroupBy } from "../../services/reportSeries";
+import {
+  PURCHASE_REPORT_STATUS_ALL,
+  type PurchasesReportStatusFilter,
+  type ReportGroupBy,
+} from "../../services/reportSeries";
 import type { ReportDefinition } from "../config/reportCatalog";
+import { ReportChipGroup, type ReportChipOption } from "./ReportChipGroup";
 
 const GROUP_BY_OPTIONS: readonly { label: string; value: ReportGroupBy | undefined }[] = [
   { label: "Automático", value: undefined },
   { label: "Día", value: "day" },
   { label: "Semana", value: "week" },
   { label: "Mes", value: "month" },
+];
+
+/** Opción por defecto del estado de compras: `status` ausente en la URL y en la petición. */
+const PURCHASE_STATUS_DEFAULT = "";
+
+const PURCHASE_STATUS_OPTIONS: readonly ReportChipOption<
+  PurchasesReportStatusFilter | typeof PURCHASE_STATUS_DEFAULT
+>[] = [
+  { label: "Vigentes (por defecto)", value: PURCHASE_STATUS_DEFAULT },
+  { label: "Todas", value: PURCHASE_REPORT_STATUS_ALL },
+  { label: "Pedidas", value: "pedido" },
+  { label: "Recibidas", value: "recibido" },
+  { label: "Canceladas", value: "cancelado" },
+  { label: "Devueltas", value: "devuelto" },
 ];
 
 type ReportsListFiltersProps = {
@@ -146,6 +165,8 @@ export function ReportsListFilters({
   const showCompare = report?.supportsCompare ?? false;
   const showSupplier = !report || report.entityFilter === "supplier";
   const showProduct = !report || report.entityFilter === "product";
+  // El estado solo se ofrece en el reporte de compras de la tienda activa.
+  const showPurchaseStatus = report?.entityFilter === "supplier";
   const hasFullRange = Boolean(dateFilters.from && dateFilters.to);
 
   function handleRangeChange(next: DateRangeChange) {
@@ -242,6 +263,15 @@ export function ReportsListFilters({
             </div>
           ) : null}
         </div>
+      ) : null}
+
+      {showPurchaseStatus ? (
+        <ReportChipGroup
+          label="Estado"
+          onChange={(status) => onPurchasesChange({ status: status || undefined })}
+          options={PURCHASE_STATUS_OPTIONS}
+          value={purchasesFilters.status ?? PURCHASE_STATUS_DEFAULT}
+        />
       ) : null}
 
       {showSupplier || showProduct ? (

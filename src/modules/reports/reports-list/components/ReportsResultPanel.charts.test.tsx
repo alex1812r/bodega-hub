@@ -260,7 +260,10 @@ describe("ReportsResultPanel · gráficos (REP-04)", () => {
       );
       expect(within(region).getByText("ref 150.00")).toBeInTheDocument();
       expect(within(region).getByText("1–10 may 2026 · por día")).toBeInTheDocument();
-      expect(within(region).queryByRole("note")).not.toBeInTheDocument();
+      // Sin aviso de agrupación. Compras, sin estado elegido, dice qué deja fuera.
+      expect(within(region).queryAllByRole("note").map((note) => note.textContent)).toEqual(
+        id === "purchases" ? ["No incluye compras canceladas ni devueltas."] : [],
+      );
       expect(within(region).queryByTestId("report-delta")).not.toBeInTheDocument();
 
       const table = screen.getByText(`Resultados: ${getReport(id).name}`);

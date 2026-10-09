@@ -18,27 +18,44 @@ import { getReportById, storeReportCatalog } from "./config/reportCatalog";
 import {
   reportsListSchema,
   resolveReportsRange,
+  serializeInventoryReportFilters,
   serializeMoneyReportFilters,
   serializeReportsRange,
+  toInventoryReportFilters,
   toMoneyReportFilters,
   toReportsFilters,
   toReportSwitchPatch,
 } from "./reportsListParams";
 
 function ReportsList() {
-  // Reporte activo, rango, agrupación, comparación, proveedor, producto, tramo,
-  // contacto, moneda y página viven en la URL: recarga, "atrás" y un enlace
-  // compartido abren lo mismo.
+  // Reporte activo, rango, agrupación, comparación, proveedor, estado, producto,
+  // tramo, contacto, moneda, días, categoría, agrupación de la rotación y página
+  // viven en la URL: recarga, "atrás" y un enlace compartido abren lo mismo.
   const list = useUrlListState(reportsListSchema);
   const { setState: setListState, state } = list;
   const pagination = useUrlPaginationState(list);
-  const { bucket, compare, contactId, currency, from, groupBy, preset, productId, report, supplierId, to } =
-    state;
+  const {
+    bucket,
+    categoryId,
+    compare,
+    contactId,
+    currency,
+    days,
+    from,
+    groupBy,
+    preset,
+    productId,
+    report,
+    status,
+    supplierId,
+    to,
+    turnoverBy,
+  } = state;
   const today = getBusinessTodayIsoDate();
   const activeReport = getReportById(report);
   // El catálogo solo ofrece lo que la sesión puede abrir: los reportes de dinero
-  // de REP-06 piden permisos propios (misma regla que sus rutas). Mientras la
-  // sesión carga no se ofrece ninguno de ellos.
+  // de REP-06 y los de inventario de REP-07 piden permisos propios (misma regla
+  // que sus rutas). Mientras la sesión carga no se ofrece ninguno de ellos.
   const { permissions, role } = usePermission();
   const visibleReports = useMemo(
     () => filterReportsByAccess(storeReportCatalog, { permissions, role }),
@@ -48,6 +65,10 @@ function ReportsList() {
     () => toMoneyReportFilters({ bucket, contactId, currency }),
     [bucket, contactId, currency],
   );
+  const inventoryFilters = useMemo(
+    () => toInventoryReportFilters({ categoryId, days, turnoverBy }),
+    [categoryId, days, turnoverBy],
+  );
   // Un `preset` relativo de la URL se recalcula con el hoy operativo. Sin rango
   // en la URL, los reportes con gráfico y fechas abren en sus últimos 30 días.
   const range = useMemo(
@@ -55,8 +76,8 @@ function ReportsList() {
     [activeReport, from, preset, to, today],
   );
   const filters = useMemo(
-    () => toReportsFilters({ compare, groupBy, productId, supplierId }, range),
-    [compare, groupBy, productId, range, supplierId],
+    () => toReportsFilters({ compare, groupBy, productId, status, supplierId }, range),
+    [compare, groupBy, productId, range, status, supplierId],
   );
 
   return (
@@ -69,7 +90,8 @@ function ReportsList() {
       <ReportsCatalog
         activeReportId={report}
         // Cambiar de reporte devuelve la página a 1 (lo hace `useUrlListState`) y
-        // limpia tramo, contacto y moneda, que son de un reporte concreto.
+        // limpia tramo, contacto, moneda, estado, días, categoría y agrupación de
+        // la rotación, que son de un reporte concreto.
         onSelect={(reportId) => setListState(toReportSwitchPatch(reportId))}
         reports={visibleReports}
       />
@@ -91,6 +113,10 @@ function ReportsList() {
           if ("supplierId" in patch) {
             setListState({ supplierId: patch.supplierId ?? "" });
           }
+
+          if ("status" in patch) {
+            setListState({ status: patch.status ?? "" });
+          }
         }}
         onStockCardChange={(patch) => {
           if ("productId" in patch) {
@@ -105,8 +131,10 @@ function ReportsList() {
 
       <ReportsResultPanel
         dateFilters={filters.dateFilters}
+        inventoryFilters={inventoryFilters}
         listHref={list.href}
         moneyFilters={moneyFilters}
+        onInventoryFiltersChange={(patch) => setListState(serializeInventoryReportFilters(patch))}
         onMoneyFiltersChange={(patch) => setListState(serializeMoneyReportFilters(patch))}
         pagination={pagination}
         purchasesFilters={filters.purchasesFilters}

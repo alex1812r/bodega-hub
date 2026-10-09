@@ -3,10 +3,13 @@ import { DATE_RANGE_PRESETS } from "@/shared/components/DateRangeField";
 import { defaultReportId, getReportById, REPORT_IDS } from "./config/reportCatalog";
 import {
   DEFAULT_CASH_CLOSE_CURRENCY,
+  DEFAULT_TURNOVER_BY,
   reportsListSchema,
   resolveReportsRange,
+  serializeInventoryReportFilters,
   serializeMoneyReportFilters,
   serializeReportsRange,
+  toInventoryReportFilters,
   toMoneyReportFilters,
   toReportDateFilters,
   toReportsFilters,
@@ -63,12 +66,16 @@ describe("parámetros de los reportes de dinero (REP-06b)", () => {
     expect(toMoneyReportFilters(state)).toEqual(filters);
   });
 
-  it("cambiar de reporte limpia tramo, contacto y moneda", () => {
+  it("cambiar de reporte limpia tramo, contacto y moneda (y lo de compras e inventario)", () => {
     expect(toReportSwitchPatch("payables-aging")).toEqual({
       bucket: "",
+      categoryId: "",
       contactId: "",
       currency: "",
+      days: 30,
       report: "payables-aging",
+      status: "",
+      turnoverBy: "product",
     });
   });
 
@@ -93,9 +100,11 @@ describe("reportsListSchema", () => {
   it("sin parámetros: reporte por defecto, sin rango, automático, sin comparar, página 1", () => {
     expect(reportsListSchema.parse({})).toEqual({
       bucket: "",
+      categoryId: "",
       compare: "",
       contactId: "",
       currency: "",
+      days: 30,
       from: "",
       groupBy: "",
       limit: 10,
@@ -103,8 +112,10 @@ describe("reportsListSchema", () => {
       preset: "",
       productId: "",
       report: defaultReportId,
+      status: "",
       supplierId: "",
       to: "",
+      turnoverBy: "product",
     });
   });
 
@@ -256,7 +267,7 @@ describe("toReportsFilters", () => {
   it("reparte el estado en los filtros de reportes y exportación", () => {
     expect(
       toReportsFilters(
-        { compare: "1", groupBy: "week", productId: "prod-1", supplierId: "sup-1" },
+        { compare: "1", groupBy: "week", productId: "prod-1", status: "", supplierId: "sup-1" },
         { from: "2026-05-01", to: "2026-05-10" },
       ),
     ).toEqual({
@@ -269,7 +280,7 @@ describe("toReportsFilters", () => {
   it("los valores por defecto no viajan", () => {
     expect(
       toReportsFilters(
-        { compare: "", groupBy: "", productId: "", supplierId: "" },
+        { compare: "", groupBy: "", productId: "", status: "", supplierId: "" },
         { from: undefined, to: undefined },
       ),
     ).toEqual({
@@ -277,6 +288,120 @@ describe("toReportsFilters", () => {
       purchasesFilters: { from: undefined, supplierId: undefined, to: undefined },
       stockCardFilters: { productId: undefined },
     });
+  });
+});
+
+describe("estado del reporte de compras (REP-07b)", () => {
+  const range = { from: "2026-05-01", to: "2026-05-10" };
+  const base = { compare: "", groupBy: "", productId: "", supplierId: "" } as const;
+
+  it("status acepta vacío (vigentes), all y cada estado; cualquier otro cae al valor por defecto", () => {
+    for (const status of ["", "all", "pedido", "recibido", "cancelado", "devuelto"]) {
+      expect(shape.status.safeParse(status)).toEqual({ data: status, success: true });
+    }
+    expect(shape.status.safeParse("anulado").success).toBe(false);
+    expect(shape.status.parse(undefined)).toBe("");
+  });
+
+  it("sin status la petición no lo lleva: el servicio excluye canceladas y devueltas", () => {
+    const { purchasesFilters } = toReportsFilters({ ...base, status: "" }, range);
+
+    expect(purchasesFilters).toEqual({ ...range, supplierId: undefined });
+    expect("status" in purchasesFilters).toBe(false);
+  });
+
+  it.each(["all", "pedido", "recibido", "cancelado", "devuelto"] as const)(
+    "status=%s viaja tal cual en los filtros de compras (y de la exportación)",
+    (status) => {
+      expect(toReportsFilters({ ...base, status }, range).purchasesFilters).toEqual({
+        ...range,
+        status,
+        supplierId: undefined,
+      });
+    },
+  );
+});
+
+describe("parámetros de los reportes de inventario (REP-07b)", () => {
+  it("days: entero de 1 a 3650; 30 por defecto", () => {
+    expect(shape.days.parse(undefined)).toBe(30);
+    for (const days of [1, 45, 180, 3650]) {
+      expect(shape.days.safeParse(days)).toEqual({ data: days, success: true });
+    }
+    for (const days of [0, -5, 3651, 2.5, "45", Number.NaN]) {
+      expect(shape.days.safeParse(days).success).toBe(false);
+    }
+  });
+
+  it("categoryId: texto de hasta 120 caracteres; turnoverBy: product o category", () => {
+    expect(shape.categoryId.safeParse("c".repeat(120)).success).toBe(true);
+    expect(shape.categoryId.safeParse("c".repeat(121)).success).toBe(false);
+    expect(shape.turnoverBy.parse(undefined)).toBe("product");
+    expect(shape.turnoverBy.safeParse("category")).toEqual({ data: "category", success: true });
+    // `groupBy` (día, semana, mes) es otro parámetro: sus valores no valen aquí ni al revés.
+    expect(shape.turnoverBy.safeParse("week").success).toBe(false);
+    expect(shape.groupBy.safeParse("category").success).toBe(false);
+    expect(shape.groupBy.safeParse("product").success).toBe(false);
+  });
+
+  it("toInventoryReportFilters: sin parámetros, 30 días, todas las categorías y por producto", () => {
+    expect(DEFAULT_TURNOVER_BY).toBe("product");
+    expect(toInventoryReportFilters({ categoryId: "", days: 30, turnoverBy: "product" })).toEqual({
+      categoryId: undefined,
+      days: 30,
+      turnoverBy: "product",
+    });
+    expect(toInventoryReportFilters({ categoryId: "cat-1", days: 90, turnoverBy: "category" })).toEqual({
+      categoryId: "cat-1",
+      days: 90,
+      turnoverBy: "category",
+    });
+  });
+
+  it("serializeInventoryReportFilters solo toca lo que cambia", () => {
+    expect(serializeInventoryReportFilters({ days: 60 })).toEqual({ days: 60 });
+    expect(serializeInventoryReportFilters({ categoryId: "cat-1" })).toEqual({ categoryId: "cat-1" });
+    expect(serializeInventoryReportFilters({ categoryId: undefined })).toEqual({ categoryId: "" });
+    expect(serializeInventoryReportFilters({ turnoverBy: "category" })).toEqual({ turnoverBy: "category" });
+    expect(serializeInventoryReportFilters({})).toEqual({});
+  });
+
+  it("ida y vuelta: lo serializado se vuelve a leer igual", () => {
+    const filters = { categoryId: "cat-9", days: 180, turnoverBy: "category" } as const;
+    const state = {
+      categoryId: "",
+      days: 30,
+      turnoverBy: "product",
+      ...serializeInventoryReportFilters(filters),
+    } as const;
+
+    expect(toInventoryReportFilters(state)).toEqual(filters);
+  });
+
+  it("rotación y ajustes abren en últimos 30 días; productos sin movimiento no usa rango", () => {
+    const empty = { from: "", preset: "", to: "" } as const;
+
+    for (const id of ["stock-turnover", "stock-adjustments"] as const) {
+      expect(resolveReportsRange(empty, TODAY, getReportById(id))).toEqual({
+        from: "2026-04-19",
+        preset: "last_30_days",
+        to: TODAY,
+      });
+    }
+    expect(toReportDateFilters(getReportById("dead-stock"), { from: "2026-05-01", to: TODAY })).toEqual({});
+  });
+
+  it("ajustes pide la agrupación (auto si la URL no la trae); rotación, solo el rango", () => {
+    const range = { from: "2026-05-01", to: "2026-05-10" };
+
+    expect(toReportDateFilters(getReportById("stock-adjustments"), range)).toEqual({ ...range, groupBy: "auto" });
+    expect(toReportDateFilters(getReportById("stock-adjustments"), { ...range, groupBy: "week" })).toEqual({
+      ...range,
+      groupBy: "week",
+    });
+    expect(
+      toReportDateFilters(getReportById("stock-turnover"), { ...range, compare: true, groupBy: "week" }),
+    ).toEqual(range);
   });
 });
 

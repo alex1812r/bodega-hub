@@ -5,9 +5,15 @@
  */
 import { getRolePermissions, type Permission, type UserRole } from "@/shared/auth/permissions";
 
+import { INVENTORY_REPORT_SLUGS } from "../../services/inventoryReports";
 import { MONEY_REPORT_SLUGS } from "../../services/moneyReports";
 import { canViewReport, filterReportsByAccess } from "./reportAccess";
-import { MULTI_STORE_REPORT_IDS, reportCatalog, storeReportCatalog } from "./reportCatalog";
+import {
+  inventoryReportCatalog,
+  MULTI_STORE_REPORT_IDS,
+  reportCatalog,
+  storeReportCatalog,
+} from "./reportCatalog";
 
 function viewer(role: UserRole, change: { add?: Permission[]; remove?: Permission[] } = {}) {
   const permissions = [...getRolePermissions(role), ...(change.add ?? [])].filter(
@@ -67,6 +73,40 @@ describe("canViewReport", () => {
   });
 });
 
+describe("canViewReport · reportes de inventario (REP-07b)", () => {
+  const visibleInventoryReports = (session: ReturnType<typeof viewer>) =>
+    INVENTORY_REPORT_SLUGS.filter((id) => canViewReport(id, session));
+
+  it("administrador ve los tres", () => {
+    expect(visibleInventoryReports(viewer("admin"))).toEqual([...INVENTORY_REPORT_SLUGS]);
+  });
+
+  it("contador (reports.view sin inventory.view) y almacén (al revés) no ven ninguno", () => {
+    expect(visibleInventoryReports(viewer("contador"))).toEqual([]);
+    expect(visibleInventoryReports(viewer("almacen"))).toEqual([]);
+    expect(visibleInventoryReports(viewer("vendedor"))).toEqual([]);
+  });
+
+  it("hacen falta los dos permisos, los mismos que pide la ruta", () => {
+    expect(visibleInventoryReports(viewer("contador", { add: ["inventory.view"] }))).toEqual([
+      ...INVENTORY_REPORT_SLUGS,
+    ]);
+    expect(visibleInventoryReports(viewer("almacen", { add: ["reports.view"] }))).toEqual([
+      ...INVENTORY_REPORT_SLUGS,
+    ]);
+    expect(visibleInventoryReports(viewer("admin", { remove: ["inventory.view"] }))).toEqual([]);
+    expect(visibleInventoryReports(viewer("admin", { remove: ["reports.view"] }))).toEqual([]);
+  });
+
+  it("mientras la sesión carga (sin rol) no se ve ninguno", () => {
+    expect(
+      INVENTORY_REPORT_SLUGS.filter((id) =>
+        canViewReport(id, { permissions: ["reports.view", "inventory.view"], role: undefined }),
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("filterReportsByAccess", () => {
   it("un administrador recibe el catálogo completo, en su orden", () => {
     expect(filterReportsByAccess(storeReportCatalog, viewer("admin"))).toEqual(storeReportCatalog);
@@ -83,6 +123,14 @@ describe("filterReportsByAccess", () => {
     const visible = filterReportsByAccess(storeReportCatalog, viewer("contador", { remove: ["cash.view"] }));
 
     expect(visible.map((report) => report.id)).not.toContain("cash-close-differences");
-    expect(visible).toHaveLength(storeReportCatalog.length - 1);
+    // Contador tampoco tiene `inventory.view`: los tres de inventario no se le ofrecen.
+    expect(visible).toHaveLength(storeReportCatalog.length - 1 - inventoryReportCatalog.length);
+
+    const withoutInventory = filterReportsByAccess(storeReportCatalog, viewer("admin", { remove: ["inventory.view"] }));
+
+    expect(withoutInventory).toHaveLength(storeReportCatalog.length - inventoryReportCatalog.length);
+    for (const id of INVENTORY_REPORT_SLUGS) {
+      expect(withoutInventory.map((report) => report.id)).not.toContain(id);
+    }
   });
 });

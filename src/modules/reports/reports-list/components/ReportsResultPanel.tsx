@@ -43,9 +43,14 @@ import type {
   PurchasesSeriesMeasures,
 } from "../../services/reportSeries";
 import { type ReportDefinition } from "../config/reportCatalog";
-import { type MoneyReportFilters, toReportDateFilters } from "../reportsListParams";
+import {
+  type InventoryReportFilters,
+  type MoneyReportFilters,
+  toReportDateFilters,
+} from "../reportsListParams";
 import { DailyCloseReportPanel } from "./DailyCloseReportPanel";
 import { FxDepreciationReportPanel } from "./FxDepreciationReportPanel";
+import { InventoryReportPanel } from "./inventory/InventoryReportPanel";
 import { MoneyReportPanel } from "./money/MoneyReportPanel";
 import { PaymentMethodsReportPanel } from "./PaymentMethodsReportPanel";
 import { ReportRankingChart } from "./ReportRankingChart";
@@ -175,6 +180,9 @@ const topCustomersColumns: DataTableColumn<TopCustomersReportRow>[] = [
   { align: "right", header: "Total VES", key: "totalVes", render: (row) => formatVes(row.totalVes) },
 ];
 
+/** Bajo el gráfico de compras cuando no se eligió estado: qué deja fuera. */
+export const PURCHASES_DEFAULT_STATUS_NOTE = "No incluye compras canceladas ni devueltas.";
+
 const purchasesColumns: DataTableColumn<PurchasesReportRow>[] = [
   { header: "Compra", key: "purchaseNumber", render: (row) => row.purchaseNumber },
   { header: "Proveedor", key: "supplier", render: (row) => row.supplier?.name ?? row.supplierId },
@@ -264,13 +272,17 @@ function PaginatedReportTable<TData, TResult extends PaginatedList<TData> = Pagi
 type ReportsResultPanelProps = {
   /** Rango global (`from` / `to`) y, para los reportes que los admiten, `groupBy` y `compare`. */
   dateFilters: ReportDateRangeFilters;
+  /** Filtros propios de los reportes de inventario (`days`, `categoryId`, `turnoverBy` de la URL). */
+  inventoryFilters?: InventoryReportFilters;
   /**
    * URL actual de la lista (`useUrlListState().href`): los enlaces a un
-   * documento o a un contacto la llevan en `returnTo` para poder volver.
+   * documento, a un contacto o a un producto la llevan en `returnTo` para
+   * poder volver.
    */
   listHref?: string;
   /** Filtros propios de los reportes de dinero (`bucket`, `contactId`, `currency` de la URL). */
   moneyFilters?: MoneyReportFilters;
+  onInventoryFiltersChange?: (patch: Partial<InventoryReportFilters>) => void;
   onMoneyFiltersChange?: (patch: Partial<MoneyReportFilters>) => void;
   /**
    * Página y tamaño de la tabla del reporte activo guardados fuera (en la URL):
@@ -288,12 +300,15 @@ type ReportsResultPanelProps = {
  * Resultado del reporte activo. Los reportes de serie (línea) y de ranking
  * (barras) llevan su gráfico encima y la tabla debajo, plegable; cierre del día,
  * depreciación FX, bajo stock y kardex son solo tabla o panel. Los de dinero de
- * REP-06 son de la tienda activa: con `scope` (plataforma) no pintan nada.
+ * REP-06 y los de inventario de REP-07 son de la tienda activa: con `scope`
+ * (plataforma) no pintan nada.
  */
 export function ReportsResultPanel({
   dateFilters,
+  inventoryFilters,
   listHref,
   moneyFilters,
+  onInventoryFiltersChange,
   onMoneyFiltersChange,
   pagination,
   purchasesFilters,
@@ -555,8 +570,10 @@ export function ReportsResultPanel({
         from: purchasesFilters.from,
         to: purchasesFilters.to,
       });
+      // Sin `status` el servicio deja fuera canceladas y devueltas, en la tabla y en la serie.
       const reportPurchasesFilters: PurchasesReportFilters = {
         ...purchasesDateFilters,
+        ...(purchasesFilters.status ? { status: purchasesFilters.status } : {}),
         supplierId: purchasesFilters.supplierId,
       };
 
@@ -566,6 +583,7 @@ export function ReportsResultPanel({
             <ReportSeriesChart
               error={query.error}
               filters={purchasesDateFilters}
+              footnote={purchasesFilters.status ? null : PURCHASES_DEFAULT_STATUS_NOTE}
               isLoading={query.isLoading}
               measure={purchasesMeasure}
               onRetry={() => void query.refetch()}
@@ -586,6 +604,7 @@ export function ReportsResultPanel({
             purchasesDateFilters.groupBy,
             purchasesDateFilters.compare,
             purchasesFilters.supplierId,
+            purchasesFilters.status,
           ]}
           scope={scope}
           useReport={usePurchasesReport}
@@ -604,6 +623,20 @@ export function ReportsResultPanel({
           key={report.id}
           listHref={listHref}
           onFiltersChange={onMoneyFiltersChange}
+          pagination={pagination}
+          report={report}
+        />
+      );
+    case "dead-stock":
+    case "stock-turnover":
+    case "stock-adjustments":
+      return scope ? null : (
+        <InventoryReportPanel
+          dateFilters={reportDateFilters}
+          filters={inventoryFilters}
+          key={report.id}
+          listHref={listHref}
+          onFiltersChange={onInventoryFiltersChange}
           pagination={pagination}
           report={report}
         />

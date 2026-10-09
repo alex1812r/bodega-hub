@@ -16,7 +16,7 @@ import {
 import type { ReportDefinition } from "../config/reportCatalog";
 import { ReportChartCard, type ReportDeltaTone } from "./ReportChartCard";
 
-const GROUP_BY_LABELS: Record<ReportGroupBy, string> = {
+export const GROUP_BY_LABELS: Record<ReportGroupBy, string> = {
   day: "día",
   month: "mes",
   week: "semana",
@@ -65,6 +65,8 @@ type ReportSeriesChartProps<M extends ReportSeriesMeasures> = {
   error: Error | null;
   /** Filtros de fecha que se enviaron al reporte (`toReportDateFilters`). */
   filters: ReportDateRangeFilters;
+  /** Aclaración de una línea bajo el gráfico (qué deja fuera la serie). */
+  footnote?: string | null;
   isLoading: boolean;
   measure: ReportSeriesChartMeasure<M>;
   onRetry: () => void;
@@ -80,6 +82,7 @@ type ReportSeriesChartProps<M extends ReportSeriesMeasures> = {
 export function ReportSeriesChart<M extends ReportSeriesMeasures>({
   error,
   filters,
+  footnote,
   isLoading,
   measure,
   onRetry,
@@ -143,6 +146,11 @@ export function ReportSeriesChart<M extends ReportSeriesMeasures>({
         onRetry={onRetry}
         series={chartSeries}
       />
+      {footnote ? (
+        <p className="text-xs text-on-surface-variant" role="note">
+          {footnote}
+        </p>
+      ) : null}
     </ReportChartCard>
   );
 }

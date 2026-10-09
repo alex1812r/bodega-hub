@@ -1,12 +1,15 @@
 import {
   Banknote,
   ClipboardCheck,
+  ClipboardMinus,
   Clock,
   HandCoins,
+  Hourglass,
   LineChart,
   Package,
   PackageMinus,
   PieChart,
+  RefreshCw,
   Scale,
   ShoppingCart,
   Tags,
@@ -20,6 +23,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { INVENTORY_REPORT_SLUGS, type InventoryReportSlug } from "../../services/inventoryReports";
 import { MONEY_REPORT_SLUGS, type MoneyReportSlug } from "../../services/moneyReports";
 
 /**
@@ -45,10 +49,15 @@ export const MULTI_STORE_REPORT_IDS = [
 export type MultiStoreReportId = (typeof MULTI_STORE_REPORT_IDS)[number];
 
 /**
- * Todos los reportes de `/reports`: los multi-tienda y los de dinero de
- * REP-06 (`MONEY_REPORT_SLUGS`), que solo existen para la tienda activa.
+ * Todos los reportes de `/reports`: los multi-tienda, los de dinero de REP-06
+ * (`MONEY_REPORT_SLUGS`) y los de inventario de REP-07
+ * (`INVENTORY_REPORT_SLUGS`), que solo existen para la tienda activa.
  */
-export const REPORT_IDS = [...MULTI_STORE_REPORT_IDS, ...MONEY_REPORT_SLUGS] as const;
+export const REPORT_IDS = [
+  ...MULTI_STORE_REPORT_IDS,
+  ...MONEY_REPORT_SLUGS,
+  ...INVENTORY_REPORT_SLUGS,
+] as const;
 
 export type ReportId = (typeof REPORT_IDS)[number];
 
@@ -311,11 +320,60 @@ export const moneyReportCatalog: ReportDefinition<MoneyReportSlug>[] = [
   },
 ];
 
-/** Catálogo de `/reports` (tienda activa): los multi-tienda y los de dinero. */
-export const storeReportCatalog: ReportDefinition[] = [...reportCatalog, ...moneyReportCatalog];
+/**
+ * Reportes de inventario de REP-07: solo de la tienda activa (no hay ruta de
+ * plataforma) y con `inventory.view` además de `reports.view` (ver
+ * `reportAccess.ts`).
+ */
+export const inventoryReportCatalog: ReportDefinition<InventoryReportSlug>[] = [
+  {
+    id: "dead-stock",
+    chart: "ranking",
+    group: "inventario",
+    icon: Hourglass,
+    name: "Productos sin movimiento",
+    period: "Actual",
+    description: "Productos sin vender y su capital inmovilizado.",
+    usesDateRange: false,
+  },
+  {
+    id: "stock-turnover",
+    chart: "ranking",
+    defaultDatePreset: REPORT_DEFAULT_DATE_PRESET,
+    group: "inventario",
+    icon: RefreshCw,
+    name: "Rotación de inventario",
+    period: "Rango",
+    description: "Qué tan rápido se vende tu inventario.",
+    usesDateRange: true,
+  },
+  {
+    id: "stock-adjustments",
+    chart: "line",
+    defaultDatePreset: REPORT_DEFAULT_DATE_PRESET,
+    group: "inventario",
+    icon: ClipboardMinus,
+    name: "Ajustes y mermas",
+    period: "Rango",
+    description: "Ajustes manuales y mermas, por motivo y periodo.",
+    supportsGroupBy: true,
+    usesDateRange: true,
+  },
+];
+
+/** Catálogo de `/reports` (tienda activa): los multi-tienda, los de dinero y los de inventario. */
+export const storeReportCatalog: ReportDefinition[] = [
+  ...reportCatalog,
+  ...moneyReportCatalog,
+  ...inventoryReportCatalog,
+];
 
 export function isMoneyReportId(id: ReportId): id is MoneyReportSlug {
   return (MONEY_REPORT_SLUGS as readonly string[]).includes(id);
+}
+
+export function isInventoryReportId(id: ReportId): id is InventoryReportSlug {
+  return (INVENTORY_REPORT_SLUGS as readonly string[]).includes(id);
 }
 
 export const defaultReportId: ReportId = "daily-sales";

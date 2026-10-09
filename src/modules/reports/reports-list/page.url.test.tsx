@@ -139,6 +139,28 @@ jest.mock("../../contacts/hooks/useContacts", () => ({
   useContact: () => ({ data: undefined, error: null }),
 }));
 
+// Los reportes de inventario (REP-07b) tienen sus pruebas en `page.inventory.test.tsx`.
+jest.mock("../hooks/useInventoryReports", () => {
+  const idle = () => ({
+    data: undefined,
+    error: null,
+    isFetching: false,
+    isLoading: false,
+    refetch: jest.fn(),
+  });
+
+  return {
+    useDeadStockReport: jest.fn(idle),
+    useStockAdjustmentsReport: jest.fn(idle),
+    useStockTurnoverReport: jest.fn(idle),
+  };
+});
+
+jest.mock("../../products/hooks/useProducts", () => ({
+  ...jest.requireActual("../../products/hooks/useProducts"),
+  useAllCategories: () => ({ data: undefined, error: null }),
+}));
+
 jest.mock("../../purchases/hooks/usePurchaseSuppliers", () => ({
   fetchPurchaseSupplierOptions: (params: { query: string }) => mockSupplierSearch(params.query),
   usePurchaseSupplier: (id?: string) => ({

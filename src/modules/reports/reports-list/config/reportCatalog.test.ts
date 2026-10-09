@@ -1,8 +1,11 @@
+import { INVENTORY_REPORT_SLUGS } from "../../services/inventoryReports";
 import { MONEY_REPORT_SLUGS } from "../../services/moneyReports";
 import {
   defaultReportId,
   getReportById,
   groupReports,
+  inventoryReportCatalog,
+  isInventoryReportId,
   isMoneyReportId,
   isReportId,
   moneyReportCatalog,
@@ -125,7 +128,7 @@ describe("reportCatalog", () => {
         "cash-close-differences",
       ]);
       expect(grouped.compras).toEqual(["purchases", "supplier-purchases"]);
-      expect(grouped.inventario).toEqual(["low-stock", "stock-card"]);
+      expect(grouped.inventario.slice(0, 2)).toEqual(["low-stock", "stock-card"]);
     });
 
     it("nombre con tildes, descripción de una línea de 50 caracteres como mucho", () => {
@@ -170,6 +173,80 @@ describe("reportCatalog", () => {
         expect(report.supportsGroupBy ?? false).toBe(false);
         expect(report.entityFilter).toBeUndefined();
       }
+    });
+  });
+
+  describe("reportes de inventario (REP-07b)", () => {
+    it("los tres ids nuevos están en el catálogo de la tienda y no en el multi-tienda", () => {
+      expect(ids(inventoryReportCatalog)).toEqual([...INVENTORY_REPORT_SLUGS]);
+      expect(ids(inventoryReportCatalog)).toEqual(["dead-stock", "stock-turnover", "stock-adjustments"]);
+      for (const id of INVENTORY_REPORT_SLUGS) {
+        expect(isReportId(id)).toBe(true);
+        expect(isInventoryReportId(id)).toBe(true);
+        expect(isMoneyReportId(id)).toBe(false);
+        expect(getReportById(id).id).toBe(id);
+        // Plataforma y la exportación leen `reportCatalog`: ahí no existen.
+        expect(ids(reportCatalog)).not.toContain(id);
+      }
+      expect(isInventoryReportId("low-stock")).toBe(false);
+    });
+
+    it("van en Inventario, detrás de bajo stock y kardex", () => {
+      const grouped = Object.fromEntries(
+        groupReports(storeReportCatalog).map((group) => [group.id, ids(group.reports)]),
+      );
+
+      expect(grouped.inventario).toEqual([
+        "low-stock",
+        "stock-card",
+        "dead-stock",
+        "stock-turnover",
+        "stock-adjustments",
+      ]);
+    });
+
+    it("nombre con tildes, descripción de una línea de 50 caracteres como mucho", () => {
+      expect(Object.fromEntries(inventoryReportCatalog.map((report) => [report.id, report.name]))).toEqual({
+        "dead-stock": "Productos sin movimiento",
+        "stock-adjustments": "Ajustes y mermas",
+        "stock-turnover": "Rotación de inventario",
+      });
+
+      for (const report of inventoryReportCatalog) {
+        expect(report.description).not.toMatch(/\n/);
+        expect(report.description.length).toBeLessThanOrEqual(50);
+        expect(report.description.endsWith(".")).toBe(true);
+      }
+    });
+
+    it("rango: productos sin movimiento no lo usa; rotación y ajustes sí (30 días por defecto); solo ajustes agrupa", () => {
+      const pick = (id: (typeof INVENTORY_REPORT_SLUGS)[number]) => {
+        const { chart, defaultDatePreset, supportsCompare, supportsGroupBy, usesDateRange } = getReportById(id);
+
+        return { chart, defaultDatePreset, supportsCompare, supportsGroupBy, usesDateRange };
+      };
+
+      expect(pick("dead-stock")).toEqual({
+        chart: "ranking",
+        defaultDatePreset: undefined,
+        supportsCompare: undefined,
+        supportsGroupBy: undefined,
+        usesDateRange: false,
+      });
+      expect(pick("stock-turnover")).toEqual({
+        chart: "ranking",
+        defaultDatePreset: "last_30_days",
+        supportsCompare: undefined,
+        supportsGroupBy: undefined,
+        usesDateRange: true,
+      });
+      expect(pick("stock-adjustments")).toEqual({
+        chart: "line",
+        defaultDatePreset: "last_30_days",
+        supportsCompare: undefined,
+        supportsGroupBy: true,
+        usesDateRange: true,
+      });
     });
   });
 
