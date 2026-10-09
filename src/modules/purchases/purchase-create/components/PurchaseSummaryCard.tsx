@@ -122,6 +122,13 @@ function CostCurrencyToggle({
   );
 }
 
+/**
+ * Columna de importes de una fila del resumen: cede ancho a su etiqueta y un importe que
+ * no cabe (tarjeta de 286 px a 360 px de pantalla) se parte en vez de salirse.
+ */
+const summaryAmountsClassName = "flex min-w-0 flex-col items-end text-right leading-tight";
+const summaryAmountClassName = "tabular-nums [overflow-wrap:anywhere]";
+
 /** Fila con el monto en la moneda de la compra arriba y su equivalente debajo, igual que las líneas. */
 function SummaryRow({
   costCurrency,
@@ -143,16 +150,16 @@ function SummaryRow({
     <div className="flex items-start justify-between gap-3">
       <span
         className={cn(
-          "text-sm",
+          "shrink-0 text-sm",
           emphasize ? "font-bold text-foreground" : "text-on-surface-variant",
         )}
       >
         {label}
       </span>
-      <div className="flex flex-col items-end leading-tight">
+      <div className={summaryAmountsClassName}>
         <span
           className={cn(
-            "tabular-nums",
+            summaryAmountClassName,
             emphasize ? "text-xl font-bold text-primary" : "text-sm text-foreground",
           )}
         >
@@ -160,7 +167,8 @@ function SummaryRow({
         </span>
         <span
           className={cn(
-            "tabular-nums text-on-surface-variant",
+            summaryAmountClassName,
+            "text-on-surface-variant",
             emphasize ? "text-sm font-medium" : "text-xs",
           )}
         >
@@ -236,8 +244,8 @@ export function PurchaseSummaryCard({
           vesAmount={subtotalVes}
         />
         <div className="flex items-start justify-between gap-3">
-          <span className="text-sm text-on-surface-variant">Descuento</span>
-          <div className="flex flex-col items-end leading-tight">
+          <span className="shrink-0 text-sm text-on-surface-variant">Descuento</span>
+          <div className={summaryAmountsClassName}>
             <div className="flex items-center gap-1">
               <span className="text-muted-foreground">-</span>
               <span className="text-xs text-on-surface-variant">ref</span>
@@ -254,7 +262,7 @@ export function PurchaseSummaryCard({
                 value={discountRef}
               />
             </div>
-            <span className="text-xs tabular-nums text-on-surface-variant">
+            <span className={cn(summaryAmountClassName, "text-xs text-on-surface-variant")}>
               - {formatVesBs(discountVes)}
             </span>
           </div>

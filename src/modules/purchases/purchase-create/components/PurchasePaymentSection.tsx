@@ -44,7 +44,7 @@ export function PurchasePaymentSection({
 
   return (
     <CollapsibleSection
-      className="rounded-xl shadow-sm"
+      className="min-w-0 rounded-xl shadow-sm"
       onOpenChange={onOpenChange}
       open={open}
       summary="Opcional: registra el pago al confirmar la compra."

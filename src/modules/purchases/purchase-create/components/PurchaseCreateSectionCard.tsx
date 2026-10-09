@@ -19,7 +19,7 @@ export function PurchaseCreateSectionCard({
   return (
     <section
       className={cn(
-        "rounded-xl border border-border bg-surface-container-lowest p-5 shadow-sm dark:border-slate-800",
+        "min-w-0 rounded-xl border border-border bg-surface-container-lowest p-5 shadow-sm dark:border-slate-800",
         className,
       )}
     >

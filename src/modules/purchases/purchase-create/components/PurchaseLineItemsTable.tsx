@@ -111,7 +111,7 @@ export function PurchaseLineItemsTable({
           label="Bloquear al agregar"
           onChange={lockControls.onLockOnAddChange}
         />
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center justify-end gap-1">
           <Button
             className={lockAllButtonClassName}
             disabled={lockedCount === lines.length}

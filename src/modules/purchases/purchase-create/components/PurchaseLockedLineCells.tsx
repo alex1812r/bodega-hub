@@ -17,8 +17,11 @@ type PurchaseLockedLineCellsProps = {
 };
 
 const stackedLabelClassName = cn(purchaseLineFieldLabelClassName, "block @xl:hidden");
-const valueClassName = "truncate text-sm leading-tight tabular-nums text-foreground";
-const detailClassName = "truncate text-xs leading-tight tabular-nums text-on-surface-variant";
+// Apilada (tres celdas por fila) un importe largo se parte; en una sola fila se recorta.
+const valueClassName =
+  "text-sm leading-tight break-words tabular-nums text-foreground @xl:truncate";
+const detailClassName =
+  "text-xs leading-tight break-words tabular-nums text-on-surface-variant @xl:truncate";
 
 /**
  * Celdas de una línea bloqueada: producto · cantidad (o empaques × unidades) ·

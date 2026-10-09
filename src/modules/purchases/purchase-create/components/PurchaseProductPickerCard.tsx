@@ -160,8 +160,16 @@ const SCAN_MISS_MESSAGES = {
   not_found: "No hay un producto activo con ese código de barras o SKU.",
 };
 const PICK_FAILED_MESSAGE = "No se pudo consultar el último costo del producto. Vuelve a elegirlo.";
-const popupClassName =
-  "absolute left-0 right-0 top-full z-20 mt-1 rounded-lg border border-border bg-surface-container-lowest shadow-lg";
+const popupSurfaceClassName =
+  "z-20 mt-1 rounded-lg border border-border bg-surface-container-lowest shadow-lg";
+/** Lista de resultados: flota bajo el campo, sin empujar la tabla mientras se escribe. */
+const popupClassName = `absolute left-0 right-0 top-full ${popupSurfaceClassName}`;
+/**
+ * Avisos del buscador (buscando, error, sin resultados): en móvil «Nuevo producto» queda
+ * justo bajo el campo y un aviso flotante lo taparía, así que ocupan su sitio y lo
+ * desplazan; desde `sm` el botón va al lado y flotan como la lista.
+ */
+const popupNoticeClassName = `sm:absolute sm:left-0 sm:right-0 sm:top-full ${popupSurfaceClassName}`;
 const popupMessageClassName = "px-4 py-2.5 text-sm";
 
 /**
@@ -393,7 +401,7 @@ export function PurchaseProductPickerCard({
 
   return (
     <section
-      className="flex min-h-[31.25rem] flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800"
+      className="flex min-h-[31.25rem] min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800"
       ref={cardRef}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-5 py-3 dark:border-slate-800">
@@ -408,7 +416,7 @@ export function PurchaseProductPickerCard({
         />
       </div>
 
-      <div className="flex flex-col gap-2 border-b border-border px-4 py-4 sm:flex-row sm:items-start dark:border-slate-800">
+      <div className="flex min-w-0 flex-col gap-2 border-b border-border px-4 py-4 sm:flex-row sm:items-start dark:border-slate-800">
         <div
           className="relative min-w-0 flex-1"
           onBlur={(event) => {
@@ -443,7 +451,7 @@ export function PurchaseProductPickerCard({
           ) : null}
           {showResults && isSearching ? (
             <p
-              className={cn(popupClassName, popupMessageClassName, "text-muted-foreground")}
+              className={cn(popupNoticeClassName, popupMessageClassName, "text-muted-foreground")}
               role="status"
             >
               Buscando...
@@ -451,7 +459,7 @@ export function PurchaseProductPickerCard({
           ) : null}
           {showResults && !isSearching && searchError ? (
             <p
-              className={cn(popupClassName, popupMessageClassName, "text-destructive")}
+              className={cn(popupNoticeClassName, popupMessageClassName, "text-destructive")}
               role="alert"
             >
               {searchError}
@@ -488,7 +496,7 @@ export function PurchaseProductPickerCard({
           {showResults && !isSearching && !searchError && catalog.length === 0 ? (
             <div
               className={cn(
-                popupClassName,
+                popupNoticeClassName,
                 "flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5",
               )}
             >

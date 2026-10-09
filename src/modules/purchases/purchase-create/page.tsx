@@ -768,7 +768,7 @@ export function PurchaseCreatePage() {
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-12 lg:items-start">
-        <div className="flex flex-col gap-6 lg:col-span-8">
+        <div className="flex min-w-0 flex-col gap-6 lg:col-span-8">
           <PurchaseSupplierCard
             onSupplierChange={handleSupplierChange}
             selectedSupplierId={supplierId}
@@ -828,7 +828,7 @@ export function PurchaseCreatePage() {
           />
         </div>
 
-        <div className="flex flex-col gap-6 lg:col-span-4 lg:sticky lg:top-6">
+        <div className="flex min-w-0 flex-col gap-6 lg:col-span-4 lg:sticky lg:top-6">
           <PurchaseStatusNotesCard
             notes={notes}
             onNotesChange={setNotes}

@@ -419,10 +419,10 @@ export function PurchaseLineRow({
 
       <div className="min-w-0 text-right" key="total">
         <span className={stackedLabelClassName}>Total</span>
-        <p className="truncate text-sm leading-tight font-medium tabular-nums text-foreground">
+        <p className="text-sm leading-tight font-medium break-words tabular-nums text-foreground @xl:truncate">
           {isVes ? totalVesText : totalRefText}
         </p>
-        <p className="truncate text-xs leading-tight tabular-nums text-on-surface-variant">
+        <p className="text-xs leading-tight break-words tabular-nums text-on-surface-variant @xl:truncate">
           {isVes ? totalRefText : totalVesText}
         </p>
       </div>
