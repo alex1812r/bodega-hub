@@ -88,6 +88,7 @@ import { PurchaseCreatePage } from "./page";
 const TITLE = "No pudimos registrar la compra";
 const NETWORK_MESSAGE =
   "No pudimos conectar con el servidor. Revisa tu conexión y vuelve a intentar; no se duplicará la compra.";
+const SERVER_MESSAGE = "No pudimos registrar la compra. Inténtalo de nuevo; no se duplicará.";
 const scrollIntoView = jest.fn();
 
 function renderPage() {
@@ -132,24 +133,93 @@ afterEach(() => {
 
 // COM-F10 · F-A3: el aviso se pintaba arriba del formulario, fuera de la vista.
 describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM-F10 · F-A3)", () => {
-  it("un 500 del servidor: su mensaje tal cual, en un solo aviso junto al botón, y se desplaza hasta él", async () => {
+  // COM-F11 · P3-4: un 5xx trae un mensaje técnico («unsupported Unicode escape sequence»).
+  it.each([
+    [500, { error: { code: "INTERNAL", message: "unsupported Unicode escape sequence" } }],
+    [502, "<html>Bad Gateway</html>"],
+  ])("un %i del servidor: un mensaje propio en vez del técnico, en un solo aviso junto al botón", async (status, payload) => {
     const api = installFetchStub(() => null);
-    api.respondToNextPost(
-      { error: { code: "INTERNAL", message: "No se pudo registrar la compra en este momento." } },
-      500,
-    );
+    api.respondToNextPost(payload, status);
 
     renderPage();
     addSupplierAndProduct();
     fireEvent.click(confirm());
 
     await waitFor(() => expect(confirmAlert()).toHaveTextContent(TITLE));
-    expect(confirmAlert()).toHaveTextContent("No se pudo registrar la compra en este momento.");
+    expect(confirmAlert()).toHaveTextContent(SERVER_MESSAGE);
+    expect(screen.queryByText(/unsupported Unicode/)).not.toBeInTheDocument();
     // Uno solo: no se repite arriba del formulario.
     expect(screen.getAllByText(TITLE)).toHaveLength(1);
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
-    expect(scrollIntoView.mock.contexts[0]).toBe(confirmAlert());
     expect(confirm()).toBeEnabled();
+  });
+
+  // COM-F11 · P3-1: el aviso se insertaba donde estaba el botón y lo sacaba de la vista.
+  it("el aviso va encima del botón y lo que se trae a la vista es el bloque con los dos", async () => {
+    const api = installFetchStub(() => null);
+    api.respondToNextPost({ error: { code: "CONFLICT", message: "Conflicto." } }, 409);
+
+    renderPage();
+    addSupplierAndProduct();
+    fireEvent.click(confirm());
+
+    await waitFor(() => expect(confirmAlert()).toHaveTextContent("Conflicto."));
+
+    const scrolled = scrollIntoView.mock.contexts.at(-1) as HTMLElement;
+
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+    expect(scrolled).toContainElement(confirmAlert());
+    expect(scrolled).toContainElement(confirm());
+    expect(
+      confirmAlert().compareDocumentPosition(confirm()) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  // COM-F11 · P3-2: el botón se deshabilita durante el envío y el navegador le quita el foco.
+  it("tras un error del servidor el foco vuelve al botón Confirmar", async () => {
+    const api = installFetchStub(() => null);
+    const release = api.holdNextPost({ error: { code: "CONFLICT", message: "Conflicto." } }, 409);
+
+    renderPage();
+    addSupplierAndProduct();
+    confirm().focus();
+    fireEvent.click(confirm());
+
+    const submitting = await screen.findByRole("button", { name: "Confirmando..." });
+
+    expect(submitting).toBeDisabled();
+    // Lo que hace el navegador con el botón deshabilitado: el foco cae al documento. jsdom no
+    // lo hace solo (ni deja quitarle el foco con `blur`), así que se lleva a otro elemento
+    // que se retira.
+    const elsewhere = document.createElement("button");
+
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    elsewhere.remove();
+    expect(document.body).toHaveFocus();
+
+    await act(async () => {
+      release();
+    });
+
+    await waitFor(() => expect(confirmAlert()).toHaveTextContent("Conflicto."));
+    expect(confirm()).toHaveFocus();
+  });
+
+  it("mientras se corrige el pago no se le quita el foco al campo que se está editando", async () => {
+    const api = installFetchStub(() => null);
+    api.respondToNextPost({ error: { code: "CONFLICT", message: "Conflicto." } }, 409);
+
+    renderPage();
+    addSupplierAndProduct();
+    fireEvent.click(confirm());
+    await waitFor(() => expect(confirmAlert()).toHaveTextContent("Conflicto."));
+
+    const notes = screen.getByPlaceholderText("Nro. de factura, condiciones...");
+
+    notes.focus();
+    fireEvent.change(notes, { target: { value: "Factura 12" } });
+
+    expect(notes).toHaveFocus();
   });
 
   it("un 409 muestra el mensaje del servidor sin tocarlo", async () => {
@@ -196,7 +266,9 @@ describe("PurchaseCreatePage · el error de Confirmar se ve junto al botón (COM
 
     fireEvent.click(screen.getByRole("button", { name: "elegir proveedor" }));
     fireEvent.click(confirm());
-    expect(confirmAlert()).toHaveTextContent("Agrega al menos un producto");
+    expect(confirmAlert()).toHaveTextContent(
+      "Agrega al menos un producto con cantidad y costo válidos.",
+    );
     expect(screen.getAllByText(TITLE)).toHaveLength(1);
   });
 

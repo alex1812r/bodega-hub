@@ -20,6 +20,7 @@ import {
   useReceivePurchase,
   useReturnPurchase,
 } from "../hooks/usePurchases";
+import { describePurchaseRequestError } from "../purchase-create/utils/purchaseConfirmError";
 import { getPurchaseActions } from "../utils/purchaseActions";
 import { PurchaseDetailDatesCard } from "./components/PurchaseDetailDatesCard";
 import { PurchaseDetailFinancialCard } from "./components/PurchaseDetailFinancialCard";
@@ -305,7 +306,7 @@ export function PurchaseDetailsPage({
             receiveBlocked && receiveDistributionError
               ? receiveDistributionError
               : receivePurchase.error instanceof Error
-                ? receivePurchase.error.message
+                ? describePurchaseRequestError(receivePurchase.error)
                 : null
           }
           isPending={receivePurchase.isPending}

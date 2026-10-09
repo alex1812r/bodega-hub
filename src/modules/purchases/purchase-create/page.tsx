@@ -56,6 +56,7 @@ import { resolvePurchaseProducts } from "./services/resolvePurchaseProducts";
 import type { PurchaseCostCurrency, PurchaseDraftItem } from "./types";
 import { buildUnlinkedCatalogProduct } from "./utils/buildPurchaseCatalog";
 import { buildPurchaseLine, nextPurchaseLineId } from "./utils/buildPurchaseLine";
+import { describeConfirmError } from "./utils/purchaseConfirmError";
 import {
   buildDuplicatedPurchaseLines,
   type PurchaseDuplicateSourceItem,
@@ -99,18 +100,6 @@ function describeLineCount(count: number) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : undefined;
-}
-
-const PURCHASE_NETWORK_ERROR_MESSAGE =
-  "No pudimos conectar con el servidor. Revisa tu conexión y vuelve a intentar; no se duplicará la compra.";
-
-/**
- * Motivo por el que el servidor no registró la compra. Un `fetch` que no llega a tener
- * respuesta rechaza con `TypeError` («Failed to fetch»): eso se dice en español. Lo que
- * contesta el servidor (`ClientApiError`) se muestra tal cual.
- */
-function describeConfirmError(error: Error) {
-  return error instanceof TypeError ? PURCHASE_NETWORK_ERROR_MESSAGE : error.message;
 }
 
 export function PurchaseCreatePage() {
@@ -600,7 +589,7 @@ export function PurchaseCreatePage() {
     }
 
     if (validLines.length === 0) {
-      setFormError("Agrega al menos un producto con cantidad y costo validos.");
+      setFormError("Agrega al menos un producto con cantidad y costo válidos.");
       return;
     }
 

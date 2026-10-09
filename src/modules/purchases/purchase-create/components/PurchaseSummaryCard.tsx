@@ -194,18 +194,34 @@ export function PurchaseSummaryCard({
   const discountOverSubtotal = isPurchaseDiscountOverSubtotal(discountRef, subtotalRef);
   const totalRef = Math.max(0, roundMoney(subtotalRef - discountRef + taxRef));
   const totalVes = Math.max(0, roundMoney(subtotalVes - discountVes + taxVes));
-  const confirmErrorRef = useRef<HTMLDivElement>(null);
+  // Aviso + botón: se traen a la vista juntos, para que el aviso no saque al botón de ella.
+  const confirmBlockRef = useRef<HTMLDivElement>(null);
+  const wasSubmitting = useRef(false);
   // El aviso del descuento junto a su campo ya anuncia ese mismo texto.
   const alreadyAnnounced =
     confirmErrorAnnounced ||
     (discountOverSubtotal && confirmError === PURCHASE_DISCOUNT_OVER_SUBTOTAL_MESSAGE);
 
+  // El botón se deshabilita durante el envío y el navegador le quita el foco: si el envío
+  // termina en error, vuelve a él para reintentar con el teclado. Solo al terminar un
+  // envío: el aviso también cambia mientras se corrige otro campo, y ese foco no se toca.
   useEffect(() => {
-    const notice = confirmErrorRef.current;
+    const finishedWithError = wasSubmitting.current && !isSubmitting && Boolean(confirmError);
+
+    wasSubmitting.current = isSubmitting;
+
+    if (finishedWithError) {
+      // El único botón del bloque es Confirmar (`Button` no reenvía `ref`).
+      confirmBlockRef.current?.querySelector("button")?.focus({ preventScroll: true });
+    }
+  }, [confirmError, isSubmitting]);
+
+  useEffect(() => {
+    const block = confirmBlockRef.current;
 
     // jsdom no implementa `scrollIntoView`.
-    if (confirmError && notice && typeof notice.scrollIntoView === "function") {
-      notice.scrollIntoView({ block: "nearest" });
+    if (confirmError && block && typeof block.scrollIntoView === "function") {
+      block.scrollIntoView({ block: "nearest" });
     }
   }, [confirmError, confirmErrorAttempt]);
 
@@ -302,34 +318,35 @@ export function PurchaseSummaryCard({
         </div>
       ) : null}
 
-      {confirmError ? (
-        <div
-          className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive"
-          ref={confirmErrorRef}
-          role={alreadyAnnounced ? undefined : "alert"}
-        >
-          <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
-          <div className="min-w-0">
-            <p className="text-sm font-semibold">{PURCHASE_CONFIRM_ERROR_TITLE}</p>
-            <p className="text-sm break-words">{confirmError}</p>
+      <div className="mt-4 flex flex-col gap-4" ref={confirmBlockRef}>
+        {confirmError ? (
+          <div
+            className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive"
+            role={alreadyAnnounced ? undefined : "alert"}
+          >
+            <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">{PURCHASE_CONFIRM_ERROR_TITLE}</p>
+              <p className="text-sm break-words">{confirmError}</p>
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      <Button
-        aria-busy={isSubmitting}
-        className="mt-4 w-full gap-2"
-        disabled={isSubmitting || isConfirmed}
-        onClick={onConfirm}
-        type="button"
-      >
-        <CheckCircle aria-hidden className="size-5" />
-        {isConfirmed
-          ? "Compra registrada..."
-          : isSubmitting
-            ? "Confirmando..."
-            : "Confirmar Compra"}
-      </Button>
+        <Button
+          aria-busy={isSubmitting}
+          className="w-full gap-2"
+          disabled={isSubmitting || isConfirmed}
+          onClick={onConfirm}
+          type="button"
+        >
+          <CheckCircle aria-hidden className="size-5" />
+          {isConfirmed
+            ? "Compra registrada..."
+            : isSubmitting
+              ? "Confirmando..."
+              : "Confirmar Compra"}
+        </Button>
+      </div>
     </PurchaseCreateSectionCard>
   );
 }

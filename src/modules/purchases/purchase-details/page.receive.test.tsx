@@ -112,6 +112,8 @@ type ReceiveBehaviour =
   | { kind: "deferred" }
   /** Otra persona ya la recibió: el servidor responde PT409 y la compra está recibida. */
   | { kind: "already-received" }
+  /** La petición no llega a tener respuesta: `fetch` rechaza con `TypeError`. */
+  | { kind: "offline" }
   | { kind: "ok" };
 
 function installApi(
@@ -129,6 +131,11 @@ function installApi(
 
     if (init?.method === "PATCH" && url === `/api/purchases/${PURCHASE.id}/receive`) {
       receiveCalls.push(url);
+
+      if (behaviour.kind === "offline") {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
+
       purchase = { ...purchase, status: "recibido" };
 
       if (behaviour.kind === "already-received") {
@@ -374,5 +381,20 @@ describe("PurchaseDetailsPage · previsualización al recibir (COM-07)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(screen.queryByText(PT409)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: RECEIVE })).not.toBeInTheDocument();
+  });
+
+  // COM-F11 · P3-5: sin conexión el modal decía solo «Failed to fetch».
+  it("sin conexión: el modal dice en español que no hubo conexión, igual que al confirmar una compra", async () => {
+    const { receiveCalls, user } = await renderPage({}, { role: "admin" }, { kind: "offline" });
+    const dialog = await openPreview(user);
+
+    await user.click(within(dialog).getByRole("button", { name: RECEIVE }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "No pudimos conectar con el servidor. Revisa tu conexión y vuelve a intentar; no se duplicará la compra.",
+    );
+    expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
+    expect(receiveCalls).toHaveLength(1);
+    expect(within(dialog).getByRole("button", { name: RECEIVE })).toBeEnabled();
   });
 });
