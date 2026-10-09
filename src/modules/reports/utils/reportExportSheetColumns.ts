@@ -1,6 +1,8 @@
 import { paymentMethodLabels } from "@/shared/payments/paymentMethods";
 import { formatDate } from "@/shared/utils/date";
 
+// Mismo formateador que las tablas en pantalla: instante → día operativo de Caracas.
+import { formatCaracasDay } from "../reports-list/components/inventory/inventoryReportText";
 import {
   AGING_BUCKET_LABELS,
   CASH_CLOSE_CURRENCY_LABELS,
@@ -123,7 +125,7 @@ export const customerPurchasesExportColumns: ReportExportColumn<CustomerPurchase
     { fixedDecimals: true, header: "Pendiente VES", value: (row) => row.pendingVes },
     {
       header: "Última compra",
-      value: (row) => (row.lastPurchaseAt ? formatDate(row.lastPurchaseAt) : "Sin compras"),
+      value: (row) => (row.lastPurchaseAt ? formatCaracasDay(row.lastPurchaseAt) : "Sin compras"),
     },
   ];
 
@@ -135,12 +137,12 @@ export const supplierPurchasesExportColumns: ReportExportColumn<SupplierPurchase
     { fixedDecimals: true, header: "Pendiente VES", value: (row) => row.pendingVes },
     {
       header: "Última compra",
-      value: (row) => (row.lastPurchaseAt ? formatDate(row.lastPurchaseAt) : "Sin compras"),
+      value: (row) => (row.lastPurchaseAt ? formatCaracasDay(row.lastPurchaseAt) : "Sin compras"),
     },
   ];
 
 export const stockCardExportColumns: ReportExportColumn<StockCardReportRow>[] = [
-  { header: "Fecha", value: (row) => formatDate(row.createdAt) },
+  { header: "Fecha", value: (row) => formatCaracasDay(row.createdAt) },
   { header: "Producto", value: (row) => row.productName || row.sku || "" },
   { header: "Tipo", value: (row) => row.type },
   { header: "Movimiento", value: (row) => row.quantityDelta },
@@ -165,7 +167,7 @@ export const purchasesExportColumns: ReportExportColumn<PurchasesReportRow>[] = 
   { header: "Compra", value: (row) => row.purchaseNumber },
   // Sin nombre no se muestra el id interno del proveedor.
   { header: "Proveedor", value: (row) => row.supplier?.name ?? "Sin proveedor" },
-  { header: "Fecha", value: (row) => formatDate(row.createdAt) },
+  { header: "Fecha", value: (row) => formatCaracasDay(row.createdAt) },
   { header: "Items", value: (row) => row.itemsCount },
   { fixedDecimals: true, header: "Total VES", value: (row) => row.totalVes },
 ];
@@ -289,7 +291,7 @@ export const deadStockExportColumns: ReportExportColumn<DeadStockRow>[] = [
   { header: "Días sin vender", value: (row) => row.daysIdle },
   {
     header: "Última venta",
-    value: (row) => (row.lastSaleAt ? formatDate(row.lastSaleAt) : "Nunca"),
+    value: (row) => (row.lastSaleAt ? formatCaracasDay(row.lastSaleAt) : "Nunca"),
   },
 ];
 
