@@ -2,9 +2,7 @@ import { computeContactDetailMetrics, openBalanceRef } from "./computeContactDet
 
 describe("computeContactDetailMetrics", () => {
   it("calcula ventas, pagos y saldo por cobrar para clientes", () => {
-    const metrics = computeContactDetailMetrics(
-      "cliente",
-      [
+    const metrics = computeContactDetailMetrics([
         { status: "pagada", totalRef: 100 } as never,
         { status: "pendiente_pago", totalRef: 50 } as never,
       ],
@@ -12,30 +10,26 @@ describe("computeContactDetailMetrics", () => {
       [{ amountRef: 80, direction: "entrada" } as never],
     );
 
-    expect(metrics.operationsLabel).toBe("Total Ventas (REF)");
-    expect(metrics.operationsTotalRef).toBe(150);
+    expect(metrics.salesTotalRef).toBe(150);
+    expect(metrics.purchasesTotalRef).toBe(0);
     expect(metrics.paymentsTotalRef).toBe(80);
     expect(metrics.receivableRef).toBe(70);
     expect(metrics.payableRef).toBe(0);
   });
 
   it("calcula compras y saldo por pagar para proveedores", () => {
-    const metrics = computeContactDetailMetrics(
-      "proveedor",
-      [],
+    const metrics = computeContactDetailMetrics([],
       [{ status: "recibido", totalRef: 40 } as never],
       [{ amountRef: 25, direction: "salida" } as never],
     );
 
-    expect(metrics.operationsLabel).toBe("Total Compras (REF)");
+    expect(metrics.purchasesTotalRef).toBe(40);
     expect(metrics.receivableRef).toBe(0);
     expect(metrics.payableRef).toBe(15);
   });
 
   it("separa por cobrar y por pagar para contactos mixtos", () => {
-    const metrics = computeContactDetailMetrics(
-      "ambos",
-      [{ status: "pendiente_pago", totalRef: 20 } as never],
+    const metrics = computeContactDetailMetrics([{ status: "pendiente_pago", totalRef: 20 } as never],
       [{ status: "pedido", totalRef: 30 } as never],
       [
         { amountRef: 10, direction: "entrada" } as never,
@@ -50,9 +44,7 @@ describe("computeContactDetailMetrics", () => {
   // PAG-F4 B: la tarjeta contradecía a la pestaña "Saldos" de la misma pantalla.
   describe("por cobrar / por pagar solo con documentos que admiten pago y pagos vigentes", () => {
     it("Constructora Horizonte: una venta en borrador y otra cancelada no dejan nada por cobrar", () => {
-      const metrics = computeContactDetailMetrics(
-        "cliente",
-        [
+      const metrics = computeContactDetailMetrics([
           { id: "sale-003", status: "borrador", totalRef: 40 } as never,
           { id: "sale-004", status: "cancelada", totalRef: 38 } as never,
         ],
@@ -64,9 +56,7 @@ describe("computeContactDetailMetrics", () => {
     });
 
     it("Ferreteria La Central: la venta devuelta y su pago no cuentan; queda la venta pendiente", () => {
-      const metrics = computeContactDetailMetrics(
-        "cliente",
-        [
+      const metrics = computeContactDetailMetrics([
           { id: "sale-001", status: "pagada", totalRef: 15 } as never,
           { id: "sale-payroll-005", status: "pendiente_pago", totalRef: 60 } as never,
           { id: "sale-005", status: "devuelta", totalRef: 7 } as never,
@@ -96,16 +86,14 @@ describe("computeContactDetailMetrics", () => {
         status: "anulado",
       } as never;
 
-      const metrics = computeContactDetailMetrics("cliente", sales, [], [active, voided]);
+      const metrics = computeContactDetailMetrics(sales, [], [active, voided]);
 
       expect(metrics.receivableRef).toBe(38);
       expect(metrics.paymentsTotalRef).toBe(22);
     });
 
     it("proveedor: las compras cancelada y devuelta y el pago anulado no cuentan en lo por pagar", () => {
-      const metrics = computeContactDetailMetrics(
-        "proveedor",
-        [],
+      const metrics = computeContactDetailMetrics([],
         [
           { id: "purchase-001", status: "recibido", totalRef: 20 } as never,
           { id: "purchase-002", status: "pedido", totalRef: 52.4 } as never,
@@ -130,7 +118,7 @@ describe("PAG-F8 N2: por cobrar / por pagar con los totales de la pestaña Saldo
   const purchases = [{ id: "p1", status: "recibido", totalRef: 52.4 } as never];
 
   it("usa los saldos de los documentos abiertos en vez de la cuenta con la primera página", () => {
-    const metrics = computeContactDetailMetrics("ambos", sales, purchases, [], {
+    const metrics = computeContactDetailMetrics(sales, purchases, [], {
       payableRef: 0,
       receivableRef: 0,
     });
@@ -138,18 +126,19 @@ describe("PAG-F8 N2: por cobrar / por pagar con los totales de la pestaña Saldo
     expect(metrics.receivableRef).toBe(0);
     expect(metrics.payableRef).toBe(0);
     // Las demás métricas no cambian.
-    expect(metrics.operationsTotalRef).toBeCloseTo(681.15);
+    expect(metrics.salesTotalRef).toBe(628.75);
+    expect(metrics.purchasesTotalRef).toBe(52.4);
     expect(metrics.paymentsTotalRef).toBe(0);
   });
 
   it("sin saldo conocido para una sección conserva el cálculo de siempre para esa métrica", () => {
-    const metrics = computeContactDetailMetrics("ambos", sales, purchases, [], {
+    const metrics = computeContactDetailMetrics(sales, purchases, [], {
       receivableRef: 60,
     });
 
     expect(metrics.receivableRef).toBe(60);
     expect(metrics.payableRef).toBe(52.4);
-    expect(computeContactDetailMetrics("ambos", sales, purchases, []).receivableRef).toBe(628.75);
+    expect(computeContactDetailMetrics(sales, purchases, []).receivableRef).toBe(628.75);
   });
 
   it("openBalanceRef: el total en REF de la lista; 0 si no hay documentos; undefined si no se sabe", () => {

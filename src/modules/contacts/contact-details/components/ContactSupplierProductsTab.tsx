@@ -1,22 +1,33 @@
 "use client";
 
 import { Package, Plus, Search } from "lucide-react";
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 
+import { toggleSort } from "@/lib/api/sorting";
 import { Can } from "@/shared/auth/Can";
 import { usePermission } from "@/shared/auth/usePermission";
 import { type ActionMenuItem } from "@/shared/components/ActionsMenu";
 import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
-import { ResponsivePagination, usePaginationState, useSortState } from "@/shared/components/Pagination";
+import {
+  ResponsivePagination,
+  getCurrentPage,
+  getSkipForPage,
+  getTotalPages,
+} from "@/shared/components/Pagination";
+import { useUrlListState } from "@/shared/hooks/useUrlListState";
 import { formControlClassName } from "@/shared/styles/form-controls";
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { InventorySkuCell } from "@/modules/inventory/inventory-list/components/InventorySkuCell";
 import { formatRefUsd } from "@/shared/utils/currency";
 import { formatDateTimeShort } from "@/shared/utils/date";
 import { cn } from "@/shared/utils/cn";
+import { withChainedReturnTo } from "@/shared/utils/returnTo";
 
+import { contactProductsListSchema } from "../hooks/contactDetailParams";
+import type { SupplierProductSortBy } from "../../services/supplierProductSort";
 import { useSupplierProducts } from "../../hooks/useSupplierProducts";
 import { EditSupplierProductModal } from "../../components/supplier-products/EditSupplierProductModal";
 import { LinkSupplierProductModal } from "../../components/supplier-products/LinkSupplierProductModal";
@@ -48,35 +59,68 @@ export function ContactSupplierProductsTab({
   supplierName,
 }: ContactSupplierProductsTabProps) {
   const { can } = usePermission();
-  const [search, setSearch] = useState("");
-  const [activeOnly, setActiveOnly] = useState(true);
+  // Búsqueda, filtro, orden y página en la URL con campos propios (`products…`):
+  // no chocan con los de las otras sublistas del detalle.
+  const list = useUrlListState(contactProductsListSchema, {
+    pageField: "productsPage",
+    textFields: ["productsSearch"],
+  });
+  const { setState, state } = list;
+  const search = state.productsSearch;
+  const activeOnly = state.productsActive;
+  const sortBy = state.productsSort;
+  const sortOrder = state.productsDir;
+  const limit = state.productsLimit;
+  const page = state.productsPage;
+  const skip = getSkipForPage(page, limit);
   const searchTerm = search.trim();
   const hasSearch = searchTerm.length > 0;
-  const { handleSort, sortBy, sortOrder } = useSortState({
-    defaultSortBy: "updatedAt",
-    defaultSortOrder: "desc",
-  });
-  const pagination = usePaginationState([searchTerm, activeOnly, sortBy, sortOrder], 10);
   const [selected, setSelected] = useState<SupplierProduct | null>(null);
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
 
   const query = useSupplierProducts(supplierId, {
     activeOnly,
-    limit: pagination.limit,
+    limit,
     search: searchTerm || undefined,
-    skip: pagination.skip,
+    skip,
     sortBy,
     sortOrder,
   });
 
   const rows = getPaginatedItems(query.data);
   const total = query.data?.total ?? 0;
+  const lastPage = getTotalPages(total, limit);
+  const isPagePastTheEnd = query.data !== undefined && page > lastPage;
+
+  // Una página más allá del total cae a la última válida.
+  useEffect(() => {
+    if (isPagePastTheEnd) {
+      setState({ productsPage: lastPage });
+    }
+  }, [isPagePastTheEnd, lastPage, setState]);
+
+  // Una columna que el schema no permite se ignora (lo valida `useUrlListState`).
+  function handleSort(column: string) {
+    const next = toggleSort({ sortBy, sortOrder }, column);
+
+    setState({
+      productsDir: next.sortOrder,
+      productsSort: next.sortBy as SupplierProductSortBy,
+    });
+  }
 
   const columns: DataTableColumn<SupplierProduct>[] = [
     {
       header: "Producto",
       key: "product",
-      render: (row) => row.product?.name ?? row.productId,
+      render: (row) => (
+        <Link
+          className="font-medium text-primary hover:underline dark:text-indigo-300"
+          href={withChainedReturnTo(`/products/${encodeURIComponent(row.productId)}`, list.href)}
+        >
+          {row.product?.name ?? row.productId}
+        </Link>
+      ),
       sortable: true,
     },
     {
@@ -245,8 +289,9 @@ export function ContactSupplierProductsTab({
           />
           <input
             className={cn(formControlClassName, "w-full pl-10")}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar por nombre, SKU o codigo de barras..."
+            aria-label="Buscar productos del proveedor"
+            onChange={(event) => setState({ productsSearch: event.target.value })}
+            placeholder="Buscar por nombre, SKU o código de barras..."
             type="search"
             value={search}
           />
@@ -258,7 +303,8 @@ export function ContactSupplierProductsTab({
               ? "border-primary bg-primary/10 text-primary"
               : "border-outline-variant text-on-surface-variant",
           )}
-          onClick={() => setActiveOnly((current) => !current)}
+          aria-pressed={activeOnly}
+          onClick={() => setState({ productsActive: !activeOnly })}
           type="button"
         >
           Solo activos
@@ -288,10 +334,12 @@ export function ContactSupplierProductsTab({
           <ResponsivePagination
             entityLabel="productos"
             isDisabled={query.isFetching}
-            limit={pagination.limit}
-            onLimitChange={pagination.setLimit}
-            onSkipChange={pagination.setSkip}
-            skip={query.data?.skip ?? pagination.skip}
+            limit={limit}
+            onLimitChange={(nextLimit) => setState({ productsLimit: nextLimit })}
+            onSkipChange={(nextSkip) =>
+              setState({ productsPage: getCurrentPage(Math.max(0, nextSkip), limit) })
+            }
+            skip={query.data?.skip ?? skip}
             total={total}
             variant="stitch"
           />

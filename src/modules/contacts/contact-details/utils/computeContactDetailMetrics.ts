@@ -1,11 +1,13 @@
 import type { ContactType, PaymentMock, PurchaseMock, SaleMock } from "@/shared/mocks/erp-data";
 
 export type ContactDetailMetrics = {
-  operationsLabel: string;
-  operationsTotalRef: number;
   payableRef: number;
   paymentsTotalRef: number;
+  /** Total comprado al contacto (proveedor). */
+  purchasesTotalRef: number;
   receivableRef: number;
+  /** Total vendido al contacto (cliente). */
+  salesTotalRef: number;
 };
 
 function sumRef<T>(rows: T[], pick: (row: T) => number) {
@@ -45,12 +47,13 @@ export function openBalanceRef(totals: { count: number; pendingRef?: number } | 
 }
 
 /**
- * `sales`, `purchases` y `payments` son la primera página del contacto: con más filas
- * que esa página, el saldo calculado aquí queda mal. Por eso `openBalances`, cuando
- * viene, manda sobre `receivableRef` / `payableRef`.
+ * `sales`, `purchases` y `payments` son las filas cargadas del contacto (hasta
+ * `MAX_PAGE_LIMIT`): con más filas que esas, el saldo calculado aquí queda mal. Por eso
+ * `openBalances`, cuando viene, manda sobre `receivableRef` / `payableRef`. Los totales
+ * vendido / comprado / pagado son la suma de esas filas; qué tarjetas se pintan según
+ * el tipo de contacto lo decide `ContactDetailMetrics`.
  */
 export function computeContactDetailMetrics(
-  contactType: ContactType,
   sales: SaleMock[],
   purchases: PurchaseMock[],
   payments: PaymentMock[],
@@ -91,31 +94,17 @@ export function computeContactDetailMetrics(
     (row) => row.amountRef,
   );
 
-  const operationsLabel =
-    contactType === "cliente"
-      ? "Total Ventas (REF)"
-      : contactType === "proveedor"
-        ? "Total Compras (REF)"
-        : "Total Operaciones (REF)";
-
-  const operationsTotalRef =
-    contactType === "cliente"
-      ? salesTotalRef
-      : contactType === "proveedor"
-        ? purchasesTotalRef
-        : salesTotalRef + purchasesTotalRef;
-
   const receivableRef =
     openBalances.receivableRef ?? Math.max(0, openSalesTotalRef - salesPaymentsRef);
   const payableRef =
     openBalances.payableRef ?? Math.max(0, openPurchasesTotalRef - purchasePaymentsRef);
 
   return {
-    operationsLabel,
-    operationsTotalRef,
     payableRef,
     paymentsTotalRef,
+    purchasesTotalRef,
     receivableRef,
+    salesTotalRef,
   };
 }
 

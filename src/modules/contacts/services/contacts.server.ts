@@ -278,6 +278,7 @@ export async function getContactActivity(
   throwIfSupabaseError(purchasesResult.error);
   throwIfSupabaseError(paymentsResult.error);
 
+  // Lo más reciente primero: la página 1 es la actividad reciente, no la más antigua.
   const items = [
     ...(salesResult.data ?? []).map((sale) => ({
       amountVes: Number(sale.total_ves ?? 0),
@@ -297,7 +298,7 @@ export async function getContactActivity(
       id: payment.id,
       type: "payment" as const,
     })),
-  ].sort((first, second) => first.createdAt.localeCompare(second.createdAt));
+  ].sort((first, second) => second.createdAt.localeCompare(first.createdAt));
 
   return paginateList(items, searchParams);
 }
