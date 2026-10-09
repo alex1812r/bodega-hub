@@ -23,7 +23,11 @@ import {
   assertPackDistribution,
   type PackDistributionItem,
 } from "@/modules/products/services/packConversionSchemas";
-import { applyMockPurchaseCost } from "@/modules/products/services/priceReview.mock-server";
+import {
+  applyMockPurchaseCost,
+  ensureMockPriceBaselines,
+  recordMockPurchaseCostEvent,
+} from "@/modules/products/services/priceReview.mock-server";
 import {
   findActiveMockTaxRateByCode,
   findMockTaxRateForPct,
@@ -381,6 +385,9 @@ function disassembleReceivedLines(
       storeId,
     );
 
+    // La línea base de ganancia guarda el costo de los componentes ANTES de la apertura.
+    ensureMockPriceBaselines();
+
     const conversion = convertPackToUnits(
       {
         clientRequestId: `purchase-disassemble:${line.itemId}`,
@@ -393,6 +400,12 @@ function disassembleReceivedLines(
     );
 
     disassembleState().set(line.itemId, { conversionId: conversion.conversionId, marked: true });
+
+    // INT-04: el costo que la apertura fija en cada componente es de ESTA compra, como
+    // en la base (products_price_review enlaza la conversión con la línea desarmada).
+    for (const component of conversion.components) {
+      recordMockPurchaseCostEvent(component.unitProductId, purchase.id);
+    }
   }
 }
 

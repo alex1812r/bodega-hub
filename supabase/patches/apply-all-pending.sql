@@ -758,3 +758,18 @@ notify pgrst, 'reload schema';
 -- INV-09 (5 argumentos) funciona sobre la base parcheada. El BFF nuevo sin este parche: guardar una receta sin tocar la
 -- casilla funciona (no envia el argumento); tocandola responde 409 ("Esta base aún no admite guardar la receta...") sin
 -- escribir nada. La preferencia se sigue LEYENDO de la cabecera con el select que authenticated conserva.
+-- -----------------------------------------------------------------------------
+-- 20261012b — price review disassemble (INT-04): la cola "Por revisar" atribuye a la compra el costo que suben los
+--             componentes de un empaque desarmado en su recepcion ("Desarmar al recibir"), para que el aviso de reprecio
+--             del detalle de ESA compra los liste
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261012b-price-review-disassemble.sql
+-- Requiere 20261009c (la vista) y 20261010d (purchase_items.disassembled_conversion_id). Idempotente, una transaccion.
+-- Solo redefine la vista products_price_review (mismas columnas, tipos y orden; security_invoker) y crea el indice
+-- parcial idx_purchase_items_disassembled_conversion. La compra causante pasa a ser la del movimiento mas reciente
+-- posterior a la ultima instantanea de precio que sea una `compra` o una `conversion_entrada` cuya apertura es la que
+-- guardo una linea de compra al desarmarse. No cambia QUE productos estan en la cola ni toca stock, costos, precios,
+-- dinero, filas, politicas, grants ni RPC. Una apertura a mano sigue sin compra.
+-- No depende del BFF (lee las mismas columnas): puede ir antes o despues. El `create index` no es concurrently: bloquea
+-- las escrituras de purchase_items mientras se construye.
+-- OJO: reaplicar 20261009c reinstala la vista sin el enlace: volver a aplicar este parche y correr verify-patches.sql.
