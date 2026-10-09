@@ -161,9 +161,13 @@ import {
 import { ToastProvider } from "@/shared/components/Toast";
 
 import { PurchaseCreatePage } from "./page";
-import { purchaseDraftStorageKey } from "./utils/purchaseDraftStorage";
+import {
+  purchaseDraftStorageKey,
+  purchaseNewDraftStorageKey,
+} from "./utils/purchaseDraftStorage";
 
 const draftKey = purchaseDraftStorageKey({ storeId: "store-1", userId: "user-1" });
+const newDraftKey = purchaseNewDraftStorageKey({ storeId: "store-1", userId: "user-1" });
 
 function storeProduct(id: string, name: string, taxRate: number, input: object = {}) {
   return {
@@ -324,6 +328,11 @@ const storedDraft = () => {
   return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
 };
 const banner = () => screen.queryByRole("status", { name: "Compra sin terminar" });
+const storedNewDraft = () => {
+  const raw = window.localStorage.getItem(newDraftKey);
+
+  return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+};
 
 /** Deja guardada una compra: proveedor, dos líneas (la primera bloqueada), exenta y en REF. */
 function leaveUnfinishedPurchase() {
@@ -491,7 +500,8 @@ describe("PurchaseCreatePage · borrador local (COM-09)", () => {
     click("agregar cable");
 
     expect(window.localStorage.getItem(draftKey)).toBe(before);
-    expect(banner()).toHaveTextContent("Restaurar sustituye lo que hay ahora en el formulario.");
+    // COM-F10: lo nuevo ya no se pierde; el aviso pide decidir (ver el bloque F-B1).
+    expect(banner()).toHaveTextContent("Empezaste una compra nueva");
   });
 
   it("confirmar la compra borra el borrador", async () => {
@@ -674,10 +684,12 @@ describe("PurchaseCreatePage · duplicar compra (COM-09)", () => {
     await waitFor(() => expect(lineTexts()).toHaveLength(2));
     expect(lineTexts()[0]).toContain("Cable HDMI · 3 u");
     expect(window.localStorage.getItem(draftKey)).toBe(before);
-    expect(banner()).toHaveTextContent("Restaurar sustituye lo que hay ahora en el formulario.");
+    // COM-F10: la compra duplicada es una compra nueva más; se guarda aparte.
+    expect(banner()).toHaveTextContent("Empezaste una compra nueva");
+    expect(storedNewDraft()).toMatchObject({ supplierId: "cont-supplier" });
 
     await act(async () => {
-      click("Restaurar");
+      click("Restaurar el guardado");
     });
 
     await waitFor(() => expect(banner()).not.toBeInTheDocument());
@@ -775,5 +787,167 @@ describe("PurchaseCreatePage · cambiar de proveedor con líneas pregunta antes 
     expect(confirmDialog()).not.toBeInTheDocument();
     await waitFor(() => expect(lineTexts()).toHaveLength(2));
     expect(screen.getByText("proveedor: cont-otro")).toBeInTheDocument();
+  });
+});
+
+// COM-F10 · F-B1: con el aviso sin resolver, la compra nueva no se autoguardaba y al recargar se perdía.
+describe("PurchaseCreatePage · compra nueva con un borrador guardado sin decidir (COM-F10 · F-B1)", () => {
+  const SAVED = "proveedor Proveedor Demo · 2 líneas";
+
+  /** Con una compra guardada sin decidir, empieza otra: otro proveedor y un cable. */
+  function startNewPurchaseOverSavedDraft() {
+    leaveUnfinishedPurchase();
+
+    const view = renderPage();
+
+    click("elegir otro proveedor");
+    click("agregar cable");
+
+    return view;
+  }
+
+  it("al agregar la primera línea el aviso pide decidir, y la compra nueva se guarda aparte sin tocar la guardada", () => {
+    leaveUnfinishedPurchase();
+
+    const before = window.localStorage.getItem(draftKey);
+
+    renderPage();
+    click("elegir otro proveedor");
+    // Solo proveedor: todavía no hay nada que perder.
+    expect(banner()).toHaveTextContent("Tienes una compra sin terminar");
+    expect(storedNewDraft()).toBeNull();
+
+    click("agregar cable");
+
+    expect(banner()).toHaveTextContent(
+      `Empezaste una compra nueva: al seguir se reemplaza el borrador guardado (${SAVED})`,
+    );
+    expect(screen.getByRole("button", { name: "Restaurar el guardado" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Seguir con esta" })).toBeInTheDocument();
+    expect(window.localStorage.getItem(draftKey)).toBe(before);
+    expect(storedNewDraft()).toMatchObject({ supplierId: "cont-otro", supplierName: "Otro Proveedor" });
+    // No bloquea: se puede seguir armando la compra.
+    click("agregar harina");
+    expect(lineTexts()).toHaveLength(2);
+  });
+
+  it("proveedor y notas, sin líneas, también cuentan como compra nueva", () => {
+    leaveUnfinishedPurchase();
+    renderPage();
+    click("elegir otro proveedor");
+    fireEvent.change(screen.getByPlaceholderText("Nro. de factura, condiciones..."), {
+      target: { value: "Factura nueva" },
+    });
+
+    expect(banner()).toHaveTextContent("Empezaste una compra nueva");
+    expect(storedNewDraft()).toMatchObject({ notes: "Factura nueva" });
+  });
+
+  it("al recargar sin decidir no se pierde ninguna: se ofrece elegir, y la nueva vuelve al formulario", async () => {
+    startNewPurchaseOverSavedDraft().unmount();
+    renderPage();
+
+    expect(banner()).toHaveTextContent("Tienes dos compras sin terminar");
+    expect(banner()).toHaveTextContent(`Guardada: ${SAVED} · guardada hace un momento`);
+    expect(banner()).toHaveTextContent(
+      "Nueva: proveedor Otro Proveedor · 1 línea · guardada hace un momento",
+    );
+    expect(lineTexts()).toEqual([]);
+
+    click("Restaurar la nueva");
+
+    await waitFor(() => expect(lineTexts()).toHaveLength(1));
+    expect(lineTexts()[0]).toContain("Cable HDMI · 1 u");
+    expect(screen.getByText("proveedor: cont-otro")).toBeInTheDocument();
+    expect(banner()).not.toBeInTheDocument();
+    // La nueva pasa a ser el borrador y la vieja se borra.
+    expect(storedDraft()).toMatchObject({ supplierId: "cont-otro" });
+    expect(storedNewDraft()).toBeNull();
+  });
+
+  it("al recargar, «Restaurar la guardada» repone la vieja y borra la nueva", async () => {
+    startNewPurchaseOverSavedDraft().unmount();
+    renderPage();
+
+    click("Restaurar la guardada");
+
+    await waitFor(() => expect(lineTexts()).toHaveLength(2));
+    expect(screen.getByText("proveedor: cont-supplier")).toBeInTheDocument();
+    expect(banner()).not.toBeInTheDocument();
+    expect(storedDraft()).toMatchObject({ supplierId: "cont-supplier" });
+    expect(storedNewDraft()).toBeNull();
+  });
+
+  it("al recargar, «Descartar las dos» deja el formulario vacío y sin borradores", () => {
+    startNewPurchaseOverSavedDraft().unmount();
+    renderPage();
+
+    click("Descartar las dos");
+
+    expect(banner()).not.toBeInTheDocument();
+    expect(storedDraft()).toBeNull();
+    expect(storedNewDraft()).toBeNull();
+  });
+
+  it("«Seguir con esta» promueve la compra nueva, borra la guardada y deja el formulario como estaba", () => {
+    startNewPurchaseOverSavedDraft();
+
+    click("Seguir con esta");
+
+    expect(banner()).not.toBeInTheDocument();
+    expect(lineTexts()).toHaveLength(1);
+    expect(screen.getByText("proveedor: cont-otro")).toBeInTheDocument();
+    expect(storedDraft()).toMatchObject({ supplierId: "cont-otro" });
+    expect(storedNewDraft()).toBeNull();
+
+    // Desde aquí se guarda como cualquier compra en curso.
+    click("agregar harina");
+    expect((storedDraft()?.lines as { items: unknown[] }).items).toHaveLength(2);
+  });
+
+  it("«Restaurar el guardado» repone la vieja y borra la nueva", async () => {
+    startNewPurchaseOverSavedDraft();
+
+    click("Restaurar el guardado");
+
+    await waitFor(() => expect(lineTexts()).toHaveLength(2));
+    expect(screen.getByText("proveedor: cont-supplier")).toBeInTheDocument();
+    expect(banner()).not.toBeInTheDocument();
+    expect(storedDraft()).toMatchObject({ supplierId: "cont-supplier" });
+    expect(storedNewDraft()).toBeNull();
+  });
+
+  it("confirmar la compra nueva sin haber decidido borra las dos", async () => {
+    const api = installApi();
+
+    startNewPurchaseOverSavedDraft();
+    click(/Confirmar Compra/);
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-nueva"));
+    expect(api.posts).toHaveLength(1);
+    expect(storedDraft()).toBeNull();
+    expect(storedNewDraft()).toBeNull();
+  });
+
+  it("una compra duplicada cuyas líneas aún esperan proveedor no se guarda: el aviso dice que Restaurar la sustituye", async () => {
+    leaveUnfinishedPurchase();
+    window.history.replaceState({}, "", "/purchases/create?duplicate=pur-1");
+    installApi({ purchase: sourcePurchase({ ...activeSupplier, isActive: false }) });
+    renderPage();
+
+    await screen.findByText(/está inactivo: elige otro proveedor/);
+    expect(banner()).toHaveTextContent("Tienes una compra sin terminar");
+    expect(banner()).toHaveTextContent("Restaurar sustituye lo que hay ahora en el formulario.");
+    expect(storedNewDraft()).toBeNull();
+  });
+
+  it("al salir con la compra nueva guardada aparte, el guardia ya no dice que se va a perder", () => {
+    startNewPurchaseOverSavedDraft();
+
+    fireEvent.click(screen.getByRole("link", { name: "Ventas" }));
+
+    const dialog = screen.getByRole("dialog", { name: "¿Salir sin terminar?" });
+
+    expect(within(dialog).queryByText(/esta no se guardará/)).not.toBeInTheDocument();
   });
 });

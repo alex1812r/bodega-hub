@@ -3,6 +3,7 @@ import { act, renderHook } from "@testing-library/react";
 import { createUnitDraftItem } from "../types";
 import {
   purchaseDraftStorageKey,
+  purchaseNewDraftStorageKey,
   type PurchaseDraftContent,
 } from "../utils/purchaseDraftStorage";
 import { usePurchaseDraftStorage } from "./usePurchaseDraftStorage";
@@ -17,6 +18,7 @@ jest.mock("../../../../shared/auth/usePermission", () => ({
 }));
 
 const key = purchaseDraftStorageKey({ storeId: "store-1", userId: "user-1" });
+const newKey = purchaseNewDraftStorageKey({ storeId: "store-1", userId: "user-1" });
 
 function buildContent(overrides: Partial<PurchaseDraftContent> = {}): PurchaseDraftContent {
   return {
@@ -191,5 +193,161 @@ describe("usePurchaseDraftStorage", () => {
       act(() => result.current.clear());
     }).not.toThrow();
     expect(result.current.pending).toBeNull();
+  });
+});
+
+// COM-F10 · F-B1: con el aviso de borrador sin resolver, la compra nueva no se guardaba.
+describe("usePurchaseDraftStorage · segunda ranura para la compra nueva (COM-F10 · F-B1)", () => {
+  /** Otra visita dejó guardada una compra con la nota «anterior». */
+  function leaveSavedDraft() {
+    const previous = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => previous.result.current.sync(buildContent({ notes: "anterior" })));
+    previous.unmount();
+  }
+
+  /** Y otra más empezó una compra nueva («nueva») sin decidir sobre aquella. */
+  function leaveSavedAndNewDrafts() {
+    leaveSavedDraft();
+
+    const visit = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => visit.result.current.sync(buildContent({ notes: "nueva" })));
+    visit.unmount();
+  }
+
+  it("la ranura nueva cuelga de la clave del borrador", () => {
+    expect(newKey).toBe(`${key}:nuevo`);
+  });
+
+  it("con un guardado sin decidir, lo nuevo va a la segunda ranura y el guardado no se toca", () => {
+    leaveSavedDraft();
+
+    const before = window.localStorage.getItem(key);
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    expect(result.current.pendingNew).toBeNull();
+
+    act(() => result.current.sync(buildContent({ notes: "nueva" })));
+
+    expect(window.localStorage.getItem(key)).toBe(before);
+    expect(window.localStorage.getItem(newKey)).toContain("nueva");
+    expect(result.current.pending).toMatchObject({ notes: "anterior" });
+    expect(result.current.pendingNew).toMatchObject({ notes: "nueva", version: 1 });
+    expect(result.current.ownsNew).toBe(true);
+  });
+
+  it("al recargar no se pierde ninguna: se ofrecen las dos, y una tercera no pisa a ninguna", () => {
+    leaveSavedAndNewDrafts();
+
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    expect(result.current.pending).toMatchObject({ notes: "anterior" });
+    expect(result.current.pendingNew).toMatchObject({ notes: "nueva" });
+    expect(result.current.ownsNew).toBe(false);
+
+    act(() => result.current.sync(buildContent({ notes: "tercera" })));
+
+    expect(window.localStorage.getItem(key)).toContain("anterior");
+    expect(window.localStorage.getItem(newKey)).toContain("nueva");
+  });
+
+  it("keepNew promueve la nueva, borra la guardada y la visita sigue guardando en la ranura principal", () => {
+    leaveSavedDraft();
+
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => result.current.sync(buildContent({ notes: "nueva" })));
+    act(() => result.current.keepNew());
+
+    expect(window.localStorage.getItem(key)).toContain("nueva");
+    expect(window.localStorage.getItem(newKey)).toBeNull();
+    expect(result.current.pending).toBeNull();
+    expect(result.current.pendingNew).toBeNull();
+
+    act(() => result.current.sync(buildContent({ notes: "nueva y editada" })));
+    expect(window.localStorage.getItem(key)).toContain("nueva y editada");
+    expect(window.localStorage.getItem(newKey)).toBeNull();
+  });
+
+  it("keepNew sobre las dos que dejó otra visita promueve la nueva", () => {
+    leaveSavedAndNewDrafts();
+
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => result.current.keepNew());
+
+    expect(window.localStorage.getItem(key)).toContain("nueva");
+    expect(window.localStorage.getItem(newKey)).toBeNull();
+    expect(result.current.pending).toBeNull();
+  });
+
+  it("adopt (Restaurar el guardado) conserva la guardada y borra la nueva", () => {
+    leaveSavedDraft();
+
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => result.current.sync(buildContent({ notes: "nueva" })));
+    act(() => result.current.adopt());
+
+    expect(window.localStorage.getItem(key)).toContain("anterior");
+    expect(window.localStorage.getItem(newKey)).toBeNull();
+    expect(result.current.pending).toBeNull();
+    expect(result.current.pendingNew).toBeNull();
+  });
+
+  it("clear (compra confirmada, o descartar) borra las dos", () => {
+    leaveSavedAndNewDrafts();
+
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => result.current.clear());
+
+    expect(window.localStorage.getItem(key)).toBeNull();
+    expect(window.localStorage.getItem(newKey)).toBeNull();
+    expect(result.current.pending).toBeNull();
+    expect(result.current.pendingNew).toBeNull();
+  });
+
+  it("si la compra nueva se queda sin nada que perder, su ranura se borra y el guardado sigue ofreciéndose", () => {
+    leaveSavedDraft();
+
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    act(() => result.current.sync(buildContent({ notes: "nueva" })));
+    act(() => result.current.sync(buildContent({ lines: emptyLines })));
+
+    expect(window.localStorage.getItem(newKey)).toBeNull();
+    expect(result.current.pendingNew).toBeNull();
+    expect(result.current.ownsNew).toBe(false);
+    expect(result.current.pending).toMatchObject({ notes: "anterior" });
+  });
+
+  it("una ranura nueva huérfana (sin guardado) se ofrece como el borrador pendiente", () => {
+    leaveSavedAndNewDrafts();
+    window.localStorage.removeItem(key);
+
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    expect(result.current.pending).toMatchObject({ notes: "nueva" });
+    expect(result.current.pendingNew).toBeNull();
+
+    act(() => result.current.adopt());
+
+    expect(window.localStorage.getItem(key)).toContain("nueva");
+    expect(window.localStorage.getItem(newKey)).toBeNull();
+    expect(result.current.pending).toBeNull();
+  });
+
+  it("una ranura nueva corrupta se ignora y se puede escribir encima", () => {
+    leaveSavedDraft();
+    window.localStorage.setItem(newKey, "{no es un borrador");
+
+    const { result } = renderHook(() => usePurchaseDraftStorage());
+
+    expect(result.current.pendingNew).toBeNull();
+
+    act(() => result.current.sync(buildContent({ notes: "nueva" })));
+    expect(window.localStorage.getItem(newKey)).toContain("nueva");
   });
 });

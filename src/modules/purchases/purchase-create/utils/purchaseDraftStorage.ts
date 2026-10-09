@@ -16,6 +16,9 @@ import { switchPurchaseReviewCostCurrency } from "./purchaseLineReview";
  * (`PurchaseDraftItem`: tipos y cuentas de las líneas). Aquí solo se PERSISTE
  * sobre esos tipos.
  *
+ * Hay dos ranuras con el mismo esquema: la principal (`purchaseDraftStorageKey`) y la
+ * de la compra nueva empezada con un borrador sin decidir (`purchaseNewDraftStorageKey`).
+ *
  * Nunca se guardan los datos del pago inicial ni la clave de idempotencia.
  * Para extender el esquema (CNF-16): añadir campos OPCIONALES a
  * `storedPurchaseDraftSchema`; un cambio incompatible sube `PURCHASE_DRAFT_VERSION`
@@ -34,6 +37,14 @@ export function purchaseDraftStorageKey(session: PurchaseDraftSession) {
     encodeURIComponent(session.storeId ?? ""),
     encodeURIComponent(session.userId),
   ].join(":");
+}
+
+/**
+ * Segunda ranura (COM-F10): la compra NUEVA que se empieza mientras hay un borrador
+ * guardado sobre el que aún no se decidió. Mismo esquema y misma validación.
+ */
+export function purchaseNewDraftStorageKey(session: PurchaseDraftSession) {
+  return `${purchaseDraftStorageKey(session)}:nuevo`;
 }
 
 const amountSchema = z.number().nonnegative();
@@ -297,15 +308,19 @@ export function formatPurchaseDraftAge(savedAt: string, now: number) {
   return days === 1 ? "hace 1 día" : `hace ${days} días`;
 }
 
-/** "Distribuidora X · 12 líneas · guardada hace 20 min". */
-export function describeStoredPurchaseDraft(draft: StoredPurchaseDraft, now: number) {
+/** "proveedor Distribuidora X · 12 líneas": qué compra es, sin su antigüedad. */
+export function describeStoredPurchaseDraftContent(draft: StoredPurchaseDraft) {
   const lineCount = draft.lines.items.length;
 
   return [
     draft.supplierName ? `proveedor ${draft.supplierName}` : null,
     lineCount === 1 ? "1 línea" : `${lineCount} líneas`,
-    `guardada ${formatPurchaseDraftAge(draft.savedAt, now)}`,
   ]
     .filter((part) => part !== null)
     .join(" · ");
+}
+
+/** "proveedor Distribuidora X · 12 líneas · guardada hace 20 min". */
+export function describeStoredPurchaseDraft(draft: StoredPurchaseDraft, now: number) {
+  return `${describeStoredPurchaseDraftContent(draft)} · guardada ${formatPurchaseDraftAge(draft.savedAt, now)}`;
 }

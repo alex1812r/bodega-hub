@@ -359,26 +359,30 @@ export function PurchaseCreatePage() {
   );
   const hasPendingDraft = draft.pending !== null;
   const syncDraft = draft.sync;
+  // Con un borrador anterior sin decidir, esta compra se guarda aparte (segunda ranura).
+  // No hay dónde si localStorage falla o si ya hay dos compras guardadas sin decidir.
+  const isSavedApart = draft.pendingNew !== null && draft.ownsNew;
+  const isNotSaved = hasPendingDraft && !isSavedApart;
 
-  // Se guarda en cada cambio. Con un borrador anterior sin decidir no se escribe:
-  // al restaurarlo o descartarlo el efecto vuelve a correr y guarda lo que haya.
+  // Se guarda en cada cambio; dónde lo decide el hook (nunca pisa un borrador sin decidir).
+  // Al restaurar, descartar o seguir con esta el efecto vuelve a correr y guarda lo que haya.
   useEffect(() => {
-    if (confirmed || hasPendingDraft) {
+    if (confirmed) {
       return;
     }
 
     syncDraft(draftContent);
   }, [confirmed, draftContent, hasPendingDraft, syncDraft]);
 
-  // Regla 14: con líneas, salir pregunta. Si hay un borrador anterior sin decidir no se
-  // promete guardar este (no se pisa aquel sin preguntar): el aviso es de pérdida.
+  // Regla 14: con líneas, salir pregunta. Si esta compra no se pudo guardar aparte de la
+  // que ya había sin decidir, no se promete guardarla: el aviso es de pérdida.
   const guard = useProcessGuard({
     active: items.length > 0 && !confirmed,
-    description: hasPendingDraft
+    description: isNotSaved
       ? "Ya hay otra compra sin terminar guardada: esta no se guardará mientras no restaures o descartes aquella."
       : undefined,
     label: `Compra en curso con ${describeLineCount(items.length)}`,
-    onLeave: hasPendingDraft ? "discard" : "draft",
+    onLeave: isNotSaved ? "discard" : "draft",
     onSaveDraft: () => syncDraft(draftContent),
   });
 
@@ -435,8 +439,10 @@ export function PurchaseCreatePage() {
     ready: currentRateVes !== undefined,
   });
 
-  async function handleRestoreDraft() {
-    const stored = draft.pending;
+  // `saved`: el borrador guardado; `new`: la compra nueva de la segunda ranura (tras
+  // recargar sin decidir). La que no se restaura se descarta.
+  async function handleRestoreDraft(which: "new" | "saved") {
+    const stored = which === "new" ? draft.pendingNew : draft.pending;
 
     if (!stored || currentRateVes === undefined) {
       return;
@@ -451,7 +457,12 @@ export function PurchaseCreatePage() {
       );
       const restored = restorePurchaseDraft(stored, { products, rateVes: currentRateVes });
 
-      draft.adopt();
+      if (which === "new") {
+        draft.keepNew();
+      } else {
+        draft.adopt();
+      }
+
       setSupplierId(stored.supplierId);
       setSupplierName(stored.supplierName ?? null);
       setProductSearch("");
@@ -728,8 +739,12 @@ export function PurchaseCreatePage() {
         <PurchaseDraftBanner
           draft={draft.pending}
           isRestoring={isRestoringDraft}
+          newDraft={draft.pendingNew}
+          newDraftInForm={draft.ownsNew}
           onDiscard={draft.clear}
-          onRestore={() => void handleRestoreDraft()}
+          onKeepNew={draft.keepNew}
+          onRestore={() => void handleRestoreDraft("saved")}
+          onRestoreNew={() => void handleRestoreDraft("new")}
           replacesForm={items.length > 0 || pendingDuplicate !== null}
           restoreDisabled={currentRateVes === undefined}
         />
