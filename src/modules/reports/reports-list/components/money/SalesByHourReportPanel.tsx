@@ -42,11 +42,32 @@ const HOUR_LABEL_EVERY = 3;
 
 type MeasureRow = SalesByHourMeasures & { id: string; label: string };
 
+/** Cuatro columnas cortas: cada cifra en una línea y alineada por dígitos. */
+const MEASURE_CELL_CLASS = "whitespace-nowrap tabular-nums";
+
 const measureColumns = (firstHeader: string): DataTableColumn<MeasureRow>[] => [
-  { header: firstHeader, key: "label", render: (row) => row.label },
-  { align: "right", header: "Ventas", key: "salesCount", render: (row) => row.salesCount },
-  { align: "right", header: "REF", key: "totalRef", render: (row) => formatRef(row.totalRef) },
-  { align: "right", header: "Bs", key: "totalVes", render: (row) => formatVesBs(row.totalVes) },
+  { cellClassName: MEASURE_CELL_CLASS, header: firstHeader, key: "label", render: (row) => row.label },
+  {
+    align: "right",
+    cellClassName: MEASURE_CELL_CLASS,
+    header: "Ventas",
+    key: "salesCount",
+    render: (row) => row.salesCount,
+  },
+  {
+    align: "right",
+    cellClassName: MEASURE_CELL_CLASS,
+    header: "REF",
+    key: "totalRef",
+    render: (row) => formatRef(row.totalRef),
+  },
+  {
+    align: "right",
+    cellClassName: MEASURE_CELL_CLASS,
+    header: "Bs",
+    key: "totalVes",
+    render: (row) => formatVesBs(row.totalVes),
+  },
 ];
 
 const weekdayColumns = measureColumns("Día");
@@ -70,7 +91,9 @@ function SalesByHourTable({
   return (
     <section
       aria-label={title}
-      className="overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest"
+      // Las dos tablas van lado a lado (~440 px cada una a 1280): se quita el
+      // ancho mínimo de 720 px de la tabla «stitch», que escondía REF y Bs.
+      className="overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest [&_table]:min-w-0"
     >
       <h4 className="border-b border-outline-variant bg-surface-container-low px-4 py-2 text-sm font-semibold text-on-surface">
         {title}

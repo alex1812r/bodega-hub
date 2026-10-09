@@ -391,6 +391,25 @@ describe("MoneyReportPanel · REP-06b", () => {
       expect(within(byHour.getByRole("row", { name: /18:00/ })).getByText("15")).toBeInTheDocument();
     });
 
+    // REP-F6: a 1280 px cada caja mide ~437 px y la tabla exigía 720 (REF y Bs
+    // quedaban fuera, tras un scroll); las cifras se partían en dos líneas.
+    it("las dos tablas caben en su caja: sin ancho mínimo fijo y con las cifras en una línea", () => {
+      mockQueries.useSalesByHourReport = { data: report };
+      renderPanel("sales-by-hour");
+
+      for (const name of ["Por día de la semana", "Por hora"]) {
+        const region = screen.getByRole("region", { name });
+        const cells = [...region.querySelectorAll("tbody td")];
+
+        expect(region).toHaveClass("[&_table]:min-w-0");
+        expect(cells.length).toBeGreaterThan(0);
+
+        for (const cell of cells) {
+          expect(cell).toHaveClass("whitespace-nowrap", "tabular-nums");
+        }
+      }
+    });
+
     it("390 px: el mapa se traspone (24 filas × 7 columnas) y conserva el valor de cada celda", () => {
       setViewport("mobile");
       mockQueries.useSalesByHourReport = { data: report };
