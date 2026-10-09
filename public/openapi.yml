@@ -4006,6 +4006,9 @@ paths:
         Mismos reportes que `/api/reports/*`.
         `storeScope=all` (default), `one` o `selected`.
         Con `one`/`selected` requiere `storeIds` (CSV o repetido `storeId`).
+        Valida la entrada igual que la ruta de tienda de cada reporte: 400 si `from` / `to` / `date` no son
+        un dia real `AAAA-MM-DD` con el ano entre 2000 y el actual + 1, si `from > to`, o si `productId` /
+        `supplierId` no tienen forma de id.
       x-permission: platform.reports.view
       parameters:
         - name: report
@@ -4072,6 +4075,9 @@ paths:
     get:
       tags: [Platform]
       summary: Metricas de periodo multi-tienda
+      description: |
+        400 si `from` / `to` no son un dia real `AAAA-MM-DD` con el ano entre 2000 y el actual + 1 o si
+        `from > to` (mismo validador que `/api/dashboard/metrics`). Con `fromStart` el `from` no se valida.
       x-permission: platform.dashboard.view
       parameters:
         - name: storeScope
@@ -4092,6 +4098,7 @@ paths:
           schema: { type: string }
       responses:
         "200": { description: Metricas del periodo }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
   /api/platform/home/sales-trend:
     get:
