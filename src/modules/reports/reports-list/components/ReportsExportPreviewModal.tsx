@@ -10,6 +10,7 @@ import { Tabs } from "@/shared/components/Tabs";
 import { formatCaracasDateTime } from "@/shared/utils/caracasBusinessDay";
 import { cn } from "@/shared/utils/cn";
 
+import type { ChartImage } from "../../services/captureChartImage";
 import {
   downloadReportsExcelFromDataset,
   downloadReportsPdfFromDataset,
@@ -20,12 +21,15 @@ import type {
 } from "../../services/fetchReportsForExport";
 import {
   buildReportExportSections,
+  getReportExportName,
   type ReportExportSection,
 } from "../../utils/reportExportSections";
 
 const PREVIEW_PAGE_SIZE = 25;
 
 type ReportsExportPreviewModalProps = {
+  /** Imagen del gráfico del reporte abierto; va en su sección del PDF y del Excel. */
+  chartImage?: ChartImage | null;
   data: ReportsExportDataset | null;
   exportedAt: string | null;
   filters: ReportsExportFilters;
@@ -127,6 +131,7 @@ function PreviewSheetTable({ section }: { section: ReportExportSection }) {
 }
 
 export function ReportsExportPreviewModal({
+  chartImage = null,
   data,
   exportedAt,
   filters,
@@ -156,6 +161,8 @@ export function ReportsExportPreviewModal({
     sections.find((section) => section.id === activeSectionId) ?? sections[0] ?? null;
   // Hora de Caracas en 24 h: "a. m." seguido del punto de la frase daba "a. m..".
   const generatedLabel = exportedAt ? formatCaracasDateTime(exportedAt) : null;
+  const truncatedSections = sections.filter((section) => section.truncationNotice);
+  const chartReportName = chartImage ? getReportExportName(filters.view?.activeReportId) : undefined;
 
   async function handleDownloadExcel() {
     if (!data || !exportedAt) {
@@ -166,7 +173,7 @@ export function ReportsExportPreviewModal({
     setDownloadError(null);
 
     try {
-      await downloadReportsExcelFromDataset(data, filters, exportedAt);
+      await downloadReportsExcelFromDataset(data, filters, exportedAt, chartImage);
     } catch (error) {
       setDownloadError(
         error instanceof Error ? error.message : "No se pudo descargar el Excel.",
@@ -185,7 +192,7 @@ export function ReportsExportPreviewModal({
     setDownloadError(null);
 
     try {
-      downloadReportsPdfFromDataset(data, filters, exportedAt);
+      downloadReportsPdfFromDataset(data, filters, exportedAt, chartImage);
     } catch (error) {
       setDownloadError(
         error instanceof Error ? error.message : "No se pudo descargar el PDF.",
@@ -215,6 +222,7 @@ export function ReportsExportPreviewModal({
           ) : (
             <p className="text-sm text-on-surface-variant">
               {sections.length} hojas · descarga opcional
+              {chartReportName ? ` · incluye el gráfico de «${chartReportName}»` : ""}
             </p>
           )}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -261,30 +269,52 @@ export function ReportsExportPreviewModal({
           No hay datos para previsualizar.
         </p>
       ) : (
-        <Tabs
-          ariaLabel="Hojas del reporte"
-          className="flex h-full min-h-[28rem] flex-col"
-          items={sections.map((section) => ({
-            badge: section.rows.length,
-            content: (
-              <div className="flex h-full min-h-0 flex-col gap-2">
-                <div className="shrink-0 space-y-1">
-                  <p className="text-sm text-on-surface-variant">{section.periodLabel}</p>
-                  {section.note ? (
-                    <p className="text-xs text-on-surface-variant">{section.note}</p>
-                  ) : null}
+        <div className="flex h-full min-h-0 flex-col gap-3">
+          {truncatedSections.length > 0 ? (
+            <p
+              className="shrink-0 rounded-lg border border-outline-variant bg-surface-container-low px-3 py-2 text-sm font-medium text-foreground"
+              role="status"
+            >
+              {truncatedSections.length === 1
+                ? "Una hoja llegó al tope de filas y sale cortada: "
+                : `${truncatedSections.length} hojas llegaron al tope de filas y salen cortadas: `}
+              {truncatedSections.map((section) => section.title).join(", ")}. Acota los filtros para
+              exportar el resto.
+            </p>
+          ) : null}
+          <Tabs
+            ariaLabel="Hojas del reporte"
+            className="flex min-h-[28rem] flex-1 flex-col"
+            items={sections.map((section) => ({
+              badge: section.rows.length,
+              content: (
+                <div className="flex h-full min-h-0 flex-col gap-2">
+                  <div className="shrink-0 space-y-1">
+                    {section.headerLines.map((line, index) => (
+                      <p
+                        className={cn(
+                          "text-on-surface-variant",
+                          index === 0 ? "text-sm" : "text-xs",
+                          line === section.truncationNotice && "font-medium text-foreground",
+                        )}
+                        key={line}
+                      >
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+                  <PreviewSheetTable section={section} />
                 </div>
-                <PreviewSheetTable section={section} />
-              </div>
-            ),
-            label: section.title,
-            value: section.id,
-          }))}
-          onValueChange={setActiveSectionId}
-          panelClassName="min-h-0 flex-1 pt-3"
-          // Controlado y sin `urlParam`: dentro del modal la hoja activa no se escribe en la URL.
-          value={activeSection?.id}
-        />
+              ),
+              label: section.title,
+              value: section.id,
+            }))}
+            onValueChange={setActiveSectionId}
+            panelClassName="min-h-0 flex-1 pt-3"
+            // Controlado y sin `urlParam`: dentro del modal la hoja activa no se escribe en la URL.
+            value={activeSection?.id}
+          />
+        </div>
       )}
     </Modal>
   );

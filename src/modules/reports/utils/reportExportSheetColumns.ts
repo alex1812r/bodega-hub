@@ -1,6 +1,22 @@
 import { paymentMethodLabels } from "@/shared/payments/paymentMethods";
 import { formatDate } from "@/shared/utils/date";
 
+import {
+  AGING_BUCKET_LABELS,
+  CASH_CLOSE_CURRENCY_LABELS,
+  CASH_CLOSE_REASON_LABELS,
+  formatHour,
+} from "../reports-list/components/money/moneyReportText";
+import type {
+  DeadStockRow,
+  StockAdjustmentRow,
+  StockTurnoverRow,
+} from "../services/inventoryReports";
+import type {
+  AgingDocumentRow,
+  CashCloseDifferenceRow,
+  SalesByCategoryRow,
+} from "../services/moneyReports";
 import type {
   CustomerPurchasesReportRow,
   DailySalesReportRow,
@@ -101,7 +117,8 @@ export const topCustomersExportColumns: ReportExportColumn<TopCustomersReportRow
 
 export const purchasesExportColumns: ReportExportColumn<PurchasesReportRow>[] = [
   { header: "Compra", value: (row) => row.purchaseNumber },
-  { header: "Proveedor", value: (row) => row.supplier?.name ?? row.supplierId },
+  // Sin nombre no se muestra el id interno del proveedor.
+  { header: "Proveedor", value: (row) => row.supplier?.name ?? "Sin proveedor" },
   { header: "Fecha", value: (row) => formatDate(row.createdAt) },
   { header: "Items", value: (row) => row.itemsCount },
   { header: "Total VES", value: (row) => row.totalVes },
@@ -133,4 +150,109 @@ export const paymentMethodsExportColumns: ReportExportColumn<PaymentMethodReport
   { header: "Pagos", value: (row) => row.paymentCount },
   { header: "REF", value: (row) => row.amountRef },
   { header: "VES", value: (row) => row.amountVes },
+];
+
+/** Texto de una medida que no se puede calcular (divisor en cero). */
+const NOT_AVAILABLE = "N/D";
+
+function orNotAvailable(value: number | null) {
+  return value === null ? NOT_AVAILABLE : value;
+}
+
+/** Una celda con ventas de la matriz día de la semana × hora. */
+export type SalesByHourExportRow = {
+  hour: number;
+  salesCount: number;
+  totalRef: number;
+  totalVes: number;
+  /** «lunes» … «domingo». */
+  weekday: string;
+};
+
+export const salesByHourExportColumns: ReportExportColumn<SalesByHourExportRow>[] = [
+  { header: "Día", value: (row) => row.weekday },
+  { header: "Hora", value: (row) => formatHour(row.hour) },
+  { header: "Ventas", value: (row) => row.salesCount },
+  { header: "Total REF", value: (row) => row.totalRef },
+  { header: "Total VES", value: (row) => row.totalVes },
+];
+
+export const salesByCategoryExportColumns: ReportExportColumn<SalesByCategoryRow>[] = [
+  { header: "Categoría", value: (row) => row.categoryName },
+  { header: "Unidades", value: (row) => row.units },
+  { header: "Ingreso REF", value: (row) => row.revenueRef },
+  { header: "Costo REF", value: (row) => row.costRef },
+  { header: "Ganancia REF", value: (row) => row.grossProfitRef },
+  { header: "Margen %", value: (row) => orNotAvailable(row.marginPct) },
+];
+
+function agingExportColumns(contactHeader: string): ReportExportColumn<AgingDocumentRow>[] {
+  return [
+    { header: "Documento", value: (row) => row.document.number },
+    { header: contactHeader, value: (row) => row.contact?.name ?? "Sin contacto" },
+    { header: "Fecha", value: (row) => formatDate(row.date) },
+    { header: "Días", value: (row) => row.days },
+    { header: "Tramo", value: (row) => AGING_BUCKET_LABELS[row.bucket] },
+    { header: "Total REF", value: (row) => row.totalRef },
+    { header: "Pagado REF", value: (row) => row.paidRef },
+    { header: "Pendiente REF", value: (row) => row.pendingRef },
+    { header: "Pendiente VES", value: (row) => row.pendingVes },
+  ];
+}
+
+export const receivablesAgingExportColumns = agingExportColumns("Cliente");
+
+export const payablesAgingExportColumns = agingExportColumns("Proveedor");
+
+export const cashCloseDifferencesExportColumns: ReportExportColumn<CashCloseDifferenceRow>[] = [
+  { header: "Fecha de cierre", value: (row) => formatDate(row.closeDate) },
+  { header: "Caja", value: (row) => row.registerName ?? "Caja" },
+  {
+    header: "Cierre",
+    value: (row) => (row.closedReason ? CASH_CLOSE_REASON_LABELS[row.closedReason] : NOT_AVAILABLE),
+  },
+  { header: "Moneda", value: (row) => CASH_CLOSE_CURRENCY_LABELS[row.currency] },
+  { header: "Esperado", value: (row) => row.expected },
+  { header: "Contado", value: (row) => row.counted },
+  { header: "Diferencia", value: (row) => row.difference },
+  { header: "Diferencia acumulada", value: (row) => row.runningDifference },
+];
+
+export const deadStockExportColumns: ReportExportColumn<DeadStockRow>[] = [
+  { header: "Producto", value: (row) => row.product.name || row.product.sku },
+  { header: "SKU", value: (row) => row.product.sku },
+  { header: "Categoría", value: (row) => row.category.name },
+  { header: "Stock", value: (row) => row.stock },
+  { header: "Costo REF", value: (row) => row.costRef },
+  { header: "Valor inmovilizado REF", value: (row) => row.stockValueRef },
+  { header: "Días sin vender", value: (row) => row.daysIdle },
+  {
+    header: "Última venta",
+    value: (row) => (row.lastSaleAt ? formatDate(row.lastSaleAt) : "Nunca"),
+  },
+];
+
+export const stockTurnoverExportColumns: ReportExportColumn<StockTurnoverRow>[] = [
+  // Por categoría la fila no tiene producto: se nombra con la categoría.
+  { header: "Nombre", value: (row) => row.product?.name || row.product?.sku || row.category.name },
+  { header: "SKU", value: (row) => row.product?.sku ?? "" },
+  { header: "Categoría", value: (row) => row.category.name },
+  { header: "Unidades vendidas", value: (row) => row.soldUnits },
+  { header: "Costo de lo vendido REF", value: (row) => row.cogsRef },
+  { header: "Inventario promedio REF", value: (row) => row.averageStockValueRef },
+  { header: "Rotación", value: (row) => orNotAvailable(row.turnover) },
+  { header: "Días de inventario", value: (row) => orNotAvailable(row.daysOfInventory) },
+  { header: "Stock", value: (row) => row.stock },
+  { header: "Valor del stock REF", value: (row) => row.stockValueRef },
+];
+
+export const stockAdjustmentsExportColumns: ReportExportColumn<StockAdjustmentRow>[] = [
+  { header: "Fecha", value: (row) => formatDate(row.date) },
+  { header: "Producto", value: (row) => row.product.name || row.product.sku },
+  { header: "SKU", value: (row) => row.product.sku },
+  { header: "Tipo", value: (row) => (row.type === "ajuste_entrada" ? "Entrada" : "Salida") },
+  { header: "Motivo", value: (row) => row.reason },
+  { header: "Cantidad", value: (row) => row.quantityDelta },
+  { header: "Costo unitario REF", value: (row) => row.unitCostRef },
+  { header: "Valor REF", value: (row) => row.valueRef },
 ];

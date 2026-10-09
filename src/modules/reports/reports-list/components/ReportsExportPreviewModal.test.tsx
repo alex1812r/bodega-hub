@@ -2,6 +2,10 @@ import "@testing-library/jest-dom";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import {
+  downloadReportsExcelFromDataset,
+  downloadReportsPdfFromDataset,
+} from "../../services/downloadReportsExport";
 import type { ReportsExportDataset } from "../../services/fetchReportsForExport";
 import type { ReportExportSection } from "../../utils/reportExportSections";
 import { ReportsExportPreviewModal } from "./ReportsExportPreviewModal";
@@ -18,15 +22,20 @@ jest.mock("../../utils/reportExportSections", () => ({
   buildReportExportSections: (data: FakeDataset) => data.sections,
 }));
 
+const TRUNCATION_NOTICE = "Archivo cortado: esta hoja trae las primeras 20.000 filas de 53.210.";
+
 function section(id: string): ReportExportSection {
   return {
     columns: [],
+    // La hoja "t" llegó al tope de filas.
+    headerLines: [`Periodo ${id}`, `Tienda ${id}`, ...(id.startsWith("t") ? [TRUNCATION_NOTICE] : [])],
     id,
     periodLabel: `Periodo ${id}`,
     // La hoja "b" lleva dos filas: su pestaña muestra el contador.
     rows: id === "b" ? [{}, {}] : [],
     title: `Hoja ${id}`,
-  } as ReportExportSection;
+    truncationNotice: id.startsWith("t") ? TRUNCATION_NOTICE : undefined,
+  };
 }
 
 function dataset(...ids: string[]) {
@@ -37,7 +46,13 @@ const filters = { dateFilters: {}, purchasesFilters: {}, stockCardFilters: {} };
 const abc = dataset("a", "b", "c");
 const ac = dataset("a", "c");
 
-function modal(data: ReportsExportDataset | null, open = true) {
+const chartImage = { dataUrl: "data:image/png;base64,AAAA", height: 480, width: 960 };
+
+function modal(
+  data: ReportsExportDataset | null,
+  open = true,
+  extra: Partial<Parameters<typeof ReportsExportPreviewModal>[0]> = {},
+) {
   return (
     <ReportsExportPreviewModal
       data={data}
@@ -45,6 +60,7 @@ function modal(data: ReportsExportDataset | null, open = true) {
       filters={filters}
       onOpenChange={() => undefined}
       open={open}
+      {...extra}
     />
   );
 }
@@ -182,6 +198,86 @@ describe("ReportsExportPreviewModal", () => {
     expect(replaceState).not.toHaveBeenCalled();
     expect(window.location.href).toBe(before);
     replaceState.mockRestore();
+  });
+
+  // REP-08
+  it("muestra el encabezado de la hoja tal como saldrá en el archivo", () => {
+    render(modal(abc));
+
+    expect(screen.getByText("Periodo a")).toBeVisible();
+    expect(screen.getByText("Tienda a")).toBeVisible();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("avisa de las hojas que llegaron al tope de filas, en el modal y en su hoja", async () => {
+    const user = userEvent.setup();
+    render(modal(dataset("a", "t1", "t2")));
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "2 hojas llegaron al tope de filas y salen cortadas: Hoja t1, Hoja t2. Acota los filtros para exportar el resto.",
+    );
+    expect(screen.queryByText(TRUNCATION_NOTICE)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /Hoja t1/ }));
+
+    expect(screen.getByText(TRUNCATION_NOTICE)).toBeVisible();
+  });
+
+  it("con una sola hoja cortada lo dice en singular", () => {
+    render(modal(dataset("a", "t1")));
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Una hoja llegó al tope de filas y sale cortada: Hoja t1.",
+    );
+  });
+
+  it("descarga el PDF y el Excel con la imagen del gráfico capturada", async () => {
+    const user = userEvent.setup();
+    const data = dataset("a");
+    const viewFilters = {
+      ...filters,
+      view: {
+        activeReportId: "daily-sales",
+        compare: false,
+        viewer: { permissions: [], role: undefined },
+      },
+    };
+    render(modal(data, true, { chartImage, filters: viewFilters }));
+
+    expect(screen.getByText(/incluye el gráfico de «Ventas diarias»/)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Descargar PDF" }));
+    await user.click(screen.getByRole("button", { name: "Descargar Excel" }));
+
+    expect(downloadReportsPdfFromDataset).toHaveBeenCalledWith(
+      data,
+      viewFilters,
+      "2026-01-15T12:00:00.000Z",
+      chartImage,
+    );
+    expect(downloadReportsExcelFromDataset).toHaveBeenCalledWith(
+      data,
+      viewFilters,
+      "2026-01-15T12:00:00.000Z",
+      chartImage,
+    );
+  });
+
+  it("sin imagen descarga igual y no anuncia ningún gráfico", async () => {
+    const user = userEvent.setup();
+    const data = dataset("a");
+    render(modal(data));
+
+    expect(screen.queryByText(/incluye el gráfico/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Descargar PDF" }));
+
+    expect(downloadReportsPdfFromDataset).toHaveBeenLastCalledWith(
+      data,
+      filters,
+      "2026-01-15T12:00:00.000Z",
+      null,
+    );
   });
 
   it("shows the empty message without data", () => {

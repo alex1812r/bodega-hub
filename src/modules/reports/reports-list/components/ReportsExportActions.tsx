@@ -3,25 +3,35 @@
 import { Eye, Loader2 } from "lucide-react";
 import { useState } from "react";
 
+import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 
+import { captureChartImage, type ChartImage } from "../../services/captureChartImage";
 import {
   fetchReportsForExport,
   type ReportsExportDataset,
   type ReportsExportFilters,
 } from "../../services/fetchReportsForExport";
+import { readReportsExportView } from "../../utils/reportExportView";
 import { ReportsExportPreviewModal } from "./ReportsExportPreviewModal";
 
 type ReportsExportActionsProps = {
   exportFilters: ReportsExportFilters;
 };
 
+/** Lo que se exporta: se fija al abrir la vista previa y no cambia hasta cerrarla. */
+type ExportPreview = {
+  chartImage: ChartImage | null;
+  data: ReportsExportDataset;
+  exportedAt: string;
+  filters: ReportsExportFilters;
+};
+
 export function ReportsExportActions({ exportFilters }: ReportsExportActionsProps) {
+  const { permissions, role } = usePermission();
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewData, setPreviewData] = useState<ReportsExportDataset | null>(null);
-  const [exportedAt, setExportedAt] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ExportPreview | null>(null);
 
   const exportDisabled =
     isLoadingPreview ||
@@ -33,11 +43,24 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
     setPreviewError(null);
 
     try {
-      const nextExportedAt = new Date().toISOString();
-      const data = await fetchReportsForExport(exportFilters);
-      setExportedAt(nextExportedAt);
-      setPreviewData(data);
-      setPreviewOpen(true);
+      const exportedAt = new Date().toISOString();
+      // Por tienda, el reporte abierto y sus filtros salen de la URL (regla 15):
+      // el archivo lleva el encabezado, el nombre y el gráfico de lo que se ve.
+      // Plataforma (`scope`) exporta como siempre, sin imagen.
+      const filters: ReportsExportFilters =
+        exportFilters.scope || exportFilters.view
+          ? exportFilters
+          : {
+              ...exportFilters,
+              view: readReportsExportView(window.location.search, { permissions, role }),
+            };
+      // El gráfico se captura ahora, antes de que el modal lo tape.
+      const [data, chartImage] = await Promise.all([
+        fetchReportsForExport(filters),
+        filters.view && !filters.scope ? captureChartImage() : null,
+      ]);
+
+      setPreview({ chartImage, data, exportedAt, filters });
     } catch (error) {
       setPreviewError(
         error instanceof Error
@@ -50,10 +73,8 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
   }
 
   function handlePreviewOpenChange(open: boolean) {
-    setPreviewOpen(open);
     if (!open) {
-      setPreviewData(null);
-      setExportedAt(null);
+      setPreview(null);
     }
   }
 
@@ -79,11 +100,12 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
       ) : null}
 
       <ReportsExportPreviewModal
-        data={previewData}
-        exportedAt={exportedAt}
-        filters={exportFilters}
+        chartImage={preview?.chartImage ?? null}
+        data={preview?.data ?? null}
+        exportedAt={preview?.exportedAt ?? null}
+        filters={preview?.filters ?? exportFilters}
         onOpenChange={handlePreviewOpenChange}
-        open={previewOpen}
+        open={preview !== null}
       />
     </div>
   );
