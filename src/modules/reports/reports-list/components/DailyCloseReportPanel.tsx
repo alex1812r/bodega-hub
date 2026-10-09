@@ -18,7 +18,7 @@ export function DailyCloseReportPanel({ dateFilters, scope }: DailyCloseReportPa
 
   return (
     <DailyClosePanel
-      data={query.data}
+      data={query.data ?? undefined}
       error={getReportQueryError(query)}
       isLoading={query.isLoading || query.isFetching}
       onRetry={() => void query.refetch()}

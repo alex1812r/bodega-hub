@@ -28,6 +28,7 @@ import type {
   ReportDateRangeFilters,
   StockCardReportFilters,
 } from "../../hooks/useReports";
+import { getReportQueryError } from "../reportQueryState";
 import {
   PURCHASE_REPORT_STATUS_ALL,
   type PurchasesReportStatusFilter,
@@ -104,7 +105,8 @@ function SupplierFilter({
   return (
     <EntityAutocomplete
       entity="contact"
-      error={pickedLabel === undefined ? supplierQuery.error?.message : undefined}
+      // Solo un error de negocio enseña su mensaje; un 5xx o un fallo de red, el genérico.
+      error={pickedLabel === undefined ? getReportQueryError(supplierQuery)?.message : undefined}
       fetcher={fetchPurchaseSupplierOptions}
       label="Proveedor"
       onChange={(option) => {

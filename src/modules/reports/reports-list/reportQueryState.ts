@@ -23,13 +23,22 @@ type ReportQueryLike = {
 };
 
 /**
- * Mensaje que se puede enseñar. Solo los errores de negocio del servidor
- * (`ClientApiError`, con su mensaje ya en español) se muestran tal cual: el
- * resto (fallos de red, de la librería de consultas, de JavaScript) trae texto
- * interno, como la clave de la consulta, y se sustituye por uno genérico.
+ * Error de negocio del servidor: un `ClientApiError` 4xx, con su mensaje ya en
+ * español. Un 5xx también llega como `ClientApiError`, pero su mensaje es el
+ * interno del servidor ("URI too long", el de Postgres): no es de negocio.
+ */
+function isBusinessError(error: unknown): error is ClientApiError {
+  return error instanceof ClientApiError && error.status < 500;
+}
+
+/**
+ * Mensaje que se puede enseñar. Solo los errores de negocio del servidor (4xx)
+ * se muestran tal cual: el resto (5xx, fallos de red, de la librería de
+ * consultas, de JavaScript) trae texto interno, como la clave de la consulta,
+ * y se sustituye por uno genérico.
  */
 export function toReportErrorMessage(error: unknown, fallback = REPORT_GENERIC_ERROR_MESSAGE) {
-  if (error instanceof ClientApiError || error instanceof ReportOfflineError) {
+  if (isBusinessError(error) || error instanceof ReportOfflineError) {
     return error.message;
   }
 
@@ -47,13 +56,16 @@ export function isReportQueryOffline(query: ReportQueryLike) {
 /**
  * Error que el panel debe pintar, o `null`: el de negocio tal cual (conserva el
  * 403), cualquier otro con el texto genérico, y la pausa por falta de red como
- * `ReportOfflineError`.
+ * `ReportOfflineError`. Una respuesta 200 con `data: null` también es un error:
+ * sin esto el panel quedaba en blanco o «cargando» para siempre.
  */
 export function getReportQueryError(query: ReportQueryLike): Error | null {
   if (query.error) {
-    return query.error instanceof ClientApiError
-      ? query.error
-      : new Error(REPORT_GENERIC_ERROR_MESSAGE);
+    return isBusinessError(query.error) ? query.error : new Error(REPORT_GENERIC_ERROR_MESSAGE);
+  }
+
+  if (query.data === null) {
+    return new Error(REPORT_GENERIC_ERROR_MESSAGE);
   }
 
   return isReportQueryOffline(query) ? new ReportOfflineError() : null;
