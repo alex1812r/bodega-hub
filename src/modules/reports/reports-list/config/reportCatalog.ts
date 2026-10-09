@@ -1,10 +1,15 @@
 import {
+  Banknote,
   ClipboardCheck,
+  Clock,
+  HandCoins,
   LineChart,
   Package,
   PackageMinus,
   PieChart,
+  Scale,
   ShoppingCart,
+  Tags,
   TrendingDown,
   TrendingUp,
   Truck,
@@ -15,7 +20,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export const REPORT_IDS = [
+import { MONEY_REPORT_SLUGS, type MoneyReportSlug } from "../../services/moneyReports";
+
+/**
+ * Reportes que existen por tienda y también en plataforma (varias tiendas, vía
+ * `/api/platform/reports`) y que la exportación incluye.
+ */
+export const MULTI_STORE_REPORT_IDS = [
   "daily-sales",
   "gross-profit",
   "product-profitability",
@@ -31,14 +42,23 @@ export const REPORT_IDS = [
   "fx-depreciation",
 ] as const;
 
+export type MultiStoreReportId = (typeof MULTI_STORE_REPORT_IDS)[number];
+
+/**
+ * Todos los reportes de `/reports`: los multi-tienda y los de dinero de
+ * REP-06 (`MONEY_REPORT_SLUGS`), que solo existen para la tienda activa.
+ */
+export const REPORT_IDS = [...MULTI_STORE_REPORT_IDS, ...MONEY_REPORT_SLUGS] as const;
+
 export type ReportId = (typeof REPORT_IDS)[number];
 
 /**
  * Gráfico que el reporte lleva encima de la tabla (un solo componente por tipo):
  * `line` = serie en el tiempo (`TimeSeriesChart`); `ranking` = barras
- * horizontales ordenadas (`RankingBarChart`). Sin él, el reporte es solo tabla.
+ * horizontales (`RankingBarChart`); `heatmap` = mapa de calor
+ * (`HeatmapChart`). Sin él, el reporte es solo tabla.
  */
-export type ReportChartKind = "line" | "ranking";
+export type ReportChartKind = "heatmap" | "line" | "ranking";
 
 /** Rango que usan los reportes con gráfico y fechas cuando la URL no trae ninguno. */
 export const REPORT_DEFAULT_DATE_PRESET = "last_30_days";
@@ -58,7 +78,7 @@ export const reportGroups: readonly { id: ReportGroupId; label: string }[] = [
  * entrada aquí y su `case` en `ReportsResultPanel`: el catálogo, la URL
  * (`?report=`) y la barra de filtros se adaptan solos a estos campos.
  */
-export type ReportDefinition = {
+export type ReportDefinition<TId extends ReportId = ReportId> = {
   /** Gráfico encima de la tabla; ver `ReportChartKind`. */
   chart?: ReportChartKind;
   /**
@@ -72,7 +92,7 @@ export type ReportDefinition = {
   entityFilter?: "product" | "supplier";
   group: ReportGroupId;
   icon: LucideIcon;
-  id: ReportId;
+  id: TId;
   name: string;
   period: string;
   /** Admite «Comparar con periodo anterior» (`compare=1`). */
@@ -83,7 +103,11 @@ export type ReportDefinition = {
   usesDateRange: boolean;
 };
 
-export const reportCatalog: ReportDefinition[] = [
+/**
+ * Reportes multi-tienda: los que ofrecen plataforma y la exportación. `/reports`
+ * usa `storeReportCatalog`, que añade los de la tienda activa.
+ */
+export const reportCatalog: ReportDefinition<MultiStoreReportId>[] = [
   {
     id: "daily-sales",
     chart: "line",
@@ -227,14 +251,81 @@ export const reportCatalog: ReportDefinition[] = [
   },
 ];
 
+/**
+ * Reportes de dinero de REP-06: solo de la tienda activa (no hay ruta de
+ * plataforma) y con permisos propios además de `reports.view` (ver
+ * `reportAccess.ts`).
+ */
+export const moneyReportCatalog: ReportDefinition<MoneyReportSlug>[] = [
+  {
+    id: "sales-by-hour",
+    chart: "heatmap",
+    defaultDatePreset: REPORT_DEFAULT_DATE_PRESET,
+    group: "ventas",
+    icon: Clock,
+    name: "Ventas por hora y día de la semana",
+    period: "Rango",
+    description: "Cuándo vendes más: por hora y día de semana.",
+    usesDateRange: true,
+  },
+  {
+    id: "sales-by-category",
+    chart: "ranking",
+    defaultDatePreset: REPORT_DEFAULT_DATE_PRESET,
+    group: "ventas",
+    icon: Tags,
+    name: "Ventas y margen por categoría",
+    period: "Rango",
+    description: "Ingreso, costo y ganancia por categoría.",
+    usesDateRange: true,
+  },
+  {
+    id: "receivables-aging",
+    chart: "ranking",
+    group: "dinero",
+    icon: HandCoins,
+    name: "Cuentas por cobrar",
+    period: "Actual",
+    description: "Lo que te deben, por antigüedad de la deuda.",
+    usesDateRange: false,
+  },
+  {
+    id: "payables-aging",
+    chart: "ranking",
+    group: "dinero",
+    icon: Banknote,
+    name: "Cuentas por pagar",
+    period: "Actual",
+    description: "Lo que debes a proveedores, por antigüedad.",
+    usesDateRange: false,
+  },
+  {
+    id: "cash-close-differences",
+    chart: "line",
+    group: "dinero",
+    icon: Scale,
+    name: "Diferencias de cierre de caja",
+    period: "Rango opcional",
+    description: "Sobrantes y faltantes al cerrar la caja.",
+    usesDateRange: true,
+  },
+];
+
+/** Catálogo de `/reports` (tienda activa): los multi-tienda y los de dinero. */
+export const storeReportCatalog: ReportDefinition[] = [...reportCatalog, ...moneyReportCatalog];
+
+export function isMoneyReportId(id: ReportId): id is MoneyReportSlug {
+  return (MONEY_REPORT_SLUGS as readonly string[]).includes(id);
+}
+
 export const defaultReportId: ReportId = "daily-sales";
 
 export function isReportId(value: unknown): value is ReportId {
   return typeof value === "string" && (REPORT_IDS as readonly string[]).includes(value);
 }
 
-export function getReportById(id: ReportId) {
-  return reportCatalog.find((report) => report.id === id) ?? reportCatalog[0];
+export function getReportById(id: ReportId): ReportDefinition {
+  return storeReportCatalog.find((report) => report.id === id) ?? storeReportCatalog[0];
 }
 
 /** Minúsculas y sin tildes, para comparar lo tecleado con el catálogo. */

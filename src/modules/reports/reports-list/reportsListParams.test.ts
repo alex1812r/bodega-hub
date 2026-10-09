@@ -2,20 +2,100 @@ import { DATE_RANGE_PRESETS } from "@/shared/components/DateRangeField";
 
 import { defaultReportId, getReportById, REPORT_IDS } from "./config/reportCatalog";
 import {
+  DEFAULT_CASH_CLOSE_CURRENCY,
   reportsListSchema,
   resolveReportsRange,
+  serializeMoneyReportFilters,
   serializeReportsRange,
+  toMoneyReportFilters,
   toReportDateFilters,
   toReportsFilters,
+  toReportSwitchPatch,
 } from "./reportsListParams";
 
 const TODAY = "2026-05-18";
 const shape = reportsListSchema.shape;
 
+describe("parámetros de los reportes de dinero (REP-06b)", () => {
+  it("bucket, contactId y currency aceptan solo sus valores y caen a vacío", () => {
+    for (const bucket of ["", "0-7", "8-30", "30+"]) {
+      expect(shape.bucket.safeParse(bucket)).toEqual({ data: bucket, success: true });
+    }
+    expect(shape.bucket.safeParse("31-60").success).toBe(false);
+
+    for (const currency of ["", "ves", "ref"]) {
+      expect(shape.currency.safeParse(currency)).toEqual({ data: currency, success: true });
+    }
+    expect(shape.currency.safeParse("usd").success).toBe(false);
+
+    expect(shape.contactId.safeParse("c".repeat(120)).success).toBe(true);
+    expect(shape.contactId.safeParse("c".repeat(121)).success).toBe(false);
+  });
+
+  it("toMoneyReportFilters: sin parámetros no hay tramo ni contacto y la moneda es Bs", () => {
+    expect(DEFAULT_CASH_CLOSE_CURRENCY).toBe("ves");
+    expect(toMoneyReportFilters({ bucket: "", contactId: "", currency: "" })).toEqual({
+      bucket: undefined,
+      contactId: undefined,
+      currency: "ves",
+    });
+    expect(toMoneyReportFilters({ bucket: "30+", contactId: "cli-1", currency: "ref" })).toEqual({
+      bucket: "30+",
+      contactId: "cli-1",
+      currency: "ref",
+    });
+  });
+
+  it("serializeMoneyReportFilters solo toca lo que cambia y no escribe la moneda por defecto", () => {
+    expect(serializeMoneyReportFilters({ bucket: "8-30" })).toEqual({ bucket: "8-30" });
+    expect(serializeMoneyReportFilters({ bucket: undefined })).toEqual({ bucket: "" });
+    expect(serializeMoneyReportFilters({ contactId: "cli-1" })).toEqual({ contactId: "cli-1" });
+    expect(serializeMoneyReportFilters({ contactId: undefined })).toEqual({ contactId: "" });
+    expect(serializeMoneyReportFilters({ currency: "ref" })).toEqual({ currency: "ref" });
+    expect(serializeMoneyReportFilters({ currency: "ves" })).toEqual({ currency: "" });
+    expect(serializeMoneyReportFilters({})).toEqual({});
+  });
+
+  it("ida y vuelta: lo serializado se vuelve a leer igual", () => {
+    const filters = { bucket: "0-7", contactId: "prov-9", currency: "ref" } as const;
+    const state = { bucket: "", contactId: "", currency: "", ...serializeMoneyReportFilters(filters) } as const;
+
+    expect(toMoneyReportFilters(state)).toEqual(filters);
+  });
+
+  it("cambiar de reporte limpia tramo, contacto y moneda", () => {
+    expect(toReportSwitchPatch("payables-aging")).toEqual({
+      bucket: "",
+      contactId: "",
+      currency: "",
+      report: "payables-aging",
+    });
+  });
+
+  it("los reportes de ventas nuevos abren en últimos 30 días; cierre de caja, sin rango", () => {
+    const empty = { from: "", preset: "", to: "" } as const;
+
+    for (const id of ["sales-by-hour", "sales-by-category"] as const) {
+      expect(resolveReportsRange(empty, TODAY, getReportById(id)).preset).toBe("last_30_days");
+    }
+    expect(resolveReportsRange(empty, TODAY, getReportById("cash-close-differences"))).toEqual({
+      from: undefined,
+      preset: undefined,
+      to: undefined,
+    });
+    expect(toReportDateFilters(getReportById("receivables-aging"), { from: "2026-05-01", to: "2026-05-10" })).toEqual(
+      {},
+    );
+  });
+});
+
 describe("reportsListSchema", () => {
   it("sin parámetros: reporte por defecto, sin rango, automático, sin comparar, página 1", () => {
     expect(reportsListSchema.parse({})).toEqual({
+      bucket: "",
       compare: "",
+      contactId: "",
+      currency: "",
       from: "",
       groupBy: "",
       limit: 10,

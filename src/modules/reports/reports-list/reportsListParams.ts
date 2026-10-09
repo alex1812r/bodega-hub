@@ -16,8 +16,17 @@ import type {
   ReportDateRangeFilters,
   StockCardReportFilters,
 } from "../hooks/useReports";
+import {
+  AGING_BUCKETS,
+  CASH_CLOSE_CURRENCIES,
+  type AgingBucket,
+  type CashCloseCurrency,
+} from "../services/moneyReports";
 import { REPORT_GROUP_BY_VALUES } from "../services/reportSeries";
 import { defaultReportId, isReportId, type ReportDefinition, type ReportId } from "./config/reportCatalog";
+
+/** Mismo tope que acepta el servidor para `contactId` (`parseAgingQuery`). */
+const CONTACT_ID_MAX_LENGTH = 120;
 
 /** Reporte activo: un id del catálogo; cualquier otro valor cae al reporte por defecto. */
 const reportParam = () => z.custom<ReportId>(isReportId).default(defaultReportId);
@@ -36,6 +45,9 @@ const reportParam = () => z.custom<ReportId>(isReportId).default(defaultReportId
  * | `compare`    | `1`                                                 | `""` = sin comparar |
  * | `supplierId` | id de proveedor (reporte de compras)                | `""`                |
  * | `productId`  | id de producto (kardex)                             | `""`                |
+ * | `bucket`     | `0-7` · `8-30` · `30+` (cuentas por cobrar / pagar) | `""` = todos        |
+ * | `contactId`  | id de contacto (cuentas por cobrar / pagar)         | `""`                |
+ * | `currency`   | `ves` · `ref` (diferencias de cierre de caja)       | `""` = `ves`        |
  * | `page`       | base 1, de la tabla del reporte activo              | `1`                 |
  * | `limit`      | tamaño de página                                    | `10`                |
  *
@@ -45,7 +57,9 @@ const reportParam = () => z.custom<ReportId>(isReportId).default(defaultReportId
  * se escribe en la URL. `preset=custom` sin fechas es «todas las fechas»
  * elegido a propósito (ver `serializeReportsRange`).
  *
- * Cambiar cualquier parámetro (también `report`) devuelve `page` a 1.
+ * Cambiar cualquier parámetro (también `report`) devuelve `page` a 1. Cambiar
+ * de reporte limpia además `bucket`, `contactId` y `currency`
+ * (`toReportSwitchPatch`): un cliente no vale como filtro de cuentas por pagar.
  */
 export const reportsListSchema = z.object({
   report: reportParam(),
@@ -56,11 +70,64 @@ export const reportsListSchema = z.object({
   compare: listParams.oneOf(["", "1"], ""),
   supplierId: listParams.text(64),
   productId: listParams.text(64),
+  bucket: listParams.oneOf(["", ...AGING_BUCKETS], ""),
+  contactId: listParams.text(CONTACT_ID_MAX_LENGTH),
+  currency: listParams.oneOf(["", ...CASH_CLOSE_CURRENCIES], ""),
   page: listParams.page(),
   limit: listParams.limit(),
 });
 
 export type ReportsListState = UrlListStateOf<typeof reportsListSchema.shape>;
+
+/** Moneda de «Diferencias de cierre de caja» cuando la URL no trae `currency`. */
+export const DEFAULT_CASH_CLOSE_CURRENCY: CashCloseCurrency = "ves";
+
+/** Filtros propios de los reportes de dinero de REP-06, ya tipados. */
+export type MoneyReportFilters = {
+  /** Tramo de antigüedad; sin él, todos. */
+  bucket?: AgingBucket;
+  contactId?: string;
+  currency: CashCloseCurrency;
+};
+
+type MoneyReportParams = Pick<ReportsListState, "bucket" | "contactId" | "currency">;
+
+/** Estado de la URL → filtros de los reportes de dinero. */
+export function toMoneyReportFilters(state: MoneyReportParams): MoneyReportFilters {
+  return {
+    bucket: state.bucket || undefined,
+    contactId: state.contactId || undefined,
+    currency: state.currency || DEFAULT_CASH_CLOSE_CURRENCY,
+  };
+}
+
+/**
+ * Cambio de filtros de dinero → patch de la URL. Solo toca las claves que trae
+ * el cambio; la moneda por defecto no se escribe.
+ */
+export function serializeMoneyReportFilters(patch: Partial<MoneyReportFilters>): Partial<MoneyReportParams> {
+  const params: Partial<MoneyReportParams> = {};
+
+  if ("bucket" in patch) {
+    params.bucket = patch.bucket ?? "";
+  }
+
+  if ("contactId" in patch) {
+    params.contactId = patch.contactId ?? "";
+  }
+
+  if ("currency" in patch) {
+    params.currency =
+      patch.currency && patch.currency !== DEFAULT_CASH_CLOSE_CURRENCY ? patch.currency : "";
+  }
+
+  return params;
+}
+
+/** Patch de la URL al elegir otro reporte: los filtros de dinero no se arrastran. */
+export function toReportSwitchPatch(report: ReportId): Pick<ReportsListState, "report"> & MoneyReportParams {
+  return { bucket: "", contactId: "", currency: "", report };
+}
 
 export type ReportsListFilters = {
   dateFilters: ReportDateRangeFilters;

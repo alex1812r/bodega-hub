@@ -20,7 +20,11 @@ import {
   resolveReportSeriesRequest,
   type ReportSeriesRequest,
 } from "../../services/reportSeries";
-import { REPORT_IDS, reportCatalog, type ReportId } from "../config/reportCatalog";
+import {
+  MULTI_STORE_REPORT_IDS as REPORT_IDS,
+  reportCatalog,
+  type ReportId,
+} from "../config/reportCatalog";
 import { getGroupingNotice } from "./ReportSeriesChart";
 import { ReportsResultPanel, type ReportPagination } from "./ReportsResultPanel";
 
