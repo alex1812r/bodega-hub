@@ -31,6 +31,18 @@ function makePoints(values: number[], startOffset = 0): TimeSeriesPoint[] {
 
 const WEEK = [10, 50, 20, 80, 30, 40, 15];
 
+/** Los 30 días de las stories `thirty-days` / `mobile` (2024-03-02 → 2024-03-31). */
+const STORY_MONTH: TimeSeriesPoint[] = Array.from({ length: 30 }, (_, index) => {
+  const weekly = [0.7, 0.85, 0.9, 1, 1.25, 1.6, 0.5][index % 7];
+  const wave = 1 + Math.sin(index / 11) * 0.25;
+  const jitter = ((index * 37) % 17) / 100;
+
+  return {
+    key: new Date(Date.UTC(2024, 2, 2 + index)).toISOString().slice(0, 10),
+    valueRef: Math.round(180 * weekly * (wave + jitter) * 100) / 100,
+  };
+});
+
 const SALES: TimeSeriesSeries = { id: "sales", name: "Ventas", points: makePoints(WEEK) };
 
 const SALES_WITH_PREVIOUS: TimeSeriesSeries = {
@@ -48,6 +60,12 @@ async function waitForLines(count: number) {
   );
 }
 
+function peakKeys() {
+  return [...getChart().querySelectorAll("[data-peak]")].map((node) =>
+    node.getAttribute("data-peak"),
+  );
+}
+
 function peakLabels() {
   return [...getChart().querySelectorAll("[data-peak] text")].map((node) => node.textContent);
 }
@@ -57,8 +75,10 @@ describe("TimeSeriesChart", () => {
   let rectSpy: jest.SpyInstance;
   let warnSpy: jest.SpyInstance;
   let errorSpy: jest.SpyInstance;
+  let containerWidth = 390;
 
   beforeEach(() => {
+    containerWidth = 390;
     global.ResizeObserver = class {
       disconnect() {}
       observe() {}
@@ -73,7 +93,7 @@ describe("TimeSeriesChart", () => {
         return (
           this.id === "recharts_measurement_span"
             ? { height: 13, width: (this.textContent ?? "").length * 6.6 }
-            : { height: 280, width: 390 }
+            : { height: 280, width: containerWidth }
         ) as DOMRect;
       });
     warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -224,6 +244,64 @@ describe("TimeSeriesChart", () => {
       }
     });
 
+    // REP-F1: a 390 px el contenedor mide 326 (la tarjeta le quita 64 px).
+    it.each([326, 1216])(
+      "los picos son los mismos 3 máximos con un contenedor de %i px",
+      async (width) => {
+        containerWidth = width;
+        render(
+          <TimeSeriesChart
+            ariaLabel="Ventas"
+            series={[{ id: "sales", name: "Ventas", points: STORY_MONTH }]}
+          />,
+        );
+        await waitForLines(1);
+
+        await waitFor(() =>
+          expect(peakKeys()).toEqual(["2024-03-07", "2024-03-21", "2024-03-28"]),
+        );
+      },
+    );
+
+    it("en móvil las etiquetas de pico no se pisan entre sí ni se salen del área", async () => {
+      containerWidth = 326;
+      render(
+        <TimeSeriesChart
+          ariaLabel="Ventas"
+          series={[{ id: "sales", name: "Ventas", points: STORY_MONTH }]}
+        />,
+      );
+      await waitForLines(1);
+      await waitFor(() => expect(peakKeys()).toHaveLength(3));
+
+      const boxes = [...getChart().querySelectorAll("[data-peak] text")].map((text) => {
+        const left = Number(text.getAttribute("x"));
+
+        return { left, right: left + (text.textContent ?? "").length * 11 * 0.6 };
+      });
+
+      expect(boxes.length).toBeGreaterThan(0);
+      boxes.forEach((box, index) => {
+        expect(box.left).toBeGreaterThanOrEqual(52);
+        expect(box.right).toBeLessThanOrEqual(326 - 12);
+        if (index > 0) {
+          expect(box.left).toBeGreaterThanOrEqual(boxes[index - 1].right);
+        }
+      });
+    });
+
+    it("el último punto no es pico si es un punto bajo, aunque suba respecto al anterior", async () => {
+      render(
+        <TimeSeriesChart
+          ariaLabel="Ventas"
+          series={[{ ...SALES, points: makePoints([10, 300, 20, 280, 40, 30, 90]) }]}
+        />,
+      );
+      await waitForLines(1);
+
+      await waitFor(() => expect(peakLabels()).toEqual(["ref 300.00", "ref 280.00"]));
+    });
+
     it("un solo punto: se dibuja el punto, sin NaN", async () => {
       render(
         <TimeSeriesChart ariaLabel="Ventas" series={[{ ...SALES, points: makePoints([45]) }]} />,
@@ -270,8 +348,8 @@ describe("TimeSeriesChart", () => {
       expectCleanRender();
     });
 
-    it.each([30, 730])(
-      "en 390 px las etiquetas del eje X no se solapan con %i puntos",
+    it.each([30, 90])(
+      "en 390 px las etiquetas del eje X no se solapan con %i puntos del mismo año",
       async (length) => {
         render(
           <TimeSeriesChart
@@ -299,6 +377,36 @@ describe("TimeSeriesChart", () => {
         });
       },
     );
+
+    it("rango que cruza de año: los ticks del eje X llevan año y no se solapan", async () => {
+      // 730 días desde el 01/10/2026: llega a 2028.
+      render(
+        <TimeSeriesChart
+          ariaLabel="Ventas"
+          series={[
+            { ...SALES, points: makePoints(Array.from({ length: 730 }, (_, index) => index + 1)) },
+          ]}
+        />,
+      );
+      await waitForLines(1);
+
+      const ticks = [
+        ...getChart().querySelectorAll(
+          ".recharts-xAxis-tick-labels .recharts-cartesian-axis-tick-value",
+        ),
+      ];
+      const centers = ticks.map((tick) => Number(tick.getAttribute("x")));
+
+      expect(ticks.length).toBeGreaterThan(1);
+      expect(ticks[0].textContent).toBe("01/10/26");
+      for (const tick of ticks) {
+        expect(tick.textContent).toMatch(/^\d{2}\/\d{2}\/\d{2}$/);
+      }
+      // Cada etiqueta «dd/mm/aa» ocupa 8 × 6,6 px en la medición simulada.
+      centers.slice(1).forEach((center, index) => {
+        expect(center - centers[index]).toBeGreaterThanOrEqual(8 * 6.6);
+      });
+    });
 
     it("markerLimit decide cuándo se quitan los marcadores", async () => {
       render(<TimeSeriesChart ariaLabel="Ventas" markerLimit={5} series={[SALES]} />);

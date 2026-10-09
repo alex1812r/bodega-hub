@@ -82,7 +82,7 @@ export const SevenDays: Story = {
   },
 };
 
-/** 30 días: el eje X reduce etiquetas y los picos mantienen separación. */
+/** 30 días: el eje X reduce etiquetas; los 3 picos son los mismos a cualquier ancho. */
 export const ThirtyDays: Story = {
   args: { series: [salesSeries(30, "2024-03-02")] },
 };
@@ -205,7 +205,7 @@ export const FiveSeriesDark: Story = {
   globals: { theme: "dark" },
 };
 
-/** Rango de 2 años (730 puntos): sin marcador por punto, solo los picos. */
+/** Rango de 2 años (730 puntos): sin marcador por punto, solo los picos; el eje X lleva el año. */
 export const TwoYears: Story = {
   args: { series: [salesSeries(730, "2022-04-02")] },
   play: async ({ canvasElement }) => {

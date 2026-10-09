@@ -10,7 +10,10 @@ export type TimeSeriesPoint = {
    * `2026-10`).
    */
   key: string;
-  /** Etiqueta corta del eje X. Si falta: `dd/mm` para un día, o la propia `key`. */
+  /**
+   * Etiqueta corta del eje X. Si falta: `dd/mm` para un día (`dd/mm/aa` cuando
+   * el rango cruza de año), o la propia `key`.
+   */
   label?: string;
   /** Título del tooltip. Si falta: la fecha larga en español para un día, o `label`. */
   title?: string;
@@ -60,7 +63,9 @@ function parseIsoDay(key: string) {
   const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
   const date = new Date(Date.UTC(year, month - 1, day));
 
-  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? { date, day, month } : null;
+  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+    ? { date, day, month, year }
+    : null;
 }
 
 // La clave ya es el día de calendario: se formatea en UTC para no desplazarla.
@@ -72,8 +77,14 @@ const dayTitleFormatter = new Intl.DateTimeFormat("es-VE", {
   year: "numeric",
 });
 
-/** Etiqueta corta del eje X: `2026-10-08` → `08/10`. */
-export function formatPointLabel(point: Pick<TimeSeriesPoint, "key" | "label">) {
+/**
+ * Etiqueta corta del eje X: `2026-10-08` → `08/10`, o `08/10/26` con
+ * `withYear` (rangos que cruzan de año, donde `dd/mm` sería ambiguo).
+ */
+export function formatPointLabel(
+  point: Pick<TimeSeriesPoint, "key" | "label">,
+  { withYear = false }: { withYear?: boolean } = {},
+) {
   if (point.label) {
     return point.label;
   }
@@ -84,7 +95,26 @@ export function formatPointLabel(point: Pick<TimeSeriesPoint, "key" | "label">) 
     return point.key;
   }
 
-  return `${String(parsed.day).padStart(2, "0")}/${String(parsed.month).padStart(2, "0")}`;
+  const dayMonth = `${String(parsed.day).padStart(2, "0")}/${String(parsed.month).padStart(2, "0")}`;
+
+  return withYear ? `${dayMonth}/${String(parsed.year % 100).padStart(2, "0")}` : dayMonth;
+}
+
+/** Los días del eje (puntos sin etiqueta propia) caen en más de un año. */
+function spansSeveralYears(series: readonly TimeSeriesSeries[]) {
+  const years = new Set<number>();
+
+  for (const item of series) {
+    for (const point of item.points) {
+      const parsed = point.label ? null : parseIsoDay(point.key);
+
+      if (parsed) {
+        years.add(parsed.year);
+      }
+    }
+  }
+
+  return years.size > 1;
 }
 
 /** Título del tooltip: `2026-10-08` → `jueves, 8 de octubre de 2026`. */
@@ -124,10 +154,12 @@ export function hasVesValues(series: readonly TimeSeriesSeries[]) {
 /**
  * Filas del gráfico. El eje X sigue el orden de la primera serie; las claves
  * que solo traen las demás se añaden al final. El periodo anterior se alinea
- * por posición con su serie, no por clave.
+ * por posición con su serie, no por clave. Si los días cruzan de año, sus
+ * etiquetas llevan el año.
  */
 export function buildRows(series: readonly TimeSeriesSeries[]): TimeSeriesRow[] {
   const rows = new Map<string, TimeSeriesRow>();
+  const withYear = spansSeveralYears(series);
 
   for (const item of series) {
     item.points.forEach((point, index) => {
@@ -137,7 +169,7 @@ export function buildRows(series: readonly TimeSeriesSeries[]): TimeSeriesRow[] 
         row = {
           cells: new Map(),
           key: point.key,
-          label: formatPointLabel(point),
+          label: formatPointLabel(point, { withYear }),
           title: formatPointTitle(point),
         };
         rows.set(point.key, row);

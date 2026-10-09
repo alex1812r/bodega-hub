@@ -10,6 +10,8 @@ import {
   ResponsiveContainer,
   Tooltip,
   usePlotArea,
+  useXAxisScale,
+  useYAxisScale,
   XAxis,
   YAxis,
 } from "recharts";
@@ -37,7 +39,7 @@ import {
   type TimeSeriesRow,
   type TimeSeriesSeries,
 } from "./chartData";
-import { findPeaks, peakMinGap, placePeakLabel } from "./peaks";
+import { findPeaks, layoutPeakLabels } from "./peaks";
 import { computeYScale, formatAxisValue } from "./scale";
 import { TimeSeriesTooltip } from "./TimeSeriesTooltip";
 
@@ -99,6 +101,8 @@ const DEFAULT_PEAK_COUNT = 3;
 const DEFAULT_MARKER_LIMIT = 60;
 /** Ancho aproximado de un carácter de etiqueta respecto al tamaño de letra. */
 const LABEL_CHAR_RATIO = 0.6;
+/** Separación horizontal mínima entre dos etiquetas de pico, en px. */
+const PEAK_LABEL_GAP = 4;
 
 const CURRENCY_OPTIONS: { label: string; value: TimeSeriesCurrency }[] = [
   { label: "REF", value: "ref" },
@@ -190,81 +194,93 @@ type PeakMarkersProps = {
 
 /**
  * Marcador destacado en los picos de cada serie y, con una sola serie, la
- * etiqueta con su valor. Se monta dentro del `LineChart` porque necesita el
- * ancho real del área de dibujo: de él sale cuánto hay que separar los picos
- * para que sus etiquetas no se pisen y dónde deja de caber una etiqueta.
+ * etiqueta con su valor. Qué puntos son pico sale solo de los datos. Se monta
+ * dentro del `LineChart` porque colocar las etiquetas sí necesita las escalas y
+ * el área de dibujo reales: en un gráfico estrecho se apartan para no pisarse
+ * y, si no caben, el pico más bajo se queda solo con su marcador.
  */
 function PeakMarkers({ currency, peakCount, rows, series }: PeakMarkersProps) {
   const plot = usePlotArea();
+  const xScale = useXAxisScale();
+  const yScale = useYAxisScale();
 
-  if (!plot || peakCount <= 0) {
+  if (!plot || !xScale || !yScale || peakCount <= 0) {
     return null;
   }
 
   const withLabels = series.length === 1;
 
   return series.flatMap((item) => {
-    const labels = item.values.map((value) => (value === null ? "" : formatMoney(value, currency)));
-    const widestLabel =
-      Math.max(0, ...labels.map((label) => label.length)) * CHART_FONT_SIZE * LABEL_CHAR_RATIO;
-    const minGap = withLabels ? peakMinGap(rows.length, plot.width, widestLabel + 8) : 1;
-
-    return findPeaks(item.values, peakCount, minGap).flatMap((index) => {
+    const peaks = findPeaks(item.values, peakCount).flatMap((index) => {
       const value = item.values[index];
+      const cx = xScale(rows[index].key);
+      const cy = value === null ? undefined : yScale(value);
 
-      if (value === null) {
+      if (value === null || cx === undefined || cy === undefined) {
         return [];
       }
 
-      const label = labels[index];
+      const label = formatMoney(value, currency);
 
       return [
+        {
+          cx,
+          cy,
+          key: rows[index].key,
+          label,
+          textWidth: label.length * CHART_FONT_SIZE * LABEL_CHAR_RATIO,
+          value,
+        },
+      ];
+    });
+    const labelPositions = withLabels
+      ? layoutPeakLabels(peaks, {
+          fontSize: CHART_FONT_SIZE,
+          gap: PEAK_LABEL_GAP,
+          plot,
+          radius: CHART_SERIES_STYLE.peakDotRadius,
+        })
+      : [];
+
+    return peaks.map((peak, order) => {
+      const position = labelPositions[order] ?? null;
+
+      return (
         <ReferenceDot
           ifOverflow="extendDomain"
-          key={`${item.id}:${rows[index].key}`}
-          shape={({ cx = 0, cy = 0 }) => {
-            const position = placePeakLabel({
-              cx: Number(cx),
-              cy: Number(cy),
-              fontSize: CHART_FONT_SIZE,
-              plot,
-              radius: CHART_SERIES_STYLE.peakDotRadius,
-              textWidth: label.length * CHART_FONT_SIZE * LABEL_CHAR_RATIO,
-            });
-
-            return (
-              <g data-peak={rows[index].key}>
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  fill={item.color}
-                  r={CHART_SERIES_STYLE.peakDotRadius}
+          key={`${item.id}:${peak.key}`}
+          shape={({ cx = peak.cx, cy = peak.cy }) => (
+            <g data-peak={peak.key}>
+              <circle
+                cx={cx}
+                cy={cy}
+                fill={item.color}
+                r={CHART_SERIES_STYLE.peakDotRadius}
+                stroke={CHART_COLORS.markerOutline}
+                strokeWidth={2}
+              />
+              {position ? (
+                <text
+                  fill={CHART_COLORS.label}
+                  fontSize={CHART_FONT_SIZE}
+                  fontWeight={600}
+                  paintOrder="stroke"
                   stroke={CHART_COLORS.markerOutline}
-                  strokeWidth={2}
-                />
-                {withLabels ? (
-                  <text
-                    fill={CHART_COLORS.label}
-                    fontSize={CHART_FONT_SIZE}
-                    fontWeight={600}
-                    paintOrder="stroke"
-                    stroke={CHART_COLORS.markerOutline}
-                    strokeLinejoin="round"
-                    strokeWidth={3}
-                    textAnchor="start"
-                    x={position.x}
-                    y={position.y}
-                  >
-                    {label}
-                  </text>
-                ) : null}
-              </g>
-            );
-          }}
-          x={rows[index].key}
-          y={value}
-        />,
-      ];
+                  strokeLinejoin="round"
+                  strokeWidth={3}
+                  textAnchor="start"
+                  x={position.x}
+                  y={position.y}
+                >
+                  {peak.label}
+                </text>
+              ) : null}
+            </g>
+          )}
+          x={peak.key}
+          y={peak.value}
+        />
+      );
     });
   });
 }

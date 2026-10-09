@@ -44,6 +44,14 @@ describe("formatPointLabel / formatPointTitle", () => {
     expect(formatPointTitle({ key: "2026-10", label: "Oct 2026" })).toBe("Oct 2026");
   });
 
+  it("con año: `dd/mm/aa`, para rangos que cruzan de año", () => {
+    expect(formatPointLabel({ key: "2025-03-09" }, { withYear: true })).toBe("09/03/25");
+    expect(formatPointLabel({ key: "2026-W41", label: "Sem 41" }, { withYear: true })).toBe(
+      "Sem 41",
+    );
+    expect(formatPointLabel({ key: "2026-10" }, { withYear: true })).toBe("2026-10");
+  });
+
   it("una clave que no es un día real se muestra como llega", () => {
     expect(formatPointLabel({ key: "2026-02-31" })).toBe("2026-02-31");
     expect(formatPointTitle({ key: "2026-02-31" })).toBe("2026-02-31");
@@ -86,6 +94,35 @@ describe("buildRows", () => {
     ]);
     expect(rows[1].label).toBe("07/10");
     expect(rows[1].title).toBe("miércoles, 7 de octubre de 2026");
+  });
+
+  it("si los días cruzan de año, la etiqueta del eje lleva el año (REP-F1)", () => {
+    const rows = buildRows([
+      {
+        id: "sales",
+        name: "Ventas",
+        points: [
+          { key: "2025-12-31", valueRef: 1 },
+          { key: "2026-01-01", valueRef: 2 },
+          { key: "2026-W01", label: "Sem 1", valueRef: 3 },
+        ],
+      },
+    ]);
+
+    expect(rows.map((row) => row.label)).toEqual(["31/12/25", "01/01/26", "Sem 1"]);
+  });
+
+  it("el periodo anterior de otro año no pone año en el eje", () => {
+    const rows = buildRows([
+      {
+        id: "sales",
+        name: "Ventas",
+        points: [{ key: "2026-01-01", valueRef: 2 }],
+        previousPoints: [{ key: "2025-12-31", valueRef: 1 }],
+      },
+    ]);
+
+    expect(rows[0].label).toBe("01/01");
   });
 
   it("un periodo anterior más corto deja sin comparar los últimos puntos", () => {

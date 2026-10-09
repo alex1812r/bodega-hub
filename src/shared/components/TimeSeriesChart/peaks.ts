@@ -51,49 +51,58 @@ export function findLocalMaxima(values: readonly SeriesValue[]): number[] {
 }
 
 /**
- * Los `count` máximos locales más altos, devueltos en orden de aparición.
- * `count` ≤ 0 los apaga. Con `minGap` > 1 se descartan los que quedan a menos
- * de `minGap` posiciones de otro más alto, para que sus etiquetas no se pisen.
- * A igual valor gana el que aparece antes.
+ * Un extremo (de la serie o de un tramo con datos) solo tiene un vecino:
+ * superarlo no basta para ser un pico (el último día de un mes flojo «sube»
+ * respecto al anterior). Cuenta solo si además está en la mitad alta del rango
+ * de valores de la serie. `index` es el primer punto de su meseta.
  */
-export function findPeaks(values: readonly SeriesValue[], count: number, minGap = 1): number[] {
+function isRelevantMaximum(values: readonly SeriesValue[], index: number) {
+  const value = readValue(values, index);
+  let end = index;
+
+  while (end + 1 < values.length && readValue(values, end + 1) === value) {
+    end += 1;
+  }
+
+  if (readValue(values, index - 1) !== null && readValue(values, end + 1) !== null) {
+    return true;
+  }
+
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+
+  for (let position = 0; position < values.length; position += 1) {
+    const other = readValue(values, position);
+
+    if (other !== null) {
+      min = Math.min(min, other);
+      max = Math.max(max, other);
+    }
+  }
+
+  return value !== null && value >= (min + max) / 2;
+}
+
+/**
+ * Los `count` máximos locales más altos, devueltos en orden de aparición.
+ * `count` ≤ 0 los apaga. A igual valor gana el que aparece antes.
+ *
+ * Depende solo de los datos, nunca del ancho del gráfico: si las etiquetas de
+ * dos picos no caben, eso lo resuelve `layoutPeakLabels`.
+ */
+export function findPeaks(values: readonly SeriesValue[], count: number): number[] {
   if (!Number.isFinite(count) || count <= 0) {
     return [];
   }
 
-  const limit = Math.floor(count);
-  const gap = Number.isFinite(minGap) ? Math.max(1, Math.ceil(minGap)) : 1;
-  const candidates = findLocalMaxima(values).sort(
-    (first, second) =>
-      (readValue(values, second) ?? 0) - (readValue(values, first) ?? 0) || first - second,
-  );
-  const selected: number[] = [];
-
-  for (const candidate of candidates) {
-    if (selected.length >= limit) {
-      break;
-    }
-
-    if (selected.every((index) => Math.abs(index - candidate) >= gap)) {
-      selected.push(candidate);
-    }
-  }
-
-  return selected.sort((first, second) => first - second);
-}
-
-/**
- * Separación mínima entre picos, en puntos, para que dos etiquetas de
- * `labelWidth` px no se solapen en un área de `plotWidth` px.
- */
-export function peakMinGap(pointCount: number, plotWidth: number, labelWidth: number) {
-  if (pointCount <= 1 || !(plotWidth > 0) || !(labelWidth > 0)) {
-    return 1;
-  }
-
-  const step = plotWidth / (pointCount - 1);
-
-  return Math.max(1, Math.ceil(labelWidth / step));
+  return findLocalMaxima(values)
+    .filter((index) => isRelevantMaximum(values, index))
+    .sort(
+      (first, second) =>
+        (readValue(values, second) ?? 0) - (readValue(values, first) ?? 0) || first - second,
+    )
+    .slice(0, Math.floor(count))
+    .sort((first, second) => first - second);
 }
 
 type PlotBox = { x: number; y: number; width: number; height: number };
@@ -121,4 +130,104 @@ export function placePeakLabel({ cx, cy, fontSize, plot, radius, textWidth }: Pe
   const y = above - fontSize < plot.y ? cy + radius + fontSize + 2 : above;
 
   return { x, y };
+}
+
+export type PeakLabelRequest = {
+  /** Centro del marcador. */
+  cx: number;
+  cy: number;
+  textWidth: number;
+  /** Valor del pico: si dos etiquetas no caben, se queda la del más alto. */
+  value: number;
+};
+
+type PeakLabelLayoutOptions = {
+  fontSize: number;
+  /** Separación horizontal mínima entre dos etiquetas, en px. */
+  gap: number;
+  plot: PlotBox;
+  /** Radio del marcador. */
+  radius: number;
+};
+
+type LabelSlot = {
+  /** Posición preferida (centrada) y límites entre los que la etiqueta sigue sobre su marcador. */
+  preferred: number;
+  min: number;
+  max: number;
+  width: number;
+  y: number;
+  left: number;
+};
+
+/**
+ * Posición de las etiquetas de los picos de una serie, dados en orden de
+ * aparición; `null` = ese pico se queda solo con su marcador.
+ *
+ * Dos etiquetas que se pisarían se apartan hacia los lados, sin dejar de cubrir
+ * su marcador ni salirse del área. Si aun así no caben, pierde la etiqueta el
+ * pico más bajo. Qué puntos son pico no cambia.
+ */
+export function layoutPeakLabels(
+  peaks: readonly PeakLabelRequest[],
+  { fontSize, gap, plot, radius }: PeakLabelLayoutOptions,
+): ({ x: number; y: number } | null)[] {
+  const slots: LabelSlot[] = peaks.map(({ cx, cy, textWidth }) => {
+    const { x, y } = placePeakLabel({ cx, cy, fontSize, plot, radius, textWidth });
+    const maxLeft = Math.max(plot.x, plot.x + plot.width - textWidth);
+    const clamp = (left: number) => Math.min(Math.max(left, plot.x), maxLeft);
+
+    return {
+      left: x,
+      max: Math.max(x, clamp(cx - radius)),
+      min: Math.min(x, clamp(cx + radius - textWidth)),
+      preferred: x,
+      width: textWidth,
+      y,
+    };
+  });
+  const sameRow = (first: LabelSlot, second: LabelSlot) => Math.abs(first.y - second.y) < fontSize;
+  const collide = (first: LabelSlot, second: LabelSlot) =>
+    sameRow(first, second) &&
+    first.left < second.left + second.width + gap &&
+    second.left < first.left + first.width + gap;
+  let shown = slots.map((_, index) => index).sort((a, b) => peaks[a].cx - peaks[b].cx);
+
+  while (shown.length > 0) {
+    // De izquierda a derecha cada etiqueta se aparta de la anterior; de vuelta,
+    // la anterior cede lo que a la siguiente le faltó.
+    shown.forEach((index, order) => {
+      const slot = slots[index];
+      const previous = order > 0 ? slots[shown[order - 1]] : null;
+      const floor =
+        previous && sameRow(previous, slot) ? previous.left + previous.width + gap : slot.min;
+
+      slot.left = Math.min(slot.max, Math.max(slot.preferred, floor));
+    });
+
+    for (let order = shown.length - 2; order >= 0; order -= 1) {
+      const slot = slots[shown[order]];
+      const next = slots[shown[order + 1]];
+
+      if (sameRow(slot, next)) {
+        slot.left = Math.max(slot.min, Math.min(slot.left, next.left - gap - slot.width));
+      }
+    }
+
+    const colliding = shown.filter((index) =>
+      shown.some((other) => other !== index && collide(slots[index], slots[other])),
+    );
+
+    if (colliding.length === 0) {
+      break;
+    }
+
+    const lowest = colliding.reduce((worst, index) =>
+      peaks[index].value < peaks[worst].value ? index : worst,
+    );
+
+    shown = shown.filter((index) => index !== lowest);
+  }
+
+  return slots.map((slot, index) => (shown.includes(index) ? { x: slot.left, y: slot.y } : null));
 }
