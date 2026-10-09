@@ -4,12 +4,13 @@ import type { PurchaseListRow, PurchasesFilters } from "../hooks/usePurchases";
 
 export type PurchasesExportFilters = Pick<
   PurchasesFilters,
-  "from" | "search" | "status" | "supplierId" | "to"
+  "from" | "pendingBalance" | "search" | "status" | "supplierId" | "to"
 >;
 
 function pickExportQuery(filters: PurchasesExportFilters) {
   return {
     from: filters.from,
+    pendingBalance: filters.pendingBalance,
     search: filters.search,
     status: filters.status,
     supplierId: filters.supplierId,

@@ -24,15 +24,11 @@ type PurchaseDetailHeaderCardProps = {
 
   isExportingPdf?: boolean;
 
-  isReceiving?: boolean;
-
   isReturning?: boolean;
 
   onCancel: () => void | Promise<void>;
 
   onExportPdf: () => void | Promise<void>;
-
-  onReceive: () => void | Promise<void>;
 
   onReturn: () => void | Promise<void>;
 
@@ -54,15 +50,11 @@ export function PurchaseDetailHeaderCard({
 
   isExportingPdf = false,
 
-  isReceiving = false,
-
   isReturning = false,
 
   onCancel,
 
   onExportPdf,
-
-  onReceive,
 
   onReturn,
 
@@ -112,15 +104,11 @@ export function PurchaseDetailHeaderCard({
 
           isExportingPdf={isExportingPdf}
 
-          isReceiving={isReceiving}
-
           isReturning={isReturning}
 
           onCancel={onCancel}
 
           onExportPdf={onExportPdf}
-
-          onReceive={onReceive}
 
           onReturn={onReturn}
 

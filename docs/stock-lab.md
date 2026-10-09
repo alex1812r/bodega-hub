@@ -268,6 +268,25 @@ reproducido), `finding` (el stock queda bien, pero hay una carencia), `error`
   `os.20260830b_remove.fix_by_api` comprueban ese rechazo y después devuelven
   por el camino ligado, verificando el tope (vendido/recibido − ya devuelto:
   pasarse es 409, el resto exacto pasa, una unidad más es 409).
+- **Compra de un producto inactivo** (COM-15, `20261010b`): las celdas
+  `inactive.purchase_received_*` exigen el rechazo (400, stock y libro
+  intactos); ya no son `finding`. `inactive.purchase_ordered_then_receive`
+  pide con el producto ACTIVO, lo desactiva, exige que la recepción se acepte
+  (entra una vez) y que un pedido nuevo se rechace. El resto de celdas
+  `inactive.purchase_*` (recibir dos veces, cancelar, devolver) compran con el
+  producto activo y lo desactivan justo antes del paso bajo prueba. Los ajustes
+  sobre un inactivo (`inactive.adjust_in` / `adjust_out`) siguen siendo
+  `finding`.
+- **Compra con desarmar al recibir** (COM-14, `20261010d`): los casos
+  `pack.receive_disassemble_*` (`scenarios/receive-disassemble.ts`) corren con
+  `--suite hypotheses` y no usan el BFF (RPC por PostgREST como `lab-almacen`).
+  Exigen: pedido con línea marcada → recibir deja el empaque neto 0 (`compra`
+  +N, `conversion_salida` −N) y los componentes con lo de la receta; la compra
+  que nace recibida hace lo mismo en una llamada; recepciones con desarme,
+  recepciones normales y aperturas a mano del mismo empaque a la vez entran
+  todas, sin deadlock; y cinco envíos de la recepción con la MISMA clave dejan
+  una recepción y una apertura (otra clave después: 409). `--only` casa por id
+  completo: `--only pack.receive_disassemble_order,pack.receive_disassemble_parallel`.
 - **Doble envío de compra, ajuste y conversión**: `h08.dg5_double_submit` manda
   la MISMA `clientRequestId` en los dos POST y exige una sola operación (mismo
   id, un movimiento). `h08.dg5_double_submit_no_key` repite el envío sin clave:

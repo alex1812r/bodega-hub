@@ -4,11 +4,11 @@ import { paginateList } from "@/lib/api/pagination";
 import {
   mockContacts,
   mockPayments,
-  mockPurchases,
   mockSales,
   type PaymentMethod,
   type PaymentMock,
 } from "@/shared/mocks/erp-data";
+import { findMockPurchase } from "@/modules/purchases/services/purchases.mock-server";
 import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
@@ -16,6 +16,16 @@ import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusiness
 import type { PaymentDocumentBalance } from "../payment-details/types";
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
 import { resolvePaymentRelatedDocument } from "../utils/resolvePaymentRelatedDocument";
+
+/**
+ * La compra de un pago, de la semilla o creada en esta ejecución (`createPurchase`
+ * del mock): `resolvePaymentRelatedDocument` la busca en esta lista.
+ */
+function relatedPurchases(payment: Pick<PaymentMock, "purchaseId">) {
+  const purchase = payment.purchaseId ? findMockPurchase(payment.purchaseId) : undefined;
+
+  return purchase ? [purchase] : [];
+}
 
 /** Desglose de billetes por moneda: `{"USD":{"1":3}}`. */
 export type PaymentDenominations = Partial<Record<"USD" | "VES", Record<string, number>>>;
@@ -100,7 +110,7 @@ export function listPayments(
     .map((payment) => ({
       ...payment,
       contact: mockContacts.find((contact) => contact.id === payment.contactId),
-      relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, mockPurchases),
+      relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, relatedPurchases(payment)),
     }));
 
   return paginateList(items, searchParams);
@@ -126,7 +136,7 @@ function resolveMockDocumentBalance(
   }
 
   if (payment.purchaseId) {
-    const purchase = mockPurchases.find((candidate) => candidate.id === payment.purchaseId);
+    const purchase = findMockPurchase(payment.purchaseId);
 
     if (!purchase) {
       return undefined;
@@ -161,7 +171,7 @@ export function getPaymentById(id: string, storeId: string) {
     contact: mockContacts.find((contact) => contact.id === payment.contactId),
     documentBalance,
     pendingBalanceVes: documentBalance?.pendingVes,
-    relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, mockPurchases),
+    relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, relatedPurchases(payment)),
   };
 }
 
@@ -258,9 +268,7 @@ function registerMockPayment(input: PaymentInput, storeId: string) {
   const sale = input.saleId
     ? mockSales.find((candidate) => candidate.id === input.saleId)
     : undefined;
-  const purchase = input.purchaseId
-    ? mockPurchases.find((candidate) => candidate.id === input.purchaseId)
-    : undefined;
+  const purchase = input.purchaseId ? findMockPurchase(input.purchaseId) : undefined;
 
   if (sale) {
     assertMockStoreResource(sale, storeId, "Venta no encontrada.");
@@ -341,7 +349,7 @@ function registerMockPayment(input: PaymentInput, storeId: string) {
     contact: mockContacts.find((contact) => contact.id === payment.contactId),
     documentBalance: resolveMockDocumentBalance(payment),
     pendingBalanceVes,
-    relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, mockPurchases),
+    relatedDocument: resolvePaymentRelatedDocument(payment, mockSales, relatedPurchases(payment)),
   };
 }
 
@@ -377,7 +385,7 @@ export function cancelPayment(id: string, storeId: string) {
   }
 
   if (payment.purchaseId) {
-    const purchase = mockPurchases.find((candidate) => candidate.id === payment.purchaseId);
+    const purchase = findMockPurchase(payment.purchaseId);
     assertMockStoreResource(purchase, storeId, "Compra no encontrada.");
 
     if (purchase.status === "cancelado" || purchase.status === "devuelto") {

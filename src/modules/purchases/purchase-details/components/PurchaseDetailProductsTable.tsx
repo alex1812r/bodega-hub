@@ -4,20 +4,25 @@ import { Package } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
-import type { PurchaseItemMock, ProductMock } from "@/shared/mocks/erp-data";
+import type { PurchaseItemMock, ProductMock, PurchaseStatus } from "@/shared/mocks/erp-data";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { cn } from "@/shared/utils/cn";
 
+import type { PurchaseItemDisassemble } from "../../services/purchaseDisassemble";
+import { getPurchaseLineDisassembleLabel } from "../utils/purchaseDetailLabels";
 import { PurchaseDetailSectionCard } from "./PurchaseDetailSectionCard";
 
-export type PurchaseDetailItemRow = PurchaseItemMock & {
-  product?: Pick<ProductMock, "imageUrl" | "name" | "sku">;
-};
+export type PurchaseDetailItemRow = PurchaseItemMock &
+  Pick<PurchaseItemDisassemble, "disassembled" | "disassembleOnReceive"> & {
+    product?: Pick<ProductMock, "imageUrl" | "name" | "sku">;
+  };
 
 type PurchaseDetailProductsTableProps = {
   discountRef: number;
   discountVes: number;
   items: PurchaseDetailItemRow[];
+  /** Estado de la compra: decide el texto de desarme de cada línea (COM-14). */
+  status: PurchaseStatus;
   taxRef: number;
   taxVes: number;
   totalRef: number;
@@ -115,6 +120,7 @@ export function PurchaseDetailProductsTable({
   discountRef,
   discountVes,
   items,
+  status,
   taxRef,
   taxVes,
   totalRef,
@@ -158,6 +164,7 @@ export function PurchaseDetailProductsTable({
                 const withTaxRef = Math.round((item.subtotalRef + taxRefLine) * 100) / 100;
                 const withTaxVes = Math.round((item.subtotalVes + taxVesLine) * 100) / 100;
                 const taxRate = item.taxRate ?? 0;
+                const disassembleLabel = getPurchaseLineDisassembleLabel(item, status);
                 const unitWithTaxRef =
                   Math.round(item.unitCostRef * (1 + taxRate / 100) * 100) / 100;
                 const unitWithTaxVes =
@@ -207,6 +214,9 @@ export function PurchaseDetailProductsTable({
                             <p className="text-xs text-on-surface-variant">
                               IVA {taxRate}%
                             </p>
+                          ) : null}
+                          {disassembleLabel ? (
+                            <p className="text-xs text-on-surface-variant">{disassembleLabel}</p>
                           ) : null}
                         </div>
                       </div>

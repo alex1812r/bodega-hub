@@ -1,11 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import {
   useCancelPurchase,
   useCreatePurchase,
   usePurchase,
+  useReceivePurchase,
   usePurchases,
   useReturnPurchase,
   useSupplierProducts,
@@ -163,5 +164,73 @@ describe("purchase hooks", () => {
       "/api/purchases/purchase-001/return",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+});
+
+// COM-F10 · F-A5: sin conexión la mutación quedaba en pausa («Confirmando...» sin fin) y
+// se enviaba sola al volver la red.
+describe("purchase mutations sin conexión (COM-F10 · F-A5)", () => {
+  const fetchMock = jest.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    global.fetch = fetchMock;
+    onlineManager.setOnline(false);
+  });
+
+  afterEach(() => {
+    onlineManager.setOnline(true);
+  });
+
+  it("crear una compra sin red falla enseguida, no queda en pausa ni se envía sola al volver", async () => {
+    const { result } = renderHook(() => useCreatePurchase(), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.mutate({
+        discountRef: 0,
+        discountVes: 0,
+        items: [],
+        refRateVes: 510,
+        subtotalRef: 0,
+        subtotalVes: 0,
+        supplierId: "cont-supplier",
+        taxRef: 0,
+        taxVes: 0,
+      });
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isPaused).toBe(false);
+    expect(result.current.error).toBeInstanceOf(TypeError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    act(() => onlineManager.setOnline(true));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("recibir una compra sin red falla enseguida: el modal de recepción no queda colgado", async () => {
+    const { result } = renderHook(() => useReceivePurchase("purchase-002"), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.mutate({ clientRequestId: "clave-1" });
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isPaused).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    act(() => onlineManager.setOnline(true));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

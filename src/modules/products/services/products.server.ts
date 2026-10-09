@@ -6,6 +6,7 @@ import { parsePagination } from "@/lib/api/pagination";
 import {
   mapProduct,
   type ProductPriceHistoryRow,
+  type ProductPriceReviewRow,
   type ProductRow,
 } from "@/lib/supabase/mappers";
 import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
@@ -272,6 +273,34 @@ export function isProductSearchUnsearchable(searchParams: URLSearchParams) {
   );
 }
 
+/**
+ * Filas de la cola "Por revisar" de los productos de UNA página, por id de
+ * producto. Embebida en la consulta paginada, la relación calculada
+ * `price_review` se evalúa por cada producto que casa con los filtros, antes
+ * del `LIMIT` (≈ 1 s con 3.600 coincidencias); aquí solo para los de la página.
+ */
+async function loadPagePriceReviews(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  productIds: string[],
+  storeId: string,
+) {
+  if (productIds.length === 0) {
+    return new Map<string, ProductPriceReviewRow>();
+  }
+
+  const { data, error } = await supabase
+    .from("products_price_review")
+    .select(PRICE_REVIEW_COLUMNS)
+    .eq("store_id", storeId)
+    .in("product_id", productIds);
+
+  throwIfSupabaseError(error);
+
+  return new Map(
+    ((data ?? []) as unknown as ProductPriceReviewRow[]).map((row) => [row.product_id, row]),
+  );
+}
+
 export async function listProducts(searchParams: URLSearchParams, storeId: string) {
   assertListFilterParams(searchParams, PRODUCT_LIST_EXACT_FILTERS);
 
@@ -283,7 +312,10 @@ export async function listProducts(searchParams: URLSearchParams, storeId: strin
 
   const supabase = await createRouteSupabaseClient();
   const packLink = parsePackLinkFilter(searchParams);
-  const baseSelect = isPriceReviewFilterOn(searchParams) ? productReviewOnlySelect : productSelect;
+  // Solo `review=1` necesita la relación en la consulta (es su filtro). Sin él,
+  // la página se pide sin la relación y la cola se resuelve para sus productos.
+  const reviewOnly = isPriceReviewFilterOn(searchParams);
+  const baseSelect = reviewOnly ? productReviewOnlySelect : productRowSelect;
 
   // Los cortes del semáforo son los de la tienda: una sola lectura por petición
   // y solo cuando el filtro los usa ("none" y sin filtro no los necesitan).
@@ -332,8 +364,19 @@ export async function listProducts(searchParams: URLSearchParams, storeId: strin
 
   throwIfSupabaseError(error);
 
+  const rows = (data ?? []) as unknown as ProductRow[];
+  const pageReviews = reviewOnly
+    ? null
+    : await loadPagePriceReviews(
+        supabase,
+        rows.map((row) => row.id),
+        storeId,
+      );
+
   return {
-    items: (data ?? []).map((row) => mapProduct(row as unknown as ProductRow)),
+    items: rows.map((row) =>
+      mapProduct(pageReviews ? { ...row, price_review: pageReviews.get(row.id) ?? null } : row),
+    ),
     limit,
     skip,
     total: count ?? 0,

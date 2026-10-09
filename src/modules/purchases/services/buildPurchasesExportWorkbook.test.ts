@@ -60,4 +60,31 @@ describe("buildPurchasesExportWorkbook", () => {
     expect(workbook.getWorksheet("Compras")?.getCell("C6").value).toBe("Distribuidora ACME");
     expect(workbook.getWorksheet("Compras")?.getCell("E6").value).toBe("ref 120.50");
   });
+
+  // COM-08: la exportación lleva lo pagado y el saldo, y dice si solo hay compras con saldo.
+  it("adds the paid and balance columns and notes the pending balance filter", async () => {
+    const buffer = await buildPurchasesExportWorkbook(
+      [
+        { ...sampleRow, paidRef: 20.5 },
+        { ...sampleRow, id: "purchase-2", paidRef: 10, status: "cancelado" },
+      ],
+      {
+        exportedAt: "2026-05-20T12:00:00.000Z",
+        filters: { pendingBalance: "1" },
+      },
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
+    const sheet = workbook.getWorksheet("Compras");
+
+    expect(sheet?.getCell("A2").value).toBe("Solo compras con saldo pendiente");
+    expect(sheet?.getCell("F4").value).toBe("Pagado (REF)");
+    expect(sheet?.getCell("G4").value).toBe("Saldo (REF)");
+    expect(sheet?.getCell("F5").value).toBe("ref 20.50");
+    expect(sheet?.getCell("G5").value).toBe("ref 100.00");
+    // Una compra cancelada no se debe: sin saldo.
+    expect(sheet?.getCell("F6").value).toBe("ref 10.00");
+    expect(sheet?.getCell("G6").value).toBeFalsy();
+  });
 });

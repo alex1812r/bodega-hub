@@ -8,11 +8,16 @@
 
 import { listPriceReview } from "@/modules/products/services/priceReview.mock-server";
 import { createProduct } from "@/modules/products/services/products.mock-server";
-import { mockProducts } from "@/shared/mocks/erp-data";
+import { mockPayments, mockProducts, mockPurchases } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import type { PurchaseItemInput } from "../schemas/purchaseItem.schema";
-import { createPurchase, getPurchaseById, receivePurchase } from "./purchases.mock-server";
+import {
+  createPurchase,
+  getPurchaseById,
+  listPurchases,
+  receivePurchase,
+} from "./purchases.mock-server";
 
 const KEY_A = "6f1a2b3c-4d5e-4f60-8a71-92b3c4d5e6f7";
 const KEY_B = "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d";
@@ -192,5 +197,104 @@ describe("purchases.mock-server · costo al recibir (PRO-10)", () => {
 
     expect(costOf(unitProductId)).toBe(1.5);
     expect(costOf("prod-cigar-pack")).toBe(15);
+  });
+});
+
+/**
+ * COM-16 · paridad con `purchases.server`: sin permiso para ver pagos de compras
+ * el detalle no lleva los pagos individuales; lo pagado es el de la cabecera.
+ */
+describe("purchases.mock-server · pagos del detalle por acceso (COM-16)", () => {
+  const PURCHASE_ID = "purchase-001";
+  const header = () => mockPurchases.find((purchase) => purchase.id === PURCHASE_ID);
+  const seedPaymentIds = () =>
+    mockPayments.filter((payment) => payment.purchaseId === PURCHASE_ID).map((payment) => payment.id);
+
+  it("sin acceso: `payments: []` y Pagado de la cabecera; el resto del detalle no cambia", () => {
+    const full = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID);
+    const restricted = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID, { canViewPayments: false });
+
+    expect(seedPaymentIds().length).toBeGreaterThan(0);
+    expect(restricted.payments).toEqual([]);
+    expect(restricted.paidVes).toBe(header()?.paidVes);
+    expect(restricted.paidVes).toBeGreaterThan(0);
+    expect(restricted.paidRef).toBe(full.paidRef);
+    expect({ ...restricted, payments: full.payments }).toEqual(full);
+  });
+
+  it.each([
+    ["acceso explícito", { canViewPayments: true }],
+    ["acceso por defecto", undefined],
+  ] as const)("con %s: los pagos de la compra con su contacto, como antes", (_label, access) => {
+    const detail = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID, access);
+
+    expect(detail.payments.map((payment) => payment.id)).toEqual(seedPaymentIds());
+    expect(detail.payments.every((payment) => payment.contact?.id === payment.contactId)).toBe(true);
+    expect(detail.paidVes).toBe(header()?.paidVes);
+  });
+});
+
+/**
+ * COM-F2 · la semilla no trae `paidRef` en la cabecera: lo pagado de una compra
+ * del mock sale de sus pagos activos, igual en el detalle (con o sin permiso
+ * para ver pagos) y en el listado.
+ */
+describe("purchases.mock-server · pagado coherente con los pagos activos (COM-F2)", () => {
+  const listed = (id: string) =>
+    listPurchases(new URLSearchParams("limit=100"), DEFAULT_STORE_ID).items.find(
+      (purchase) => purchase.id === id,
+    );
+
+  it.each([
+    ["con permiso", { canViewPayments: true }],
+    ["sin permiso", { canViewPayments: false }],
+  ] as const)("detalle %s: purchase-001 está pagada entera en REF y en Bs", (_label, access) => {
+    const detail = getPurchaseById("purchase-001", DEFAULT_STORE_ID, access);
+
+    expect(detail.paidRef).toBe(20);
+    expect(detail.paidVes).toBe(10200);
+    expect(detail.totalRef - detail.paidRef).toBe(0);
+  });
+
+  it("detalle: un abono parcial deja el pagado en la suma de sus pagos", () => {
+    const detail = getPurchaseById("purchase-004", DEFAULT_STORE_ID);
+
+    expect(detail.paidRef).toBe(5.02);
+    expect(detail.paidVes).toBe(2500);
+  });
+
+  it("detalle: una compra sin pagos lleva pagado 0, no `undefined`", () => {
+    const detail = getPurchaseById("purchase-002", DEFAULT_STORE_ID);
+
+    expect(detail.paidRef).toBe(0);
+    expect(detail.paidVes).toBe(0);
+  });
+
+  it("listado: cada compra lleva el mismo pagado que su detalle", () => {
+    for (const id of ["purchase-001", "purchase-002", "purchase-004"]) {
+      const detail = getPurchaseById(id, DEFAULT_STORE_ID);
+
+      expect(listed(id)).toEqual(
+        expect.objectContaining({ paidRef: detail.paidRef, paidVes: detail.paidVes }),
+      );
+    }
+  });
+
+  it("un pago anulado no cuenta como pagado", () => {
+    const payment = mockPayments.find((candidate) => candidate.purchaseId === "purchase-001");
+
+    if (!payment) {
+      throw new Error("La semilla debe traer un pago de purchase-001.");
+    }
+
+    const previousStatus = payment.status;
+    payment.status = "anulado";
+
+    try {
+      expect(getPurchaseById("purchase-001", DEFAULT_STORE_ID).paidRef).toBe(0);
+      expect(listed("purchase-001")?.paidVes).toBe(0);
+    } finally {
+      payment.status = previousStatus;
+    }
   });
 });

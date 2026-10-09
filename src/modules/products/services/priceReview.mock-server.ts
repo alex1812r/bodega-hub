@@ -1,7 +1,7 @@
 import { ApiError } from "@/lib/api/apiError";
 import { assertMockStoreResource } from "@/lib/api/assertStoreResource";
 import { paginateList } from "@/lib/api/pagination";
-import { findMockPurchase } from "@/modules/purchases/services/purchases.mock-server";
+import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
 import { getPricingSettings } from "@/modules/settings/services/settings.mock-server";
 import {
   mockContacts,

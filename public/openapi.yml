@@ -1664,21 +1664,61 @@ paths:
           required: false
           schema:
             type: string
+        - name: search
+          in: query
+          required: false
+          description: Texto a buscar en el numero de compra.
+          schema:
+            type: string
         - name: from
           in: query
           required: false
+          description: >-
+            Primer dia del rango (dia operativo Caracas, incluido). Una fecha que
+            no existe o con otro formato responde 400, igual que `from` posterior
+            a `to`.
           schema:
             type: string
             format: date
         - name: to
           in: query
           required: false
+          description: Ultimo dia del rango (dia operativo Caracas, incluido).
           schema:
             type: string
             format: date
+        - name: pendingBalance
+          in: query
+          required: false
+          description: >-
+            `1` = solo compras con saldo pendiente: estado `pedido` o `recibido`
+            y `totalRef - paidRef` de al menos 0.01 REF. Lo pagado es el de la
+            cabecera de la compra (no se leen pagos), asi que vale para cualquier
+            rol con `purchases.view`. Con este filtro la respuesta incluye
+            `pendingBalanceRef`, la suma del saldo de todas las compras filtradas
+            (no solo la pagina). Cualquier otro valor responde 400.
+          schema:
+            type: string
+            enum: ["1"]
+        - name: skip
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
       responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "200":
-          description: Lista de compras
+          description: >-
+            Lista de compras. Cada compra lleva `paidRef` y `paidVes`; con
+            `pendingBalance=1` el objeto de la respuesta lleva ademas
+            `pendingBalanceRef`.
           content:
             application/json:
               schema:
@@ -1692,6 +1732,15 @@ paths:
     post:
       tags: [Purchases]
       summary: Crear compra
+      description: >-
+        Con `initialPayment` registra ademas un pago de la compra recien creada
+        (un `register_payment` normal, en secuencia tras `create_purchase`). Compra
+        y pago se validan y se autorizan antes de crear nada: un pago invalido
+        responde 400 y sin `payments.manage` responde 403, en ambos casos sin
+        crear la compra. Si la compra se crea y el pago falla, la respuesta sigue
+        siendo 201 con la compra y `initialPayment.status = failed`: la compra queda
+        pendiente de pago. Repetir la peticion con las mismas dos claves de
+        idempotencia devuelve la misma compra y el mismo pago.
       x-permission: purchases.create
       requestBody:
         required: true
@@ -1701,17 +1750,144 @@ paths:
               $ref: "#/components/schemas/PurchaseCreateInput"
       responses:
         "201":
-          description: Compra creada
+          description: >-
+            Compra creada. Lleva `initialPayment` solo si la peticion lo envio.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PurchaseResponse"
+                $ref: "#/components/schemas/PurchaseCreateResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/IdempotencyConflict"
+  /api/purchases/suppliers:
+    get:
+      tags: [Purchases]
+      summary: Buscar proveedores para registrar una compra
+      description: >-
+        Proveedores de la tienda (contactos de tipo `proveedor` o `ambos`) para el
+        formulario de compra. Se autoriza con `purchases.create`, no con
+        `contacts.view`, y por eso solo devuelve `id`, `name`, `taxId` e
+        `isActive`: nunca telefono, direccion, correo, saldos ni notas. Sin `id`
+        lista solo los activos, ordenados por nombre. Con `id` devuelve ese
+        proveedor aunque este inactivo (borrador o compra duplicada) y los demas
+        parametros se ignoran.
+      x-permission: purchases.create
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Texto a buscar en el nombre o el RIF. Hasta 100 caracteres.
+          schema:
+            type: string
+            maxLength: 100
+        - name: limit
+          in: query
+          required: false
+          description: Un valor mayor que 20 se acota a 20; menor que 1 o no entero responde 400.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 8
+        - name: skip
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: id
+          in: query
+          required: false
+          description: Id del proveedor a leer. Vacio o con caracteres no validos responde 400.
+          schema:
+            type: string
+            maxLength: 64
+      responses:
+        "200":
+          description: >-
+            Sin `id`, la pagina de proveedores (`items`, `total`, `skip`, `limit`).
+            Con `id`, el proveedor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    oneOf:
+                      - type: object
+                        required: [items, limit, skip, total]
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/PurchaseSupplier"
+                          limit:
+                            type: integer
+                          skip:
+                            type: integer
+                          total:
+                            type: integer
+                      - $ref: "#/components/schemas/PurchaseSupplier"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/purchases/last-costs:
+    get:
+      tags: [Purchases]
+      summary: Ultimo costo de compra de unos productos
+      description: >-
+        Costo unitario SIN IVA de la ultima linea de compra de cada producto, para
+        sugerir el costo de una linea nueva en el formulario de compra. Solo cuentan
+        compras en estado `recibido` (ni `pedido`, ni `cancelado`, ni `devuelto`);
+        la mas reciente es la de mayor fecha de creacion de la compra. Primero se
+        busca entre las compras de `supplierId` (`source: supplier`); si ese
+        proveedor nunca vendio el producto, entre las de cualquier proveedor
+        (`source: any`). Un producto sin ninguna linea recibida, o que no existe,
+        no aparece en la respuesta. En una linea por empaque el costo es el de la
+        unidad. Se autoriza con `purchases.create`.
+      x-permission: purchases.create
+      parameters:
+        - name: supplierId
+          in: query
+          required: true
+          description: Proveedor de la compra. Vacio o con caracteres no validos responde 400.
+          schema:
+            type: string
+            maxLength: 64
+        - name: productIds
+          in: query
+          required: true
+          description: >-
+            Ids de producto separados por coma, entre 1 y 50. Mas de 50, uno vacio
+            o con caracteres no validos responde 400.
+          schema:
+            type: string
+          example: prod-drill,prod-cable
+      responses:
+        "200":
+          description: Un elemento por producto con alguna linea de compra recibida.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PurchaseLastCost"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/purchases/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -1748,7 +1924,20 @@ paths:
     patch:
       tags: [Purchases]
       summary: Recibir mercancia de compra en pedido
+      description: >-
+        Recibe el pedido y, en la MISMA transaccion, abre los empaques de las lineas
+        marcadas "Desarmar al recibir" en los componentes de la receta de su producto
+        (COM-14, RPC `receive_purchase_and_disassemble`). Si una apertura falla no se
+        recibe nada. El cuerpo es opcional: sin el se desarman las lineas que el pedido
+        guardo marcadas. La respuesta trae en cada linea `id`, `disassembleOnReceive` y
+        `disassembled`.
       x-permission: purchases.create
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReceivePurchaseInput"
       responses:
         "200":
           description: Compra recibida
@@ -1762,6 +1951,15 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            La compra no esta en pedido; una linea a desarmar ya no tiene receta de
+            apertura activa (el mensaje nombra el producto: desmarcarla o activar la
+            receta); o la clave de idempotencia ya se uso con otra lista.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/purchases/{id}/return:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -4196,6 +4394,12 @@ components:
           description: Recetas activas de las que sale el producto, por nombre del empaque.
           items:
             $ref: "#/components/schemas/ProductPackConversionSource"
+        alwaysDisassembleOnReceive:
+          type: boolean
+          description: >-
+            Preferencia de la receta `id` (COM-14): la linea de compra de su empaque
+            nace marcada "Desarmar al recibir" en `/purchases/create` (el usuario la
+            puede desmarcar). Solo se envia cuando es `true`; ausente = `false`.
     PackConversionInput:
       type: object
       description: >-
@@ -4211,6 +4415,13 @@ components:
       properties:
         enabled:
           type: boolean
+        alwaysDisassembleOnReceive:
+          type: boolean
+          description: >-
+            Preferencia "Desarmar siempre al recibir compras" de la receta (COM-14,
+            cualquier `mode`). Opcional: ausente = no cambia (una receta nueva nace
+            en `false`; una receta reemplazada conserva la de la anterior). No
+            cambia stock ni costos: solo decide como nace el chip de la linea de compra.
         mode:
           type: string
           enum: [link_existing, create_unit, assorted]
@@ -4596,6 +4807,39 @@ components:
           type: number
         totalVes:
           type: number
+    PurchaseSupplier:
+      type: object
+      description: Lo minimo de un contacto proveedor para registrar una compra.
+      additionalProperties: false
+      required: [id, name, taxId, isActive]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        taxId:
+          type: string
+          description: RIF; cadena vacia si el contacto no lo tiene.
+        isActive:
+          type: boolean
+    PurchaseLastCost:
+      type: object
+      description: Ultima linea de compra recibida de un producto.
+      additionalProperties: false
+      required: [productId, unitCostRef, taxRate, source]
+      properties:
+        productId:
+          type: string
+        unitCostRef:
+          type: number
+          description: Costo por unidad en REF, sin IVA.
+        taxRate:
+          type: number
+          description: Porcentaje de IVA que llevo esa linea (0 si fue exenta).
+        source:
+          type: string
+          enum: [supplier, any]
+          description: supplier = compra del proveedor consultado; any = de otro proveedor.
     Contact:
       type: object
       required: [id, name, type, isActive]
@@ -4803,10 +5047,84 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/Purchase"
+    PurchaseCreateResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          allOf:
+            - $ref: "#/components/schemas/Purchase"
+            - type: object
+              properties:
+                initialPayment:
+                  $ref: "#/components/schemas/PurchaseInitialPaymentResult"
+    PurchaseInitialPaymentResult:
+      description: >-
+        Resultado del pago inicial. `registered`: el pago quedo registrado.
+        `failed`: la compra SI se creo y quedo pendiente de pago; `message` es el
+        motivo en español (el de `register_payment`, o un aviso de resultado
+        incierto si no hubo respuesta clara).
+      oneOf:
+        - type: object
+          required: [status, paymentId]
+          properties:
+            status:
+              type: string
+              enum: [registered]
+            paymentId:
+              type: string
+        - type: object
+          required: [status, message]
+          properties:
+            status:
+              type: string
+              enum: [failed]
+            message:
+              type: string
+    PurchaseInitialPaymentInput:
+      type: object
+      required: [clientRequestId, method, amount]
+      description: >-
+        Pago inicial de la compra: los campos de `PaymentCreateInput` sin `saleId`
+        ni `purchaseId` (el servidor usa la compra recien creada), con las mismas
+        reglas por metodo. No admite vuelto.
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+          description: >-
+            Clave de idempotencia del pago, obligatoria y distinta de la de la
+            compra: al reintentar el mismo intento el pago no se registra dos veces.
+        method:
+          $ref: "#/components/schemas/PaymentMethod"
+        currency:
+          type: string
+          enum: [USD, VES]
+        amount:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1000000000000
+        bankName:
+          type: string
+          maxLength: 120
+        phone:
+          type: string
+          maxLength: 30
+        referenceCode:
+          type: string
+          maxLength: 100
+        notes:
+          type: string
+          maxLength: 2000
+        receivedDenominations:
+          $ref: "#/components/schemas/PaymentDenominations"
     PurchaseCreateInput:
       type: object
       required: [supplierId, items]
       properties:
+        initialPayment:
+          $ref: "#/components/schemas/PurchaseInitialPaymentInput"
         clientRequestId:
           type: string
           format: uuid
@@ -5675,6 +5993,47 @@ components:
         quantity:
           type: integer
           minimum: 1
+    ReceivePurchaseInput:
+      type: object
+      description: Cuerpo opcional de PATCH /api/purchases/{id}/receive (COM-14).
+      properties:
+        clientRequestId:
+          type: string
+          format: uuid
+          description: >-
+            Clave de idempotencia del intento: repetir la misma recepcion devuelve la
+            compra ya recibida sin mover stock; la misma clave con otra lista es 409.
+        disassemble:
+          type: array
+          maxItems: 500
+          description: >-
+            Lineas a desarmar al recibir. Si se envia, la lista ES el conjunto de lineas
+            a desarmar y sustituye las marcas del pedido (`[]` = no desarmar ninguna).
+            Sin el campo, mandan las marcas guardadas.
+          items:
+            type: object
+            required: [purchaseItemId]
+            properties:
+              purchaseItemId:
+                type: string
+                description: Valor de `id` de la linea en el detalle de la compra.
+              distribution:
+                type: array
+                minItems: 1
+                maxItems: 20
+                description: >-
+                  Reparto real de la apertura (surtidos): solo componentes de la receta,
+                  sin repetir, y debe sumar unidades de la receta x empaques de la linea
+                  (400 si no). Sin el campo se usa la receta.
+                items:
+                  type: object
+                  required: [unitProductId, units]
+                  properties:
+                    unitProductId:
+                      type: string
+                    units:
+                      type: integer
+                      minimum: 0
     PurchaseLineItemInput:
       type: object
       required: [productId, quantity, unitCostRef]
@@ -5689,6 +6048,13 @@ components:
           minimum: 0
         supplierSku:
           type: string
+        disassembleOnReceive:
+          type: boolean
+          description: >-
+            "Desarmar al recibir" (COM-14). Solo en la linea de un producto que es el
+            empaque de una receta de apertura activa (si no, 400 nombrando el producto).
+            En un pedido la marca se guarda; en una compra recibida los empaques de la
+            linea se abren en la misma transaccion. Ausente o `false` = compra de siempre.
         taxRateCode:
           type: string
           minLength: 1

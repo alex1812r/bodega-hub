@@ -9,6 +9,22 @@ import {
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 import { formatDateTimeShort } from "@/shared/utils/date";
 
+/**
+ * Texto secundario de una línea de compra sobre el desarme al recibir (COM-14):
+ * "Desarmado al recibir" si la recepción ya abrió sus empaques; "Se desarmará al
+ * recibir" si el pedido aún no se recibió y la línea está marcada; `null` si no aplica.
+ */
+export function getPurchaseLineDisassembleLabel(
+  line: { disassembled?: boolean; disassembleOnReceive?: boolean },
+  status: PurchaseStatus,
+): string | null {
+  if (line.disassembled) {
+    return "Desarmado al recibir";
+  }
+
+  return status === "pedido" && line.disassembleOnReceive ? "Se desarmará al recibir" : null;
+}
+
 export function formatPurchaseHeading(purchaseNumber: string) {
   const code = purchaseNumber.startsWith("#")
     ? purchaseNumber.slice(1)

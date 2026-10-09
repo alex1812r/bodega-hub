@@ -38,7 +38,7 @@ import { authQueryKeys } from "@/modules/auth/hooks/useCurrentUser";
 import { jsonResponse } from "@/modules/inventory/utils/requestAttempt.testUtils";
 import { type Permission, type UserRole, getRolePermissions } from "@/shared/auth/permissions";
 import type { PaymentMock } from "@/shared/mocks/erp-data";
-import { formatVes } from "@/shared/utils/currency";
+import { formatRefUsd, formatVes } from "@/shared/utils/currency";
 
 import type { PurchaseDetails } from "../hooks/usePurchases";
 import { PurchaseDetailsPage } from "./page";
@@ -497,5 +497,53 @@ describe("PurchaseDetailsPage · aviso de reprecio (PRO-10)", () => {
 
     expect(await screen.findByText("No pudimos cargar la compra")).toBeInTheDocument();
     expect(screen.queryByTestId("purchase-reprice-notice")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * COM-16 · almacén ve la compra pero no sus pagos: el BFF le manda `payments: []`
+ * y lo pagado de la cabecera. El detalle no puede decirle "sin pagos".
+ */
+describe("PurchaseDetailsPage · pagos de la compra por rol (COM-16)", () => {
+  const NO_PERMISSION = "No tienes permiso para ver los pagos de esta compra.";
+  const NO_PAYMENTS = "No hay pagos registrados para esta compra.";
+
+  it("almacén: aviso de permiso en el historial, sin «Pagar», y Pagado / Pendiente de la cabecera", async () => {
+    await renderPage({ paidRef: 10, paidVes: 5000, payments: [] }, { role: "almacen" });
+
+    expect(screen.getByText(NO_PERMISSION)).toBeInTheDocument();
+    expect(screen.queryByText(NO_PAYMENTS)).not.toBeInTheDocument();
+    expect(payButton()).not.toBeInTheDocument();
+    expect(screen.getByText(`Pagado ${formatRefUsd(10)}`)).toBeInTheDocument();
+    expect(screen.getByText("Pago parcial")).toBeInTheDocument();
+    expect(screen.getByText(formatRefUsd(30))).toBeInTheDocument();
+  });
+
+  it.each<UserRole>(["admin", "contador"])("%s sin pagos sigue viendo «no hay pagos registrados»", async (role) => {
+    await renderPage({}, { role });
+
+    expect(screen.getByText(NO_PAYMENTS)).toBeInTheDocument();
+    expect(screen.queryByText(NO_PERMISSION)).not.toBeInTheDocument();
+  });
+
+  it.each<UserRole>(["admin", "contador"])("%s ve los pagos de la compra", async (role) => {
+    const payment: PaymentMock = {
+      amount: 5000,
+      amountRef: 10,
+      amountVes: 5000,
+      contactId: "cont-supplier",
+      createdAt: "2026-10-06T14:00:00.000Z",
+      direction: "salida",
+      id: "pay-com16",
+      method: "transferencia",
+      purchaseId: PURCHASE.id,
+      referenceCode: "TRX-COM16",
+      refRateVes: RATE_VES,
+    };
+
+    await renderPage({ paidRef: 10, paidVes: 5000, payments: [payment] }, { role });
+
+    expect(screen.getByText("TRX-COM16")).toBeInTheDocument();
+    expect(screen.queryByText(NO_PERMISSION)).not.toBeInTheDocument();
   });
 });

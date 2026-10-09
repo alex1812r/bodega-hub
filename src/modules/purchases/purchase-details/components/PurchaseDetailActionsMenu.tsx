@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { usePermission } from "@/shared/auth/usePermission";
@@ -11,16 +12,16 @@ import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 
-type PurchaseDetailActionId = "cancel" | "pdf" | "receive" | "return";
+import { getPurchaseActions } from "../../utils/purchaseActions";
+
+type PurchaseDetailActionId = "cancel" | "pdf" | "return";
 
 type PurchaseDetailActionsMenuProps = {
   isCancelling?: boolean;
   isExportingPdf?: boolean;
-  isReceiving?: boolean;
   isReturning?: boolean;
   onCancel: () => void | Promise<void>;
   onExportPdf: () => void | Promise<void>;
-  onReceive: () => void | Promise<void>;
   onReturn: () => void | Promise<void>;
   purchaseNumber: string;
   status: PurchaseStatus;
@@ -47,12 +48,6 @@ const actionConfigs: Record<PurchaseDetailActionId, ActionConfig> = {
       "Se descargará un PDF con los datos actuales de la compra, incluyendo ítems y totales.",
     title: "Confirmar impresión",
   },
-  receive: {
-    confirmLabel: "Confirmar recepción",
-    description:
-      "La mercancía ingresará al inventario y el estado de la compra pasará a recibido.",
-    title: "Recibir pedido",
-  },
   return: {
     confirmLabel: "Confirmar devolución",
     confirmVariant: "danger",
@@ -65,32 +60,29 @@ const actionConfigs: Record<PurchaseDetailActionId, ActionConfig> = {
 export function PurchaseDetailActionsMenu({
   isCancelling = false,
   isExportingPdf = false,
-  isReceiving = false,
   isReturning = false,
   onCancel,
   onExportPdf,
-  onReceive,
   onReturn,
   purchaseNumber,
   status,
 }: PurchaseDetailActionsMenuProps) {
-  const { can } = usePermission();
+  const { can, role } = usePermission();
+  // El detalle vive en `/purchases/[id]`: el id de la compra es el último tramo de la ruta.
+  const purchaseId = usePathname().split("/").filter(Boolean).at(-1);
   const [pendingAction, setPendingAction] = useState<PurchaseDetailActionId | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
 
-  const canMutate = status !== "cancelado" && status !== "devuelto";
+  // Mismas reglas de permiso y de estado que el menú de fila de la lista.
+  const {
+    canCancelOrReturn,
+    canDuplicate,
+    isOpen: canMutate,
+  } = getPurchaseActions({ status }, { can, role });
   const pendingConfig = pendingAction ? actionConfigs[pendingAction] : null;
 
   const actions = useMemo(() => {
     const menuActions: ActionMenuItem[] = [];
-
-    if (can("purchases.create") && status === "pedido") {
-      menuActions.push({
-        disabled: isReceiving,
-        label: isReceiving ? "Recibiendo..." : "Recibir pedido",
-        onSelect: () => setPendingAction("receive"),
-      });
-    }
 
     menuActions.push({
       disabled: isExportingPdf,
@@ -98,7 +90,15 @@ export function PurchaseDetailActionsMenu({
       onSelect: () => setPendingAction("pdf"),
     });
 
-    if (can("purchases.create")) {
+    // Duplicar vale en cualquier estado: crea otra compra, no toca esta.
+    if (canDuplicate && purchaseId) {
+      menuActions.push({
+        href: `/purchases/create?duplicate=${encodeURIComponent(purchaseId)}`,
+        label: "Duplicar compra",
+      });
+    }
+
+    if (canCancelOrReturn) {
       menuActions.push({
         disabled: !canMutate || isReturning,
         label: isReturning ? "Procesando..." : "Devolver",
@@ -115,13 +115,13 @@ export function PurchaseDetailActionsMenu({
 
     return menuActions;
   }, [
-    can,
+    canCancelOrReturn,
+    canDuplicate,
     canMutate,
     isCancelling,
     isExportingPdf,
-    isReceiving,
     isReturning,
-    status,
+    purchaseId,
   ]);
 
   async function handleConfirm() {
@@ -138,9 +138,6 @@ export function PurchaseDetailActionsMenu({
           break;
         case "pdf":
           await onExportPdf();
-          break;
-        case "receive":
-          await onReceive();
           break;
         case "return":
           await onReturn();

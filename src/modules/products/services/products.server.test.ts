@@ -379,14 +379,33 @@ describe("products.server listProducts: price review (PRO-11)", () => {
     jest.clearAllMocks();
   });
 
-  it("embeds the price_review relation in the same query: no extra query per product", async () => {
+  // COM-F7 (M5): embebida, la relación se evaluaba por cada producto que casaba
+  // con los filtros antes del LIMIT; ahora la página va sin ella y la cola se lee
+  // una vez para los productos de la página.
+  it("reads the price review of the page with ONE extra query by ids: not embedded, no query per product", async () => {
+    const supabase = createMockSupabase();
+    supabase.chain.range.mockResolvedValue({
+      count: 2,
+      data: [productRow, { ...productRow, id: "prod-2" }],
+      error: null,
+    });
+    supabase.chain.in = jest.fn().mockResolvedValue({ data: [reviewRow], error: null });
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue(supabase);
+
+    const result = await listProducts(new URLSearchParams(), DEFAULT_STORE_ID);
+
+    expect(String(supabase.chain.select.mock.calls[0][0])).not.toContain("price_review");
+    expect(supabase.from.mock.calls).toEqual([["products"], ["products_price_review"]]);
+    expect(supabase.chain.in).toHaveBeenCalledWith("product_id", ["prod-1", "prod-2"]);
+    expect(result.items[0].priceReview).toMatchObject({ currentBand: "low", previousBand: "high" });
+    expect(result.items[1]).not.toHaveProperty("priceReview");
+  });
+
+  it("does not read the price review of an empty page", async () => {
     const chain = setup();
 
     await listProducts(new URLSearchParams(), DEFAULT_STORE_ID);
 
-    const select = String(chain.select.mock.calls[0][0]);
-    expect(select).toContain("price_review:price_review(");
-    expect(select).not.toContain("!inner");
     expect(chain.select).toHaveBeenCalledTimes(1);
   });
 
@@ -413,7 +432,7 @@ describe("products.server listProducts: price review (PRO-11)", () => {
     expect(String(chain.select.mock.calls[0][0])).not.toContain("!inner");
   });
 
-  it("exposes priceReview only on the products that are in the queue", async () => {
+  it("exposes priceReview only on the products that are in the queue (relation embedded by review=1)", async () => {
     setup([
       { ...productRow, price_review: reviewRow },
       { ...productRow, id: "prod-2", price_review: null },
@@ -421,7 +440,7 @@ describe("products.server listProducts: price review (PRO-11)", () => {
       { ...productRow, id: "prod-4", price_review: [{ ...reviewRow, purchase_id: null }] },
     ]);
 
-    const result = await listProducts(new URLSearchParams(), DEFAULT_STORE_ID);
+    const result = await listProducts(new URLSearchParams("review=1"), DEFAULT_STORE_ID);
 
     expect(result.items[0].priceReview).toEqual({
       currentBand: "low",

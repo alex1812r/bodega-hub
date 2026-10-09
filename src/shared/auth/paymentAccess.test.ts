@@ -8,11 +8,21 @@ import {
 } from "./paymentAccess";
 
 describe("paymentAccess", () => {
-  it("allows purchase payments for non-vendedor roles", () => {
+  it("allows purchase payments only for roles with payments.view and purchases.view", () => {
     expect(canViewPurchasePayments("admin")).toBe(true);
     expect(canViewPurchasePayments("contador")).toBe(true);
-    expect(canViewPurchasePayments("almacen")).toBe(true);
+    expect(canViewPurchasePayments("almacen")).toBe(false);
     expect(canViewPurchasePayments("vendedor")).toBe(false);
+    expect(canViewPurchasePayments("superadmin")).toBe(false);
+  });
+
+  it("blocks almacen from purchase payments like vendedor", () => {
+    expect(() =>
+      assertCanAccessPayment("almacen", { purchaseId: "purchase-001", direction: "salida" }),
+    ).toThrow(PURCHASE_PAYMENTS_FORBIDDEN_MESSAGE);
+    expect(() => assertCanCreatePurchasePayment("almacen", { purchaseId: "purchase-001" })).toThrow(
+      PURCHASE_PAYMENTS_FORBIDDEN_MESSAGE,
+    );
   });
 
   it("detects purchase-linked payments", () => {

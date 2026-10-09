@@ -552,3 +552,122 @@ notify pgrst, 'reload schema';
 -- ORDEN DE DESPLIEGUE (PRO-F9): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
 -- el parche: el reprecio masivo, el cambio de precio con costo esperado, "Mantener precio" con costo esperado y el alta de
 -- producto con clientRequestId responden error (funcion o columna inexistente); nada queda a medias.
+-- -----------------------------------------------------------------------------
+-- 20261010a — purchase auto link (COM-02): create_purchase deja vinculada al proveedor cada linea de la compra en la misma
+--             transaccion (tambien en un pedido), crea el empaque del proveedor del vinculo nuevo y rechaza con PT400 al
+--             proveedor inactivo o que no es proveedor
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010a-purchase-auto-link.sql
+-- Requiere 20261006c / f / h, 20261007a, 20261009d y 20261009e. Idempotente, una transaccion. Solo redefine create_purchase
+-- (misma firma de 14 argumentos) a partir del cuerpo de 20261009d; no toca tablas, indices, politicas, triggers ni
+-- receive_purchase. No migra datos.
+-- NO cambia lineas, movimientos (quantity_delta), costo del producto ni totales: para el mismo payload la compra es la misma
+-- que con 20261009d. Compra recibida: el vinculo se crea / reactiva y registra el costo como hasta hoy (origen 'compra').
+-- Nuevo: un PEDIDO de un producto sin vinculo lo crea con el costo de la linea (con IVA), historial 'vinculacion' y sin
+-- last_purchased_at; sobre un vinculo inactivo lo reactiva sin tocar costo; sobre uno activo no hace nada. La linea por
+-- empaque de un vinculo creado en esa compra anade su supplier_product_pack_units (el primero, predeterminado).
+-- El proveedor habitual lo sigue decidiendo el trigger de 20261009e: el vinculo nuevo queda habitual solo si el producto
+-- no tenia ninguno.
+-- OJO: el proveedor inactivo o que no es proveedor / ambos responde ahora PT400 con mensaje propio ("El proveedor X está
+-- inactivo: no se puede registrar la compra"); antes salia de assert_contact_type sin errcode (P0001).
+-- OJO: create_purchase lee el contacto con FOR SHARE: desactivar a un proveedor espera a que termine su compra en curso.
+-- OJO: reaplicar 20261006c / f / h, 20261007a o 20261009d reinstala create_purchase sin el vinculo automatico: volver a
+-- aplicar este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (COM-02): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada y el BFF nuevo
+-- sobre la base sin parche (mismo payload y misma firma); sin el parche, un pedido no deja vinculo hasta recibirlo.
+-- OJO: reaplicar 20261010a reinstala create_purchase sin la guarda de producto inactivo: volver a aplicar 20261010b.
+-- -----------------------------------------------------------------------------
+-- 20261010b — purchase inactive product (COM-15): create_purchase rechaza con PT400 cualquier linea de un producto inactivo
+--             (compra recibida o pedido), nombrando el producto, sin crear nada
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010b-purchase-inactive-product.sql
+-- Requiere 20261006c / f / h, 20261007a, 20261009d, 20261009e y 20261010a. Idempotente, una transaccion. Solo redefine
+-- create_purchase (misma firma de 14 argumentos) a partir del cuerpo de 20261010a; no toca tablas, indices, politicas,
+-- triggers ni receive_purchase. No migra datos.
+-- NO cambia lineas, movimientos (quantity_delta), costo del producto, totales ni vinculos de una compra de productos
+-- activos: para el mismo payload la compra es la misma que con 20261010a.
+-- Nuevo: si alguna linea es de un producto con is_active = false la compra entera responde PT400 ("El producto X está
+-- inactivo: no se puede registrar la compra"; con varios, "Los productos X, Y están inactivos: ..."). Se comprueba con los
+-- productos ya bloqueados (order by id for update): no hay carrera con la desactivacion. El producto inexistente o de otra
+-- tienda sigue respondiendo PT404.
+-- OJO: receive_purchase no cambia: un pedido creado con el producto activo se puede recibir aunque el producto se haya
+-- desactivado despues. El reintento con un clientRequestId ya guardado devuelve la compra original aunque el producto
+-- este hoy inactivo.
+-- OJO: reaplicar 20261006c / f / h, 20261007a, 20261009d o 20261010a reinstala create_purchase sin esta guarda: volver a
+-- aplicar este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (COM-15): parche -> verify -> BFF. Mismo payload y misma firma: el BFF anterior y el nuevo funcionan
+-- sobre la base con o sin parche; sin el parche, la compra de un producto inactivo se sigue aceptando.
+-- OJO: reaplicar 20261010b reinstala create_purchase sin la marca "Desarmar al recibir": volver a aplicar 20261010d.
+-- -----------------------------------------------------------------------------
+-- 20261010c — payments purchase RLS (COM-16, D23): los pagos de COMPRAS (purchase_id no nulo) solo los leen admin y
+--             contador por PostgREST; los pagos de ventas se leen como hasta hoy (toda la tienda)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010c-payments-purchase-rls.sql
+-- Requiere 20260716-multi-store y 20261006a / h. Idempotente, una transaccion. Solo redefine la politica de lectura
+-- "Authenticated users read payments"; no toca tablas, columnas, indices, funciones, triggers ni otras politicas. No
+-- migra datos. Las RPC que leen payments son security definer: cierre de caja, baul y vistas de integridad no cambian.
+-- Efecto: vendedor y almacen dejan de leer pagos a proveedores con su JWT (0 filas, sin error). Lo pagado de una compra
+-- sigue legible desde su cabecera (purchases.paid_ref / paid_ves).
+-- OJO: vault_movements (asientos purchase_out del baul) NO se toca: sigue legible por tienda sin filtro de rol.
+-- OJO: reaplicar 20260716-multi-store reinstala la lectura sin filtro de rol: volver a aplicar este parche.
+-- ORDEN DE DESPLIEGUE (COM-16): BFF -> parche -> verify. El BFF anterior lee payments con la sesion del usuario en
+-- GET /api/purchases/[id] y sobrescribe Pagado con esa suma: sobre la base parcheada almacen veria "Pagado 0". El BFF
+-- nuevo no consulta payments para almacen y funciona igual con o sin parche.
+-- -----------------------------------------------------------------------------
+-- 20261010d — receive disassemble (COM-14): la linea de compra marcada "Desarmar al recibir" se abre en los componentes de
+--             la receta de su empaque en la misma transaccion que la recibe
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010d-receive-disassemble.sql
+-- Requiere 20261006a / c, 20261009d, 20261010a y 20261010b. Idempotente, una transaccion. Anade
+-- purchase_items.disassemble_on_receive (boolean, default false) y disassembled_conversion_id (uuid), y
+-- purchases.receive_client_request_id / receive_request_hash; no migra datos (ninguna linea existente queda marcada).
+-- Redefine create_purchase (misma firma de 14 argumentos) a partir del cuerpo de 20261010b: acepta
+-- disassemble_on_receive por linea, exige receta activa del empaque (PT400) y, si la compra nace recibida, abre los
+-- empaques al final de la misma transaccion. Crea la RPC receive_purchase_and_disassemble(p_purchase_id, p_disassemble,
+-- p_client_request_id) y 4 funciones internas (sin execute para PostgREST). NO redefine receive_purchase ni
+-- convert_pack_to_units: las invoca.
+-- NO cambia cantidades, costos, totales ni movimientos: una compra sin lineas marcadas es la de 20261010b (misma huella de
+-- idempotencia) y una con lineas marcadas deja lo mismo que recibir y despues abrir los empaques a mano.
+-- Camino ATOMICO en los dos sitios: si una apertura falla se revierte todo (ni compra recibida ni stock a medias). Receta
+-- desactivada entre el pedido y la recepcion: PT409 nombrando el producto; se recibe desmarcando la linea.
+-- OJO: anular o devolver una compra desarmada responde como tras abrir los empaques a mano (stock insuficiente del
+-- empaque): cancel_purchase / return_purchase no cambian.
+-- OJO: reaplicar 20261006c / f / h, 20261007a, 20261009d, 20261010a o 20261010b reinstala create_purchase sin el desarme:
+-- volver a aplicar este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (COM-14): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo
+-- sobre la base sin parche: el detalle de compra responde error (pide las columnas nuevas); la recepcion sin lineas a
+-- desarmar cae a receive_purchase.
+-- -----------------------------------------------------------------------------
+-- 20261010e — pack recipe always disassemble (COM-14): preferencia "Desarmar siempre al recibir compras" en la cabecera de
+--             la receta de apertura (product_pack_conversions.always_disassemble_on_receive)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010e-pack-recipe-always-disassemble.sql
+-- Requiere 20261009d. Idempotente, una transaccion. Solo anade la columna (boolean not null default false); no toca
+-- funciones, triggers, indices ni politicas, y no migra datos (toda receta existente queda en false).
+-- NO cambia stock, costo ni dinero: ninguna RPC lee la columna. Es una preferencia de pantalla: la linea de ese empaque
+-- nace con el chip "Desarmar al recibir" marcado en /purchases/create; la marca que decide sigue viajando por linea.
+-- Se lee y se escribe por tabla directa (PostgREST), como el resto de la receta, con la RLS de la cabecera: lectura de la
+-- tienda, escritura admin / almacen de la tienda.
+-- ORDEN DE DESPLIEGUE: parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sobre la
+-- base sin parche responde error al leer recetas (pide la columna nueva).
+-- -----------------------------------------------------------------------------
+-- 20261010f — receive disassemble invariant (COM-F7 M1, sobre COM-14): una compra no queda recibida con una linea marcada
+--             "Desarmar al recibir" sin desarmar; lo garantiza la base con un constraint trigger diferido
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261010f-receive-disassemble-invariant.sql
+-- Requiere 20261010d. Idempotente, una transaccion. Crea la funcion purchases_received_disassemble_guard() (security
+-- definer, sin execute para PostgREST, solo lee) y el constraint trigger del mismo nombre sobre purchases: after insert or
+-- update of status, when (new.status = 'recibido'), deferrable initially deferred. NO redefine receive_purchase,
+-- receive_purchase_and_disassemble, create_purchase ni convert_pack_to_units; no toca tablas, columnas, indices ni
+-- politicas; no migra datos.
+-- NO cambia stock, costo ni dinero. Al final de la transaccion que deja una compra recibida, si le queda una linea con
+-- disassemble_on_receive = true y disassembled_conversion_id NULL responde PT409 ("Esta compra tiene lineas marcadas para
+-- desarmar: ...") y se revierte todo. Solo lo dispara receive_purchase llamada DIRECTAMENTE sobre un pedido con lineas
+-- marcadas (antes dejaba la compra recibida con la marca y sin conversion). receive_purchase_and_disassemble (con marcas,
+-- con reparto o con [] = desmarca y recibe sin abrir), create_purchase recibida y receive_purchase sobre un pedido sin
+-- marcas responden lo mismo que antes.
+-- OJO: el rechazo llega al confirmar la transaccion (por PostgREST, 409 con el mensaje). En una transaccion abierta a mano
+-- se adelanta con: set constraints public.purchases_received_disassemble_guard immediate;
+-- OJO: un constraint trigger no valida filas existentes; la cabecera del parche trae la consulta que localiza una compra
+-- recibida con una linea marcada sin desarmar. Reaplicar 20261010d no elimina el trigger.
+-- ORDEN DE DESPLIEGUE: parche -> verify. No depende del BFF (ya recibe siempre con receive_purchase_and_disassemble).

@@ -14,6 +14,7 @@ import {
   caseId,
   listSerialMatrix,
   mulRound2,
+  purchaseHttp,
   purchaseUnits,
   round2,
   saleHttp,
@@ -195,6 +196,13 @@ describe("cálculo de esperados y payloads", () => {
     expect(adjustHttp({ active: true, stock: 0 }, -3)).toBe("reject");
     expect(adjustHttp({ active: false, stock: 20 }, -25)).toBe("reject");
     expect(adjustHttp({ active: false, stock: 20 }, 5)).toBe("either");
+  });
+
+  it("COM-15: una compra sobre un producto inactivo se rechaza (ya no se observa); las variantes de empaque siguen en observación", () => {
+    expect(purchaseHttp({ active: true })).toBe("accept");
+    expect(purchaseHttp({ active: false })).toBe("reject");
+    expect(purchaseHttp({ active: true }, true)).toBe("either");
+    expect(purchaseHttp({ active: false }, true)).toBe("either");
   });
 
   it("SKU con el prefijo del ticket, el run y un sufijo único", () => {

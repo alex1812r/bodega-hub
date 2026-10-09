@@ -74,14 +74,14 @@ const DEADLOCK_RE = /deadlock|40P01/i;
 
 const share = (product: LabProductRef, units: number): Share => ({ unit_product_id: product.id, units });
 const resultOf = (res: RestResult): ConversionResult => (res.data && typeof res.data === "object" ? (res.data as ConversionResult) : {});
-const explain = (res: RestResult): string => (res.error ? `${res.status} ${res.error.code ?? ""} ${res.error.message}`.trim() : String(res.status));
+export const explain = (res: RestResult): string => (res.error ? `${res.status} ${res.error.code ?? ""} ${res.error.message}`.trim() : String(res.status));
 
-async function setCost(t: CaseCtx, product: LabProductRef, cost: number): Promise<void> {
+export async function setCost(t: CaseCtx, product: LabProductRef, cost: number): Promise<void> {
   await t.sql(`fixture costo ${product.sku}`, "update public.products set current_cost_ref = $2 where id = $1", [product.id, cost]);
 }
 
 /** Receta por PostgREST como `lab-almacen`: cabecera inactiva → componentes → activar (cada petición confirma sola). */
-async function createRecipe(lab: Lab, t: CaseCtx, pack: LabProductRef, lines: readonly RecipeLine[]): Promise<string> {
+export async function createRecipe(lab: Lab, t: CaseCtx, pack: LabProductRef, lines: readonly RecipeLine[]): Promise<string> {
   const client = await lab.supa(STOCKER);
   const total = lines.reduce((sum, line) => sum + line.units, 0);
   const header = await t.rest(
@@ -114,7 +114,7 @@ function open(t: CaseCtx, pack: LabProductRef, options: OpenOptions = {}, as: La
   });
 }
 
-async function facts(lab: Lab, products: readonly LabProductRef[]): Promise<Array<{ stock: number; cost: number }>> {
+export async function facts(lab: Lab, products: readonly LabProductRef[]): Promise<Array<{ stock: number; cost: number }>> {
   const rows = await lab.rows<{ id: string; current_stock: number; cost: number }>(
     "select id, current_stock, current_cost_ref::float8 as cost from public.products where id = any($1::uuid[])",
     [products.map((p) => p.id)],
@@ -139,7 +139,7 @@ async function allConversionMoves(lab: Lab, products: readonly LabProductRef[]):
 const brief = (moves: readonly Movement[]): Array<[string, number, number]> => moves.map((move) => [move.type, move.quantity_delta, move.stock_after]);
 
 /** Las 9 vistas en 0 para los productos del caso. */
-async function expectClean(c: Checks, t: CaseCtx): Promise<void> {
+export async function expectClean(c: Checks, t: CaseCtx): Promise<void> {
   const scoped = await t.scoped();
   c.eq("vistas de integridad de los productos del caso", Object.fromEntries(Object.entries(scoped).filter(([, rows]) => rows > 0)), {});
 }

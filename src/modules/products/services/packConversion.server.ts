@@ -31,6 +31,7 @@ const recipeSelect = `
   pack_product_id,
   label,
   total_units,
+  always_disassemble_on_receive,
   pack_product:products!pack_product_id(${linkedProductSelect}),
   components:product_pack_components(
     unit_product_id,
@@ -48,6 +49,7 @@ type PackComponentRow = {
 };
 
 type PackRecipeRow = {
+  always_disassemble_on_receive?: boolean | null;
   components?: PackComponentRow[] | null;
   id: string;
   label?: string | null;
@@ -93,6 +95,7 @@ export function mapPackRecipeRow(row: PackRecipeRow): PackRecipeView | undefined
   }
 
   return {
+    ...(row.always_disassemble_on_receive === true ? { alwaysDisassembleOnReceive: true } : {}),
     components: components.flatMap(({ component, product }) =>
       product
         ? [
@@ -384,6 +387,7 @@ async function discardCreatedUnit(
 }
 
 type ActiveRecipeRow = {
+  always_disassemble_on_receive?: boolean | null;
   components?: { cost_weight: number | string; unit_product_id: string; units_per_pack: number }[] | null;
   id: string;
   label?: string | null;
@@ -400,7 +404,7 @@ async function findActiveRecipe(
   const { data, error } = await supabase
     .from("product_pack_conversions")
     .select(
-      "id, unit_product_id, total_units, label, components:product_pack_components(unit_product_id, units_per_pack, cost_weight)",
+      "id, unit_product_id, total_units, label, always_disassemble_on_receive, components:product_pack_components(unit_product_id, units_per_pack, cost_weight)",
     )
     .eq("store_id", storeId)
     .eq("pack_product_id", packProductId)
@@ -410,6 +414,27 @@ async function findActiveRecipe(
   throwIfSupabaseError(error);
 
   return (data as unknown as ActiveRecipeRow | null) ?? null;
+}
+
+/**
+ * Preferencia «Desarmar siempre al recibir compras» (COM-14, parche 20261010e)
+ * con la que queda la receta: la que llega o, si no llega, la de la receta
+ * vigente (una receta reemplazada no la pierde; una receta nueva nace sin ella).
+ */
+function resolveAlwaysDisassemble(input: PackConversionInput, existing: ActiveRecipeRow | null) {
+  return input.alwaysDisassembleOnReceive ?? existing?.always_disassemble_on_receive === true;
+}
+
+/** La columna en el alta de una cabecera: solo se nombra en `true` (la base pone `false`). */
+function alwaysDisassembleColumn(value: boolean) {
+  return value ? { always_disassemble_on_receive: true } : {};
+}
+
+/** La columna al editar una cabecera en sitio: solo si la petición trae la preferencia. */
+function alwaysDisassemblePatch(input: PackConversionInput) {
+  return input.alwaysDisassembleOnReceive === undefined
+    ? {}
+    : { always_disassemble_on_receive: input.alwaysDisassembleOnReceive };
 }
 
 async function setRecipeActive(supabase: RouteSupabaseClient, recipeId: string, isActive: boolean) {
@@ -520,10 +545,18 @@ async function saveAssortedRecipe(
       { components, totalUnits },
     )
   ) {
-    if ((existing.label ?? null) !== label) {
+    const patch = {
+      ...((existing.label ?? null) !== label ? { label } : {}),
+      ...(resolveAlwaysDisassemble(input, existing) !==
+      (existing.always_disassemble_on_receive === true)
+        ? alwaysDisassemblePatch(input)
+        : {}),
+    };
+
+    if (Object.keys(patch).length > 0) {
       const { error } = await supabase
         .from("product_pack_conversions")
-        .update({ label })
+        .update(patch)
         .eq("id", existing.id);
 
       throwIfSupabaseError(error);
@@ -535,6 +568,7 @@ async function saveAssortedRecipe(
   const { data: draft, error: draftError } = await supabase
     .from("product_pack_conversions")
     .insert({
+      ...alwaysDisassembleColumn(resolveAlwaysDisassemble(input, existing)),
       is_active: false,
       label,
       pack_product_id: packProductId,
@@ -665,6 +699,7 @@ export async function upsertPackConversionForPackProduct(
     const { error } = await supabase
       .from("product_pack_conversions")
       .update({
+        ...alwaysDisassemblePatch(input),
         unit_product_id: unitProductId,
         units_per_pack: unitsPerPack,
       })
@@ -686,6 +721,7 @@ export async function upsertPackConversionForPackProduct(
   }
 
   const { error: insertError } = await supabase.from("product_pack_conversions").insert({
+    ...alwaysDisassembleColumn(resolveAlwaysDisassemble(input, existing)),
     pack_product_id: packProductId,
     store_id: storeId,
     unit_product_id: unitProductId,

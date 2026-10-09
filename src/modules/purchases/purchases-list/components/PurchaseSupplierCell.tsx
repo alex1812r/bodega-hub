@@ -29,11 +29,15 @@ export function PurchaseSupplierCell({ name }: PurchaseSupplierCellProps) {
   const initials = getInitials(name) || "?";
 
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      <div className={cn("purchase-supplier-avatar", getAvatarTone(name))} aria-hidden>
-        {initials}
-      </div>
-      <span className="truncate font-medium text-foreground">{name}</span>
+    // Con tope: un nombre largo se recorta en vez de ensanchar la tabla. El avatar
+    // (decorativo) solo aparece cuando la tarjeta de la tabla tiene ancho de sobra.
+    <div className="flex min-w-0 max-w-36 items-center gap-2 @6xl:max-w-52">
+      <span aria-hidden className="hidden shrink-0 @6xl:block">
+        <span className={cn("purchase-supplier-avatar", getAvatarTone(name))}>{initials}</span>
+      </span>
+      <span className="truncate font-medium text-foreground" title={name}>
+        {name}
+      </span>
     </div>
   );
 }

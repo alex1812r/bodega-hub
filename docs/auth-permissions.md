@@ -110,6 +110,12 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 
 Notas de pagos:
 - El **vendedor** no tiene `payments.manage`, pero puede **registrar cobros de venta** (POS / `POST /api/payments` con `saleId`) con `sales.create`. No puede pagar compras ni anular pagos.
+- **Pagos de compras** (pagos a proveedores, `payments.purchase_id` no nulo): solo los ven **admin y contador**, que son los roles con `payments.view` y `purchases.view` a la vez (`canViewPurchasePayments` en `src/shared/auth/paymentAccess.ts`). Vale en las dos capas: la RLS de `payments` (parche `20261010c-payments-purchase-rls.sql`) devuelve 0 filas a vendedor y almacén aunque consulten PostgREST con su JWT, y el BFF no se los entrega. Los pagos de ventas se siguen leyendo por tienda.
+- **Almacén** ve la compra (`purchases.view`) pero no sus pagos: `GET /api/purchases/[id]` le responde `payments: []` y `paidRef` / `paidVes` de la cabecera de la compra (`purchases.paid_ref` / `paid_ves`, que mantiene `register_payment`); el detalle le muestra Pagado / Pendiente y, en el historial, «No tienes permiso para ver los pagos de esta compra». `vault_movements` (asientos `purchase_out` del baúl) queda fuera de esta regla.
+
+Notas de compras:
+- **Proveedor de una compra** (COM-F9): `GET /api/purchases/suppliers` se autoriza con `purchases.create` (admin y almacén), no con `contacts.view`, para que almacén pueda elegir proveedor sin leer contactos. Solo entrega `id`, `name`, `taxId` e `isActive` de contactos `proveedor` / `ambos` de la tienda; `/api/contacts` sigue exigiendo `contacts.view`.
+- Lee `contacts` con la sesión del usuario: la política «Authenticated users read contacts» (`20260716-multi-store.sql`) solo filtra por tienda, no por rol; quien acota los campos y el tipo es el BFF.
 
 Notas de nomina:
 - `payroll.manage` es del dueno: calcular, aprobar, pagar y anular quincenas.

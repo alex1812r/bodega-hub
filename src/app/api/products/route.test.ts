@@ -354,6 +354,8 @@ describe("/api/products", () => {
       eq: mockEq,
       gte: mockGte,
       ilike: jest.fn().mockReturnThis(),
+      // Cola "Por revisar" de los productos de la página (COM-F7 M5): ninguno.
+      in: jest.fn().mockResolvedValue({ data: [], error: null }),
       is: mockIs,
       lt: mockLt,
       // Fila de app_settings de la tienda: sin configuración, umbrales por defecto.

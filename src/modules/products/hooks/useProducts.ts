@@ -84,6 +84,8 @@ export type ProductInput = {
   minStock?: number;
   name: string;
   packConversion?: {
+    /** Preferencia de la receta (COM-14). Ausente = no cambia. */
+    alwaysDisassembleOnReceive?: boolean;
     /** Solo `mode: "assorted"`: de 2 a 20 productos; sus unidades suman `totalUnits`. */
     components?: { costWeight?: number; unitProductId: string; unitsPerPack: number }[];
     enabled: boolean;

@@ -59,6 +59,7 @@ const COMPONENT_PRODUCT_MESSAGE = "Selecciona el producto de cada componente.";
 const COMPONENT_MESSAGE = "Cada componente del empaque requiere su producto y sus unidades.";
 const COMPONENTS_LIST_MESSAGE = "Los componentes del empaque deben ser una lista.";
 const ENABLED_MESSAGE = "Indica si el empaque está activo.";
+const ALWAYS_DISASSEMBLE_MESSAGE = "Indica si el empaque se desarma siempre al recibir compras.";
 const LABEL_MESSAGE = "El nombre de la receta debe ser un texto.";
 const MODE_MESSAGE = "El tipo de empaque no es válido.";
 const UNIT_PRODUCT_ID_MESSAGE = "Selecciona el producto unidad.";
@@ -94,9 +95,12 @@ export const packConversionComponentSchema = z.object(
  * - `link_existing` / `create_unit`: el par de siempre (un producto unidad).
  * - `assorted`: receta surtida (`totalUnits`, `components`, `label` opcional).
  * - `enabled: false`: desactiva la receta del producto.
+ * - `alwaysDisassembleOnReceive` (cualquier modo, opcional): preferencia de la
+ *   receta (COM-14). Ausente = no cambia (receta nueva: `false`).
  */
 export const packConversionInputSchema = z
   .object({
+    alwaysDisassembleOnReceive: z.boolean({ message: ALWAYS_DISASSEMBLE_MESSAGE }).optional(),
     components: z
       .array(packConversionComponentSchema, { message: COMPONENTS_LIST_MESSAGE })
       .optional(),
