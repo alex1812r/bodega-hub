@@ -97,6 +97,35 @@ export const WithPriceReview: Story = {
   },
 };
 
+/** REP-09b: cuentas por cobrar con más de 30 días (y de 8 a 30) encima de "Bajo stock". */
+export const WithOverdueReceivables: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        ...dashboardHandlers,
+        http.get("/api/reports/receivables-aging", () =>
+          HttpResponse.json({
+            data: {
+              items: [],
+              limit: 10,
+              skip: 0,
+              summary: {
+                buckets: [
+                  { bucket: "0-7", documentsCount: 6, pendingRef: 84.5, pendingVes: 43095 },
+                  { bucket: "8-30", documentsCount: 4, pendingRef: 61.2, pendingVes: 31212 },
+                  { bucket: "30+", documentsCount: 3, pendingRef: 128.75, pendingVes: 65662.5 },
+                ],
+                totals: { documentsCount: 13, pendingRef: 274.45, pendingVes: 139969.5 },
+              },
+              total: 13,
+            },
+          }),
+        ),
+      ],
+    },
+  },
+};
+
 /** Ventas REF de un ciclo de dos semanas, con tres picos claros. */
 const PEAK_PATTERN = [120, 180, 140, 420, 210, 160, 90, 130, 510, 170, 150, 380, 200, 110];
 

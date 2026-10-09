@@ -28,7 +28,14 @@ type Story = { parameters?: { msw?: { handlers: MockHandler[] }; nextjs?: unknow
 type StoryModule = Record<string, Story> & { default: Story & { beforeEach?: () => void } };
 
 const stories = jest.requireActual<StoryModule>("../../app/dashboard/page.stories");
-const STORY_NAMES = ["Default", "WithPriceReview", "WithSalesPeaks", "Loading", "Error"];
+const STORY_NAMES = [
+  "Default",
+  "WithPriceReview",
+  "WithOverdueReceivables",
+  "WithSalesPeaks",
+  "Loading",
+  "Error",
+];
 
 async function storyGet(story: Story, pathname: string, query = "") {
   const handler = story.parameters?.msw?.handlers.find((item) => item.path === pathname);
@@ -47,7 +54,7 @@ describe("Storybook · stories del dashboard", () => {
     stories.default.beforeEach?.();
   });
 
-  it("están las cinco y todas heredan el router de app con la ruta del dashboard", () => {
+  it("están las seis y todas heredan el router de app con la ruta del dashboard", () => {
     expect(Object.keys(stories).filter((name) => name !== "default").sort()).toEqual(
       [...STORY_NAMES].sort(),
     );
@@ -76,6 +83,18 @@ describe("Storybook · stories del dashboard", () => {
     expect(values).toHaveLength(7);
     expect(Math.max(...values)).toBeGreaterThan(2 * Math.min(...values));
     expect(trend.series?.previous).toHaveLength(7);
+  });
+
+  it("WithOverdueReceivables responde documentos de más de 30 días y de 8 a 30", async () => {
+    const report = (await storyGet(stories.WithOverdueReceivables, "/api/reports/receivables-aging")) as {
+      summary: { buckets: { bucket: string; documentsCount: number }[] };
+    };
+
+    expect(report.summary.buckets.map((row) => [row.bucket, row.documentsCount])).toEqual([
+      ["0-7", 6],
+      ["8-30", 4],
+      ["30+", 3],
+    ]);
   });
 
   it("WithPriceReview responde 3 productos por revisar", async () => {

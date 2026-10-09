@@ -16,6 +16,8 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import * as dashboardMock from "@/modules/dashboard/services/dashboard.mock-server";
+import { assertMoneyReportAccess } from "@/modules/reports/services/moneyReports";
+import { getReceivablesAgingReport } from "@/modules/reports/services/moneyReports.mock-server";
 import { rolePermissions, type UserRole } from "@/shared/auth/permissions";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
@@ -35,6 +37,7 @@ jest.mock("../../shared/auth/usePermission", () => ({
         permission,
       ),
     isLoading: false,
+    permissions: jest.requireActual("../../shared/auth/permissions").rolePermissions[mockRole],
     role: mockRole,
   }),
 }));
@@ -61,6 +64,21 @@ function requiredPermission(pathname: string) {
   const source = readFileSync(routeFile, "utf8");
 
   return /require(?:Store)?Permission\(\s*request,\s*"([^"]+)"/.exec(source)?.[1] ?? null;
+}
+
+/** Permisos propios de un reporte de dinero, además del de su ruta (`assertMoneyReportAccess`). */
+function deniedByMoneyReportRule(pathname: string, role: UserRole) {
+  if (pathname !== "/api/reports/receivables-aging") {
+    return false;
+  }
+
+  try {
+    assertMoneyReportAccess("receivables-aging", { permissions: rolePermissions[role], role });
+
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 function jsonResponse(payload: unknown, status = 200) {
@@ -92,6 +110,8 @@ function respond(url: URL) {
       return { items: [], summary: { paymentCount: 0, totalRef: 0, totalVes: 0 } };
     case "/api/products/price-review/summary":
       return { total: 2 };
+    case "/api/reports/receivables-aging":
+      return getReceivablesAgingReport({ limit: 10, skip: 0 }, DEFAULT_STORE_ID, TODAY);
     default:
       throw new Error(`Endpoint inesperado en el dashboard: ${url.pathname}`);
   }
@@ -109,7 +129,8 @@ describe("/dashboard · periodo único en la URL y peticiones por rol", () => {
       const url = new URL(String(input), "http://localhost");
       const permission = requiredPermission(url.pathname);
       const forbidden =
-        permission !== null && !(rolePermissions[mockRole] as readonly string[]).includes(permission);
+        (permission !== null && !(rolePermissions[mockRole] as readonly string[]).includes(permission)) ||
+        deniedByMoneyReportRule(url.pathname, mockRole);
 
       requests.push({ forbidden, path: url.pathname, query: url.search });
 
@@ -151,8 +172,16 @@ describe("/dashboard · periodo único en la URL y peticiones por rol", () => {
   ];
 
   it.each([
-    ["admin", [...DASHBOARD_ENDPOINTS, "/api/products/price-review/summary", "/api/reports/payment-methods"]],
-    ["contador", [...DASHBOARD_ENDPOINTS, "/api/reports/payment-methods"]],
+    [
+      "admin",
+      [
+        ...DASHBOARD_ENDPOINTS,
+        "/api/products/price-review/summary",
+        "/api/reports/payment-methods",
+        "/api/reports/receivables-aging",
+      ],
+    ],
+    ["contador", [...DASHBOARD_ENDPOINTS, "/api/reports/payment-methods", "/api/reports/receivables-aging"]],
     ["almacen", [...DASHBOARD_ENDPOINTS, "/api/products/price-review/summary"]],
     ["vendedor", [...DASHBOARD_ENDPOINTS, "/api/products/price-review/summary"]],
   ] as const)("%s solo pide lo que su rol puede ver: ningún 403", async (role, expected) => {
@@ -165,6 +194,30 @@ describe("/dashboard · periodo único en la URL y peticiones por rol", () => {
 
     expect(requests.filter((request) => request.forbidden)).toEqual([]);
   });
+
+  it.each(["almacen", "vendedor"] as const)(
+    "%s no pide cuentas por cobrar (REP-09b): la ruta le contestaría 403",
+    async (role) => {
+      mockRole = role;
+      renderDashboard();
+      await waitForDashboard();
+
+      expect(deniedByMoneyReportRule("/api/reports/receivables-aging", role)).toBe(true);
+      expect(requestsTo("/api/reports/receivables-aging")).toEqual([]);
+      expect(screen.queryByText("Cuentas por cobrar vencidas")).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(["admin", "contador"] as const)(
+    "%s pide cuentas por cobrar una sola vez, solo el resumen (REP-09b)",
+    async (role) => {
+      mockRole = role;
+      renderDashboard();
+      await waitForDashboard();
+
+      await waitFor(() => expect(requestsTo("/api/reports/receivables-aging")).toEqual(["?limit=10"]));
+    },
+  );
 
   it("almacén no llama a payment-methods y la tarjeta no deja hueco", async () => {
     mockRole = "almacen";

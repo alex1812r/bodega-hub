@@ -16,6 +16,7 @@ jest.mock("../../shared/auth/usePermission", () => ({
   usePermission: () => ({
     can: (permission: string) => mockPermissions.includes(permission),
     isLoading: false,
+    permissions: mockPermissions,
     role: "admin",
   }),
 }));
@@ -154,5 +155,118 @@ describe("DashboardPage · tarjeta Por revisar (PRO-F5)", () => {
     );
 
     expect(platformPage).not.toMatch(/PriceReview|price-review/);
+  });
+});
+
+describe("DashboardPage · tarjeta Cuentas por cobrar vencidas (REP-09b)", () => {
+  const fetchMock = jest.fn();
+  const AGING_PATH = "/api/reports/receivables-aging";
+
+  function agingSummary(overdue: number, dueSoon: number) {
+    return {
+      items: [],
+      limit: 10,
+      skip: 0,
+      summary: {
+        buckets: [
+          { bucket: "0-7", documentsCount: 4, pendingRef: 40, pendingVes: 20000 },
+          { bucket: "8-30", documentsCount: dueSoon, pendingRef: dueSoon * 5, pendingVes: dueSoon * 2500 },
+          { bucket: "30+", documentsCount: overdue, pendingRef: overdue * 10, pendingVes: overdue * 5000 },
+        ],
+        totals: { documentsCount: 4 + dueSoon + overdue, pendingRef: 0, pendingVes: 0 },
+      },
+      total: 0,
+    };
+  }
+
+  function respondWith(overdue: number, dueSoon: number, priceReviewTotal = 0) {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).startsWith(AGING_PATH)
+        ? jsonResponse({ data: agingSummary(overdue, dueSoon) })
+        : jsonResponse({ data: { total: priceReviewTotal } }),
+    );
+  }
+
+  function agingRequests() {
+    return fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.startsWith(AGING_PATH));
+  }
+
+  beforeEach(() => {
+    mockPermissions = ["products.view", "reports.view", "payments.manage"];
+    fetchMock.mockReset();
+    global.fetch = fetchMock;
+  });
+
+  function renderPage() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DashboardPage />
+      </QueryClientProvider>,
+    );
+  }
+
+  function asideChildren() {
+    const lowStockSlot = screen.getByTestId("low-stock").parentElement;
+
+    if (!lowStockSlot?.parentElement) {
+      throw new Error("Sin columna lateral");
+    }
+
+    return { children: Array.from(lowStockSlot.parentElement.children), lowStockSlot };
+  }
+
+  it("va después de Por revisar y antes de Bajo stock, con una sola petición del resumen", async () => {
+    respondWith(2, 3, 3);
+    renderPage();
+
+    const overdue = await screen.findByRole("link", { name: /Cuentas por cobrar vencidas/ });
+    const priceReview = await screen.findByRole("link", { name: /productos bajaron de ganancia/ });
+    const { children, lowStockSlot } = asideChildren();
+
+    expect(children).toEqual([priceReview, overdue, lowStockSlot]);
+    expect(overdue).toHaveAttribute("href", "/reports?report=receivables-aging&bucket=30%2B");
+    expect(agingRequests()).toEqual(["/api/reports/receivables-aging?limit=10"]);
+  });
+
+  it("sin documentos de más de 7 días la columna queda solo con Bajo stock, sin hueco", async () => {
+    respondWith(0, 0);
+    renderPage();
+
+    await waitFor(() => expect(agingRequests()).toHaveLength(1));
+    await waitFor(() => expect(fetchMock.mock.results.every((result) => result.type === "return")).toBe(true));
+    await Promise.resolve();
+
+    const { children, lowStockSlot } = asideChildren();
+
+    expect(screen.queryByText("Cuentas por cobrar vencidas")).not.toBeInTheDocument();
+    expect(children).toEqual([lowStockSlot]);
+    expect(lowStockSlot).toHaveClass("min-h-0", "flex-1");
+  });
+
+  it.each([
+    ["sin reports.view", ["products.view", "sales.create", "payments.manage"]],
+    ["con reports.view pero sin payments.manage ni sales.create", ["products.view", "reports.view"]],
+  ])("%s ni la pide ni la monta", async (_name, permissions) => {
+    mockPermissions = permissions;
+    respondWith(2, 3);
+    renderPage();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await Promise.resolve();
+
+    expect(agingRequests()).toEqual([]);
+    expect(screen.queryByText("Cuentas por cobrar vencidas")).not.toBeInTheDocument();
+    expect(asideChildren().children).toHaveLength(1);
+  });
+
+  it("el dashboard de plataforma no la monta", () => {
+    const platformPage = readFileSync(
+      join(process.cwd(), "src/modules/platform/dashboard/page.tsx"),
+      "utf8",
+    );
+
+    expect(platformPage).not.toMatch(/OverdueReceivables|receivables-aging/);
   });
 });

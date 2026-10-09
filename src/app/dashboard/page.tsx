@@ -5,6 +5,7 @@ import { DashboardContentGrid } from "@/modules/dashboard/components/DashboardCo
 import { DashboardKpiCardsGrid } from "@/modules/dashboard/components/DashboardKpiCardsGrid";
 import { DashboardDailyCloseCard } from "@/modules/dashboard/components/DashboardDailyCloseCard";
 import { DashboardLowStockCard } from "@/modules/dashboard/components/DashboardLowStockCard";
+import { DashboardOverdueReceivablesCard } from "@/modules/dashboard/components/DashboardOverdueReceivablesCard";
 import { DashboardPaymentMethodsCard } from "@/modules/dashboard/components/DashboardPaymentMethodsCard";
 import { DashboardPeriodField } from "@/modules/dashboard/components/DashboardPeriodField";
 import { DashboardRecentSalesCard } from "@/modules/dashboard/components/DashboardRecentSalesCard";
@@ -99,11 +100,13 @@ function DashboardScreen() {
 
           <DashboardContentGrid
             aside={
-              // Columna de atención: avisos (precios por revisar) encima de "Bajo
-              // stock". Un aviso que no pinta nada no deja hueco: el `gap` solo
-              // separa hijos presentes y "Bajo stock" ocupa el resto de la altura.
+              // Columna de atención: avisos (precios por revisar, cuentas por cobrar
+              // vencidas) encima de "Bajo stock". Un aviso que no pinta nada no deja
+              // hueco: el `gap` solo separa hijos presentes y "Bajo stock" ocupa el
+              // resto de la altura.
               <div className="flex h-full flex-col gap-6">
                 <PriceReviewDashboardCard />
+                <DashboardOverdueReceivablesCard />
                 <div className="min-h-0 flex-1">
                   <DashboardLowStockCard totalCount={summary.data?.lowStockCount ?? 0} />
                 </div>
