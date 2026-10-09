@@ -30,6 +30,7 @@ import { SaleDetailHeader } from "./components/SaleDetailHeader";
 import { SaleDetailPaymentsTable } from "./components/SaleDetailPaymentsTable";
 import { SaleDetailProductsTable } from "./components/SaleDetailProductsTable";
 import { SaleDetailReceiptPreview } from "./components/SaleDetailReceiptPreview";
+import { SaleReceiptPrintPageStyle } from "./components/SaleReceiptPrintPageStyle";
 import { SaleDetailSellerCard } from "./components/SaleDetailSellerCard";
 import { SaleDetailTotals } from "./components/SaleDetailTotals";
 import { resolveSeller } from "./utils/resolveSeller";
@@ -280,9 +281,11 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
       {/*
         Copia solo para imprimir: las reglas de impresión (globals.css) pintan
         `#sale-receipt-preview`, y una sección colapsada no se imprime. Así el
-        ticket sale igual con la vista previa abierta o cerrada.
+        ticket sale igual con la vista previa abierta o cerrada. El `@page` del
+        ticket va aquí y no en globals.css para no alcanzar al resto de la app.
       */}
       <div aria-hidden="true" className="sale-detail-receipt-aside hidden print:block">
+        <SaleReceiptPrintPageStyle />
         <SaleDetailReceiptPreview {...receipt} />
       </div>
     </div>

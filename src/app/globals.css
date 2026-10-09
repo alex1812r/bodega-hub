@@ -255,15 +255,21 @@ button.pos-cart-remove svg {
   }
 }
 
-/* Detalle de venta: impresión ticket térmico 80 mm */
+/*
+ * Detalle de venta: impresión ticket térmico 80 mm.
+ *
+ * Solo actúa en la pantalla que tiene montado el recibo (`#sale-receipt-preview`).
+ * Sueltas (`html, body` / `body *`), estas reglas estrechaban y ocultaban TODA la
+ * app al imprimir con el navegador: cualquier otra pantalla salía en blanco.
+ * `:where()` deja la especificidad igual que antes (`html`, `body`, `body *`),
+ * así que el recibo se imprime con la misma cascada.
+ *
+ * El `@page` (margen del ticket) no admite selector: lo aporta
+ * `SaleReceiptPrintPageStyle`, que se monta junto al recibo.
+ */
 @media print {
-  @page {
-    margin: 2mm;
-    size: 80mm auto;
-  }
-
-  html,
-  body {
+  html:where(:has(#sale-receipt-preview)),
+  :where(html:has(#sale-receipt-preview)) body {
     width: 80mm;
     min-width: 80mm;
     max-width: 80mm;
@@ -272,7 +278,7 @@ button.pos-cart-remove svg {
     background: #ffffff !important;
   }
 
-  body * {
+  :where(html:has(#sale-receipt-preview)) body * {
     visibility: hidden;
   }
 
