@@ -38,6 +38,7 @@ import {
   useCreateContact,
   useUpdateContact,
 } from "../hooks/useContacts";
+import { ContactDeactivateConfirmModal } from "./components/ContactDeactivateConfirmModal";
 import { ContactInfoCell } from "./components/ContactInfoCell";
 import { ContactNameCell } from "./components/ContactNameCell";
 import { ContactsExportActions } from "./components/ContactsExportActions";
@@ -106,6 +107,7 @@ function ContactsList() {
   // Búsqueda, filtros, página y tamaño viven en la URL: recarga, "atrás" y volver del perfil los conservan.
   const list = useUrlListState(contactsListSchema);
   const [editingContact, setEditingContact] = useState<ContactMock | null>(null);
+  const [contactToDeactivate, setContactToDeactivate] = useState<ContactMock | null>(null);
   const { limit, setLimit, setSkip, skip } = useUrlPaginationState(list);
   // El campo refleja lo tecleado al instante; la consulta espera lo mismo que la URL.
   const debouncedSearch = useDebouncedValue(list.state.search, URL_LIST_DEBOUNCE_MS);
@@ -162,9 +164,10 @@ function ContactsList() {
     setEditingContact(null);
   }
 
-  async function toggleContactActive(contact: ContactMock) {
+  // Reactivar no arrastra nada más: es directo. Desactivar confirma con su efecto.
+  async function activateContact(contact: ContactMock) {
     await apiFetch(`/api/contacts/${contact.id}`, {
-      body: { isActive: !contact.isActive },
+      body: { isActive: true },
       method: "PATCH",
     });
     await queryClient.invalidateQueries({ queryKey: contactsQueryKeys.all });
@@ -223,16 +226,14 @@ function ContactsList() {
                 if (contact.isActive) {
                   items.push({
                     label: "Desactivar",
-                    onSelect: () => {
-                      void toggleContactActive(contact);
-                    },
+                    onSelect: () => setContactToDeactivate(contact),
                     variant: "danger",
                   });
                 } else {
                   items.push({
                     label: "Activar",
                     onSelect: () => {
-                      void toggleContactActive(contact);
+                      void activateContact(contact);
                     },
                   });
                 }
@@ -297,6 +298,15 @@ function ContactsList() {
           </div>
         </div>
       </EntityListPage>
+
+      <ContactDeactivateConfirmModal
+        contact={contactToDeactivate}
+        onOpenChange={(open) => {
+          if (!open) {
+            setContactToDeactivate(null);
+          }
+        }}
+      />
 
       {editingContact ? (
         <ContactFormModal

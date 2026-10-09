@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { PaymentMethod } from "@bodega/core";
@@ -23,6 +23,21 @@ jest.mock("../../../settings/hooks/useCurrentExchangeRate", () => ({
   useCurrentExchangeRate: () => ({ data: { rateVes: 100 } }),
 }));
 
+jest.mock("../../../vault/hooks/useVault", () => ({
+  useVault: () => ({
+    data: { balanceEfectivoVes: 5000, balanceRef: 800, balanceVes: 3000 },
+    error: null,
+    refetch: jest.fn(),
+  }),
+}));
+
+/** El formulario abre la confirmación (CNF-13); el pago solo sale al confirmarla. */
+async function confirmPayment(user: ReturnType<typeof userEvent.setup>) {
+  const dialog = await screen.findByRole("dialog", { name: "Confirmar pago de comisión" });
+
+  await user.click(within(dialog).getByRole("button", { name: "Pagar comisión" }));
+}
+
 const item = { fullName: "Ana Perez", id: "item-1", totalRef: 12.5 } as PayrollItem;
 
 describe("PayrollPayModal · NumberInput (SHR-09)", () => {
@@ -42,6 +57,7 @@ describe("PayrollPayModal · NumberInput (SHR-09)", () => {
     expect(amount).toHaveValue("1250.00");
 
     await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+    await confirmPayment(user);
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync).toHaveBeenCalledWith({
@@ -62,6 +78,7 @@ describe("PayrollPayModal · NumberInput (SHR-09)", () => {
 
     await user.clear(amount);
     await user.type(amount, "1200,555{Enter}");
+    await confirmPayment(user);
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ amount: 1200.56 }));
@@ -105,6 +122,7 @@ describe("PayrollPayModal · metodos habilitados que llegan tarde (PAG-08)", () 
     expect(screen.getByLabelText("Monto")).toHaveValue("12.50");
 
     await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+    await confirmPayment(user);
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync).toHaveBeenCalledWith(
@@ -127,6 +145,7 @@ describe("PayrollPayModal · metodos habilitados que llegan tarde (PAG-08)", () 
     expect(screen.getByLabelText("Monto")).toHaveValue("1250.00");
 
     await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+    await confirmPayment(user);
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync).toHaveBeenCalledWith(
@@ -149,6 +168,7 @@ describe("PayrollPayModal · metodos habilitados que llegan tarde (PAG-08)", () 
     expect(screen.getByLabelText("Monto")).toHaveValue("10");
 
     await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+    await confirmPayment(user);
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync).toHaveBeenCalledWith(
@@ -170,6 +190,7 @@ describe("PayrollPayModal · metodos habilitados que llegan tarde (PAG-08)", () 
     expect(screen.getByLabelText("Monto")).toHaveValue("500");
 
     await user.click(screen.getByRole("button", { name: "Registrar pago" }));
+    await confirmPayment(user);
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync).toHaveBeenCalledWith(

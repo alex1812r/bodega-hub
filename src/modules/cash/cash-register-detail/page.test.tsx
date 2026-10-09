@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 
 const mockNavigation = { query: "" };
+/** Turnos que devuelve `/sessions`; cada prueba pone los suyos. */
+let mockSessions: unknown[] = [];
 
 jest.mock("next/navigation", () => ({
   usePathname: () => "/cash/registers/r-1",
@@ -19,6 +21,7 @@ describe("CashRegisterDetailPage · Volver (DET-06b)", () => {
 
   beforeEach(() => {
     mockNavigation.query = "";
+    mockSessions = [];
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: (query: string) => ({
@@ -32,7 +35,7 @@ describe("CashRegisterDetailPage · Volver (DET-06b)", () => {
       headers: { get: () => "application/json" },
       json: async () => ({
         data: String(url).endsWith("/sessions")
-          ? []
+          ? mockSessions
           : {
               createdAt: "2026-01-15T12:00:00.000Z",
               id: "r-1",
@@ -91,5 +94,50 @@ describe("CashRegisterDetailPage · Volver (DET-06b)", () => {
       "href",
       "/cash/registers",
     );
+  });
+
+  describe("diferencia de un cierre (CNF-13)", () => {
+    const register = { id: "r-1", isActive: true, name: "Caja principal" };
+
+    function closedSession(theoretical: { ref: number | null; ves: number | null }) {
+      return {
+        closedAt: "2026-01-15T22:00:00.000Z",
+        closingRef: 10,
+        closingVes: 900.1,
+        id: "s-1",
+        openedAt: "2026-01-15T12:00:00.000Z",
+        openingRef: 0,
+        openingVes: 0,
+        register,
+        registerId: "r-1",
+        status: "closed",
+        theoreticalClosingRef: theoretical.ref,
+        theoreticalClosingVes: theoretical.ves,
+      };
+    }
+
+    it("sin teórico dice «Teórico no disponible» y no inventa una diferencia", async () => {
+      mockSessions = [closedSession({ ref: null, ves: null })];
+      renderPage();
+
+      expect(await screen.findByText("Teórico no disponible")).toBeInTheDocument();
+      expect(screen.queryByText("Cuadrada")).not.toBeInTheDocument();
+    });
+
+    it("con teórico igual al contado muestra «Cuadrada»", async () => {
+      mockSessions = [closedSession({ ref: 10, ves: 900.1 })];
+      renderPage();
+
+      expect(await screen.findByText("Cuadrada")).toBeInTheDocument();
+      expect(screen.queryByText("Teórico no disponible")).not.toBeInTheDocument();
+    });
+
+    it("con teórico distinto muestra la diferencia contado − teórico", async () => {
+      mockSessions = [closedSession({ ref: 10, ves: 1000.3 })];
+      renderPage();
+
+      expect(await screen.findByText(/[-−].*100,20/)).toBeInTheDocument();
+      expect(screen.queryByText("Teórico no disponible")).not.toBeInTheDocument();
+    });
   });
 });
