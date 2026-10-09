@@ -8,21 +8,24 @@ import JSDOMEnvironment from "jest-environment-jsdom";
  *
  * `process.env.TZ` dentro de una prueba es una copia: hay que cambiar el del
  * proceso real, y devolverlo al terminar porque el worker ejecuta más pruebas.
+ *
+ * La zona anterior se lee ANTES de cambiarla (un inicializador de campo corre
+ * después de `super()`, o sea ya en Tokio) y se repone con su nombre: en Node
+ * `delete process.env.TZ` no devuelve el reloj a la zona del sistema, y la
+ * siguiente suite del worker pintaría las fechas un día corridas.
  */
 export default class TokyoTimezoneEnvironment extends JSDOMEnvironment {
-  private readonly originalTimezone = process.env.TZ;
+  private readonly originalTimezone: string;
 
   constructor(config: JestEnvironmentConfig, context: EnvironmentContext) {
+    const originalTimezone = process.env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     process.env.TZ = "Asia/Tokyo";
     super(config, context);
+    this.originalTimezone = originalTimezone;
   }
 
   async teardown() {
-    if (this.originalTimezone === undefined) {
-      delete process.env.TZ;
-    } else {
-      process.env.TZ = this.originalTimezone;
-    }
+    process.env.TZ = this.originalTimezone;
 
     await super.teardown();
   }
