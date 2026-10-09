@@ -10,7 +10,6 @@ import { cn } from "@/shared/utils/cn";
 
 import type { PurchaseItemDisassemble } from "../../services/purchaseDisassemble";
 import { getPurchaseLineDisassembleLabel } from "../utils/purchaseDetailLabels";
-import { PurchaseDetailSectionCard } from "./PurchaseDetailSectionCard";
 
 export type PurchaseDetailItemRow = PurchaseItemMock &
   Pick<PurchaseItemDisassemble, "disassembled" | "disassembleOnReceive"> & {
@@ -139,7 +138,7 @@ export function PurchaseDetailProductsTable({
   const hasDiscount = discountVes > 0 || discountRef > 0;
 
   return (
-    <PurchaseDetailSectionCard title="Ítems de la compra">
+    <>
       {items.length === 0 ? (
         <p className="px-6 py-8 text-center text-sm text-on-surface-variant">
           Esta compra no tiene productos registrados.
@@ -299,6 +298,6 @@ export function PurchaseDetailProductsTable({
           </table>
         </div>
       )}
-    </PurchaseDetailSectionCard>
+    </>
   );
 }

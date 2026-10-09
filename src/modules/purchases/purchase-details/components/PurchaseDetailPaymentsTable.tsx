@@ -6,7 +6,6 @@ import { cn } from "@/shared/utils/cn";
 import { PaymentDetailStatusBadge } from "@/modules/payments/payment-details/components/PaymentDetailStatusBadge";
 import { SalePaymentMethodBadge } from "@/modules/sales/sale-details/components/SalePaymentMethodBadge";
 
-import { PurchaseDetailSectionCard } from "./PurchaseDetailSectionCard";
 
 type PurchaseDetailPaymentsTableProps = {
   /**
@@ -39,16 +38,14 @@ export function PurchaseDetailPaymentsTable({
 }: PurchaseDetailPaymentsTableProps) {
   if (!canViewPayments) {
     return (
-      <PurchaseDetailSectionCard title="Historial de pagos">
-        <p className="px-6 py-8 text-center text-sm text-on-surface-variant">
-          No tienes permiso para ver los pagos de esta compra.
-        </p>
-      </PurchaseDetailSectionCard>
+      <p className="px-6 py-8 text-center text-sm text-on-surface-variant">
+        No tienes permiso para ver los pagos de esta compra.
+      </p>
     );
   }
 
   return (
-    <PurchaseDetailSectionCard title="Historial de pagos">
+    <>
       {payments.length === 0 ? (
         <p className="px-6 py-8 text-center text-sm text-on-surface-variant">
           No hay pagos registrados para esta compra.
@@ -129,6 +126,6 @@ export function PurchaseDetailPaymentsTable({
           </table>
         </div>
       )}
-    </PurchaseDetailSectionCard>
+    </>
   );
 }

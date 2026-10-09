@@ -6,10 +6,13 @@
  * PAG-F2 · «Volver» regresa a la lista de origen que viaja en `returnTo`.
  *
  * PRO-10 · el detalle de compra monta el aviso de reprecio con el id de la compra cargada.
+ *
+ * DET-02 · cabecera con las cifras y UNA acción primaria según estado y permisos,
+ * secciones plegables y enlaces salientes que encadenan el `returnTo`.
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const mockRouterPush = jest.fn();
@@ -41,7 +44,9 @@ import type { PaymentMock } from "@/shared/mocks/erp-data";
 import { formatRefUsd, formatVes } from "@/shared/utils/currency";
 
 import type { PurchaseDetails } from "../hooks/usePurchases";
+import { PURCHASE_DETAIL_SECTION_STORAGE_KEYS } from "./components/PurchaseDetailSections";
 import { PurchaseDetailsPage } from "./page";
+import { exportPurchaseDetailPdf } from "./services/exportPurchaseDetailPdf";
 
 const RATE_VES = 500;
 const PURCHASE: PurchaseDetails = {
@@ -194,8 +199,28 @@ function payButton() {
   return screen.queryByRole("button", { name: "Pagar" });
 }
 
+/** Cabecera de estado: cifras, acción primaria y menú "…". */
+function stateHeader() {
+  return screen.getByRole("region", { hidden: true, name: "Resumen de la compra" });
+}
+
+/** Texto de una cifra de la cabecera (valor y texto secundario). */
+function figure(label: string) {
+  const term = within(stateHeader()).getByText(label, { selector: "dt" });
+
+  return term.nextElementSibling?.textContent ?? "";
+}
+
+/** Botón que pliega una sección; su nombre lleva el resumen cuando está cerrada. */
+function sectionToggle(title: string) {
+  return screen.getByRole("button", { name: new RegExp(`^${title}`) });
+}
+
 beforeEach(() => {
   mockRouterPush.mockReset();
+  jest.mocked(exportPurchaseDetailPdf).mockReset();
+  // Cada prueba parte de los valores por defecto de las secciones.
+  window.localStorage.clear();
 });
 
 describe("PurchaseDetailsPage · Pagar (PAG-01)", () => {
@@ -206,14 +231,14 @@ describe("PurchaseDetailsPage · Pagar (PAG-01)", () => {
       expect(payButton()).toBeInTheDocument();
     });
 
-    it("va en la cabecera, antes del menu de acciones", async () => {
+    it("va en la cabecera de estado, junto al titulo y al menu de acciones", async () => {
       await renderPage();
 
-      const header = screen.getByRole("heading", { name: /C-20261006-000007/ }).closest("header");
-      const pay = within(header as HTMLElement).getByRole("button", { name: "Pagar" });
-      const menu = within(header as HTMLElement).getByRole("button", { name: /^Acciones de/ });
+      const header = within(stateHeader());
 
-      expect(pay.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(header.getByRole("heading", { name: /C-20261006-000007/ })).toBeInTheDocument();
+      expect(header.getByRole("button", { name: "Pagar" })).toBeInTheDocument();
+      expect(header.getByRole("button", { name: /^Acciones de/ })).toBeInTheDocument();
     });
 
     it("PAG-03b: el menu de acciones ya no ofrece «Registrar pago» ni lleva a /payments", async () => {
@@ -295,7 +320,7 @@ describe("PurchaseDetailsPage · Pagar (PAG-01)", () => {
     const { posts, purchaseGets, user } = await renderPage();
     const getsBefore = purchaseGets();
 
-    expect(screen.getByText("Pendiente")).toBeInTheDocument();
+    expect(figure("Estado de pago")).toBe("Pendiente");
     expect(screen.getByText("No hay pagos registrados para esta compra.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Pagar" }));
@@ -318,11 +343,12 @@ describe("PurchaseDetailsPage · Pagar (PAG-01)", () => {
     ]);
 
     // Estado de pago e historial salen del GET que dispara la invalidacion.
-    expect(await screen.findByText("Pagado")).toBeInTheDocument();
-    expect(screen.queryByText("Pendiente")).not.toBeInTheDocument();
+    await waitFor(() => expect(figure("Estado de pago")).toBe("Pagado"));
     expect(
       screen.queryByText("No hay pagos registrados para esta compra."),
     ).not.toBeInTheDocument();
+    // Saldar la compra no pliega el historial que se estaba mirando.
+    expect(sectionToggle("Pagos")).toHaveAttribute("aria-expanded", "true");
     expect(purchaseGets()).toBeGreaterThan(getsBefore);
     expect(payButton()).not.toBeInTheDocument();
     expect(mockRouterPush).not.toHaveBeenCalled();
@@ -367,7 +393,7 @@ describe("PurchaseDetailsPage · pago de resultado incierto (PAG-F3)", () => {
     await user.click(screen.getByRole("button", { name: "Registrar pago" }));
 
     // El re-pedido tras el 500 trae la compra ya saldada.
-    expect(await screen.findByText("Pagado", {}, { timeout: 3000 })).toBeInTheDocument();
+    await waitFor(() => expect(figure("Estado de pago")).toBe("Pagado"), { timeout: 3000 });
     expect(posts).toHaveLength(1);
 
     const dialog = screen.getByRole("dialog", { name: "Pagar compra" });
@@ -514,9 +540,9 @@ describe("PurchaseDetailsPage · pagos de la compra por rol (COM-16)", () => {
     expect(screen.getByText(NO_PERMISSION)).toBeInTheDocument();
     expect(screen.queryByText(NO_PAYMENTS)).not.toBeInTheDocument();
     expect(payButton()).not.toBeInTheDocument();
-    expect(screen.getByText(`Pagado ${formatRefUsd(10)}`)).toBeInTheDocument();
-    expect(screen.getByText("Pago parcial")).toBeInTheDocument();
-    expect(screen.getByText(formatRefUsd(30))).toBeInTheDocument();
+    expect(figure("Pagado")).toContain(formatRefUsd(10));
+    expect(figure("Estado de pago")).toBe("Pago parcial");
+    expect(figure("Saldo")).toContain(formatRefUsd(30));
   });
 
   it.each<UserRole>(["admin", "contador"])("%s sin pagos sigue viendo «no hay pagos registrados»", async (role) => {
@@ -545,5 +571,231 @@ describe("PurchaseDetailsPage · pagos de la compra por rol (COM-16)", () => {
 
     expect(screen.getByText("TRX-COM16")).toBeInTheDocument();
     expect(screen.queryByText(NO_PERMISSION)).not.toBeInTheDocument();
+  });
+});
+
+/** DET-02 · una sola acción primaria, la que toca según el estado y los permisos. */
+describe("PurchaseDetailsPage · acción primaria por estado (DET-02)", () => {
+  const RECEIVE = "Recibir mercancía";
+  const PAID = { paidRef: 40, paidVes: 20000 };
+
+  function withoutPermissions(...denied: Permission[]): Session {
+    return {
+      permissions: getRolePermissions("admin").filter((permission) => !denied.includes(permission)),
+      role: "admin",
+    };
+  }
+
+  /** De las tres acciones posibles, las que están a la vista como botón. */
+  function primaryActions() {
+    return [RECEIVE, "Pagar", "Ver PDF"].filter(
+      (name) => screen.queryByRole("button", { name }) !== null,
+    );
+  }
+
+  it("pedido: «Recibir mercancía» abre la previsualización de la recepción", async () => {
+    const { user } = await renderPage({ status: "pedido" });
+
+    expect(primaryActions()).toEqual([RECEIVE]);
+
+    await user.click(screen.getByRole("button", { name: RECEIVE }));
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("pedido sin permiso de recibir: cae a «Pagar»", async () => {
+    await renderPage({ status: "pedido" }, withoutPermissions("purchases.create"));
+
+    expect(primaryActions()).toEqual(["Pagar"]);
+  });
+
+  it("pedido sin permiso de recibir ni de pagar: cae a «Ver PDF»", async () => {
+    await renderPage(
+      { status: "pedido" },
+      withoutPermissions("purchases.create", "payments.manage"),
+    );
+
+    expect(primaryActions()).toEqual(["Ver PDF"]);
+  });
+
+  it("recibida con saldo pendiente: «Pagar»", async () => {
+    await renderPage();
+
+    expect(primaryActions()).toEqual(["Pagar"]);
+  });
+
+  it("recibida con saldo y sin permiso de pagar: cae a «Ver PDF»", async () => {
+    await renderPage({}, withoutPermissions("payments.manage"));
+
+    expect(primaryActions()).toEqual(["Ver PDF"]);
+  });
+
+  it("recibida y pagada: «Ver PDF» exporta la compra una sola vez aunque se pulse dos veces", async () => {
+    await renderPage(PAID);
+
+    expect(primaryActions()).toEqual(["Ver PDF"]);
+
+    const pdf = screen.getByRole("button", { name: "Ver PDF" });
+
+    // Dos clics seguidos: el segundo llega con la acción ya en curso y no exporta.
+    fireEvent.click(pdf);
+    fireEvent.click(pdf);
+
+    await waitFor(() => expect(exportPurchaseDetailPdf).toHaveBeenCalledTimes(1));
+    expect(jest.mocked(exportPurchaseDetailPdf).mock.calls[0][0]).toMatchObject({
+      id: PURCHASE.id,
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ver PDF" })).toBeEnabled());
+    expect(exportPurchaseDetailPdf).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["cancelado", "Compra cancelada: ya no admite recepción ni pagos."],
+    ["devuelto", "Compra devuelta: ya no admite recepción ni pagos."],
+  ] as const)("%s: «Ver PDF» con el aviso de estado, nunca recibir ni pagar", async (status, notice) => {
+    await renderPage({ status });
+
+    expect(primaryActions()).toEqual(["Ver PDF"]);
+    expect(within(stateHeader()).getByRole("status")).toHaveTextContent(notice);
+  });
+
+  it("la cabecera pinta total, pagado, saldo y estado de pago", async () => {
+    await renderPage({ paidRef: 10, paidVes: 5000 });
+
+    expect(figure("Total")).toContain(formatRefUsd(40));
+    expect(figure("Total")).toContain("Tasa: 1 REF = 500.00 VES");
+    expect(figure("Pagado")).toContain(formatRefUsd(10));
+    expect(figure("Saldo")).toContain(formatRefUsd(30));
+    expect(figure("Estado de pago")).toBe("Pago parcial");
+  });
+
+  it("el menú conserva sus acciones: PDF, duplicar, devolver y cancelar", async () => {
+    const { user } = await renderPage();
+
+    await user.click(screen.getByRole("button", { name: /^Acciones de/ }));
+
+    const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
+
+    expect(items).toEqual(["Descargar PDF", "Duplicar compra", "Devolver", "Cancelar"]);
+  });
+});
+
+describe("PurchaseDetailsPage · secciones plegables (DET-02)", () => {
+  const PAYMENT: PaymentMock = {
+    amount: 20000,
+    amountRef: 40,
+    amountVes: 20000,
+    contactId: "cont-supplier",
+    createdAt: "2026-10-06T14:00:00.000Z",
+    direction: "salida",
+    id: "pay-det02",
+    method: "transferencia",
+    purchaseId: PURCHASE.id,
+    referenceCode: "TRX-DET02",
+    refRateVes: RATE_VES,
+  };
+
+  function openSections() {
+    return ["Productos", "Pagos", "Proveedor", "Fechas", "Notas e información"].filter(
+      (title) => sectionToggle(title).getAttribute("aria-expanded") === "true",
+    );
+  }
+
+  it("con saldo pendiente: Productos y Pagos abiertas, el resto cerradas con su resumen", async () => {
+    await renderPage({ notes: "Entregar por la puerta trasera" });
+
+    expect(openSections()).toEqual(["Productos", "Pagos"]);
+    expect(sectionToggle("Proveedor")).toHaveTextContent("Distribuidora Polar");
+    expect(sectionToggle("Fechas")).toHaveTextContent(/Creada el 6 oct/);
+    expect(sectionToggle("Notas e información")).toHaveTextContent(
+      "Entregar por la puerta trasera",
+    );
+  });
+
+  it("sin saldo pendiente: Pagos cerrada con «N pagos · pagado X»", async () => {
+    await renderPage({ paidRef: 40, paidVes: 20000, payments: [PAYMENT] });
+
+    expect(openSections()).toEqual(["Productos"]);
+    expect(sectionToggle("Pagos")).toHaveTextContent(`1 pago · pagado ${formatRefUsd(40)}`);
+  });
+
+  it("compra sin pagos: estado vacío dentro de Pagos, sin error", async () => {
+    await renderPage();
+
+    const payments = document.getElementById(
+      sectionToggle("Pagos").getAttribute("aria-controls") as string,
+    ) as HTMLElement;
+
+    expect(payments).toBeVisible();
+    expect(
+      within(payments).getByText("No hay pagos registrados para esta compra."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No pudimos cargar la compra")).not.toBeInTheDocument();
+  });
+
+  it("sin notas, la sección de información resume el estado de la compra", async () => {
+    await renderPage();
+
+    expect(sectionToggle("Notas e información")).toHaveTextContent("Mercancía recibida");
+  });
+
+  it("cada sección recuerda su estado con su propia clave", async () => {
+    const { user } = await renderPage();
+
+    await user.click(sectionToggle("Proveedor"));
+    await user.click(sectionToggle("Productos"));
+
+    expect(window.localStorage.getItem(PURCHASE_DETAIL_SECTION_STORAGE_KEYS.supplier)).toBe("open");
+    expect(window.localStorage.getItem(PURCHASE_DETAIL_SECTION_STORAGE_KEYS.products)).toBe(
+      "closed",
+    );
+    expect(window.localStorage.getItem(PURCHASE_DETAIL_SECTION_STORAGE_KEYS.payments)).toBeNull();
+    expect(new Set(Object.values(PURCHASE_DETAIL_SECTION_STORAGE_KEYS)).size).toBe(5);
+  });
+});
+
+describe("PurchaseDetailsPage · returnTo encadenado en los enlaces salientes (DET-02)", () => {
+  const LIST = "/purchases?status=recibido&page=2";
+
+  afterEach(() => {
+    mockSearch = "";
+  });
+
+  function supplierLink() {
+    const href = screen
+      .getByRole("link", { hidden: true, name: "Distribuidora Polar" })
+      .getAttribute("href") as string;
+    const [path, query] = href.split("?");
+
+    return { path, returnTo: new URLSearchParams(query).get("returnTo") };
+  }
+
+  it("el enlace al proveedor vuelve a la compra y conserva la lista de origen", async () => {
+    mockSearch = `returnTo=${encodeURIComponent(LIST)}`;
+    await renderPage();
+
+    const { path, returnTo } = supplierLink();
+
+    expect(path).toBe("/contacts/cont-supplier");
+    expect(returnTo).toBe(`/purchases/purchase-pag01?returnTo=${encodeURIComponent(LIST)}`);
+    // De vuelta en la compra, «Volver» sigue llevando a la lista con sus filtros.
+    expect(new URLSearchParams((returnTo as string).split("?")[1]).get("returnTo")).toBe(LIST);
+    expect(screen.getByRole("link", { name: "Volver" })).toHaveAttribute("href", LIST);
+  });
+
+  it("sin returnTo de origen, el enlace vuelve a la compra", async () => {
+    await renderPage();
+
+    expect(supplierLink()).toEqual({
+      path: "/contacts/cont-supplier",
+      returnTo: "/purchases/purchase-pag01",
+    });
+  });
+
+  it("un returnTo de origen inseguro no viaja en el enlace", async () => {
+    mockSearch = `returnTo=${encodeURIComponent("https://evil.example/x")}`;
+    await renderPage();
+
+    expect(supplierLink().returnTo).toBe("/purchases/purchase-pag01");
   });
 });
