@@ -7,6 +7,7 @@ import { useEffect, useMemo } from "react";
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { Can } from "@/shared/auth/Can";
 import { usePermission } from "@/shared/auth/usePermission";
+import type { ActionMenuItem } from "@/shared/components/ActionsMenu";
 import { Button } from "@/shared/components/Button";
 import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
 import { EmptyState } from "@/shared/components/EmptyState";
@@ -33,6 +34,7 @@ import {
   usePurchases,
   useReturnPurchase,
 } from "../hooks/usePurchases";
+import { getPurchaseActions } from "../utils/purchaseActions";
 import { PurchaseNumberCell } from "./components/PurchaseNumberCell";
 import { PurchasePaymentStatusBadge } from "./components/PurchasePaymentStatusBadge";
 import { PurchaseSupplierCell } from "./components/PurchaseSupplierCell";
@@ -195,8 +197,8 @@ function PurchasesList() {
   const filters = toPurchasesFilters(list.state, debouncedSearch);
   const purchases = usePurchases({ ...filters, limit, skip });
   const cancelPurchase = useCancelPurchase();
-  // Recibir exige el mismo permiso que el botón «Recibir mercancía» del detalle.
-  const canReceive = usePermission().can("purchases.create");
+  // Las acciones de fila siguen las mismas reglas de permiso y estado que el detalle.
+  const access = usePermission();
   const returnPurchase = useReturnPurchase();
   const purchaseItems = getPaginatedItems(purchases.data);
   const totalPurchases = purchases.data?.total ?? 0;
@@ -258,29 +260,46 @@ function PurchasesList() {
 
         <div className="@container flex w-full flex-col overflow-hidden rounded-xl border border-border bg-surface-container-lowest shadow-sm dark:border-slate-800">
           <DataTable
-            actions={(purchase) => [
-              { href: withReturnTo(`/purchases/${purchase.id}`, list.href), label: "Ver detalle" },
-              { href: `/payments?purchaseId=${purchase.id}`, label: "Registrar pago" },
+            actions={(purchase) => {
+              const allowed = getPurchaseActions(purchase, access);
+              const rowActions: ActionMenuItem[] = [
+                { href: withReturnTo(`/purchases/${purchase.id}`, list.href), label: "Ver detalle" },
+              ];
+
+              if (allowed.canPay) {
+                rowActions.push({
+                  href: `/payments?purchaseId=${purchase.id}`,
+                  label: "Registrar pago",
+                });
+              }
+
               // No recibe: abre el detalle con la previsualización de la recepción.
-              ...(purchase.status === "pedido" && canReceive
-                ? [
-                    {
-                      href: withReturnTo(`/purchases/${purchase.id}?receive=1`, list.href),
-                      label: "Recibir mercancía…",
-                    },
-                  ]
-                : []),
-              {
-                label: "Cancelar",
-                onSelect: () => void cancelPurchase.mutateAsync(purchase.id),
-                variant: "danger",
-              },
-              {
-                label: "Devolver",
-                onSelect: () => void returnPurchase.mutateAsync(purchase.id),
-                variant: "danger",
-              },
-            ]}
+              if (allowed.canReceive) {
+                rowActions.push({
+                  href: withReturnTo(`/purchases/${purchase.id}?receive=1`, list.href),
+                  label: "Recibir mercancía…",
+                });
+              }
+
+              if (allowed.canCancelOrReturn) {
+                rowActions.push(
+                  {
+                    disabled: !allowed.isOpen,
+                    label: "Cancelar",
+                    onSelect: () => void cancelPurchase.mutateAsync(purchase.id),
+                    variant: "danger",
+                  },
+                  {
+                    disabled: !allowed.isOpen,
+                    label: "Devolver",
+                    onSelect: () => void returnPurchase.mutateAsync(purchase.id),
+                    variant: "danger",
+                  },
+                );
+              }
+
+              return rowActions;
+            }}
             cardSubtitle={(purchase) => purchase.supplier?.name ?? purchase.supplierId}
             cardTitle={(purchase) => formatPurchaseNumber(purchase.purchaseNumber)}
             columns={columns}

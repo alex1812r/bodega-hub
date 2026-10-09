@@ -12,6 +12,8 @@ import { Button } from "@/shared/components/Button";
 import { Modal } from "@/shared/components/Modal";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
 
+import { getPurchaseActions } from "../../utils/purchaseActions";
+
 type PurchaseDetailActionId = "cancel" | "pdf" | "return";
 
 type PurchaseDetailActionsMenuProps = {
@@ -65,13 +67,18 @@ export function PurchaseDetailActionsMenu({
   purchaseNumber,
   status,
 }: PurchaseDetailActionsMenuProps) {
-  const { can } = usePermission();
+  const { can, role } = usePermission();
   // El detalle vive en `/purchases/[id]`: el id de la compra es el último tramo de la ruta.
   const purchaseId = usePathname().split("/").filter(Boolean).at(-1);
   const [pendingAction, setPendingAction] = useState<PurchaseDetailActionId | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
 
-  const canMutate = status !== "cancelado" && status !== "devuelto";
+  // Mismas reglas de permiso y de estado que el menú de fila de la lista.
+  const {
+    canCancelOrReturn,
+    canDuplicate,
+    isOpen: canMutate,
+  } = getPurchaseActions({ status }, { can, role });
   const pendingConfig = pendingAction ? actionConfigs[pendingAction] : null;
 
   const actions = useMemo(() => {
@@ -84,14 +91,14 @@ export function PurchaseDetailActionsMenu({
     });
 
     // Duplicar vale en cualquier estado: crea otra compra, no toca esta.
-    if (can("purchases.create") && purchaseId) {
+    if (canDuplicate && purchaseId) {
       menuActions.push({
         href: `/purchases/create?duplicate=${encodeURIComponent(purchaseId)}`,
         label: "Duplicar compra",
       });
     }
 
-    if (can("purchases.create")) {
+    if (canCancelOrReturn) {
       menuActions.push({
         disabled: !canMutate || isReturning,
         label: isReturning ? "Procesando..." : "Devolver",
@@ -108,7 +115,8 @@ export function PurchaseDetailActionsMenu({
 
     return menuActions;
   }, [
-    can,
+    canCancelOrReturn,
+    canDuplicate,
     canMutate,
     isCancelling,
     isExportingPdf,

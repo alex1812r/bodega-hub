@@ -13,7 +13,6 @@ import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { PurchaseRepriceNotice } from "@/modules/products/components/price-review/PurchaseRepriceNotice";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
-import { roundMoney } from "@/shared/utils/currency";
 
 import {
   useCancelPurchase,
@@ -21,6 +20,7 @@ import {
   useReceivePurchase,
   useReturnPurchase,
 } from "../hooks/usePurchases";
+import { getPurchaseActions } from "../utils/purchaseActions";
 import { PurchaseDetailDatesCard } from "./components/PurchaseDetailDatesCard";
 import { PurchaseDetailFinancialCard } from "./components/PurchaseDetailFinancialCard";
 import { PurchaseDetailHeaderCard } from "./components/PurchaseDetailHeaderCard";
@@ -204,18 +204,13 @@ export function PurchaseDetailsPage({
   const currentRateVes = exchangeRate.data?.rateVes ?? 0;
   // "Pagar" sigue las reglas de `register_payment` y de POST /api/payments: el saldo
   // es el de bolívares (total − pagado), una compra cancelada o devuelta no admite
-  // pagos, y solo paga quien tiene `payments.manage` y no es vendedor.
-  const pendingVes = roundMoney(data.totalVes - data.paidVes);
+  // pagos, y solo paga quien tiene `payments.manage` y no es vendedor. Es la misma
+  // regla que «Registrar pago» en la fila de la lista (`getPurchaseActions`).
+  const { canPay } = getPurchaseActions(data, { can, role });
   // Los pagos individuales de la compra solo llegan a quien puede ver pagos de
   // compras (admin, contador). A los demás el BFF les manda `payments: []`: no es
   // "sin pagos", así que el historial lo dice. Pagado / Pendiente vienen de la compra.
   const canViewPayments = role !== undefined && canViewPurchasePayments(role);
-  const canPay =
-    pendingVes > 0 &&
-    data.status !== "cancelado" &&
-    data.status !== "devuelto" &&
-    can("payments.manage") &&
-    canViewPayments;
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">

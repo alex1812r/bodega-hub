@@ -36,12 +36,14 @@ jest.mock("next/navigation", () => {
 });
 /** Permisos que la sesión simulada NO tiene; vacío = admin. */
 const mockDeniedPermissions = new Set<string>();
+/** Rol de la sesión simulada: decide quién ve los pagos de una compra. */
+const mockSession = { role: "admin" };
 
 jest.mock("../../../shared/auth/usePermission", () => ({
   usePermission: () => ({
     can: (permission: string) => !mockDeniedPermissions.has(permission),
     isLoading: false,
-    role: "admin",
+    role: mockSession.role,
   }),
 }));
 jest.mock("./components/PurchasesExportActions", () => ({
@@ -108,6 +110,7 @@ describe("PurchasesListPage", () => {
     listTotal = undefined;
     listFailure = null;
     mockDeniedPermissions.clear();
+    mockSession.role = "admin";
     openAt("");
     // Lo que hace Next con un `replaceState`: reflejar la URL en `useSearchParams`.
     window.history.replaceState = (data: unknown, unused: string, url?: string | URL | null) => {
@@ -594,6 +597,109 @@ describe("PurchasesListPage", () => {
 
       expect(labels).toContain("Ver detalle");
       expect(labels.some((label) => /recibir/i.test(label ?? ""))).toBe(false);
+    });
+  });
+
+  // COM-F10 · F-G1: la fila ofrecía Cancelar, Devolver y Registrar pago a todos los roles y estados.
+  describe("acciones de la fila según permiso y estado (COM-F10 · F-G1)", () => {
+    async function rowMenu(user: ReturnType<typeof userEvent.setup>) {
+      await user.click((await screen.findAllByRole("button", { name: /acciones/i }))[0]);
+
+      return screen.findAllByRole("menuitem");
+    }
+
+    async function rowLabels(user: ReturnType<typeof userEvent.setup>) {
+      return (await rowMenu(user)).map((item) => item.textContent);
+    }
+
+    /** El contador: ve compras y gestiona pagos, no crea compras. */
+    function asContador() {
+      mockSession.role = "contador";
+      mockDeniedPermissions.add("purchases.create");
+    }
+
+    /** Almacén: crea y recibe compras, no gestiona pagos. */
+    function asAlmacen() {
+      mockSession.role = "almacen";
+      mockDeniedPermissions.add("payments.manage");
+      mockDeniedPermissions.add("payments.view");
+    }
+
+    it("admin, compra recibida con saldo: detalle, pago, cancelar y devolver", async () => {
+      const user = userEvent.setup();
+
+      listItems = [purchase("001", { status: "recibido" })];
+      renderPage();
+
+      expect(await rowLabels(user)).toEqual(["Ver detalle", "Registrar pago", "Cancelar", "Devolver"]);
+      expect(screen.getByRole("menuitem", { name: "Registrar pago" })).toHaveAttribute(
+        "href",
+        "/payments?purchaseId=001",
+      );
+    });
+
+    it("contador: no ve Cancelar ni Devolver (terminaban en 403) y sí Registrar pago", async () => {
+      const user = userEvent.setup();
+
+      asContador();
+      listItems = [purchase("001", { status: "recibido" })];
+      renderPage();
+
+      expect(await rowLabels(user)).toEqual(["Ver detalle", "Registrar pago"]);
+    });
+
+    it("almacén: no ve Registrar pago (llevaba a «sin permiso») y sí Cancelar y Devolver", async () => {
+      const user = userEvent.setup();
+
+      asAlmacen();
+      listItems = [purchase("001", { status: "pedido" })];
+      renderPage();
+
+      expect(await rowLabels(user)).toEqual([
+        "Ver detalle",
+        "Recibir mercancía…",
+        "Cancelar",
+        "Devolver",
+      ]);
+    });
+
+    it("una compra ya pagada no ofrece Registrar pago", async () => {
+      const user = userEvent.setup();
+
+      listItems = [purchase("001", { paidRef: 20, paidVes: 10200 })];
+      renderPage();
+
+      expect(await rowLabels(user)).toEqual(["Ver detalle", "Cancelar", "Devolver"]);
+    });
+
+    it.each(["cancelado", "devuelto"])(
+      "una compra en estado %s no admite pago, y Cancelar y Devolver quedan deshabilitadas como en el detalle",
+      async (status) => {
+        const user = userEvent.setup();
+
+        listItems = [purchase("001", { status })];
+        renderPage();
+
+        expect(await rowLabels(user)).toEqual(["Ver detalle", "Cancelar", "Devolver"]);
+        expect(screen.getByRole("menuitem", { name: "Cancelar" })).toBeDisabled();
+        expect(screen.getByRole("menuitem", { name: "Devolver" })).toBeDisabled();
+
+        await user.click(screen.getByRole("menuitem", { name: "Cancelar" }));
+
+        expect(
+          fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method),
+        ).toHaveLength(0);
+      },
+    );
+
+    it("contador sobre una compra anulada: solo Ver detalle", async () => {
+      const user = userEvent.setup();
+
+      asContador();
+      listItems = [purchase("001", { status: "cancelado" })];
+      renderPage();
+
+      expect(await rowLabels(user)).toEqual(["Ver detalle"]);
     });
   });
 
