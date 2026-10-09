@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import MockDate from "mockdate";
 
 import { ReportsListPage } from "./page";
 
@@ -14,6 +15,11 @@ import { ReportsListPage } from "./page";
  * enlace distinto a la misma pantalla.
  */
 const meta = {
+  // Los datos de prueba son de mayo de 2026: con el "hoy" en su último día los
+  // rangos relativos («últimos 30 días», «este mes») traen datos y hay gráfico.
+  beforeEach() {
+    MockDate.set("2026-05-18T16:00:00.000Z");
+  },
   component: ReportsListPage,
   parameters: {
     nextjs: {

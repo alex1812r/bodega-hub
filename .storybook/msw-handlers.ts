@@ -73,6 +73,7 @@ import {
   getTopCustomersReport,
   getTopProductsReport,
 } from "../src/modules/reports/services/reports.mock-server";
+import { getPaymentMethodsReport } from "../src/modules/reports/services/paymentMethodsReport.mock-server";
 import {
   cancelSale,
   createSale,
@@ -361,35 +362,39 @@ export const mswHandlers = [
   http.get("/api/payments/:id", ({ params }) =>
     fromService(() => getPaymentById(String(params.id))),
   ),
+  // Los servicios de reportes filtran por tienda: sin ella no devuelven nada.
   http.get("/api/reports/daily-sales", ({ request }) =>
-    fromService(() => getDailySalesReport(searchParams(request))),
+    fromService(() => getDailySalesReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/gross-profit", ({ request }) =>
-    fromService(() => getGrossProfitReport(searchParams(request))),
+    fromService(() => getGrossProfitReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/product-profitability", ({ request }) =>
-    fromService(() => getProductProfitabilityReport(searchParams(request))),
+    fromService(() => getProductProfitabilityReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/low-stock", ({ request }) =>
-    fromService(() => getLowStockReport(searchParams(request))),
+    fromService(() => getLowStockReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/customer-purchases", ({ request }) =>
-    fromService(() => getCustomerPurchasesReport(searchParams(request))),
+    fromService(() => getCustomerPurchasesReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/supplier-purchases", ({ request }) =>
-    fromService(() => getSupplierPurchasesReport(searchParams(request))),
+    fromService(() => getSupplierPurchasesReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/stock-card", ({ request }) =>
-    fromService(() => getStockCardReport(searchParams(request))),
+    fromService(() => getStockCardReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/top-products", ({ request }) =>
-    fromService(() => getTopProductsReport(searchParams(request))),
+    fromService(() => getTopProductsReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/top-customers", ({ request }) =>
-    fromService(() => getTopCustomersReport(searchParams(request))),
+    fromService(() => getTopCustomersReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/purchases", ({ request }) =>
-    fromService(() => getPurchasesReport(searchParams(request))),
+    fromService(() => getPurchasesReport(searchParams(request), DEFAULT_STORE_ID)),
+  ),
+  http.get("/api/reports/payment-methods", ({ request }) =>
+    fromService(() => getPaymentMethodsReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/settings", () => fromService(() => getSettings())),
   // Semáforo de ganancia y chips de % de la tienda demo (formulario, lista y detalle de producto).

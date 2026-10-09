@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import MockDate from "mockdate";
 import { delay, http, HttpResponse } from "msw";
 
 import {
@@ -58,10 +59,19 @@ const dashboardHandlers = [
 ];
 
 const meta = {
+  // Los datos de prueba son de mayo de 2026: el "hoy" de las stories es su último día.
+  beforeEach() {
+    MockDate.set("2026-05-18T16:00:00.000Z");
+  },
   component: DashboardPage,
   parameters: {
     msw: {
       handlers: dashboardHandlers,
+    },
+    // El periodo del dashboard vive en la URL (`useUrlListState`): necesita el router de app.
+    nextjs: {
+      appDirectory: true,
+      navigation: { pathname: "/dashboard" },
     },
   },
   title: "App/Dashboard/DashboardPage",
