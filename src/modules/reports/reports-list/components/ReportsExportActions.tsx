@@ -1,7 +1,7 @@
 "use client";
 
 import { Eye, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
@@ -36,6 +36,17 @@ type ExportPreview = {
 
 const NO_CHART: ChartCapture = { image: null, missing: null };
 
+const STALE_PREVIEW_NOTICE =
+  "Los filtros cambiaron mientras se generaba la vista previa. Vuelve a generarla.";
+
+/**
+ * Lo que define un exporte: los filtros que recibe el botón y la URL (reporte
+ * abierto, rango, página). Dos lecturas iguales = se exporta lo mismo.
+ */
+function readExportStateKey(exportFilters: ReportsExportFilters) {
+  return JSON.stringify([exportFilters, window.location.search]);
+}
+
 const CHART_MISSING_NOTICES: Record<NonNullable<ChartCapture["missing"]>, string> = {
   failed: "El gráfico no se incluirá: no se pudo capturar la imagen.",
   loading: "El gráfico no se incluirá: aún se estaba cargando.",
@@ -46,6 +57,12 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ExportPreview | null>(null);
+  // Los filtros vigentes, para compararlos al terminar de generar la vista previa.
+  const latestExportFilters = useRef(exportFilters);
+
+  useEffect(() => {
+    latestExportFilters.current = exportFilters;
+  }, [exportFilters]);
 
   const exportDisabled =
     isLoadingPreview ||
@@ -57,6 +74,7 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
     setPreviewError(null);
 
     try {
+      const startedWith = readExportStateKey(exportFilters);
       const exportedAt = new Date().toISOString();
       // Por tienda, el reporte abierto y sus filtros salen de la URL (regla 15):
       // el archivo lleva el encabezado, el nombre y el gráfico de lo que se ve.
@@ -75,6 +93,14 @@ export function ReportsExportActions({ exportFilters }: ReportsExportActionsProp
         fetchReportsForExport(filters),
         filters.view && !filters.scope ? captureChartImageWhenReady() : NO_CHART,
       ]);
+
+      // Los datos son los del clic, pero el gráfico se captura (hasta 5 s después)
+      // de lo que haya en pantalla: si mientras tanto cambió el rango o el reporte,
+      // el archivo mezclaría tablas de un rango con el gráfico de otro. Se descarta.
+      if (readExportStateKey(latestExportFilters.current) !== startedWith) {
+        setPreviewError(STALE_PREVIEW_NOTICE);
+        return;
+      }
 
       setPreview({ chartImage: chart.image, chartMissing: chart.missing, data, exportedAt, filters });
     } catch (error) {
