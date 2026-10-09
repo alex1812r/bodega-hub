@@ -81,6 +81,16 @@ describe("ProductDetailStockCard · Ajustar stock (PRO-03)", () => {
     );
   });
 
+  // DET-F1: sin `inventory.view` la página no pasa destino y no hay enlace que acabe en 403.
+  it("sin destino de movimientos no pinta el enlace", () => {
+    renderCard({ movementsHref: undefined });
+
+    expect(
+      screen.queryByRole("link", { name: "Ver movimientos de inventario" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ajustar stock" })).toBeInTheDocument();
+  });
+
   it("sin producto la tarjeta queda como antes, sin botón", () => {
     renderCard({ adjustableProduct: undefined });
 

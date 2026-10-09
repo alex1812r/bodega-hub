@@ -17,6 +17,7 @@ import {
   getSkipForPage,
   getTotalPages,
 } from "@/shared/components/Pagination";
+import { useReportReady } from "@/shared/hooks/useReportReady";
 import { useUrlListState } from "@/shared/hooks/useUrlListState";
 import { formControlClassName } from "@/shared/styles/form-controls";
 import { getPaginatedItems } from "@/lib/api/pagination";
@@ -45,6 +46,8 @@ import {
 import type { SupplierProduct } from "../../types/supplierProducts";
 
 type ContactSupplierProductsTabProps = {
+  /** Aviso de que la lista ya cargó (con filas, vacía o con error). */
+  onReady?: () => void;
   supplierId: string;
   supplierName?: string;
 };
@@ -55,6 +58,7 @@ const skuHeaderClass = "w-[5.75rem] max-w-[5.75rem]";
 const skuCellClass = "min-w-0 w-[5.75rem] max-w-[5.75rem] overflow-hidden";
 
 export function ContactSupplierProductsTab({
+  onReady,
   supplierId,
   supplierName,
 }: ContactSupplierProductsTabProps) {
@@ -86,6 +90,8 @@ export function ContactSupplierProductsTab({
     sortBy,
     sortOrder,
   });
+
+  useReportReady(!query.isLoading, onReady);
 
   const rows = getPaginatedItems(query.data);
   const total = query.data?.total ?? 0;

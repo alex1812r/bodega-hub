@@ -5,6 +5,7 @@ import { Receipt } from "lucide-react";
 import { DEFAULT_PAGE_LIMIT, getPaginatedItems } from "@/lib/api/pagination";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { ResponsivePagination } from "@/shared/components/Pagination";
+import { useReportReady } from "@/shared/hooks/useReportReady";
 import { formatCaracasDateTime } from "@/shared/utils/caracasBusinessDay";
 import { cn } from "@/shared/utils/cn";
 import { formatRef, formatVes } from "@/shared/utils/currency";
@@ -30,13 +31,19 @@ const statusClassNames: Record<ProductSaleHistoryRow["status"], string> = {
 };
 
 type ProductDetailSalesHistoryCardProps = {
+  /** Aviso de que el historial ya cargó (con filas, vacío o con error). */
+  onReady?: () => void;
   productId: string;
 };
 
 export function ProductDetailSalesHistoryCard({
+  onReady,
   productId,
 }: ProductDetailSalesHistoryCardProps) {
   const sales = useProductSalesHistory(productId);
+
+  useReportReady(!sales.isLoading, onReady);
+
   const rows = getPaginatedItems(sales.data);
   const total = sales.data?.total ?? 0;
   // Con el tamaño por defecto como corte: al agrandar la página no desaparece el selector.

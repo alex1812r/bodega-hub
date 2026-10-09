@@ -4,6 +4,7 @@ import { getPriceChangeReason } from "@/lib/api/dataSourceUi";
 import { DEFAULT_PAGE_LIMIT, getPaginatedItems } from "@/lib/api/pagination";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { ResponsivePagination } from "@/shared/components/Pagination";
+import { useReportReady } from "@/shared/hooks/useReportReady";
 import { formatDate } from "@/shared/utils/date";
 
 import type { ProductPriceHistoryEntry } from "../../hooks/useProducts";
@@ -32,13 +33,20 @@ function mapPriceHistory(rows: ProductPriceHistoryEntry[]): ProductPriceHistoryR
 }
 
 type ProductDetailPriceHistoryCardProps = {
+  /** Aviso de que el historial ya cargó (con filas, vacío o con error). */
+  onReady?: () => void;
   productId: string;
 };
 
 /** Historial de precios del producto, paginado en servidor y con la página en la URL. */
-export function ProductDetailPriceHistoryCard({ productId }: ProductDetailPriceHistoryCardProps) {
+export function ProductDetailPriceHistoryCard({
+  onReady,
+  productId,
+}: ProductDetailPriceHistoryCardProps) {
   const history = useProductPriceHistoryPage(productId);
   const total = history.data?.total ?? 0;
+
+  useReportReady(!history.isLoading, onReady);
 
   if (history.error) {
     return (

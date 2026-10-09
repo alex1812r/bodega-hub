@@ -1,7 +1,8 @@
 "use client";
 
 import { Pencil } from "lucide-react";
-import { useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useRef, useState } from "react";
 
 import { getPaginatedItems, MAX_PAGE_LIMIT } from "@/lib/api/pagination";
 import { ProductKardexCard } from "@/modules/inventory/components/ProductKardexCard";
@@ -15,6 +16,7 @@ import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { type TabItem, Tabs } from "@/shared/components/Tabs";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { withUrlListBoundary } from "@/shared/hooks/useUrlListState";
 
 import { KeepPriceConfirmModal } from "../components/price-review/KeepPriceConfirmModal";
@@ -76,6 +78,19 @@ function ProductDetails({ productId = "prod-drill" }: ProductDetailsPageProps) {
   const quickPriceUpdate = useUpdateProductPrice(productId);
   const priceCardRef = useRef<HTMLDivElement | null>(null);
   const [isKeepPriceOpen, setIsKeepPriceOpen] = useState(false);
+  // Al volver de un enlace del detalle, el scroll queda donde estaba. Se restaura una
+  // vez, con la pestaña de la URL ya pintada: Proveedores e Historial cargan sus listas.
+  const requestedTab = useSearchParams().get(PRODUCT_DETAIL_TAB_PARAM);
+  const [isPriceHistoryReady, setIsPriceHistoryReady] = useState(false);
+  const [isSalesHistoryReady, setIsSalesHistoryReady] = useState(false);
+  const markPriceHistoryReady = useCallback(() => setIsPriceHistoryReady(true), []);
+  const markSalesHistoryReady = useCallback(() => setIsSalesHistoryReady(true), []);
+  const isActiveTabReady =
+    requestedTab === "historial"
+      ? isPriceHistoryReady && isSalesHistoryReady
+      : requestedTab !== "proveedores" || !suppliers.isLoading;
+
+  useScrollRestoration(detailUrl, { ready: Boolean(product.data) && isActiveTabReady });
 
   async function handleUpdateProduct(input: ProductInput) {
     const currentPrice = product.data?.salePriceRef;
@@ -123,10 +138,13 @@ function ProductDetails({ productId = "prod-drill" }: ProductDetailsPageProps) {
     ? getPriceReviewTargetPct(data.priceReview.previousBand, marginThresholds)
     : null;
   // Conserva el `returnTo` con el que se llegó al detalle: al volver del kardex sigue ahí.
-  const movementsHref = withChainedReturnTo(
-    `/inventory/movements?productId=${encodeURIComponent(data.id)}`,
-    detailUrl,
-  );
+  // Solo con `inventory.view`: sin él, `/inventory/movements` responde 403.
+  const movementsHref = can("inventory.view")
+    ? withChainedReturnTo(
+        `/inventory/movements?productId=${encodeURIComponent(data.id)}`,
+        detailUrl,
+      )
+    : undefined;
 
   // "Reprecio" no cambia nada: lleva a la tarjeta de precio, con el foco en el % sugerido.
   function focusPriceCard() {
@@ -232,8 +250,8 @@ function ProductDetails({ productId = "prod-drill" }: ProductDetailsPageProps) {
     {
       content: (
         <div className="space-y-6">
-          <ProductDetailPriceHistoryCard productId={productId} />
-          <ProductDetailSalesHistoryCard productId={productId} />
+          <ProductDetailPriceHistoryCard onReady={markPriceHistoryReady} productId={productId} />
+          <ProductDetailSalesHistoryCard onReady={markSalesHistoryReady} productId={productId} />
         </div>
       ),
       label: "Historial",

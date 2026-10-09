@@ -11,6 +11,7 @@ import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
 import { useCurrentUrl } from "@/shared/hooks/useCurrentUrl";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 import {
@@ -43,6 +44,9 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
   // URL del detalle con el `returnTo` con el que se llegó: los enlaces que salen de
   // aquí la llevan entera, para volver a esta venta sin perder su lista de origen.
   const detailUrl = useCurrentUrl();
+
+  // Al volver de un enlace del detalle, el scroll queda donde estaba.
+  useScrollRestoration(detailUrl, { ready: Boolean(sale.data) });
 
   // El modal deja abonar varias veces seguidas; cuando el servidor confirma que el
   // saldo quedó en 0 ya no hay nada que cobrar y se cierra solo.

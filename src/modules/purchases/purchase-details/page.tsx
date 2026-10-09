@@ -12,6 +12,7 @@ import { usePermission } from "@/shared/auth/usePermission";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
 import type { PrimaryStateActionConfig } from "@/shared/components/PrimaryStateAction";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { roundMoney } from "@/shared/utils/currency";
 import { PurchaseRepriceNotice } from "@/modules/products/components/price-review/PurchaseRepriceNotice";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
@@ -98,6 +99,9 @@ export function PurchaseDetailsPage({
   const detailQuery = searchParams.toString();
   const detailUrl = detailQuery ? `${pathname}?${detailQuery}` : pathname;
   const [receiveRequestHandled, setReceiveRequestHandled] = useState(false);
+
+  // Al volver de un enlace del detalle, el scroll queda donde estaba.
+  useScrollRestoration(detailUrl, { ready: Boolean(purchaseData) });
 
   // La petición se atiende una sola vez, con la compra y los permisos ya cargados.
   if (receiveRequested && !receiveRequestHandled && purchaseData && !isPermissionLoading) {

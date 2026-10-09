@@ -1,7 +1,7 @@
 "use client";
 
 import { Pencil } from "lucide-react";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { getConnectedToApiPhrase } from "@/lib/api/dataSourceUi";
 import { MAX_PAGE_LIMIT, type PaginatedList, getPaginatedItems } from "@/lib/api/pagination";
@@ -12,6 +12,8 @@ import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
+import { useCurrentUrl } from "@/shared/hooks/useCurrentUrl";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { withUrlListBoundary } from "@/shared/hooks/useUrlListState";
 import type { PaymentMock, PurchaseMock, SaleMock } from "@/shared/mocks/erp-data";
 
@@ -58,6 +60,14 @@ function ContactDetails({ contactId = "cont-customer" }: ContactDetailsPageProps
   const purchases = useContactPurchases(canViewPurchases ? contactId : undefined, SUMMARY_PAGE);
   const payments = useContactPayments(contactId, SUMMARY_PAGE);
   const updateContact = useUpdateContact(contactId);
+  // Al volver de un enlace del detalle, el scroll queda donde estaba. Se restaura una
+  // vez, con el contacto y la sublista de la pestaña activa ya pintados; cambiar de
+  // pestaña o de página después no lo mueve.
+  const detailUrl = useCurrentUrl();
+  const [isSubListReady, setIsSubListReady] = useState(false);
+  const markSubListReady = useCallback(() => setIsSubListReady(true), []);
+
+  useScrollRestoration(detailUrl, { ready: Boolean(contact.data) && isSubListReady });
 
   // "Por cobrar" y "Por pagar" salen de la MISMA consulta que la pestaña Saldos (misma
   // clave: una sola caché y se refrescan juntas), no de las filas de ventas, compras y
@@ -179,6 +189,7 @@ function ContactDetails({ contactId = "cont-customer" }: ContactDetailsPageProps
         contactId={contactId}
         contactName={data.name}
         contactType={data.type}
+        onSubListReady={markSubListReady}
       />
     </div>
   );

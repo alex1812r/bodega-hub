@@ -4,7 +4,8 @@ import { CreditCard, Receipt, ShoppingCart } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
 
-import { getPaginatedItems } from "@/lib/api/pagination";
+import { MAX_PAGE_LIMIT, getPaginatedItems } from "@/lib/api/pagination";
+import { useOpenDocuments } from "@/modules/payments/hooks/useOpenDocuments";
 import { paymentMethodLabels } from "@/modules/payments/payment-details/utils/paymentDetailLabels";
 import { getPaymentDocument } from "@/modules/payments/payments-list/utils/paymentDocument";
 import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
@@ -12,6 +13,7 @@ import type { Permission } from "@/shared/auth/permissions";
 import { usePermission } from "@/shared/auth/usePermission";
 import type { DataTableColumn } from "@/shared/components/DataTable";
 import { type TabItem, Tabs } from "@/shared/components/Tabs";
+import { useReportReady } from "@/shared/hooks/useReportReady";
 import type { ContactType, PaymentMock, PurchaseMock, SaleMock } from "@/shared/mocks/erp-data";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
@@ -50,11 +52,16 @@ const activityTargets: Record<
 
 type ContactTabProps = {
   contactId: string;
+  /** Aviso de que la sublista de la pestaña ya cargó (con filas, vacía o con error). */
+  onReady?: () => void;
 };
 
-function ContactActivityTab({ contactId }: ContactTabProps) {
+function ContactActivityTab({ contactId, onReady }: ContactTabProps) {
   const { can } = usePermission();
   const list = useContactActivityList(contactId);
+
+  useReportReady(!list.isLoading, onReady);
+
   const rows = list.data;
   const detailUrl = list.href;
   const items = useMemo(
@@ -98,9 +105,12 @@ function ContactActivityTab({ contactId }: ContactTabProps) {
   );
 }
 
-function ContactSalesTab({ contactId }: ContactTabProps) {
+function ContactSalesTab({ contactId, onReady }: ContactTabProps) {
   const { can } = usePermission();
   const list = useContactSalesList(contactId);
+
+  useReportReady(!list.isLoading, onReady);
+
   const canOpen = can("sales.view");
   const columns: DataTableColumn<SaleMock>[] = [
     {
@@ -141,8 +151,11 @@ function ContactSalesTab({ contactId }: ContactTabProps) {
   );
 }
 
-function ContactPurchasesTab({ contactId }: ContactTabProps) {
+function ContactPurchasesTab({ contactId, onReady }: ContactTabProps) {
   const list = useContactPurchasesList(contactId);
+
+  useReportReady(!list.isLoading, onReady);
+
   const columns: DataTableColumn<PurchaseMock>[] = [
     {
       header: "Compra",
@@ -179,9 +192,12 @@ function ContactPurchasesTab({ contactId }: ContactTabProps) {
   );
 }
 
-function ContactPaymentsTab({ contactId }: ContactTabProps) {
+function ContactPaymentsTab({ contactId, onReady }: ContactTabProps) {
   const { can } = usePermission();
   const list = useContactPaymentsList(contactId);
+
+  useReportReady(!list.isLoading, onReady);
+
   const canOpen = can("payments.view");
   const canOpenSales = can("sales.view");
   const canOpenPurchases = can("purchases.view");
@@ -261,12 +277,30 @@ function ContactPaymentsTab({ contactId }: ContactTabProps) {
 type ContactBalancesPanelProps = {
   contactId: string;
   contactName: string;
+  /** Aviso de que los saldos de todas las secciones ya cargaron. */
+  onReady?: () => void;
   sections: ReturnType<typeof getContactBalanceSections>;
 };
 
 /** Monta la pestaña "Saldos" de Pagos con la URL del detalle como destino de retorno. */
-function ContactBalancesPanel({ contactId, contactName, sections }: ContactBalancesPanelProps) {
+function ContactBalancesPanel({
+  contactId,
+  contactName,
+  onReady,
+  sections,
+}: ContactBalancesPanelProps) {
   const detailUrl = useContactDetailUrl();
+  // Mismas consultas (misma clave, una sola petición) que pinta cada sección de la pestaña.
+  const openSales = useOpenDocuments(
+    { contactId, limit: MAX_PAGE_LIMIT, type: "sale" },
+    { enabled: Boolean(contactId) && sections.includes("sale") },
+  );
+  const openPurchases = useOpenDocuments(
+    { contactId, limit: MAX_PAGE_LIMIT, type: "purchase" },
+    { enabled: Boolean(contactId) && sections.includes("purchase") },
+  );
+
+  useReportReady(!openSales.isLoading && !openPurchases.isLoading, onReady);
 
   return (
     <ContactBalancesTab
@@ -282,6 +316,8 @@ type ContactDetailActivityTabsProps = {
   contactId: string;
   contactName?: string;
   contactType: ContactType;
+  /** Aviso de que la sublista de la pestaña activa ya cargó: con él se restaura el scroll. */
+  onSubListReady?: () => void;
 };
 
 function isSupplierContact(type: ContactType) {
@@ -292,6 +328,7 @@ export function ContactDetailActivityTabs({
   contactId,
   contactName,
   contactType,
+  onSubListReady,
 }: ContactDetailActivityTabsProps) {
   const { can, role } = usePermission();
   const canSeeSuppliers = role ? canViewSupplierContacts(role) : false;
@@ -303,21 +340,29 @@ export function ContactDetailActivityTabs({
 
   const tabs: TabItem<ContactDetailTab>[] = [
     {
-      content: <ContactActivityTab contactId={contactId} />,
+      content: <ContactActivityTab contactId={contactId} onReady={onSubListReady} />,
       label: "Actividad reciente",
       value: "actividad",
     },
-    { content: <ContactSalesTab contactId={contactId} />, label: "Ventas", value: "ventas" },
+    {
+      content: <ContactSalesTab contactId={contactId} onReady={onSubListReady} />,
+      label: "Ventas",
+      value: "ventas",
+    },
     ...(showPurchasesTab
       ? [
           {
-            content: <ContactPurchasesTab contactId={contactId} />,
+            content: <ContactPurchasesTab contactId={contactId} onReady={onSubListReady} />,
             label: "Compras",
             value: "compras" as const,
           },
         ]
       : []),
-    { content: <ContactPaymentsTab contactId={contactId} />, label: "Pagos", value: "pagos" },
+    {
+      content: <ContactPaymentsTab contactId={contactId} onReady={onSubListReady} />,
+      label: "Pagos",
+      value: "pagos",
+    },
     ...(balanceSections.length > 0
       ? [
           {
@@ -325,6 +370,7 @@ export function ContactDetailActivityTabs({
               <ContactBalancesPanel
                 contactId={contactId}
                 contactName={contactName ?? ""}
+                onReady={onSubListReady}
                 sections={balanceSections}
               />
             ),
@@ -337,7 +383,11 @@ export function ContactDetailActivityTabs({
       ? [
           {
             content: (
-              <ContactSupplierProductsTab supplierId={contactId} supplierName={contactName} />
+              <ContactSupplierProductsTab
+                onReady={onSubListReady}
+                supplierId={contactId}
+                supplierName={contactName}
+              />
             ),
             label: "Productos",
             value: "productos" as const,
