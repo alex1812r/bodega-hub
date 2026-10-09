@@ -13,8 +13,8 @@ import {
   buildGrossProfitSeries,
   buildPurchasesSeries,
   parseReportSeriesParams,
+  resolvePurchasesReportStatuses,
   resolveReportSeriesRequest,
-  SERIES_EXCLUDED_PURCHASE_STATUSES,
   seriesFetchRange,
   type DailySalesSeries,
   type GrossProfitSeries,
@@ -675,10 +675,14 @@ type DbPurchaseSeriesRow = {
 };
 
 /**
- * Compras por periodo. La tabla (`items`) lista las compras paginadas como
- * siempre. Con `from` + `to` y (`groupBy` o `compare`) añade `series` en el
- * mismo endpoint: total y nº de compras por periodo, respetando `supplierId` y
- * sin las canceladas ni devueltas (igual que `supplier_purchase_summary`).
+ * Compras por periodo. La tabla (`items`) lista las compras paginadas. Con
+ * `from` + `to` y (`groupBy` o `compare`) añade `series` en el mismo endpoint:
+ * total y nº de compras por periodo, respetando `supplierId`.
+ *
+ * Tabla y serie aplican la MISMA regla de estados (`status`): por defecto sin
+ * canceladas ni devueltas (igual que `supplier_purchase_summary`), `status=all`
+ * para todas o un estado concreto. Así el total de la serie es la suma de la
+ * tabla del rango.
  */
 export async function getPurchasesReport(
   searchParams: URLSearchParams,
@@ -690,11 +694,15 @@ export async function getPurchasesReport(
   const from = searchParams.get("from");
   const supplierId = searchParams.get("supplierId");
   const to = searchParams.get("to");
+  const statuses = [...resolvePurchasesReportStatuses(searchParams)];
   const { limit, skip } = parsePagination(searchParams);
   const supabase = await getReportsClient(options);
 
   const buildQuery = (head: boolean) => {
-    let query = supabase.from("purchases").select("*", listCountOptions(head));
+    let query = supabase
+      .from("purchases")
+      .select("*", listCountOptions(head))
+      .in("status", statuses);
     query = applyStoreIdsFilter(query, storeIds);
 
     if (supplierId) {
@@ -765,7 +773,7 @@ export async function getPurchasesReport(
       let query = supabase
         .from("purchases")
         .select("id, created_at, total_ref, total_ves", { count: "exact" })
-        .not("status", "in", `(${SERIES_EXCLUDED_PURCHASE_STATUSES.join(",")})`);
+        .in("status", statuses);
       query = applyStoreIdsFilter(query, storeIds);
 
       if (supplierId) {

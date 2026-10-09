@@ -552,6 +552,49 @@ export function buildPurchasesSeries(
 export const SERIES_EXCLUDED_SALE_STATUSES = ["cancelada", "devuelta"] as const;
 export const SERIES_EXCLUDED_PURCHASE_STATUSES = ["cancelado", "devuelto"] as const;
 
+/** Valores del enum `purchase_status` de la base. */
+export const PURCHASE_REPORT_STATUSES = ["pedido", "recibido", "cancelado", "devuelto"] as const;
+
+export type PurchaseReportStatus = (typeof PURCHASE_REPORT_STATUSES)[number];
+
+/** `status=all`: todas las compras, incluidas canceladas y devueltas. */
+export const PURCHASE_REPORT_STATUS_ALL = "all";
+
+/** Lo que acepta el parámetro `status` del reporte de compras. */
+export type PurchasesReportStatusFilter = PurchaseReportStatus | typeof PURCHASE_REPORT_STATUS_ALL;
+
+/**
+ * Estados de compra que entran en el reporte de compras, los MISMOS para la
+ * tabla y para la serie (así el total del gráfico es la suma de la tabla del
+ * rango). Sin `status`: todos menos `cancelado` y `devuelto`; `status=all`:
+ * todos; un estado concreto: solo ese. Lanza `ApiError` 400 si no se reconoce.
+ */
+export function resolvePurchasesReportStatuses(
+  searchParams: URLSearchParams,
+): readonly PurchaseReportStatus[] {
+  const raw = blankToNull(searchParams.get("status"));
+
+  if (raw === null) {
+    return PURCHASE_REPORT_STATUSES.filter(
+      (status) => !(SERIES_EXCLUDED_PURCHASE_STATUSES as readonly string[]).includes(status),
+    );
+  }
+
+  if (raw === PURCHASE_REPORT_STATUS_ALL) {
+    return PURCHASE_REPORT_STATUSES;
+  }
+
+  const status = PURCHASE_REPORT_STATUSES.find((value) => value === raw);
+
+  if (!status) {
+    throw badRequest(
+      "El estado de compra no es válido. Usa pedido, recibido, cancelado, devuelto o all.",
+    );
+  }
+
+  return [status];
+}
+
 /**
  * Validación de entrada de las rutas de reportes de serie: lanza `ApiError` 400
  * si `from`/`to`/`groupBy` no son válidos o el rango de la serie es excesivo.

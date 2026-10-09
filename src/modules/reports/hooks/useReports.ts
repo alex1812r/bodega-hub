@@ -8,6 +8,7 @@ import type { PaymentMethodsReportComparison } from "../services/paymentMethodsR
 import type {
   DailySalesSeries,
   GrossProfitSeries,
+  PurchasesReportStatusFilter,
   PurchasesSeries,
   ReportGroupBy,
 } from "../services/reportSeries";
@@ -41,6 +42,11 @@ export type StockCardReportFilters = PaginationParams & {
 };
 
 export type PurchasesReportFilters = ReportDateRangeFilters & {
+  /**
+   * Estados que entran en la tabla Y en la serie. Sin valor: todas menos
+   * canceladas y devueltas; `"all"`: todas; o un estado concreto.
+   */
+  status?: PurchasesReportStatusFilter;
   supplierId?: string;
 };
 

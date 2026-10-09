@@ -4,14 +4,16 @@
  * por día operativo de Caracas, sin ventas canceladas ni devueltas, filtrada por
  * `from` / `to`. Así la suma de la tabla es el total del gráfico.
  */
-import { mockProducts, mockSaleItems, mockSales } from "@/shared/mocks/erp-data";
+import { mockProducts, mockPurchases, mockSaleItems, mockSales } from "@/shared/mocks/erp-data";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
 import {
   getDailySalesReport,
   getGrossProfitReport,
+  getPurchasesReport,
   getStockCard,
+  getTopCustomersReport,
   getTopProductsReport,
 } from "./reports.mock-server";
 
@@ -129,5 +131,81 @@ describe("mock de ventas diarias y ganancia bruta: tabla y serie cuadran (REP-F2
     expect(sum(report.items.map((row) => row.grossProfitRef))).toBe(
       report.series?.totals.current.grossProfitRef,
     );
+  });
+});
+
+describe("mock de compras: tabla y serie cuadran (REP-F4)", () => {
+  const storePurchases = mockPurchases.filter(
+    (purchase) => (purchase.storeId ?? DEFAULT_STORE_ID) === STORE_ID,
+  );
+  const days = storePurchases.map((purchase) => toCaracasDateKey(purchase.createdAt)).sort();
+  const RANGE = `from=${days[0]}&to=${days[days.length - 1]}&groupBy=day`;
+  const excluded = storePurchases.filter(
+    (purchase) => purchase.status === "cancelado" || purchase.status === "devuelto",
+  );
+
+  it("los datos de prueba tienen alguna compra cancelada y alguna devuelta", () => {
+    expect(new Set(excluded.map((purchase) => purchase.status)).size).toBe(2);
+  });
+
+  it("por defecto ni la tabla ni la serie cuentan canceladas ni devueltas", () => {
+    const report = getPurchasesReport(params(RANGE), STORE_ID);
+
+    expect(report.total).toBe(storePurchases.length - excluded.length);
+    expect(report.items.some((item) => item.status === "cancelado" || item.status === "devuelto")).toBe(
+      false,
+    );
+    expect(report.series?.totals.current.count).toBe(report.total);
+    expect(report.series?.totals.current.totalRef).toBe(sum(report.items.map((item) => item.totalRef)));
+    expect(report.series?.totals.current.totalVes).toBe(sum(report.items.map((item) => item.totalVes)));
+  });
+
+  it("con status=all las dos las incluyen y siguen cuadrando", () => {
+    const report = getPurchasesReport(params(`${RANGE}&status=all`), STORE_ID);
+
+    expect(report.total).toBe(storePurchases.length);
+    expect(report.series?.totals.current.count).toBe(storePurchases.length);
+    expect(report.series?.totals.current.totalRef).toBe(sum(report.items.map((item) => item.totalRef)));
+  });
+
+  it("un estado concreto filtra tabla y serie; uno desconocido es un 400", () => {
+    const report = getPurchasesReport(params(`${RANGE}&status=cancelado`), STORE_ID);
+
+    expect(report.items.map((item) => item.status)).toEqual(
+      excluded.filter((purchase) => purchase.status === "cancelado").map(() => "cancelado"),
+    );
+    expect(report.series?.totals.current.count).toBe(report.total);
+    expect(() => getPurchasesReport(params("status=anulado"), STORE_ID)).toThrow(
+      /estado de compra no es válido/,
+    );
+  });
+});
+
+describe("mock de rankings: sin ventas canceladas ni devueltas, como el servidor (REP-F4)", () => {
+  const countedIds = new Set(countedSales.map((sale) => sale.id));
+
+  it("top productos suma solo las líneas de las ventas que cuentan", () => {
+    const { items } = getTopProductsReport(params(""), STORE_ID);
+    const countedItems = mockSaleItems.filter((item) => countedIds.has(item.saleId));
+    const storeProductIds = new Set(
+      mockProducts
+        .filter((product) => (product.storeId ?? DEFAULT_STORE_ID) === STORE_ID)
+        .map((product) => product.id),
+    );
+
+    expect(mockSaleItems.some((item) => !countedIds.has(item.saleId))).toBe(true);
+    expect(sum(items.map((item) => item.unitsSold))).toBe(
+      sum(countedItems.filter((item) => storeProductIds.has(item.productId)).map((item) => item.quantity)),
+    );
+  });
+
+  it("top clientes cuenta solo las ventas que cuentan", () => {
+    const { items } = getTopCustomersReport(params(""), STORE_ID);
+    const customerIds = new Set(items.map((item) => item.customerId));
+    const expected = countedSales.filter((sale) => customerIds.has(sale.customerId));
+
+    expect(storeSales.length).toBeGreaterThan(countedSales.length);
+    expect(sum(items.map((item) => item.salesCount))).toBe(expected.length);
+    expect(sum(items.map((item) => item.totalRef))).toBe(sum(expected.map((sale) => sale.totalRef)));
   });
 });

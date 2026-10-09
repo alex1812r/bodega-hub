@@ -158,6 +158,7 @@ describe("report hooks", () => {
       () =>
         usePurchasesReport({
           from: "2026-05-17",
+          status: "all",
           supplierId: "cont-supplier",
           to: "2026-05-19",
         }),
@@ -187,7 +188,7 @@ describe("report hooks", () => {
       expect.any(Object),
     );
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/reports/purchases?from=2026-05-17&supplierId=cont-supplier&to=2026-05-19",
+      "/api/reports/purchases?from=2026-05-17&status=all&supplierId=cont-supplier&to=2026-05-19",
       expect.any(Object),
     );
     expect(fetchMock).toHaveBeenCalledWith(

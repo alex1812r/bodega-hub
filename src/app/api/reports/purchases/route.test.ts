@@ -45,6 +45,37 @@ describe("/api/reports/purchases: validación de parámetros (REP-05)", () => {
     expect(body.error.message).toMatch(message);
   });
 
+  it("responde 400 en español con un estado de compra desconocido (REP-F4)", async () => {
+    const response = await get("status=anulado");
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("BAD_REQUEST");
+    expect(body.error.message).toMatch(/estado de compra no es válido/);
+  });
+
+  it("por defecto no lista canceladas ni devueltas; status=all las incluye; un estado concreto filtra (REP-F4)", async () => {
+    const statusesOf = async (query: string) => {
+      const response = await get(`${query}&limit=100`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.data.total).toBe(body.data.items.length);
+
+      return new Set<string>(body.data.items.map((item: { status: string }) => item.status));
+    };
+
+    const byDefault = await statusesOf("");
+    const all = await statusesOf("status=all");
+
+    expect(byDefault.has("cancelado")).toBe(false);
+    expect(byDefault.has("devuelto")).toBe(false);
+    expect(byDefault.size).toBeGreaterThan(0);
+    expect(all.has("cancelado")).toBe(true);
+    expect(all.has("devuelto")).toBe(true);
+    expect([...(await statusesOf("status=cancelado"))]).toEqual(["cancelado"]);
+  });
+
   it("acepta un rango válido con groupBy y compare", async () => {
     const response = await get("from=2026-05-01&to=2026-05-31&groupBy=week&compare=1");
 

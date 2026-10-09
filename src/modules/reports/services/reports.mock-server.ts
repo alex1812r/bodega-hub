@@ -14,8 +14,8 @@ import {
   buildGrossProfitSeries,
   buildPurchasesSeries,
   parseReportSeriesParams,
+  resolvePurchasesReportStatuses,
   resolveReportSeriesRequest,
-  SERIES_EXCLUDED_PURCHASE_STATUSES,
   SERIES_EXCLUDED_SALE_STATUSES,
   type DailySalesSeries,
   type GrossProfitSeries,
@@ -35,10 +35,6 @@ function toStoreIds(storeIdOrIds: string | string[]) {
 
 function isSeriesSale(status: string) {
   return !(SERIES_EXCLUDED_SALE_STATUSES as readonly string[]).includes(status);
-}
-
-function isSeriesPurchase(status: string) {
-  return !(SERIES_EXCLUDED_PURCHASE_STATUSES as readonly string[]).includes(status);
 }
 
 function isDayWithinRange(day: string, from: string | null, to: string | null) {
@@ -337,8 +333,12 @@ export function getTopProductsReport(searchParams: URLSearchParams, storeIdOrIds
   const storeIds = toStoreIds(storeIdOrIds);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
+  // Como el servidor: una venta cancelada o devuelta no entra en el ranking.
   const sales = mockSales.filter(
-    (sale) => matchesStoreIds(sale.storeId, storeIds) && isWithinDateRange(sale.createdAt, from, to),
+    (sale) =>
+      matchesStoreIds(sale.storeId, storeIds) &&
+      isSeriesSale(sale.status) &&
+      isWithinDateRange(sale.createdAt, from, to),
   );
   const saleIds = new Set(sales.map((sale) => sale.id));
 
@@ -371,8 +371,12 @@ export function getTopCustomersReport(
   const storeIds = toStoreIds(storeIdOrIds);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
+  // Como el servidor: una venta cancelada o devuelta no entra en el ranking.
   const sales = mockSales.filter(
-    (sale) => matchesStoreIds(sale.storeId, storeIds) && isWithinDateRange(sale.createdAt, from, to),
+    (sale) =>
+      matchesStoreIds(sale.storeId, storeIds) &&
+      isSeriesSale(sale.status) &&
+      isWithinDateRange(sale.createdAt, from, to),
   );
 
   const items = mockContacts
@@ -399,21 +403,28 @@ export function getTopCustomersReport(
   return paginateList(items, searchParams);
 }
 
+/**
+ * Compras por periodo. Como el servidor: la tabla y la serie parten de las
+ * mismas compras (tienda, proveedor y `status`), así que el total de la serie
+ * es la suma de la tabla del rango. Por defecto sin canceladas ni devueltas.
+ */
 export function getPurchasesReport(searchParams: URLSearchParams, storeIdOrIds: string | string[]) {
   const storeIds = toStoreIds(storeIdOrIds);
   const seriesRequest = resolveReportSeriesRequest(parseReportSeriesParams(searchParams));
   const from = searchParams.get("from");
   const supplierId = searchParams.get("supplierId");
   const to = searchParams.get("to");
+  const statuses: readonly string[] = resolvePurchasesReportStatuses(searchParams);
 
-  const items = mockPurchases
-    .filter((purchase) => {
-      return (
-        matchesStoreIds(purchase.storeId, storeIds) &&
-        (!supplierId || purchase.supplierId === supplierId) &&
-        isWithinDateRange(purchase.createdAt, from, to)
-      );
-    })
+  const purchases = mockPurchases.filter(
+    (purchase) =>
+      matchesStoreIds(purchase.storeId, storeIds) &&
+      (!supplierId || purchase.supplierId === supplierId) &&
+      statuses.includes(purchase.status),
+  );
+
+  const items = purchases
+    .filter((purchase) => isWithinDateRange(purchase.createdAt, from, to))
     .map((purchase) => ({
       ...purchase,
       itemsCount: mockPurchaseItems.filter((item) => item.purchaseId === purchase.id).length,
@@ -433,17 +444,10 @@ export function getPurchasesReport(searchParams: URLSearchParams, storeIdOrIds: 
     ...list,
     series: buildPurchasesSeries(
       seriesRequest,
-      mockPurchases
-        .filter(
-          (purchase) =>
-            matchesStoreIds(purchase.storeId, storeIds) &&
-            (!supplierId || purchase.supplierId === supplierId) &&
-            isSeriesPurchase(purchase.status),
-        )
-        .map((purchase) => ({
-          day: toCaracasDateKey(purchase.createdAt),
-          values: { count: 1, totalRef: purchase.totalRef, totalVes: purchase.totalVes },
-        })),
+      purchases.map((purchase) => ({
+        day: toCaracasDateKey(purchase.createdAt),
+        values: { count: 1, totalRef: purchase.totalRef, totalVes: purchase.totalVes },
+      })),
     ),
   };
 }

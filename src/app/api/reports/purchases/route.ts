@@ -10,7 +10,7 @@ export async function GET(request: Request) {
   try {
     const auth = await requireStorePermission(request, "reports.view");
     const searchParams = new URL(request.url).searchParams;
-    // 400 si `from`/`to`/`groupBy` no son válidos.
+    // 400 si `from`/`to`/`groupBy` no son válidos; `status` lo valida el servicio (400).
     assertReportSeriesParams(searchParams);
     const data =
       resolveDataSource() === "supabase"

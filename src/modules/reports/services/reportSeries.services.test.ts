@@ -101,9 +101,11 @@ jest.mock("../../../shared/mocks/erp-data", () => {
       purchase("p2", "2026-05-05T16:00:00.000Z", 10, "sup-b", "pedido"),
       purchase("p3", "2026-05-07T15:00:00.000Z", 500, "sup-a", "cancelado"),
       purchase("p4", "2026-04-28T15:00:00.000Z", 25, "sup-a"),
+      purchase("p5", "2026-05-06T15:00:00.000Z", 70, "sup-b", "devuelto"),
+      purchase("p6", "2026-04-29T15:00:00.000Z", 300, "sup-a", "cancelado"),
     ],
     mockSaleItems: mockSales.map((item) => ({
-      productId: "prod-1",
+      productId: actual.mockProducts[0].id,
       quantity: 1,
       saleId: item.id,
       subtotalRef: item.totalRef,
@@ -118,6 +120,7 @@ jest.mock("../../../shared/mocks/erp-data", () => {
 import { ApiError } from "@/lib/api/apiError";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import {
+  mockContacts,
   mockPayments,
   mockProducts,
   mockPurchases,
@@ -301,6 +304,23 @@ function mockDataTables(): Record<string, Row[]> {
       status: payment.status ?? "activo",
       store_id: payment.storeId ?? DEFAULT_STORE_ID,
     })),
+    contacts: mockContacts.map((contact) => ({ id: contact.id, name: contact.name })),
+    products: mockProducts.map((product) => ({ id: product.id, name: product.name, sku: product.sku })),
+    sale_items: mockSaleItems.map((item) => ({
+      product_id: item.productId,
+      quantity: item.quantity,
+      sale_id: item.saleId,
+      subtotal_ref: item.subtotalRef,
+    })),
+    sales: mockSales.map((sale) => ({
+      created_at: sale.createdAt,
+      customer_id: sale.customerId,
+      id: sale.id,
+      status: sale.status,
+      store_id: sale.storeId ?? DEFAULT_STORE_ID,
+      total_ref: sale.totalRef,
+      total_ves: sale.totalVes,
+    })),
     purchases: mockPurchases.map((purchase) => ({
       created_at: purchase.createdAt,
       discount_ref: purchase.discountRef,
@@ -326,7 +346,12 @@ type Services = {
   lowStock: (query: string) => Promise<{ items: unknown[]; skip: number; total: number }>;
   paymentMethods: (query: string) => Promise<Awaited<ReturnType<typeof getPaymentMethodsReportServer>>>;
   purchases: (query: string) => Promise<Awaited<ReturnType<typeof reportsServer.getPurchasesReport>>>;
+  topCustomers: (query: string) => Promise<{ items: RankedCustomer[]; total: number }>;
+  topProducts: (query: string) => Promise<{ items: RankedProduct[]; total: number }>;
 };
+
+type RankedCustomer = { customerId: string; name: string; salesCount: number; totalRef: number; totalVes: number };
+type RankedProduct = { name: string; productId: string; revenueRef: number; sku: string; unitsSold: number };
 
 const q = (query: string) => new URLSearchParams(query);
 
@@ -339,6 +364,8 @@ const sources: [string, Services][] = [
       lowStock: (query) => reportsServer.getLowStockReport(q(query), DEFAULT_STORE_ID),
       paymentMethods: (query) => getPaymentMethodsReportServer(q(query), DEFAULT_STORE_ID),
       purchases: (query) => reportsServer.getPurchasesReport(q(query), DEFAULT_STORE_ID),
+      topCustomers: (query) => reportsServer.getTopCustomersReport(q(query), DEFAULT_STORE_ID),
+      topProducts: (query) => reportsServer.getTopProductsReport(q(query), DEFAULT_STORE_ID),
     },
   ],
   [
@@ -349,6 +376,8 @@ const sources: [string, Services][] = [
       lowStock: async (query) => reportsMock.getLowStockReport(q(query), DEFAULT_STORE_ID),
       paymentMethods: async (query) => getPaymentMethodsReportMock(q(query), DEFAULT_STORE_ID),
       purchases: async (query) => reportsMock.getPurchasesReport(q(query), DEFAULT_STORE_ID),
+      topCustomers: async (query) => reportsMock.getTopCustomersReport(q(query), DEFAULT_STORE_ID),
+      topProducts: async (query) => reportsMock.getTopProductsReport(q(query), DEFAULT_STORE_ID),
     },
   ],
 ];
@@ -490,8 +519,8 @@ describe.each(sources)("series de reportes (%s)", (_name, services) => {
   it("compras por periodo: sin canceladas, con filtro de proveedor, sin romper la tabla", async () => {
     const all = await services.purchases(`${RANGE}&groupBy=week&compare=1`);
 
-    expect(all.total).toBe(3);
-    expect(all.items).toHaveLength(3);
+    expect(all.total).toBe(2);
+    expect(all.items).toHaveLength(2);
     expect(all.series?.totals).toEqual({
       current: { count: 2, totalRef: 50, totalVes: 25000 },
       deltaPct: 100,
@@ -578,7 +607,70 @@ describe.each(sources)("series de reportes (%s)", (_name, services) => {
 
     const purchases = await services.purchases("skip=500&limit=10");
 
-    expect(purchases).toEqual(expect.objectContaining({ items: [], total: 4 }));
+    expect(purchases).toEqual(expect.objectContaining({ items: [], total: 3 }));
+  });
+
+  // REP-F4: misma regla de estados en la tabla y en la serie.
+  it.each([
+    ["", ["p1", "p2"], 50],
+    ["&status=all", ["p1", "p2", "p3", "p5"], 620],
+    ["&status=recibido", ["p1"], 40],
+    ["&status=pedido", ["p2"], 10],
+    ["&status=cancelado", ["p3"], 500],
+    ["&status=devuelto", ["p5"], 70],
+  ])("compras%s: la suma de la tabla del rango es el total de la serie", async (status, ids, totalRef) => {
+    const result = await services.purchases(`${RANGE}&groupBy=day&limit=100${status}`);
+    const tableRef = result.items.reduce((total, item) => total + item.totalRef, 0);
+    const tableVes = result.items.reduce((total, item) => total + item.totalVes, 0);
+
+    expect(result.items.map((item) => item.id).sort()).toEqual(ids);
+    expect(result.total).toBe(ids.length);
+    expect(tableRef).toBe(totalRef);
+    expect(result.series?.totals.current).toEqual({
+      count: ids.length,
+      totalRef: tableRef,
+      totalVes: tableVes,
+    });
+  });
+
+  it("compras: `status` también acota el total paginado y el periodo anterior", async () => {
+    const paged = await services.purchases(`${RANGE}&status=all&skip=3`);
+
+    expect(paged.items).toHaveLength(1);
+    expect(paged.total).toBe(4);
+
+    const compared = await services.purchases(`${RANGE}&status=all&groupBy=week&compare=1`);
+
+    expect(compared.series?.totals.previous).toEqual({ count: 2, totalRef: 325, totalVes: 162500 });
+    expect((await services.purchases("status=all")).total).toBe(6);
+  });
+
+  it("compras: rechaza un estado desconocido con 400 en español", async () => {
+    await expect(services.purchases(`${RANGE}&status=anulado`)).rejects.toEqual(
+      expect.objectContaining({
+        message: expect.stringMatching(/estado de compra no es válido/),
+        status: 400,
+      }),
+    );
+    await expect(services.purchases("status=ALL")).rejects.toBeInstanceOf(ApiError);
+  });
+
+  // REP-F4: el ranking no cuenta ventas canceladas ni devueltas (un borrador sí).
+  it("top productos y top clientes: sin ventas canceladas ni devueltas ni de otra tienda", async () => {
+    const products = await services.topProducts(RANGE);
+    const customers = await services.topCustomers(RANGE);
+
+    expect(products.items).toHaveLength(1);
+    expect(products.items[0]).toEqual(
+      expect.objectContaining({ productId: mockProducts[0]!.id, unitsSold: 5 }),
+    );
+    expect(products.items[0]!.revenueRef).toBeCloseTo(72.55, 6);
+    expect(customers.items).toHaveLength(1);
+    expect(customers.items[0]).toEqual(
+      expect.objectContaining({ customerId: "cont-walk-in", salesCount: 5 }),
+    );
+    expect(customers.items[0]!.totalRef).toBeCloseTo(72.55, 6);
+    expect(customers.items[0]!.totalVes).toBeCloseTo(36275, 6);
   });
 });
 
@@ -605,6 +697,52 @@ describe("paridad exacta servidor / mock", () => {
     expect(serverPayments.comparison).toEqual(mockPaymentsResult.comparison);
     expect(serverPayments.summary).toEqual(mockPaymentsResult.summary);
   });
+});
+
+describe("paridad exacta servidor / mock de compras y rankings (REP-F4)", () => {
+  const [server, mock] = [sources[0]![1], sources[1]![1]];
+
+  it.each([
+    `${RANGE}&groupBy=day`,
+    `${RANGE}&groupBy=day&status=all`,
+    `${RANGE}&groupBy=week&compare=1&status=all`,
+    `${RANGE}&groupBy=week&compare=1&status=cancelado`,
+    `${RANGE}&groupBy=day&status=all&supplierId=sup-b`,
+    "from=2026-04-01&to=2026-05-31&compare=1&status=devuelto",
+    "status=all",
+    "",
+  ])("compras con %s: misma tabla, mismo total y misma serie", async (query) => {
+    const [fromServer, fromMock] = [
+      await server.purchases(`${query}&limit=100`),
+      await mock.purchases(`${query}&limit=100`),
+    ];
+    const rows = (items: { id: string; status: string; totalRef: number; totalVes: number }[]) =>
+      items
+        .map((item) => ({ id: item.id, status: item.status, totalRef: item.totalRef, totalVes: item.totalVes }))
+        .sort((first, second) => first.id.localeCompare(second.id));
+
+    expect(rows(fromServer.items)).toEqual(rows(fromMock.items));
+    expect(fromServer.total).toBe(fromMock.total);
+    expect(fromServer.series).toEqual(fromMock.series);
+  });
+
+  it.each([RANGE, "", "from=2026-05-12&to=2026-05-13", "from=2026-04-27&to=2026-04-29"])(
+    "top productos y top clientes con %s: mismo ranking",
+    async (query) => {
+      const pickProduct = (items: RankedProduct[]) =>
+        items.map(({ name, productId, revenueRef, sku, unitsSold }) => ({ name, productId, revenueRef, sku, unitsSold }));
+      const pickCustomer = (items: RankedCustomer[]) =>
+        items.map(({ customerId, name, salesCount, totalRef, totalVes }) => ({ customerId, name, salesCount, totalRef, totalVes }));
+
+      const [serverProducts, mockProductsResult] = [await server.topProducts(query), await mock.topProducts(query)];
+      const [serverCustomers, mockCustomers] = [await server.topCustomers(query), await mock.topCustomers(query)];
+
+      expect(pickProduct(serverProducts.items)).toEqual(pickProduct(mockProductsResult.items));
+      expect(serverProducts.total).toBe(mockProductsResult.total);
+      expect(pickCustomer(serverCustomers.items)).toEqual(pickCustomer(mockCustomers.items));
+      expect(serverCustomers.total).toBe(mockCustomers.total);
+    },
+  );
 });
 
 describe("servidor: top productos (REP-F2)", () => {
