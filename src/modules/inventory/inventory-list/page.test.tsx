@@ -11,6 +11,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { SCROLL_POSITIONS_STORAGE_KEY } from "@/shared/hooks/useScrollRestoration";
+
 import type { InventoryMovement } from "../hooks/useInventory";
 import type { InventoryOverviewItem } from "../services/inventoryOverview";
 
@@ -1220,6 +1222,82 @@ describe("InventoryListPage · vista única de stock", () => {
         search: "arroz",
         stockStatus: "low",
       });
+    });
+  });
+
+  describe("DET-06d · volver con filtros y scroll", () => {
+    /** Posición guardada para `url` y espía del `scrollTo` de la ventana (sin `<main>`, hace scroll ella). */
+    function rememberScroll(url: string, top: number) {
+      const scrollTo = jest.fn();
+
+      Object.defineProperty(window, "scrollTo", { configurable: true, value: scrollTo });
+      window.sessionStorage.setItem(SCROLL_POSITIONS_STORAGE_KEY, JSON.stringify([[url, top]]));
+
+      return scrollTo;
+    }
+
+    afterEach(() => {
+      window.sessionStorage.clear();
+    });
+
+    it("restores the scroll saved for this exact URL once the rows are painted", async () => {
+      const scrollTo = rememberScroll("/inventory?status=low&page=2", 640);
+
+      renderPage("status=low&page=2");
+
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      await findRow("Harina");
+
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      expect(scrollTo).toHaveBeenCalledWith(0, 640);
+    });
+
+    it("does not move the scroll on a URL without a saved position", async () => {
+      const scrollTo = rememberScroll("/inventory?status=low&page=2", 640);
+
+      renderPage("status=low");
+      await findRow("Harina");
+
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("sends 'Ver todos los movimientos' with the exact list URL as returnTo", async () => {
+      renderPage("status=low&page=2");
+      await findRow("Harina");
+
+      expect(screen.getByRole("link", { name: "Ver todos los movimientos" })).toHaveAttribute(
+        "href",
+        `/inventory/movements?returnTo=${encodeURIComponent("/inventory?status=low&page=2")}`,
+      );
+    });
+
+    it("keeps the returnTo the list arrived with nested in 'Ver todos los movimientos'", async () => {
+      const origin = "/products?search=caf&page=2";
+
+      renderPage(`status=low&returnTo=${encodeURIComponent(origin)}`);
+      await findRow("Harina");
+
+      const href = screen
+        .getByRole("link", { name: "Ver todos los movimientos" })
+        .getAttribute("href");
+      const listUrl = new URLSearchParams((href ?? "").split("?")[1] ?? "").get("returnTo");
+
+      expect(href?.split("?")[0]).toBe("/inventory/movements");
+      expect(listUrl?.split("?")[0]).toBe("/inventory");
+      expect(Object.fromEntries(new URLSearchParams(listUrl?.split("?")[1]))).toEqual({
+        returnTo: origin,
+        status: "low",
+      });
+    });
+
+    it("goes back to a detail with the returnTo that detail arrived with (chained)", async () => {
+      const detailUrl = `/products/p-arroz?returnTo=${encodeURIComponent("/products?search=arr&page=2")}`;
+
+      renderPage(`returnTo=${encodeURIComponent(detailUrl)}`);
+      await findRow("Harina");
+
+      expect(screen.getByRole("link", { name: "Volver" })).toHaveAttribute("href", detailUrl);
     });
   });
 });

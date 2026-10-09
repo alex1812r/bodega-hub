@@ -50,6 +50,7 @@ const mockTaxCatalog = {
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("../../settings/hooks/useCurrentExchangeRate", () => ({
   useCurrentExchangeRate: () => ({ data: { rateVes: 510 }, error: null }),

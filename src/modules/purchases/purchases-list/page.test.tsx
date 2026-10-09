@@ -7,6 +7,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { SCROLL_POSITIONS_STORAGE_KEY } from "@/shared/hooks/useScrollRestoration";
+
 /** URL simulada: `useSearchParams` la sigue como hace Next tras un `history.replaceState`. */
 const mockNavigation = {
   listeners: new Set<() => void>(),
@@ -736,6 +738,101 @@ describe("PurchasesListPage", () => {
         await Promise.resolve();
       });
       expect(screen.queryByText("Proveedor 001")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("DET-06d · volver con filtros y scroll", () => {
+    /** Posición guardada para `url` y espía del `scrollTo` de la ventana (sin `<main>`, hace scroll ella). */
+    function rememberScroll(url: string, top: number) {
+      const scrollTo = jest.fn();
+
+      Object.defineProperty(window, "scrollTo", { configurable: true, value: scrollTo });
+      window.sessionStorage.setItem(SCROLL_POSITIONS_STORAGE_KEY, JSON.stringify([[url, top]]));
+
+      return scrollTo;
+    }
+
+    afterEach(() => {
+      window.sessionStorage.clear();
+    });
+
+    it("restaura el scroll guardado de esa URL exacta cuando las filas ya están pintadas", async () => {
+      const scrollTo = rememberScroll("/purchases?status=recibido&page=2", 640);
+
+      listTotal = 40;
+      openAt("status=recibido&page=2");
+      renderPage();
+
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      await screen.findByText("Proveedor 001");
+
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      expect(scrollTo).toHaveBeenCalledWith(0, 640);
+    });
+
+    it("sin posición guardada para esa URL no mueve el scroll", async () => {
+      const scrollTo = rememberScroll("/purchases?status=recibido&page=2", 640);
+
+      openAt("status=recibido");
+      renderPage();
+      await screen.findByText("Proveedor 001");
+
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("«Nueva compra» lleva la URL exacta de la lista en returnTo", async () => {
+      listTotal = 40;
+      openAt("status=recibido&pendingBalance=1&page=2");
+      renderPage();
+      await screen.findByText("Proveedor 001");
+
+      expect(screen.getByRole("link", { name: "Nueva compra" })).toHaveAttribute(
+        "href",
+        `/purchases/create?returnTo=${encodeURIComponent(
+          "/purchases?status=recibido&pendingBalance=1&page=2",
+        )}`,
+      );
+    });
+
+    it("«Nueva compra» del estado vacío también lleva returnTo", async () => {
+      listItems = [];
+      renderPage();
+      await screen.findByText("Registra una compra para verla aquí.");
+
+      const links = screen.getAllByRole("link", { name: "Nueva compra" });
+
+      expect(links).toHaveLength(2);
+
+      for (const link of links) {
+        expect(link).toHaveAttribute(
+          "href",
+          `/purchases/create?returnTo=${encodeURIComponent("/purchases")}`,
+        );
+      }
+    });
+
+    it("en la tarjeta móvil el número es un enlace real al detalle con returnTo", async () => {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: (query: string) => ({
+          addEventListener: jest.fn(),
+          matches: true,
+          media: query,
+          removeEventListener: jest.fn(),
+        }),
+      });
+      openAt("pendingBalance=1");
+      renderPage();
+
+      const link = await screen.findByRole("link", { name: "#C-001" });
+
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+      expect(link.tagName).toBe("A");
+      expect(link).toHaveAttribute(
+        "href",
+        `/purchases/001?returnTo=${encodeURIComponent("/purchases?pendingBalance=1")}`,
+      );
     });
   });
 });

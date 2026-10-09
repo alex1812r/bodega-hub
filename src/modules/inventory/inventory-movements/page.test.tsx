@@ -8,6 +8,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { SCROLL_POSITIONS_STORAGE_KEY } from "@/shared/hooks/useScrollRestoration";
+
 import type { InventoryMovement } from "../hooks/useInventory";
 
 const mockExportMovementsToExcel = jest.fn();
@@ -804,6 +806,76 @@ describe("InventoryMovementsPage · filtros en servidor y en la URL", () => {
         to: undefined,
         type: undefined,
       });
+    });
+  });
+
+  describe("DET-06d · volver y scroll", () => {
+    /** Posición guardada para `url` y espía del `scrollTo` de la ventana (sin `<main>`, hace scroll ella). */
+    function rememberScroll(url: string, top: number) {
+      const scrollTo = jest.fn();
+
+      Object.defineProperty(window, "scrollTo", { configurable: true, value: scrollTo });
+      window.sessionStorage.setItem(SCROLL_POSITIONS_STORAGE_KEY, JSON.stringify([[url, top]]));
+
+      return scrollTo;
+    }
+
+    afterEach(() => {
+      window.sessionStorage.clear();
+    });
+
+    it("restores the scroll saved for this exact URL once the rows are painted", async () => {
+      const scrollTo = rememberScroll("/inventory/movements?type=venta&from=2026-10-01", 640);
+
+      renderPage("type=venta&from=2026-10-01");
+
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      await findRowWith("V-0001");
+
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      expect(scrollTo).toHaveBeenCalledWith(0, 640);
+    });
+
+    it("does not move the scroll on a URL without a saved position", async () => {
+      const scrollTo = rememberScroll("/inventory/movements?type=venta&from=2026-10-01", 640);
+
+      renderPage("type=venta");
+      await findRowWith("V-0001");
+
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("'Volver' with a returnTo announces its shortcuts; 'Volver a Inventario' has none", async () => {
+      const view = renderPage("returnTo=%2Finventory%3Fsearch%3Dharina");
+
+      await findRowWith("V-0001");
+
+      expect(screen.getByRole("link", { name: "Volver" })).toHaveAttribute(
+        "aria-keyshortcuts",
+        "Escape Alt+ArrowLeft",
+      );
+
+      view.unmount();
+      renderPage();
+      await findRowWith("V-0001");
+
+      expect(screen.getByRole("link", { name: "Volver a Inventario" })).not.toHaveAttribute(
+        "aria-keyshortcuts",
+      );
+    });
+
+    it("writes the type filter in the URL and goes back to page 1", async () => {
+      const user = userEvent.setup();
+
+      renderPage("page=3");
+      await findRowWith("V-0001");
+      await user.selectOptions(screen.getByLabelText("Tipo de movimiento"), "Venta");
+
+      expect(window.location.search).toBe("?type=venta");
+      await waitFor(() =>
+        expect(lastMovementRequest()).toEqual({ limit: "10", skip: "0", type: "venta" }),
+      );
     });
   });
 });

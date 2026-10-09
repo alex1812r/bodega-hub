@@ -15,6 +15,7 @@ import {
   ResponsivePagination,
   useUrlPaginationState,
 } from "@/shared/components/Pagination";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { useUrlListState, withUrlListBoundary } from "@/shared/hooks/useUrlListState";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
@@ -171,6 +172,10 @@ function PaymentsList() {
       setListState({ page: lastPage });
     }
   }, [isPastLastPage, lastPage, setListState]);
+
+  // Al volver de un comprobante o de un documento la lista reaparece a la altura en que se dejó.
+  useScrollRestoration(list.href, { ready: !payments.isLoading });
+
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [payingDocument, setPayingDocument] = useState<PayingDocument | null>(null);
   const { purchaseId: linkedPurchaseId, saleId: linkedSaleId } = effectiveFilters;

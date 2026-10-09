@@ -14,6 +14,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { SCROLL_POSITIONS_STORAGE_KEY } from "@/shared/hooks/useScrollRestoration";
+
 /** URL simulada: `useSearchParams` la sigue como hace Next tras un `history.replaceState`. */
 const mockNavigation = {
   listeners: new Set<() => void>(),
@@ -787,6 +789,71 @@ describe("PaymentsListPage", () => {
       expect(filtersPanel().queryByText(/Compra/)).not.toBeInTheDocument();
       expect(requestedPaths()).not.toContain("/api/purchases/purchase-001");
       expect(screen.getByLabelText("Método")).toHaveValue("efectivo_ves");
+    });
+  });
+
+  describe("DET-06d · volver con filtros y scroll", () => {
+    /** Posición guardada para `url` y espía del `scrollTo` de la ventana (sin `<main>`, hace scroll ella). */
+    function rememberScroll(url: string, top: number) {
+      const scrollTo = jest.fn();
+
+      Object.defineProperty(window, "scrollTo", { configurable: true, value: scrollTo });
+      window.sessionStorage.setItem(SCROLL_POSITIONS_STORAGE_KEY, JSON.stringify([[url, top]]));
+
+      return scrollTo;
+    }
+
+    afterEach(() => {
+      window.sessionStorage.clear();
+    });
+
+    it("restaura el scroll guardado de esa URL exacta cuando las filas ya estan pintadas", async () => {
+      const scrollTo = rememberScroll("/payments?method=efectivo_ves&page=2", 640);
+
+      listTotal = 25;
+      openAt("method=efectivo_ves&page=2");
+      renderPage();
+
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      await screen.findAllByRole("link", { name: "V-000002" });
+
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      expect(scrollTo).toHaveBeenCalledWith(0, 640);
+    });
+
+    it("sin posicion guardada para esa URL no mueve el scroll", async () => {
+      const scrollTo = rememberScroll("/payments?method=efectivo_ves&page=2", 640);
+
+      openAt("method=efectivo_ves");
+      renderPage();
+      await screen.findAllByRole("link", { name: "V-000002" });
+
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("abierta con filtros y enlace profundo, la unica peticion de la lista ya los lleva", async () => {
+      listTotal = 60;
+      openAt(
+        "direction=salida&method=pago_movil&purchaseId=purchase-001&contactId=c-1&from=2026-10-01&to=2026-10-06&page=2",
+      );
+      renderPage();
+
+      await screen.findAllByRole("link", { name: "V-000002" });
+      await settle();
+
+      expect(listRequests()).toEqual([
+        {
+          contactId: "c-1",
+          direction: "salida",
+          from: "2026-10-01",
+          limit: "10",
+          method: "pago_movil",
+          purchaseId: "purchase-001",
+          skip: "10",
+          to: "2026-10-06",
+        },
+      ]);
     });
   });
 });
