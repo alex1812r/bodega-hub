@@ -222,7 +222,7 @@ describe("RankingBarChart", () => {
     expect(getChart().outerHTML).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);
     expect(getChart().querySelector('rect[data-bar="current"]')).toHaveAttribute(
       "fill",
-      "var(--primary)",
+      "var(--chart-1)",
     );
   });
 

@@ -52,27 +52,15 @@ function tokenRgb(tokens: Tokens, name: string): Rgb {
   return hexToRgb(value);
 }
 
-/** Resuelve `var(--a)` o `color-mix(in srgb, var(--a) N%, var(--b))` con los tokens del tema. */
+/** Resuelve `var(--a)` con los tokens del tema. Cualquier otra cosa no es un token. */
 function resolveColor(color: string, tokens: Tokens): Rgb {
   const plain = /^var\(--([\w-]+)\)$/.exec(color);
 
-  if (plain) {
-    return tokenRgb(tokens, plain[1]);
-  }
-
-  const mixed = /^color-mix\(in srgb, var\(--([\w-]+)\) (\d+)%, var\(--([\w-]+)\)\)$/.exec(color);
-
-  if (!mixed) {
+  if (!plain) {
     throw new Error(`Color que no sale de tokens: ${color}`);
   }
 
-  const first = tokenRgb(tokens, mixed[1]);
-  const second = tokenRgb(tokens, mixed[3]);
-  const weight = Number(mixed[2]) / 100;
-
-  return first.map((channel, index) =>
-    Math.round(channel * weight + second[index] * (1 - weight)),
-  ) as Rgb;
+  return tokenRgb(tokens, plain[1]);
 }
 
 function luminance(rgb: Rgb) {
@@ -91,9 +79,82 @@ function contrast(first: Rgb, second: Rgb) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-function distance(first: Rgb, second: Rgb) {
-  return Math.hypot(...first.map((channel, index) => channel - second[index]));
+type Matrix = [Rgb, Rgb, Rgb];
+type Lab = { a: number; b: number; lightness: number };
+
+/**
+ * Visión normal y las dos deficiencias rojo-verde (≈ 8 % de los hombres),
+ * simuladas con las matrices de Machado, Oliveira y Fernandes (2009) para
+ * severidad total, sobre sRGB lineal.
+ */
+const VISION: Record<"deuteranopia" | "normal" | "protanopia", Matrix> = {
+  deuteranopia: [
+    [0.367322, 0.860646, -0.227968],
+    [0.280085, 0.672501, 0.047413],
+    [-0.01182, 0.04294, 0.968881],
+  ],
+  normal: [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+  ],
+  protanopia: [
+    [0.152286, 1.052583, -0.204868],
+    [0.114503, 0.786281, 0.099216],
+    [-0.003882, -0.048116, 1.051998],
+  ],
+};
+
+function toLinear(channel: number) {
+  const value = channel / 255;
+
+  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
 }
+
+/** Color tal como lo percibe esa visión, en CIELAB (D65). */
+function toLab(rgb: Rgb, vision: Matrix): Lab {
+  const linear = rgb.map(toLinear);
+  const [red, green, blue] = vision.map((row) =>
+    Math.min(1, Math.max(0, row[0] * linear[0] + row[1] * linear[1] + row[2] * linear[2])),
+  );
+  const pivot = (value: number) =>
+    value > 216 / 24389 ? Math.cbrt(value) : ((24389 / 27) * value + 16) / 116;
+  const x = pivot((0.4124564 * red + 0.3575761 * green + 0.1804375 * blue) / 0.95047);
+  const y = pivot(0.2126729 * red + 0.7151522 * green + 0.072175 * blue);
+  const z = pivot((0.0193339 * red + 0.119192 * green + 0.9503041 * blue) / 1.08883);
+
+  return { a: 500 * (x - y), b: 200 * (y - z), lightness: 116 * y - 16 };
+}
+
+/** ΔE*ab (CIE76): distancia percibida entre dos colores. ≈ 2,3 es lo mínimo apreciable. */
+function deltaE(first: Lab, second: Lab) {
+  return Math.hypot(first.lightness - second.lightness, first.a - second.a, first.b - second.b);
+}
+
+/** Distancia solo de tono y saturación (plano a*b*), sin contar la luminosidad. */
+function deltaChroma(first: Lab, second: Lab) {
+  return Math.hypot(first.a - second.a, first.b - second.b);
+}
+
+function pairs<T>(items: T[]): [T, T][] {
+  return items.flatMap((first, index) => items.slice(index + 1).map((second): [T, T] => [first, second]));
+}
+
+/**
+ * Umbrales de separación entre series (hoy la paleta da 40 / 34 / 26 de mínimo):
+ *
+ * - `MIN_DELTA_E` = 30 con visión normal. Una línea de 2 px o una muestra de
+ *   leyenda de 8 px se distingue peor que dos manchas grandes: se exige más de
+ *   diez veces lo mínimo apreciable (2,3).
+ * - `MIN_DELTA_CHROMA` = 25: las series se separan por tono, no solo por ser
+ *   una más clara que otra (dos grises a ΔE 40 pasarían el primer umbral).
+ * - `MIN_DELTA_E_CVD` = 20 con protanopia y deuteranopia: ahí el tono se
+ *   aplana y la separación se apoya también en la luminosidad, así que basta
+ *   una distancia total menor, pero todavía inconfundible.
+ */
+const MIN_DELTA_E = 30;
+const MIN_DELTA_CHROMA = 25;
+const MIN_DELTA_E_CVD = 20;
 
 const THEMES: [string, Tokens][] = [
   ["claro", light],
@@ -121,7 +182,33 @@ describe("chartTheme", () => {
     expect(dark.get("on-surface-variant")).not.toBe(light.get("on-surface-variant"));
   });
 
-  it("no tiene ningún color literal: todo es var(--token) o mezcla de tokens", () => {
+  it("las 5 series son los tokens --chart-1 … --chart-5, en orden", () => {
+    expect([...CHART_SERIES_COLORS]).toEqual([
+      "var(--chart-1)",
+      "var(--chart-2)",
+      "var(--chart-3)",
+      "var(--chart-4)",
+      "var(--chart-5)",
+    ]);
+  });
+
+  it("los tokens de serie existen en :root y en .dark, y son colores del tema", () => {
+    const darkOnly = readTokens(".dark");
+
+    for (const index of [1, 2, 3, 4, 5]) {
+      expect(light.get(`chart-${index}`)).toBeDefined();
+      expect(darkOnly.get(`chart-${index}`)).toBeDefined();
+      expect(css).toContain(`--color-chart-${index}: var(--chart-${index});`);
+    }
+  });
+
+  it("chartTheme.ts no mezcla colores: ni color-mix ni literales", () => {
+    const source = readFileSync(join(process.cwd(), "src/shared/components/charts/chartTheme.ts"), "utf8");
+
+    expect(source).not.toMatch(/color-mix|#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/);
+  });
+
+  it("no tiene ningún color literal: todo es var(--token)", () => {
     const colors = [
       ...CHART_SERIES_COLORS,
       ...collectStrings(CHART_COLORS),
@@ -149,14 +236,42 @@ describe("chartTheme", () => {
       }
     });
 
-    it("las series se distinguen entre sí", () => {
-      const resolved = CHART_SERIES_COLORS.map((color) => resolveColor(color, tokens));
+    it("la serie 1 es el color de marca del tema", () => {
+      expect(tokens.get("chart-1")).toBe(tokens.get("primary"));
+    });
 
-      resolved.forEach((first, index) => {
-        resolved.slice(index + 1).forEach((second) => {
-          expect(distance(first, second)).toBeGreaterThanOrEqual(70);
-        });
-      });
+    it("las series se distinguen entre sí por tono, no solo por luminosidad", () => {
+      const series = CHART_SERIES_COLORS.map((color) =>
+        toLab(resolveColor(color, tokens), VISION.normal),
+      );
+
+      for (const [first, second] of pairs(series)) {
+        expect(deltaE(first, second)).toBeGreaterThanOrEqual(MIN_DELTA_E);
+        expect(deltaChroma(first, second)).toBeGreaterThanOrEqual(MIN_DELTA_CHROMA);
+      }
+    });
+
+    it.each(["protanopia", "deuteranopia"] as const)(
+      "las series se siguen distinguiendo con %s",
+      (vision) => {
+        const series = CHART_SERIES_COLORS.map((color) =>
+          toLab(resolveColor(color, tokens), VISION[vision]),
+        );
+
+        for (const [first, second] of pairs(series)) {
+          expect(deltaE(first, second)).toBeGreaterThanOrEqual(MIN_DELTA_E_CVD);
+        }
+      },
+    );
+
+    it("ninguna serie se confunde con el color de error", () => {
+      const error = toLab(tokenRgb(tokens, "error"), VISION.normal);
+
+      for (const color of CHART_SERIES_COLORS) {
+        expect(deltaE(toLab(resolveColor(color, tokens), VISION.normal), error)).toBeGreaterThanOrEqual(
+          MIN_DELTA_E,
+        );
+      }
     });
 
     it.each(SURFACES)("el texto de ejes, etiquetas y tooltip cumple AA sobre --%s", (surface) => {

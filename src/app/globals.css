@@ -50,6 +50,13 @@
   --sidebar-foreground: #e2e8f0;
   --sidebar-muted: #94a3b8;
   --ring: #4f46e5;
+  /* Series de gráficos, en orden (máx. 5). Solo se usan vía chartTheme.ts.
+     Contrastes y separación en docs/design-tokens.md ("Series de gráficos"). */
+  --chart-1: #4f46e5;
+  --chart-2: #a16207;
+  --chart-3: #0d9488;
+  --chart-4: #86198f;
+  --chart-5: #1e293b;
   --pos-cart-width: 32rem;
   --app-sidebar-width: 18rem;
   --app-sidebar-width-collapsed: 5rem;
@@ -106,6 +113,13 @@
   --tertiary-fixed-dim: #ffb95f;
   --primary-fixed-dim: #c3c0ff;
   --on-primary-fixed: #0f0069;
+
+  /* Series de gráficos: mismas familias de tono que en claro, aclaradas. */
+  --chart-1: #6366f1;
+  --chart-2: #fbbf24;
+  --chart-3: #99f6e4;
+  --chart-4: #f0abfc;
+  --chart-5: #64748b;
 }
 
 @theme inline {
@@ -152,6 +166,11 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted: var(--sidebar-muted);
   --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono);
 }

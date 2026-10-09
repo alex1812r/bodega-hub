@@ -87,8 +87,8 @@ export type TimeSeriesChartProps = {
    * const svg = chartRef.current?.querySelector("svg.recharts-surface");
    * ```
    *
-   * Los colores del SVG son `var(--token)` y `color-mix(...)`: fuera del
-   * documento no se resuelven. Antes de serializar con `XMLSerializer`, copia a
+   * Los colores del SVG son `var(--token)`: fuera del documento no se
+   * resuelven. Antes de serializar con `XMLSerializer`, copia a
    * cada nodo de un clon su `getComputedStyle(nodo).stroke` / `.fill` / `.color`
    * leídos del original. La leyenda y el control REF / Bs son HTML y quedan
    * fuera. Mientras hay carga, error o vacío no existe el contenedor (`null`).

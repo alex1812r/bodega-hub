@@ -13,30 +13,21 @@ function token(name: string) {
 }
 
 /**
- * Mezcla de dos tokens. Sirve para los tonos de serie que el tema no trae como
- * token propio; al mezclar tokens, el resultado sigue cambiando con el tema.
- */
-function mix(first: string, firstPercent: number, second: string) {
-  return `color-mix(in srgb, ${token(first)} ${firstPercent}%, ${token(second)})`;
-}
-
-/**
- * Paleta categórica: hasta 5 series, en este orden. Cada color llega a 3:1
- * sobre `--surface` y `--surface-container-lowest` en claro y en oscuro
- * (`chartTheme.test.ts` lo calcula con los valores de `globals.css`).
+ * Paleta categórica: hasta 5 series, en este orden. Son los tokens
+ * `--chart-1` … `--chart-5` de `globals.css` (documentados en
+ * `docs/design-tokens.md`): índigo (el de `--primary`), ámbar, turquesa,
+ * fucsia y pizarra. Ninguno es el rojo de error.
  *
- * - Ámbar: `--tertiary` solo no llega a 3:1 en claro, y `--tertiary-container`
- *   no se lee en oscuro; mezclado con `--on-surface` se oscurece en claro y se
- *   aclara en oscuro.
- * - Magenta: no hay token; sale de `--error` + `--primary`. Se evita `--error`
- *   puro para que una serie no parezca un fallo.
+ * `chartTheme.test.ts` calcula con los valores de `globals.css` que cada uno
+ * llega a 3:1 sobre `--surface` y `--surface-container-lowest` y que se
+ * distinguen entre sí, también con daltonismo, en claro y en oscuro.
  */
 export const CHART_SERIES_COLORS = [
-  token("primary"),
-  token("secondary-stitch"),
-  mix("tertiary", 70, "on-surface"),
-  mix("error", 60, "primary"),
-  token("on-surface-variant"),
+  token("chart-1"),
+  token("chart-2"),
+  token("chart-3"),
+  token("chart-4"),
+  token("chart-5"),
 ] as const;
 
 /** Máximo de series que la paleta distingue. */

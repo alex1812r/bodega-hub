@@ -595,7 +595,7 @@ describe("TimeSeriesChart", () => {
 
       expect(new Set(strokes).size).toBe(5);
       for (const stroke of strokes) {
-        expect(stroke).toMatch(/^(var\(--[\w-]+\)|color-mix\(in srgb, var\()/);
+        expect(stroke).toMatch(/^var\(--chart-[1-5]\)$/);
       }
       for (const item of five) {
         expect(screen.getByText(item.name)).toBeInTheDocument();

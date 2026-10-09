@@ -51,8 +51,8 @@ export type RankingBarChartProps = {
    * const svg = chartRef.current?.querySelector("svg.ranking-bar-chart-surface");
    * ```
    *
-   * Igual que en `TimeSeriesChart`, los colores son `var(--token)` y
-   * `color-mix(...)`: antes de serializar hay que copiar a un clon los
+   * Igual que en `TimeSeriesChart`, los colores son `var(--token)`: antes
+   * de serializar hay que copiar a un clon los
    * `getComputedStyle(nodo).fill` / `.stroke` del original. Mientras hay carga,
    * error o vacío no existe el contenedor (`null`).
    */
