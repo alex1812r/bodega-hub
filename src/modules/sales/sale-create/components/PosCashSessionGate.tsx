@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
 import { CashSessionCountdown } from "@/modules/cash/components/CashSessionCountdown";
@@ -17,6 +17,8 @@ import { ErrorState } from "@/shared/components/ErrorState";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { PageBackButton } from "@/shared/components/PageBackButton";
 
+import { purgePosCartDrafts } from "../utils/posCartDraft";
+
 type PosCashSessionGateProps = {
   children: ReactNode;
 };
@@ -30,6 +32,17 @@ export function PosCashSessionGate({ children }: PosCashSessionGateProps) {
   const clock = useCashSessionClock(session.data?.openedAt);
 
   const userId = currentUser.data?.user.id;
+  const storeId = currentUser.data?.storeId ?? null;
+  // El servidor respondio que no hay caja abierta, o la abierta ya vencio.
+  const cashClosed =
+    !session.isLoading && !session.error && (session.data ? clock.expired : session.isSuccess);
+
+  useEffect(() => {
+    // Cerrar caja invalida el carrito recuperable (CNF-16): el de un turno no reaparece en otro.
+    if (cashClosed && userId) {
+      purgePosCartDrafts({ storeId, userId });
+    }
+  }, [cashClosed, storeId, userId]);
   const register =
     session.data?.register ??
     registers.data?.find(
