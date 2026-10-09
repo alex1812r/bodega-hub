@@ -35,7 +35,10 @@ export type ReportSeriesMeasures = Record<string, number>;
 export type ReportSeriesBucket<M extends ReportSeriesMeasures> = M & {
   /** Primer día del periodo (`yyyy-mm-dd`), ya recortado al rango pedido. */
   key: string;
-  /** `08/10` (un día), `06/10–12/10` (varios) u `oct 2026` (mes completo). */
+  /**
+   * `08/10` (un día), `06/10–12/10` (varios) u `oct 2026` (mes completo). Si
+   * la serie cruza de año, con año: `08/10/26`, `06/10–12/10/26`.
+   */
   label: string;
   /** Primer y último día del periodo, ambos incluidos. */
   from: string;
@@ -280,17 +283,36 @@ function longDay(day: string) {
   return `${shortDay(day)}/${day.slice(0, 4)}`;
 }
 
-/** `08/10` (un día), `oct 2026` (mes de calendario completo) o `06/10–12/10`. */
-export function formatBucketLabel(window: ReportSeriesRange) {
+function shortDayWithYear(day: string) {
+  return `${shortDay(day)}/${day.slice(2, 4)}`;
+}
+
+function sameYear(range: ReportSeriesRange) {
+  return range.from.slice(0, 4) === range.to.slice(0, 4);
+}
+
+/**
+ * `08/10` (un día), `oct 2026` (mes de calendario completo) o `06/10–12/10`.
+ * Con `withYear` (la serie cruza de año) el día lleva año, `08/10/26`, y el
+ * periodo lo lleva al final, `06/10–12/10/26`, o en ambos extremos si él mismo
+ * cruza de año: `29/12/25–04/01/26`.
+ */
+export function formatBucketLabel(window: ReportSeriesRange, options?: { withYear?: boolean }) {
+  const withYear = options?.withYear ?? false;
+
   if (window.from === window.to) {
-    return shortDay(window.from);
+    return withYear ? shortDayWithYear(window.from) : shortDay(window.from);
   }
 
   if (window.from === firstDayOfMonth(window.from) && window.to === lastDayOfMonth(window.from)) {
     return `${MONTH_LABELS[Number(window.from.slice(5, 7)) - 1]} ${window.from.slice(0, 4)}`;
   }
 
-  return `${shortDay(window.from)}–${shortDay(window.to)}`;
+  if (!withYear) {
+    return `${shortDay(window.from)}–${shortDay(window.to)}`;
+  }
+
+  return `${sameYear(window) ? shortDay(window.from) : shortDayWithYear(window.from)}–${shortDayWithYear(window.to)}`;
 }
 
 /**
@@ -341,6 +363,11 @@ function buildBuckets<M extends ReportSeriesMeasures>(
   byDay: Map<string, Record<string, number>>,
   measures: readonly (keyof M & string)[],
 ): ReportSeriesBucket<M>[] {
+  // Si las ventanas cruzan de año, cada etiqueta dice de qué año es.
+  const first = windows[0];
+  const last = windows[windows.length - 1];
+  const withYear = Boolean(first && last && !sameYear({ from: first.from, to: last.to }));
+
   return windows.map((window) => {
     const totals = emptyMeasures<ReportSeriesMeasures>(measures);
 
@@ -362,7 +389,7 @@ function buildBuckets<M extends ReportSeriesMeasures>(
       ...(totals as M),
       from: window.from,
       key: window.from,
-      label: formatBucketLabel(window),
+      label: formatBucketLabel(window, { withYear }),
       to: window.to,
     };
   });

@@ -218,6 +218,55 @@ describe("buildBucketWindows", () => {
   });
 });
 
+// REP-F2: con un rango que cruza de año el eje X no distinguía un 19/05 de otro.
+describe("etiquetas de un rango que cruza de año", () => {
+  const series = (query: string) => {
+    const request = resolveReportSeriesRequest(parseReportSeriesParams(new URLSearchParams(query)));
+
+    if (!request) {
+      throw new Error("sin serie");
+    }
+
+    return buildDailySalesSeries(request, []);
+  };
+
+  it("por día: cada etiqueta lleva su año", () => {
+    const { current, previous } = series("from=2025-12-30&to=2026-01-02&groupBy=day&compare=1");
+
+    expect(current.map((bucket) => bucket.label)).toEqual([
+      "30/12/25",
+      "31/12/25",
+      "01/01/26",
+      "02/01/26",
+    ]);
+    expect(previous?.map((bucket) => bucket.label)).toEqual(["26/12", "27/12", "28/12", "29/12"]);
+  });
+
+  it("por semana: el año va al final, y en los dos extremos si la semana cruza de año", () => {
+    const { current } = series("from=2025-12-22&to=2026-01-11&groupBy=week");
+
+    expect(current.map((bucket) => bucket.label)).toEqual([
+      "22/12–28/12/25",
+      "29/12/25–04/01/26",
+      "05/01–11/01/26",
+    ]);
+  });
+
+  it("por mes: los meses parciales de los extremos también llevan año", () => {
+    const { current } = series("from=2024-05-19&to=2026-05-18&groupBy=month");
+
+    expect(current[0].label).toBe("19/05–31/05/24");
+    expect(current[1].label).toBe("jun 2024");
+    expect(current[current.length - 1].label).toBe("01/05–18/05/26");
+  });
+
+  it("dentro de un mismo año las etiquetas siguen sin año", () => {
+    const { current } = series("from=2026-05-17&to=2026-05-18&groupBy=day");
+
+    expect(current.map((bucket) => bucket.label)).toEqual(["17/05", "18/05"]);
+  });
+});
+
 describe("formatBucketLabel", () => {
   it("día, mes completo y periodo parcial", () => {
     expect(formatBucketLabel({ from: "2026-10-08", to: "2026-10-08" })).toBe("08/10");
