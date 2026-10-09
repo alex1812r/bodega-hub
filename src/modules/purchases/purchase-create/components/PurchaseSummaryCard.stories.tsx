@@ -151,3 +151,17 @@ export const CostsInRef: Story = {
     await expect(args.onCostCurrencyChange).toHaveBeenCalledWith("ves");
   },
 };
+
+/** Confirmar falló: el motivo queda junto al botón, que es donde mira quien lo pulsó. */
+export const ConfirmError: Story = {
+  args: {
+    confirmError:
+      "No pudimos conectar con el servidor. Revisa tu conexión y vuelve a intentar; no se duplicará la compra.",
+  },
+  name: "Error al confirmar",
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await expect(canvas.getByRole("alert")).toHaveTextContent("No pudimos registrar la compra");
+  },
+};

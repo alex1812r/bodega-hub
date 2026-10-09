@@ -100,6 +100,18 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : undefined;
 }
 
+const PURCHASE_NETWORK_ERROR_MESSAGE =
+  "No pudimos conectar con el servidor. Revisa tu conexión y vuelve a intentar; no se duplicará la compra.";
+
+/**
+ * Motivo por el que el servidor no registró la compra. Un `fetch` que no llega a tener
+ * respuesta rechaza con `TypeError` («Failed to fetch»): eso se dice en español. Lo que
+ * contesta el servidor (`ClientApiError`) se muestra tal cual.
+ */
+function describeConfirmError(error: Error) {
+  return error instanceof TypeError ? PURCHASE_NETWORK_ERROR_MESSAGE : error.message;
+}
+
 export function PurchaseCreatePage() {
   const router = useRouter();
   const exchangeRate = useCurrentExchangeRate();
@@ -145,6 +157,8 @@ export function PurchaseCreatePage() {
   // Moneda en la que se teclean los costos: una sola para toda la compra.
   const [costCurrency, setCostCurrency] = useState<PurchaseCostCurrency>("ves");
   const [formError, setFormError] = useState<string | null>(null);
+  // Intentos de confirmar: el aviso junto al botón se trae a la vista en cada uno.
+  const [confirmAttempt, setConfirmAttempt] = useState(0);
   // "Pagar ahora" (COM-06): cerrada, la compra se confirma sin pago.
   const [payNow, setPayNow] = useState(false);
   const [storedPaymentValues, setPaymentValues] = useState<PaymentFormValues>(() =>
@@ -562,6 +576,8 @@ export function PurchaseCreatePage() {
   }
 
   async function handleSubmit() {
+    setConfirmAttempt((attempt) => attempt + 1);
+
     if (!supplierId) {
       setFormError("Selecciona un proveedor antes de confirmar la compra.");
       return;
@@ -675,6 +691,13 @@ export function PurchaseCreatePage() {
   }
 
   const dependencyError = exchangeRate.error ?? taxRates.error;
+  const shownPaymentError = canPayNow && payNow ? paymentError : null;
+  // Un solo motivo junto al botón: la validación propia, el pago incompleto o lo que
+  // contestó (o no) el servidor al último envío.
+  const confirmError =
+    formError ??
+    shownPaymentError ??
+    (createPurchase.error ? describeConfirmError(createPurchase.error) : null);
 
   // Sin tasa la compra de origen no puede llegar al formulario: no se espera para siempre.
   const duplicateError = duplicate.error ?? (duplicate.isLoading ? exchangeRate.error : null);
@@ -732,13 +755,6 @@ export function PurchaseCreatePage() {
         <ErrorState
           description={dependencyError.message}
           title="No pudimos cargar los datos de la compra"
-        />
-      ) : null}
-
-      {formError || createPurchase.error ? (
-        <ErrorState
-          description={formError ?? createPurchase.error?.message}
-          title="No pudimos registrar la compra"
         />
       ) : null}
 
@@ -809,7 +825,7 @@ export function PurchaseCreatePage() {
           />
           {canPayNow ? (
             <PurchasePaymentSection
-              error={payNow ? paymentError : null}
+              error={shownPaymentError}
               methods={paymentMethods}
               onOpenChange={(open) => {
                 setPayNow(open);
@@ -827,6 +843,9 @@ export function PurchaseCreatePage() {
             />
           ) : null}
           <PurchaseSummaryCard
+            confirmError={confirmError}
+            confirmErrorAnnounced={confirmError !== null && confirmError === shownPaymentError}
+            confirmErrorAttempt={confirmAttempt}
             costCurrency={costCurrency}
             discountRef={discountRef}
             discountVes={discountVes}

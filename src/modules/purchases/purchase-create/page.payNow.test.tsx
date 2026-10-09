@@ -313,7 +313,7 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     fireEvent.click(toggle());
     fireEvent.click(screen.getByRole("button", { name: "Completar saldo" }));
     fireEvent.click(confirm());
-    await screen.findByText("Failed to fetch");
+    await screen.findByText(/No pudimos conectar con el servidor/);
 
     fireEvent.click(confirm());
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/purchases/purchase-1"));

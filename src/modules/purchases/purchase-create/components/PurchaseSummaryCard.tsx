@@ -1,6 +1,7 @@
 "use client";
 
-import { CheckCircle, Receipt } from "lucide-react";
+import { AlertTriangle, CheckCircle, Receipt } from "lucide-react";
+import { useEffect, useRef } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
@@ -25,7 +26,23 @@ export function isPurchaseDiscountOverSubtotal(discountRef: number, subtotalRef:
   return discountRef > subtotalRef;
 }
 
+/** Título del aviso de Confirmar; debajo va el motivo. */
+export const PURCHASE_CONFIRM_ERROR_TITLE = "No pudimos registrar la compra";
+
 type PurchaseSummaryCardProps = {
+  /**
+   * Por qué no se registró la compra (validación propia, respuesta del servidor o red).
+   * Se muestra junto al botón, que es donde mira quien acaba de pulsarlo, y se trae a la
+   * vista al aparecer.
+   */
+  confirmError?: string | null;
+  /**
+   * Otro aviso de la pantalla ya anuncia ese mismo texto (el del pago, en «Pagar ahora»):
+   * aquí se ve, pero sin `role="alert"`, para que un lector de pantalla no lo lea dos veces.
+   */
+  confirmErrorAnnounced?: boolean;
+  /** Cambia en cada intento de confirmar: el mismo error repetido vuelve a traerse a la vista. */
+  confirmErrorAttempt?: number;
   /** Moneda en la que se teclean los costos de TODAS las líneas de la compra. */
   costCurrency: PurchaseCostCurrency;
   discountRef: number;
@@ -155,6 +172,9 @@ function SummaryRow({
 }
 
 export function PurchaseSummaryCard({
+  confirmError = null,
+  confirmErrorAnnounced = false,
+  confirmErrorAttempt = 0,
   costCurrency,
   discountRef,
   discountVes,
@@ -174,6 +194,20 @@ export function PurchaseSummaryCard({
   const discountOverSubtotal = isPurchaseDiscountOverSubtotal(discountRef, subtotalRef);
   const totalRef = Math.max(0, roundMoney(subtotalRef - discountRef + taxRef));
   const totalVes = Math.max(0, roundMoney(subtotalVes - discountVes + taxVes));
+  const confirmErrorRef = useRef<HTMLDivElement>(null);
+  // El aviso del descuento junto a su campo ya anuncia ese mismo texto.
+  const alreadyAnnounced =
+    confirmErrorAnnounced ||
+    (discountOverSubtotal && confirmError === PURCHASE_DISCOUNT_OVER_SUBTOTAL_MESSAGE);
+
+  useEffect(() => {
+    const notice = confirmErrorRef.current;
+
+    // jsdom no implementa `scrollIntoView`.
+    if (confirmError && notice && typeof notice.scrollIntoView === "function") {
+      notice.scrollIntoView({ block: "nearest" });
+    }
+  }, [confirmError, confirmErrorAttempt]);
 
   return (
     <PurchaseCreateSectionCard icon={Receipt} title="Resumen de Compra">
@@ -265,6 +299,20 @@ export function PurchaseSummaryCard({
               </li>
             ))}
           </ul>
+        </div>
+      ) : null}
+
+      {confirmError ? (
+        <div
+          className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive"
+          ref={confirmErrorRef}
+          role={alreadyAnnounced ? undefined : "alert"}
+        >
+          <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">{PURCHASE_CONFIRM_ERROR_TITLE}</p>
+            <p className="text-sm break-words">{confirmError}</p>
+          </div>
         </div>
       ) : null}
 

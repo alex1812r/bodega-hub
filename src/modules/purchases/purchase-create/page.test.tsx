@@ -254,7 +254,7 @@ describe("PurchaseCreatePage · idempotencia (C6)", () => {
     renderWithCart();
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
-    await screen.findByText("Failed to fetch");
+    await screen.findByText(/No pudimos conectar con el servidor/);
     expect(mockPush).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
@@ -322,7 +322,7 @@ describe("PurchaseCreatePage · idempotencia (C6)", () => {
     renderWithCart();
 
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
-    await screen.findByText("Failed to fetch");
+    await screen.findByText(/No pudimos conectar con el servidor/);
 
     fireEvent.click(screen.getByRole("button", { name: "agregar producto con empaque" }));
     fireEvent.click(screen.getByRole("button", { name: /Confirmar Compra/ }));
