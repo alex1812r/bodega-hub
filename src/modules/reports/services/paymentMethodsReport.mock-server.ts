@@ -1,9 +1,9 @@
-import { parseDashboardMetricsDateParams } from "@/modules/dashboard/utils/kpiPeriod";
 import { mockPayments } from "@/shared/mocks/erp-data";
-import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 
 import {
   computePaymentMethodsReport,
+  resolvePaymentMethodsReportRequest,
+  splitPaymentsByPeriod,
   type PaymentMethodsReportResult,
 } from "./paymentMethodsReport";
 import { matchesStoreIds, normalizeStoreIds } from "./storeScope";
@@ -13,18 +13,23 @@ export function getPaymentMethodsReport(
   storeIdOrIds: string | string[],
 ): PaymentMethodsReportResult {
   const storeIds = normalizeStoreIds(storeIdOrIds);
-  const { from, to } = parseDashboardMetricsDateParams(searchParams);
+  const request = resolvePaymentMethodsReportRequest(searchParams);
 
-  const payments = mockPayments.filter(
-    (payment) =>
-      (payment.status ?? "activo") === "activo" &&
-      Boolean(payment.saleId) &&
-      matchesStoreIds(payment.storeId, storeIds) &&
-      isUtcTimestampInCaracasDateRange(payment.createdAt, from, to),
+  const { current, previous } = splitPaymentsByPeriod(
+    mockPayments.filter(
+      (payment) =>
+        (payment.status ?? "activo") === "activo" &&
+        Boolean(payment.saleId) &&
+        matchesStoreIds(payment.storeId, storeIds),
+    ),
+    request,
   );
 
   return computePaymentMethodsReport({
-    payments,
+    comparison: request.compare
+      ? { payments: previous, previousRange: request.previousRange }
+      : undefined,
+    payments: current,
     searchParams,
   });
 }

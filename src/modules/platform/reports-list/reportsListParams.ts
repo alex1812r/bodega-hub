@@ -7,29 +7,27 @@ import type {
   StockCardReportFilters,
 } from "@/modules/reports/hooks/useReports";
 import {
-  defaultReportId,
+  MULTI_STORE_REPORT_IDS,
+  type MultiStoreReportId,
   type ReportId,
 } from "@/modules/reports/reports-list/config/reportCatalog";
+import { DATE_RANGE_PRESETS } from "@/shared/components/DateRangeField";
 import { listParams, type UrlListStateOf } from "@/shared/hooks/useUrlListState";
 
 import type { PlatformStoreScope } from "../types/reports";
 
-/** Reportes del catálogo que la URL puede dejar activos. */
-export const PLATFORM_REPORT_IDS = [
-  "customer-purchases",
-  "daily-close",
-  "daily-sales",
-  "fx-depreciation",
-  "gross-profit",
-  "low-stock",
-  "payment-methods",
-  "product-profitability",
-  "purchases",
-  "stock-card",
-  "supplier-purchases",
-  "top-customers",
-  "top-products",
-] as const satisfies readonly ReportId[];
+/**
+ * Reportes que la URL puede dejar activos: los multi-tienda del catálogo. Los de
+ * la tienda activa (dinero, inventario) no existen en `/api/platform/reports`.
+ */
+export const PLATFORM_REPORT_IDS = MULTI_STORE_REPORT_IDS;
+
+/** Reporte de plataforma cuando la URL no trae `report` (o trae uno que no existe aquí). */
+export const DEFAULT_PLATFORM_REPORT_ID: MultiStoreReportId = "daily-sales";
+
+export function isPlatformReportId(id: ReportId | string): id is MultiStoreReportId {
+  return (PLATFORM_REPORT_IDS as readonly string[]).includes(id);
+}
 
 export const PLATFORM_STORE_SCOPES = [
   "all",
@@ -53,15 +51,17 @@ const STORE_ID_PARAM = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
  * |---------------|---------------------------------------------------------|---------------|
  * | `report`      | id del catálogo de reportes                             | `daily-sales` |
  * | `from` / `to` | `YYYY-MM-DD`, día operativo Caracas                     | `""`          |
+ * | `preset`      | preset de `DateRangeField` (relativo: se recalcula)     | `""`          |
  * | `supplier`    | id del proveedor (texto, con debounce)                  | `""`          |
  * | `product`     | id del producto (texto, con debounce)                   | `""`          |
  * | `scope`       | `all` · `one` · `selected`                              | `all`         |
  * | `store`       | id (UUID) de tienda, repetible: `?store=a&store=b`      | ninguna       |
  */
 export const platformReportsListSchema = z.object({
-  report: listParams.oneOf(PLATFORM_REPORT_IDS, defaultReportId),
+  report: listParams.oneOf(PLATFORM_REPORT_IDS, DEFAULT_PLATFORM_REPORT_ID),
   from: listParams.date(),
   to: listParams.date(),
+  preset: listParams.oneOf(["", ...DATE_RANGE_PRESETS], ""),
   supplier: listParams.text(),
   product: listParams.text(),
   scope: listParams.oneOf(PLATFORM_STORE_SCOPES, "all"),
@@ -101,11 +101,12 @@ export function toPlatformReportScope(
 }
 
 /**
- * Estado de la URL → filtros de los reportes. `supplier` y `product` llegan ya
- * con su debounce. El rango de fechas vale también para el reporte de compras.
+ * Rango ya resuelto (`parseDateRangeParams`, nunca `state.from/to`: un `preset`
+ * relativo no trae fechas) → filtros de los reportes. `supplier` y `product`
+ * llegan ya con su debounce. El rango vale también para el reporte de compras.
  */
 export function toPlatformReportFilters(
-  state: Pick<PlatformReportsListState, "from" | "to">,
+  range: { from?: string; to?: string },
   supplier: string,
   product: string,
 ): {
@@ -113,7 +114,7 @@ export function toPlatformReportFilters(
   purchasesFilters: PurchasesReportFilters;
   stockCardFilters: StockCardReportFilters;
 } {
-  const dateFilters = { from: state.from || undefined, to: state.to || undefined };
+  const dateFilters = { from: range.from || undefined, to: range.to || undefined };
 
   return {
     dateFilters,

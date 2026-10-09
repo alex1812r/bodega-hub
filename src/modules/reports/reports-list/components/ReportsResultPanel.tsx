@@ -5,9 +5,9 @@ import type { ReactNode } from "react";
 
 import { getPaginatedItems, type PaginatedList, type PaginationParams } from "@/lib/api/pagination";
 import { RestockPurchaseButton } from "@/modules/inventory/restock";
-import { ResponsivePagination, usePaginationState } from "@/shared/components/Pagination";
-import { DataTable, type DataTableColumn } from "@/shared/components/DataTable";
-import type { StockMovementMock } from "@/shared/mocks/erp-data";
+import { usePaginationState } from "@/shared/components/Pagination";
+import type { DataTableColumn } from "@/shared/components/DataTable";
+import { formatDateRangeLabel, isValidIsoDate } from "@/shared/components/DateRangeField";
 import { formatRef, formatVes } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
 
@@ -22,6 +22,7 @@ import {
   type ReportDateRangeFilters,
   type ReportRequestScope,
   type StockCardReportFilters,
+  type StockCardReportRow,
   type SupplierPurchasesReportRow,
   type TopCustomersReportRow,
   type TopProductsReportRow,
@@ -36,202 +37,234 @@ import {
   useTopCustomersReport,
   useTopProductsReport,
 } from "../../hooks/useReports";
+import type {
+  DailySalesSeriesMeasures,
+  GrossProfitSeriesMeasures,
+  PurchasesSeriesMeasures,
+} from "../../services/reportSeries";
 import { type ReportDefinition } from "../config/reportCatalog";
+import {
+  type InventoryReportFilters,
+  type MoneyReportFilters,
+  toReportDateFilters,
+} from "../reportsListParams";
+import { getReportQueryError, toFiniteNumber } from "../reportQueryState";
 import { DailyCloseReportPanel } from "./DailyCloseReportPanel";
 import { FxDepreciationReportPanel } from "./FxDepreciationReportPanel";
+import { formatCaracasDay } from "./inventory/inventoryReportText";
+import { InventoryReportPanel } from "./inventory/InventoryReportPanel";
+import { MoneyReportPanel } from "./money/MoneyReportPanel";
+import { PanelErrorBoundary } from "./PanelErrorBoundary";
 import { PaymentMethodsReportPanel } from "./PaymentMethodsReportPanel";
+import { ReportRankingChart } from "./ReportRankingChart";
+import { ReportSeriesChart, type ReportSeriesChartMeasure } from "./ReportSeriesChart";
+import {
+  formatResultsRange,
+  ReportTable,
+  type ReportPagination,
+  useResetPagePastTheEnd,
+} from "./ReportTable";
+import { ReportTableSection } from "./ReportTableSection";
+
+export type { ReportPagination } from "./ReportTable";
+
+// Una sola medida por gráfico de línea: la misma sobre la que el servicio calcula
+// la variación. Así el periodo anterior y las etiquetas de pico se leen sin ruido.
+const dailySalesMeasure: ReportSeriesChartMeasure<DailySalesSeriesMeasures> = {
+  count: "count",
+  countLabel: "ventas",
+  name: "Ventas",
+  totalLabel: "Total vendido",
+  valueRef: "totalRef",
+  valueVes: "totalVes",
+};
+
+const grossProfitMeasure: ReportSeriesChartMeasure<GrossProfitSeriesMeasures> = {
+  name: "Ganancia bruta",
+  totalLabel: "Ganancia bruta",
+  valueRef: "grossProfitRef",
+};
+
+const purchasesMeasure: ReportSeriesChartMeasure<PurchasesSeriesMeasures> = {
+  count: "count",
+  countLabel: "compras",
+  deltaTone: "neutral",
+  name: "Compras",
+  totalLabel: "Total comprado",
+  valueRef: "totalRef",
+  valueVes: "totalVes",
+};
+
+/**
+ * Cómo se nombra un producto a la vista: su nombre y, si falta, el SKU. El id
+ * interno (un UUID) no se muestra nunca.
+ */
+function productLabel(name: string | undefined, sku: string | undefined) {
+  return name || sku || "—";
+}
+
+function formatUnits(value: number) {
+  return `${value.toLocaleString("es-VE", { maximumFractionDigits: 2 })} uds`;
+}
+
+const NO_VALUE = "—";
+
+// Borde del panel: una celda cuyo dato no llegó como se espera (null, texto,
+// NaN) se pinta «—» en vez de romper el render o enseñar «NaN».
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function ref(value: unknown) {
+  return isFiniteNumber(value) ? formatRef(value) : NO_VALUE;
+}
+
+function ves(value: unknown) {
+  return isFiniteNumber(value) ? formatVes(value) : NO_VALUE;
+}
+
+function count(value: unknown) {
+  return isFiniteNumber(value) ? value : NO_VALUE;
+}
+
+/** Texto de una celda o de una etiqueta del gráfico: sin dato, «—» (nunca «undefined» ni un hueco). */
+function text(value: unknown) {
+  return typeof value === "string" && value.trim() !== "" ? value : NO_VALUE;
+}
+
+/** Día de Caracas que ya llega como `YYYY-MM-DD`. */
+function day(value: unknown) {
+  return isValidIsoDate(value) ? formatDate(value) : NO_VALUE;
+}
+
+/**
+ * Instante (kardex, compras, última compra) → su día operativo de Caracas. Con
+ * `formatDate` salía en la zona del navegador: un día después en Asia/Tokyo.
+ */
+function caracasDay(value: unknown) {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value))
+    ? formatCaracasDay(value)
+    : NO_VALUE;
+}
 
 const dailySalesColumns: DataTableColumn<DailySalesReportRow>[] = [
-  { header: "Fecha", key: "saleDate", render: (row) => formatDate(row.saleDate) },
-  { align: "right", header: "Ventas", key: "salesCount", render: (row) => row.salesCount },
-  { align: "right", header: "Total ref", key: "totalRef", render: (row) => formatRef(row.totalRef) },
-  { align: "right", header: "Total VES", key: "totalVes", render: (row) => formatVes(row.totalVes) },
-  { align: "right", header: "Cobrado VES", key: "paidVes", render: (row) => formatVes(row.paidVes) },
+  { header: "Fecha", key: "saleDate", render: (row) => day(row.saleDate) },
+  { align: "right", header: "Ventas", key: "salesCount", render: (row) => count(row.salesCount) },
+  { align: "right", header: "Total ref", key: "totalRef", render: (row) => ref(row.totalRef) },
+  { align: "right", header: "Total VES", key: "totalVes", render: (row) => ves(row.totalVes) },
+  { align: "right", header: "Cobrado VES", key: "paidVes", render: (row) => ves(row.paidVes) },
 ];
 
 const grossProfitColumns: DataTableColumn<GrossProfitReportRow>[] = [
-  { header: "Fecha", key: "saleDate", render: (row) => formatDate(row.saleDate) },
-  { align: "right", header: "Ingresos", key: "revenueRef", render: (row) => formatRef(row.revenueRef) },
-  { align: "right", header: "Costos", key: "costRef", render: (row) => formatRef(row.costRef) },
-  { align: "right", header: "Ganancia", key: "grossProfitRef", render: (row) => formatRef(row.grossProfitRef) },
+  { header: "Fecha", key: "saleDate", render: (row) => day(row.saleDate) },
+  { align: "right", header: "Ingresos", key: "revenueRef", render: (row) => ref(row.revenueRef) },
+  { align: "right", header: "Costos", key: "costRef", render: (row) => ref(row.costRef) },
+  { align: "right", header: "Ganancia", key: "grossProfitRef", render: (row) => ref(row.grossProfitRef) },
 ];
 
 const productProfitabilityColumns: DataTableColumn<ProductProfitabilityReportRow>[] = [
-  { header: "Producto", key: "productId", render: (row) => row.productId },
-  { header: "SKU", key: "sku", render: (row) => row.sku },
-  { align: "right", header: "Unidades", key: "unitsSold", render: (row) => row.unitsSold },
-  { align: "right", header: "Costo", key: "costRef", render: (row) => formatRef(row.costRef) },
-  { align: "right", header: "Ganancia", key: "grossProfitRef", render: (row) => formatRef(row.grossProfitRef) },
+  { header: "Producto", key: "name", render: (row) => productLabel(row.name, row.sku) },
+  { header: "SKU", key: "sku", render: (row) => text(row.sku) },
+  { align: "right", header: "Unidades", key: "unitsSold", render: (row) => count(row.unitsSold) },
+  { align: "right", header: "Costo", key: "costRef", render: (row) => ref(row.costRef) },
+  { align: "right", header: "Ganancia", key: "grossProfitRef", render: (row) => ref(row.grossProfitRef) },
 ];
 
 const lowStockColumns: DataTableColumn<LowStockReportRow>[] = [
-  { header: "Producto", key: "name", render: (row) => row.name },
-  { header: "SKU", key: "sku", render: (row) => row.sku },
-  { align: "right", header: "Stock", key: "currentStock", render: (row) => row.currentStock },
-  { align: "right", header: "Minimo", key: "minStock", render: (row) => row.minStock },
+  { header: "Producto", key: "name", render: (row) => productLabel(row.name, row.sku) },
+  { header: "SKU", key: "sku", render: (row) => text(row.sku) },
+  { align: "right", header: "Stock", key: "currentStock", render: (row) => count(row.currentStock) },
+  { align: "right", header: "Mínimo", key: "minStock", render: (row) => count(row.minStock) },
 ];
 
 const customerPurchasesColumns: DataTableColumn<CustomerPurchasesReportRow>[] = [
-  { header: "Cliente", key: "name", render: (row) => row.name },
-  { align: "right", header: "Ventas", key: "salesCount", render: (row) => row.salesCount },
-  { align: "right", header: "Total ref", key: "totalRef", render: (row) => formatRef(row.totalRef) },
-  { align: "right", header: "Pendiente VES", key: "pendingVes", render: (row) => formatVes(row.pendingVes) },
+  { header: "Cliente", key: "name", render: (row) => text(row.name) },
+  { align: "right", header: "Ventas", key: "salesCount", render: (row) => count(row.salesCount) },
+  { align: "right", header: "Total ref", key: "totalRef", render: (row) => ref(row.totalRef) },
+  { align: "right", header: "Pendiente VES", key: "pendingVes", render: (row) => ves(row.pendingVes) },
   {
-    header: "Ultima compra",
+    header: "Última compra",
     key: "lastPurchaseAt",
-    render: (row) => (row.lastPurchaseAt ? formatDate(row.lastPurchaseAt) : "Sin compras"),
+    render: (row) => (row.lastPurchaseAt ? caracasDay(row.lastPurchaseAt) : "Sin compras"),
   },
 ];
 
 const supplierPurchasesColumns: DataTableColumn<SupplierPurchasesReportRow>[] = [
-  { header: "Proveedor", key: "name", render: (row) => row.name },
-  { align: "right", header: "Compras", key: "purchasesCount", render: (row) => row.purchasesCount },
-  { align: "right", header: "Total ref", key: "totalRef", render: (row) => formatRef(row.totalRef) },
-  { align: "right", header: "Pendiente VES", key: "pendingVes", render: (row) => formatVes(row.pendingVes) },
+  { header: "Proveedor", key: "name", render: (row) => text(row.name) },
+  { align: "right", header: "Compras", key: "purchasesCount", render: (row) => count(row.purchasesCount) },
+  { align: "right", header: "Total ref", key: "totalRef", render: (row) => ref(row.totalRef) },
+  { align: "right", header: "Pendiente VES", key: "pendingVes", render: (row) => ves(row.pendingVes) },
   {
-    header: "Ultima compra",
+    header: "Última compra",
     key: "lastPurchaseAt",
-    render: (row) => (row.lastPurchaseAt ? formatDate(row.lastPurchaseAt) : "Sin compras"),
+    render: (row) => (row.lastPurchaseAt ? caracasDay(row.lastPurchaseAt) : "Sin compras"),
   },
 ];
 
-const stockCardColumns: DataTableColumn<StockMovementMock>[] = [
-  { header: "Fecha", key: "createdAt", render: (row) => formatDate(row.createdAt) },
-  { header: "Producto", key: "productId", render: (row) => row.productId },
-  { header: "Tipo", key: "type", render: (row) => row.type },
-  { align: "right", header: "Movimiento", key: "quantityDelta", render: (row) => row.quantityDelta },
-  { align: "right", header: "Stock final", key: "stockAfter", render: (row) => row.stockAfter },
+const stockCardColumns: DataTableColumn<StockCardReportRow>[] = [
+  { header: "Fecha", key: "createdAt", render: (row) => caracasDay(row.createdAt) },
+  { header: "Producto", key: "productName", render: (row) => productLabel(row.productName, row.sku) },
+  { header: "Tipo", key: "type", render: (row) => text(row.type) },
+  { align: "right", header: "Movimiento", key: "quantityDelta", render: (row) => count(row.quantityDelta) },
+  { align: "right", header: "Stock final", key: "stockAfter", render: (row) => count(row.stockAfter) },
 ];
 
 const topProductsColumns: DataTableColumn<TopProductsReportRow>[] = [
-  { header: "Producto", key: "productId", render: (row) => row.productId },
-  { header: "SKU", key: "sku", render: (row) => row.sku },
-  { align: "right", header: "Unidades", key: "unitsSold", render: (row) => row.unitsSold },
-  { align: "right", header: "Ingreso ref", key: "revenueRef", render: (row) => formatRef(row.revenueRef) },
+  { header: "Producto", key: "name", render: (row) => productLabel(row.name, row.sku) },
+  { header: "SKU", key: "sku", render: (row) => text(row.sku) },
+  { align: "right", header: "Unidades", key: "unitsSold", render: (row) => count(row.unitsSold) },
+  { align: "right", header: "Ingreso ref", key: "revenueRef", render: (row) => ref(row.revenueRef) },
 ];
 
 const topCustomersColumns: DataTableColumn<TopCustomersReportRow>[] = [
-  { header: "Cliente", key: "name", render: (row) => row.name },
-  { align: "right", header: "Ventas", key: "salesCount", render: (row) => row.salesCount },
-  { align: "right", header: "Total ref", key: "totalRef", render: (row) => formatRef(row.totalRef) },
-  { align: "right", header: "Total VES", key: "totalVes", render: (row) => formatVes(row.totalVes) },
+  { header: "Cliente", key: "name", render: (row) => text(row.name) },
+  { align: "right", header: "Ventas", key: "salesCount", render: (row) => count(row.salesCount) },
+  { align: "right", header: "Total ref", key: "totalRef", render: (row) => ref(row.totalRef) },
+  { align: "right", header: "Total VES", key: "totalVes", render: (row) => ves(row.totalVes) },
 ];
+
+/** Bajo el gráfico de compras cuando no se eligió estado: qué deja fuera. */
+export const PURCHASES_DEFAULT_STATUS_NOTE = "No incluye compras canceladas ni devueltas.";
 
 const purchasesColumns: DataTableColumn<PurchasesReportRow>[] = [
-  { header: "Compra", key: "purchaseNumber", render: (row) => row.purchaseNumber },
-  { header: "Proveedor", key: "supplier", render: (row) => row.supplier?.name ?? row.supplierId },
-  { header: "Fecha", key: "createdAt", render: (row) => formatDate(row.createdAt) },
-  { align: "right", header: "Items", key: "itemsCount", render: (row) => row.itemsCount },
-  { align: "right", header: "Total VES", key: "totalVes", render: (row) => formatVes(row.totalVes) },
+  { header: "Compra", key: "purchaseNumber", render: (row) => text(row.purchaseNumber) },
+
+  { header: "Proveedor", key: "supplier", render: (row) => text(row.supplier?.name ?? row.supplierId) },
+  { header: "Fecha", key: "createdAt", render: (row) => caracasDay(row.createdAt) },
+  { align: "right", header: "Items", key: "itemsCount", render: (row) => count(row.itemsCount) },
+  {
+    align: "right",
+    header: "Total REF",
+    key: "totalRef",
+    // El gráfico totaliza en REF: la tabla lo trae para poder cuadrarlo. Una fila sin el dato, «—».
+    render: (row) => ref(row.totalRef),
+  },
+  { align: "right", header: "Total VES", key: "totalVes", render: (row) => ves(row.totalVes) },
 ];
 
-function formatResultsRange(skip: number, limit: number, total: number) {
-  if (total === 0) {
-    return "Sin registros";
-  }
-
-  const start = skip + 1;
-  const end = Math.min(skip + limit, total);
-  return `Mostrando ${start}-${end} de ${total} registros`;
-}
-
-type ReportTableProps<TData> = {
-  /** Acciones de la cabecera del reporte, junto al resumen de resultados. */
-  actions?: ReactNode;
-  columns: DataTableColumn<TData>[];
-  getRowId: (row: TData) => string;
-  limit: number;
-  onLimitChange: (limit: number) => void;
-  onSkipChange: (skip: number) => void;
-  query: UseQueryResult<PaginatedList<TData>, Error>;
-  report: ReportDefinition;
-  skip: number;
-};
-
-function ReportTable<TData>({
-  actions,
-  columns,
-  getRowId,
-  limit,
-  onLimitChange,
-  onSkipChange,
-  query,
-  report,
-  skip,
-}: ReportTableProps<TData>) {
-  const total = query.data?.total ?? 0;
-  const currentSkip = query.data?.skip ?? skip;
-
-  return (
-    <section className="overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest shadow-sm">
-      <div className="flex flex-col gap-2 border-b border-outline-variant bg-surface-container-low px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h3 className="text-base font-semibold text-on-surface">
-            Resultados: {report.name}
-          </h3>
-          {report.ignoresGlobalFilters ? (
-            <p className="mt-0.5 text-xs text-on-surface-variant">
-              Los filtros globales no aplican a este reporte.
-            </p>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-xs text-on-surface-variant">
-            {formatResultsRange(currentSkip, limit, total)}
-          </span>
-          {actions}
-        </div>
-      </div>
-
-      <DataTable
-        columns={columns}
-        data={getPaginatedItems(query.data)}
-        embedded
-        error={query.error}
-        getRowId={getRowId}
-        isFetching={query.isFetching}
-        isLoading={query.isLoading}
-        layout="table"
-        loadingRows={5}
-        onRetry={() => void query.refetch()}
-        variant="stitch"
-      />
-
-      <div className="flex justify-center border-t border-outline-variant px-4 py-3">
-        <ResponsivePagination
-          className="w-full justify-end"
-          isDisabled={query.isFetching}
-          limit={limit}
-          onLimitChange={onLimitChange}
-          onSkipChange={onSkipChange}
-          showSummary={false}
-          skip={currentSkip}
-          total={total}
-          variant="stitch"
-        />
-      </div>
-    </section>
-  );
-}
-
-function useReportPagination(resetDeps: readonly unknown[] = []) {
-  return usePaginationState(resetDeps);
-}
-
-function PaginatedReportTable<TData>({
+function PaginatedReportTable<TData, TResult extends PaginatedList<TData> = PaginatedList<TData>>({
   columns,
   actions,
+  chart,
   filters = {},
   getRowId,
+  pagination: externalPagination,
   report,
   resetDeps = [],
   scope,
   useReport,
 }: {
   actions?: ReactNode;
+  /**
+   * Gráfico del reporte, a partir de la misma consulta que la tabla. Con él la
+   * tabla va debajo, en una sección plegable.
+   */
+  chart?: (query: UseQueryResult<TResult, Error>) => ReactNode;
   columns: DataTableColumn<TData>[];
   filters?: PaginationParams;
   getRowId: (row: TData) => string;
+  /** Paginación guardada fuera (URL). Sin ella la tabla lleva la suya. */
+  pagination?: ReportPagination;
   report: ReportDefinition;
   resetDeps?: readonly unknown[];
   scope?: ReportRequestScope;
@@ -239,58 +272,169 @@ function PaginatedReportTable<TData>({
   useReport: (
     filters: PaginationParams,
     scope?: ReportRequestScope,
-  ) => UseQueryResult<PaginatedList<TData>, Error>;
+  ) => UseQueryResult<TResult, Error>;
 }) {
-  const pagination = useReportPagination(resetDeps);
+  // La paginación propia vuelve a la primera página al cambiar de reporte o de filtros.
+  const localPagination = usePaginationState([report.id, ...resetDeps]);
+  const pagination = externalPagination ?? localPagination;
+  const { setSkip, skip } = pagination;
   const query = useReport(
     {
       ...filters,
       limit: pagination.limit,
-      skip: pagination.skip,
+      skip,
     },
     scope,
   );
+  const { data } = query;
 
-  return (
+  useResetPagePastTheEnd(query, pagination);
+
+  const table = (
     <ReportTable
       actions={actions}
       columns={columns}
       getRowId={getRowId}
       limit={pagination.limit}
       onLimitChange={pagination.setLimit}
-      onSkipChange={pagination.setSkip}
+      onSkipChange={setSkip}
       query={query}
       report={report}
-      skip={pagination.skip}
+      skip={skip}
     />
+  );
+
+  if (!chart) {
+    return table;
+  }
+
+  return (
+    <div className="min-w-0 space-y-4">
+      {chart(query)}
+      <ReportTableSection
+        summary={
+          getReportQueryError(query)
+            ? undefined
+            : formatResultsRange(data?.skip ?? skip, pagination.limit, toFiniteNumber(data?.total))
+        }
+      >
+        {table}
+      </ReportTableSection>
+    </div>
   );
 }
 
 type ReportsResultPanelProps = {
+  /** Rango global (`from` / `to`) y, para los reportes que los admiten, `groupBy` y `compare`. */
   dateFilters: ReportDateRangeFilters;
+  /** Filtros propios de los reportes de inventario (`days`, `categoryId`, `turnoverBy` de la URL). */
+  inventoryFilters?: InventoryReportFilters;
+  /**
+   * URL actual de la lista (`useUrlListState().href`): los enlaces a un
+   * documento, a un contacto o a un producto la llevan en `returnTo` para
+   * poder volver.
+   */
+  listHref?: string;
+  /** Filtros propios de los reportes de dinero (`bucket`, `contactId`, `currency` de la URL). */
+  moneyFilters?: MoneyReportFilters;
+  onInventoryFiltersChange?: (patch: Partial<InventoryReportFilters>) => void;
+  onMoneyFiltersChange?: (patch: Partial<MoneyReportFilters>) => void;
+  /**
+   * Página y tamaño de la tabla del reporte activo guardados fuera (en la URL):
+   * quien los guarda los reinicia al cambiar de reporte o de filtros. Sin esta
+   * prop cada reporte lleva su propia paginación.
+   */
+  pagination?: ReportPagination;
   purchasesFilters: PurchasesReportFilters;
   report: ReportDefinition;
   scope?: ReportRequestScope;
   stockCardFilters: StockCardReportFilters;
 };
 
-export function ReportsResultPanel({
+/**
+ * Resultado del reporte activo. Los reportes de serie (línea) y de ranking
+ * (barras) llevan su gráfico encima y la tabla debajo, plegable; cierre del día,
+ * depreciación FX, bajo stock y kardex son solo tabla o panel. Los de dinero de
+ * REP-06 y los de inventario de REP-07 son de la tienda activa: con `scope`
+ * (plataforma) no pintan nada.
+ *
+ * Va dentro de un límite de error: si el render del reporte lanza (una respuesta
+ * 200 con campos nulos o de otro tipo), se muestra su estado de error con
+ * «Reintentar» y el catálogo y los filtros siguen vivos. El límite se reinicia
+ * al cambiar de reporte, de filtros o de página.
+ */
+export function ReportsResultPanel(props: ReportsResultPanelProps) {
+  const { dateFilters, inventoryFilters, moneyFilters, pagination, purchasesFilters, report, scope } =
+    props;
+  const resetKey = JSON.stringify([
+    report.id,
+    dateFilters,
+    purchasesFilters,
+    props.stockCardFilters,
+    moneyFilters,
+    inventoryFilters,
+    pagination?.limit,
+    pagination?.skip,
+    scope,
+  ]);
+
+  return (
+    <PanelErrorBoundary resetKey={resetKey}>
+      <ReportsResultPanelContent {...props} />
+    </PanelErrorBoundary>
+  );
+}
+
+function ReportsResultPanelContent({
   dateFilters,
+  inventoryFilters,
+  listHref,
+  moneyFilters,
+  onInventoryFiltersChange,
+  onMoneyFiltersChange,
+  pagination,
   purchasesFilters,
   report,
   scope,
   stockCardFilters,
 }: ReportsResultPanelProps) {
   const scopeResetDeps = [scope?.pathPrefix, scope?.storeScope, scope?.storeIds, scope?.enabled];
+  // Solo lo que este reporte admite: rango, y `groupBy` / `compare` en los de serie.
+  // Con `groupBy` o `compare` la respuesta trae `series` (la consume el gráfico).
+  const reportDateFilters = toReportDateFilters(report, dateFilters);
+  const dateResetDeps = [
+    ...scopeResetDeps,
+    reportDateFilters.from,
+    reportDateFilters.to,
+    reportDateFilters.groupBy,
+    reportDateFilters.compare,
+  ];
 
+  const rangeLabel = formatDateRangeLabel(reportDateFilters.from, reportDateFilters.to);
+
+  // `key` por reporte: cada tabla monta su propio estado y nada se arrastra de un reporte a otro.
   switch (report.id) {
     case "daily-sales":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportSeriesChart
+              error={getReportQueryError(query)}
+              filters={reportDateFilters}
+              isLoading={query.isLoading}
+              measure={dailySalesMeasure}
+              onRetry={() => void query.refetch()}
+              report={report}
+              series={query.data?.series}
+            />
+          )}
           columns={dailySalesColumns}
+          filters={reportDateFilters}
           getRowId={(row) => `${row.saleDate}-${row.totalVes}-${row.paidVes}-${row.storeId ?? ""}`}
+          key={report.id}
+          pagination={pagination}
           report={report}
-          resetDeps={scopeResetDeps}
+          resetDeps={dateResetDeps}
           scope={scope}
           useReport={useDailySalesReport}
         />
@@ -298,25 +442,61 @@ export function ReportsResultPanel({
     case "gross-profit":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportSeriesChart
+              error={getReportQueryError(query)}
+              filters={reportDateFilters}
+              isLoading={query.isLoading}
+              measure={grossProfitMeasure}
+              onRetry={() => void query.refetch()}
+              report={report}
+              series={query.data?.series}
+            />
+          )}
           columns={grossProfitColumns}
+          filters={reportDateFilters}
           getRowId={(row) => `${row.saleDate}-${row.revenueRef}-${row.costRef}-${row.storeId ?? ""}`}
+          key={report.id}
+          pagination={pagination}
           report={report}
-          resetDeps={scopeResetDeps}
+          resetDeps={dateResetDeps}
           scope={scope}
           useReport={useGrossProfitReport}
         />
       );
     case "fx-depreciation":
-      return <FxDepreciationReportPanel dateFilters={dateFilters} scope={scope} />;
+      return (
+        <FxDepreciationReportPanel
+          dateFilters={reportDateFilters}
+          pagination={pagination}
+          scope={scope}
+        />
+      );
     case "daily-close":
-      return <DailyCloseReportPanel dateFilters={dateFilters} scope={scope} />;
+      return <DailyCloseReportPanel dateFilters={reportDateFilters} scope={scope} />;
     case "payment-methods":
-      return <PaymentMethodsReportPanel dateFilters={dateFilters} scope={scope} />;
+      return <PaymentMethodsReportPanel dateFilters={reportDateFilters} scope={scope} />;
     case "product-profitability":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportRankingChart
+              error={getReportQueryError(query)}
+              isLoading={query.isLoading}
+              items={getPaginatedItems(query.data).map((row) => ({
+                id: row.productId,
+                label: productLabel(row.name, row.sku),
+                value: toFiniteNumber(row.grossProfitRef),
+              }))}
+              measureLabel="Ganancia bruta en REF"
+              onRetry={() => void query.refetch()}
+              report={report}
+            />
+          )}
           columns={productProfitabilityColumns}
           getRowId={(row) => row.productId}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={scopeResetDeps}
           scope={scope}
@@ -330,6 +510,8 @@ export function ReportsResultPanel({
           actions={scope ? undefined : <RestockPurchaseButton size="sm" />}
           columns={lowStockColumns}
           getRowId={(row) => row.id}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={scopeResetDeps}
           scope={scope}
@@ -339,8 +521,24 @@ export function ReportsResultPanel({
     case "customer-purchases":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportRankingChart
+              error={getReportQueryError(query)}
+              isLoading={query.isLoading}
+              items={getPaginatedItems(query.data).map((row) => ({
+                id: row.customerId,
+                label: text(row.name),
+                value: toFiniteNumber(row.totalRef),
+              }))}
+              measureLabel="Total comprado en REF"
+              onRetry={() => void query.refetch()}
+              report={report}
+            />
+          )}
           columns={customerPurchasesColumns}
           getRowId={(row) => row.customerId}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={scopeResetDeps}
           scope={scope}
@@ -350,8 +548,24 @@ export function ReportsResultPanel({
     case "supplier-purchases":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportRankingChart
+              error={getReportQueryError(query)}
+              isLoading={query.isLoading}
+              items={getPaginatedItems(query.data).map((row) => ({
+                id: row.supplierId,
+                label: text(row.name),
+                value: toFiniteNumber(row.totalRef),
+              }))}
+              measureLabel="Total comprado en REF"
+              onRetry={() => void query.refetch()}
+              report={report}
+            />
+          )}
           columns={supplierPurchasesColumns}
           getRowId={(row) => row.supplierId}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={scopeResetDeps}
           scope={scope}
@@ -364,6 +578,8 @@ export function ReportsResultPanel({
           columns={stockCardColumns}
           filters={stockCardFilters}
           getRowId={(row) => row.id}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={[...scopeResetDeps, stockCardFilters.productId]}
           scope={scope}
@@ -373,11 +589,29 @@ export function ReportsResultPanel({
     case "top-products":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportRankingChart
+              error={getReportQueryError(query)}
+              formatValue={formatUnits}
+              isLoading={query.isLoading}
+              items={getPaginatedItems(query.data).map((row) => ({
+                id: row.productId,
+                label: productLabel(row.name, row.sku),
+                value: toFiniteNumber(row.unitsSold),
+              }))}
+              measureLabel="Unidades vendidas"
+              onRetry={() => void query.refetch()}
+              rangeLabel={rangeLabel}
+              report={report}
+            />
+          )}
           columns={topProductsColumns}
-          filters={dateFilters}
+          filters={reportDateFilters}
           getRowId={(row) => row.productId}
+          key={report.id}
+          pagination={pagination}
           report={report}
-          resetDeps={[...scopeResetDeps, dateFilters.from, dateFilters.to]}
+          resetDeps={dateResetDeps}
           scope={scope}
           useReport={useTopProductsReport}
         />
@@ -385,30 +619,108 @@ export function ReportsResultPanel({
     case "top-customers":
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportRankingChart
+              error={getReportQueryError(query)}
+              isLoading={query.isLoading}
+              items={getPaginatedItems(query.data).map((row) => ({
+                id: row.customerId,
+                label: text(row.name),
+                value: toFiniteNumber(row.totalRef),
+              }))}
+              measureLabel="Total comprado en REF"
+              onRetry={() => void query.refetch()}
+              rangeLabel={rangeLabel}
+              report={report}
+            />
+          )}
           columns={topCustomersColumns}
-          filters={dateFilters}
+          filters={reportDateFilters}
           getRowId={(row) => row.customerId}
+          key={report.id}
+          pagination={pagination}
           report={report}
-          resetDeps={[...scopeResetDeps, dateFilters.from, dateFilters.to]}
+          resetDeps={dateResetDeps}
           scope={scope}
           useReport={useTopCustomersReport}
         />
       );
-    case "purchases":
+    case "purchases": {
+      // El rango de compras llega en `purchasesFilters`; `groupBy` y `compare`, en los globales.
+      const purchasesDateFilters = toReportDateFilters(report, {
+        ...dateFilters,
+        from: purchasesFilters.from,
+        to: purchasesFilters.to,
+      });
+      // Sin `status` el servicio deja fuera canceladas y devueltas, en la tabla y en la serie.
+      const reportPurchasesFilters: PurchasesReportFilters = {
+        ...purchasesDateFilters,
+        ...(purchasesFilters.status ? { status: purchasesFilters.status } : {}),
+        supplierId: purchasesFilters.supplierId,
+      };
+
       return (
         <PaginatedReportTable
+          chart={(query) => (
+            <ReportSeriesChart
+              error={getReportQueryError(query)}
+              filters={purchasesDateFilters}
+              footnote={purchasesFilters.status ? null : PURCHASES_DEFAULT_STATUS_NOTE}
+              isLoading={query.isLoading}
+              measure={purchasesMeasure}
+              onRetry={() => void query.refetch()}
+              report={report}
+              series={query.data?.series}
+            />
+          )}
           columns={purchasesColumns}
-          filters={purchasesFilters}
+          filters={reportPurchasesFilters}
           getRowId={(row) => row.id}
+          key={report.id}
+          pagination={pagination}
           report={report}
           resetDeps={[
             ...scopeResetDeps,
-            purchasesFilters.from,
-            purchasesFilters.to,
+            purchasesDateFilters.from,
+            purchasesDateFilters.to,
+            purchasesDateFilters.groupBy,
+            purchasesDateFilters.compare,
             purchasesFilters.supplierId,
+            purchasesFilters.status,
           ]}
           scope={scope}
           useReport={usePurchasesReport}
+        />
+      );
+    }
+    case "sales-by-hour":
+    case "sales-by-category":
+    case "receivables-aging":
+    case "payables-aging":
+    case "cash-close-differences":
+      return scope ? null : (
+        <MoneyReportPanel
+          dateFilters={reportDateFilters}
+          filters={moneyFilters}
+          key={report.id}
+          listHref={listHref}
+          onFiltersChange={onMoneyFiltersChange}
+          pagination={pagination}
+          report={report}
+        />
+      );
+    case "dead-stock":
+    case "stock-turnover":
+    case "stock-adjustments":
+      return scope ? null : (
+        <InventoryReportPanel
+          dateFilters={reportDateFilters}
+          filters={inventoryFilters}
+          key={report.id}
+          listHref={listHref}
+          onFiltersChange={onInventoryFiltersChange}
+          pagination={pagination}
+          report={report}
         />
       );
     default:

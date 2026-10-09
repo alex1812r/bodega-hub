@@ -2185,6 +2185,104 @@ select
   )
 union all
 select
+  'daily_sales_summary y gross_profit_summary agrupan por dia operativo de Caracas (created_at at time zone America/Caracas), ya no por dia UTC, con las mismas columnas, security_invoker y select solo para authenticated / service_role (20261013a)',
+  (
+    select count(*) = 2
+      and bool_and(c.relkind = 'v' and c.reloptions @> array['security_invoker=true'])
+      and bool_and(pg_get_viewdef(c.oid) ilike '%at time zone ''America/Caracas''%')
+      and bool_and(pg_get_viewdef(c.oid) not ilike '%date_trunc%')
+      and bool_and(has_table_privilege('authenticated', c.oid, 'select') and has_table_privilege('service_role', c.oid, 'select'))
+      and bool_and(not has_table_privilege('anon', c.oid, 'select'))
+    from pg_class c
+    where c.oid in (to_regclass('public.daily_sales_summary'), to_regclass('public.gross_profit_summary'))
+  )
+  and (
+    select string_agg(col.column_name || ':' || col.data_type, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'daily_sales_summary'
+  ) = 'store_id:uuid,sale_date:date,sales_count:bigint,total_ref:numeric,total_ves:numeric,paid_ves:numeric'
+  and (
+    select string_agg(col.column_name || ':' || col.data_type, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'gross_profit_summary'
+  ) = 'store_id:uuid,sale_date:date,revenue_ref:numeric,cost_ref:numeric,gross_profit_ref:numeric'
+union all
+select
+  'vistas de reportes de dinero report_sales_by_hour, report_sales_by_category, report_open_documents_aging, report_open_documents_aging_summary y report_cash_close_differences: security_invoker, select solo para authenticated / service_role, sin escritura y con sus columnas en orden (20261013a)',
+  (
+    select count(*) = 5
+      and bool_and(c.relkind = 'v' and c.reloptions @> array['security_invoker=true'])
+      and bool_and(has_table_privilege('authenticated', c.oid, 'select') and has_table_privilege('service_role', c.oid, 'select'))
+      and bool_and(not has_table_privilege('anon', c.oid, 'select'))
+      and bool_and(not has_table_privilege('authenticated', c.oid, 'insert, update, delete'))
+    from pg_class c
+    where c.oid in (
+      to_regclass('public.report_sales_by_hour'),
+      to_regclass('public.report_sales_by_category'),
+      to_regclass('public.report_open_documents_aging'),
+      to_regclass('public.report_open_documents_aging_summary'),
+      to_regclass('public.report_cash_close_differences')
+    )
+  )
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_sales_by_hour'
+  ) = 'store_id,sale_date,dow,hour,sales_count,total_ref,total_ves'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_sales_by_category'
+  ) = 'store_id,sale_date,category_id,category_name,units,revenue_ref,cost_ref,gross_profit_ref'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_open_documents_aging'
+  ) = 'store_id,doc_type,document_id,document_number,contact_id,contact_name,created_at,document_date,days,bucket,ref_rate_ves,total_ref,total_ves,paid_ref,paid_ves,pending_ref,pending_ves'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_open_documents_aging_summary'
+  ) = 'store_id,doc_type,contact_id,bucket,documents_count,pending_ref,pending_ves'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_cash_close_differences'
+  ) = 'store_id,cash_session_id,register_id,register_name,closed_at,close_date,closed_reason,currency,expected,counted,difference,running_expected,running_counted,running_difference'
+union all
+select
+  'vistas de reportes de inventario report_product_last_movement, report_stock_daily_flow y report_stock_adjustments: security_invoker, select solo para authenticated / service_role, sin escritura, sin leer stock_after ni exponer created_by, y con sus columnas en orden (20261013b)',
+  (
+    select count(*) = 3
+      and bool_and(c.relkind = 'v' and c.reloptions @> array['security_invoker=true'])
+      and bool_and(has_table_privilege('authenticated', c.oid, 'select') and has_table_privilege('service_role', c.oid, 'select'))
+      and bool_and(not has_table_privilege('anon', c.oid, 'select'))
+      and bool_and(not has_table_privilege('authenticated', c.oid, 'insert, update, delete'))
+      and bool_and(pg_get_viewdef(c.oid) not ilike '%stock_after%' and pg_get_viewdef(c.oid) not ilike '%created_by%')
+    from pg_class c
+    where c.oid in (
+      to_regclass('public.report_product_last_movement'),
+      to_regclass('public.report_stock_daily_flow'),
+      to_regclass('public.report_stock_adjustments')
+    )
+  )
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_product_last_movement'
+  ) = 'store_id,product_id,sku,name,is_active,category_id,category_name,stock,cost_ref,stock_value_ref,last_sale_at,last_movement_at,first_movement_at,idle_since'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_stock_daily_flow'
+  ) = 'store_id,movement_date,product_id,net_delta,sold_units,cogs_ref'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_stock_adjustments'
+  ) = 'store_id,movement_id,seq,created_at,movement_date,product_id,sku,product_name,movement_type,quantity_delta,reason,unit_cost_ref,value_ref,cost_basis'
+union all
+select
   'app_settings.cash_close_diff_alert_ves: umbral de aviso de faltante al cerrar caja (numeric not null default 0) con check 0 <= umbral <= 999999999999.99 (20261015a)',
   exists (
     select 1

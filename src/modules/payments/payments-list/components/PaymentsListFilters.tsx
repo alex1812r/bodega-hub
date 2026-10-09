@@ -4,6 +4,11 @@ import { X } from "lucide-react";
 
 import { Button } from "@/shared/components/Button";
 import {
+  DateRangeField,
+  serializeDateRange,
+  type DateRangeChange,
+} from "@/shared/components/DateRangeField";
+import {
   stitchListFilterFieldClassName,
   stitchListFilterLabelClassName,
 } from "@/shared/styles/form-controls";
@@ -19,9 +24,13 @@ type PaymentsListFiltersProps = {
   onChange: (patch: Partial<PaymentsListState>) => void;
   onClear: () => void;
   onRemoveChip: (key: PaymentsFilterChipKey) => void;
+  /** Rango efectivo (`parseDateRangeParams` sobre el estado de la URL). */
+  range: DateRangeChange;
   /** Vendedor: solo cobros de venta, el tipo queda fijo en "Entrada". */
   salePaymentsOnly?: boolean;
-  state: Pick<PaymentsListState, "direction" | "from" | "method" | "to">;
+  state: Pick<PaymentsListState, "direction" | "method">;
+  /** Día operativo `YYYY-MM-DD`. */
+  today: string;
 };
 
 export function PaymentsListFilters({
@@ -30,52 +39,27 @@ export function PaymentsListFilters({
   onChange,
   onClear,
   onRemoveChip,
+  range,
   salePaymentsOnly = false,
   state,
+  today,
 }: PaymentsListFiltersProps) {
-  // Un rango invertido no se puede elegir: el otro extremo acompaña al que se mueve.
-  function handleFromChange(from: string) {
-    onChange(from && state.to && from > state.to ? { from, to: from } : { from });
-  }
-
-  function handleToChange(to: string) {
-    onChange(to && state.from && to < state.from ? { from: to, to } : { to });
-  }
-
   return (
     <section
       aria-label="Filtros de pagos"
       className="flex flex-col gap-3 rounded-xl border border-border bg-surface-container-lowest p-4 shadow-sm dark:border-slate-800 md:p-5"
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
-        <div className="min-w-0">
-          <label className={stitchListFilterLabelClassName} htmlFor="payments-from">
-            Desde
-          </label>
-          <input
-            className={stitchListFilterFieldClassName}
-            id="payments-from"
-            max={state.to || undefined}
-            onChange={(event) => handleFromChange(event.target.value)}
-            type="date"
-            value={state.from}
-          />
-        </div>
+      <DateRangeField
+        clearable
+        label="Rango de fechas"
+        maxDate={today}
+        onChange={(next) => onChange(serializeDateRange(next))}
+        size="sm"
+        today={today}
+        value={range}
+      />
 
-        <div className="min-w-0">
-          <label className={stitchListFilterLabelClassName} htmlFor="payments-to">
-            Hasta
-          </label>
-          <input
-            className={stitchListFilterFieldClassName}
-            id="payments-to"
-            min={state.from || undefined}
-            onChange={(event) => handleToChange(event.target.value)}
-            type="date"
-            value={state.to}
-          />
-        </div>
-
+      <div className="grid grid-cols-2 gap-3 md:gap-4">
         <div className="col-span-2 min-w-0 md:col-span-1">
           <label className={stitchListFilterLabelClassName} htmlFor="payments-method">
             Método

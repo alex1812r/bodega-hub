@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { DATE_RANGE_PRESETS } from "@/shared/components/DateRangeField";
 import type { PaymentMethod } from "@/shared/mocks/erp-data";
 import { listParams, type UrlListStateOf } from "@/shared/hooks/useUrlListState";
 
@@ -19,7 +20,8 @@ const MAX_DEEP_LINK_ID_LENGTH = 120;
 /**
  * Estado de `/payments` en la URL. `saleId`, `purchaseId` y `contactId` son
  * enlaces profundos (detalle de venta, compra o contacto): se muestran como
- * chips quitables, nunca como campos.
+ * chips quitables, nunca como campos. El rango es `from` / `to` (propio) o
+ * `preset` (de `DateRangeField`; el relativo se recalcula con el hoy operativo).
  */
 export const paymentsListSchema = z.object({
   contactId: listParams.text(MAX_DEEP_LINK_ID_LENGTH),
@@ -28,6 +30,7 @@ export const paymentsListSchema = z.object({
   limit: listParams.limit(),
   method: listParams.oneOf(["all", ...PAYMENT_METHOD_FILTER_VALUES], "all"),
   page: listParams.page(),
+  preset: listParams.oneOf(["", ...DATE_RANGE_PRESETS], ""),
   purchaseId: listParams.text(MAX_DEEP_LINK_ID_LENGTH),
   saleId: listParams.text(MAX_DEEP_LINK_ID_LENGTH),
   to: listParams.date(),
@@ -41,6 +44,7 @@ export const CLEARED_PAYMENTS_FILTERS = {
   direction: "all",
   from: "",
   method: "all",
+  preset: "",
   purchaseId: "",
   saleId: "",
   to: "",
@@ -49,21 +53,24 @@ export const CLEARED_PAYMENTS_FILTERS = {
 /**
  * Filtros que viajan a `GET /api/payments`. Con `salePaymentsOnly` (vendedor)
  * solo hay entradas de venta: se fuerza `entrada` y se ignora `purchaseId`.
+ * Las fechas salen de `range` (`parseDateRangeParams`), nunca de
+ * `state.from/to`: un `preset` relativo no las trae.
  */
 export function toPaymentsFilters(
-  state: PaymentsListState,
+  state: Pick<PaymentsListState, "contactId" | "direction" | "method" | "purchaseId" | "saleId">,
   salePaymentsOnly: boolean,
+  range: { from?: string; to?: string },
 ): PaymentsFilters {
   const direction = state.direction === "all" ? undefined : state.direction;
 
   return {
     contactId: state.contactId || undefined,
     direction: salePaymentsOnly ? "entrada" : direction,
-    from: state.from || undefined,
+    from: range.from,
     method: state.method === "all" ? undefined : state.method,
     purchaseId: salePaymentsOnly ? undefined : state.purchaseId || undefined,
     saleId: state.saleId || undefined,
-    to: state.to || undefined,
+    to: range.to,
   };
 }
 
@@ -74,6 +81,7 @@ export function hasActivePaymentsFilters(state: PaymentsListState, salePaymentsO
       state.saleId ||
       state.from ||
       state.to ||
+      state.preset ||
       state.method !== "all" ||
       (!salePaymentsOnly && (state.purchaseId || state.direction !== "all")),
   );

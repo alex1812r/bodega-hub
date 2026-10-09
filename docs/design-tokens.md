@@ -86,6 +86,39 @@ Notas:
 - `--secondary` (`#10b981`) y `--tertiary` (`#f59e0b`) con texto blanco dan 2.54 y 2.15 en ambos temas.
 - No existe `--on-tertiary-container`: la clase `text-on-tertiary-container` no genera CSS.
 
+## Series de gráficos
+
+Tokens `--chart-1` … `--chart-5` en `src/app/globals.css` (`:root` y `.dark`, también como colores del tema: `text-chart-1`, `bg-chart-2`…).
+
+| Orden | Token | Tono | Claro | Oscuro |
+|-------|-------|------|-------|--------|
+| 1 | `--chart-1` | Índigo (= `--primary` de cada tema) | `#4f46e5` | `#6366f1` |
+| 2 | `--chart-2` | Ámbar | `#a16207` | `#fbbf24` |
+| 3 | `--chart-3` | Turquesa | `#0d9488` | `#99f6e4` |
+| 4 | `--chart-4` | Fucsia | `#86198f` | `#f0abfc` |
+| 5 | `--chart-5` | Pizarra | `#1e293b` | `#64748b` |
+
+Contraste WCAG de cada serie sobre `--surface` / `--surface-container-lowest` (mínimo exigido 3:1, elemento gráfico):
+
+| Token | Claro (`#f8f9ff` / `#ffffff`) | Oscuro (`#0f172a` / `#020617`) |
+|-------|------|------|
+| `--chart-1` | 5.98 / 6.29 | 4.00 / 4.52 |
+| `--chart-2` | 4.69 / 4.92 | 10.69 / 12.08 |
+| `--chart-3` | 3.56 / 3.74 | 14.16 / 16.00 |
+| `--chart-4` | 7.84 / 8.24 | 10.15 / 11.47 |
+| `--chart-5` | 13.92 / 14.63 | 3.75 / 4.24 |
+
+Separación mínima entre dos series cualesquiera (ΔE\*ab CIE76; ≈ 2,3 es lo mínimo apreciable): 40 en claro y 49 en oscuro con visión normal; 33 / 35 con protanopia y 30 / 27 con deuteranopia (simulación de Machado 2009). `src/shared/components/charts/chartTheme.test.ts` lo recalcula leyendo `globals.css` y falla por debajo de 30 (visión normal), 25 (solo tono, sin luminosidad) y 20 (daltonismo).
+
+Reglas:
+
+- **Ningún gráfico escribe colores literales**: ni hex, ni `rgb()`, ni `color-mix()`, ni `var(--chart-N)` a mano. Se importa de `src/shared/components/charts/chartTheme.ts` (`CHART_SERIES_COLORS`, `getChartSeriesColor(index)`, `CHART_COLORS`, `CHART_TOOLTIP_COLORS`).
+- **El orden es fijo**: la serie `i` usa `--chart-(i+1)`. Un gráfico de una sola serie usa `--chart-1`. No se salta ni se reordena para "elegir" un color.
+- **Máximo 5 series** (`CHART_MAX_SERIES`). Con más categorías, agrupa el resto en "Otros" o usa una tabla; pasado el máximo la paleta se repite y deja de distinguir.
+- El color nunca es la única pista: leyenda con nombre, tooltip y, para el periodo anterior, línea discontinua del mismo color (`CHART_PREVIOUS_SERIES_STYLE`), no otro token.
+- Las series no significan estado: ninguna es el rojo de `--error` ni el verde de éxito. Para "bien / mal" se usan los semánticos, no `--chart-N`. Con deuteranopia el ámbar (`--chart-2`) queda cerca de `--error`: no pintes un error junto a una serie sin icono o texto.
+- Al cambiar un valor, cámbialo en `:root` y en `.dark` y pasa `chartTheme.test.ts`.
+
 ## Tipografía
 
 - **Familia:** Inter (`next/font/google`, variable `--font-inter`)

@@ -82,7 +82,9 @@ describe("dashboard.server", () => {
   });
 
   it("aggregates dashboard metrics for a date range", async () => {
+    // Las lecturas van paginadas con `count: "exact"`: el doble responde el total.
     const salesBuilder = createQueryBuilder({
+      count: 2,
       data: [
         { id: "sale-1", paid_ves: 20, total_ref: 10, total_ves: 50 },
         { id: "sale-2", paid_ves: 5, total_ref: 5, total_ves: 25 },
@@ -90,7 +92,11 @@ describe("dashboard.server", () => {
       error: null,
     });
     const itemsBuilder = createQueryBuilder({
-      data: [{ quantity: 2 }, { quantity: 1 }],
+      count: 2,
+      data: [
+        { id: "item-1", quantity: 2 },
+        { id: "item-2", quantity: 1 },
+      ],
       error: null,
     });
 

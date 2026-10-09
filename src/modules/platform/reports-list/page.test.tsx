@@ -2,11 +2,18 @@
  * DET-06b · reportes de plataforma: reporte activo, rango, proveedor, producto y
  * alcance de tiendas viven en la URL (regla 15). La pantalla no enlaza a
  * detalles ni pagina: no hay `returnTo` ni `page` que comprobar.
+ * INT-05 · el rango se elige con `DateRangeField` (`from` / `to` / `preset`).
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+
+import {
+  dateRangeChip,
+  dateRangeLabel,
+  pickCustomDateRange,
+} from "@/shared/components/DateRangeField/testing";
 
 /** URL simulada: `useSearchParams` la sigue como hace Next tras un `history.replaceState`. */
 const mockNavigation = {
@@ -35,6 +42,10 @@ jest.mock("next/navigation", () => {
       ),
   };
 });
+// Hoy operativo fijo: los presets relativos se calculan con él.
+jest.mock("../../dashboard/utils/businessDate", () => ({
+  getBusinessTodayIsoDate: () => "2026-10-09",
+}));
 // El panel y la exportación son del módulo Reportes: aquí solo importa qué reciben.
 jest.mock("../../reports/reports-list/components/ReportsResultPanel", () => ({
   ReportsResultPanel: ({ report, ...filters }: { report: { id: string } }) => (
@@ -124,8 +135,8 @@ describe("PlatformReportsListPage · estado en la URL (DET-06b)", () => {
 
     expect(screen.getByLabelText("Reporte activo")).toHaveValue("daily-sales");
     expect(screen.getByLabelText("Alcance")).toHaveValue("all");
-    expect(screen.getByLabelText("Desde")).toHaveValue("");
-    expect(screen.getByLabelText("Hasta")).toHaveValue("");
+    expect(dateRangeLabel()).toHaveTextContent("Todas las fechas");
+    expect(document.querySelector('input[type="date"]')).toBeNull();
     expect(panelProps()).toEqual({
       dateFilters: {},
       purchasesFilters: {},
@@ -143,8 +154,8 @@ describe("PlatformReportsListPage · estado en la URL (DET-06b)", () => {
     renderPage();
 
     expect(screen.getByLabelText("Reporte activo")).toHaveValue("purchases");
-    expect(screen.getByLabelText("Desde")).toHaveValue("2026-10-01");
-    expect(screen.getByLabelText("Hasta")).toHaveValue("2026-10-31");
+    expect(dateRangeLabel()).toHaveTextContent("1–31 oct 2026");
+    expect(dateRangeChip("Personalizado")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("Proveedor")).toHaveValue("cont-1");
     expect(screen.getByLabelText("Producto")).toHaveValue("prod-1");
     expect(screen.getByLabelText("Alcance")).toHaveValue("selected");
@@ -173,8 +184,7 @@ describe("PlatformReportsListPage · estado en la URL (DET-06b)", () => {
     renderPage();
 
     await user.selectOptions(screen.getByLabelText("Reporte activo"), "top-products");
-    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-10-01" } });
-    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-10-09" } });
+    await pickCustomDateRange(user, "1 de octubre de 2026", "9 de octubre de 2026");
     await user.type(screen.getByLabelText("Proveedor"), "cont-9");
     await user.type(screen.getByLabelText("Producto"), "prod-9");
 
@@ -195,6 +205,63 @@ describe("PlatformReportsListPage · estado en la URL (DET-06b)", () => {
         stockCardFilters: { productId: "prod-9" },
       }),
     );
+  });
+
+  it("«Mes pasado» guarda solo el preset y el panel recibe sus fechas; quitar el rango limpia la URL", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+
+    await user.click(dateRangeChip("Mes pasado"));
+
+    expect(urlParams()).toEqual({ preset: ["last_month"] });
+    expect(dateRangeLabel()).toHaveTextContent("1–30 sep 2026");
+    expect(panelProps()).toMatchObject({
+      dateFilters: { from: "2026-09-01", to: "2026-09-30" },
+      purchasesFilters: { from: "2026-09-01", to: "2026-09-30" },
+    });
+    expect(exportFilters()).toMatchObject({ dateFilters: { from: "2026-09-01", to: "2026-09-30" } });
+
+    await user.click(screen.getByRole("button", { name: "Quitar rango de fechas" }));
+
+    expect(urlParams()).toEqual({});
+    expect(panelProps()).toMatchObject({ dateFilters: {}, purchasesFilters: {} });
+  });
+
+  it("una URL pegada con `preset` relativo se recalcula con el hoy operativo", () => {
+    openAt("report=gross-profit&preset=last_month");
+    renderPage();
+
+    expect(dateRangeChip("Mes pasado")).toHaveAttribute("aria-pressed", "true");
+    expect(panelProps()).toMatchObject({
+      dateFilters: { from: "2026-09-01", to: "2026-09-30" },
+      report: "gross-profit",
+    });
+    expect(urlParams()).toEqual({ preset: ["last_month"], report: ["gross-profit"] });
+  });
+
+  it("un rango con el año fuera de 2000..actual+1 o invertido no viaja y se avisa", () => {
+    openAt("from=9999-01-01&to=9999-12-31");
+    const first = renderPage();
+
+    expect(panelProps()).toMatchObject({ dateFilters: {}, purchasesFilters: {} });
+    expect(exportFilters()).toMatchObject({ dateFilters: {} });
+    expect(screen.getByRole("status")).toHaveTextContent("El rango de la dirección no era válido");
+    first.unmount();
+
+    openAt("from=2026-10-09&to=2026-10-01");
+    renderPage();
+
+    expect(panelProps()).toMatchObject({ dateFilters: {}, purchasesFilters: {} });
+    expect(screen.getByRole("status")).toHaveTextContent("El rango de la dirección no era válido");
+  });
+
+  it("un reporte que solo existe por tienda no se puede dejar activo desde la URL", () => {
+    openAt("report=sales-by-hour");
+    renderPage();
+
+    expect(screen.getByLabelText("Reporte activo")).toHaveValue("daily-sales");
+    expect(panelProps()).toMatchObject({ report: "daily-sales" });
   });
 
   it("el alcance y las tiendas elegidas se escriben en la URL", async () => {
@@ -246,8 +313,8 @@ describe("PlatformReportsListPage · estado en la URL (DET-06b)", () => {
 
     expect(screen.getByLabelText("Reporte activo")).toHaveValue("daily-sales");
     expect(screen.getByLabelText("Alcance")).toHaveValue("all");
-    expect(screen.getByLabelText("Desde")).toHaveValue("");
-    expect(screen.getByLabelText("Hasta")).toHaveValue("");
+    expect(dateRangeLabel()).toHaveTextContent("Todas las fechas");
+    expect(document.querySelector('input[type="date"]')).toBeNull();
     expect(panelProps()).toEqual({
       dateFilters: {},
       purchasesFilters: {},

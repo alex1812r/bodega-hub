@@ -1,8 +1,11 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useMemo } from "react";
 
 import { getPageDataSourceSuffix } from "@/lib/api/dataSourceUi";
+import { getBusinessTodayIsoDate } from "@/modules/dashboard/utils/businessDate";
+import { parseDateRangeParams, serializeDateRange } from "@/shared/components/DateRangeField";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import { SelectField } from "@/shared/components/SelectField";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
@@ -11,6 +14,7 @@ import {
   useUrlListState,
   withUrlListBoundary,
 } from "@/shared/hooks/useUrlListState";
+import { InvalidUrlRangeNotice } from "@/modules/reports/reports-list/components/InvalidUrlRangeNotice";
 import { ReportsCatalogTable } from "@/modules/reports/reports-list/components/ReportsCatalogTable";
 import { ReportsExportActions } from "@/modules/reports/reports-list/components/ReportsExportActions";
 import { ReportsListFilters } from "@/modules/reports/reports-list/components/ReportsListFilters";
@@ -18,11 +22,12 @@ import { ReportsResultPanel } from "@/modules/reports/reports-list/components/Re
 import {
   getReportById,
   reportCatalog,
-  type ReportId,
 } from "@/modules/reports/reports-list/config/reportCatalog";
+import { sanitizeUrlRange } from "@/modules/reports/reports-list/urlDateRange";
 
 import { PlatformStoreScopeFilter } from "../components/PlatformStoreScopeFilter";
 import {
+  isPlatformReportId,
   PLATFORM_REPORTS_TEXT_FIELDS,
   platformReportsListSchema,
   toPlatformReportFilters,
@@ -37,7 +42,22 @@ function PlatformReportsList() {
     textFields: PLATFORM_REPORTS_TEXT_FIELDS,
   });
   const { setState: setListState, state } = list;
-  const { from, product, report, scope, store, supplier, to } = state;
+  const { from, preset, product, report, scope, store, supplier, to } = state;
+  const today = getBusinessTodayIsoDate();
+  // Un rango de la URL invertido, con el año fuera de 2000..actual+1 o mal formado
+  // no se usa ni viaja al servidor (que lo rechazaría con 400): se avisa.
+  const searchParams = useSearchParams();
+  const rawFrom = searchParams.get("from");
+  const rawTo = searchParams.get("to");
+  const urlRange = useMemo(
+    () => sanitizeUrlRange({ from, to }, { from: rawFrom, to: rawTo }, today),
+    [from, rawFrom, rawTo, to, today],
+  );
+  // Rango efectivo: un `preset` relativo se recalcula con el hoy operativo.
+  const range = useMemo(
+    () => parseDateRangeParams({ from: urlRange.from, preset, to: urlRange.to }, today),
+    [preset, today, urlRange],
+  );
   // Los campos reflejan lo tecleado al instante; los reportes esperan lo mismo que la URL.
   const debouncedSupplier = useDebouncedValue(supplier, URL_LIST_DEBOUNCE_MS);
   const debouncedProduct = useDebouncedValue(product, URL_LIST_DEBOUNCE_MS);
@@ -45,16 +65,19 @@ function PlatformReportsList() {
   const selectedStoreIds = useMemo(() => toSelectedStoreIds({ scope, store }), [scope, store]);
   const reportScope = useMemo(() => toPlatformReportScope({ scope, store }), [scope, store]);
   const typedFilters = useMemo(
-    () => toPlatformReportFilters({ from, to }, supplier, product),
-    [from, product, supplier, to],
+    () => toPlatformReportFilters(range, supplier, product),
+    [product, range, supplier],
   );
   const filters = useMemo(
-    () => toPlatformReportFilters({ from, to }, debouncedSupplier, debouncedProduct),
-    [debouncedProduct, debouncedSupplier, from, to],
+    () => toPlatformReportFilters(range, debouncedSupplier, debouncedProduct),
+    [debouncedProduct, debouncedSupplier, range],
   );
 
-  function selectReport(reportId: ReportId) {
-    setListState({ report: reportId });
+  function selectReport(reportId: string) {
+    // Solo los reportes multi-tienda existen aquí: cualquier otro id anula el cambio.
+    if (isPlatformReportId(reportId)) {
+      setListState({ report: reportId });
+    }
   }
 
   return (
@@ -72,18 +95,16 @@ function PlatformReportsList() {
         selectedStoreIds={selectedStoreIds}
       />
 
+      <InvalidUrlRangeNotice show={urlRange.wasInvalid} />
+
       <ReportsListFilters
         dateFilters={typedFilters.dateFilters}
-        onDateChange={(patch) => {
-          if ("from" in patch) {
-            setListState({ from: patch.from ?? "" });
-          }
-          if ("to" in patch) {
-            setListState({ to: patch.to ?? "" });
-          }
-        }}
+        datePreset={range.preset}
+        // Sin `report` la barra no ofrece agrupación ni comparación: nada que guardar.
+        onDateChange={() => undefined}
+        onDateRangeChange={(next) => setListState(serializeDateRange(next))}
         onPurchasesChange={(patch) => {
-          // El rango ya lo escribe `onDateChange`; de compras solo queda el proveedor.
+          // El rango ya lo escribe `onDateRangeChange`; de compras solo queda el proveedor.
           if ("supplierId" in patch) {
             setListState({ supplier: patch.supplierId ?? "" });
           }
@@ -95,14 +116,14 @@ function PlatformReportsList() {
         }}
         purchasesFilters={typedFilters.purchasesFilters}
         stockCardFilters={typedFilters.stockCardFilters}
+        today={today}
       />
 
       <div className="lg:hidden">
         <SelectField
           label="Reporte activo"
           onChange={(event) =>
-            // El schema valida el valor: uno que no conoce anula el cambio.
-            selectReport(event.target.value as ReportId)
+            selectReport(event.target.value)
           }
           options={reportCatalog.map((item) => ({
             label: item.name,

@@ -1,6 +1,5 @@
 "use client";
 
-import { Filter } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -8,10 +7,10 @@ import { getPageDataSourceSuffix } from "@/lib/api/dataSourceUi";
 import { DashboardContentGrid } from "@/modules/dashboard/components/DashboardContentGrid";
 import { DashboardKpiCardsGrid } from "@/modules/dashboard/components/DashboardKpiCardsGrid";
 import { DashboardLowStockCard } from "@/modules/dashboard/components/DashboardLowStockCard";
-import { DashboardPeriodFilterModal } from "@/modules/dashboard/components/DashboardPeriodFilterModal";
+import { DashboardPeriodField } from "@/modules/dashboard/components/DashboardPeriodField";
 import { DashboardRecentSalesCard } from "@/modules/dashboard/components/DashboardRecentSalesCard";
 import { DashboardSalesChartCard } from "@/modules/dashboard/components/DashboardSalesChartCard";
-import { useDashboardKpiPeriod } from "@/modules/dashboard/hooks/useDashboardKpiPeriod";
+import { useDashboardUrlPeriod } from "@/modules/dashboard/hooks/useDashboardKpiPeriod";
 import {
   type DashboardRequestScope,
   useDashboardMetrics,
@@ -19,9 +18,9 @@ import {
 } from "@/modules/dashboard/hooks/useDashboard";
 import { Button } from "@/shared/components/Button";
 import { ErrorState } from "@/shared/components/ErrorState";
-import { IconButton } from "@/shared/components/IconButton";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { Typography } from "@/shared/components/Typography";
+import { withUrlListBoundary } from "@/shared/hooks/useUrlListState";
 
 import { PlatformStoreScopeFilter } from "../components/PlatformStoreScopeFilter";
 import type { PlatformStoreScope } from "../types/reports";
@@ -34,8 +33,8 @@ function scopeSubtitle(scope: PlatformStoreScope, selectedCount: number) {
     : "Selecciona tiendas";
 }
 
-export function PlatformDashboardPage() {
-  const kpiPeriod = useDashboardKpiPeriod();
+function PlatformDashboardScreen() {
+  const kpiPeriod = useDashboardUrlPeriod("platform");
   const [storeScope, setStoreScope] = useState<PlatformStoreScope>("all");
   const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
 
@@ -74,27 +73,20 @@ export function PlatformDashboardPage() {
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <Typography as="h1" variant="h1">
-            Resumen de plataforma
-          </Typography>
-          <Typography className="mt-2" variant="muted">
-            {scopeSubtitle(storeScope, selectedStoreIds.length)}. Dia operativo Caracas
-            (America/Caracas)
-            {kpiPeriod.preset === "hoy"
-              ? getPageDataSourceSuffix()
-              : ` Indicadores de ventas: ${kpiPeriod.kpiPeriodLabel.toLowerCase()}.`}
-          </Typography>
-        </div>
-        <IconButton
-          aria-label="Filtrar periodo de indicadores"
-          className="shrink-0 text-muted-foreground hover:bg-surface-container hover:text-primary"
-          icon={<Filter className="h-5 w-5" />}
-          onClick={kpiPeriod.openModal}
-          variant="ghost"
-        />
+      <div className="min-w-0">
+        <Typography as="h1" variant="h1">
+          Resumen de plataforma
+        </Typography>
+        <Typography className="mt-2" variant="muted">
+          {scopeSubtitle(storeScope, selectedStoreIds.length)}. Dia operativo Caracas
+          (America/Caracas)
+          {kpiPeriod.preset === "hoy"
+            ? getPageDataSourceSuffix()
+            : `. Periodo: ${kpiPeriod.kpiPeriodLabel}.`}
+        </Typography>
       </div>
+
+      <DashboardPeriodField period={kpiPeriod} />
 
       <PlatformStoreScopeFilter
         description="Agrega indicadores de una tienda, varias o todas."
@@ -102,25 +94,6 @@ export function PlatformDashboardPage() {
         onSelectedStoreIdsChange={setSelectedStoreIds}
         scope={storeScope}
         selectedStoreIds={selectedStoreIds}
-      />
-
-      <DashboardPeriodFilterModal
-        applyDisabled={kpiPeriod.applyDisabled}
-        customRange={{
-          from: kpiPeriod.draftFrom,
-          max: kpiPeriod.today,
-          onFromChange: kpiPeriod.setDraftFrom,
-          onToChange: kpiPeriod.setDraftTo,
-          to: kpiPeriod.draftTo,
-        }}
-        description="Selecciona Hoy, Ayer, un rango o desde el inicio para ventas REF, total VES y cantidad de ventas."
-        draftPeriodKey={kpiPeriod.draftPreset}
-        onApply={kpiPeriod.apply}
-        onDraftPeriodKeyChange={kpiPeriod.changeDraftPreset}
-        onOpenChange={kpiPeriod.setModalOpen}
-        open={kpiPeriod.modalOpen}
-        periods={kpiPeriod.periods}
-        title="Periodo de indicadores"
       />
 
       {!scopeReady ? (
@@ -169,7 +142,7 @@ export function PlatformDashboardPage() {
               />
             }
           >
-            <DashboardSalesChartCard scope={dashboardScope} />
+            <DashboardSalesChartCard range={kpiPeriod.range} scope={dashboardScope} />
             <DashboardRecentSalesCard
               scope={dashboardScope}
               showStore
@@ -182,3 +155,6 @@ export function PlatformDashboardPage() {
     </div>
   );
 }
+
+/** El periodo vive en la URL (`useUrlListState`): la pantalla lleva su límite de Suspense. */
+export const PlatformDashboardPage = withUrlListBoundary(PlatformDashboardScreen);

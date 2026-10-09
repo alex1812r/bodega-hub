@@ -1,14 +1,15 @@
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
-import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { mapPayment, type DbPaymentRow } from "@/lib/supabase/mappers/transactions";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { caracasDateRangeToUtcBounds } from "@/shared/utils/caracasBusinessDay";
-import { parseDashboardMetricsDateParams } from "@/modules/dashboard/utils/kpiPeriod";
 
 import {
   computePaymentMethodsReport,
+  resolvePaymentMethodsReportRequest,
+  splitPaymentsByPeriod,
   type PaymentMethodsReportResult,
 } from "./paymentMethodsReport";
+import { fetchAllRows } from "./reportPagination";
 import { normalizeStoreIds } from "./storeScope";
 
 export type ReportQueryOptions = {
@@ -25,38 +26,56 @@ export async function getPaymentMethodsReport(
   options?: ReportQueryOptions,
 ): Promise<PaymentMethodsReportResult> {
   const storeIds = normalizeStoreIds(storeIdOrIds);
-  const { from, to } = parseDashboardMetricsDateParams(searchParams);
+  const request = resolvePaymentMethodsReportRequest(searchParams);
   const supabase = await getClient(options);
+  // Una sola lectura cubre el periodo actual y, si se compara, el anterior.
+  const { startUtc, endUtcExclusive } = caracasDateRangeToUtcBounds(
+    request.previousRange?.from ?? request.from,
+    request.to,
+  );
 
-  let query = supabase
-    .from("payments")
-    .select(
-      "id, amount, amount_ref, amount_ves, contact_id, created_at, direction, method, sale_id, status, store_id",
-    )
-    .eq("status", "activo")
-    .not("sale_id", "is", null);
+  // Paginado hasta agotar: PostgREST corta cada respuesta en 1.000 filas (D24).
+  const rows = await fetchAllRows(
+    async (rangeFrom, rangeTo) => {
+      let query = supabase
+        .from("payments")
+        .select(
+          "id, amount, amount_ref, amount_ves, contact_id, created_at, direction, method, sale_id, status, store_id",
+          { count: "exact" },
+        )
+        .eq("status", "activo")
+        .not("sale_id", "is", null);
 
-  if (storeIds.length === 1) {
-    query = query.eq("store_id", storeIds[0]!);
-  } else {
-    query = query.in("store_id", storeIds);
-  }
+      if (storeIds.length === 1) {
+        query = query.eq("store_id", storeIds[0]!);
+      } else {
+        query = query.in("store_id", storeIds);
+      }
 
-  const { startUtc, endUtcExclusive } = caracasDateRangeToUtcBounds(from, to);
-  if (startUtc) {
-    query = query.gte("created_at", startUtc);
-  }
-  if (endUtcExclusive) {
-    query = query.lt("created_at", endUtcExclusive);
-  }
+      if (startUtc) {
+        query = query.gte("created_at", startUtc);
+      }
+      if (endUtcExclusive) {
+        query = query.lt("created_at", endUtcExclusive);
+      }
 
-  const { data, error } = await query;
-  throwIfSupabaseError(error);
+      // `id` es único: el orden no cambia entre páginas.
+      const { count, data, error, status } = await query
+        .order("id", { ascending: true })
+        .range(rangeFrom, rangeTo);
 
-  const payments = (data ?? []).map((row) => mapPayment(row as DbPaymentRow));
+      return { count, data: data as DbPaymentRow[] | null, error, status };
+    },
+    { getKey: (row) => row.id },
+  );
+
+  const { current, previous } = splitPaymentsByPeriod(rows.map(mapPayment), request);
 
   return computePaymentMethodsReport({
-    payments,
+    comparison: request.compare
+      ? { payments: previous, previousRange: request.previousRange }
+      : undefined,
+    payments: current,
     searchParams,
   });
 }

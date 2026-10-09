@@ -4,6 +4,14 @@ import { useQuery } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import type { DailyCloseSummary } from "../services/dailyCloseSummary";
+import type { PaymentMethodsReportComparison } from "../services/paymentMethodsReport";
+import type {
+  DailySalesSeries,
+  GrossProfitSeries,
+  PurchasesReportStatusFilter,
+  PurchasesSeries,
+  ReportGroupBy,
+} from "../services/reportSeries";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
   ContactMock,
@@ -14,8 +22,18 @@ import type {
 } from "@/shared/mocks/erp-data";
 
 export type ReportDateRangeFilters = PaginationParams & {
+  /**
+   * Pide el periodo anterior (mismo nº de días justo antes de `from`). Viaja
+   * como `compare=1`. Necesita `from` y `to`.
+   */
+  compare?: boolean;
   from?: string;
   fromStart?: boolean;
+  /**
+   * Agrupación de la serie; `"auto"` deja que el servidor elija según el nº de
+   * días. Con `groupBy` o `compare` (y `from` + `to`) la respuesta trae `series`.
+   */
+  groupBy?: ReportGroupBy | "auto";
   to?: string;
 };
 
@@ -24,6 +42,11 @@ export type StockCardReportFilters = PaginationParams & {
 };
 
 export type PurchasesReportFilters = ReportDateRangeFilters & {
+  /**
+   * Estados que entran en la tabla Y en la serie. Sin valor: todas menos
+   * canceladas y devueltas; `"all"`: todas; o un estado concreto.
+   */
+  status?: PurchasesReportStatusFilter;
   supplierId?: string;
 };
 
@@ -55,6 +78,8 @@ export type GrossProfitReportRow = {
 export type ProductProfitabilityReportRow = {
   costRef: number;
   grossProfitRef: number;
+  /** Nombre del producto: es lo que se muestra; `productId` es solo la clave. */
+  name?: string;
   productId: string;
   sku: string;
   storeId?: string | null;
@@ -91,11 +116,19 @@ export type SupplierPurchasesReportRow = {
 };
 
 export type TopProductsReportRow = {
+  /** Nombre del producto: es lo que se muestra; `productId` es solo la clave. */
+  name?: string;
   productId: string;
   revenueRef: number;
   sku: string;
   storeId?: string | null;
   unitsSold: number;
+};
+
+/** Movimiento del kardex con el nombre y el SKU del producto (vista `stock_card`). */
+export type StockCardReportRow = StockMovementMock & {
+  productName?: string;
+  sku?: string;
 };
 
 export type TopCustomersReportRow = {
@@ -170,8 +203,33 @@ export type PaymentMethodsReportSummary = {
 };
 
 export type PaymentMethodsReportResult = PaginatedList<PaymentMethodReportRow> & {
+  /** Solo con `compare`. */
+  comparison?: PaymentMethodsReportComparison;
   summary: PaymentMethodsReportSummary;
 };
+
+/** `series` solo llega con `from` + `to` y (`groupBy` o `compare`). */
+export type DailySalesReportResult = PaginatedList<DailySalesReportRow> & {
+  series?: DailySalesSeries;
+};
+
+export type GrossProfitReportResult = PaginatedList<GrossProfitReportRow> & {
+  series?: GrossProfitSeries;
+};
+
+export type PurchasesReportResult = PaginatedList<PurchasesReportRow> & {
+  series?: PurchasesSeries;
+};
+
+/** Filtros de fecha como query: `compare` → `1`, y "desde el inicio" sin `from`. */
+function toDateRangeQuery<T extends ReportDateRangeFilters>(filters: T) {
+  return {
+    ...filters,
+    compare: filters.compare ? 1 : undefined,
+    from: filters.fromStart ? undefined : filters.from,
+    fromStart: filters.fromStart ? 1 : undefined,
+  };
+}
 
 function reportPath(slug: string, scope?: ReportRequestScope) {
   const prefix = scope?.pathPrefix ?? "/api/reports";
@@ -236,29 +294,29 @@ export const reportsQueryKeys = {
 };
 
 export function useDailySalesReport(
-  filters: PaginationParams = {},
+  filters: ReportDateRangeFilters = {},
   scope?: ReportRequestScope,
 ) {
   return useQuery({
     enabled: scope?.enabled ?? true,
     queryKey: [...reportsQueryKeys.dailySales(scope), filters] as const,
     queryFn: () =>
-      apiFetch<PaginatedList<DailySalesReportRow>>(reportPath("daily-sales", scope), {
-        query: withScopeQuery(filters, scope),
+      apiFetch<DailySalesReportResult>(reportPath("daily-sales", scope), {
+        query: withScopeQuery(toDateRangeQuery(filters), scope),
       }),
   });
 }
 
 export function useGrossProfitReport(
-  filters: PaginationParams = {},
+  filters: ReportDateRangeFilters = {},
   scope?: ReportRequestScope,
 ) {
   return useQuery({
     enabled: scope?.enabled ?? true,
     queryKey: [...reportsQueryKeys.grossProfit(scope), filters] as const,
     queryFn: () =>
-      apiFetch<PaginatedList<GrossProfitReportRow>>(reportPath("gross-profit", scope), {
-        query: withScopeQuery(filters, scope),
+      apiFetch<GrossProfitReportResult>(reportPath("gross-profit", scope), {
+        query: withScopeQuery(toDateRangeQuery(filters), scope),
       }),
   });
 }
@@ -307,14 +365,7 @@ export function usePaymentMethodsReport(
     queryKey: reportsQueryKeys.paymentMethods(filters, scope),
     queryFn: () =>
       apiFetch<PaymentMethodsReportResult>(reportPath("payment-methods", scope), {
-        query: withScopeQuery(
-          {
-            ...filters,
-            from: filters.fromStart ? undefined : filters.from,
-            fromStart: filters.fromStart ? 1 : undefined,
-          },
-          scope,
-        ),
+        query: withScopeQuery(toDateRangeQuery(filters), scope),
       }),
   });
 }
@@ -386,7 +437,7 @@ export function useStockCardReport(
     enabled: scope?.enabled ?? true,
     queryKey: reportsQueryKeys.stockCard(filters, scope),
     queryFn: () =>
-      apiFetch<PaginatedList<StockMovementMock>>(reportPath("stock-card", scope), {
+      apiFetch<PaginatedList<StockCardReportRow>>(reportPath("stock-card", scope), {
         query: withScopeQuery(filters, scope),
       }),
   });
@@ -428,8 +479,8 @@ export function usePurchasesReport(
     enabled: scope?.enabled ?? true,
     queryKey: reportsQueryKeys.purchases(filters, scope),
     queryFn: () =>
-      apiFetch<PaginatedList<PurchasesReportRow>>(reportPath("purchases", scope), {
-        query: withScopeQuery(filters, scope),
+      apiFetch<PurchasesReportResult>(reportPath("purchases", scope), {
+        query: withScopeQuery(toDateRangeQuery(filters), scope),
       }),
   });
 }

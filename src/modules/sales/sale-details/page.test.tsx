@@ -760,6 +760,20 @@ describe("SaleDetailsPage · secciones colapsables (DET-03)", () => {
     expect(printable[0].innerHTML).toBe(screenReceipt().innerHTML);
   });
 
+  // INT-05 (B4): el `@page` del ticket era global y dejaba toda la app en la hoja del recibo.
+  it("la página de impresión del ticket solo existe junto al recibo que se imprime", async () => {
+    await renderSale(PAID_SALE);
+
+    const pageStyles = [...document.querySelectorAll("style")].filter((style) =>
+      style.textContent?.includes("@page"),
+    );
+
+    expect(pageStyles).toHaveLength(1);
+    expect(pageStyles[0].textContent).toBe("@media print { @page { margin: 2mm; size: 80mm auto; } }");
+    expect(pageStyles[0].parentElement).toHaveClass("sale-detail-receipt-aside");
+    expect(pageStyles[0].nextElementSibling).toHaveAttribute("id", "sale-receipt-preview");
+  });
+
   it("con saldo: Productos y Pagos abiertas, Cliente / Vendedor cerrada con su resumen", async () => {
     await renderSale(PENDING_SALE);
 

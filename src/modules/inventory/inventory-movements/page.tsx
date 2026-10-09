@@ -5,9 +5,11 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
+import { getBusinessTodayIsoDate } from "@/modules/dashboard/utils/businessDate";
 import { ClientApiError } from "@/shared/api/apiFetch";
 import { Can } from "@/shared/auth/Can";
 import { Button } from "@/shared/components/Button";
+import { parseDateRangeParams } from "@/shared/components/DateRangeField";
 import { EmptyState } from "@/shared/components/EmptyState";
 import {
   ResponsivePagination,
@@ -78,11 +80,16 @@ function InventoryMovements() {
   const debouncedDocument = useDebouncedValue(state.document, URL_LIST_DEBOUNCE_MS);
   // Al limpiar el campo no se espera: no se consulta otra vez con el texto anterior.
   const document = state.document.trim() === "" ? "" : debouncedDocument;
-  const { documentKind, from, productId, purchaseId, saleId, to, type } = state;
+  const { documentKind, from, preset, productId, purchaseId, saleId, to, type } = state;
+  const today = getBusinessTodayIsoDate();
+  // Rango efectivo: un `preset` relativo de la URL se recalcula con el hoy operativo.
+  const range = useMemo(
+    () => parseDateRangeParams({ from, preset, to }, today),
+    [from, preset, to, today],
+  );
   const filters = useMemo(
-    () =>
-      toMovementFilters({ documentKind, from, productId, purchaseId, saleId, to, type }, document),
-    [document, documentKind, from, productId, purchaseId, saleId, to, type],
+    () => toMovementFilters({ documentKind, productId, purchaseId, saleId, type }, document, range),
+    [document, documentKind, productId, purchaseId, range, saleId, type],
   );
   const isRangeInverted = isMovementsRangeInverted(state);
   const hasFilters = hasInventoryMovementsFilters(state);
@@ -163,6 +170,8 @@ function InventoryMovements() {
             isRangeInverted={isRangeInverted}
             onChange={setListState}
             onClear={clearFilters}
+            range={range}
+            today={today}
           />
 
           <div className="flex w-full min-w-0 flex-col md:overflow-hidden md:rounded-xl md:border md:border-border md:bg-surface-container-lowest md:shadow-sm dark:md:border-slate-800">

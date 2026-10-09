@@ -58,4 +58,14 @@ describe("API route contract coverage", () => {
 
     expect(undocumentedRoutes).toEqual([]);
   });
+
+  // INT-05 (B5): una clave repetida hace que un parser YAML estricto rechace el contrato entero.
+  it("does not document the same path twice in OpenAPI", () => {
+    const paths = [...readFileSync(openApiPath, "utf8").matchAll(/^ {2}(\/[^:\n]+):$/gm)].map(
+      (match) => match[1],
+    );
+    const repeated = paths.filter((path, index) => paths.indexOf(path) !== index);
+
+    expect(repeated).toEqual([]);
+  });
 });

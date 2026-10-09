@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { RestockPurchaseButton } from "@/modules/inventory/restock";
+import { isReportQueryOffline } from "@/modules/reports/reports-list/reportQueryState";
 import { Button } from "@/shared/components/Button";
 import { LoadingState } from "@/shared/components/LoadingState";
 import { cn } from "@/shared/utils/cn";
@@ -13,6 +14,8 @@ import {
   type DashboardRequestScope,
   useDashboardLowStock,
 } from "../hooks/useDashboard";
+import { DashboardCardBoundary } from "./DashboardCardBoundary";
+import { DashboardOfflineNote } from "./DashboardOfflineNote";
 
 const LOW_STOCK_LIMIT = 8;
 
@@ -23,7 +26,16 @@ type DashboardLowStockCardProps = {
   totalCount: number;
 };
 
-export function DashboardLowStockCard({
+/** Bajo stock, dentro de su límite de error: si falla, el resto del dashboard sigue. */
+export function DashboardLowStockCard(props: DashboardLowStockCardProps) {
+  return (
+    <DashboardCardBoundary>
+      <LowStockCard {...props} />
+    </DashboardCardBoundary>
+  );
+}
+
+function LowStockCard({
   footer,
   scope,
   showStore = false,
@@ -50,16 +62,18 @@ export function DashboardLowStockCard({
         {lowStock.isLoading ? (
           <div className="p-4">
             <LoadingState
-              description="Productos por debajo del minimo configurado."
+              description="Productos por debajo del mínimo configurado."
               title="Cargando inventario"
               variant="inline"
             />
           </div>
         ) : lowStock.error ? (
           <p className="p-4 text-sm text-red-600">No pudimos cargar el listado de bajo stock.</p>
+        ) : isReportQueryOffline(lowStock) ? (
+          <DashboardOfflineNote className="p-4" onRetry={() => void lowStock.refetch()} />
         ) : products.length === 0 ? (
           <p className="p-4 text-sm text-muted-foreground">
-            No hay productos por debajo del minimo configurado.
+            No hay productos por debajo del mínimo configurado.
           </p>
         ) : (
           <ul className="space-y-1">
@@ -92,7 +106,7 @@ export function DashboardLowStockCard({
                     >
                       {product.currentStock} unds
                     </span>
-                    <span className="text-xs text-muted-foreground">Min: {product.minStock}</span>
+                    <span className="text-xs text-muted-foreground">Mín: {product.minStock}</span>
                   </div>
                 </li>
               );

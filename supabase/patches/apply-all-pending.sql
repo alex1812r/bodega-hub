@@ -774,6 +774,42 @@ notify pgrst, 'reload schema';
 -- las escrituras de purchase_items mientras se construye.
 -- OJO: reaplicar 20261009c reinstala la vista sin el enlace: volver a aplicar este parche y correr verify-patches.sql.
 -- -----------------------------------------------------------------------------
+-- 20261013a — report money views (REP-06a): daily_sales_summary y gross_profit_summary pasan de dia UTC a dia operativo
+--             de Caracas, y vistas nuevas report_sales_by_hour, report_sales_by_category, report_open_documents_aging,
+--             report_open_documents_aging_summary y report_cash_close_differences para los reportes de dinero
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261013a-report-money-views.sql
+-- Requiere 20260716b, 20260811b, 20260819, 20261006a y 20261006h. Idempotente, una transaccion. SOLO LECTURA: crea /
+-- redefine vistas; no toca tablas, filas, RPC, politicas, stock, dinero, cash_* ni baul. Todas security_invoker (RLS de
+-- las tablas base del que consulta), sin acceso para anon / public.
+-- CAMBIO VISIBLE: en Ventas diarias y Ganancia bruta (y en la tendencia del dashboard) las ventas de 20:00-23:59 Caracas
+-- pasan del dia siguiente a su dia real. El total de un rango no cambia salvo por las ventas que cruzan su borde.
+-- report_open_documents_aging reproduce el criterio de GET /api/payments/open-documents (venta pendiente_pago / compra
+-- pedido o recibido con round(total_ves - paid_ves, 2) > 0); report_cash_close_differences lee el teorico y el contado
+-- que guardo el cierre (theoretical_closing_* / closing_*), no recalcula nada.
+-- OJO: reaplicar 20260716b devuelve los dos resumenes al dia UTC y borra security_invoker: volver a aplicar 20261006a y
+-- este parche y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (REP-06): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: los cinco reportes nuevos (/api/reports/sales-by-hour, sales-by-category, receivables-aging, payables-aging,
+-- cash-close-differences) responden error (la vista no existe); el resto de reportes no cambia.
+-- -----------------------------------------------------------------------------
+-- 20261013b — report inventory views (REP-07a): vistas report_product_last_movement, report_stock_daily_flow y
+--             report_stock_adjustments para los reportes de inventario (sin movimiento, rotacion, ajustes y mermas)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261013b-report-inventory-views.sql
+-- Requiere 20260716, 20261006a (seq), 20261006h y 20261011a (indice product_id, seq desc). Idempotente, una transaccion.
+-- SOLO LECTURA: crea vistas; no toca tablas, filas, RPC, politicas, stock ni dinero. Calculan sobre el libro
+-- stock_movements (orden seq), sin leer stock_after ni exponer created_by. Todas security_invoker (RLS de las tablas base
+-- del que consulta: no amplian quien lee el libro), sin acceso para anon / public.
+-- Clasificacion: venta = 'venta'; reversion de venta = 'devolucion_cliente' o 'ajuste_entrada' con sale_id; ajuste manual
+-- = 'ajuste_entrada' / 'ajuste_salida' sin sale_id ni purchase_id (la merma es un ajuste_salida con su motivo). Las
+-- aperturas de empaque ('conversion_*') y 'inventario_inicial' no son ajustes.
+-- El libro no guarda costo por movimiento: los ajustes se valoran a current_cost_ref ACTUAL (cost_basis = current_cost);
+-- el costo de lo vendido usa sale_items.unit_cost_ref_snapshot.
+-- ORDEN DE DESPLIEGUE (REP-07): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: /api/reports/dead-stock, stock-turnover y stock-adjustments responden error (la vista no existe); el resto
+-- de reportes no cambia. Ningun otro parche redefine estas vistas: puede reaplicarse solo.
+-- -----------------------------------------------------------------------------
 -- 20261015a — cash close diff alert (CNF-10): umbral por tienda del aviso de faltante al cerrar caja
 --             (app_settings.cash_close_diff_alert_ves numeric(14,2) not null default 0, check 0 <= umbral)
 -- -----------------------------------------------------------------------------

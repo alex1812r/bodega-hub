@@ -5,9 +5,14 @@
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import {
+  dateRangeChip,
+  dateRangeLabel,
+  pickCustomDateRange,
+} from "@/shared/components/DateRangeField/testing";
 import { SCROLL_POSITIONS_STORAGE_KEY } from "@/shared/hooks/useScrollRestoration";
 
 import type { InventoryMovement } from "../hooks/useInventory";
@@ -20,6 +25,10 @@ jest.mock("next/navigation", () => ({
   usePathname: () => "/inventory/movements",
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(window.location.search),
+}));
+// Hoy operativo fijo: los presets relativos del rango se calculan con él.
+jest.mock("../../dashboard/utils/businessDate", () => ({
+  getBusinessTodayIsoDate: () => "2026-10-09",
 }));
 jest.mock("../../../shared/auth/usePermission", () => ({
   usePermission: () => ({ can: () => true, isLoading: false, role: "admin" }),
@@ -255,8 +264,8 @@ describe("InventoryMovementsPage · filtros en servidor y en la URL", () => {
       expect(screen.getByLabelText("Tipo de movimiento")).toHaveValue("");
       expect(screen.getByLabelText("Tipo de documento")).toHaveValue("");
       expect(screen.getByLabelText("Número de documento")).toHaveValue("");
-      expect(screen.getByLabelText("Desde")).toHaveValue("");
-      expect(screen.getByLabelText("Hasta")).toHaveValue("");
+      expect(dateRangeLabel()).toHaveTextContent("Todas las fechas");
+      expect(document.querySelector('input[type="date"]')).toBeNull();
       expect(productField()).toHaveValue("");
       expect(screen.queryByRole("button", { name: "Limpiar filtros" })).not.toBeInTheDocument();
     });
@@ -283,8 +292,8 @@ describe("InventoryMovementsPage · filtros en servidor y en la URL", () => {
       expect(screen.getByLabelText("Tipo de movimiento")).toHaveValue("venta");
       expect(screen.getByLabelText("Tipo de documento")).toHaveValue("venta");
       expect(screen.getByLabelText("Número de documento")).toHaveValue("V-00");
-      expect(screen.getByLabelText("Desde")).toHaveValue("2026-10-01");
-      expect(screen.getByLabelText("Hasta")).toHaveValue("2026-10-05");
+      expect(dateRangeLabel()).toHaveTextContent("1–5 oct 2026");
+      expect(dateRangeChip("Personalizado")).toHaveAttribute("aria-pressed", "true");
     });
 
     it("falls back to the default of an invalid parameter without losing the valid ones", async () => {
@@ -318,17 +327,12 @@ describe("InventoryMovementsPage · filtros en servidor y en la URL", () => {
     );
 
     it("writes the date range in the URL, asks the server for it and goes back to page 1", async () => {
+      const user = userEvent.setup();
+
       renderPage("page=3");
       await findRowWith("V-0001");
 
-      fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-10-01" } });
-
-      expect(window.location.search).toBe("?from=2026-10-01");
-      await waitFor(() =>
-        expect(lastMovementRequest()).toEqual({ from: "2026-10-01", limit: "10", skip: "0" }),
-      );
-
-      fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-10-05" } });
+      await pickCustomDateRange(user, "1 de octubre de 2026", "5 de octubre de 2026");
 
       expect(window.location.search).toBe("?from=2026-10-01&to=2026-10-05");
       await waitFor(() =>
@@ -340,6 +344,61 @@ describe("InventoryMovementsPage · filtros en servidor y en la URL", () => {
         }),
       );
     });
+
+    it("INT-05 · 'Mes pasado' writes only the preset, asks for its dates and 'Limpiar filtros' removes it", async () => {
+      const user = userEvent.setup();
+
+      renderPage("type=venta&page=3");
+      await findRowWith("V-0001");
+
+      await user.click(dateRangeChip("Mes pasado"));
+
+      expect(window.location.search).toBe("?type=venta&preset=last_month");
+      await waitFor(() =>
+        expect(lastMovementRequest()).toEqual({
+          from: "2026-09-01",
+          limit: "10",
+          skip: "0",
+          to: "2026-09-30",
+          type: "venta",
+        }),
+      );
+
+      await user.click(screen.getByRole("button", { name: "Limpiar filtros" }));
+
+      expect(window.location.search).toBe("");
+      await waitFor(() => expect(lastMovementRequest()).toEqual({ limit: "10", skip: "0" }));
+    });
+
+    it.each([
+      ["preset", "preset=last_month", "1–30 sep 2026", "Mes pasado", "2026-09-01", "2026-09-30"],
+      ["range", "from=2026-10-01&to=2026-10-05", "1–5 oct 2026", "Personalizado", "2026-10-01", "2026-10-05"],
+    ])(
+      "INT-05 · filtering by %s → document → back (or the URL pasted in another tab) keeps the same filters",
+      async (_kind, rangeQuery, label, chip, from, to) => {
+        const first = renderPage(`type=venta&${rangeQuery}&page=2`);
+
+        await findRowWith("V-0001");
+
+        const href = screen.getByRole("link", { name: "V-0001" }).getAttribute("href") ?? "";
+        const returnTo = new URL(href, "http://localhost").searchParams.get("returnTo");
+
+        expect(returnTo).toBe(`/inventory/movements?type=venta&${rangeQuery}&page=2`);
+        first.unmount();
+        fetchMock.mockClear();
+
+        // "Volver" of the detail (and a pasted link) open exactly that URL.
+        renderPage((returnTo ?? "").split("?")[1]);
+        await findRowWith("V-0001");
+
+        expect(dateRangeLabel()).toHaveTextContent(label);
+        expect(dateRangeChip(chip)).toHaveAttribute("aria-pressed", "true");
+        expect(screen.getByLabelText("Tipo de movimiento")).toHaveValue("venta");
+        expect(movementRequests()).toEqual([
+          { from, limit: "10", skip: "10", to, type: "venta" },
+        ]);
+      },
+    );
 
     it("sends the document text after the debounce only from 3 characters, and goes back to page 1", async () => {
       const user = userEvent.setup();
@@ -386,16 +445,16 @@ describe("InventoryMovementsPage · filtros en servidor y en la URL", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent(
         "La fecha inicial no puede ser posterior a la final.",
       );
-      expect(screen.getByLabelText("Desde")).toHaveAttribute("aria-invalid", "true");
-      expect(screen.getByLabelText("Hasta")).toHaveAttribute("aria-invalid", "true");
+      expect(dateRangeLabel()).toHaveTextContent("Todas las fechas");
       expect(screen.getByText("Revisa el rango de fechas")).toBeInTheDocument();
       expect(screen.queryByText("No pudimos cargar los datos")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Exportar Excel" })).toBeDisabled();
       expect(movementRequests()).toEqual([]);
 
-      fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-10-09" } });
+      await userEvent.setup().click(dateRangeChip("Esta semana"));
 
       await findRowWith("V-0001");
+      expect(window.location.search).toBe("?preset=this_week");
       expect(movementRequests()).toEqual([
         { from: "2026-10-05", limit: "10", skip: "0", to: "2026-10-09" },
       ]);
@@ -403,15 +462,24 @@ describe("InventoryMovementsPage · filtros en servidor y en la URL", () => {
       expect(screen.getByRole("button", { name: "Exportar Excel" })).toBeEnabled();
     });
 
-    it("stops querying when a valid range becomes inverted", async () => {
+    it("the calendar cannot leave an inverted range: it orders the two days", async () => {
+      const user = userEvent.setup();
+
       renderPage("from=2026-10-01&to=2026-10-05");
       await findRowWith("V-0001");
 
-      fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-10-20" } });
+      await pickCustomDateRange(user, "8 de octubre de 2026", "2 de octubre de 2026");
 
-      expect(await screen.findByRole("alert")).toBeInTheDocument();
-      expect(screen.queryByText("V-0001")).not.toBeInTheDocument();
-      expect(movementRequests()).toHaveLength(1);
+      expect(window.location.search).toBe("?from=2026-10-02&to=2026-10-08");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(lastMovementRequest()).toEqual({
+          from: "2026-10-02",
+          limit: "10",
+          skip: "0",
+          to: "2026-10-08",
+        }),
+      );
     });
   });
 

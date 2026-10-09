@@ -1,3 +1,5 @@
+import { parseDateRangeParams } from "@/shared/components/DateRangeField";
+
 import {
   hasInventoryMovementsFilters,
   INVENTORY_MOVEMENTS_NO_FILTERS,
@@ -43,7 +45,7 @@ describe("inventoryMovementsParams", () => {
   });
 
   it("sends the document only from 3 characters and drops the empty filters", () => {
-    expect(toMovementFilters(INVENTORY_MOVEMENTS_NO_FILTERS, "V-")).toEqual({
+    expect(toMovementFilters(INVENTORY_MOVEMENTS_NO_FILTERS, "V-", {})).toEqual({
       document: undefined,
       documentKind: undefined,
       from: undefined,
@@ -57,14 +59,13 @@ describe("inventoryMovementsParams", () => {
       toMovementFilters(
         {
           documentKind: "sin_documento",
-          from: "2026-10-01",
           productId: "p-1",
           purchaseId: "",
           saleId: "",
-          to: "2026-10-05",
           type: "ajuste_salida",
         },
         " V-00 ",
+        { from: "2026-10-01", to: "2026-10-05" },
       ),
     ).toEqual({
       document: "V-00",
@@ -78,12 +79,27 @@ describe("inventoryMovementsParams", () => {
     });
   });
 
+  // INT-05: el rango de la consulta sale de `parseDateRangeParams`, no de `state.from/to`.
+  it("resolves a relative preset of the URL with the operating day and counts it as a filter", () => {
+    const state = inventoryMovementsSchema.parse({ preset: "last_month" });
+    const range = parseDateRangeParams(state, "2026-10-09");
+
+    expect(state).toMatchObject({ from: "", preset: "last_month", to: "" });
+    expect(toMovementFilters(state, "", range)).toMatchObject({
+      from: "2026-09-01",
+      to: "2026-09-30",
+    });
+    expect(hasInventoryMovementsFilters(state)).toBe(true);
+    expect(hasInventoryMovementsFilters({ ...state, ...INVENTORY_MOVEMENTS_NO_FILTERS })).toBe(false);
+    expect(inventoryMovementsSchema.safeParse({ preset: "siempre" }).success).toBe(false);
+  });
+
   // DET-05: «Ver movimientos de stock» del detalle de una venta o una compra.
   it("reads the sale and the purchase of the URL and sends them to the server as exact filters", () => {
     const state = inventoryMovementsSchema.parse({ purchaseId: "purchase-7", saleId: "sale-1" });
 
     expect(state).toMatchObject({ purchaseId: "purchase-7", saleId: "sale-1" });
-    expect(toMovementFilters(state, "")).toMatchObject({
+    expect(toMovementFilters(state, "", {})).toMatchObject({
       purchaseId: "purchase-7",
       saleId: "sale-1",
     });

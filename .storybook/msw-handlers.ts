@@ -73,6 +73,30 @@ import {
   getTopCustomersReport,
   getTopProductsReport,
 } from "../src/modules/reports/services/reports.mock-server";
+import { getPaymentMethodsReport } from "../src/modules/reports/services/paymentMethodsReport.mock-server";
+import {
+  parseDeadStockQuery,
+  parseStockAdjustmentsQuery,
+  parseStockTurnoverQuery,
+} from "../src/modules/reports/services/inventoryReports";
+import {
+  getDeadStockReport,
+  getStockAdjustmentsReport,
+  getStockTurnoverReport,
+} from "../src/modules/reports/services/inventoryReports.mock-server";
+import {
+  parseAgingQuery,
+  parseCashCloseDifferencesQuery,
+  parseMoneyReportRange,
+} from "../src/modules/reports/services/moneyReports";
+import {
+  buildCashCloseLedger,
+  getCashCloseDifferencesReport,
+  getPayablesAgingReport,
+  getReceivablesAgingReport,
+  getSalesByCategoryReport,
+  getSalesByHourReport,
+} from "../src/modules/reports/services/moneyReports.mock-server";
 import {
   cancelSale,
   createSale,
@@ -169,6 +193,41 @@ async function fromJson<TData>(
     return jsonError(error);
   }
 }
+
+/**
+ * Cierres de caja de las stories: los datos de prueba no traen ninguna caja
+ * cerrada y «Diferencias de cierre de caja» salía vacío. Una semana de mayo de
+ * 2026 (el «hoy» de las stories de reportes es el 18) con sobrantes, faltantes,
+ * un cierre exacto y un autocierre, que cuenta el teórico.
+ */
+function storyCashClose(
+  day: string,
+  ves: [expected: number, counted: number],
+  ref: [expected: number, counted: number],
+  closedReason: "end_of_day" | "manual" = "manual",
+) {
+  return {
+    closedAt: `${day}T22:30:00.000Z`,
+    closedReason,
+    closingRef: ref[1],
+    closingVes: ves[1],
+    id: `story-cash-close-${day}`,
+    register: { name: "Caja principal" },
+    registerId: "story-register-1",
+    theoreticalClosingRef: ref[0],
+    theoreticalClosingVes: ves[0],
+  };
+}
+
+const storyCashCloseLedger = buildCashCloseLedger([
+  storyCashClose("2026-05-11", [18_450, 18_450], [120, 120]),
+  storyCashClose("2026-05-12", [22_300, 22_180], [95, 95]),
+  storyCashClose("2026-05-13", [15_760, 15_800], [140, 138]),
+  storyCashClose("2026-05-14", [27_915, 27_915], [80, 80], "end_of_day"),
+  storyCashClose("2026-05-15", [31_240, 30_990], [165, 170]),
+  storyCashClose("2026-05-16", [24_600, 24_650], [110, 110]),
+  storyCashClose("2026-05-17", [19_875, 19_805], [75, 74.5]),
+]);
 
 function resolveDemoProfile(request: Request) {
   const userId = request.headers.get("x-demo-user-id");
@@ -361,35 +420,83 @@ export const mswHandlers = [
   http.get("/api/payments/:id", ({ params }) =>
     fromService(() => getPaymentById(String(params.id))),
   ),
+  // Los servicios de reportes filtran por tienda: sin ella no devuelven nada.
   http.get("/api/reports/daily-sales", ({ request }) =>
-    fromService(() => getDailySalesReport(searchParams(request))),
+    fromService(() => getDailySalesReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/gross-profit", ({ request }) =>
-    fromService(() => getGrossProfitReport(searchParams(request))),
+    fromService(() => getGrossProfitReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/product-profitability", ({ request }) =>
-    fromService(() => getProductProfitabilityReport(searchParams(request))),
+    fromService(() => getProductProfitabilityReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/low-stock", ({ request }) =>
-    fromService(() => getLowStockReport(searchParams(request))),
+    fromService(() => getLowStockReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/customer-purchases", ({ request }) =>
-    fromService(() => getCustomerPurchasesReport(searchParams(request))),
+    fromService(() => getCustomerPurchasesReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/supplier-purchases", ({ request }) =>
-    fromService(() => getSupplierPurchasesReport(searchParams(request))),
+    fromService(() => getSupplierPurchasesReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/stock-card", ({ request }) =>
-    fromService(() => getStockCardReport(searchParams(request))),
+    fromService(() => getStockCardReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/top-products", ({ request }) =>
-    fromService(() => getTopProductsReport(searchParams(request))),
+    fromService(() => getTopProductsReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/top-customers", ({ request }) =>
-    fromService(() => getTopCustomersReport(searchParams(request))),
+    fromService(() => getTopCustomersReport(searchParams(request), DEFAULT_STORE_ID)),
   ),
   http.get("/api/reports/purchases", ({ request }) =>
-    fromService(() => getPurchasesReport(searchParams(request))),
+    fromService(() => getPurchasesReport(searchParams(request), DEFAULT_STORE_ID)),
+  ),
+  http.get("/api/reports/payment-methods", ({ request }) =>
+    fromService(() => getPaymentMethodsReport(searchParams(request), DEFAULT_STORE_ID)),
+  ),
+  // Reportes de dinero (REP-06): mismos parseos que sus rutas (400 si el parámetro no vale).
+  http.get("/api/reports/sales-by-hour", ({ request }) =>
+    fromService(() =>
+      getSalesByHourReport(parseMoneyReportRange(searchParams(request)), DEFAULT_STORE_ID),
+    ),
+  ),
+  http.get("/api/reports/sales-by-category", ({ request }) =>
+    fromService(() =>
+      getSalesByCategoryReport(parseMoneyReportRange(searchParams(request)), DEFAULT_STORE_ID),
+    ),
+  ),
+  http.get("/api/reports/receivables-aging", ({ request }) =>
+    fromService(() =>
+      getReceivablesAgingReport(parseAgingQuery(searchParams(request)), DEFAULT_STORE_ID),
+    ),
+  ),
+  http.get("/api/reports/payables-aging", ({ request }) =>
+    fromService(() =>
+      getPayablesAgingReport(parseAgingQuery(searchParams(request)), DEFAULT_STORE_ID),
+    ),
+  ),
+  http.get("/api/reports/cash-close-differences", ({ request }) =>
+    fromService(() =>
+      getCashCloseDifferencesReport(
+        parseCashCloseDifferencesQuery(searchParams(request)),
+        DEFAULT_STORE_ID,
+        storyCashCloseLedger,
+      ),
+    ),
+  ),
+  // Reportes de inventario (REP-07): mismos parseos que sus rutas (400 si el parámetro no vale).
+  http.get("/api/reports/dead-stock", ({ request }) =>
+    fromService(() => getDeadStockReport(parseDeadStockQuery(searchParams(request)), DEFAULT_STORE_ID)),
+  ),
+  http.get("/api/reports/stock-turnover", ({ request }) =>
+    fromService(() =>
+      getStockTurnoverReport(parseStockTurnoverQuery(searchParams(request)), DEFAULT_STORE_ID),
+    ),
+  ),
+  http.get("/api/reports/stock-adjustments", ({ request }) =>
+    fromService(() =>
+      getStockAdjustmentsReport(parseStockAdjustmentsQuery(searchParams(request)), DEFAULT_STORE_ID),
+    ),
   ),
   http.get("/api/settings", () => fromService(() => getSettings())),
   // Semáforo de ganancia y chips de % de la tienda demo (formulario, lista y detalle de producto).
