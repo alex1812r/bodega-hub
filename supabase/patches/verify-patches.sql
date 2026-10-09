@@ -2221,4 +2221,36 @@ select
     from information_schema.columns col
     where col.table_schema = 'public' and col.table_name = 'report_cash_close_differences'
   ) = 'store_id,cash_session_id,register_id,register_name,closed_at,close_date,closed_reason,currency,expected,counted,difference,running_expected,running_counted,running_difference'
+union all
+select
+  'vistas de reportes de inventario report_product_last_movement, report_stock_daily_flow y report_stock_adjustments: security_invoker, select solo para authenticated / service_role, sin escritura, sin leer stock_after ni exponer created_by, y con sus columnas en orden (20261013b)',
+  (
+    select count(*) = 3
+      and bool_and(c.relkind = 'v' and c.reloptions @> array['security_invoker=true'])
+      and bool_and(has_table_privilege('authenticated', c.oid, 'select') and has_table_privilege('service_role', c.oid, 'select'))
+      and bool_and(not has_table_privilege('anon', c.oid, 'select'))
+      and bool_and(not has_table_privilege('authenticated', c.oid, 'insert, update, delete'))
+      and bool_and(pg_get_viewdef(c.oid) not ilike '%stock_after%' and pg_get_viewdef(c.oid) not ilike '%created_by%')
+    from pg_class c
+    where c.oid in (
+      to_regclass('public.report_product_last_movement'),
+      to_regclass('public.report_stock_daily_flow'),
+      to_regclass('public.report_stock_adjustments')
+    )
+  )
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_product_last_movement'
+  ) = 'store_id,product_id,sku,name,is_active,category_id,category_name,stock,cost_ref,stock_value_ref,last_sale_at,last_movement_at,first_movement_at,idle_since'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_stock_daily_flow'
+  ) = 'store_id,movement_date,product_id,net_delta,sold_units,cogs_ref'
+  and (
+    select string_agg(col.column_name::text, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'report_stock_adjustments'
+  ) = 'store_id,movement_id,seq,created_at,movement_date,product_id,sku,product_name,movement_type,quantity_delta,reason,unit_cost_ref,value_ref,cost_basis'
 order by 1;

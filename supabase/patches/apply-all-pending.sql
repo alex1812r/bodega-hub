@@ -777,3 +777,20 @@ notify pgrst, 'reload schema';
 -- ORDEN DE DESPLIEGUE (REP-06): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
 -- el parche: los cinco reportes nuevos (/api/reports/sales-by-hour, sales-by-category, receivables-aging, payables-aging,
 -- cash-close-differences) responden error (la vista no existe); el resto de reportes no cambia.
+-- -----------------------------------------------------------------------------
+-- 20261013b — report inventory views (REP-07a): vistas report_product_last_movement, report_stock_daily_flow y
+--             report_stock_adjustments para los reportes de inventario (sin movimiento, rotacion, ajustes y mermas)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261013b-report-inventory-views.sql
+-- Requiere 20260716, 20261006a (seq), 20261006h y 20261011a (indice product_id, seq desc). Idempotente, una transaccion.
+-- SOLO LECTURA: crea vistas; no toca tablas, filas, RPC, politicas, stock ni dinero. Calculan sobre el libro
+-- stock_movements (orden seq), sin leer stock_after ni exponer created_by. Todas security_invoker (RLS de las tablas base
+-- del que consulta: no amplian quien lee el libro), sin acceso para anon / public.
+-- Clasificacion: venta = 'venta'; reversion de venta = 'devolucion_cliente' o 'ajuste_entrada' con sale_id; ajuste manual
+-- = 'ajuste_entrada' / 'ajuste_salida' sin sale_id ni purchase_id (la merma es un ajuste_salida con su motivo). Las
+-- aperturas de empaque ('conversion_*') y 'inventario_inicial' no son ajustes.
+-- El libro no guarda costo por movimiento: los ajustes se valoran a current_cost_ref ACTUAL (cost_basis = current_cost);
+-- el costo de lo vendido usa sale_items.unit_cost_ref_snapshot.
+-- ORDEN DE DESPLIEGUE (REP-07): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: /api/reports/dead-stock, stock-turnover y stock-adjustments responden error (la vista no existe); el resto
+-- de reportes no cambia. Ningun otro parche redefine estas vistas: puede reaplicarse solo.
