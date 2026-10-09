@@ -5,17 +5,25 @@ import { useMemo, useState } from "react";
 import { usePendingCashClosures } from "@/modules/cash/hooks/useCash";
 import type { CashSession } from "@/modules/cash/types";
 import { Button } from "@/shared/components/Button";
+import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { Modal } from "@/shared/components/Modal";
 import { Textarea } from "@/shared/components/Textarea";
 import { cn } from "@/shared/utils/cn";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 
-import { useTransferFromCash } from "../../hooks/useVault";
+import { useTransferFromCash, useVault } from "../../hooks/useVault";
+import { getVaultBalancesState } from "../utils/vaultBalancesState";
+import { computeClosuresTransferEffect } from "../utils/vaultEffect";
+
+import { VaultTransferEffects } from "./VaultTransferEffects";
 
 type VaultTransferFromCashModalProps = {
   onOpenChange: (open: boolean) => void;
   open: boolean;
 };
+
+/** Sin saldos cargados solo valen los totales del efecto; la confirmación no enseña las cubetas. */
+const UNKNOWN_BALANCES = { balanceEfectivoVes: 0, balanceRef: 0, balanceVes: 0 };
 
 function closureLabel(session: CashSession) {
   const closedAt = session.closedAt
@@ -30,32 +38,32 @@ export function VaultTransferFromCashModal({
 }: VaultTransferFromCashModalProps) {
   const closures = usePendingCashClosures();
   const transfer = useTransferFromCash();
+  const vault = useVault();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const pending = closures.data ?? [];
+  const pending = useMemo(() => closures.data ?? [], [closures.data]);
   const selected = useMemo(
     () => pending.filter((session) => selectedIds.includes(session.id)),
     [pending, selectedIds],
   );
-  const selectedTotals = useMemo(
-    () =>
-      selected.reduce(
-        (total, session) => {
-          total.ref += session.closingRef ?? 0;
-          total.ves += session.closingVes ?? 0;
-          return total;
-        },
-        { ref: 0, ves: 0 },
-      ),
-    [selected],
-  );
+  const trimmedNotes = notes.trim();
+  const balances = getVaultBalancesState(vault);
+  // El "después" suma el CONTADO de cada cierre, que es lo que asienta la RPC.
+  const effect = computeClosuresTransferEffect({
+    closures: selected,
+    vault: balances.vault ?? UNKNOWN_BALANCES,
+  });
 
   function resetForm() {
     setSelectedIds([]);
     setNotes("");
     setErrorMessage(null);
+    setRequestError(null);
+    setConfirmOpen(false);
   }
 
   function toggleSession(sessionId: string) {
@@ -68,8 +76,8 @@ export function VaultTransferFromCashModal({
 
   /**
    * Deja fuera los cierres absorbidos: son anteriores a `20260904b`, su monto
-   * incluye el fondo de apertura que el turno siguiente volvio a usar, y
-   * transferirlos en bloque re-infla el baul (docs/cuadre-baul.md §2.2).
+   * incluye el fondo de apertura que el turno siguiente volvió a usar, y
+   * transferirlos en bloque re-infla el baúl (docs/cuadre-baul.md §2.2).
    */
   function selectAll() {
     setSelectedIds(
@@ -77,25 +85,39 @@ export function VaultTransferFromCashModal({
     );
   }
 
-  async function handleSubmit() {
-    if (selectedIds.length === 0) {
+  /** El formulario no envía: abre la confirmación con los cierres y los saldos resultantes. */
+  function handleContinue() {
+    if (transfer.isPending) {
+      return;
+    }
+
+    if (selected.length === 0) {
       setErrorMessage("Selecciona al menos un cierre pendiente.");
       return;
     }
 
+    setErrorMessage(null);
+    // Un error de un intento anterior no pertenece a esta confirmación.
+    setRequestError(null);
+    setConfirmOpen(true);
+  }
+
+  async function handleConfirm() {
     try {
-      setErrorMessage(null);
       await transfer.mutateAsync({
-        notes: notes.trim() || undefined,
-        sessionIds: selectedIds,
+        notes: trimmedNotes || undefined,
+        // Solo los cierres que la confirmación enseña: uno que ya no esté pendiente no viaja.
+        sessionIds: selected.map((session) => session.id),
       });
-      resetForm();
-      onOpenChange(false);
     } catch (error) {
-      setErrorMessage(
+      setRequestError(
         error instanceof Error ? error.message : "No se pudo transferir desde la caja.",
       );
+      return;
     }
+
+    resetForm();
+    onOpenChange(false);
   }
 
   return (
@@ -103,26 +125,24 @@ export function VaultTransferFromCashModal({
       description="Transfiere al baúl cierres pendientes. Si una caja se reabrió sin transferir, el cierre anterior ya quedó absorbido y solo verás el cierre vigente."
       footer={({ close }) => (
         <>
-          <Button
-            disabled={transfer.isPending}
-            onClick={() => {
-              resetForm();
-              close();
-            }}
-            type="button"
-            variant="outline"
-          >
+          <Button disabled={transfer.isPending} onClick={close} type="button" variant="outline">
             Cancelar
           </Button>
-          <Button disabled={transfer.isPending} onClick={() => void handleSubmit()} type="button">
-            {transfer.isPending ? "Transferiendo..." : "Transferir cierres"}
+          <Button disabled={transfer.isPending} onClick={handleContinue} type="button">
+            Continuar
           </Button>
         </>
       )}
       onOpenChange={(nextOpen) => {
+        // Con la transferencia en vuelo el modal no se cierra: su resultado llegaría sin formulario.
+        if (!nextOpen && transfer.isPending) {
+          return;
+        }
+
         if (!nextOpen) {
           resetForm();
         }
+
         onOpenChange(nextOpen);
       }}
       open={open}
@@ -179,7 +199,7 @@ export function VaultTransferFromCashModal({
                       {session.absorbedBySessionId ? (
                         <span className="mt-1 block text-xs text-amber-700 dark:text-amber-300">
                           Cierre anterior al cambio de apertura: el monto incluye el fondo, que
-                          se reciclo en el turno siguiente. Revisalo antes de transferirlo.
+                          se recicló en el turno siguiente. Revísalo antes de transferirlo.
                         </span>
                       ) : null}
                     </span>
@@ -194,11 +214,11 @@ export function VaultTransferFromCashModal({
           <p className="text-sm text-muted-foreground">
             Total seleccionado:{" "}
             <span className="font-medium text-foreground tabular-nums">
-              {formatRefUsd(selectedTotals.ref)}
+              {formatRefUsd(effect.totalRef)}
             </span>
             {" · "}
             <span className="font-medium text-foreground tabular-nums">
-              {formatVesBs(selectedTotals.ves)}
+              {formatVesBs(effect.totalVes)}
             </span>
           </p>
         ) : null}
@@ -209,8 +229,44 @@ export function VaultTransferFromCashModal({
           rows={3}
           value={notes}
         />
-        {errorMessage ? <p className="text-sm text-destructive">{errorMessage}</p> : null}
+        {errorMessage ? (
+          <p className="text-sm text-destructive" role="alert">
+            {errorMessage}
+          </p>
+        ) : null}
+        {/* Con la confirmación abierta el error se dice en ella; al cancelarla sigue a la vista aquí. */}
+        {requestError && !confirmOpen ? (
+          <p className="text-sm text-destructive" role="alert">
+            {requestError}
+          </p>
+        ) : null}
       </div>
+      <ConfirmActionModal
+        confirmLabel="Transferir cierres"
+        description="Revisa los cierres y cómo quedan los saldos del baúl antes de transferir."
+        error={requestError}
+        isPending={transfer.isPending}
+        onConfirm={handleConfirm}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setConfirmOpen(false);
+          }
+        }}
+        onRetry={() => void vault.refetch()}
+        open={confirmOpen}
+        renderEffects={() => <VaultTransferEffects effect={effect} />}
+        status={balances.status}
+        statusHint={balances.status === "error" ? "No se ha transferido nada." : undefined}
+        statusMessage={balances.statusMessage}
+        title="Confirmar transferencia al baúl"
+      >
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+          <dt>Nota</dt>
+          <dd className="whitespace-pre-wrap break-words font-medium text-foreground">
+            {trimmedNotes || "Sin nota"}
+          </dd>
+        </dl>
+      </ConfirmActionModal>
     </Modal>
   );
 }

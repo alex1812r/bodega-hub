@@ -17,6 +17,7 @@ import type { VaultMovement } from "../types";
 import { VaultDepositModal } from "./components/VaultDepositModal";
 import { VaultTransferFromCashModal } from "./components/VaultTransferFromCashModal";
 import { VaultWithdrawalModal } from "./components/VaultWithdrawalModal";
+import { vaultBucketLabels } from "./utils/vaultEffect";
 
 const movementTypeLabels: Record<VaultMovement["type"], string> = {
   adjustment: "Ajuste",
@@ -116,21 +117,21 @@ export function VaultHomePage() {
             accentClassName="bg-amber-500/15"
             icon={Banknote}
             iconClassName="text-amber-600"
-            label="Efectivo Bs."
+            label={vaultBucketLabels.efectivoVes}
             value={balanceEfectivoVes}
           />
           <DashboardKpiCard
             accentClassName="bg-emerald-500/15"
             icon={Building2}
             iconClassName="text-emerald-600"
-            label="Cuenta Bs."
+            label={vaultBucketLabels.cuentaVes}
             value={balanceCuentaVes}
           />
           <DashboardKpiCard
             accentClassName="bg-primary/15"
             icon={CircleDollarSign}
             iconClassName="text-primary"
-            label="Saldo REF"
+            label={vaultBucketLabels.efectivoRef}
             value={balanceRef}
           />
         </div>
