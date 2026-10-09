@@ -45,7 +45,8 @@ describe("reportCatalog", () => {
     for (const report of reportCatalog) {
       expect(report.name.trim()).not.toBe("");
       expect(report.description).not.toMatch(/\n/);
-      expect(report.description.length).toBeLessThanOrEqual(80);
+      // REP-F2: corta, para que quepa lo más posible en la tarjeta (el resto se recorta con «…»).
+      expect(report.description.length).toBeLessThanOrEqual(50);
       expect(report.description.endsWith(".")).toBe(true);
     }
   });

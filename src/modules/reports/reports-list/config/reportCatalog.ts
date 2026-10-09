@@ -105,7 +105,7 @@ export const reportCatalog: ReportDefinition[] = [
     icon: TrendingUp,
     name: "Ganancia bruta",
     period: "Rango",
-    description: "Ingresos, costos y ganancia bruta por venta.",
+    description: "Ingresos, costos y ganancia bruta por día.",
     supportsCompare: true,
     supportsGroupBy: true,
     usesDateRange: true,
@@ -149,7 +149,7 @@ export const reportCatalog: ReportDefinition[] = [
     icon: Users,
     name: "Compras de clientes",
     period: "Histórico",
-    description: "Ventas acumuladas, deuda y última compra por cliente.",
+    description: "Ventas, deuda y última compra por cliente.",
     usesDateRange: false,
   },
   {
@@ -173,7 +173,7 @@ export const reportCatalog: ReportDefinition[] = [
     icon: Truck,
     name: "Compras a proveedores",
     period: "Histórico",
-    description: "Compras acumuladas, deuda y última compra por proveedor.",
+    description: "Compras, deuda y última compra por proveedor.",
     usesDateRange: false,
   },
   {
@@ -201,7 +201,7 @@ export const reportCatalog: ReportDefinition[] = [
     icon: ClipboardCheck,
     name: "Cierre del día",
     period: "Día operativo",
-    description: "Ventas, cobros por método, pérdida cambiaria y estado de caja y baúl.",
+    description: "Ventas, cobros, pérdida cambiaria, caja y baúl.",
     usesDateRange: true,
   },
   {

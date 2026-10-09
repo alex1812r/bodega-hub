@@ -124,7 +124,10 @@ export function ReportsCatalog({
                               <span className="block text-sm font-medium text-on-surface">
                                 {report.name}
                               </span>
-                              <span className="block text-xs text-on-surface-variant">
+                              <span
+                                className="block truncate text-xs text-on-surface-variant"
+                                title={report.description}
+                              >
                                 {report.description}
                               </span>
                             </span>
