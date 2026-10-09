@@ -1,10 +1,16 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import { type FormEvent, type ReactNode, useState } from "react";
 
+import { apiFetch } from "@/shared/api/apiFetch";
 import { Button } from "@/shared/components/Button";
-import { type ConfirmActionEffect, ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
+import {
+  type ConfirmActionEffect,
+  ConfirmActionModal,
+  type ConfirmActionStatus,
+} from "@/shared/components/ConfirmActionModal";
 import {
   EntityAutocomplete,
   type ProductEntityFilters,
@@ -16,11 +22,13 @@ import { NumberInput } from "@/shared/components/NumberInput";
 import { ProcessGuardModal } from "@/shared/components/ProcessGuard";
 import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
+import { useToast } from "@/shared/components/Toast";
 import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
 import { cn } from "@/shared/utils/cn";
 
 import {
   type InventoryItem,
+  inventoryQueryKeys,
   useAdjustInventory,
   useInventoryProduct,
 } from "../../hooks/useInventory";
@@ -131,8 +139,28 @@ export function buildStockAdjustmentConfirmEffects(
 }
 
 /**
+ * Aviso de éxito con el stock que devolvió el servidor (CAOS-04). Si no es el que
+ * mostraba la confirmación, se dice sin alarmar; sin el dato, no se inventa.
+ */
+function describeFinalStock(stockAfter: unknown, expectedStockAfter: number) {
+  if (typeof stockAfter !== "number" || !Number.isFinite(stockAfter)) {
+    return undefined;
+  }
+
+  return stockAfter === expectedStockAfter
+    ? `Stock final: ${stockAfter}.`
+    : `Stock final: ${stockAfter}. Se preveía ${expectedStockAfter}: hubo otro movimiento de este producto mientras confirmabas.`;
+}
+
+/**
  * Ajuste manual de stock: el formulario no envía, abre la confirmación con el
  * efecto sobre el stock.
+ *
+ * Cada apertura de la confirmación relee el stock del producto (CAOS-04): el
+ * «antes → después» se pinta con ese dato y, si no es el que tenía el formulario,
+ * se avisa. Entre esa lectura y el envío puede colarse otro movimiento (el ajuste
+ * es un delta, no hay «stock esperado» en el endpoint): por eso el aviso de éxito
+ * dice el stock que devolvió el servidor.
  *
  * Si el usuario cambió algo respecto a como abrió el modal (otro producto, tipo,
  * cantidad o motivo), cerrar (Esc, clic fuera, Cancelar, la X) o salir de la
@@ -165,7 +193,10 @@ export function InventoryAdjustmentModal({
   const [reason, setReason] = useState("");
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Sube con cada apertura de la confirmación: ninguna reutiliza la lectura de otra.
+  const [confirmRead, setConfirmRead] = useState(0);
   const [previousOpen, setPreviousOpen] = useState(open);
+  const { showToast } = useToast();
   const adjustment = useAdjustInventory();
   const requestAttempt = useRequestAttempt({ lockAfterSuccess: true, renewOnContentChange: true });
   // Tras el éxito no sale otro ajuste hasta que el modal se cierre (INT-02).
@@ -189,6 +220,36 @@ export function InventoryAdjustmentModal({
   const trimmedReason = trimStockReason(reason);
   const canConfirm =
     Boolean(productId) && isQuantityValid && !hasInsufficientStock && trimmedReason !== "";
+  const freshProductQuery = useQuery({
+    enabled: confirmOpen && Boolean(productId),
+    gcTime: 0,
+    queryFn: () => apiFetch<InventoryItem>(`/api/products/${productId}`),
+    queryKey: [...inventoryQueryKeys.product(productId), "confirm", confirmRead],
+    retry: false,
+    staleTime: 0,
+  });
+  // Una respuesta sin un stock numérico no vale como lectura: cuenta como fallo.
+  const readStock = freshProductQuery.data?.currentStock;
+  const freshStock =
+    typeof readStock === "number" && Number.isFinite(readStock) ? readStock : undefined;
+  const confirmEffect =
+    freshStock === undefined
+      ? null
+      : computeStockAdjustmentEffect({ currentStock: freshStock, delta: quantityDelta });
+  const stockChanged = freshStock !== undefined && freshStock !== selectedProduct?.currentStock;
+  let confirmStatus: ConfirmActionStatus = "ready";
+  let confirmStatusMessage: string | undefined;
+
+  if (!confirmEffect) {
+    confirmStatus = freshProductQuery.isFetching ? "loading" : "error";
+    confirmStatusMessage =
+      confirmStatus === "error"
+        ? "No se pudo comprobar el stock actual."
+        : "Comprobando el stock actual…";
+  } else if (confirmEffect.wouldBeNegative) {
+    confirmStatus = "blocked";
+    confirmStatusMessage = `Stock insuficiente: ahora hay ${confirmEffect.stockBefore} en stock y la salida es de ${Math.abs(confirmEffect.delta)}.`;
+  }
   // Elegir otro producto (o quitar el precargado) cuenta; volver al precargado, no.
   const hasChangedProduct =
     !lockedProduct &&
@@ -247,14 +308,17 @@ export function InventoryAdjustmentModal({
 
     // Un error de un intento anterior no pertenece a esta confirmación.
     adjustment.reset();
+    setConfirmRead((current) => current + 1);
     setConfirmOpen(true);
   }
 
   async function handleConfirm() {
-    if (!canConfirm) {
+    if (!canConfirm || !selectedProduct || !confirmEffect || confirmStatus !== "ready") {
       return;
     }
 
+    const productName = selectedProduct.name;
+    const expectedStockAfter = confirmEffect.stockAfter;
     const input = {
       productId,
       quantityDelta,
@@ -268,14 +332,23 @@ export function InventoryAdjustmentModal({
       return;
     }
 
+    let movement: { stockAfter?: unknown } | null | undefined;
+
     try {
-      await adjustment.mutateAsync({ ...input, clientRequestId });
+      movement = await adjustment.mutateAsync({ ...input, clientRequestId });
     } catch (error) {
       requestAttempt.fail(error);
+      // El rechazo puede deberse a que el stock cambió: la confirmación lo relee.
+      void freshProductQuery.refetch();
       return;
     }
 
     requestAttempt.succeed();
+    showToast({
+      description: describeFinalStock(movement?.stockAfter, expectedStockAfter),
+      title: `Ajuste registrado: ${productName}`,
+      tone: "success",
+    });
 
     setConfirmOpen(false);
     resetForm();
@@ -425,10 +498,18 @@ export function InventoryAdjustmentModal({
         <ConfirmActionModal
           confirmLabel="Registrar movimiento"
           description="Revisa el efecto sobre el stock antes de registrar el movimiento."
-          effects={buildStockAdjustmentConfirmEffects(selectedProduct.name, effect)}
+          effects={
+            confirmEffect
+              ? buildStockAdjustmentConfirmEffects(selectedProduct.name, confirmEffect)
+              : undefined
+          }
           error={adjustment.error ? describeStockRequestError(adjustment.error) : null}
           isPending={adjustment.isPending}
           onConfirm={handleConfirm}
+          onRetry={() => void freshProductQuery.refetch()}
+          status={confirmStatus}
+          statusHint={confirmStatus === "ready" ? undefined : "No se ha registrado nada."}
+          statusMessage={confirmStatusMessage}
           onOpenChange={(nextOpen) => {
             if (!nextOpen) {
               setConfirmOpen(false);
@@ -438,6 +519,11 @@ export function InventoryAdjustmentModal({
           open={confirmOpen && !guard.dialog.open}
           title="Confirmar ajuste de stock"
         >
+          {stockChanged && confirmStatus === "ready" ? (
+            <p className="mb-2 font-medium text-foreground" role="status">
+              El stock cambió: ahora es {freshStock}.
+            </p>
+          ) : null}
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
             <dt>Producto</dt>
             <dd className="break-words font-medium text-foreground">

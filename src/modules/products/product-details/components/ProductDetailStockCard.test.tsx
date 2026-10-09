@@ -50,6 +50,11 @@ describe("ProductDetailStockCard · Ajustar stock (PRO-03)", () => {
     const api = installFetchStub((url) => {
       gets.push(url);
 
+      // Relectura del stock al abrir la confirmación (CAOS-04).
+      if (url === "/api/products/prod-1") {
+        return { ...product, currentStock: 7, isActive: true };
+      }
+
       return { items: [], limit: 100, skip: 0, total: 0 };
     });
 
@@ -75,7 +80,7 @@ describe("ProductDetailStockCard · Ajustar stock (PRO-03)", () => {
       await screen.findByRole("dialog", { name: "Confirmar ajuste de stock" }),
     );
 
-    expect(confirmation.getByRole("listitem")).toHaveTextContent(
+    expect(await confirmation.findByRole("listitem")).toHaveTextContent(
       /\+4 Caja Cola x6\s*Stock 7\s*pasa a\s*11/,
     );
     expect(api.posts).toHaveLength(0);

@@ -20,6 +20,7 @@ import {
   type CashCloseSettings,
 } from "./cashCloseSettings.schemas";
 import type { CreateStoreUserInput } from "./createStoreUserSchema";
+import { assertStoreKeepsActiveAdmin, removesActiveAdmin } from "./lastActiveAdmin";
 import { parsePricingSettings, type PricingSettings } from "./pricingSettings.schemas";
 import type { SettingsInput, UserProfileInput } from "./settings.mock-server";
 import { DEFAULT_TAX_RATE_UNAVAILABLE_MESSAGE } from "./taxRates.schemas";
@@ -292,12 +293,58 @@ export async function listUsers(searchParams: URLSearchParams, storeId: string) 
   };
 }
 
+/**
+ * CAOS-03: quitar el rol `admin` o desactivar al último administrador activo de
+ * la tienda se rechaza con 409. Es una lectura previa, no un cerrojo: dos
+ * peticiones simultáneas que degraden a los dos últimos administradores pueden
+ * pasar ambas la comprobación y dejar la tienda sin ninguno (carrera residual
+ * aceptada; cerrarla exige una RPC o un trigger en la base).
+ */
+async function assertUpdateKeepsActiveAdmin(
+  supabase: RouteSupabaseClient,
+  id: string,
+  input: UserProfileInput,
+  storeId: string,
+) {
+  if ((input.role === undefined || input.role === "admin") && input.isActive !== false) {
+    return;
+  }
+
+  const { data: current, error } = await supabase
+    .from("profiles")
+    .select("role, is_active")
+    .eq("id", id)
+    .eq("store_id", storeId)
+    .maybeSingle<{ is_active: boolean; role: string }>();
+
+  throwIfSupabaseError(error);
+
+  // Sin fila (no existe o es de otra tienda) responde el 404 de la actualización.
+  if (!current || !removesActiveAdmin({ isActive: current.is_active, role: current.role }, input)) {
+    return;
+  }
+
+  const { count, error: countError } = await supabase
+    .from("profiles")
+    .select("id", { count: "exact", head: true })
+    .eq("store_id", storeId)
+    .eq("role", "admin")
+    .eq("is_active", true)
+    .neq("id", id);
+
+  throwIfSupabaseError(countError);
+  assertStoreKeepsActiveAdmin(count ?? 0);
+}
+
 export async function updateUser(id: string, input: UserProfileInput, storeId: string) {
   if (input.role !== undefined && !isStoreUserRole(input.role)) {
     throw new ApiError(400, "BAD_REQUEST", "Rol no permitido para usuarios de tienda.");
   }
 
   const supabase = await createRouteSupabaseClient();
+
+  await assertUpdateKeepsActiveAdmin(supabase, id, input, storeId);
+
   const { data, error } = await supabase
     .from("profiles")
     .update(toProfileUpdate(input))

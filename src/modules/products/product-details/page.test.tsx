@@ -257,7 +257,7 @@ describe("ProductDetailsPage", () => {
     await user.click(card.getByRole("button", { name: "Actualizar precio" }));
     // CNF-07: el cambio se confirma en el modal.
     await user.click(
-      within(await screen.findByRole("dialog")).getByRole("button", { name: "Cambiar precio" }),
+      await within(await screen.findByRole("dialog")).findByRole("button", { name: "Cambiar precio" }),
     );
 
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -284,7 +284,7 @@ describe("ProductDetailsPage", () => {
     await user.click(card.getByRole("button", { name: "Actualizar precio" }));
     // CNF-07: el cambio se confirma en el modal.
     await user.click(
-      within(await screen.findByRole("dialog")).getByRole("button", { name: "Cambiar precio" }),
+      await within(await screen.findByRole("dialog")).findByRole("button", { name: "Cambiar precio" }),
     );
 
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -299,7 +299,7 @@ describe("ProductDetailsPage", () => {
     await user.click(card.getByRole("button", { name: "Actualizar precio" }));
     // CNF-07: el cambio se confirma en el modal.
     await user.click(
-      within(await screen.findByRole("dialog")).getByRole("button", { name: "Cambiar precio" }),
+      await within(await screen.findByRole("dialog")).findByRole("button", { name: "Cambiar precio" }),
     );
 
     // En blanco viaja vacío: el servidor lo guarda como "sin motivo".
@@ -418,7 +418,7 @@ describe("ProductDetailsPage", () => {
       await user.click(card.getByRole("button", { name: "Actualizar precio" }));
       // CNF-07: el cambio se confirma en el modal.
       await user.click(
-        within(await screen.findByRole("dialog")).getByRole("button", { name: "Cambiar precio" }),
+        await within(await screen.findByRole("dialog")).findByRole("button", { name: "Cambiar precio" }),
       );
 
       expect(await screen.findByText("No pudimos actualizar el producto")).toBeInTheDocument();
@@ -443,6 +443,69 @@ describe("ProductDetailsPage", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
     expect(screen.getByText("No autorizado para cambiar precios")).toBeInTheDocument();
+    expect(card.getByLabelText("Precio REF")).toHaveValue("13");
+  });
+
+  it("CAOS-04: si otro cambió el precio mientras se editaba, la confirmación lo relee, lo avisa y parte del precio fresco", async () => {
+    const user = renderPage();
+    const card = within(
+      (await screen.findByRole("heading", { name: "Cambio rápido de precio" })).closest(
+        "section",
+      ) as HTMLElement,
+    );
+
+    await user.click(card.getByRole("button", { name: "30 %" }));
+    // Otro usuario lo sube a 20 con el formulario ya relleno.
+    productData = { ...product, salePriceRef: 20 };
+    await user.click(card.getByRole("button", { name: "Actualizar precio" }));
+
+    const dialog = within(await screen.findByRole("dialog"));
+
+    expect(
+      await dialog.findByText("El precio cambió mientras editabas: ahora es ref 20.00."),
+    ).toBeInTheDocument();
+    expect(dialog.getByTestId("price-change-effect")).toHaveTextContent(
+      /Precio\s*ref 20\.00\s*pasa a\s*ref 13\.00/,
+    );
+
+    await user.click(dialog.getByRole("button", { name: "Cambiar precio" }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].body).toMatchObject({ expectedCostRef: 10, salePriceRef: 13 });
+  });
+
+  it("CAOS-04: si la relectura falla, la confirmación lo dice sin dejar confirmar y el detalle sigue en pantalla", async () => {
+    const user = renderPage();
+    const card = within(
+      (await screen.findByRole("heading", { name: "Cambio rápido de precio" })).closest(
+        "section",
+      ) as HTMLElement,
+    );
+    const loadedFetch = global.fetch;
+
+    await user.click(card.getByRole("button", { name: "30 %" }));
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      !init?.method && new URL(String(input), "http://localhost").pathname === "/api/products/p-1"
+        ? Promise.resolve(
+            jsonResponse({ error: { code: "INTERNAL_ERROR", message: "Sin servicio" } }, 500),
+          )
+        : loadedFetch(input, init),
+    ) as unknown as typeof fetch;
+    await user.click(card.getByRole("button", { name: "Actualizar precio" }));
+
+    const dialog = within(await screen.findByRole("dialog"));
+
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      "No se pudo comprobar el precio actual.",
+    );
+    expect(dialog.queryByRole("button", { name: "Cambiar precio" })).not.toBeInTheDocument();
+    expect(screen.queryByText("No pudimos cargar el producto")).not.toBeInTheDocument();
+    expect(posts).toHaveLength(0);
+
+    await user.click(dialog.getByRole("button", { name: "Cerrar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // El formulario conserva lo tecleado.
     expect(card.getByLabelText("Precio REF")).toHaveValue("13");
   });
 

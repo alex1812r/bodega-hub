@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
@@ -9,6 +10,7 @@ import { ProductKardexCard } from "@/modules/inventory/components/ProductKardexC
 import { withChainedReturnTo } from "@/modules/inventory/utils/chainedReturnTo";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
+import { apiFetch } from "@/shared/api/apiFetch";
 import { Can } from "@/shared/auth/Can";
 import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
 import { usePermission } from "@/shared/auth/usePermission";
@@ -28,6 +30,8 @@ import {
 } from "../components/price-review/PriceReviewDetailNotice";
 import {
   type ProductInput,
+  type ProductWithCategory,
+  productsQueryKeys,
   useAllCategories,
   useProduct,
   useProductSuppliers,
@@ -65,6 +69,7 @@ function ProductDetails({ productId = "prod-drill" }: ProductDetailsPageProps) {
   // URL del detalle con su pestaña y su `returnTo`: a ella vuelven los enlaces que salen de aquí.
   const detailUrl = useProductDetailUrl();
   const product = useProduct(productId);
+  const queryClient = useQueryClient();
   const categories = useAllCategories();
   // Semáforo y chips de la tienda; sin datos (cargando o error) valen los por defecto.
   const pricingSettings = usePricingSettings();
@@ -116,7 +121,29 @@ function ProductDetails({ productId = "prod-drill" }: ProductDetailsPageProps) {
     reason: string,
     expectedCostRef: number,
   ) {
-    await quickPriceUpdate.mutateAsync({ expectedCostRef, reason, salePriceRef });
+    const result = await quickPriceUpdate.mutateAsync({ expectedCostRef, reason, salePriceRef });
+
+    return {
+      previousSalePriceRef: result.history.previousSalePriceRef,
+      salePriceRef: result.product.salePriceRef,
+    };
+  }
+
+  // CAOS-04: la confirmación del cambio rápido relee el producto antes de pintar su
+  // efecto. Es una lectura aparte de la del detalle: si falla, lo dice la confirmación
+  // y la página sigue en pantalla; si llega, el detalle se pone al día con ella.
+  async function refreshProductPricing() {
+    const fresh = await queryClient.fetchQuery({
+      gcTime: 0,
+      queryFn: () => apiFetch<ProductWithCategory>(`/api/products/${productId}`),
+      queryKey: [...productsQueryKeys.detail(productId), "price-confirm"],
+      retry: false,
+      staleTime: 0,
+    });
+
+    queryClient.setQueryData(productsQueryKeys.detail(productId), fresh);
+
+    return { currentCostRef: fresh.currentCostRef, currentPriceRef: fresh.salePriceRef };
   }
 
   if (product.isLoading) {
@@ -212,6 +239,7 @@ function ProductDetails({ productId = "prod-drill" }: ProductDetailsPageProps) {
                 currentCostRef={data.currentCostRef}
                 currentPriceRef={data.salePriceRef}
                 isSubmitting={quickPriceUpdate.isPending}
+                onRefreshProduct={refreshProductPricing}
                 onSubmit={handleQuickPriceUpdate}
                 pricing={pricingSettings.data}
                 productName={data.name}

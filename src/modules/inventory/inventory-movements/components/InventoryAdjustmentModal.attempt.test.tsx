@@ -77,6 +77,8 @@ async function submitAndConfirm() {
 
   const dialog = await screen.findByRole("dialog", { name: CONFIRM_TITLE });
 
+  // El botón aparece cuando la confirmación terminó de releer el stock (CAOS-04).
+  await within(dialog).findByRole("button", { name: "Registrar movimiento" });
   fireEvent.click(confirmButton(dialog));
 
   return dialog;

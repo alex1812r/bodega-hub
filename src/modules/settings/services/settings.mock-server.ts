@@ -17,6 +17,11 @@ import {
 } from "./cashCloseSettings.schemas";
 import type { CreateStoreUserInput } from "./createStoreUserSchema";
 import {
+  assertStoreKeepsActiveAdmin,
+  isActiveAdmin,
+  removesActiveAdmin,
+} from "./lastActiveAdmin";
+import {
   defaultPricingSettings,
   parsePricingSettings,
   type PricingSettings,
@@ -150,6 +155,15 @@ export function updateUser(id: string, input: UserProfileInput, storeId: string)
 
   if (!user || user.storeId == null) {
     throw new ApiError(404, "NOT_FOUND", "Usuario no encontrado.");
+  }
+
+  // Misma regla que el servicio real (CAOS-03): la tienda conserva un administrador activo.
+  if (removesActiveAdmin(user, input)) {
+    assertStoreKeepsActiveAdmin(
+      mockUserProfiles.filter(
+        (profile) => profile.id !== id && profile.storeId === storeId && isActiveAdmin(profile),
+      ).length,
+    );
   }
 
   Object.assign(user, input);

@@ -52,7 +52,24 @@ export function purchaseNewDraftStorageKey(session: PurchaseDraftSession) {
   return `${purchaseDraftStorageKey(session)}:nuevo`;
 }
 
-const amountSchema = z.number().nonnegative();
+/**
+ * Mayor número que el formulario deja escribir: `NumberInput` corta a los 15 dígitos.
+ * Un valor guardado por encima no salió del formulario (CAOS-10: con 1e300 el total
+ * daba «Infinity» con «Registrar compra» activo).
+ */
+export const PURCHASE_DRAFT_MAX_NUMBER = 999_999_999_999_999;
+
+/**
+ * Tope de líneas de un borrador (CAOS-10: 2 000 líneas congelaban la pantalla 20 s).
+ * El esquema de alta de compras del BFF no fija un máximo de líneas; el único que
+ * define el BFF de compras son las 500 de `receivePurchaseBodySchema` (recepción).
+ */
+export const PURCHASE_DRAFT_MAX_LINES = 500;
+
+/** `z.number()` ya descarta NaN e infinitos; aquí además negativos y lo que el formulario no admite. */
+const amountSchema = z.number().nonnegative().max(PURCHASE_DRAFT_MAX_NUMBER);
+/** Porcentaje de IVA: el mismo tope que `purchaseItemInputSchema`. */
+const taxRateSchema = z.number().nonnegative().max(100);
 const costCurrencySchema = z.enum(["ves", "ref"]);
 
 const draftItemSchema = z.object({
@@ -66,7 +83,7 @@ const draftItemSchema = z.object({
   packUnitId: z.string().optional(),
   productId: z.string().min(1),
   quantity: amountSchema,
-  taxRate: amountSchema,
+  taxRate: taxRateSchema,
   unitCostRef: amountSchema,
   unitCostVes: amountSchema,
   unitsPerPack: amountSchema,
@@ -83,14 +100,14 @@ const packUnitSchema = z.object({
   isDefault: z.boolean(),
   label: z.string(),
   supplierProductId: z.string(),
-  unitsPerPack: z.number().positive(),
+  unitsPerPack: z.number().positive().max(PURCHASE_DRAFT_MAX_NUMBER),
 });
 
 const lineMetaSchema = z.object({
   name: z.string(),
   packUnits: z.array(packUnitSchema).optional(),
   sku: z.string(),
-  taxRate: amountSchema,
+  taxRate: taxRateSchema,
 });
 
 const storedPurchaseDraftSchema = z.object({
@@ -102,7 +119,7 @@ const storedPurchaseDraftSchema = z.object({
   lines: z.object({
     /** Elección «Desarmar al recibir» por línea (COM-14); ausente = ninguna tocada. */
     disassemble: z.record(z.string(), z.boolean()).optional(),
-    items: z.array(draftItemSchema),
+    items: z.array(draftItemSchema).max(PURCHASE_DRAFT_MAX_LINES),
     locks: z.object({ locked: z.record(z.string(), z.literal(true)) }),
     review: z.object({
       baselines: z.record(z.string(), snapshotSchema),
@@ -115,7 +132,7 @@ const storedPurchaseDraftSchema = z.object({
   }),
   notes: z.string(),
   /** Tasa con la que se calcularon los costos guardados; al restaurar manda la vigente. */
-  rateVes: z.number().positive(),
+  rateVes: z.number().positive().max(PURCHASE_DRAFT_MAX_NUMBER),
   /** ISO 8601. */
   savedAt: z.string().refine((value) => !Number.isNaN(Date.parse(value))),
   status: z.enum(["recibido", "pedido"]),
@@ -162,8 +179,9 @@ export function serializePurchaseDraft(
 
 /**
  * Lee un borrador guardado. Devuelve `null`, sin avisar, si no hay nada, si el
- * texto está corrupto, si es de otra versión o si lo guardó otra tienda u otro
- * usuario.
+ * texto está corrupto (también con un número no finito, negativo o mayor de lo que
+ * el formulario admite, o con más de `PURCHASE_DRAFT_MAX_LINES` líneas), si es de
+ * otra versión o si lo guardó otra tienda u otro usuario.
  */
 export function parseStoredPurchaseDraft(
   raw: string | null,

@@ -44,10 +44,10 @@ const otherPage: UserProfileMock = {
 };
 
 /** Como la página: los cambios pendientes viven por encima de la tabla. */
-function Harness({ users }: { users: UserProfileMock[] }) {
+function Harness({ totalUsers, users }: { totalUsers?: number; users: UserProfileMock[] }) {
   const changes = usePendingUserChanges();
 
-  return <SettingsUsersTable changes={changes} users={users} />;
+  return <SettingsUsersTable changes={changes} totalUsers={totalUsers} users={users} />;
 }
 
 function installServer({ reject = false } = {}) {
@@ -337,5 +337,167 @@ describe("SettingsUsersTable · rol y estado con confirmación (CNF-11)", () => 
     expect(screen.queryByText(/cambios sin guardar en otra/)).not.toBeInTheDocument();
     expect(rowOf("Ana Pérez").getByLabelText("Rol")).toHaveValue("contador");
     expect(api.writes()).toHaveLength(0);
+  });
+});
+
+describe("SettingsUsersTable · cuenta propia y último administrador (CAOS-03)", () => {
+  const rosa: UserProfileMock = {
+    email: "rosa@demo.test",
+    id: "user-rosa",
+    isActive: true,
+    name: "Rosa Admin",
+    role: "admin",
+  };
+  const SERVER_MESSAGE = "La tienda debe conservar al menos un administrador activo.";
+
+  /** Sesión de `currentUserId`; `reject` hace que el servidor conteste su 409. */
+  function installSession(currentUserId: string, { reject = false } = {}) {
+    return installApi(({ body, method, url }) => {
+      if (url === "/api/auth/me") {
+        return apiData({ permissions: ["users.manage"], role: "admin", user: { id: currentUserId } });
+      }
+
+      if (url.startsWith("/api/users/") && method === "PATCH") {
+        return reject
+          ? { payload: { error: { code: "CONFLICT", message: SERVER_MESSAGE } }, status: 409 }
+          : apiData({ ...luis, ...(body as object) });
+      }
+
+      return apiData({ items: [], limit: 10, skip: 0, total: 0 });
+    });
+  }
+
+  function renderComplete(users: UserProfileMock[], totalUsers = users.length) {
+    const user = userEvent.setup({ delay: null });
+
+    render(<Harness totalUsers={totalUsers} users={users} />, { wrapper: createSettingsWrapper() });
+
+    return user;
+  }
+
+  async function openConfirm(
+    user: ReturnType<typeof userEvent.setup>,
+    name: string,
+    field: "Estado" | "Rol",
+    value: string,
+  ) {
+    const row = rowOf(name);
+
+    await user.selectOptions(row.getByLabelText(field), value);
+    await user.click(row.getByRole("button", { name: `Guardar cambios de ${name}` }));
+
+    return screen.findByRole("dialog");
+  }
+
+  it("quitarse a uno mismo el rol de administrador: dice que es TU cuenta, en peligro", async () => {
+    const api = installSession(luis.id);
+    const user = renderComplete([ana, luis, rosa]);
+    const dialog = await openConfirm(user, "Luis Admin", "Rol", "vendedor");
+
+    expect(
+      await within(dialog).findByText(
+        "Es tu propia cuenta: perderás la administración de la tienda en cuanto guardes y no podrás deshacerlo tú; tendrá que devolvértela otro administrador.",
+      ),
+    ).toHaveClass("text-destructive");
+
+    const confirm = within(dialog).getByRole("button", { name: "Cambiar rol" });
+
+    expect(confirm).toHaveClass("bg-red-600");
+    expect(within(dialog).getByRole("button", { name: "Cancelar" })).toHaveFocus();
+
+    await user.dblClick(confirm);
+
+    await waitFor(() => expect(api.writes()).toHaveLength(1));
+    expect(api.writes()[0]).toEqual({
+      body: { role: "vendedor" },
+      method: "PATCH",
+      url: "/api/users/user-luis",
+    });
+  });
+
+  it("desactivarse a uno mismo: dice que no podrás volver a entrar", async () => {
+    installSession(luis.id);
+    const user = renderComplete([ana, luis, rosa]);
+    const dialog = await openConfirm(user, "Luis Admin", "Estado", "false");
+
+    expect(
+      await within(dialog).findByText(
+        "Es tu propia cuenta: se cerrará tu acceso y no podrás volver a entrar hasta que otro administrador te reactive.",
+      ),
+    ).toHaveClass("text-destructive");
+    expect(within(dialog).getByRole("button", { name: "Desactivar usuario" })).toHaveClass(
+      "bg-red-600",
+    );
+  });
+
+  it("cambiar el rol propio sin perder la administración también avisa y va en peligro", async () => {
+    installSession(ana.id);
+    const user = renderComplete([ana, luis, rosa]);
+    const dialog = await openConfirm(user, "Ana Pérez", "Rol", "contador");
+
+    expect(
+      await within(dialog).findByText(
+        "Es tu propia cuenta: tus permisos cambian en cuanto guardes.",
+      ),
+    ).toHaveClass("text-destructive");
+    expect(within(dialog).getByRole("button", { name: "Cambiar rol" })).toHaveClass("bg-red-600");
+  });
+
+  it("el cambio de otro usuario no habla de cuenta propia", async () => {
+    installSession(luis.id);
+    const user = renderComplete([ana, luis, rosa]);
+    const dialog = await openConfirm(user, "Rosa Admin", "Rol", "vendedor");
+
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Cambiar rol" })).toBeInTheDocument(),
+    );
+    expect(dialog).not.toHaveTextContent("Es tu propia cuenta");
+  });
+
+  it.each([
+    ["quitarle el rol", "Rol", "vendedor"],
+    ["desactivarlo", "Estado", "false"],
+  ] as const)(
+    "último administrador activo con toda la lista a la vista: %s queda bloqueado con el motivo",
+    async (_label, field, value) => {
+      const api = installSession(luis.id);
+      // Marta no cuenta (inactiva aunque fuera admin); Ana no es administradora.
+      const user = renderComplete([ana, luis, { ...marta, role: "admin" }]);
+      const dialog = await openConfirm(user, "Luis Admin", field, value);
+
+      expect(within(dialog).getByRole("alert")).toHaveTextContent(
+        "Luis Admin es el único administrador activo de la tienda: nombra o reactiva a otro administrador antes de quitarle el rol o desactivarlo.",
+      );
+      expect(dialog).toHaveTextContent("No se ha cambiado nada.");
+      expect(await within(dialog).findByText(/^Es tu propia cuenta:/)).toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: /Cambiar rol|Desactivar usuario/ })).not.toBeInTheDocument();
+
+      await user.click(within(dialog).getByRole("button", { name: "Cerrar" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(api.writes()).toHaveLength(0);
+      // El cambio sigue pendiente: se puede descartar o guardar cuando haya otro administrador.
+      expect(rowOf("Luis Admin").getByRole("button", { name: /Descartar/ })).toBeInTheDocument();
+    },
+  );
+
+  it("con más usuarios en otras páginas no se bloquea a ciegas: decide el servidor y su 409 se muestra tal cual", async () => {
+    const api = installSession(luis.id, { reject: true });
+    const user = renderComplete([ana, luis], 25);
+    const dialog = await openConfirm(user, "Luis Admin", "Rol", "vendedor");
+
+    await user.click(within(dialog).getByRole("button", { name: "Cambiar rol" }));
+
+    expect(await within(dialog).findByText(SERVER_MESSAGE)).toHaveAttribute("role", "alert");
+    expect(api.writes()).toHaveLength(1);
+  });
+
+  it("con otro administrador activo a la vista no se bloquea", async () => {
+    installSession(ana.id);
+    const user = renderComplete([ana, luis, rosa]);
+    const dialog = await openConfirm(user, "Luis Admin", "Estado", "false");
+
+    expect(within(dialog).getByRole("button", { name: "Desactivar usuario" })).toBeEnabled();
+    expect(dialog).not.toHaveTextContent("único administrador activo");
   });
 });

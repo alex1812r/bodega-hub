@@ -158,8 +158,9 @@ describe("InventoryAdjustmentModal · guardia de datos tecleados (CNF-15)", () =
 
     await fill(user);
     submitForm();
+    // «Cancelar» aparece cuando la confirmación terminó de releer el stock (CAOS-04).
     await user.click(
-      within(await screen.findByRole("dialog", { name: CONFIRM_TITLE })).getByRole("button", {
+      await within(await screen.findByRole("dialog", { name: CONFIRM_TITLE })).findByRole("button", {
         name: "Cancelar",
       }),
     );
@@ -193,8 +194,9 @@ describe("InventoryAdjustmentModal · guardia de datos tecleados (CNF-15)", () =
     api.respondToNextPost({ data: { id: "mov-1" } });
     await fill(user);
     submitForm();
+    // El botón aparece cuando la confirmación terminó de releer el stock (CAOS-04).
     await user.click(
-      within(await screen.findByRole("dialog", { name: CONFIRM_TITLE })).getByRole("button", {
+      await within(await screen.findByRole("dialog", { name: CONFIRM_TITLE })).findByRole("button", {
         name: "Registrar movimiento",
       }),
     );

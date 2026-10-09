@@ -13,8 +13,16 @@ import {
 } from "../utils/rolePermissionDiff";
 
 type UserChangeConfirmModalProps = {
+  /**
+   * Con la lista de usuarios completa a la vista, este cambio dejaría la tienda sin
+   * ningún administrador activo: el diálogo se bloquea con el motivo. Es un atajo:
+   * quien decide es el servidor (409), también cuando aquí no se pudo saber.
+   */
+  blocksLastActiveAdmin?: boolean;
   /** Cambio ya depurado: solo lo que difiere del usuario cargado. */
   change: PendingUserChange;
+  /** El usuario afectado es quien tiene la sesión abierta. */
+  isOwnAccount?: boolean;
   onClose: () => void;
   /** El servidor guardó el cambio: la fila deja de tener cambios pendientes. */
   onSaved: () => void;
@@ -57,14 +65,31 @@ function getConfirmLabel(change: PendingUserChange) {
   return change.role !== undefined ? "Cambiar rol" : "Reactivar usuario";
 }
 
+function getOwnAccountNotice(isDeactivating: boolean, losesAdministration: boolean) {
+  if (isDeactivating) {
+    return "Es tu propia cuenta: se cerrará tu acceso y no podrás volver a entrar hasta que otro administrador te reactive.";
+  }
+
+  if (losesAdministration) {
+    return "Es tu propia cuenta: perderás la administración de la tienda en cuanto guardes y no podrás deshacerlo tú; tendrá que devolvértela otro administrador.";
+  }
+
+  return "Es tu propia cuenta: tus permisos cambian en cuanto guardes.";
+}
+
 /**
  * Confirmación de un cambio de rol y/o de estado de un usuario de la tienda
  * (CNF-11). Muestra los permisos efectivos que gana y pierde y lo que supone
  * desactivarlo o reactivarlo; no decide nada que le toque al servidor: si este
  * rechaza el cambio, su mensaje se muestra aquí tal cual.
+ *
+ * CAOS-03: si el cambio es sobre la propia cuenta lo dice, en peligro; y si se ve
+ * que dejaría la tienda sin administrador activo, no deja confirmar.
  */
 export function UserChangeConfirmModal({
+  blocksLastActiveAdmin = false,
   change,
+  isOwnAccount = false,
   onClose,
   onSaved,
   user,
@@ -97,6 +122,9 @@ export function UserChangeConfirmModal({
       error={updateUser.error?.message}
       isPending={updateUser.isPending}
       onConfirm={handleConfirm}
+      status={blocksLastActiveAdmin ? "blocked" : "ready"}
+      statusHint="No se ha cambiado nada."
+      statusMessage={`${user.name} es el único administrador activo de la tienda: nombra o reactiva a otro administrador antes de quitarle el rol o desactivarlo.`}
       onOpenChange={(open) => {
         if (!open) {
           updateUser.reset();
@@ -177,7 +205,15 @@ export function UserChangeConfirmModal({
         </div>
       )}
       title={`¿Guardar los cambios de ${user.name}?`}
-      variant={isDeactivating || roleEffect?.losesAdministration ? "danger" : "default"}
-    />
+      variant={
+        isOwnAccount || isDeactivating || roleEffect?.losesAdministration ? "danger" : "default"
+      }
+    >
+      {isOwnAccount ? (
+        <p className="font-medium text-destructive">
+          {getOwnAccountNotice(isDeactivating, roleEffect?.losesAdministration ?? false)}
+        </p>
+      ) : null}
+    </ConfirmActionModal>
   );
 }

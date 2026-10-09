@@ -8,6 +8,8 @@ import {
   formatPurchaseDraftAge,
   isPurchaseDraftWorthSaving,
   parseStoredPurchaseDraft,
+  PURCHASE_DRAFT_MAX_LINES,
+  PURCHASE_DRAFT_MAX_NUMBER,
   PURCHASE_DRAFT_VERSION,
   purchaseDraftStorageKey,
   restorePurchaseDraft,
@@ -158,6 +160,71 @@ describe("serializar y leer el borrador de compra", () => {
 
     expect(parseStoredPurchaseDraft(JSON.stringify(negative), session)).toBeNull();
     expect(parseStoredPurchaseDraft(JSON.stringify(mixed), session)).toBeNull();
+  });
+});
+
+describe("borrador con números absurdos o demasiadas líneas (CAOS-10)", () => {
+  type RawDraft = {
+    discountRef: number;
+    lineMeta: Record<string, { taxRate: number }>;
+    lines: {
+      items: Array<Record<string, unknown>>;
+      review: { baselines: Record<string, { item: Record<string, unknown> }> };
+    };
+    rateVes: number;
+  };
+
+  const rawDraft = () =>
+    JSON.parse(serializePurchaseDraft(buildContent(), session, savedAt)) as RawDraft;
+  const read = (draft: RawDraft) => parseStoredPurchaseDraft(JSON.stringify(draft), session);
+
+  it.each([
+    ["una cantidad de 1e300", (draft: RawDraft) => { draft.lines.items[1].quantity = 1e300; }],
+    ["un costo de 1e300", (draft: RawDraft) => { draft.lines.items[1].unitCostRef = 1e300; }],
+    ["un costo en Bs de 16 cifras", (draft: RawDraft) => { draft.lines.items[0].packCostVes = 1e15; }],
+    ["un descuento de 1e300", (draft: RawDraft) => { draft.discountRef = 1e300; }],
+    ["una tasa de 1e300", (draft: RawDraft) => { draft.rateVes = 1e300; }],
+    ["un IVA de línea de 5000 %", (draft: RawDraft) => { draft.lines.items[0].taxRate = 5000; }],
+    ["un IVA de categoría de 5000 %", (draft: RawDraft) => { draft.lineMeta["prod-cable"].taxRate = 5000; }],
+    [
+      "una foto de revisión con 1e300",
+      (draft: RawDraft) => { draft.lines.review.baselines["line-cable"].item.quantity = 1e300; },
+    ],
+  ])("descarta un borrador con %s", (_label, corrupt) => {
+    const draft = rawDraft();
+
+    corrupt(draft);
+
+    expect(read(draft)).toBeNull();
+  });
+
+  it("un número no finito escrito a mano (1e999) también lo descarta", () => {
+    const raw = JSON.stringify(rawDraft()).replace('"discountRef":1.5', '"discountRef":1e999');
+
+    expect(raw).toContain("1e999");
+    expect(parseStoredPurchaseDraft(raw, session)).toBeNull();
+  });
+
+  it("admite el mayor número que el formulario deja escribir (15 cifras)", () => {
+    const draft = rawDraft();
+
+    draft.lines.items[1].quantity = PURCHASE_DRAFT_MAX_NUMBER;
+
+    expect(read(draft)).not.toBeNull();
+  });
+
+  it("descarta un borrador con más líneas que el tope, y admite justo el tope", () => {
+    const line = (index: number) => ({ ...cable, id: `line-${index}` });
+    const withLines = (count: number) => {
+      const draft = rawDraft();
+
+      draft.lines.items = Array.from({ length: count }, (_, index) => line(index));
+      return draft;
+    };
+
+    expect(read(withLines(PURCHASE_DRAFT_MAX_LINES))).not.toBeNull();
+    expect(read(withLines(PURCHASE_DRAFT_MAX_LINES + 1))).toBeNull();
+    expect(read(withLines(2000))).toBeNull();
   });
 });
 

@@ -7,11 +7,13 @@ import {
   storeUserRoles,
   type StoreUserRole,
 } from "@/shared/auth/permissions";
+import { usePermission } from "@/shared/auth/usePermission";
 import { Badge } from "@/shared/components/Badge";
 import { Button } from "@/shared/components/Button";
 import { SelectField } from "@/shared/components/SelectField";
 import type { UserProfileMock } from "@/shared/mocks/erp-data";
 
+import { isActiveAdmin, removesActiveAdmin } from "../../services/lastActiveAdmin";
 import {
   getEffectiveUserChange,
   type PendingUserChange,
@@ -108,6 +110,11 @@ function SettingsUserRow({ change, changes, onSave, user }: SettingsUserRowProps
 
 type SettingsUsersTableProps = {
   changes: PendingUserChanges;
+  /**
+   * Total de usuarios de la tienda. Solo si `users` los trae todos (una sola página)
+   * se puede saber aquí que alguien es el último administrador activo.
+   */
+  totalUsers?: number;
   users: UserProfileMock[];
 };
 
@@ -116,12 +123,23 @@ type SettingsUsersTableProps = {
  * cambio pendiente en la fila; se guarda con «Guardar», tras confirmar lo que
  * gana y pierde ese usuario. Los cambios pendientes de otras páginas se
  * conservan y se avisan aquí.
+ *
+ * CAOS-03: la confirmación avisa si el cambio es sobre la propia cuenta y, con todos
+ * los usuarios a la vista, se bloquea si dejaría la tienda sin administrador activo.
  */
-export function SettingsUsersTable({ changes, users }: SettingsUsersTableProps) {
+export function SettingsUsersTable({ changes, totalUsers, users }: SettingsUsersTableProps) {
+  const { user: currentUser } = usePermission();
   const [confirming, setConfirming] = useState<UserProfileMock | null>(null);
   const confirmingChange = confirming
     ? getEffectiveUserChange(confirming, changes.pending[confirming.id])
     : null;
+  const seesEveryUser = totalUsers !== undefined && totalUsers <= users.length;
+  const blocksLastActiveAdmin =
+    confirming != null &&
+    confirmingChange != null &&
+    seesEveryUser &&
+    removesActiveAdmin(confirming, confirmingChange) &&
+    !users.some((user) => user.id !== confirming.id && isActiveAdmin(user));
   const visibleIds = new Set(users.map((user) => user.id));
   const pendingElsewhere = Object.keys(changes.pending).filter((id) => !visibleIds.has(id)).length;
 
@@ -161,7 +179,9 @@ export function SettingsUsersTable({ changes, users }: SettingsUsersTableProps) 
 
       {confirming && confirmingChange ? (
         <UserChangeConfirmModal
+          blocksLastActiveAdmin={blocksLastActiveAdmin}
           change={confirmingChange}
+          isOwnAccount={currentUser?.id === confirming.id}
           onClose={() => setConfirming(null)}
           onSaved={() => {
             changes.discard(confirming.id);

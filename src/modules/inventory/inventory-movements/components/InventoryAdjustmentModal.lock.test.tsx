@@ -34,11 +34,11 @@ async function fillAndConfirm(quantity: string) {
   fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: quantity } });
   fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: "Conteo físico" } });
   fireEvent.submit(document.getElementById(formId) as HTMLFormElement);
+  // El botón aparece cuando la confirmación terminó de releer el stock (CAOS-04).
   fireEvent.click(
-    within(await screen.findByRole("dialog", { name: "Confirmar ajuste de stock" })).getByRole(
-      "button",
-      { name: "Registrar movimiento" },
-    ),
+    await within(
+      await screen.findByRole("dialog", { name: "Confirmar ajuste de stock" }),
+    ).findByRole("button", { name: "Registrar movimiento" }),
   );
 }
 

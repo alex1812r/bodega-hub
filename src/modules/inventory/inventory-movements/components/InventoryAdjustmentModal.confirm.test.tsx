@@ -25,7 +25,12 @@ const CONFIRM_TITLE = "Confirmar ajuste de stock";
 const uuid = expect.stringMatching(/^[0-9a-f-]{36}$/);
 
 function renderModal(onOpenChange?: (open: boolean) => void) {
-  const api = installFetchStub(() => {
+  // El único GET es la relectura del stock al abrir la confirmación (CAOS-04).
+  const api = installFetchStub((url) => {
+    if (url === "/api/products/prod-cable") {
+      return { ...lockedProduct, isActive: true };
+    }
+
     throw new Error("GET inesperado en el test");
   });
 
@@ -57,7 +62,12 @@ function queryConfirm() {
 async function openConfirm() {
   submitForm();
 
-  return screen.findByRole("dialog", { name: CONFIRM_TITLE });
+  const dialog = await screen.findByRole("dialog", { name: CONFIRM_TITLE });
+
+  // Lista para confirmar: ya releyó el stock.
+  await within(dialog).findByRole("button", { name: "Registrar movimiento" });
+
+  return dialog;
 }
 
 function confirmButton(dialog: HTMLElement) {

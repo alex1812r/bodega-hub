@@ -94,11 +94,20 @@ function queryConfirm() {
   return screen.queryByRole("dialog", { name: CONFIRM_TITLE });
 }
 
+/** La confirmación, ya con el stock releído (CAOS-04): hasta entonces no ofrece confirmar. */
+async function findReadyConfirm() {
+  const dialog = await screen.findByRole("dialog", { name: CONFIRM_TITLE });
+
+  await within(dialog).findByRole("button", { name: "Registrar movimiento" });
+
+  return dialog;
+}
+
 /** CNF-08: el formulario ya no envía; abre la confirmación con el efecto. */
 async function openConfirm() {
   fireEvent.submit(getForm());
 
-  return screen.findByRole("dialog", { name: CONFIRM_TITLE });
+  return findReadyConfirm();
 }
 
 function confirmButton(dialog: HTMLElement) {
@@ -309,7 +318,7 @@ describe("InventoryAdjustmentModal · producto bloqueado y apertura controlada (
     fireEvent.submit(getForm());
     fireEvent.submit(getForm());
 
-    const dialog = await screen.findByRole("dialog", { name: CONFIRM_TITLE });
+    const dialog = await findReadyConfirm();
 
     // Abrir la confirmación no envía nada.
     expect(api.posts).toHaveLength(0);
@@ -504,7 +513,7 @@ describe("InventoryAdjustmentModal · cantidad entera (SHR-09J)", () => {
       await user.click(screen.getByRole("button", { name: "Continuar" }));
     }
 
-    await user.click(confirmButton(await screen.findByRole("dialog", { name: CONFIRM_TITLE })));
+    await user.click(confirmButton(await findReadyConfirm()));
     await waitFor(() => expect(document.getElementById("inventory-adjustment-form")).toBeNull());
 
     expect(api.posts).toHaveLength(1);

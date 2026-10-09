@@ -269,6 +269,7 @@ function SettingsList() {
                     ) : (
                       <SettingsUsersTable
                         changes={pendingUserChanges}
+                        totalUsers={usersQuery.data?.total}
                         users={getPaginatedItems(usersQuery.data)}
                       />
                     )}

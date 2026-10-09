@@ -7,6 +7,7 @@ jest.mock("../../../../lib/supabase/admin-client");
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { mockUserProfiles } from "@/shared/mocks/erp-data";
 
 import { PATCH } from "./route";
 
@@ -76,6 +77,57 @@ describe("/api/users/[id]", () => {
     expect(response.status).toBe(400);
   });
 
+  describe("último administrador activo de la tienda (CAOS-03)", () => {
+    const patchAdmin = (body: Record<string, unknown>) =>
+      PATCH(
+        new Request("http://localhost/api/users/user-admin", {
+          body: JSON.stringify(body),
+          headers: { "content-type": "application/json" },
+          method: "PATCH",
+        }),
+        context("user-admin"),
+      );
+    const storedAdmin = () => mockUserProfiles.find((profile) => profile.id === "user-admin");
+
+    it.each([
+      ["quitarse el rol", { role: "vendedor" }],
+      ["desactivarse", { isActive: false }],
+    ])("responde 409 CONFLICT al %s y no cambia nada", async (_label, body) => {
+      const response = await patchAdmin(body);
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: {
+          code: "CONFLICT",
+          message: "La tienda debe conservar al menos un administrador activo.",
+        },
+      });
+      expect(storedAdmin()).toMatchObject({ isActive: true, role: "admin" });
+    });
+
+    it("con otro administrador activo en la tienda responde 200", async () => {
+      const snapshot = mockUserProfiles.map((profile) => ({ ...profile }));
+
+      mockUserProfiles.push({
+        email: "admin2@example.com",
+        id: "user-admin-2",
+        isActive: true,
+        name: "Admin Dos",
+        role: "admin",
+        storeId: storedAdmin()?.storeId,
+      });
+
+      try {
+        const response = await patchAdmin({ role: "vendedor" });
+
+        expect(response.status).toBe(200);
+        expect((await response.json()).data.role).toBe("vendedor");
+      } finally {
+        mockUserProfiles.splice(0, mockUserProfiles.length, ...snapshot);
+      }
+    });
+  });
+
   describe("supabase data source", () => {
     const mockMaybeSingle = jest.fn();
     const mockSelect = jest.fn(() => ({
@@ -83,6 +135,7 @@ describe("/api/users/[id]", () => {
     }));
     const chain = {
       eq: jest.fn(),
+      maybeSingle: mockMaybeSingle,
       select: mockSelect,
     };
     chain.eq.mockReturnValue(chain);
@@ -103,6 +156,8 @@ describe("/api/users/[id]", () => {
       });
       (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
         from: jest.fn(() => ({
+          // Lectura previa de CAOS-03 (rol y estado actuales del usuario).
+          select: jest.fn(() => chain),
           update: mockUpdate,
         })),
       });
