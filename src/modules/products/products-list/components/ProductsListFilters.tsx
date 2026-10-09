@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, Search } from "lucide-react";
+import Link from "next/link";
 
 import {
   stitchListFilterFieldClassName,
@@ -19,6 +20,8 @@ import {
 type ProductsListFiltersProps = {
   categoryOptions: Array<{ label: string; value: string }>;
   filters: ProductsListFilterState;
+  /** `/inventory` con la búsqueda y la categoría actuales (INV-06); sin `inventory.view` no llega y no hay enlace. */
+  inventoryHref?: string;
   onChange: (patch: Partial<ProductsListFilterState>) => void;
   /** Productos en "Por revisar" (`usePriceReviewSummary`); sin dato, el chip va sin contador. */
   reviewCount?: number;
@@ -49,6 +52,7 @@ function isOneOf<TValue extends string>(
 export function ProductsListFilters({
   categoryOptions,
   filters,
+  inventoryHref,
   onChange,
   reviewCount,
 }: ProductsListFiltersProps) {
@@ -203,6 +207,15 @@ export function ProductsListFilters({
             </span>
           )}
         </button>
+        {/* El stock se filtra en Inventario: aquí solo el atajo, con la búsqueda y la categoría puestas. */}
+        {inventoryHref ? (
+          <Link
+            className="ml-auto rounded-md text-sm font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            href={inventoryHref}
+          >
+            Ver stock en Inventario
+          </Link>
+        ) : null}
       </div>
     </section>
   );

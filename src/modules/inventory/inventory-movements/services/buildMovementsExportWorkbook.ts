@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 
+import { fitExcelCell } from "../../utils/excelCell";
 import {
   movementExportColumns,
   type MovementExportRow,
@@ -27,12 +28,13 @@ export async function buildMovementsExportWorkbook(
   workbook.created = new Date(metadata.exportedAt);
 
   const worksheet = workbook.addWorksheet(sanitizeSheetName(SHEET_NAME));
-  worksheet.addRow([buildMovementsExportContextLabel(metadata.filters)]);
+  // Con filtro de producto todas las filas son suyas: la primera trae su nombre.
+  worksheet.addRow([buildMovementsExportContextLabel(metadata.filters, rows[0]?.product)]);
   worksheet.addRow([]);
   worksheet.addRow(movementExportColumns.map((column) => column.header));
 
   for (const row of rows) {
-    worksheet.addRow(movementExportColumns.map((column) => column.value(row)));
+    worksheet.addRow(movementExportColumns.map((column) => fitExcelCell(column.value(row))));
   }
 
   const headerRow = worksheet.getRow(3);

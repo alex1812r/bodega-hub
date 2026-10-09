@@ -297,11 +297,19 @@ Invalidar `productsQueryKeys.all` tras crear/editar/precio. Crear producto con `
 | `useInventory` | GET | `/api/inventory?lowStock=true` | `inventory.view` |
 | `useInventoryMovements` | GET | `/api/inventory/movements?productId=` | `inventory.view` |
 | `useStockCard` | GET | `/api/inventory/stock-card?productId=` | `inventory.view` |
+| `useProductKardex` | GET | `/api/inventory/kardex?productId=` | `inventory.view` |
 | `useAdjustInventory` | POST | `/api/inventory/adjustments` | `inventory.manage` |
+| `useConvertPackToUnits` | POST | `/api/inventory/conversions` | `inventory.manage` |
 
 Tipos de ajuste: `inventario_inicial`, `ajuste_entrada`, `ajuste_salida`, `devolucion_cliente`, `devolucion_proveedor`.
 
 Invalidar `inventoryQueryKeys.all` y `["products"]` si cambia stock visible en producto.
+
+Formularios que mueven stock (ajuste y conversión; filtros y parámetros completos en [`modules-catalog.md`](modules-catalog.md#inventario)):
+
+- **Clave de idempotencia:** `const attempt = useRequestAttempt({ renewOnContentChange: true })` ([`requestAttempt.ts`](../src/modules/inventory/utils/requestAttempt.ts)). `begin` devuelve el `clientRequestId` a enviar, o `null` si ya hay un envío en vuelo. La clave queda atada al contenido que la estrenó: el reintento del mismo contenido tras un error de resultado incierto (red, 5xx, 409) repite la clave; otro contenido estrena una. Llamar a `attempt.discard()` al cerrar el modal o desmontar el formulario.
+- **Sin red:** las mutaciones que mueven stock van con `networkMode: "always"` y `retry: false`. Con el modo por defecto TanStack Query deja la mutación en pausa y la envía sola al volver la conexión, cuando el usuario ya no la espera.
+- **Volver encadenado:** en una lista a la que se llega con `returnTo`, los enlaces de fila se arman con `withChainedReturnTo(href, urlDeLaLista)` ([`chainedReturnTo.ts`](../src/modules/inventory/utils/chainedReturnTo.ts)) en vez de `withReturnTo`, para que el destino vuelva a la lista y la lista siga sabiendo volver a su origen.
 
 ### Contactos
 

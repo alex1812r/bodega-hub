@@ -1252,17 +1252,65 @@ paths:
   /api/inventory:
     get:
       tags: [Inventory]
-      summary: Listar stock actual
+      summary: Listar stock actual (vista unica de stock)
+      description: >-
+        Una fila por producto ACTIVO de la tienda, ordenada por nombre, con su stock, las entradas y salidas de los
+        ultimos 30 dias, el ultimo movimiento y el estado de stock. Filtros, conteo y paginacion se resuelven en la
+        base (vista `inventory_overview`). Un `skip` mas alla del total responde `200` con `items: []` y el total
+        real. `skip`, `limit`, `minPriceRef`, `maxPriceRef` o `stockStatus` invalidos se ignoran (valor por defecto
+        o sin filtro), no dan error. Excepcion a "solo activos": con `productId` el producto se devuelve aunque
+        este inactivo (`isActive: false`). `categoryId` o `productId` de mas de 200 caracteres o con caracteres de
+        control responden `400`.
       x-permission: inventory.view
       parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Search"
+        - name: productId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Id exacto de un producto (enlace desde `/products`). No filtra por activo: devuelve el producto aunque
+            este inactivo. Los demas filtros se siguen aplicando.
+        - name: categoryId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filtra por categoria.
+        - name: stockStatus
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Lista separada por comas de `ok`, `low`, `out` (p. ej. `low,out`). `out` = stock 0; `low` = stock menor
+            o igual al minimo; `ok` = el resto. Los valores desconocidos se descartan.
         - name: lowStock
           in: query
           required: false
           schema:
             type: boolean
+          description: >-
+            `true` deja solo `low` y `out`. Si ademas llega `stockStatus`, se cruzan (con `stockStatus=ok` no casa
+            nada).
+        - name: minPriceRef
+          in: query
+          required: false
+          schema:
+            type: number
+          description: Precio de venta REF minimo (inclusive).
+        - name: maxPriceRef
+          in: query
+          required: false
+          schema:
+            type: number
+          description: Precio de venta REF maximo (inclusive).
       responses:
         "200":
-          description: Productos en inventario
+          description: Lista paginada de productos con sus cifras de inventario
           content:
             application/json:
               schema:
@@ -1270,23 +1318,94 @@ paths:
                 required: [data]
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Product"
+                    allOf:
+                      - $ref: "#/components/schemas/PaginatedList"
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/InventoryOverviewItem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/inventory/movements:
     get:
       tags: [Inventory]
       summary: Listar movimientos de inventario
+      description: >-
+        Libro de movimientos de la tienda, del mas reciente al mas antiguo (orden real del libro, `seq` descendente).
+        Filtros, conteo y paginacion se resuelven en la base. Cada movimiento trae su documento resuelto
+        (`documentKind` y `documentNumber`); un ajuste o asiento historico sin venta, compra ni conversion llega con
+        ambos en `null`. Un `skip` mas alla del total responde `200` con `items: []` y el total real; `skip` o
+        `limit` invalidos caen a su valor por defecto. Un filtro vacio (`type=`) cuenta como ausente.
       x-permission: inventory.view
       parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
         - name: productId
           in: query
           required: false
           schema:
             type: string
+          description: Id exacto del producto.
+        - name: type
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/StockMovementType"
+          description: Tipo de movimiento. Un valor desconocido responde `400`.
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Dia inicial (calendario de Caracas, `YYYY-MM-DD`, inclusive). Formato invalido responde `400`.
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: >-
+            Dia final (calendario de Caracas, `YYYY-MM-DD`, inclusive). Formato invalido, o `from` posterior a
+            `to`, responde `400`.
+        - name: document
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Texto parcial del numero de venta o de compra (sin distinguir mayusculas; se recorta a 100 caracteres).
+            Se resuelve contra las ventas y compras de la tienda, hasta 50 documentos por tipo (los mas recientes).
+            Los comodines (porcentaje, guion bajo, asterisco, barra invertida y comillas dobles) casan con un
+            caracter cualquiera; un texto formado solo por ellos responde vacio.
+        - name: documentKind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [venta, compra, conversion, sin_documento]
+          description: >-
+            Movimientos ligados a una venta, a una compra o a una conversion de empaque; `sin_documento` = sin
+            ninguno de los tres vinculos. Un valor desconocido responde `400`.
+        - name: saleId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Id exacto de la venta.
+        - name: purchaseId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Id exacto de la compra.
       responses:
         "200":
-          description: Movimientos de stock
+          description: Pagina de movimientos de stock
           content:
             application/json:
               schema:
@@ -1294,23 +1413,105 @@ paths:
                 required: [data]
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/StockMovement"
+                    type: object
+                    required: [items, limit, skip, total]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/StockMovementListItem"
+                      limit:
+                        type: integer
+                      skip:
+                        type: integer
+                      total:
+                        type: integer
+                        description: Total de movimientos que casan con los filtros.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/inventory/kardex:
+    get:
+      tags: [Inventory]
+      summary: Kardex de un producto
+      description: >-
+        Resumen del libro de un producto de la tienda para su ficha: stock actual, serie diaria de los ultimos 30
+        dias (calendario de Caracas, contando hoy), entradas y salidas del periodo y los 10 ultimos movimientos
+        (orden real del libro, `seq` descendente) con su documento resuelto. El saldo de cada dia se reconstruye
+        hacia atras desde el stock actual restando los movimientos posteriores. La lectura de la ventana esta
+        acotada a 5.000 movimientos (paginas de 1.000): si el producto tiene mas en 30 dias, `truncated` es
+        `true` y los dias mas antiguos, que no se leyeron completos, llegan con `balance`, `entries` y `exits` en
+        `null`. Un producto de otra tienda responde `404`, igual que uno inexistente.
+      x-permission: inventory.view
+      parameters:
+        - name: productId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Id exacto del producto. Ausente, vacio o con formato invalido responde `400`.
+      responses:
+        "200":
+          description: Kardex del producto
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProductKardex"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/inventory/stock-card:
     get:
       tags: [Inventory]
       summary: Obtener kardex de inventario
+      description: >-
+        Movimientos de la vista `stock_card`, del mas reciente al mas antiguo (`created_at` e `id` descendentes: la
+        vista no expone `seq`). No atiende los filtros de documento ni devuelve `documentKind` / `documentNumber`.
+        Un `skip` mas alla del total responde `200` con `items: []` y el total real; `skip` o `limit` invalidos
+        caen a su valor por defecto.
       x-permission: inventory.view
       parameters:
+        - $ref: "#/components/parameters/Skip"
+        - $ref: "#/components/parameters/Limit"
         - name: productId
           in: query
           required: false
           schema:
             type: string
+          description: Id exacto del producto.
+        - name: type
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/StockMovementType"
+          description: Tipo de movimiento. Un valor desconocido responde `400`.
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Dia inicial (calendario de Caracas, `YYYY-MM-DD`, inclusive). Formato invalido responde `400`.
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: >-
+            Dia final (calendario de Caracas, `YYYY-MM-DD`, inclusive). Formato invalido, o `from` posterior a
+            `to`, responde `400`.
       responses:
         "200":
-          description: Movimientos del kardex
+          description: Pagina de movimientos del kardex
           content:
             application/json:
               schema:
@@ -1318,9 +1519,24 @@ paths:
                 required: [data]
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/StockMovement"
+                    type: object
+                    required: [items, limit, skip, total]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/StockMovement"
+                      limit:
+                        type: integer
+                      skip:
+                        type: integer
+                      total:
+                        type: integer
+                        description: Total de movimientos que casan con los filtros.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/inventory/adjustments:
     post:
       tags: [Inventory]
@@ -1353,6 +1569,11 @@ paths:
             recibido menos lo ya devuelto, el documento no esta en un estado
             devolvible, o la base aun no admite devoluciones ligadas (en ese caso
             no se registra nada: el servidor no repite la operacion sin el vinculo).
+            Tambien cuando el producto esta inactivo y el ajuste es una entrada
+            libre (`quantityDelta` > 0 sin `saleId` / `purchaseId`): "El producto
+            esta inactivo: reactivalo antes de registrar una entrada de stock"; no
+            se registra movimiento ni se consume la clave. Las salidas sobre un
+            producto inactivo se aceptan.
           content:
             application/json:
               schema:
@@ -1385,6 +1606,8 @@ paths:
                   minimum: 1
                 reason:
                   type: string
+                  maxLength: 500
+                  description: Sin contar los espacios de los extremos. Mas largo responde 400 "El motivo admite hasta 500 caracteres." Con caracteres de control (NUL, C0, DEL, C1; se admiten tabulador y saltos de linea) responde 400 "El motivo contiene caracteres no permitidos."
                 components:
                   type: array
                   minItems: 1
@@ -5903,6 +6126,40 @@ components:
           minLength: 1
         role:
           $ref: "#/components/schemas/UserRole"
+    InventoryOverviewItem:
+      description: Producto del listado de inventario con las cifras del libro `stock_movements`.
+      allOf:
+        - $ref: "#/components/schemas/Product"
+        - type: object
+          required: [entries30d, exits30d, lastMovementAt, lastMovementType, stockStatus]
+          properties:
+            category:
+              $ref: "#/components/schemas/Category"
+            entries30d:
+              type: integer
+              description: Suma de los movimientos positivos de los ultimos 30 dias (30 x 24 h hasta ahora).
+            exits30d:
+              type: integer
+              description: Suma del valor absoluto de los movimientos negativos de los ultimos 30 dias.
+            lastMovementAt:
+              type: string
+              format: date-time
+              nullable: true
+              description: Fecha del ultimo movimiento del producto; `null` si nunca tuvo uno.
+            lastMovementType:
+              allOf:
+                - $ref: "#/components/schemas/StockMovementType"
+              nullable: true
+            stockStatus:
+              type: string
+              enum: [ok, low, out]
+              description: "`out` = stock 0; `low` = stock menor o igual al minimo; `ok` = el resto."
+            reconciliationDiff:
+              type: integer
+              nullable: true
+              description: >-
+                Solo viaja si quien consulta es admin. `current_stock` menos la suma de los movimientos del
+                producto; `null` si cuadra. Para cualquier otro rol la propiedad no existe.
     StockMovement:
       type: object
       required: [id, productId, type, quantityDelta, stockAfter, createdAt]
@@ -5928,6 +6185,133 @@ components:
         createdAt:
           type: string
           format: date-time
+    StockMovementListItem:
+      allOf:
+        - $ref: "#/components/schemas/StockMovement"
+        - type: object
+          required: [documentKind, documentNumber]
+          properties:
+            documentKind:
+              type: string
+              nullable: true
+              enum: [venta, compra, conversion, null]
+              description: >-
+                Documento al que esta ligado el movimiento, segun sus vinculos. `null` = sin documento (ajustes y
+                asientos historicos).
+            documentNumber:
+              type: string
+              nullable: true
+              description: >-
+                Numero de la venta o de la compra. `null` en una conversion y en un movimiento sin documento.
+    ProductKardex:
+      type: object
+      required: [product, series, entries30d, exits30d, openingBalance, lastMovements, truncated]
+      properties:
+        product:
+          type: object
+          required: [id, name, sku, currentStock, minStock]
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            sku:
+              type: string
+            currentStock:
+              type: integer
+            minStock:
+              type: integer
+        series:
+          type: array
+          description: 30 puntos, uno por dia de Caracas, del mas antiguo a hoy.
+          items:
+            type: object
+            required: [date, entries, exits, balance]
+            properties:
+              date:
+                type: string
+                format: date
+              entries:
+                type: integer
+                nullable: true
+                description: Suma de los movimientos positivos del dia. `null` si el dia no se leyo completo.
+              exits:
+                type: integer
+                nullable: true
+                description: >-
+                  Suma en positivo de los movimientos negativos del dia. `null` si el dia no se leyo completo.
+              balance:
+                type: integer
+                nullable: true
+                description: >-
+                  Saldo al cierre del dia; el de hoy es el stock actual. Puede ser negativo en datos historicos.
+                  `null` si el dia no se leyo completo.
+        entries30d:
+          type: integer
+          description: Entradas de los dias de la serie que tienen dato.
+        exits30d:
+          type: integer
+          description: Salidas (en positivo) de los dias de la serie que tienen dato.
+        openingBalance:
+          type: integer
+          nullable: true
+          description: Saldo antes del primer dia de la serie. `null` si `truncated`.
+        lastMovements:
+          type: array
+          maxItems: 10
+          description: Ultimos movimientos del producto, del mas reciente al mas antiguo.
+          items:
+            type: object
+            required:
+              - id
+              - type
+              - quantityDelta
+              - stockAfter
+              - documentKind
+              - documentNumber
+              - reason
+              - saleId
+              - purchaseId
+              - conversionId
+              - createdAt
+            properties:
+              id:
+                type: string
+              type:
+                $ref: "#/components/schemas/StockMovementType"
+              quantityDelta:
+                type: integer
+              stockAfter:
+                type: integer
+              documentKind:
+                type: string
+                nullable: true
+                enum: [venta, compra, conversion, null]
+                description: "`null` = movimiento sin documento (ajuste manual o asiento historico)."
+              documentNumber:
+                type: string
+                nullable: true
+                description: Numero de la venta o de la compra. `null` en una conversion y sin documento.
+              reason:
+                type: string
+                nullable: true
+              saleId:
+                type: string
+                nullable: true
+              purchaseId:
+                type: string
+                nullable: true
+              conversionId:
+                type: string
+                nullable: true
+              createdAt:
+                type: string
+                format: date-time
+        truncated:
+          type: boolean
+          description: >-
+            `true` si el producto supera los 5.000 movimientos en la ventana: la serie solo cubre los dias leidos
+            completos.
     StockMovementResponse:
       type: object
       required: [data]
@@ -5957,8 +6341,18 @@ components:
             devuelto. Sin el, la devolucion no tiene tope.
         quantityDelta:
           type: integer
+          minimum: -2147483647
+          maximum: 2147483647
+          description: >-
+            Distinto de cero. Con `type`, el signo debe casar con el tipo:
+            `ajuste_salida` y `devolucion_proveedor` restan (si no, 400 "Una salida
+            debe restar unidades."); `ajuste_entrada`, `devolucion_cliente` e
+            `inventario_inicial` suman (si no, 400 "Una entrada debe sumar
+            unidades."). Sin `type` lo decide el signo.
         reason:
           type: string
+          maxLength: 500
+          description: Sin contar los espacios de los extremos. Mas largo responde 400 "El motivo admite hasta 500 caracteres." Con caracteres de control (NUL, C0, DEL, C1; se admiten tabulador y saltos de linea) responde 400 "El motivo contiene caracteres no permitidos."
         saleId:
           type: string
           format: uuid

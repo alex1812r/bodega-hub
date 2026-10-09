@@ -4,8 +4,10 @@
 /**
  * COM-14 · preferencia «Desarmar siempre al recibir compras» de la receta
  * (`product_pack_conversions.always_disassemble_on_receive`, parche 20261010e),
- * lado BFF con Supabase simulado: se lee con la receta y se escribe por la misma
- * vía (tabla directa). Ausente en la petición = no cambia.
+ * lado BFF con Supabase simulado: se lee con la receta (tabla, solo `select`) y
+ * se ESCRIBE por la RPC `save_pack_recipe` (parche 20261012a, INT-02): desde
+ * 20261011d el BFF no puede escribir `product_pack_conversions` ni
+ * `product_pack_components` por tabla. Ausente en la petición = no cambia.
  */
 
 jest.mock("../../../lib/supabase/route-client");
@@ -23,7 +25,7 @@ import {
 import { packConversionInputSchema } from "./packConversionSchemas";
 
 type Call = {
-  op: "delete" | "insert" | "select" | "update";
+  op: "delete" | "insert" | "rpc" | "select" | "update";
   payload?: unknown;
   select?: string;
   table: string;
@@ -74,14 +76,20 @@ function mountSupabase(respond: (call: Call) => Reply | undefined) {
     return builder;
   });
 
-  (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from });
+  const rpc = jest.fn((name: string, args: unknown) => {
+    const call: Call = { op: "rpc", payload: args, table: name };
+
+    calls.push(call);
+
+    return Promise.resolve({ data: null, error: null, ...respond(call) });
+  });
+
+  (createRouteSupabaseClient as jest.Mock).mockResolvedValue({ from, rpc });
 
   return { calls };
 }
 
 const PACK = "pack-1";
-const OLD_RECIPE = "recipe-old";
-const DRAFT = "recipe-draft";
 
 function product(id: string, name: string) {
   return {
@@ -95,67 +103,43 @@ function product(id: string, name: string) {
   };
 }
 
-type ExistingRecipe = {
-  always_disassemble_on_receive?: boolean;
-  components: { cost_weight: number; unit_product_id: string; units_per_pack: number }[];
-  id: string;
-  label: string | null;
-  total_units: number;
-  unit_product_id: string | null;
-};
-
-const singleExisting: ExistingRecipe = {
-  components: [{ cost_weight: 1, unit_product_id: "unit-cola", units_per_pack: 10 }],
-  id: OLD_RECIPE,
-  label: null,
-  total_units: 10,
-  unit_product_id: "unit-cola",
-};
-
-const assortedExisting: ExistingRecipe = {
-  components: [
-    { cost_weight: 1, unit_product_id: "unit-cola", units_per_pack: 2 },
-    { cost_weight: 1, unit_product_id: "unit-naranja", units_per_pack: 2 },
-    { cost_weight: 1, unit_product_id: "unit-uva", units_per_pack: 2 },
-  ],
-  id: OLD_RECIPE,
-  label: null,
-  total_units: 6,
-  unit_product_id: null,
-};
-
-/** Base simulada: los productos existen, ninguno es empaque y `existing` es la receta activa. */
-function mountStore(existing: ExistingRecipe | null) {
+/** Base simulada: los productos existen y ninguno es empaque; la RPC responde `rpcReply`. */
+function mountStore(rpcReply: Reply = {}) {
   return mountSupabase((call) => {
+    if (call.op === "rpc") {
+      return rpcReply;
+    }
+
     if (call.table === "products" && call.op === "select") {
       return { data: ["unit-cola", "unit-naranja", "unit-uva"].map((id) => ({ id })) };
     }
 
-    if (call.table === "product_pack_components" && call.op === "select") {
-      return { data: [] };
+    if (call.table === "products" && call.op === "insert") {
+      return { data: { id: "unit-new" } };
     }
 
-    if (call.table === "product_pack_conversions" && call.op === "select") {
-      if (call.select === "pack_product_id") {
-        return { data: [] };
-      }
-
-      return { data: call.select === "id" ? null : existing };
-    }
-
-    if (call.table === "product_pack_conversions" && call.op === "insert") {
-      return { data: { id: DRAFT } };
+    if (call.op === "select") {
+      return { data: call.select === "id" || call.select === "pack_product_id" ? null : [] };
     }
 
     return {};
   });
 }
 
-/** Escrituras sobre la cabecera de la receta, en orden. */
-function headerWrites(calls: Call[]) {
+/** Escrituras DIRECTAS sobre las tablas de la receta (prohibidas desde 20261011d). */
+function recipeTableWrites(calls: Call[]) {
+  return calls.filter(
+    (call) =>
+      (call.table === "product_pack_conversions" || call.table === "product_pack_components") &&
+      (call.op === "insert" || call.op === "update" || call.op === "delete"),
+  );
+}
+
+/** Argumentos de cada llamada a `save_pack_recipe`, en orden. */
+function recipeRpcArgs(calls: Call[]) {
   return calls
-    .filter((call) => call.table === "product_pack_conversions" && call.op !== "select")
-    .map((call) => [call.op, call.payload]);
+    .filter((call) => call.op === "rpc" && call.table === "save_pack_recipe")
+    .map((call) => call.payload as Record<string, unknown>);
 }
 
 function assorted(units: [number, number, number], extra: Record<string, unknown> = {}) {
@@ -249,150 +233,124 @@ describe("packConversion.server · leer la preferencia «Desarmar siempre al rec
   });
 });
 
-describe("packConversion.server · guardar la preferencia", () => {
-  it("receta 1 a 1 nueva con la preferencia: el insert de la cabecera la lleva en true", async () => {
-    const { calls } = mountStore(null);
+describe("packConversion.server · guardar la preferencia por save_pack_recipe (INT-02)", () => {
+  it("1 a 1 con la preferencia: una sola llamada a la RPC con p_always_disassemble_on_receive y NINGUNA escritura por tabla", async () => {
+    const { calls } = mountStore();
 
     await save(link("unit-cola", 12, { alwaysDisassembleOnReceive: true }));
 
-    expect(headerWrites(calls)).toEqual([
-      [
-        "insert",
-        {
-          always_disassemble_on_receive: true,
-          is_active: true,
-          pack_product_id: PACK,
-          store_id: DEFAULT_STORE_ID,
-          unit_product_id: "unit-cola",
-          units_per_pack: 12,
-        },
-      ],
+    expect(recipeTableWrites(calls)).toEqual([]);
+    expect(recipeRpcArgs(calls)).toEqual([
+      {
+        p_always_disassemble_on_receive: true,
+        p_components: [{ cost_weight: 1, unit_product_id: "unit-cola", units_per_pack: 12 }],
+        p_enabled: true,
+        p_label: null,
+        p_pack_product_id: PACK,
+        p_total_units: 12,
+      },
     ]);
   });
 
-  it("receta nueva sin la preferencia (o en false): el insert de siempre, sin nombrar la columna", async () => {
-    for (const extra of [{}, { alwaysDisassembleOnReceive: false }]) {
-      const { calls } = mountStore(null);
-
-      await save(link("unit-cola", 12, extra));
-
-      expect(headerWrites(calls)).toEqual([
-        [
-          "insert",
-          {
-            is_active: true,
-            pack_product_id: PACK,
-            store_id: DEFAULT_STORE_ID,
-            unit_product_id: "unit-cola",
-            units_per_pack: 12,
-          },
-        ],
-      ]);
-    }
-  });
-
-  it("1 a 1 con la misma unidad: la preferencia viaja en el mismo update en sitio; sin ella, el update de siempre", async () => {
-    const withPreference = mountStore(singleExisting);
-
-    await save(link("unit-cola", 10, { alwaysDisassembleOnReceive: true }));
-
-    expect(headerWrites(withPreference.calls)).toEqual([
-      [
-        "update",
-        { always_disassemble_on_receive: true, unit_product_id: "unit-cola", units_per_pack: 10 },
-      ],
-    ]);
-
-    const without = mountStore({ ...singleExisting, always_disassemble_on_receive: true });
-
-    await save(link("unit-cola", 24));
-
-    expect(headerWrites(without.calls)).toEqual([
-      ["update", { unit_product_id: "unit-cola", units_per_pack: 24 }],
-    ]);
-  });
-
-  it("quitar la preferencia de una receta que la tenía: el update la deja en false", async () => {
-    const { calls } = mountStore({ ...singleExisting, always_disassemble_on_receive: true });
+  it("quitar la preferencia: viaja en false (no se omite)", async () => {
+    const { calls } = mountStore();
 
     await save(link("unit-cola", 10, { alwaysDisassembleOnReceive: false }));
 
-    expect(headerWrites(calls)).toEqual([
-      [
-        "update",
-        { always_disassemble_on_receive: false, unit_product_id: "unit-cola", units_per_pack: 10 },
-      ],
+    expect(recipeTableWrites(calls)).toEqual([]);
+    expect(recipeRpcArgs(calls).map((args) => args.p_always_disassemble_on_receive)).toEqual([
+      false,
     ]);
   });
 
-  it("el mismo surtido: solo se escribe la preferencia si cambia", async () => {
-    const changed = mountStore(assortedExisting);
+  it("surtido con la preferencia: misma RPC, mismo argumento", async () => {
+    const { calls } = mountStore();
 
-    await save(assorted([2, 2, 2], { alwaysDisassembleOnReceive: true }));
+    await save(assorted([3, 2, 1], { alwaysDisassembleOnReceive: true, label: "Surtido" }));
 
-    expect(headerWrites(changed.calls)).toEqual([
-      ["update", { always_disassemble_on_receive: true }],
-    ]);
-
-    const same = mountStore({ ...assortedExisting, always_disassemble_on_receive: true });
-
-    await save(assorted([2, 2, 2], { alwaysDisassembleOnReceive: true }));
-    await save(assorted([2, 2, 2]));
-
-    expect(headerWrites(same.calls)).toEqual([]);
-  });
-
-  it("receta reemplazada sin nombrar la preferencia: la cabecera nueva conserva la de la anterior", async () => {
-    const assortedReplaced = mountStore({ ...assortedExisting, always_disassemble_on_receive: true });
-
-    await save(assorted([3, 2, 1]));
-
-    expect(headerWrites(assortedReplaced.calls)[0]).toEqual([
-      "insert",
+    expect(recipeTableWrites(calls)).toEqual([]);
+    expect(recipeRpcArgs(calls)).toEqual([
       {
-        always_disassemble_on_receive: true,
-        is_active: false,
-        label: null,
-        pack_product_id: PACK,
-        store_id: DEFAULT_STORE_ID,
-        total_units: 6,
+        p_always_disassemble_on_receive: true,
+        p_components: [
+          { cost_weight: 1, unit_product_id: "unit-cola", units_per_pack: 3 },
+          { cost_weight: 1, unit_product_id: "unit-naranja", units_per_pack: 2 },
+          { cost_weight: 1, unit_product_id: "unit-uva", units_per_pack: 1 },
+        ],
+        p_enabled: true,
+        p_label: "Surtido",
+        p_pack_product_id: PACK,
+        p_total_units: 6,
       },
     ]);
+  });
 
-    const otherUnit = mountStore({ ...singleExisting, always_disassemble_on_receive: true });
+  it("create_unit con la preferencia: la unidad se crea y la receta va por la RPC con el argumento", async () => {
+    const { calls } = mountStore();
 
-    await save(link("unit-uva", 10));
+    await save(
+      packConversionInputSchema.parse({
+        alwaysDisassembleOnReceive: true,
+        enabled: true,
+        mode: "create_unit",
+        unitProduct: { salePriceRef: 1 },
+        unitsPerPack: 6,
+      }),
+    );
 
-    expect(headerWrites(otherUnit.calls)).toEqual([
-      ["update", { is_active: false }],
-      [
-        "insert",
-        {
-          always_disassemble_on_receive: true,
-          is_active: true,
-          pack_product_id: PACK,
-          store_id: DEFAULT_STORE_ID,
-          unit_product_id: "unit-uva",
-          units_per_pack: 10,
-        },
-      ],
+    expect(recipeTableWrites(calls)).toEqual([]);
+    expect(recipeRpcArgs(calls)).toEqual([
+      {
+        p_always_disassemble_on_receive: true,
+        p_components: [{ cost_weight: 1, unit_product_id: "unit-new", units_per_pack: 6 }],
+        p_enabled: true,
+        p_label: null,
+        p_pack_product_id: PACK,
+        p_total_units: 6,
+      },
     ]);
   });
 
-  it("receta reemplazada con la preferencia en false: la cabecera nueva nace sin ella", async () => {
-    const { calls } = mountStore({ ...assortedExisting, always_disassemble_on_receive: true });
+  it("sin la preferencia en la petición: el argumento NO se envía (la base conserva o hereda la que hubiera; sirve sobre una base sin 20261012a)", async () => {
+    for (const input of [link("unit-cola", 24), assorted([2, 2, 2])]) {
+      const { calls } = mountStore();
 
-    await save(assorted([3, 2, 1], { alwaysDisassembleOnReceive: false }));
+      await save(input);
 
-    expect(headerWrites(calls)[0]).toEqual([
-      "insert",
+      expect(recipeTableWrites(calls)).toEqual([]);
+      expect(recipeRpcArgs(calls)).toHaveLength(1);
+      expect("p_always_disassemble_on_receive" in recipeRpcArgs(calls)[0]).toBe(false);
+    }
+  });
+
+  it("desactivar la receta: no nombra la preferencia aunque la petición la traiga", async () => {
+    const { calls } = mountStore();
+
+    await save(packConversionInputSchema.parse({ alwaysDisassembleOnReceive: true, enabled: false }));
+
+    expect(recipeTableWrites(calls)).toEqual([]);
+    expect(recipeRpcArgs(calls)).toEqual([
       {
-        is_active: false,
-        label: null,
-        pack_product_id: PACK,
-        store_id: DEFAULT_STORE_ID,
-        total_units: 6,
+        p_components: null,
+        p_enabled: false,
+        p_label: null,
+        p_pack_product_id: PACK,
+        p_total_units: null,
       },
     ]);
+  });
+
+  it("base sin 20261012a (PGRST202) al guardar la preferencia: 409 y nada escrito por tabla", async () => {
+    const { calls } = mountStore({
+      error: {
+        code: "PGRST202",
+        message: "Could not find the function public.save_pack_recipe(...) in the schema cache",
+      },
+    });
+
+    await expect(
+      save(link("unit-cola", 12, { alwaysDisassembleOnReceive: true })),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(recipeTableWrites(calls)).toEqual([]);
   });
 });

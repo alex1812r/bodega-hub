@@ -73,7 +73,12 @@ import { ProductsStatusBadge } from "./components/ProductsStatusBadge";
 import { getProductMarginThresholds, getProductPricingOptions } from "../services/productMargin";
 import { PRODUCT_EDIT_PRICE_REASON } from "../services/productSchemas";
 import { normalizeBarcode } from "../services/productSearch";
-import { productsListSchema, toProductsFilters } from "./productsListParams";
+import {
+  productsListSchema,
+  toInventoryListHref,
+  toInventoryProductHref,
+  toProductsFilters,
+} from "./productsListParams";
 
 /**
  * PRO-F2: con la columna "Ganancia" la tabla medía 1021 px y no cabía en los
@@ -89,6 +94,9 @@ const skuHeaderClass = "w-[5.25rem] max-w-[5.25rem] px-2 pl-4";
 const skuCellClass = "min-w-0 overflow-hidden";
 const detailLinkClass =
   "block min-w-0 rounded-md hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+/** Enlace de la celda "Stock": mismo trato que el del nombre, en línea para respetar la alineación. */
+const stockLinkClass =
+  "rounded-md hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function isLowStock(product: ProductWithCategory) {
   return product.isActive && product.currentStock > 0 && product.currentStock <= product.minStock;
@@ -144,6 +152,8 @@ function buildProductColumns(
   detailHref: (productId: string) => string,
   thresholds: MarginThresholds,
   selection?: RowSelection,
+  /** Fila del producto en `/inventory` (INV-06); solo llega con `inventory.view`. */
+  stockHref?: (productId: string) => string,
 ): DataTableColumn<ProductWithCategory>[] {
   return [
     {
@@ -243,17 +253,25 @@ function buildProductColumns(
       className: compactColumnClass,
       header: "Stock",
       key: "currentStock",
-      render: (product) => (
-        <span
-          className={cn(
-            !product.isActive && "text-outline",
-            product.currentStock === 0 && product.isActive && "font-medium text-destructive",
-            isLowStock(product) && "font-medium text-destructive",
-          )}
-        >
-          {product.currentStock} un
-        </span>
-      ),
+      render: (product) => {
+        const stockClassName = cn(
+          !product.isActive && "text-outline",
+          product.currentStock === 0 && product.isActive && "font-medium text-destructive",
+          isLowStock(product) && "font-medium text-destructive",
+        );
+
+        return stockHref ? (
+          <Link
+            aria-label={`Ver el stock de ${product.name} en Inventario: ${product.currentStock} un`}
+            className={cn(stockLinkClass, stockClassName)}
+            href={stockHref(product.id)}
+          >
+            {product.currentStock} un
+          </Link>
+        ) : (
+          <span className={stockClassName}>{product.currentStock} un</span>
+        );
+      },
       sortable: true,
     },
     {
@@ -311,6 +329,15 @@ function ProductsList() {
     (productId: string) => withReturnTo(`/products/${productId}`, listHref),
     [listHref],
   );
+  // El stock se consulta en Inventario (INV-06): quien no lo ve se queda con el número.
+  const canViewInventory = can("inventory.view");
+  const stockHref = useMemo(
+    () =>
+      canViewInventory
+        ? (productId: string) => toInventoryProductHref(productId, listHref)
+        : undefined,
+    [canViewInventory, listHref],
+  );
   // Semáforo de la tienda; sin datos (cargando o error) valen los cortes por defecto.
   const pricingSettings = usePricingSettings();
   const marginThresholds = useMemo(
@@ -342,8 +369,8 @@ function ProductsList() {
     [canBulkReprice, listHref, selectedIds],
   );
   const columns = useMemo(
-    () => buildProductColumns(rateVes, detailHref, marginThresholds, rowSelection),
-    [detailHref, marginThresholds, rateVes, rowSelection],
+    () => buildProductColumns(rateVes, detailHref, marginThresholds, rowSelection, stockHref),
+    [detailHref, marginThresholds, rateVes, rowSelection, stockHref],
   );
   const createProduct = useCreateProduct();
   const productToEditQuery = useProduct(productToEditId ?? "");
@@ -477,6 +504,7 @@ function ProductsList() {
         <ProductsListFilters
           categoryOptions={categoryOptions}
           filters={list.state}
+          inventoryHref={canViewInventory ? toInventoryListHref(list.state, listHref) : undefined}
           onChange={list.setState}
           reviewCount={priceReviewSummary.data?.total}
         />

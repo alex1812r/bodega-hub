@@ -1116,7 +1116,7 @@ describe("20261010e · preferencia «Desarmar siempre al recibir compras» de la
     }).toEqual({ begins: 1, commits: 1, columna: true, notify: true, otros: false });
   });
 
-  it("la columna es boolean not null default false, reaplicar el parche no cambia nada y ninguna función de public la lee", async () => {
+  it("la columna es boolean not null default false, reaplicar el parche no cambia nada y solo save_pack_recipe (20261012a, que la guarda) la nombra", async () => {
     await withRollback(db, async () => {
       const box = await boxOf(6);
       await sql("marcar la receta", "update public.product_pack_conversions set always_disassemble_on_receive = true where id = $1", [box.recipeId]);
@@ -1134,19 +1134,22 @@ describe("20261010e · preferencia «Desarmar siempre al recibir compras» de la
         "columna",
         "select data_type, is_nullable, column_default from information_schema.columns where table_schema = 'public' and table_name = 'product_pack_conversions' and column_name = 'always_disassemble_on_receive'",
       );
-      const readers = await one("funciones que la nombran", "select count(*)::int as n from pg_proc where pronamespace = 'public'::regnamespace and prosrc ilike '%always_disassemble_on_receive%'");
+      const readers = await one(
+        "funciones que la nombran",
+        "select coalesce(array_agg(distinct proname::text order by proname::text), '{}') as n from pg_proc where pronamespace = 'public'::regnamespace and prosrc ilike '%always_disassemble_on_receive%'",
+      );
       const fresh = await boxOf(6);
 
       expect({ column, lectores: readers.n, marcada: await preference(box.recipeId), nueva: await preference(fresh.recipeId) }).toEqual({
         column: { data_type: "boolean", is_nullable: "NO", column_default: "false" },
-        lectores: 0,
+        lectores: ["save_pack_recipe"],
         marcada: true,
         nueva: false,
       });
     });
   });
 
-  it("se lee y se escribe por la tabla (vía de la receta) con la RLS de la cabecera: la lee toda la tienda, la escriben almacén y admin; otra tienda y anon no ven ni escriben nada", async () => {
+  it("se lee por la tabla con la RLS de la cabecera (toda la tienda; otra tienda y anon no) y NADIE la escribe por tabla desde 20261011d (42501): la guardan almacén y admin por save_pack_recipe (20261012a)", async () => {
     await withRollback(db, async () => {
       const box = await boxOf(6);
       const read = (actor: Actor): Promise<Outcome> =>
@@ -1155,15 +1158,28 @@ describe("20261010e · preferencia «Desarmar siempre al recibir compras» de la
         const out = await runAs(actor, "update public.product_pack_conversions set always_disassemble_on_receive = $2 where id = $1 returning id", [box.recipeId, value]);
         return out.code ?? out.rows.length;
       };
+      /** La misma receta (1 componente, 6 unidades) por la RPC: solo cambia la preferencia. */
+      const viaRpc = async (actor: Actor, value: boolean): Promise<string | null> =>
+        (
+          await runAs(actor, "select public.save_pack_recipe($1::uuid, true, 6, null, $2::jsonb, $3::boolean) as r", [
+            box.pack,
+            JSON.stringify([{ unit_product_id: box.unit, units_per_pack: 6 }]),
+            value,
+          ])
+        ).code;
 
-      const denied = {
+      const direct = {
         vendedor: await write("vendedor1", true),
         contador: await write("contador", true),
+        almacen: await write("almacen", true),
+        admin: await write("admin", true),
         otraTienda: await write("otraTienda", true),
         anon: await write("anon", true),
       };
+      const afterDirect = await preference(box.recipeId);
+      const rpcDenied = { vendedor: await viaRpc("vendedor1", true), contador: await viaRpc("contador", true) };
       const afterDenied = await preference(box.recipeId);
-      const almacen = await write("almacen", true);
+      const almacen = await viaRpc("almacen", true);
       const reads = {
         vendedor: (await read("vendedor1")).rows[0]?.v,
         contador: (await read("contador")).rows[0]?.v,
@@ -1171,15 +1187,17 @@ describe("20261010e · preferencia «Desarmar siempre al recibir compras» de la
         otraTienda: (await read("otraTienda")).rows.length,
         anon: (await read("anon")).rows.length,
       };
-      const admin = await write("admin", false);
+      const admin = await viaRpc("admin", false);
 
-      expect({ denied, afterDenied, almacen, reads, admin, final: await preference(box.recipeId) }).toEqual({
-        // El update de quien no puede escribir no afecta filas (RLS), sin error.
-        denied: { vendedor: 0, contador: 0, otraTienda: 0, anon: 0 },
+      expect({ direct, afterDirect, rpcDenied, afterDenied, almacen, reads, admin, final: await preference(box.recipeId) }).toEqual({
+        // Sin privilegio de tabla (20261011d): 42501 para todos, también admin y almacén.
+        direct: { vendedor: "42501", contador: "42501", almacen: "42501", admin: "42501", otraTienda: "42501", anon: "42501" },
+        afterDirect: false,
+        rpcDenied: { vendedor: "PT403", contador: "PT403" },
         afterDenied: false,
-        almacen: 1,
+        almacen: null,
         reads: { vendedor: true, contador: true, almacen: true, otraTienda: 0, anon: 0 },
-        admin: 1,
+        admin: null,
         final: false,
       });
     });
@@ -1194,7 +1212,7 @@ describe("20261010e · preferencia «Desarmar siempre al recibir compras» de la
     expect((data ?? []).every((row) => row.always_disassemble_on_receive === false)).toBe(true);
   });
 
-  it("escribir solo la preferencia no toca la receta (componentes, total, columnas de compatibilidad) ni mueve stock", async () => {
+  it("escribir solo la preferencia (por save_pack_recipe, único camino desde 20261011d) no toca la receta (componentes, total, columnas de compatibilidad) ni mueve stock", async () => {
     await withRollback(db, async () => {
       const kit = await assortment();
       const ids = [kit.pack, kit.a, kit.b, kit.c];
@@ -1206,9 +1224,25 @@ describe("20261010e · preferencia «Desarmar siempre al recibir compras» de la
         );
       const [antes, estadoAntes] = [await shape(), await state(ids)];
 
-      const out = await run("update public.product_pack_conversions set always_disassemble_on_receive = true where pack_product_id = $1 and is_active returning id", [kit.pack]);
+      // La misma receta de `assortment()` (5 + 4 + 3 con sus pesos) y la preferencia en true.
+      const out = await run("select public.save_pack_recipe($1::uuid, true, 12, (select label from public.product_pack_conversions where pack_product_id = $1 and is_active), $2::jsonb, true) as r", [
+        kit.pack,
+        JSON.stringify([
+          { unit_product_id: kit.a, units_per_pack: 5 },
+          { unit_product_id: kit.b, units_per_pack: 4, cost_weight: 1.5 },
+          { unit_product_id: kit.c, units_per_pack: 3, cost_weight: 2 },
+        ]),
+      ]);
+      const result = (out.rows[0]?.r as Row | undefined) ?? {};
+      const guardada = await one("preferencia", "select always_disassemble_on_receive as v from public.product_pack_conversions where pack_product_id = $1 and is_active", [kit.pack]);
 
-      expect({ code: out.code, filas: out.rows.length, receta: await shape(), estado: await state(ids) }).toEqual({ code: null, filas: 1, receta: antes, estado: estadoAntes });
+      expect({ code: out.code, action: result.action, guardada: guardada.v, receta: await shape(), estado: await state(ids) }).toEqual({
+        code: null,
+        action: "unchanged",
+        guardada: true,
+        receta: antes,
+        estado: estadoAntes,
+      });
     });
   });
 

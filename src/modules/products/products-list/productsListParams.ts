@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { listParams, type UrlListStateOf } from "@/shared/hooks/useUrlListState";
+import { withReturnTo } from "@/shared/utils/returnTo";
 
 import type { ProductsFilters } from "../hooks/useProducts";
 import { PRODUCT_MARGIN_FILTERS } from "../services/productMargin";
@@ -102,4 +103,37 @@ export function toProductsFilters(
     sortBy: state.sort,
     sortOrder: state.dir,
   };
+}
+
+/**
+ * Fila del producto en `/inventory` (su stock y su kardex), con vuelta a la
+ * lista de productos. `listHref` = URL actual de la lista (`list.href`).
+ */
+export function toInventoryProductHref(productId: string, listHref: string) {
+  return withReturnTo(`/inventory?product=${encodeURIComponent(productId)}`, listHref);
+}
+
+/**
+ * `/inventory` con lo que ambas listas comparten del estado actual: búsqueda y
+ * categoría (mismos nombres de parámetro). Estado, ganancia, "Por revisar" y
+ * orden no existen en Inventario y no viajan.
+ */
+export function toInventoryListHref(
+  state: Pick<ProductsListState, "category" | "search">,
+  listHref: string,
+) {
+  const params = new URLSearchParams();
+  const search = state.search.trim();
+
+  if (search) {
+    params.set("search", search);
+  }
+
+  if (state.category) {
+    params.set("category", state.category);
+  }
+
+  const query = params.toString();
+
+  return withReturnTo(query ? `/inventory?${query}` : "/inventory", listHref);
 }

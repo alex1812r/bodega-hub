@@ -9,6 +9,11 @@ import { stripControlChars } from "./productText";
  */
 export const LIST_FILTER_MAX_LENGTH = 200;
 
+/** Un id (o SKU, código de barras) que puede existir: ni desmedido ni con caracteres de control. */
+export function isExactFilterValue(value: string) {
+  return value.length <= LIST_FILTER_MAX_LENGTH && stripControlChars(value) === value;
+}
+
 /**
  * Rechaza con 400 los filtros exactos que no pueden casar con nada: más largos
  * que `LIST_FILTER_MAX_LENGTH` o con caracteres de control. Viajaban enteros a
@@ -22,7 +27,7 @@ export function assertListFilterParams(searchParams: URLSearchParams, names: rea
       continue;
     }
 
-    if (value.length > LIST_FILTER_MAX_LENGTH || stripControlChars(value) !== value) {
+    if (!isExactFilterValue(value)) {
       throw new ApiError(400, "BAD_REQUEST", `El filtro "${name}" no es válido.`);
     }
   }

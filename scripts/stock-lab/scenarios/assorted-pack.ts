@@ -5,8 +5,8 @@
  *   npm run stock-lab:scenarios -- --suite hypotheses --only pack.assorted_recipe_222,pack.assorted_real_312
  *
  * Corren con la suite `hypotheses` (mismo runner y mismo formato de salida). No pasan por el BFF, que todavía no
- * envía `p_components`: las recetas se crean por las tablas con PostgREST como `lab-almacen` (cabecera inactiva →
- * componentes → activar, una transacción por petición) y los empaques se abren llamando a la RPC por PostgREST.
+ * envía `p_components`: las recetas se guardan con la RPC `save_pack_recipe` como `lab-almacen` (desde 20261011d
+ * `authenticated` no escribe las tablas de la receta) y los empaques se abren llamando a la RPC por PostgREST.
  *
  * Convención: `expected` describe lo que haría un sistema sano; `fail` = bug reproducido. Todo sobre productos
  * propios `s403-<run>-…` con stock por `inventario_inicial`.
@@ -80,27 +80,18 @@ export async function setCost(t: CaseCtx, product: LabProductRef, cost: number):
   await t.sql(`fixture costo ${product.sku}`, "update public.products set current_cost_ref = $2 where id = $1", [product.id, cost]);
 }
 
-/** Receta por PostgREST como `lab-almacen`: cabecera inactiva → componentes → activar (cada petición confirma sola). */
+/** Receta por la RPC `save_pack_recipe` como `lab-almacen`: único camino de escritura desde 20261011d. */
 export async function createRecipe(lab: Lab, t: CaseCtx, pack: LabProductRef, lines: readonly RecipeLine[]): Promise<string> {
-  const client = await lab.supa(STOCKER);
   const total = lines.reduce((sum, line) => sum + line.units, 0);
-  const header = await t.rest(
-    STOCKER,
-    "POST product_pack_conversions (inactiva)",
-    client.from("product_pack_conversions").insert({ store_id: lab.storeId, pack_product_id: pack.id, total_units: total, label: `S403 surtido x${total}`, is_active: false }).select("id"),
-  );
-  const id = Array.isArray(header.data) ? (header.data[0] as { id?: unknown } | undefined)?.id : null;
-  if (header.error || typeof id !== "string") throw new Error(`No se pudo crear la cabecera de la receta: ${explain(header)}`);
-  const components = await t.rest(
-    STOCKER,
-    "POST product_pack_components",
-    client
-      .from("product_pack_components")
-      .insert(lines.map((line) => ({ conversion_id: id, store_id: lab.storeId, unit_product_id: line.product.id, units_per_pack: line.units, cost_weight: line.weight ?? 1 }))),
-  );
-  if (components.error) throw new Error(`No se pudieron crear los componentes: ${explain(components)}`);
-  const activated = await t.rest(STOCKER, "PATCH product_pack_conversions (activar)", client.from("product_pack_conversions").update({ is_active: true }).eq("id", id));
-  if (activated.error) throw new Error(`No se pudo activar la receta: ${explain(activated)}`);
+  const saved = await t.rpc(STOCKER, "save_pack_recipe", {
+    p_pack_product_id: pack.id,
+    p_enabled: true,
+    p_total_units: total,
+    p_label: `S403 surtido x${total}`,
+    p_components: lines.map((line) => ({ unit_product_id: line.product.id, units_per_pack: line.units, cost_weight: line.weight ?? 1 })),
+  });
+  const id = saved.data && typeof saved.data === "object" ? (saved.data as { conversionId?: unknown }).conversionId : null;
+  if (saved.error || typeof id !== "string") throw new Error(`No se pudo guardar la receta: ${explain(saved)}`);
   return id;
 }
 

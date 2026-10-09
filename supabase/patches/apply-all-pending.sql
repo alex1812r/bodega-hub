@@ -505,8 +505,12 @@ notify pgrst, 'reload schema';
 -- se mantiene uq_product_pack_conversions_pack_active (una receta activa por empaque).
 -- Compatibilidad: product_pack_conversions.units_per_pack (= total_units) y unit_product_id (componente unico o NULL en un
 -- surtido) se mantienen por trigger; el BFF que aun lee y escribe el par 1 a 1 sigue funcionando sobre la base parcheada.
--- OJO: una receta ACTIVA debe sumar total_units (trigger diferido, PT400 al commit). Por PostgREST: crear la cabecera
--- inactiva, insertar los componentes y activarla.
+-- OJO: una receta ACTIVA debe sumar total_units (trigger diferido, PT400 al commit). Hasta 20261011d un usuario podia
+-- escribirla por PostgREST (cabecera inactiva, componentes, activar); desde 20261011d solo por la RPC save_pack_recipe.
+-- OJO (INV-L2): este parche concede a authenticated insert / update / delete sobre product_pack_components (seccion 8).
+-- Sobre una base que ya tiene 20261011d, REAPLICAR este parche reabre la escritura directa de los componentes: volver a
+-- aplicar 20261011d-pack-recipe-write-lockdown.sql justo despues y correr verify-patches.sql (la fila de RLS de 20261009d
+-- y la de 20261011d quedan en fail hasta entonces).
 -- OJO: reaplicar 20261006c deja dos sobrecargas de convert_pack_to_units; reaplicar 20261006c / f / h o 20261007a
 -- reinstala create_purchase sin la lectura de componentes; reaplicar 20261006d reinstala conversion_mismatches del modelo
 -- 1 a 1. En los tres casos: volver a aplicar este parche y correr verify-patches.sql.
@@ -646,10 +650,11 @@ notify pgrst, 'reload schema';
 -- funciones, triggers, indices ni politicas, y no migra datos (toda receta existente queda en false).
 -- NO cambia stock, costo ni dinero: ninguna RPC lee la columna. Es una preferencia de pantalla: la linea de ese empaque
 -- nace con el chip "Desarmar al recibir" marcado en /purchases/create; la marca que decide sigue viajando por linea.
--- Se lee y se escribe por tabla directa (PostgREST), como el resto de la receta, con la RLS de la cabecera: lectura de la
--- tienda, escritura admin / almacen de la tienda.
+-- Se LEE por tabla directa (PostgREST) con la RLS de la cabecera (lectura de la tienda). Se ESCRIBE por la RPC
+-- save_pack_recipe desde 20261012a (INT-02): 20261011d revoca la escritura directa de la cabecera, tambien para admin y
+-- almacen. La cabecera del parche aun describe la escritura por tabla de la rama de Compras: ya no aplica.
 -- ORDEN DE DESPLIEGUE: parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sobre la
--- base sin parche responde error al leer recetas (pide la columna nueva).
+-- base sin parche responde error al leer recetas (pide la columna nueva). Aplicar ANTES de 20261012a (usa la columna).
 -- -----------------------------------------------------------------------------
 -- 20261010f — receive disassemble invariant (COM-F7 M1, sobre COM-14): una compra no queda recibida con una linea marcada
 --             "Desarmar al recibir" sin desarmar; lo garantiza la base con un constraint trigger diferido
@@ -671,3 +676,85 @@ notify pgrst, 'reload schema';
 -- OJO: un constraint trigger no valida filas existentes; la cabecera del parche trae la consulta que localiza una compra
 -- recibida con una linea marcada sin desarmar. Reaplicar 20261010d no elimina el trigger.
 -- ORDEN DE DESPLIEGUE: parche -> verify. No depende del BFF (ya recibe siempre con receive_purchase_and_disassemble).
+-- -----------------------------------------------------------------------------
+-- 20261011a — inventory overview (INV-01a): vista public.inventory_overview (una fila por producto con entradas y salidas
+--             de 30 dias, ultimo movimiento por seq y stock_status) para que GET /api/inventory filtre y pagine en la base,
+--             e indice idx_stock_movements_product_seq (product_id, seq desc)
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011a-inventory-overview.sql
+-- Requiere 20260716, 20261006a y 20261006h. Idempotente, una transaccion. Solo lectura: no toca stock, dinero, politicas ni
+-- RPC. La vista es security_invoker (RLS de products y stock_movements del que consulta) y solo la leen authenticated y
+-- service_role. low_stock_products sigue existiendo (el BFF nuevo ya no la lee).
+-- OJO: create index sin concurrently: bloquea las escrituras de stock_movements mientras se construye (segundos en un libro
+-- grande). Aplicar fuera de hora pico.
+-- ORDEN DE DESPLIEGUE (INV-01): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sin
+-- el parche: GET /api/inventory responde error (la vista no existe); el resto del inventario no cambia.
+-- -----------------------------------------------------------------------------
+-- 20261011b — adjust_stock inactive (COM-15a): adjust_stock rechaza (PT409) la entrada libre de stock a un producto
+--             inactivo; las salidas y las devoluciones ligadas a su venta / compra no cambian
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011b-adjust-stock-inactive.sql
+-- Requiere 20261006a, b, c, e, f y g. Idempotente, una transaccion. La firma de adjust_stock no cambia (7 argumentos).
+-- Reaplicar 20261006c o 20261006g reinstala la version anterior de adjust_stock (sin la guarda): volver a aplicar este
+-- parche despues.
+-- OJO: un ajuste con delta > 0 (ajuste_entrada, inventario_inicial o sin tipo) sobre un producto con is_active = false
+-- ahora responde PT409 ("El producto esta inactivo: reactivalo antes de registrar una entrada de stock"), sin movimiento
+-- ni clave de idempotencia consumida. Un ajuste de salida sobre un inactivo sigue entrando (para dejarlo en cero), igual
+-- que devolucion_cliente con p_sale_id y devolucion_proveedor con p_purchase_id. Sobre un producto activo nada cambia.
+-- create_purchase / receive_purchase NO cambian con este parche. Las compras de un producto inactivo las rechaza
+-- 20261010b (PT400); recibir un pedido hecho antes de desactivarlo sigue permitido.
+-- Scripts que cargan stock inicial por adjust_stock: crear el producto activo, cargar el stock y desactivarlo despues.
+-- ORDEN DE DESPLIEGUE (COM-15a): parche -> verify. No depende del BFF: el anterior y el nuevo funcionan con y sin el
+-- parche (el 409 llega con el mensaje de la base).
+-- -----------------------------------------------------------------------------
+-- 20261011c — save pack recipe (INV-09): RPC public.save_pack_recipe(p_pack_product_id, p_enabled, p_total_units, p_label,
+--             p_components) que guarda, reemplaza o desactiva la receta de un empaque en UNA transaccion, con el empaque y
+--             sus componentes bloqueados (order by id) y la regla de cadenas validada en base
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011c-save-pack-recipe.sql
+-- Requiere 20261006a y 20261009d. Idempotente, una transaccion. No toca stock, dinero, tablas, politicas ni grants de tabla.
+-- OJO: authenticated conserva insert / update / delete sobre product_pack_conversions y product_pack_components: una
+-- escritura directa por tabla no toma el bloqueo ni pasa la regla de cadenas (riesgo residual, ver cabecera del parche).
+-- ORDEN DE DESPLIEGUE (INV-09): parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada (sigue escribiendo
+-- por tabla). El BFF nuevo sin el parche: guardar o desactivar la receta de un empaque responde 409 ("Esta base aún no
+-- admite guardar la receta de un empaque de forma segura...") sin escribir la receta; el resto de la edicion no cambia.
+-- El riesgo residual lo cierra 20261011d (abajo), que se aplica DESPUES de desplegar el BFF nuevo.
+-- OJO: 20261012a sustituye esta firma de 5 argumentos por una de 6. Reaplicar 20261011c reinstala la de 5 y deja dos
+-- sobrecargas (PGRST203): volver a aplicar 20261012a justo despues y correr verify-patches.sql.
+-- -----------------------------------------------------------------------------
+-- 20261011d — pack recipe write lockdown (INV-L2): la receta de un empaque solo se escribe por save_pack_recipe. Revoca
+--             insert / update / delete / truncate de authenticated y todo de anon y public sobre product_pack_conversions
+--             y product_pack_components; authenticated conserva select
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261011d-pack-recipe-write-lockdown.sql
+-- Requiere 20261009d y 20261011c. Idempotente, una transaccion. Solo privilegios de tabla: no toca stock, dinero, filas,
+-- politicas RLS, triggers ni funciones. service_role y el dueno de las tablas (migraciones, fixtures) siguen escribiendo.
+-- OJO: una escritura directa por PostgREST (POST / PATCH / DELETE) sobre cualquiera de las dos tablas responde 403
+-- (42501 permission denied), tambien para admin y almacen. Cualquier script que escriba recetas con un JWT de usuario
+-- debe pasar a la RPC save_pack_recipe.
+-- ORDEN DE DESPLIEGUE (INV-L2): 20261011c -> verify -> BFF nuevo (INV-09) -> este parche -> verify. En el primer verify
+-- quedan en fail, y solo ellas, las dos filas que exigen este parche (la de privilegios de 20261011d y la de RLS de
+-- product_pack_components de 20261009d); en el segundo, fail=0. Si despues se reaplica 20261009d, reaplicar este. NO aplicar antes del
+-- BFF nuevo: el BFF anterior escribe la receta por tabla y, sobre la base con este parche, guardar, editar o desactivar
+-- la receta de un empaque le responde 403. Deshacer: grant insert, update, delete on public.product_pack_conversions,
+-- public.product_pack_components to authenticated;
+-- OJO (INT-02): el BFF integrado guarda ademas la preferencia "Desarmar siempre al recibir compras" por la RPC: aplicar
+-- 20261012a ANTES de desplegarlo. Orden completo: 20261010e -> 20261011c -> 20261012a -> verify -> BFF -> 20261011d -> verify.
+-- -----------------------------------------------------------------------------
+-- 20261012a — save pack recipe always disassemble (INT-02): save_pack_recipe gana p_always_disassemble_on_receive (boolean,
+--             default null) y guarda la preferencia "Desarmar siempre al recibir compras" de la cabecera de la receta en
+--             la misma transaccion; una receta reemplazada hereda la preferencia de la anterior
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261012a-save-pack-recipe-always-disassemble.sql
+-- Requiere 20261010e (la columna) y 20261011c (la RPC). Idempotente, una transaccion. Solo redefine save_pack_recipe: el
+-- cuerpo es el de 20261011c (mismas validaciones, bloqueos, mensajes y acciones) mas la columna. No toca stock, costo,
+-- dinero, tablas, politicas ni grants de tabla; ninguna otra funcion lee la columna.
+-- Firma: pasa de 5 a 6 argumentos (el nuevo al final, con default) y se ELIMINA la de 5; las llamadas con 5 argumentos
+-- siguen resolviendo. null / ausente = no cambia (edicion en sitio: conserva; reemplazo: hereda la de la receta anterior;
+-- alta: false). El resultado anade "alwaysDisassembleOnReceive".
+-- OJO: reaplicar 20261011c reinstala la firma de 5 y deja dos sobrecargas (PGRST203 en toda llamada de 5 argumentos):
+-- volver a aplicar este parche y correr verify-patches.sql. Reaplicar 20261010e, 20261009d o 20261011d no lo afecta.
+-- ORDEN DE DESPLIEGUE (INT-02): 20261010e -> 20261011c -> este parche -> verify -> BFF -> 20261011d -> verify. El BFF de
+-- INV-09 (5 argumentos) funciona sobre la base parcheada. El BFF nuevo sin este parche: guardar una receta sin tocar la
+-- casilla funciona (no envia el argumento); tocandola responde 409 ("Esta base aún no admite guardar la receta...") sin
+-- escribir nada. La preferencia se sigue LEYENDO de la cabecera con el select que authenticated conserva.

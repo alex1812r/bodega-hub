@@ -1549,17 +1549,15 @@ select
   )
 union all
 select
-  'product_pack_components: RLS por tienda (lectura de la tienda, escritura admin / almacen) y sin privilegios para anon (20261009d)',
+  'product_pack_components: RLS por tienda (politicas de lectura de la tienda y de escritura admin / almacen), authenticated solo lee la tabla (la escritura directa la cierra 20261011d: la receta se guarda por save_pack_recipe) y sin privilegios para anon (20261009d)',
   exists (
     select 1
     from pg_class c
     where c.oid = to_regclass('public.product_pack_components')
       and c.relrowsecurity
       and has_table_privilege('authenticated', c.oid, 'select')
-      and has_table_privilege('authenticated', c.oid, 'insert')
-      and not has_table_privilege('authenticated', c.oid, 'truncate')
-      and not has_table_privilege('anon', c.oid, 'select')
-      and not has_table_privilege('anon', c.oid, 'insert')
+      and not has_table_privilege('authenticated', c.oid, 'insert, update, delete, truncate')
+      and not has_table_privilege('anon', c.oid, 'select, insert, update, delete, truncate')
   ) and (
     select count(*) = 2
        and bool_and(pol.roles = '{authenticated}'::name[])
@@ -1983,7 +1981,7 @@ select
   )
 union all
 select
-  'product_pack_conversions.always_disassemble_on_receive (boolean not null default false): preferencia de la receta; ninguna funcion de public la lee (20261010e)',
+  'product_pack_conversions.always_disassemble_on_receive (boolean not null default false): preferencia de la receta; ninguna funcion de public la nombra salvo save_pack_recipe, que la guarda desde 20261012a (20261010e)',
   (
     select count(*) = 1
        and bool_and(c.data_type = 'boolean' and c.is_nullable = 'NO' and c.column_default = 'false')
@@ -1991,6 +1989,7 @@ select
          select 1
          from pg_proc p
          where p.pronamespace = 'public'::regnamespace
+           and p.proname <> 'save_pack_recipe'
            and p.prosrc ilike '%always_disassemble_on_receive%'
        )
     from information_schema.columns c
@@ -2021,5 +2020,139 @@ select
     where t.tgrelid = 'public.purchases'::regclass
       and t.tgname = 'purchases_received_disassemble_guard'
       and not t.tgisinternal
+  )
+union all
+select
+  'vista inventory_overview: security_invoker, una fila por producto con entries_30d / exits_30d / last_movement_at / last_movement_type / stock_status, select solo para authenticated / service_role e indice idx_stock_movements_product_seq (product_id, seq desc) (20261011a)',
+  exists (
+    select 1
+    from pg_class c
+    where c.oid = to_regclass('public.inventory_overview')
+      and c.relkind = 'v'
+      and c.reloptions @> array['security_invoker=true']
+      and has_table_privilege('authenticated', c.oid, 'select')
+      and has_table_privilege('service_role', c.oid, 'select')
+      and not has_table_privilege('anon', c.oid, 'select')
+      and not has_table_privilege('authenticated', c.oid, 'insert, update, delete')
+  )
+  and (
+    select count(*) = 17
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'inventory_overview'
+      and col.column_name in (
+        'id', 'store_id', 'category_id', 'sku', 'barcode', 'name', 'sale_price_ref', 'current_cost_ref',
+        'current_stock', 'min_stock', 'image_url', 'is_active', 'entries_30d', 'exits_30d',
+        'last_movement_at', 'last_movement_type', 'stock_status'
+      )
+  )
+  and exists (
+    select 1
+    from pg_index i
+    where i.indexrelid = to_regclass('public.idx_stock_movements_product_seq')
+      and i.indrelid = 'public.stock_movements'::regclass
+      and i.indisvalid
+      and pg_get_indexdef(i.indexrelid) ilike '%(product_id, seq desc)'
+  )
+union all
+select
+  'adjust_stock rechaza la entrada libre a un producto inactivo (PT409), deja pasar las salidas y la devolucion de cliente ligada a su venta, y sigue con una sola firma de 7 argumentos (20261011b)',
+  exists (
+    select 1 from pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and p.proname = 'adjust_stock'
+      and p.prosecdef
+      and p.prosrc ilike '%not v_product.is_active and p_quantity_delta > 0 and p_sale_id is null%'
+      and p.prosrc ilike '%El producto esta inactivo: reactivalo antes de registrar una entrada de stock%'
+      -- Lo que no cambia: R4, clave de idempotencia y stock por movimiento.
+      and p.prosrc ilike '%v_type = ''devolucion_cliente'' and p_sale_id is null%'
+      and p.prosrc ilike '%stock_request_replay%'
+      and p.prosrc ilike '%insert into public.stock_movements%'
+  )
+  and (
+    select count(*) = 1
+      and bool_and(pg_get_function_identity_arguments(p.oid)
+        = 'p_product_id uuid, p_quantity_delta integer, p_reason text, p_type stock_movement_type, p_client_request_id uuid, p_sale_id uuid, p_purchase_id uuid')
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'adjust_stock'
+  )
+union all
+select
+  'save_pack_recipe guarda la receta de un empaque en una transaccion: security definer, una sola firma (la de 6 argumentos de 20261012a; la de 5 de 20261011c ya no existe), bloqueo ordenado de productos, regla de cadenas en los dos sentidos y execute solo para authenticated / service_role (20261011c)',
+  (
+    select count(*) = 1
+      and bool_and(p.prosecdef)
+      and bool_and(pg_get_function_identity_arguments(p.oid)
+        = 'p_pack_product_id uuid, p_enabled boolean, p_total_units integer, p_label text, p_components jsonb, p_always_disassemble_on_receive boolean')
+      and bool_and(p.proconfig @> array['search_path=public'])
+      and bool_and(p.prosrc ilike '%assert_store_context()%')
+      and bool_and(p.prosrc ilike '%where id = any(v_lock_ids)%order by id%for update%')
+      and bool_and(p.prosrc ilike '%es un empaque con receta activa: no puede salir de otro empaque%')
+      and bool_and(p.prosrc ilike '%no puede ser a la vez un empaque%')
+      and bool_and(has_function_privilege('authenticated', p.oid, 'execute'))
+      and bool_and(has_function_privilege('service_role', p.oid, 'execute'))
+      and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'save_pack_recipe'
+  )
+union all
+select
+  'la receta de un empaque solo se escribe por save_pack_recipe: authenticated solo tiene select sobre product_pack_conversions y product_pack_components, y anon y public ningun privilegio (20261011d)',
+  (
+    select count(*) = 2
+      and bool_and(has_table_privilege('authenticated', t.oid, 'select'))
+      and bool_and(not has_table_privilege('authenticated', t.oid, 'insert, update, delete, truncate, references, trigger'))
+      and bool_and(not has_table_privilege('anon', t.oid, 'select, insert, update, delete, truncate, references, trigger'))
+      and bool_and(not has_table_privilege('public', t.oid, 'select, insert, update, delete, truncate, references, trigger'))
+    from pg_class t
+    where t.relnamespace = 'public'::regnamespace
+      and t.relname in ('product_pack_conversions', 'product_pack_components')
+  )
+union all
+select
+  'tras 20261011d la receta conserva su camino de escritura y su RLS: service_role y el dueno de save_pack_recipe (security definer) escriben las dos tablas, que siguen con RLS activa y su politica de lectura (20261011d)',
+  (
+    select count(*) = 2
+      and bool_and(has_table_privilege('service_role', t.oid, 'select'))
+      and bool_and(has_table_privilege('service_role', t.oid, 'insert'))
+      and bool_and(has_table_privilege('service_role', t.oid, 'update'))
+      and bool_and(has_table_privilege('service_role', t.oid, 'delete'))
+      and bool_and(t.relrowsecurity)
+      and bool_and(exists (
+        select 1 from pg_policies pol
+        where pol.schemaname = 'public' and pol.tablename = t.relname and pol.cmd = 'SELECT'
+      ))
+    from pg_class t
+    where t.relnamespace = 'public'::regnamespace
+      and t.relname in ('product_pack_conversions', 'product_pack_components')
+  )
+  and (
+    select count(*) = 1
+      and bool_and(p.prosecdef)
+      and bool_and(has_table_privilege(p.proowner, 'public.product_pack_conversions', 'insert'))
+      and bool_and(has_table_privilege(p.proowner, 'public.product_pack_conversions', 'update'))
+      and bool_and(has_table_privilege(p.proowner, 'public.product_pack_components', 'insert'))
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'save_pack_recipe'
+  )
+union all
+select
+  'save_pack_recipe guarda la preferencia always_disassemble_on_receive: sexto argumento boolean con default null (null = no cambia; la receta que reemplaza a otra hereda la de la anterior), la escribe en los tres caminos (misma receta, edicion en sitio, alta / reemplazo) y la devuelve en el resultado (20261012a)',
+  (
+    select count(*) = 1
+      and bool_and(p.pronargs = 6 and p.pronargdefaults = 4)
+      and bool_and(p.proargnames[6] = 'p_always_disassemble_on_receive')
+      and bool_and(p.proargtypes[5] = 'boolean'::regtype)
+      and bool_and(p.prosecdef and p.proconfig @> array['search_path=public'])
+      and bool_and(p.prosrc ilike '%v_always := coalesce(p_always_disassemble_on_receive, v_existing.always_disassemble_on_receive, false);%')
+      and bool_and(p.prosrc ilike '%if v_existing.always_disassemble_on_receive is distinct from v_always then%set always_disassemble_on_receive = v_always%')
+      and bool_and(p.prosrc ilike '%units_per_pack = p_total_units,%always_disassemble_on_receive = v_always%')
+      and bool_and(p.prosrc ilike '%values (v_store_id, p_pack_product_id, p_total_units, v_label, true, v_always)%')
+      and bool_and(p.prosrc ilike '%''alwaysDisassembleOnReceive'', v_always%')
+      and bool_and(p.prosrc ilike '%where id = any(v_lock_ids)%order by id%for update%')
+      and bool_and(p.prosrc not ilike '%current_stock%' and p.prosrc not ilike '%stock_movements%')
+      and bool_and(has_function_privilege('authenticated', p.oid, 'execute'))
+      and bool_and(not has_function_privilege('anon', p.oid, 'execute'))
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'save_pack_recipe'
   )
 order by 1;

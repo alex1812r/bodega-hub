@@ -222,10 +222,15 @@ export function purchaseHttp(subject: { active: boolean }, observe = false): Htt
   return subject.active ? "accept" : "reject";
 }
 
-/** Un ajuste que deja el stock negativo debe rechazarse; sobre un inactivo se observa. */
+/**
+ * Ajuste libre (sin documento). Se rechaza el que deja el stock negativo y, desde `20261011b` (COM-15a), la entrada
+ * a un producto inactivo (409: hay que reactivarlo antes). La salida de un inactivo se acepta: es la forma de dejar
+ * en cero un producto dado de baja que aún tiene stock.
+ */
 export function adjustHttp(subject: { active: boolean; stock: number }, quantityDelta: number): HttpExpectation {
   if (subject.stock + quantityDelta < 0) return "reject";
-  return subject.active ? "accept" : "either";
+  if (!subject.active && quantityDelta > 0) return "reject";
+  return "accept";
 }
 
 // ---------------------------------------------------------------------------
@@ -418,7 +423,6 @@ async function adjust(
   type: string,
   http: HttpExpectation,
   label: string,
-  findingIfAccepted?: string,
   link?: AdjustLink,
 ): Promise<OpResult> {
   const result = await c.h.op({
@@ -432,7 +436,6 @@ async function adjust(
       stockDelta: { [subject.id]: quantityDelta },
       movements: [{ productId: subject.id, type, quantityDelta }],
       ref: adjustRef(link),
-      ...(findingIfAccepted ? { findingIfAccepted } : {}),
     },
   });
   if (result.accepted) applyStock(subject, subject.id, quantityDelta);
@@ -836,13 +839,13 @@ export const OPS: OpDef[] = [
       // R4 (20261006g): la devolución suelta ya no existe; 400 y ni un movimiento.
       await adjust(c, subject, 1, "devolucion_cliente", "reject", "devolución de 1 SIN saleId (ajuste suelto)");
       const link = { saleId: sale.id };
-      const first = await adjust(c, subject, 1, "devolucion_cliente", flowHttp(subject), "devolución parcial de 1 ligada a la venta", undefined, link);
+      const first = await adjust(c, subject, 1, "devolucion_cliente", flowHttp(subject), "devolución parcial de 1 ligada a la venta", link);
       if (!first.accepted) return;
       // Tope: vendido 3, ya devuelto 1 → caben 2, no 3.
-      await adjust(c, subject, 3, "devolucion_cliente", "reject", "devolución de 3 ligada (supera el tope: quedan 2)", undefined, link);
-      const rest = await adjust(c, subject, 2, "devolucion_cliente", flowHttp(subject), "devolución de las 2 restantes ligada", undefined, link);
+      await adjust(c, subject, 3, "devolucion_cliente", "reject", "devolución de 3 ligada (supera el tope: quedan 2)", link);
+      const rest = await adjust(c, subject, 2, "devolucion_cliente", flowHttp(subject), "devolución de las 2 restantes ligada", link);
       if (!rest.accepted) return;
-      await adjust(c, subject, 1, "devolucion_cliente", "reject", "devolución de 1 más (tope agotado)", undefined, link);
+      await adjust(c, subject, 1, "devolucion_cliente", "reject", "devolución de 1 más (tope agotado)", link);
       c.h.note(`la venta ${sale.id} queda "${await saleStatus(c, sale.id)}": la devolución ligada mueve stock, no el documento ni el cobro`);
     },
   },
@@ -982,13 +985,13 @@ export const OPS: OpDef[] = [
       // R4 (20261006g): la devolución suelta ya no existe; 400 y ni un movimiento.
       await adjust(c, subject, -3, "devolucion_proveedor", "reject", "devolución de 3 SIN purchaseId (ajuste suelto)");
       const link = { purchaseId: purchase.id };
-      const first = await adjust(c, subject, -3, "devolucion_proveedor", flowHttp(subject), "devolución parcial de 3 ligada a la compra", undefined, link);
+      const first = await adjust(c, subject, -3, "devolucion_proveedor", flowHttp(subject), "devolución parcial de 3 ligada a la compra", link);
       if (!first.accepted) return;
       // Tope: recibido 10, ya devuelto 3 → caben 7, no 8.
-      await adjust(c, subject, -8, "devolucion_proveedor", "reject", "devolución de 8 ligada (supera el tope: quedan 7)", undefined, link);
-      const rest = await adjust(c, subject, -7, "devolucion_proveedor", flowHttp(subject), "devolución de las 7 restantes ligada", undefined, link);
+      await adjust(c, subject, -8, "devolucion_proveedor", "reject", "devolución de 8 ligada (supera el tope: quedan 7)", link);
+      const rest = await adjust(c, subject, -7, "devolucion_proveedor", flowHttp(subject), "devolución de las 7 restantes ligada", link);
       if (!rest.accepted) return;
-      await adjust(c, subject, -1, "devolucion_proveedor", "reject", "devolución de 1 más (tope agotado)", undefined, link);
+      await adjust(c, subject, -1, "devolucion_proveedor", "reject", "devolución de 1 más (tope agotado)", link);
     },
   },
   {
@@ -1007,19 +1010,15 @@ export const OPS: OpDef[] = [
   },
   {
     key: "adjust_in",
-    title: "Ajuste de entrada (+5)",
+    title: "Ajuste de entrada (+5; sobre un producto inactivo debe rechazarse)",
     hypothesis: ["H7"],
     run: async (c) => {
       const subject = await createSubject(c);
-      await adjust(
-        c,
-        subject,
-        5,
-        "ajuste_entrada",
-        adjustHttp(subject, 5),
-        "ajuste entrada",
-        subject.active ? undefined : "se puede ajustar (entrada) el stock de un producto inactivo",
-      );
+      const result = await adjust(c, subject, 5, "ajuste_entrada", adjustHttp(subject, 5), "ajuste entrada");
+      if (subject.active) return;
+      // COM-15a (20261011b): la regla es un 409 con su mensaje, no un 4xx cualquiera.
+      if (result.res.status !== 409) c.h.fail(`ajuste entrada a un inactivo: se esperaba 409 y respondió ${result.res.status}`);
+      c.h.note("20261011b: un producto inactivo no recibe entradas libres (409, sin movimiento); hay que reactivarlo antes");
     },
   },
   {
@@ -1028,15 +1027,8 @@ export const OPS: OpDef[] = [
     hypothesis: ["H7"],
     run: async (c) => {
       const subject = await createSubject(c);
-      await adjust(
-        c,
-        subject,
-        -3,
-        "ajuste_salida",
-        adjustHttp(subject, -3),
-        "ajuste salida",
-        subject.active ? undefined : "se puede ajustar (salida) el stock de un producto inactivo",
-      );
+      await adjust(c, subject, -3, "ajuste_salida", adjustHttp(subject, -3), "ajuste salida");
+      if (!subject.active) c.h.note("20261011b: la salida de un producto inactivo se acepta a propósito (permite dejarlo en cero)");
     },
   },
   {

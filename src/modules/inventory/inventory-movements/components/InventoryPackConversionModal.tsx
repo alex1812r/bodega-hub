@@ -1,30 +1,42 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
+import { EntityAutocomplete, type EntityFetcher } from "@/shared/components/EntityAutocomplete";
+import { ErrorState } from "@/shared/components/ErrorState";
 import { FormActions } from "@/shared/components/FormActions";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
-import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 import { useToast } from "@/shared/components/Toast";
 
 import {
+  packConversionsQueryOptions,
   useConvertPackToUnits,
   usePackConversions,
 } from "../../hooks/useInventory";
-
 import { useRequestAttempt } from "../../utils/requestAttempt";
+import { STOCK_REASON_MAX_LENGTH, describeStockReasonLength } from "../../utils/stockReason";
+import { describeStockRequestError } from "../../utils/stockRequestError";
+import { useAssortedPackOpening } from "../hooks/useAssortedPackOpening";
+import { AssortedPackOpeningConfirm } from "./AssortedPackOpeningConfirm";
+import { AssortedPackOpeningActions, AssortedPackOpeningFields } from "./AssortedPackOpeningFields";
 import {
   buildPackOpeningToast,
   describeRecipeOpening,
   isAssortedOpening,
 } from "./packOpeningText";
+import { describePackRecipe, searchPackOptions } from "./packProductOptions";
 
 const formId = "inventory-pack-conversion-form";
 
 type InventoryPackConversionModalProps = {
+  /**
+   * Empaque precargado; el usuario puede cambiarlo. Si el producto no es un
+   * empaque con receta activa el campo queda vacío.
+   */
   defaultPackProductId?: string;
   trigger?: ReactNode;
 };
@@ -39,29 +51,29 @@ export function InventoryPackConversionModal({
   const [reason, setReason] = useState("");
   // Se activa al tocar la cantidad o al intentar enviar; al abrir no hay aviso.
   const [showQuantityError, setShowQuantityError] = useState(false);
+  // Se activa al intentar enviar sin empaque elegido.
+  const [showPackError, setShowPackError] = useState(false);
+  const queryClient = useQueryClient();
   const packConversionsQuery = usePackConversions();
   const convert = useConvertPackToUnits();
-  const requestAttempt = useRequestAttempt();
+  const requestAttempt = useRequestAttempt({ renewOnContentChange: true });
   const { showToast } = useToast();
 
-  const packOptions = useMemo(
-    () =>
-      (packConversionsQuery.data ?? []).map((item) => ({
-        label: isAssortedOpening(item)
-          ? `${item.packProduct.name} → surtido de ${item.components?.length} productos (x${item.unitsPerPack})`
-          : `${item.packProduct.name} → ${item.linkedProduct.name} (x${item.unitsPerPack})`,
-        value: item.packProduct.id,
-      })),
+  const recipesByPackId = useMemo(
+    () => new Map((packConversionsQuery.data ?? []).map((item) => [item.packProduct.id, item])),
     [packConversionsQuery.data],
   );
-
-  const selected = useMemo(
-    () =>
-      (packConversionsQuery.data ?? []).find(
-        (item) => item.packProduct.id === packProductId,
-      ),
-    [packConversionsQuery.data, packProductId],
-  );
+  const selected = recipesByPackId.get(packProductId);
+  // Las recetas son la fuente (ver packProductOptions): se buscan en la consulta ya cargada.
+  const fetchPackOptions: EntityFetcher<"product"> = async ({ limit, query }) =>
+    searchPackOptions(await queryClient.ensureQueryData(packConversionsQueryOptions), query, limit);
+  const isLoadingDefaultPack = Boolean(packProductId) && packConversionsQuery.isLoading;
+  // Sin recetas no hay empaque que elegir: se dice el error y se ofrece reintentar. Si
+  // falla un refresco con recetas ya cargadas, el formulario sigue (el servidor valida).
+  const recipesError =
+    packConversionsQuery.isError && packConversionsQuery.data === undefined
+      ? packConversionsQuery.error
+      : null;
 
   const quantityNumber = Number(packQuantity);
   const unitPreview =
@@ -74,6 +86,29 @@ export function InventoryPackConversionModal({
     quantityNumber <= (selected?.packProduct.currentStock ?? 0);
   const packStock = selected?.packProduct.currentStock;
   const isAssorted = selected ? isAssortedOpening(selected) : false;
+  // Surtido: reparto editable y confirmación con su efecto. El 1 a 1 sigue por `handleSubmit`.
+  const assorted = useAssortedPackOpening({
+    onOpened: (result, effect) => {
+      if (selected) {
+        showToast(
+          buildPackOpeningToast({
+            packName: effect.pack.name,
+            packQuantity: effect.packQuantity,
+            recipe: selected,
+            result,
+          }),
+        );
+      }
+      resetForm();
+      setOpen(false);
+    },
+    packQuantity: quantityNumber,
+    reason,
+    target:
+      selected && isAssorted
+        ? { components: selected.components ?? [], pack: selected.packProduct }
+        : null,
+  });
   // Sin `min`/`max` en el input no hay burbuja nativa: el motivo se dice aqui.
   const quantityError = !showQuantityError
     ? undefined
@@ -90,12 +125,20 @@ export function InventoryPackConversionModal({
     setPackQuantity("1");
     setReason("");
     setShowQuantityError(false);
+    setShowPackError(false);
+    assorted.reset();
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSubmit) {
+      setShowPackError(true);
       setShowQuantityError(true);
+      return;
+    }
+
+    if (isAssorted) {
+      assorted.openConfirm();
       return;
     }
 
@@ -135,22 +178,40 @@ export function InventoryPackConversionModal({
     <Modal
       contentClassName="sm:max-w-lg"
       description="Convierte empaques cerrados en unidades sueltas con movimiento de inventario emparejado."
-      footer={({ close }) => (
-        <FormActions
-          isSubmitting={convert.isPending}
-          onCancel={close}
-          submitFormId={formId}
-          submitLabel="Convertir empaque"
-          submittingLabel="Convirtiendo..."
-        />
-      )}
+      footer={({ close }) =>
+        recipesError ? (
+          <Button onClick={close} type="button" variant="outline">
+            Cerrar
+          </Button>
+        ) : isAssorted ? (
+          <AssortedPackOpeningActions formId={formId} onCancel={close} opening={assorted} />
+        ) : (
+          <FormActions
+            isSubmitting={convert.isPending}
+            onCancel={close}
+            submitFormId={formId}
+            submitLabel="Convertir empaque"
+            submittingLabel="Convirtiendo..."
+          />
+        )
+      }
       onOpenChange={(nextOpen) => {
+        // Con una conversión en vuelo (1 a 1 o surtido) el modal no se cierra.
+        if (!nextOpen && (convert.isPending || assorted.isPending)) {
+          return;
+        }
+
         setOpen(nextOpen);
         if (nextOpen) {
           convert.reset();
           setPackProductId(defaultPackProductId ?? "");
+          // El stock del empaque y de sus componentes se lee al abrir: el efecto no se calcula con caché.
+          void packConversionsQuery.refetch();
         } else {
           resetForm();
+          // Cerrar descarta el intento: al reabrir, clave nueva y sin el error anterior.
+          requestAttempt.discard();
+          convert.reset();
         }
       }}
       open={open}
@@ -163,55 +224,85 @@ export function InventoryPackConversionModal({
         )
       }
     >
-      <form className="grid gap-4" id={formId} onSubmit={handleSubmit}>
-        <SelectField
-          label="Producto empaque"
-          onChange={(event) => setPackProductId(event.target.value)}
-          options={packOptions}
-          placeholder={
-            packConversionsQuery.isLoading ? "Cargando..." : "Selecciona un empaque vinculado"
-          }
-          value={packProductId}
-        />
-        {selected ? (
+      {recipesError ? (
+        <div role="alert">
+          <ErrorState
+            description={recipesError.message}
+            onRetry={() => void packConversionsQuery.refetch()}
+            title="No pudimos cargar los empaques"
+          />
+        </div>
+      ) : (
+        <form className="grid gap-4" id={formId} onSubmit={handleSubmit}>
+          <EntityAutocomplete
+            disabled={isLoadingDefaultPack || convert.isPending}
+            entity="product"
+            error={showPackError && !selected ? "Selecciona un empaque." : undefined}
+            fetcher={fetchPackOptions}
+            helperText={
+              isLoadingDefaultPack
+                ? "Cargando empaque…"
+                : packConversionsQuery.isLoading
+                  ? "Cargando empaques…"
+                  : packConversionsQuery.error
+                    ? packConversionsQuery.error.message
+                    : "Solo empaques con receta activa."
+            }
+            label="Producto empaque"
+            onChange={(option) => setPackProductId(option?.id ?? "")}
+            placeholder="Buscar empaque por nombre o SKU"
+            // Sin recientes: un empaque guardado en el navegador puede haber perdido su receta.
+            recentsKey={null}
+            renderSecondary={(option) => {
+              const recipe = recipesByPackId.get(option.id);
+
+              return [option.sku, `Stock ${option.currentStock}`, recipe ? describePackRecipe(recipe) : ""]
+                .filter(Boolean)
+                .join(" · ");
+            }}
+            value={selected ? { id: selected.packProduct.id, label: selected.packProduct.name } : null}
+          />
+          {selected ? (
+            <p className="text-sm text-on-surface-variant">
+              Stock empaque: {selected.packProduct.currentStock}.{" "}
+              {isAssorted
+                ? `Por empaque: ${describeRecipeOpening(selected, 1)}.`
+                : `Unidad: ${selected.linkedProduct.name} (stock ${selected.linkedProduct.currentStock}).`}
+            </p>
+          ) : null}
+          <NumberInput
+            decimals={0}
+            disabled={convert.isPending}
+            error={quantityError}
+            label="Cantidad de empaques"
+            onChange={(event) => {
+              setPackQuantity(event.target.value);
+              setShowQuantityError(true);
+            }}
+            required
+            value={packQuantity}
+          />
           <p className="text-sm text-on-surface-variant">
-            Stock empaque: {selected.packProduct.currentStock}.{" "}
-            {isAssorted
-              ? `Por empaque: ${describeRecipeOpening(selected, 1)}.`
-              : `Unidad: ${selected.linkedProduct.name} (stock ${selected.linkedProduct.currentStock}).`}
+            Preview: −{quantityNumber || 0} empaque(s) / +{unitPreview} unidad(es).
           </p>
-        ) : null}
-        <NumberInput
-          decimals={0}
-          error={quantityError}
-          label="Cantidad de empaques"
-          onChange={(event) => {
-            setPackQuantity(event.target.value);
-            setShowQuantityError(true);
-          }}
-          required
-          value={packQuantity}
-        />
-        <p className="text-sm text-on-surface-variant">
-          Preview: −{quantityNumber || 0} empaque(s) / +{unitPreview} unidad(es).
-          {selected && isAssorted && unitPreview > 0
-            ? ` Se abrirá en: ${describeRecipeOpening(selected, quantityNumber)}.`
-            : null}
-        </p>
-        <Textarea
-          label="Motivo"
-          onChange={(event) => setReason(event.target.value)}
-          placeholder="Opcional"
-          value={reason}
-        />
-        {convert.error ? (
-          <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
-            {convert.error instanceof Error
-              ? convert.error.message
-              : "No se pudo convertir el empaque."}
-          </p>
-        ) : null}
-      </form>
+          <AssortedPackOpeningFields opening={assorted} />
+          <Textarea
+            disabled={convert.isPending}
+            helperText={describeStockReasonLength(reason)}
+            label="Motivo"
+            maxLength={STOCK_REASON_MAX_LENGTH}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Opcional"
+            value={reason}
+          />
+          {convert.error ? (
+            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+              {describeStockRequestError(convert.error)}
+            </p>
+          ) : null}
+        </form>
+      )}
+      <AssortedPackOpeningConfirm opening={assorted} />
     </Modal>
   );
 }

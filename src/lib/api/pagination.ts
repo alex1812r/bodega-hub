@@ -13,7 +13,11 @@ export type PaginatedList<T> = {
 };
 
 export function parsePagination(searchParams: URLSearchParams) {
-  const skip = Math.max(0, Number.parseInt(searchParams.get("skip") ?? "0", 10) || 0);
+  // Con cientos de dígitos `parseInt` da Infinity, que en JSON sale como `null`.
+  const skip = Math.min(
+    Number.MAX_SAFE_INTEGER,
+    Math.max(0, Number.parseInt(searchParams.get("skip") ?? "0", 10) || 0),
+  );
   const parsedLimit = Number.parseInt(searchParams.get("limit") ?? String(DEFAULT_PAGE_LIMIT), 10);
   const limit = Math.max(
     MIN_PAGE_LIMIT,

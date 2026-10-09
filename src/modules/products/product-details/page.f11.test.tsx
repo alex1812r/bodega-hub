@@ -33,6 +33,17 @@ const product = {
   sku: "arroz",
 };
 
+/** INV-03 · kardex sin movimientos: la tarjeta de kardex queda en su estado vacío. */
+const emptyKardex = {
+  entries30d: 0,
+  exits30d: 0,
+  lastMovements: [],
+  openingBalance: 10,
+  product: { currentStock: 10, id: "p-1", minStock: 2, name: "Arroz", sku: "arroz" },
+  series: [],
+  truncated: false,
+};
+
 function jsonResponse(payload: unknown) {
   return {
     headers: { get: () => "application/json" },
@@ -60,6 +71,10 @@ describe("ProductDetailsPage · listas de referencia completas (PRO-F11)", () =>
     global.fetch = jest.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), "http://localhost");
       requests.push(`${url.pathname}${url.search}`);
+
+      if (url.pathname === "/api/inventory/kardex") {
+        return jsonResponse({ data: emptyKardex });
+      }
 
       return url.pathname === "/api/products/p-1"
         ? jsonResponse({ data: product })

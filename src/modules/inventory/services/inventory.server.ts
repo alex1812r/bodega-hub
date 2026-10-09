@@ -1,6 +1,6 @@
 import { ApiError } from "@/lib/api/apiError";
 import { assertSupabaseStoreResource } from "@/lib/api/assertStoreResource";
-import { paginateList, parsePagination } from "@/lib/api/pagination";
+import { parsePagination } from "@/lib/api/pagination";
 import {
   mapCategory,
   mapProductSummary,
@@ -16,36 +16,90 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import type { StockMovementType } from "@/shared/mocks/erp-data";
 
 import {
-  matchesInventoryListFilters,
   parseInventoryListFilters,
+  type InventoryListQueryFilters,
 } from "../utils/inventoryListFilters";
+import type { InventoryStockStatus } from "../utils/inventoryStockStatus";
 import {
-  matchesInventoryMovementFilters,
+  MOVEMENT_EXACT_FILTERS,
+  buildDocumentNumberPattern,
   parseInventoryMovementFilters,
+  parseStockCardFilters,
+  resolveMovementDocumentKind,
+  type InventoryMovementListFilters,
 } from "../utils/inventoryMovementFilters";
 import {
   assertPackDistribution,
   type PackDistributionItem,
 } from "@/modules/products/services/packConversionSchemas";
+import { assertListFilterParams } from "@/modules/products/services/listFilterParams";
+import { isRangeNotSatisfiable, listCountOptions } from "@/modules/products/services/listRange";
 import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
+import {
+  canSeeInventoryReconciliation,
+  type InventoryOverviewItem,
+  type ListInventoryOptions,
+} from "./inventoryOverview";
 import { assertReturnAdjustmentHasDocument } from "./returnAdjustmentDocument";
 import { isMissingRpcSignatureError, rpcWithClientRequestId } from "./rpcWithClientRequestId";
 
 const productSummarySelect =
   "id, category_id, sku, barcode, name, sale_price_ref, current_cost_ref, current_stock, min_stock, image_url, is_active";
 
-const productInventorySelect = `
+/** Vista `inventory_overview` (parche 20261011a): producto + cifras del libro + `stock_status`. */
+const inventoryOverviewSelect = `
   ${productSummarySelect},
+  entries_30d,
+  exits_30d,
+  last_movement_at,
+  last_movement_type,
+  stock_status,
   category:categories(id, name, description, is_active, created_at, updated_at)
 `;
 
-function mapInventoryItem(row: DbProductSummaryRow & { category?: CategoryRow | null }) {
+type InventoryOverviewRow = DbProductSummaryRow & {
+  category?: CategoryRow | null;
+  entries_30d?: number | null;
+  exits_30d?: number | null;
+  last_movement_at?: string | null;
+  last_movement_type?: StockMovementType | null;
+  stock_status: InventoryStockStatus;
+};
+
+function mapInventoryOverviewItem(row: InventoryOverviewRow): InventoryOverviewItem {
   return {
     ...mapProductSummary(row),
     category: row.category ? mapCategory(row.category) : undefined,
+    entries30d: row.entries_30d ?? 0,
+    exits30d: row.exits_30d ?? 0,
+    lastMovementAt: row.last_movement_at ?? null,
+    lastMovementType: row.last_movement_type ?? null,
+    stockStatus: row.stock_status,
   };
+}
+
+/** Filtros exactos del listado que viajan tal cual a PostgREST. */
+const INVENTORY_LIST_EXACT_FILTERS = ["categoryId", "productId"] as const;
+
+/** `offset` máximo que se envía a PostgREST; más allá no puede haber filas. */
+const MAX_LIST_SKIP = 2_000_000_000;
+
+/**
+ * Estados de stock que pide la consulta. `lowStock` equivale a "bajo o agotado"
+ * y se cruza con `stockStatus`. `undefined` = sin filtro; lista vacía = nada casa.
+ */
+function resolveStockStatuses(
+  filters: InventoryListQueryFilters,
+): InventoryStockStatus[] | undefined {
+  if (!filters.lowStock) {
+    return filters.stockStatus;
+  }
+
+  return filters.stockStatus
+    ? filters.stockStatus.filter((status) => status !== "ok")
+    : ["low", "out"];
 }
 
 const stockMovementSelect = `
@@ -59,132 +113,381 @@ const stockMovementSelect = `
   conversion_id,
   reason,
   created_at,
+  sale:sales!sale_id(invoice_number),
+  purchase:purchases!purchase_id(purchase_number),
   product:products(${productSummarySelect})
 `;
+
+type EmbeddedRow<T> = T | T[] | null;
+
+/** Fila del listado de movimientos: el movimiento más el número de su venta o compra. */
+type ListedStockMovementRow = DbStockMovementRow & {
+  purchase?: EmbeddedRow<{ purchase_number: string | null }>;
+  sale?: EmbeddedRow<{ invoice_number: string | null }>;
+};
+
+function firstEmbedded<T>(value: EmbeddedRow<T> | undefined) {
+  return (Array.isArray(value) ? value[0] : value) ?? null;
+}
+
+/**
+ * Movimiento con su documento resuelto. `documentKind` sale de los vínculos;
+ * `documentNumber` es el número de la venta o compra (`null` en una conversión
+ * y en un movimiento sin documento).
+ */
+function mapListedStockMovement(row: ListedStockMovementRow) {
+  const movement = mapStockMovement(row);
+  const documentKind = resolveMovementDocumentKind(movement);
+
+  return {
+    ...movement,
+    documentKind,
+    documentNumber:
+      documentKind === "venta"
+        ? (firstEmbedded(row.sale)?.invoice_number ?? null)
+        : documentKind === "compra"
+          ? (firstEmbedded(row.purchase)?.purchase_number ?? null)
+          : null,
+  };
+}
+
+/**
+ * Tope de documentos por tipo que resuelve el filtro `document` (los más
+ * recientes): sus ids viajan en la URL de la consulta de movimientos.
+ */
+export const MAX_DOCUMENT_MATCHES = 50;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type ListPageQueryResult = {
+  count: number | null;
+  data: unknown;
+  error: { code?: string } | null;
+  status?: number;
+};
+
+/**
+ * Página de una lista con conteo exacto. Un `skip` más allá del total no es un
+ * error: responde sin filas y con el total real (`total()` vuelve a contar con
+ * los mismos filtros).
+ */
+async function readListPage<Row>(params: {
+  rows: () => PromiseLike<ListPageQueryResult>;
+  skip: number;
+  total: () => PromiseLike<Pick<ListPageQueryResult, "count" | "error">>;
+}): Promise<{ rows: Row[]; total: number }> {
+  const emptyPage = async () => {
+    const { count, error } = await params.total();
+
+    throwIfSupabaseError(error);
+
+    return { rows: [], total: count ?? 0 };
+  };
+
+  if (params.skip > MAX_LIST_SKIP) {
+    return emptyPage();
+  }
+
+  const { count, data, error, status } = await params.rows();
+
+  if (isRangeNotSatisfiable(error, status)) {
+    return emptyPage();
+  }
+
+  throwIfSupabaseError(error);
+
+  return { rows: (data ?? []) as Row[], total: count ?? 0 };
+}
 
 const stockCardSelect =
   "id, product_id, sku, product_name, type, quantity_delta, stock_after, sale_id, purchase_id, conversion_id, reason, created_by, created_at";
 
-export async function listInventory(searchParams: URLSearchParams, storeId: string) {
-  const supabase = await createRouteSupabaseClient();
+export async function listInventory(
+  searchParams: URLSearchParams,
+  storeId: string,
+  options: ListInventoryOptions = {},
+) {
+  assertListFilterParams(searchParams, INVENTORY_LIST_EXACT_FILTERS);
+
   const filters = parseInventoryListFilters(searchParams);
-  const needsInMemoryPagination =
-    Boolean(filters.stockStatus?.length) ||
-    filters.minPriceRef !== undefined ||
-    filters.maxPriceRef !== undefined;
+  const { limit, skip } = parsePagination(searchParams);
+  const stockStatuses = resolveStockStatuses(filters);
 
-  const table = filters.lowStock ? "low_stock_products" : "products";
-  let query = supabase
-    .from(table)
-    .select(productInventorySelect, {
-      count: needsInMemoryPagination ? undefined : "exact",
-    })
+  if (stockStatuses?.length === 0) {
+    return { items: [], limit, skip, total: 0 };
+  }
+
+  const supabase = await createRouteSupabaseClient();
+
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    let query = supabase
+      .from("inventory_overview")
+      .select(inventoryOverviewSelect, listCountOptions(head))
+      .eq("store_id", storeId);
+
+    // Por id exacto el producto se devuelve aunque esté inactivo (enlace desde
+    // `/products`, que lista inactivos); la lista general solo trae activos.
+    query = filters.productId
+      ? query.eq("id", filters.productId)
+      : query.eq("is_active", true);
+
+    if (filters.search) {
+      query = query.or(buildProductSearchOrFilter(filters.search));
+    }
+
+    if (filters.categoryId) {
+      query = query.eq("category_id", filters.categoryId);
+    }
+
+    if (stockStatuses) {
+      query = query.in("stock_status", stockStatuses);
+    }
+
+    if (filters.minPriceRef !== undefined) {
+      query = query.gte("sale_price_ref", filters.minPriceRef);
+    }
+
+    if (filters.maxPriceRef !== undefined) {
+      query = query.lte("sale_price_ref", filters.maxPriceRef);
+    }
+
+    return query;
+  };
+
+  /** Página más allá del total: no es un error, es una página vacía con el total real. */
+  const emptyPage = async () => {
+    const total = await buildFilteredQuery(true);
+
+    throwIfSupabaseError(total.error);
+
+    return { items: [], limit, skip, total: total.count ?? 0 };
+  };
+
+  if (skip > MAX_LIST_SKIP) {
+    return emptyPage();
+  }
+
+  const { count, data, error, status } = await buildFilteredQuery(false)
+    .order("name", { ascending: true })
+    .order("id", { ascending: true })
+    .range(skip, skip + limit - 1);
+
+  if (isRangeNotSatisfiable(error, status)) {
+    return emptyPage();
+  }
+
+  throwIfSupabaseError(error);
+
+  const items = (data ?? []).map((row) =>
+    mapInventoryOverviewItem(row as unknown as InventoryOverviewRow),
+  );
+
+  if (!canSeeInventoryReconciliation(options.role)) {
+    return { items, limit, skip, total: count ?? 0 };
+  }
+
+  const diffs = await loadReconciliationDiffs(
+    supabase,
+    storeId,
+    items.map((item) => item.id),
+  );
+
+  return {
+    items: items.map((item) => ({
+      ...item,
+      reconciliationDiff: diffs.get(item.id) ?? null,
+    })),
+    limit,
+    skip,
+    total: count ?? 0,
+  };
+}
+
+/**
+ * Descuadre `current_stock − Σ movimientos` de los productos de la página
+ * (`stock_reconciliation` solo lista los que no cuadran). Solo se consulta para admin.
+ */
+async function loadReconciliationDiffs(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  storeId: string,
+  productIds: string[],
+) {
+  const diffs = new Map<string, number>();
+
+  if (productIds.length === 0) {
+    return diffs;
+  }
+
+  const { data, error } = await supabase
+    .from("stock_reconciliation")
+    .select("product_id, diff")
     .eq("store_id", storeId)
-    .order("name", { ascending: true });
+    .in("product_id", productIds);
 
-  if (!filters.lowStock) {
-    query = query.eq("is_active", true);
+  throwIfSupabaseError(error);
+
+  for (const row of (data ?? []) as { diff: number; product_id: string }[]) {
+    diffs.set(row.product_id, row.diff);
   }
 
-  if (filters.search) {
-    query = query.or(buildProductSearchOrFilter(filters.search));
-  }
+  return diffs;
+}
 
-  if (filters.categoryId) {
-    query = query.eq("category_id", filters.categoryId);
-  }
+type DocumentMatches = { purchaseIds: string[]; saleIds: string[] };
 
-  if (needsInMemoryPagination) {
-    const { data, error } = await query;
+/**
+ * Ventas y compras de la tienda cuyo número contiene `filters.document` (hasta
+ * `MAX_DOCUMENT_MATCHES` por tipo, las más recientes). El texto del usuario solo
+ * viaja como valor de `ilike`; a la consulta de movimientos llegan ids.
+ */
+async function findDocumentMatches(
+  supabase: RouteSupabaseClient,
+  storeId: string,
+  filters: InventoryMovementListFilters & { document: string },
+): Promise<DocumentMatches> {
+  const pattern = buildDocumentNumberPattern(filters.document);
+  const findIds = async (table: "purchases" | "sales", numberColumn: string) => {
+    const { data, error } = await supabase
+      .from(table)
+      .select("id")
+      .eq("store_id", storeId)
+      .ilike(numberColumn, pattern)
+      .order("created_at", { ascending: false })
+      .limit(MAX_DOCUMENT_MATCHES);
 
     throwIfSupabaseError(error);
 
-    const items = (data ?? [])
-      .map((row) =>
-        mapInventoryItem(
-          row as unknown as DbProductSummaryRow & { category?: CategoryRow | null },
-        ),
-      )
-      .filter((item) => matchesInventoryListFilters(item, filters));
-
-    return paginateList(items, searchParams);
-  }
-
-  const { limit, skip } = parsePagination(searchParams);
-  const { count, data, error } = await query.range(skip, skip + limit - 1);
-
-  throwIfSupabaseError(error);
-
-  return {
-    items: (data ?? []).map((row) =>
-      mapInventoryItem(
-        row as unknown as DbProductSummaryRow & { category?: CategoryRow | null },
-      ),
-    ),
-    limit,
-    skip,
-    total: count ?? 0,
+    return ((data ?? []) as { id: string }[])
+      .map((row) => row.id)
+      .filter((id) => UUID_PATTERN.test(id));
   };
+  const searchesSales = !filters.documentKind || filters.documentKind === "venta";
+  const searchesPurchases = !filters.documentKind || filters.documentKind === "compra";
+  const [saleIds, purchaseIds] = await Promise.all([
+    searchesSales ? findIds("sales", "invoice_number") : [],
+    searchesPurchases ? findIds("purchases", "purchase_number") : [],
+  ]);
+
+  return { purchaseIds, saleIds };
 }
 
 export async function listStockMovements(searchParams: URLSearchParams, storeId: string) {
-  const supabase = await createRouteSupabaseClient();
+  assertListFilterParams(searchParams, MOVEMENT_EXACT_FILTERS);
+
   const { limit, skip } = parsePagination(searchParams);
   const filters = parseInventoryMovementFilters(searchParams);
 
-  let query = supabase
-    .from("stock_movements")
-    .select(stockMovementSelect, { count: "exact" })
-    .eq("store_id", storeId)
-    .order("created_at", { ascending: false });
-
-  if (filters.productId) {
-    query = query.eq("product_id", filters.productId);
+  if (filters.documentUnsearchable) {
+    return { items: [], limit, skip, total: 0 };
   }
 
-  if (filters.type) {
-    query = query.eq("type", filters.type);
+  const supabase = await createRouteSupabaseClient();
+  const { document } = filters;
+  const matches = document
+    ? await findDocumentMatches(supabase, storeId, { ...filters, document })
+    : null;
+
+  if (matches && matches.saleIds.length === 0 && matches.purchaseIds.length === 0) {
+    return { items: [], limit, skip, total: 0 };
   }
 
-  query = applyCreatedAtCaracasRange(query, filters.from, filters.to);
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    let query = supabase
+      .from("stock_movements")
+      .select(stockMovementSelect, listCountOptions(head))
+      .eq("store_id", storeId);
 
-  const { count, data, error } = await query.range(skip, skip + limit - 1);
+    if (filters.productId) {
+      query = query.eq("product_id", filters.productId);
+    }
 
-  throwIfSupabaseError(error);
+    if (filters.type) {
+      query = query.eq("type", filters.type);
+    }
 
-  return {
-    items: (data ?? []).map((row) => mapStockMovement(row as DbStockMovementRow)),
-    limit,
-    skip,
-    total: count ?? 0,
+    if (filters.saleId) {
+      query = query.eq("sale_id", filters.saleId);
+    }
+
+    if (filters.purchaseId) {
+      query = query.eq("purchase_id", filters.purchaseId);
+    }
+
+    if (filters.documentKind === "venta") {
+      query = query.not("sale_id", "is", null);
+    } else if (filters.documentKind === "compra") {
+      query = query.not("purchase_id", "is", null);
+    } else if (filters.documentKind === "conversion") {
+      query = query.not("conversion_id", "is", null);
+    } else if (filters.documentKind === "sin_documento") {
+      query = query.is("sale_id", null).is("purchase_id", null).is("conversion_id", null);
+    }
+
+    if (matches && matches.saleIds.length > 0 && matches.purchaseIds.length > 0) {
+      query = query.or(
+        `sale_id.in.(${matches.saleIds.join(",")}),purchase_id.in.(${matches.purchaseIds.join(",")})`,
+      );
+    } else if (matches && matches.saleIds.length > 0) {
+      query = query.in("sale_id", matches.saleIds);
+    } else if (matches) {
+      query = query.in("purchase_id", matches.purchaseIds);
+    }
+
+    return applyCreatedAtCaracasRange(query, filters.from, filters.to);
   };
+
+  // `seq` es el orden real del libro (docs/stock-integrity.md §1) y es único.
+  const page = await readListPage<ListedStockMovementRow>({
+    rows: () =>
+      buildFilteredQuery(false)
+        .order("seq", { ascending: false })
+        .range(skip, skip + limit - 1),
+    skip,
+    total: () => buildFilteredQuery(true),
+  });
+
+  return { items: page.rows.map(mapListedStockMovement), limit, skip, total: page.total };
 }
 
 export async function getStockCard(searchParams: URLSearchParams, storeId: string) {
-  const supabase = await createRouteSupabaseClient();
+  assertListFilterParams(searchParams, MOVEMENT_EXACT_FILTERS);
+
   const { limit, skip } = parsePagination(searchParams);
-  const productId = searchParams.get("productId");
+  const filters = parseStockCardFilters(searchParams);
+  const supabase = await createRouteSupabaseClient();
 
-  let query = supabase
-    .from("stock_card")
-    .select(stockCardSelect, { count: "exact" })
-    .eq("store_id", storeId)
-    .order("created_at", { ascending: false });
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    let query = supabase
+      .from("stock_card")
+      .select(stockCardSelect, listCountOptions(head))
+      .eq("store_id", storeId);
 
-  if (productId) {
-    query = query.eq("product_id", productId);
-  }
+    if (filters.productId) {
+      query = query.eq("product_id", filters.productId);
+    }
 
-  const { count, data, error } = await query.range(skip, skip + limit - 1);
+    if (filters.type) {
+      query = query.eq("type", filters.type);
+    }
 
-  throwIfSupabaseError(error);
-
-  return {
-    items: (data ?? []).map((row) => mapStockCardEntry(row as StockCardRow)),
-    limit,
-    skip,
-    total: count ?? 0,
+    return applyCreatedAtCaracasRange(query, filters.from, filters.to);
   };
+
+  // La vista `stock_card` no expone `seq`: el orden estable es fecha e id.
+  const page = await readListPage<StockCardRow>({
+    rows: () =>
+      buildFilteredQuery(false)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(skip, skip + limit - 1),
+    skip,
+    total: () => buildFilteredQuery(true),
+  });
+
+  return { items: page.rows.map(mapStockCardEntry), limit, skip, total: page.total };
 }
 
 export async function createStockAdjustment(

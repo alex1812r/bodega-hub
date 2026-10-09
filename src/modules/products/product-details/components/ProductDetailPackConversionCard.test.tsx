@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 
@@ -90,7 +90,7 @@ describe("ProductDetailPackConversionCard · idempotencia (C6)", () => {
 
     await openDialog();
     fireEvent.submit(getForm());
-    await screen.findByText("Failed to fetch");
+    await screen.findByText(/No pudimos confirmar si el movimiento se registró/);
     expect(onConverted).not.toHaveBeenCalled();
 
     fireEvent.submit(getForm());
@@ -349,7 +349,7 @@ describe("ProductDetailPackConversionCard · surtido y orígenes (PRO-13)", () =
     expect(screen.queryByText(/Proviene de/)).not.toBeInTheDocument();
   });
 
-  it("empaque surtido: «Abrir según la receta» abre sin reparto (el servidor reparte por receta)", async () => {
+  it("empaque surtido: «Abrir según la receta» precarga el reparto por receta, confirma y lo envía (INV-08)", async () => {
     const api = installFetchStub(() => null);
     api.respondToNextPost(conversionResult);
     const onConverted = renderWith(assorted);
@@ -359,14 +359,94 @@ describe("ProductDetailPackConversionCard · surtido y orígenes (PRO-13)", () =
     fireEvent.click(screen.getByRole("button", { name: "Abrir según la receta" }));
     await screen.findByLabelText("Cantidad de empaques");
     expect(screen.getByText(/Entrada: \+6 unidad\(es\)/)).toBeVisible();
+    expect(screen.getByLabelText("Unidades de Cola")).toHaveValue("2");
+    expect(screen.getByLabelText("Unidades de Manzana")).toHaveValue("2");
+    expect(screen.getByLabelText("Unidades de Naranja")).toHaveValue("2");
+    expect(screen.getByText("6 de 6 unidades")).toBeVisible();
 
     fireEvent.submit(getForm());
+
+    const dialog = await screen.findByRole("dialog", { name: "Abrir empaque surtido" });
+
+    // Nada se envía hasta confirmar.
+    expect(api.posts).toHaveLength(0);
+    expect(onConverted).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Abrir empaque" }));
     await waitFor(() => expect(onConverted).toHaveBeenCalledTimes(1));
 
     expect(api.posts).toHaveLength(1);
     expect(api.posts[0]?.url).toBe("/api/inventory/conversions");
-    expect(api.posts[0]?.body).toMatchObject({ packProductId: "prod-sabores", packQuantity: 1 });
-    expect(api.posts[0]?.body).not.toHaveProperty("components");
+    expect(api.posts[0]?.body).toEqual({
+      clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      components: [
+        { unitProductId: "prod-cola", units: 2 },
+        { unitProductId: "prod-manzana", units: 2 },
+        { unitProductId: "prod-naranja", units: 2 },
+      ],
+      packProductId: "prod-sabores",
+      packQuantity: 1,
+    });
+  });
+
+  it("empaque surtido: reparto editado, suma que no coincide bloquea y la confirmación muestra el efecto (INV-08)", async () => {
+    const api = installFetchStub(() => null);
+    api.respondToNextPost(conversionResult);
+    const onConverted = renderWith(assorted);
+
+    fireEvent.click(screen.getByRole("button", { name: "Abrir según la receta" }));
+    fireEvent.change(await screen.findByLabelText("Cantidad de empaques"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Unidades de Cola"), { target: { value: "9" } });
+
+    expect(screen.getByText("17 de 12 unidades")).toBeVisible();
+    expect(screen.getByText("Sobran 5 unidad(es): el reparto debe sumar 12.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Continuar" })).toBeDisabled();
+
+    fireEvent.submit(getForm());
+    expect(screen.queryByRole("dialog", { name: "Abrir empaque surtido" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Restablecer receta" }));
+    expect(screen.getByLabelText("Unidades de Cola")).toHaveValue("4");
+
+    fireEvent.change(screen.getByLabelText("Unidades de Cola"), { target: { value: "9" } });
+    fireEvent.change(screen.getByLabelText("Unidades de Manzana"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Unidades de Naranja"), { target: { value: "3" } });
+    fireEvent.submit(getForm());
+
+    const dialog = await screen.findByRole("dialog", { name: "Abrir empaque surtido" });
+    const effects = within(dialog).getAllByRole("listitem");
+
+    // Manzana (inactivo en este surtido) recibe 0: no aparece.
+    expect(effects).toHaveLength(3);
+    expect(effects[0]).toHaveTextContent(/−2 Refrescos sabores x6\s*Stock 5\s*pasa a\s*3$/);
+    expect(effects[1]).toHaveTextContent(/\+9 Cola\s*Stock 4\s*pasa a\s*13$/);
+    expect(effects[2]).toHaveTextContent(/\+3 Naranja\s*Stock 4\s*pasa a\s*7$/);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Abrir empaque" }));
+    await waitFor(() => expect(onConverted).toHaveBeenCalledTimes(1));
+
+    expect(api.posts[0]?.body).toMatchObject({
+      components: [
+        { unitProductId: "prod-cola", units: 9 },
+        { unitProductId: "prod-naranja", units: 3 },
+      ],
+      packQuantity: 2,
+    });
+  });
+
+  it("empaque surtido: más empaques de los que hay no llega a la confirmación (INV-08)", async () => {
+    const api = installFetchStub(() => null);
+    renderWith(assorted);
+
+    fireEvent.click(screen.getByRole("button", { name: "Abrir según la receta" }));
+    fireEvent.change(await screen.findByLabelText("Cantidad de empaques"), { target: { value: "6" } });
+
+    expect(screen.getByText("Solo hay 5 empaque(s) en stock.")).toBeVisible();
+
+    fireEvent.submit(getForm());
+
+    expect(screen.queryByRole("dialog", { name: "Abrir empaque surtido" })).not.toBeInTheDocument();
+    expect(api.posts).toHaveLength(0);
   });
 
   it("empaque 1 a 1: como siempre, con su unidad enlazada y «Abrir empaque»", () => {

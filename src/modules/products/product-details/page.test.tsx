@@ -42,6 +42,17 @@ const product = {
   sku: "arroz",
 };
 
+/** INV-03 · kardex sin movimientos: la tarjeta de kardex queda en su estado vacío. */
+const emptyKardex = {
+  entries30d: 0,
+  exits30d: 0,
+  lastMovements: [],
+  openingBalance: 10,
+  product: { currentStock: 10, id: "p-1", minStock: 2, name: "Arroz", sku: "arroz" },
+  series: [],
+  truncated: false,
+};
+
 function jsonResponse(payload: unknown, status = 200) {
   return {
     headers: { get: () => "application/json" },
@@ -95,6 +106,10 @@ describe("ProductDetailsPage", () => {
         return jsonResponse({
           data: { items: priceHistory, limit: 10, skip: 0, total: priceHistory.length },
         });
+      }
+
+      if (path === "/api/inventory/kardex") {
+        return jsonResponse({ data: emptyKardex });
       }
 
       return path === "/api/products/p-1"
@@ -393,5 +408,21 @@ describe("ProductDetailsPage", () => {
     expect(unhandled).not.toHaveBeenCalled();
     expect(screen.getByText("No autorizado para cambiar precios")).toBeInTheDocument();
     expect(card.getByLabelText("Precio REF")).toHaveValue("13");
+  });
+
+  it("monta el kardex del producto y su enlace vuelve al detalle (INV-03)", async () => {
+    renderPage();
+
+    const heading = await screen.findByRole("heading", { name: "Kardex" });
+    const card = within(heading.closest("section") as HTMLElement);
+
+    expect(await card.findByText("Este producto aún no tiene movimientos.")).toBeInTheDocument();
+    expect(card.getByRole("link", { name: "Ver kardex completo" })).toHaveAttribute(
+      "href",
+      "/inventory/movements?productId=p-1&returnTo=%2Fproducts%2Fp-1",
+    );
+    expect(
+      (global.fetch as jest.Mock).mock.calls.map(([input]) => String(input)),
+    ).toContain("/api/inventory/kardex?productId=p-1");
   });
 });

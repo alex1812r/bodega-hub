@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 
 import { getPriceChangeReason } from "@/lib/api/dataSourceUi";
 import { getPaginatedItems, MAX_PAGE_LIMIT } from "@/lib/api/pagination";
+import { ProductKardexCard } from "@/modules/inventory/components/ProductKardexCard";
 import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { Can } from "@/shared/auth/Can";
 import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
@@ -237,6 +238,9 @@ export function ProductDetailsPage({ productId = "prod-drill" }: ProductDetailsP
             />
           </div>
         ) : null}
+        <div className="empty:hidden lg:col-span-12">
+          <ProductKardexCard productId={data.id} returnTo={`/products/${data.id}`} />
+        </div>
         <div className="lg:col-span-4" ref={priceCardRef}>
           <Can permission="products.manage">
             <ProductDetailPriceChangeCard

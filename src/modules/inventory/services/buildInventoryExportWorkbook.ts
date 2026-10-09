@@ -1,14 +1,14 @@
 import ExcelJS from "exceljs";
 
 import { inventoryExportColumns } from "./inventoryExportColumns";
-import type { InventoryItem } from "../hooks/useInventory";
+import type { InventoryOverviewItem } from "./inventoryOverview";
 
 export type InventoryExportWorkbookMetadata = {
   exportedAt: string;
 };
 
 export async function buildInventoryExportWorkbook(
-  items: InventoryItem[],
+  items: InventoryOverviewItem[],
   metadata: InventoryExportWorkbookMetadata,
 ): Promise<ArrayBuffer> {
   const workbook = new ExcelJS.Workbook();
