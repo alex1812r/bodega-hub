@@ -29,7 +29,14 @@ function mockQuery(slug: string) {
 
 jest.mock("../../hooks/useReports", () => ({
   ...jest.requireActual("../../hooks/useReports"),
+  useCustomerPurchasesReport: jest.fn(mockQuery("customer-purchases")),
   useDailySalesReport: jest.fn(mockQuery("daily-sales")),
+  useLowStockReport: jest.fn(mockQuery("low-stock")),
+  useProductProfitabilityReport: jest.fn(mockQuery("product-profitability")),
+  usePurchasesReport: jest.fn(mockQuery("purchases")),
+  useStockCardReport: jest.fn(mockQuery("stock-card")),
+  useSupplierPurchasesReport: jest.fn(mockQuery("supplier-purchases")),
+  useTopCustomersReport: jest.fn(mockQuery("top-customers")),
   useTopProductsReport: jest.fn(mockQuery("top-products")),
 }));
 
@@ -257,6 +264,18 @@ const CASES: [ReportId, string, unknown][] = [
   ],
 ];
 
+/** REP-F10 (N-11): una fila sin ningún campo pintaba «undefined» en la etiqueta del gráfico o en la celda. */
+const EMPTY_ROW_REPORTS: ReportId[] = [
+  "top-customers",
+  "customer-purchases",
+  "supplier-purchases",
+  "purchases",
+  "top-products",
+  "product-profitability",
+  "low-stock",
+  "stock-card",
+];
+
 function getReport(id: ReportId) {
   return getReportById(id);
 }
@@ -337,6 +356,25 @@ describe("ReportsResultPanel · respuestas 200 malformadas (REP-F8 R-05)", () =>
     } else {
       // Datos saneados: ninguna cifra rota a la vista.
       expect(document.body.textContent).not.toMatch(/NaN|Infinity|undefined|Invalid date|\[object Object\]/);
+    }
+  });
+
+  it.each(EMPTY_ROW_REPORTS)("%s · filas sin campos: ni «undefined» ni celdas en blanco (N-11)", (reportId) => {
+    mockData[reportId] = { items: [{}, {}], limit: 10, skip: 0, total: 2 };
+
+    expect(() => renderPage(reportId)).not.toThrow();
+    expect(screen.getByText("Catálogo y filtros siguen aquí")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/NaN|Infinity|undefined|Invalid date|\[object Object\]/);
+    expect(
+      [...document.querySelectorAll("[aria-label]")].map((node) => node.getAttribute("aria-label")).join(" "),
+    ).not.toMatch(/undefined|NaN/);
+
+    if (!screen.queryByText("No pudimos mostrar este reporte")) {
+      // Cada celda de las filas rotas dice algo: «—» donde falta el dato.
+      const cells = [...document.querySelectorAll("tbody td")];
+
+      expect(cells.length).toBeGreaterThan(0);
+      expect(cells.filter((cell) => cell.textContent?.trim() === "")).toHaveLength(0);
     }
   });
 

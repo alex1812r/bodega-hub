@@ -127,6 +127,11 @@ function count(value: unknown) {
   return isFiniteNumber(value) ? value : NO_VALUE;
 }
 
+/** Texto de una celda o de una etiqueta del gráfico: sin dato, «—» (nunca «undefined» ni un hueco). */
+function text(value: unknown) {
+  return typeof value === "string" && value.trim() !== "" ? value : NO_VALUE;
+}
+
 /** Día de Caracas que ya llega como `YYYY-MM-DD`. */
 function day(value: unknown) {
   return isValidIsoDate(value) ? formatDate(value) : NO_VALUE;
@@ -159,22 +164,22 @@ const grossProfitColumns: DataTableColumn<GrossProfitReportRow>[] = [
 
 const productProfitabilityColumns: DataTableColumn<ProductProfitabilityReportRow>[] = [
   { header: "Producto", key: "name", render: (row) => productLabel(row.name, row.sku) },
-  { header: "SKU", key: "sku", render: (row) => row.sku },
+  { header: "SKU", key: "sku", render: (row) => text(row.sku) },
   { align: "right", header: "Unidades", key: "unitsSold", render: (row) => count(row.unitsSold) },
   { align: "right", header: "Costo", key: "costRef", render: (row) => ref(row.costRef) },
   { align: "right", header: "Ganancia", key: "grossProfitRef", render: (row) => ref(row.grossProfitRef) },
 ];
 
 const lowStockColumns: DataTableColumn<LowStockReportRow>[] = [
-  { header: "Producto", key: "name", render: (row) => row.name },
-  { header: "SKU", key: "sku", render: (row) => row.sku },
-  { align: "right", header: "Stock", key: "currentStock", render: (row) => row.currentStock },
-  { align: "right", header: "Mínimo", key: "minStock", render: (row) => row.minStock },
+  { header: "Producto", key: "name", render: (row) => productLabel(row.name, row.sku) },
+  { header: "SKU", key: "sku", render: (row) => text(row.sku) },
+  { align: "right", header: "Stock", key: "currentStock", render: (row) => count(row.currentStock) },
+  { align: "right", header: "Mínimo", key: "minStock", render: (row) => count(row.minStock) },
 ];
 
 const customerPurchasesColumns: DataTableColumn<CustomerPurchasesReportRow>[] = [
-  { header: "Cliente", key: "name", render: (row) => row.name },
-  { align: "right", header: "Ventas", key: "salesCount", render: (row) => row.salesCount },
+  { header: "Cliente", key: "name", render: (row) => text(row.name) },
+  { align: "right", header: "Ventas", key: "salesCount", render: (row) => count(row.salesCount) },
   { align: "right", header: "Total ref", key: "totalRef", render: (row) => ref(row.totalRef) },
   { align: "right", header: "Pendiente VES", key: "pendingVes", render: (row) => ves(row.pendingVes) },
   {
@@ -185,8 +190,8 @@ const customerPurchasesColumns: DataTableColumn<CustomerPurchasesReportRow>[] = 
 ];
 
 const supplierPurchasesColumns: DataTableColumn<SupplierPurchasesReportRow>[] = [
-  { header: "Proveedor", key: "name", render: (row) => row.name },
-  { align: "right", header: "Compras", key: "purchasesCount", render: (row) => row.purchasesCount },
+  { header: "Proveedor", key: "name", render: (row) => text(row.name) },
+  { align: "right", header: "Compras", key: "purchasesCount", render: (row) => count(row.purchasesCount) },
   { align: "right", header: "Total ref", key: "totalRef", render: (row) => ref(row.totalRef) },
   { align: "right", header: "Pendiente VES", key: "pendingVes", render: (row) => ves(row.pendingVes) },
   {
@@ -199,21 +204,21 @@ const supplierPurchasesColumns: DataTableColumn<SupplierPurchasesReportRow>[] = 
 const stockCardColumns: DataTableColumn<StockCardReportRow>[] = [
   { header: "Fecha", key: "createdAt", render: (row) => caracasDay(row.createdAt) },
   { header: "Producto", key: "productName", render: (row) => productLabel(row.productName, row.sku) },
-  { header: "Tipo", key: "type", render: (row) => row.type },
-  { align: "right", header: "Movimiento", key: "quantityDelta", render: (row) => row.quantityDelta },
-  { align: "right", header: "Stock final", key: "stockAfter", render: (row) => row.stockAfter },
+  { header: "Tipo", key: "type", render: (row) => text(row.type) },
+  { align: "right", header: "Movimiento", key: "quantityDelta", render: (row) => count(row.quantityDelta) },
+  { align: "right", header: "Stock final", key: "stockAfter", render: (row) => count(row.stockAfter) },
 ];
 
 const topProductsColumns: DataTableColumn<TopProductsReportRow>[] = [
   { header: "Producto", key: "name", render: (row) => productLabel(row.name, row.sku) },
-  { header: "SKU", key: "sku", render: (row) => row.sku },
+  { header: "SKU", key: "sku", render: (row) => text(row.sku) },
   { align: "right", header: "Unidades", key: "unitsSold", render: (row) => count(row.unitsSold) },
   { align: "right", header: "Ingreso ref", key: "revenueRef", render: (row) => ref(row.revenueRef) },
 ];
 
 const topCustomersColumns: DataTableColumn<TopCustomersReportRow>[] = [
-  { header: "Cliente", key: "name", render: (row) => row.name },
-  { align: "right", header: "Ventas", key: "salesCount", render: (row) => row.salesCount },
+  { header: "Cliente", key: "name", render: (row) => text(row.name) },
+  { align: "right", header: "Ventas", key: "salesCount", render: (row) => count(row.salesCount) },
   { align: "right", header: "Total ref", key: "totalRef", render: (row) => ref(row.totalRef) },
   { align: "right", header: "Total VES", key: "totalVes", render: (row) => ves(row.totalVes) },
 ];
@@ -222,10 +227,11 @@ const topCustomersColumns: DataTableColumn<TopCustomersReportRow>[] = [
 export const PURCHASES_DEFAULT_STATUS_NOTE = "No incluye compras canceladas ni devueltas.";
 
 const purchasesColumns: DataTableColumn<PurchasesReportRow>[] = [
-  { header: "Compra", key: "purchaseNumber", render: (row) => row.purchaseNumber },
-  { header: "Proveedor", key: "supplier", render: (row) => row.supplier?.name ?? row.supplierId },
+  { header: "Compra", key: "purchaseNumber", render: (row) => text(row.purchaseNumber) },
+
+  { header: "Proveedor", key: "supplier", render: (row) => text(row.supplier?.name ?? row.supplierId) },
   { header: "Fecha", key: "createdAt", render: (row) => caracasDay(row.createdAt) },
-  { align: "right", header: "Items", key: "itemsCount", render: (row) => row.itemsCount },
+  { align: "right", header: "Items", key: "itemsCount", render: (row) => count(row.itemsCount) },
   {
     align: "right",
     header: "Total REF",
@@ -521,7 +527,7 @@ function ReportsResultPanelContent({
               isLoading={query.isLoading}
               items={getPaginatedItems(query.data).map((row) => ({
                 id: row.customerId,
-                label: row.name,
+                label: text(row.name),
                 value: toFiniteNumber(row.totalRef),
               }))}
               measureLabel="Total comprado en REF"
@@ -548,7 +554,7 @@ function ReportsResultPanelContent({
               isLoading={query.isLoading}
               items={getPaginatedItems(query.data).map((row) => ({
                 id: row.supplierId,
-                label: row.name,
+                label: text(row.name),
                 value: toFiniteNumber(row.totalRef),
               }))}
               measureLabel="Total comprado en REF"
@@ -619,7 +625,7 @@ function ReportsResultPanelContent({
               isLoading={query.isLoading}
               items={getPaginatedItems(query.data).map((row) => ({
                 id: row.customerId,
-                label: row.name,
+                label: text(row.name),
                 value: toFiniteNumber(row.totalRef),
               }))}
               measureLabel="Total comprado en REF"
