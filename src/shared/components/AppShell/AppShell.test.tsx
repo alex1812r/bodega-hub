@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render } from "@testing-library/react";
 import type { ReactElement } from "react";
 
@@ -6,8 +7,17 @@ import { ThemeProvider } from "@/shared/theme/ThemeProvider";
 
 import { AppShell } from "./AppShell";
 
+// La búsqueda global del header navega con el router y consulta con React Query.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
 function renderShell(ui: ReactElement) {
-  return render(<ThemeProvider>{ui}</ThemeProvider>);
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ThemeProvider>{ui}</ThemeProvider>
+    </QueryClientProvider>,
+  );
 }
 
 describe("AppShell", () => {
@@ -33,7 +43,7 @@ describe("AppShell", () => {
       </AppShell>,
     );
 
-    fireEvent.click(getByLabelText(/abrir menu de navegacion/i));
+    fireEvent.click(getByLabelText("Abrir menú de navegación"));
 
     expect(getByRole("dialog")).toBeInTheDocument();
     expect(getAllByLabelText(/navegación principal/i).length).toBeGreaterThan(1);
@@ -62,6 +72,25 @@ describe("AppShell", () => {
     fireEvent.click(getByRole("button", { name: /^dinero$/i }));
 
     expect(getByRole("link", { name: /^mis recibos$/i })).toBeVisible();
+  });
+
+  it("shows the global search only with a search permission", () => {
+    const withSearch = renderShell(
+      <AppShell role="vendedor">
+        <p>Contenido</p>
+      </AppShell>,
+    );
+
+    expect(withSearch.getByRole("combobox", { name: "Búsqueda global" })).toBeInTheDocument();
+    withSearch.unmount();
+
+    const withoutSearch = renderShell(
+      <AppShell permissions={["dashboard.view", "reports.view"]} role="vendedor">
+        <p>Contenido</p>
+      </AppShell>,
+    );
+
+    expect(withoutSearch.queryByRole("combobox", { name: "Búsqueda global" })).not.toBeInTheDocument();
   });
 
   it("filters navigation by effective permissions when provided", () => {

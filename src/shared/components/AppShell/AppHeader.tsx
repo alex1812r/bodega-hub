@@ -2,15 +2,19 @@
 
 import { Menu, UserCircle } from "lucide-react";
 
+import type { Permission } from "@/shared/auth/permissions";
 import { IconButton } from "@/shared/components/IconButton";
 import { ThemeToggle } from "@/shared/components/ThemeToggle";
 import { cn } from "@/shared/utils/cn";
 
 import { ExchangeRateBadge } from "./ExchangeRateBadge";
+import { GlobalSearch } from "./GlobalSearch";
 
 type AppHeaderProps = {
   className?: string;
   onOpenMenu: () => void;
+  /** Permisos efectivos: deciden si se muestra la búsqueda global. */
+  permissions?: readonly Permission[];
   refRateError?: boolean;
   refRateVes?: number;
   userName?: string;
@@ -20,6 +24,7 @@ type AppHeaderProps = {
 export function AppHeader({
   className,
   onOpenMenu,
+  permissions = [],
   refRateError = false,
   refRateVes,
   userName = "Admin",
@@ -34,13 +39,14 @@ export function AppHeader({
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <IconButton
-          aria-label="Abrir menu de navegacion"
+          aria-label="Abrir menú de navegación"
           className="shrink-0 text-foreground hover:bg-surface-container hover:text-primary lg:hidden"
           icon={<Menu className="h-5 w-5" />}
           onClick={onOpenMenu}
           variant="ghost"
         />
         <ExchangeRateBadge hasError={refRateError} rateVes={refRateVes} />
+        <GlobalSearch permissions={permissions} />
       </div>
 
       <div className="flex shrink-0 items-center gap-2 sm:gap-3">

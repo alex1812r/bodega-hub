@@ -81,6 +81,7 @@ export function AppShell({
         <AppHeader
           className="shrink-0"
           onOpenMenu={() => setMobileNavOpen(true)}
+          permissions={effectivePermissions}
           refRateError={refRateError}
           refRateVes={refRateVes}
           userName={userName}
