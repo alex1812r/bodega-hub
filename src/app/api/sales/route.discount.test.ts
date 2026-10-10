@@ -25,6 +25,7 @@ import { mockUserProfiles } from "@/shared/mocks/erp-data";
 import {
   SALE_DISCOUNT_DECIMALS_MESSAGE,
   SALE_DISCOUNT_FORBIDDEN_MESSAGE,
+  SALE_DISCOUNT_NEEDS_PRICES_MESSAGE,
   SALE_DISCOUNT_NEGATIVE_MESSAGE,
   SALE_DISCOUNT_OVER_SUBTOTAL_MESSAGE,
 } from "@/modules/sales/utils/saleDiscountPolicy";
@@ -60,13 +61,18 @@ function nextClientRequestId() {
   return `6f1a2b3c-4d5e-4f60-8a71-${String(requestSequence).padStart(12, "0")}`;
 }
 
-/** `discountJson` va tal cual al cuerpo: permite `1e999`, `"5"` o `null`. */
+/**
+ * `discountJson` va tal cual al cuerpo: permite `1e999`, `"5"` o `null`. Una línea
+ * de 15,00; el precio solo viaja si el descuento es positivo (el BFF lo exige, POS-F4),
+ * como en el POS, que no envía ni precio ni descuento.
+ */
 function postSale(dataSource: DataSource, role: Role, discountJson: string | undefined) {
+  const price = Number(discountJson) > 0 ? `,"unitPriceRef":${SUBTOTAL_REF}` : "";
   const ids = dataSource === "supabase" ? SUPABASE_IDS : MOCK_IDS;
   const fields = [
     `"clientRequestId":"${nextClientRequestId()}"`,
     `"customerId":"${ids.customerId}"`,
-    `"items":[{"productId":"${ids.productId}","quantity":1}]`,
+    `"items":[{"productId":"${ids.productId}","quantity":1${price}}]`,
     `"refRateVes":510`,
   ];
 
@@ -226,10 +232,10 @@ describe("POST /api/sales · el rechazo del RPC llega tal cual", () => {
   });
 
   it("un PT400 de descuento del RPC responde 400 con su mensaje", async () => {
-    const message = "El descuento (15.00 REF) debe ser menor que el subtotal de la venta (15.00 REF)";
+    const message = "El descuento (5.00 REF) debe ser menor que el subtotal de la venta (4.00 REF)";
     const rpc = mountSalesRpc({ code: "PT400", message });
 
-    const response = await postSale("supabase", "admin", "15");
+    const response = await postSale("supabase", "admin", "5");
     const body = await response.json();
 
     expect(rpc).toHaveBeenCalledTimes(1);
@@ -255,9 +261,10 @@ describe.each<DataSource>(["supabase", "mock"])(
     }
 
     /** Dos líneas con precio: 2 × 6,20 + 1 × 5,00 = 17,40. */
-    function postPricedSale(discountRef: number, withPrices = true) {
+    function postPricedSale(discountRef: number, priced: "all" | "first" | "none" = "all") {
       const ids = dataSource === "supabase" ? SUPABASE_IDS : MOCK_IDS;
-      const price = (unitPriceRef: number) => (withPrices ? { unitPriceRef } : {});
+      const price = (unitPriceRef: number, line: number) =>
+        priced === "all" || (priced === "first" && line === 0) ? { unitPriceRef } : {};
 
       return POST(
         new Request("http://localhost/api/sales", {
@@ -266,8 +273,8 @@ describe.each<DataSource>(["supabase", "mock"])(
             customerId: ids.customerId,
             discountRef,
             items: [
-              { productId: ids.productId, quantity: 2, ...price(6.2) },
-              { productId: ids.productId, quantity: 1, ...price(5) },
+              { productId: ids.productId, quantity: 2, ...price(6.2, 0) },
+              { productId: ids.productId, quantity: 1, ...price(5, 1) },
             ],
             refRateVes: 510,
           }),
@@ -308,10 +315,40 @@ describe.each<DataSource>(["supabase", "mock"])(
       expect(creations()).toBe(1);
     });
 
-    it("sin precios en el cuerpo el BFF no conoce el subtotal y decide el servicio", async () => {
-      await postPricedSale(27.4, false);
+    // POS-F4 (caos pasada 2, F5): sin precio el subtotal lo pone el RPC y el tope no se aplicaba.
+    it.each([
+      ["mayor que el subtotal de lista", 27.4],
+      ["igual al subtotal de lista", 17.4],
+      ["mínimo", 0.01],
+    ])("descuento %s sin precios en el cuerpo → 400 sin crear la venta", async (_caso, discountRef) => {
+      const response = await postPricedSale(discountRef, "none");
+      const body = await response.json();
 
-      expect(creations()).toBe(1);
+      expect(response.status).toBe(400);
+      expect(body.error).toEqual({ code: "BAD_REQUEST", message: SALE_DISCOUNT_NEEDS_PRICES_MESSAGE });
+      expect(creations()).toBe(0);
     });
+
+    it.each([27.75, 17.75, 0.01])(
+      "descuento %s con UNA sola línea sin precio → 400 sin crear la venta",
+      async (discountRef) => {
+        const response = await postPricedSale(discountRef, "first");
+        const body = await response.json();
+
+        expect(response.status).toBe(400);
+        expect(body.error).toEqual({ code: "BAD_REQUEST", message: SALE_DISCOUNT_NEEDS_PRICES_MESSAGE });
+        expect(creations()).toBe(0);
+      },
+    );
+
+    it.each<"first" | "none">(["first", "none"])(
+      "sin descuento no exige precios (líneas con precio: %s): la venta se crea como hoy",
+      async (priced) => {
+        const response = await postPricedSale(0, priced);
+
+        expect(response.status).toBe(201);
+        expect(creations()).toBe(1);
+      },
+    );
   },
 );

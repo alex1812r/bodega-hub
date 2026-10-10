@@ -2268,10 +2268,12 @@ paths:
       description: >-
         `clientRequestId` (uuid) es obligatorio: sin él, o si no es un uuid, responde 400. El descuento
         (`discountRef`) se valida antes del RPC: no numérico, negativo o con más de 2 decimales responde 400; mayor
-        que cero con rol `vendedor` responde 403 (el vendedor no aplica descuentos, igual que en el POS). Cuando
-        todas las líneas traen `unitPriceRef`, un descuento igual o mayor al subtotal del cuerpo (suma de cantidad ×
-        precio por línea) responde 400 para cualquier rol; si alguna línea no trae precio (lo pone el RPC con el de
-        lista) ese tope solo lo aplica el RPC al vendedor.
+        que cero con rol `vendedor` responde 403 (el vendedor no aplica descuentos, igual que en el POS). Un
+        descuento mayor que cero exige `unitPriceRef` en todas las líneas: si alguna no lo trae responde 400
+        («Para aplicar un descuento indica el precio unitario de cada línea.»). Con todos los precios, un descuento
+        igual o mayor al subtotal del cuerpo (suma de cantidad × precio por línea) responde 400 para cualquier rol.
+        Sin descuento (`discountRef` 0 u omitido) `unitPriceRef` sigue siendo opcional: el RPC usa el precio de
+        lista.
       x-permission: sales.create
       requestBody:
         required: true
@@ -4830,6 +4832,12 @@ paths:
     post:
       tags: [Auth]
       summary: Login mock
+      description: >-
+        Crea la sesión por cookies. Un usuario inactivo responde 403 («Tu usuario está inactivo.»; sin perfil
+        asignado, también 403) y un usuario bloqueado en el servidor de auth responde 403 («Tu usuario está
+        bloqueado. Contacta al administrador.»); en ningún caso la respuesta deja cookie de sesión. Si el servidor
+        de auth no responde o falla, responde 503 («No se pudo iniciar sesión. Inténtalo de nuevo.»), nunca su
+        texto crudo.
       requestBody:
         required: true
         content:
@@ -4841,6 +4849,30 @@ paths:
           $ref: "#/components/responses/ReportObjectResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Credenciales inválidas o correo sin confirmar
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Usuario inactivo, sin perfil o bloqueado; no queda sesión abierta
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Demasiados intentos de inicio de sesión
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: El servidor de auth no responde o falló; se puede reintentar
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/auth/logout:
     post:
       tags: [Auth]

@@ -9,6 +9,7 @@ import {
   SALE_DISCOUNT_DECIMALS_MESSAGE,
   SALE_DISCOUNT_FORBIDDEN_MESSAGE,
   SALE_DISCOUNT_INVALID_MESSAGE,
+  SALE_DISCOUNT_NEEDS_PRICES_MESSAGE,
   SALE_DISCOUNT_NEGATIVE_MESSAGE,
 } from "./saleDiscountPolicy";
 
@@ -89,7 +90,20 @@ describe("saleDiscountPolicy · descuento contra el subtotal del cuerpo (POS-F3)
     expect(() => assertSaleDiscountBelowBodySubtotal(0, [{ quantity: 1, unitPriceRef: 0 }])).not.toThrow();
   });
 
-  it("no decide cuando alguna línea no trae precio (lo pone el RPC)", () => {
-    expect(() => assertSaleDiscountBelowBodySubtotal(999, [...lines, { quantity: 1 }])).not.toThrow();
+  // POS-F4 (caos pasada 2, F5): bastaba omitir el precio de una línea para saltarse el tope.
+  it.each([
+    ["una línea sin precio", [...lines, { quantity: 1 }]],
+    ["ninguna línea con precio", [{ quantity: 2 }, { quantity: 1 }]],
+  ])("rechaza con 400 un descuento con %s", (_caso, items) => {
+    for (const discountRef of [0.01, 17.39, 999]) {
+      expect(() => assertSaleDiscountBelowBodySubtotal(discountRef, items)).toThrow(
+        expect.objectContaining({ code: "BAD_REQUEST", message: SALE_DISCOUNT_NEEDS_PRICES_MESSAGE, status: 400 }),
+      );
+    }
+  });
+
+  it("sin descuento no exige precios: los pone el RPC con el precio de lista", () => {
+    expect(() => assertSaleDiscountBelowBodySubtotal(0, [...lines, { quantity: 1 }])).not.toThrow();
+    expect(() => assertSaleDiscountBelowBodySubtotal(0, [{ quantity: 1 }])).not.toThrow();
   });
 });

@@ -145,4 +145,25 @@ describe("LoginPage · POS-H3 un solo POST por intento", () => {
 
     await waitFor(() => expect(loginPosts(fetchMock)).toHaveLength(2));
   });
+
+  // POS-F4 (caos pasada 2, H1/H2): el rechazo del servidor se muestra tal cual.
+  it.each([
+    [403, "FORBIDDEN", "Tu usuario está inactivo."],
+    [403, "FORBIDDEN", "Tu usuario está bloqueado. Contacta al administrador."],
+    [503, "INTERNAL_ERROR", "No se pudo iniciar sesión. Inténtalo de nuevo."],
+  ])("shows the server message of a %s %s rejection and stays on the login", async (status, code, message) => {
+    const { container } = renderPage();
+    fillCredentials();
+
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+    await waitFor(() => expect(loginPosts(fetchMock)).toHaveLength(1));
+
+    await act(async () => {
+      resolveLogin(jsonResponse({ error: { code, message } }, status));
+    });
+
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(pushMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /iniciar sesión/i })).toBeEnabled();
+  });
 });

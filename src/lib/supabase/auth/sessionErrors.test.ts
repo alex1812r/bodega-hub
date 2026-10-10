@@ -59,6 +59,16 @@ describe("isSessionAuthError", () => {
     ["respuesta que no es JSON", new AuthUnknownError("Unexpected token <", new Error("boom"))],
     ["límite de peticiones", new AuthApiError("Too many requests", 429, "over_request_rate_limit")],
     ["límite de peticiones sin código", new AuthApiError("Too many requests", 429, undefined)],
+    // POS-F4 (N1): forma exacta de GoTrue ante refrescos simultáneos de la misma sesión.
+    [
+      "choque de refrescos simultáneos",
+      new AuthApiError(
+        "Too many concurrent token refresh requests on the same session or refresh token",
+        409,
+        "conflict",
+      ),
+    ],
+    ["409 del servidor de auth sin código", new AuthApiError("Conflict", 409, undefined)],
     ["error sin estado ni código con otro texto", new AuthUnknownError("Refresh token is not valid", null)],
     ["TypeError de red sin envolver", new TypeError("fetch failed")],
     ["null", null],

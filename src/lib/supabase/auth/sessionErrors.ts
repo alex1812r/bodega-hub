@@ -28,8 +28,12 @@ const SESSION_ERROR_NAMES = new Set([
   "AuthSessionMissingError",
 ]);
 
-/** Límite de peticiones: el servidor no llegó a evaluar la credencial. */
-const RATE_LIMIT_STATUS = 429;
+/**
+ * Rechazos 4xx en los que el servidor no llegó a evaluar la credencial: 429
+ * (límite de peticiones) y 409 (`conflict`: demasiados refrescos simultáneos
+ * de la misma sesión, cuyo refresh token sigue siendo válido).
+ */
+const TRANSIENT_REJECTION_STATUSES = new Set([409, 429]);
 
 /**
  * Textos de sesión de un error que llega sin estado HTTP ni `code` ("Invalid
@@ -90,8 +94,9 @@ export function isAuthServiceFailure(error: unknown): boolean {
  * Al leer la sesión, cualquier rechazo 4xx del servidor de auth significa que
  * la credencial enviada no sirve, sea cual sea su `code` (`validation_failed`
  * o `bad_json` de un refresh token mal formado, `invalid_grant`,
- * `refresh_token_*`, `session_*`, `bad_jwt`…). La excepción es 429: el límite
- * de peticiones no dice nada de la credencial y sigue siendo error de servidor.
+ * `refresh_token_*`, `session_*`, `bad_jwt`…). Las excepciones son 429 y 409: el
+ * límite de peticiones y el choque de refrescos simultáneos no dicen nada de la
+ * credencial y siguen siendo error de servidor.
  *
  * Solo para errores de `getUser()`/refresh de sesión; no clasifica el inicio
  * de sesión con credenciales.
@@ -103,7 +108,7 @@ export function isSessionAuthError(error: unknown): boolean {
     return false;
   }
 
-  if (shape.status === RATE_LIMIT_STATUS) {
+  if (shape.status !== null && TRANSIENT_REJECTION_STATUSES.has(shape.status)) {
     return false;
   }
 

@@ -191,4 +191,22 @@ describe("POS-H3 · sesión caducada en las rutas del BFF", () => {
 
     expect(response.status).not.toBe(401);
   });
+
+  it.each(protectedCases)(
+    "%s no responde 401 ante el 409 de refrescos simultáneos: la sesión es válida (POS-F4)",
+    async (_name, handler) => {
+      // Forma exacta de GoTrue: 409 `conflict`.
+      withSession(
+        new AuthApiError(
+          "Too many concurrent token refresh requests on the same session or refresh token",
+          409,
+          "conflict",
+        ),
+      );
+
+      const response = await call(handler);
+
+      expect(response.status).toBeGreaterThanOrEqual(500);
+    },
+  );
 });
