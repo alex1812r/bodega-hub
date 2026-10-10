@@ -51,7 +51,7 @@ function AppNavLink({ collapsed, currentPath, item, onNavigate }: AppNavLinkProp
   const isActive = currentPath === item.href;
 
   return (
-    <SidebarTooltip label={item.label} placement="bottom" show={collapsed}>
+    <SidebarTooltip label={item.label} placement="right" show={collapsed}>
       <Link
         aria-current={isActive ? "page" : undefined}
         aria-label={item.label}

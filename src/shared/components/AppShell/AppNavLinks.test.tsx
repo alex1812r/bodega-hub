@@ -136,7 +136,32 @@ describe("AppNavLinks", () => {
     );
     expect(screen.getAllByRole("link")).toHaveLength(13);
     expect(screen.getByRole("link", { name: "Baúl" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getAllByRole("tooltip").map((tip) => tip.textContent)).toContain("Nómina");
+  });
+
+  it("shows the tooltip of every collapsed link outside the scrolling rail, even the last one", () => {
+    const groups = buildAppNavGroups({ permissions: getRolePermissions("admin"), role: "admin" });
+
+    render(
+      <div className="overflow-x-hidden overflow-y-auto" data-testid="rail">
+        <AppNavLinks collapsed currentPath="/vault" groups={groups} />
+      </div>,
+    );
+    const rail = screen.getByTestId("rail");
+
+    for (const link of screen.getAllByRole("link")) {
+      fireEvent.mouseEnter(link);
+
+      const tooltip = screen.getByRole("tooltip");
+
+      expect(tooltip).toHaveTextContent(link.getAttribute("aria-label") ?? "");
+      expect(rail).not.toContainElement(tooltip);
+      expect(tooltip).toHaveClass("fixed");
+      expect(tooltip).not.toHaveClass("top-full");
+
+      fireEvent.mouseLeave(link);
+    }
+
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
   it("calls onNavigate when a link is followed", () => {
