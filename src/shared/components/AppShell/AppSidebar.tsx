@@ -1,4 +1,4 @@
-import { type AppNavItem } from "./appShellNav";
+import { type AppNavGroup } from "./appShellNav";
 import { AppNavLinks } from "./AppNavLinks";
 import { SidebarBrand } from "./SidebarBrand";
 import { SidebarFooter } from "./SidebarFooter";
@@ -6,7 +6,7 @@ import { SidebarFooter } from "./SidebarFooter";
 type AppSidebarProps = {
   collapsed?: boolean;
   currentPath: string;
-  items: AppNavItem[];
+  groups: AppNavGroup[];
   onSignOut?: () => void;
   userRole?: string;
 };
@@ -14,7 +14,7 @@ type AppSidebarProps = {
 export function AppSidebar({
   collapsed = false,
   currentPath,
-  items,
+  groups,
   onSignOut,
   userRole,
 }: AppSidebarProps) {
@@ -25,7 +25,7 @@ export function AppSidebar({
     >
       <SidebarBrand collapsed={collapsed} userRole={userRole} />
       <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto py-2">
-        <AppNavLinks collapsed={collapsed} currentPath={currentPath} items={items} />
+        <AppNavLinks collapsed={collapsed} currentPath={currentPath} groups={groups} />
       </div>
       <SidebarFooter collapsed={collapsed} onSignOut={onSignOut} />
     </aside>

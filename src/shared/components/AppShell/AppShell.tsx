@@ -10,7 +10,7 @@ import {
 
 import { cn } from "@/shared/utils/cn";
 
-import { appNavItems } from "./appShellNav";
+import { buildAppNavGroups } from "./appShellNav";
 import { AppHeader } from "./AppHeader";
 import { AppSidebar } from "./AppSidebar";
 import { MobileNavDrawer } from "./MobileNavDrawer";
@@ -50,16 +50,14 @@ export function AppShell({
     useSidebarCollapsed();
   const effectivePermissions =
     permissions ?? (role ? [...getRolePermissions(role)] : []);
-  const visibleNavItems = appNavItems.filter((item) =>
-    effectivePermissions.includes(item.permission),
-  );
+  const navGroups = buildAppNavGroups({ permissions: effectivePermissions, role });
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">
       <AppSidebar
         collapsed={sidebarCollapsed}
         currentPath={currentPath}
-        items={visibleNavItems}
+        groups={navGroups}
         onSignOut={onSignOut}
         userRole={userRole}
       />
@@ -69,7 +67,7 @@ export function AppShell({
       />
       <MobileNavDrawer
         currentPath={currentPath}
-        items={visibleNavItems}
+        groups={navGroups}
         onOpenChange={setMobileNavOpen}
         onSignOut={onSignOut}
         open={mobileNavOpen}

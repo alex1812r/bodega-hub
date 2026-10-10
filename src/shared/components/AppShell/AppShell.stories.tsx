@@ -14,6 +14,7 @@ type Story = StoryObj<typeof meta>;
 export const DashboardLayout: Story = {
   args: {
     currentPath: "/dashboard",
+    role: "admin",
     refRateVes: 510,
     userName: "Alex Admin",
     userRole: "admin",
@@ -45,5 +46,27 @@ export const DashboardLayout: Story = {
         </Card>
       </div>
     ),
+  },
+};
+
+/** Vendedor: "Operación" primero y abierta, con Ventas y Mi caja arriba. */
+export const SellerMenu: Story = {
+  args: {
+    ...DashboardLayout.args,
+    currentPath: "/sales",
+    role: "vendedor",
+    userName: "Vero Vendedora",
+    userRole: "Vendedor",
+  },
+};
+
+/** Contador: "Dinero" y "Análisis" primero; el grupo de la ruta activa abre solo. */
+export const AccountantMenu: Story = {
+  args: {
+    ...DashboardLayout.args,
+    currentPath: "/vault",
+    role: "contador",
+    userName: "Carla Contadora",
+    userRole: "Contador",
   },
 };
