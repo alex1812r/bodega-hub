@@ -48,6 +48,19 @@ function amountField() {
 }
 
 describe("PaymentFormFields", () => {
+  // GQ-04: en la columna lateral de la compra (angosta aunque la pantalla sea ancha)
+  // «Método» y «Monto» iban lado a lado por el ancho de la VENTANA y el select se
+  // cortaba con fuente al 130 %. Las dos columnas dependen del ancho del contenedor.
+  it("pone Método y Monto en dos columnas según el ancho de su contenedor, no el de la ventana", () => {
+    render(<Harness />);
+
+    const row = screen.getByLabelText("Método").closest("div.grid");
+
+    expect(row).toHaveClass("@sm:grid-cols-2");
+    expect(row).not.toHaveClass("md:grid-cols-2");
+    expect(row?.parentElement).toHaveClass("@container");
+  });
+
   describe("campos por metodo", () => {
     const cases: Array<{
       bank: boolean;

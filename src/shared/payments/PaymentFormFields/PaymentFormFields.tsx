@@ -104,8 +104,10 @@ export function PaymentFormFields({
   }
 
   return (
-    <div className="grid gap-4">
-      <div className="grid gap-4 md:grid-cols-2">
+    // `@container`: las dos columnas dependen del ancho de este bloque, no del de la
+    // ventana; en una columna lateral angosta «Método» y «Monto» van uno bajo el otro.
+    <div className="@container grid gap-4">
+      <div className="grid gap-4 @sm:grid-cols-2">
         <SelectField
           label="Método"
           onChange={(event) => {
