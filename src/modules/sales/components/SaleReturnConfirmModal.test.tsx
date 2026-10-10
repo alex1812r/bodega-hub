@@ -208,6 +208,62 @@ describe("SaleReturnConfirmModal", () => {
     expect(mobile).toHaveTextContent("Bs. 17.800,00");
   });
 
+  it("sin permiso de baúl ni de caja (AUD-01): muestra cuánto se mueve, sin saldos ni nombre de caja", async () => {
+    respondWith(
+      allowedSaleImpact("return", {
+        paidVes: 2550,
+        payments: [
+          impactPaymentLine({
+            amount: 2550,
+            amountVes: 2550,
+            description: "Se anula: se revierte de caja y se revierte del baúl (cuenta).",
+            effects: [
+              {
+                balanceAfter: null,
+                balanceBefore: null,
+                currency: "VES",
+                delta: -2550,
+                note: null,
+                physical: false,
+                restricted: true,
+                target: "caja",
+                targetName: null,
+              },
+              {
+                balanceAfter: null,
+                balanceBefore: null,
+                currency: "VES",
+                delta: -2550,
+                note: null,
+                physical: true,
+                restricted: true,
+                target: "baul_cuenta",
+                targetName: null,
+              },
+            ],
+            method: "pago_movil",
+            netVes: 2550,
+            paymentId: "pay-2",
+          }),
+        ],
+      }),
+    );
+    renderModal();
+
+    const dialog = await effectDialog();
+    const [cash, vault] = within(
+      dialog.getByRole("list", { name: "Asientos que revierte el pago por Pago móvil" }),
+    ).getAllByRole("listitem");
+
+    expect(cash).toHaveTextContent("Caja");
+    expect(cash).not.toHaveTextContent("sin nombre");
+    expect(vault).toHaveTextContent("Baúl (cuenta)");
+    expect(vault).toHaveTextContent("− Bs. 2.550,00");
+    expect(vault).not.toHaveTextContent("Saldo");
+    // No es un fallo de lectura: no hay aviso de efecto inexacto.
+    expect(dialog.queryByText(/No se pudo leer el saldo del baúl/)).not.toBeInTheDocument();
+  });
+
   it("dinero a devolver al cliente por método, vuelto que se descuenta y neto", async () => {
     respondWith(paidReturnImpact());
     renderModal();

@@ -4,12 +4,14 @@ import { requireStorePermission } from "@/lib/api/requirePermission";
 import { PAYMENT_IMPACT_ACTIONS } from "@/modules/payments/services/paymentImpact";
 import { getPaymentImpact as getPaymentImpactMock } from "@/modules/payments/services/paymentImpact.mock-server";
 import { getPaymentImpact as getPaymentImpactServer } from "@/modules/payments/services/paymentImpact.server";
+import { impactLedgerAccess } from "@/shared/impact/impactAccess";
 import { impactJson, parseImpactAction } from "@/shared/impact/impactServer";
 
 /**
  * Efecto de anular el pago (`action=cancel`), sin escribir. Mismo permiso que
  * la anulación real (`payments.manage`) y misma regla de acceso a pagos de
- * compras.
+ * compras. Los saldos del baúl solo viajan con `vault.view` y el detalle de la
+ * caja con `cash.view`.
  */
 export async function GET(request: Request, context: RouteContext<"/api/payments/[id]/impact">) {
   try {
@@ -18,7 +20,13 @@ export async function GET(request: Request, context: RouteContext<"/api/payments
     const { id } = await context.params;
     const data =
       resolveDataSource() === "supabase"
-        ? await getPaymentImpactServer(id, action, auth.storeId, auth.role)
+        ? await getPaymentImpactServer(
+            id,
+            action,
+            auth.storeId,
+            auth.role,
+            impactLedgerAccess(auth.permissions),
+          )
         : getPaymentImpactMock(id, action, auth.storeId, auth.role);
 
     return impactJson(data);

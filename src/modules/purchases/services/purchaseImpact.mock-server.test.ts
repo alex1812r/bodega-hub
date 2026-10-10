@@ -154,7 +154,9 @@ describe("purchaseImpact.mock-server", () => {
       ["cancel", "cancela"],
       ["return", "devuelve"],
     ] as const) {
-      const impact = getPurchaseImpact("purchase-001", action, DEFAULT_STORE_ID);
+      const impact = getPurchaseImpact("purchase-001", action, DEFAULT_STORE_ID, {
+        canViewPayments: true,
+      });
 
       expect(impact).toMatchObject({
         allowed: false,
@@ -175,6 +177,12 @@ describe("purchaseImpact.mock-server", () => {
         expect.objectContaining({ productId: "prod-cable", quantityDelta: 0, stockAfter: 4, stockBefore: 4 }),
       ]);
     }
+  });
+
+  it("AUD-01 · sin opciones no se ven pagos: el valor por defecto es cerrado", () => {
+    const impact = getPurchaseImpact("purchase-001", "cancel", DEFAULT_STORE_ID);
+
+    expect(impact).toMatchObject({ allowed: false, payments: [], paymentsRestricted: true });
   });
 
   it("sin permiso para ver pagos de compras: mismo veredicto, sin líneas", () => {

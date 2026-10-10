@@ -19,6 +19,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { computeSaleImpact, type SaleImpact, type SaleImpactAction } from "../../../src/modules/sales/services/saleImpact";
 import { loadSaleImpactInputs } from "../../../src/modules/sales/services/saleImpact.server";
+import { FULL_IMPACT_LEDGER_ACCESS } from "../../../src/shared/impact/impactAccess";
 import type { LabRoleKey } from "../agents/base";
 import { Lab } from "../scenarios/db";
 
@@ -172,11 +173,15 @@ async function snapshot(saleId: string): Promise<Snapshot> {
   };
 }
 
-/** El impact tal como lo calcula el BFF: lecturas del usuario + asientos de caja con service role. */
+/**
+ * El impact tal como lo calcula el BFF: lecturas del usuario + asientos de caja con service role.
+ * Con el libro completo a la vista (`cash.view` + `vault.view`): aquí se comprueban los saldos
+ * previstos contra los que deja la RPC, sea cual sea el rol que ejecuta.
+ */
 async function impactOf(role: Seller, saleId: string, action: SaleImpactAction, storeId = lab.storeId): Promise<SaleImpact> {
   const user = await lab.supa(role);
   return computeSaleImpact(
-    await loadSaleImpactInputs({ privileged: () => lab.service(), user }, saleId, action, storeId),
+    await loadSaleImpactInputs({ privileged: () => lab.service(), user }, saleId, action, storeId, FULL_IMPACT_LEDGER_ACCESS),
   );
 }
 

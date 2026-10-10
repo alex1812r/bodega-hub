@@ -6,6 +6,7 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { assertCanAccessPayment } from "@/shared/auth/paymentAccess";
 import type { UserRole } from "@/shared/auth/permissions";
+import type { ImpactLedgerAccess } from "@/shared/impact/impactAccess";
 import { assertImpactDocumentId } from "@/shared/impact/impactServer";
 import type {
   PaymentMethod,
@@ -28,6 +29,8 @@ type ReadClient = Pick<SupabaseClient, "from">;
  *
  * - `user`: JWT de quien pide el impact. Con él se lee el pago, su documento,
  *   los asientos de baúl y el baúl; es quien decide el 404 de un pago ajeno.
+ *   La RLS de `store_vaults` solo filtra por tienda: los saldos del baúl los
+ *   protege el BFF, que no los lee sin `vault.view` (`ImpactLedgerAccess`, AUD-01).
  * - `privileged`: service role, SOLO para `cash_movements` con su sesión y su
  *   caja. La RLS de esas tablas no deja ver los asientos de la caja de otro
  *   usuario y `cancel_payment_apply` (security definer) borra los de cualquier
@@ -105,6 +108,7 @@ async function loadLedger(
   clients: PaymentImpactClients,
   storeId: string,
   paymentId: string,
+  access: ImpactLedgerAccess,
 ): Promise<PaymentImpactLedger> {
   const [cash, vaultMovements, vault] = await Promise.all([
     clients
@@ -123,11 +127,14 @@ async function loadLedger(
       .eq("payment_id", paymentId)
       .in("type", ["sale_in", "withdrawal", "purchase_out"])
       .returns<VaultMovementRow[]>(),
-    clients.user
-      .from("store_vaults")
-      .select("id, balance_ves, balance_efectivo_ves, balance_ref")
-      .eq("store_id", storeId)
-      .maybeSingle<VaultRow>(),
+    // Sin `vault.view` los saldos del baúl no se consultan (ni se devuelven).
+    access.canViewVault
+      ? clients.user
+          .from("store_vaults")
+          .select("id, balance_ves, balance_efectivo_ves, balance_ref")
+          .eq("store_id", storeId)
+          .maybeSingle<VaultRow>()
+      : { data: null, error: null },
   ]);
 
   throwIfSupabaseError(cash.error);
@@ -143,6 +150,10 @@ async function loadLedger(
       type: row.type,
       vaultTransferredAt: row.session?.vault_transferred_at ?? null,
     })),
+    hidden:
+      access.canViewCash && access.canViewVault
+        ? undefined
+        : { cash: !access.canViewCash, vault: !access.canViewVault },
     kind: "full",
     vault: vault.data
       ? {
@@ -210,6 +221,7 @@ export async function loadPaymentImpactInputs(
   action: PaymentImpactAction,
   storeId: string,
   role: UserRole,
+  access: ImpactLedgerAccess,
 ): Promise<PaymentImpactInputs> {
   assertImpactDocumentId(paymentId);
 
@@ -240,7 +252,7 @@ export async function loadPaymentImpactInputs(
     ledger:
       status === "anulado"
         ? { cashMovements: [], kind: "full", vault: null, vaultMovements: [] }
-        : await loadLedger(clients, storeId, payment.id),
+        : await loadLedger(clients, storeId, payment.id, access),
     payment: {
       amount: Number(payment.amount),
       amountRef: Number(payment.amount_ref),
@@ -261,6 +273,7 @@ export async function getPaymentImpact(
   action: PaymentImpactAction,
   storeId: string,
   role: UserRole,
+  access: ImpactLedgerAccess,
 ) {
   // Antes de crear ningún cliente: un id mal formado no llega a Supabase.
   assertImpactDocumentId(id);
@@ -274,6 +287,7 @@ export async function getPaymentImpact(
       action,
       storeId,
       role,
+      access,
     ),
   );
 }

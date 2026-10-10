@@ -58,6 +58,12 @@ export type SaleImpactVaultMovement = {
 export type SaleImpactLedger =
   | {
       cashMovements: SaleImpactCashMovement[];
+      /**
+       * Lo que el llamante NO puede ver (AUD-01). Ausente = ve todo. Con
+       * `vault` el cargador no lee `store_vaults` y el asiento de baúl sale sin
+       * saldos; con `cash`, el de caja sale sin nombre de caja ni notas.
+       */
+      hidden?: { cash: boolean; vault: boolean };
       kind: "full";
       /** Baúl de la tienda (`store_vaults`); `balanceVes` es la cubeta "cuenta". */
       vault: { balanceVes: number; id: string } | null;
@@ -374,7 +380,7 @@ function computeCancel(inputs: SaleImpactInputs): SaleImpact {
 type VaultState = { cents: number | null };
 
 /** Asientos de caja del pago: `cancel_payment_apply` los borra todos. */
-function cashEffects(movements: SaleImpactCashMovement[]) {
+function cashEffects(movements: SaleImpactCashMovement[], hidden: boolean) {
   const effects: ImpactMoneyEffect[] = [];
   let unknownType: string | null = null;
 
@@ -403,10 +409,11 @@ function cashEffects(movements: SaleImpactCashMovement[]) {
           currency,
           // Borrar el asiento deshace su efecto: signo contrario al del tipo.
           delta: fromCents(-kind.sign * cents),
-          note,
+          note: hidden ? null : note,
           physical: kind.physical,
+          ...(hidden ? { restricted: true as const } : {}),
           target: "caja",
-          targetName: movement.registerName,
+          targetName: hidden ? null : movement.registerName,
         });
       }
     }
@@ -450,6 +457,25 @@ function vaultEffect(
   // `withdrawal` fue el vuelto por cuenta: vuelve al baúl. `sale_in` fue el cobro: sale.
   const signedCents = type === "withdrawal" ? amountCents : -amountCents;
 
+  // Sin `vault.view` el saldo no se leyó: se informa cuánto se mueve, sin saldos.
+  // No es una lectura fallida, así que no se declara inexacto.
+  if (ledger.hidden?.vault) {
+    return {
+      effect: {
+        balanceAfter: null,
+        balanceBefore: null,
+        currency: "VES",
+        delta: fromCents(signedCents),
+        note: null,
+        physical: true,
+        restricted: true,
+        target: "baul_cuenta",
+        targetName: null,
+      },
+      inexact: null,
+    };
+  }
+
   if (vault.cents === null || ledger.vault?.id !== movement.vaultId) {
     vault.cents = null;
 
@@ -492,17 +518,19 @@ function vaultEffect(
 }
 
 function describeReverted(effects: ImpactMoneyEffect[]) {
+  const cash = effects.filter((effect) => effect.target === "caja");
   const registers = [
     ...new Set(
-      effects
-        .filter((effect) => effect.target === "caja")
-        .map((effect) => effect.targetName ?? "sin nombre"),
+      cash.filter((effect) => !effect.restricted).map((effect) => effect.targetName ?? "sin nombre"),
     ),
   ];
   const parts: string[] = [];
 
   if (registers.length > 0) {
     parts.push(`se revierte de la caja ${registers.map((name) => `«${name}»`).join(", ")}`);
+  } else if (cash.length > 0) {
+    // Sin `cash.view` no se nombra la caja.
+    parts.push("se revierte de caja");
   }
 
   if (effects.some((effect) => effect.target === "baul_cuenta")) {
@@ -608,7 +636,7 @@ function computeReturn(inputs: SaleImpactInputs): SaleImpact {
     }
 
     // 2. Asientos de caja del pago (cobro y vuelto): se borran.
-    const cash = cashEffects(cashMovements);
+    const cash = cashEffects(cashMovements, ledger.hidden?.cash === true);
     effects.push(...cash.effects);
     if (cash.unknownType) {
       inexact = inexact ?? {

@@ -37,7 +37,10 @@ export type PurchaseImpactClients = {
 };
 
 export type PurchaseImpactOptions = {
-  /** Calculado por la ruta con el rol de la sesión (`canViewPurchasePayments`). */
+  /**
+   * Calculado por la ruta con el rol de la sesión (`canViewPurchasePayments`).
+   * Ausente = `false`: sin decir qué puede ver el rol no viajan líneas de pago.
+   */
   canViewPayments?: boolean;
   /** Solo `receive`: la lista `disassemble` que enviará la recepción; sin ella, las marcas guardadas. */
   disassemble?: PurchaseImpactDisassembleEntry[] | null;
@@ -240,7 +243,7 @@ export async function loadPurchaseImpactInputs(
 
   return {
     action,
-    canViewPayments: options.canViewPayments ?? true,
+    canViewPayments: options.canViewPayments ?? false,
     disassemble,
     items,
     payments: (payments.data ?? []).map((payment) => ({

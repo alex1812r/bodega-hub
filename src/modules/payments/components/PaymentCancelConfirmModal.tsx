@@ -68,7 +68,10 @@ function moneyEffectLabel(effect: ImpactMoneyEffect) {
   const amount = formatSignedMoney(effect.delta, effect.currency);
 
   if (effect.target === "caja") {
-    const register = `la caja «${effect.targetName ?? "sin nombre"}»`;
+    // Sin `cash.view` el impact no trae el nombre de la caja.
+    const register = effect.restricted
+      ? "la caja"
+      : `la caja «${effect.targetName ?? "sin nombre"}»`;
 
     if (!effect.physical) {
       const entry = effect.delta < 0 ? "cobro" : "vuelto";

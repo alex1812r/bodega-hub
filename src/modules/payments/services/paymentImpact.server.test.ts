@@ -7,6 +7,12 @@ jest.mock("../../../lib/supabase/admin-client");
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import {
+  getEffectivePermissions,
+  type Permission,
+  type StoreUserRole,
+} from "@/shared/auth/permissions";
+import { FULL_IMPACT_LEDGER_ACCESS, impactLedgerAccess } from "@/shared/impact/impactAccess";
 
 import { getPaymentImpact, loadPaymentImpactInputs } from "./paymentImpact.server";
 
@@ -134,6 +140,7 @@ describe("loadPaymentImpactInputs", () => {
       "cancel",
       STORE_ID,
       "admin",
+      FULL_IMPACT_LEDGER_ACCESS,
     );
 
     expect(inputs).toEqual({
@@ -225,6 +232,7 @@ describe("loadPaymentImpactInputs", () => {
       "cancel",
       STORE_ID,
       "contador",
+      FULL_IMPACT_LEDGER_ACCESS,
     );
 
     expect(inputs.document).toEqual({
@@ -257,6 +265,7 @@ describe("loadPaymentImpactInputs", () => {
       "cancel",
       STORE_ID,
       "admin",
+      FULL_IMPACT_LEDGER_ACCESS,
     );
 
     expect(inputs.payment.status).toBe("anulado");
@@ -275,6 +284,7 @@ describe("loadPaymentImpactInputs", () => {
       "cancel",
       STORE_ID,
       "vendedor",
+      FULL_IMPACT_LEDGER_ACCESS,
     );
 
     expect(inputs.canCancelPayments).toBe(false);
@@ -285,7 +295,7 @@ describe("loadPaymentImpactInputs", () => {
     const privileged = jest.fn();
 
     await expect(
-      loadPaymentImpactInputs({ privileged, user: user.client as never }, PAYMENT_ID, "cancel", STORE_ID, "vendedor"),
+      loadPaymentImpactInputs({ privileged, user: user.client as never }, PAYMENT_ID, "cancel", STORE_ID, "vendedor", FULL_IMPACT_LEDGER_ACCESS),
     ).rejects.toMatchObject({ code: "FORBIDDEN", status: 403 });
     expect(privileged).not.toHaveBeenCalled();
     expect(user.from.mock.calls).toEqual([["payments"]]);
@@ -295,7 +305,7 @@ describe("loadPaymentImpactInputs", () => {
     const user = readClient(userResults({ payments: { data: null, error: null } }));
 
     await expect(
-      loadPaymentImpactInputs({ privileged: jest.fn(), user: user.client as never }, PAYMENT_ID, "cancel", STORE_ID, "admin"),
+      loadPaymentImpactInputs({ privileged: jest.fn(), user: user.client as never }, PAYMENT_ID, "cancel", STORE_ID, "admin", FULL_IMPACT_LEDGER_ACCESS),
     ).rejects.toMatchObject({ code: "NOT_FOUND", message: "Pago no encontrado.", status: 404 });
     expect(user.from.mock.calls).toEqual([["payments"]]);
   });
@@ -309,10 +319,10 @@ describe("loadPaymentImpactInputs", () => {
     );
 
     await expect(
-      loadPaymentImpactInputs({ privileged: jest.fn(), user: withoutSale.client as never }, PAYMENT_ID, "cancel", STORE_ID, "admin"),
+      loadPaymentImpactInputs({ privileged: jest.fn(), user: withoutSale.client as never }, PAYMENT_ID, "cancel", STORE_ID, "admin", FULL_IMPACT_LEDGER_ACCESS),
     ).rejects.toMatchObject({ message: "Venta no encontrada.", status: 404 });
     await expect(
-      loadPaymentImpactInputs({ privileged: jest.fn(), user: withoutPurchase.client as never }, PAYMENT_ID, "cancel", STORE_ID, "admin"),
+      loadPaymentImpactInputs({ privileged: jest.fn(), user: withoutPurchase.client as never }, PAYMENT_ID, "cancel", STORE_ID, "admin", FULL_IMPACT_LEDGER_ACCESS),
     ).rejects.toMatchObject({ message: "Compra no encontrada.", status: 404 });
   });
 
@@ -320,7 +330,7 @@ describe("loadPaymentImpactInputs", () => {
     const user = readClient(userResults());
 
     await expect(
-      loadPaymentImpactInputs({ privileged: jest.fn(), user: user.client as never }, "pay-1", "cancel", STORE_ID, "admin"),
+      loadPaymentImpactInputs({ privileged: jest.fn(), user: user.client as never }, "pay-1", "cancel", STORE_ID, "admin", FULL_IMPACT_LEDGER_ACCESS),
     ).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
     await expect(
       loadPaymentImpactInputs(
@@ -329,6 +339,7 @@ describe("loadPaymentImpactInputs", () => {
         "cancel",
         STORE_ID,
         "admin",
+        FULL_IMPACT_LEDGER_ACCESS,
       ),
     ).rejects.toMatchObject({ status: 400 });
     expect(user.from).not.toHaveBeenCalled();
@@ -349,6 +360,7 @@ describe("loadPaymentImpactInputs", () => {
           "cancel",
           STORE_ID,
           "admin",
+          FULL_IMPACT_LEDGER_ACCESS,
         ),
       ).rejects.toBeInstanceOf(Error);
     }
@@ -366,7 +378,7 @@ describe("getPaymentImpact", () => {
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue(user.client);
     (createAdminSupabaseClient as jest.Mock).mockReturnValue(privileged.client);
 
-    const impact = await getPaymentImpact(PAYMENT_ID, "cancel", STORE_ID, "admin");
+    const impact = await getPaymentImpact(PAYMENT_ID, "cancel", STORE_ID, "admin", FULL_IMPACT_LEDGER_ACCESS);
 
     expect(impact).toMatchObject({
       allowed: true,
@@ -383,8 +395,129 @@ describe("getPaymentImpact", () => {
   });
 
   it("id mal formado: 400 antes de crear ningún cliente", async () => {
-    await expect(getPaymentImpact("nope", "cancel", STORE_ID, "admin")).rejects.toMatchObject({ status: 400 });
+    await expect(getPaymentImpact("nope", "cancel", STORE_ID, "admin", FULL_IMPACT_LEDGER_ACCESS)).rejects.toMatchObject({ status: 400 });
     expect(createRouteSupabaseClient).not.toHaveBeenCalled();
     expect(createAdminSupabaseClient).not.toHaveBeenCalled();
   });
+});
+
+/**
+ * AUD-01: cada dato del impact va cubierto por un permiso del llamante. Los
+ * saldos del baúl exigen `vault.view`; el detalle de la caja, `cash.view`.
+ */
+describe("acceso por rol al libro de caja y baúl (AUD-01)", () => {
+  const bankPayment = {
+    ...salePaymentRow,
+    change_method: null,
+    change_ref: null,
+    change_ves: null,
+    method: "pago_movil",
+    sale: { ...salePaymentRow.sale, paid_ves: "1000.00", total_ves: "1000.00" },
+  };
+
+  async function impactFor(role: StoreUserRole, deniedPermissions: Permission[] = []) {
+    const user = readClient(
+      userResults({
+        payments: { data: bankPayment, error: null },
+        store_vaults: {
+          data: {
+            balance_efectivo_ves: "61234.50",
+            balance_ref: "7123.45",
+            balance_ves: "54321.98",
+            id: "vault-1",
+          },
+          error: null,
+        },
+        vault_movements: {
+          data: [{ amount_ref: 0, amount_ves: "1000.00", id: "vm-s", type: "sale_in", vault_id: "vault-1" }],
+          error: null,
+        },
+      }),
+    );
+    const privileged = readClient({
+      cash_movements: {
+        data: [{ ...cashRows.cash_movements.data[0], type: "account_in" }],
+        error: null,
+      },
+    });
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue(user.client);
+    (createAdminSupabaseClient as jest.Mock).mockReturnValue(privileged.client);
+
+    const impact = await getPaymentImpact(
+      PAYMENT_ID,
+      "cancel",
+      STORE_ID,
+      role,
+      impactLedgerAccess(getEffectivePermissions({ deniedPermissions, role })),
+    );
+
+    return { impact, tables: user.from.mock.calls.map(([table]) => table), text: JSON.stringify(impact) };
+  }
+
+  it.each(["admin", "contador"] as const)(
+    "%s (payments.manage + vault.view + cash.view): saldos del baúl y nombre de la caja",
+    async (role) => {
+      const { impact, tables } = await impactFor(role);
+
+      expect(tables).toContain("store_vaults");
+      expect(impact.allowed).toBe(true);
+      expect(impact.effects).toEqual([
+        expect.objectContaining({ delta: -1000, target: "caja", targetName: "Caja 1" }),
+        expect.objectContaining({
+          balanceAfter: 53321.98,
+          balanceBefore: 54321.98,
+          delta: -1000,
+          target: "baul_cuenta",
+        }),
+      ]);
+    },
+  );
+
+  it("contador con vault.view denegado: no lee store_vaults; el asiento de baúl va sin saldos y no es inexacto", async () => {
+    const { impact, tables, text } = await impactFor("contador", ["vault.view"]);
+
+    expect(tables).not.toContain("store_vaults");
+    expect(text).not.toMatch(/54321|61234|7123/);
+    expect(impact.allowed).toBe(true);
+    expect(impact.inexact).toBeNull();
+    expect(impact.effects[1]).toEqual({
+      balanceAfter: null,
+      balanceBefore: null,
+      currency: "VES",
+      delta: -1000,
+      note: null,
+      physical: true,
+      restricted: true,
+      target: "baul_cuenta",
+      targetName: null,
+    });
+    expect(impact.description).toContain("salen Bs. 1.000,00 del baúl (cuenta)");
+  });
+
+  it("contador con cash.view denegado: el asiento de caja va sin nombre de caja", async () => {
+    const { impact, text } = await impactFor("contador", ["cash.view"]);
+
+    expect(text).not.toContain("Caja 1");
+    expect(impact.effects[0]).toMatchObject({
+      delta: -1000,
+      note: null,
+      restricted: true,
+      target: "caja",
+      targetName: null,
+    });
+    expect(impact.description).toContain("del turno de la caja;");
+    // El baúl sí lo puede ver.
+    expect(impact.effects[1]).toMatchObject({ balanceAfter: 53321.98, balanceBefore: 54321.98 });
+  });
+
+  it.each(["vendedor", "almacen"] as const)(
+    "%s (sin vault.view; la ruta ya le da 403): el cargador tampoco lee store_vaults ni devuelve saldos",
+    async (role) => {
+      const { impact, tables, text } = await impactFor(role);
+
+      expect(tables).not.toContain("store_vaults");
+      expect(text).not.toMatch(/54321|61234|7123/);
+      expect(impact).toMatchObject({ allowed: false, effects: [], reasonCode: "FORBIDDEN" });
+    },
+  );
 });

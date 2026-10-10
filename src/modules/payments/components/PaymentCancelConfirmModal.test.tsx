@@ -269,6 +269,31 @@ describe("PaymentCancelConfirmModal", () => {
     expect(effectRow(impact.effects[0].note ?? "")).toHaveAttribute("data-tone", "warning");
   });
 
+  it("AUD-01 · sin permiso de baúl ni de caja: dice cuánto se mueve, sin saldos ni nombre de caja", async () => {
+    const impact = impactOf({
+      ledger: ledger({
+        cashMovements: [{ ...openCashSaleIn, type: "account_in" }],
+        hidden: { cash: true, vault: true },
+        vault: null,
+        vaultMovements: [{ amountRef: 0, amountVes: 1000, id: "vm-1", type: "sale_in", vaultId: "vault-1" }],
+      }),
+      payment: { ...salePayment, method: "pago_movil" },
+    });
+
+    impactResponse = async () => jsonResponse({ data: impact });
+    renderModal();
+
+    await screen.findByRole("button", { name: "Anular pago" });
+
+    const vault = effectRow(/Sale del baúl \(cuenta\)/);
+
+    expect(vault).toHaveTextContent("−Bs. 1.000,00");
+    expect(vault).not.toHaveTextContent("pasa a");
+    expect(screen.getByText(/Se quita del turno de la caja el cobro por cuenta/)).toBeInTheDocument();
+    expect(screen.queryByText(/sin nombre/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No se pudo leer el saldo del baúl/)).not.toBeInTheDocument();
+  });
+
   it("modo demo (inexact, sin asientos): dice por qué no hay cifra y no inventa ninguna", async () => {
     const reason =
       "El modo demo no registra asientos de caja ni de baúl por pago: no se puede anticipar de dónde sale ni a dónde vuelve el dinero.";

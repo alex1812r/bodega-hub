@@ -136,7 +136,10 @@ function StockLine({ line }: { line: ImpactStockLine }) {
 function MoneyEffect({ effect }: { effect: ImpactMoneyEffect }) {
   const target =
     effect.target === "caja"
-      ? `Caja «${effect.targetName ?? "sin nombre"}»`
+      ? // Sin `cash.view` el impact no trae el nombre de la caja.
+        effect.restricted
+        ? "Caja"
+        : `Caja «${effect.targetName ?? "sin nombre"}»`
       : MONEY_TARGET_LABEL[effect.target];
 
   return (

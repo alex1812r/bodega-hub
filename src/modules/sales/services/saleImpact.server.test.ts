@@ -7,6 +7,8 @@ jest.mock("../../../lib/supabase/admin-client");
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { adminSellPermissions, getEffectivePermissions } from "@/shared/auth/permissions";
+import { FULL_IMPACT_LEDGER_ACCESS, impactLedgerAccess } from "@/shared/impact/impactAccess";
 
 import { getSaleImpact, loadSaleImpactInputs } from "./saleImpact.server";
 
@@ -111,6 +113,7 @@ describe("loadSaleImpactInputs", () => {
       SALE_ID,
       "return",
       STORE_ID,
+      FULL_IMPACT_LEDGER_ACCESS,
     );
 
     expect(inputs).toEqual({
@@ -188,6 +191,7 @@ describe("loadSaleImpactInputs", () => {
       SALE_ID,
       "cancel",
       STORE_ID,
+      FULL_IMPACT_LEDGER_ACCESS,
     );
 
     expect(inputs.ledger).toEqual({
@@ -215,7 +219,7 @@ describe("loadSaleImpactInputs", () => {
     );
     const privileged = jest.fn();
 
-    await loadSaleImpactInputs({ privileged, user: user.client as never }, SALE_ID, "return", STORE_ID);
+    await loadSaleImpactInputs({ privileged, user: user.client as never }, SALE_ID, "return", STORE_ID, FULL_IMPACT_LEDGER_ACCESS);
 
     expect(privileged).not.toHaveBeenCalled();
     expect(user.from.mock.calls.map(([table]) => table)).not.toContain("vault_movements");
@@ -225,7 +229,7 @@ describe("loadSaleImpactInputs", () => {
     const user = readClient(userResults({ sales: { data: null, error: null } }));
 
     await expect(
-      loadSaleImpactInputs({ privileged: jest.fn(), user: user.client as never }, SALE_ID, "cancel", STORE_ID),
+      loadSaleImpactInputs({ privileged: jest.fn(), user: user.client as never }, SALE_ID, "cancel", STORE_ID, FULL_IMPACT_LEDGER_ACCESS),
     ).rejects.toMatchObject({ code: "NOT_FOUND", message: "Venta no encontrada.", status: 404 });
     expect(user.from.mock.calls).toEqual([["sales"]]);
   });
@@ -234,7 +238,7 @@ describe("loadSaleImpactInputs", () => {
     const user = readClient(userResults());
 
     await expect(
-      loadSaleImpactInputs({ privileged: jest.fn(), user: user.client as never }, "sale-1", "cancel", STORE_ID),
+      loadSaleImpactInputs({ privileged: jest.fn(), user: user.client as never }, "sale-1", "cancel", STORE_ID, FULL_IMPACT_LEDGER_ACCESS),
     ).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
     await expect(
       loadSaleImpactInputs(
@@ -242,6 +246,7 @@ describe("loadSaleImpactInputs", () => {
         `${SALE_ID}\u0000`,
         "cancel",
         STORE_ID,
+        FULL_IMPACT_LEDGER_ACCESS,
       ),
     ).rejects.toMatchObject({ status: 400 });
     expect(user.from).not.toHaveBeenCalled();
@@ -259,6 +264,7 @@ describe("loadSaleImpactInputs", () => {
         SALE_ID,
         "return",
         STORE_ID,
+        FULL_IMPACT_LEDGER_ACCESS,
       ),
     ).rejects.toBeInstanceOf(Error);
   });
@@ -275,7 +281,7 @@ describe("getSaleImpact", () => {
     (createRouteSupabaseClient as jest.Mock).mockResolvedValue(user.client);
     (createAdminSupabaseClient as jest.Mock).mockReturnValue(privileged.client);
 
-    const impact = await getSaleImpact(SALE_ID, "return", STORE_ID);
+    const impact = await getSaleImpact(SALE_ID, "return", STORE_ID, FULL_IMPACT_LEDGER_ACCESS);
 
     expect(impact).toMatchObject({
       allowed: true,
@@ -293,8 +299,155 @@ describe("getSaleImpact", () => {
   });
 
   it("id mal formado: 400 antes de crear ningún cliente", async () => {
-    await expect(getSaleImpact("nope", "cancel", STORE_ID)).rejects.toMatchObject({ status: 400 });
+    await expect(getSaleImpact("nope", "cancel", STORE_ID, FULL_IMPACT_LEDGER_ACCESS)).rejects.toMatchObject({ status: 400 });
     expect(createRouteSupabaseClient).not.toHaveBeenCalled();
     expect(createAdminSupabaseClient).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * AUD-01: cada dato del impact va cubierto por un permiso del llamante. El saldo
+ * del baúl exige `vault.view`; el detalle de la caja (nombre, notas), `cash.view`.
+ */
+describe("acceso por rol al libro de caja y baúl (AUD-01)", () => {
+  const bankSale = {
+    ...saleRow,
+    payments: [{ ...saleRow.payments[0], method: "pago_movil" }],
+  };
+  const bankCashRows = {
+    cash_movements: {
+      data: [{ ...cashRows.cash_movements.data[0], type: "account_in" }],
+      error: null,
+    },
+  };
+
+  function profileOf(role: "admin" | "almacen" | "contador" | "vendedor") {
+    // El admin solo llega a este impact con «El administrador puede vender».
+    return impactLedgerAccess(
+      getEffectivePermissions({
+        grantedPermissions: role === "admin" ? [...adminSellPermissions] : [],
+        role,
+      }),
+    );
+  }
+
+  async function impactFor(role: "admin" | "almacen" | "contador" | "vendedor") {
+    const user = readClient(
+      userResults({
+        sales: { data: bankSale, error: null },
+        store_vaults: { data: { balance_ves: "54321.98", id: "vault-1" }, error: null },
+        vault_movements: {
+          data: [
+            { amount_ves: 1000, id: "vm-1", payment_id: PAYMENT_ID, type: "sale_in", vault_id: "vault-1" },
+          ],
+          error: null,
+        },
+      }),
+    );
+    const privileged = readClient(bankCashRows);
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue(user.client);
+    (createAdminSupabaseClient as jest.Mock).mockReturnValue(privileged.client);
+
+    const impact = await getSaleImpact(SALE_ID, "return", STORE_ID, profileOf(role));
+
+    return { impact, tables: user.from.mock.calls.map(([table]) => table), text: JSON.stringify(impact) };
+  }
+
+  it.each(["vendedor", "almacen"] as const)(
+    "%s (sin vault.view): no lee store_vaults ni recibe saldos del baúl",
+    async (role) => {
+      const { impact, tables, text } = await impactFor(role);
+      const vault = impact.payments[0].effects.find((effect) => effect.target === "baul_cuenta");
+
+      expect(tables).not.toContain("store_vaults");
+      expect(text).not.toContain("54321");
+      // El efecto sobre el baúl sigue a la vista: cuánto sale, sin saldo antes → después.
+      expect(vault).toEqual({
+        balanceAfter: null,
+        balanceBefore: null,
+        currency: "VES",
+        delta: -1000,
+        note: null,
+        physical: true,
+        restricted: true,
+        target: "baul_cuenta",
+        targetName: null,
+      });
+      // No es una lectura fallida: no se anuncia como inexacto.
+      expect(impact.payments[0].inexact).toBeNull();
+      expect(impact.inexact).toBeNull();
+      expect(impact.allowed).toBe(true);
+    },
+  );
+
+  it.each(["admin", "contador"] as const)(
+    "%s (con vault.view): recibe el saldo del baúl antes → después",
+    async (role) => {
+      const { impact, tables } = await impactFor(role);
+
+      expect(tables).toContain("store_vaults");
+      expect(impact.payments[0].effects).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            balanceAfter: 53321.98,
+            balanceBefore: 54321.98,
+            delta: -1000,
+            target: "baul_cuenta",
+          }),
+        ]),
+      );
+    },
+  );
+
+  it.each(["admin", "vendedor", "contador"] as const)(
+    "%s (con cash.view): ve la caja del asiento",
+    async (role) => {
+      const { impact } = await impactFor(role);
+
+      expect(impact.payments[0].effects).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ delta: -1000, target: "caja", targetName: "Caja 1" }),
+        ]),
+      );
+    },
+  );
+
+  it("almacen (sin cash.view): el asiento de caja llega sin nombre de caja ni notas", async () => {
+    const { impact, text } = await impactFor("almacen");
+
+    expect(text).not.toContain("Caja 1");
+    expect(impact.payments[0].effects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          delta: -1000,
+          note: null,
+          restricted: true,
+          target: "caja",
+          targetName: null,
+        }),
+      ]),
+    );
+    expect(impact.payments[0].description).toBe("Se anula: se revierte de caja y se revierte del baúl (cuenta).");
+  });
+
+  it("sin cash.view el cierre ya transferido sigue rechazando: el veredicto no depende del permiso", async () => {
+    const user = readClient(userResults());
+    const privileged = readClient({
+      cash_movements: {
+        data: [
+          {
+            ...cashRows.cash_movements.data[0],
+            session: { register: { name: "Caja 1" }, status: "closed", vault_transferred_at: "2026-10-02T00:00:00Z" },
+          },
+        ],
+        error: null,
+      },
+    });
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue(user.client);
+    (createAdminSupabaseClient as jest.Mock).mockReturnValue(privileged.client);
+
+    const impact = await getSaleImpact(SALE_ID, "return", STORE_ID, profileOf("almacen"));
+
+    expect(impact).toMatchObject({ allowed: false, reasonCode: "CONFLICT" });
   });
 });

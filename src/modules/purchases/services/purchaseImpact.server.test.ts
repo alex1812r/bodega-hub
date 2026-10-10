@@ -7,6 +7,7 @@ jest.mock("../../../lib/supabase/admin-client");
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
 
 import { getPurchaseImpact, loadPurchaseImpactInputs } from "./purchaseImpact.server";
 
@@ -116,6 +117,7 @@ describe("loadPurchaseImpactInputs", () => {
       PURCHASE_ID,
       "receive",
       STORE_ID,
+      { canViewPayments: true },
     );
 
     expect(inputs).toEqual({
@@ -342,4 +344,72 @@ describe("getPurchaseImpact", () => {
     expect(createRouteSupabaseClient).not.toHaveBeenCalled();
     expect(createAdminSupabaseClient).not.toHaveBeenCalled();
   });
+});
+
+/**
+ * AUD-01: las líneas de pago de una compra solo viajan a quien puede ver pagos
+ * de compras (`payments.view` + `purchases.view`). Cerrado por defecto: quien
+ * llame sin decir qué puede ver el rol no recibe pagos.
+ */
+describe("acceso por rol a los pagos de la compra (AUD-01)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function clientsWithActivePayment() {
+    const user = readClient(userResults({ purchases: { data: receivedRow, error: null } }));
+    const privileged = readClient({ payments: { data: paymentRows, error: null } });
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue(user.client);
+    (createAdminSupabaseClient as jest.Mock).mockReturnValue(privileged.client);
+
+    return { privileged, user };
+  }
+
+  it("sin opciones no se ven pagos: el valor por defecto es cerrado", async () => {
+    const { privileged, user } = clientsWithActivePayment();
+
+    const inputs = await loadPurchaseImpactInputs(
+      { privileged: () => privileged.client as never, user: user.client as never },
+      PURCHASE_ID,
+      "cancel",
+      STORE_ID,
+    );
+    const impact = await getPurchaseImpact(PURCHASE_ID, "cancel", STORE_ID);
+
+    expect(inputs.canViewPayments).toBe(false);
+    expect(impact).toMatchObject({ allowed: false, payments: [], paymentsRestricted: true });
+    expect(JSON.stringify(impact)).not.toContain(PAYMENT_ID);
+  });
+
+  it.each(["admin", "contador"] as const)("%s: recibe las líneas de pago de la compra", async (role) => {
+    clientsWithActivePayment();
+
+    const impact = await getPurchaseImpact(PURCHASE_ID, "cancel", STORE_ID, {
+      canViewPayments: canViewPurchasePayments(role),
+    });
+
+    expect(impact.paymentsRestricted).toBe(false);
+    expect(impact.payments).toEqual([
+      expect.objectContaining({ amountVes: 500, outcome: "blocks_action", paymentId: PAYMENT_ID }),
+    ]);
+  });
+
+  it.each(["almacen", "vendedor"] as const)(
+    "%s: mismo veredicto que la RPC, sin líneas de pago",
+    async (role) => {
+      clientsWithActivePayment();
+
+      const impact = await getPurchaseImpact(PURCHASE_ID, "cancel", STORE_ID, {
+        canViewPayments: canViewPurchasePayments(role),
+      });
+
+      expect(impact).toMatchObject({
+        allowed: false,
+        payments: [],
+        paymentsRestricted: true,
+        reasonCode: "CONFLICT",
+      });
+      expect(JSON.stringify(impact)).not.toContain(PAYMENT_ID);
+    },
+  );
 });

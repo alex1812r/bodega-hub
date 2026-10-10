@@ -60,6 +60,12 @@ export type ImpactMoneyEffect = {
   note: string | null;
   /** `false`: asiento informativo de la sesión (cobro o vuelto por cuenta), no mueve la gaveta. */
   physical: boolean;
+  /**
+   * `true`: quien pide el impact no tiene el permiso de lectura de ese destino
+   * (`cash.view` para la caja, `vault.view` para el baúl). El asiento viaja con
+   * su monto, pero sin nombre de caja, sin notas y sin saldos (AUD-01).
+   */
+  restricted?: true;
   target: ImpactMoneyTarget;
   /** Nombre de la caja cuando `target = "caja"`. */
   targetName: string | null;

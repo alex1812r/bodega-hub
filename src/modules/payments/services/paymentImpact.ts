@@ -63,6 +63,12 @@ export type PaymentImpactVaultMovement = {
 export type PaymentImpactLedger =
   | {
       cashMovements: PaymentImpactCashMovement[];
+      /**
+       * Lo que el llamante NO puede ver (AUD-01). Ausente = ve todo. Con
+       * `vault` el cargador no lee `store_vaults` y los asientos de baúl salen
+       * sin saldos; con `cash`, los de caja salen sin nombre de caja ni notas.
+       */
+      hidden?: { cash: boolean; vault: boolean };
       kind: "full";
       /** Baúl de la tienda (`store_vaults`) con sus tres cubetas. */
       vault: {
@@ -260,7 +266,7 @@ function verdictOf(inputs: PaymentImpactInputs, netCents: number): ImpactVerdict
 }
 
 /** Asientos de caja del cobro: `cancel_payment_apply` los borra todos. */
-function cashPart(movements: PaymentImpactCashMovement[]): MoneyPart {
+function cashPart(movements: PaymentImpactCashMovement[], hidden: boolean): MoneyPart {
   const effects: ImpactMoneyEffect[] = [];
   let unknownType: string | null = null;
 
@@ -289,10 +295,11 @@ function cashPart(movements: PaymentImpactCashMovement[]): MoneyPart {
           currency,
           // Borrar el asiento deshace su efecto: signo contrario al del tipo.
           delta: fromCents(-kind.sign * cents),
-          note,
+          note: hidden ? null : note,
           physical: kind.physical,
+          ...(hidden ? { restricted: true as const } : {}),
           target: "caja",
-          targetName: movement.registerName,
+          targetName: hidden ? null : movement.registerName,
         });
       }
     }
@@ -323,6 +330,28 @@ function bucketEffect(
 ): MoneyPart {
   const currency = target === "baul_ref" ? ("USD" as const) : ("VES" as const);
   const before = state[target];
+
+  // Sin `vault.view` el saldo no se leyó: se informa cuánto se mueve, sin saldos
+  // (ni el recorte a 0, que los delataría). No es una lectura fallida, así que
+  // no se declara inexacto.
+  if (ledger.hidden?.vault) {
+    return {
+      effects: [
+        {
+          balanceAfter: null,
+          balanceBefore: null,
+          currency,
+          delta: fromCents(signedCents),
+          note: null,
+          physical: true,
+          restricted: true,
+          target,
+          targetName: null,
+        },
+      ],
+      inexact: null,
+    };
+  }
 
   if (before === null || ledger.vault?.id !== movement.vaultId) {
     state[target] = null;
@@ -432,7 +461,7 @@ function saleMoney(inputs: PaymentImpactInputs, ledger: FullLedger, state: Vault
   // 2. Asientos de caja del pago (cobro y vuelto): se borran, esté la sesión
   //    abierta o cerrada sin transferir.
   if (CASH_METHODS.includes(payment.method) || BANK_METHODS.includes(payment.method)) {
-    parts.push(cashPart(ledger.cashMovements));
+    parts.push(cashPart(ledger.cashMovements, ledger.hidden?.cash === true));
   }
 
   // 3. Cobro por cuenta: su `sale_in` sale del baúl (cuenta), sin bajar de 0.
@@ -480,7 +509,10 @@ function describeEffect(effect: ImpactMoneyEffect) {
   const amount = formatMoney(Math.abs(effect.delta), effect.currency);
 
   if (effect.target === "caja") {
-    const register = `la caja «${effect.targetName ?? "sin nombre"}»`;
+    // Sin `cash.view` no se nombra la caja.
+    const register = effect.restricted
+      ? "la caja"
+      : `la caja «${effect.targetName ?? "sin nombre"}»`;
 
     if (!effect.physical) {
       return effect.delta < 0

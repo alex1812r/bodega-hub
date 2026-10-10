@@ -19,6 +19,7 @@ import { findMockPurchase } from "./purchaseMockStore";
 import { getPurchaseById } from "./purchases.mock-server";
 
 export type PurchaseImpactOptions = {
+  /** Ausente = `false`, igual que el cargador real. */
   canViewPayments?: boolean;
   disassemble?: PurchaseImpactDisassembleEntry[] | null;
 };
@@ -75,7 +76,7 @@ export function loadPurchaseImpactInputs(
 
   return {
     action,
-    canViewPayments: options.canViewPayments ?? true,
+    canViewPayments: options.canViewPayments ?? false,
     disassemble: action === "receive" ? (options.disassemble ?? null) : null,
     items: purchase.items.map((item) => ({
       disassembled: item.disassembled,
