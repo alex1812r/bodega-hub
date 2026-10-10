@@ -16,7 +16,7 @@ Ver [`frontend-api-guide.md`](frontend-api-guide.md#autenticación-y-permisos) y
 ## Roles Iniciales
 
 - `superadmin`: solo backoffice plataforma (`platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view`) mas `assistant.use`. Home en `/platform/dashboard`. Puede ver usuarios de todas las tiendas, crear **solo** admins y generar reportes/KPIs multi-tienda. No opera el ERP ni crea otros roles.
-- `admin`: acceso total al ERP de **su** tienda (sin permisos `platform.*`), **excepto** venta POS (`sales.create`) y operar caja (`cash.operate`). Puede ver ventas, gestionar cajas/baúl y el resto de módulos.
+- `admin`: acceso total al ERP de **su** tienda (sin permisos `platform.*`), **excepto** venta POS (`sales.create`) y operar caja (`cash.operate`). Puede ver ventas, gestionar cajas/baúl y el resto de módulos. Esos dos permisos se le pueden conceder con el interruptor [«El administrador puede vender»](#el-administrador-puede-vender).
 - `vendedor`: acceso a ventas y datos necesarios para vender.
 - `almacen`: acceso a compras, productos e inventario.
 - `contador`: acceso a pagos, reportes y lectura contable.
@@ -85,7 +85,7 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | --- | --- | --- | --- | --- |
 | `dashboard.view` | Si | Si | Si | Si |
 | `sales.view` | Si | Si | No | Si |
-| `sales.create` | No | Si | No | No |
+| `sales.create` | No (*) | Si | No | No |
 | `purchases.view` | Si | No | Si | Si |
 | `purchases.create` | Si | No | Si | No |
 | `inventory.view` | Si | No | Si | No |
@@ -97,7 +97,7 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | `payments.view` | Si | Si | No | Si |
 | `payments.manage` | Si | No | No | Si |
 | `cash.view` | Si | Si | No | Si |
-| `cash.operate` | No | Si | No | No |
+| `cash.operate` | No (*) | Si | No | No |
 | `cash.manage` | Si | No | No | No |
 | `vault.view` | Si | No | No | Si |
 | `vault.manage` | Si | No | No | No |
@@ -107,6 +107,8 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | `assistant.use` | Si | No | No | No |
 | `settings.view` | Si | No | No | No |
 | `users.manage` | Si | No | No | No |
+
+(*) Sí cuando la tienda tiene encendido [«El administrador puede vender»](#el-administrador-puede-vender).
 
 Notas de pagos:
 - El **vendedor** no tiene `payments.manage`, pero puede **registrar cobros de venta** (POS / `POST /api/payments` con `saleId`) con `sales.create`. No puede pagar compras ni anular pagos.
@@ -138,6 +140,8 @@ El rol sigue siendo la plantilla base del usuario, pero un administrador puede r
 
 - `grantedPermissions`: permisos adicionales al rol.
 - `deniedPermissions`: permisos bloqueados aunque el rol los tenga.
+
+El rol `admin` **ignora** estas excepciones, con una sola salvedad: `sales.create` y `cash.operate` en `grantedPermissions` (`adminSellPermissions` en `packages/core/src/permissions.ts`). Ningún otro permiso concedido o bloqueado cambia lo que puede hacer un administrador.
 
 En modo mock (sin sesión), los endpoints aceptan `x-demo-user-id` para probar excepciones. Ejemplo: `55555555-5555-4555-8555-555555555555` (`vendedor.contactos@example.com`) es rol `vendedor` con `contacts.manage` concedido.
 
@@ -251,7 +255,55 @@ El control en UI no reemplaza RLS ni `requirePermission` en el backend.
 | Permiso | Vendedor | Contador | Administrador |
 | --- | --- | --- | --- |
 | `cash.view` | Sí | Sí | Sí |
-| `cash.operate` | Sí | No | No |
+| `cash.operate` | Sí | No | No (sí con «El administrador puede vender») |
 | `cash.manage` | No | No | Sí |
 | `vault.view` | No | Sí | Sí |
 | `vault.manage` | No | No | Sí |
+
+## El administrador puede vender
+
+Para bodegas de un solo cajero, donde el dueño también atiende la caja (POS-02; cierra R21 / S3 de [`auditoria-producto-2026-10.md`](auditoria-producto-2026-10.md)). Es un interruptor en **Configuración → General / sistema → Ventas del administrador**. Apagado por defecto.
+
+### Qué otorga
+
+Encendido, los administradores de la tienda tienen además `sales.create` y `cash.operate`:
+
+- Ven «Ventas → POS» y «Mi caja» en el menú (el menú filtra por los permisos efectivos de `GET /api/auth/me`).
+- Pueden abrir caja, vender, cobrar y cerrar su caja. Para abrir caja hace falta una **caja asignada** (Cajas → asignar al administrador): sin ella el POS muestra el estado «sin caja» de siempre.
+
+No cambia nada más: nómina (`payroll.view_own` sigue bloqueado para el admin), ni los permisos de los demás roles, ni ninguna RPC. Las RPC de venta y de caja (`create_sale*`, `open_cash_session`, `close_cash_session`) ya aceptaban el rol `admin` en la base; lo que impedía vender al administrador era el permiso en el BFF y en la UI.
+
+### Cómo se guarda
+
+No hay un ajuste de tienda ni SQL nuevo: el estado **son** los `granted_permissions` de los perfiles `admin` de la tienda.
+
+- **Encendido** = todos los administradores **activos** de la tienda tienen los dos permisos concedidos. Si solo los tienen algunos, el interruptor se muestra apagado con el aviso «Solo algunos administradores pueden vender» y se puede igualar en un sentido u otro.
+- `PUT /api/settings/admin-can-sell` `{ "enabled": boolean }` concede o retira los dos permisos a **todos** los perfiles `admin` de la tienda (también los inactivos, para que al reactivarlos no desentonen), sin tocar el resto de sus excepciones. Es idempotente. Los administradores con las mismas excepciones se escriben en una sola sentencia (lo habitual); si tienen excepciones distintas hay una sentencia por grupo y, si una falla, basta repetir la operación.
+- `GET /api/settings/admin-can-sell` devuelve `{ enabled, admins: [{ id, name, canSell }] }` (solo administradores activos).
+- Ambos exigen `users.manage`: solo el admin de **esa** tienda (vendedor, almacén y contador → 403; el superadmin no opera tiendas → 403). La tienda sale de la sesión, nunca del cliente.
+- La UI confirma con `ConfirmActionModal`: «Vender en el POS: No → Sí», «Operar caja: No → Sí» y la lista de administradores afectados.
+
+### Administradores nuevos y cambios de rol
+
+- Un administrador **creado** en Configuración (`POST /api/users`) nace con el estado de la tienda.
+- Un usuario que **pasa a admin** (`PATCH /api/users/{id}` con `role`) queda como los demás administradores activos: recibe los dos permisos si el interruptor está encendido y los pierde si está apagado.
+- Un administrador que **deja de serlo** pierde los dos permisos concedidos (no se quedan colgados en un contador o un almacén). Si pasa a vendedor los conserva por su rol.
+- Si el `PATCH` trae `grantedPermissions` explícitos, mandan ellos.
+- **No cubierto:** un administrador creado desde el panel de plataforma (superadmin) en una tienda que ya tiene el interruptor encendido nace sin los permisos; la tienda queda en estado parcial hasta que un administrador vuelva a confirmar el interruptor.
+- **Migración:** un perfil `admin` que ya tuviera `sales.create` y/o `cash.operate` en `granted_permissions` (antes se ignoraban) pasa a tenerlos efectivos. Conviene revisarlo antes de desplegar:
+
+```sql
+select id, full_name, store_id, granted_permissions
+from public.profiles
+where role = 'admin'
+  and (granted_permissions ? 'sales.create' or granted_permissions ? 'cash.operate');
+```
+
+### Apagarlo con una caja abierta
+
+Al apagar, el administrador deja de poder vender (`POST /api/sales` → 403) y de abrir un turno nuevo (`POST /api/cash/session/open` → 403) de inmediato. Un turno que ya tuviera abierto **no queda atrapado**:
+
+- `POST /api/cash/session/close` acepta `cash.operate` **o** `cash.manage`. Quien solo tiene `cash.manage` puede cerrar únicamente **su propia** sesión abierta (la que devuelve `GET /api/cash/session`); la de otro usuario → 403. La RPC `close_cash_session` no cambia.
+- La confirmación de apagar avisa de las cajas abiertas a nombre de un administrador.
+- Como «Mi caja» deja de estar en el menú, la tarjeta del interruptor muestra al administrador «Tienes abierta la caja …» con el botón **Cerrar mi caja** (el mismo diálogo de cierre de siempre).
+- Si no la cierra, el cierre automático de fin de jornada sigue aplicando.

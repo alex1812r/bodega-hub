@@ -8,6 +8,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import {
+  ADMIN_CAN_SELL_OFF,
   apiData,
   apiError,
   buildRate,
@@ -71,6 +72,10 @@ function installServer({ cashCloseDiffAlertVes = 0, rejectWith }: ServerOptions 
         skip: 0,
         total: 1,
       });
+    }
+
+    if (url.split("?")[0] === "/api/settings/admin-can-sell") {
+      return apiData(ADMIN_CAN_SELL_OFF);
     }
 
     return apiData({ items: [], limit: 10, skip: 0, total: 0 });

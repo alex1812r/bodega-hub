@@ -39,6 +39,18 @@ describe("permissions", () => {
     expect(effective).not.toContain("platform.stores.manage");
   });
 
+  it("lets an admin sell and operate cash only through the two granted sell permissions", () => {
+    const effective = getEffectivePermissions({
+      grantedPermissions: ["sales.create", "cash.operate", "payroll.view_own"],
+      role: "admin",
+    });
+
+    expect(effective).toContain("sales.create");
+    expect(effective).toContain("cash.operate");
+    expect(effective).not.toContain("payroll.view_own");
+    expect(hasEffectivePermission({ grantedPermissions: ["sales.create"], role: "admin" }, "cash.operate")).toBe(false);
+  });
+
   it("gives superadmin platform permissions plus the assistant", () => {
     const effective = getEffectivePermissions({ role: "superadmin" });
 

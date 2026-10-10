@@ -91,6 +91,30 @@ describe("rolePermissionDiff (CNF-11)", () => {
     expect(flat(effect.lost)).toEqual(["sales.create"]);
   });
 
+  it("POS-02: con «El administrador puede vender» encendido, quien pasa a admin sigue vendiendo", () => {
+    const effect = computeRoleChangeEffect({ role: "vendedor" }, "admin", true);
+
+    expect(flat(effect.lost)).toEqual(["payroll.view_own"]);
+    expect(flat(effect.gained)).not.toContain("sales.create");
+
+    const fromAccountant = computeRoleChangeEffect({ role: "contador" }, "admin", true);
+
+    expect(flat(fromAccountant.gained)).toEqual(
+      expect.arrayContaining(["sales.create", "cash.operate"]),
+    );
+  });
+
+  it("POS-02: un admin que vende y pasa a contador pierde vender y operar caja", () => {
+    const effect = computeRoleChangeEffect(
+      { grantedPermissions: ["sales.create", "cash.operate"], role: "admin" },
+      "contador",
+      true,
+    );
+
+    expect(flat(effect.lost)).toEqual(expect.arrayContaining(["sales.create", "cash.operate"]));
+    expect(effect.losesAdministration).toBe(true);
+  });
+
   it("el mismo rol no cambia nada", () => {
     for (const role of storeUserRoles) {
       const effect = computeRoleChangeEffect({ role }, role);

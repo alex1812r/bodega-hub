@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
+import { authQueryKeys } from "@/modules/auth/hooks/useCurrentUser";
+import type { AdminCanSellState } from "@/modules/settings/services/adminCanSell";
 import type { CashCloseSettings } from "@/modules/settings/services/cashCloseSettings.schemas";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
@@ -40,6 +42,7 @@ export type CreateUserInput = {
 };
 
 export const settingsQueryKeys = {
+  adminCanSell: () => [...settingsQueryKeys.all, "admin-can-sell"] as const,
   all: ["settings"] as const,
   cashClose: () => [...settingsQueryKeys.all, "cash-close"] as const,
   detail: () => [...settingsQueryKeys.all, "detail"] as const,
@@ -134,6 +137,42 @@ export function useUpdateSettings() {
   });
 }
 
+export type { AdminCanSellState };
+
+/**
+ * «El administrador puede vender» (`GET /api/settings/admin-can-sell`, permiso
+ * `users.manage`): si todos los administradores activos pueden vender y operar
+ * caja, y cuáles son.
+ */
+export function useAdminCanSell(enabled = true) {
+  return useQuery({
+    enabled,
+    queryKey: settingsQueryKeys.adminCanSell(),
+    queryFn: () => apiFetch<AdminCanSellState>("/api/settings/admin-can-sell"),
+  });
+}
+
+/**
+ * Concede o retira la venta a los administradores de la tienda. Al guardar se
+ * refresca el perfil propio: el menú («Ventas → POS», «Mi caja») sale de ahí.
+ */
+export function useSetAdminCanSell() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (enabled: boolean) =>
+      apiFetch<AdminCanSellState>("/api/settings/admin-can-sell", {
+        body: { enabled },
+        method: "PUT",
+      }),
+    onSuccess: (state) => {
+      queryClient.setQueryData(settingsQueryKeys.adminCanSell(), state);
+      void queryClient.invalidateQueries({ queryKey: settingsQueryKeys.users() });
+      void queryClient.invalidateQueries({ queryKey: authQueryKeys.me() });
+    },
+  });
+}
+
 export type UsersFilters = PaginationParams;
 
 export function useUsers(filters: UsersFilters = {}) {
@@ -158,6 +197,10 @@ export function useUpdateUser(id: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: settingsQueryKeys.users(),
+      });
+      // Un cambio de rol o de estado mueve quiénes son los administradores activos.
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.adminCanSell(),
       });
     },
   });

@@ -8,11 +8,18 @@ import {
   type PricingSettingsRow,
   type ProfileListRow,
 } from "@/lib/supabase/mappers/settings";
+import { mapPermissionList } from "@/lib/supabase/mappers";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
-import { isStoreUserRole } from "@/shared/auth/permissions";
+import { isStoreUserRole, type Permission } from "@/shared/auth/permissions";
 
+import {
+  buildAdminCanSellState,
+  resolveAdminSellGrantsOnRoleChange,
+  withAdminSellGrants,
+} from "./adminCanSell";
+import { loadStoreAdminGrants } from "./adminCanSell.server";
 import {
   CASH_CLOSE_DIFF_ALERT_UNAVAILABLE_MESSAGE,
   mapCashCloseDiffAlertVes,
@@ -336,6 +343,51 @@ async function assertUpdateKeepsActiveAdmin(
   assertStoreKeepsActiveAdmin(count ?? 0);
 }
 
+/**
+ * POS-02: un cambio de rol que no trae `grantedPermissions` hereda el estado de
+ * «El administrador puede vender»: quien pasa a `admin` queda como los demás
+ * administradores activos y quien deja de serlo pierde `sales.create` y
+ * `cash.operate` concedidos. Solo lee cuando el cambio trae rol.
+ */
+async function resolveRoleChangeGrants(
+  supabase: RouteSupabaseClient,
+  id: string,
+  input: UserProfileInput,
+  storeId: string,
+): Promise<Permission[] | undefined> {
+  if (input.role === undefined || input.grantedPermissions !== undefined) {
+    return undefined;
+  }
+
+  const { data: current, error } = await supabase
+    .from("profiles")
+    .select("role, granted_permissions")
+    .eq("id", id)
+    .eq("store_id", storeId)
+    .maybeSingle<{ granted_permissions: unknown; role: string }>();
+
+  throwIfSupabaseError(error);
+
+  // Sin fila responde el 404 de la actualización; sin cambio de rol no hay herencia.
+  if (!current || current.role === input.role) {
+    return undefined;
+  }
+
+  const storeEnabled =
+    input.role === "admin"
+      ? buildAdminCanSellState(
+          (await loadStoreAdminGrants(supabase, storeId)).filter((admin) => admin.id !== id),
+        ).enabled
+      : false;
+
+  return resolveAdminSellGrantsOnRoleChange({
+    currentRole: current.role,
+    granted: mapPermissionList(current.granted_permissions),
+    nextRole: input.role,
+    storeEnabled,
+  });
+}
+
 export async function updateUser(id: string, input: UserProfileInput, storeId: string) {
   if (input.role !== undefined && !isStoreUserRole(input.role)) {
     throw new ApiError(400, "BAD_REQUEST", "Rol no permitido para usuarios de tienda.");
@@ -345,9 +397,14 @@ export async function updateUser(id: string, input: UserProfileInput, storeId: s
 
   await assertUpdateKeepsActiveAdmin(supabase, id, input, storeId);
 
+  const inheritedGrants = await resolveRoleChangeGrants(supabase, id, input, storeId);
+
   const { data, error } = await supabase
     .from("profiles")
-    .update(toProfileUpdate(input))
+    .update({
+      ...toProfileUpdate(input),
+      ...(inheritedGrants !== undefined ? { granted_permissions: inheritedGrants } : {}),
+    })
     .eq("id", id)
     .eq("store_id", storeId)
     .select(profileSelect)
@@ -370,6 +427,10 @@ export async function createUser(input: CreateStoreUserInput, storeId: string) {
   }
 
   const admin = createAdminSupabaseClient();
+  // POS-02: un administrador nuevo nace como los que ya hay (se lee antes de crearlo).
+  const inheritsSelling =
+    input.role === "admin" &&
+    buildAdminCanSellState(await loadStoreAdminGrants(admin, storeId)).enabled;
   let userId: string | undefined;
 
   try {
@@ -397,6 +458,7 @@ export async function createUser(input: CreateStoreUserInput, storeId: string) {
       is_active: true,
       role: input.role,
       store_id: storeId,
+      ...(inheritsSelling ? { granted_permissions: withAdminSellGrants([], true) } : {}),
     });
     throwIfSupabaseError(profileError);
 

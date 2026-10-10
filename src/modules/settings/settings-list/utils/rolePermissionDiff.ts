@@ -5,6 +5,8 @@ import {
   type StoreUserRole,
 } from "@/shared/auth/permissions";
 
+import { resolveAdminSellGrantsOnRoleChange } from "../../services/adminCanSell";
+
 export const permissionAreas = [
   "ventas",
   "caja",
@@ -122,14 +124,28 @@ export function groupPermissionsByArea(list: readonly Permission[]): PermissionA
 /**
  * Qué gana y qué pierde un usuario al pasar a `nextRole`. Compara los permisos
  * EFECTIVOS como los calcula el sistema (`getEffectivePermissions`): rol +
- * concedidos − bloqueados, y el administrador ignora las excepciones por usuario.
+ * concedidos − bloqueados, y el administrador ignora las excepciones por usuario
+ * salvo vender y operar caja. Aplica la misma herencia que el servidor (POS-02):
+ * `otherAdminsCanSell` es el estado de «El administrador puede vender» entre los
+ * demás administradores activos de la tienda.
  */
 export function computeRoleChangeEffect(
   profile: RoleChangeProfile,
   nextRole: StoreUserRole,
+  otherAdminsCanSell = false,
 ): RoleChangeEffect {
   const before = getEffectivePermissions(profile);
-  const after = getEffectivePermissions({ ...profile, role: nextRole });
+  const inheritedGrants = resolveAdminSellGrantsOnRoleChange({
+    currentRole: profile.role,
+    granted: profile.grantedPermissions,
+    nextRole,
+    storeEnabled: otherAdminsCanSell,
+  });
+  const after = getEffectivePermissions({
+    ...profile,
+    grantedPermissions: inheritedGrants ?? profile.grantedPermissions,
+    role: nextRole,
+  });
   const gained = after.filter((permission) => !before.includes(permission));
   const lost = before.filter((permission) => !after.includes(permission));
 

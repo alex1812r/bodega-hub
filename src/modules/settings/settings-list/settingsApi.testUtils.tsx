@@ -72,6 +72,12 @@ export function createSettingsWrapper() {
   };
 }
 
+/** `GET /api/settings/admin-can-sell` de una tienda con el interruptor apagado. */
+export const ADMIN_CAN_SELL_OFF = {
+  admins: [{ canSell: false, id: "user-admin", name: "Admin Demo" }],
+  enabled: false,
+};
+
 export function buildSettings(overrides: Partial<AppSettingsMock> = {}): AppSettingsMock {
   return {
     businessName: "Bodega de prueba",

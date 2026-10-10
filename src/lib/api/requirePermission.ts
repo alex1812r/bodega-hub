@@ -49,14 +49,22 @@ export function getDemoUserProfile(request: Request): UserProfileMock {
 
   const role = getDemoRole(request);
   const storeHeader = request.headers.get("x-demo-store-id");
+  const demoStoreId = role === "superadmin" ? null : (storeHeader ?? DEFAULT_STORE_ID);
+  // El perfil demo por rol hereda las excepciones del perfil mock con su mismo id
+  // y tienda (hoy solo `user-admin`): asi «El administrador puede vender» surte efecto.
+  const stored = mockUserProfiles.find(
+    (profile) => profile.id === `user-${role}` && (profile.storeId ?? null) === demoStoreId,
+  );
 
   return {
+    deniedPermissions: stored?.deniedPermissions,
     email: `${role}@example.com`,
+    grantedPermissions: stored?.grantedPermissions,
     id: `user-${role}`,
     isActive: true,
     name: `Usuario ${role}`,
     role,
-    storeId: role === "superadmin" ? null : (storeHeader ?? DEFAULT_STORE_ID),
+    storeId: demoStoreId,
   };
 }
 

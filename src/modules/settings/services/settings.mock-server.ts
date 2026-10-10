@@ -11,6 +11,14 @@ import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import {
+  buildAdminCanSellState,
+  matchesAdminSellGrants,
+  resolveAdminSellGrantsOnRoleChange,
+  withAdminSellGrants,
+  type AdminCanSellState,
+  type StoreAdminGrants,
+} from "./adminCanSell";
+import {
   DEFAULT_CASH_CLOSE_DIFF_ALERT_VES,
   parseCashCloseDiffAlertVes,
   type CashCloseSettings,
@@ -145,6 +153,38 @@ export function listUsers(searchParams: URLSearchParams, storeId: string) {
   return paginateList(items, searchParams);
 }
 
+/** Perfiles `admin` de la tienda (activos e inactivos), como los lee el servicio real. */
+function storeAdminProfiles(storeId: string) {
+  return mockUserProfiles.filter(
+    (profile) => profile.storeId === storeId && profile.role === "admin",
+  );
+}
+
+function toStoreAdminGrants(profile: UserProfileMock): StoreAdminGrants {
+  return {
+    grantedPermissions: profile.grantedPermissions ?? [],
+    id: profile.id,
+    isActive: profile.isActive,
+    name: profile.name,
+  };
+}
+
+/** Estado de «El administrador puede vender» (POS-02), derivado de los perfiles. */
+export function getAdminCanSell(storeId: string): AdminCanSellState {
+  return buildAdminCanSellState(storeAdminProfiles(storeId).map(toStoreAdminGrants));
+}
+
+/** Misma regla que el servicio real: todos los `admin` de la tienda, idempotente. */
+export function setAdminCanSell(enabled: boolean, storeId: string): AdminCanSellState {
+  for (const profile of storeAdminProfiles(storeId)) {
+    if (!matchesAdminSellGrants(profile.grantedPermissions, enabled)) {
+      profile.grantedPermissions = withAdminSellGrants(profile.grantedPermissions, enabled);
+    }
+  }
+
+  return getAdminCanSell(storeId);
+}
+
 export function updateUser(id: string, input: UserProfileInput, storeId: string) {
   const user = mockUserProfiles.find((profile) => profile.id === id);
   assertMockStoreResource(
@@ -166,7 +206,26 @@ export function updateUser(id: string, input: UserProfileInput, storeId: string)
     );
   }
 
-  Object.assign(user, input);
+  // Misma herencia que el servicio real (POS-02) cuando cambia el rol.
+  const inheritedGrants =
+    input.role !== undefined && input.grantedPermissions === undefined
+      ? resolveAdminSellGrantsOnRoleChange({
+          currentRole: user.role,
+          granted: user.grantedPermissions,
+          nextRole: input.role,
+          storeEnabled: buildAdminCanSellState(
+            storeAdminProfiles(storeId)
+              .filter((profile) => profile.id !== id)
+              .map(toStoreAdminGrants),
+          ).enabled,
+        })
+      : undefined;
+
+  Object.assign(
+    user,
+    input,
+    inheritedGrants !== undefined ? { grantedPermissions: inheritedGrants } : {},
+  );
 
   return {
     ...user,
@@ -180,8 +239,10 @@ export function createUser(input: CreateStoreUserInput, storeId: string) {
     throw new ApiError(409, "CONFLICT", "Ya existe un usuario con este correo.");
   }
 
+  const inheritsSelling = input.role === "admin" && getAdminCanSell(storeId).enabled;
   const user: UserProfileMock = {
     email,
+    ...(inheritsSelling ? { grantedPermissions: withAdminSellGrants([], true) } : {}),
     id: `user-mock-${Date.now()}`,
     isActive: true,
     name: input.fullName.trim(),

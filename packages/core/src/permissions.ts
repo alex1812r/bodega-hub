@@ -72,13 +72,24 @@ const platformPermissions = permissions.filter((permission) =>
  * Admin opera el comercio pero no vende en POS ni opera "Mi caja".
  * Tampoco cobra nómina: es el dueño y sus retiros salen del baúl, así que no
  * necesita "Mis recibos" (`payroll.view_own`).
- * Los permisos siguen existiendo para reactivarlos por rol/overrides más adelante.
+ * Vender y operar caja se pueden conceder a un admin con `adminSellPermissions`
+ * (interruptor «El administrador puede vender» de Configuración).
  */
 const adminBlockedPermissions = new Set<Permission>([
   "sales.create",
   "cash.operate",
   "payroll.view_own",
 ]);
+
+/**
+ * Lo único que un admin puede recibir por `grantedPermissions`: vender en el POS
+ * y operar su caja. Lo concede o retira, a todos los admin de la tienda, el
+ * interruptor «El administrador puede vender» (POS-02, docs/auth-permissions.md).
+ */
+export const adminSellPermissions = [
+  "sales.create",
+  "cash.operate",
+] as const satisfies readonly Permission[];
 
 const adminStorePermissions = storePermissions.filter(
   (permission) => !adminBlockedPermissions.has(permission),
@@ -144,8 +155,14 @@ export function getEffectivePermissions(profile: PermissionProfile) {
   }
 
   if (profile.role === "admin") {
-    // Admin ignores per-user overrides; base role already excludes sales.create / cash.operate.
-    return [...rolePermissions.admin];
+    // El admin ignora las excepciones por usuario, salvo `adminSellPermissions` concedidos.
+    const granted = profile.grantedPermissions ?? [];
+    const effectiveAdmin = new Set<Permission>([
+      ...rolePermissions.admin,
+      ...adminSellPermissions.filter((permission) => granted.includes(permission)),
+    ]);
+
+    return permissions.filter((permission) => effectiveAdmin.has(permission));
   }
 
   const effectivePermissions = new Set<Permission>([

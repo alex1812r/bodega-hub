@@ -38,6 +38,7 @@ import {
   useExchangeRates,
 } from "../hooks/useCurrentExchangeRate";
 import { useUsers } from "../hooks/useSettings";
+import { AdminCanSellCard } from "./components/AdminCanSellCard";
 import { CreateStoreUserModal } from "./components/CreateStoreUserModal";
 import { GeneralSettingsCard, SETTINGS_FORM_ID } from "./components/GeneralSettingsCard";
 import { PricingSettingsSection } from "./components/PricingSettingsSection";
@@ -228,7 +229,10 @@ function SettingsList() {
                       : "grid grid-cols-1 gap-4"
                   }
                 >
-                  <GeneralSettingsCard settings={generalSettings} />
+                  <div className="min-w-0 space-y-4">
+                    <GeneralSettingsCard settings={generalSettings} />
+                    {canEditSettings ? <AdminCanSellCard /> : null}
+                  </div>
 
                   {showDemoAuthCard ? <DemoAuthCard /> : null}
                 </div>

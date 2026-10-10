@@ -7,7 +7,13 @@ import "@testing-library/jest-dom";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { apiData, buildSettings, createSettingsWrapper, installApi } from "./settingsApi.testUtils";
+import {
+  ADMIN_CAN_SELL_OFF,
+  apiData,
+  buildSettings,
+  createSettingsWrapper,
+  installApi,
+} from "./settingsApi.testUtils";
 
 /** URL simulada: `useSearchParams` la sigue como hace Next tras un `history.replaceState`. */
 const mockNavigation = {
@@ -125,6 +131,10 @@ describe("SettingsListPage · pestañas y paginación en la URL (DET-06c)", () =
             source: `Fuente ${numbered(index)}`,
           })),
         );
+      }
+
+      if (path === "/api/settings/admin-can-sell") {
+        return apiData(ADMIN_CAN_SELL_OFF);
       }
 
       return apiData({ items: [], limit: 10, skip: 0, total: 0 });

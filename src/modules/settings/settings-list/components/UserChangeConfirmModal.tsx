@@ -5,7 +5,7 @@ import { useToast } from "@/shared/components/Toast";
 import { roleLabels } from "@/shared/auth/permissions";
 import type { UserProfileMock } from "@/shared/mocks/erp-data";
 
-import { useUpdateUser } from "../../hooks/useSettings";
+import { useAdminCanSell, useUpdateUser } from "../../hooks/useSettings";
 import type { PendingUserChange } from "../usePendingUserChanges";
 import {
   computeRoleChangeEffect,
@@ -97,7 +97,14 @@ export function UserChangeConfirmModal({
   const { showToast } = useToast();
   const updateUser = useUpdateUser(user.id);
   const nextRole = change.role;
-  const roleEffect = nextRole ? computeRoleChangeEffect(user, nextRole) : null;
+  // Solo con cambio de rol: quien pasa a administrador hereda «El administrador puede vender».
+  const adminCanSell = useAdminCanSell(nextRole !== undefined);
+  const otherAdmins = (adminCanSell.data?.admins ?? []).filter((admin) => admin.id !== user.id);
+  const otherAdminsCanSell =
+    otherAdmins.length > 0 && otherAdmins.every((admin) => admin.canSell);
+  const roleEffect = nextRole
+    ? computeRoleChangeEffect(user, nextRole, otherAdminsCanSell)
+    : null;
   const isDeactivating = change.isActive === false;
   const isReactivating = change.isActive === true;
   const staysInactive = !user.isActive && !isReactivating;

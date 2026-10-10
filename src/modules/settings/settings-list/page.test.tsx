@@ -8,6 +8,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import {
+  ADMIN_CAN_SELL_OFF,
   apiData,
   buildRate,
   buildSettings,
@@ -83,6 +84,10 @@ function installServer() {
 
     if (url.startsWith("/api/exchange-rates") && method === "POST") {
       return apiData({ createdAt: "2026-10-07T12:00:00.000Z", id: "rate-2", ...(body as object) }, 201);
+    }
+
+    if (url.split("?")[0] === "/api/settings/admin-can-sell") {
+      return apiData(ADMIN_CAN_SELL_OFF);
     }
 
     return apiData(emptyPage);
@@ -278,5 +283,28 @@ describe("SettingsListPage · Impuestos, Precios y D20 (PRO-09)", () => {
 
     expect(await screen.findByLabelText("Rojo por debajo de (%)")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Guardar precios" })).not.toBeInTheDocument();
+  });
+
+  it("POS-02: General ofrece «El administrador puede vender» a quien administra la tienda", async () => {
+    installServer();
+    renderPage();
+
+    await thresholdField();
+
+    expect(
+      await screen.findByRole("switch", { name: "El administrador puede vender" }),
+    ).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("POS-02: sin users.manage el interruptor no se muestra ni se consulta", async () => {
+    mockPermissions.clear();
+    const api = installServer();
+
+    renderPage();
+    await thresholdField();
+
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ventas del administrador")).not.toBeInTheDocument();
+    expect(api.calls.some((call) => call.url.includes("admin-can-sell"))).toBe(false);
   });
 });
