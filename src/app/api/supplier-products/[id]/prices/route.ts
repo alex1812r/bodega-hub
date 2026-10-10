@@ -1,5 +1,6 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getSupplierProductsService } from "@/modules/contacts/services";
 import { supplierProductPriceInputSchema } from "@/modules/contacts/services/supplierProducts.schemas";
@@ -13,7 +14,7 @@ export async function POST(
     const auth = await requireStorePermission(request, "products.manage");
     assertCanAccessSupplierContacts(auth.role);
     const { id } = await context.params;
-    const input = supplierProductPriceInputSchema.parse(await request.json());
+    const input = supplierProductPriceInputSchema.parse(await readJsonBody(request));
 
     return jsonData(
       await getSupplierProductsService().registerSupplierProductPrice(id, {

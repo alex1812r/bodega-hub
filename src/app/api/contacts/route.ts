@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getContactsService } from "@/modules/contacts/services";
 import {
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "contacts.manage");
-    const input = contactSchema.parse(await request.json());
+    const input = contactSchema.parse(await readJsonBody(request));
     assertCanWriteContactType(auth.role, input.type);
     return jsonCreated(await getContactsService().createContact(input, auth.storeId));
   } catch (error) {

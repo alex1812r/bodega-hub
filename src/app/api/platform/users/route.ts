@@ -1,6 +1,7 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonCreated, jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requirePermission } from "@/lib/api/requirePermission";
 import { createStoreAdminSchema } from "@/modules/platform/services/users.schemas";
 import * as usersMockServer from "@/modules/platform/services/users.mock-server";
@@ -22,7 +23,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     await requirePermission(request, "platform.users.manage");
-    const input = createStoreAdminSchema.parse(await request.json());
+    const input = createStoreAdminSchema.parse(await readJsonBody(request));
     return jsonCreated(await getUsersService().createStoreAdmin(input));
   } catch (error) {
     return toErrorResponse(error);

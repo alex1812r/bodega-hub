@@ -34,7 +34,7 @@ import { PUT as putSuppliers } from "./[id]/suppliers/route";
 import { POST as postReprice } from "./price-review/reprice/route";
 import { GET as getProducts, POST as postProduct } from "./route";
 
-const INVALID_JSON_MESSAGE = "El cuerpo de la solicitud no es un JSON valido.";
+const INVALID_JSON_MESSAGE = "El cuerpo de la solicitud no es un JSON válido.";
 const OTHER_STORE_ID = "00000000-0000-4000-8000-000000000002";
 const NUL = "\u0000";
 

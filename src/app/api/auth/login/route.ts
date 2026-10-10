@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { getProfileByUserId } from "@/lib/supabase/auth/profile.server";
 import { mapSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
@@ -13,7 +14,7 @@ const loginSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const input = loginSchema.parse(await request.json());
+    const input = loginSchema.parse(await readJsonBody(request));
     const supabase = await createRouteSupabaseClient();
 
     const { data, error } = await supabase.auth.signInWithPassword({

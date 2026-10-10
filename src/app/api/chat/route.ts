@@ -9,6 +9,7 @@ import {
 import { z } from "zod";
 
 import { ApiError, toErrorResponse } from "@/lib/api/apiError";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { createAssistantModel } from "@/modules/assistant/server/provider";
 import {
   assertUnderDailyLimit,
@@ -83,7 +84,7 @@ export async function POST(request: Request) {
     const usage = await getAssistantUsage(ctx);
     assertUnderDailyLimit(usage);
 
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(await readJsonBody(request));
     const history = sanitizeMessages(body.messages).slice(-HISTORY_LIMIT);
 
     if (history.length === 0) {

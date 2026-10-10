@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { toErrorResponse } from "@/lib/api/apiError";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getContactsService } from "@/modules/contacts/services";
 import {
@@ -35,7 +36,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/contac
   try {
     const auth = await requireStorePermission(request, "contacts.manage");
     const { id } = await context.params;
-    const input = updateContactSchema.parse(await request.json());
+    const input = updateContactSchema.parse(await readJsonBody(request));
     const existing = await getContactsService().getContactById(id, auth.storeId);
     assertCanAccessContact(auth.role, existing);
     assertCanWriteContactType(auth.role, input.type);

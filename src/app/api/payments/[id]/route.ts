@@ -3,6 +3,7 @@ import { z } from "zod";
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as paymentsMockServer from "@/modules/payments/services/payments.mock-server";
 import * as paymentsServer from "@/modules/payments/services/payments.server";
@@ -36,7 +37,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/paymen
   try {
     const auth = await requireStorePermission(request, "payments.manage");
     const { id } = await context.params;
-    const input = updatePaymentSchema.parse(await request.json());
+    const input = updatePaymentSchema.parse(await readJsonBody(request));
     const service = getPaymentsService();
     const existing = await service.getPaymentById(id, auth.storeId);
     assertCanAccessPayment(auth.role, existing);

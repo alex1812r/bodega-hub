@@ -1,6 +1,7 @@
 import { toErrorResponse } from "@/lib/api/apiError";
 import { resolveDataSource } from "@/lib/api/dataSource";
 import { jsonData } from "@/lib/api/jsonResponse";
+import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requirePermission } from "@/lib/api/requirePermission";
 import { updateStoreSchema } from "@/modules/platform/services/stores.schemas";
 import * as storesMockServer from "@/modules/platform/services/stores.mock-server";
@@ -26,7 +27,7 @@ export async function PATCH(request: Request, context: StoreRouteContext) {
   try {
     await requirePermission(request, "platform.stores.manage");
     const { id } = await context.params;
-    const input = updateStoreSchema.parse(await request.json());
+    const input = updateStoreSchema.parse(await readJsonBody(request));
     return jsonData(await getStoresService().updateStore(id, input));
   } catch (error) {
     return toErrorResponse(error);
