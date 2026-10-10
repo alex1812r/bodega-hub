@@ -1,7 +1,7 @@
 "use client";
 
-import { RouteErrorState } from "@/modules/reports/reports-list/components/RouteErrorState";
 import { AuthenticatedAppShell } from "@/shared/components/AppShell";
+import { RouteError } from "@/shared/components/RouteError";
 
 /**
  * Red de seguridad de `/reports` (REP-F8 R-05). Sustituye a la página entera,
@@ -16,8 +16,9 @@ export default function ReportsError({
 }) {
   return (
     <AuthenticatedAppShell currentPath="/reports" requiredPermission="reports.view">
-      <RouteErrorState
+      <RouteError
         error={error}
+        homeHref={null}
         queryKey={["reports"]}
         retry={unstable_retry}
         title="No pudimos mostrar los reportes"

@@ -1,6 +1,6 @@
 "use client";
 
-import { RouteErrorState } from "@/modules/reports/reports-list/components/RouteErrorState";
+import { RouteError } from "@/shared/components/RouteError";
 
 /**
  * Red de seguridad de `/dashboard` (REP-F8 R-05). Se pinta dentro del `AppShell`
@@ -14,8 +14,9 @@ export default function DashboardError({
   unstable_retry: () => void;
 }) {
   return (
-    <RouteErrorState
+    <RouteError
       error={error}
+      homeHref={null}
       queryKey={["dashboard"]}
       retry={unstable_retry}
       title="No pudimos mostrar el dashboard"

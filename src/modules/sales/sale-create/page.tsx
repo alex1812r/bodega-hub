@@ -8,7 +8,7 @@ import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
 import { useMyCashSession } from "@/modules/cash/hooks/useCash";
 import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useProductBarcodeScan } from "@/modules/products/hooks/useProductBarcodeScan";
-import { useAllProducts, useCategories } from "@/modules/products/hooks/useProducts";
+import { useAllCategories, useAllProducts } from "@/modules/products/hooks/useProducts";
 import { matchesProductSearch } from "@/modules/products/services/productSearch";
 import { sortPosCatalogProducts } from "@/modules/sales/sale-create/utils/sortPosCatalogProducts";
 import { getSaleByClientRequestId } from "@/modules/sales/services/sales.client";
@@ -122,7 +122,7 @@ export function SaleCreatePage() {
 
 function SaleCreatePosWorkspace() {
   const contacts = useContacts({ limit: 100 }, posCatalogQueryOptions);
-  const categories = useCategories({}, posCatalogQueryOptions);
+  const categories = useAllCategories({}, posCatalogQueryOptions);
   // Catálogo completo: con `limit: 100` el POS dejaba fuera todo producto que
   // cayera pasado el corte alfabético, y la búsqueda filtra en cliente.
   const products = useAllProducts({ isActive: true }, posCatalogQueryOptions);
