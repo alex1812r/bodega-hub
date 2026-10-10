@@ -6,10 +6,11 @@
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { ToastProvider } from "@/shared/components/Toast";
+import { IMPACT_TIMEOUT_MS } from "@/shared/impact";
 
 import { jsonResponse } from "../../utils/requestAttempt.testUtils";
 import { InventoryAdjustmentModal } from "./InventoryAdjustmentModal";
@@ -159,6 +160,37 @@ describe("InventoryAdjustmentModal · el efecto se pinta con el stock releído (
 
     expect(await within(dialog).findByRole("listitem")).toHaveTextContent(/Stock 31\s*pasa a\s*36$/);
     expect(calls.posts).toHaveLength(0);
+  });
+
+  it("CNF-F10: una relectura que no responde deja de «comprobar» a los 15 s y se puede reintentar", async () => {
+    installServer({ reads: [() => new Promise<Response>(() => undefined), stock(31)] });
+    renderModal();
+    fill("5");
+
+    // El reloj falso, antes de abrir: el límite de la relectura se arma al pedirla.
+    jest.useFakeTimers();
+    try {
+      fireEvent.submit(document.getElementById(formId) as HTMLFormElement);
+
+      const dialog = screen.getByRole("dialog", { name: CONFIRM_TITLE });
+
+      expect(within(dialog).getByText("Comprobando el stock actual…")).toBeInTheDocument();
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(IMPACT_TIMEOUT_MS + 1);
+      });
+
+      expect(within(dialog).getByRole("alert")).toHaveTextContent(
+        "No se pudo comprobar el stock actual.",
+      );
+      expect(confirmButton(dialog)).not.toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+
+    expect(await screen.findByRole("listitem")).toHaveTextContent(/Stock 31s*pasa as*36$/);
   });
 
   it("una salida que con el stock fresco quedaría en negativo se bloquea con el motivo", async () => {

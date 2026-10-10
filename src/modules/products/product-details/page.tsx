@@ -10,7 +10,6 @@ import { ProductKardexCard } from "@/modules/inventory/components/ProductKardexC
 import { withChainedReturnTo } from "@/modules/inventory/utils/chainedReturnTo";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
-import { apiFetch } from "@/shared/api/apiFetch";
 import { Can } from "@/shared/auth/Can";
 import { canViewSupplierContacts } from "@/shared/auth/contactAccess";
 import { usePermission } from "@/shared/auth/usePermission";
@@ -22,6 +21,7 @@ import { type TabItem, Tabs } from "@/shared/components/Tabs";
 import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { withUrlListBoundary } from "@/shared/hooks/useUrlListState";
 
+import { fetchFreshProduct } from "../components/price-review/freshPricing";
 import { KeepPriceConfirmModal } from "../components/price-review/KeepPriceConfirmModal";
 import { PriceReviewBadge } from "../components/price-review/PriceReviewBadge";
 import {
@@ -30,7 +30,6 @@ import {
 } from "../components/price-review/PriceReviewDetailNotice";
 import {
   type ProductInput,
-  type ProductWithCategory,
   productsQueryKeys,
   useAllCategories,
   useProduct,
@@ -133,9 +132,11 @@ function ProductDetails({ productId = "prod-drill" }: ProductDetailsPageProps) {
   // efecto. Es una lectura aparte de la del detalle: si falla, lo dice la confirmación
   // y la página sigue en pantalla; si llega, el detalle se pone al día con ella.
   async function refreshProductPricing() {
+    // Con tiempo máximo y solo si trae precio y costo numéricos: lo demás es un fallo
+    // de la confirmación, no un detalle roto.
     const fresh = await queryClient.fetchQuery({
       gcTime: 0,
-      queryFn: () => apiFetch<ProductWithCategory>(`/api/products/${productId}`),
+      queryFn: () => fetchFreshProduct(productId),
       queryKey: [...productsQueryKeys.detail(productId), "price-confirm"],
       retry: false,
       staleTime: 0,

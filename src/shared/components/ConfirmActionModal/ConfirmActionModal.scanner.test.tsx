@@ -193,3 +193,70 @@ describe("ConfirmActionModal · un lector de códigos no pulsa ningún botón (C
     expect(onScannerInput).not.toHaveBeenCalled();
   });
 });
+
+describe("ConfirmActionModal · el sufijo del lector tampoco pulsa nada (CNF-F10 · CAOS-13)", () => {
+  it.each([
+    ["CR+LF (dos Enter seguidos)", ["{Enter}"], 5],
+    ["Enter×3", ["{Enter}", "{Enter}"], 5],
+    ["Enter×3 de un lector lento (200 ms entre cada uno)", ["{Enter}", "{Enter}"], 200],
+    ["Enter + Tab + Enter", ["{Tab}", "{Enter}"], 5],
+    ["Enter + Espacio", [" "], 5],
+    ["Enter + Espacio + Enter", [" ", "{Enter}"], 5],
+  ])("%s: no confirma, no cierra y el foco no se mueve", async (_label, suffix, gapMs) => {
+    const { onConfirm, onOpenChange, onScannerInput } = renderModal();
+
+    await scan("7501234567890", 5);
+    await press(suffix, gapMs);
+
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(confirmButton()).toHaveFocus();
+    expect(onScannerInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("acción peligrosa con el foco en confirmar: el segundo Enter del lector tampoco ejecuta", async () => {
+    const { onConfirm } = renderModal({ confirmLabel: "Anular venta", variant: "danger" });
+
+    act(() => confirmButton("Anular venta").focus());
+    await scan("7501234567890", 5);
+    await press(["{Enter}"], 5);
+
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("pasado el enfriamiento, un Enter humano confirma una vez", async () => {
+    const { onConfirm } = renderModal();
+
+    await scan("7501234567890", 5);
+    await press(["{Enter}"], 5);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    await press(["{Enter}"], 500);
+
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("pasado el enfriamiento, Tab vuelve a mover el foco y Espacio vuelve a pulsar", async () => {
+    const { onConfirm, onOpenChange } = renderModal();
+
+    await scan("7501234567890", 5);
+    await press(["{Enter}"], 5);
+    await press(["{Shift>}{Tab}{/Shift}"], 500);
+
+    expect(screen.getByRole("button", { name: "Cancelar" })).toHaveFocus();
+
+    await press([" "], 500);
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("sin lectura delante no hay enfriamiento: un Enter nada más abrir confirma", async () => {
+    const { onConfirm, onScannerInput } = renderModal();
+
+    await press(["{Enter}"], 5);
+
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onScannerInput).not.toHaveBeenCalled();
+  });
+});

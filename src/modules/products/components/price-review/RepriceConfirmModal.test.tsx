@@ -38,8 +38,32 @@ const SIN_COSTO: RepriceProduct = { currentCostRef: 0, id: "p-nuevo", name: "Nue
 
 type ModalProps = Partial<React.ComponentProps<typeof RepriceConfirmModal>>;
 
-function renderModal(props: ModalProps = {}) {
+/** Respuesta del POST de reprecio; cada test puede cambiarla. */
+let repriceResponse: Response;
+
+/**
+ * Al abrirse, la confirmación relee la cola «Por revisar» (CNF-F10): aquí devuelve los
+ * mismos productos, con las mismas cifras, que recibe el modal.
+ */
+function serveQueue(products: RepriceProduct[]) {
+  fetchMock.mockImplementation(async (_url: string, init?: RequestInit) =>
+    init?.method === "POST"
+      ? repriceResponse
+      : jsonResponse({
+          data: {
+            items: products.map(({ id, ...figures }) => ({ ...figures, productId: id })),
+            limit: 100,
+            skip: 0,
+            total: products.length,
+          },
+        }),
+  );
+}
+
+async function renderModal(props: ModalProps = {}) {
   const onDone = jest.fn();
+
+  serveQueue(props.products ?? [ARROZ, HARINA]);
   const onOpenChange = jest.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -57,6 +81,9 @@ function renderModal(props: ModalProps = {}) {
     </QueryClientProvider>,
   );
 
+  // Con la relectura hecha aparecen la lista y el botón de confirmar.
+  await screen.findByRole("list", { name: LIST_NAME });
+
   return { onDone, onOpenChange, user: userEvent.setup({ delay: null }) };
 }
 
@@ -72,13 +99,13 @@ function summary() {
 
 beforeEach(() => {
   fetchMock.mockReset();
-  fetchMock.mockResolvedValue(jsonResponse({ data: { failed: 0, results: [], updated: 2 } }));
+  repriceResponse = jsonResponse({ data: { failed: 0, results: [], updated: 2 } });
   global.fetch = fetchMock;
 });
 
 describe("RepriceConfirmModal (CNF-07)", () => {
-  it("lista cada producto con precio en REF y Bs y ganancia con semáforo, antes → después", () => {
-    renderModal();
+  it("lista cada producto con precio en REF y Bs y ganancia con semáforo, antes → después", async () => {
+    await renderModal();
 
     const [arroz, harina] = rows();
 
@@ -99,8 +126,8 @@ describe("RepriceConfirmModal (CNF-07)", () => {
     expect(posts()).toEqual([]);
   });
 
-  it("el semáforo usa los cortes de la tienda", () => {
-    renderModal({ products: [ARROZ], thresholds: { high: 40, low: 12 } });
+  it("el semáforo usa los cortes de la tienda", async () => {
+    await renderModal({ products: [ARROZ], thresholds: { high: 40, low: 12 } });
 
     const badges = within(rows()[0]).getAllByTitle(BADGE_TITLE);
 
@@ -108,8 +135,8 @@ describe("RepriceConfirmModal (CNF-07)", () => {
     expect(badges[1]).toHaveAttribute("data-band", "mid");
   });
 
-  it("resume cuántos suben, bajan, no cambian, quedan bajo costo y no tienen costo", () => {
-    renderModal({ products: [ARROZ, HARINA, SAL, SIN_COSTO] });
+  it("resume cuántos suben, bajan, no cambian, quedan bajo costo y no tienen costo", async () => {
+    await renderModal({ products: [ARROZ, HARINA, SAL, SIN_COSTO] });
 
     expect(summary()).toEqual([
       "1 sube",
@@ -122,9 +149,9 @@ describe("RepriceConfirmModal (CNF-07)", () => {
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
-  it("avisa en tono de peligro cuando un precio nuevo queda por debajo del costo", () => {
+  it("avisa en tono de peligro cuando un precio nuevo queda por debajo del costo", async () => {
     // Un % negativo deja el precio bajo el costo: 9 × 0,90 = 8,10.
-    renderModal({ markupPct: -10, products: [ARROZ, HARINA] });
+    await renderModal({ markupPct: -10, products: [ARROZ, HARINA] });
 
     expect(summary()).toEqual(["0 suben", "2 bajan", "2 quedan bajo su costo"]);
 
@@ -141,7 +168,7 @@ describe("RepriceConfirmModal (CNF-07)", () => {
     );
   });
 
-  it("con 50 productos los lista todos, con el precio que calculará el servidor", () => {
+  it("con 50 productos los lista todos, con el precio que calculará el servidor", async () => {
     const products = Array.from({ length: 50 }, (_, index) => ({
       currentCostRef: 1 + index * 0.37,
       id: `p-${index}`,
@@ -149,7 +176,7 @@ describe("RepriceConfirmModal (CNF-07)", () => {
       salePriceRef: 1,
     }));
 
-    renderModal({ markupPct: 17.5, products });
+    await renderModal({ markupPct: 17.5, products });
 
     const list = rows();
 
@@ -163,7 +190,7 @@ describe("RepriceConfirmModal (CNF-07)", () => {
   });
 
   it("cancelar no envía nada", async () => {
-    const { onDone, onOpenChange, user } = renderModal();
+    const { onDone, onOpenChange, user } = await renderModal();
 
     await user.click(screen.getByRole("button", { name: "Cancelar" }));
 
@@ -173,7 +200,7 @@ describe("RepriceConfirmModal (CNF-07)", () => {
   });
 
   it("doble clic al confirmar envía UNA sola petición, con el costo de la vista previa", async () => {
-    const { onDone } = renderModal();
+    const { onDone } = await renderModal();
     const confirm = screen.getByRole("button", { name: "Cambiar 2 precios" });
 
     fireEvent.click(confirm);
@@ -195,14 +222,17 @@ describe("RepriceConfirmModal (CNF-07)", () => {
   });
 
   it("un error del servidor se muestra tal cual y el modal sigue abierto", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ error: { code: "FORBIDDEN", message: "No autorizado para cambiar precios." } }, 403),
+    repriceResponse = jsonResponse(
+      { error: { code: "FORBIDDEN", message: "No autorizado para cambiar precios." } },
+      403,
     );
-    const { onDone, onOpenChange, user } = renderModal();
+    const { onDone, onOpenChange, user } = await renderModal();
 
     await user.click(screen.getByRole("button", { name: "Cambiar 2 precios" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("No autorizado para cambiar precios.");
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent(
+      "No autorizado para cambiar precios.",
+    );
     expect(onDone).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
     expect(screen.getByRole("dialog")).toBeInTheDocument();

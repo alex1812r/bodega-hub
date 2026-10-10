@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import { type FormEvent, type ReactNode, useState } from "react";
 
-import { apiFetch } from "@/shared/api/apiFetch";
 import { Button } from "@/shared/components/Button";
 import {
   type ConfirmActionEffect,
@@ -24,6 +23,7 @@ import { SelectField } from "@/shared/components/SelectField";
 import { Textarea } from "@/shared/components/Textarea";
 import { useToast } from "@/shared/components/Toast";
 import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
+import { fetchImpact, isImpactRecord } from "@/shared/impact";
 import { cn } from "@/shared/utils/cn";
 
 import {
@@ -223,15 +223,20 @@ export function InventoryAdjustmentModal({
   const freshProductQuery = useQuery({
     enabled: confirmOpen && Boolean(productId),
     gcTime: 0,
-    queryFn: () => apiFetch<InventoryItem>(`/api/products/${productId}`),
+    // Como un impact: con tiempo máximo, y una respuesta sin un stock numérico no vale
+    // como lectura (cuenta como fallo, con «Reintentar»).
+    queryFn: () =>
+      fetchImpact<InventoryItem>(`/api/products/${productId}`, {
+        isExpected: (data) =>
+          isImpactRecord(data) &&
+          typeof data.currentStock === "number" &&
+          Number.isFinite(data.currentStock),
+      }),
     queryKey: [...inventoryQueryKeys.product(productId), "confirm", confirmRead],
     retry: false,
     staleTime: 0,
   });
-  // Una respuesta sin un stock numérico no vale como lectura: cuenta como fallo.
-  const readStock = freshProductQuery.data?.currentStock;
-  const freshStock =
-    typeof readStock === "number" && Number.isFinite(readStock) ? readStock : undefined;
+  const freshStock = freshProductQuery.data?.currentStock;
   const confirmEffect =
     freshStock === undefined
       ? null

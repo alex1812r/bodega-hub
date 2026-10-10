@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
+import { ConfirmActionModal, type ConfirmActionStatus } from "@/shared/components/ConfirmActionModal";
 import { Input } from "@/shared/components/Input";
 import { formatMarkupPct } from "@/shared/components/MarginBadge";
 import { useToast } from "@/shared/components/Toast";
@@ -15,6 +15,7 @@ import {
   useKeepProductPrice,
 } from "../../hooks/usePriceReview";
 import { PRICE_CHANGE_REASON_MAX_LENGTH } from "../../services/productSchemas";
+import { useFreshProductPricing } from "./freshPricing";
 
 export type KeepPriceProduct = {
   currentCostRef: number;
@@ -50,6 +51,9 @@ export function describeKeptPrice(
  * "Mantener precio" (PRO-11): el producto sale de "Por revisar" sin cambiar su
  * precio. El motivo es opcional; sin él el servidor guarda "Precio mantenido".
  *
+ * Al abrirse relee el producto (CAOS-04b): el precio y la ganancia que dice mantener son
+ * los de ese momento, no los de la lista que lo abrió, y hasta tenerlos no deja confirmar.
+ *
  * Si el costo cambió mientras el usuario decidía (409), relee el producto: el
  * modal pasa a mostrar el costo y la ganancia actuales y el siguiente clic
  * confirma sobre ellos; si el producto ya no está en la cola, se cierra con un aviso.
@@ -59,7 +63,7 @@ export function KeepPriceConfirmModal({
   onKept,
   onOpenChange,
   open,
-  product: openedProduct,
+  product,
 }: KeepPriceConfirmModalProps) {
   const { showToast } = useToast();
   const keepPrice = useKeepProductPrice();
@@ -67,7 +71,22 @@ export function KeepPriceConfirmModal({
   const [reason, setReason] = useState("");
   // Cifras releídas tras un 409: mandan sobre las que traía quien abrió el modal.
   const [refreshed, setRefreshed] = useState<KeepPriceProduct | null>(null);
-  const product = refreshed && refreshed.id === openedProduct?.id ? refreshed : openedProduct;
+  const freshRead = useFreshProductPricing(product?.id, open && product !== null);
+  const afterConflict = refreshed && refreshed.id === product?.id ? refreshed : null;
+  // Las cifras que se confirman: las del 409 si lo hubo; si no, las releídas al abrir.
+  const figures =
+    afterConflict ??
+    (freshRead.fresh
+      ? {
+          currentCostRef: freshRead.fresh.currentCostRef,
+          salePriceRef: freshRead.fresh.currentPriceRef,
+        }
+      : null);
+  let status: ConfirmActionStatus = "ready";
+
+  if (!figures) {
+    status = freshRead.status === "error" ? "error" : "loading";
+  }
 
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
@@ -80,7 +99,7 @@ export function KeepPriceConfirmModal({
   }
 
   async function handleConfirm() {
-    if (!product) {
+    if (!product || !figures) {
       return;
     }
 
@@ -88,7 +107,7 @@ export function KeepPriceConfirmModal({
       // El costo con el que se calculó la ganancia que el modal muestra: si ya es
       // otro, el servidor responde 409 y no se guarda nada.
       await keepPrice.mutateAsync({
-        expectedCostRef: product.currentCostRef,
+        expectedCostRef: figures.currentCostRef,
         productId: product.id,
         reason: reason.trim() || defaultReason || undefined,
       });
@@ -132,15 +151,21 @@ export function KeepPriceConfirmModal({
     <ConfirmActionModal
       confirmLabel="Mantener precio"
       description={
-        product
-          ? `${describeKeptPrice(product)} Saldrá de la lista hasta que el costo vuelva a subir.`
-          : ""
+        figures
+          ? `${describeKeptPrice(figures)} Saldrá de la lista hasta que el costo vuelva a subir.`
+          : "El producto sale de la lista sin cambiar su precio."
       }
       error={keepPrice.error instanceof Error ? keepPrice.error.message : null}
       isPending={keepPrice.isPending}
       onConfirm={handleConfirm}
       onOpenChange={handleOpenChange}
+      onRetry={freshRead.refetch}
       open={open && product !== null}
+      status={status}
+      statusHint={status === "ready" ? undefined : "No se ha cambiado nada."}
+      statusMessage={
+        status === "error" ? "No se pudo comprobar el precio actual." : "Comprobando el precio actual…"
+      }
       title="Mantener precio"
     >
       <div className="flex flex-col gap-3">

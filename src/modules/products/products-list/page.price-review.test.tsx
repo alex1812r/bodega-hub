@@ -130,6 +130,18 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
         return jsonResponse({ data: { items, limit: 10, skip: 0, total: items.length } });
       }
 
+      // Relecturas de las confirmaciones al abrirse (CNF-F10): la cola y el producto,
+      // con las cifras que el servidor tiene en ese momento.
+      if (path === "/api/products/price-review") {
+        const items = queue.map(({ id, ...figures }) => ({ ...figures, productId: id }));
+
+        return jsonResponse({ data: { items, limit: 100, skip: 0, total: items.length } });
+      }
+
+      if (path.startsWith("/api/products/")) {
+        return jsonResponse({ data: queue.find((item) => path === `/api/products/${item.id}`) });
+      }
+
       if (path === "/api/settings/pricing") {
         return jsonResponse({ data: { chipsPct: [12, 20, 30], greenFromPct: 25, yellowFromPct: 15 } });
       }

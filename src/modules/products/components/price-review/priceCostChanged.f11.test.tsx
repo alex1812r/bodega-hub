@@ -85,7 +85,8 @@ describe("KeepPriceConfirmModal · reintento tras el costo cambiado (PRO-F11)", 
           : jsonResponse({ data: { history: { kind: "keep" }, product: freshProduct } });
       }
 
-      return jsonResponse({ data: freshProduct });
+      // Al abrir (CNF-F10) el producto aún es el de la lista; tras el 409, el nuevo.
+      return jsonResponse({ data: keepCalls === 0 ? { ...product, priceReview: review } : freshProduct });
     });
   }
 
@@ -97,7 +98,7 @@ describe("KeepPriceConfirmModal · reintento tras el costo cambiado (PRO-F11)", 
     );
     const dialog = within(await screen.findByRole("dialog"));
 
-    expect(dialog.getByText(/con una ganancia de 19,05 %/)).toBeInTheDocument();
+    expect(await dialog.findByText(/con una ganancia de 19,05 %/)).toBeInTheDocument();
     await user.click(dialog.getByRole("button", { name: "Mantener precio" }));
 
     expect(await dialog.findByText(/con una ganancia de -10,71 %/)).toBeInTheDocument();
@@ -123,7 +124,7 @@ describe("KeepPriceConfirmModal · reintento tras el costo cambiado (PRO-F11)", 
     );
 
     await user.click(
-      within(await screen.findByRole("dialog")).getByRole("button", { name: "Mantener precio" }),
+      await within(await screen.findByRole("dialog")).findByRole("button", { name: "Mantener precio" }),
     );
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
@@ -173,6 +174,20 @@ describe("PurchaseRepriceNotice · reintento tras el costo cambiado (PRO-F11)", 
 
       const items = conflicted ? queueAfterConflict : [item];
 
+      // Relectura del producto al abrir una confirmación (CNF-F10) y tras el 409.
+      if (url === "/api/products/prod-1") {
+        const queued = items.find((queuedItem) => queuedItem.productId === "prod-1");
+
+        return jsonResponse({
+          data: {
+            currentCostRef: queued?.currentCostRef ?? 14,
+            id: "prod-1",
+            priceReview: queued ? {} : undefined,
+            salePriceRef: 10,
+          },
+        });
+      }
+
       return jsonResponse({ data: { items, limit: 100, skip: 0, total: items.length } });
     });
   }
@@ -183,7 +198,7 @@ describe("PurchaseRepriceNotice · reintento tras el costo cambiado (PRO-F11)", 
 
     await user.click(await screen.findByRole("button", { name: "Aplicar" }));
     await user.click(
-      within(await screen.findByRole("dialog")).getByRole("button", { name: "Aplicar precio" }),
+      await within(await screen.findByRole("dialog")).findByRole("button", { name: "Aplicar precio" }),
     );
 
     const dialog = within(screen.getByRole("dialog"));
@@ -208,7 +223,7 @@ describe("PurchaseRepriceNotice · reintento tras el costo cambiado (PRO-F11)", 
 
     await user.click(await screen.findByRole("button", { name: "Aplicar" }));
     await user.click(
-      within(await screen.findByRole("dialog")).getByRole("button", { name: "Aplicar precio" }),
+      await within(await screen.findByRole("dialog")).findByRole("button", { name: "Aplicar precio" }),
     );
 
     expect(await screen.findByText(LEFT_QUEUE_TITLE)).toBeInTheDocument();
@@ -224,9 +239,10 @@ describe("PurchaseRepriceNotice · reintento tras el costo cambiado (PRO-F11)", 
     await user.click(row.getByRole("button", { name: "Mantener precio" }));
     // CNF-F3: confirma con el mismo modal que la lista y el detalle del producto.
     await user.click(
-      within(await screen.findByRole("dialog", { name: "Mantener precio" })).getByRole("button", {
-        name: "Mantener precio",
-      }),
+      await within(await screen.findByRole("dialog", { name: "Mantener precio" })).findByRole(
+        "button",
+        { name: "Mantener precio" },
+      ),
     );
 
     expect(await screen.findByText(LEFT_QUEUE_TITLE)).toBeInTheDocument();

@@ -12,6 +12,8 @@ import { useToast } from "@/shared/components/Toast";
 import { formatRefUsd } from "@/shared/utils/currency";
 import { markupPct } from "@/shared/utils/pricing";
 
+import type { FreshProductPricing } from "../../components/price-review/freshPricing";
+import { FreshPricingChangedNotice } from "../../components/price-review/FreshPricingChangedNotice";
 import {
   isPriceBelowCost,
   PriceChangeEffect,
@@ -22,8 +24,7 @@ import {
 } from "../../services/productMargin";
 import { PRICE_CHANGE_REASON_MAX_LENGTH } from "../../services/productSchemas";
 
-/** Precio y costo del producto recién leídos del servidor. */
-export type FreshProductPricing = { currentCostRef: number; currentPriceRef: number };
+export type { FreshProductPricing };
 
 /** Lo que el servidor devolvió al guardar: el precio que quedó y el que sustituyó. */
 export type PriceChangeSubmitResult = {
@@ -158,14 +159,6 @@ export function ProductDetailPriceChangeCard({
   const reason = typedReason ?? suggestedReason;
   const trimmedReason = reason.trim();
   const isBelowCost = price !== null && isPriceBelowCost(baseCostRef, price);
-  const priceChangedWhileEditing =
-    confirmBase !== null &&
-    shownAtOpen !== null &&
-    confirmBase.currentPriceRef !== shownAtOpen.currentPriceRef;
-  const costChangedWhileEditing =
-    confirmBase !== null &&
-    shownAtOpen !== null &&
-    confirmBase.currentCostRef !== shownAtOpen.currentCostRef;
   let confirmStatus: ConfirmActionStatus = "ready";
   let confirmStatusMessage: string | undefined;
 
@@ -337,15 +330,12 @@ export function ProductDetailPriceChangeCard({
           title="Confirmar cambio de precio"
           variant={isBelowCost ? "danger" : "default"}
         >
-          {confirmStatus === "ready" && (priceChangedWhileEditing || costChangedWhileEditing) ? (
-            <div className="space-y-1 font-medium text-foreground" role="status">
-              {priceChangedWhileEditing ? (
-                <p>El precio cambió mientras editabas: ahora es {formatRefUsd(basePriceRef)}.</p>
-              ) : null}
-              {costChangedWhileEditing ? (
-                <p>El costo cambió mientras editabas: ahora es {formatRefUsd(baseCostRef)}.</p>
-              ) : null}
-            </div>
+          {confirmStatus === "ready" && confirmBase && shownAtOpen ? (
+            <FreshPricingChangedNotice
+              fresh={confirmBase}
+              shown={shownAtOpen}
+              since="mientras editabas"
+            />
           ) : null}
         </ConfirmActionModal>
       ) : null}

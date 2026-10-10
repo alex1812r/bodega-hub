@@ -9,7 +9,7 @@ import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExcha
 import { usePricingSettings } from "@/modules/settings/hooks/useSettings";
 import { usePermission } from "@/shared/auth/usePermission";
 import { Button } from "@/shared/components/Button";
-import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
+import { ConfirmActionModal, type ConfirmActionStatus } from "@/shared/components/ConfirmActionModal";
 import { formatMarkupPct } from "@/shared/components/MarginBadge";
 import { useToast } from "@/shared/components/Toast";
 import { formatRefUsd } from "@/shared/utils/currency";
@@ -24,6 +24,8 @@ import {
 import { useUpdateProductPrice } from "../../hooks/useProducts";
 import { buildRepriceReason } from "../../services/priceReview";
 import { getProductMarginThresholds } from "../../services/productMargin";
+import { useFreshProductPricing } from "./freshPricing";
+import { FreshPricingChangedNotice } from "./FreshPricingChangedNotice";
 import { KeepPriceConfirmModal, type KeepPriceProduct } from "./KeepPriceConfirmModal";
 import { isPriceBelowCost, PriceChangeEffect } from "./PriceChangeEffect";
 import { PriceReviewChangeSummary } from "./PriceReviewChangeSummary";
@@ -70,10 +72,34 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
   // Tasa vigente, solo para mostrar el cambio en Bs: se pide al abrir la confirmación.
   const currentRate = useCurrentExchangeRate({ enabled: isConfirmOpen });
 
+  // CAOS-04b: la confirmación relee el producto al abrirse; la fila sigue con lo de la cola.
+  const freshRead = useFreshProductPricing(item.productId, isConfirmOpen);
+  const fresh = freshRead.fresh;
   const proposal = getPurchaseRepriceProposal(item);
+  // Lo que se confirma: el mismo % sobre el costo recién leído, desde el precio recién leído.
+  const confirmCostRef = fresh?.currentCostRef ?? item.currentCostRef;
+  const confirmFromRef = fresh?.currentPriceRef ?? item.salePriceRef;
+  const confirmProposal = getPurchaseRepriceProposal({
+    currentCostRef: confirmCostRef,
+    previousMarginPct: item.previousMarginPct,
+  });
   const purchaseNumber = item.purchase?.number.trim() ?? "";
   const currentPrice = formatRefUsd(item.salePriceRef);
   const proposedPrice = formatRefUsd(proposal.salePriceRef);
+  const confirmToPrice = formatRefUsd(confirmProposal.salePriceRef);
+  let confirmStatus: ConfirmActionStatus = "ready";
+  let confirmStatusMessage: string | undefined;
+
+  if (!fresh) {
+    confirmStatus = freshRead.status === "error" ? "error" : "loading";
+    confirmStatusMessage =
+      confirmStatus === "error"
+        ? "No se pudo comprobar el precio actual."
+        : "Comprobando el precio actual…";
+  } else if (fresh.currentPriceRef === confirmProposal.salePriceRef) {
+    confirmStatus = "blocked";
+    confirmStatusMessage = `El precio ya es ${confirmToPrice}: no hay nada que cambiar.`;
+  }
   // Motivo que queda en el historial de precios; la confirmación lo muestra tal cual.
   const applyReason = `${buildRepriceReason(proposal.markupPct)}${purchaseNumber ? ` por compra ${purchaseNumber}` : ""}`;
   // "Mantener precio" pasa por el mismo modal que en la lista y el detalle del
@@ -118,25 +144,31 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
   }
 
   async function handleApply() {
-    if (!lock()) {
+    if (!fresh || confirmStatus !== "ready" || !lock()) {
       return;
     }
 
     try {
-      await updatePrice.mutateAsync({
+      const result = await updatePrice.mutateAsync({
         // El precio propuesto sale de este costo: si ya es otro, 409 y no se aplica.
-        expectedCostRef: item.currentCostRef,
+        expectedCostRef: confirmCostRef,
         reason: applyReason,
-        salePriceRef: proposal.salePriceRef,
+        salePriceRef: confirmProposal.salePriceRef,
       });
+      // El aviso dice lo que el servidor guardó y lo que sustituyó, no lo que se preveía.
+      const replacedRef = result.history?.previousSalePriceRef;
+      const savedRef = result.product?.salePriceRef;
+
       setIsConfirmOpen(false);
       showToast({
-        description: `Pasa de ${currentPrice} a ${proposedPrice}.`,
+        description: `Pasa de ${formatRefUsd(typeof replacedRef === "number" ? replacedRef : confirmFromRef)} a ${formatRefUsd(typeof savedRef === "number" ? savedRef : confirmProposal.salePriceRef)}.`,
         title: `Precio actualizado: ${item.name}`,
         tone: "success",
       });
     } catch (applyError) {
       unlock(errorMessage(applyError, "No se pudo cambiar el precio."));
+      // El rechazo puede deberse a que el producto cambió (409 por costo): se relee.
+      freshRead.refetch();
       await warnIfLeftQueue(applyError);
     }
   }
@@ -203,29 +235,45 @@ function PurchaseRepriceRow({ canManage, item, thresholds }: PurchaseRepriceRowP
       {canManage ? (
         <ConfirmActionModal
           confirmLabel="Aplicar precio"
-          description={`El precio de ${item.name} pasa de ${currentPrice} a ${proposedPrice}.`}
+          description={
+            fresh
+              ? `El precio de ${item.name} pasa de ${formatRefUsd(confirmFromRef)} a ${confirmToPrice}.`
+              : `Reprecio de ${item.name} al ${formatMarkupPct(proposal.markupPct)}.`
+          }
           error={error}
           isPending={updatePrice.isPending}
           onConfirm={handleApply}
           onOpenChange={setIsConfirmOpen}
+          onRetry={freshRead.refetch}
           open={isConfirmOpen}
           renderEffects={() => (
             <PriceChangeEffect
               change={{
-                costRef: item.currentCostRef,
-                fromPriceRef: item.salePriceRef,
-                toPriceRef: proposal.salePriceRef,
+                costRef: confirmCostRef,
+                fromPriceRef: confirmFromRef,
+                toPriceRef: confirmProposal.salePriceRef,
               }}
               rateVes={currentRate.data?.rateVes}
               reason={applyReason}
               thresholds={thresholds}
             />
           )}
+          status={confirmStatus}
+          statusHint={confirmStatus === "ready" ? undefined : "No se ha cambiado nada."}
+          statusMessage={confirmStatusMessage}
           title="Aplicar reprecio"
           variant={
-            isPriceBelowCost(item.currentCostRef, proposal.salePriceRef) ? "danger" : "default"
+            isPriceBelowCost(confirmCostRef, confirmProposal.salePriceRef) ? "danger" : "default"
           }
-        />
+        >
+          {fresh && confirmStatus === "ready" ? (
+            <FreshPricingChangedNotice
+              fresh={fresh}
+              shown={{ currentCostRef: item.currentCostRef, currentPriceRef: item.salePriceRef }}
+              since="desde que se cargó este aviso"
+            />
+          ) : null}
+        </ConfirmActionModal>
       ) : null}
 
       {canManage ? (

@@ -509,6 +509,34 @@ describe("ProductDetailsPage", () => {
     expect(card.getByLabelText("Precio REF")).toHaveValue("13");
   });
 
+  it.each([
+    ["sin precio", { salePriceRef: undefined }],
+    ["con el costo en null", { currentCostRef: null }],
+  ])("CNF-F10: una relectura 200 %s cuenta como fallo de la confirmación y el detalle sigue en pie", async (_label, broken) => {
+    const user = renderPage();
+    const card = within(
+      (await screen.findByRole("heading", { name: "Cambio rápido de precio" })).closest(
+        "section",
+      ) as HTMLElement,
+    );
+
+    await user.click(card.getByRole("button", { name: "30 %" }));
+    productData = { ...product, ...broken };
+    await user.click(card.getByRole("button", { name: "Actualizar precio" }));
+
+    const dialog = within(await screen.findByRole("dialog"));
+
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      "No se pudo comprobar el precio actual.",
+    );
+    expect(dialog.queryByRole("button", { name: "Cambiar precio" })).not.toBeInTheDocument();
+    // El detalle sigue montado detrás de la confirmación.
+    expect(
+      screen.getByRole("heading", { hidden: true, name: "Cambio rápido de precio" }),
+    ).toBeInTheDocument();
+    expect(posts).toHaveLength(0);
+  });
+
   it("monta el kardex del producto y su enlace vuelve al detalle (INV-03)", async () => {
     renderPage();
 

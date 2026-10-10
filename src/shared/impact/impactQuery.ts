@@ -52,10 +52,83 @@ export type ImpactShape = {
   documentId?: string;
 };
 
+/** Cifras del contrato que siempre son un número, estén donde estén en la respuesta. */
+const FINITE_KEYS = new Set([
+  "amount",
+  "amountRef",
+  "amountVes",
+  "changeRef",
+  "changeVes",
+  "componentsIn",
+  "delta",
+  "disassembledOut",
+  "netVes",
+  "packsOut",
+  "paidVes",
+  "paidVesAfter",
+  "pendingVes",
+  "pendingVesAfter",
+  "purchasedIn",
+  "quantityDelta",
+  "totalVes",
+  "unitsIn",
+]);
+
+/** Cifras que el contrato deja en `null` (saldo de caja, producto que ya no existe, REF de una venta…). */
+const NULLABLE_KEYS = new Set([
+  "available",
+  "balanceAfter",
+  "balanceBefore",
+  "costRefAfter",
+  "costRefBefore",
+  "paidRef",
+  "paidRefAfter",
+  "pendingRef",
+  "pendingRefAfter",
+  "required",
+  "stockAfter",
+  "stockBefore",
+  "totalRef",
+]);
+
+/** Cifras que cada línea de una lista debe traer para poder pintarse. */
+const LINE_FIGURES: Record<string, readonly string[]> = {
+  disassemble: ["packsOut"],
+  effects: ["delta"],
+  payments: ["amount", "amountRef", "amountVes", "changeVes", "netVes"],
+  stock: ["quantityDelta"],
+};
+
+function isFiniteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** Ninguna cifra conocida de la respuesta, a cualquier profundidad, es `null`, texto o `NaN` sin permiso. */
+function hasFiniteFigures(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.every(hasFiniteFigures);
+  }
+
+  if (!isImpactRecord(value)) {
+    return true;
+  }
+
+  return Object.entries(value).every(([key, field]) => {
+    if (FINITE_KEYS.has(key)) {
+      return isFiniteNumber(field);
+    }
+
+    return NULLABLE_KEYS.has(key)
+      ? field === null || isFiniteNumber(field)
+      : hasFiniteFigures(field);
+  });
+}
+
 /**
  * Forma mínima de un impact (CNF-F7): veredicto, la acción pedida, la cabecera del
- * documento (el pedido, si se indica) y las listas que el modal pinta. No valida las
- * cifras: solo que el modal pueda pintar la respuesta y que sea la que se pidió.
+ * documento (el pedido, si se indica) y las listas que el modal pinta, con líneas que
+ * son objetos. De las cifras solo comprueba que sean pintables (CNF-F10): un número
+ * finito, o `null` donde el contrato lo permite; no que sean correctas.
  */
 export function hasImpactShape(
   value: unknown,
@@ -81,13 +154,26 @@ export function hasImpactShape(
     return false;
   }
 
-  return arrays.every((key) => Array.isArray(value[key]));
+  const hasLines = arrays.every((key) => {
+    const lines = value[key];
+
+    return (
+      Array.isArray(lines) &&
+      lines.every(
+        (line) =>
+          isImpactRecord(line) &&
+          (LINE_FIGURES[key] ?? []).every((figure) => isFiniteNumber(line[figure])),
+      )
+    );
+  });
+
+  return hasLines && hasFiniteFigures(value);
 }
 
 type FetchImpactOptions = {
   /** `true` si la respuesta tiene la forma del impact pedido (ver `hasImpactShape`). */
   isExpected: (data: unknown) => boolean;
-  query: Record<string, string>;
+  query?: Record<string, string>;
 };
 
 /**

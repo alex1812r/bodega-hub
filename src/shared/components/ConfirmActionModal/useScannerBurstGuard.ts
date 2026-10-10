@@ -14,6 +14,15 @@ export const SCANNER_BURST_MIN_KEYS = 3;
 /** Un Enter tan pegado a una tecla de carácter no es de una persona, sea cual sea el largo. */
 export const SCANNER_FAST_KEY_GAP_MS = 50;
 
+/**
+ * Enfriamiento tras ignorar el Enter de un lector: lo que quede de su sufijo (CR+LF,
+ * Enter repetido, Tab) llega pegado, y una persona no pulsa nada tan pronto.
+ */
+export const SCANNER_SUFFIX_COOLDOWN_MS = 450;
+
+/** Teclas de sufijo de un lector que pulsarían un botón o moverían el foco. */
+const SUFFIX_KEYS = new Set(["Enter", "Tab", " "]);
+
 /** Caracteres que se conservan de una ráfaga: de sobra para el código más largo. */
 const MAX_BUFFERED_KEYS = 64;
 
@@ -69,6 +78,12 @@ function swallow(event: KeyboardEvent) {
  *   `SCANNER_BURST_MIN_KEYS` o más, o a menos de `SCANNER_FAST_KEY_GAP_MS` de
  *   cualquier carácter. `onScannerInput` recibe entonces lo leído.
  * - Un espacio dentro de una ráfaga tampoco pulsa el botón enfocado.
+ * - Tras un Enter ignorado, cualquier Enter (también el del teclado numérico), Tab o
+ *   Espacio que llegue a menos de `SCANNER_SUFFIX_COOLDOWN_MS` del último ignorado
+ *   también se ignora: es el resto del sufijo del lector (CR+LF, Enter×3, Enter+Tab+Enter).
+ *   Cada uno renueva el plazo, así que un lector lento no se cuela. Un Tab que no sigue a
+ *   un Enter ignorado no se toca: solo mueve el foco, y el Enter que lo siga cierra la
+ *   ráfaga igual.
  * - Con el foco en un campo de texto no se toca nada: se teclea y se confirma como siempre.
  *
  * Un Enter o un Espacio sin ráfaga delante (una persona) no se tocan.
@@ -87,7 +102,15 @@ export function useScannerBurstGuard(active: boolean, onScannerInput?: ScannerIn
 
     let text = "";
     let keyTimes: number[] = [];
-    let swallowSpaceKeyUp = false;
+    // Hasta cuándo se ignora el resto del sufijo del lector (0 = ningún Enter ignorado).
+    let cooldownUntil = 0;
+    // Teclas ignoradas al pulsarse: al soltarse tampoco llegan (Espacio pulsa al soltar).
+    const swallowedKeyUps = new Set<string>();
+
+    function swallowKey(event: KeyboardEvent) {
+      swallow(event);
+      swallowedKeyUps.add(event.key);
+    }
 
     function clear() {
       text = "";
@@ -107,13 +130,19 @@ export function useScannerBurstGuard(active: boolean, onScannerInput?: ScannerIn
       const now = Date.now();
       const sinceLastKey = keyTimes.length > 0 ? now - keyTimes[keyTimes.length - 1] : Infinity;
 
+      if (now < cooldownUntil && SUFFIX_KEYS.has(event.key)) {
+        cooldownUntil = now + SCANNER_SUFFIX_COOLDOWN_MS;
+        clear();
+        swallowKey(event);
+        return;
+      }
+
       if (event.key.length === 1) {
         const continues = sinceLastKey < SCANNER_BURST_KEY_GAP_MS;
 
         // Un espacio suelto, o repetido, es de una persona; detrás de otro carácter, del lector.
         if (event.key === " " && continues && text.trim() !== "") {
-          swallow(event);
-          swallowSpaceKeyUp = true;
+          swallowKey(event);
         }
 
         text = ((continues ? text : "") + event.key).slice(-MAX_BUFFERED_KEYS);
@@ -137,14 +166,14 @@ export function useScannerBurstGuard(active: boolean, onScannerInput?: ScannerIn
         return;
       }
 
-      swallow(event);
+      cooldownUntil = now + SCANNER_SUFFIX_COOLDOWN_MS;
+      swallowKey(event);
       onScannerInputRef.current?.(burstText, burst);
     }
 
-    // Un botón se pulsa con Espacio al soltar la tecla: el de la ráfaga tampoco debe llegar.
+    // Un botón se pulsa con Espacio al soltar la tecla: la de una tecla ignorada tampoco llega.
     function handleKeyUp(event: KeyboardEvent) {
-      if (swallowSpaceKeyUp && event.key === " ") {
-        swallowSpaceKeyUp = false;
+      if (swallowedKeyUps.delete(event.key)) {
         swallow(event);
       }
     }

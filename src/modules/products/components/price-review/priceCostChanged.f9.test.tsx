@@ -64,14 +64,19 @@ describe("KeepPriceConfirmModal · costo esperado (M1)", () => {
   const product = { currentCostRef: 10, id: "prod-1", name: "Harina PAN", salePriceRef: 12.5 };
 
   it("envía el costo con el que mostró la ganancia; ante el 409 muestra el motivo, no cierra ni anuncia éxito, y refresca", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ error: { code: "CONFLICT", message: COST_CHANGED_MESSAGE } }, 409));
+    // La relectura al abrir (CNF-F10) y la de después del 409: el producto sigue en la cola.
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) =>
+      init?.method === "POST"
+        ? jsonResponse({ error: { code: "CONFLICT", message: COST_CHANGED_MESSAGE } }, 409)
+        : jsonResponse({ data: { ...product, priceReview: {} } }),
+    );
     const onOpenChange = jest.fn();
     const { invalidate, user } = renderWithClient(
       <KeepPriceConfirmModal onOpenChange={onOpenChange} open product={product} />,
     );
     const dialog = within(await screen.findByRole("dialog"));
 
-    expect(dialog.getByText(/con una ganancia de 25 %/)).toBeInTheDocument();
+    expect(await dialog.findByText(/con una ganancia de 25 %/)).toBeInTheDocument();
     await user.click(dialog.getByRole("button", { name: "Mantener precio" }));
 
     expect(await dialog.findByText(COST_CHANGED_MESSAGE)).toBeVisible();
@@ -85,7 +90,22 @@ describe("KeepPriceConfirmModal · costo esperado (M1)", () => {
 describe("RepriceConfirmModal · costo de la vista previa (ALTA-1)", () => {
   it("envía cada producto con el costo sobre el que calculó el precio mostrado", async () => {
     const result = { failed: 0, results: [], updated: 2 };
-    fetchMock.mockResolvedValue(jsonResponse({ data: result }));
+    // La relectura de la cola al abrir (CNF-F10) trae los mismos costos que la lista.
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) =>
+      init?.method === "POST"
+        ? jsonResponse({ data: result })
+        : jsonResponse({
+            data: {
+              items: [
+                { currentCostRef: 12, productId: "prod-1", salePriceRef: 13 },
+                { currentCostRef: 0, productId: "prod-2", salePriceRef: 4 },
+              ],
+              limit: 100,
+              skip: 0,
+              total: 2,
+            },
+          }),
+    );
     const onDone = jest.fn();
     const { user } = renderWithClient(
       <RepriceConfirmModal
@@ -161,9 +181,12 @@ describe("PurchaseRepriceNotice · costo esperado (ALTA-1, M1)", () => {
 
   function serve() {
     let queueReads = 0;
+    let conflicted = false;
 
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (init?.method === "POST") {
+        conflicted = true;
+
         return jsonResponse({ error: { code: "CONFLICT", message: COST_CHANGED_MESSAGE } }, 409);
       }
 
@@ -176,10 +199,13 @@ describe("PurchaseRepriceNotice · costo esperado (ALTA-1, M1)", () => {
         return jsonResponse({ data: { rateVes: 40 } });
       }
 
-      // Relectura del producto tras el 409: sigue en la cola, ya con el costo nuevo.
+      // Relectura del producto: al abrir la confirmación (CNF-F10) aún cuesta lo de la
+      // cola; tras el 409 sigue en ella, ya con el costo nuevo.
       if (url === "/api/products/prod-1") {
+        const currentCostRef = conflicted ? 14 : 10;
+
         return jsonResponse({
-          data: { currentCostRef: 14, id: "prod-1", priceReview: { currentCostRef: 14 }, salePriceRef: 10 },
+          data: { currentCostRef, id: "prod-1", priceReview: { currentCostRef }, salePriceRef: 10 },
         });
       }
 
@@ -197,7 +223,7 @@ describe("PurchaseRepriceNotice · costo esperado (ALTA-1, M1)", () => {
 
     await user.click(await screen.findByRole("button", { name: "Aplicar" }));
     const readsBefore = queueReads();
-    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Aplicar precio" }));
+    await user.click(await within(await screen.findByRole("dialog")).findByRole("button", { name: "Aplicar precio" }));
 
     expect(await within(screen.getByRole("dialog")).findByText(COST_CHANGED_MESSAGE)).toBeVisible();
     expect(posts()).toEqual([
@@ -221,7 +247,7 @@ describe("PurchaseRepriceNotice · costo esperado (ALTA-1, M1)", () => {
     const dialog = within(await screen.findByRole("dialog", { name: "Mantener precio" }));
 
     expect(posts()).toEqual([]);
-    await user.click(dialog.getByRole("button", { name: "Mantener precio" }));
+    await user.click(await dialog.findByRole("button", { name: "Mantener precio" }));
 
     expect(await dialog.findByRole("alert")).toHaveTextContent(COST_CHANGED_MESSAGE);
     // 10 sobre un costo de 14: la ganancia que de verdad se aceptaría.
