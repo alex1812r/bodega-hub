@@ -8,6 +8,7 @@ import { DEAD_STOCK_DEFAULT_DAYS } from "../../../services/inventoryReports";
 import type { ReportGroupBy } from "../../../services/reportSeries";
 import { canViewReport } from "../../config/reportAccess";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { useReportPanelReady } from "../../reportPanelReady";
 import { DEFAULT_TURNOVER_BY, type InventoryReportFilters } from "../../reportsListParams";
 import { ReportForbiddenState } from "../money/ReportStates";
 import type { ReportPagination } from "../ReportTable";
@@ -60,12 +61,16 @@ export function InventoryReportPanel({
   ]);
   const pagination = externalPagination ?? localPagination;
   const range = { from: dateFilters.from, to: dateFilters.to };
+  const canView = canViewReport(report.id, { permissions, role });
+
+  // Sin permiso no se monta ningún reporte: el 403 ya es el contenido final del panel.
+  useReportPanelReady(!isLoading && !canView);
 
   if (isLoading) {
     return <LoadingState description="Comprobando permisos del reporte." title="Cargando reporte" />;
   }
 
-  if (!canViewReport(report.id, { permissions, role })) {
+  if (!canView) {
     return <ReportForbiddenState reportName={report.name} />;
   }
 

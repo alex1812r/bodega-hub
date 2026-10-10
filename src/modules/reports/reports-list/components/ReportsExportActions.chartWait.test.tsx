@@ -180,12 +180,12 @@ describe("ReportsExportActions · exportar con el gráfico cargando (REP-F8 R-07
     );
 
     fetchMock.mockRejectedValueOnce(
-      new ClientApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion."),
+      new ClientApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción."),
     );
     await user.click(screen.getByRole("button", { name: "Vista previa / exportar" }));
 
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent("No tienes permiso para realizar esta accion."),
+      expect(screen.getByRole("alert")).toHaveTextContent("No tienes permiso para realizar esta acción."),
     );
   });
 });

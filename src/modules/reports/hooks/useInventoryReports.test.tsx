@@ -134,7 +134,7 @@ describe("hooks de reportes de inventario", () => {
 
   it("un 403 del reporte llega como error del hook", async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ error: { code: "FORBIDDEN", message: "No tienes permiso para realizar esta accion." } }, 403),
+      jsonResponse({ error: { code: "FORBIDDEN", message: "No tienes permiso para realizar esta acción." } }, 403),
     );
 
     const { result } = renderHook(() => useDeadStockReport(), { wrapper: createWrapper() });

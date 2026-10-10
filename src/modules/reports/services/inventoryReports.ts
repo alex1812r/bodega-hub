@@ -64,7 +64,7 @@ export function assertInventoryReportAccess(auth: { permissions: readonly Permis
   const has = (permission: Permission) => auth.permissions.includes(permission);
 
   if (!has("reports.view") || !has("inventory.view")) {
-    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción.");
   }
 }
 

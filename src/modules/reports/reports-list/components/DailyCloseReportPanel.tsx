@@ -6,6 +6,7 @@ import {
   type ReportRequestScope,
   useDailyCloseReport,
 } from "../../hooks/useReports";
+import { useReportPanelReady } from "../reportPanelReady";
 import { getReportQueryError } from "../reportQueryState";
 
 type DailyCloseReportPanelProps = {
@@ -15,6 +16,8 @@ type DailyCloseReportPanelProps = {
 
 export function DailyCloseReportPanel({ dateFilters, scope }: DailyCloseReportPanelProps) {
   const query = useDailyCloseReport(dateFilters, scope);
+
+  useReportPanelReady(!query.isLoading);
 
   return (
     <DailyClosePanel

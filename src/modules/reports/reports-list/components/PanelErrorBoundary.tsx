@@ -5,6 +5,8 @@ import { Component, useContext, useState, type ReactNode } from "react";
 
 import { ErrorState } from "@/shared/components/ErrorState";
 
+import { ReportPanelReadySignal } from "../reportPanelReady";
+
 const REPORTS_QUERY_KEY: QueryKey = ["reports"];
 
 type BoundaryProps = {
@@ -39,6 +41,8 @@ class Boundary extends Component<BoundaryProps, BoundaryState> {
         className="min-w-0 rounded-lg border border-outline-variant bg-surface-container-lowest shadow-sm"
         data-testid="panel-error"
       >
+        {/* El panel cayó sin llegar a avisar: su estado de error ya es el contenido final. */}
+        <ReportPanelReadySignal />
         <ErrorState
           description={this.props.description}
           onRetry={this.props.onRetry}

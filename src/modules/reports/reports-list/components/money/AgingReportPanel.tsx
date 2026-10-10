@@ -28,6 +28,7 @@ import type {
   AgingDocumentRow,
 } from "../../../services/moneyReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { useReportPanelReady } from "../../reportPanelReady";
 import { getReportQueryError } from "../../reportQueryState";
 import { ReportChartCard } from "../ReportChartCard";
 import {
@@ -290,6 +291,7 @@ export function AgingReportPanel({
   );
 
   useResetPagePastTheEnd(query, pagination);
+  useReportPanelReady(!query.isLoading);
 
   return (
     <div className="min-w-0 space-y-4">

@@ -22,6 +22,7 @@ import {
   usePaymentMethodsReport,
 } from "../../hooks/useReports";
 import type { PaymentMethodsReportComparison } from "../../services/paymentMethodsReport";
+import { useReportPanelReady } from "../reportPanelReady";
 import { getReportQueryError } from "../reportQueryState";
 import { ReportQueryError } from "./money/ReportStates";
 import { ReportChartCard } from "./ReportChartCard";
@@ -129,6 +130,9 @@ export function PaymentMethodsReportPanel({
 }: PaymentMethodsReportPanelProps) {
   // Con `compare` la respuesta trae `comparison` (totales del periodo anterior).
   const query = usePaymentMethodsReport(dateFilters, scope);
+
+  useReportPanelReady(!query.isLoading);
+
   const items = getPaginatedItems(query.data);
   const summary = query.data?.summary;
   const comparison = dateFilters.compare ? query.data?.comparison : undefined;

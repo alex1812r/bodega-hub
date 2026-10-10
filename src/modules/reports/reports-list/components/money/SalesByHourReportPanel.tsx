@@ -16,6 +16,7 @@ import {
   type SalesByHourReport,
 } from "../../../services/moneyReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { useReportPanelReady } from "../../reportPanelReady";
 import { getReportQueryError } from "../../reportQueryState";
 import { useIsNarrowViewport } from "../../hooks/useIsNarrowViewport";
 import { ReportChartCard } from "../ReportChartCard";
@@ -157,6 +158,9 @@ type SalesByHourReportPanelProps = {
 export function SalesByHourReportPanel({ range, report }: SalesByHourReportPanelProps) {
   const hasRange = Boolean(range.from && range.to);
   const query = useSalesByHourReport(range);
+
+  useReportPanelReady(!query.isLoading);
+
   const queryError = getReportQueryError(query);
   const { data } = query;
   const hasSales = Boolean(data && data.totals.salesCount > 0);

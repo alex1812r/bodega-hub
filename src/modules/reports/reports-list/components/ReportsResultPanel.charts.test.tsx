@@ -787,7 +787,7 @@ describe("ReportsResultPanel · gráficos (REP-04)", () => {
       mockResponses["top-customers"] = { data: rows(35) };
       renderPanel("top-customers", MAY, { limit: 10, setLimit: jest.fn(), setSkip, skip: 0 });
 
-      await user.click(screen.getByRole("button", { name: "Ir a pagina 2" }));
+      await user.click(screen.getByRole("button", { name: /^Ir a p[aá]gina 2$/ }));
 
       expect(setSkip).toHaveBeenCalledWith(10);
     });

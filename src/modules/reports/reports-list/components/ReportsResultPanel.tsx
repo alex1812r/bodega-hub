@@ -48,6 +48,7 @@ import {
   type MoneyReportFilters,
   toReportDateFilters,
 } from "../reportsListParams";
+import { ReportPanelReadyProvider, useReportPanelReady } from "../reportPanelReady";
 import { getReportQueryError, toFiniteNumber } from "../reportQueryState";
 import { DailyCloseReportPanel } from "./DailyCloseReportPanel";
 import { FxDepreciationReportPanel } from "./FxDepreciationReportPanel";
@@ -289,6 +290,8 @@ function PaginatedReportTable<TData, TResult extends PaginatedList<TData> = Pagi
   const { data } = query;
 
   useResetPagePastTheEnd(query, pagination);
+  // El gráfico y la tabla salen de esta misma consulta: al terminar, el panel tiene su alto.
+  useReportPanelReady(!query.isLoading);
 
   const table = (
     <ReportTable
@@ -340,6 +343,12 @@ type ReportsResultPanelProps = {
   onInventoryFiltersChange?: (patch: Partial<InventoryReportFilters>) => void;
   onMoneyFiltersChange?: (patch: Partial<MoneyReportFilters>) => void;
   /**
+   * Aviso de «datos pintados» del reporte activo: su consulta terminó (con filas,
+   * vacía o con error) y el panel ya tiene su alto. La pantalla lo usa como
+   * `ready` de `useScrollRestoration`. Debe ser estable e idempotente.
+   */
+  onReady?: () => void;
+  /**
    * Página y tamaño de la tabla del reporte activo guardados fuera (en la URL):
    * quien los guarda los reinicia al cambiar de reporte o de filtros. Sin esta
    * prop cada reporte lleva su propia paginación.
@@ -379,9 +388,11 @@ export function ReportsResultPanel(props: ReportsResultPanelProps) {
   ]);
 
   return (
-    <PanelErrorBoundary resetKey={resetKey}>
-      <ReportsResultPanelContent {...props} />
-    </PanelErrorBoundary>
+    <ReportPanelReadyProvider onReady={props.onReady}>
+      <PanelErrorBoundary resetKey={resetKey}>
+        <ReportsResultPanelContent {...props} />
+      </PanelErrorBoundary>
+    </ReportPanelReadyProvider>
   );
 }
 

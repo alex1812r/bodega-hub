@@ -17,6 +17,7 @@ import { formatRef } from "@/shared/utils/currency";
 import { useSalesByCategoryReport } from "../../../hooks/useMoneyReports";
 import type { MoneyReportRange, SalesByCategoryTotals } from "../../../services/moneyReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { useReportPanelReady } from "../../reportPanelReady";
 import { getReportQueryError } from "../../reportQueryState";
 import { ReportChartCard } from "../ReportChartCard";
 import { ReportTableSection } from "../ReportTableSection";
@@ -80,6 +81,9 @@ type SalesByCategoryReportPanelProps = {
 export function SalesByCategoryReportPanel({ range, report }: SalesByCategoryReportPanelProps) {
   const hasRange = Boolean(range.from && range.to);
   const query = useSalesByCategoryReport(range);
+
+  useReportPanelReady(!query.isLoading);
+
   const queryError = getReportQueryError(query);
   const { data } = query;
   const items = data?.items;

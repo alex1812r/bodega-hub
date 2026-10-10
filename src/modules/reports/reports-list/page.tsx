@@ -1,13 +1,14 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { getPageDataSourceSuffix } from "@/lib/api/dataSourceUi";
 import { getBusinessTodayIsoDate } from "@/modules/dashboard/utils/businessDate";
 import { usePermission } from "@/shared/auth/usePermission";
 import { EntityListPage } from "@/shared/components/EntityListPage";
 import { useUrlPaginationState } from "@/shared/components/Pagination";
+import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { useUrlListState, withUrlListBoundary } from "@/shared/hooks/useUrlListState";
 
 import { InvalidUrlRangeNotice } from "./components/InvalidUrlRangeNotice";
@@ -54,6 +55,17 @@ function ReportsList() {
     to,
     turnoverBy,
   } = state;
+  // Reporte cuyo panel ya avisó de que su consulta terminó (con filas, vacía o con
+  // error) y tiene su alto. La restauración del scroll espera a ese aviso del
+  // reporte ACTIVO: el de uno que ya no se muestra no cuenta.
+  const [readyReport, setReadyReport] = useState<string | null>(null);
+  const markReportReady = useCallback(() => setReadyReport(report), [report]);
+
+  // Al volver de un detalle (`returnTo` = esta URL) el scroll vuelve a donde estaba.
+  // Se restaura una vez por visita: cambiar de reporte, de filtros o de página no
+  // mueve el scroll a ninguna posición guardada.
+  useScrollRestoration(list.href, { ready: readyReport === report });
+
   const today = getBusinessTodayIsoDate();
   const activeReport = getReportById(report);
   // Un rango de la URL invertido, con el año fuera de rango o mal formado no se
@@ -150,6 +162,7 @@ function ReportsList() {
         moneyFilters={moneyFilters}
         onInventoryFiltersChange={(patch) => setListState(serializeInventoryReportFilters(patch))}
         onMoneyFiltersChange={(patch) => setListState(serializeMoneyReportFilters(patch))}
+        onReady={markReportReady}
         pagination={pagination}
         purchasesFilters={filters.purchasesFilters}
         report={activeReport}

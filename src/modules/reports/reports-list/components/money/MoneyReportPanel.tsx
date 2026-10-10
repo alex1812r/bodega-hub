@@ -6,6 +6,7 @@ import { usePaginationState } from "@/shared/components/Pagination";
 
 import { canViewReport } from "../../config/reportAccess";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { useReportPanelReady } from "../../reportPanelReady";
 import { DEFAULT_CASH_CLOSE_CURRENCY, type MoneyReportFilters } from "../../reportsListParams";
 import type { ReportPagination } from "../ReportTable";
 import { AgingReportPanel } from "./AgingReportPanel";
@@ -47,12 +48,16 @@ export function MoneyReportPanel({
   const localPagination = usePaginationState([report.id, filters.bucket, filters.contactId, filters.currency]);
   const pagination = externalPagination ?? localPagination;
   const range = { from: dateFilters.from, to: dateFilters.to };
+  const canView = canViewReport(report.id, { permissions, role });
+
+  // Sin permiso no se monta ningún reporte: el 403 ya es el contenido final del panel.
+  useReportPanelReady(!isLoading && !canView);
 
   if (isLoading) {
     return <LoadingState description="Comprobando permisos del reporte." title="Cargando reporte" />;
   }
 
-  if (!canViewReport(report.id, { permissions, role })) {
+  if (!canView) {
     return <ReportForbiddenState reportName={report.name} />;
   }
 

@@ -14,6 +14,7 @@ import {
   type ReportRequestScope,
   useFxDepreciationReport,
 } from "../../hooks/useReports";
+import { useReportPanelReady } from "../reportPanelReady";
 import { getReportQueryError } from "../reportQueryState";
 import { formatCaracasDay } from "./inventory/inventoryReportText";
 import { ReportQueryError } from "./money/ReportStates";
@@ -195,6 +196,8 @@ export function FxDepreciationReportPanel({
   // Error de negocio, genérico (5xx, respuesta rota) o sin red (consulta en
   // pausa: no es un reporte vacío).
   const queryError = query.isLoading ? null : getReportQueryError(query);
+
+  useReportPanelReady(!query.isLoading);
 
   return (
     <section className="space-y-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-5 shadow-sm">

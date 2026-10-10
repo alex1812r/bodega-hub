@@ -192,7 +192,7 @@ describe("ReportsResultPanel", () => {
       const user = userEvent.setup();
       const { rerender } = render(panel("daily-sales"));
 
-      await user.click(screen.getByRole("button", { name: "Ir a pagina 2" }));
+      await user.click(screen.getByRole("button", { name: /^Ir a p[aá]gina 2$/ }));
       expect(hooks.useDailySalesReport).toHaveBeenLastCalledWith(
         expect.objectContaining({ skip: 10 }),
         scope,
@@ -209,7 +209,7 @@ describe("ReportsResultPanel", () => {
     const user = userEvent.setup();
     const { rerender } = render(panel("top-products"));
 
-    await user.click(screen.getByRole("button", { name: "Ir a pagina 2" }));
+    await user.click(screen.getByRole("button", { name: /^Ir a p[aá]gina 2$/ }));
     expect(hooks.useTopProductsReport).toHaveBeenLastCalledWith({ ...range, limit: 10, skip: 10 }, scope);
 
     const nextRange = { from: "2026-03-01", to: "2026-03-31" };
@@ -240,7 +240,7 @@ describe("ReportsResultPanel", () => {
 
     expect(hooks.useTopProductsReport).toHaveBeenLastCalledWith({ ...range, limit: 10, skip: 10 }, scope);
 
-    await user.click(screen.getByRole("button", { name: "Ir a pagina 3" }));
+    await user.click(screen.getByRole("button", { name: /^Ir a p[aá]gina 3$/ }));
     expect(setSkip).toHaveBeenCalledWith(20);
   });
 });

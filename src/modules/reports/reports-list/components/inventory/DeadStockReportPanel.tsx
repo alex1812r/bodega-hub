@@ -20,6 +20,7 @@ import { withReturnTo } from "@/shared/utils/returnTo";
 import { type DeadStockFilters, useDeadStockReport } from "../../../hooks/useInventoryReports";
 import { DEAD_STOCK_MAX_DAYS, type DeadStockRow } from "../../../services/inventoryReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { useReportPanelReady } from "../../reportPanelReady";
 import { getReportQueryError } from "../../reportQueryState";
 import { ReportQueryError } from "../money/ReportStates";
 import { ReportChartCard } from "../ReportChartCard";
@@ -212,6 +213,9 @@ export function DeadStockReportPanel({
     skip: pagination.skip,
   };
   const query = useDeadStockReport(filters);
+
+  useReportPanelReady(!query.isLoading);
+
   const queryError = getReportQueryError(query);
   const { data } = query;
   const items = data?.items;

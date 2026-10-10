@@ -14,6 +14,7 @@ import { type StockTurnoverFilters, useStockTurnoverReport } from "../../../hook
 import type { StockTurnoverGroupBy, StockTurnoverRow } from "../../../services/inventoryReports";
 import type { MoneyReportRange } from "../../../services/moneyReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { useReportPanelReady } from "../../reportPanelReady";
 import { getReportQueryError } from "../../reportQueryState";
 import { ReportQueryError } from "../money/ReportStates";
 import { ReportChartCard } from "../ReportChartCard";
@@ -156,6 +157,9 @@ export function StockTurnoverReportPanel({
     to: range.to,
   };
   const query = useStockTurnoverReport(filters);
+
+  useReportPanelReady(!query.isLoading);
+
   const queryError = getReportQueryError(query);
   const { data } = query;
   const items = data?.items;

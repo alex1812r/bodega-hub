@@ -172,7 +172,7 @@ describe("ReportsExportActions (REP-08)", () => {
   it("si la consulta falla muestra el error y no abre la vista previa", async () => {
     // Error de negocio del servidor: su mensaje sí se muestra (REP-F8 R-11).
     fetchMock.mockRejectedValue(
-      new ClientApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion."),
+      new ClientApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción."),
     );
     const user = userEvent.setup();
     render(<ReportsExportActions exportFilters={storeFilters} />);
@@ -180,7 +180,7 @@ describe("ReportsExportActions (REP-08)", () => {
     await user.click(screen.getByRole("button", { name: "Vista previa / exportar" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "No tienes permiso para realizar esta accion.",
+      "No tienes permiso para realizar esta acción.",
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });

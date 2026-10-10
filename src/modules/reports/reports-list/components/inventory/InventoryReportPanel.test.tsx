@@ -415,7 +415,7 @@ describe("InventoryReportPanel · REP-07b", () => {
       const { ClientApiError } = jest.requireActual("../../../../../shared/api/apiFetch");
 
       mockQueries.useStockTurnoverReport = {
-        error: new ClientApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion."),
+        error: new ClientApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción."),
       };
       renderPanel("stock-turnover");
 

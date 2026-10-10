@@ -326,7 +326,7 @@ describe("MoneyReportPanel · REP-06b", () => {
       const { ClientApiError } = jest.requireActual("../../../../../shared/api/apiFetch");
 
       mockQueries.useSalesByCategoryReport = {
-        error: new ClientApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion."),
+        error: new ClientApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción."),
       };
       renderPanel("sales-by-category");
 
@@ -582,7 +582,7 @@ describe("MoneyReportPanel · REP-06b", () => {
 
     it("con contactId en la URL el nombre sale de las filas del reporte, sin pedir el contacto", () => {
       // Un rol que ve el reporte pero no puede leer `GET /api/contacts/:id`.
-      mockContactError = new Error("No tienes permiso para realizar esta accion.");
+      mockContactError = new Error("No tienes permiso para realizar esta acción.");
       mockQueries[hookName] = { data: agingReport([agingRow(3, "8-30", type)]) };
       renderPanel(id, { filters: { contactId: "contacto-3", currency: "ves" } });
 
@@ -612,7 +612,7 @@ describe("MoneyReportPanel · REP-06b", () => {
     });
 
     it("sin filas del contacto y sin acceso a Contactos sigue diciendo que no está disponible", () => {
-      mockContactError = new Error("No tienes permiso para realizar esta accion.");
+      mockContactError = new Error("No tienes permiso para realizar esta acción.");
       mockQueries[hookName] = { data: agingReport([]) };
       renderPanel(id, { filters: { contactId: "cli-1", currency: "ves" } });
 

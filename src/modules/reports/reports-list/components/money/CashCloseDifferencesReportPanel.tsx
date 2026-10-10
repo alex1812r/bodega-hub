@@ -19,6 +19,7 @@ import {
   type CashCloseDifferenceRow,
 } from "../../../services/moneyReports";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { useReportPanelReady } from "../../reportPanelReady";
 import { getReportQueryError } from "../../reportQueryState";
 import { ReportChartCard } from "../ReportChartCard";
 import {
@@ -202,6 +203,9 @@ export function CashCloseDifferencesReportPanel({
     to: range.to,
   };
   const query = useCashCloseDifferencesReport(filters);
+
+  useReportPanelReady(!query.isLoading);
+
   const queryError = getReportQueryError(query);
   const { data } = query;
   const items = data?.items;

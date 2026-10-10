@@ -23,6 +23,7 @@ import type {
 import type { MoneyReportRange } from "../../../services/moneyReports";
 import { toTimeSeriesPoints, type ReportGroupBy } from "../../../services/reportSeries";
 import type { ReportDefinition } from "../../config/reportCatalog";
+import { useReportPanelReady } from "../../reportPanelReady";
 import { getReportQueryError } from "../../reportQueryState";
 import { ReportQueryError } from "../money/ReportStates";
 import { ReportChartCard } from "../ReportChartCard";
@@ -128,6 +129,9 @@ export function StockAdjustmentsReportPanel({
     to: range.to,
   };
   const query = useStockAdjustmentsReport(filters);
+
+  useReportPanelReady(!query.isLoading);
+
   const queryError = getReportQueryError(query);
   const { data } = query;
   const byReason = data?.byReason;
