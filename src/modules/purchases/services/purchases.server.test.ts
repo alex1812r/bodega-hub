@@ -238,12 +238,14 @@ describe("purchases.server", () => {
       return { from, paymentsBuilder };
     }
 
-    it("without access: never queries payments, returns no payments and the header paid amounts", async () => {
+    // GQ-06: closed by default. A caller that does not say who is looking gets no payments.
+    it.each([
+      ["without access", { canViewPayments: false }],
+      ["with default access", undefined],
+    ] as const)("%s: never queries payments, returns no payments and the header paid amounts", async (_label, access) => {
       const { from } = mockDetail();
 
-      const purchase = await getPurchaseById(purchaseRow.id, DEFAULT_STORE_ID, {
-        canViewPayments: false,
-      });
+      const purchase = await getPurchaseById(purchaseRow.id, DEFAULT_STORE_ID, access);
 
       expect(from.mock.calls.map(([table]) => table)).toEqual(["purchases"]);
       expect(purchase.payments).toEqual([]);
@@ -253,13 +255,12 @@ describe("purchases.server", () => {
       expect(purchase.items).toEqual([]);
     });
 
-    it.each([
-      ["explicit access", { canViewPayments: true }],
-      ["default access", undefined],
-    ] as const)("with %s: payments by purchase_id and paid amounts summed from them, as before", async (_label, access) => {
+    it("with explicit access: payments by purchase_id and paid amounts summed from them", async () => {
       const { from, paymentsBuilder } = mockDetail();
 
-      const purchase = await getPurchaseById(purchaseRow.id, DEFAULT_STORE_ID, access);
+      const purchase = await getPurchaseById(purchaseRow.id, DEFAULT_STORE_ID, {
+        canViewPayments: true,
+      });
 
       expect(from.mock.calls.map(([table]) => table)).toEqual(["purchases", "payments"]);
       expect(paymentsBuilder.eq).toHaveBeenCalledWith("purchase_id", purchaseRow.id);

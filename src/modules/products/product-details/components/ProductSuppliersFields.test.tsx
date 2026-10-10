@@ -269,6 +269,21 @@ describe("ProductSuppliersFields (PRO-14)", () => {
     expect(state.preferredSupplierId).toBeNull();
   });
 
+  // GQ-06: en una fila de proveedor el aviso de «punto de miles» va flotante, no
+  // en línea bajo el campo (hacía crecer la fila y desalineaba el SKU de al lado).
+  it("un costo que parece llevar punto de miles avisa sin hacer crecer la fila", async () => {
+    const { user } = renderFields({
+      initial: createProductSuppliersState([link("sup-mavesa", "Mavesa")]),
+    });
+
+    await user.type(screen.getByLabelText("Costo REF de Mavesa"), "30.600");
+
+    const notice = await screen.findByRole("status");
+
+    expect(notice).toHaveAttribute("data-placement", "floating");
+    expect(document.querySelector('[data-placement="inline"]')).not.toBeInTheDocument();
+  });
+
   it("costo y código son opcionales: vacíos no viajan; un código vaciado que existía viaja como null", async () => {
     const { onState, user } = renderFields({
       initial: createProductSuppliersState([

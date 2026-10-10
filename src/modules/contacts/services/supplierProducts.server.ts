@@ -23,7 +23,12 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import { SUPPLIER_PRODUCT_SELECT } from "./contacts.server";
 import { applySupplierProductSort } from "./supplierProductSort";
-import { buildProductSearchOrFilter } from "@/modules/products/services/productSearch";
+import {
+  buildIlikeOrFilter,
+  buildProductSearchOrFilter,
+  escapeIlike,
+  normalizeProductSearch,
+} from "@/modules/products/services/productSearch";
 import type {
   ProductPreferredSupplier,
   ProductSupplierInput,
@@ -58,23 +63,15 @@ function isMissingPackUnitsSchema(error: unknown) {
   return message.includes("supplier_product_pack_units");
 }
 
-function escapeIlike(value: string) {
-  return value.replace(/[%_,]/g, "");
-}
-
 async function findProductIdsMatchingSearch(
   supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
   search: string,
 ) {
-  const term = escapeIlike(search.trim());
-  if (!term) {
-    return [];
-  }
-
+  // El helper común normaliza y escapa el término: aquí viaja tal cual se tecleó.
   const { data, error } = await supabase
     .from("products")
     .select("id")
-    .or(buildProductSearchOrFilter(term));
+    .or(buildProductSearchOrFilter(search));
 
   throwIfSupabaseError(error);
 
@@ -85,15 +82,14 @@ async function resolveSupplierProductSearch(
   supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
   search: string | null,
 ) {
-  const term = search?.trim();
+  const term = normalizeProductSearch(search);
   if (!term) {
     return null;
   }
 
-  const escapedTerm = escapeIlike(term);
   const productIds = await findProductIdsMatchingSearch(supabase, term);
 
-  return { productIds, term: escapedTerm };
+  return { productIds, term };
 }
 
 function applySupplierProductSearchFilter<TQuery extends {
@@ -104,11 +100,13 @@ function applySupplierProductSearchFilter<TQuery extends {
   filter: { productIds: string[]; term: string },
 ): TQuery {
   if (filter.productIds.length === 0) {
-    return query.ilike("supplier_sku", `%${filter.term}%`);
+    return query.ilike("supplier_sku", `%${escapeIlike(filter.term)}%`);
   }
 
   const quotedIds = filter.productIds.map((id) => `"${id}"`).join(",");
-  return query.or(`supplier_sku.ilike.%${filter.term}%,product_id.in.(${quotedIds})`);
+  return query.or(
+    `${buildIlikeOrFilter(["supplier_sku"], filter.term)},product_id.in.(${quotedIds})`,
+  );
 }
 
 async function deleteSupplierProductRow(id: string) {

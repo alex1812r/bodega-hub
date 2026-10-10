@@ -426,7 +426,7 @@ export type PurchaseDetailAccess = {
 export function getPurchaseById(
   id: string,
   storeId: string,
-  access: PurchaseDetailAccess = { canViewPayments: true },
+  access: PurchaseDetailAccess = { canViewPayments: false },
 ) {
   const created = createdMockPurchases().get(id);
   const purchase = created?.purchase ?? mockPurchases.find((item) => item.id === id);
@@ -744,7 +744,12 @@ function receiptsByClientRequest() {
  * pedido; la misma `clientRequestId` con el mismo contenido devuelve la compra ya
  * recibida. Todo se valida antes de mover nada.
  */
-export function receivePurchase(id: string, storeId: string, options: ReceivePurchaseOptions = {}) {
+export function receivePurchase(
+  id: string,
+  storeId: string,
+  options: ReceivePurchaseOptions = {},
+  access?: PurchaseDetailAccess,
+) {
   const purchase = getPurchaseById(id, storeId);
   const receiptKey = `${storeId}:${id}`;
   const fingerprint = JSON.stringify(options.disassemble ?? null);
@@ -759,7 +764,7 @@ export function receivePurchase(id: string, storeId: string, options: ReceivePur
       );
     }
 
-    return purchase;
+    return getPurchaseById(id, storeId, access);
   }
 
   if (purchase.status !== "pedido") {
@@ -824,18 +829,18 @@ export function receivePurchase(id: string, storeId: string, options: ReceivePur
     });
   }
 
-  return getPurchaseById(id, storeId);
+  return getPurchaseById(id, storeId, access);
 }
 
-export function cancelPurchase(id: string, storeId: string) {
+export function cancelPurchase(id: string, storeId: string, access?: PurchaseDetailAccess) {
   return {
-    ...getPurchaseById(id, storeId),
+    ...getPurchaseById(id, storeId, access),
     status: "cancelado",
   };
 }
 
-export function returnPurchase(id: string, storeId: string) {
-  const purchase = getPurchaseById(id, storeId);
+export function returnPurchase(id: string, storeId: string, access?: PurchaseDetailAccess) {
+  const purchase = getPurchaseById(id, storeId, access);
 
   return {
     purchase: {

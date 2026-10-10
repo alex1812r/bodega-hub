@@ -211,7 +211,7 @@ describe("purchases.mock-server · pagos del detalle por acceso (COM-16)", () =>
     mockPayments.filter((payment) => payment.purchaseId === PURCHASE_ID).map((payment) => payment.id);
 
   it("sin acceso: `payments: []` y Pagado de la cabecera; el resto del detalle no cambia", () => {
-    const full = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID);
+    const full = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID, { canViewPayments: true });
     const restricted = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID, { canViewPayments: false });
 
     expect(seedPaymentIds().length).toBeGreaterThan(0);
@@ -222,11 +222,15 @@ describe("purchases.mock-server · pagos del detalle por acceso (COM-16)", () =>
     expect({ ...restricted, payments: full.payments }).toEqual(full);
   });
 
-  it.each([
-    ["acceso explícito", { canViewPayments: true }],
-    ["acceso por defecto", undefined],
-  ] as const)("con %s: los pagos de la compra con su contacto, como antes", (_label, access) => {
-    const detail = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID, access);
+  // GQ-06: cerrado por defecto. Quien no dice quién mira no recibe pagos.
+  it("sin indicar acceso (por defecto): igual que sin acceso", () => {
+    expect(getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID)).toEqual(
+      getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID, { canViewPayments: false }),
+    );
+  });
+
+  it("con acceso explícito: los pagos de la compra con su contacto", () => {
+    const detail = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID, { canViewPayments: true });
 
     expect(detail.payments.map((payment) => payment.id)).toEqual(seedPaymentIds());
     expect(detail.payments.every((payment) => payment.contact?.id === payment.contactId)).toBe(true);

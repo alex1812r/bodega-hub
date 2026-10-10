@@ -6,6 +6,7 @@ import { requireStorePermission } from "@/lib/api/requirePermission";
 import { receivePurchaseBodySchema } from "@/modules/purchases/services/purchaseDisassemble";
 import * as purchasesMockServer from "@/modules/purchases/services/purchases.mock-server";
 import * as purchasesServer from "@/modules/purchases/services/purchases.server";
+import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
 
 function getPurchasesService() {
   return resolveDataSource() === "supabase" ? purchasesServer : purchasesMockServer;
@@ -28,7 +29,11 @@ export async function PATCH(
     const { id } = await context.params;
     const options = receivePurchaseBodySchema.parse(await readOptionalJsonBody(request));
     const service = getPurchasesService();
-    return jsonData(await service.receivePurchase(id, auth.storeId, options));
+    return jsonData(
+      await service.receivePurchase(id, auth.storeId, options, {
+        canViewPayments: canViewPurchasePayments(auth.role),
+      }),
+    );
   } catch (error) {
     return toErrorResponse(error);
   }

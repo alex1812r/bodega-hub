@@ -454,7 +454,7 @@ export async function listPurchases(
 export async function getPurchaseById(
   id: string,
   storeId: string,
-  access: PurchaseDetailAccess = { canViewPayments: true },
+  access: PurchaseDetailAccess = { canViewPayments: false },
 ) {
   await assertSupabaseStoreResource("purchases", id, storeId, "Compra no encontrada.");
   const supabase = await createRouteSupabaseClient();
@@ -582,6 +582,7 @@ export async function receivePurchase(
   id: string,
   storeId: string,
   options: ReceivePurchaseOptions = {},
+  access?: PurchaseDetailAccess,
 ) {
   await assertSupabaseStoreResource("purchases", id, storeId, "Compra no encontrada.");
   const supabase = await createRouteSupabaseClient();
@@ -615,10 +616,10 @@ export async function receivePurchase(
     throw new ApiError(404, "NOT_FOUND", "Compra no encontrada.");
   }
 
-  return getPurchaseById(id, storeId);
+  return getPurchaseById(id, storeId, access);
 }
 
-export async function cancelPurchase(id: string, storeId: string) {
+export async function cancelPurchase(id: string, storeId: string, access?: PurchaseDetailAccess) {
   await assertSupabaseStoreResource("purchases", id, storeId, "Compra no encontrada.");
   const supabase = await createRouteSupabaseClient();
 
@@ -632,10 +633,10 @@ export async function cancelPurchase(id: string, storeId: string) {
     throw new ApiError(404, "NOT_FOUND", "Compra no encontrada.");
   }
 
-  return getPurchaseById(id, storeId);
+  return getPurchaseById(id, storeId, access);
 }
 
-export async function returnPurchase(id: string, storeId: string) {
+export async function returnPurchase(id: string, storeId: string, access?: PurchaseDetailAccess) {
   await assertSupabaseStoreResource("purchases", id, storeId, "Compra no encontrada.");
   const supabase = await createRouteSupabaseClient();
 
@@ -649,7 +650,7 @@ export async function returnPurchase(id: string, storeId: string) {
     throw new ApiError(404, "NOT_FOUND", "Compra no encontrada.");
   }
 
-  const purchase = await getPurchaseById(id, storeId);
+  const purchase = await getPurchaseById(id, storeId, access);
 
   const { data: stockMovements, error: movementsError } = await supabase
     .from("stock_movements")

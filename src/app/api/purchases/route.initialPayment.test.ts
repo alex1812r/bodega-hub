@@ -179,7 +179,9 @@ describe("POST /api/purchases · pago inicial (COM-06)", () => {
     expect(new Set(createPurchase.mock.results.map((result) => result.value.id)).size).toBe(1);
     expect(paymentsOf(purchaseId).map((payment) => payment.id)).toEqual([paymentId]);
 
-    const detail = purchasesMockServer.getPurchaseById(purchaseId, DEFAULT_STORE_ID);
+    const detail = purchasesMockServer.getPurchaseById(purchaseId, DEFAULT_STORE_ID, {
+      canViewPayments: true,
+    });
 
     expect(detail.paidVes).toBe(2040);
     expect(detail.payments).toHaveLength(1);

@@ -1,5 +1,5 @@
 import { ApiError } from "@/lib/api/apiError";
-import { getSupabaseErrorMessage, throwIfSupabaseError } from "@/lib/supabase/errors";
+import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
@@ -52,12 +52,6 @@ function mapSession(row: Record<string, unknown>): CashSession {
 
 function mapMovement(row: Record<string, unknown>): CashMovement {
   return { amountRef: Number(row.amount_ref), amountVes: Number(row.amount_ves), createdAt: row.created_at as string, id: row.id as string, notes: row.notes as string | null, paymentId: row.payment_id as string | null, sessionId: row.session_id as string, type: row.type as CashMovement["type"] };
-}
-
-function rpcError(error: unknown) {
-  if (!error) return;
-  const message = getSupabaseErrorMessage(error);
-  throw new ApiError(400, "BAD_REQUEST", message);
 }
 
 /**
@@ -169,7 +163,8 @@ export async function openCashSession(input: OpenCashSessionInput, userId: strin
   const supabase = await createRouteSupabaseClient();
   await assertCanOpenCashSession(supabase, input.registerId, userId, storeId);
   const { data, error } = await supabase.rpc("open_cash_session", { p_opening_ref: input.openingRef ?? 0, p_opening_ves: input.openingVes ?? 0, p_register_id: input.registerId });
-  rpcError(error);
+  // Rechazo de negocio (PT4xx / P0001): su mensaje. Cualquier otro fallo: genérico + log.
+  throwIfSupabaseError(error);
   if (!data) throw new ApiError(500, "INTERNAL_ERROR", "No se pudo abrir la caja.");
   return mapSession(data as Record<string, unknown>);
 }
@@ -177,7 +172,8 @@ export async function openCashSession(input: OpenCashSessionInput, userId: strin
 export async function closeCashSession(input: CloseCashSessionInput, _userId: string, _storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.rpc("close_cash_session", { p_closing_ref: input.closingRef, p_closing_ves: input.closingVes, p_session_id: input.sessionId });
-  rpcError(error);
+  // Rechazo de negocio (PT4xx / P0001): su mensaje. Cualquier otro fallo: genérico + log.
+  throwIfSupabaseError(error);
   if (!data) throw new ApiError(500, "INTERNAL_ERROR", "No se pudo cerrar la caja.");
   return mapSession(data as Record<string, unknown>);
 }

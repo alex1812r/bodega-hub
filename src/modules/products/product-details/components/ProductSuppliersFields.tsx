@@ -476,6 +476,7 @@ export function ProductSuppliersFields({
                             })
                           }
                           placeholder="Opcional"
+                          thousandsHintPlacement="floating"
                           value={row.costRef}
                         />
                       </div>

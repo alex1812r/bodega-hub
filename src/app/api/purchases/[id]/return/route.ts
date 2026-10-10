@@ -4,6 +4,7 @@ import { jsonData } from "@/lib/api/jsonResponse";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import * as purchasesMockServer from "@/modules/purchases/services/purchases.mock-server";
 import * as purchasesServer from "@/modules/purchases/services/purchases.server";
+import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
 
 function getPurchasesService() {
   return resolveDataSource() === "supabase" ? purchasesServer : purchasesMockServer;
@@ -14,7 +15,11 @@ export async function POST(request: Request, context: RouteContext<"/api/purchas
     const auth = await requireStorePermission(request, "purchases.create");
     const { id } = await context.params;
     const service = getPurchasesService();
-    return jsonData(await service.returnPurchase(id, auth.storeId));
+    return jsonData(
+      await service.returnPurchase(id, auth.storeId, {
+        canViewPayments: canViewPurchasePayments(auth.role),
+      }),
+    );
   } catch (error) {
     return toErrorResponse(error);
   }

@@ -66,6 +66,7 @@ export function PayrollEmployeeRow({
           decimals={2}
           error={pctIsValid ? undefined : "Entre 0 y 100."}
           onChange={(event) => setCommissionPct(event.target.value)}
+          thousandsHintPlacement="floating"
           value={commissionPct}
         />
       </td>
