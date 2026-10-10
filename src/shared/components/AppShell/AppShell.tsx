@@ -88,9 +88,12 @@ export function AppShell({
           userRole={userRole}
         />
 
+        {/* `relative`: `<main>` es el bloque contenedor de sus descendientes
+            `position: absolute` (p. ej. `sr-only`). Sin él se colocan respecto al
+            documento, escapan del recorte y dejan desplazar la aplicación entera. */}
         <main
           className={cn(
-            "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-surface",
+            "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-surface",
             mainScroll === "hidden"
               ? "w-full max-w-none overflow-y-hidden"
               : "overflow-y-auto px-4 py-6 lg:px-6",

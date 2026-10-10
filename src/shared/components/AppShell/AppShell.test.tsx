@@ -36,6 +36,22 @@ describe("AppShell", () => {
     expect(getByText(/contenido del dashboard/i)).toBeVisible();
   });
 
+  // GQ-01: un descendiente `position: absolute` (p. ej. `sr-only`) sin ancestro
+  // posicionado se coloca respecto al documento, escapa del recorte de `<main>`
+  // y deja desplazar la aplicación entera. `<main>` debe ser su bloque contenedor.
+  it.each(["auto", "hidden"] as const)(
+    "makes the %s-scroll main the containing block of its absolute descendants",
+    (mainScroll) => {
+      const { getByRole } = renderShell(
+        <AppShell mainScroll={mainScroll}>
+          <span className="sr-only">Solo lectores de pantalla</span>
+        </AppShell>,
+      );
+
+      expect(getByRole("main")).toHaveClass("relative");
+    },
+  );
+
   it("opens mobile navigation drawer", () => {
     const { getAllByLabelText, getByLabelText, getByRole } = renderShell(
       <AppShell role="admin">
