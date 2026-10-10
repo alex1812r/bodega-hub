@@ -1,12 +1,14 @@
 "use client";
 
-import { Calculator, Plus, X } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { Calculator, ChevronDown, ChevronUp, Plus, X } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { Button } from "@/shared/components/Button";
 import { FormActions } from "@/shared/components/FormActions";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
 import { NumberInput } from "@/shared/components/NumberInput";
+import { SelectField } from "@/shared/components/SelectField";
 import { VenezuelanBankField } from "@/shared/components/VenezuelanBankField";
 import { VenezuelanPhoneField } from "@/shared/components/VenezuelanPhoneField";
 import type { PaymentMethod } from "@/shared/mocks/erp-data";
@@ -66,7 +68,7 @@ function formatMethodAmount(method: PaymentMethod, amount: number) {
   return isUsdPaymentMethod(method) ? formatRef(amount) : formatVes(amount);
 }
 
-/** Vuelto sugerido: el maximo que se puede armar con billetes reales. */
+/** Vuelto sugerido: el máximo que se puede armar con billetes reales. */
 function suggestChange(
   method: PaymentMethod,
   overageVes: number,
@@ -86,6 +88,51 @@ function suggestChange(
   return { amount: deliverable.delivered, counts: deliverable.counts };
 }
 
+// El efectivo arranca vacío para que el cajero indique lo recibido; los
+// métodos bancarios se prellenan con el total, que sí se cobra exacto.
+function createLinesForMethod(
+  method: PaymentMethod,
+  totalRef: number,
+  rateVes: number,
+) {
+  return isCashPaymentMethod(method)
+    ? [createEmptyMixedPaymentLine(method)]
+    : createCheckoutForMethod(method, totalRef, rateVes).lines;
+}
+
+function hasCountedBills(line: PosMixedPaymentLine | undefined) {
+  return Object.values(line?.denominations ?? {}).some((count) => (count ?? 0) > 0);
+}
+
+function hasPaymentDetails(line: PosMixedPaymentLine | undefined) {
+  return Boolean(
+    line?.bankName?.trim() || line?.phone?.trim() || line?.referenceCode?.trim(),
+  );
+}
+
+/**
+ * Datos que el método exige y que el modo compacto pide al pulsar «Cobrar»;
+ * `null` si el método no exige ninguno.
+ */
+function describeRequiredDetails(method: PaymentMethod) {
+  const names = [
+    needsBank(method) ? "banco" : null,
+    needsPhone(method) ? "teléfono" : null,
+    needsReference(method) ? "referencia" : null,
+  ].filter((name): name is string => name != null);
+
+  if (names.length === 0) {
+    return null;
+  }
+
+  const list =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}`;
+
+  return `Al cobrar ${names.length === 1 ? "se pide" : "se piden"} ${list}.`;
+}
+
 function createInitialLines(
   initialCheckout: PosCheckout | null | undefined,
   firstMethod: PaymentMethod | null,
@@ -100,11 +147,7 @@ function createInitialLines(
     return [];
   }
 
-  // El efectivo arranca vacio para que el cajero cuente los billetes; los
-  // metodos bancarios se prellenan con el total, que si se cobra exacto.
-  return isCashPaymentMethod(firstMethod)
-    ? [createEmptyMixedPaymentLine(firstMethod)]
-    : createCheckoutForMethod(firstMethod, totalRef, rateVes).lines;
+  return createLinesForMethod(firstMethod, totalRef, rateVes);
 }
 
 function createInitialChangeDraft(
@@ -176,6 +219,45 @@ export function PosCheckoutModal({
     createInitialChangeDraft(initialCheckout),
   );
   const [hasSubmitted, setHasSubmitted] = useState(false);
+  // Modo compacto (método + monto): solo cabe un pago. Si el cobro guardado ya
+  // trae varios pagos o billetes contados arranca expandido para no esconderlos.
+  const [isExpandedByUser, setIsExpandedByUser] = useState(
+    () => lines.length !== 1 || hasCountedBills(lines[0]),
+  );
+  const [detailsRevealed, setDetailsRevealed] = useState(() =>
+    hasPaymentDetails(lines[0]),
+  );
+  const canCompact = lines.length === 1;
+  const isCompact = canCompact && !isExpandedByUser;
+  const amountInputRef = useRef<HTMLInputElement>(null);
+  const detailsRef = useRef<HTMLDivElement>(null);
+  const focusDetailsOnRevealRef = useRef(false);
+  // En compacto con efectivo el cajero empieza escribiendo lo recibido.
+  const [focusAmountOnOpen] = useState(
+    () => isCompact && isCashPaymentMethod(lines[0].method) && !lines[0].amount,
+  );
+
+  useEffect(() => {
+    if (!open || !focusAmountOnOpen) {
+      return;
+    }
+
+    // Se difiere: el diálogo mueve el foco al montar su contenido.
+    const frame = requestAnimationFrame(() => amountInputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [focusAmountOnOpen, open]);
+
+  useEffect(() => {
+    if (!detailsRevealed || !focusDetailsOnRevealRef.current) {
+      return;
+    }
+
+    focusDetailsOnRevealRef.current = false;
+
+    // Tras el primer «Cobrar» el cajero sigue en el primer dato que falta.
+    const inputs = Array.from(detailsRef.current?.querySelectorAll("input") ?? []);
+    (inputs.find((input) => input.value.trim() === "") ?? inputs[0])?.focus();
+  }, [detailsRevealed]);
 
   const totalVes = getSaleTotalVes(totalRef, rateVes);
   const allocatedRef = getAllocatedRef(lines, rateVes);
@@ -260,7 +342,25 @@ export function PosCheckoutModal({
     setLines((current) => [...current, createEmptyMixedPaymentLine(method)]);
   }
 
+  function changeSingleMethod(method: PaymentMethod) {
+    setChangeDraft(null);
+    setDetailsRevealed(false);
+    setLines(createLinesForMethod(method, totalRef, rateVes));
+  }
+
   function handleConfirm() {
+    // En compacto el primer «Cobrar» de un método con datos obligatorios solo
+    // los pide: todavía no es un envío, así que no valida ni pinta errores.
+    if (
+      isCompact &&
+      !detailsRevealed &&
+      describeRequiredDetails(lines[0].method) != null
+    ) {
+      focusDetailsOnRevealRef.current = true;
+      setDetailsRevealed(true);
+      return;
+    }
+
     setHasSubmitted(true);
 
     if (!validation.isValid) {
@@ -283,7 +383,11 @@ export function PosCheckoutModal({
   return (
     <Modal
       contentClassName="sm:max-w-2xl"
-      description="Cuenta los billetes que entrega el cliente y declara el vuelto."
+      description={
+        isCompact
+          ? "Elige el método e indica el monto recibido."
+          : "Cuenta los billetes que entrega el cliente y declara el vuelto."
+      }
       footer={({ close }) => (
         <FormActions
           onCancel={close}
@@ -313,31 +417,51 @@ export function PosCheckoutModal({
           </div>
         </div>
 
-        <section className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-              Recibido
-            </h3>
-            {lines.length < maxLines ? (
-              <div className="flex flex-wrap gap-1.5">
-                {availableMethods.map((method) => (
-                  <button
-                    className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-border bg-surface-container-lowest px-3 py-1 text-xs font-medium text-foreground hover:bg-surface-container-low dark:border-slate-700"
-                    key={method}
-                    onClick={() => addLine(method)}
-                    type="button"
-                  >
-                    <Plus aria-hidden className="size-3.5" />
-                    {paymentMethodLabels[method]}
-                  </button>
-                ))}
-              </div>
-            ) : null}
+        {canCompact ? (
+          <div className="flex justify-end">
+            <Button
+              aria-expanded={!isCompact}
+              onClick={() => setIsExpandedByUser((current) => !current)}
+              size="sm"
+              variant="ghost"
+            >
+              {isCompact ? (
+                <ChevronDown aria-hidden className="size-4" />
+              ) : (
+                <ChevronUp aria-hidden className="size-4" />
+              )}
+              {isCompact ? "Expandir" : "Compactar"}
+            </Button>
           </div>
+        ) : null}
+
+        <section className="space-y-3">
+          {isCompact ? null : (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Recibido
+              </h3>
+              {lines.length < maxLines ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {availableMethods.map((method) => (
+                    <button
+                      className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-border bg-surface-container-lowest px-3 py-1 text-xs font-medium text-foreground hover:bg-surface-container-low dark:border-slate-700"
+                      key={method}
+                      onClick={() => addLine(method)}
+                      type="button"
+                    >
+                      <Plus aria-hidden className="size-3.5" />
+                      {paymentMethodLabels[method]}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
 
           {lines.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground dark:border-slate-700">
-              Agrega un metodo de pago para empezar el cobro.
+              Agrega un método de pago para empezar el cobro.
             </p>
           ) : null}
 
@@ -352,50 +476,81 @@ export function PosCheckoutModal({
               rateVes,
             );
             const quickTenders = isCash ? suggestQuickTenders(targetAmount, bills) : [];
+            const isExactlyCovered =
+              remainingVes <= MIXED_PAYMENT_TOLERANCE_VES && !hasOverage;
+            const showDetails = !isCompact || detailsRevealed;
+            const requiredDetails = showDetails
+              ? null
+              : describeRequiredDetails(line.method);
 
             return (
               <div
-                className="space-y-3 rounded-xl border border-border p-3 dark:border-slate-700"
+                className={cn(
+                  "space-y-3",
+                  !isCompact && "rounded-xl border border-border p-3 dark:border-slate-700",
+                )}
                 key={line.id}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium text-foreground">
-                    {paymentMethodLabels[line.method]}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-foreground">
-                      {formatMethodAmount(line.method, line.amount)}
-                    </span>
-                    {lines.length > 1 ? (
-                      <button
-                        aria-label={`Quitar ${paymentMethodLabels[line.method]}`}
-                        className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-surface-container hover:text-destructive"
-                        onClick={() => removeLine(line.id)}
-                        type="button"
-                      >
-                        <X aria-hidden className="size-4" />
-                      </button>
-                    ) : null}
+                {isCompact ? (
+                  <SelectField
+                    label="Método de pago"
+                    onChange={(event) => {
+                      const method = enabled.find(
+                        (option) => option === event.target.value,
+                      );
+
+                      if (method) {
+                        changeSingleMethod(method);
+                      }
+                    }}
+                    options={enabled.map((method) => ({
+                      label: paymentMethodLabels[method],
+                      value: method,
+                    }))}
+                    value={line.method}
+                  />
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-foreground">
+                      {paymentMethodLabels[line.method]}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-foreground">
+                        {formatMethodAmount(line.method, line.amount)}
+                      </span>
+                      {lines.length > 1 ? (
+                        <button
+                          aria-label={`Quitar ${paymentMethodLabels[line.method]}`}
+                          className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-surface-container hover:text-destructive"
+                          onClick={() => removeLine(line.id)}
+                          type="button"
+                        >
+                          <X aria-hidden className="size-4" />
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {isCash ? (
                   <>
-                    <PosBillPad
-                      autoFocus={index === 0}
-                      counts={line.denominations ?? {}}
-                      currency={currency}
-                      onChange={(counts) =>
-                        updateLine(line.id, {
-                          amount: sumDenominations(counts, bills),
-                          denominations: counts,
-                        })
-                      }
-                    />
+                    {!isCompact || hasOverage ? (
+                      <PosBillPad
+                        autoFocus={index === 0 && !isCompact && !focusAmountOnOpen}
+                        counts={line.denominations ?? {}}
+                        currency={currency}
+                        onChange={(counts) =>
+                          updateLine(line.id, {
+                            amount: sumDenominations(counts, bills),
+                            denominations: counts,
+                          })
+                        }
+                      />
+                    ) : null}
 
                     {quickTenders.length > 0 ? (
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs text-muted-foreground">Rapidos</span>
+                        <span className="text-xs text-muted-foreground">Rápidos</span>
                         {quickTenders.map((tender) => (
                           <button
                             className="cursor-pointer rounded-full border border-primary/40 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
@@ -420,7 +575,9 @@ export function PosCheckoutModal({
                   decimals={2}
                   helperText={
                     isCash
-                      ? "Escribe el monto si prefieres no contar billetes."
+                      ? isCompact
+                        ? `Restante: ${formatMethodAmount(line.method, targetAmount)}`
+                        : "Escribe el monto si prefieres no contar billetes."
                       : `Restante: ${formatVes(lineRemainingVes)}`
                   }
                   label="Monto"
@@ -430,64 +587,75 @@ export function PosCheckoutModal({
                       denominations: null,
                     })
                   }
+                  ref={index === 0 ? amountInputRef : undefined}
                   trailing={
-                    <button
-                      aria-label="Completar restante"
-                      className="inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
-                      disabled={
-                        rateVes <= 0 || lineRemainingVes <= MIXED_PAYMENT_TOLERANCE_VES
-                      }
-                      onClick={() =>
-                        updateLine(line.id, {
-                          amount: targetAmount,
-                          denominations: null,
-                        })
-                      }
-                      title="Completar restante"
-                      type="button"
-                    >
-                      <Calculator aria-hidden className="size-4" />
-                    </button>
+                    isCompact && isExactlyCovered ? undefined : (
+                      <button
+                        aria-label="Completar restante"
+                        className="inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={
+                          rateVes <= 0 || lineRemainingVes <= MIXED_PAYMENT_TOLERANCE_VES
+                        }
+                        onClick={() =>
+                          updateLine(line.id, {
+                            amount: targetAmount,
+                            denominations: null,
+                          })
+                        }
+                        title="Completar restante"
+                        type="button"
+                      >
+                        <Calculator aria-hidden className="size-4" />
+                      </button>
+                    )
                   }
                   value={line.amount || ""}
                 />
 
-                {needsBank(line.method) ? (
-                  <VenezuelanBankField
-                    onChange={(bankName) => updateLine(line.id, { bankName })}
-                    value={line.bankName ?? ""}
-                  />
+                {requiredDetails ? (
+                  <p className="text-xs text-muted-foreground">{requiredDetails}</p>
                 ) : null}
 
-                {needsPhone(line.method) || needsReference(line.method) ? (
-                  <div
-                    className={cn(
-                      "grid gap-3",
-                      needsPhone(line.method) && needsReference(line.method)
-                        ? "sm:grid-cols-2"
-                        : "grid-cols-1",
-                    )}
-                  >
-                    {needsPhone(line.method) ? (
-                      <VenezuelanPhoneField
-                        onChange={(phone) => updateLine(line.id, { phone })}
-                        value={line.phone ?? ""}
+                {showDetails && describeRequiredDetails(line.method) != null ? (
+                  <div className="space-y-3" ref={isCompact ? detailsRef : undefined}>
+                    {needsBank(line.method) ? (
+                      <VenezuelanBankField
+                        onChange={(bankName) => updateLine(line.id, { bankName })}
+                        value={line.bankName ?? ""}
                       />
                     ) : null}
 
-                    {needsReference(line.method) ? (
-                      <Input
-                        helperText={
-                          line.method === "pago_movil"
-                            ? "Ultimos 4 digitos de la referencia."
-                            : undefined
-                        }
-                        label="Referencia"
-                        onChange={(event) =>
-                          updateLine(line.id, { referenceCode: event.target.value })
-                        }
-                        value={line.referenceCode ?? ""}
-                      />
+                    {needsPhone(line.method) || needsReference(line.method) ? (
+                      <div
+                        className={cn(
+                          "grid gap-3",
+                          needsPhone(line.method) && needsReference(line.method)
+                            ? "sm:grid-cols-2"
+                            : "grid-cols-1",
+                        )}
+                      >
+                        {needsPhone(line.method) ? (
+                          <VenezuelanPhoneField
+                            onChange={(phone) => updateLine(line.id, { phone })}
+                            value={line.phone ?? ""}
+                          />
+                        ) : null}
+
+                        {needsReference(line.method) ? (
+                          <Input
+                            helperText={
+                              line.method === "pago_movil"
+                                ? "Últimos 4 dígitos de la referencia."
+                                : undefined
+                            }
+                            label="Referencia"
+                            onChange={(event) =>
+                              updateLine(line.id, { referenceCode: event.target.value })
+                            }
+                            value={line.referenceCode ?? ""}
+                          />
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 ) : null}
@@ -496,39 +664,41 @@ export function PosCheckoutModal({
           })}
         </section>
 
-        <dl className="space-y-1 rounded-lg border border-border bg-surface-container-low px-3 py-2 text-sm dark:border-slate-700">
-          <div className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">Recibido</dt>
-            <dd className="font-medium text-foreground">
-              {formatRef(allocatedRef)}
-              {rateVes > 0 ? ` · ${formatVes(allocatedVes)}` : ""}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">Falta</dt>
-            <dd
-              className={cn(
-                "font-medium",
-                remainingVes > MIXED_PAYMENT_TOLERANCE_VES
-                  ? "text-destructive"
-                  : "text-foreground",
-              )}
-            >
-              {remainingVes > MIXED_PAYMENT_TOLERANCE_VES ? formatVes(remainingVes) : "—"}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="font-semibold text-foreground">Vuelto</dt>
-            <dd className="text-right font-semibold text-foreground">
-              {hasOverage ? formatVes(overageVes) : "—"}
-              {hasOverage && rateVes > 0 ? (
-                <span className="ml-1 text-xs font-normal text-muted-foreground">
-                  ({formatRef(overageVes / rateVes)})
-                </span>
-              ) : null}
-            </dd>
-          </div>
-        </dl>
+        {isCompact && !hasOverage ? null : (
+          <dl className="space-y-1 rounded-lg border border-border bg-surface-container-low px-3 py-2 text-sm dark:border-slate-700">
+            <div className="flex justify-between gap-3">
+              <dt className="text-muted-foreground">Recibido</dt>
+              <dd className="font-medium text-foreground">
+                {formatRef(allocatedRef)}
+                {rateVes > 0 ? ` · ${formatVes(allocatedVes)}` : ""}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-muted-foreground">Falta</dt>
+              <dd
+                className={cn(
+                  "font-medium",
+                  remainingVes > MIXED_PAYMENT_TOLERANCE_VES
+                    ? "text-destructive"
+                    : "text-foreground",
+                )}
+              >
+                {remainingVes > MIXED_PAYMENT_TOLERANCE_VES ? formatVes(remainingVes) : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="font-semibold text-foreground">Vuelto</dt>
+              <dd className="text-right font-semibold text-foreground">
+                {hasOverage ? formatVes(overageVes) : "—"}
+                {hasOverage && rateVes > 0 ? (
+                  <span className="ml-1 text-xs font-normal text-muted-foreground">
+                    ({formatRef(overageVes / rateVes)})
+                  </span>
+                ) : null}
+              </dd>
+            </div>
+          </dl>
+        )}
 
         {hasOverage && effectiveChangeMethod ? (
           <fieldset className="space-y-3 rounded-xl border border-border p-3 dark:border-slate-700">
@@ -575,7 +745,7 @@ export function PosCheckoutModal({
                   </p>
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    El vuelto es menor al billete mas chico: cambia el metodo o el
+                    El vuelto es menor al billete más chico: cambia el método o el
                     recibido.
                   </p>
                 )}
@@ -597,7 +767,7 @@ export function PosCheckoutModal({
             ) : (
               <NumberInput
                 decimals={2}
-                helperText="Se descuenta del baul en la cuenta de la tienda."
+                helperText="Se descuenta del baúl en la cuenta de la tienda."
                 label="Vuelto entregado"
                 onChange={(event) =>
                   setChangeDraft({
