@@ -18,6 +18,8 @@ import {
   phase12Exceptions,
   phase13Prices,
   phase15Users,
+  phase4Products,
+  phase6SupplierProducts,
   phase8Purchases,
   phase9PurchasePayments,
 } from "./phases";
@@ -229,6 +231,47 @@ describe("e2e-bodegon: contrato de las peticiones", () => {
     expect(discounted[0]?.role).toBe("vendedor");
     const notes = calls.filter((call) => call.method === "PATCH" && /^\/api\/sales\/[^/]+$/.test(call.path));
     expect(notes.map((call) => call.role)).toEqual(["vendedor"]);
+  });
+
+  it("fase 6: el duplicado (409) repite un vínculo que sigue activo, no el que la fase desactivó", async () => {
+    const { client, calls } = fakeClient();
+    await phase6SupplierProducts(client, manifest());
+
+    const creates = posts(calls, "/api/supplier-products");
+    const deactivated = calls.find((call) => call.path.endsWith("/deactivate"))?.path.split("/")[3];
+    // Las altas reciben ids correlativos: el vínculo desactivado es el de la primera.
+    expect(deactivated).toBe("id-1");
+    const duplicate = creates.find((call) => call.body?.supplierSku === "SNK-DUP")?.body;
+    expect(duplicate).toBeDefined();
+    const original = creates.findIndex(
+      (call) => call.body?.productId === duplicate?.productId && call.body?.supplierId === duplicate?.supplierId,
+    );
+    // Recrear un vínculo inactivo lo reactiva (201); el 409 solo vale para uno activo.
+    expect(original).toBeGreaterThan(0);
+  });
+
+  it("fases 10, 11 y 13: ninguna venta va por debajo del precio de lista que dejó la fase 4 (C19)", async () => {
+    const { client, calls } = fakeClient();
+    const m = manifest();
+    await phase4Products(client, m);
+    const repriced = new Map<string, number>();
+    for (const call of calls) {
+      const id = /^\/api\/products\/([^/]+)$/.exec(call.path)?.[1];
+      if (call.method === "PATCH" && id && typeof call.body?.salePriceRef === "number") repriced.set(id, call.body.salePriceRef);
+    }
+    expect(repriced.size).toBeGreaterThan(0);
+
+    calls.length = 0;
+    await phase10Sales(client, m);
+    await phase11SalePayments(client, m);
+    await phase13Prices(client, m);
+
+    const sold = posts(calls, "/api/sales").flatMap((call) => (call.body?.items as Body[]) ?? []);
+    const checked = sold.filter((item) => repriced.has(String(item.productId)) && item.unitPriceRef !== undefined);
+    expect(checked.length).toBeGreaterThan(1);
+    for (const item of checked) {
+      expect(Number(item.unitPriceRef)).toBeGreaterThanOrEqual(repriced.get(String(item.productId)) ?? 0);
+    }
   });
 
   it("fase 11: los dos abonos de una venta suman su total al céntimo y los dólares no pasan del total", async () => {

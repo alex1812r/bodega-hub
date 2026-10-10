@@ -22,6 +22,18 @@ import { buildPurchaseBody, splitAmount, type PurchaseLineSeed, type RateContext
 type SaleLike = { id: string; totalRef?: number; totalVes?: number; status?: string };
 type PurchaseLike = { id: string; totalRef?: number; totalVes?: number; status?: string };
 
+/** Precio de lista del arroz tras el PATCH de la fase 4 (sale de catálogo a 1,80). */
+const ARROZ_REPRICED_REF = 1.9;
+
+/**
+ * Precio de lista vigente al vender: el de catálogo salvo el arroz, que la fase 4
+ * sube. Un vendedor no puede vender por debajo de él (regla C19 → 400).
+ */
+function listPriceRef(key: string): number {
+  if (key === "arroz") return ARROZ_REPRICED_REF;
+  return PRODUCTS.find((product) => product.key === key)!.salePriceRef;
+}
+
 function recordId(obj: unknown): string {
   const id = unwrapId(obj);
   if (!id) throw new Error("Missing id in API response");
@@ -185,7 +197,7 @@ export async function phase4Products(client: ApiClient, manifest: E2eManifest) {
     await client.step("4", "PATCH /api/products/[id]", () =>
       client.request(`/api/products/${arrozId}`, {
         method: "PATCH",
-        body: JSON.stringify({ minStock: 25, salePriceRef: 1.9 }),
+        body: JSON.stringify({ minStock: 25, salePriceRef: ARROZ_REPRICED_REF }),
       }),
     );
   }
@@ -352,9 +364,29 @@ export async function phase6SupplierProducts(client: ApiClient, manifest: E2eMan
     );
   }
 
-  const firstLink = SUPPLIER_PRODUCT_LINKS[0];
-  const duplicateProductId = manifest.productIds[firstLink.productKey];
-  const duplicateSupplierId = manifest.contactIds[firstLink.supplierKey];
+  // El vínculo [0] quedó desactivado arriba: recrearlo lo reactiva (201). El 409
+  // solo lo da repetir uno que sigue activo.
+  const inactiveLink = SUPPLIER_PRODUCT_LINKS[0];
+  const inactiveProductId = manifest.productIds[inactiveLink.productKey];
+  const inactiveSupplierId = manifest.contactIds[inactiveLink.supplierKey];
+  if (spId && inactiveProductId && inactiveSupplierId) {
+    await client.step("6", "POST supplier-product desactivado lo reactiva (201)", () =>
+      client.request("/api/supplier-products", {
+        method: "POST",
+        body: JSON.stringify({
+          productId: inactiveProductId,
+          supplierId: inactiveSupplierId,
+          supplierSku: inactiveLink.supplierSku,
+          lastCostRef: inactiveLink.lastCostRef,
+        }),
+      }),
+      { expectStatus: [201] },
+    );
+  }
+
+  const activeLink = SUPPLIER_PRODUCT_LINKS[1];
+  const duplicateProductId = manifest.productIds[activeLink.productKey];
+  const duplicateSupplierId = manifest.contactIds[activeLink.supplierKey];
   if (duplicateProductId && duplicateSupplierId) {
     await client.step("6", "POST supplier-product duplicado (409)", () =>
       client.request("/api/supplier-products", {
@@ -860,8 +892,7 @@ export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
   const itemsSnack = ["oreo", "coca", "chicle"]
     .map((key) => {
       const productId = manifest.productIds[key];
-      const p = PRODUCTS.find((x) => x.key === key)!;
-      return productId ? { productId, quantity: 3, unitPriceRef: p.salePriceRef } : null;
+      return productId ? { productId, quantity: 3, unitPriceRef: listPriceRef(key) } : null;
     })
     .filter(Boolean);
 
@@ -888,8 +919,7 @@ export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
   const itemsDespensa = ["arroz", "aceite"]
     .map((key) => {
       const productId = manifest.productIds[key];
-      const p = PRODUCTS.find((x) => x.key === key)!;
-      return productId ? { productId, quantity: 2, unitPriceRef: p.salePriceRef } : null;
+      return productId ? { productId, quantity: 2, unitPriceRef: listPriceRef(key) } : null;
     })
     .filter(Boolean);
 
@@ -917,7 +947,7 @@ export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
         body: JSON.stringify({
           clientRequestId: randomUUID(),
           customerId: mariaId,
-          items: [{ productId: arrozId, quantity: 999999, unitPriceRef: 1.8 }],
+          items: [{ productId: arrozId, quantity: 999999, unitPriceRef: ARROZ_REPRICED_REF }],
           exchangeRateId,
           refRateVes,
         }),
@@ -992,8 +1022,7 @@ export async function phase11SalePayments(client: ApiClient, manifest: E2eManife
     const items = productKeys
       .map((pk) => {
         const productId = manifest.productIds[pk];
-        const p = PRODUCTS.find((x) => x.key === pk)!;
-        return productId ? { productId, quantity: 2, unitPriceRef: p.salePriceRef } : null;
+        return productId ? { productId, quantity: 2, unitPriceRef: listPriceRef(pk) } : null;
       })
       .filter(Boolean);
     if (!customerId || !items.length) return;
@@ -1224,7 +1253,7 @@ export async function phase13Prices(client: ApiClient, manifest: E2eManifest) {
         body: JSON.stringify({
           clientRequestId: randomUUID(),
           customerId: manifest.contactIds.cli_roberto,
-          items: [{ productId: arrozId, quantity: 1, unitPriceRef: 1.9 }],
+          items: [{ productId: arrozId, quantity: 1, unitPriceRef: ARROZ_REPRICED_REF }],
           ...rate,
         }),
       }),
