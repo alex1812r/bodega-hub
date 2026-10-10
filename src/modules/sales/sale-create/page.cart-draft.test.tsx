@@ -1118,11 +1118,14 @@ const BASELINE_LOAD_REQUESTS = [
   "GET /api/settings/payment-methods",
 ];
 // El POST y los refrescos de catálogo que ya disparaba una venta registrada, en ese orden.
+// POS-F6 añade, DESPUÉS del POST y en segundo plano, el saldo del cajón: con él se valida
+// el vuelto en efectivo del siguiente cobro (antes quedaba el de la carga de la página).
 const BASELINE_CHARGE_REQUESTS = [
   "POST /api/sales",
   "GET /api/categories",
   "GET /api/products",
   "GET /api/contacts",
+  "GET /api/cash/session",
 ];
 
 describe("El camino de cobro no cambia", () => {

@@ -14,13 +14,17 @@ import {
   type ReportDefinition,
   type ReportId,
 } from "../config/reportCatalog";
+import { REPORTS_CATALOG_OPEN_KEY, useSessionSectionOpen } from "../hooks/useSessionSectionOpen";
 
 /** Por debajo de `lg` el catálogo se cierra al elegir, para dejar el resultado a la vista. */
 const COMPACT_CATALOG_QUERY = "(max-width: 1023px)";
 
 type ReportsCatalogProps = {
   activeReportId: ReportId;
-  /** Catálogo abierto al montar. Por defecto cerrado: la cabecera ya dice qué reporte se ve. */
+  /**
+   * Catálogo abierto al entrar. Por defecto cerrado: la cabecera ya dice qué reporte se ve.
+   * Abierto o plegado se recuerda durante la sesión: al volver de un detalle está como se dejó.
+   */
   defaultOpen?: boolean;
   onSelect: (id: ReportId) => void;
   reports: readonly ReportDefinition[];
@@ -42,7 +46,7 @@ export function ReportsCatalog({
   reports,
 }: ReportsCatalogProps) {
   const headingId = useId();
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const [isOpen, setIsOpen] = useSessionSectionOpen(REPORTS_CATALOG_OPEN_KEY, defaultOpen);
   const [search, setSearch] = useState("");
   const activeReport = reports.find((report) => report.id === activeReportId) ?? getReportById(activeReportId);
   const groups = groupReports(searchReports(reports, search));

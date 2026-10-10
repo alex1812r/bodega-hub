@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
-import { useMyCashSession } from "@/modules/cash/hooks/useCash";
+import { cashKeys, useMyCashSession } from "@/modules/cash/hooks/useCash";
 import { useContacts } from "@/modules/contacts/hooks/useContacts";
 import { useProductBarcodeScan } from "@/modules/products/hooks/useProductBarcodeScan";
 import { useAllCategories, useAllProducts } from "@/modules/products/hooks/useProducts";
@@ -499,6 +499,15 @@ function SaleCreatePosWorkspace() {
     });
   }
 
+  /**
+   * Una venta registrada cambia el efectivo del cajón, que es contra lo que se valida el
+   * vuelto del siguiente cobro. Se vuelve a pedir en segundo plano y solo DESPUÉS de que
+   * el servidor confirma la venta: nada se añade antes del `POST /api/sales`.
+   */
+  function refreshCashDrawer() {
+    void queryClient.invalidateQueries({ queryKey: cashKeys.session });
+  }
+
   function showUnresolvedAttempt() {
     setFormError(UNRESOLVED_SALE_MESSAGE);
     setNeedsVerification(true);
@@ -517,6 +526,7 @@ function SaleCreatePosWorkspace() {
 
     // La respuesta perdida no paso por `onSuccess` de la mutacion.
     invalidateAfterSaleRegistered(queryClient);
+    refreshCashDrawer();
 
     if (isThisCart) {
       completeSale(sale, content.payments.length > 0);
@@ -839,6 +849,7 @@ function SaleCreatePosWorkspace() {
         }
       }
 
+      refreshCashDrawer();
       completeSale(sale, content.payments.length > 0);
     } finally {
       submitLockRef.current = false;

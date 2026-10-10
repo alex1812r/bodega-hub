@@ -50,6 +50,8 @@ let mockDailySales: MockQuery | "throw" = mockPending;
 let mockTopProducts: MockQuery = mockEmpty;
 let mockStockAdjustments: MockQuery = mockPending;
 let mockDeniedPermissions: Permission[] = [];
+/** Viewport de la prueba: en móvil (390 px) coinciden las consultas `max-width`. */
+let mockIsMobile = false;
 
 jest.mock("../../dashboard/utils/businessDate", () => ({
   getBusinessTodayIsoDate: () => "2026-10-09",
@@ -140,6 +142,8 @@ function renderPage(url: string) {
   window.history.replaceState(null, "", url);
 
   const applied: number[] = [];
+  /** Secciones desplegadas en el instante de cada restauración: de ellas sale el alto. */
+  const openSectionsWhenApplied: string[][] = [];
   let top = 0;
 
   Object.defineProperty(Element.prototype, "scrollTop", {
@@ -148,6 +152,7 @@ function renderPage(url: string) {
     set: (next: number) => {
       top = next;
       applied.push(next);
+      openSectionsWhenApplied.push(openSections());
     },
   });
 
@@ -156,6 +161,7 @@ function renderPage(url: string) {
 
   return {
     applied,
+    openSectionsWhenApplied,
     /** Vuelve a pintar con el estado actual de las consultas, como al llegar la respuesta. */
     repaint: () => view.rerender(<Screen />),
     /** Scroll del usuario: no pasa por la restauración. */
@@ -165,6 +171,24 @@ function renderPage(url: string) {
     },
     view,
   };
+}
+
+function catalogToggle() {
+  return screen.getByRole("button", { name: /^Reporte: / });
+}
+
+function tableToggle() {
+  return screen.getByRole("button", { name: /^Tabla de datos/ });
+}
+
+/** Secciones plegables de la pantalla que están desplegadas ahora mismo. */
+function openSections() {
+  return [
+    ["catálogo", screen.queryByRole("button", { name: /^Reporte: / })] as const,
+    ["tabla", screen.queryByRole("button", { name: /^Tabla de datos/ })] as const,
+  ]
+    .filter(([, toggle]) => toggle?.getAttribute("aria-expanded") === "true")
+    .map(([name]) => name);
 }
 
 async function selectReport(user: ReturnType<typeof userEvent.setup>, name: RegExp) {
@@ -185,6 +209,8 @@ describe("ReportsListPage · scroll al volver de un detalle (POS-H7)", () => {
 
   beforeEach(() => {
     window.sessionStorage.clear();
+    window.localStorage.clear();
+    mockIsMobile = false;
     mockDailySales = mockPending;
     mockTopProducts = mockEmpty;
     mockStockAdjustments = mockPending;
@@ -196,7 +222,7 @@ describe("ReportsListPage · scroll al volver de un detalle (POS-H7)", () => {
         addEventListener: () => undefined,
         addListener: () => undefined,
         dispatchEvent: () => false,
-        matches: !query.includes("max-width"),
+        matches: query.includes("max-width") === mockIsMobile,
         media: query,
         onchange: null,
         removeEventListener: () => undefined,
@@ -370,5 +396,121 @@ describe("ReportsListPage · scroll al volver de un detalle (POS-H7)", () => {
     back.repaint();
 
     expect(back.applied).toEqual([725]);
+  });
+
+  // POS-F6 (F2 de qa-final): lo plegado y desplegado decide el alto de la página. Si al
+  // volver no está como se dejó, la posición guardada cae en otro sitio o no existe.
+  describe("las secciones plegables vuelven como se dejaron (POS-F6)", () => {
+    it("móvil: «Tabla de datos» nace plegada; desplegada, vuelve desplegada y se restaura sobre ella", async () => {
+      const user = userEvent.setup();
+
+      mockIsMobile = true;
+      mockDailySales = mockWithRows;
+
+      const list = renderPage(DAILY_SALES_URL);
+
+      expect(tableToggle()).toHaveAttribute("aria-expanded", "false");
+
+      await user.click(tableToggle());
+      list.scrollTo(1772);
+      list.view.unmount();
+
+      // «Volver» del detalle: la consulta vuelve a cargar.
+      mockDailySales = mockPending;
+
+      const back = renderPage(DAILY_SALES_URL);
+
+      mockDailySales = mockWithRows;
+      back.repaint();
+
+      expect(tableToggle()).toHaveAttribute("aria-expanded", "true");
+      expect(back.applied).toEqual([1772]);
+      expect(back.openSectionsWhenApplied).toEqual([["tabla"]]);
+    });
+
+    it("escritorio: «Tabla de datos» plegada a mano vuelve plegada", async () => {
+      const user = userEvent.setup();
+
+      mockDailySales = mockWithRows;
+
+      const list = renderPage(DAILY_SALES_URL);
+
+      expect(tableToggle()).toHaveAttribute("aria-expanded", "true");
+
+      await user.click(tableToggle());
+      list.scrollTo(240);
+      list.view.unmount();
+
+      const back = renderPage(DAILY_SALES_URL);
+
+      expect(tableToggle()).toHaveAttribute("aria-expanded", "false");
+      expect(back.applied).toEqual([240]);
+      expect(back.openSectionsWhenApplied).toEqual([[]]);
+    });
+
+    it("escritorio: tras cambiar de reporte por el catálogo, el catálogo vuelve desplegado y se restaura sobre él", async () => {
+      const user = userEvent.setup();
+
+      mockDailySales = mockWithRows;
+
+      const list = renderPage(DAILY_SALES_URL);
+
+      expect(catalogToggle()).toHaveAttribute("aria-expanded", "false");
+
+      await selectReport(user, /Top productos/);
+
+      expect(currentUrl()).toBe(TOP_PRODUCTS_URL);
+      expect(catalogToggle()).toHaveAttribute("aria-expanded", "true");
+
+      list.scrollTo(2134);
+      list.view.unmount();
+
+      const back = renderPage(TOP_PRODUCTS_URL);
+
+      expect(catalogToggle()).toHaveAttribute("aria-expanded", "true");
+      expect(back.applied).toEqual([2134]);
+      expect(back.openSectionsWhenApplied).toEqual([["catálogo", "tabla"]]);
+    });
+
+    it("móvil: elegir un reporte pliega el catálogo y así vuelve", async () => {
+      const user = userEvent.setup();
+
+      mockIsMobile = true;
+      mockDailySales = mockWithRows;
+
+      const list = renderPage(DAILY_SALES_URL);
+
+      await selectReport(user, /Top productos/);
+
+      expect(catalogToggle()).toHaveAttribute("aria-expanded", "false");
+
+      list.scrollTo(300);
+      list.view.unmount();
+
+      const back = renderPage(TOP_PRODUCTS_URL);
+
+      expect(catalogToggle()).toHaveAttribute("aria-expanded", "false");
+      expect(back.applied).toEqual([300]);
+    });
+
+    it("sin almacenamiento de sesión las secciones siguen plegándose y desplegándose", async () => {
+      const user = userEvent.setup();
+
+      jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new Error("almacenamiento bloqueado");
+      });
+      jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new Error("almacenamiento bloqueado");
+      });
+      mockDailySales = mockWithRows;
+
+      renderPage(DAILY_SALES_URL);
+
+      await user.click(tableToggle());
+      expect(tableToggle()).toHaveAttribute("aria-expanded", "false");
+
+      await user.click(catalogToggle());
+      expect(catalogToggle()).toHaveAttribute("aria-expanded", "true");
+    });
   });
 });

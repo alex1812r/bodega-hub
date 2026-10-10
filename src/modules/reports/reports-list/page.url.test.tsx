@@ -237,6 +237,8 @@ describe("ReportsListPage · REP-03", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // Cada prueba es una sesión nueva: el catálogo y la tabla abren en su estado por defecto.
+    window.sessionStorage.clear();
     for (const key of Object.keys(mockTotals)) {
       delete mockTotals[key];
     }
