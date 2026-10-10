@@ -376,6 +376,8 @@ export function PurchaseLineNumberCell({
       onValueChange={handleValueChange}
       // Un costo se ve siempre con dos decimales: «30.600» queda en 30.60, no en 30.6 (D26).
       padDecimals={!integer}
+      // En el flujo, el aviso de miles sube la fila de 71 a 113 px y empuja las siguientes (AUD-02).
+      thousandsHintPlacement="floating"
       value={shown}
     />
   );

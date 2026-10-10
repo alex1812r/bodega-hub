@@ -46,6 +46,17 @@ export type NumberInputProps = Omit<
   ref?: Ref<HTMLInputElement>;
   /** Solo se usa junto con `allowArrowStep`. */
   step?: NumericLimit;
+  /**
+   * Aviso no bloqueante cuando lo escrito parece llevar un punto de miles
+   * (`30.600`, `1.250`): el campo lo lee como 30,60 y lo dice bajo el campo.
+   * Activado por defecto; `false` lo quita. No aparece en campos enteros.
+   */
+  thousandsHint?: boolean;
+  /**
+   * `floating`: el aviso se ancla al campo sin mover lo que lo rodea (celdas de
+   * tabla) y solo se ve con el foco o el puntero en el campo.
+   */
+  thousandsHintPlacement?: "floating" | "inline";
   /** Modo controlado: número, texto con punto o coma, o `null` para vacío. */
   value?: NumberInputValue;
 };
@@ -63,12 +74,22 @@ type NormalizeOptions = TextOptions & {
 
 type TypedSeparator = "," | ".";
 
+/** Quién escribe en el campo cuando no es el usuario tecla a tecla. */
+type WriteMode = "format" | "paste" | "step";
+
+/** Texto que parecía llevar punto de miles y el valor que tenía el campo al detectarlo. */
+type ThousandsHint = { thousands: string; typed: string; value: number | null };
+
 /** Una tecla anunciada por `beforeinput`: el carácter y la selección que va a sustituir. */
 type TypedKey = { char: string; end: number; start: number };
 
 const DIGIT = /\d/;
 const SEPARATOR = /[.,]/g;
 const INTEGER_REQUIRED_MESSAGE = "Debe ser un número entero.";
+// Un punto y exactamente tres dígitos detrás de un grupo de 1 a 3 que no empieza
+// por cero: así se escriben los miles en Venezuela ("30.600", "1.250"). "0.600" y
+// "1234.567" no pueden ser miles.
+const THOUSANDS_LOOKALIKE = /^-?[1-9]\d{0,2}\.\d{3}$/;
 // Con más dígitos el número deja de ser exacto y acaba saliendo como 1e+21 o Infinity.
 const MAX_DIGITS = 15;
 
@@ -118,6 +139,15 @@ export function getNumberInputError(text: string, { decimals }: Pick<TextOptions
   return decimals === 0 && parseNumberInput(text) !== null && !isIntegerText(text)
     ? INTEGER_REQUIRED_MESSAGE
     : undefined;
+}
+
+/**
+ * Si el texto del campo (ya con punto) se puede confundir con miles, los dígitos
+ * que tendría leído así ("30.600" → "30600"); si no, `null`. El campo NO lo lee
+ * como miles (un separador es el decimal): solo sirve para avisar.
+ */
+export function readAsThousands(text: string) {
+  return THOUSANDS_LOOKALIKE.test(text) ? text.replace(".", "") : null;
 }
 
 /**
@@ -389,6 +419,17 @@ export function normalizeNumberText(text: string, options: NormalizeOptions = {}
   return `${sign}${integerPart}${fractionPart ? `.${fractionPart}` : ""}`;
 }
 
+/**
+ * Texto del aviso de miles. La primera cifra es el valor con el que se quedará el
+ * campo al salir (redondeado y dentro de min/max), con coma y al menos dos decimales.
+ */
+function thousandsHintMessage(hint: ThousandsHint, text: string, options: NormalizeOptions) {
+  const [integerPart = "0", fractionPart = ""] = normalizeNumberText(text, options).split(".");
+  const reading = `${integerPart},${fractionPart.padEnd(Math.min(options.decimals ?? 2, 2), "0")}`;
+
+  return `Se leerá como ${reading}. Si son ${hint.typed} (miles), escribe ${hint.thousands}.`;
+}
+
 function toLimit(limit: NumericLimit | undefined) {
   return parseNumberInput(limit) ?? undefined;
 }
@@ -435,6 +476,8 @@ export function NumberInput({
   readOnly,
   ref,
   step,
+  thousandsHint = true,
+  thousandsHintPlacement = "inline",
   value,
   ...props
 }: NumberInputProps) {
@@ -445,6 +488,11 @@ export function NumberInput({
   const lastValue = useRef("");
   const isComposing = useRef(false);
   const isWriting = useRef(false);
+  const writeMode = useRef<WriteMode>("format");
+  // El separador decimal actual se escribió como coma: no es un punto de miles dudoso.
+  // A diferencia de `typedSeparator`, se conserva cuando el campo da formato al salir.
+  const commaDecimal = useRef(false);
+  const [hint, setHint] = useState<ThousandsHint | null>(null);
   // Tecla que el navegador anunció para la edición en curso; `null` si el texto llega de otra forma.
   const typedKey = useRef<TypedKey | null>(null);
   // Texto a medio componer (teclado IME): se muestra tal cual hasta que la composición termina.
@@ -479,8 +527,12 @@ export function NumberInput({
   // Se compara con el valor sin formatear: lo tecleado puede llevar decimales de más hasta el blur.
   const valueNumber = typeof value === "number" ? parseNumberInput(value) : parseNumberInput(valueText);
   const displayValue = parseNumberInput(draft) === valueNumber ? draft : valueText;
+  const shownText = isControlled ? displayValue : draft;
   // El aviso del llamador manda sobre el del propio campo.
-  const shownError = error ?? getNumberInputError(isControlled ? displayValue : draft, { decimals });
+  const shownError = error ?? getNumberInputError(shownText, { decimals });
+  // El aviso de miles vale mientras el campo conserve el valor con el que se detectó.
+  const shownHint =
+    hint && !disabled && !readOnly && parseNumberInput(shownText) === hint.value ? hint : null;
 
   const setRefs = useCallback(
     (node: HTMLInputElement | null) => {
@@ -529,11 +581,19 @@ export function NumberInput({
   });
 
   // Lo que escribe el propio campo (formato al salir, pegado, flechas) lleva siempre punto.
-  function writeValue(element: HTMLInputElement, next: string) {
+  function writeValue(element: HTMLInputElement, next: string, mode: WriteMode) {
     typedSeparator.current = ".";
     isWriting.current = true;
+    writeMode.current = mode;
     commitValue(element, next);
     isWriting.current = false;
+  }
+
+  function detectThousandsHint(text: string): ThousandsHint | null {
+    const thousands =
+      thousandsHint && decimals !== 0 && !commaDecimal.current ? readAsThousands(text) : null;
+
+    return thousands === null ? null : { thousands, typed: text, value: parseNumberInput(text) };
   }
 
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
@@ -583,6 +643,30 @@ export function NumberInput({
       element.setSelectionRange(caret, caret);
     }
 
+    if (!isWriting.current) {
+      const insertion = findInsertion(previous, raw);
+
+      // Solo cambia cuando esta edición trae el separador; uno que ya estaba conserva su origen.
+      if (decimalIndex < 0) {
+        commaDecimal.current = false;
+      } else if (decimalIndex >= insertion.start && decimalIndex < insertion.start + insertion.length) {
+        commaDecimal.current = raw[decimalIndex] === ",";
+      }
+
+      setHint(detectThousandsHint(next));
+    } else if (writeMode.current === "paste") {
+      setHint(detectThousandsHint(next));
+    } else if (writeMode.current === "format") {
+      // Dar formato al salir no es cambiar el valor: el aviso sigue, sobre el valor que queda.
+      setHint((current) =>
+        current && parseNumberInput(previous) === current.value
+          ? { ...current, value: parseNumberInput(next) }
+          : null,
+      );
+    } else {
+      setHint(null);
+    }
+
     lastValue.current = next;
     setDraft(next);
     onChange?.(event);
@@ -617,7 +701,7 @@ export function NumberInput({
 
   function handleBlur(event: FocusEvent<HTMLInputElement>) {
     if (!readOnly) {
-      writeValue(event.currentTarget, normalizeNumberText(event.currentTarget.value, options));
+      writeValue(event.currentTarget, normalizeNumberText(event.currentTarget.value, options), "format");
     }
 
     onBlur?.(event);
@@ -651,7 +735,19 @@ export function NumberInput({
     }
     const caret = Math.min(sanitizeNumberText(head, options).length, next.length);
 
-    writeValue(element, next);
+    // Con una coma en lo pegado el decimal no es un punto dudoso ("30,600", "1.234,50").
+    if (!next.includes(".")) {
+      commaDecimal.current = false;
+    } else if (/[.,]/.test(pasted)) {
+      commaDecimal.current = pasted.includes(",");
+    }
+
+    if (element.value === next) {
+      // Pegar el mismo texto no dispara un cambio, pero sí dice con qué separador se escribió.
+      setHint(detectThousandsHint(next));
+    }
+
+    writeValue(element, next, "paste");
     element.setSelectionRange(caret, caret);
   }
 
@@ -660,7 +756,7 @@ export function NumberInput({
 
     // Enter envía el formulario sin pasar por blur: se normaliza antes para no enviar sin redondear.
     if (event.key === "Enter" && !event.defaultPrevented && !readOnly) {
-      writeValue(event.currentTarget, normalizeNumberText(event.currentTarget.value, options));
+      writeValue(event.currentTarget, normalizeNumberText(event.currentTarget.value, options), "format");
       return;
     }
 
@@ -679,7 +775,7 @@ export function NumberInput({
     const stepped = current + (event.key === "ArrowUp" ? stepValue : -stepValue);
     const next = Math.min(Math.max(stepped, options.min ?? -Infinity), options.max ?? Infinity);
 
-    writeValue(element, normalizeNumberText(String(Number(next.toFixed(precision))), options));
+    writeValue(element, normalizeNumberText(String(Number(next.toFixed(precision))), options), "step");
   }
 
   // `Input` reenvía sus props al <input>, `ref` incluido, aunque su tipo no lo declare.
@@ -689,6 +785,8 @@ export function NumberInput({
     error: shownError,
     // Los teclados numéricos del móvil no traen el signo menos.
     inputMode: allowNegative ? ("text" as const) : decimals === 0 ? ("numeric" as const) : ("decimal" as const),
+    notice: shownHint ? thousandsHintMessage(shownHint, shownText, options) : undefined,
+    noticePlacement: thousandsHintPlacement,
     onBlur: handleBlur,
     onChange: handleChange,
     onCompositionEnd: handleCompositionEnd,

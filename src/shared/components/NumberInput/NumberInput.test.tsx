@@ -90,7 +90,8 @@ describe("NumberInput", () => {
     }
 
     function getFormValue() {
-      return screen.getByRole("status").textContent;
+      // El <output> del formulario, no el aviso de miles del campo (también `status`, AUD-02).
+      return screen.getAllByRole("status").find((node) => node.tagName === "OUTPUT")?.textContent;
     }
 
     async function placeCaret(user: ReturnType<typeof userEvent.setup>, position: number) {

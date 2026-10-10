@@ -269,6 +269,55 @@ export const EditedLine: Story = {
 };
 
 /**
+ * AUD-02: «30.600» en un costo se lee como 30,60 (D7). El campo lo avisa con un
+ * aviso anclado a él, que no cambia el alto de la fila ni mueve las demás.
+ */
+export const ThousandsHintOnCost: Story = {
+  name: "Aviso de miles en el costo",
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const body = within(canvasElement.ownerDocument.body);
+    const list = canvas.getByRole("list", { name: "Líneas de la compra" });
+    const cost = canvas.getByLabelText(/^Costo unitario .* de Cable HDMI 2 m$/);
+    const measure = () => ({
+      list: list.getBoundingClientRect().height,
+      rows: within(list)
+        .getAllByRole("listitem")
+        .map((row) => {
+          const rect = row.getBoundingClientRect();
+
+          return [rect.top, rect.height];
+        }),
+    });
+    const before = measure();
+
+    await userEvent.clear(cost);
+    await userEvent.type(cost, "30.600");
+
+    const hint = await body.findByText("Se leerá como 30,60. Si son 30.600 (miles), escribe 30600.");
+
+    await expect(hint).toBeVisible();
+    await expect(hint).toHaveAttribute("role", "status");
+    await expect(measure()).toEqual(before);
+
+    // Pegado bajo el campo y entero dentro de la ventana.
+    const hintRect = hint.getBoundingClientRect();
+    const costRect = cost.getBoundingClientRect();
+
+    await expect(hintRect.top).toBeGreaterThanOrEqual(costRect.bottom);
+    await expect(hintRect.top - costRect.bottom).toBeLessThan(12);
+    await expect(hintRect.left).toBeGreaterThanOrEqual(0);
+    await expect(hintRect.right).toBeLessThanOrEqual(window.innerWidth);
+    await expect(hintRect.bottom).toBeLessThanOrEqual(window.innerHeight);
+
+    // Al salir del campo el costo queda en 30.60 y la fila sigue igual de alta.
+    await userEvent.tab();
+    await expect(cost).toHaveValue("30.60");
+    await expect(measure()).toEqual(before);
+  },
+};
+
+/**
  * Líneas bloqueadas: filas compactas de solo lectura, sin campos. Se desbloquean
  * con el candado o con doble clic; "Bloquear todas" las vuelve a cerrar.
  */

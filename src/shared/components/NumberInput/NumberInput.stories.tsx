@@ -55,6 +55,18 @@ flechas cuenta como el punto que se ve. Lo que muestra el campo y lo que reciben
 \`onChange\`/\`onValueChange\`/\`register\` coinciden en cada pulsación. Con \`decimals={0}\` valen las
 mismas reglas: el separador se conserva y el campo queda inválido.
 
+**Aviso de miles**: un único separador es el decimal, así que \`30.600\` vale 30,60 aunque en Venezuela
+el punto se use para los miles. Cuando lo tecleado o pegado es un punto seguido de exactamente tres
+dígitos tras un grupo de uno a tres (\`30.600\`, \`1.250\`), el campo lo avisa sin bloquear:
+«Se leerá como 30,60. Si son 30.600 (miles), escribe 30600.» (\`role="status"\`, tono de advertencia). No
+cambia el valor ni marca el campo como inválido, sigue a la vista al salir del campo y se va cuando el
+valor cambia. No aparece si el decimal se escribió con coma (\`30,600\`), con otro número de decimales,
+con \`0.600\` o \`1234.567\` (no pueden ser miles), en campos enteros ni en campos deshabilitados o de
+solo lectura. \`thousandsHint={false}\` lo quita (cantidades con tres decimales, por ejemplo).
+\`thousandsHintPlacement="floating"\` lo ancla al campo sin ocupar sitio, para celdas de tabla: entonces
+se ve, como un tooltip, mientras el campo tiene el foco o el puntero encima, y el campo conserva el
+borde de aviso.
+
 \`step\` solo actúa con \`allowArrowStep\`. Sin \`allowNegative\` el campo nunca baja de cero.
 `;
 
@@ -163,6 +175,89 @@ export const WithError: Story = {
   play: async ({ canvas }) => {
     await expect(canvas.getByLabelText(/monto bs/i)).toHaveAttribute("aria-invalid", "true");
   },
+};
+
+/**
+ * AUD-02: «30.600» se lee como 30,60 (un separador es el decimal). El campo lo
+ * avisa sin bloquear; con coma, o con otro número de decimales, no hay aviso.
+ */
+export const ThousandsHint: Story = {
+  args: {
+    decimals: 2,
+    label: "Monto Bs",
+    padDecimals: true,
+  },
+  name: "Aviso de miles",
+  play: async ({ canvas, userEvent }) => {
+    const field = canvas.getByLabelText(/monto bs/i);
+
+    await userEvent.type(field, "30.60");
+    await expect(canvas.queryByRole("status")).not.toBeInTheDocument();
+
+    await userEvent.type(field, "0");
+
+    await expect(field).toHaveValue("30.600");
+    await expect(canvas.getByRole("status")).toHaveTextContent(
+      "Se leerá como 30,60. Si son 30.600 (miles), escribe 30600.",
+    );
+    await expect(canvas.getByRole("status")).toBeVisible();
+    await expect(field).not.toHaveAttribute("aria-invalid");
+
+    // Sigue a la vista al salir del campo: el valor no ha cambiado.
+    await userEvent.tab();
+    await expect(field).toHaveValue("30.60");
+    await expect(canvas.getByRole("status")).toBeVisible();
+  },
+};
+
+/** El decimal escrito con coma no deja dudas: no hay aviso. */
+export const ThousandsHintNotWithComma: Story = {
+  args: {
+    decimals: 2,
+    label: "Monto Bs",
+  },
+  name: "Aviso de miles: con coma no aparece",
+  play: async ({ canvas, userEvent }) => {
+    const field = canvas.getByLabelText(/monto bs/i);
+
+    await userEvent.type(field, "30,600");
+
+    await expect(field).toHaveValue("30.600");
+    await expect(canvas.queryByRole("status")).not.toBeInTheDocument();
+  },
+};
+
+/**
+ * En una celda de tabla el aviso va anclado al campo (`thousandsHintPlacement="floating"`):
+ * no ocupa sitio y la fila conserva su alto.
+ */
+export const ThousandsHintFloating: Story = {
+  args: {
+    "aria-label": "Costo",
+    decimals: 2,
+    label: undefined,
+    thousandsHintPlacement: "floating",
+  },
+  name: "Aviso de miles anclado al campo",
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const field = canvas.getByLabelText("Costo");
+    const row = canvas.getByTestId("fila");
+    const heightBefore = row.getBoundingClientRect().height;
+
+    await userEvent.type(field, "1.250");
+
+    const hint = canvasElement.ownerDocument.body.querySelector('[role="status"][data-placement="floating"]');
+
+    await expect(hint).toHaveTextContent("Se leerá como 1,25. Si son 1.250 (miles), escribe 1250.");
+    await expect(hint).toBeVisible();
+    await expect(row.getBoundingClientRect().height).toBe(heightBefore);
+  },
+  render: (args) => (
+    <div className="grid w-80 grid-cols-[1fr_7rem] items-center gap-3 rounded-md border border-border p-2" data-testid="fila">
+      <span className="text-sm text-foreground">Cable HDMI 2 m</span>
+      <NumberInput {...args} />
+    </div>
+  ),
 };
 
 export const Disabled: Story = {
