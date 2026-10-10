@@ -84,7 +84,7 @@ describe("payments.mock-server · compra creada en la sesión (COM-06)", () => {
       { amount: 2040, method: "efectivo_ves", purchaseId: purchase.id },
       DEFAULT_STORE_ID,
     );
-    const paid = getPurchaseById(purchase.id, DEFAULT_STORE_ID);
+    const paid = getPurchaseById(purchase.id, DEFAULT_STORE_ID, { canViewPayments: true });
 
     expect(paid.paidVes).toBe(2040);
     expect(paid.paidRef).toBe(4);

@@ -83,7 +83,7 @@ describe("payments.mock-server · el pago registrado queda guardado (PAG-F3)", (
       DEFAULT_STORE_ID,
     );
 
-    const detail = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID);
+    const detail = getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID, { canViewPayments: true });
 
     expect(detail.payments.find((item) => item.id === payment.id)).toMatchObject({
       amountVes: 500,
@@ -187,7 +187,7 @@ describe("payments.mock-server · anular revierte como `cancel_payment` (PAG-F3)
 
     expect({ paidRef: purchase().paidRef, paidVes: purchase().paidVes }).toEqual(before);
     expect(
-      getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID).payments.find(
+      getPurchaseById(PURCHASE_ID, DEFAULT_STORE_ID, { canViewPayments: true }).payments.find(
         (item) => item.id === payment.id,
       )?.status,
     ).toBe("anulado");
