@@ -12,11 +12,15 @@ import { ApiError } from "@/lib/api/apiError";
  *   vendedor por API vendía con `discountRef = subtotal − 0,01` (P4-2): el
  *   vendedor no aplica descuentos, igual que en la pantalla.
  *
- * El tope «descuento < subtotal» necesita los precios de lista y vive en el RPC.
+ * El tope «descuento < subtotal» lo aplica el RPC solo al vendedor (C19). Para el
+ * resto, `assertSaleDiscountBelowBodySubtotal` lo aplica cuando el cuerpo trae el
+ * precio de todas las líneas; con precios de lista (los pone el RPC) no hay tope.
  */
 export const SALE_DISCOUNT_INVALID_MESSAGE = "El descuento debe ser un número válido.";
 export const SALE_DISCOUNT_NEGATIVE_MESSAGE = "El descuento no puede ser negativo.";
 export const SALE_DISCOUNT_DECIMALS_MESSAGE = "El descuento admite como máximo 2 decimales.";
+export const SALE_DISCOUNT_OVER_SUBTOTAL_MESSAGE =
+  "El descuento no puede ser igual o mayor al subtotal de la venta.";
 export const SALE_DISCOUNT_FORBIDDEN_MESSAGE =
   "Tu rol no puede aplicar descuentos a una venta. Pide a un administrador que la registre.";
 
@@ -43,5 +47,46 @@ export function assertSaleDiscountAllowed(discountRef: number, role: string | un
 
   if (discountRef > 0 && !canApplySaleDiscount(role)) {
     throw new ApiError(403, "FORBIDDEN", SALE_DISCOUNT_FORBIDDEN_MESSAGE);
+  }
+}
+
+type SaleBodyLine = { quantity: number; unitPriceRef?: number };
+
+/**
+ * Subtotal de la venta en céntimos tal como lo calcula `create_sale`
+ * (`round(cantidad × precio, 2)` por línea), o `null` si alguna línea no trae
+ * precio: ese lo pone el RPC con el precio de lista y aquí no se conoce.
+ */
+export function saleBodySubtotalCents(items: readonly SaleBodyLine[]) {
+  let cents = 0;
+
+  for (const item of items) {
+    if (item.unitPriceRef === undefined) {
+      return null;
+    }
+
+    cents += Math.round(roundMoney(item.quantity * roundMoney(item.unitPriceRef)) * 100);
+  }
+
+  return cents;
+}
+
+/**
+ * Lanza `ApiError` 400 si el descuento iguala o supera el subtotal del cuerpo
+ * (POS-F3 / caos F5: venta en 0,00 con `discount_ref > subtotal_ref`). No lee la
+ * base: no añade nada al camino de cobro.
+ */
+export function assertSaleDiscountBelowBodySubtotal(
+  discountRef: number,
+  items: readonly SaleBodyLine[],
+) {
+  if (discountRef <= 0) {
+    return;
+  }
+
+  const subtotalCents = saleBodySubtotalCents(items);
+
+  if (subtotalCents !== null && Math.round(discountRef * 100) >= subtotalCents) {
+    throw new ApiError(400, "BAD_REQUEST", SALE_DISCOUNT_OVER_SUBTOTAL_MESSAGE);
   }
 }

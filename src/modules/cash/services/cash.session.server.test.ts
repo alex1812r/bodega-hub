@@ -7,7 +7,13 @@ jest.mock("../../../lib/supabase/admin-client");
 
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
-import { listPendingClosures } from "./cash.session.server";
+import {
+  getCashSessionOwner,
+  getCurrentCashSession,
+  listPendingClosures,
+  openCashSession,
+} from "./cash.session.server";
+import { createCashSupabaseFake, type CashFakeState } from "./testing/cashSupabaseFake";
 
 const STORE_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -66,5 +72,81 @@ describe("cash.session.server · teórico de un cierre (CNF-10, lectura)", () =>
 
     expect(closure.theoreticalClosingVes).toBe(1250.75);
     expect(closure.theoreticalClosingRef).toBe(0);
+  });
+});
+
+describe("cash.session.server · reglas de turno del que opera caja (POS-F3)", () => {
+  const ADMIN = "admin-1";
+
+  function openSession(id: string, registerId: string, openedAt: string, openedBy = ADMIN) {
+    return {
+      id,
+      opened_at: openedAt,
+      opened_by: openedBy,
+      opening_ref: 0,
+      opening_ves: 0,
+      register_id: registerId,
+      status: "open",
+      store_id: STORE_ID,
+    };
+  }
+
+  function register(id: string, assignedUserId: string | null) {
+    return { assigned_user_id: assignedUserId, id, is_active: true, name: id, store_id: STORE_ID };
+  }
+
+  function mount(state: CashFakeState) {
+    const fake = createCashSupabaseFake(state, { role: "admin", uid: ADMIN });
+    (createRouteSupabaseClient as jest.Mock).mockResolvedValue(fake.client);
+
+    return fake;
+  }
+
+  it("getCurrentCashSession devuelve el turno propio más reciente cuando hay más de uno", async () => {
+    mount({
+      registers: [],
+      sessions: [
+        openSession("s-1", "reg-1", "2026-10-10T08:00:00.000Z"),
+        openSession("s-2", "reg-2", "2026-10-10T09:00:00.000Z"),
+      ],
+    });
+
+    await expect(getCurrentCashSession(ADMIN, STORE_ID)).resolves.toEqual(
+      expect.objectContaining({ id: "s-2" }),
+    );
+  });
+
+  it("getCashSessionOwner dice quién abrió el turno y null si no existe en la tienda", async () => {
+    mount({ registers: [], sessions: [openSession("s-1", "reg-1", "2026-10-10T08:00:00.000Z", "otro")] });
+
+    await expect(getCashSessionOwner("s-1", STORE_ID)).resolves.toEqual({ openedBy: "otro" });
+    await expect(getCashSessionOwner("s-1", "otra-tienda")).resolves.toBeNull();
+    await expect(getCashSessionOwner("s-9", STORE_ID)).resolves.toBeNull();
+  });
+
+  it("openCashSession rechaza la caja asignada a otro (403) y un segundo turno (409) sin llamar al RPC", async () => {
+    const fake = mount({
+      registers: [register("reg-mia", ADMIN), register("reg-ajena", "otro")],
+      sessions: [openSession("s-1", "reg-vieja", "2026-10-10T08:00:00.000Z")],
+    });
+
+    await expect(openCashSession({ registerId: "reg-ajena" }, ADMIN, STORE_ID)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      status: 403,
+    });
+    await expect(openCashSession({ registerId: "reg-mia" }, ADMIN, STORE_ID)).rejects.toMatchObject({
+      code: "CONFLICT",
+      status: 409,
+    });
+    expect(fake.rpcCalls).toEqual([]);
+  });
+
+  it("openCashSession abre la caja asignada cuando no hay otro turno propio", async () => {
+    const fake = mount({ registers: [register("reg-mia", ADMIN)], sessions: [] });
+
+    await expect(openCashSession({ registerId: "reg-mia" }, ADMIN, STORE_ID)).resolves.toEqual(
+      expect.objectContaining({ registerId: "reg-mia", status: "open" }),
+    );
+    expect(fake.rpcCalls.map((call) => call.name)).toEqual(["open_cash_session"]);
   });
 });

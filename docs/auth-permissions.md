@@ -271,6 +271,16 @@ Encendido, los administradores de la tienda tienen además `sales.create` y `cas
 - Ven «Ventas → POS» y «Mi caja» en el menú (el menú filtra por los permisos efectivos de `GET /api/auth/me`).
 - Pueden abrir caja, vender, cobrar y cerrar su caja. Para abrir caja hace falta una **caja asignada** (Cajas → asignar al administrador): sin ella el POS muestra el estado «sin caja» de siempre.
 
+### Abrir y cerrar caja: las mismas reglas que el vendedor
+
+`open_cash_session` y `close_cash_session` solo limitan al rol `vendedor` (caja asignada a él; cerrar lo que abrió) y al `admin` le aceptan cualquier caja y cualquier turno. Como las RPC no cambian, el BFF aplica al administrador que opera caja la regla del vendedor (POS-F3):
+
+- **Abrir** (`POST /api/cash/session/open`): solo la caja **asignada a quien la abre** (`cash_registers.assigned_user_id`). La de otro usuario o una sin asignar → 403 «La caja no está asignada al usuario actual.». Cada usuario tiene una sola caja activa asignada (índice `cash_registers_one_active_assignment_per_store_idx`) y cada caja un solo turno abierto, así que hay **un turno abierto por usuario**: con uno propio abierto en otra caja → 409 `CONFLICT` «Ya tienes una caja abierta. Ciérrala antes de abrir otra.». Reabrir la misma caja sigue dando el 400 del RPC. Son dos lecturas en el camino de abrir caja; el cobro no cambia.
+- **Cerrar** (`POST /api/cash/session/close`): cada quien cierra **solo el turno que abrió** (`cash_sessions.opened_by`), tenga `cash.operate` o solo `cash.manage`. Uno ajeno → 403; uno inexistente o de otra tienda → 404. Se decide por el `sessionId`, no por «el turno actual».
+- **Turnos de otros:** un administrador ya no cierra por esta ruta la caja abierta de un vendedor. Le queda el cierre automático de fin de jornada; `/cash/registers` es de solo lectura.
+- **Estado heredado:** si un administrador quedó con varios turnos abiertos antes de esta regla, `GET /api/cash/session` devuelve el más reciente (antes 404) y puede cerrarlos uno a uno, con el interruptor encendido o apagado.
+- **Límite conocido:** las comprobaciones de apertura son lecturas previas al RPC, no un candado en la base: dos aperturas simultáneas del mismo administrador sobre dos cajas distintas (solo posible si le reasignan la caja en ese instante) no se excluyen entre sí.
+
 No cambia nada más: nómina (`payroll.view_own` sigue bloqueado para el admin), ni los permisos de los demás roles, ni ninguna RPC. Las RPC de venta y de caja (`create_sale*`, `open_cash_session`, `close_cash_session`) ya aceptaban el rol `admin` en la base; lo que impedía vender al administrador era el permiso en el BFF y en la UI.
 
 ### Cómo se guarda
@@ -303,7 +313,7 @@ where role = 'admin'
 
 Al apagar, el administrador deja de poder vender (`POST /api/sales` → 403) y de abrir un turno nuevo (`POST /api/cash/session/open` → 403) de inmediato. Un turno que ya tuviera abierto **no queda atrapado**:
 
-- `POST /api/cash/session/close` acepta `cash.operate` **o** `cash.manage`. Quien solo tiene `cash.manage` puede cerrar únicamente **su propia** sesión abierta (la que devuelve `GET /api/cash/session`); la de otro usuario → 403. La RPC `close_cash_session` no cambia.
+- `POST /api/cash/session/close` acepta `cash.operate` **o** `cash.manage`, y en ambos casos cierra únicamente un turno **abierto por quien llama** (ver arriba); el de otro usuario → 403. La RPC `close_cash_session` no cambia.
 - La confirmación de apagar avisa de las cajas abiertas a nombre de un administrador.
 - Como «Mi caja» deja de estar en el menú, la tarjeta del interruptor muestra al administrador «Tienes abierta la caja …» con el botón **Cerrar mi caja** (el mismo diálogo de cierre de siempre).
 - Si no la cierra, el cierre automático de fin de jornada sigue aplicando.

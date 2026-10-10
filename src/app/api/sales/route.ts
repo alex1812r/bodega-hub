@@ -14,7 +14,10 @@ import {
   createSale as createSaleServer,
   listSales as listSalesServer,
 } from "@/modules/sales/services/sales.server";
-import { assertSaleDiscountAllowed } from "@/modules/sales/utils/saleDiscountPolicy";
+import {
+  assertSaleDiscountAllowed,
+  assertSaleDiscountBelowBodySubtotal,
+} from "@/modules/sales/utils/saleDiscountPolicy";
 
 const createSaleSchema = z.object({
   // Clave de idempotencia por intento de cobro: con la misma clave el servidor
@@ -70,6 +73,7 @@ export async function POST(request: Request) {
     const auth = await requireStorePermission(request, "sales.create");
     const input = createSaleSchema.parse(await readJsonBody(request));
     assertSaleDiscountAllowed(input.discountRef, auth.role);
+    assertSaleDiscountBelowBodySubtotal(input.discountRef, input.items);
     const viewer = { role: auth.role, userId: auth.userId };
     const data =
       resolveDataSource() === "supabase"

@@ -177,7 +177,9 @@ paths:
     get:
       tags: [Cash]
       summary: Obtener sesión de caja actual
-      description: Turno abierto del usuario de la sesión, con `liveTotals`, o `null` si no tiene ninguno.
+      description: >-
+        Turno abierto por el usuario de la sesión, con `liveTotals`, o `null` si no tiene ninguno. Si por datos
+        anteriores tuviera más de uno abierto, devuelve el más reciente (no 404): al cerrarlo aparece el siguiente.
       x-permission: cash.view
       responses:
         "200":
@@ -203,9 +205,11 @@ paths:
       tags: [Cash]
       summary: Abrir sesión de caja
       description: >-
-        RPC `open_cash_session` cuando `API_DATA_SOURCE=supabase`: sus rechazos (por ejemplo, la caja ya tiene un turno
-        abierto) responden 400 con el mensaje del RPC. Con datos mock, una caja que no está asignada al usuario
-        responde 403.
+        Solo se abre la caja asignada a quien llama y un turno a la vez, sea vendedor o administrador con «El
+        administrador puede vender»: una caja asignada a otro usuario o sin asignar responde 403, y tener ya un turno
+        propio abierto en otra caja responde 409. RPC `open_cash_session` cuando `API_DATA_SOURCE=supabase`: sus
+        rechazos (por ejemplo, la caja ya tiene un turno abierto, o el vendedor que pide una caja que no es la suya)
+        responden 400 con el mensaje del RPC.
       x-permission: cash.operate
       requestBody:
         required: true
@@ -226,18 +230,28 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: Sin `cash.operate`, o la caja no está asignada al usuario
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: El usuario ya tiene un turno abierto en otra caja
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/cash/session/close:
     post:
       tags: [Cash]
       summary: Cerrar sesión de caja
       description: >-
-        Cierra quien opera caja (`cash.operate`). Quien no tiene ese permiso pero administra cajas (`cash.manage`)
-        puede cerrar SOLO su propio turno abierto: con el `sessionId` de un turno ajeno, o sin turno abierto, responde
-        403. Es el caso del administrador al que se le apagó «El administrador puede vender» con un turno abierto. RPC
-        `close_cash_session` cuando `API_DATA_SOURCE=supabase`: sus rechazos (por ejemplo, el turno ya está cerrado)
-        responden 400 con el mensaje del RPC. Con datos mock, un turno inexistente responde 404 y el de una caja
-        asignada a otro usuario 403.
+        Cierra quien opera caja (`cash.operate`) o quien administra cajas (`cash.manage`, el administrador al que se
+        le apagó «El administrador puede vender» con un turno abierto). En ambos casos SOLO un turno abierto por quien
+        llama: la pertenencia se decide por el `sessionId` (quién lo abrió), así que quien tenga varios abiertos los
+        cierra uno a uno. Un turno ajeno responde 403 y uno inexistente o de otra tienda 404. RPC `close_cash_session`
+        cuando `API_DATA_SOURCE=supabase`: sus rechazos (por ejemplo, el turno ya está cerrado) responden 400 con el
+        mensaje del RPC.
       x-permission: cash.operate | cash.manage
       requestBody:
         required: true
@@ -258,13 +272,13 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          description: Sin `cash.operate` ni `cash.manage`, o con solo `cash.manage` y un turno que no es el propio
+          description: Sin `cash.operate` ni `cash.manage`, o el turno lo abrió otro usuario
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Sesión de caja no encontrada (solo con datos mock)
+          description: Sesión de caja no encontrada en la tienda
           content:
             application/json:
               schema:
@@ -2254,7 +2268,10 @@ paths:
       description: >-
         `clientRequestId` (uuid) es obligatorio: sin él, o si no es un uuid, responde 400. El descuento
         (`discountRef`) se valida antes del RPC: no numérico, negativo o con más de 2 decimales responde 400; mayor
-        que cero con rol `vendedor` responde 403 (el vendedor no aplica descuentos, igual que en el POS).
+        que cero con rol `vendedor` responde 403 (el vendedor no aplica descuentos, igual que en el POS). Cuando
+        todas las líneas traen `unitPriceRef`, un descuento igual o mayor al subtotal del cuerpo (suma de cantidad ×
+        precio por línea) responde 400 para cualquier rol; si alguna línea no trae precio (lo pone el RPC con el de
+        lista) ese tope solo lo aplica el RPC al vendedor.
       x-permission: sales.create
       requestBody:
         required: true
@@ -2274,7 +2291,8 @@ paths:
             Solicitud inválida: cuerpo que no es JSON válido, campos que no cumplen el schema (incluido
             `clientRequestId` ausente o que no es uuid), descuento no numérico («El descuento debe ser un número
             válido.»), negativo («El descuento no puede ser negativo.») o con más de 2 decimales («El descuento admite
-            como máximo 2 decimales.»), o rechazo de negocio del RPC.
+            como máximo 2 decimales.»), igual o mayor al subtotal de las líneas con precio («El descuento no puede ser
+            igual o mayor al subtotal de la venta.»), o rechazo de negocio del RPC.
           content:
             application/json:
               schema:

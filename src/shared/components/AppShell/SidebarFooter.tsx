@@ -26,7 +26,7 @@ export function SidebarFooter({ collapsed = false, onSignOut }: SidebarFooterPro
         collapsed ? "py-2" : "p-4",
       )}
     >
-      <SidebarTooltip label="Cerrar sesión" placement="bottom" show={collapsed}>
+      <SidebarTooltip label="Cerrar sesión" placement="right" show={collapsed}>
         <button
           aria-label="Cerrar sesión"
           className={cn(

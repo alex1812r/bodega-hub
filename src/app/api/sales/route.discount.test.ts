@@ -26,6 +26,7 @@ import {
   SALE_DISCOUNT_DECIMALS_MESSAGE,
   SALE_DISCOUNT_FORBIDDEN_MESSAGE,
   SALE_DISCOUNT_NEGATIVE_MESSAGE,
+  SALE_DISCOUNT_OVER_SUBTOTAL_MESSAGE,
 } from "@/modules/sales/utils/saleDiscountPolicy";
 
 import { POST } from "./route";
@@ -236,3 +237,81 @@ describe("POST /api/sales · el rechazo del RPC llega tal cual", () => {
     expect(body.error.message).toBe(message);
   });
 });
+
+/**
+ * POS-F3 (caos pos-nav F5): el RPC solo aplica «descuento < subtotal» al vendedor, y
+ * un admin con «El administrador puede vender» dejaba ventas en 0,00 con
+ * `discount_ref > subtotal_ref`. Cuando todas las líneas traen `unitPriceRef` el
+ * subtotal sale del cuerpo y el BFF lo rechaza sin leer nada.
+ */
+describe.each<DataSource>(["supabase", "mock"])(
+  "POST /api/sales · descuento contra el subtotal del cuerpo (%s)",
+  (dataSource) => {
+    const originalDataSource = process.env.API_DATA_SOURCE;
+    let rpc: ReturnType<typeof mountSalesRpc>;
+
+    function creations() {
+      return dataSource === "supabase" ? rpc.mock.calls.length : (createSaleMock as jest.Mock).mock.calls.length;
+    }
+
+    /** Dos líneas con precio: 2 × 6,20 + 1 × 5,00 = 17,40. */
+    function postPricedSale(discountRef: number, withPrices = true) {
+      const ids = dataSource === "supabase" ? SUPABASE_IDS : MOCK_IDS;
+      const price = (unitPriceRef: number) => (withPrices ? { unitPriceRef } : {});
+
+      return POST(
+        new Request("http://localhost/api/sales", {
+          body: JSON.stringify({
+            clientRequestId: nextClientRequestId(),
+            customerId: ids.customerId,
+            discountRef,
+            items: [
+              { productId: ids.productId, quantity: 2, ...price(6.2) },
+              { productId: ids.productId, quantity: 1, ...price(5) },
+            ],
+            refRateVes: 510,
+          }),
+          headers: { "content-type": "application/json", "x-demo-role": "admin" },
+          method: "POST",
+        }),
+      );
+    }
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      process.env.API_DATA_SOURCE = dataSource;
+      setAdminCanSell(true);
+      rpc = mountSalesRpc();
+    });
+
+    afterEach(() => {
+      setAdminCanSell(false);
+      process.env.API_DATA_SOURCE = originalDataSource;
+    });
+
+    it.each([
+      ["igual al subtotal", 17.4],
+      ["mayor que el subtotal", 27.4],
+    ])("admin con descuento %s → 400 sin crear la venta", async (_caso, discountRef) => {
+      const response = await postPricedSale(discountRef);
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body.error).toEqual({ code: "BAD_REQUEST", message: SALE_DISCOUNT_OVER_SUBTOTAL_MESSAGE });
+      expect(creations()).toBe(0);
+    });
+
+    it("admin con subtotal − 0,01 sigue permitido (heredado)", async () => {
+      const response = await postPricedSale(17.39);
+
+      expect(response.status).toBe(201);
+      expect(creations()).toBe(1);
+    });
+
+    it("sin precios en el cuerpo el BFF no conoce el subtotal y decide el servicio", async () => {
+      await postPricedSale(27.4, false);
+
+      expect(creations()).toBe(1);
+    });
+  },
+);

@@ -10,9 +10,22 @@ import type { CashMovement, CashSession } from "../types";
 
 const sessions: CashSession[] = [];
 const movements: CashMovement[] = [];
+/** Quién abrió cada turno (`cash_sessions.opened_by`): decide de quién es. */
+const openedBy = new Map<string, string>();
 
 export type OpenCashSessionInput = { openingRef?: number; openingVes?: number; registerId: string };
 export type CloseCashSessionInput = { closingRef: number; closingVes: number; sessionId: string };
+export type CashSessionOwner = { openedBy: string | null };
+
+/**
+ * Reglas de apertura que el BFF aplica a todo el que opera caja (POS-F3). Son las
+ * que `open_cash_session` ya imponía al vendedor: solo su caja asignada, y como
+ * cada usuario tiene una sola caja activa, un único turno abierto a la vez.
+ */
+export const CASH_REGISTER_NOT_ASSIGNED_MESSAGE = "La caja no está asignada al usuario actual.";
+export const CASH_SESSION_ALREADY_OPEN_MESSAGE =
+  "Ya tienes una caja abierta. Ciérrala antes de abrir otra.";
+export const CASH_SESSION_NOT_FOUND_MESSAGE = "Sesión de caja no encontrada.";
 
 function sessionTotals(session: CashSession) {
   return computeCashSessionTotals(
@@ -26,13 +39,20 @@ function theoretical(session: CashSession) {
   return { ref: totals.cashRef, ves: totals.cashVes };
 }
 
+/** Turno abierto por el usuario; si hubiera más de uno, el más reciente. */
 export function getCurrentCashSession(userId: string, storeId: string) {
-  const session = sessions.find(
-    (candidate) =>
-      candidate.status === "open" &&
-      candidate.register.storeId === storeId &&
-      candidate.register.assignedUserId === userId,
-  );
+  const session = sessions
+    .filter(
+      (candidate) =>
+        candidate.status === "open" &&
+        candidate.register.storeId === storeId &&
+        openedBy.get(candidate.id) === userId,
+    )
+    .reduce<CashSession | undefined>(
+      (latest, candidate) =>
+        latest && Date.parse(latest.openedAt) > Date.parse(candidate.openedAt) ? latest : candidate,
+      undefined,
+    );
 
   // El POS usa `liveTotals` para limitar el vuelto en efectivo al contenido real
   // de la gaveta (docs/cobro-pos-billetes.md §5).
@@ -42,14 +62,18 @@ export function getCurrentCashSession(userId: string, storeId: string) {
 export function openCashSession(input: OpenCashSessionInput, userId: string, storeId: string) {
   const register = getCashRegister(input.registerId, storeId);
   if (!register.isActive || register.assignedUserId !== userId) {
-    throw new ApiError(403, "FORBIDDEN", "La caja no está asignada al usuario actual.");
+    throw new ApiError(403, "FORBIDDEN", CASH_REGISTER_NOT_ASSIGNED_MESSAGE);
   }
-  if (getCurrentCashSession(userId, storeId) || sessions.some((item) => item.registerId === register.id && item.status === "open")) {
+  const current = getCurrentCashSession(userId, storeId);
+  if (current && current.registerId !== register.id) {
+    throw new ApiError(409, "CONFLICT", CASH_SESSION_ALREADY_OPEN_MESSAGE);
+  }
+  if (sessions.some((item) => item.registerId === register.id && item.status === "open")) {
     throw new ApiError(400, "BAD_REQUEST", "La caja ya tiene una sesión de caja abierta.");
   }
   const openedAt = new Date().toISOString();
   const session: CashSession = {
-    id: `cash-session-${Date.now()}`,
+    id: `cash-session-${Date.now()}-${sessions.length}`,
     openedAt,
     openingRef: input.openingRef ?? 0,
     openingVes: input.openingVes ?? 0,
@@ -58,6 +82,7 @@ export function openCashSession(input: OpenCashSessionInput, userId: string, sto
     status: "open",
   };
   sessions.push(session);
+  openedBy.set(session.id, userId);
   // Desde `20260904b-cash-lifecycle.sql` la apertura ya no absorbe los cierres
   // previos: el efectivo del turno anterior sigue siendo transferible al baul.
   if (session.openingRef || session.openingVes) {
@@ -66,10 +91,17 @@ export function openCashSession(input: OpenCashSessionInput, userId: string, sto
   return session;
 }
 
+/** Quién abrió el turno, o `null` si no existe en la tienda. */
+export function getCashSessionOwner(sessionId: string, storeId: string): CashSessionOwner | null {
+  const session = sessions.find((item) => item.id === sessionId && item.register.storeId === storeId);
+
+  return session ? { openedBy: openedBy.get(session.id) ?? null } : null;
+}
+
 export function closeCashSession(input: CloseCashSessionInput, userId: string, storeId: string) {
   const session = sessions.find((item) => item.id === input.sessionId && item.register.storeId === storeId);
-  if (!session) throw new ApiError(404, "NOT_FOUND", "Sesión de caja no encontrada.");
-  if (session.register.assignedUserId !== userId) throw new ApiError(403, "FORBIDDEN", "No puedes cerrar esta sesión.");
+  if (!session) throw new ApiError(404, "NOT_FOUND", CASH_SESSION_NOT_FOUND_MESSAGE);
+  if (openedBy.get(session.id) !== userId) throw new ApiError(403, "FORBIDDEN", "No puedes cerrar esta sesión.");
   if (session.status !== "open") throw new ApiError(400, "BAD_REQUEST", "La sesión de caja ya está cerrada.");
   const balance = theoretical(session);
   Object.assign(session, {

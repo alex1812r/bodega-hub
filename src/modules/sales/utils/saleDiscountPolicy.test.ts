@@ -2,7 +2,10 @@ import { ApiError } from "@/lib/api/apiError";
 
 import {
   assertSaleDiscountAllowed,
+  assertSaleDiscountBelowBodySubtotal,
   canApplySaleDiscount,
+  saleBodySubtotalCents,
+  SALE_DISCOUNT_OVER_SUBTOTAL_MESSAGE,
   SALE_DISCOUNT_DECIMALS_MESSAGE,
   SALE_DISCOUNT_FORBIDDEN_MESSAGE,
   SALE_DISCOUNT_INVALID_MESSAGE,
@@ -60,5 +63,33 @@ describe("saleDiscountPolicy", () => {
     for (const role of ["vendedor", "admin"]) {
       expect(rejection(discountRef, role)).toEqual({ code: "BAD_REQUEST", message, status: 400 });
     }
+  });
+});
+
+describe("saleDiscountPolicy · descuento contra el subtotal del cuerpo (POS-F3)", () => {
+  const lines = [
+    { quantity: 2, unitPriceRef: 6.2 },
+    { quantity: 1, unitPriceRef: 5 },
+  ];
+
+  it("suma el subtotal en céntimos, línea a línea, sin arrastrar coma flotante", () => {
+    expect(saleBodySubtotalCents(lines)).toBe(1740);
+    expect(saleBodySubtotalCents([{ quantity: 3, unitPriceRef: 0.1 }, { quantity: 1, unitPriceRef: 0.2 }])).toBe(50);
+    expect(saleBodySubtotalCents([...lines, { quantity: 1 }])).toBeNull();
+  });
+
+  it("rechaza con 400 el descuento igual o mayor al subtotal y deja pasar subtotal − 0,01", () => {
+    for (const discountRef of [17.4, 27.4]) {
+      expect(() => assertSaleDiscountBelowBodySubtotal(discountRef, lines)).toThrow(
+        expect.objectContaining({ message: SALE_DISCOUNT_OVER_SUBTOTAL_MESSAGE, status: 400 }),
+      );
+    }
+
+    expect(() => assertSaleDiscountBelowBodySubtotal(17.39, lines)).not.toThrow();
+    expect(() => assertSaleDiscountBelowBodySubtotal(0, [{ quantity: 1, unitPriceRef: 0 }])).not.toThrow();
+  });
+
+  it("no decide cuando alguna línea no trae precio (lo pone el RPC)", () => {
+    expect(() => assertSaleDiscountBelowBodySubtotal(999, [...lines, { quantity: 1 }])).not.toThrow();
   });
 });

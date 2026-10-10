@@ -1,6 +1,7 @@
 import {
   autoCloseStaleCashSessions,
   closeCashSession,
+  getCashSessionOwner,
   getCurrentCashSession,
   openCashSession,
 } from "./cash.session.mock-server";
@@ -43,5 +44,46 @@ describe("autoCloseStaleCashSessions mock", () => {
     expect(result.closedCount).toBe(0);
     expect(session.status).toBe("open");
     closeCashSession({ sessionId: session.id, closingRef: 0, closingVes: 0 }, userIdFresh, storeId);
+  });
+});
+
+describe("reglas de turno del que opera caja (POS-F3, paridad con el BFF real)", () => {
+  const store = "store-test-cash-rules";
+
+  it("solo se abre la caja asignada, un turno a la vez, y cada quien cierra el que abrió", () => {
+    const mine = createCashRegister({ name: "Caja reglas A" }, store);
+    const other = createCashRegister({ name: "Caja reglas B" }, store);
+    const spare = createCashRegister({ name: "Caja reglas C" }, store);
+    updateCashRegister(mine.id, { assignedUserId: "ana" }, store);
+    updateCashRegister(other.id, { assignedUserId: "luis" }, store);
+
+    expect(() => openCashSession({ registerId: other.id }, "ana", store)).toThrow(
+      expect.objectContaining({ status: 403 }),
+    );
+
+    const first = openCashSession({ registerId: mine.id }, "ana", store);
+    const foreign = openCashSession({ registerId: other.id }, "luis", store);
+
+    expect(getCashSessionOwner(first.id, store)).toEqual({ openedBy: "ana" });
+    expect(getCashSessionOwner(first.id, "otra-tienda")).toBeNull();
+    expect(() => openCashSession({ registerId: mine.id }, "ana", store)).toThrow(
+      expect.objectContaining({ status: 400 }),
+    );
+
+    // La caja se reasigna con el turno todavía abierto: el turno sigue siendo de quien lo abrió.
+    updateCashRegister(mine.id, { assignedUserId: null }, store);
+    updateCashRegister(spare.id, { assignedUserId: "ana" }, store);
+
+    expect(() => openCashSession({ registerId: spare.id }, "ana", store)).toThrow(
+      expect.objectContaining({ code: "CONFLICT", status: 409 }),
+    );
+    expect(getCurrentCashSession("ana", store)?.id).toBe(first.id);
+    expect(() =>
+      closeCashSession({ closingRef: 0, closingVes: 0, sessionId: foreign.id }, "ana", store),
+    ).toThrow(expect.objectContaining({ status: 403 }));
+    expect(closeCashSession({ closingRef: 0, closingVes: 0, sessionId: first.id }, "ana", store).status).toBe(
+      "closed",
+    );
+    expect(openCashSession({ registerId: spare.id }, "ana", store).status).toBe("open");
   });
 });

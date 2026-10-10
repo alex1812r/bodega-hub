@@ -33,7 +33,7 @@ export function createCashRegister(input: CashRegisterInput, storeId: string) {
   const createdAt = now();
   const register: CashRegister = {
     createdAt,
-    id: `cash-register-${Date.now()}`,
+    id: `cash-register-${Date.now()}-${registers.length}`,
     isActive: true,
     name: input.name.trim(),
     storeId,

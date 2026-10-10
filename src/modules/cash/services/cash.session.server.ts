@@ -6,7 +6,13 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 
 import type { CashMovement, CashSession } from "../types";
 import { computeCashSessionTotals } from "../utils/cashSessionTotals";
-import type { CloseCashSessionInput, OpenCashSessionInput } from "./cash.session.mock-server";
+import {
+  CASH_REGISTER_NOT_ASSIGNED_MESSAGE,
+  CASH_SESSION_ALREADY_OPEN_MESSAGE,
+  type CashSessionOwner,
+  type CloseCashSessionInput,
+  type OpenCashSessionInput,
+} from "./cash.session.mock-server";
 
 /**
  * Un teórico ausente (turno abierto o cierre histórico sin teórico guardado) es
@@ -54,9 +60,22 @@ function rpcError(error: unknown) {
   throw new ApiError(400, "BAD_REQUEST", message);
 }
 
+/**
+ * Turno abierto por el usuario. Datos previos a POS-F3 pueden dejarle más de uno:
+ * se devuelve el más reciente (antes `maybeSingle` fallaba con 404) y, al cerrarlo,
+ * aparece el siguiente.
+ */
 export async function getCurrentCashSession(userId: string, storeId: string) {
   const supabase = await createRouteSupabaseClient();
-  const { data, error } = await supabase.from("cash_sessions").select("*, cash_registers(*)").eq("store_id", storeId).eq("status", "open").eq("opened_by", userId).maybeSingle();
+  const { data, error } = await supabase
+    .from("cash_sessions")
+    .select("*, cash_registers(*)")
+    .eq("store_id", storeId)
+    .eq("status", "open")
+    .eq("opened_by", userId)
+    .order("opened_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
   throwIfSupabaseError(error);
   if (!data) {
     return null;
@@ -85,8 +104,70 @@ export async function getCurrentCashSession(userId: string, storeId: string) {
   return { ...session, liveTotals: computeCashSessionTotals(rows, session) };
 }
 
-export async function openCashSession(input: OpenCashSessionInput, _userId: string, _storeId: string) {
+/** Quién abrió el turno (`cash_sessions.opened_by`), o `null` si no existe en la tienda. */
+export async function getCashSessionOwner(
+  sessionId: string,
+  storeId: string,
+): Promise<CashSessionOwner | null> {
   const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("cash_sessions")
+    .select("opened_by")
+    .eq("id", sessionId)
+    .eq("store_id", storeId)
+    .maybeSingle();
+  throwIfSupabaseError(error);
+
+  if (!data) {
+    return null;
+  }
+
+  return { openedBy: ((data as Record<string, unknown>).opened_by as string | null) ?? null };
+}
+
+/**
+ * `open_cash_session` solo exige caja asignada al rol vendedor; al admin que vende
+ * («El administrador puede vender») le dejaba abrir cualquier caja y varias a la
+ * vez (POS-F3). Estas dos lecturas le aplican la misma regla antes del RPC, que no
+ * cambia. Una caja que el usuario no puede leer (RLS: el vendedor solo ve la suya)
+ * o el reintento sobre la misma caja siguen llegando al RPC, con su rechazo de siempre.
+ */
+async function assertCanOpenCashSession(
+  supabase: Awaited<ReturnType<typeof createRouteSupabaseClient>>,
+  registerId: string,
+  userId: string,
+  storeId: string,
+) {
+  const register = await supabase
+    .from("cash_registers")
+    .select("assigned_user_id")
+    .eq("id", registerId)
+    .eq("store_id", storeId)
+    .maybeSingle();
+  throwIfSupabaseError(register.error);
+
+  if (register.data && (register.data as Record<string, unknown>).assigned_user_id !== userId) {
+    throw new ApiError(403, "FORBIDDEN", CASH_REGISTER_NOT_ASSIGNED_MESSAGE);
+  }
+
+  const elsewhere = await supabase
+    .from("cash_sessions")
+    .select("id")
+    .eq("store_id", storeId)
+    .eq("status", "open")
+    .eq("opened_by", userId)
+    .neq("register_id", registerId)
+    .limit(1);
+  throwIfSupabaseError(elsewhere.error);
+
+  if ((elsewhere.data ?? []).length > 0) {
+    throw new ApiError(409, "CONFLICT", CASH_SESSION_ALREADY_OPEN_MESSAGE);
+  }
+}
+
+export async function openCashSession(input: OpenCashSessionInput, userId: string, storeId: string) {
+  const supabase = await createRouteSupabaseClient();
+  await assertCanOpenCashSession(supabase, input.registerId, userId, storeId);
   const { data, error } = await supabase.rpc("open_cash_session", { p_opening_ref: input.openingRef ?? 0, p_opening_ves: input.openingVes ?? 0, p_register_id: input.registerId });
   rpcError(error);
   if (!data) throw new ApiError(500, "INTERNAL_ERROR", "No se pudo abrir la caja.");
