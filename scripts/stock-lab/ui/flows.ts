@@ -426,7 +426,7 @@ class CaseRec {
     await page.goto(`${this.lab.baseUrl}/login`);
     await page.getByLabel("Correo").fill(LAB_USERS[role].email);
     await page.getByLabel("Clave").fill(LAB_PASSWORD);
-    await page.getByRole("button", { name: "Iniciar sesion" }).click();
+    await page.getByRole("button", { name: "Iniciar sesión" }).click();
     await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: NAV_TIMEOUT });
     this.step("UI login /login", { as: role, ms: Date.now() - started, note: new URL(page.url()).pathname });
     return page;
@@ -503,7 +503,7 @@ async function runCase(lab: Lab, meta: CaseMeta, body: (rec: CaseRec) => Promise
 // Lectura genérica de pantalla
 // ---------------------------------------------------------------------------
 
-/** Texto visible de alertas, diálogos y avisos (no hay toasts en la app: todo es inline). */
+/** Texto visible de alertas, diálogos, avisos y toasts (los toasts son `role="status"`). */
 async function screenTexts(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const out: string[] = [];
@@ -625,23 +625,26 @@ function column(table: TableData, header: RegExp): number {
 type UiMovement = { type: string; quantity: number | null; stockAfter: number | null; raw: string };
 
 /**
- * Abre /inventory/movements (admin), filtra por el producto con el selector
- * de la pantalla y devuelve las filas que la UI muestra para él.
+ * Abre /inventory/movements (admin), filtra por el producto con el buscador
+ * «Producto» de la pantalla y devuelve las filas que la UI muestra para él.
  */
 async function uiMovements(rec: CaseRec, page: Page, product: LabProduct, shotName: string): Promise<UiMovement[]> {
   await rec.goto(page, "/inventory/movements");
-  const select = page.getByLabel("Producto", { exact: true });
-  await select.waitFor({ state: "visible" });
-  await select.locator("option").nth(1).waitFor({ state: "attached", timeout: NAV_TIMEOUT });
-  const option = select.locator("option", { hasText: product.name });
-  let filteredBy = "selector Producto";
-  if ((await option.count()) > 0) {
-    await select.selectOption({ label: (await option.first().innerText()).trim() });
+  // «Producto» es un buscador que consulta al servidor mientras se escribe.
+  const picker = page.locator("main").getByRole("combobox", { name: "Producto", exact: true });
+  await picker.waitFor({ state: "visible", timeout: NAV_TIMEOUT });
+  await picker.click();
+  await picker.fill(product.name);
+  const option = page.getByRole("option").filter({ hasText: product.name }).first();
+  let filteredBy = "buscador Producto";
+  if (await option.waitFor({ state: "visible", timeout: UI_TIMEOUT }).then(() => true, () => false)) {
+    await option.click();
+    await page.waitForURL((url) => url.searchParams.get("productId") === product.id, { timeout: NAV_TIMEOUT });
   } else {
-    // El selector solo lista una página de productos: se anota y se usa el filtro por URL.
-    filteredBy = "URL ?productId= (el producto NO aparece en el selector Producto)";
-    rec.say("/inventory/movements selector Producto", `no lista «${product.name}» (${await select.locator("option").count()} opciones)`);
-    rec.note("el filtro «Producto» de /inventory/movements solo carga 100 productos: los demás solo se alcanzan por el enlace Kardex (?productId=)");
+    // El buscador no lo ofrece: se anota y se usa el filtro por URL.
+    filteredBy = "URL ?productId= (el buscador Producto NO ofrece el producto)";
+    rec.say("/inventory/movements buscador Producto", `no ofrece «${product.name}»`);
+    rec.note("el buscador «Producto» de /inventory/movements no encontró el producto por su nombre: solo se alcanzó por el enlace Kardex (?productId=)");
     await rec.goto(page, `/inventory/movements?productId=${product.id}`);
   }
   await page.waitForLoadState("networkidle", { timeout: NAV_TIMEOUT }).catch(() => undefined);
@@ -650,7 +653,7 @@ async function uiMovements(rec: CaseRec, page: Page, product: LabProduct, shotNa
   const iSku = column(table, /^SKU/i);
   const iType = column(table, /^Tipo/i);
   const iQty = column(table, /^Cant/i);
-  const iStock = column(table, /^Stock final/i);
+  const iStock = column(table, /^Saldo/i);
   const rows = table.rows
     .filter((row) => (row[iSku] ?? "").toLowerCase() === product.sku)
     .map((row) => ({
@@ -756,7 +759,7 @@ async function posCartCount(page: Page): Promise<number> {
 
 /** Elige un método de pago sin datos adicionales (efectivo en bolívares) y devuelve su etiqueta. */
 async function posPickCash(page: Page): Promise<string> {
-  const group = page.getByRole("group", { name: "Metodo de pago" });
+  const group = page.getByRole("group", { name: "Método de pago" });
   const buttons = group.getByRole("button");
   const labels = await buttons.allInnerTexts();
   const wanted =
@@ -803,7 +806,7 @@ async function posOutcome(page: Page, timeoutMs: number): Promise<PosOutcome> {
     text = (await page.locator("main").innerText()).replace(/\s+/g, " ");
     const match = /Venta registrada\s*Factura\s*([^\s.]+)/.exec(text);
     invoice = match?.[1] ?? null;
-    text = /Venta registrada.*?opcion\.?/.exec(text)?.[0] ?? text.slice(0, 200);
+    text = /Venta registrada.*?opción\.?/.exec(text)?.[0] ?? text.slice(0, 200);
   } else if (claim === "error") {
     text = (await failure.first().innerText().catch(() => "")).replace(/\s+/g, " ");
     const alert = cartPanel(page).locator('[role="alert"]');
@@ -1271,7 +1274,11 @@ async function flow03(lab: Lab): Promise<void> {
       };
       /** El cajero rehace el mismo carrito y vuelve a cobrar: la acción que duplicaba en fase 4. */
       const rebuildAndCharge = async () => {
-        await posAdd(page, product, quantity);
+        // El POS guarda un borrador del carrito: si al volver ya lo trae, el cajero
+        // solo completa lo que falte hasta tener el MISMO carrito.
+        const restored = (await posQty(page, product)) ?? 0;
+        rec.say("POS · carrito antes de rehacerlo", restored > 0 ? `el borrador trae ${restored} unidad(es) de ${product.name}` : "vacío");
+        if (restored < quantity) await posAdd(page, product, quantity - restored);
         await posPickCash(page);
         await rec.shot(page, "carrito-rehecho");
         await processButton(page).click({ timeout: 10_000 });
@@ -1309,6 +1316,13 @@ async function flow03(lab: Lab): Promise<void> {
         await rebuildAndCharge();
       } else if (spec.action === "leave_and_return") {
         await page.getByRole("link", { name: "Volver a ventas" }).or(page.getByRole("button", { name: "Volver a ventas" })).first().click();
+        // Con una venta en curso, salir del POS pasa por el guardia «¿Salir sin terminar?».
+        const leaveGuard = page.getByRole("dialog", { name: "¿Salir sin terminar?" });
+        if (await leaveGuard.waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false)) {
+          rec.say("POS · guardia al salir", await dialogText(leaveGuard));
+          await rec.shot(page, "guardia-salir");
+          await leaveGuard.getByRole("button", { name: "Salir", exact: true }).click();
+        }
         await page.waitForURL((url) => url.pathname === "/sales", { timeout: NAV_TIMEOUT });
         await page.waitForLoadState("networkidle", { timeout: NAV_TIMEOUT }).catch(() => undefined);
         await rec.shot(page, "fuera-del-pos");
@@ -1488,20 +1502,29 @@ async function uiCreatePackPurchase(
   await search.fill(product.name);
   await page.locator("main").getByRole("listitem").getByRole("button").filter({ hasText: product.name }).first().click();
 
-  const mode = page.getByLabel(`Modo de captura de ${product.name}`);
+  // Los costos se capturan en la moneda de la compra («Costos en»), no por línea.
+  await page.getByRole("group", { name: "Costos en" }).getByRole("button", { name: "REF", exact: true }).click();
+  // «Empaque» pasa la línea a captura por empaque y despliega sus cuatro campos.
+  const packChip = page.getByRole("button", { name: `Empaque de ${product.name}`, exact: true });
+  await packChip.waitFor({ state: "visible" });
+  if ((await packChip.getAttribute("aria-pressed")) !== "true") await packChip.click();
+  const mode = page.getByLabel(`Tipo de empaque de ${product.name}`, { exact: true });
   await mode.waitFor({ state: "visible" });
-  rec.say("Compra · opciones de Modo", (await mode.locator("option").allInnerTexts()).join(" / "));
   const modeLabels = (await mode.locator("option").allInnerTexts()).map((text) => text.trim());
-  const preset = usePreset ? modeLabels.find((label) => !/^(Unidad|Personalizado)$/i.test(label)) : undefined;
-  if (usePreset && !preset) throw new Error(`El modo no ofrece el empaque del proveedor: ${modeLabels.join(" / ")}`);
-  await mode.selectOption({ label: preset ?? "Personalizado" });
-  rec.say("Compra · modo elegido", preset ?? "Personalizado");
+  rec.say("Compra · opciones de Tipo de empaque", modeLabels.join(" / "));
+  // Los empaques guardados del proveedor salen como «Etiqueta (N u)»; los estándar
+  // (Bulto, Paquete, Caja, Manga) se teclean: son el antiguo «Personalizado».
+  const preset = usePreset ? modeLabels.find((label) => /\(\d+ u\)$/.test(label)) : undefined;
+  if (usePreset && !preset) throw new Error(`El tipo de empaque no ofrece el del proveedor: ${modeLabels.join(" / ")}`);
+  const custom = modeLabels.find((label) => /^Bulto( \(personalizado\))?$/.test(label));
+  if (!preset && !custom) throw new Error(`El tipo de empaque no ofrece «Bulto» para teclear: ${modeLabels.join(" / ")}`);
+  await mode.selectOption({ label: preset ?? custom });
+  rec.say("Compra · tipo de empaque elegido", preset ?? custom ?? "");
   await page.getByLabel(new RegExp(`^Cantidad de .+ de ${product.name}$`)).fill(String(packCount));
   const perPack = page.getByLabel(new RegExp(`^Unidades por .+ de ${product.name}$`));
   if ((await perPack.count()) > 0 && (await perPack.isEditable())) await perPack.fill(String(unitsPerPack));
-  await page.getByRole("group", { name: `Moneda de costo de ${product.name}` }).getByRole("button", { name: "REF" }).click();
   await page.getByLabel(new RegExp(`^Costo por .+ REF de ${product.name}$`)).fill(String(packCostRef));
-  rec.say("Compra · línea capturada", (await page.getByRole("row").filter({ hasText: product.name }).first().innerText().catch(() => "")).slice(0, 400));
+  rec.say("Compra · línea capturada", (await page.getByRole("list", { name: "Líneas de la compra" }).getByRole("listitem").filter({ hasText: product.name }).first().innerText().catch(() => "")).slice(0, 400));
 
   const status = page.getByLabel("Estado de la Compra", { exact: true }).and(page.locator("select"));
   const defaultStatus = (await status.locator("option:checked").innerText()).trim();
@@ -1638,7 +1661,7 @@ async function flow05(lab: Lab): Promise<void> {
 
       // Lista
       await rec.goto(page, "/purchases");
-      await page.getByLabel("Búsqueda").fill(purchase.number);
+      await page.locator("main").getByLabel("Búsqueda", { exact: true }).fill(purchase.number);
       await page.waitForLoadState("networkidle").catch(() => undefined);
       await page.waitForTimeout(800);
       const list = await readTable(page);
@@ -1730,11 +1753,11 @@ async function uiAdjust(
   quantity: number,
   shotName: string,
 ): Promise<AdjustOutcome> {
-  // Camino real: /inventory → filtrar por SKU → Acciones de la fila → «Registrar ajuste»
+  // Camino real: /inventory → buscar por SKU → Acciones de la fila → «Registrar ajuste»
   // (lleva a /inventory/movements?productId=…) → botón «Ajustar stock».
   await rec.goto(page, "/inventory");
-  await page.getByLabel("Producto o SKU").fill(product.sku);
-  await page.getByRole("button", { name: "Aplicar filtros" }).click();
+  // Los filtros de la lista se aplican solos al teclear (con debounce).
+  await page.getByRole("searchbox", { name: "Búsqueda", exact: true }).fill(product.sku);
   const row = page.getByRole("row").filter({ hasText: product.sku });
   await row.first().waitFor({ state: "visible", timeout: NAV_TIMEOUT });
   rec.say("/inventory · fila del producto", await row.first().innerText());
@@ -1913,6 +1936,8 @@ async function flow07(lab: Lab): Promise<void> {
       const before = await snapshot(lab.db, ids);
       const page = await rec.open("admin");
       await rec.goto(page, `/products/${pack.id}`);
+      // «Conversión de empaque» está en la pestaña «Avanzado» del detalle.
+      await page.getByRole("tab", { name: "Avanzado", exact: true }).click();
       const card = page.locator("section,div").filter({ has: page.getByRole("heading", { name: "Conversión de empaque" }) }).last();
       rec.say("Detalle empaque · tarjeta Conversión de empaque", await card.innerText());
       const trigger = page.getByRole("button", { name: "Abrir empaque" });
@@ -2322,12 +2347,15 @@ async function flow09(lab: Lab): Promise<void> {
       const dialog = page.getByRole("dialog");
       await dialog.waitFor({ state: "visible" });
       await dialog.getByLabel("Nombre", { exact: true }).fill(name);
+      await dialog.getByLabel("Categoría", { exact: true }).selectOption({ label: lab.categoryName });
+      await dialog.getByLabel("Costo REF", { exact: true }).fill("0.6");
+      await dialog.getByLabel("Precio REF", { exact: true }).fill("1");
+      // SKU y stock viven en la sección plegada «Más opciones».
+      const more = dialog.getByRole("button", { name: /Más opciones/ });
+      if ((await more.getAttribute("aria-expanded")) !== "true") await more.click();
       await dialog.getByLabel("SKU", { exact: true }).fill(sku);
-      await dialog.getByLabel("Categoria").selectOption({ label: lab.categoryName }).catch(() => undefined);
-      await dialog.getByLabel("Costo ref").fill("0.6");
-      await dialog.getByLabel("Precio ref").fill("1");
-      await dialog.getByLabel("Stock inicial").fill(String(stock));
-      await dialog.getByLabel("Stock minimo").fill("0");
+      await dialog.getByLabel("Stock inicial", { exact: true }).fill(String(stock));
+      await dialog.getByLabel("Stock mínimo", { exact: true }).fill("0");
       rec.say("Diálogo Crear producto · etiquetas", (await dialog.locator("label").allInnerTexts()).map((t) => t.replace(/\s+/g, " ").trim()).join(" / "));
       await rec.shot(page, "formulario");
       const posted = page

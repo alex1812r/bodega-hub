@@ -333,7 +333,7 @@ describe("judgeRejection (9.5 / 9.7 / 9.9) e isRawDbError", () => {
     expect(raw.detail).toContain("error crudo de Postgres");
     expect(judgeRejection({ ...strict, status: 500, error: "INTERNAL_ERROR x" }).verdict).toBe("fail");
     expect(judgeRejection({ ...strict, status: 200 }).verdict).toBe("fail");
-    const generic = judgeRejection({ ...strict, status: 400, error: "BAD_REQUEST Los datos enviados no son validos." });
+    const generic = judgeRejection({ ...strict, status: 400, error: "BAD_REQUEST Los datos enviados no son válidos." });
     expect(generic.verdict).toBe("finding");
     expect(generic.detail).toContain("mensaje genérico");
     expect(judgeRejection({ ...strict, status: 409, error: "CONFLICT x", newMovements: 1 }).verdict).toBe("fail");
@@ -405,7 +405,7 @@ describe("judgeReverseOrder (9.10)", () => {
   it("pass: la perdedora recibe el 409 reintentable del BFF (40P01) con rollback limpio", () => {
     const j = judgeReverseOrder({
       statuses: [409, 201],
-      errors: ["CONFLICT La operacion choco con otra en curso y no se aplico. Intenta de nuevo.", undefined],
+      errors: ["CONFLICT La operación chocó con otra en curso y no se aplicó. Intenta de nuevo.", undefined],
       lines,
       stockDeltas: [-1, -1, -1],
       sales: 1,

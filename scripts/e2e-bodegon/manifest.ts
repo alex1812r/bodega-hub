@@ -12,6 +12,9 @@ export type E2eManifest = {
   paymentIds: string[];
   discardCategoryId?: string;
   discardProductId?: string;
+  /** Caja asignada al vendedor y su turno abierto (fase 10). */
+  cashRegisterId?: string;
+  cashSessionId?: string;
   vendedorUserId: string;
 };
 

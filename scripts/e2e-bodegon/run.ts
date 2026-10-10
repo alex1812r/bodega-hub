@@ -66,9 +66,10 @@ async function main() {
   await phase6SupplierProducts(client, manifest);
   await phase7Inventory(client, manifest);
   await phase8Purchases(client, manifest);
-  await phase9PurchasePayments(client, manifest);
   await phase10Sales(client, manifest);
   await phase11SalePayments(client, manifest);
+  // Después de cobrar ventas: los pagos de compra por cuenta salen de lo cobrado por cuenta.
+  await phase9PurchasePayments(client, manifest);
   await phase12Exceptions(client, manifest);
   await phase13Prices(client, manifest);
   await phase14Analytics(client, manifest);

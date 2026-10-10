@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 
+import { roundMoney } from "@bodega/core";
+
 import type { ApiClient } from "./client";
-import { unwrapId } from "./client";
+import { unwrapId, unwrapList } from "./client";
 import type { E2eManifest } from "./manifest";
 import {
   CATEGORIES,
@@ -15,9 +17,10 @@ import {
   USERS,
   e2eSuffix,
 } from "./data";
+import { buildPurchaseBody, splitAmount, type PurchaseLineSeed, type RateContext } from "./requests";
 
-type SaleLike = { id: string; totalVes?: number; status?: string };
-type PurchaseLike = { id: string; totalVes?: number; status?: string };
+type SaleLike = { id: string; totalRef?: number; totalVes?: number; status?: string };
+type PurchaseLike = { id: string; totalRef?: number; totalVes?: number; status?: string };
 
 function recordId(obj: unknown): string {
   const id = unwrapId(obj);
@@ -193,6 +196,7 @@ export async function phase4Products(client: ApiClient, manifest: E2eManifest) {
       body: JSON.stringify({
         sku: `BOD-DGR-001${e2eSuffix()}`,
         name: "Arroz duplicado",
+        categoryId: manifest.categoryIds.despensa_granos,
         salePriceRef: 2,
       }),
     }),
@@ -445,71 +449,123 @@ async function loginAs(client: ApiClient, role: keyof typeof USERS) {
   if (!res.ok) throw new Error(`Login ${role} failed`);
 }
 
-function rateContext(manifest: E2eManifest) {
-  return {
-    exchangeRateId: manifest.exchangeRateIds.at(-1),
-    refRateVes: 52,
-  };
+/**
+ * Tasa con la que se registra una venta o una compra: la ÚLTIMA fila de
+ * `exchange_rates` de la tienda, que es contra la que `create_sale` valida
+ * (±5 %). Se consulta antes `/current` porque puede registrar la tasa oficial
+ * del día y dejar atrás las manuales de la fase 2.
+ */
+async function storeRate(client: ApiClient, manifest: E2eManifest): Promise<RateContext> {
+  await client.request("/api/exchange-rates/current");
+  const latest = unwrapList(await client.request("/api/exchange-rates?limit=1"))[0] as
+    | { id?: string; rateVes?: number }
+    | undefined;
+
+  if (latest?.id && typeof latest.rateVes === "number" && latest.rateVes > 0) {
+    return { exchangeRateId: latest.id, refRateVes: latest.rateVes };
+  }
+
+  return { exchangeRateId: manifest.exchangeRateIds.at(-1), refRateVes: 52 };
+}
+
+function purchaseLines(manifest: E2eManifest, keys: readonly string[], quantity: number): PurchaseLineSeed[] {
+  return keys.flatMap((key) => {
+    const productId = manifest.productIds[key];
+    const product = PRODUCTS.find((entry) => entry.key === key);
+
+    return productId && product ? [{ productId, quantity, unitCostRef: product.currentCostRef }] : [];
+  });
+}
+
+/**
+ * Los cobros de una venta (también los que registra el contador) entran por un
+ * turno de caja abierto en la tienda. Deja abierto el del vendedor: crea y le
+ * asigna una caja si no tiene, y abre el turno con fondo cero. Termina con la
+ * sesión del vendedor iniciada.
+ */
+async function ensureSellerCashSession(client: ApiClient, manifest: E2eManifest) {
+  await loginAs(client, "vendedor");
+  const current = await client.step("10", "GET /api/cash/session (vendedor)", () => client.request("/api/cash/session"));
+  const open = client.data<{ id?: string }>(current);
+
+  if (open?.id) {
+    manifest.cashSessionId = open.id;
+    return;
+  }
+
+  const me = client.data<{ user?: { id?: string } }>(await client.request("/api/auth/me"));
+  const sellerId = me?.user?.id ?? manifest.vendedorUserId;
+  const registers = unwrapList(await client.request("/api/cash/registers")) as Array<{
+    assignedUserId?: string | null;
+    id: string;
+    isActive?: boolean;
+  }>;
+  let registerId = registers.find((entry) => entry.assignedUserId === sellerId && entry.isActive !== false)?.id;
+
+  if (!registerId) {
+    await loginAs(client, "admin");
+    const created = await client.step("10", "POST /api/cash/registers", () =>
+      client.request("/api/cash/registers", {
+        method: "POST",
+        body: JSON.stringify({ name: `Caja E2E${e2eSuffix()}` }),
+      }),
+    );
+    registerId = recordId(client.data(created));
+    await client.step("10", "PATCH /api/cash/registers/[id] (asignar al vendedor)", () =>
+      client.request(`/api/cash/registers/${registerId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ assignedUserId: sellerId }),
+      }),
+    );
+    await loginAs(client, "vendedor");
+  }
+
+  manifest.cashRegisterId = registerId;
+  const opened = await client.step("10", "POST /api/cash/session/open", () =>
+    client.request("/api/cash/session/open", {
+      method: "POST",
+      body: JSON.stringify({ registerId, openingVes: 0, openingRef: 0 }),
+    }),
+  );
+  manifest.cashSessionId = unwrapId(client.data(opened));
 }
 
 export async function phase8Purchases(client: ApiClient, manifest: E2eManifest) {
   console.log("\n=== Fase 8 — Compras ===");
   await loginAs(client, "almacen");
 
-  const rateCtx = rateContext(manifest);
+  const rate = await storeRate(client, manifest);
   const despensaId = manifest.contactIds.prov_despensa;
-  const itemsDespensa = ["arroz", "pasta", "harina", "aceite"]
-    .map((key) => {
-      const productId = manifest.productIds[key];
-      if (!productId) return null;
-      const p = PRODUCTS.find((x) => x.key === key)!;
-      return {
-        productId,
-        quantity: 50,
-        unitCostRef: p.currentCostRef,
-      };
-    })
-    .filter(Boolean);
+  const itemsDespensa = purchaseLines(manifest, ["arroz", "pasta", "harina", "aceite"], 50);
 
   if (despensaId && itemsDespensa.length) {
     const res = await client.step("8", "POST compra recibida despensa", () =>
       client.request("/api/purchases", {
         method: "POST",
-        body: JSON.stringify({
-          supplierId: despensaId,
-          status: "recibido",
-          items: itemsDespensa,
-          taxRef: 0,
-          discountRef: 0,
-          ...rateCtx,
-          notes: "Compra despensa mayorista E2E",
-        }),
+        body: JSON.stringify(
+          buildPurchaseBody({
+            supplierId: despensaId,
+            status: "recibido",
+            lines: itemsDespensa,
+            rate,
+            notes: "Compra despensa mayorista E2E",
+          }),
+        ),
       }),
     );
     manifest.purchaseIds.despensa_recibida = recordId(client.data(res));
   }
 
   const heladosId = manifest.contactIds.prov_helados;
-  const itemsPedido = ["paleta", "helado_pote"]
-    .map((key) => {
-      const productId = manifest.productIds[key];
-      const p = PRODUCTS.find((x) => x.key === key)!;
-      return productId
-        ? { productId, quantity: 30, unitCostRef: p.currentCostRef }
-        : null;
-    })
-    .filter(Boolean);
+  const itemsPedido = purchaseLines(manifest, ["paleta", "helado_pote"], 30);
 
   if (heladosId && itemsPedido.length) {
     const res = await client.step("8", "POST compra pedido helados", () =>
       client.request("/api/purchases", {
         method: "POST",
-        body: JSON.stringify({
-          supplierId: heladosId,
-          status: "pedido",
-          items: itemsPedido,
-          ...rateCtx,
-        }),
+        body: JSON.stringify(
+          buildPurchaseBody({ supplierId: heladosId, status: "pedido", lines: itemsPedido, rate }),
+        ),
       }),
     );
     manifest.purchaseIds.helados_pedido = recordId(client.data(res));
@@ -538,12 +594,14 @@ export async function phase8Purchases(client: ApiClient, manifest: E2eManifest) 
     const cancelRes = await client.step("8", "POST compra para cancelar", () =>
       client.request("/api/purchases", {
         method: "POST",
-        body: JSON.stringify({
-          supplierId: refrescosId,
-          status: "pedido",
-          items: [{ productId: cocaId, quantity: 5, unitCostRef: 1.6 }],
-          ...rateCtx,
-        }),
+        body: JSON.stringify(
+          buildPurchaseBody({
+            supplierId: refrescosId,
+            status: "pedido",
+            lines: [{ productId: cocaId, quantity: 5, unitCostRef: 1.6 }],
+            rate,
+          }),
+        ),
       }),
     );
     const cancelId = cancelRes.ok ? recordId(client.data(cancelRes)) : undefined;
@@ -560,12 +618,14 @@ export async function phase8Purchases(client: ApiClient, manifest: E2eManifest) 
     const retRes = await client.step("8", "POST compra para devolver", () =>
       client.request("/api/purchases", {
         method: "POST",
-        body: JSON.stringify({
-          supplierId: snacksId,
-          status: "recibido",
-          items: [{ productId: papasId, quantity: 10, unitCostRef: 1.5 }],
-          ...rateCtx,
-        }),
+        body: JSON.stringify(
+          buildPurchaseBody({
+            supplierId: snacksId,
+            status: "recibido",
+            lines: [{ productId: papasId, quantity: 10, unitCostRef: 1.5 }],
+            rate,
+          }),
+        ),
       }),
     );
     const retId = retRes.ok ? recordId(client.data(retRes)) : undefined;
@@ -579,15 +639,19 @@ export async function phase8Purchases(client: ApiClient, manifest: E2eManifest) 
   await client.logout();
   await client.step("8", "POST compra como vendedor (403)", async () => {
     await client.login(USERS.vendedor.email, USERS.vendedor.password);
+    // Cuerpo válido: el rechazo es por permiso, no por formato.
     return client.request("/api/purchases", {
       method: "POST",
-      body: JSON.stringify({
-        supplierId: despensaId,
-        items: [{ productId: manifest.productIds.arroz, quantity: 1, unitCostRef: 1 }],
-        ...rateCtx,
-      }),
+      body: JSON.stringify(
+        buildPurchaseBody({
+          supplierId: despensaId ?? "",
+          status: "recibido",
+          lines: [{ productId: manifest.productIds.arroz ?? "", quantity: 1, unitCostRef: 1 }],
+          rate,
+        }),
+      ),
     });
-  }, { expectStatus: [403, 500], allowFail: true });
+  }, { expectStatus: 403 });
 
   await client.login(USERS.admin.email, USERS.admin.password);
 }
@@ -595,6 +659,7 @@ export async function phase8Purchases(client: ApiClient, manifest: E2eManifest) 
 export async function phase9PurchasePayments(client: ApiClient, manifest: E2eManifest) {
   console.log("\n=== Fase 9 — Pagos de compras ===");
   await loginAs(client, "admin");
+  const rate = await storeRate(client, manifest);
 
   const createPurchaseForPayment = async (key: string) => {
     const supplierId = manifest.contactIds.prov_refrescos;
@@ -603,27 +668,29 @@ export async function phase9PurchasePayments(client: ApiClient, manifest: E2eMan
     const res = await client.step("9", `POST compra base pago ${key}`, () =>
       client.request("/api/purchases", {
         method: "POST",
-        body: JSON.stringify({
-          supplierId,
-          status: "recibido",
-          items: [{ productId, quantity: 12, unitCostRef: 1.3 }],
-          notes: `Compra para pago ${key}`,
-          ...rateContext(manifest),
-        }),
+        body: JSON.stringify(
+          buildPurchaseBody({
+            supplierId,
+            status: "recibido",
+            lines: [{ productId, quantity: 12, unitCostRef: 1.3 }],
+            rate,
+            notes: `Compra para pago ${key}`,
+          }),
+        ),
       }),
     );
     if (res.ok) {
-      const data = client.data<PurchaseLike>(res);
-      const id = recordId(data);
-      manifest.purchaseIds[`pay_${key}`] = id;
-      return { id, totalVes: data?.totalVes ?? 8000 };
+      manifest.purchaseIds[`pay_${key}`] = recordId(client.data<PurchaseLike>(res));
     }
   };
+
+  /** Abono en dólares físicos de la compra `efectivo_usd`: nunca más que su total. */
+  const usdAmount = (totalRef: number) => roundMoney(Math.min(totalRef, 10));
 
   const payTargets: Array<{
     key: string;
     method: string;
-    body: (purchaseId: string, amount: number) => object;
+    body: (purchaseId: string, amount: number, totalRef: number) => object;
   }> = [
     {
       key: "efectivo_ves",
@@ -638,9 +705,9 @@ export async function phase9PurchasePayments(client: ApiClient, manifest: E2eMan
     {
       key: "efectivo_usd",
       method: "efectivo_usd",
-      body: (purchaseId, amount) => ({
+      body: (purchaseId, _amount, totalRef) => ({
         purchaseId,
-        amount: Math.min(amount / 50, 50),
+        amount: usdAmount(totalRef),
         method: "efectivo_usd",
         currency: "USD",
       }),
@@ -650,7 +717,7 @@ export async function phase9PurchasePayments(client: ApiClient, manifest: E2eMan
       method: "pago_movil",
       body: (purchaseId, amount) => ({
         purchaseId,
-        amount: amount * 0.5,
+        amount: roundMoney(amount * 0.5),
         method: "pago_movil",
         currency: "VES",
         bankName: "Banesco",
@@ -663,7 +730,7 @@ export async function phase9PurchasePayments(client: ApiClient, manifest: E2eMan
       method: "transferencia",
       body: (purchaseId, amount) => ({
         purchaseId,
-        amount: amount * 0.3,
+        amount: roundMoney(amount * 0.3),
         method: "transferencia",
         currency: "VES",
         bankName: "Mercantil",
@@ -675,7 +742,7 @@ export async function phase9PurchasePayments(client: ApiClient, manifest: E2eMan
       method: "punto_venta",
       body: (purchaseId, amount) => ({
         purchaseId,
-        amount: amount * 0.2,
+        amount: roundMoney(amount * 0.2),
         method: "punto_venta",
         currency: "VES",
         referenceCode: "POS-9988",
@@ -689,23 +756,43 @@ export async function phase9PurchasePayments(client: ApiClient, manifest: E2eMan
 
   await loginAs(client, "contador");
 
-  const purchaseTotals: Record<string, number> = {};
+  const purchaseTotals: Record<string, { totalRef: number; totalVes: number }> = {};
   for (const pt of payTargets) {
-    const pid = manifest.purchaseIds[`pay_${pt.key}`];
-    if (!pid) continue;
-    const detail = await client.request(`/api/purchases/${pid}`);
-    purchaseTotals[pt.key] = client.data<PurchaseLike>(detail)?.totalVes ?? 8000;
+    const purchaseId = manifest.purchaseIds[`pay_${pt.key}`];
+    if (!purchaseId) continue;
+    const detail = client.data<PurchaseLike>(await client.request(`/api/purchases/${purchaseId}`));
+    purchaseTotals[pt.key] = { totalRef: detail?.totalRef ?? 15.6, totalVes: detail?.totalVes ?? 8000 };
+  }
+
+  // El efectivo de una compra sale del baúl: sin fondos el pago es 400
+  // (INSUFFICIENT_VAULT_BALANCE). Los pagos por cuenta (pago móvil, transferencia,
+  // punto) salen de lo cobrado por cuenta en las ventas: por eso esta fase corre
+  // después de la 11.
+  const cashVes = purchaseTotals.efectivo_ves;
+  const cashUsd = purchaseTotals.efectivo_usd;
+  if (cashVes || cashUsd) {
+    await loginAs(client, "admin");
+    await client.step("9", "POST /api/vault/deposits (fondo para pagar en efectivo)", () =>
+      client.request("/api/vault/deposits", {
+        method: "POST",
+        body: JSON.stringify({
+          amountVes: cashVes?.totalVes ?? 0,
+          amountRef: cashUsd ? usdAmount(cashUsd.totalRef) : 0,
+          notes: "Fondo E2E para pagos de compras",
+        }),
+      }),
+    );
+    await loginAs(client, "contador");
   }
 
   for (const pt of payTargets) {
-    const created = manifest.purchaseIds[`pay_${pt.key}`]
-      ? { id: manifest.purchaseIds[`pay_${pt.key}`], totalVes: purchaseTotals[pt.key] ?? 8000 }
-      : undefined;
-    if (!created) continue;
+    const purchaseId = manifest.purchaseIds[`pay_${pt.key}`];
+    const totals = purchaseTotals[pt.key];
+    if (!purchaseId || !totals) continue;
     const res = await client.step("9", `POST pago compra ${pt.method}`, () =>
       client.request("/api/payments", {
         method: "POST",
-        body: JSON.stringify(pt.body(created.id, created.totalVes)),
+        body: JSON.stringify(pt.body(purchaseId, totals.totalVes, totals.totalRef)),
       }),
     );
     if (res.ok) {
@@ -765,12 +852,9 @@ export async function phase9PurchasePayments(client: ApiClient, manifest: E2eMan
 
 export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
   console.log("\n=== Fase 10 — Ventas ===");
-  await loginAs(client, "vendedor");
+  await ensureSellerCashSession(client, manifest);
 
-  const rateRes = await client.request("/api/exchange-rates/current");
-  const rateData = client.data<{ id?: string; rateVes?: number }>(rateRes);
-  const exchangeRateId = rateData?.id ?? manifest.exchangeRateIds.at(-1);
-  const refRateVes = rateData?.rateVes ?? 52;
+  const { exchangeRateId, refRateVes } = await storeRate(client, manifest);
 
   const mariaId = manifest.contactIds.cli_maria;
   const itemsSnack = ["oreo", "coca", "chicle"]
@@ -834,10 +918,26 @@ export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
           clientRequestId: randomUUID(),
           customerId: mariaId,
           items: [{ productId: arrozId, quantity: 999999, unitPriceRef: 1.8 }],
-          ...rateContext(manifest),
+          exchangeRateId,
+          refRateVes,
         }),
       }),
-      { expectStatus: [400, 409, 500] },
+      { expectStatus: [400, 409] },
+    );
+    // Un vendedor no aplica descuentos: 403 antes de tocar la base.
+    await client.step("10", "POST venta con descuento como vendedor (403)", () =>
+      client.request("/api/sales", {
+        method: "POST",
+        body: JSON.stringify({
+          clientRequestId: randomUUID(),
+          customerId: mariaId,
+          items: [{ productId: arrozId, quantity: 1 }],
+          discountRef: 0.5,
+          exchangeRateId,
+          refRateVes,
+        }),
+      }),
+      { expectStatus: 403 },
     );
   }
 
@@ -845,16 +945,15 @@ export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
   const saleId = manifest.saleIds.snacks;
   if (saleId) {
     await client.step("10", "GET /api/sales/[id]", () => client.request(`/api/sales/${saleId}`));
-    await client.logout();
-    await client.login(USERS.admin.email, USERS.admin.password);
-    await client.step("10", "PATCH /api/sales/[id] notas (admin/RLS)", () =>
+    // La ruta pide `sales.create` (el admin no lo tiene salvo «El administrador puede
+    // vender») y la RLS decide si el vendedor puede escribir la venta: 200 o 404.
+    await client.step("10", "PATCH /api/sales/[id] notas (vendedor/RLS)", () =>
       client.request(`/api/sales/${saleId}`, {
         method: "PATCH",
         body: JSON.stringify({ notes: "Cliente frecuente — E2E" }),
       }),
       { expectStatus: [200, 404] },
     );
-    await client.login(USERS.vendedor.email, USERS.vendedor.password);
     await client.step("10", "GET /api/sales/[id]/receipt", () =>
       client.request(`/api/sales/${saleId}/receipt`),
     );
@@ -874,7 +973,8 @@ export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
         clientRequestId: randomUUID(),
         customerId: mariaId,
         items: [{ productId: manifest.productIds.chicle, quantity: 1 }],
-        ...rateContext(manifest),
+        exchangeRateId,
+        refRateVes,
       }),
     });
   }, { expectStatus: 403 });
@@ -884,6 +984,8 @@ export async function phase10Sales(client: ApiClient, manifest: E2eManifest) {
 
 export async function phase11SalePayments(client: ApiClient, manifest: E2eManifest) {
   console.log("\n=== Fase 11 — Pagos de ventas ===");
+  await loginAs(client, "vendedor");
+  const rate = await storeRate(client, manifest);
 
   const createSale = async (key: string, customerKey: string, productKeys: string[]) => {
     const customerId = manifest.contactIds[customerKey];
@@ -901,16 +1003,15 @@ export async function phase11SalePayments(client: ApiClient, manifest: E2eManife
         clientRequestId: randomUUID(),
         customerId,
         items,
-        ...rateContext(manifest),
+        ...rate,
       }),
     });
     if (!res.ok) return;
     const data = client.data<SaleLike>(res);
     manifest.saleIds[`pay_${key}`] = data!.id;
-    return { id: data!.id, totalVes: data!.totalVes ?? 3000 };
+    return { id: data!.id, totalRef: data!.totalRef ?? 1, totalVes: data!.totalVes ?? 3000 };
   };
 
-  await loginAs(client, "vendedor");
   const saleA = await createSale("a", "cli_ana", ["papas"]);
   const saleB = await createSale("b", "cli_luis", ["leche", "queso"]);
   const saleC = await createSale("c", "cli_carmen", ["harina"]);
@@ -933,12 +1034,13 @@ export async function phase11SalePayments(client: ApiClient, manifest: E2eManife
   }
 
   if (saleB) {
+    const [firstPart, rest] = splitAmount(saleB.totalVes, 0.4);
     await client.step("11", "Pago venta pago_movil parcial", () =>
       client.request("/api/payments", {
         method: "POST",
         body: JSON.stringify({
           saleId: saleB.id,
-          amount: saleB.totalVes * 0.4,
+          amount: firstPart,
           method: "pago_movil",
           currency: "VES",
           bankName: "Provincial",
@@ -952,7 +1054,7 @@ export async function phase11SalePayments(client: ApiClient, manifest: E2eManife
         method: "POST",
         body: JSON.stringify({
           saleId: saleB.id,
-          amount: saleB.totalVes * 0.6,
+          amount: rest,
           method: "transferencia",
           currency: "VES",
           bankName: "BNC",
@@ -968,7 +1070,8 @@ export async function phase11SalePayments(client: ApiClient, manifest: E2eManife
         method: "POST",
         body: JSON.stringify({
           saleId: saleC.id,
-          amount: 5,
+          // Dólares físicos: nunca más que el total de la venta.
+          amount: roundMoney(Math.min(5, saleC.totalRef)),
           method: "efectivo_usd",
           currency: "USD",
         }),
@@ -1010,8 +1113,10 @@ export async function phase11SalePayments(client: ApiClient, manifest: E2eManife
 }
 
 export async function phase12Exceptions(client: ApiClient, manifest: E2eManifest) {
-  const rateCtx = rateContext(manifest);
   console.log("\n=== Fase 12 — Excepciones ===");
+  // Vender, anular y devolver una venta piden `sales.create`: lo hace el vendedor.
+  await loginAs(client, "vendedor");
+  const rate = await storeRate(client, manifest);
   const mariaId = manifest.contactIds.cli_maria;
   const chicleId = manifest.productIds.chicle;
   if (mariaId && chicleId) {
@@ -1021,7 +1126,7 @@ export async function phase12Exceptions(client: ApiClient, manifest: E2eManifest
         clientRequestId: randomUUID(),
         customerId: mariaId,
         items: [{ productId: chicleId, quantity: 5, unitPriceRef: 1.2 }],
-        ...rateCtx,
+        ...rate,
       }),
     });
     const cancelSaleId = res.ok ? recordId(client.data(res)) : undefined;
@@ -1034,26 +1139,34 @@ export async function phase12Exceptions(client: ApiClient, manifest: E2eManifest
 
   const anaId = manifest.contactIds.cli_ana;
   const oreoId = manifest.productIds.oreo;
+  let partialReturnSaleId: string | undefined;
   if (anaId && oreoId) {
-    const saleRes = await client.request("/api/sales", {
-      method: "POST",
-      body: JSON.stringify({
-        clientRequestId: randomUUID(),
-        customerId: anaId,
-        items: [{ productId: oreoId, quantity: 4, unitPriceRef: 3.5 }],
-        ...rateCtx,
-      }),
-    });
+    const oreoSale = () =>
+      client.request("/api/sales", {
+        method: "POST",
+        body: JSON.stringify({
+          clientRequestId: randomUUID(),
+          customerId: anaId,
+          items: [{ productId: oreoId, quantity: 4, unitPriceRef: 3.5 }],
+          ...rate,
+        }),
+      });
+    const saleRes = await oreoSale();
     const returnSaleId = saleRes.ok ? recordId(client.data(saleRes)) : undefined;
     if (returnSaleId) {
       await client.step("12", "POST /api/sales/[id]/return", () =>
         client.request(`/api/sales/${returnSaleId}/return`, { method: "POST" }),
       );
     }
+    // Otra venta igual, sin devolver: de ella sale la devolución parcial por ajuste.
+    const partialRes = await oreoSale();
+    partialReturnSaleId = partialRes.ok ? recordId(client.data(partialRes)) : undefined;
   }
 
+  await loginAs(client, "admin");
   if (oreoId) {
-    await client.step("12", "Ajuste devolucion_cliente", () =>
+    // Una devolución de cliente va ligada a su venta: sin `saleId` no hay ajuste.
+    await client.step("12", "Ajuste devolucion_cliente sin venta (400)", () =>
       client.request("/api/inventory/adjustments", {
         method: "POST",
         body: JSON.stringify({
@@ -1063,7 +1176,22 @@ export async function phase12Exceptions(client: ApiClient, manifest: E2eManifest
           reason: "Devolución E2E",
         }),
       }),
+      { expectStatus: 400 },
     );
+    if (partialReturnSaleId) {
+      await client.step("12", "Ajuste devolucion_cliente", () =>
+        client.request("/api/inventory/adjustments", {
+          method: "POST",
+          body: JSON.stringify({
+            productId: oreoId,
+            quantityDelta: 2,
+            type: "devolucion_cliente",
+            reason: "Devolución E2E",
+            saleId: partialReturnSaleId,
+          }),
+        }),
+      );
+    }
     await client.step("12", "GET movements post-return", () =>
       client.request(`/api/inventory/movements?productId=${oreoId}&limit=15`),
     );
@@ -1071,8 +1199,8 @@ export async function phase12Exceptions(client: ApiClient, manifest: E2eManifest
 }
 
 export async function phase13Prices(client: ApiClient, manifest: E2eManifest) {
-  const rateCtx = rateContext(manifest);
   console.log("\n=== Fase 13 — Precios ===");
+  await loginAs(client, "admin");
   const oreoId = manifest.productIds.oreo;
   const arrozId = manifest.productIds.arroz;
   if (oreoId) {
@@ -1087,6 +1215,9 @@ export async function phase13Prices(client: ApiClient, manifest: E2eManifest) {
     );
   }
   if (arrozId && manifest.contactIds.cli_roberto) {
+    // El admin no vende: la venta al precio nuevo la registra el vendedor.
+    await loginAs(client, "vendedor");
+    const rate = await storeRate(client, manifest);
     await client.step("13", "Venta post-reprecio", () =>
       client.request("/api/sales", {
         method: "POST",
@@ -1094,10 +1225,11 @@ export async function phase13Prices(client: ApiClient, manifest: E2eManifest) {
           clientRequestId: randomUUID(),
           customerId: manifest.contactIds.cli_roberto,
           items: [{ productId: arrozId, quantity: 1, unitPriceRef: 1.9 }],
-          ...rateCtx,
+          ...rate,
         }),
       }),
     );
+    await loginAs(client, "admin");
   }
 }
 
@@ -1145,7 +1277,13 @@ export async function phase15Users(client: ApiClient, manifest: E2eManifest) {
   console.log("\n=== Fase 15 — Usuarios y permisos ===");
   await loginAs(client, "admin");
 
-  await client.step("15", "GET /api/users", () => client.request("/api/users?limit=10"));
+  const users = await client.step("15", "GET /api/users", () => client.request("/api/users?limit=100"));
+  const seller = (unwrapList(users) as Array<{ email?: string; id?: string }>).find(
+    (user) => user.email === USERS.vendedor.email,
+  );
+  if (seller?.id) {
+    manifest.vendedorUserId = seller.id;
+  }
 
   await client.step("15", "PATCH /api/users/[id] vendedor grants", () =>
     client.request(`/api/users/${manifest.vendedorUserId}`, {
