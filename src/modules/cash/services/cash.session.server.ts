@@ -203,7 +203,13 @@ export async function listOpenCashSessions(storeId: string) {
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase.from("cash_sessions").select("*, cash_registers(*)").eq("store_id", storeId).eq("status", "open");
   throwIfSupabaseError(error);
-  const sessions = (data ?? []).map((row) => mapSession(row as Record<string, unknown>));
+  // Quién abrió cada turno: de él es el turno (solo él lo cierra). Lo usa el aviso
+  // de «El administrador puede vender» al apagarse; la caja no trae a quién está asignada.
+  const sessions = (data ?? []).map((row) => {
+    const record = row as Record<string, unknown>;
+
+    return { ...mapSession(record), openedBy: (record.opened_by as string | null) ?? null };
+  });
   if (sessions.length === 0) {
     return sessions;
   }

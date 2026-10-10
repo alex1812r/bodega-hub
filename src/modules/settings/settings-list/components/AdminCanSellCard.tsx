@@ -1,10 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
+import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
 import { CloseCashSessionModal } from "@/modules/cash/components/CloseCashSessionModal";
 import {
   useCashMovements,
+  useCashRegisters,
   useMyCashSession,
   useOpenCashSessions,
 } from "@/modules/cash/hooks/useCash";
@@ -49,33 +52,48 @@ function currentLabel(state: AdminCanSellState) {
 }
 
 /**
- * Al desactivar: administradores con una caja abierta a su nombre. Solo avisa;
- * el turno se podrá cerrar igual (caos 7.8).
+ * Al desactivar: turnos abiertos por un administrador. Solo avisa; el turno se
+ * podrá cerrar igual (caos 7.8). El turno es de quien lo abrió: el propio sale de
+ * `GET /api/cash/session` y el de los demás de `openedBy` (la caja de un turno no
+ * trae a quién está asignada).
  */
 function OpenSessionsNotice({ state }: { state: AdminCanSellState }) {
+  const ownSession = useMyCashSession().data ?? null;
   const openSessions = useOpenCashSessions();
   const adminNames = new Map(state.admins.map((admin) => [admin.id, admin.name]));
-  const affected = (openSessions.data ?? []).filter((session) =>
-    adminNames.has(session.register.assignedUserId ?? ""),
+  const others = (openSessions.data ?? []).filter(
+    (session) => session.id !== ownSession?.id && adminNames.has(session.openedBy ?? ""),
   );
 
-  if (affected.length === 0) {
+  if (!ownSession && others.length === 0) {
     return null;
   }
 
   return (
-    <div className="space-y-1" role="status">
-      <p className="font-medium text-foreground">Hay cajas abiertas a nombre de un administrador:</p>
-      <ul aria-label="Cajas abiertas de administradores" className="list-disc space-y-1 pl-5">
-        {affected.map((session) => (
-          <li className="[overflow-wrap:anywhere]" key={session.id}>
-            {adminNames.get(session.register.assignedUserId ?? "")} · {session.register.name}
-          </li>
-        ))}
-      </ul>
-      <p>
-        Podrán cerrar ese turno desde Configuración, pero no vender ni abrir uno nuevo.
-      </p>
+    <div className="space-y-2" role="status">
+      {ownSession ? (
+        <p className="[overflow-wrap:anywhere]">
+          <span className="font-medium text-foreground">
+            Tienes una caja abierta: podrás cerrarla, pero no vender.
+          </span>{" "}
+          Es {ownSession.register.name}.
+        </p>
+      ) : null}
+      {others.length > 0 ? (
+        <div className="space-y-1">
+          <p className="font-medium text-foreground">
+            Hay cajas abiertas a nombre de un administrador:
+          </p>
+          <ul aria-label="Cajas abiertas de administradores" className="list-disc space-y-1 pl-5">
+            {others.map((session) => (
+              <li className="[overflow-wrap:anywhere]" key={session.id}>
+                {adminNames.get(session.openedBy ?? "")} · {session.register.name}
+              </li>
+            ))}
+          </ul>
+          <p>Podrán cerrar ese turno desde Configuración, pero no vender ni abrir uno nuevo.</p>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -197,6 +215,38 @@ function OwnOpenCashSessionNotice() {
 }
 
 /**
+ * Encendido, vender exige además una caja asignada: si quien mira aún no tiene
+ * una activa, se le lleva a Cajas (allí se la asigna). Solo se monta para quien
+ * gestiona cajas (`cash.manage`).
+ */
+function AssignRegisterHint() {
+  const currentUser = useCurrentUser();
+  const registers = useCashRegisters();
+  const userId = currentUser.data?.user.id;
+
+  if (
+    !userId ||
+    !registers.data ||
+    registers.data.some((register) => register.isActive && register.assignedUserId === userId)
+  ) {
+    return null;
+  }
+
+  return (
+    <p className={noticeClassName} role="status">
+      Asígnate una caja en{" "}
+      <Link
+        className="font-medium text-primary underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        href="/cash/registers"
+      >
+        Cajas
+      </Link>{" "}
+      para poder vender.
+    </p>
+  );
+}
+
+/**
  * Configuración → «El administrador puede vender» (POS-02). El interruptor no
  * guarda al pulsarlo: abre la confirmación con el antes → después y los
  * administradores afectados. Solo lo ve quien administra la tienda
@@ -279,6 +329,7 @@ export function AdminCanSellCard() {
                 Quitar la venta a todos
               </Button>
             ) : null}
+            {state.enabled && can("cash.manage") ? <AssignRegisterHint /> : null}
           </>
         )}
         {can("cash.view") && !can("cash.operate") ? <OwnOpenCashSessionNotice /> : null}

@@ -1,9 +1,12 @@
 import { ApiError } from "@/lib/api/apiError";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { mapPermissionList } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { isUserRole } from "@/shared/auth/permissions";
 
 import type { CashRegister } from "../types";
 import type { CashRegisterInput, CashRegisterUpdateInput } from "./cash.registers.mock-server";
+import { canBeAssignedCashRegister, CASH_REGISTER_ASSIGNEE_MESSAGE } from "./cashRegisterAssignee";
 
 const SELECT_WITH_ASSIGNEE = "*, assigned_user:profiles(full_name)";
 
@@ -41,6 +44,37 @@ export async function createCashRegister(input: CashRegisterInput, storeId: stri
   const { data, error } = await supabase.from("cash_registers").insert({ name: input.name.trim(), store_id: storeId }).select(SELECT_WITH_ASSIGNEE).single();
   throwIfSupabaseError(error);
   return mapRegister(data as Record<string, unknown>);
+}
+
+/**
+ * La caja solo se asigna a un usuario activo de la tienda con `cash.operate`
+ * efectivo (vendedor, administrador con «El administrador puede vender» o permiso
+ * concedido). Es una lectura previa a la actualización; desasignar no pasa por aquí.
+ */
+export async function assertCashRegisterAssignee(userId: string, storeId: string) {
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("role, is_active, granted_permissions, denied_permissions")
+    .eq("id", userId)
+    .eq("store_id", storeId)
+    .maybeSingle();
+  throwIfSupabaseError(error);
+
+  const row = data as Record<string, unknown> | null;
+  const canOperate =
+    row != null &&
+    isUserRole(row.role) &&
+    canBeAssignedCashRegister({
+      deniedPermissions: mapPermissionList(row.denied_permissions),
+      grantedPermissions: mapPermissionList(row.granted_permissions),
+      isActive: row.is_active === true,
+      role: row.role,
+    });
+
+  if (!canOperate) {
+    throw new ApiError(400, "BAD_REQUEST", CASH_REGISTER_ASSIGNEE_MESSAGE);
+  }
 }
 
 export async function updateCashRegister(id: string, input: CashRegisterUpdateInput, storeId: string) {

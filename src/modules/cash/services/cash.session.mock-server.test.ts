@@ -3,6 +3,7 @@ import {
   closeCashSession,
   getCashSessionOwner,
   getCurrentCashSession,
+  listOpenCashSessions,
   openCashSession,
 } from "./cash.session.mock-server";
 import { createCashRegister, updateCashRegister } from "./cash.registers.mock-server";
@@ -69,6 +70,14 @@ describe("reglas de turno del que opera caja (POS-F3, paridad con el BFF real)",
     expect(() => openCashSession({ registerId: mine.id }, "ana", store)).toThrow(
       expect.objectContaining({ status: 400 }),
     );
+
+    // POS-F5: la lista de turnos abiertos dice quién abrió cada uno.
+    expect(
+      listOpenCashSessions(store).map((session) => [session.id, session.openedBy]),
+    ).toEqual([
+      [first.id, "ana"],
+      [foreign.id, "luis"],
+    ]);
 
     // La caja se reasigna con el turno todavía abierto: el turno sigue siendo de quien lo abrió.
     updateCashRegister(mine.id, { assignedUserId: null }, store);

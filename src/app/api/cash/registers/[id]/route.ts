@@ -9,4 +9,19 @@ import * as server from "@/modules/cash/services/cash.registers.server";
 const schema = z.object({ assignedUserId: z.string().nullable().optional(), assignedUserName: z.string().nullable().optional(), isActive: z.boolean().optional(), name: z.string().trim().min(1).optional() });
 const service = () => resolveDataSource() === "supabase" ? server : mock;
 export async function GET(request: Request, context: RouteContext<"/api/cash/registers/[id]">) { try { const auth = await requireStorePermission(request, "cash.view"); const { id } = await context.params; return jsonData(await service().getCashRegister(id, auth.storeId)); } catch (error) { return toErrorResponse(error); } }
-export async function PATCH(request: Request, context: RouteContext<"/api/cash/registers/[id]">) { try { const auth = await requireStorePermission(request, "cash.manage"); const { id } = await context.params; return jsonData(await service().updateCashRegister(id, schema.parse(await readJsonBody(request)), auth.storeId)); } catch (error) { return toErrorResponse(error); } }
+export async function PATCH(request: Request, context: RouteContext<"/api/cash/registers/[id]">) {
+  try {
+    const auth = await requireStorePermission(request, "cash.manage");
+    const { id } = await context.params;
+    const input = schema.parse(await readJsonBody(request));
+
+    // Solo al asignar: desasignar, renombrar o (des)activar no tocan a quién está asignada.
+    if (input.assignedUserId) {
+      await service().assertCashRegisterAssignee(input.assignedUserId, auth.storeId);
+    }
+
+    return jsonData(await service().updateCashRegister(id, input, auth.storeId));
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}

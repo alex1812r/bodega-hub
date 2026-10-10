@@ -5,7 +5,7 @@
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 jest.mock("next/navigation", () => ({
@@ -14,9 +14,10 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
+import type { CashRegister } from "../types";
 import { CashRegistersListPage } from "./page";
 
-function register(id: string) {
+function register(id: string): CashRegister {
   return {
     assignedUserId: null,
     assignedUserName: null,
@@ -114,5 +115,158 @@ describe("CashRegistersListPage · enlaces al detalle (DET-06b)", () => {
       "/cash/registers/001?returnTo=%2Fcash%2Fregisters",
     );
     expect(screen.getAllByText("Caja 002").length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * POS-F5 (qa-final F1): con «El administrador puede vender» encendido el admin no
+ * aparecía en el selector (solo listaba `role === "vendedor"`). Se lista a quien
+ * tiene `cash.operate` efectivo y está activo.
+ */
+describe("CashRegistersListPage · a quién se puede asignar una caja (POS-F5)", () => {
+  const originalMatchMedia = window.matchMedia;
+  let registers: Array<ReturnType<typeof register>>;
+  let patches: Array<{ body: unknown; url: string }>;
+
+  const users = [
+    { id: "seller", isActive: true, name: "Vendedora Activa", role: "vendedor" },
+    { id: "seller-off", isActive: false, name: "Vendedor Inactivo", role: "vendedor" },
+    {
+      deniedPermissions: ["cash.operate"],
+      id: "seller-denied",
+      isActive: true,
+      name: "Vendedor Sin Caja",
+      role: "vendedor",
+    },
+    {
+      grantedPermissions: ["sales.create", "cash.operate"],
+      id: "admin-sells",
+      isActive: true,
+      name: "Admin Que Vende",
+      role: "admin",
+    },
+    { id: "admin-plain", isActive: true, name: "Admin Sin Venta", role: "admin" },
+    { id: "accountant", isActive: true, name: "Contadora", role: "contador" },
+    {
+      grantedPermissions: ["cash.operate"],
+      id: "warehouse-cash",
+      isActive: true,
+      name: "Almacén Con Caja",
+      role: "almacen",
+    },
+  ];
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    window.history.replaceState(null, "", "/cash/registers");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string) => ({
+        addEventListener: jest.fn(),
+        matches: false,
+        media: query,
+        removeEventListener: jest.fn(),
+      }),
+    });
+    registers = [register("001")];
+    patches = [];
+    global.fetch = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(url).split("?")[0];
+      let data: unknown = [];
+
+      if (init?.method === "PATCH") {
+        patches.push({ body: JSON.parse(String(init.body)), url: path });
+        data = registers[0];
+      } else if (path === "/api/cash/registers") {
+        data = registers;
+      } else if (path === "/api/users") {
+        data = { items: users, limit: 100, skip: 0, total: users.length };
+      }
+
+      return {
+        headers: { get: () => "application/json" },
+        json: async () => ({ data }),
+        ok: true,
+        status: 200,
+      };
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: originalMatchMedia,
+    });
+  });
+
+  function renderPage() {
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CashRegistersListPage />
+      </QueryClientProvider>,
+    );
+  }
+
+  async function assignmentSelect() {
+    const [select] = await screen.findAllByRole("combobox", { name: "Asignar Caja 001" });
+
+    return select as HTMLSelectElement;
+  }
+
+  function optionLabels(select: HTMLSelectElement) {
+    return Array.from(select.options).map((option) => option.textContent);
+  }
+
+  it("lista a los usuarios activos con cash.operate: vendedores, el admin que vende y permisos concedidos", async () => {
+    renderPage();
+
+    const select = await assignmentSelect();
+
+    await waitFor(() =>
+      expect(optionLabels(select)).toEqual([
+        "Sin asignar",
+        "Vendedora Activa",
+        "Admin Que Vende",
+        "Almacén Con Caja",
+      ]),
+    );
+  });
+
+  it("el administrador que vende se puede asignar una caja", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+
+    const select = await assignmentSelect();
+
+    await waitFor(() => expect(optionLabels(select)).toContain("Admin Que Vende"));
+    await user.selectOptions(select, "admin-sells");
+
+    await waitFor(() =>
+      expect(patches).toEqual([
+        {
+          body: { assignedUserId: "admin-sells", assignedUserName: "Admin Que Vende" },
+          url: "/api/cash/registers/001",
+        },
+      ]),
+    );
+  });
+
+  it("con el interruptor apagado la caja sigue mostrando al administrador asignado", async () => {
+    registers = [
+      { ...register("001"), assignedUserId: "admin-plain", assignedUserName: "Admin Sin Venta" },
+    ];
+    renderPage();
+
+    const select = await assignmentSelect();
+
+    await waitFor(() => expect(optionLabels(select)).toContain("Vendedora Activa"));
+    expect(select.value).toBe("admin-plain");
+    expect(select.selectedOptions[0]).toHaveTextContent("Admin Sin Venta");
+    expect(optionLabels(select).filter((label) => label?.includes("Admin Sin Venta"))).toHaveLength(1);
   });
 });

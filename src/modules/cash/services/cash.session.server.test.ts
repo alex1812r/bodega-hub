@@ -10,6 +10,7 @@ import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import {
   getCashSessionOwner,
   getCurrentCashSession,
+  listOpenCashSessions,
   listPendingClosures,
   openCashSession,
 } from "./cash.session.server";
@@ -122,6 +123,23 @@ describe("cash.session.server · reglas de turno del que opera caja (POS-F3)", (
     await expect(getCashSessionOwner("s-1", STORE_ID)).resolves.toEqual({ openedBy: "otro" });
     await expect(getCashSessionOwner("s-1", "otra-tienda")).resolves.toBeNull();
     await expect(getCashSessionOwner("s-9", STORE_ID)).resolves.toBeNull();
+  });
+
+  it("listOpenCashSessions dice quién abrió cada turno (POS-F5: aviso al apagar «El administrador puede vender»)", async () => {
+    mount({
+      registers: [register("reg-1", "otro"), register("reg-2", null)],
+      sessions: [
+        openSession("s-1", "reg-1", "2026-10-10T08:00:00.000Z"),
+        openSession("s-2", "reg-2", "2026-10-10T09:00:00.000Z", "vendedor-1"),
+      ],
+    });
+
+    const sessions = await listOpenCashSessions(STORE_ID);
+
+    expect(sessions.map((session) => [session.id, session.openedBy])).toEqual([
+      ["s-1", ADMIN],
+      ["s-2", "vendedor-1"],
+    ]);
   });
 
   it("openCashSession rechaza la caja asignada a otro (403) y un segundo turno (409) sin llamar al RPC", async () => {

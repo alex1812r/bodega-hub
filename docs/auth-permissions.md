@@ -269,7 +269,13 @@ Para bodegas de un solo cajero, donde el dueño también atiende la caja (POS-02
 Encendido, los administradores de la tienda tienen además `sales.create` y `cash.operate`:
 
 - Ven «Ventas → POS» y «Mi caja» en el menú (el menú filtra por los permisos efectivos de `GET /api/auth/me`).
-- Pueden abrir caja, vender, cobrar y cerrar su caja. Para abrir caja hace falta una **caja asignada** (Cajas → asignar al administrador): sin ella el POS muestra el estado «sin caja» de siempre.
+- Pueden abrir caja, vender, cobrar y cerrar su caja. Para abrir caja hace falta una **caja asignada** (Cajas → asignar al administrador): sin ella el POS muestra el estado «sin caja» de siempre. Con el interruptor encendido y sin caja activa asignada, la tarjeta le muestra «Asígnate una caja en Cajas para poder vender» (solo con `cash.manage`).
+
+### A quién se asigna una caja
+
+El selector de **Cajas** y `PATCH /api/cash/registers/{id}` usan la misma regla (`canBeAssignedCashRegister` en `src/modules/cash/services/cashRegisterAssignee.ts`): usuario **activo** de la tienda con `cash.operate` **efectivo**. Son los vendedores, los administradores con el interruptor encendido y quien tenga el permiso concedido; un vendedor con `cash.operate` bloqueado queda fuera. Asignar a cualquier otro → 400. Desasignar, renombrar y activar o desactivar la caja no se validan.
+
+Al apagar el interruptor **no se borran** las asignaciones: la caja sigue asignada al administrador (así puede cerrar su turno), Cajas lo sigue mostrando en el selector aunque ya no sea una opción elegible, y volver a asignársela responde 400 hasta encenderlo de nuevo.
 
 ### Abrir y cerrar caja: las mismas reglas que el vendedor
 
@@ -314,6 +320,6 @@ where role = 'admin'
 Al apagar, el administrador deja de poder vender (`POST /api/sales` → 403) y de abrir un turno nuevo (`POST /api/cash/session/open` → 403) de inmediato. Un turno que ya tuviera abierto **no queda atrapado**:
 
 - `POST /api/cash/session/close` acepta `cash.operate` **o** `cash.manage`, y en ambos casos cierra únicamente un turno **abierto por quien llama** (ver arriba); el de otro usuario → 403. La RPC `close_cash_session` no cambia.
-- La confirmación de apagar avisa de las cajas abiertas a nombre de un administrador.
+- La confirmación de apagar avisa de los turnos abiertos por un administrador. El turno es de quien lo abrió: el propio sale de `GET /api/cash/session` («Tienes una caja abierta: podrás cerrarla, pero no vender») y el de los demás de `openedBy` en `GET /api/cash/session/open` (la caja de un turno no trae a quién está asignada).
 - Como «Mi caja» deja de estar en el menú, la tarjeta del interruptor muestra al administrador «Tienes abierta la caja …» con el botón **Cerrar mi caja** (el mismo diálogo de cierre de siempre).
 - Si no la cierra, el cierre automático de fin de jornada sigue aplicando.

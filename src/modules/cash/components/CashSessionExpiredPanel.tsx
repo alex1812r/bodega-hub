@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
@@ -22,8 +22,17 @@ export function CashSessionExpiredPanel({
 }: CashSessionExpiredPanelProps) {
   const closeSession = useCloseCashSession();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Cerrojo síncrono: `isPending` llega un render tarde y un doble clic enviaba dos
+  // cierres (200 + 400). Solo se suelta si el cierre falla, para poder reintentar.
+  const lockedRef = useRef(false);
 
   async function handleClose() {
+    if (lockedRef.current) {
+      return;
+    }
+
+    lockedRef.current = true;
+
     try {
       setErrorMessage(null);
       await closeSession.mutateAsync({
@@ -32,6 +41,7 @@ export function CashSessionExpiredPanel({
         sessionId,
       });
     } catch (error) {
+      lockedRef.current = false;
       setErrorMessage(error instanceof Error ? error.message : "No se pudo cerrar la caja.");
     }
   }

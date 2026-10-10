@@ -31,6 +31,8 @@ export type CashSession = {
   /** Solo en turnos abiertos: saldos acumulados hasta ahora. */
   liveTotals?: CashSessionLiveTotals | null;
   openedAt: string;
+  /** Solo en `GET /api/cash/session/open`: id del usuario que abrió el turno. */
+  openedBy?: string | null;
   openingRef: number;
   openingVes: number;
   register: CashRegister;

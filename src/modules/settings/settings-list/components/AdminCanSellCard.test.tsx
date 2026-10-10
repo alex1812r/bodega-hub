@@ -32,13 +32,17 @@ type Admin = { canSell: boolean; id: string; name: string };
 const ana: Admin = { canSell: false, id: "admin-ana", name: "Ana Pérez" };
 const luis: Admin = { canSell: false, id: "admin-luis", name: "Luis Gómez" };
 
+/**
+ * Como la entrega el BFF real: `register` viene SIN `assignedUserId` (qa-final
+ * F5); de quién es el turno lo dice `openedBy`.
+ */
 const openSession = {
   id: "session-1",
   openedAt: "2026-10-09T12:00:00.000Z",
+  openedBy: ana.id,
   openingRef: 0,
   openingVes: 100,
   register: {
-    assignedUserId: ana.id,
     createdAt: "2026-10-01T12:00:00.000Z",
     id: "register-1",
     isActive: true,
@@ -50,9 +54,15 @@ const openSession = {
   status: "open",
 };
 
+type RegisterRow = { assignedUserId: string | null; id: string; isActive: boolean; name: string };
+
 type ServerOptions = {
   admins?: Admin[];
   failLoad?: boolean;
+  /** Quién tiene la sesión (`GET /api/auth/me`). */
+  meId?: string;
+  /** Cajas de la tienda (`GET /api/cash/registers`). */
+  registers?: RegisterRow[];
   /** La caja abierta de quien tiene la sesión (`GET /api/cash/session`). */
   ownSession?: typeof openSession | null;
   rejectWith?: { message: string; status: number };
@@ -65,7 +75,9 @@ type ServerOptions = {
 function installServer({
   admins = [ana, luis],
   failLoad = false,
+  meId = ana.id,
   ownSession = null,
+  registers = [],
   rejectWith,
   storeSessions = [],
   waitFor: gate,
@@ -96,6 +108,14 @@ function installServer({
       }
 
       return apiData(state());
+    }
+
+    if (path === "/api/auth/me") {
+      return apiData({ user: { id: meId, isActive: true, name: "Ana Pérez" } });
+    }
+
+    if (path === "/api/cash/registers") {
+      return apiData(registers);
     }
 
     if (path === "/api/cash/session/open") {
@@ -285,7 +305,8 @@ describe("AdminCanSellCard (POS-02)", () => {
         {
           ...openSession,
           id: "session-2",
-          register: { ...openSession.register, assignedUserId: "seller", name: "Caja 2" },
+          openedBy: "seller",
+          register: { ...openSession.register, name: "Caja 2" },
         },
       ],
     });
@@ -323,6 +344,131 @@ describe("AdminCanSellCard (POS-02)", () => {
       { body: { enabled: false }, method: "PUT", url: "/api/settings/admin-can-sell" },
     ]);
     expect(await findSwitch()).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("desactivar con la caja propia abierta: avisa que podrá cerrarla, pero no vender (qa-final F5)", async () => {
+    installServer({
+      admins: [
+        { ...ana, canSell: true },
+        { ...luis, canSell: true },
+      ],
+      ownSession: openSession,
+      storeSessions: [
+        openSession,
+        {
+          ...openSession,
+          id: "session-3",
+          openedBy: luis.id,
+          register: { ...openSession.register, name: "Caja 3" },
+        },
+      ],
+    });
+    const user = renderCard();
+
+    await user.click(await findSwitch());
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "¿Quitar la venta al administrador?",
+    });
+
+    const own = await within(dialog).findByText(
+      "Tienes una caja abierta: podrás cerrarla, pero no vender.",
+    );
+
+    expect(own.closest("p")).toHaveTextContent("Es Caja principal.");
+
+    // La propia no se repite en la lista de los demás administradores.
+    const others = await within(dialog).findByRole("list", {
+      name: "Cajas abiertas de administradores",
+    });
+
+    expect(
+      within(others)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["Luis Gómez · Caja 3"]);
+  });
+
+  it("desactivar sin cajas abiertas de administradores no avisa de nada", async () => {
+    installServer({
+      admins: [{ ...ana, canSell: true }],
+      storeSessions: [{ ...openSession, openedBy: "seller" }],
+    });
+    const user = renderCard();
+
+    await user.click(await findSwitch());
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "¿Quitar la venta al administrador?",
+    });
+
+    await waitFor(() =>
+      expect(
+        (global.fetch as jest.Mock).mock.calls.some(([url]) => url === "/api/cash/session/open"),
+      ).toBe(true),
+    );
+    expect(within(dialog).queryByText(/Tienes una caja abierta/)).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("list", { name: "Cajas abiertas de administradores" }),
+    ).not.toBeInTheDocument();
+  });
+
+  describe("ayuda para asignarse una caja (qa-final F1)", () => {
+    const enabledAdmins = [{ ...ana, canSell: true }];
+    const hint = "Asígnate una caja en Cajas para poder vender.";
+    const mine: RegisterRow = { assignedUserId: ana.id, id: "register-1", isActive: true, name: "Caja 1" };
+
+    it("encendido y sin caja asignada: enlaza a Cajas", async () => {
+      installServer({
+        admins: enabledAdmins,
+        registers: [
+          { ...mine, assignedUserId: "seller" },
+          // Una caja inactiva no sirve para vender.
+          { ...mine, id: "register-2", isActive: false },
+        ],
+      });
+      renderCard();
+
+      const link = await screen.findByRole("link", { name: "Cajas" });
+
+      expect(link).toHaveAttribute("href", "/cash/registers");
+      expect(link.closest("p")).toHaveTextContent(hint);
+    });
+
+    it("con una caja activa asignada no muestra la ayuda", async () => {
+      const api = installServer({ admins: enabledAdmins, registers: [mine] });
+
+      renderCard();
+      await findSwitch();
+
+      await waitFor(() =>
+        expect(api.calls.map((call) => call.url)).toEqual(
+          expect.arrayContaining(["/api/cash/registers", "/api/auth/me"]),
+        ),
+      );
+      await waitFor(() => expect(screen.queryByText(hint)).not.toBeInTheDocument());
+      expect(screen.queryByRole("link", { name: "Cajas" })).not.toBeInTheDocument();
+    });
+
+    it("sin permiso de gestionar cajas no muestra la ayuda ni consulta las cajas", async () => {
+      mockPermissions.delete("cash.manage");
+      const api = installServer({ admins: enabledAdmins });
+
+      renderCard();
+      await findSwitch();
+
+      expect(screen.queryByRole("link", { name: "Cajas" })).not.toBeInTheDocument();
+      expect(api.calls.map((call) => call.url)).toEqual(["/api/settings/admin-can-sell"]);
+    });
+
+    it("apagado no muestra la ayuda", async () => {
+      installServer({ admins: [ana] });
+
+      renderCard();
+      await findSwitch();
+
+      expect(screen.queryByRole("link", { name: "Cajas" })).not.toBeInTheDocument();
+    });
   });
 
   it("activar no consulta las cajas abiertas", async () => {

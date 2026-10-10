@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 
 import { DashboardKpiCard } from "@/modules/dashboard/components/DashboardKpiCard";
 import { apiFetch } from "@/shared/api/apiFetch";
+import type { Permission, UserRole } from "@/shared/auth/permissions";
 import { ActionsMenu } from "@/shared/components/ActionsMenu";
 import { Badge } from "@/shared/components/Badge";
 import { Button } from "@/shared/components/Button";
@@ -28,9 +29,18 @@ import {
   useUpdateCashRegister,
 } from "../hooks/useCash";
 import { useCashSessionClock } from "../hooks/useCashSessionClock";
+import { canBeAssignedCashRegister } from "../services/cashRegisterAssignee";
 import type { CashRegister, CashSession } from "../types";
 
-type User = { id: string; name: string; role: string };
+/** Lo que usa esta pantalla de `GET /api/users`. */
+type User = {
+  deniedPermissions?: Permission[];
+  grantedPermissions?: Permission[];
+  id: string;
+  isActive: boolean;
+  name: string;
+  role: UserRole;
+};
 
 /**
  * `/cash/registers` no tiene búsqueda, filtros, orden ni paginación (lista
@@ -61,8 +71,10 @@ export function CashRegistersListPage() {
     queryKey: ["users", "vendors"],
     queryFn: () => apiFetch<{ items: User[] }>("/api/users", { query: { limit: 100 } }),
   });
+  // Quien puede operar caja: vendedores, administradores con «El administrador
+  // puede vender» y permisos concedidos. El servidor valida lo mismo al asignar.
   const vendors = useMemo(
-    () => (users.data?.items ?? []).filter((user) => user.role === "vendedor"),
+    () => (users.data?.items ?? []).filter(canBeAssignedCashRegister),
     [users.data],
   );
 
@@ -449,6 +461,13 @@ function RegisterRowActions({ register }: { register: CashRegister }) {
 
 function RegisterAssignment({ register, vendors }: { register: CashRegister; vendors: User[] }) {
   const update = useUpdateCashRegister(register.id);
+  const assignedUserId = register.assignedUserId ?? "";
+  // La asignación se conserva aunque el usuario ya no pueda operar caja (p. ej. un
+  // administrador tras apagar «El administrador puede vender»): se sigue mostrando.
+  const assignedOutsideOptions =
+    assignedUserId !== "" && !vendors.some((user) => user.id === assignedUserId)
+      ? [{ label: register.assignedUserName ?? "Usuario asignado", value: assignedUserId }]
+      : [];
 
   return (
     <SelectField
@@ -463,8 +482,9 @@ function RegisterAssignment({ register, vendors }: { register: CashRegister; ven
       options={[
         { label: "Sin asignar", value: "" },
         ...vendors.map((user) => ({ label: user.name, value: user.id })),
+        ...assignedOutsideOptions,
       ]}
-      value={register.assignedUserId ?? ""}
+      value={assignedUserId}
     />
   );
 }

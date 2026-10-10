@@ -1,6 +1,9 @@
 import { ApiError } from "@/lib/api/apiError";
+import { isStoreUserRole } from "@/shared/auth/permissions";
+import { mockUserProfiles } from "@/shared/mocks/erp-data";
 
 import type { CashRegister } from "../types";
+import { canBeAssignedCashRegister, CASH_REGISTER_ASSIGNEE_MESSAGE } from "./cashRegisterAssignee";
 
 const registers: CashRegister[] = [];
 
@@ -41,6 +44,22 @@ export function createCashRegister(input: CashRegisterInput, storeId: string) {
   };
   registers.push(register);
   return register;
+}
+
+/**
+ * Misma regla que el servicio real: usuario activo de la tienda con `cash.operate`.
+ * Los usuarios demo por rol (`user-<rol>`, ver `getDemoUserProfile`) no siempre
+ * tienen perfil mock: valen por su rol.
+ */
+export function assertCashRegisterAssignee(userId: string, storeId: string) {
+  const demoRole = userId.startsWith("user-") ? userId.slice("user-".length) : "";
+  const profile =
+    mockUserProfiles.find((item) => item.id === userId && item.storeId === storeId) ??
+    (isStoreUserRole(demoRole) ? { isActive: true, role: demoRole } : undefined);
+
+  if (!profile || !canBeAssignedCashRegister(profile)) {
+    throw new ApiError(400, "BAD_REQUEST", CASH_REGISTER_ASSIGNEE_MESSAGE);
+  }
 }
 
 export function updateCashRegister(id: string, input: CashRegisterUpdateInput, storeId: string) {

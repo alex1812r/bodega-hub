@@ -101,7 +101,11 @@ paths:
     patch:
       tags: [Cash]
       summary: Actualizar caja registradora
-      description: Renombra, activa o desactiva la caja, o cambia el usuario asignado (`assignedUserId` en `null` la deja sin asignar).
+      description: >-
+        Renombra, activa o desactiva la caja, o cambia el usuario asignado (`assignedUserId` en `null` la deja sin
+        asignar). Solo se asigna a un usuario activo de la tienda con `cash.operate` efectivo (vendedor, administrador
+        con «El administrador puede vender» o permiso concedido): a cualquier otro responde 400. Las asignaciones ya
+        hechas no se borran si el usuario pierde el permiso.
       x-permission: cash.manage
       requestBody:
         required: true
@@ -192,7 +196,7 @@ paths:
     get:
       tags: [Cash]
       summary: Listar sesiones abiertas
-      description: Todos los turnos abiertos de la tienda, cada uno con `liveTotals`.
+      description: Todos los turnos abiertos de la tienda, cada uno con `liveTotals` y `openedBy` (quién lo abrió).
       x-permission: cash.manage
       responses:
         "200":
@@ -8092,6 +8096,10 @@ components:
           $ref: "#/components/schemas/CashRegister"
         status: { type: string, enum: [open, closed] }
         openedAt: { type: string, format: date-time }
+        openedBy:
+          type: string
+          nullable: true
+          description: Solo en `GET /api/cash/session/open`. Id del usuario que abrió el turno.
         openingRef: { type: number }
         openingVes: { type: number }
         closedAt: { type: string, format: date-time, nullable: true }

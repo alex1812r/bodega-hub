@@ -180,7 +180,11 @@ export function markSessionsTransferredToVault(sessionIds: string[], storeId: st
 export function listOpenCashSessions(storeId: string) {
   return sessions
     .filter((session) => session.status === "open" && session.register.storeId === storeId)
-    .map((session) => ({ ...session, liveTotals: sessionTotals(session) }));
+    .map((session) => ({
+      ...session,
+      liveTotals: sessionTotals(session),
+      openedBy: openedBy.get(session.id) ?? null,
+    }));
 }
 
 export function listRegisterSessions(registerId: string, storeId: string, limit = 20) {
