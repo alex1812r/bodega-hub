@@ -243,8 +243,8 @@ describe("/api/settings/admin-can-sell (POS-02)", () => {
       expect(closed.status).toBe(200);
       expect((await closed.json()).data).toMatchObject({ id: sessionId, status: "closed" });
       expect(getCurrentCashSession(ADMIN_ID, DEFAULT_STORE_ID)).toBeNull();
-      // Cerrada la suya, ya no hay nada que pueda cerrar ni abrir.
-      expect((await close(sessionId)).status).toBe(403);
+      // Cerrada la suya: repetir el cierre lo rechaza el servicio (ya no está abierta) y no puede abrir otra.
+      expect((await close(sessionId)).status).toBe(400);
       expect((await open(register.id)).status).toBe(403);
     });
 
