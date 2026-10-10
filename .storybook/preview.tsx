@@ -52,6 +52,9 @@ const preview: Preview = {
   },
   loaders: [mswLoader],
   parameters: {
+    // Toda la aplicación usa el App Router: sin esto `useRouter`, `usePathname` y
+    // `useSearchParams` de `next/navigation` no tienen router en la story.
+    nextjs: { appDirectory: true },
     msw: {
       handlers: mswHandlers,
     },

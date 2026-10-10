@@ -195,7 +195,7 @@ export const SaveDraftFails: Story = {
     await userEvent.click(canvas.getByRole("link", { name: /inventario/i }));
     await userEvent.click(await body.findByRole("button", { name: "Salir" }));
 
-    await expect(await body.findByRole("alert")).toHaveTextContent("Sin conexión con el servidor");
+    await expect(await within(await body.findByRole("dialog")).findByRole("alert")).toHaveTextContent("Sin conexión con el servidor");
     await expect(body.getByRole("dialog")).toHaveTextContent("No se pudo guardar el borrador.");
     await expect(body.getByRole("button", { name: "Reintentar" })).toHaveFocus();
     await expect(body.getByRole("button", { name: "Salir sin guardar" })).toBeEnabled();

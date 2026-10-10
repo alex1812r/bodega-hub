@@ -144,7 +144,7 @@ export const WithError: Story = {
   play: async ({ canvasElement }) => {
     const body = within(canvasElement.ownerDocument.body);
 
-    await expect(await body.findByRole("alert")).toHaveTextContent(
+    await expect(await within(await body.findByRole("dialog")).findByRole("alert")).toHaveTextContent(
       "La caja de esta venta ya está cerrada.",
     );
   },
@@ -162,7 +162,7 @@ export const StaleErrorHidden: Story = {
     const body = within(canvasElement.ownerDocument.body);
 
     await expect(await body.findByRole("dialog")).toBeVisible();
-    await expect(body.queryByRole("alert")).toBeNull();
+    await expect(within(await body.findByRole("dialog")).queryByRole("alert")).toBeNull();
   },
 };
 
@@ -278,7 +278,7 @@ export const EffectLoading: Story = {
   play: async ({ canvasElement }) => {
     const body = within(canvasElement.ownerDocument.body);
 
-    await expect(await body.findByRole("status")).toHaveTextContent("Calculando el efecto");
+    await expect(await within(await body.findByRole("dialog")).findByRole("status")).toHaveTextContent("Calculando el efecto");
     await expect(body.queryByRole("button", { name: "Anular venta" })).toBeNull();
     await expect(body.getByRole("button", { name: "Cerrar" })).toHaveFocus();
   },
@@ -296,7 +296,7 @@ export const EffectError: Story = {
   play: async ({ args, canvasElement, userEvent }) => {
     const body = within(canvasElement.ownerDocument.body);
 
-    await expect(await body.findByRole("alert")).toHaveTextContent("Venta no encontrada");
+    await expect(await within(await body.findByRole("dialog")).findByRole("alert")).toHaveTextContent("Venta no encontrada");
     await expect(body.queryByRole("button", { name: "Anular venta" })).toBeNull();
     await userEvent.click(body.getByRole("button", { name: "Reintentar" }));
     await expect(args.onRetry).toHaveBeenCalledTimes(1);
@@ -317,7 +317,7 @@ export const EffectBlocked: Story = {
   play: async ({ canvasElement }) => {
     const body = within(canvasElement.ownerDocument.body);
 
-    await expect(await body.findByRole("alert")).toHaveTextContent("1 pago(s) activo(s)");
+    await expect(await within(await body.findByRole("dialog")).findByRole("alert")).toHaveTextContent("1 pago(s) activo(s)");
     await expect(body.queryByRole("button", { name: "Anular venta" })).toBeNull();
     await expect(body.getByRole("button", { name: "Devolver la venta" })).toBeVisible();
   },
@@ -334,7 +334,7 @@ export const LoadingThenReady: Story = {
     const body = within(canvasElement.ownerDocument.body);
     const dialog = await body.findByRole("dialog");
 
-    await expect(body.getByRole("status")).toBeVisible();
+    await expect(within(dialog).getByRole("status")).toBeVisible();
     await waitFor(
       () => expect(body.getByRole("textbox", { name: "Palabra de confirmación" })).toHaveFocus(),
       { timeout: 4000 },
