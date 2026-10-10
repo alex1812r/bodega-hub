@@ -5,18 +5,19 @@ import { jsonData } from "@/lib/api/jsonResponse";
 import { readJsonBody } from "@/lib/api/readJsonBody";
 import { requireStorePermission } from "@/lib/api/requirePermission";
 import { getContactsService } from "@/modules/contacts/services";
+import { safeText } from "@/modules/purchases/schemas/safeText";
 import {
   assertCanAccessContact,
   assertCanWriteContactType,
 } from "@/shared/auth/contactAccess";
 
 const updateContactSchema = z.object({
-  address: z.string().optional(),
+  address: safeText().optional(),
   email: z.email().optional(),
   isActive: z.boolean().optional(),
-  name: z.string().min(1).optional(),
-  phone: z.string().optional(),
-  taxId: z.string().optional(),
+  name: safeText().min(1).optional(),
+  phone: safeText().optional(),
+  taxId: safeText().optional(),
   type: z.enum(["cliente", "proveedor", "ambos"]).optional(),
 });
 

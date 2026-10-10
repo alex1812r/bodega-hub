@@ -26,6 +26,15 @@ describe("mapSupabaseError", () => {
     expect(error.code).toBe("BAD_REQUEST");
   });
 
+  // FIN-02: carácter nulo en un texto → dato inválido del cliente, no un 500.
+  it.each(["22P05", "22021"])("maps a NUL character rejection (%s) to 400 without the database text", (code) => {
+    const error = mapSupabaseError({ code, message: "unsupported Unicode escape sequence" });
+
+    expect(error.status).toBe(400);
+    expect(error.code).toBe("BAD_REQUEST");
+    expect(error.message).toBe("Los datos enviados no son válidos.");
+  });
+
   it("maps invalid login to 401", () => {
     const error = mapSupabaseError({ message: "Invalid login credentials" });
 

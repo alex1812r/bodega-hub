@@ -1,5 +1,6 @@
 import { ApiError, unauthenticatedError } from "@/lib/api/apiError";
 import { getAuthProfileFromSession } from "@/lib/supabase/auth/profile.server";
+import { INVALID_DATA_MESSAGE } from "@/lib/supabase/errors";
 import {
   getEffectivePermissions,
   hasEffectivePermission,
@@ -113,6 +114,20 @@ export async function resolveAuthProfile(request: Request) {
   return toPermissionProfile(await resolveUserProfile(request));
 }
 
+/**
+ * Un id de la URL con el carácter nulo (`%00`) no es de ningún recurso y Postgres
+ * no lo admite en `text` ni como parámetro de una RPC (22P05 → 500). Se rechaza
+ * aquí, tras autenticar y antes de que la ruta llame a su servicio, para cubrir
+ * cualquier ruta con un segmento dinámico.
+ */
+function assertPathWithoutNul(request: Request) {
+  const path = request.url.split("?")[0] ?? "";
+
+  if (path.includes("%00")) {
+    throw new ApiError(400, "BAD_REQUEST", INVALID_DATA_MESSAGE);
+  }
+}
+
 export async function requirePermission(
   request: Request,
   permission: Permission,
@@ -126,6 +141,8 @@ export async function requirePermission(
   if (!profile.isActive || !hasEffectivePermission(profile, permission)) {
     throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción.");
   }
+
+  assertPathWithoutNul(request);
 
   const isSuperadmin = isSuperadminRole(profile.role);
 
@@ -183,6 +200,8 @@ export async function requireStoreAnyPermission(
   if (isSuperadmin) {
     throw new ApiError(403, "FORBIDDEN", SUPERADMIN_ERP_FORBIDDEN_MESSAGE);
   }
+
+  assertPathWithoutNul(request);
 
   return toStoreAuthContext({
     isSuperadmin,

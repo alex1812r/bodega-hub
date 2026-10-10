@@ -32,6 +32,28 @@ describe("requirePermission", () => {
       expect(auth.permissions).toContain("products.manage");
     });
 
+    // FIN-02: un id con el carácter nulo no llega a ningún servicio; el permiso manda antes.
+    it("rejects a path with an encoded NUL with 400, after the permission check", async () => {
+      const url = "http://localhost/api/payroll/periods/%00/approve?x=%00";
+
+      await expect(
+        requirePermission(new Request(url, { headers: { "x-demo-role": "admin" } }), "payroll.manage"),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
+      await expect(
+        requireStoreAnyPermission(new Request(url, { headers: { "x-demo-role": "admin" } }), ["payroll.manage"]),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
+      await expect(
+        requirePermission(new Request(url, { headers: { "x-demo-role": "vendedor" } }), "payroll.manage"),
+      ).rejects.toMatchObject({ status: 403 });
+      // Solo la ruta: un NUL en la query lo trata cada filtro.
+      await expect(
+        requirePermission(
+          new Request("http://localhost/api/products?search=%00", { headers: { "x-demo-role": "admin" } }),
+          "products.manage",
+        ),
+      ).resolves.toMatchObject({ role: "admin" });
+    });
+
     it("prefers session over demo headers when both are present", async () => {
       (getAuthProfileFromSession as jest.Mock).mockResolvedValue({
         deniedPermissions: [],

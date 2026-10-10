@@ -82,6 +82,9 @@ export function mapSupabaseErrorByCode(error: unknown): ApiError | null {
     // de constraint, el valor enviado): no se reenvia.
     case "23514":
     case "22P02":
+    // 22P05 / 22021: carácter nulo (U+0000) en un texto o en un `jsonb`.
+    case "22P05":
+    case "22021":
     case "23502":
     case "22003":
     case "22007":
