@@ -13,7 +13,12 @@ import {
   type DbSupplierProductPriceHistoryRow,
   type DbSupplierProductRow,
 } from "@/lib/supabase/mappers/supplierProducts";
-import { getPaginationRange, toPaginatedList } from "@/lib/supabase/pagination";
+import {
+  fetchListPage,
+  getPaginationRange,
+  listCountOptions,
+  toPaginatedList,
+} from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import { SUPPLIER_PRODUCT_SELECT } from "./contacts.server";
@@ -308,26 +313,38 @@ export async function listSupplierProducts(searchParams: URLSearchParams, storeI
   const search = searchParams.get("search");
   const { skip, to } = getPaginationRange(searchParams);
 
-  let query = supabase.from("supplier_products").select(SUPPLIER_PRODUCT_SELECT, { count: "exact" }).eq("store_id", storeId);
-
-  if (productId) {
-    query = query.eq("product_id", productId);
-  }
-
-  if (supplierId) {
-    query = query.eq("supplier_id", supplierId);
-  }
-
-  if (isActive != null && isActive !== "") {
-    query = query.eq("is_active", isActive.toLowerCase() === "true");
-  }
-
   const searchFilter = await resolveSupplierProductSearch(supabase, search);
-  if (searchFilter) {
-    query = applySupplierProductSearchFilter(query, searchFilter);
-  }
 
-  const result = await applySupplierProductSort(query, searchParams).range(skip, to);
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    let query = supabase
+      .from("supplier_products")
+      .select(SUPPLIER_PRODUCT_SELECT, listCountOptions(head))
+      .eq("store_id", storeId);
+
+    if (productId) {
+      query = query.eq("product_id", productId);
+    }
+
+    if (supplierId) {
+      query = query.eq("supplier_id", supplierId);
+    }
+
+    if (isActive != null && isActive !== "") {
+      query = query.eq("is_active", isActive.toLowerCase() === "true");
+    }
+
+    if (searchFilter) {
+      query = applySupplierProductSearchFilter(query, searchFilter);
+    }
+
+    return query;
+  };
+
+  const result = await fetchListPage({
+    count: () => buildFilteredQuery(true),
+    rows: () => applySupplierProductSort(buildFilteredQuery(false), searchParams).range(skip, to),
+  });
   const rows = (result.data ?? []) as DbSupplierProductRow[];
   const ids = rows.map((row) => row.id);
   const historyMap = await fetchLatestHistoryBySupplierProductIds(ids);
@@ -532,12 +549,15 @@ export async function listSupplierProductPriceHistory(id: string, searchParams: 
 
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
-  const result = await supabase
-    .from("supplier_product_price_history")
-    .select("*", { count: "exact" })
-    .eq("supplier_product_id", id)
-    .order("created_at", { ascending: false })
-    .range(skip, to);
+  const buildQuery = (head: boolean) =>
+    supabase
+      .from("supplier_product_price_history")
+      .select("*", listCountOptions(head))
+      .eq("supplier_product_id", id);
+  const result = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () => buildQuery(false).order("created_at", { ascending: false }).range(skip, to),
+  });
 
   return toPaginatedList(
     searchParams,

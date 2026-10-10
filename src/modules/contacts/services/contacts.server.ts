@@ -11,7 +11,12 @@ import {
   type DbPurchaseRow,
   type DbSaleRow,
 } from "@/lib/supabase/mappers/transactions";
-import { getPaginationRange, toPaginatedList } from "@/lib/supabase/pagination";
+import {
+  fetchListPage,
+  getPaginationRange,
+  listCountOptions,
+  toPaginatedList,
+} from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import type { ContactInput } from "./contacts.mock-server";
@@ -79,20 +84,28 @@ export async function listContacts(
 
   const { skip, to } = getPaginationRange(searchParams);
 
-  let query = supabase.from("contacts").select("*", { count: "exact" }).eq("store_id", storeId);
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    let query = supabase.from("contacts").select("*", listCountOptions(head)).eq("store_id", storeId);
 
-  query = applyContactTypeFilter(query, type, options.customersOnly);
+    query = applyContactTypeFilter(query, type, options.customersOnly);
 
-  if (filtersByActive) {
-    query = query.eq("is_active", isActive === "true");
-  }
+    if (filtersByActive) {
+      query = query.eq("is_active", isActive === "true");
+    }
 
-  if (search) {
-    const term = escapeIlike(search);
-    query = query.or(`name.ilike.%${term}%,tax_id.ilike.%${term}%,phone.ilike.%${term}%`);
-  }
+    if (search) {
+      const term = escapeIlike(search);
+      query = query.or(`name.ilike.%${term}%,tax_id.ilike.%${term}%,phone.ilike.%${term}%`);
+    }
 
-  const result = await query.order("name").range(skip, to);
+    return query;
+  };
+
+  const result = await fetchListPage({
+    count: () => buildFilteredQuery(true),
+    rows: () => buildFilteredQuery(false).order("name").range(skip, to),
+  });
 
   return toPaginatedList(searchParams, result, mapContact);
 }
@@ -180,13 +193,16 @@ export async function getContactSales(id: string, searchParams: URLSearchParams,
 
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
-  const result = await supabase
-    .from("sales")
-    .select("*", { count: "exact" })
-    .eq("customer_id", id)
-    .eq("store_id", storeId)
-    .order("created_at", { ascending: false })
-    .range(skip, to);
+  const buildQuery = (head: boolean) =>
+    supabase
+      .from("sales")
+      .select("*", listCountOptions(head))
+      .eq("customer_id", id)
+      .eq("store_id", storeId);
+  const result = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () => buildQuery(false).order("created_at", { ascending: false }).range(skip, to),
+  });
 
   return toPaginatedList(searchParams, result as { count: number | null; data: DbSaleRow[] | null; error: unknown }, mapSale);
 }
@@ -196,13 +212,16 @@ export async function getContactPurchases(id: string, searchParams: URLSearchPar
 
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
-  const result = await supabase
-    .from("purchases")
-    .select("*", { count: "exact" })
-    .eq("supplier_id", id)
-    .eq("store_id", storeId)
-    .order("created_at", { ascending: false })
-    .range(skip, to);
+  const buildQuery = (head: boolean) =>
+    supabase
+      .from("purchases")
+      .select("*", listCountOptions(head))
+      .eq("supplier_id", id)
+      .eq("store_id", storeId);
+  const result = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () => buildQuery(false).order("created_at", { ascending: false }).range(skip, to),
+  });
 
   return toPaginatedList(
     searchParams,
@@ -221,17 +240,20 @@ export async function getContactPayments(
 
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
-  let query = supabase
-    .from("payments")
-    .select("*", { count: "exact" })
-    .eq("contact_id", id)
-    .eq("store_id", storeId);
+  const buildQuery = (head: boolean) => {
+    const query = supabase
+      .from("payments")
+      .select("*", listCountOptions(head))
+      .eq("contact_id", id)
+      .eq("store_id", storeId);
 
-  if (options.salePaymentsOnly) {
-    query = query.is("purchase_id", null);
-  }
+    return options.salePaymentsOnly ? query.is("purchase_id", null) : query;
+  };
 
-  const result = await query.order("created_at", { ascending: false }).range(skip, to);
+  const result = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () => buildQuery(false).order("created_at", { ascending: false }).range(skip, to),
+  });
 
   return toPaginatedList(
     searchParams,

@@ -8,7 +8,12 @@ import {
 } from "@/lib/supabase/errors";
 import { mapContact, type DbContactRow } from "@/lib/supabase/mappers/contacts";
 import { mapPayment, type DbPaymentRow } from "@/lib/supabase/mappers/transactions";
-import { getPaginationRange, toPaginatedList } from "@/lib/supabase/pagination";
+import {
+  fetchListPage,
+  getPaginationRange,
+  listCountOptions,
+  toPaginatedList,
+} from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { rpcWithClientRequestId } from "@/modules/inventory/services/rpcWithClientRequestId";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
@@ -319,11 +324,18 @@ export async function listPayments(
   const supabase = await createRouteSupabaseClient();
   const { skip, to } = getPaginationRange(searchParams);
 
-  let query = supabase.from("payments").select(PAYMENT_SELECT, { count: "exact" }).eq("store_id", storeId);
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) =>
+    applyPaymentFilters(
+      supabase.from("payments").select(PAYMENT_SELECT, listCountOptions(head)).eq("store_id", storeId),
+      searchParams,
+      options.salePaymentsOnly,
+    );
 
-  query = applyPaymentFilters(query, searchParams, options.salePaymentsOnly);
-
-  const result = await query.order("created_at", { ascending: false }).range(skip, to);
+  const result = await fetchListPage({
+    count: () => buildFilteredQuery(true),
+    rows: () => buildFilteredQuery(false).order("created_at", { ascending: false }).range(skip, to),
+  });
 
   return toPaginatedList(searchParams, result as { count: number | null; data: PaymentRowWithContact[] | null; error: unknown }, (row) =>
     mapPaymentWithContact(row),

@@ -20,6 +20,24 @@ describe("/api/contacts", () => {
     process.env.API_DATA_SOURCE = originalDataSource;
   });
 
+  // POS-H2: una página más allá del total es una lista vacía con el total real, no un error.
+  it.each(["skip=999999", "skip=999999&limit=20&type=cliente", "skip=2147483648"])(
+    "%s → 200 con lista vacía y el total real",
+    async (query) => {
+      const filters = query.includes("type=") ? "&type=cliente" : "";
+      const firstPage = await GET(new Request(`http://localhost/api/contacts?limit=10${filters}`));
+      const firstBody = await firstPage.json();
+      const response = await GET(new Request(`http://localhost/api/contacts?${query}`));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.data.items).toEqual([]);
+      expect(firstBody.data.total).toBeGreaterThan(0);
+      expect(body.data.total).toBe(firstBody.data.total);
+      expect(body.data.skip).toBe(Number(new URLSearchParams(query).get("skip")));
+    },
+  );
+
   it("returns contacts", async () => {
     const response = await GET(new Request("http://localhost/api/contacts"));
     const body = await response.json();

@@ -11,6 +11,7 @@ import {
 import { mapPermissionList } from "@/lib/supabase/mappers";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { fetchListPage, listCountOptions } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { isStoreUserRole, type Permission } from "@/shared/auth/permissions";
 
@@ -279,12 +280,15 @@ export async function listUsers(searchParams: URLSearchParams, storeId: string) 
   const supabase = await createRouteSupabaseClient();
   const { limit, skip } = parsePagination(searchParams);
 
-  const { count, data, error } = await supabase
-    .from("profiles")
-    .select(profileSelect, { count: "exact" })
-    .eq("store_id", storeId)
-    .order("full_name", { ascending: true, nullsFirst: false })
-    .range(skip, skip + limit - 1);
+  const buildQuery = (head: boolean) =>
+    supabase.from("profiles").select(profileSelect, listCountOptions(head)).eq("store_id", storeId);
+  const { count, data, error } = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () =>
+      buildQuery(false)
+        .order("full_name", { ascending: true, nullsFirst: false })
+        .range(skip, skip + limit - 1),
+  });
 
   throwIfSupabaseError(error);
 

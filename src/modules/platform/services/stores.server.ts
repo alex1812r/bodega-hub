@@ -6,6 +6,7 @@ import {
 } from "@/modules/contacts/constants";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { fetchListPage, listCountOptions } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import type {
@@ -50,10 +51,17 @@ export async function listStores(searchParams: URLSearchParams) {
   const { limit, skip } = parsePagination(searchParams);
   const search = searchParams.get("search")?.trim();
   const status = searchParams.get("status");
-  let query = admin.from("stores").select("*", { count: "exact" });
-  if (search) query = query.or(`name.ilike.%${search}%,slug.ilike.%${search}%`);
-  if (status === "active" || status === "paused") query = query.eq("status", status);
-  const { count, data, error } = await query.order("created_at", { ascending: false }).range(skip, skip + limit - 1);
+  const buildFilteredQuery = (head: boolean) => {
+    let query = admin.from("stores").select("*", listCountOptions(head));
+    if (search) query = query.or(`name.ilike.%${search}%,slug.ilike.%${search}%`);
+    if (status === "active" || status === "paused") query = query.eq("status", status);
+    return query;
+  };
+  const { count, data, error } = await fetchListPage({
+    count: () => buildFilteredQuery(true),
+    rows: () =>
+      buildFilteredQuery(false).order("created_at", { ascending: false }).range(skip, skip + limit - 1),
+  });
   throwIfSupabaseError(error);
   const rows = (data ?? []) as StoreRow[];
   const ids = rows.map((row) => row.id);

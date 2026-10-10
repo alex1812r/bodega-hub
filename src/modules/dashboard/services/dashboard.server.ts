@@ -2,6 +2,7 @@ import { parsePagination, type PaginatedList } from "@/lib/api/pagination";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { fetchListPage, listCountOptions } from "@/lib/supabase/pagination";
 import { fetchAllRows, fetchAllRowsByIds } from "@/modules/reports/services/reportPagination";
 import { getDailySalesReport } from "@/modules/reports/services/reports.server";
 import { normalizeStoreIds } from "@/modules/reports/services/storeScope";
@@ -392,15 +393,24 @@ export async function getRecentSales(
   const { limit, skip } = parsePagination(searchParams);
   const supabase = await getDashboardClient(options);
 
-  let query = supabase
-    .from("sales")
-    .select("id, invoice_number, created_at, status, total_ref, store_id, contacts(name)", {
-      count: "exact",
-    })
-    .order("created_at", { ascending: false });
-  query = applyStoreIdsFilter(query, storeIds);
+  const buildQuery = (head: boolean) => {
+    let query = supabase
+      .from("sales")
+      .select(
+        "id, invoice_number, created_at, status, total_ref, store_id, contacts(name)",
+        listCountOptions(head),
+      );
+    query = applyStoreIdsFilter(query, storeIds);
 
-  const { data, error, count } = await query.range(skip, skip + limit - 1);
+    return query;
+  };
+  const { data, error, count } = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () =>
+      buildQuery(false)
+        .order("created_at", { ascending: false })
+        .range(skip, skip + limit - 1),
+  });
   throwIfSupabaseError(error);
 
   const rows = (data ?? []) as DbSaleWithCustomer[];
@@ -437,13 +447,21 @@ export async function getDashboardLowStock(
   const { limit, skip } = parsePagination(searchParams);
   const supabase = await getDashboardClient(options);
 
-  let query = supabase
-    .from("low_stock_products")
-    .select("id, name, sku, current_stock, min_stock, store_id", { count: "exact" })
-    .order("name", { ascending: true });
-  query = applyStoreIdsFilter(query, storeIds);
+  const buildQuery = (head: boolean) => {
+    let query = supabase
+      .from("low_stock_products")
+      .select("id, name, sku, current_stock, min_stock, store_id", listCountOptions(head));
+    query = applyStoreIdsFilter(query, storeIds);
 
-  const { data, error, count } = await query.range(skip, skip + limit - 1);
+    return query;
+  };
+  const { data, error, count } = await fetchListPage({
+    count: () => buildQuery(true),
+    rows: () =>
+      buildQuery(false)
+        .order("name", { ascending: true })
+        .range(skip, skip + limit - 1),
+  });
   throwIfSupabaseError(error);
 
   const rows = (data ?? []) as DbProduct[];

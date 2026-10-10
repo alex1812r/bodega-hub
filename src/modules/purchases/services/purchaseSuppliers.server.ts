@@ -1,6 +1,7 @@
 import { ApiError } from "@/lib/api/apiError";
 import type { PaginatedList } from "@/lib/api/pagination";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { fetchListPage, listCountOptions } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 
 import {
@@ -44,19 +45,24 @@ export async function listPurchaseSuppliers(
   storeId: string,
 ): Promise<PaginatedList<PurchaseSupplier>> {
   const supabase = await createRouteSupabaseClient();
-  let query = supabase
-    .from("contacts")
-    .select(PURCHASE_SUPPLIER_COLUMNS, { count: "exact" })
-    .eq("store_id", storeId)
-    .in("type", PURCHASE_SUPPLIER_TYPES)
-    .eq("is_active", true);
   const term = search ? toIlikeTerm(search) : "";
 
-  if (term) {
-    query = query.or(`name.ilike.%${term}%,tax_id.ilike.%${term}%`);
-  }
+  /** La consulta con todos los filtros; `head` = solo el conteo, sin filas. */
+  const buildFilteredQuery = (head: boolean) => {
+    const query = supabase
+      .from("contacts")
+      .select(PURCHASE_SUPPLIER_COLUMNS, listCountOptions(head))
+      .eq("store_id", storeId)
+      .in("type", PURCHASE_SUPPLIER_TYPES)
+      .eq("is_active", true);
 
-  const { count, data, error } = await query.order("name").range(skip, skip + limit - 1);
+    return term ? query.or(`name.ilike.%${term}%,tax_id.ilike.%${term}%`) : query;
+  };
+
+  const { count, data, error } = await fetchListPage({
+    count: () => buildFilteredQuery(true),
+    rows: () => buildFilteredQuery(false).order("name").range(skip, skip + limit - 1),
+  });
 
   throwIfSupabaseError(error);
 

@@ -11,6 +11,7 @@ import {
 } from "@/lib/supabase/mappers";
 import { mapSupabaseError, throwIfSupabaseError } from "@/lib/supabase/errors";
 import { getSupabaseUrl } from "@/lib/supabase/env";
+import { fetchListPage } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { getPricingSettings } from "@/modules/settings/services/settings.server";
 
@@ -911,14 +912,20 @@ export async function getProductPriceHistory(
     throw new ApiError(404, "NOT_FOUND", "Producto no encontrado.");
   }
 
-  const { count, data, error } = await supabase
-    .from("product_price_history")
-    .select(PRICE_HISTORY_COLUMNS, { count: "exact" })
-    .eq("product_id", id)
-    .order("created_at", { ascending: false })
-    // Dos filas de la misma transacción comparten fecha: manda el orden en que se guardaron.
-    .order("snapshot_seq", { ascending: false, nullsFirst: false })
-    .range(skip, skip + limit - 1);
+  const buildHistoryQuery = (head: boolean) =>
+    supabase
+      .from("product_price_history")
+      .select(PRICE_HISTORY_COLUMNS, listCountOptions(head))
+      .eq("product_id", id);
+  const { count, data, error } = await fetchListPage({
+    count: () => buildHistoryQuery(true),
+    rows: () =>
+      buildHistoryQuery(false)
+        .order("created_at", { ascending: false })
+        // Dos filas de la misma transacción comparten fecha: manda el orden en que se guardaron.
+        .order("snapshot_seq", { ascending: false, nullsFirst: false })
+        .range(skip, skip + limit - 1),
+  });
 
   throwIfSupabaseError(error);
 
