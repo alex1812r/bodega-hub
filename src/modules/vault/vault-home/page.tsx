@@ -154,18 +154,21 @@ export function VaultHomePage() {
         </section>
       </EntityListPage>
 
-      <VaultDepositModal
-        onOpenChange={(open) => setActiveModal(open ? "deposit" : null)}
-        open={activeModal === "deposit"}
-      />
-      <VaultWithdrawalModal
-        onOpenChange={(open) => setActiveModal(open ? "withdrawal" : null)}
-        open={activeModal === "withdrawal"}
-      />
-      <VaultTransferFromCashModal
-        onOpenChange={(open) => setActiveModal(open ? "transfer" : null)}
-        open={activeModal === "transfer"}
-      />
+      {/* Solo para quien opera el baúl: montados piden datos que exigen `vault.manage`. */}
+      <Can permission="vault.manage">
+        <VaultDepositModal
+          onOpenChange={(open) => setActiveModal(open ? "deposit" : null)}
+          open={activeModal === "deposit"}
+        />
+        <VaultWithdrawalModal
+          onOpenChange={(open) => setActiveModal(open ? "withdrawal" : null)}
+          open={activeModal === "withdrawal"}
+        />
+        <VaultTransferFromCashModal
+          onOpenChange={(open) => setActiveModal(open ? "transfer" : null)}
+          open={activeModal === "transfer"}
+        />
+      </Can>
     </>
   );
 }

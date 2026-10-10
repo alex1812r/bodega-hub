@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { useSettings } from "@/modules/settings/hooks/useSettings";
+import { useBusinessSettings } from "@/modules/settings/hooks/useSettings";
 import { Badge } from "@/shared/components/Badge";
 import { Button } from "@/shared/components/Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/components/Card";
@@ -37,7 +37,8 @@ function ReceiptFigure({ label, value }: { label: string; value: string }) {
 export function PayrollMinePage() {
   const receiptsQuery = useMyPayrollItems();
   const currentQuery = useMyPayrollCurrent();
-  const appSettings = useSettings();
+  // Solo el nombre del negocio: el cajero no puede leer `/api/settings`.
+  const appSettings = useBusinessSettings();
   const [salesReceipt, setSalesReceipt] = useState<PayrollMineItem | null>(null);
 
   const receipts = receiptsQuery.data?.items ?? [];

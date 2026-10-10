@@ -21,6 +21,7 @@ import {
   withAdminSellGrants,
 } from "./adminCanSell";
 import { loadStoreAdminGrants } from "./adminCanSell.server";
+import type { BusinessSettings } from "./businessSettings";
 import {
   CASH_CLOSE_DIFF_ALERT_UNAVAILABLE_MESSAGE,
   mapCashCloseDiffAlertVes,
@@ -186,6 +187,24 @@ export async function getPricingSettings(storeId: string): Promise<PricingSettin
   throwIfSupabaseError(error);
 
   return mapPricingSettings(data);
+}
+
+/**
+ * Nombre del negocio, lo unico de la configuracion que imprimen los recibos.
+ * Una tienda sin fila de configuracion responde `null`: aqui no hay 404,
+ * porque el detalle de venta debe abrir siempre.
+ */
+export async function getBusinessSettings(storeId: string): Promise<BusinessSettings> {
+  const supabase = await createRouteSupabaseClient();
+  const { data, error } = await supabase
+    .from("app_settings")
+    .select("business_name")
+    .eq("store_id", storeId)
+    .maybeSingle<{ business_name: string | null }>();
+
+  throwIfSupabaseError(error);
+
+  return { businessName: data?.business_name ?? null };
 }
 
 /**

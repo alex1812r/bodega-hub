@@ -903,6 +903,37 @@ describe("SaleDetailsPage · el menú «…» conserva sus acciones (DET-03)", (
     print.mockRestore();
   });
 
+  // GQ-03: el vendedor no tiene `settings.view`; pedir `/api/settings` le devolvía 403.
+  it("pide solo el nombre del negocio, por el endpoint que el vendedor puede leer, y lo pasa al PDF", async () => {
+    mockPermissions = ["sales.view", "sales.create"];
+    installCollectApi(PAID_SALE);
+
+    const fetchMock = global.fetch as jest.Mock;
+    const working = fetchMock.getMockImplementation();
+
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === "/api/settings/business"
+        ? Promise.resolve(jsonResponse({ data: { businessName: "Bodega La Esquina" } }))
+        : working?.(input, init),
+    );
+
+    const requested = () => fetchMock.mock.calls.map(([input]) => String(input));
+
+    render(<SaleDetailsPage saleId={PAID_SALE.id} />, { wrapper: createQueryWrapper() });
+    await screen.findByRole("heading", { level: 1 });
+    await waitFor(() => expect(requested()).toContain("/api/settings/business"));
+
+    await menuItems();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Descargar PDF" }));
+
+    await waitFor(() =>
+      expect(exportSaleInvoicePdf).toHaveBeenLastCalledWith(PAID_SALE.id, {
+        companyName: "Bodega La Esquina",
+      }),
+    );
+    expect(requested()).not.toContain("/api/settings");
+  });
+
   it("sin sales.create: imprimir y PDF", async () => {
     mockPermissions = ["sales.view"];
     await renderSale(PAID_SALE);

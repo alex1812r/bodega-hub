@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
 import { authQueryKeys } from "@/modules/auth/hooks/useCurrentUser";
 import type { AdminCanSellState } from "@/modules/settings/services/adminCanSell";
+import type { BusinessSettings } from "@/modules/settings/services/businessSettings";
 import type { CashCloseSettings } from "@/modules/settings/services/cashCloseSettings.schemas";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
@@ -44,6 +45,7 @@ export type CreateUserInput = {
 export const settingsQueryKeys = {
   adminCanSell: () => [...settingsQueryKeys.all, "admin-can-sell"] as const,
   all: ["settings"] as const,
+  business: () => [...settingsQueryKeys.all, "business"] as const,
   cashClose: () => [...settingsQueryKeys.all, "cash-close"] as const,
   detail: () => [...settingsQueryKeys.all, "detail"] as const,
   paymentMethods: () => [...settingsQueryKeys.all, "payment-methods"] as const,
@@ -55,6 +57,19 @@ export function useSettings() {
   return useQuery({
     queryKey: settingsQueryKeys.detail(),
     queryFn: () => apiFetch<AppSettings>("/api/settings"),
+  });
+}
+
+/**
+ * Nombre del negocio para los recibos (`GET /api/settings/business`): lo leen
+ * quien ve ventas y quien ve sus recibos de nómina, que no tienen
+ * `settings.view`. Mientras carga, o si falla, el recibo usa su nombre por defecto.
+ */
+export function useBusinessSettings() {
+  return useQuery({
+    queryKey: settingsQueryKeys.business(),
+    queryFn: () => apiFetch<BusinessSettings>("/api/settings/business"),
+    staleTime: 60_000,
   });
 }
 
@@ -126,6 +141,13 @@ export function useUpdateSettings() {
       });
       void queryClient.invalidateQueries({
         queryKey: settingsQueryKeys.cashClose(),
+        refetchType: "none",
+      });
+      queryClient.setQueryData<BusinessSettings>(settingsQueryKeys.business(), {
+        businessName: settings.businessName,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.business(),
         refetchType: "none",
       });
       queryClient.setQueryData(settingsQueryKeys.pricing(), settings.pricing);

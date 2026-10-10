@@ -5,7 +5,7 @@ import { useCallback, useState } from "react";
 import { DocumentStockMovementsLink } from "@/modules/inventory/components/DocumentStockMovementsLink";
 import { RegisterPaymentModal } from "@/modules/payments/components/RegisterPaymentModal";
 import type { PaymentDetail } from "@/modules/payments/hooks/usePayments";
-import { useSettings } from "@/modules/settings/hooks/useSettings";
+import { useBusinessSettings } from "@/modules/settings/hooks/useSettings";
 import { usePermission } from "@/shared/auth/usePermission";
 import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
@@ -42,7 +42,8 @@ type SaleDetailsPageProps = {
 
 export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
   const sale = useSale(saleId);
-  const settings = useSettings();
+  // Solo el nombre del negocio: el vendedor no puede leer `/api/settings`.
+  const settings = useBusinessSettings();
   const cancelSale = useCancelSale(saleId);
   const returnSale = useReturnSale(saleId);
   const [isExportingPdf, setIsExportingPdf] = useState(false);

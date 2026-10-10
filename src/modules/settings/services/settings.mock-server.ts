@@ -23,6 +23,7 @@ import {
   parseCashCloseDiffAlertVes,
   type CashCloseSettings,
 } from "./cashCloseSettings.schemas";
+import type { BusinessSettings } from "./businessSettings";
 import type { CreateStoreUserInput } from "./createStoreUserSchema";
 import {
   assertStoreKeepsActiveAdmin,
@@ -79,6 +80,11 @@ export function getCashCloseSettings(storeId: string): CashCloseSettings {
     cashCloseDiffAlertVes:
       cashCloseDiffAlertByStore().get(storeId) ?? DEFAULT_CASH_CLOSE_DIFF_ALERT_VES,
   };
+}
+
+/** Nombre del negocio: lo unico de la configuracion que imprimen los recibos. */
+export function getBusinessSettings(storeId: string): BusinessSettings {
+  return { businessName: getSettings(storeId).businessName };
 }
 
 /** Misma regla que el servicio real: la alicuota debe verla la tienda y estar activa. */

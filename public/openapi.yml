@@ -4305,6 +4305,31 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/settings/business:
+    get:
+      tags: [Settings]
+      summary: Nombre del negocio de la tienda (solo lectura)
+      description: >-
+        El mismo valor que `businessName` de /api/settings, para quien imprime el
+        recibo de venta o su recibo de nomina sin `settings.view` (vendedor,
+        contador). Basta uno de los permisos. Una tienda sin configuracion responde
+        `null`. Se cambia con PATCH /api/settings.
+      x-permission: sales.view | payroll.view_own | settings.view
+      responses:
+        "200":
+          description: Nombre del negocio
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/BusinessSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/settings/cash-close:
     get:
       tags: [Settings]
@@ -7975,6 +8000,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PaymentMethod"
+    BusinessSettings:
+      type: object
+      required: [businessName]
+      properties:
+        businessName:
+          type: string
+          nullable: true
+          description: Nombre del negocio que encabeza los recibos (null si la tienda no tiene configuracion).
     CashCloseSettings:
       type: object
       required: [cashCloseDiffAlertVes]
