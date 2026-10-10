@@ -126,6 +126,29 @@ describe("contacts.server", () => {
       expect(chain.or).toHaveBeenCalledWith(expect.stringContaining("name.ilike.%lago%"));
     });
 
+    it.each([
+      // Una coma cerraría el valor y añadiría otra condición al `or` (AUD-04).
+      [
+        "x,is_active.eq.false",
+        'name.ilike."%x,is_active.eq.false%",tax_id.ilike."%x,is_active.eq.false%",phone.ilike."%x,is_active.eq.false%"',
+      ],
+      // Un paréntesis rompía el `or=(…)`: PostgREST respondía 400 y el BFF 500.
+      [
+        "Lago (Mcbo)",
+        'name.ilike."%Lago (Mcbo)%",tax_id.ilike."%Lago (Mcbo)%",phone.ilike."%Lago (Mcbo)%"',
+      ],
+      // Un RIF con guiones no lleva caracteres reservados: viaja sin comillas.
+      ["J-12345678-9", "name.ilike.%J-12345678-9%,tax_id.ilike.%J-12345678-9%,phone.ilike.%J-12345678-9%"],
+      // Comillas, barras y comodines no llegan como sintaxis.
+      ['a"b\\c%d', "name.ilike.%a_b_c_d%,tax_id.ilike.%a_b_c_d%,phone.ilike.%a_b_c_d%"],
+    ])("AUD-04 · search [%s] travels as text, not as PostgREST syntax", async (search, expected) => {
+      const chain = setup();
+
+      await listContacts(new URLSearchParams({ search }), DEFAULT_STORE_ID);
+
+      expect(chain.or).toHaveBeenCalledWith(expected);
+    });
+
     it("returns an empty page for a value the mock would not match", async () => {
       const chain = setup();
 

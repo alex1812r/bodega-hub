@@ -70,17 +70,22 @@ export function matchesProductSearch(product: ProductSearchFields, search: strin
 const POSTGREST_RESERVED_CHARS = /[,.:()]/;
 
 /**
- * Filtro `or` de PostgREST que busca el término en nombre, SKU y código de
- * barras. Un término con caracteres reservados viaja entre comillas dobles: así
- * es texto y no puede cerrar el `or=(…)` ni añadir filtros. `escapeIlike` ya
- * cambió las comillas y las barras invertidas, lo único que habría que escapar
- * dentro de un valor entrecomillado.
+ * Filtro `or` de PostgREST que busca el término («contiene», sin distinguir
+ * mayúsculas) en cada columna. Un término con caracteres reservados viaja entre
+ * comillas dobles: así es texto y no puede cerrar el `or=(…)` ni añadir filtros.
+ * `escapeIlike` ya cambió las comillas y las barras invertidas, lo único que
+ * habría que escapar dentro de un valor entrecomillado.
  */
-export function buildProductSearchOrFilter(search: string): string {
+export function buildIlikeOrFilter(columns: readonly string[], search: string): string {
   const pattern = `%${escapeIlike(normalizeProductSearch(search))}%`;
   const value = POSTGREST_RESERVED_CHARS.test(pattern) ? `"${pattern}"` : pattern;
 
-  return `name.ilike.${value},sku.ilike.${value},barcode.ilike.${value}`;
+  return columns.map((column) => `${column}.ilike.${value}`).join(",");
+}
+
+/** `buildIlikeOrFilter` sobre nombre, SKU y código de barras. */
+export function buildProductSearchOrFilter(search: string): string {
+  return buildIlikeOrFilter(["name", "sku", "barcode"], search);
 }
 
 export function matchesExactBarcode(

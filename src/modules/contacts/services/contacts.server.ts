@@ -18,6 +18,7 @@ import {
   toPaginatedList,
 } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { buildIlikeOrFilter } from "@/modules/products/services/productSearch";
 
 import type { ContactInput } from "./contacts.mock-server";
 
@@ -29,10 +30,6 @@ const SUPPLIER_PRODUCT_SELECT = `
   ),
   supplier:contacts(id, type, name, tax_id, email, phone, address, is_active, created_at, updated_at)
 `;
-
-function escapeIlike(value: string) {
-  return value.replace(/[%_,]/g, "");
-}
 
 function isUniqueViolation(error: unknown) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
@@ -95,8 +92,8 @@ export async function listContacts(
     }
 
     if (search) {
-      const term = escapeIlike(search);
-      query = query.or(`name.ilike.%${term}%,tax_id.ilike.%${term}%,phone.ilike.%${term}%`);
+      // El término viaja como texto: una coma o un paréntesis no añaden filtros ni rompen el `or`.
+      query = query.or(buildIlikeOrFilter(["name", "tax_id", "phone"], search));
     }
 
     return query;

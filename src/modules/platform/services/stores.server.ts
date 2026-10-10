@@ -8,6 +8,7 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin-client";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { fetchListPage, listCountOptions } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import { buildIlikeOrFilter } from "@/modules/products/services/productSearch";
 
 import type {
   CreateStoreInput,
@@ -53,7 +54,8 @@ export async function listStores(searchParams: URLSearchParams) {
   const status = searchParams.get("status");
   const buildFilteredQuery = (head: boolean) => {
     let query = admin.from("stores").select("*", listCountOptions(head));
-    if (search) query = query.or(`name.ilike.%${search}%,slug.ilike.%${search}%`);
+    // El término viaja como texto: una coma o un paréntesis no añaden filtros ni rompen el `or`.
+    if (search) query = query.or(buildIlikeOrFilter(["name", "slug"], search));
     if (status === "active" || status === "paused") query = query.eq("status", status);
     return query;
   };

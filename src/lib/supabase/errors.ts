@@ -12,6 +12,8 @@ function isSupabaseLikeError(error: unknown): error is SupabaseLikeError {
 }
 
 export const INVALID_DATA_MESSAGE ="Los datos enviados no son válidos.";
+/** Lo único que ve el cliente de un error sin mapear: su texto es de Postgres o de la red. */
+export const UNEXPECTED_ERROR_MESSAGE = "Ocurrió un error inesperado. Intenta de nuevo.";
 const RETRYABLE_CONFLICT_MESSAGE =
   "La operación chocó con otra en curso y no se aplicó. Intenta de nuevo.";
 
@@ -34,6 +36,20 @@ export function getSupabaseErrorMessage(error: unknown) {
   }
 
   return "Unexpected Supabase error.";
+}
+
+/** Lo que se anota de un error sin mapear: nunca viaja en la respuesta. */
+function describeUnmappedError(error: unknown) {
+  if (isSupabaseLikeError(error)) {
+    return {
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      message: error.message,
+    };
+  }
+
+  return { message: getSupabaseErrorMessage(error) };
 }
 
 /**
@@ -142,7 +158,11 @@ export function mapSupabaseError(error: unknown): ApiError {
     }
   }
 
-  return new ApiError(500, "INTERNAL_ERROR", getSupabaseErrorMessage(error));
+  // Código sin mapear: el texto original nombra columnas, relaciones y filtros. Se
+  // queda en el log del servidor y el cliente recibe un mensaje genérico.
+  console.error("[supabase] error sin mapear", describeUnmappedError(error));
+
+  return new ApiError(500, "INTERNAL_ERROR", UNEXPECTED_ERROR_MESSAGE);
 }
 
 export function throwIfSupabaseError(error: unknown): void {
