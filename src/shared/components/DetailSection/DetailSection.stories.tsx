@@ -17,7 +17,7 @@ const meta = {
         items={[
           { label: "Nombre", value: "Aceite 1L" },
           { label: "Estado", value: "Activo" },
-          { label: "Categoria", value: "Alimentos" },
+          { label: "Categoría", value: "Alimentos" },
         ]}
       />
     ),

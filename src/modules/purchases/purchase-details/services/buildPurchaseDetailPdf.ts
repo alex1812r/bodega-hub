@@ -29,7 +29,7 @@ function drawPageFooter(doc: jsPDF, purchaseLabel: string, exportedAtLabel: stri
   doc.setTextColor(120, 128, 140);
   doc.text(`BodegaHub · ${purchaseLabel} · ${exportedAtLabel}`, PAGE_MARGIN_MM, footerY);
   doc.text(
-    `Pagina ${doc.getCurrentPageInfo().pageNumber}`,
+    `Página ${doc.getCurrentPageInfo().pageNumber}`,
     PAGE_WIDTH_MM - PAGE_MARGIN_MM,
     footerY,
     { align: "right" },

@@ -175,7 +175,7 @@ export const PurchaseUsdOverBalance: Story = {
     );
 
     await dialog.findByText(/Saldo pendiente actual/);
-    await userEvent.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+    await userEvent.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
     await userEvent.type(dialog.getByLabelText("Monto"), "30");
     // El botón espera a la tasa del día antes de dejar enviar un pago en USD.
     await waitFor(() =>

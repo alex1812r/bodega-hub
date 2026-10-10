@@ -175,7 +175,7 @@ describe("/api/inventory/adjustments", () => {
 
   describe("id de producto con caracteres de control o desmedido (INV-L4)", () => {
     const UUID = "950df0d2-f0c3-4cee-b935-86d0c8fd47bb";
-    const INVALID_ID_ERROR = { code: "BAD_REQUEST", message: "Los datos enviados no son validos." };
+    const INVALID_ID_ERROR = { code: "BAD_REQUEST", message: "Los datos enviados no son válidos." };
 
     function post(productId: string) {
       return POST(

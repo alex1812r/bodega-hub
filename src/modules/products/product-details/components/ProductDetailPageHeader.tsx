@@ -37,7 +37,7 @@ export function ProductDetailPageHeader({
           {barcode ? (
             <span className="inline-flex items-center gap-2">
               <Barcode aria-hidden className="size-4 shrink-0" />
-              Codigo de barras: {barcode}
+              Código de barras: {barcode}
             </span>
           ) : null}
         </p>

@@ -53,7 +53,7 @@ export function toErrorResponse(error: unknown) {
       {
         error: {
           code: "BAD_REQUEST",
-          message: "La solicitud no tiene un formato valido.",
+          message: "La solicitud no tiene un formato válido.",
           issues: error.issues,
         },
       },
@@ -65,7 +65,7 @@ export function toErrorResponse(error: unknown) {
     {
       error: {
         code: "INTERNAL_ERROR",
-        message: "Ocurrio un error inesperado.",
+        message: "Ocurrió un error inesperado.",
       },
     },
     { status: 500 },

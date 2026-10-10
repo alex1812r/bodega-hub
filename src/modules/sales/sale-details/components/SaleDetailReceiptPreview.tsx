@@ -75,7 +75,7 @@ export function SaleDetailReceiptPreview({
           <thead>
             <tr className="border-b border-border/40">
               <th className="w-[14%] py-0.5 pr-1">Cant</th>
-              <th className="w-[56%] py-0.5">Descripcion</th>
+              <th className="w-[56%] py-0.5">Descripción</th>
               <th className="w-[30%] py-0.5 text-right">Total</th>
             </tr>
           </thead>

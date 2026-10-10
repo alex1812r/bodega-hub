@@ -64,8 +64,8 @@ export function AuthenticatedAppShell({
   if (currentUser.isLoading) {
     return (
       <LoadingState
-        description="Estamos validando tu sesion y permisos."
-        title="Cargando sesion..."
+        description="Estamos validando tu sesión y permisos."
+        title="Cargando sesión..."
         variant="page"
       />
     );
@@ -84,11 +84,11 @@ export function AuthenticatedAppShell({
       error.code === "NOT_FOUND";
 
     const message =
-      error instanceof Error ? error.message : "No se pudo cargar tu sesion.";
+      error instanceof Error ? error.message : "No se pudo cargar tu sesión.";
 
     return (
       <ErrorState
-        actionLabel={isMissingApiRoute ? "Reiniciar sesion" : undefined}
+        actionLabel={isMissingApiRoute ? "Reiniciar sesión" : undefined}
         description={message}
         onRetry={
           isMissingApiRoute
@@ -97,8 +97,8 @@ export function AuthenticatedAppShell({
         }
         title={
           isMissingApiRoute
-            ? "Servicio de autenticacion no disponible"
-            : "No pudimos cargar tu sesion"
+            ? "Servicio de autenticación no disponible"
+            : "No pudimos cargar tu sesión"
         }
       />
     );
@@ -111,7 +111,7 @@ export function AuthenticatedAppShell({
   if (!profile.user.isActive) {
     return (
       <ErrorState
-        description="Tu usuario esta inactivo. Solicita acceso a un administrador."
+        description="Tu usuario está inactivo. Solicita acceso a un administrador."
         title="Cuenta inactiva"
       />
     );
@@ -145,7 +145,7 @@ export function AuthenticatedAppShell({
             <CardHeader>
               <CardTitle>No tienes permiso para acceder</CardTitle>
               <CardDescription>
-                Tu rol actual no permite entrar a este modulo. Solicita acceso a
+                Tu rol actual no permite entrar a este módulo. Solicita acceso a
                 un administrador si lo necesitas para tu trabajo.
               </CardDescription>
             </CardHeader>

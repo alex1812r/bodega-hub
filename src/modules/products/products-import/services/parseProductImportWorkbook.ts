@@ -66,7 +66,7 @@ export function parseProductImportWorkbook(
   const sheet = workbook.Sheets[PRODUCT_IMPORT_SHEET];
 
   if (!sheet) {
-    throw new Error(`No se encontro la hoja "${PRODUCT_IMPORT_SHEET}".`);
+    throw new Error(`No se encontró la hoja "${PRODUCT_IMPORT_SHEET}".`);
   }
 
   const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
@@ -76,12 +76,12 @@ export function parseProductImportWorkbook(
   });
 
   if (rows.length === 0) {
-    throw new Error("El archivo esta vacio.");
+    throw new Error("El archivo está vacío.");
   }
 
   if (!headersMatch(rows[0] ?? [])) {
     throw new Error(
-      `Encabezados invalidos. Use exactamente: ${PRODUCT_IMPORT_HEADERS.join(", ")}`,
+      `Encabezados inválidos. Use exactamente: ${PRODUCT_IMPORT_HEADERS.join(", ")}`,
     );
   }
 

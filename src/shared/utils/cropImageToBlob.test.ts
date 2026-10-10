@@ -4,7 +4,7 @@ describe("validateProductImageFile", () => {
   it("rejects non-image files", () => {
     const file = new File(["hello"], "notes.txt", { type: "text/plain" });
 
-    expect(validateProductImageFile(file)).toBe("Selecciona un archivo de imagen valido.");
+    expect(validateProductImageFile(file)).toBe("Selecciona un archivo de imagen válido.");
   });
 
   it("rejects files larger than 5 MB", () => {
@@ -12,7 +12,7 @@ describe("validateProductImageFile", () => {
       type: "image/webp",
     });
 
-    expect(validateProductImageFile(file)).toBe("La imagen supera el limite de 5 MB.");
+    expect(validateProductImageFile(file)).toBe("La imagen supera el límite de 5 MB.");
   });
 
   it("accepts valid image files", () => {

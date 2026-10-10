@@ -199,7 +199,7 @@ describe("RegisterPaymentModal · guardia de datos tecleados (CNF-15)", () => {
   it("cambiar el método cuenta como dato; volver al inicial, no", async () => {
     const { dialog, user } = await openModal();
 
-    await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+    await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
 
     expect(dispatchBeforeUnload()).toBe(true);
 
@@ -208,7 +208,7 @@ describe("RegisterPaymentModal · guardia de datos tecleados (CNF-15)", () => {
     expect(await findGuardDialog()).toHaveTextContent("Cobro a Maria Perez sin registrar");
 
     await answerGuard(user, "Seguir aquí");
-    await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_ves");
+    await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_ves");
 
     expect(dispatchBeforeUnload()).toBe(false);
   });

@@ -25,8 +25,8 @@ export function LoginPage() {
         </div>
 
         <div className="grid gap-4 text-sm text-indigo-50">
-          <p>Precios base en ref con conversion historica a VES.</p>
-          <p>Pagos parciales, stock auditable y metricas de ganancia.</p>
+          <p>Precios base en ref con conversión histórica a VES.</p>
+          <p>Pagos parciales, stock auditable y métricas de ganancia.</p>
         </div>
       </section>
 
@@ -45,7 +45,7 @@ export function LoginPage() {
 
         <Card className="w-full max-w-md shadow-[0_8px_12px_-4px_rgba(11,28,48,0.08)]">
           <CardHeader>
-            <CardTitle>Iniciar sesion</CardTitle>
+            <CardTitle>Iniciar sesión</CardTitle>
             <CardDescription>
               Ingresa con tu usuario para acceder al ERP.
             </CardDescription>

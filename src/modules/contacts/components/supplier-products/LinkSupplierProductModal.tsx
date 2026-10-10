@@ -195,7 +195,7 @@ export function LinkSupplierProductModal({
         ) : (
           <SearchAutocomplete
             error={productFieldError}
-            helperText="Escribe al menos 2 caracteres para buscar por nombre, SKU o codigo de barras."
+            helperText="Escribe al menos 2 caracteres para buscar por nombre, SKU o código de barras."
             isLoading={products.isFetching && trimmedProductSearch.length >= 2}
             label="Producto"
             onQueryChange={(nextQuery) => {
@@ -215,7 +215,7 @@ export function LinkSupplierProductModal({
               setErrorMessage(null);
             }}
             options={productOptions}
-            placeholder="Buscar por nombre, SKU o codigo de barras..."
+            placeholder="Buscar por nombre, SKU o código de barras..."
             query={productSearch}
             required
             selectedLabel={selectedProductLabel}

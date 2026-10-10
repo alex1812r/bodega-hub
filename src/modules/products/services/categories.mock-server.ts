@@ -57,7 +57,7 @@ export function listCategories(searchParams: URLSearchParams, storeId: string) {
 
 export function getCategoryById(id: string, storeId: string) {
   const category = mockCategories.find((item) => item.id === id);
-  assertMockStoreResource(category, storeId, "Categoria no encontrada.");
+  assertMockStoreResource(category, storeId, "Categoría no encontrada.");
 
   return category;
 }

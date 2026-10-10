@@ -123,7 +123,7 @@ describe("/api/inventory/conversions", () => {
 
   describe("ids con caracteres de control o desmedidos (INV-L4)", () => {
     const UUID = "aca3dfe9-8630-44d0-acd9-c44288ca9f71";
-    const INVALID_ID_ERROR = { code: "BAD_REQUEST", message: "Los datos enviados no son validos." };
+    const INVALID_ID_ERROR = { code: "BAD_REQUEST", message: "Los datos enviados no son válidos." };
 
     function post(body: Record<string, unknown>) {
       return POST(

@@ -117,7 +117,7 @@ describe("taxRates.server", () => {
     const { calls } = mountClient([globalGeneral]);
 
     await expect(createTaxRate({ label: "General", pct: 12 }, DEFAULT_STORE_ID)).rejects.toMatchObject({
-      message: 'Ya existe una alicuota de IVA con el codigo "general".',
+      message: 'Ya existe una alícuota de IVA con el código "general".',
       status: 409,
     });
     expect(writes(calls)).toEqual([]);

@@ -139,10 +139,10 @@ export const addProductBarcodeSchema = z.object({
   barcode: z
     .string()
     .transform(cleanText)
-    .pipe(z.string().min(1, "El codigo de barras es obligatorio"))
+    .pipe(z.string().min(1, "El código de barras es obligatorio"))
     .transform((value) => normalizeBarcode(value))
     .refine((value): value is string => Boolean(value), {
-      message: "El codigo de barras es obligatorio",
+      message: "El código de barras es obligatorio",
     }),
 });
 

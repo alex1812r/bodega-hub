@@ -25,7 +25,7 @@ export async function GET(request: Request, context: PeriodRouteContext) {
     // Sin identidad no hay recibo propio que enseñar: mejor un 403 claro que una
     // consulta con `profile_id` vacío, que PostgREST devuelve como 500.
     if (!canManage && !auth.userId) {
-      throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+      throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción.");
     }
 
     return jsonData(

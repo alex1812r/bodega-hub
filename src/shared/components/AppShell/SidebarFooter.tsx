@@ -26,9 +26,9 @@ export function SidebarFooter({ collapsed = false, onSignOut }: SidebarFooterPro
         collapsed ? "py-2" : "p-4",
       )}
     >
-      <SidebarTooltip label="Cerrar sesion" placement="bottom" show={collapsed}>
+      <SidebarTooltip label="Cerrar sesión" placement="bottom" show={collapsed}>
         <button
-          aria-label="Cerrar sesion"
+          aria-label="Cerrar sesión"
           className={cn(
             "flex w-full cursor-pointer items-center rounded-lg text-sm font-medium text-sidebar-muted hover:bg-white/10 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300",
             "app-sidebar-shell-transition",
@@ -44,7 +44,7 @@ export function SidebarFooter({ collapsed = false, onSignOut }: SidebarFooterPro
               collapsed ? "max-w-0 opacity-0" : "max-w-[11rem] opacity-100",
             )}
           >
-            Cerrar sesion
+            Cerrar sesión
           </span>
         </button>
       </SidebarTooltip>

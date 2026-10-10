@@ -1042,7 +1042,7 @@ describe("InventoryListPage · vista única de stock", () => {
       expect(screen.getByRole("link", { name: "Volver" })).toHaveAttribute("href", PRODUCTS_URL);
 
       await user.click(screen.getByRole("button", { name: "Ver movimientos de Arroz" }));
-      await user.click(screen.getByRole("button", { name: "Ir a pagina 2" }));
+      await user.click(screen.getByRole("button", { name: "Ir a página 2" }));
 
       expect(new URLSearchParams(window.location.search).get("page")).toBe("2");
 

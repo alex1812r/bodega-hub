@@ -34,7 +34,7 @@ const DEFAULT_PREFIX: VeMobilePrefix = "0412";
 export function VenezuelanPhoneField({
   error,
   helperText = "Formato: 0412 555-1234",
-  label = "Telefono",
+  label = "Teléfono",
   onChange,
   value,
 }: VenezuelanPhoneFieldProps) {
@@ -80,7 +80,7 @@ export function VenezuelanPhoneField({
 
       <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-2">
         <SelectField
-          aria-label="Codigo de area"
+          aria-label="Código de área"
           onChange={(event) =>
             emit(event.target.value as VeMobilePrefix, subscriberDigits)
           }
@@ -93,7 +93,7 @@ export function VenezuelanPhoneField({
         <input
           aria-describedby={description ? descriptionId : undefined}
           aria-invalid={error ? true : undefined}
-          aria-label="Numero telefonico"
+          aria-label="Número telefónico"
           className={cn(
             formControlClassName,
             error && formControlErrorClassName,

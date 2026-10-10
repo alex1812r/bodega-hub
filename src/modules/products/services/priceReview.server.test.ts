@@ -162,7 +162,7 @@ describe("priceReview.server listPriceReview", () => {
     });
 
     await expect(listPriceReview(new URLSearchParams("purchaseId=no-uuid"), DEFAULT_STORE_ID)).rejects.toMatchObject({
-      message: "Los datos enviados no son validos.",
+      message: "Los datos enviados no son válidos.",
       status: 400,
     });
   });

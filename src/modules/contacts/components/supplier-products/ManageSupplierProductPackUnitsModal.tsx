@@ -146,7 +146,7 @@ export function ManageSupplierProductPackUnitsModal({
 
     const unitsPerPack = Number(draft.unitsPerPack);
     if (!draft.label.trim() || !Number.isInteger(unitsPerPack) || unitsPerPack <= 0) {
-      setErrorMessage("Indica etiqueta y unidades por empaque validas.");
+      setErrorMessage("Indica etiqueta y unidades por empaque válidas.");
       return;
     }
 

@@ -302,7 +302,7 @@ describe("PlatformUsersListPage · estado en la URL (DET-06b, DET-06c)", () => {
     await screen.findByText("Usuario 010");
     expect(screen.queryByText("Usuario 011")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Pagina siguiente" }));
+    await user.click(screen.getByRole("button", { name: "Página siguiente" }));
 
     expect(await screen.findByText("Usuario 011")).toBeInTheDocument();
     expect(lastListRequest()).toEqual({ limit: "10", skip: "10" });

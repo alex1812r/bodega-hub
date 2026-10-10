@@ -100,7 +100,7 @@ export function PaymentFormFields({
     <div className="grid gap-4">
       <div className="grid gap-4 md:grid-cols-2">
         <SelectField
-          label="Metodo"
+          label="Método"
           onChange={(event) => {
             const nextMethod = event.target.value as PaymentMethod;
 

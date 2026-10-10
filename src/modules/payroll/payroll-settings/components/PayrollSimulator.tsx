@@ -53,8 +53,8 @@ export function PayrollSimulator({
           />
           <NumberInput
             decimals={2}
-            helperText="Porcentaje de comision a simular."
-            label="Comision (%)"
+            helperText="Porcentaje de comisión a simular."
+            label="Comisión (%)"
             onChange={(event) => setCommissionPct(event.target.value)}
             value={commissionPct}
           />
@@ -64,11 +64,11 @@ export function PayrollSimulator({
           className="rounded-md bg-indigo-50 px-3 py-2 text-sm leading-6 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
           data-testid="payroll-simulator-result"
         >
-          Con ventas de {formatRefUsd(salesNumber)} al {pctNumber.toFixed(2)} %, la comision seria{" "}
+          Con ventas de {formatRefUsd(salesNumber)} al {pctNumber.toFixed(2)} %, la comisión sería{" "}
           <strong className="tabular-nums">{formatRefUsd(commissionRef)}</strong>
           {sharePct == null
-            ? "; todavia no tenemos ganancia bruta promedio para comparar."
-            : `; eso es ${sharePct.toFixed(2)} % de la ganancia bruta promedio de las ultimas ${String(periodsInAverage)} quincenas (${formatRefUsd(averageGrossProfitRef ?? 0)}).`}
+            ? "; todavía no tenemos ganancia bruta promedio para comparar."
+            : `; eso es ${sharePct.toFixed(2)} % de la ganancia bruta promedio de las últimas ${String(periodsInAverage)} quincenas (${formatRefUsd(averageGrossProfitRef ?? 0)}).`}
         </p>
       </CardContent>
     </Card>

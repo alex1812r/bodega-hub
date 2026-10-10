@@ -22,7 +22,7 @@ describe("parseImpactAction", () => {
       expect(() => parseImpactAction(request(query), ACTIONS)).toThrow(
         expect.objectContaining({
           code: "BAD_REQUEST",
-          message: "El parametro action es obligatorio y debe ser uno de: cancel, return.",
+          message: "El parámetro action es obligatorio y debe ser uno de: cancel, return.",
           status: 400,
         }),
       );

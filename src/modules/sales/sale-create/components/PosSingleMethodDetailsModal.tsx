@@ -61,7 +61,7 @@ export function PosSingleMethodDetailsModal({
     () =>
       method
         ? validateSinglePaymentDetails(method, details)
-        : { errors: ["Metodo invalido."], isValid: false },
+        : { errors: ["Método inválido."], isValid: false },
     [details, method],
   );
 
@@ -142,9 +142,9 @@ export function PosSingleMethodDetailsModal({
             <VenezuelanPhoneField
               error={
                 hasSubmitted &&
-                validation.errors.some((error) => error.toLowerCase().includes("telefono"))
+                validation.errors.some((error) => error.toLowerCase().includes("teléfono"))
                   ? validation.errors.find((error) =>
-                      error.toLowerCase().includes("telefono"),
+                      error.toLowerCase().includes("teléfono"),
                     )
                   : undefined
               }
@@ -170,8 +170,8 @@ export function PosSingleMethodDetailsModal({
             }
             helperText={
               method === "pago_movil"
-                ? "Ultimos 4 digitos de la referencia."
-                : "Numero de transferencia."
+                ? "Últimos 4 dígitos de la referencia."
+                : "Número de transferencia."
             }
             label="Referencia"
             onChange={(event) =>

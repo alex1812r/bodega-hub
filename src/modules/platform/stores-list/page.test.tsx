@@ -255,7 +255,7 @@ describe("StoresListPage · estado en la URL (DET-06b, DET-06c)", () => {
     await screen.findByText("Tienda 010");
     expect(screen.queryByText("Tienda 011")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Pagina siguiente" }));
+    await user.click(screen.getByRole("button", { name: "Página siguiente" }));
 
     expect(await screen.findByText("Tienda 011")).toBeInTheDocument();
     expect(lastListRequest()).toEqual({ limit: "10", skip: "10" });

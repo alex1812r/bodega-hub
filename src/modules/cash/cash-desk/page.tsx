@@ -27,9 +27,9 @@ const movementTypeLabels: Record<CashMovement["type"], string> = {
   adjustment: "Ajuste",
   change_out: "Vuelto entregado",
   opening: "Apertura",
-  refund_out: "Devolucion",
+  refund_out: "Devolución",
   sale_in: "Efectivo venta",
-  transfer_out: "Transferencia baul",
+  transfer_out: "Transferencia baúl",
 };
 
 export function CashDeskPage() {
@@ -84,8 +84,8 @@ export function CashDeskPage() {
               </p>
             ) : !hasOpenSession ? (
               <p className="text-sm text-on-surface-variant">
-                La caja esta cerrada. Usa el boton <strong>Abrir caja</strong> para iniciar una
-                sesion e indicar el fondo inicial.
+                La caja está cerrada. Usa el botón <strong>Abrir caja</strong> para iniciar una
+                sesión e indicar el fondo inicial.
               </p>
             ) : clock.expired && session.data ? (
               <CashSessionExpiredPanel
@@ -109,7 +109,7 @@ export function CashDeskPage() {
                 </div>
                 <div>
                   <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-                    Efectivo en cajon
+                    Efectivo en cajón
                   </p>
                   <p className="font-semibold tabular-nums">
                     {formatRefUsd(theoreticalRef)}
@@ -127,7 +127,7 @@ export function CashDeskPage() {
                     {formatVesBs(accountVes)}
                   </p>
                   <p className="text-xs text-on-surface-variant">
-                    Pago movil, transferencia y punto
+                    Pago móvil, transferencia y punto
                   </p>
                 </div>
                 <div>

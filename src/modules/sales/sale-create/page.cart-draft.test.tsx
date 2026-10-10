@@ -414,7 +414,7 @@ describe("CNF-15 · guardia de salida del POS", () => {
     for (const opener of [
       screen.getByRole("button", { name: "Cobrar con billetes y vuelto" }),
       screen.getByRole("button", { name: CUSTOMER.name }),
-      screen.getByRole("button", { name: "Escanear codigo" }),
+      screen.getByRole("button", { name: "Escanear código" }),
     ]) {
       fireEvent.click(opener);
 
@@ -478,7 +478,7 @@ describe("CNF-16 · carrito recuperable del POS", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Vaciar" }));
 
-    await screen.findByText("Carrito vacio");
+    await screen.findByText("Carrito vacío");
     await waitFor(() => expect(draftKeys()).toEqual([]));
     expect(screen.queryByText("Carrito recuperado")).not.toBeInTheDocument();
   });
@@ -544,7 +544,7 @@ describe("CNF-16 · carrito recuperable del POS", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Limpiar orden" }));
 
-    await screen.findByText("Carrito vacio");
+    await screen.findByText("Carrito vacío");
     expect(draftKeys()).toEqual([]);
   });
 
@@ -563,7 +563,7 @@ describe("CNF-16 · carrito recuperable del POS", () => {
 
     await screen.findAllByText(HARINA.name);
     await flush();
-    expect(screen.getByText("Carrito vacio")).toBeInTheDocument();
+    expect(screen.getByText("Carrito vacío")).toBeInTheDocument();
     expect(screen.queryByText("Carrito recuperado")).not.toBeInTheDocument();
     expect(draftKeys()).toEqual([]);
   });
@@ -604,7 +604,7 @@ describe("CNF-16 · carrito recuperable del POS", () => {
 
       await screen.findAllByText(HARINA.name);
       await flush();
-      expect(screen.getByText("Carrito vacio")).toBeInTheDocument();
+      expect(screen.getByText("Carrito vacío")).toBeInTheDocument();
       expect(screen.queryByText("Carrito recuperado")).not.toBeInTheDocument();
       visit.unmount();
     }
@@ -689,7 +689,7 @@ describe("CNF-F5 · un carrito cobrado no reaparece por una copia de otra pesta�
 
     await screen.findAllByText(HARINA.name);
     await flush();
-    expect(screen.getByText("Carrito vacio")).toBeInTheDocument();
+    expect(screen.getByText("Carrito vacío")).toBeInTheDocument();
     expect(screen.queryByText("Carrito recuperado")).not.toBeInTheDocument();
   });
 
@@ -729,7 +729,7 @@ describe("CNF-F5 · un carrito cobrado no reaparece por una copia de otra pesta�
 
     fireEvent.click(screen.getByRole("button", { name: "Vaciar" }));
 
-    await screen.findByText("Carrito vacio");
+    await screen.findByText("Carrito vacío");
     expect(screen.queryByText("Este carrito ya se cobró en otra pestaña")).not.toBeInTheDocument();
     expect(beforeUnloadIsBlocked()).toBe(false);
   });
@@ -1058,7 +1058,7 @@ describe("POS-H6 · la clave del cobro se deriva del carrito: dos pestañas env�
     await expectCartCount("1 item");
     await chargeInCashUsd();
     // Sin respuesta, el POS pregunta por la clave y el servidor dice que no hay venta.
-    await screen.findAllByText(/no quedo guardado/i);
+    await screen.findAllByText(/no quedó guardado/i);
 
     const chargeButton = screen.getByRole("button", { name: "Procesar venta" });
 

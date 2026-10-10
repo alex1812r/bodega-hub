@@ -89,7 +89,7 @@ export function getKpiComparisonLabel(preset: DashboardKpiPreset) {
   }
 
   if (preset === "ayer") {
-    return "vs dia anterior";
+    return "vs día anterior";
   }
 
   if (preset === "rango") {

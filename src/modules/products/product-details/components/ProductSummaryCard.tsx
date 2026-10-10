@@ -26,7 +26,7 @@ export function ProductSummaryCard({ product }: ProductSummaryCardProps) {
       <InfoGrid
         items={[
           { label: "SKU", value: product.sku },
-          { label: "Categoria", value: product.category },
+          { label: "Categoría", value: product.category },
           { label: "Costo actual", value: formatRef(product.costRef) },
           { label: "Precio venta", value: formatRef(product.priceRef) },
           {

@@ -463,7 +463,7 @@ describe("ContactSettlementModal", () => {
   it("método bancario sin referencia no confirma; con ella, la misma vale para todos los pagos", async () => {
     const { dialog, user } = await openModal();
 
-    await user.selectOptions(dialog.getByLabelText("Metodo"), "punto_venta");
+    await user.selectOptions(dialog.getByLabelText("Método"), "punto_venta");
     await previewAmount(dialog, user, "150");
 
     expect(dialog.getByText("Indica la referencia.")).toBeInTheDocument();
@@ -561,7 +561,7 @@ describe("ContactSettlementModal", () => {
 
     const { dialog, user } = await openModal();
 
-    await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+    await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
     await previewAmount(dialog, user, "7.73");
 
     // 100 / 36.5 = 2.7397: caben 2.73 USD (Bs 99,65) y quedan Bs 0,35.
@@ -594,7 +594,7 @@ describe("ContactSettlementModal", () => {
 
     expect(dialog.getByText(/1 compra por pagar/)).toBeInTheDocument();
 
-    await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+    await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
     await waitFor(() =>
       expect(dialog.queryByText("Cargando la tasa del día...")).not.toBeInTheDocument(),
     );
@@ -1008,7 +1008,7 @@ describe("ContactSettlementModal", () => {
                 { message: "El texto no puede superar 2000 caracteres", path: ["notes"] },
                 { message: "Otro motivo", path: ["referenceCode"] },
               ],
-              message: "La solicitud no tiene un formato valido.",
+              message: "La solicitud no tiene un formato válido.",
             },
           },
           400,
@@ -1020,7 +1020,7 @@ describe("ContactSettlementModal", () => {
 
       expect(
         row(dialog, "Venta F-0001").getByText(
-          "La solicitud no tiene un formato valido. El texto no puede superar 2000 caracteres",
+          "La solicitud no tiene un formato válido. El texto no puede superar 2000 caracteres",
         ),
       ).toBeInTheDocument();
     });

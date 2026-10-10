@@ -28,7 +28,7 @@ export function PayrollSalesModal({
 }: PayrollSalesModalProps) {
   return (
     <Modal
-      description={`Ventas que entraron en la comision de ${cashierName}.`}
+      description={`Ventas que entraron en la comisión de ${cashierName}.`}
       onOpenChange={onOpenChange}
       open={open}
       title="Ventas comisionadas"
@@ -36,7 +36,7 @@ export function PayrollSalesModal({
       {sales.length === 0 ? (
         <EmptyState
           className="py-8"
-          description="Esta quincena no le sumo ninguna venta a este cajero."
+          description="Esta quincena no le sumó ninguna venta a este cajero."
           title="Sin ventas comisionadas"
         />
       ) : (

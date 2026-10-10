@@ -52,7 +52,7 @@ export function getPageDataSourceSuffix() {
 
 export function getFormSaveDescription() {
   return isMockDataSource()
-    ? "Los cambios se envian a la API mock y luego invalidan las consultas del modulo."
+    ? "Los cambios se envían a la API mock y luego invalidan las consultas del módulo."
     : "Confirma los datos antes de guardar.";
 }
 
@@ -62,7 +62,7 @@ export function getSettingsSavedMessage() {
 
 export function getExchangeRateSavedMessage() {
   return isMockDataSource()
-    ? "Tasa registrada para esta sesion mock."
+    ? "Tasa registrada para esta sesión mock."
     : "Tasa registrada correctamente.";
 }
 

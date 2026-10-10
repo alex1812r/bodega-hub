@@ -763,14 +763,14 @@ export function addProductBarcode(id: string, barcode: string, storeId: string) 
 
   const normalized = normalizeBarcode(barcode);
   if (!normalized) {
-    throw new ApiError(400, "BAD_REQUEST", "El codigo de barras es obligatorio.");
+    throw new ApiError(400, "BAD_REQUEST", "El código de barras es obligatorio.");
   }
 
   if (normalizeBarcode(product.barcode)) {
     throw new ApiError(
       400,
       "BAD_REQUEST",
-      "El producto ya tiene codigo de barras; no se puede modificar desde esta accion.",
+      "El producto ya tiene código de barras; no se puede modificar desde esta acción.",
     );
   }
 
@@ -782,7 +782,7 @@ export function addProductBarcode(id: string, barcode: string, storeId: string) 
         normalizeBarcode(item.barcode) === normalized,
     )
   ) {
-    throw new ApiError(409, "CONFLICT", "Ya existe un producto con este codigo de barras.");
+    throw new ApiError(409, "CONFLICT", "Ya existe un producto con este código de barras.");
   }
 
   product.barcode = normalized;

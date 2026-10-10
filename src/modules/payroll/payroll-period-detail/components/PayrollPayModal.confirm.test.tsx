@@ -156,7 +156,7 @@ describe("PayrollPayModal · confirmación con efecto en el baúl (CNF-13)", () 
     const user = userEvent.setup();
 
     render(<PayrollPayModal items={[item, second]} onOpenChange={jest.fn()} open />);
-    await user.selectOptions(screen.getByLabelText("Metodo"), "efectivo_usd");
+    await user.selectOptions(screen.getByLabelText("Método"), "efectivo_usd");
     await user.click(screen.getByRole("button", { name: "Pagar todos" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Confirmar pago de la quincena" });

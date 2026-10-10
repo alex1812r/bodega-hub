@@ -85,7 +85,7 @@ export const MobilePayment: Story = {
     },
   },
   play: async ({ canvas }) => {
-    await expect(canvas.getByLabelText("Numero telefonico")).toHaveValue("555-1234");
+    await expect(canvas.getByLabelText("Número telefónico")).toHaveValue("555-1234");
     await expect(canvas.getByLabelText("Referencia")).toHaveValue("1234");
   },
 };
@@ -101,7 +101,7 @@ export const BankTransfer: Story = {
   },
   play: async ({ canvas }) => {
     await expect(canvas.getByLabelText("Referencia")).toHaveValue("TRX-001");
-    await expect(canvas.queryByLabelText("Numero telefonico")).not.toBeInTheDocument();
+    await expect(canvas.queryByLabelText("Número telefónico")).not.toBeInTheDocument();
   },
 };
 
@@ -155,7 +155,7 @@ export const WithErrors: Story = {
   },
   play: async ({ canvas }) => {
     await expect(canvas.getByText("Indica un monto mayor a cero.")).toBeVisible();
-    await expect(canvas.getByText("Usa una referencia de 4 digitos.")).toBeVisible();
+    await expect(canvas.getByText("Usa una referencia de 4 dígitos.")).toBeVisible();
   },
 };
 

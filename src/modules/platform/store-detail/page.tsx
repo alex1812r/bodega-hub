@@ -52,7 +52,7 @@ export function StoreDetailPage({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Informacion de la tienda</CardTitle>
+          <CardTitle>Información de la tienda</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-3">
           <div>

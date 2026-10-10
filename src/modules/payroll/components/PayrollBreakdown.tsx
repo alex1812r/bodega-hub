@@ -126,7 +126,7 @@ export function PayrollBreakdown({
           </div>
           {sharePct == null ? (
             <p className="text-xs text-on-surface-variant">
-              No tenemos la ganancia bruta de esta quincena, asi que el semaforo queda sin
+              No tenemos la ganancia bruta de esta quincena, así que el semáforo queda sin
               calcular.
             </p>
           ) : null}
@@ -134,7 +134,7 @@ export function PayrollBreakdown({
 
         <div className="rounded-lg border border-outline-variant p-3">
           <p className="mb-1 text-sm font-medium text-foreground">
-            Queda para gastos, reinversion y reserva
+            Queda para gastos, reinversión y reserva
           </p>
           {breakdown ? (
             <div>
@@ -150,7 +150,7 @@ export function PayrollBreakdown({
               />
               <BreakdownRow
                 hint={`${reinvestPct.toFixed(0)} %`}
-                label="Reinversion sugerida"
+                label="Reinversión sugerida"
                 value={formatRefUsd(breakdown.reinvestRef)}
               />
               <BreakdownRow
@@ -162,7 +162,7 @@ export function PayrollBreakdown({
             </div>
           ) : (
             <p className="text-sm text-on-surface-variant">
-              Sin ganancia bruta no podemos sugerir reinversion ni reserva.
+              Sin ganancia bruta no podemos sugerir reinversión ni reserva.
             </p>
           )}
         </div>

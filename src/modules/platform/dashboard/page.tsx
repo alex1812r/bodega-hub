@@ -78,7 +78,7 @@ function PlatformDashboardScreen() {
           Resumen de plataforma
         </Typography>
         <Typography className="mt-2" variant="muted">
-          {scopeSubtitle(storeScope, selectedStoreIds.length)}. Dia operativo Caracas
+          {scopeSubtitle(storeScope, selectedStoreIds.length)}. Día operativo Caracas
           (America/Caracas)
           {kpiPeriod.preset === "hoy"
             ? getPageDataSourceSuffix()

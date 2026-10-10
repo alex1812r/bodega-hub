@@ -93,7 +93,7 @@ export function Pagination({
 
   return (
     <nav
-      aria-label="Paginacion de resultados"
+      aria-label="Paginación de resultados"
       className={cn(
         "flex max-w-full min-w-0 flex-col gap-3",
         isStitch
@@ -148,9 +148,9 @@ export function Pagination({
       >
         {showPageSizeSelector && !isStitch ? (
           <label className="flex shrink-0 items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-            <span className="whitespace-nowrap">Por pagina</span>
+            <span className="whitespace-nowrap">Por página</span>
             <select
-              aria-label="Resultados por pagina"
+              aria-label="Resultados por página"
               className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none transition-colors focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-indigo-500 dark:focus:ring-indigo-950"
               disabled={isDisabled}
               onChange={(event) => handleLimitChange(Number(event.target.value))}
@@ -182,7 +182,7 @@ export function Pagination({
             </Button>
           ) : (
             <IconButton
-              aria-label="Pagina anterior"
+              aria-label="Página anterior"
               disabled={isDisabled || !canGoPrevious}
               icon={<ChevronLeft className="h-4 w-4" />}
               onClick={() => goToPage(currentPage - 1)}
@@ -192,7 +192,7 @@ export function Pagination({
 
           {isCompact ? (
             <p className="whitespace-nowrap px-1 text-sm text-slate-500 dark:text-slate-400">
-              Pagina{" "}
+              Página{" "}
               <span className="font-medium text-slate-900 dark:text-slate-100">{currentPage}</span> de{" "}
               <span className="font-medium text-slate-900 dark:text-slate-100">{totalPages}</span>
             </p>
@@ -219,7 +219,7 @@ export function Pagination({
                 ) : (
                   <Button
                     aria-current={page === currentPage ? "page" : undefined}
-                    aria-label={`Ir a pagina ${page}`}
+                    aria-label={`Ir a página ${page}`}
                     className={cn(
                       isStitch ? "h-auto min-w-9 px-3 py-1 text-sm" : "min-w-9 px-2",
                       page === currentPage &&
@@ -254,7 +254,7 @@ export function Pagination({
             </Button>
           ) : (
             <IconButton
-              aria-label="Pagina siguiente"
+              aria-label="Página siguiente"
               disabled={isDisabled || !canGoNext}
               icon={<ChevronRight className="h-4 w-4" />}
               onClick={() => goToPage(currentPage + 1)}
@@ -265,7 +265,7 @@ export function Pagination({
 
         {!isCompact && !isStitch ? (
           <p className="shrink-0 text-sm text-slate-500 dark:text-slate-400">
-            Pagina{" "}
+            Página{" "}
             <span className="font-medium text-slate-900 dark:text-slate-100">{currentPage}</span> de{" "}
             <span className="font-medium text-slate-900 dark:text-slate-100">{totalPages}</span>
           </p>

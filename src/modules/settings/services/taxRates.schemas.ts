@@ -50,7 +50,7 @@ export const createTaxRateSchema = z.strictObject({
     .string()
     .trim()
     .max(TAX_RATE_CODE_MAX_LENGTH)
-    .regex(TAX_RATE_CODE_PATTERN, "El codigo solo admite minusculas, numeros, guiones y puntos.")
+    .regex(TAX_RATE_CODE_PATTERN, "El código solo admite minúsculas, números, guiones y puntos.")
     .optional(),
   label: labelSchema,
   pct: pctSchema,
@@ -100,11 +100,11 @@ export function nextTaxRateSortOrder(rates: ReadonlyArray<Pick<TaxRate, "sortOrd
 }
 
 export function buildTaxRateCodeTakenMessage(code: string) {
-  return `Ya existe una alicuota de IVA con el codigo "${code}".`;
+  return `Ya existe una alícuota de IVA con el código "${code}".`;
 }
 
 export const TAX_RATE_CODE_NOT_DERIVABLE_MESSAGE =
-  "No se pudo generar un codigo a partir del nombre: usa letras o numeros.";
+  "No se pudo generar un código a partir del nombre: usa letras o números.";
 
 /**
  * Motivo por el que una alicuota no se puede desactivar, o `null` si nadie la usa.

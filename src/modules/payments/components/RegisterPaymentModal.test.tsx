@@ -163,7 +163,7 @@ describe("RegisterPaymentModal", () => {
     renderModal(<RegisterPaymentModal saleId="sale-002" />);
     const { dialog, user } = await openModal();
 
-    await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+    await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
     await user.type(dialog.getByLabelText("Monto"), "12.5");
     await user.type(dialog.getByLabelText("Notas"), "  Abono en caja  ");
     await submit(user);
@@ -188,11 +188,11 @@ describe("RegisterPaymentModal", () => {
     renderModal(<RegisterPaymentModal saleId="sale-002" />);
     const { dialog, user } = await openModal();
 
-    await user.selectOptions(dialog.getByLabelText("Metodo"), "pago_movil");
+    await user.selectOptions(dialog.getByLabelText("Método"), "pago_movil");
     await user.type(dialog.getByLabelText("Monto"), "1500.75");
     await user.type(dialog.getByLabelText("Banco"), BANK.code);
     await user.click(await dialog.findByRole("button", { name: new RegExp(BANK.code) }));
-    await user.type(dialog.getByLabelText("Numero telefonico"), "5551234");
+    await user.type(dialog.getByLabelText("Número telefónico"), "5551234");
     await user.type(dialog.getByLabelText("Referencia"), "1234");
     await submit(user);
 
@@ -214,7 +214,7 @@ describe("RegisterPaymentModal", () => {
     renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
     const { dialog, user } = await openModal();
 
-    await user.selectOptions(dialog.getByLabelText("Metodo"), "transferencia");
+    await user.selectOptions(dialog.getByLabelText("Método"), "transferencia");
     await user.type(dialog.getByLabelText("Monto"), "20200");
     await user.type(dialog.getByLabelText("Banco"), BANK.code);
     await user.click(await dialog.findByRole("button", { name: new RegExp(BANK.code) }));
@@ -274,13 +274,13 @@ describe("RegisterPaymentModal", () => {
     renderModal(<RegisterPaymentModal saleId="sale-002" />);
     const { dialog, user } = await openModal();
 
-    await user.selectOptions(dialog.getByLabelText("Metodo"), "pago_movil");
+    await user.selectOptions(dialog.getByLabelText("Método"), "pago_movil");
     await submit(user);
 
     expect(await dialog.findByText("Indica un monto mayor a cero.")).toBeInTheDocument();
     expect(dialog.getByText("Indica el banco.")).toBeInTheDocument();
-    expect(dialog.getByText("Indica el telefono.")).toBeInTheDocument();
-    expect(dialog.getByText("Usa una referencia de 4 digitos.")).toBeInTheDocument();
+    expect(dialog.getByText("Indica el teléfono.")).toBeInTheDocument();
+    expect(dialog.getByText("Usa una referencia de 4 dígitos.")).toBeInTheDocument();
     expect(postedBodies()).toHaveLength(0);
   });
 
@@ -356,7 +356,7 @@ describe("RegisterPaymentModal", () => {
     renderModal(<RegisterPaymentModal saleId="sale-002" />);
     const { dialog, user } = await openModal();
 
-    await waitFor(() => expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_usd"));
+    await waitFor(() => expect(dialog.getByLabelText("Método")).toHaveValue("efectivo_usd"));
     await user.type(dialog.getByLabelText("Monto"), "3");
     await submit(user);
 
@@ -458,11 +458,11 @@ describe("RegisterPaymentModal", () => {
       await waitFor(() => expect(postedBodies()).toHaveLength(1));
       await act(async () => {
         resolvePost(
-          jsonResponse({ error: { code: "CONFLICT", message: "La caja esta cerrada." } }, 409),
+          jsonResponse({ error: { code: "CONFLICT", message: "La caja está cerrada." } }, 409),
         );
       });
 
-      expect(await dialog.findByText("La caja esta cerrada.")).toBeInTheDocument();
+      expect(await dialog.findByText("La caja está cerrada.")).toBeInTheDocument();
       expect(dialog.getByRole("button", { name: "Cancelar" })).toBeEnabled();
 
       // PAG-F6 U4: un 409 es de resultado incierto; el reintento es el mismo envio.
@@ -491,7 +491,7 @@ describe("RegisterPaymentModal", () => {
       const { dialog, user } = await openModal();
 
       await user.click(dialog.getByRole("button", { name: "Completar saldo" }));
-      await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+      await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
       await submit(user);
 
       const post = await expectSinglePost();
@@ -521,7 +521,7 @@ describe("RegisterPaymentModal", () => {
       renderModal(<RegisterPaymentModal saleId="sale-002" />);
       const { dialog, user } = await openModal();
 
-      await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+      await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
       // 17.62 USD = Bs 8.986,20 > 8.475 + 510.
       await user.type(dialog.getByLabelText("Monto"), "17.62");
       await submit(user);
@@ -545,7 +545,7 @@ describe("RegisterPaymentModal", () => {
       renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
       const { dialog, user } = await openModal();
 
-      await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+      await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
       await user.type(dialog.getByLabelText("Monto"), "45");
       expect(dialog.getByRole("status")).toHaveTextContent(/El monto supera el saldo pendiente/);
       await submit(user);
@@ -566,7 +566,7 @@ describe("RegisterPaymentModal", () => {
           renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
           const { dialog, user } = await openModal();
 
-          await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+          await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
           await user.type(dialog.getByLabelText("Monto"), amount);
           await submit(user);
 
@@ -583,7 +583,7 @@ describe("RegisterPaymentModal", () => {
         renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
         const { dialog, user } = await openModal();
 
-        await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+        await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
         // 39 USD: Bs 19.500 a la tasa de la compra, Bs 20.280 a la del dia (> 20.200,01).
         await user.type(dialog.getByLabelText("Monto"), "39");
         await submit(user);
@@ -607,7 +607,7 @@ describe("RegisterPaymentModal", () => {
         renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
         const { dialog, user } = await openModal();
 
-        await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+        await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
         await user.click(dialog.getByRole("button", { name: "Completar saldo" }));
         await submit(user);
 
@@ -631,7 +631,7 @@ describe("RegisterPaymentModal", () => {
         renderModal(<RegisterPaymentModal purchaseId="purchase-002" />);
         const { dialog, user } = await openModal();
 
-        await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+        await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
         await user.type(dialog.getByLabelText("Monto"), "45{Enter}");
         await act(async () => {
           await new Promise((resolve) => setTimeout(resolve, 20));
@@ -865,13 +865,13 @@ describe("RegisterPaymentModal", () => {
       renderModal(<RegisterPaymentModal saleId="sale-002" />);
       const { dialog, user } = await openModal();
 
-      expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_ves");
+      expect(dialog.getByLabelText("Método")).toHaveValue("efectivo_ves");
       await user.type(dialog.getByLabelText("Monto"), "50");
 
       await act(async () => {
         releaseMethods(usdOnlyMethods());
       });
-      await waitFor(() => expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_usd"));
+      await waitFor(() => expect(dialog.getByLabelText("Método")).toHaveValue("efectivo_usd"));
 
       // Bs 50 a tasa 510 = 0.10 USD: la misma conversion que el cambio manual de metodo.
       expect(dialog.getByLabelText("Monto")).toHaveValue("0.1");
@@ -900,7 +900,7 @@ describe("RegisterPaymentModal", () => {
       await act(async () => {
         releaseMethods(usdOnlyMethods());
       });
-      await waitFor(() => expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_usd"));
+      await waitFor(() => expect(dialog.getByLabelText("Método")).toHaveValue("efectivo_usd"));
 
       expect(dialog.getByLabelText("Monto")).toHaveValue("");
     });
@@ -921,7 +921,7 @@ describe("RegisterPaymentModal", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
 
-      expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_ves");
+      expect(dialog.getByLabelText("Método")).toHaveValue("efectivo_ves");
       expect(dialog.getByLabelText("Monto")).toHaveValue("50");
       await submit(user);
 
@@ -1067,7 +1067,7 @@ describe("RegisterPaymentModal", () => {
 
       it("al reabrirlo por codigo el formulario vuelve limpio, sin el error anterior", async () => {
         paymentResponse = jsonResponse(
-          { error: { code: "BAD_REQUEST", message: "La caja esta cerrada." } },
+          { error: { code: "BAD_REQUEST", message: "La caja está cerrada." } },
           400,
         );
         const user = userEvent.setup();
@@ -1080,7 +1080,7 @@ describe("RegisterPaymentModal", () => {
         await dialog.findByText(/Saldo pendiente actual/);
         await user.type(dialog.getByLabelText("Monto"), "100");
         await submit(user);
-        expect(await dialog.findByText("La caja esta cerrada.")).toBeInTheDocument();
+        expect(await dialog.findByText("La caja está cerrada.")).toBeInTheDocument();
 
         // El padre cierra sin pasar por el modal (p. ej. al navegar).
         fireEvent.click(screen.getByRole("button", { hidden: true, name: "Cerrar por codigo" }));
@@ -1090,7 +1090,7 @@ describe("RegisterPaymentModal", () => {
         dialog = within(await screen.findByRole("dialog"));
 
         expect(dialog.getByLabelText("Monto")).toHaveValue("");
-        expect(dialog.queryByText("La caja esta cerrada.")).not.toBeInTheDocument();
+        expect(dialog.queryByText("La caja está cerrada.")).not.toBeInTheDocument();
       });
 
       it("con el pago en vuelo no pide cerrarse", async () => {
@@ -1154,7 +1154,7 @@ describe("RegisterPaymentModal", () => {
       const onRegistered = jest.fn();
 
       paymentResponse = jsonResponse(
-        { error: { code: "BAD_REQUEST", message: "La caja esta cerrada." } },
+        { error: { code: "BAD_REQUEST", message: "La caja está cerrada." } },
         400,
       );
       renderModal(<RegisterPaymentModal onRegistered={onRegistered} saleId="sale-002" />);
@@ -1163,7 +1163,7 @@ describe("RegisterPaymentModal", () => {
       await user.type(dialog.getByLabelText("Monto"), "100");
       await submit(user);
 
-      expect(await dialog.findByText("La caja esta cerrada.")).toBeInTheDocument();
+      expect(await dialog.findByText("La caja está cerrada.")).toBeInTheDocument();
       expect(onRegistered).not.toHaveBeenCalled();
     });
 
@@ -1549,7 +1549,7 @@ describe("RegisterPaymentModal", () => {
 
       const opened = await openModal();
 
-      await opened.user.selectOptions(opened.dialog.getByLabelText("Metodo"), "efectivo_usd");
+      await opened.user.selectOptions(opened.dialog.getByLabelText("Método"), "efectivo_usd");
       await opened.user.type(opened.dialog.getByLabelText("Monto"), "2");
       await opened.user.type(opened.dialog.getByLabelText("Notas"), "Abono");
       await submit(opened.user);
@@ -1565,8 +1565,8 @@ describe("RegisterPaymentModal", () => {
       expect(dialog.getByText("Fallo.")).toBeInTheDocument();
       expect(dialog.getByLabelText("Monto")).toHaveValue("2");
       expect(dialog.getByLabelText("Monto")).toBeDisabled();
-      expect(dialog.getByLabelText("Metodo")).toHaveValue("efectivo_usd");
-      expect(dialog.getByLabelText("Metodo")).toBeDisabled();
+      expect(dialog.getByLabelText("Método")).toHaveValue("efectivo_usd");
+      expect(dialog.getByLabelText("Método")).toBeDisabled();
       expect(dialog.getByLabelText("Notas")).toBeDisabled();
       await waitFor(() => expect(dialog.getByRole("button", { name: "Reintentar" })).toBeEnabled());
       expect(dialog.queryByRole("button", { name: SUBMIT_BUTTON })).not.toBeInTheDocument();
@@ -1628,7 +1628,7 @@ describe("RegisterPaymentModal", () => {
       expect(reopened.dialog.getByText(UNCONFIRMED_NOTICE)).toBeInTheDocument();
       expect(reopened.dialog.getByLabelText("Monto")).toHaveValue("2");
       expect(reopened.dialog.getByLabelText("Monto")).toBeDisabled();
-      expect(reopened.dialog.getByLabelText("Metodo")).toHaveValue("efectivo_usd");
+      expect(reopened.dialog.getByLabelText("Método")).toHaveValue("efectivo_usd");
 
       paymentResponse = success();
       await retry(reopened.user);
@@ -2449,7 +2449,7 @@ describe("RegisterPaymentModal", () => {
                 path: ["notes"],
               },
             ],
-            message: "La solicitud no tiene un formato valido.",
+            message: "La solicitud no tiene un formato válido.",
           },
         },
         400,
@@ -2462,7 +2462,7 @@ describe("RegisterPaymentModal", () => {
 
       expect(
         await dialog.findByText(
-          "La solicitud no tiene un formato valido. El texto no puede superar 2000 caracteres.",
+          "La solicitud no tiene un formato válido. El texto no puede superar 2000 caracteres.",
         ),
       ).toBeInTheDocument();
       expect(dialog.queryByText(/Invalid input/)).not.toBeInTheDocument();

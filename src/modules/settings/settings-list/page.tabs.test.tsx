@@ -255,7 +255,7 @@ describe("SettingsListPage · pestañas y paginación en la URL (DET-06c)", () =
     renderPage();
     await screen.findByText("Usuario 001");
 
-    await user.click(screen.getByRole("button", { name: "Pagina siguiente" }));
+    await user.click(screen.getByRole("button", { name: "Página siguiente" }));
 
     expect(await screen.findByText("Usuario 011")).toBeInTheDocument();
     expect(urlParams()).toEqual({ tab: "usuarios", usersPage: "2" });
@@ -264,9 +264,9 @@ describe("SettingsListPage · pestañas y paginación en la URL (DET-06c)", () =
 
     await user.click(screen.getByRole("tab", { name: "Tasas" }));
     await screen.findByText("Fuente 001");
-    await user.click(screen.getByRole("button", { name: "Pagina siguiente" }));
+    await user.click(screen.getByRole("button", { name: "Página siguiente" }));
     await screen.findByText("Fuente 011");
-    await user.click(screen.getByRole("button", { name: "Pagina siguiente" }));
+    await user.click(screen.getByRole("button", { name: "Página siguiente" }));
 
     expect(await screen.findByText("Fuente 021")).toBeInTheDocument();
     expect(urlParams()).toEqual({ ratesPage: "3", tab: "tasas", usersPage: "2" });
@@ -285,7 +285,7 @@ describe("SettingsListPage · pestañas y paginación en la URL (DET-06c)", () =
     renderPage();
     await screen.findByText("Fuente 011");
 
-    await user.selectOptions(screen.getByLabelText("Resultados por pagina"), "25");
+    await user.selectOptions(screen.getByLabelText("Resultados por página"), "25");
 
     await waitFor(() =>
       expect(urlParams()).toEqual({ ratesLimit: "25", tab: "tasas", usersPage: "2" }),

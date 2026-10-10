@@ -24,6 +24,6 @@ export const Submitting: Story = {
 
 export const WithError: Story = {
   args: {
-    errorMessage: "Credenciales invalidas.",
+    errorMessage: "Credenciales inválidas.",
   },
 };

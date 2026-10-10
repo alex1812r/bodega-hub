@@ -67,7 +67,7 @@ import { deriveSaleRequestId } from "./utils/saleRequestId";
 const UNRESOLVED_SALE_MESSAGE =
   "La venta pudo haberse registrado; verifica antes de volver a cobrar.";
 const SALE_NOT_REGISTERED_MESSAGE =
-  "El servidor confirmo que ese cobro no quedo guardado. Puedes volver a pulsar «Procesar venta».";
+  "El servidor confirmó que ese cobro no quedó guardado. Puedes volver a pulsar «Procesar venta».";
 const CART_CHARGED_ELSEWHERE_MESSAGE =
   "Este carrito ya se cobró en otra pestaña y no se puede cobrar otra vez. Vacíalo si es la misma venta; si es otra venta con los mismos productos, pulsa «Es una venta nueva».";
 const CART_CHARGING_ELSEWHERE_MESSAGE =
@@ -528,7 +528,7 @@ function SaleCreatePosWorkspace() {
     clearSaleAttempt(attemptStorageKey);
     setNeedsVerification(false);
     setFormError(
-      `El cobro anterior si quedo registrado como venta ${sale.invoiceNumber}${
+      `El cobro anterior sí quedó registrado como venta ${sale.invoiceNumber}${
         sale.status === "pendiente_pago" ? " (pendiente de pago)" : ""
       }. Si este carrito es esa misma venta, limpia la orden: no la cobres otra vez.`,
     );
@@ -701,17 +701,17 @@ function SaleCreatePosWorkspace() {
         return;
       }
     } else if (!paymentMethod) {
-      setFormError("Selecciona un metodo de pago antes de procesar la venta.");
+      setFormError("Selecciona un método de pago antes de procesar la venta.");
       return;
     } else if (!isPaymentMethodEnabled(paymentMethod, enabledPaymentMethods)) {
-      setFormError("El metodo de pago seleccionado ya no esta habilitado.");
+      setFormError("El método de pago seleccionado ya no está habilitado.");
       setPaymentMethod(null);
       setPaymentDetails(null);
       return;
     } else if (methodRequiresPaymentDetails(paymentMethod)) {
       const validation = validateSinglePaymentDetails(paymentMethod, paymentDetails);
       if (!validation.isValid) {
-        setFormError(validation.errors[0] ?? "Completa los datos del metodo de pago.");
+        setFormError(validation.errors[0] ?? "Completa los datos del método de pago.");
         setPaymentDetailsModalOpen(true);
         return;
       }
@@ -719,7 +719,7 @@ function SaleCreatePosWorkspace() {
 
     // Un escaneo en vuelo todavia puede agregar una linea: cobrar ahora venderia sin ella.
     if (scanInFlightRef.current > 0) {
-      setFormError("Espera a que termine la busqueda del producto escaneado.");
+      setFormError("Espera a que termine la búsqueda del producto escaneado.");
       return;
     }
 
@@ -817,7 +817,7 @@ function SaleCreatePosWorkspace() {
               cartDraft.endCharge();
               lastAttemptRef.current = null;
               setFormError(
-                `${conflictMessage} Ya existe la venta ${outcome.sale.invoiceNumber} con ese intento de cobro: verificala en Ventas antes de volver a cobrar.`,
+                `${conflictMessage} Ya existe la venta ${outcome.sale.invoiceNumber} con ese intento de cobro: verifícala en Ventas antes de volver a cobrar.`,
               );
               return;
             }
@@ -828,7 +828,7 @@ function SaleCreatePosWorkspace() {
             cartDraft.endCharge();
             setFormError(
               conflictMessage ??
-                `El cobro no se completo y la venta ${outcome.sale.invoiceNumber} quedo anulada. Puedes volver a cobrar.`,
+                `El cobro no se completo y la venta ${outcome.sale.invoiceNumber} quedó anulada. Puedes volver a cobrar.`,
             );
             return;
           case "absent":

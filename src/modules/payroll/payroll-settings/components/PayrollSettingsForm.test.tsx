@@ -23,9 +23,9 @@ const settings = {
 } as PayrollSettings;
 
 const percentLabels = [
-  "Comision por defecto (%)",
-  "Umbral de alerta del semaforo (%)",
-  "Reinversion sugerida (%)",
+  "Comisión por defecto (%)",
+  "Umbral de alerta del semáforo (%)",
+  "Reinversión sugerida (%)",
   "Reserva sugerida (%)",
 ];
 
@@ -45,7 +45,7 @@ describe("PayrollSettingsForm · porcentajes entre 0 y 100 (SHR-09J)", () => {
     await user.clear(field);
     // El boton esta dentro del <form>: Enter lo envia de verdad.
     await user.type(field, "150{Enter}");
-    await user.click(screen.getByRole("button", { name: "Guardar parametros" }));
+    await user.click(screen.getByRole("button", { name: "Guardar parámetros" }));
 
     // Sin `max` en el campo: lo escrito no se recorta a 100 en silencio.
     expect(field).toHaveValue("150");
@@ -66,7 +66,7 @@ describe("PayrollSettingsForm · porcentajes entre 0 y 100 (SHR-09J)", () => {
 
     render(<PayrollSettingsForm settings={settings} />);
 
-    const field = screen.getByLabelText("Comision por defecto (%)");
+    const field = screen.getByLabelText("Comisión por defecto (%)");
 
     await user.clear(field);
     await user.type(field, "100{Enter}");

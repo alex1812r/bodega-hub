@@ -23,7 +23,7 @@ export async function POST(request: Request) {
       const ownSession = await service().getCurrentCashSession(userId, auth.storeId);
 
       if (ownSession?.id !== input.sessionId) {
-        throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+        throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción.");
       }
     }
 

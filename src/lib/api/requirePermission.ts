@@ -124,7 +124,7 @@ export async function requirePermission(
   }
 
   if (!profile.isActive || !hasEffectivePermission(profile, permission)) {
-    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción.");
   }
 
   const isSuperadmin = isSuperadminRole(profile.role);
@@ -134,7 +134,7 @@ export async function requirePermission(
   }
 
   if (!isSuperadmin && isPlatformPermission(permission)) {
-    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción.");
   }
 
   return {
@@ -175,7 +175,7 @@ export async function requireStoreAnyPermission(
   );
 
   if (!profile.isActive || !allowed) {
-    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+    throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción.");
   }
 
   const isSuperadmin = isSuperadminRole(profile.role);

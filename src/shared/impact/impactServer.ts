@@ -19,7 +19,7 @@ export function parseImpactAction<TAction extends string>(
     throw new ApiError(
       400,
       "BAD_REQUEST",
-      `El parametro action es obligatorio y debe ser uno de: ${allowed.join(", ")}.`,
+      `El parámetro action es obligatorio y debe ser uno de: ${allowed.join(", ")}.`,
     );
   }
 

@@ -29,7 +29,7 @@ function parseDisassemble(request: Request, action: PurchaseImpactAction) {
     throw new ApiError(
       400,
       "BAD_REQUEST",
-      "El parametro disassemble va una sola vez y solo con action=receive.",
+      "El parámetro disassemble va una sola vez y solo con action=receive.",
     );
   }
 
@@ -38,7 +38,7 @@ function parseDisassemble(request: Request, action: PurchaseImpactAction) {
   try {
     parsed = JSON.parse(values[0]);
   } catch {
-    throw new ApiError(400, "BAD_REQUEST", "El parametro disassemble no es un JSON válido.");
+    throw new ApiError(400, "BAD_REQUEST", "El parámetro disassemble no es un JSON válido.");
   }
 
   return disassembleSchema.unwrap().parse(parsed);

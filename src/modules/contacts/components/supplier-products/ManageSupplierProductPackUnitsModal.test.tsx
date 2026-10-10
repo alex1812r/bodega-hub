@@ -44,7 +44,7 @@ describe("ManageSupplierProductPackUnitsModal · unidades enteras (SHR-09J)", ()
     expect(units).toHaveValue("2.5");
     expect(units).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText("Debe ser un número entero.")).toBeVisible();
-    expect(screen.getByText("Indica etiqueta y unidades por empaque validas.")).toBeVisible();
+    expect(screen.getByText("Indica etiqueta y unidades por empaque válidas.")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Agregar empaque" }));
 

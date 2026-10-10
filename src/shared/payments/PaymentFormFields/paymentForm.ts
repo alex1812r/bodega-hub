@@ -145,12 +145,12 @@ export function validatePaymentForm(
   }
 
   if (paymentNeedsPhone(method) && !isValidVeMobilePhone(phone)) {
-    errors.phone = phone.trim() ? "Telefono invalido (ej. 0412 555-1234)." : "Indica el telefono.";
+    errors.phone = phone.trim() ? "Teléfono inválido (ej. 0412 555-1234)." : "Indica el teléfono.";
   }
 
   if (method === "pago_movil") {
     if (!/^\d{4}$/.test(referenceCode.trim())) {
-      errors.referenceCode = "Usa una referencia de 4 digitos.";
+      errors.referenceCode = "Usa una referencia de 4 dígitos.";
     }
   } else if (paymentNeedsReference(method) && !referenceCode.trim()) {
     errors.referenceCode = "Indica la referencia.";

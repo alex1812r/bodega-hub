@@ -65,7 +65,7 @@ const isoDateSchema = z
   .refine((value) => {
     const date = new Date(`${value}T12:00:00.000Z`);
     return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
-  }, "La fecha no es valida.");
+  }, "La fecha no es válida.");
 
 const listPaymentsQuerySchema = z
   .object({

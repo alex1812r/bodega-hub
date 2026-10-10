@@ -21,9 +21,9 @@ import { isCashSessionExpired } from "../utils/cashSessionDeadline";
 import type { CashSession, CashSessionClosedReason } from "../types";
 
 const closedReasonLabels: Record<CashSessionClosedReason, string> = {
-  end_of_day: "Cierre automatico (medianoche)",
+  end_of_day: "Cierre automático (medianoche)",
   manual: "Cierre manual",
-  max_24h: "Cierre automatico (24 h)",
+  max_24h: "Cierre automático (24 h)",
 };
 
 function formatDateTime(value?: string | null) {
@@ -167,7 +167,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
         visibility: "lg",
       },
       {
-        header: "Baul",
+        header: "Baúl",
         key: "vault",
         render: (item) => {
           if (item.status === "open") {
@@ -251,7 +251,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
             label="Cobros en cuenta Bs."
             trend={
               <p className="mt-1 text-xs text-muted-foreground">
-                Pago movil, transferencia y punto de este turno.
+                Pago móvil, transferencia y punto de este turno.
               </p>
             }
             value={formatVesBs(openSession.liveTotals?.accountVes ?? 0)}
@@ -266,11 +266,11 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
               <AlertTriangle aria-hidden className="mt-0.5 size-5 shrink-0 text-amber-600" />
             ) : null}
             <div>
-              <CardTitle className="text-base">Cierres pendientes por transferir al baul</CardTitle>
+              <CardTitle className="text-base">Cierres pendientes por transferir al baúl</CardTitle>
               <p className="mt-1 text-sm text-on-surface-variant">
                 {pending.length === 0
-                  ? "Esta caja no tiene cierres pendientes: todo el efectivo cerrado ya paso al baul."
-                  : `${pending.length} cierre${pending.length === 1 ? "" : "s"} con efectivo que todavia no llega al baul.`}
+                  ? "Esta caja no tiene cierres pendientes: todo el efectivo cerrado ya pasó al baúl."
+                  : `${pending.length} cierre${pending.length === 1 ? "" : "s"} con efectivo que todavía no llega al baúl.`}
               </p>
             </div>
           </div>
@@ -296,7 +296,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
                     </p>
                     <p className="text-xs text-on-surface-variant">
                       {session.closedReason ? closedReasonLabels[session.closedReason] : "—"}
-                      {session.absorbedBySessionId ? " · absorbido (historico)" : ""}
+                      {session.absorbedBySessionId ? " · absorbido (histórico)" : ""}
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
@@ -316,7 +316,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
                   {formatVesBs(pendingTotals.absorbedVes)} / {formatRefUsd(pendingTotals.absorbedRef)}
                 </strong>{" "}
                 vienen de cierres absorbidos por una apertura posterior, de antes de que la
-                apertura tomara el fondo del baul. Ya se pueden transferir con{" "}
+                apertura tomara el fondo del baúl. Ya se pueden transferir con{" "}
                 <em>Transferir cierres</em>.
               </p>
             ) : null}
@@ -353,7 +353,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
             embedded
             emptyState={
               <p className="p-6 text-center text-sm text-on-surface-variant">
-                Esta caja todavia no tiene turnos registrados.
+                Esta caja todavía no tiene turnos registrados.
               </p>
             }
             getRowId={(session) => session.id}

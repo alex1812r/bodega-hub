@@ -587,13 +587,13 @@ async function createSaleThenPayments(
       const cancelMessage = getSupabaseErrorMessage(cancelError);
 
       console.error(
-        `[sales] la venta ${sale.invoice_number} (${sale.id}) quedo viva: fallo el cobro (${paymentMessage}) y no se pudo anular (${cancelMessage}).`,
+        `[sales] la venta ${sale.invoice_number} (${sale.id}) quedó viva: falló el cobro (${paymentMessage}) y no se pudo anular (${cancelMessage}).`,
       );
 
       throw new ApiError(
         409,
         "CONFLICT",
-        `El cobro fallo (${paymentMessage}) y la venta ${sale.invoice_number} NO se pudo anular: quedo registrada con el stock descontado. No la repitas; revisala en Ventas (id ${sale.id}).`,
+        `El cobro fallo (${paymentMessage}) y la venta ${sale.invoice_number} NO se pudo anular: quedó registrada con el stock descontado. No la repitas; revísala en Ventas (id ${sale.id}).`,
         {
           cancelError: cancelMessage,
           invoiceNumber: sale.invoice_number,

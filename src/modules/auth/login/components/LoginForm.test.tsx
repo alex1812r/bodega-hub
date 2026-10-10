@@ -11,7 +11,7 @@ describe("LoginForm", () => {
 
     expect(getByLabelText(/correo/i)).toBeVisible();
     expect(getByLabelText(/clave/i)).toBeVisible();
-    expect(getByRole("button", { name: /iniciar sesion/i })).toBeVisible();
+    expect(getByRole("button", { name: /iniciar sesión/i })).toBeVisible();
   });
 
   it("shows submit state", () => {

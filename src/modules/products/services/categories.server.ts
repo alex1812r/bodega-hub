@@ -108,7 +108,7 @@ export async function listCategories(searchParams: URLSearchParams, storeId: str
 }
 
 export async function getCategoryById(id: string, storeId: string) {
-  await assertSupabaseStoreResource("categories", id, storeId, "Categoria no encontrada.");
+  await assertSupabaseStoreResource("categories", id, storeId, "Categoría no encontrada.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("categories")
@@ -120,7 +120,7 @@ export async function getCategoryById(id: string, storeId: string) {
   throwIfSupabaseError(error);
 
   if (!data) {
-    throw new ApiError(404, "NOT_FOUND", "Categoria no encontrada.");
+    throw new ApiError(404, "NOT_FOUND", "Categoría no encontrada.");
   }
 
   return mapCategoryWithTaxRate(data);
@@ -137,14 +137,14 @@ export async function createCategory(input: CategoryInput, storeId: string) {
   throwIfSupabaseError(error);
 
   if (!data) {
-    throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear la categoria.");
+    throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear la categoría.");
   }
 
   return mapCategoryWithTaxRate(data);
 }
 
 export async function updateCategory(id: string, input: CategoryInput, storeId: string) {
-  await assertSupabaseStoreResource("categories", id, storeId, "Categoria no encontrada.");
+  await assertSupabaseStoreResource("categories", id, storeId, "Categoría no encontrada.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("categories")
@@ -157,14 +157,14 @@ export async function updateCategory(id: string, input: CategoryInput, storeId: 
   throwIfSupabaseError(error);
 
   if (!data) {
-    throw new ApiError(404, "NOT_FOUND", "Categoria no encontrada.");
+    throw new ApiError(404, "NOT_FOUND", "Categoría no encontrada.");
   }
 
   return mapCategoryWithTaxRate(data);
 }
 
 export async function deleteCategory(id: string, storeId: string) {
-  await assertSupabaseStoreResource("categories", id, storeId, "Categoria no encontrada.");
+  await assertSupabaseStoreResource("categories", id, storeId, "Categoría no encontrada.");
   const supabase = await createRouteSupabaseClient();
   const { data, error } = await supabase
     .from("categories")
@@ -178,7 +178,7 @@ export async function deleteCategory(id: string, storeId: string) {
   throwIfSupabaseError(error);
 
   if (!data) {
-    throw new ApiError(404, "NOT_FOUND", "Categoria no encontrada.");
+    throw new ApiError(404, "NOT_FOUND", "Categoría no encontrada.");
   }
 
   return {

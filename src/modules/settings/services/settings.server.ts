@@ -164,7 +164,7 @@ export async function getSettings(storeId: string) {
   throwIfSupabaseError(error);
 
   if (!data) {
-    throw new ApiError(404, "NOT_FOUND", "Configuracion no encontrada.");
+    throw new ApiError(404, "NOT_FOUND", "Configuración no encontrada.");
   }
 
   return mapAppSettingsWithTaxRate(data);
@@ -270,7 +270,7 @@ export async function updateSettings(input: SettingsInput, storeId: string) {
   throwIfSupabaseError(error);
 
   if (!data) {
-    throw new ApiError(404, "NOT_FOUND", "Configuracion no encontrada.");
+    throw new ApiError(404, "NOT_FOUND", "Configuración no encontrada.");
   }
 
   return mapAppSettingsWithTaxRate(data);

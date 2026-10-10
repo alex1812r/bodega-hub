@@ -232,7 +232,7 @@ export const UsdDifferentRates: Story = {
   play: async ({ canvasElement, userEvent }) => {
     const dialog = await findDialog(canvasElement);
 
-    await userEvent.selectOptions(await dialog.findByLabelText("Metodo"), "efectivo_usd");
+    await userEvent.selectOptions(await dialog.findByLabelText("Método"), "efectivo_usd");
     await userEvent.type(dialog.getByLabelText("Monto"), "100");
     await userEvent.click(dialog.getByRole("button", { name: "Ver reparto" }));
     await expect(dialog.getByRole("listitem", { name: "Venta F-000327" })).toBeInTheDocument();
@@ -392,7 +392,7 @@ export const PurchasesUsd: Story = {
     const dialog = await findDialog(canvasElement);
 
     await expect(await dialog.findByText(/2 compras por pagar/)).toBeInTheDocument();
-    await userEvent.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+    await userEvent.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
     await userEvent.click(
       await dialog.findByRole("button", { name: "Completar total pendiente" }),
     );

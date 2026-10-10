@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     }
 
     if (!profile.isActive) {
-      throw mapSupabaseError(new Error("Tu usuario esta inactivo."));
+      throw mapSupabaseError(new Error("Tu usuario está inactivo."));
     }
 
     return jsonData({

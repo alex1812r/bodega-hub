@@ -27,7 +27,7 @@ const settingsSchema = z.object({
   defaultTaxRateId: z.string().trim().min(1).optional(),
   enabledPaymentMethods: z
     .array(paymentMethodSchema)
-    .min(1, "Debes habilitar al menos un metodo de pago.")
+    .min(1, "Debes habilitar al menos un método de pago.")
     .optional(),
   invoicePrefix: z.string().min(1).optional(),
   lowStockThreshold: z.number().int().min(0).optional(),

@@ -354,7 +354,7 @@ describe("createProduct · la receta falla después de crear el producto (PRO-F7
     await expect(
       createProduct({ ...baseInput, packConversion: assorted(["cola", "uva"]) }, DEFAULT_STORE_ID),
     ).rejects.toMatchObject({
-      message: "La operacion choco con otra en curso y no se aplico. Intenta de nuevo.",
+      message: "La operación chocó con otra en curso y no se aplicó. Intenta de nuevo.",
       status: 409,
     });
 
@@ -375,7 +375,7 @@ describe("createProduct · la receta falla después de crear el producto (PRO-F7
       ),
     ).rejects.toMatchObject({
       message:
-        "El producto se creó pero el empaque no se pudo guardar: La operacion choco con otra en curso y no se aplico. Intenta de nuevo. Edítalo para completar el empaque.",
+        "El producto se creó pero el empaque no se pudo guardar: La operación chocó con otra en curso y no se aplicó. Intenta de nuevo. Edítalo para completar el empaque.",
       status: 409,
     });
 

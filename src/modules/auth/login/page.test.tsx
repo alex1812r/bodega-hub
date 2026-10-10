@@ -66,7 +66,7 @@ describe("LoginPage · POS-H3 un solo POST por intento", () => {
   it("sends one POST for a double click on the submit button", async () => {
     renderPage();
     fillCredentials();
-    const button = screen.getByRole("button", { name: /iniciar sesion/i });
+    const button = screen.getByRole("button", { name: /iniciar sesión/i });
 
     // Los dos clics llegan antes de que React pinte el botón deshabilitado.
     act(() => {
@@ -90,7 +90,7 @@ describe("LoginPage · POS-H3 un solo POST por intento", () => {
     act(() => {
       // Enter en un campo envía el formulario; el clic llega en el mismo tick.
       fireEvent.submit(form);
-      fireEvent.click(screen.getByRole("button", { name: /iniciar sesion/i }));
+      fireEvent.click(screen.getByRole("button", { name: /iniciar sesión/i }));
       fireEvent.submit(form);
     });
 
@@ -134,11 +134,11 @@ describe("LoginPage · POS-H3 un solo POST por intento", () => {
 
     await act(async () => {
       resolveLogin(
-        jsonResponse({ error: { code: "UNAUTHORIZED", message: "Credenciales invalidas." } }, 401),
+        jsonResponse({ error: { code: "UNAUTHORIZED", message: "Credenciales inválidas." } }, 401),
       );
     });
 
-    expect(await screen.findByText("Credenciales invalidas.")).toBeVisible();
+    expect(await screen.findByText("Credenciales inválidas.")).toBeVisible();
     expect(pushMock).not.toHaveBeenCalled();
 
     fireEvent.submit(form);

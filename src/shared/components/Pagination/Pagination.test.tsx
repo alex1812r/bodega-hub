@@ -34,8 +34,8 @@ describe("Pagination", () => {
     expect(getByText("21")).toBeVisible();
     expect(getByText("30")).toBeVisible();
     expect(getByText("95")).toBeVisible();
-    expect(getByRole("button", { name: /ir a pagina 3/i })).toHaveAttribute("aria-current", "page");
-    expect(getByText(/pagina/i)).toHaveTextContent("Pagina 3 de 10");
+    expect(getByRole("button", { name: /ir a página 3/i })).toHaveAttribute("aria-current", "page");
+    expect(getByText(/página/i)).toHaveTextContent("Página 3 de 10");
   });
 
   it("navigates to previous and next pages", () => {
@@ -45,10 +45,10 @@ describe("Pagination", () => {
       <Pagination limit={10} onSkipChange={onSkipChange} skip={20} total={95} />,
     );
 
-    fireEvent.click(getByRole("button", { name: /pagina anterior/i }));
+    fireEvent.click(getByRole("button", { name: /página anterior/i }));
     expect(onSkipChange).toHaveBeenCalledWith(10);
 
-    fireEvent.click(getByRole("button", { name: /pagina siguiente/i }));
+    fireEvent.click(getByRole("button", { name: /página siguiente/i }));
     expect(onSkipChange).toHaveBeenCalledWith(30);
   });
 
@@ -57,11 +57,11 @@ describe("Pagination", () => {
       <Pagination limit={10} onSkipChange={jest.fn()} skip={0} total={95} />,
     );
 
-    expect(getByRole("button", { name: /pagina anterior/i })).toBeDisabled();
+    expect(getByRole("button", { name: /página anterior/i })).toBeDisabled();
 
     rerender(<Pagination limit={10} onSkipChange={jest.fn()} skip={90} total={95} />);
 
-    expect(getByRole("button", { name: /pagina siguiente/i })).toBeDisabled();
+    expect(getByRole("button", { name: /página siguiente/i })).toBeDisabled();
   });
 
   it("changes page when clicking a page button", () => {
@@ -71,7 +71,7 @@ describe("Pagination", () => {
       <Pagination limit={10} onSkipChange={onSkipChange} skip={0} total={95} />,
     );
 
-    fireEvent.click(getByRole("button", { name: /ir a pagina 4/i }));
+    fireEvent.click(getByRole("button", { name: /ir a página 4/i }));
 
     expect(onSkipChange).toHaveBeenCalledWith(30);
   });
@@ -90,7 +90,7 @@ describe("Pagination", () => {
       />,
     );
 
-    fireEvent.change(getByLabelText(/resultados por pagina/i), { target: { value: "25" } });
+    fireEvent.change(getByLabelText(/resultados por página/i), { target: { value: "25" } });
 
     expect(onLimitChange).toHaveBeenCalledWith(25);
     expect(onSkipChange).toHaveBeenCalledWith(0);
@@ -154,7 +154,7 @@ describe("Pagination", () => {
       const label = container.querySelector("[data-pagination-page-label]");
 
       expect(pages).toHaveClass("hidden", "sm:flex");
-      expect(pages).toContainElement(getByRole("button", { name: /ir a pagina 10/i }));
+      expect(pages).toContainElement(getByRole("button", { name: /ir a página 10/i }));
       expect(label).toHaveClass("sm:hidden", "whitespace-nowrap");
       expect(label).toHaveTextContent("Página 10 de 25");
     });
@@ -188,7 +188,7 @@ describe("Pagination", () => {
 
         expect(container.querySelector("[data-pagination-pages]")).toHaveClass("hidden", "sm:flex");
         expect(container.querySelector("[data-pagination-page-label]")).toBeNull();
-        expect(getAllByText(/^Pagina/)).toHaveLength(1);
+        expect(getAllByText(/^Página/)).toHaveLength(1);
         expect(container.querySelector("[data-pagination-controls]")).toHaveClass("flex-wrap", "min-w-0");
       },
     );
@@ -206,8 +206,8 @@ describe("Pagination", () => {
       />,
     );
 
-    expect(getByRole("navigation")).toHaveTextContent("Pagina 1 de 6");
-    expect(queryByRole("button", { name: /ir a pagina 2/i })).not.toBeInTheDocument();
-    expect(getByRole("button", { name: /pagina siguiente/i })).toBeEnabled();
+    expect(getByRole("navigation")).toHaveTextContent("Página 1 de 6");
+    expect(queryByRole("button", { name: /ir a página 2/i })).not.toBeInTheDocument();
+    expect(getByRole("button", { name: /página siguiente/i })).toBeEnabled();
   });
 });

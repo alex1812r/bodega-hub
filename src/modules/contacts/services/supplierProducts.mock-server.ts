@@ -243,7 +243,7 @@ function assertUniqueActiveLink(supplierId: string, productId: string, excludeId
   );
 
   if (duplicate) {
-    throw new ApiError(409, "CONFLICT", "Ya existe una relacion para este proveedor y producto.");
+    throw new ApiError(409, "CONFLICT", "Ya existe una relación para este proveedor y producto.");
   }
 }
 
@@ -345,7 +345,7 @@ export function createSupplierProduct(input: SupplierProductCreateInput, storeId
 
   if (existing) {
     if (existing.isActive !== false) {
-      throw new ApiError(409, "CONFLICT", "Ya existe una relacion para este proveedor y producto.");
+      throw new ApiError(409, "CONFLICT", "Ya existe una relación para este proveedor y producto.");
     }
 
     const now = new Date().toISOString();

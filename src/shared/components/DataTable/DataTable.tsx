@@ -422,7 +422,7 @@ export function DataTable<TData>({
                 >
                   {emptyState ?? (
                     <EmptyState
-                      description="Cuando existan datos, se mostraran en esta tabla."
+                      description="Cuando existan datos, se mostrarán en esta tabla."
                       title="No hay registros para mostrar"
                     />
                   )}

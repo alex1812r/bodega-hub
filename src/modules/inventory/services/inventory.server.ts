@@ -531,7 +531,7 @@ export async function createStockAdjustment(
     throw new ApiError(
       409,
       "CONFLICT",
-      "Esta base aun no admite devoluciones ligadas a una venta o compra. No se registro el movimiento.",
+      "Esta base aún no admite devoluciones ligadas a una venta o compra. No se registró el movimiento.",
     );
   }
 
@@ -641,7 +641,7 @@ export async function convertPackToUnits(input: PackConversionRequest, storeId: 
     throw new ApiError(
       409,
       "CONFLICT",
-      "Esta base aun no admite el reparto de un empaque surtido. No se registro la conversion.",
+      "Esta base aún no admite el reparto de un empaque surtido. No se registró la conversión.",
     );
   }
 

@@ -40,7 +40,7 @@ export async function runProductImportJob(
         rowIndex: row.rowIndex,
         sku: row.sku,
         status: "skipped",
-        error: "Fila sin datos validos.",
+        error: "Fila sin datos válidos.",
       });
       progress.processed += 1;
       progress.failed += 1;

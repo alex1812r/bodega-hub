@@ -54,7 +54,7 @@ export function PosCashSessionGate({ children }: PosCashSessionGateProps) {
       <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
         <PosGateHeader />
         <div className="flex flex-1 items-center justify-center p-6">
-          <LoadingState description="Verificando si tu caja esta abierta." title="Cargando caja..." />
+          <LoadingState description="Verificando si tu caja está abierta." title="Cargando caja..." />
         </div>
       </div>
     );
@@ -137,7 +137,7 @@ export function PosCashSessionGate({ children }: PosCashSessionGateProps) {
             <>
               <h2 className="text-lg font-semibold text-foreground">Caja cerrada</h2>
               <p className="max-w-md text-sm text-on-surface-variant">
-                Abre la caja <strong>{register.name}</strong> para cargar el catalogo y registrar
+                Abre la caja <strong>{register.name}</strong> para cargar el catálogo y registrar
                 ventas.
               </p>
               <Button onClick={() => setOpenModal(true)} size="lg" type="button">

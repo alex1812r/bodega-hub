@@ -240,7 +240,7 @@ describe("ContactSettlementModal · guardia de datos tecleados (CNF-15)", () => 
   it("cambiar el método cuenta como dato tecleado", async () => {
     const { dialog, user } = await openModal();
 
-    await user.selectOptions(dialog.getByLabelText("Metodo"), "efectivo_usd");
+    await user.selectOptions(dialog.getByLabelText("Método"), "efectivo_usd");
     await user.keyboard("{Escape}");
 
     expect(await findGuardDialog()).toHaveTextContent("Cobro a Maria Perez sin registrar");

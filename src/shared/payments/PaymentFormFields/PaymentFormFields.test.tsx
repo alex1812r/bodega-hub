@@ -65,11 +65,11 @@ describe("PaymentFormFields", () => {
     it.each(cases)("$method muestra solo sus campos", ({ bank, method, phone, reference }) => {
       render(<Harness initial={{ method }} />);
 
-      expect(screen.getByLabelText("Metodo")).toHaveValue(method);
+      expect(screen.getByLabelText("Método")).toHaveValue(method);
       expect(amountField()).toBeInTheDocument();
       expect(screen.getByLabelText("Notas")).toBeInTheDocument();
       expect(screen.queryByLabelText("Banco") !== null).toBe(bank);
-      expect(screen.queryByLabelText("Numero telefonico") !== null).toBe(phone);
+      expect(screen.queryByLabelText("Número telefónico") !== null).toBe(phone);
       expect(screen.queryByLabelText("Referencia") !== null).toBe(reference);
     });
 
@@ -78,7 +78,7 @@ describe("PaymentFormFields", () => {
 
       expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
         "Efectivo VES",
-        "Pago movil",
+        "Pago móvil",
       ]);
     });
 
@@ -100,7 +100,7 @@ describe("PaymentFormFields", () => {
         />,
       );
 
-      await user.selectOptions(screen.getByLabelText("Metodo"), "transferencia");
+      await user.selectOptions(screen.getByLabelText("Método"), "transferencia");
 
       expect(onValues).toHaveBeenLastCalledWith({
         amount: "100",
@@ -349,7 +349,7 @@ describe("PaymentFormFields", () => {
       await user.click(screen.getByRole("button", { name: "Completar saldo" }));
       expect(amountField()).toHaveValue("30600");
 
-      await user.selectOptions(screen.getByLabelText("Metodo"), "efectivo_usd");
+      await user.selectOptions(screen.getByLabelText("Método"), "efectivo_usd");
 
       expect(amountField()).toHaveValue("60");
       expect(screen.queryByText(/supera el saldo pendiente/)).not.toBeInTheDocument();
@@ -359,7 +359,7 @@ describe("PaymentFormFields", () => {
       const user = userEvent.setup();
 
       render(<Harness initial={{ amount: "12.5", method: "efectivo_usd" }} rateVes={510} />);
-      await user.selectOptions(screen.getByLabelText("Metodo"), "pago_movil");
+      await user.selectOptions(screen.getByLabelText("Método"), "pago_movil");
 
       expect(amountField()).toHaveValue("6375");
     });
@@ -368,7 +368,7 @@ describe("PaymentFormFields", () => {
       const user = userEvent.setup();
 
       render(<Harness initial={{ amount: "1000", method: "efectivo_ves" }} rateVes={510} />);
-      await user.selectOptions(screen.getByLabelText("Metodo"), "efectivo_usd");
+      await user.selectOptions(screen.getByLabelText("Método"), "efectivo_usd");
 
       expect(amountField()).toHaveValue(String(roundMoney(1000 / 510)));
     });
@@ -378,7 +378,7 @@ describe("PaymentFormFields", () => {
       const onValues = jest.fn();
 
       render(<Harness initial={{ amount: "30600" }} onValues={onValues} />);
-      await user.selectOptions(screen.getByLabelText("Metodo"), "efectivo_usd");
+      await user.selectOptions(screen.getByLabelText("Método"), "efectivo_usd");
 
       expect(amountField()).toHaveValue("");
       expect(onValues).toHaveBeenLastCalledWith(
@@ -390,7 +390,7 @@ describe("PaymentFormFields", () => {
       const user = userEvent.setup();
 
       render(<Harness initial={{ amount: "100.5", method: "efectivo_ves" }} rateVes={510} />);
-      await user.selectOptions(screen.getByLabelText("Metodo"), "punto_venta");
+      await user.selectOptions(screen.getByLabelText("Método"), "punto_venta");
 
       expect(amountField()).toHaveValue("100.5");
     });
@@ -488,8 +488,8 @@ describe("PaymentFormFields", () => {
 
       expect(screen.getByText("Indica un monto mayor a cero.")).toBeInTheDocument();
       expect(screen.getByText("Indica el banco.")).toBeInTheDocument();
-      expect(screen.getByText("Indica el telefono.")).toBeInTheDocument();
-      expect(screen.getByText("Usa una referencia de 4 digitos.")).toBeInTheDocument();
+      expect(screen.getByText("Indica el teléfono.")).toBeInTheDocument();
+      expect(screen.getByText("Usa una referencia de 4 dígitos.")).toBeInTheDocument();
       expect(amountField()).toHaveAttribute("aria-invalid", "true");
     });
 
@@ -505,8 +505,8 @@ describe("PaymentFormFields", () => {
         }),
       ).toEqual({
         bankName: "Selecciona un banco de la lista.",
-        phone: "Telefono invalido (ej. 0412 555-1234).",
-        referenceCode: "Usa una referencia de 4 digitos.",
+        phone: "Teléfono inválido (ej. 0412 555-1234).",
+        referenceCode: "Usa una referencia de 4 dígitos.",
       });
     });
 

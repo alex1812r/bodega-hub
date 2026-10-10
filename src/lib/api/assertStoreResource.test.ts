@@ -59,7 +59,7 @@ describe("assertSupabaseStoreResource", () => {
       assertSupabaseStoreResource("products", id, "store-a", "Producto no encontrado."),
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
-      message: "Los datos enviados no son validos.",
+      message: "Los datos enviados no son válidos.",
       status: 400,
     });
     expect(from).not.toHaveBeenCalled();

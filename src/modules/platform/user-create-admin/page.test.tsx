@@ -54,7 +54,7 @@ describe("CreateStoreAdminPage · tienda preseleccionada", () => {
 
     await user.type(screen.getByLabelText(/Nombre completo/), "Ana Perez");
     await user.type(screen.getByLabelText(/Email/), "ana@test.dev");
-    await user.type(screen.getByLabelText(/Contrasena temporal/), "secreta123");
+    await user.type(screen.getByLabelText(/Contraseña temporal/), "secreta123");
     await user.click(screen.getByRole("button", { name: /crear|guardar/i }));
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/platform/users/user-9"));

@@ -59,7 +59,7 @@ export function assertProductImagePublicUrlHost(supabaseUrl: string, publicUrl: 
     expected = new URL(normalizeSupabaseBaseUrl(supabaseUrl));
     actual = new URL(publicUrl);
   } catch {
-    throw new Error("La URL publica de la imagen no es valida.");
+    throw new Error("La URL pública de la imagen no es válida.");
   }
 
   if (actual.protocol !== "https:" || actual.host !== expected.host) {
@@ -82,7 +82,7 @@ export function assertAllowedProductImageUrl(
   const allowed = getAllowedProductImagePublicUrls(supabaseUrl, productId);
   if (!allowed.includes(imageUrl)) {
     throw new Error(
-      "imageUrl debe ser la URL publica cover.webp o cover.png del producto en product-images.",
+      "imageUrl debe ser la URL pública cover.webp o cover.png del producto en product-images.",
     );
   }
 }

@@ -84,11 +84,11 @@ export function readFileAsDataUrl(file: File): Promise<string> {
 
 export function validateProductImageFile(file: File) {
   if (!file.type.startsWith("image/")) {
-    return "Selecciona un archivo de imagen valido.";
+    return "Selecciona un archivo de imagen válido.";
   }
 
   if (file.size > PRODUCT_IMAGE_MAX_INPUT_BYTES) {
-    return "La imagen supera el limite de 5 MB.";
+    return "La imagen supera el límite de 5 MB.";
   }
 
   return null;

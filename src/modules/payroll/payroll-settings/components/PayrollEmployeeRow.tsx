@@ -62,7 +62,7 @@ export function PayrollEmployeeRow({
       </td>
       <td className="px-3 py-2">
         <NumberInput
-          aria-label={`Comision de ${employee.fullName}`}
+          aria-label={`Comisión de ${employee.fullName}`}
           decimals={2}
           error={pctIsValid ? undefined : "Entre 0 y 100."}
           onChange={(event) => setCommissionPct(event.target.value)}

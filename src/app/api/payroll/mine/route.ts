@@ -13,7 +13,7 @@ export async function GET(request: Request) {
     const auth = await requireStorePermission(request, "payroll.view_own");
 
     if (!auth.userId) {
-      throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta accion.");
+      throw new ApiError(403, "FORBIDDEN", "No tienes permiso para realizar esta acción.");
     }
 
     const searchParams = new URL(request.url).searchParams;

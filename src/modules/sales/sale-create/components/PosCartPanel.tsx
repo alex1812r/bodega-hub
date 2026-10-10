@@ -159,8 +159,8 @@ export function PosCartPanel({
         {items.length === 0 ? (
           <EmptyState
             className="py-10"
-            description="Toca un producto del catalogo para agregarlo."
-            title="Carrito vacio"
+            description="Toca un producto del catálogo para agregarlo."
+            title="Carrito vacío"
           />
         ) : (
           <ul className="flex flex-col gap-2">

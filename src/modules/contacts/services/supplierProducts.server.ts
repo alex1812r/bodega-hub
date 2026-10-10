@@ -418,7 +418,7 @@ export async function createSupplierProduct(input: SupplierProductCreateInput, s
 
   if (existing) {
     if (existing.is_active !== false) {
-      throw new ApiError(409, "CONFLICT", "Ya existe una relacion para este proveedor y producto.");
+      throw new ApiError(409, "CONFLICT", "Ya existe una relación para este proveedor y producto.");
     }
 
     const reactivated = await reactivateSupplierProductRow(existing.id, input);
@@ -452,7 +452,7 @@ export async function createSupplierProduct(input: SupplierProductCreateInput, s
       }, storeId);
     }
 
-    throw new ApiError(409, "CONFLICT", "Ya existe una relacion para este proveedor y producto.");
+    throw new ApiError(409, "CONFLICT", "Ya existe una relación para este proveedor y producto.");
   }
 
   throwIfSupabaseError(error);
@@ -494,7 +494,7 @@ export async function updateSupplierProduct(id: string, input: SupplierProductMe
     .single();
 
   if (isUniqueViolation(error)) {
-    throw new ApiError(409, "CONFLICT", "Ya existe una relacion para este proveedor y producto.");
+    throw new ApiError(409, "CONFLICT", "Ya existe una relación para este proveedor y producto.");
   }
 
   throwIfSupabaseError(error);

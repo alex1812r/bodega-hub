@@ -4,7 +4,7 @@ export function requireCronSecret(request: Request) {
   const expected = process.env.CRON_SECRET?.trim();
 
   if (!expected) {
-    throw new ApiError(503, "INTERNAL_ERROR", "CRON_SECRET no esta configurado.");
+    throw new ApiError(503, "INTERNAL_ERROR", "CRON_SECRET no está configurado.");
   }
 
   const authorization = request.headers.get("authorization");

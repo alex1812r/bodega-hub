@@ -174,7 +174,7 @@ export async function apiFetch<TData>(
       error?.code ?? (isHtmlNotFound ? "NOT_FOUND" : "UNKNOWN_ERROR"),
       error?.message ??
         (isHtmlNotFound
-          ? `El endpoint ${path} no esta disponible (HTML 404). Para Turbopack: para el dev server, borra la carpeta .next y vuelve a ejecutar npm run dev.`
+          ? `El endpoint ${path} no está disponible (HTML 404). Para Turbopack: para el dev server, borra la carpeta .next y vuelve a ejecutar npm run dev.`
           : "No se pudo completar la solicitud."),
       error?.issues,
       error?.details,

@@ -27,7 +27,7 @@ describe("paymentMethodsChange (CNF-11)", () => {
     );
 
     expect(effects).toEqual([
-      { after: "Deshabilitado", before: "Habilitado", label: "Pago movil", tone: "warning" },
+      { after: "Deshabilitado", before: "Habilitado", label: "Pago móvil", tone: "warning" },
       { after: "Habilitado", before: "Deshabilitado", label: "Transferencia", tone: "positive" },
     ]);
   });

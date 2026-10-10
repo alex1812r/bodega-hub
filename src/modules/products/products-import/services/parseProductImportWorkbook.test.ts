@@ -90,7 +90,7 @@ describe("parseProductImportWorkbook", () => {
     const buffer = buildWorkbookBuffer([["wrong", "headers"]]);
 
     expect(() => parseProductImportWorkbook(buffer, categories)).toThrow(
-      "Encabezados invalidos",
+      "Encabezados inválidos",
     );
   });
 });

@@ -197,7 +197,7 @@ describe("SettingsListPage · umbral de faltante al cerrar caja (CNF-11)", () =>
 describe("SettingsListPage · métodos de pago habilitados (CNF-11)", () => {
   async function togglePagoMovil(user: ReturnType<typeof userEvent.setup>) {
     await loadedThreshold("0");
-    await user.click(screen.getByRole("checkbox", { name: "Pago movil" }));
+    await user.click(screen.getByRole("checkbox", { name: "Pago móvil" }));
   }
 
   it("deshabilitar un método pide confirmación con lo que cambia y su consecuencia", async () => {
@@ -214,7 +214,7 @@ describe("SettingsListPage · métodos de pago habilitados (CNF-11)", () => {
       .filter((item) => item.hasAttribute("data-tone"));
 
     expect(effects).toHaveLength(2);
-    expect(effects[0]).toHaveTextContent("Pago movil");
+    expect(effects[0]).toHaveTextContent("Pago móvil");
     expect(effects[0]).toHaveTextContent("Habilitado");
     expect(effects[0]).toHaveTextContent("Deshabilitado");
     expect(effects[0]).toHaveAttribute("data-tone", "warning");
@@ -240,7 +240,7 @@ describe("SettingsListPage · métodos de pago habilitados (CNF-11)", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(api.writes()).toHaveLength(0);
-    expect(screen.getByRole("checkbox", { name: "Pago movil" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Pago móvil" })).not.toBeChecked();
     expect(saveButton()).toBeEnabled();
   });
 
@@ -274,7 +274,7 @@ describe("SettingsListPage · métodos de pago habilitados (CNF-11)", () => {
   });
 
   it("si el servidor rechaza, su mensaje se muestra dentro del diálogo", async () => {
-    installServer({ rejectWith: { message: "Debe quedar al menos un metodo de pago.", status: 400 } });
+    installServer({ rejectWith: { message: "Debe quedar al menos un método de pago.", status: 400 } });
 
     const user = renderPage();
 
@@ -286,7 +286,7 @@ describe("SettingsListPage · métodos de pago habilitados (CNF-11)", () => {
     await user.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "Debe quedar al menos un metodo de pago.",
+      "Debe quedar al menos un método de pago.",
     );
   });
 

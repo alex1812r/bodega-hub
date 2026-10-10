@@ -18,11 +18,11 @@ export function WelcomePage() {
           </h1>
           <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600 dark:text-slate-400">
             Pantalla inicial de referencia para desarrollo. La entrada principal de la app
-            redirige al dashboard o al login segun la sesion.
+            redirige al dashboard o al login según la sesión.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Button asChild>
-              <Link href="/login">Iniciar sesion</Link>
+              <Link href="/login">Iniciar sesión</Link>
             </Button>
             <Button asChild variant="outline">
               <Link href="/dashboard">Ver dashboard</Link>

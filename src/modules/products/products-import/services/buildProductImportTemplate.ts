@@ -12,15 +12,15 @@ import {
 } from "../schemas/productImportRowSchema";
 
 const INSTRUCTIONS = [
-  "Importacion masiva de productos",
+  "Importación masiva de productos",
   "",
   "1. Complete la hoja Productos desde la fila 3.",
   "2. No modifique los encabezados de la fila 1.",
   "3. En columna categoria use SOLO el desplegable (lista validada).",
-  "4. No escriba categorias manualmente ni valores fuera de la lista.",
+  "4. No escriba categorías manualmente ni valores fuera de la lista.",
   "5. No repita SKU ni codigo_barras dentro del archivo.",
-  "6. codigo_barras es opcional y debe ser unico si se indica.",
-  "7. Maximo 500 filas de datos.",
+  "6. codigo_barras es opcional y debe ser único si se indica.",
+  "7. Máximo 500 filas de datos.",
   "8. Requiere permiso products.manage para importar.",
 ];
 
@@ -54,11 +54,11 @@ function applyCategoryDropdown(
       formulae: [listRange],
       showErrorMessage: true,
       errorStyle: "stop",
-      errorTitle: "Categoria invalida",
-      error: "Seleccione una categoria del listado desplegable.",
+      errorTitle: "Categoría inválida",
+      error: "Seleccione una categoría del listado desplegable.",
       showInputMessage: true,
-      promptTitle: "Categoria",
-      prompt: "Elija una categoria de la lista (hoja Categorias).",
+      promptTitle: "Categoría",
+      prompt: "Elija una categoría de la lista (hoja Categorias).",
     },
   );
 }
@@ -156,7 +156,7 @@ export async function downloadProductImportTemplateFromApi(
       return {
         source: "client",
         usedFallback: true,
-        error: `${message} Se uso la plantilla generada en el navegador.`,
+        error: `${message} Se usó la plantilla generada en el navegador.`,
       };
     }
 
@@ -170,8 +170,8 @@ export async function downloadProductImportTemplateFromApi(
       usedFallback: true,
       error:
         error instanceof Error
-          ? `${error.message}. Se uso la plantilla generada en el navegador.`
-          : "Se uso la plantilla generada en el navegador.",
+          ? `${error.message}. Se usó la plantilla generada en el navegador.`
+          : "Se usó la plantilla generada en el navegador.",
     };
   }
 }

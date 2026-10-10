@@ -112,7 +112,7 @@ export function ProductImportRowEditModal({
           value={draft.sku}
         />
         <Input
-          label="Codigo de barras"
+          label="Código de barras"
           name="codigo_barras"
           onChange={(event) => updateField("codigo_barras", event.target.value)}
           placeholder="Opcional"

@@ -160,8 +160,8 @@ export function OpenCashSessionModal({
       <div className="grid gap-3" onFocus={trackFocus}>
         {prefilledFromClosure ? (
           <p className="text-sm text-muted-foreground">
-            Se autocompleto con el ultimo cierre pendiente. Al abrir, ese cierre queda absorbido
-            por esta sesion (no se transferira aparte al baul).
+            Se autocompletó con el último cierre pendiente. Al abrir, ese cierre queda absorbido
+            por esta sesión (no se transferirá aparte al baúl).
           </p>
         ) : null}
         <NumberInput

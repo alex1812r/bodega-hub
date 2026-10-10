@@ -13,7 +13,7 @@ export const DEFAULT_ENABLED_PAYMENT_METHODS: PaymentMethod[] = [...PAYMENT_METH
 export const paymentMethodLabels: Record<PaymentMethod, string> = {
   efectivo_usd: "Efectivo USD",
   efectivo_ves: "Efectivo VES",
-  pago_movil: "Pago movil",
+  pago_movil: "Pago móvil",
   punto_venta: "Punto de venta",
   transferencia: "Transferencia",
 };

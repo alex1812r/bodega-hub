@@ -345,9 +345,9 @@ describe("PurchaseCreatePage · confirmación con efecto (CNF-01)", () => {
     renderWithCart();
     fireEvent.click(screen.getByRole("button", { name: /Pagar ahora/ }));
     await waitFor(() =>
-      expect(within(screen.getByLabelText("Metodo")).getByRole("option", { name: "Efectivo USD" })).toBeInTheDocument(),
+      expect(within(screen.getByLabelText("Método")).getByRole("option", { name: "Efectivo USD" })).toBeInTheDocument(),
     );
-    fireEvent.change(screen.getByLabelText("Metodo"), { target: { value: "efectivo_usd" } });
+    fireEvent.change(screen.getByLabelText("Método"), { target: { value: "efectivo_usd" } });
     fireEvent.click(screen.getByRole("button", { name: "Completar saldo" }));
     fireEvent.click(confirm());
 

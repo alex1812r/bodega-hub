@@ -43,7 +43,7 @@ export function PlatformUserDetailPage({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Informacion del usuario</CardTitle>
+          <CardTitle>Información del usuario</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>

@@ -93,7 +93,7 @@ export const ConError: Story = {
       handlers: [
         http.get("/api/search", () =>
           HttpResponse.json(
-            { error: { code: "INTERNAL_ERROR", message: "Ocurrio un error inesperado." } },
+            { error: { code: "INTERNAL_ERROR", message: "Ocurrió un error inesperado." } },
             { status: 500 },
           ),
         ),

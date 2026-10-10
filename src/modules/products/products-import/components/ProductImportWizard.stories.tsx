@@ -85,7 +85,7 @@ export const Step3Preview: Story = {
             sku: "PRD-002",
             name: "Harina",
             status: "error",
-            messages: ["precio_ref debe ser un numero valido."],
+            messages: ["precio_ref debe ser un número válido."],
           },
         ]}
         warningCount={0}

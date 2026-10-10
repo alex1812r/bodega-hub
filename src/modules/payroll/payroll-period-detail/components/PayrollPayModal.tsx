@@ -213,8 +213,8 @@ export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalPr
     <Modal
       description={
         isBulk
-          ? `Se pagaran ${String(items.length)} cajeros con el mismo metodo, cada uno por su total.`
-          : `Pago de comision de ${items[0]?.fullName ?? "la quincena"}.`
+          ? `Se pagarán ${String(items.length)} cajeros con el mismo método, cada uno por su total.`
+          : `Pago de comisión de ${items[0]?.fullName ?? "la quincena"}.`
       }
       footer={({ close }) => (
         <FormActions
@@ -236,7 +236,7 @@ export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalPr
         }
       }}
       open={open}
-      title={isBulk ? "Pagar toda la quincena" : "Pagar comision"}
+      title={isBulk ? "Pagar toda la quincena" : "Pagar comisión"}
     >
       <form className="grid gap-4" id={formId} onSubmit={handleSubmit}>
         <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
@@ -246,7 +246,7 @@ export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalPr
 
         <div className="grid gap-4 md:grid-cols-2">
           <SelectField
-            label="Metodo"
+            label="Método"
             onChange={(event) => {
               setSelectedMethod(event.target.value as PaymentMethod);
               setAmountOverride(null);
@@ -301,7 +301,7 @@ export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalPr
             error={
               hasSubmitted && !referenceIsValid
                 ? method === "pago_movil"
-                  ? "Usa una referencia de 4 digitos."
+                  ? "Usa una referencia de 4 dígitos."
                   : "Indica la referencia."
                 : undefined
             }
@@ -314,7 +314,7 @@ export function PayrollPayModal({ items, onOpenChange, open }: PayrollPayModalPr
 
         {needsRate ? (
           <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-            No hay tasa del dia registrada: cargala en Configuracion antes de pagar en Bs.
+            No hay tasa del día registrada: cárgala en Configuración antes de pagar en Bs.
           </p>
         ) : null}
 

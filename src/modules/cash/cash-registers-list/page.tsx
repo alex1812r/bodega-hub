@@ -217,7 +217,7 @@ export function CashRegistersListPage() {
             Nueva caja
           </Button>
         }
-        description="Saldos en vivo de los turnos abiertos, asignacion de vendedores y estado de cada caja."
+        description="Saldos en vivo de los turnos abiertos, asignación de vendedores y estado de cada caja."
         layout="sections"
         title="Cajas"
       >
@@ -241,7 +241,7 @@ export function CashRegistersListPage() {
             label="Efectivo en cajas REF"
             trend={
               <p className="mt-1 text-xs text-muted-foreground">
-                Divisas fisicas en los cajones abiertos.
+                Divisas físicas en los cajones abiertos.
               </p>
             }
             value={isLoadingTotals ? "—" : formatRefUsd(totals.cashRef)}
@@ -253,7 +253,7 @@ export function CashRegistersListPage() {
             label="Cobros en cuenta Bs."
             trend={
               <p className="mt-1 text-xs text-muted-foreground">
-                Pago movil, transferencia y punto de los turnos abiertos.
+                Pago móvil, transferencia y punto de los turnos abiertos.
               </p>
             }
             value={isLoadingTotals ? "—" : formatVesBs(totals.accountVes)}
@@ -266,7 +266,7 @@ export function CashRegistersListPage() {
               <AlertTriangle aria-hidden className="mt-0.5 size-5 shrink-0 text-amber-600" />
               <div>
                 <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
-                  Hay efectivo cerrado que todavia no llega al baul.
+                  Hay efectivo cerrado que todavía no llega al baúl.
                 </p>
                 <p className="text-xs text-amber-800 dark:text-amber-300">
                   No entra en los saldos de arriba: esos solo cuentan turnos abiertos. Abre el
@@ -302,7 +302,7 @@ export function CashRegistersListPage() {
               embedded
               emptyState={
                 <p className="p-6 text-center text-sm text-on-surface-variant">
-                  Aun no hay cajas registradas. Crea la primera con <strong>Nueva caja</strong>.
+                  Aún no hay cajas registradas. Crea la primera con <strong>Nueva caja</strong>.
                 </p>
               }
               getRowId={(item) => item.id}

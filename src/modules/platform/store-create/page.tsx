@@ -59,12 +59,12 @@ export function StoreCreatePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Informacion del negocio</CardTitle>
+          <CardTitle>Información del negocio</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <Input label="Nombre comercial" onChange={update("name")} required value={form.name} />
           <Input
-            helperText="Minusculas, numeros y guiones."
+            helperText="Minúsculas, números y guiones."
             label="Slug"
             onChange={update("slug")}
             required
@@ -99,8 +99,8 @@ export function StoreCreatePage() {
           />
           <Input
             className="sm:col-span-2"
-            helperText="Minimo 8 caracteres."
-            label="Contrasena temporal"
+            helperText="Mínimo 8 caracteres."
+            label="Contraseña temporal"
             minLength={8}
             onChange={update("password")}
             required

@@ -25,7 +25,7 @@ export function PosScanModal({
   return (
     <Modal
       contentClassName="sm:max-w-lg"
-      description="Usa la camara para leer el codigo, o el lector USB con el buscador enfocado."
+      description="Usa la cámara para leer el código, o el lector USB con el buscador enfocado."
       footer={({ close }) => (
         <div className="flex flex-wrap justify-end gap-2">
           {onFocusSearch ? (

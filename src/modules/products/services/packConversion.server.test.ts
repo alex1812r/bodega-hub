@@ -506,7 +506,7 @@ describe("packConversion.server · guardar la receta (INV-09: RPC `save_pack_rec
     await expect(
       upsertPackConversionForPackProduct(PACK, DEFAULT_STORE_ID, linkInput),
     ).rejects.toMatchObject({
-      message: "La operacion choco con otra en curso y no se aplico. Intenta de nuevo.",
+      message: "La operación chocó con otra en curso y no se aplicó. Intenta de nuevo.",
       status: 409,
     });
 

@@ -252,7 +252,7 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
 
     renderWithCart();
     fireEvent.click(toggle());
-    fireEvent.change(screen.getByLabelText("Metodo"), { target: { value: "transferencia" } });
+    fireEvent.change(screen.getByLabelText("Método"), { target: { value: "transferencia" } });
     fireEvent.click(confirm());
     // CNF-01: con el formulario inválido la confirmación no se abre.
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -268,7 +268,7 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     expect(mockPush).not.toHaveBeenCalled();
 
     // Un monto mayor que el total tampoco sale: el servidor lo rechazaría.
-    fireEvent.change(screen.getByLabelText("Metodo"), { target: { value: "efectivo_ves" } });
+    fireEvent.change(screen.getByLabelText("Método"), { target: { value: "efectivo_ves" } });
     fireEvent.change(amountField(), { target: { value: "5000" } });
     fireEvent.click(confirm());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -344,7 +344,7 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
   it("tras un rechazo definitivo, cambiar el pago estrena las dos claves", async () => {
     const api = installApi();
     api.respondToNextPost(
-      { error: { code: "BAD_REQUEST", message: "La solicitud no tiene un formato valido." } },
+      { error: { code: "BAD_REQUEST", message: "La solicitud no tiene un formato válido." } },
       400,
     );
     api.respondToNextPost({
@@ -356,7 +356,7 @@ describe("PurchaseCreatePage · Pagar ahora (COM-06)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Completar saldo" }));
     fireEvent.click(confirm());
     acceptConfirmation();
-    await screen.findByText("La solicitud no tiene un formato valido.");
+    await screen.findByText("La solicitud no tiene un formato válido.");
 
     // CNF-01: para cambiar el pago hay que salir de la confirmación.
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));

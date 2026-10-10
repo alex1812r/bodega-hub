@@ -112,12 +112,12 @@ describe("PayrollPayModal · metodos habilitados que llegan tarde (PAG-08)", () 
 
     await user.clear(screen.getByLabelText("Monto"));
     await user.type(screen.getByLabelText("Monto"), "500");
-    expect(screen.getByLabelText("Metodo")).toHaveValue("efectivo_ves");
+    expect(screen.getByLabelText("Método")).toHaveValue("efectivo_ves");
 
     mockEnabledMethods = ["efectivo_usd", "pago_movil"];
     view.rerender(<PayrollPayModal items={[item]} onOpenChange={jest.fn()} open />);
 
-    expect(screen.getByLabelText("Metodo")).toHaveValue("efectivo_usd");
+    expect(screen.getByLabelText("Método")).toHaveValue("efectivo_usd");
     expect(screen.getByText("Monto en USD.")).toBeInTheDocument();
     expect(screen.getByLabelText("Monto")).toHaveValue("12.50");
 
@@ -134,14 +134,14 @@ describe("PayrollPayModal · metodos habilitados que llegan tarde (PAG-08)", () 
     const user = userEvent.setup();
     const view = render(<PayrollPayModal items={[item]} onOpenChange={jest.fn()} open />);
 
-    await user.selectOptions(screen.getByLabelText("Metodo"), "efectivo_usd");
+    await user.selectOptions(screen.getByLabelText("Método"), "efectivo_usd");
     await user.clear(screen.getByLabelText("Monto"));
     await user.type(screen.getByLabelText("Monto"), "20");
 
     mockEnabledMethods = ["efectivo_ves"];
     view.rerender(<PayrollPayModal items={[item]} onOpenChange={jest.fn()} open />);
 
-    expect(screen.getByLabelText("Metodo")).toHaveValue("efectivo_ves");
+    expect(screen.getByLabelText("Método")).toHaveValue("efectivo_ves");
     expect(screen.getByLabelText("Monto")).toHaveValue("1250.00");
 
     await user.click(screen.getByRole("button", { name: "Registrar pago" }));
@@ -186,7 +186,7 @@ describe("PayrollPayModal · metodos habilitados que llegan tarde (PAG-08)", () 
     mockEnabledMethods = ["efectivo_ves", "efectivo_usd"];
     view.rerender(<PayrollPayModal items={[item]} onOpenChange={jest.fn()} open />);
 
-    expect(screen.getByLabelText("Metodo")).toHaveValue("efectivo_ves");
+    expect(screen.getByLabelText("Método")).toHaveValue("efectivo_ves");
     expect(screen.getByLabelText("Monto")).toHaveValue("500");
 
     await user.click(screen.getByRole("button", { name: "Registrar pago" }));
@@ -208,7 +208,7 @@ describe("PayrollPayModal · metodos habilitados que llegan tarde (PAG-08)", () 
     mockEnabledMethods = ["pago_movil"];
     view.rerender(<PayrollPayModal items={[item]} onOpenChange={jest.fn()} open />);
 
-    expect(screen.getByLabelText("Metodo")).toHaveValue("pago_movil");
+    expect(screen.getByLabelText("Método")).toHaveValue("pago_movil");
     expect(screen.getByText("Monto en Bs.")).toBeInTheDocument();
     expect(screen.getByLabelText("Monto")).toHaveValue("500");
   });
@@ -221,11 +221,11 @@ describe("PayrollPayModal · metodos habilitados que llegan tarde (PAG-08)", () 
 
     await user.clear(screen.getByLabelText("Monto"));
     await user.type(screen.getByLabelText("Monto"), "500");
-    await user.selectOptions(screen.getByLabelText("Metodo"), "efectivo_usd");
+    await user.selectOptions(screen.getByLabelText("Método"), "efectivo_usd");
 
     expect(screen.getByLabelText("Monto")).toHaveValue("12.50");
 
-    await user.selectOptions(screen.getByLabelText("Metodo"), "efectivo_ves");
+    await user.selectOptions(screen.getByLabelText("Método"), "efectivo_ves");
 
     expect(screen.getByLabelText("Monto")).toHaveValue("1250.00");
   });

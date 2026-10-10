@@ -76,7 +76,7 @@ function assertProductImageUrlInput(productId: string, imageUrl: string | null |
     throw new ApiError(
       400,
       "BAD_REQUEST",
-      error instanceof Error ? error.message : "imageUrl no es valido para este producto.",
+      error instanceof Error ? error.message : "imageUrl no es válido para este producto.",
     );
   }
 }
@@ -524,7 +524,7 @@ async function registerInitialStock(
     throw new ApiError(
       adjustError.status,
       adjustError.code,
-      `${adjustError.message} Ademas no se pudo deshacer el alta: el producto quedo creado con stock 0 (id ${productId}). Registra su stock con un ajuste de inventario.`,
+      `${adjustError.message} Además no se pudo deshacer el alta: el producto quedó creado con stock 0 (id ${productId}). Registra su stock con un ajuste de inventario.`,
     );
   }
 
@@ -801,7 +801,7 @@ export async function addProductBarcode(id: string, barcode: string, storeId: st
   await assertSupabaseStoreResource("products", id, storeId, "Producto no encontrado.");
   const normalized = normalizeBarcode(barcode);
   if (!normalized) {
-    throw new ApiError(400, "BAD_REQUEST", "El codigo de barras es obligatorio.");
+    throw new ApiError(400, "BAD_REQUEST", "El código de barras es obligatorio.");
   }
 
   const supabase = await createRouteSupabaseClient();

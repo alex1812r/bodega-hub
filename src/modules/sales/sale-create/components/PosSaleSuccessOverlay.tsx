@@ -75,8 +75,8 @@ export function PosSaleSuccessOverlay({
           <CardDescription>
             Factura <span className="font-medium text-foreground">{invoiceNumber}</span>.{" "}
             {pendingPayment
-              ? "Quedo pendiente de pago: no la vuelvas a crear, registra el cobro desde Ventas."
-              : `Nueva venta en ${secondsLeft}s si no eliges otra opcion.`}
+              ? "Quedó pendiente de pago: no la vuelvas a crear, registra el cobro desde Ventas."
+              : `Nueva venta en ${secondsLeft}s si no eliges otra opción.`}
           </CardDescription>
         </CardHeader>
 

@@ -602,7 +602,7 @@ describe("C3 · cobro sin confirmar visto desde otra pestaña", () => {
     expect(screen.getByRole("button", { name: "Verificar" })).toBeEnabled();
 
     fireEvent.click(chargeButton);
-    await waitFor(() => expect(visibleAlerts()).toMatch(/si quedo registrado como venta V-STK509-1/));
+    await waitFor(() => expect(visibleAlerts()).toMatch(/sí quedó registrado como venta V-STK509-1/));
     await flush();
 
     // Causa: un solo POST; la segunda consulta fue por la clave del intento de la pestaña A.

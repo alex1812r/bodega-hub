@@ -77,7 +77,7 @@ export function CreateStoreAdminPage() {
           Nuevo administrador de tienda
         </Typography>
         <Typography className="mt-1" variant="muted">
-          El superadmin solo puede crear administradores. Los demas roles los gestiona cada admin
+          El superadmin solo puede crear administradores. Los demás roles los gestiona cada admin
           de tienda.
         </Typography>
       </div>
@@ -110,8 +110,8 @@ export function CreateStoreAdminPage() {
           />
           <Input
             className="sm:col-span-2"
-            helperText="Minimo 8 caracteres."
-            label="Contrasena temporal"
+            helperText="Mínimo 8 caracteres."
+            label="Contraseña temporal"
             minLength={8}
             onChange={update("password")}
             required

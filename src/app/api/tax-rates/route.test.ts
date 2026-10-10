@@ -200,7 +200,7 @@ describe("/api/tax-rates", () => {
 
       expect(response.status).toBe(400);
       expect(body.error.message).toBe(
-        "No se pudo generar un codigo a partir del nombre: usa letras o numeros.",
+        "No se pudo generar un código a partir del nombre: usa letras o números.",
       );
     });
 
@@ -209,7 +209,7 @@ describe("/api/tax-rates", () => {
       const body = await response.json();
 
       expect(response.status).toBe(409);
-      expect(body.error.message).toBe('Ya existe una alicuota de IVA con el codigo "general".');
+      expect(body.error.message).toBe('Ya existe una alícuota de IVA con el código "general".');
       expect(await listCodes()).toHaveLength(3);
     });
   });

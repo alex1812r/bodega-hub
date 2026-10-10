@@ -35,7 +35,7 @@ async function assertProductImageObjectExists(path: string) {
     throw new ApiError(
       400,
       "BAD_REQUEST",
-      error?.message ?? "La imagen aun no existe en Storage. Sube el archivo antes de confirmar.",
+      error?.message ?? "La imagen aún no existe en Storage. Sube el archivo antes de confirmar.",
     );
   }
 }

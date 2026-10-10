@@ -164,7 +164,7 @@ export const RecipesError: Story = {
       handlers: [
         http.get("/api/inventory/pack-conversions", () =>
           HttpResponse.json(
-            { error: { code: "INTERNAL_ERROR", message: "Ocurrio un error inesperado." } },
+            { error: { code: "INTERNAL_ERROR", message: "Ocurrió un error inesperado." } },
             { status: 500 },
           ),
         ),

@@ -173,7 +173,7 @@ describe("PosCheckoutModal · modo compacto (POS-01)", () => {
     await user.click(screen.getByRole("button", { name: "Expandir" }));
 
     expect(screen.getByLabelText("Referencia")).toBeInTheDocument();
-    expect(screen.getByLabelText("Numero telefonico")).toBeInTheDocument();
+    expect(screen.getByLabelText("Número telefónico")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Efectivo USD" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Completar restante" })).toBeInTheDocument();
     expect(screen.getByText("Falta")).toBeInTheDocument();
@@ -236,9 +236,9 @@ describe("PosCheckoutModal · modo compacto (POS-01)", () => {
 
     expect(onConfirm).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Banco")).toHaveFocus();
-    expect(screen.getByLabelText("Numero telefonico")).toBeInTheDocument();
+    expect(screen.getByLabelText("Número telefónico")).toBeInTheDocument();
     expect(screen.getByLabelText("Referencia")).toBeInTheDocument();
-    expect(screen.queryByText(/^Linea 1:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Línea 1:/)).not.toBeInTheDocument();
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
     expect(
       screen.queryByText("Al cobrar se piden banco, teléfono y referencia."),
@@ -252,7 +252,7 @@ describe("PosCheckoutModal · modo compacto (POS-01)", () => {
     await user.click(screen.getByRole("button", { name: "Cobrar" }));
     await user.type(screen.getByLabelText("Banco"), "0134");
     await user.click(await screen.findByRole("button", { name: /0134/ }));
-    await user.type(screen.getByLabelText("Numero telefonico"), "5551234");
+    await user.type(screen.getByLabelText("Número telefónico"), "5551234");
     await user.type(screen.getByLabelText("Referencia"), "4321");
 
     expect(onConfirm).not.toHaveBeenCalled();
@@ -283,13 +283,13 @@ describe("PosCheckoutModal · modo compacto (POS-01)", () => {
     await user.click(screen.getByRole("button", { name: "Cobrar" }));
 
     expect(onConfirm).not.toHaveBeenCalled();
-    expect(screen.getByText("Linea 1: indica el banco.")).toBeInTheDocument();
-    expect(screen.getByText("Linea 1: indica el telefono.")).toBeInTheDocument();
+    expect(screen.getByText("Línea 1: indica el banco.")).toBeInTheDocument();
+    expect(screen.getByText("Línea 1: indica el teléfono.")).toBeInTheDocument();
     expect(
-      screen.getByText("Linea 1: la referencia de pago movil debe tener 4 digitos."),
+      screen.getByText("Línea 1: la referencia de pago móvil debe tener 4 dígitos."),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Referencia")).toBeInTheDocument();
-    expect(screen.getByLabelText("Numero telefonico")).toBeInTheDocument();
+    expect(screen.getByLabelText("Número telefónico")).toBeInTheDocument();
   });
 
   it("el aviso se genera según los datos que exige cada método", async () => {

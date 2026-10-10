@@ -114,7 +114,7 @@ export async function createTaxRate(input: CreateTaxRateInput, storeId: string):
   throwIfSupabaseError(error);
 
   if (!data) {
-    throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear la alicuota de IVA.");
+    throw new ApiError(500, "INTERNAL_ERROR", "No se pudo crear la alícuota de IVA.");
   }
 
   return mapTaxRate(data, null);
@@ -151,7 +151,7 @@ export async function updateTaxRate(
   const row = data as TaxRateRow | null;
 
   if (!row?.id) {
-    throw new ApiError(500, "INTERNAL_ERROR", "No se pudo guardar la alicuota de IVA.");
+    throw new ApiError(500, "INTERNAL_ERROR", "No se pudo guardar la alícuota de IVA.");
   }
 
   return mapTaxRate(row, await loadDefaultTaxRateId(supabase, storeId));

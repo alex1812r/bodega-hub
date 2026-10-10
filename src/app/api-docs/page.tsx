@@ -7,7 +7,7 @@ import { ApiDocsClient } from "./ApiDocsClient";
 
 export const metadata: Metadata = {
   title: "API Docs | BodegaHub",
-  description: "Documentacion visual de la API REST interna.",
+  description: "Documentación visual de la API REST interna.",
 };
 
 export default function ApiDocsPage() {

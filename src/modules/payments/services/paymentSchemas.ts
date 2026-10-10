@@ -108,7 +108,7 @@ export function addPaymentLineIssues(
     if (!value.bankName) {
       context.addIssue({
         code: "custom",
-        message: "El pago movil requiere banco.",
+        message: "El pago móvil requiere banco.",
         path: at("bankName"),
       });
     }
@@ -116,7 +116,7 @@ export function addPaymentLineIssues(
     if (!value.phone) {
       context.addIssue({
         code: "custom",
-        message: "El pago movil requiere telefono.",
+        message: "El pago móvil requiere teléfono.",
         path: at("phone"),
       });
     }
@@ -124,7 +124,7 @@ export function addPaymentLineIssues(
     if (!value.referenceCode || !/^\d{4}$/.test(value.referenceCode)) {
       context.addIssue({
         code: "custom",
-        message: "El pago movil requiere referencia de 4 digitos.",
+        message: "El pago móvil requiere referencia de 4 dígitos.",
         path: at("referenceCode"),
       });
     }
@@ -159,7 +159,7 @@ export function addPaymentLineIssues(
   if (value.change && value.change.amount > 0 && !value.change.method) {
     context.addIssue({
       code: "custom",
-      message: "El vuelto requiere un metodo.",
+      message: "El vuelto requiere un método.",
       path: at("change", "method"),
     });
   }

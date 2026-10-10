@@ -121,7 +121,7 @@ export function buildSaleInvoicePdf(input: SaleInvoicePdfInput): jsPDF {
       1: { cellWidth: RECEIPT_CONTENT_WIDTH_MM - 28 },
       2: { cellWidth: 20, halign: "right" },
     },
-    head: [["Cant", "Descripcion", "Total"]],
+    head: [["Cant", "Descripción", "Total"]],
     headStyles: {
       fillColor: [255, 255, 255],
       fontSize: 7,
