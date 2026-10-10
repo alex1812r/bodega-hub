@@ -68,17 +68,75 @@ export function useLastUntransferredClosure(registerId?: string, enabled = true)
       ),
   });
 }
-export function useCashMovements(sessionId?: string) {
-  return useQuery({
-    enabled: Boolean(sessionId),
-    queryKey: cashKeys.movements(sessionId ?? ""),
+export type CashSessionTotals = {
+  accountVes: number;
+  items: CashMovement[];
+  theoretical: { ref: number; ves: number };
+};
+/** Misma clave y misma lectura para la pantalla, el diálogo de cierre y el cierre vencido. */
+export function cashMovementsQuery(sessionId: string) {
+  return {
+    queryKey: cashKeys.movements(sessionId),
     queryFn: () =>
-      apiFetch<{
-        accountVes: number;
-        items: CashMovement[];
-        theoretical: { ref: number; ves: number };
-      }>("/api/cash/movements", { query: { sessionId } }),
+      apiFetch<CashSessionTotals>("/api/cash/movements", { query: { sessionId } }),
+  };
+}
+/**
+ * `alwaysFresh`: la pantalla que enseña el dinero del turno no se fía de la caché (una
+ * venta hecha hace segundos en el POS aún no estaría): relee siempre al montar.
+ */
+export function useCashMovements(sessionId?: string, options: { alwaysFresh?: boolean } = {}) {
+  return useQuery({
+    ...cashMovementsQuery(sessionId ?? ""),
+    enabled: Boolean(sessionId),
+    ...(options.alwaysFresh ? { staleTime: 0 } : {}),
   });
+}
+export type CashCloseTotals = {
+  errorMessage: string | null;
+  retry: () => void;
+  /** `ready` solo con una lectura hecha DESPUÉS de abrir el cierre y sin otra en curso. */
+  status: "error" | "loading" | "ready";
+  /** Último dato conocido: puede ser de caché mientras `status` no sea `ready`. */
+  totals: CashSessionTotals | null;
+};
+const CLOSE_TOTALS_ERROR = "No se pudieron leer los totales de la caja.";
+function closeTotalsStatus(
+  open: boolean,
+  query: { data?: CashSessionTotals; isError: boolean; isFetching: boolean },
+): CashCloseTotals["status"] {
+  if (!open || query.isFetching) {
+    return "loading";
+  }
+  if (query.isError) {
+    return "error";
+  }
+  return query.data ? "ready" : "loading";
+}
+/**
+ * Totales para cerrar una caja: cada apertura del cierre los vuelve a pedir al servidor.
+ * Lo contado viaja tal cual al cierre, así que un teórico de caché (p. ej. anterior a la
+ * última venta) acabaría asentado como faltante.
+ */
+export function useCashCloseTotals(sessionId: string, open: boolean): CashCloseTotals {
+  const query = useQuery({
+    ...cashMovementsQuery(sessionId),
+    enabled: open && Boolean(sessionId),
+    staleTime: 0,
+  });
+  const status = closeTotalsStatus(open, query);
+
+  return {
+    errorMessage:
+      status === "error"
+        ? query.error instanceof Error
+          ? query.error.message
+          : CLOSE_TOTALS_ERROR
+        : null,
+    retry: () => void query.refetch(),
+    status,
+    totals: query.data ?? null,
+  };
 }
 function useCashMutation<T>(path: string, method = "POST") {
   const queryClient = useQueryClient();

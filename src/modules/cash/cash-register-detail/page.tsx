@@ -214,7 +214,7 @@ export function CashRegisterDetailPage({ id }: { id: string }) {
             )}
           </div>
         }
-        description={`Vendedor asignado: ${item.assignedUserName ?? "sin asignar"}.`}
+        description={`Usuario asignado: ${item.assignedUserName ?? "sin asignar"}.`}
         title={item.name}
       />
 

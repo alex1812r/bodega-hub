@@ -27,8 +27,16 @@ jest.mock("next/navigation", () => ({
 }));
 
 const mutateAsync = jest.fn();
+// Totales ya leídos del servidor para esta apertura.
+const mockCloseTotals = {
+  errorMessage: null,
+  retry: jest.fn(),
+  status: "ready",
+  totals: { accountVes: 0, items: [], theoretical: { ref: 25.5, ves: 1500.25 } },
+};
 
 jest.mock("../hooks/useCash", () => ({
+  useCashCloseTotals: () => mockCloseTotals,
   useCloseCashSession: () => ({ isPending: false, mutateAsync }),
 }));
 
@@ -55,8 +63,6 @@ async function renderModal() {
           openingVes={500}
           registerName="Caja 1"
           sessionId="session-1"
-          theoreticalRef={25.5}
-          theoreticalVes={1500.25}
         />
       )}
     </ControlledHost>,

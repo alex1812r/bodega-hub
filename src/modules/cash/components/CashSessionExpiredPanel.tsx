@@ -1,11 +1,12 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 
-import { useCloseCashSession } from "../hooks/useCash";
+import { cashMovementsQuery, useCloseCashSession } from "../hooks/useCash";
 
 type CashSessionExpiredPanelProps = {
   registerName: string;
@@ -21,7 +22,10 @@ export function CashSessionExpiredPanel({
   theoreticalVes,
 }: CashSessionExpiredPanelProps) {
   const closeSession = useCloseCashSession();
+  const queryClient = useQueryClient();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [readingTotals, setReadingTotals] = useState(false);
+  const busy = readingTotals || closeSession.isPending;
   // Cerrojo síncrono: `isPending` llega un render tarde y un doble clic enviaba dos
   // cierres (200 + 400). Solo se suelta si el cierre falla, para poder reintentar.
   const lockedRef = useRef(false);
@@ -35,9 +39,16 @@ export function CashSessionExpiredPanel({
 
     try {
       setErrorMessage(null);
+      setReadingTotals(true);
+      // El cierre asienta lo que se le envía: el teórico se lee del servidor en este momento,
+      // no de la caché (que puede ser anterior a la última venta). Si no se puede leer, no cierra.
+      const totals = await queryClient
+        .fetchQuery({ ...cashMovementsQuery(sessionId), staleTime: 0 })
+        .finally(() => setReadingTotals(false));
+
       await closeSession.mutateAsync({
-        closingRef: theoreticalRef,
-        closingVes: theoreticalVes,
+        closingRef: totals.theoretical.ref,
+        closingVes: totals.theoretical.ves,
         sessionId,
       });
     } catch (error) {
@@ -56,10 +67,14 @@ export function CashSessionExpiredPanel({
       <p className="text-sm tabular-nums text-foreground">
         {formatRefUsd(theoreticalRef)} · {formatVesBs(theoreticalVes)}
       </p>
-      <Button disabled={closeSession.isPending} onClick={() => void handleClose()} size="lg" type="button">
-        {closeSession.isPending ? "Cerrando..." : "Cerrar con teórico y continuar"}
+      <Button disabled={busy} onClick={() => void handleClose()} size="lg" type="button">
+        {busy ? "Cerrando..." : "Cerrar con teórico y continuar"}
       </Button>
-      {errorMessage ? <p className="text-sm text-destructive">{errorMessage}</p> : null}
+      {errorMessage ? (
+        <p className="text-sm text-destructive" role="alert">
+          {errorMessage}
+        </p>
+      ) : null}
     </div>
   );
 }

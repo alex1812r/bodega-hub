@@ -151,11 +151,13 @@ function mountPos() {
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
 
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <SaleCreatePage />
     </QueryClientProvider>,
   );
+
+  return { queryClient };
 }
 
 async function addProductToCart(user: ReturnType<typeof userEvent.setup>) {
@@ -269,5 +271,37 @@ describe("POS-F6 · el efectivo disponible para vuelto sigue al cajón tras cada
         .slice(firstPost + 1, secondPost)
         .filter((route) => route === "GET /api/cash/session"),
     ).toHaveLength(1);
+  });
+});
+
+describe("POS-F8 · una venta deja obsoletos los movimientos de caja sin pedirlos desde el POS", () => {
+  it("tras cobrar, movimientos y cajas quedan invalidados y el POS solo vuelve a pedir la sesión", async () => {
+    const user = userEvent.setup();
+    const backend = mountBackend();
+    const { queryClient } = mountPos();
+
+    await addProductToCart(user);
+    await screen.findAllByText(CUSTOMER.name);
+    await waitFor(() =>
+      expect(queryClient.getQueryState(["cash", "movements", "session-1"])?.status).toBe("success"),
+    );
+    await user.click(screen.getByRole("button", { name: paymentMethodLabels.efectivo_ves }));
+    await user.click(screen.getByRole("button", { name: "Procesar venta" }));
+    await screen.findByText("Venta registrada");
+
+    // «Mi caja» monta con esta caché: si no está invalidada enseña el cajón de antes de la venta.
+    expect(queryClient.getQueryState(["cash", "movements", "session-1"])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(["cash", "registers"])?.isInvalidated).toBe(true);
+
+    await waitFor(() =>
+      expect(queryClient.getQueryState(["cash", "session"])?.fetchStatus).toBe("idle"),
+    );
+
+    // El camino de cobro no crece: del prefijo de caja, el POS solo relee la sesión (POS-F6).
+    const afterPost = backend.requests.slice(backend.requests.indexOf("POST /api/sales") + 1);
+
+    expect(afterPost.filter((route) => route.startsWith("GET /api/cash/"))).toEqual([
+      "GET /api/cash/session",
+    ]);
   });
 });

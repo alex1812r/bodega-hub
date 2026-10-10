@@ -14,7 +14,16 @@ jest.mock("next/navigation", () => ({
 const mutateAsync = jest.fn();
 const mockCashCloseSettings: { data?: { cashCloseDiffAlertVes: number } } = {};
 
+// Totales ya leídos del servidor para esta apertura (la relectura se prueba en cash-desk/page.test.tsx).
+const mockCloseTotals = {
+  errorMessage: null,
+  retry: jest.fn(),
+  status: "ready",
+  totals: { accountVes: 0, items: [], theoretical: { ref: 25.5, ves: 1500.25 } },
+};
+
 jest.mock("../hooks/useCash", () => ({
+  useCashCloseTotals: () => mockCloseTotals,
   useCloseCashSession: () => ({ isPending: false, mutateAsync }),
 }));
 
@@ -29,6 +38,12 @@ function renderModal(
 ) {
   const onOpenChange = props.onOpenChange ?? jest.fn();
 
+  mockCloseTotals.totals = {
+    accountVes: 0,
+    items: [],
+    theoretical: { ref: props.theoreticalRef ?? 25.5, ves: props.theoreticalVes ?? 1500.25 },
+  };
+
   render(
     <CloseCashSessionModal
       onOpenChange={onOpenChange}
@@ -37,8 +52,6 @@ function renderModal(
       openingVes={500}
       registerName="Caja 1"
       sessionId="session-1"
-      theoreticalRef={props.theoreticalRef ?? 25.5}
-      theoreticalVes={props.theoreticalVes ?? 1500.25}
     />,
   );
 

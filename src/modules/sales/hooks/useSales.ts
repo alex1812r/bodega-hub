@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
+import { cashKeys } from "@/modules/cash/hooks/useCash";
 import { productsQueryKeys } from "@/modules/products/hooks/useProducts";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
@@ -163,6 +164,12 @@ export function invalidateAfterSaleRegistered(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
   void queryClient.invalidateQueries({ queryKey: ["contacts"] });
   void queryClient.invalidateQueries({ queryKey: ["reports"] });
+  // Una venta cobrada mueve el cajón: sesión, movimientos y turnos abiertos en caché quedan
+  // obsoletos y «Mi caja» los relee al montar (antes enseñaba el cajón previo a la venta y
+  // prellenaba el cierre con él). Solo se MARCAN (`refetchType: "none"`): el POS tiene
+  // montadas las queries de movimientos y cajas y no debe pedirlas en el camino de cobro;
+  // la única que relee, la sesión, la pide él mismo después del cobro.
+  void queryClient.invalidateQueries({ queryKey: cashKeys.all, refetchType: "none" });
 }
 
 export function useCreateSale() {
@@ -222,6 +229,8 @@ export function useReturnSale(id?: string) {
       void queryClient.invalidateQueries({ queryKey: productsQueryKeys.all });
       void queryClient.invalidateQueries({ queryKey: ["contacts"] });
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
+      // Devolver anula los pagos de la venta: los de efectivo salen del cajón del turno.
+      void queryClient.invalidateQueries({ queryKey: cashKeys.all });
     },
   });
 }

@@ -36,7 +36,8 @@ export function CashDeskPage() {
   const registers = useCashRegisters();
   const session = useMyCashSession();
   const currentUser = useCurrentUser();
-  const movements = useCashMovements(session.data?.id);
+  // El dinero del turno se relee siempre al entrar: la caché puede ser de antes de la última venta.
+  const movements = useCashMovements(session.data?.id, { alwaysFresh: true });
   const clock = useCashSessionClock(session.data?.openedAt);
   const [openModal, setOpenModal] = useState(false);
   const [closeModal, setCloseModal] = useState(false);
@@ -49,6 +50,8 @@ export function CashDeskPage() {
     );
   const theoretical = movements.data?.theoretical;
   const accountVes = movements.data?.accountVes ?? 0;
+  // Con la relectura en curso o fallida no se enseña una cifra como si fuera la del cajón.
+  const totalsState = movements.isFetching ? "loading" : movements.isError ? "error" : "ready";
   const hasOpenSession = Boolean(session.data);
   const theoreticalRef = theoretical?.ref ?? session.data?.openingRef ?? 0;
   const theoreticalVes = theoretical?.ves ?? session.data?.openingVes ?? 0;
@@ -111,21 +114,51 @@ export function CashDeskPage() {
                   <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
                     Efectivo en cajón
                   </p>
-                  <p className="font-semibold tabular-nums">
-                    {formatRefUsd(theoreticalRef)}
-                  </p>
-                  <p className="text-sm text-on-surface-variant tabular-nums">
-                    {formatVesBs(theoreticalVes)}
-                  </p>
+                  {totalsState === "ready" ? (
+                    <>
+                      <p className="font-semibold tabular-nums">
+                        {formatRefUsd(theoreticalRef)}
+                      </p>
+                      <p className="text-sm text-on-surface-variant tabular-nums">
+                        {formatVesBs(theoreticalVes)}
+                      </p>
+                    </>
+                  ) : totalsState === "loading" ? (
+                    <p className="font-semibold text-on-surface-variant" role="status">
+                      Actualizando…
+                    </p>
+                  ) : (
+                    <div className="grid justify-items-start gap-1" role="alert">
+                      <p className="text-sm text-destructive">
+                        {movements.error instanceof Error
+                          ? movements.error.message
+                          : "No se pudo leer el efectivo de la caja."}
+                      </p>
+                      <Button
+                        onClick={() => void movements.refetch()}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        Reintentar
+                      </Button>
+                    </div>
+                  )}
                   <p className="text-xs text-on-surface-variant">Apertura + ventas efectivo</p>
                 </div>
                 <div>
                   <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
                     Cuenta Bs. (turno)
                   </p>
-                  <p className="font-semibold tabular-nums text-emerald-700">
-                    {formatVesBs(accountVes)}
-                  </p>
+                  {totalsState === "ready" ? (
+                    <p className="font-semibold tabular-nums text-emerald-700">
+                      {formatVesBs(accountVes)}
+                    </p>
+                  ) : (
+                    <p className="font-semibold text-on-surface-variant">
+                      {totalsState === "loading" ? "Actualizando…" : "—"}
+                    </p>
+                  )}
                   <p className="text-xs text-on-surface-variant">
                     Pago móvil, transferencia y punto
                   </p>
@@ -166,10 +199,10 @@ export function CashDeskPage() {
               render: (item) => item.notes ?? "—",
             },
           ]}
-          data={movements.data?.items ?? []}
+          data={totalsState === "ready" ? (movements.data?.items ?? []) : []}
           emptyState={<p className="p-4 text-sm">No hay movimientos.</p>}
           getRowId={(item) => item.id}
-          isLoading={movements.isLoading}
+          isLoading={movements.isFetching}
         />
       </EntityListPage>
 
@@ -184,15 +217,12 @@ export function CashDeskPage() {
 
       {session.data && register ? (
         <CloseCashSessionModal
-          accountVes={accountVes}
           onOpenChange={setCloseModal}
           open={closeModal}
           openingRef={session.data.openingRef}
           openingVes={session.data.openingVes}
           registerName={register.name}
           sessionId={session.data.id}
-          theoreticalRef={theoreticalRef}
-          theoreticalVes={theoreticalVes}
         />
       ) : null}
     </>

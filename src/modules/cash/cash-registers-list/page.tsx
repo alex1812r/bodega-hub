@@ -535,7 +535,7 @@ function RegisterAssignment({ register, vendors }: { register: CashRegister; ven
         )
       }
       options={[
-        { label: "Sin asignar", value: "" },
+        { label: "Sin usuario asignado", value: "" },
         ...vendors.map((user) => ({ label: user.name, value: user.id })),
         ...assignedOutsideOptions,
       ]}

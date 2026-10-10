@@ -175,6 +175,48 @@ describe("sales hooks", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["inventory"] });
   });
 
+  it("POS-F8: una venta registrada deja obsoleto todo el dinero de caja en caché (sesión, movimientos, turnos abiertos)", () => {
+    // «Mi caja» montaba con la caché de antes de la venta: cajón 0 y cierre prellenado con 0.
+    const queryClient = new QueryClient();
+    const cashQueryKeys = [
+      ["cash", "session"],
+      ["cash", "movements", "session-1"],
+      ["cash", "open-sessions"],
+      ["cash", "registers"],
+    ];
+
+    for (const queryKey of cashQueryKeys) {
+      queryClient.setQueryData(queryKey, { cached: true });
+    }
+
+    invalidateAfterSaleRegistered(queryClient);
+
+    for (const queryKey of cashQueryKeys) {
+      expect([queryKey, queryClient.getQueryState(queryKey)?.isInvalidated]).toEqual([queryKey, true]);
+    }
+  });
+
+  it("POS-F8: devolver una venta anula sus pagos y con ellos el efectivo del cajón: invalida caja", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ data: { sale: { id: "sale-002" }, stockMovements: [] } }),
+    );
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    queryClient.setQueryData(["cash", "movements", "session-1"], { cached: true });
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    }
+
+    const returnSale = renderHook(() => useReturnSale("sale-002"), { wrapper: Wrapper });
+
+    returnSale.result.current.mutate("sale-002");
+    await waitFor(() => expect(returnSale.result.current.isSuccess).toBe(true));
+
+    expect(queryClient.getQueryState(["cash", "movements", "session-1"])?.isInvalidated).toBe(true);
+  });
+
   it("invalidates the products catalog after selling, cancelling and returning", async () => {
     // El POS cachea el catalogo 5 min: si la venta no invalida `products`, el
     // cajero sigue viendo el stock anterior y puede intentar vender lo que ya no hay.

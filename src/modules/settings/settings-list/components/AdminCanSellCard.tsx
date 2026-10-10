@@ -6,7 +6,6 @@ import { useState } from "react";
 import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
 import { CloseCashSessionModal } from "@/modules/cash/components/CloseCashSessionModal";
 import {
-  useCashMovements,
   useCashRegisters,
   useMyCashSession,
   useOpenCashSessions,
@@ -180,7 +179,6 @@ function AdminCanSellConfirmModal({ onClose, state, target }: AdminCanSellConfir
  */
 function OwnOpenCashSessionNotice() {
   const session = useMyCashSession();
-  const movements = useCashMovements(session.data?.id);
   const [closing, setClosing] = useState(false);
   const open = session.data;
 
@@ -200,15 +198,12 @@ function OwnOpenCashSessionNotice() {
         </Button>
       </div>
       <CloseCashSessionModal
-        accountVes={movements.data?.accountVes ?? 0}
         onOpenChange={setClosing}
         open={closing}
         openingRef={open.openingRef}
         openingVes={open.openingVes}
         registerName={open.register.name}
         sessionId={open.id}
-        theoreticalRef={movements.data?.theoretical.ref ?? open.openingRef}
-        theoreticalVes={movements.data?.theoretical.ves ?? open.openingVes}
       />
     </>
   );

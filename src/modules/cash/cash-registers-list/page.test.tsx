@@ -230,7 +230,7 @@ describe("CashRegistersListPage · a quién se puede asignar una caja (POS-F5)",
 
     await waitFor(() =>
       expect(optionLabels(select)).toEqual([
-        "Sin asignar",
+        "Sin usuario asignado",
         "Vendedora Activa",
         "Admin Que Vende",
         "Almacén Con Caja",
@@ -360,7 +360,7 @@ describe("CashRegistersListPage · errores y doble envío (POS-F7)", () => {
     writeResponse = async () => ({ error: { code, message }, status });
   }
 
-  it("asignar a quien ya tiene otra caja activa: avisa con el motivo y el selector vuelve a «Sin asignar»", async () => {
+  it("asignar a quien ya tiene otra caja activa: avisa con el motivo y el selector vuelve a «Sin usuario asignado»", async () => {
     const user = userEvent.setup();
 
     rejectWith(409, "CONFLICT", CONFLICT_MESSAGE);
@@ -377,7 +377,7 @@ describe("CashRegistersListPage · errores y doble envío (POS-F7)", () => {
     expect(writes).toHaveLength(1);
     await waitFor(() => expect(select).toBeEnabled());
     expect(select.value).toBe("");
-    expect(select.selectedOptions[0]).toHaveTextContent("Sin asignar");
+    expect(select.selectedOptions[0]).toHaveTextContent("Sin usuario asignado");
   });
 
   it("desasignar que falla también avisa y el selector conserva al usuario asignado", async () => {

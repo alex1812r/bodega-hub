@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { useCloseCashSession } from "@/modules/cash/hooks/useCash";
+import { useCashCloseTotals, useCloseCashSession } from "@/modules/cash/hooks/useCash";
 import {
   computeCashCloseReview,
   type CashCloseDifference,
@@ -21,15 +21,12 @@ import { cn } from "@/shared/utils/cn";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 type CloseCashSessionModalProps = {
-  accountVes?: number;
   onOpenChange: (open: boolean) => void;
   open: boolean;
   openingRef: number;
   openingVes: number;
   registerName: string;
   sessionId: string;
-  theoreticalRef: number;
-  theoreticalVes: number;
 };
 
 type MoneyFormatter = (value: number) => string;
@@ -90,6 +87,11 @@ function MoneyPair({ refAmount, vesAmount }: { refAmount: number; vesAmount: num
   );
 }
 
+/** Aún no hay cifra del servidor: no se enseña un 0 que no es un dato. */
+function PendingAmount() {
+  return <p className="font-semibold text-on-surface-variant">—</p>;
+}
+
 function DifferenceRow({
   difference,
   format,
@@ -126,23 +128,27 @@ function DifferenceRow({
  *   ve en la fila de diferencia como «(sobra)».
  * - Si el umbral no se pudo leer se usa 0: ante la duda, se confirma.
  *
+ * Los totales (teórico, ventas, cuenta) los lee el propio modal del servidor en cada
+ * apertura; no se reciben de quien lo abre, que podría tenerlos en caché de antes de
+ * la última venta. Hasta que llega esa lectura no hay nada precargado ni se puede
+ * cerrar («Actualizando…»); si falla, se dice y se ofrece reintentar. Así un 0 solo
+ * aparece precargado cuando el servidor dice que el cajón está en 0.
+ *
  * Lo contado se precarga con el teórico. Si el usuario cambia un monto, cerrar
  * (Esc, clic fuera, Cancelar, la X) o salir de la pantalla pregunta antes con
  * el guardia de proceso; con lo precargado sin tocar, o tras cerrar la caja,
  * cierra sin preguntar.
  */
 export function CloseCashSessionModal({
-  accountVes = 0,
   onOpenChange,
   open,
   openingRef,
   openingVes,
   registerName,
   sessionId,
-  theoreticalRef,
-  theoreticalVes,
 }: CloseCashSessionModalProps) {
   const closeSession = useCloseCashSession();
+  const closeTotals = useCashCloseTotals(sessionId, open);
   const cashCloseSettings = useCashCloseSettings();
   const [closingVes, setClosingVes] = useState("");
   const [closingRef, setClosingRef] = useState("");
@@ -151,9 +157,27 @@ export function CloseCashSessionModal({
   /** Montos precargados al abrir: lo precargado no cuenta como tecleado. */
   const [initialAmounts, setInitialAmounts] = useState(EMPTY_AMOUNTS);
   const didPrefillRef = useRef(false);
+  /** Ya llegó la lectura de esta apertura: hay totales que enseñar y montos precargados. */
+  const [prefilled, setPrefilled] = useState(false);
+  const [wasOpen, setWasOpen] = useState(open);
+
+  // Cerrado desde fuera (sin pasar por `resetForm`): la próxima apertura parte sin totales.
+  if (wasOpen !== open) {
+    setWasOpen(open);
+
+    if (!open) {
+      setPrefilled(false);
+    }
+  }
   // Un doble clic llega antes de que `isPending` deshabilite el botón.
   const inFlightRef = useRef(false);
 
+  const totals = prefilled ? closeTotals.totals : null;
+  const theoreticalRef = totals?.theoretical.ref ?? 0;
+  const theoreticalVes = totals?.theoretical.ves ?? 0;
+  // Sin la lectura de esta apertura, o con otra en curso o fallida, no se cierra a ciegas.
+  const canClose = totals !== null && closeTotals.status === "ready";
+  const freshTotals = closeTotals.status === "ready" ? closeTotals.totals : null;
   const salesCashRef = roundMoney(theoreticalRef - openingRef);
   const salesCashVes = roundMoney(theoreticalVes - openingVes);
 
@@ -179,18 +203,19 @@ export function CloseCashSessionModal({
       return;
     }
 
-    if (didPrefillRef.current) {
+    if (didPrefillRef.current || !freshTotals) {
       return;
     }
 
     didPrefillRef.current = true;
-    setClosingVes(amountInputValue(theoreticalVes));
-    setClosingRef(amountInputValue(theoreticalRef));
+    setPrefilled(true);
+    setClosingVes(amountInputValue(freshTotals.theoretical.ves));
+    setClosingRef(amountInputValue(freshTotals.theoretical.ref));
     setInitialAmounts({
-      ref: amountInputValue(theoreticalRef),
-      ves: amountInputValue(theoreticalVes),
+      ref: amountInputValue(freshTotals.theoretical.ref),
+      ves: amountInputValue(freshTotals.theoretical.ves),
     });
-  }, [open, theoreticalRef, theoreticalVes]);
+  }, [open, freshTotals]);
 
   function resetForm() {
     setClosingVes("");
@@ -199,11 +224,12 @@ export function CloseCashSessionModal({
     setErrorMessage(null);
     setConfirmOpen(false);
     didPrefillRef.current = false;
+    setPrefilled(false);
   }
 
   /** Cierra con lo tecleado. Si el servidor rechaza, lo dice tal cual y no borra nada. */
   async function closeWithCountedAmounts() {
-    if (inFlightRef.current) {
+    if (inFlightRef.current || !canClose) {
       return;
     }
 
@@ -228,7 +254,7 @@ export function CloseCashSessionModal({
   }
 
   function handleSubmit() {
-    if (closeSession.isPending || inFlightRef.current) {
+    if (closeSession.isPending || inFlightRef.current || !canClose) {
       return;
     }
 
@@ -270,7 +296,11 @@ export function CloseCashSessionModal({
           >
             Cancelar
           </Button>
-          <Button disabled={closeSession.isPending} onClick={handleSubmit} type="button">
+          <Button
+            disabled={closeSession.isPending || !canClose}
+            onClick={handleSubmit}
+            type="button"
+          >
             {closeSession.isPending ? "Cerrando..." : "Cerrar caja"}
           </Button>
         </>
@@ -310,7 +340,11 @@ export function CloseCashSessionModal({
             <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
               2. Efectivo de ventas (turno)
             </p>
-            <MoneyPair refAmount={salesCashRef} vesAmount={salesCashVes} />
+            {totals ? (
+              <MoneyPair refAmount={salesCashRef} vesAmount={salesCashVes} />
+            ) : (
+              <PendingAmount />
+            )}
             <p className="mt-1 text-xs text-on-surface-variant">
               Solo efectivo Bs/USD. Sin pago móvil
             </p>
@@ -319,18 +353,43 @@ export function CloseCashSessionModal({
             <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
               3. Debes contar en el cajón (apertura + ventas)
             </p>
-            <MoneyPair refAmount={theoreticalRef} vesAmount={theoreticalVes} />
+            {totals ? (
+              <MoneyPair refAmount={theoreticalRef} vesAmount={theoreticalVes} />
+            ) : (
+              <PendingAmount />
+            )}
           </div>
           <div className="sm:col-span-2">
             <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
               Cuenta Bs. del turno (pago móvil / transferencia / punto)
             </p>
-            <p className="font-semibold tabular-nums text-emerald-700">{formatVesBs(accountVes)}</p>
+            {totals ? (
+              <p className="font-semibold tabular-nums text-emerald-700">
+                {formatVesBs(totals.accountVes)}
+              </p>
+            ) : (
+              <PendingAmount />
+            )}
             <p className="text-xs text-on-surface-variant">
               No entra al cajón ni al cierre físico
             </p>
           </div>
         </div>
+
+        {closeTotals.status === "error" ? (
+          <div className="grid justify-items-start gap-2" role="alert">
+            <p className="text-sm text-destructive">
+              {closeTotals.errorMessage} No se puede cerrar la caja sin sus totales al día.
+            </p>
+            <Button onClick={closeTotals.retry} size="sm" type="button" variant="outline">
+              Reintentar
+            </Button>
+          </div>
+        ) : closeTotals.status === "loading" ? (
+          <p className="text-sm text-on-surface-variant" role="status">
+            Actualizando los totales de la caja…
+          </p>
+        ) : null}
 
         <p className="text-sm text-on-surface-variant">
           Indica lo que realmente hay en efectivo. Por defecto se prellena con el total del cajón
@@ -339,24 +398,28 @@ export function CloseCashSessionModal({
 
         <NumberInput
           decimals={2}
+          disabled={!totals}
           label="Efectivo contado Bs. (cajón completo)"
           onChange={(event) => setClosingVes(event.target.value)}
           value={closingVes}
         />
         <NumberInput
           decimals={2}
+          disabled={!totals}
           label="Efectivo contado REF (cajón completo)"
           onChange={(event) => setClosingRef(event.target.value)}
           value={closingRef}
         />
 
-        <dl
-          aria-label="Diferencia entre lo contado y lo que debe haber"
-          className="grid gap-1 rounded-md border border-border bg-background/60 p-3"
-        >
-          <DifferenceRow difference={review.ves} format={formatVesBs} label="Diferencia Bs." />
-          <DifferenceRow difference={review.ref} format={formatRefUsd} label="Diferencia REF" />
-        </dl>
+        {totals ? (
+          <dl
+            aria-label="Diferencia entre lo contado y lo que debe haber"
+            className="grid gap-1 rounded-md border border-border bg-background/60 p-3"
+          >
+            <DifferenceRow difference={review.ves} format={formatVesBs} label="Diferencia Bs." />
+            <DifferenceRow difference={review.ref} format={formatRefUsd} label="Diferencia REF" />
+          </dl>
+        ) : null}
 
         {/* Con la confirmación abierta el error se dice en ella; al cancelarla sigue a la vista aquí. */}
         {errorMessage && !confirmOpen ? (
