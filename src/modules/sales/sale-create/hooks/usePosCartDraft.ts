@@ -82,6 +82,13 @@ export type PosCartDraftController = {
    */
   chargedElsewhere: boolean;
   /**
+   * Identidad del carrito en pantalla, para derivar la clave del cobro (POS-H6): la que
+   * comparten todas sus copias si ya se guardó, y si no, una propia que su primer guardado
+   * conservará. Es la misma hasta que el carrito se vacía o pasa a ser una venta nueva. No
+   * lee ni escribe nada ni vuelve a pintar.
+   */
+  chargeIdentity: () => string;
+  /**
    * El servidor confirmó que el cobro iniciado con `beginCharge` no dejó venta: retira la
    * marca «cobrando». Sin marca propia no hace nada. Un cobro sin confirmar NO la retira.
    */
@@ -147,6 +154,8 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
   const saveFailedRef = useRef(false);
   /** Identidad del carrito en pantalla; `null` mientras no se haya guardado nunca. */
   const cartIdRef = useRef<string | null>(null);
+  /** Identidad dada al cobrar un carrito que aún no se guardó; su primer guardado la adopta. */
+  const unsavedIdentityRef = useRef<string | null>(null);
   /** El carrito en pantalla se vendió: lo anota `markCharged` justo antes de vaciarse. */
   const chargedRef = useRef(false);
   /** El carrito en pantalla, si otra pestaña ya lo cerró, y cómo. */
@@ -255,6 +264,16 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
     return gate;
   }, [noteSettledElsewhere]);
 
+  const chargeIdentity = useCallback(() => {
+    if (cartIdRef.current) {
+      return cartIdRef.current;
+    }
+
+    unsavedIdentityRef.current ??= crypto.randomUUID();
+
+    return unsavedIdentityRef.current;
+  }, []);
+
   const endCharge = useCallback(() => {
     const { scope: currentScope, tabId: currentTabId } = latestRef.current;
     const cartId = chargingRef.current;
@@ -290,7 +309,7 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
       return;
     }
 
-    cartIdRef.current ??= crypto.randomUUID();
+    cartIdRef.current ??= unsavedIdentityRef.current ?? crypto.randomUUID();
 
     const saved = writePosCartDraft(
       current.key,
@@ -365,6 +384,14 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
       saveNow();
     }, POS_CART_DRAFT_SAVE_DELAY_MS);
   }, [cancelScheduled, customerId, dismiss, items, key, saveNow, scope]);
+
+  // Carrito vacío (venta cobrada u orden limpiada), con o sin guardado disponible: la venta
+  // siguiente estrena identidad, y con ella clave de cobro, aunque lleve lo mismo (POS-H6).
+  useEffect(() => {
+    if (items.length === 0) {
+      unsavedIdentityRef.current = null;
+    }
+  }, [items.length]);
 
   useEffect(() => {
     if (!found || !catalog || !awaitingRestoreRef.current) {
@@ -497,6 +524,7 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
   const startNewSale = useCallback(() => {
     // Sin identidad, el guardado le da una nueva: ya no comparte nada con la venta cobrada.
     cartIdRef.current = null;
+    unsavedIdentityRef.current = null;
     settledElsewhereRef.current = null;
     copyRef.current = false;
     chargingRef.current = null;
@@ -519,6 +547,7 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
     () => ({
       beginCharge,
       chargedElsewhere: settledElsewhere === "cobrado",
+      chargeIdentity,
       endCharge,
       markCharged,
       saveFailed,
@@ -526,6 +555,6 @@ export function usePosCartDraft(options: UsePosCartDraftOptions): PosCartDraftCo
       settledElsewhere: settledElsewhere !== null,
       startNewSale,
     }),
-    [beginCharge, endCharge, markCharged, saveFailed, saveNow, settledElsewhere, startNewSale],
+    [beginCharge, chargeIdentity, endCharge, markCharged, saveFailed, saveNow, settledElsewhere, startNewSale],
   );
 }

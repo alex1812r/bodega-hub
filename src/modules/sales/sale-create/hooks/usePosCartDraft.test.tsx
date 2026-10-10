@@ -703,6 +703,77 @@ describe("carrito cobrado o vaciado con copias en otras pestañas (CNF-F5 · B3)
     ]);
   });
 
+  // POS-H6: de esta identidad sale la clave de idempotencia del cobro.
+  it("POS-H6 · el original y su copia viva dan la misma identidad de cobro, sin leer ni escribir", () => {
+    const { tab1, tab2 } = openOriginalAndLiveCopy();
+    const getItem = jest.spyOn(Storage.prototype, "getItem");
+    const setItem = jest.spyOn(Storage.prototype, "setItem");
+
+    const identity = tab1.result.current.chargeIdentity();
+
+    expect(identity).toBe(storedCartId(tab1.key));
+    expect(tab2.result.current.chargeIdentity()).toBe(identity);
+    expect(tab1.result.current.chargeIdentity()).toBe(identity);
+    expect(setItem).not.toHaveBeenCalled();
+    // Solo la lectura de `storedCartId` de esta prueba.
+    expect(getItem).toHaveBeenCalledTimes(1);
+  });
+
+  it("POS-H6 · la venta siguiente estrena identidad; «Es una venta nueva» también", () => {
+    const tab = openTab();
+
+    tab.rerender(baseOptions({ items: [item()] }));
+    wait();
+
+    const first = tab.result.current.chargeIdentity();
+
+    act(() => tab.result.current.markCharged());
+    tab.rerender(baseOptions({ items: [] }));
+    tab.rerender(baseOptions({ items: [item()] }));
+    wait();
+
+    const second = tab.result.current.chargeIdentity();
+
+    expect(second).not.toBe(first);
+    expect(second).toBe(storedCartId(tab.key));
+
+    act(() => tab.result.current.startNewSale());
+
+    expect(tab.result.current.chargeIdentity()).not.toBe(second);
+  });
+
+  it("POS-H6 · cobrado antes de guardarse: identidad estable, el guardado la adopta y la venta siguiente no la hereda", () => {
+    const tab = openTab();
+
+    tab.rerender(baseOptions({ items: [item()] }));
+
+    const identity = tab.result.current.chargeIdentity();
+
+    expect(tab.result.current.chargeIdentity()).toBe(identity);
+    expect(draftKeys()).toEqual([]);
+
+    // El cobro falló y el carrito llega a guardarse: una copia en otra pestaña la comparte.
+    wait();
+    expect(storedCartId(tab.key)).toBe(identity);
+
+    tab.rerender(baseOptions({ items: [] }));
+    tab.rerender(baseOptions({ items: [item()] }));
+
+    expect(tab.result.current.chargeIdentity()).not.toBe(identity);
+  });
+
+  it("POS-H6 · sin caja ni guardado posible, cada venta tiene su identidad", () => {
+    const tab = mount({ cashSessionId: null, items: [item()] });
+    const identity = tab.result.current.chargeIdentity();
+
+    expect(tab.result.current.chargeIdentity()).toBe(identity);
+
+    tab.rerender(baseOptions({ cashSessionId: null, items: [] }));
+    tab.rerender(baseOptions({ cashSessionId: null, items: [item()] }));
+
+    expect(tab.result.current.chargeIdentity()).not.toBe(identity);
+  });
+
   it("un carrito que nunca se guardó (venta rápida) pasa a cobrar sin leer ni escribir", () => {
     const tab = openTab();
 

@@ -62,6 +62,7 @@ import {
   saleFingerprint,
   writeSaleAttempt,
 } from "./utils/saleAttempt";
+import { deriveSaleRequestId } from "./utils/saleRequestId";
 
 const UNRESOLVED_SALE_MESSAGE =
   "La venta pudo haberse registrado; verifica antes de volver a cobrar.";
@@ -483,6 +484,21 @@ function SaleCreatePosWorkspace() {
     createSale.reset();
   }
 
+  /**
+   * La clave quedó gastada en una venta ANULADA: el servidor responde 409 a todo cobro que
+   * la repita. Como la clave se deriva del carrito (POS-H6), el siguiente cobro de este
+   * mismo carrito la volvería a calcular; se deja guardada una nueva para ese cobro.
+   */
+  function retireVoidedSaleKey() {
+    // Primero se retira el intento gastado, también de lo compartido entre pestañas.
+    clearSaleAttempt(attemptStorageKey);
+    writeSaleAttempt(attemptStorageKey, {
+      clientRequestId: crypto.randomUUID(),
+      sent: [],
+      unresolved: false,
+    });
+  }
+
   function showUnresolvedAttempt() {
     setFormError(UNRESOLVED_SALE_MESSAGE);
     setNeedsVerification(true);
@@ -534,7 +550,7 @@ function SaleCreatePosWorkspace() {
         settleRegisteredAttempt(outcome.sale, attempt);
         return "stop";
       case "voided":
-        clearSaleAttempt(attemptStorageKey);
+        retireVoidedSaleKey();
         cartDraft.endCharge();
         setNeedsVerification(false);
         return "continue";
@@ -749,7 +765,11 @@ function SaleCreatePosWorkspace() {
         return;
       }
 
-      const clientRequestId = attempt?.clientRequestId ?? crypto.randomUUID();
+      // Sin intento guardado, la clave se DERIVA del carrito (POS-H6): otra pestaña con una
+      // copia de este carrito calcula la misma, pase o no pase la barrera de arriba, y el
+      // servidor registra una sola venta. Con otro método de pago allí, responde 409.
+      const clientRequestId =
+        attempt?.clientRequestId ?? deriveSaleRequestId(cartDraft.chargeIdentity(), content);
       const sentBefore = attempt?.sent ?? [];
       const sent = sentBefore.includes(fingerprint) ? sentBefore : [...sentBefore, fingerprint];
 
@@ -804,7 +824,7 @@ function SaleCreatePosWorkspace() {
             settleRegisteredAttempt(outcome.sale, { clientRequestId, sent, unresolved: true });
             return;
           case "voided":
-            clearSaleAttempt(attemptStorageKey);
+            retireVoidedSaleKey();
             cartDraft.endCharge();
             setFormError(
               conflictMessage ??

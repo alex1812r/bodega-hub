@@ -131,7 +131,8 @@ function paginated<T>(items: T[]) {
 }
 
 type BackendOptions = {
-  onSalePost?: (attempt: number) => Response;
+  /** Sin respuesta propia (`undefined`), el servidor registra la venta. */
+  onSalePost?: (attempt: number) => Response | undefined;
   products?: CatalogProduct[];
   /** `null`: el servidor dice que no hay caja abierta. */
   session?: { id: string; registerId: string } | null;
@@ -906,6 +907,199 @@ describe("CNF-F8 · la copia de un carrito no se cobra dos veces (CAOS-02) y el 
     await chargeInCashUsd();
     await screen.findByText("Venta registrada");
     expect(backend.salePosts[0]?.items).toEqual([{ productId: HARINA.id, quantity: 2 }]);
+  });
+});
+
+describe("POS-H6 · la clave del cobro se deriva del carrito: dos pestañas envían la misma", () => {
+  const SCOPE = {
+    cashSessionId: "session-1",
+    registerId: REGISTER.id,
+    storeId: "store-1",
+    userId: "user-1",
+  };
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const REJECTED = () =>
+    jsonResponse({ error: { code: "BAD_REQUEST", message: "Stock insuficiente." } }, 400);
+
+  /** Otra pestaña del mismo navegador: `localStorage` compartido, `sessionStorage` propio. */
+  function openSecondTab(firstTab: { unmount: () => void }) {
+    firstTab.unmount();
+    window.sessionStorage.clear();
+
+    return mountPos();
+  }
+
+  it("carrera a 0 ms: la segunda pestaña no ve ninguna marca de la primera y aun así envía la misma clave", async () => {
+    const backend = mountBackend();
+    const routedFetch = global.fetch;
+    let heldPosts = 0;
+
+    // El cobro de la primera pestaña sale y se queda viajando, sin respuesta.
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST" && String(input).includes("/api/sales") && heldPosts === 0) {
+        heldPosts += 1;
+        backend.salePosts.push(JSON.parse(String(init.body ?? "{}")) as SalePostBody);
+
+        return new Promise<Response>(() => undefined);
+      }
+
+      return routedFetch(input, init);
+    }) as typeof fetch;
+
+    const firstTab = mountPos();
+
+    await addToCart(HARINA);
+    await expectCartCount("1 item");
+    await flush(600);
+    await chargeInCashUsd();
+    await waitFor(() => expect(backend.salePosts).toHaveLength(1));
+
+    // La segunda pestaña leyó ANTES de que la primera escribiera: ni marca «cobrando» ni
+    // intento compartido. Solo queda lo que ya compartían, el carrito guardado.
+    for (const key of Object.keys(window.localStorage)) {
+      if (!key.includes(":pos:carrito:v")) {
+        window.localStorage.removeItem(key);
+      }
+    }
+    expect(draftKeys()).toHaveLength(1);
+
+    openSecondTab(firstTab);
+    await screen.findByText("Carrito recuperado");
+    await expectCartCount("1 item");
+    await chargeInCashUsd();
+    await screen.findByText("Venta registrada");
+
+    expect(backend.salePosts).toHaveLength(2);
+    expect(backend.salePosts[0]?.clientRequestId).toMatch(UUID);
+    expect(backend.salePosts[1]?.clientRequestId).toBe(backend.salePosts[0]?.clientRequestId);
+    expect(backend.salePosts[1]?.items).toEqual(backend.salePosts[0]?.items);
+  });
+
+  it("la copia que recoge otra pestaña tras un rechazo se cobra con la clave de la primera", async () => {
+    const backend = mountBackend({
+      onSalePost: (attempt) => (attempt === 1 ? REJECTED() : undefined),
+    });
+    const firstTab = mountPos();
+
+    await addToCart(HARINA);
+    await addToCart(AZUCAR);
+    await expectCartCount("2 items");
+    await flush(600);
+    await chargeInCashUsd();
+    await screen.findAllByText(/stock insuficiente/i);
+
+    openSecondTab(firstTab);
+    await screen.findByText("Carrito recuperado");
+    await expectCartCount("2 items");
+    await chargeInCashUsd();
+    await screen.findByText("Venta registrada");
+
+    expect(backend.salePosts).toHaveLength(2);
+    expect(backend.salePosts[1]?.clientRequestId).toBe(backend.salePosts[0]?.clientRequestId);
+  });
+
+  it("la venta siguiente, con los mismos productos, estrena clave: guardada o cobrada antes de guardarse", async () => {
+    const backend = mountBackend();
+
+    mountPos();
+
+    // Dos ventas que llegan a guardarse (tienen identidad compartible)…
+    for (let sale = 1; sale <= 2; sale += 1) {
+      await addToCart(HARINA);
+      await expectCartCount("1 item");
+      await flush(600);
+      await chargeInCashUsd();
+      await waitFor(() => expect(backend.salePosts).toHaveLength(sale));
+      fireEvent.click(await screen.findByRole("button", { name: "Nueva venta" }));
+    }
+
+    // …y dos que se cobran antes de su primer guardado.
+    for (let sale = 3; sale <= 4; sale += 1) {
+      await addToCart(HARINA);
+      await expectCartCount("1 item");
+      await chargeInCashUsd();
+      await waitFor(() => expect(backend.salePosts).toHaveLength(sale));
+      fireEvent.click(await screen.findByRole("button", { name: "Nueva venta" }));
+    }
+
+    const keys = backend.salePosts.map((post) => post.clientRequestId);
+
+    expect(backend.salePosts.map((post) => post.items)).toEqual(
+      Array.from({ length: 4 }, () => [{ productId: HARINA.id, quantity: 1 }]),
+    );
+    for (const key of keys) {
+      expect(key).toMatch(UUID);
+    }
+    expect(new Set(keys).size).toBe(4);
+    // Ninguna dejó carrito ni marca de cobro pendiente.
+    expect(draftKeys()).toEqual([]);
+    expect(
+      (
+        JSON.parse(window.localStorage.getItem(posCartSettledStorageKey(SCOPE)) ?? "[]") as Array<{
+          reason: string;
+        }>
+      ).filter((mark) => mark.reason === "cobrando"),
+    ).toEqual([]);
+  });
+
+  it("reintento del mismo carrito tras un error de red: misma clave", async () => {
+    const backend = mountBackend({
+      onSalePost: (attempt) => {
+        if (attempt === 1) {
+          throw new TypeError("Failed to fetch");
+        }
+
+        return undefined;
+      },
+    });
+
+    mountPos();
+    await addToCart(HARINA);
+    await expectCartCount("1 item");
+    await chargeInCashUsd();
+    // Sin respuesta, el POS pregunta por la clave y el servidor dice que no hay venta.
+    await screen.findAllByText(/no quedo guardado/i);
+
+    const chargeButton = screen.getByRole("button", { name: "Procesar venta" });
+
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+
+    expect(backend.salePosts).toHaveLength(2);
+    expect(backend.salePosts[1]?.clientRequestId).toBe(backend.salePosts[0]?.clientRequestId);
+  });
+
+  it("tras un rechazo: el mismo contenido repite clave y el contenido cambiado estrena otra", async () => {
+    const backend = mountBackend({
+      onSalePost: (attempt) => (attempt <= 2 ? REJECTED() : undefined),
+    });
+
+    mountPos();
+    await addToCart(HARINA);
+    await expectCartCount("1 item");
+    await flush(600);
+    await chargeInCashUsd();
+    await waitFor(() => expect(backend.salePosts).toHaveLength(1));
+    await screen.findAllByText(/stock insuficiente/i);
+
+    const chargeButton = screen.getByRole("button", { name: "Procesar venta" });
+
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+    fireEvent.click(chargeButton);
+    await waitFor(() => expect(backend.salePosts).toHaveLength(2));
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+
+    await addToCart(AZUCAR);
+    await expectCartCount("2 items");
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+
+    expect(backend.salePosts).toHaveLength(3);
+    expect(backend.salePosts[1]?.clientRequestId).toBe(backend.salePosts[0]?.clientRequestId);
+    expect(backend.salePosts[2]?.clientRequestId).toMatch(UUID);
+    expect(backend.salePosts[2]?.clientRequestId).not.toBe(backend.salePosts[0]?.clientRequestId);
   });
 });
 

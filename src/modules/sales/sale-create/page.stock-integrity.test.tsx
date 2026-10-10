@@ -501,6 +501,34 @@ describe("C3 · respuesta perdida al cobrar en el POS", () => {
     expect(backend.unknownRequests).toEqual([]);
   });
 
+  it("POS-H6 · un 409 con la venta de esa clave ANULADA: el mismo carrito se vuelve a cobrar con otra clave", async () => {
+    const backend = mountBackend({
+      onLookup: async () => lookupFound("cancelada"),
+      onSalePost: async (attempt) =>
+        attempt === 1
+          ? jsonResponse(
+              { error: { code: "CONFLICT", message: "La clave de idempotencia ya se uso en otra venta." } },
+              409,
+            )
+          : saleResponse(attempt),
+    });
+
+    mountPos();
+    const chargeButton = await prepareCartReadyToCharge();
+    fireEvent.click(chargeButton);
+    await waitFor(() => expect(visibleAlerts()).toMatch(/clave de idempotencia ya se uso/i));
+
+    // La clave derivada del carrito quedó gastada: repetirla sería un 409 sin salida.
+    await waitFor(() => expect(chargeButton).toBeEnabled());
+    fireEvent.click(chargeButton);
+    await screen.findByText("Venta registrada");
+
+    expect(backend.salePosts).toHaveLength(2);
+    expect(backend.salePosts[1]?.clientRequestId).toEqual(expect.any(String));
+    expect(backend.salePosts[1]?.clientRequestId).not.toBe(backend.salePosts[0]?.clientRequestId);
+    expect(backend.unknownRequests).toEqual([]);
+  });
+
   it("un 4xx definitivo no consulta por clave; la clave solo cambia si cambia el carrito", async () => {
     const backend = mountBackend({
       onSalePost: async () =>
