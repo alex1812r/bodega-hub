@@ -1,5 +1,14 @@
+import {
+  MIN_PAYABLE_VES_BY_DOCUMENT,
+  type MoneyCurrency,
+  payablePart,
+  toMoneyCents as toCents,
+  toRateUnits,
+  vesCentsToUsdCents,
+} from "@/shared/payments/moneyConversion";
+
 /** Moneda del metodo de pago: en ella se teclea el monto y se envia cada parte. */
-export type AllocationCurrency = "USD" | "VES";
+export type AllocationCurrency = MoneyCurrency;
 
 export type AllocationDocument = {
   /** Saldo pendiente del documento en Bs. */
@@ -12,12 +21,7 @@ export type AllocationDocument = {
   rateVes?: number;
 };
 
-/**
- * Menor saldo en Bs que `register_payment` todavia deja pagar. Una venta con
- * saldo <= Bs 0,01 se rechaza ("no tiene saldo pendiente"), asi que un parcial no
- * puede dejarle un centimo suelto; una compra acepta cualquier saldo positivo.
- */
-export const MIN_PAYABLE_VES_BY_DOCUMENT = { purchase: 0.01, sale: 0.02 } as const;
+export { MIN_PAYABLE_VES_BY_DOCUMENT };
 
 export type AllocatePaymentInput<TDocument extends AllocationDocument> = {
   /** Monto del abono en la moneda del metodo. */
@@ -35,7 +39,8 @@ export type PaymentAllocation<TDocument extends AllocationDocument> = {
   /**
    * Bs que el servidor descontara del saldo del documento. Con metodo en USD puede
    * superar el saldo en Bs 0,01 (medio centimo de la conversion, ver
-   * `maxUsdCentsWithin`); `remainingVes` queda entonces en 0.
+   * `maxUsdCentsWithin` en `shared/payments/moneyConversion`); `remainingVes`
+   * queda entonces en 0.
    */
   appliedVes: number;
   document: TDocument;
@@ -60,105 +65,6 @@ export type PaymentAllocationResult<TDocument extends AllocationDocument> = {
 };
 
 const CENTS = 100;
-// La tasa viaja como entero de diezmilesimas: numeric(14,4) en el servidor.
-const RATE_SCALE = 10_000;
-
-function toCents(value: number | undefined) {
-  if (value === undefined || !Number.isFinite(value) || value <= 0) {
-    return 0;
-  }
-
-  return Math.round(value * CENTS);
-}
-
-function toRateUnits(rateVes: number | undefined) {
-  if (rateVes === undefined || !Number.isFinite(rateVes) || rateVes <= 0) {
-    return 0;
-  }
-
-  return Math.round(rateVes * RATE_SCALE);
-}
-
-/**
- * `round(usd * tasa, 2)` de Postgres (mitad hacia arriba) con enteros exactos:
- * `2.73 * 36.5` es 99,645 y da 99,65; en coma flotante saldria 99,64.
- */
-function usdCentsToVesCents(usdCents: number, rateUnits: number) {
-  const scale = BigInt(RATE_SCALE);
-
-  return Number((BigInt(usdCents) * BigInt(rateUnits) + scale / BigInt(2)) / scale);
-}
-
-/** `round(bs / tasa, 2)` de Postgres, tambien con enteros exactos. */
-function vesCentsToUsdCents(vesCents: number, rateUnits: number) {
-  const rate = BigInt(rateUnits);
-  const two = BigInt(2);
-
-  return Number((BigInt(vesCents) * BigInt(RATE_SCALE) * two + rate) / (two * rate));
-}
-
-/**
- * Mayor monto en USD que cabe en el saldo. Cabe mientras su valor en Bs SIN redondear
- * no pase del saldo en mas de medio centimo: el medio centimo exacto cuenta.
- *
- * Es el caso de un documento de ref 10,00 a 875,6505: su total se guardo como
- * Bs 8.756,50 (8.756,505 hacia abajo) y `register_payment` convierte 10 USD en
- * Bs 8.756,51. El servidor acepta ese centimo (holgura de la conversion) y deja el
- * documento saldado, igual que "Completar saldo" desde su detalle; con 9,99 quedaria
- * un resto de Bs 8,75 que ningun monto en USD puede pagar.
- */
-function maxUsdCentsWithin(pendingCents: number, rateUnits: number) {
-  const scale = BigInt(RATE_SCALE);
-
-  return Number((BigInt(pendingCents) * scale + scale / BigInt(2)) / BigInt(rateUnits));
-}
-
-type Part = { appliedVesCents: number; cents: number };
-
-/**
- * Lo mas que `availableCents` puede abonar a un documento sin pagarlo de mas y sin
- * dejarle un saldo que el servidor ya no deje pagar (0 < saldo < minimo).
- */
-function takePart(
-  availableCents: number,
-  pendingCents: number,
-  rateUnits: number,
-  currency: AllocationCurrency,
-  minPayableCents: number,
-): Part {
-  if (availableCents <= 0 || pendingCents < minPayableCents) {
-    return { appliedVesCents: 0, cents: 0 };
-  }
-
-  if (currency === "VES") {
-    let cents = Math.min(availableCents, pendingCents);
-    const residue = pendingCents - cents;
-
-    if (residue > 0 && residue < minPayableCents) {
-      cents = pendingCents - minPayableCents;
-    }
-
-    return { appliedVesCents: cents, cents };
-  }
-
-  if (rateUnits <= 0) {
-    return { appliedVesCents: 0, cents: 0 };
-  }
-
-  let cents = Math.min(availableCents, maxUsdCentsWithin(pendingCents, rateUnits));
-  let appliedVesCents = usdCentsToVesCents(cents, rateUnits);
-
-  while (
-    cents > 0 &&
-    pendingCents - appliedVesCents > 0 &&
-    pendingCents - appliedVesCents < minPayableCents
-  ) {
-    cents -= 1;
-    appliedVesCents = usdCentsToVesCents(cents, rateUnits);
-  }
-
-  return { appliedVesCents, cents };
-}
 
 function distribute<TDocument extends AllocationDocument>(
   amountCents: number,
@@ -176,7 +82,7 @@ function distribute<TDocument extends AllocationDocument>(
 
     const pendingCents = toCents(document.pendingVes);
     const rateUnits = toRateUnits(document.rateVes);
-    const part = takePart(availableCents, pendingCents, rateUnits, currency, minPayableCents);
+    const part = payablePart(availableCents, pendingCents, rateUnits, currency, minPayableCents);
 
     if (part.cents <= 0) {
       continue;

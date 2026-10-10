@@ -30,6 +30,12 @@ export type PaymentFormFieldsProps = {
   /** Métodos que se ofrecen en el selector, en el orden recibido. */
   methods: readonly PaymentMethod[];
   /**
+   * Menor saldo en Bs que el servidor aún deja pagar en este documento
+   * (`MIN_PAYABLE_VES_BY_DOCUMENT`): "Completar saldo" y los atajos no dejan un
+   * resto por debajo. Por defecto Bs 0,01 (compra).
+   */
+  minPayableVes?: number;
+  /**
    * Recibe el estado completo siguiente. Cambiar de método limpia banco, teléfono y
    * referencia; si además cambia la moneda, el monto se convierte con `rateVes` (o se vacía).
    */
@@ -59,6 +65,7 @@ const completeClassName =
 
 export function PaymentFormFields({
   methods,
+  minPayableVes,
   onChange,
   overpayToleranceVes,
   pendingBalance,
@@ -85,7 +92,7 @@ export function PaymentFormFields({
   }
 
   function shareAmount(percent: number) {
-    return amountForPendingShare(method, pendingBalance, percent, rateVes);
+    return amountForPendingShare(method, pendingBalance, percent, rateVes, minPayableVes);
   }
 
   function applyShare(percent: number) {

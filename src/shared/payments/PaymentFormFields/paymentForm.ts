@@ -1,5 +1,14 @@
 import { formatVesBs, roundMoney } from "@/shared/utils/currency";
 import type { PaymentMethod } from "@/shared/mocks/erp-data";
+import {
+  fromMoneyCents,
+  maxUsdCentsWithin,
+  payablePart,
+  toMoneyCents,
+  toRateUnits,
+  usdCentsToVesCents,
+  vesCentsToUsdCents,
+} from "@/shared/payments/moneyConversion";
 
 import { isKnownBankLabel } from "@/shared/venezuela/banks";
 import { isValidVeMobilePhone } from "@/shared/venezuela/phone";
@@ -36,6 +45,11 @@ export type PaymentFormPayload = {
 
 /** Saldo del documento contra el que se compara el monto. */
 export type PaymentBalanceContext = {
+  /**
+   * Menor saldo en Bs que el servidor aún deja pagar (`MIN_PAYABLE_VES_BY_DOCUMENT`).
+   * Los atajos de saldo no dejan un resto por debajo. Por defecto Bs 0,01.
+   */
+  minPayableVes?: number;
   /**
    * Bs por encima del saldo que el servidor todavía acepta. Con él, un monto que lo
    * rebasa invalida el formulario; sin él, superar el saldo solo se avisa.
@@ -85,8 +99,13 @@ export function paymentNeedsReference(method: PaymentMethod) {
 }
 
 /**
- * Aviso cuando el monto, llevado a Bs, supera el saldo pendiente. `null` si no lo
- * supera o no se puede saber (sin saldo, o método en USD sin tasa).
+ * Aviso cuando el monto supera el saldo pendiente. `null` si no lo supera o no se
+ * puede saber (sin saldo, o método en USD sin tasa).
+ *
+ * Misma aritmética exacta que el reparto de un abono (`moneyConversion`): en USD
+ * un monto "cabe" mientras su valor en Bs sin redondear no pase del saldo en más
+ * de medio céntimo, así que lo que propone "Completar saldo" nunca se avisa. El
+ * bloqueo compara los Bs que descontará el servidor con el saldo más la holgura.
  */
 export function paymentOverpayment(
   values: PaymentFormValues,
@@ -98,27 +117,31 @@ export function paymentOverpayment(
     return null;
   }
 
-  let amountVes = parsed;
+  const amountCents = toMoneyCents(parsed);
+  const balanceCents = toMoneyCents(pendingBalance);
+  let amountVesCents = amountCents;
+  let fits = amountCents <= balanceCents;
 
   if (getPaymentCurrency(values.method) === "USD") {
-    if (!rateVes || rateVes <= 0) {
+    const rateUnits = toRateUnits(rateVes);
+
+    if (rateUnits <= 0) {
       return null;
     }
 
-    amountVes = roundMoney(parsed * rateVes);
+    amountVesCents = usdCentsToVesCents(amountCents, rateUnits);
+    fits = amountCents <= maxUsdCentsWithin(balanceCents, rateUnits);
   }
 
-  const balanceVes = Math.max(roundMoney(pendingBalance), 0);
-
-  if (!(amountVes > balanceVes)) {
+  if (fits) {
     return null;
   }
 
   return {
     blocking:
       overpayToleranceVes !== undefined &&
-      amountVes > roundMoney(balanceVes + overpayToleranceVes),
-    message: `El monto supera el saldo pendiente (${formatVesBs(balanceVes)}).`,
+      amountVesCents > balanceCents + Math.round(overpayToleranceVes * 100),
+    message: `El monto supera el saldo pendiente (${formatVesBs(fromMoneyCents(balanceCents))}).`,
   };
 }
 
@@ -197,43 +220,53 @@ export function buildPaymentFormPayload(values: PaymentFormValues): PaymentFormP
 
 /**
  * Monto, en la moneda del método, que cubre `percent` % del saldo pendiente (en Bs).
- * Nunca supera el saldo: en Bs se topa con el saldo y en REF se baja un céntimo
- * mientras su equivalente en Bs lo exceda. `null` si no se puede calcular
- * (sin saldo, o método en REF sin tasa).
+ * `null` si no se puede calcular (sin saldo, o método en REF sin tasa).
+ *
+ * Es el mismo cálculo exacto que el reparto de un abono (`payablePart`): en Bs se
+ * topa con el saldo; en REF es el mayor monto que cabe en esa parte del saldo con
+ * la regla del medio céntimo, y nunca deja un resto que el servidor ya no deje
+ * pagar (`minPayableVes`). Al 100 % coincide siempre con lo que el reparto aplica a
+ * ese documento.
  */
 export function amountForPendingShare(
   method: PaymentMethod,
   pendingBalanceVes: number | undefined,
   percent: number,
   rateVes?: number,
+  minPayableVes = 0.01,
 ): number | null {
   if (pendingBalanceVes === undefined || !Number.isFinite(pendingBalanceVes)) {
     return null;
   }
 
-  const balanceVes = roundMoney(pendingBalanceVes);
+  const balanceCents = toMoneyCents(pendingBalanceVes);
 
-  if (balanceVes <= 0 || percent <= 0) {
+  if (balanceCents <= 0 || percent <= 0) {
     return null;
   }
 
-  const shareVes = Math.min(roundMoney((balanceVes * percent) / 100), balanceVes);
+  const currency = getPaymentCurrency(method);
+  const rateUnits = currency === "USD" ? toRateUnits(rateVes) : 0;
 
-  if (getPaymentCurrency(method) === "VES") {
-    return shareVes > 0 ? shareVes : null;
-  }
-
-  if (!rateVes || rateVes <= 0) {
+  if (currency === "USD" && rateUnits <= 0) {
     return null;
   }
 
-  let amountRef = roundMoney(shareVes / rateVes);
+  // El porcentaje del saldo (en Bs) se redondea como siempre, con `roundMoney`: no es
+  // una conversión de moneda. Lo que se unifica con el reparto es lo que viene después.
+  const shareCents = Math.min(
+    toMoneyCents(roundMoney((fromMoneyCents(balanceCents) * percent) / 100)),
+    balanceCents,
+  );
+  const part = payablePart(
+    currency === "USD" ? maxUsdCentsWithin(shareCents, rateUnits) : shareCents,
+    balanceCents,
+    rateUnits,
+    currency,
+    Math.max(toMoneyCents(minPayableVes), 1),
+  );
 
-  while (amountRef > 0 && roundMoney(amountRef * rateVes) > shareVes) {
-    amountRef = roundMoney(amountRef - 0.01);
-  }
-
-  return amountRef > 0 ? amountRef : null;
+  return part.cents > 0 ? fromMoneyCents(part.cents) : null;
 }
 
 /** Equivalencia del monto en la otra moneda. `null` sin monto o sin tasa. */
@@ -243,12 +276,16 @@ export function paymentAmountEquivalent(
   rateVes?: number,
 ): { currency: PaymentFormCurrency; value: number } | null {
   const parsed = Number(amount);
+  const rateUnits = toRateUnits(rateVes);
 
-  if (!rateVes || rateVes <= 0 || !(parsed > 0)) {
+  if (rateUnits <= 0 || !(parsed > 0)) {
     return null;
   }
 
+  const cents = toMoneyCents(parsed);
+
+  // Mismo redondeo que el servidor y que el reparto de un abono (`moneyConversion`).
   return getPaymentCurrency(method) === "USD"
-    ? { currency: "VES", value: roundMoney(parsed * rateVes) }
-    : { currency: "USD", value: roundMoney(parsed / rateVes) };
+    ? { currency: "VES", value: fromMoneyCents(usdCentsToVesCents(cents, rateUnits)) }
+    : { currency: "USD", value: fromMoneyCents(vesCentsToUsdCents(cents, rateUnits)) };
 }

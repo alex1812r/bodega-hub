@@ -20,6 +20,7 @@ import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { Modal } from "@/shared/components/Modal";
 import { ProcessGuard, ProcessGuardModal } from "@/shared/components/ProcessGuard";
 import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
+import { MIN_PAYABLE_VES_BY_DOCUMENT } from "@/shared/payments/moneyConversion";
 import {
   PENDING_BALANCE_SHARES,
   PaymentFormFields,
@@ -416,6 +417,8 @@ function RegisterPaymentForm({
     rateVes,
     dayRateVes !== undefined,
   );
+  // Una venta no puede quedar con un céntimo suelto: mismo mínimo que el reparto de un abono.
+  const minPayableVes = MIN_PAYABLE_VES_BY_DOCUMENT[sale.data ? "sale" : "purchase"];
   const hasDocument = fixedDocument !== undefined;
   // Sin el saldo no hay guarda de sobrepago: mientras el documento carga o se vuelve a
   // pedir (cada apertura, tras cada pago y tras un envío de resultado incierto) no se
@@ -450,7 +453,7 @@ function RegisterPaymentForm({
       : enabledMethods[0];
   // Montos que ponen "Completar saldo" y los atajos de porcentaje: no son tecleados.
   const shortcutAmounts = PENDING_BALANCE_SHARES.map((percent) =>
-    amountForPendingShare(method, pendingBalanceVes, percent, rateVes),
+    amountForPendingShare(method, pendingBalanceVes, percent, rateVes, minPayableVes),
   ).flatMap((amount) => (amount === null ? [] : [String(amount)]));
   const hasTypedData =
     method !== baselineMethod ||
@@ -787,6 +790,7 @@ function RegisterPaymentForm({
         <fieldset className="min-w-0" disabled={unconfirmedAttempt !== null}>
           <PaymentFormFields
             methods={enabledMethods}
+            minPayableVes={minPayableVes}
             onChange={setValues}
             overpayToleranceVes={overpayToleranceVes}
             pendingBalance={unconfirmedAttempt ? undefined : pendingBalanceVes}

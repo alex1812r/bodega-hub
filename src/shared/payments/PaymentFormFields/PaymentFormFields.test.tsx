@@ -234,6 +234,33 @@ describe("PaymentFormFields", () => {
       expect(amountField()).toHaveValue("0.19");
     });
 
+    it("AUD-03 · Completar saldo en REF usa la regla exacta del reparto (medio céntimo y mínimo pagable)", async () => {
+      const user = userEvent.setup();
+      // 2.73 USD a 36.5 = Bs 99,645 → 99,65: cabe en un saldo de Bs 99,64 (medio céntimo).
+      const { unmount } = render(
+        <Harness initial={{ method: "efectivo_usd" }} pendingBalance={99.64} rateVes={36.5} />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Completar saldo" }));
+      expect(amountField()).toHaveValue("2.73");
+      expect(screen.getByText(/99,65/)).toBeInTheDocument();
+      expect(screen.queryByText(/El monto supera el saldo pendiente/)).not.toBeInTheDocument();
+      unmount();
+
+      // Una venta (mínimo pagable Bs 0,02) no se deja con Bs 0,01 sueltos: un céntimo de dólar menos.
+      render(
+        <Harness
+          initial={{ method: "efectivo_usd" }}
+          minPayableVes={0.02}
+          pendingBalance={99.66}
+          rateVes={36.5}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Completar saldo" }));
+      expect(amountField()).toHaveValue("2.72");
+    });
+
     it("los chips 25, 50 y 100 calculan con roundMoney", async () => {
       const user = userEvent.setup();
 
