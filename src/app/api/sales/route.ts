@@ -14,6 +14,7 @@ import {
   createSale as createSaleServer,
   listSales as listSalesServer,
 } from "@/modules/sales/services/sales.server";
+import { assertSaleDiscountAllowed } from "@/modules/sales/utils/saleDiscountPolicy";
 
 const createSaleSchema = z.object({
   // Clave de idempotencia por intento de cobro: con la misma clave el servidor
@@ -22,7 +23,9 @@ const createSaleSchema = z.object({
   // eran dos ventas con el stock descontado dos veces (C5a).
   clientRequestId: z.string().uuid(),
   customerId: z.string().min(1),
-  discountRef: z.number().min(0).default(0),
+  // Solo el tipo: signo, decimales y rol los valida `assertSaleDiscountAllowed`
+  // con su mensaje, antes de tocar la base.
+  discountRef: z.number().default(0),
   exchangeRateId: z.string().uuid().optional(),
   invoiceNumber: z.string().optional(),
   items: z
@@ -66,6 +69,7 @@ export async function POST(request: Request) {
   try {
     const auth = await requireStorePermission(request, "sales.create");
     const input = createSaleSchema.parse(await readJsonBody(request));
+    assertSaleDiscountAllowed(input.discountRef, auth.role);
     const viewer = { role: auth.role, userId: auth.userId };
     const data =
       resolveDataSource() === "supabase"
