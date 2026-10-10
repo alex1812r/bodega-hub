@@ -7,6 +7,7 @@ import { useCurrentUser } from "@/modules/auth/hooks/useCurrentUser";
 import { useLogout } from "@/modules/auth/hooks/useLogout";
 import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 import { ClientApiError } from "@/shared/api/apiFetch";
+import { redirectToLoginOnSessionExpired } from "@/shared/auth/loginRedirect";
 import {
   hasEffectivePermission,
   roleLabels,
@@ -56,9 +57,9 @@ export function AuthenticatedAppShell({
     const error = currentUser.error;
 
     if (error instanceof ClientApiError && error.status === 401) {
-      router.replace("/login");
+      redirectToLoginOnSessionExpired();
     }
-  }, [currentUser.error, currentUser.isError, router]);
+  }, [currentUser.error, currentUser.isError]);
 
   if (currentUser.isLoading) {
     return (

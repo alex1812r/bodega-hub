@@ -1,3 +1,4 @@
+import { isSessionAuthError } from "@/lib/supabase/auth/sessionErrors";
 import { getBearerToken } from "@/lib/supabase/bearer";
 import { mapPermissionList } from "@/lib/supabase/mappers";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
@@ -54,37 +55,11 @@ function mapProfileRow(
 }
 
 /**
- * Distingue "no hay credencial valida" de "fallo del servidor".
- *
- * Sin cookie, `getUser()` devuelve AuthSessionMissingError. Con Bearer, un token
- * caducado o manipulado devuelve AuthApiError 401/403 (`bad_jwt`). Los dos casos
- * son 401 para el cliente: la app movil refresca el token o vuelve al login.
- * Solo un fallo real de Supabase (red, 5xx) debe escalar a 500.
+ * Perfil de la sesion de la peticion (cookies o Bearer), o `null` si no hay
+ * sesion valida: sin credencial, access token caducado con refresh token invalido
+ * o revocado, JWT manipulado (`isSessionAuthError`). `requirePermission` convierte
+ * ese `null` en 401. Solo un fallo real de Supabase (red, 5xx) escala a 5xx.
  */
-function isUnauthenticatedError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) {
-    return false;
-  }
-
-  const candidate = error as { code?: unknown; message?: unknown; status?: unknown };
-  const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : "";
-  const code = typeof candidate.code === "string" ? candidate.code : "";
-  const status = typeof candidate.status === "number" ? candidate.status : 0;
-
-  return (
-    status === 401 ||
-    status === 403 ||
-    code === "session_not_found" ||
-    code === "AuthSessionMissingError" ||
-    code === "bad_jwt" ||
-    code === "session_expired" ||
-    message.includes("auth session missing") ||
-    message.includes("invalid jwt") ||
-    message.includes("jwt expired") ||
-    message.includes("token is expired")
-  );
-}
-
 export async function getAuthProfileFromSession(): Promise<ServerAuthProfile | null> {
   // El token del header manda cuando existe: `getUser()` sin argumento lee la
   // sesion de cookies y con Bearer devolveria "Auth session missing" -> 401.
@@ -96,7 +71,7 @@ export async function getAuthProfileFromSession(): Promise<ServerAuthProfile | n
   } = await supabase.auth.getUser(bearerToken ?? undefined);
 
   if (userError) {
-    if (isUnauthenticatedError(userError)) {
+    if (isSessionAuthError(userError)) {
       return null;
     }
     throwIfSupabaseError(userError);

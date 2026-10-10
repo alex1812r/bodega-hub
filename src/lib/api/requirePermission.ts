@@ -1,4 +1,4 @@
-import { ApiError } from "@/lib/api/apiError";
+import { ApiError, unauthenticatedError } from "@/lib/api/apiError";
 import { getAuthProfileFromSession } from "@/lib/supabase/auth/profile.server";
 import {
   getEffectivePermissions,
@@ -112,7 +112,7 @@ export async function requirePermission(
   const profile = await resolveAuthProfile(request);
 
   if (!profile) {
-    throw new ApiError(401, "UNAUTHORIZED", "Debes iniciar sesion para continuar.");
+    throw unauthenticatedError();
   }
 
   if (!profile.isActive || !hasEffectivePermission(profile, permission)) {
@@ -159,7 +159,7 @@ export async function requireStoreAnyPermission(
   const profile = await resolveAuthProfile(request);
 
   if (!profile) {
-    throw new ApiError(401, "UNAUTHORIZED", "Debes iniciar sesion para continuar.");
+    throw unauthenticatedError();
   }
 
   const allowed = permissions.some((permission) =>

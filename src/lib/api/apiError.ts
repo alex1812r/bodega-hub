@@ -23,6 +23,17 @@ export class ApiError extends Error {
   }
 }
 
+export const UNAUTHENTICATED_MESSAGE = "Debes iniciar sesión para continuar.";
+
+/**
+ * 401 único del BFF para "no hay sesión válida": sin credencial, access token
+ * caducado, refresh token inválido o revocado, JWT manipulado. La UI lo usa
+ * para volver al login (`apiFetch`); la app móvil, para refrescar su token.
+ */
+export function unauthenticatedError() {
+  return new ApiError(401, "UNAUTHORIZED", UNAUTHENTICATED_MESSAGE);
+}
+
 export function toErrorResponse(error: unknown) {
   if (error instanceof ApiError) {
     return Response.json(

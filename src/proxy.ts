@@ -1,7 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getDefaultHomePathForAuthUserId } from "@/lib/supabase/auth/profile.server";
+import { buildLoginUrl } from "@/shared/auth/loginRedirect";
 
 const privatePathPrefixes = [
   "/dashboard",
@@ -24,15 +26,33 @@ function isPrivatePath(pathname: string) {
 
 function copyCookies(from: NextResponse, to: NextResponse) {
   from.cookies.getAll().forEach((cookie) => {
-    to.cookies.set(cookie.name, cookie.value);
+    // Con sus opciones: el borrado de una sesión rota es `Max-Age=0`.
+    to.cookies.set(cookie);
   });
 }
 
-function redirectTo(request: NextRequest, pathname: string, response: NextResponse) {
-  const redirectResponse = NextResponse.redirect(new URL(pathname, request.url));
+/** `path`: ruta interna, con query opcional (`/login?next=…`). */
+function redirectTo(request: NextRequest, path: string, response: NextResponse) {
+  const redirectResponse = NextResponse.redirect(new URL(path, request.url));
   copyCookies(response, redirectResponse);
 
   return redirectResponse;
+}
+
+/**
+ * Usuario de la sesión, o `null` si no hay sesión válida. Una sesión rota
+ * (access token caducado y refresh token inválido o revocado) llega como
+ * `error` con `user: null`; si `getUser()` lanza, tampoco hay usuario: una
+ * página protegida redirige al login, nunca responde 500.
+ */
+async function readSessionUser(supabase: SupabaseClient): Promise<User | null> {
+  try {
+    const { data } = await supabase.auth.getUser();
+
+    return data.user;
+  } catch {
+    return null;
+  }
 }
 
 export async function proxy(request: NextRequest) {
@@ -73,9 +93,7 @@ export async function proxy(request: NextRequest) {
     },
   });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await readSessionUser(supabase);
 
   if (pathname === "/") {
     const homePath = user
@@ -95,12 +113,9 @@ export async function proxy(request: NextRequest) {
     const isDemoAuthEnabled = process.env.ALLOW_DEMO_AUTH === "true";
 
     if (!isDemoAuthEnabled) {
-      const loginUrl = request.nextUrl.clone();
-      loginUrl.pathname = "/login";
-      loginUrl.searchParams.set("next", pathname);
-      const redirectResponse = NextResponse.redirect(loginUrl);
-      copyCookies(response, redirectResponse);
-      return redirectResponse;
+      // `response` ya lleva el borrado de las cookies de una sesión rota (lo hace
+      // auth-js al fallar el refresh): el login no repite el refresh fallido.
+      return redirectTo(request, buildLoginUrl(`${pathname}${request.nextUrl.search}`), response);
     }
   }
 

@@ -3,6 +3,10 @@ import {
   getStoredDemoStoreId,
   getStoredDemoUserId,
 } from "@/shared/auth/demoAuth";
+import { redirectToLoginOnSessionExpired } from "@/shared/auth/loginRedirect";
+
+/** Su 401 significa "credenciales incorrectas", no "sesión caducada". */
+const LOGIN_ENDPOINT = "/api/auth/login";
 
 function isDemoAuthEnabledOnClient() {
   return process.env.NEXT_PUBLIC_ALLOW_DEMO_AUTH === "true";
@@ -53,6 +57,10 @@ function buildUrl(path: string, query?: ApiFetchOptions["query"]) {
   });
 
   return `${url.pathname}${url.search}`;
+}
+
+function isLoginRequest(path: string) {
+  return new URL(path, "http://localhost").pathname === LOGIN_ENDPOINT;
 }
 
 async function readJson<TPayload>(response: Response): Promise<TPayload | null> {
@@ -149,6 +157,12 @@ export async function apiFetch<TData>(
       ? await readJson<ApiErrorResponse>(response)
       : null;
     const error = payload?.error;
+
+    // Sesión caducada: al login con `next`, una sola vez aunque fallen varias
+    // peticiones a la vez. El error se lanza igual para quien hizo la petición.
+    if (response.status === 401 && !isLoginRequest(path)) {
+      redirectToLoginOnSessionExpired();
+    }
 
     const isHtmlNotFound =
       response.status === 404 &&

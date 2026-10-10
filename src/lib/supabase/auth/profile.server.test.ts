@@ -113,6 +113,43 @@ describe("getAuthProfileFromSession", () => {
     await expect(getAuthProfileFromSession()).resolves.toBeNull();
   });
 
+  it.each([
+    ["refresh token not found", { code: "refresh_token_not_found", message: "Invalid Refresh Token: Refresh Token Not Found", name: "AuthApiError", status: 400 }],
+    ["refresh token already used", { code: "refresh_token_already_used", message: "Invalid Refresh Token: Already Used", name: "AuthApiError", status: 400 }],
+    ["legacy invalid refresh token without code", { message: "Invalid Refresh Token: Refresh Token Not Found", name: "AuthApiError", status: 400 }],
+    ["expired session", { code: "session_expired", message: "Session expired", name: "AuthApiError", status: 400 }],
+    ["missing session", { message: "Auth session missing!", name: "AuthSessionMissingError", status: 400 }],
+  ])(
+    "answers unauthenticated for a cookie session with an expired access token and %s",
+    async (_label, error) => {
+      const getUser = jest.fn(async () => ({ data: { user: null }, error }));
+      mockedCreateClient.mockResolvedValue(
+        buildSupabaseStub(getUser) as unknown as Awaited<
+          ReturnType<typeof createRouteSupabaseClient>
+        >,
+      );
+      withAuthorization();
+
+      // POS-H3: antes un 400 del refresh escalaba a 500.
+      await expect(getAuthProfileFromSession()).resolves.toBeNull();
+    },
+  );
+
+  it("surfaces a network failure while refreshing as a server error, not as unauthenticated", async () => {
+    const getUser = jest.fn(async () => ({
+      data: { user: null },
+      error: { message: "fetch failed", name: "AuthRetryableFetchError", status: 0 },
+    }));
+    mockedCreateClient.mockResolvedValue(
+      buildSupabaseStub(getUser) as unknown as Awaited<
+        ReturnType<typeof createRouteSupabaseClient>
+      >,
+    );
+    withAuthorization();
+
+    await expect(getAuthProfileFromSession()).rejects.toMatchObject({ status: 500 });
+  });
+
   it("still surfaces a real Supabase outage as an error", async () => {
     const getUser = jest.fn(async () => ({
       data: { user: null },

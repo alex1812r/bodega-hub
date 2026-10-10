@@ -5,7 +5,7 @@
 import { getAuthProfileFromSession } from "@/lib/supabase/auth/profile.server";
 
 import { ApiError } from "@/lib/api/apiError";
-import { requirePermission } from "@/lib/api/requirePermission";
+import { requirePermission, requireStoreAnyPermission } from "@/lib/api/requirePermission";
 
 describe("requirePermission", () => {
   const originalDemoAuth = process.env.ALLOW_DEMO_AUTH;
@@ -151,6 +151,31 @@ describe("requirePermission", () => {
       expect(auth.userId).toBe("22222222-2222-4222-8222-222222222222");
       expect(auth.permissions).toContain("contacts.manage");
       expect(auth.permissions).not.toContain("payments.view");
+    });
+  });
+});
+
+describe("POS-H3 · mensaje del 401", () => {
+  const originalDemoAuth = process.env.ALLOW_DEMO_AUTH;
+
+  afterEach(() => {
+    process.env.ALLOW_DEMO_AUTH = originalDemoAuth;
+  });
+
+  it.each([
+    ["requirePermission", (request: Request) => requirePermission(request, "products.view")],
+    [
+      "requireStoreAnyPermission",
+      (request: Request) => requireStoreAnyPermission(request, ["products.view"]),
+    ],
+  ])("%s rechaza sin sesión con el 401 compartido", async (_label, guard) => {
+    process.env.ALLOW_DEMO_AUTH = "false";
+    (getAuthProfileFromSession as jest.Mock).mockResolvedValue(null);
+
+    await expect(guard(new Request("http://localhost/api/products"))).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      message: "Debes iniciar sesión para continuar.",
+      status: 401,
     });
   });
 });

@@ -53,8 +53,8 @@ export function LoginPage() {
           <CardContent>
             <LoginForm
               errorMessage={errorMessage}
-              isSubmitting={login.isPending}
-              onSubmit={(values) => login.mutate(values)}
+              isSubmitting={login.isPending || login.isSuccess}
+              onSubmit={login.submit}
             />
           </CardContent>
         </Card>
