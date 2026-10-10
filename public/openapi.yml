@@ -26,43 +26,467 @@ tags:
   - name: Auth
   - name: Docs
   - name: Assistant
+  - name: Platform
+  - name: Cash
+  - name: Vault
+  - name: Search
 paths:
   /api/cash/registers:
-    get: { summary: Listar cajas registradoras }
-    post: { summary: Crear caja registradora }
+    get:
+      tags: [Cash]
+      summary: Listar cajas registradoras
+      description: Cajas de la tienda de la sesión, por nombre, con el usuario asignado.
+      x-permission: cash.view
+      responses:
+        "200":
+          description: Cajas registradoras de la tienda
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CashRegister"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Cash]
+      summary: Crear caja registradora
+      x-permission: cash.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 120 }
+      responses:
+        "201":
+          $ref: "#/components/responses/CashRegisterResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Ya existe una caja con ese nombre en la tienda
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/cash/registers/{id}:
-    get: { summary: Obtener caja registradora }
-    patch: { summary: Actualizar caja registradora }
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Cash]
+      summary: Obtener caja registradora
+      x-permission: cash.view
+      responses:
+        "200":
+          $ref: "#/components/responses/CashRegisterResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Cash]
+      summary: Actualizar caja registradora
+      description: Renombra, activa o desactiva la caja, o cambia el usuario asignado (`assignedUserId` en `null` la deja sin asignar).
+      x-permission: cash.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                assignedUserId: { type: string, nullable: true }
+                assignedUserName: { type: string, nullable: true }
+                isActive: { type: boolean }
+                name: { type: string, minLength: 1 }
+      responses:
+        "200":
+          $ref: "#/components/responses/CashRegisterResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: El usuario ya tiene otra caja activa asignada, o el nombre ya existe
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/cash/registers/{id}/last-untransferred-closure:
-    get: { summary: Ultimo cierre de caja no transferido al baul }
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Cash]
+      summary: Último cierre de caja no transferido al baúl
+      description: El turno cerrado más reciente de la caja que aún no se transfirió al baúl, o `null` si no hay ninguno.
+      x-permission: cash.operate
+      responses:
+        "200":
+          $ref: "#/components/responses/CashSessionNullableResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/cash/registers/{id}/sessions:
-    get: { summary: Historial de sesiones de una caja registradora }
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Cash]
+      summary: Historial de sesiones de una caja registradora
+      description: >-
+        Turnos de la caja, del más reciente al más antiguo. El turno abierto incluye `liveTotals`. Una caja inexistente
+        o de otra tienda responde una lista vacía.
+      x-permission: cash.view
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Cantidad de turnos. Un valor no numérico o menor o igual que 0 usa 20; por encima de 50 se recorta a 50.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          $ref: "#/components/responses/CashSessionArrayResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/cash/session:
-    get: { summary: Obtener sesión de caja actual }
+    get:
+      tags: [Cash]
+      summary: Obtener sesión de caja actual
+      description: Turno abierto del usuario de la sesión, con `liveTotals`, o `null` si no tiene ninguno.
+      x-permission: cash.view
+      responses:
+        "200":
+          $ref: "#/components/responses/CashSessionNullableResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/cash/session/open:
-    get: { summary: Listar sesiones abiertas }
-    post: { summary: Abrir sesión de caja }
+    get:
+      tags: [Cash]
+      summary: Listar sesiones abiertas
+      description: Todos los turnos abiertos de la tienda, cada uno con `liveTotals`.
+      x-permission: cash.manage
+      responses:
+        "200":
+          $ref: "#/components/responses/CashSessionArrayResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Cash]
+      summary: Abrir sesión de caja
+      description: >-
+        RPC `open_cash_session` cuando `API_DATA_SOURCE=supabase`: sus rechazos (por ejemplo, la caja ya tiene un turno
+        abierto) responden 400 con el mensaje del RPC. Con datos mock, una caja que no está asignada al usuario
+        responde 403.
+      x-permission: cash.operate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [registerId]
+              properties:
+                registerId: { type: string, minLength: 1 }
+                openingRef: { type: number, minimum: 0, default: 0 }
+                openingVes: { type: number, minimum: 0, default: 0 }
+      responses:
+        "201":
+          $ref: "#/components/responses/CashSessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/cash/session/close:
-    post: { summary: Cerrar sesión de caja }
+    post:
+      tags: [Cash]
+      summary: Cerrar sesión de caja
+      description: >-
+        Cierra quien opera caja (`cash.operate`). Quien no tiene ese permiso pero administra cajas (`cash.manage`)
+        puede cerrar SOLO su propio turno abierto: con el `sessionId` de un turno ajeno, o sin turno abierto, responde
+        403. Es el caso del administrador al que se le apagó «El administrador puede vender» con un turno abierto. RPC
+        `close_cash_session` cuando `API_DATA_SOURCE=supabase`: sus rechazos (por ejemplo, el turno ya está cerrado)
+        responden 400 con el mensaje del RPC. Con datos mock, un turno inexistente responde 404 y el de una caja
+        asignada a otro usuario 403.
+      x-permission: cash.operate | cash.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, closingRef, closingVes]
+              properties:
+                sessionId: { type: string, minLength: 1 }
+                closingRef: { type: number, minimum: 0, description: USD contados en la gaveta }
+                closingVes: { type: number, minimum: 0, description: Bs. en efectivo contados en la gaveta }
+      responses:
+        "200":
+          $ref: "#/components/responses/CashSessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Sin `cash.operate` ni `cash.manage`, o con solo `cash.manage` y un turno que no es el propio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Sesión de caja no encontrada (solo con datos mock)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/cash/movements:
-    get: { summary: Listar movimientos de caja }
+    get:
+      tags: [Cash]
+      summary: Listar movimientos de caja
+      x-permission: cash.view
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          description: Turno del que se listan los movimientos. Sin él responde 400.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Movimientos del turno
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CashMovement"
+        "400":
+          description: Falta `sessionId`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Sesión de caja no encontrada en la tienda
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/cash/closures/pending:
-    get: { summary: Listar cierres de caja pendientes de transferir al baul }
+    get:
+      tags: [Cash]
+      summary: Listar cierres de caja pendientes de transferir al baúl
+      description: Turnos cerrados de la tienda sin transferir al baúl, para elegirlos en `POST /api/vault/transfers-from-cash`.
+      x-permission: vault.manage
+      responses:
+        "200":
+          $ref: "#/components/responses/CashSessionArrayResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/cash/closures/untransferred:
-    get: { summary: Listar cierres de caja sin transferir al baul (incluye historicos absorbidos) }
+    get:
+      tags: [Cash]
+      summary: Listar cierres de caja sin transferir al baúl (incluye históricos absorbidos)
+      x-permission: cash.manage
+      responses:
+        "200":
+          $ref: "#/components/responses/CashSessionArrayResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/cron/cash-sessions/auto-close:
-    get: { summary: Cerrar sesiones de caja vencidas (medianoche Caracas o 24 h) }
-    post: { summary: Cerrar sesiones de caja vencidas (medianoche Caracas o 24 h) }
+    get:
+      tags: [Cash]
+      summary: Cerrar sesiones de caja vencidas (medianoche Caracas o 24 h)
+      description: >-
+        Tarea programada, sin sesión de usuario. Se autentica con el secreto `CRON_SECRET` en
+        `Authorization: Bearer <secreto>` o en la cabecera `x-cron-secret`.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/CashAutoCloseResponse"
+        "401":
+          $ref: "#/components/responses/CronUnauthorized"
+        "503":
+          $ref: "#/components/responses/CronSecretMissing"
+    post:
+      tags: [Cash]
+      summary: Cerrar sesiones de caja vencidas (medianoche Caracas o 24 h)
+      description: Igual que el GET, con la misma autenticación por `CRON_SECRET`. No lee cuerpo.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/CashAutoCloseResponse"
+        "401":
+          $ref: "#/components/responses/CronUnauthorized"
+        "503":
+          $ref: "#/components/responses/CronSecretMissing"
   /api/vault:
-    get: { summary: Obtener baúl de la tienda }
+    get:
+      tags: [Vault]
+      summary: Obtener baúl de la tienda
+      x-permission: vault.view
+      responses:
+        "200":
+          $ref: "#/components/responses/StoreVaultResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: La tienda no tiene baúl
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/vault/movements:
-    get: { summary: Listar movimientos del baúl }
+    get:
+      tags: [Vault]
+      summary: Listar movimientos del baúl
+      description: Todos los movimientos del baúl de la tienda, del más reciente al más antiguo.
+      x-permission: vault.view
+      responses:
+        "200":
+          description: Movimientos del baúl
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/VaultMovement"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: La tienda no tiene baúl
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/vault/deposits:
-    post: { summary: Registrar depósito en baúl }
+    post:
+      tags: [Vault]
+      summary: Registrar depósito en baúl
+      description: Suma efectivo al baúl (RPC `register_vault_deposit`). Responde 200 con el baúl actualizado, no 201.
+      x-permission: vault.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VaultAmountInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/StoreVaultResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/vault/withdrawals:
-    post: { summary: Registrar retiro de baúl }
+    post:
+      tags: [Vault]
+      summary: Registrar retiro de baúl
+      description: Resta efectivo del baúl (RPC `register_vault_withdrawal`). Responde 200 con el baúl actualizado.
+      x-permission: vault.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VaultAmountInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/StoreVaultResponse"
+        "400":
+          description: >-
+            Solicitud inválida (cuerpo que no es JSON válido o montos que no cumplen el schema) o saldo insuficiente
+            en el baúl: en ese caso `error.code` es `INSUFFICIENT_VAULT_BALANCE`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/vault/transfers-from-cash:
-    post: { summary: Transferir efectivo desde caja }
+    post:
+      tags: [Vault]
+      summary: Transferir efectivo desde caja
+      description: >-
+        Pasa al baúl el efectivo contado de los cierres indicados (RPC `transfer_cash_closures_to_vault`). Los ids
+        repetidos se cuentan una vez. Un cierre que no está pendiente, o sin monto, responde 400.
+      x-permission: vault.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionIds]
+              properties:
+                sessionIds:
+                  type: array
+                  minItems: 1
+                  items: { type: string, minLength: 1 }
+                notes: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          $ref: "#/components/responses/StoreVaultResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/payroll/settings:
     get:
       tags: [Payroll]
@@ -387,6 +811,8 @@ paths:
           content:
             text/event-stream:
               schema: { type: string }
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           description: Sin sesion
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -953,6 +1379,8 @@ paths:
                       uploadUrl:
                         type: string
                         format: uri
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -1728,6 +2156,55 @@ paths:
                               $ref: "#/components/schemas/ProductPackConversionLinkedProduct"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/search:
+    get:
+      tags: [Search]
+      summary: Búsqueda global de la tienda (productos, ventas, compras y contactos)
+      description: >-
+        Buscador del encabezado. Exige sesión de tienda con al menos uno de `products.view`, `sales.view`,
+        `purchases.view` o `contacts.view`, y devuelve cada tipo solo si el rol tiene su permiso (`products` con
+        `products.view`, `sales` con `sales.view`, `purchases` con `purchases.view`, `contacts` con `contacts.view`);
+        los tipos sin permiso llegan como lista vacía. El vendedor solo recibe contactos de tipo `cliente`. Máximo 5
+        resultados por tipo. La tienda sale de la sesión, nunca del cliente.
+      x-permission: products.view | sales.view | purchases.view | contacts.view
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: >-
+            Término de búsqueda. Se normaliza antes de usarlo: se quitan los caracteres de control, los espacios
+            seguidos pasan a uno y se recorta. Con menos de 2 caracteres ya normalizado (o ausente, o formado solo por
+            comodines como `%`, `_`, `*`) responde 200 con los cuatro grupos vacíos, sin consultar. Con más de 80
+            caracteres responde 400.
+          schema:
+            type: string
+            maxLength: 80
+      responses:
+        "200":
+          description: Resultados agrupados por tipo
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/GlobalSearchResults"
+        "400":
+          description: "`q` supera los 80 caracteres"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: >-
+            Sin ninguno de los cuatro permisos de lectura, o superadmin de plataforma (no opera el ERP de una tienda)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/sales:
     get:
       tags: [Sales]
@@ -1774,6 +2251,10 @@ paths:
     post:
       tags: [Sales]
       summary: Crear venta simulada
+      description: >-
+        `clientRequestId` (uuid) es obligatorio: sin él, o si no es un uuid, responde 400. El descuento
+        (`discountRef`) se valida antes del RPC: no numérico, negativo o con más de 2 decimales responde 400; mayor
+        que cero con rol `vendedor` responde 403 (el vendedor no aplica descuentos, igual que en el POS).
       x-permission: sales.create
       requestBody:
         required: true
@@ -1789,9 +2270,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/SaleResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >-
+            Solicitud inválida: cuerpo que no es JSON válido, campos que no cumplen el schema (incluido
+            `clientRequestId` ausente o que no es uuid), descuento no numérico («El descuento debe ser un número
+            válido.»), negativo («El descuento no puede ser negativo.») o con más de 2 decimales («El descuento admite
+            como máximo 2 decimales.»), o rechazo de negocio del RPC.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: >-
+            Sin `sales.create`, o rol `vendedor` con `discountRef` mayor que cero («Tu rol no puede aplicar
+            descuentos a una venta. Pide a un administrador que la registre.»).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           $ref: "#/components/responses/IdempotencyConflict"
   /api/sales/by-request/{clientRequestId}:
@@ -2614,6 +3111,8 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/SupplierProductPackUnit"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -2647,6 +3146,8 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/SupplierProductPackUnit"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -2676,10 +3177,8 @@ paths:
     patch:
       tags: [SupplierProducts]
       summary: Desactivar relacion proveedor-producto
-      description: Baja logica via RPC `deactivate_supplier_product` (`is_active = false`). Conserva historial.
+      description: Baja logica via RPC `deactivate_supplier_product` (`is_active = false`). Conserva historial. No lee cuerpo.
       x-permission: products.manage
-      requestBody:
-        required: false
       responses:
         "200":
           description: Relacion desactivada
@@ -3740,6 +4239,48 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/settings/admin-can-sell:
+    get:
+      tags: [Settings]
+      summary: Estado de «El administrador puede vender»
+      description: >-
+        El interruptor no es un ajuste guardado: se deriva de los perfiles `admin` de la tienda. `enabled` es `true`
+        cuando hay al menos un administrador activo y TODOS los activos tienen concedidos `sales.create` y
+        `cash.operate`. `admins` lista solo los administradores activos, por nombre.
+      x-permission: users.manage
+      responses:
+        "200":
+          $ref: "#/components/responses/AdminCanSellResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [Settings]
+      summary: Encender o apagar «El administrador puede vender»
+      description: >-
+        Concede o retira `sales.create` y `cash.operate` a todos los perfiles `admin` de la tienda (también los
+        inactivos), sin tocar el resto de sus excepciones. Es idempotente. Un administrador que pierde `cash.operate`
+        con un turno abierto puede cerrarlo con `POST /api/cash/session/close`.
+      x-permission: users.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          $ref: "#/components/responses/AdminCanSellResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/settings/cash-close:
     get:
       tags: [Settings]
@@ -4230,6 +4771,10 @@ paths:
     patch:
       tags: [Users]
       summary: Actualizar perfil mock
+      description: >-
+        Cambia nombre, rol, estado (`isActive`) o excepciones de permisos de un usuario de la tienda. Desactivar se
+        hace aquí con `isActive: false` (no hay DELETE). La tienda debe conservar al menos un administrador activo:
+        quitar el rol `admin` o desactivar al único administrador activo responde 409.
       x-permission: users.manage
       requestBody:
         required: true
@@ -4242,10 +4787,20 @@ paths:
           $ref: "#/components/responses/UserProfileResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            El cambio dejaría la tienda sin ningún administrador activo. `error.code` es `CONFLICT` y
+            `error.message` «La tienda debe conservar al menos un administrador activo.»
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/auth/me:
     get:
       tags: [Auth]
@@ -4401,6 +4956,104 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Sin sesión válida (sin credencial, token caducado o manipulado)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    CronUnauthorized:
+      description: Secreto de cron ausente o incorrecto
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    CronSecretMissing:
+      description: "`CRON_SECRET` no está configurado en el servidor"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    CashRegisterResponse:
+      description: Caja registradora
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: "#/components/schemas/CashRegister"
+    CashSessionResponse:
+      description: Sesión (turno) de caja
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: "#/components/schemas/CashSession"
+    CashSessionNullableResponse:
+      description: Sesión (turno) de caja, o `null` si no hay ninguna
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                nullable: true
+                allOf:
+                  - $ref: "#/components/schemas/CashSession"
+    CashSessionArrayResponse:
+      description: Lista de sesiones (turnos) de caja
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CashSession"
+    CashAutoCloseResponse:
+      description: Turnos vencidos cerrados en esta ejecución
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: object
+                required: [closedCount, sessionIds]
+                properties:
+                  closedCount: { type: integer }
+                  sessionIds:
+                    type: array
+                    items: { type: string }
+    StoreVaultResponse:
+      description: Baúl de la tienda con sus saldos actualizados
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: "#/components/schemas/StoreVault"
+    AdminCanSellResponse:
+      description: Estado de «El administrador puede vender»
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: "#/components/schemas/AdminCanSellState"
     PayrollSettingsResponse:
       description: Parametros de nomina y empleados elegibles
       content:
@@ -5281,7 +5934,16 @@ components:
           properties:
             code:
               type: string
-              enum: [BAD_REQUEST, CONFLICT, FORBIDDEN, INTERNAL_ERROR, NOT_FOUND, UNAUTHORIZED]
+              enum:
+                - ASSISTANT_LIMIT_REACHED
+                - ASSISTANT_PROVIDER_ERROR
+                - BAD_REQUEST
+                - CONFLICT
+                - FORBIDDEN
+                - INSUFFICIENT_VAULT_BALANCE
+                - INTERNAL_ERROR
+                - NOT_FOUND
+                - UNAUTHORIZED
             message:
               type: string
             issues:
@@ -6392,6 +7054,10 @@ components:
         discountRef:
           type: number
           minimum: 0
+          default: 0
+          description: >-
+            Descuento en USD con 2 decimales como máximo. Negativo o con más decimales responde 400; mayor que cero con
+            rol `vendedor` responde 403.
         taxRef:
           type: number
           minimum: 0
@@ -7340,6 +8006,188 @@ components:
             Semaforo de ganancia y chips de %. Se envia completo (los tres campos). Umbrales
             invertidos o iguales, chips repetidos, fuera de rango o mas de 6 responden 400 con el
             motivo en español en `error.message`.
+    CashRegister:
+      type: object
+      required: [id, name, isActive, storeId, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        isActive: { type: boolean }
+        storeId: { type: string }
+        assignedUserId: { type: string, nullable: true }
+        assignedUserName: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CashSessionLiveTotals:
+      type: object
+      description: Saldos vivos de un turno abierto (lo que hay en la caja antes de cerrarla).
+      required: [accountVes, cashRef, cashVes]
+      properties:
+        accountVes:
+          type: number
+          description: Bs. cobrados en cuenta durante el turno (pago móvil, transferencia y punto).
+        cashRef:
+          type: number
+          description: USD físicos en la gaveta (fondo de apertura más ventas en efectivo).
+        cashVes:
+          type: number
+          description: Bs. físicos en la gaveta (fondo de apertura más ventas en efectivo).
+    CashSession:
+      type: object
+      required: [id, registerId, register, status, openedAt, openingRef, openingVes]
+      properties:
+        id: { type: string }
+        registerId: { type: string }
+        register:
+          $ref: "#/components/schemas/CashRegister"
+        status: { type: string, enum: [open, closed] }
+        openedAt: { type: string, format: date-time }
+        openingRef: { type: number }
+        openingVes: { type: number }
+        closedAt: { type: string, format: date-time, nullable: true }
+        closedReason:
+          type: string
+          nullable: true
+          enum: [manual, end_of_day, max_24h]
+        closingRef: { type: number, nullable: true }
+        closingVes: { type: number, nullable: true }
+        theoreticalClosingRef:
+          type: number
+          nullable: true
+          description: "`null` en un turno abierto o en un cierre histórico sin teórico guardado."
+        theoreticalClosingVes: { type: number, nullable: true }
+        vaultTransferredAt: { type: string, format: date-time, nullable: true }
+        absorbedBySessionId: { type: string, nullable: true }
+        liveTotals:
+          nullable: true
+          description: Solo en turnos abiertos.
+          allOf:
+            - $ref: "#/components/schemas/CashSessionLiveTotals"
+    CashMovement:
+      type: object
+      required: [id, sessionId, type, amountRef, amountVes, createdAt]
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        type:
+          type: string
+          enum: [sale_in, transfer_out, opening, adjustment, refund_out, account_in, account_out, change_out]
+        amountRef: { type: number }
+        amountVes: { type: number }
+        notes: { type: string, nullable: true }
+        paymentId: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    StoreVault:
+      type: object
+      required: [id, storeId, balanceRef, balanceEfectivoVes, balanceVes, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        storeId: { type: string }
+        balanceRef: { type: number, description: USD en efectivo. }
+        balanceEfectivoVes: { type: number, description: Efectivo físico en Bs. }
+        balanceVes: { type: number, description: Saldo de cuenta en Bs. (pago móvil, transferencia, punto). }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    VaultMovement:
+      type: object
+      required: [id, vaultId, type, bucket, amountRef, amountVes, createdAt]
+      properties:
+        id: { type: string }
+        vaultId: { type: string }
+        type:
+          type: string
+          enum: [transfer_in, purchase_out, deposit, withdrawal, adjustment, sale_in, payroll_out]
+        bucket: { type: string, enum: [efectivo, cuenta] }
+        amountRef: { type: number }
+        amountVes: { type: number }
+        notes: { type: string, nullable: true }
+        fromSessionId: { type: string, nullable: true }
+        paymentId: { type: string, nullable: true }
+        payrollItemId: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    VaultAmountInput:
+      type: object
+      description: Al menos uno de los dos montos debe ser mayor que cero.
+      required: [amountRef, amountVes]
+      properties:
+        amountRef: { type: number, minimum: 0 }
+        amountVes: { type: number, minimum: 0 }
+        notes: { type: string, maxLength: 500 }
+    AdminCanSellState:
+      type: object
+      required: [enabled, admins]
+      properties:
+        enabled:
+          type: boolean
+          description: Todos los administradores activos pueden vender y operar caja.
+        admins:
+          type: array
+          description: Administradores activos de la tienda, por nombre.
+          items:
+            type: object
+            required: [id, name, canSell]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              canSell:
+                type: boolean
+                description: Tiene concedidos `sales.create` y `cash.operate`.
+    GlobalSearchResults:
+      type: object
+      description: Hasta 5 resultados por tipo. Un tipo sin permiso llega como lista vacía.
+      required: [products, sales, purchases, contacts]
+      properties:
+        products:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            required: [id, name, sku, barcode]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              sku: { type: string }
+              barcode: { type: string, nullable: true }
+        sales:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            required: [id, number, status, totalRef, createdAt, customerName]
+            properties:
+              id: { type: string }
+              number: { type: string }
+              status:
+                $ref: "#/components/schemas/SaleStatus"
+              totalRef: { type: number }
+              createdAt: { type: string, format: date-time }
+              customerName: { type: string, nullable: true }
+        purchases:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            required: [id, number, status, totalRef, createdAt, supplierName]
+            properties:
+              id: { type: string }
+              number: { type: string }
+              status:
+                $ref: "#/components/schemas/PurchaseStatus"
+              totalRef: { type: number }
+              createdAt: { type: string, format: date-time }
+              supplierName: { type: string, nullable: true }
+        contacts:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            required: [id, name, type, taxId]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              type:
+                $ref: "#/components/schemas/ContactType"
+              taxId: { type: string, nullable: true }
     LoginInput:
       type: object
       required: [email, password]
