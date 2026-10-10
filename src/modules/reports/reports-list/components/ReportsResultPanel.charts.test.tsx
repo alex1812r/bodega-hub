@@ -28,6 +28,7 @@ import {
 } from "../config/reportCatalog";
 import { getGroupingNotice } from "./ReportSeriesChart";
 import { ReportsResultPanel, type ReportPagination } from "./ReportsResultPanel";
+import { REPORTS_TABLE_OPEN_KEY } from "../hooks/useSessionSectionOpen";
 
 type MockResponse = { data?: unknown; error?: Error | null; isLoading?: boolean };
 
@@ -181,6 +182,8 @@ describe("ReportsResultPanel · gráficos (REP-04)", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // GQ-02: «Tabla de datos» abre plegada. Estos casos leen la tabla: parten de una sesión que la dejó desplegada.
+    window.sessionStorage.setItem(REPORTS_TABLE_OPEN_KEY, "open");
 
     for (const key of Object.keys(mockResponses)) {
       delete mockResponses[key];
@@ -745,12 +748,22 @@ describe("ReportsResultPanel · gráficos (REP-04)", () => {
       );
     }
 
-    it("en escritorio abre desplegada y se puede plegar; plegada resume los resultados", async () => {
+    // GQ-02 (plan §4.9 REP-04 y §6.10): plegada por defecto en todos los anchos.
+    it("en escritorio abre plegada, resume los resultados y se despliega y pliega al pulsar", async () => {
+      // Sesión nueva: sin estado recordado.
+      window.sessionStorage.removeItem(REPORTS_TABLE_OPEN_KEY);
       const user = userEvent.setup();
       mockResponses["top-customers"] = { data: rows(35) };
       renderPanel("top-customers");
 
       const toggle = screen.getByRole("button", { name: /Tabla de datos/ });
+
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(screen.getByText("Resultados: Top clientes")).not.toBeVisible();
+      expect(within(toggle).getByText("Mostrando 1-10 de 35 registros")).toBeInTheDocument();
+      expect(within(chartRegion("top-customers")).getByRole("img")).toBeInTheDocument();
+
+      await user.click(toggle);
 
       expect(toggle).toHaveAttribute("aria-expanded", "true");
       expect(screen.getByText("Resultados: Top clientes")).toBeVisible();
@@ -759,11 +772,11 @@ describe("ReportsResultPanel · gráficos (REP-04)", () => {
 
       expect(toggle).toHaveAttribute("aria-expanded", "false");
       expect(screen.getByText("Resultados: Top clientes")).not.toBeVisible();
-      expect(within(toggle).getByText("Mostrando 1-10 de 35 registros")).toBeInTheDocument();
-      expect(within(chartRegion("top-customers")).getByRole("img")).toBeInTheDocument();
     });
 
     it("en móvil abre plegada, con el gráfico a la vista, y se despliega al pulsar", async () => {
+      // Sesión nueva: sin estado recordado.
+      window.sessionStorage.removeItem(REPORTS_TABLE_OPEN_KEY);
       const user = userEvent.setup();
       setViewport("mobile");
       mockResponses["top-customers"] = { data: rows(35) };

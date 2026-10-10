@@ -14,6 +14,7 @@ import userEvent from "@testing-library/user-event";
 
 import * as reportsHooks from "../hooks/useReports";
 import { REPORT_IDS, storeReportCatalog as reportCatalog, type ReportId } from "./config/reportCatalog";
+import { REPORTS_TABLE_OPEN_KEY } from "./hooks/useSessionSectionOpen";
 
 type PageRequest = { limit?: number; skip?: number };
 
@@ -239,6 +240,8 @@ describe("ReportsListPage · REP-03", () => {
     jest.clearAllMocks();
     // Cada prueba es una sesión nueva: el catálogo y la tabla abren en su estado por defecto.
     window.sessionStorage.clear();
+    // GQ-02: «Tabla de datos» abre plegada. Estos casos leen la tabla: parten de una sesión que la dejó desplegada.
+    window.sessionStorage.setItem(REPORTS_TABLE_OPEN_KEY, "open");
     for (const key of Object.keys(mockTotals)) {
       delete mockTotals[key];
     }

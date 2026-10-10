@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import * as reportsHooks from "../../hooks/useReports";
 import { reportCatalog, type ReportDefinition } from "../config/reportCatalog";
 import { ReportsResultPanel, type ReportPagination } from "./ReportsResultPanel";
+import { REPORTS_TABLE_OPEN_KEY } from "../hooks/useSessionSectionOpen";
 
 type PageRequest = { limit?: number; skip?: number };
 
@@ -117,7 +118,9 @@ describe("ReportsResultPanel", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    // Escritorio: la paginación muestra los botones de página y la tabla abre desplegada.
+    // GQ-02: «Tabla de datos» abre plegada. Estos casos leen la tabla: parten de una sesión que la dejó desplegada.
+    window.sessionStorage.setItem(REPORTS_TABLE_OPEN_KEY, "open");
+    // Escritorio: la paginación muestra los botones de página.
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: (query: string) => ({

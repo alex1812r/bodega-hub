@@ -13,6 +13,7 @@ import { dateRangeChip, dateRangeLabel } from "@/shared/components/DateRangeFiel
 import * as inventoryHooks from "../hooks/useInventoryReports";
 import * as reportsHooks from "../hooks/useReports";
 import type { StockAdjustmentInput } from "../services/inventoryReports";
+import { REPORTS_TABLE_OPEN_KEY } from "./hooks/useSessionSectionOpen";
 
 type AdjustmentsRequest = {
   from?: string;
@@ -147,7 +148,9 @@ describe("ReportsListPage · detalle → Volver y recarga (INT-05, DET-06 nº 12
 
   beforeEach(() => {
     jest.clearAllMocks();
-    // Escritorio: la paginación muestra sus botones y la tabla abre desplegada.
+    // GQ-02: «Tabla de datos» abre plegada. Estos casos leen la tabla: parten de una sesión que la dejó desplegada.
+    window.sessionStorage.setItem(REPORTS_TABLE_OPEN_KEY, "open");
+    // Escritorio: la paginación muestra sus botones.
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: (query: string) => ({

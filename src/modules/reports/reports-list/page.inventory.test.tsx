@@ -16,6 +16,7 @@ import * as inventoryHooks from "../hooks/useInventoryReports";
 import * as reportsHooks from "../hooks/useReports";
 import type { DeadStockReport, DeadStockRow } from "../services/inventoryReports";
 import { inventoryReportCatalog, storeReportCatalog } from "./config/reportCatalog";
+import { REPORTS_TABLE_OPEN_KEY } from "./hooks/useSessionSectionOpen";
 
 type DeadStockRequest = { categoryId?: string; days?: number; limit?: number; skip?: number };
 
@@ -204,11 +205,13 @@ describe("ReportsListPage · reportes de inventario (REP-07b)", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // GQ-02: «Tabla de datos» abre plegada. Estos casos leen la tabla: parten de una sesión que la dejó desplegada.
+    window.sessionStorage.setItem(REPORTS_TABLE_OPEN_KEY, "open");
     mockRole = "admin";
     mockIsLoading = false;
     mockRemoved = [];
     mockDeadStockTotal = 35;
-    // Escritorio: la paginación muestra sus botones, el catálogo no se pliega y la tabla abre desplegada.
+    // Escritorio: la paginación muestra sus botones, el catálogo no se pliega.
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: (query: string) => ({

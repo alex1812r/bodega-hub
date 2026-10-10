@@ -215,7 +215,7 @@ describe("ReportsListPage · scroll al volver de un detalle (POS-H7)", () => {
     mockTopProducts = mockEmpty;
     mockStockAdjustments = mockPending;
     mockDeniedPermissions = [];
-    // Escritorio: el catálogo no se pliega al elegir y la tabla abre desplegada.
+    // Escritorio: el catálogo no se pliega al elegir.
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: (query: string) => ({
@@ -428,13 +428,17 @@ describe("ReportsListPage · scroll al volver de un detalle (POS-H7)", () => {
       expect(back.openSectionsWhenApplied).toEqual([["tabla"]]);
     });
 
-    it("escritorio: «Tabla de datos» plegada a mano vuelve plegada", async () => {
+    // GQ-02: en escritorio también nace plegada (plan §4.9 REP-04 y §6.10).
+    it("escritorio: «Tabla de datos» nace plegada; desplegada y vuelta a plegar a mano, vuelve plegada", async () => {
       const user = userEvent.setup();
 
       mockDailySales = mockWithRows;
 
       const list = renderPage(DAILY_SALES_URL);
 
+      expect(tableToggle()).toHaveAttribute("aria-expanded", "false");
+
+      await user.click(tableToggle());
       expect(tableToggle()).toHaveAttribute("aria-expanded", "true");
 
       await user.click(tableToggle());
@@ -446,6 +450,24 @@ describe("ReportsListPage · scroll al volver de un detalle (POS-H7)", () => {
       expect(tableToggle()).toHaveAttribute("aria-expanded", "false");
       expect(back.applied).toEqual([240]);
       expect(back.openSectionsWhenApplied).toEqual([[]]);
+    });
+
+    it("escritorio: «Tabla de datos» desplegada a mano vuelve desplegada", async () => {
+      const user = userEvent.setup();
+
+      mockDailySales = mockWithRows;
+
+      const list = renderPage(DAILY_SALES_URL);
+
+      await user.click(tableToggle());
+      list.scrollTo(1772);
+      list.view.unmount();
+
+      const back = renderPage(DAILY_SALES_URL);
+
+      expect(tableToggle()).toHaveAttribute("aria-expanded", "true");
+      expect(back.applied).toEqual([1772]);
+      expect(back.openSectionsWhenApplied).toEqual([["tabla"]]);
     });
 
     it("escritorio: tras cambiar de reporte por el catálogo, el catálogo vuelve desplegado y se restaura sobre él", async () => {
@@ -469,7 +491,7 @@ describe("ReportsListPage · scroll al volver de un detalle (POS-H7)", () => {
 
       expect(catalogToggle()).toHaveAttribute("aria-expanded", "true");
       expect(back.applied).toEqual([2134]);
-      expect(back.openSectionsWhenApplied).toEqual([["catálogo", "tabla"]]);
+      expect(back.openSectionsWhenApplied).toEqual([["catálogo"]]);
     });
 
     it("móvil: elegir un reporte pliega el catálogo y así vuelve", async () => {
@@ -505,6 +527,9 @@ describe("ReportsListPage · scroll al volver de un detalle (POS-H7)", () => {
       mockDailySales = mockWithRows;
 
       renderPage(DAILY_SALES_URL);
+
+      await user.click(tableToggle());
+      expect(tableToggle()).toHaveAttribute("aria-expanded", "true");
 
       await user.click(tableToggle());
       expect(tableToggle()).toHaveAttribute("aria-expanded", "false");

@@ -26,6 +26,7 @@ import { getReportById, type ReportId } from "../../config/reportCatalog";
 import type { InventoryReportFilters } from "../../reportsListParams";
 import type { ReportPagination } from "../ReportTable";
 import { InventoryReportPanel } from "./InventoryReportPanel";
+import { REPORTS_TABLE_OPEN_KEY } from "../../hooks/useSessionSectionOpen";
 
 type QueryState = { data?: unknown; error?: Error | null; isFetching?: boolean; isLoading?: boolean };
 
@@ -339,6 +340,8 @@ describe("InventoryReportPanel · REP-07b", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // GQ-02: «Tabla de datos» abre plegada. Estos casos leen la tabla: parten de una sesión que la dejó desplegada.
+    window.sessionStorage.setItem(REPORTS_TABLE_OPEN_KEY, "open");
     mockRole = "admin";
     mockIsLoading = false;
     mockRemoved = [];
@@ -714,8 +717,11 @@ describe("InventoryReportPanel · REP-07b", () => {
       expect(mockRefetch).toHaveBeenCalledTimes(1);
     });
 
-    it("390 px: la tabla abre plegada bajo el gráfico", () => {
-      setViewport("mobile");
+    // GQ-02: plegada por defecto en todos los anchos.
+    it.each(["mobile", "desktop"] as const)("%s: la tabla abre plegada bajo el gráfico", (viewport) => {
+      // Sesión nueva: sin estado recordado.
+      window.sessionStorage.removeItem(REPORTS_TABLE_OPEN_KEY);
+      setViewport(viewport);
       mockQueries.useDeadStockReport = { data: deadStock() };
       renderPanel("dead-stock");
 

@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 
 import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
 
-import { useIsNarrowViewport } from "../hooks/useIsNarrowViewport";
 import { REPORTS_TABLE_OPEN_KEY, useSessionSectionOpen } from "../hooks/useSessionSectionOpen";
 
 type ReportTableSectionProps = {
@@ -14,14 +13,13 @@ type ReportTableSectionProps = {
 };
 
 /**
- * Tabla de un reporte con gráfico, debajo de él y plegable. En escritorio abre
- * desplegada (gráfico y detalle caben a la vez); en móvil abre plegada para que
- * el gráfico no quede a varias pantallas de los filtros. Lo que el usuario elija
- * se recuerda durante la sesión: al volver de un detalle la tabla está como la dejó.
+ * Tabla de un reporte con gráfico, debajo de él y plegable. Abre plegada en
+ * todos los anchos (plan §4.9 REP-04 y §6.10): el gráfico es la lectura
+ * principal y el detalle queda a un clic. Lo que el usuario elija se recuerda
+ * durante la sesión: al volver de un detalle la tabla está como la dejó.
  */
 export function ReportTableSection({ children, summary }: ReportTableSectionProps) {
-  const isNarrow = useIsNarrowViewport();
-  const [isOpen, setIsOpen] = useSessionSectionOpen(REPORTS_TABLE_OPEN_KEY, !isNarrow);
+  const [isOpen, setIsOpen] = useSessionSectionOpen(REPORTS_TABLE_OPEN_KEY, false);
 
   return (
     <CollapsibleSection onOpenChange={setIsOpen} open={isOpen} summary={summary} title="Tabla de datos">

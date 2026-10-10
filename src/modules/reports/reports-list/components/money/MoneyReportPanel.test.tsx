@@ -26,6 +26,7 @@ import { getReportById, type ReportId } from "../../config/reportCatalog";
 import type { MoneyReportFilters } from "../../reportsListParams";
 import type { ReportPagination } from "../ReportTable";
 import { MoneyReportPanel } from "./MoneyReportPanel";
+import { REPORTS_TABLE_OPEN_KEY } from "../../hooks/useSessionSectionOpen";
 
 type QueryState = { data?: unknown; error?: Error | null; isFetching?: boolean; isLoading?: boolean };
 
@@ -254,6 +255,8 @@ describe("MoneyReportPanel · REP-06b", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // GQ-02: «Tabla de datos» abre plegada. Estos casos leen la tabla: parten de una sesión que la dejó desplegada.
+    window.sessionStorage.setItem(REPORTS_TABLE_OPEN_KEY, "open");
     mockRole = "admin";
     mockIsLoading = false;
     mockRemoved = [];
