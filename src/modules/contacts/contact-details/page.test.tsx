@@ -102,6 +102,7 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
   /** Primera página de ventas/compras del contacto, como la devuelve `/api/contacts/:id/...`. */
   let contactSales: unknown[];
   let contactPurchases: unknown[];
+  let contactPayments: unknown[];
   /** Si está puesto, la lista de documentos con saldo de ese tipo viene vacía. */
   let settledTypes: string[];
 
@@ -111,6 +112,7 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
     contactType = "ambos";
     contactSales = [];
     contactPurchases = [];
+    contactPayments = [];
     settledTypes = [];
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -158,6 +160,10 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
 
       if (/\/api\/contacts\/[^/]+\/purchases/.test(href)) {
         return jsonResponse({ data: page(contactPurchases) });
+      }
+
+      if (/\/api\/contacts\/[^/]+\/payments/.test(href)) {
+        return jsonResponse({ data: page(contactPayments) });
       }
 
       if (/\/api\/contacts\/[^/]+\/(activity|sales|purchases|payments)/.test(href)) {
@@ -388,6 +394,58 @@ describe("ContactDetailsPage · pestaña Saldos (PAG-04b)", () => {
     expect(await screen.findByRole("tab", { name: "Pagos" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Saldos" })).not.toBeInTheDocument();
     expect(openDocumentTypes()).toEqual([]);
+  });
+
+  // GQ-05 (F7 + D56): la pestaña «Pagos» nombraba el documento solo como «Compra»/«Venta».
+  it("la pestaña Pagos nombra el documento por su número y lo enlaza con returnTo", async () => {
+    mockAuth.permissions = [...ADMIN_PERMISSIONS, "sales.view"];
+    contactPayments = [
+      {
+        amountVes: 5100,
+        createdAt: "2026-10-09T14:00:00.000Z",
+        direction: "salida",
+        id: "pay-c",
+        method: "efectivo_ves",
+        purchaseId: "pur-1",
+        relatedDocument: { href: "/purchases/pur-1", label: "#C-20261009-000007" },
+      },
+      {
+        amountVes: 2550,
+        createdAt: "2026-10-08T14:00:00.000Z",
+        direction: "entrada",
+        id: "pay-v",
+        method: "pago_movil",
+        relatedDocument: { href: "/sales/sale-9", label: "V-20261008-000031" },
+        saleId: "sale-9",
+      },
+      // Documento que la lista no pudo resolver: se nombra por su tipo, nunca por su id.
+      {
+        amountVes: 10,
+        createdAt: "2026-10-07T14:00:00.000Z",
+        direction: "entrada",
+        id: "pay-x",
+        method: "efectivo_ves",
+        saleId: "sale-oculta",
+      },
+    ];
+    renderPage();
+
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("tab", { name: "Pagos" }));
+
+    const purchase = await screen.findByRole("link", { name: "Ver la compra #C-20261009-000007" });
+
+    expect(purchase).toHaveTextContent("#C-20261009-000007");
+    expect(purchase.getAttribute("href")).toMatch(
+      /^\/purchases\/pur-1\?returnTo=%2Fcontacts%2Fcont-internal/,
+    );
+
+    const sale = screen.getByRole("link", { name: "Ver la venta V-20261008-000031" });
+
+    expect(sale).toHaveTextContent("V-20261008-000031");
+    expect(sale.getAttribute("href")).toMatch(/^\/sales\/sale-9\?returnTo=%2Fcontacts%2Fcont-internal/);
+    expect(screen.getByRole("link", { name: /^Ver la venta del pago del/ })).toHaveTextContent("Venta");
   });
 
   it("tras registrar un cobro se vuelven a leer los saldos y las metricas del contacto", async () => {

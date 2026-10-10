@@ -8,6 +8,8 @@ import {
   mockSales,
   type ContactMock,
 } from "@/shared/mocks/erp-data";
+import { resolvePaymentRelatedDocument } from "@/modules/payments/utils/resolvePaymentRelatedDocument";
+import { findMockPurchase } from "@/modules/purchases/services/purchaseMockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 export type ContactInput = Partial<
@@ -155,7 +157,22 @@ export function getContactPayments(
         (!payment.purchaseId && payment.direction !== "salida")),
   );
 
-  return paginateList(newestFirst(items), searchParams);
+  // Con el número de su venta o compra, como el servicio real.
+  return paginateList(
+    newestFirst(items).map((payment) => {
+      const purchase = payment.purchaseId ? findMockPurchase(payment.purchaseId) : undefined;
+
+      return {
+        ...payment,
+        relatedDocument: resolvePaymentRelatedDocument(
+          payment,
+          mockSales,
+          purchase ? [purchase] : [],
+        ),
+      };
+    }),
+    searchParams,
+  );
 }
 
 export function getContactActivity(

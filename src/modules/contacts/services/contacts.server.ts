@@ -18,6 +18,11 @@ import {
   toPaginatedList,
 } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
+import {
+  mapPaymentRelatedDocument,
+  PAYMENT_RELATED_DOCUMENT_SELECT,
+  type PaymentRelatedDocumentRow,
+} from "@/modules/payments/utils/resolvePaymentRelatedDocument";
 import { buildIlikeOrFilter } from "@/modules/products/services/productSearch";
 
 import type { ContactInput } from "./contacts.mock-server";
@@ -240,7 +245,8 @@ export async function getContactPayments(
   const buildQuery = (head: boolean) => {
     const query = supabase
       .from("payments")
-      .select("*", listCountOptions(head))
+      // Con el número de su venta o compra: la pestaña «Pagos» nombra el documento.
+      .select(`*, ${PAYMENT_RELATED_DOCUMENT_SELECT}`, listCountOptions(head))
       .eq("contact_id", id)
       .eq("store_id", storeId);
 
@@ -254,8 +260,12 @@ export async function getContactPayments(
 
   return toPaginatedList(
     searchParams,
-    result as { count: number | null; data: DbPaymentRow[] | null; error: unknown },
-    mapPayment,
+    result as {
+      count: number | null;
+      data: Array<DbPaymentRow & PaymentRelatedDocumentRow> | null;
+      error: unknown;
+    },
+    (row) => ({ ...mapPayment(row), relatedDocument: mapPaymentRelatedDocument(row) }),
   );
 }
 

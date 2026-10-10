@@ -4,6 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import type { UseQueryOptions } from "@tanstack/react-query";
 
 import type { PaginatedList, PaginationParams } from "@/lib/api/pagination";
+import type { PaymentRelatedDocument } from "@/modules/payments/utils/resolvePaymentRelatedDocument";
 import { apiFetch } from "@/shared/api/apiFetch";
 import type {
   ContactMock,
@@ -120,13 +121,16 @@ export function useContactPurchases(id?: string, pagination: PaginationParams = 
   });
 }
 
+/** Pago del contacto con el número y el enlace de su venta o compra. */
+export type ContactPaymentItem = PaymentMock & { relatedDocument?: PaymentRelatedDocument };
+
 export function useContactPayments(id?: string, pagination: PaginationParams = {}) {
   return useQuery({
     enabled: Boolean(id),
     placeholderData: keepPreviousData,
     queryKey: contactsQueryKeys.payments(id ?? "", pagination),
     queryFn: () =>
-      apiFetch<PaginatedList<PaymentMock>>(`/api/contacts/${id}/payments`, {
+      apiFetch<PaginatedList<ContactPaymentItem>>(`/api/contacts/${id}/payments`, {
         query: pagination,
       }),
   });

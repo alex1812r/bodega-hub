@@ -68,6 +68,30 @@ describe("contacts.mock-server · sublistas paginadas", () => {
     expect(second.items.some((item) => firstIds.has(item.id))).toBe(false);
   });
 
+  // GQ-05: la pestaña «Pagos» del contacto nombra el documento por su número.
+  it("pagos: cada pago trae el número y el enlace de su venta o compra", () => {
+    const all = params("limit=100");
+    const ofSales = mockPayments.find((payment) => payment.saleId === "sale-001");
+    const ofPurchases = mockPayments.find((payment) => payment.purchaseId === "purchase-001");
+    const salePayment = getContactPayments(ofSales?.contactId ?? "", all, DEFAULT_STORE_ID).items.find(
+      (payment) => payment.id === ofSales?.id,
+    );
+    const purchasePayment = getContactPayments(
+      ofPurchases?.contactId ?? "",
+      all,
+      DEFAULT_STORE_ID,
+    ).items.find((payment) => payment.id === ofPurchases?.id);
+
+    expect(salePayment?.relatedDocument).toEqual({
+      href: "/sales/sale-001",
+      label: expect.stringMatching(/^V-/),
+    });
+    expect(purchasePayment?.relatedDocument).toEqual({
+      href: "/purchases/purchase-001",
+      label: expect.stringMatching(/^#C-/),
+    });
+  });
+
   it("pagos: más allá del final no hay filas y el total se conserva", () => {
     const beyond = getContactPayments(CONTACT_ID, params("skip=99980&limit=10"), DEFAULT_STORE_ID);
 

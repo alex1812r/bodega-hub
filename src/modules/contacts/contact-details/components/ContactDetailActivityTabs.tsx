@@ -14,12 +14,12 @@ import { usePermission } from "@/shared/auth/usePermission";
 import type { DataTableColumn } from "@/shared/components/DataTable";
 import { type TabItem, Tabs } from "@/shared/components/Tabs";
 import { useReportReady } from "@/shared/hooks/useReportReady";
-import type { ContactType, PaymentMock, PurchaseMock, SaleMock } from "@/shared/mocks/erp-data";
+import type { ContactType, PurchaseMock, SaleMock } from "@/shared/mocks/erp-data";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDate } from "@/shared/utils/date";
 import { withChainedReturnTo } from "@/shared/utils/returnTo";
 
-import type { ContactActivityApiRow } from "../../hooks/useContacts";
+import type { ContactActivityApiRow, ContactPaymentItem } from "../../hooks/useContacts";
 import { CONTACT_DETAIL_TAB_PARAM, type ContactDetailTab } from "../hooks/contactDetailParams";
 import { useContactDetailUrl } from "../hooks/useContactDetailUrl";
 import {
@@ -201,7 +201,7 @@ function ContactPaymentsTab({ contactId, onReady }: ContactTabProps) {
   const canOpen = can("payments.view");
   const canOpenSales = can("sales.view");
   const canOpenPurchases = can("purchases.view");
-  const columns: DataTableColumn<PaymentMock>[] = [
+  const columns: DataTableColumn<ContactPaymentItem>[] = [
     {
       header: "Fecha",
       key: "createdAt",
@@ -225,8 +225,10 @@ function ContactPaymentsTab({ contactId, onReady }: ContactTabProps) {
       header: "Documento",
       key: "document",
       render: (row) => {
-        // La venta o compra que abona el pago. Esta lista no trae su número: se nombra por su tipo.
+        // La venta o compra que abona el pago, por su número (`V-…` / `C-…`). Si la
+        // lista no pudo leerlo (documento que el usuario no ve), se nombra por su tipo.
         const document = getPaymentDocument(row);
+        const kindLabel = document?.kind === "sale" ? "la venta" : "la compra";
 
         if (!document) {
           return <span className="text-on-surface-variant">—</span>;
@@ -236,7 +238,11 @@ function ContactPaymentsTab({ contactId, onReady }: ContactTabProps) {
 
         return canOpenDocument ? (
           <Link
-            aria-label={`Ver la ${document.label.toLowerCase()} del pago del ${formatDate(row.createdAt)}`}
+            aria-label={
+              row.relatedDocument
+                ? `Ver ${kindLabel} ${document.label}`
+                : `Ver ${kindLabel} del pago del ${formatDate(row.createdAt)}`
+            }
             className={linkClassName}
             href={withChainedReturnTo(document.href, list.href)}
           >

@@ -20,15 +20,18 @@ import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
 import type { PaymentDocumentBalance } from "../payment-details/types";
-import type { PaymentRelatedDocument } from "../utils/resolvePaymentRelatedDocument";
+import {
+  mapPaymentRelatedDocument,
+  PAYMENT_RELATED_DOCUMENT_SELECT,
+  type PaymentRelatedDocumentRow,
+} from "../utils/resolvePaymentRelatedDocument";
 import type { PaymentInput } from "./payments.mock-server";
 
 const PAYMENT_SELECT = `
   *,
   contact:contacts(id, type, name, tax_id, email, phone, address, is_active, created_at, updated_at),
   created_by_profile:profiles!payments_created_by_fkey(id, full_name),
-  sale:sales(id, invoice_number),
-  purchase:purchases(id, purchase_number)
+  ${PAYMENT_RELATED_DOCUMENT_SELECT}
 `;
 
 export type PaymentUpdateInput = {
@@ -43,30 +46,11 @@ type PaymentCreatedByProfile = {
   id: string;
 };
 
-type PaymentRowWithContact = DbPaymentRow & {
-  contact?: DbContactRow | null;
-  created_by_profile?: PaymentCreatedByProfile | PaymentCreatedByProfile[] | null;
-  purchase?: { id: string; purchase_number: string } | null;
-  sale?: { id: string; invoice_number: string } | null;
-};
-
-function mapPaymentRelatedDocument(row: PaymentRowWithContact): PaymentRelatedDocument | undefined {
-  if (row.sale?.id && row.sale.invoice_number) {
-    return {
-      href: `/sales/${row.sale.id}`,
-      label: row.sale.invoice_number,
-    };
-  }
-
-  if (row.purchase?.id && row.purchase.purchase_number) {
-    return {
-      href: `/purchases/${row.purchase.id}`,
-      label: formatPurchaseNumberDisplay(row.purchase.purchase_number),
-    };
-  }
-
-  return undefined;
-}
+type PaymentRowWithContact = DbPaymentRow &
+  PaymentRelatedDocumentRow & {
+    contact?: DbContactRow | null;
+    created_by_profile?: PaymentCreatedByProfile | PaymentCreatedByProfile[] | null;
+  };
 
 function mapCreatedByProfile(
   profile: PaymentCreatedByProfile | PaymentCreatedByProfile[] | null | undefined,
