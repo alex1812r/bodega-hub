@@ -64,8 +64,13 @@ Login (POST /api/auth/login)
   → AuthenticatedAppShell (menú + requiredPermission por página)
   → cada page.tsx envuelve con permiso mínimo del módulo
   → API valida requirePermission en cada request (401/403)
-  → query-client redirige a /login ante 401
+  → apiFetch redirige a /login?next=<pantalla actual> ante 401
 ```
+
+- **Sesión caducada:** una sesión rota (refresh token inválido, revocado o ya usado, JWT caducado o manipulado) responde 401 en toda ruta del BFF, nunca 500; el cliente y `src/proxy.ts` llevan a `/login?next=` y, tras entrar, se vuelve a la pantalla (solo rutas internas seguras).
+- **Login rechazado:** un usuario inactivo, sin perfil o bloqueado recibe 403 de `POST /api/auth/login` y no queda con sesión.
+
+Detalle en [`modules-catalog.md`](modules-catalog.md#sesión-caducada-y-login).
 
 | Pieza | Archivo |
 |-------|---------|
@@ -75,7 +80,8 @@ Login (POST /api/auth/login)
 | Shell autenticado | `src/shared/components/AppShell/AuthenticatedAppShell.tsx` |
 | Redirect entrada | `src/app/page.tsx` |
 | Proxy sesión | `src/proxy.ts` |
-| Handler 401 global | `src/lib/query/query-client.ts` |
+| Handler 401 global | `src/shared/api/apiFetch.ts` + `src/shared/auth/loginRedirect.ts` (`src/lib/query/query-client.ts` como red de seguridad) |
+| Clasificación de errores de sesión | `src/lib/supabase/auth/sessionErrors.ts` |
 
 La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 
@@ -243,7 +249,7 @@ with check (public.current_user_role() in ('admin', 'vendedor'));
 2. Login (`POST /api/auth/login`) → cookies → `useCurrentUser` invalida y carga perfil.
 3. `AuthenticatedAppShell` filtra menú con `permissions` efectivos de `/api/auth/me`.
 4. Cada `page.tsx` declara `requiredPermission`; componentes usan `Can` / `usePermission` donde aplica.
-5. La API valida `requirePermission` + RLS; 401 dispara redirect global en TanStack Query.
+5. La API valida `requirePermission` + RLS; un 401 dispara el redirect global a `/login?next=` (`apiFetch`).
 6. Logout (`POST /api/auth/logout`) limpia sesión, cache y redirige a `/login`.
 
 En dev con `ALLOW_DEMO_AUTH=true`, sin cookies se puede usar `x-demo-role` (ver sección demo).
@@ -273,7 +279,9 @@ Encendido, los administradores de la tienda tienen además `sales.create` y `cas
 
 ### A quién se asigna una caja
 
-El selector de **Cajas** y `PATCH /api/cash/registers/{id}` usan la misma regla (`canBeAssignedCashRegister` en `src/modules/cash/services/cashRegisterAssignee.ts`): usuario **activo** de la tienda con `cash.operate` **efectivo**. Son los vendedores, los administradores con el interruptor encendido y quien tenga el permiso concedido; un vendedor con `cash.operate` bloqueado queda fuera. Asignar a cualquier otro → 400. Desasignar, renombrar y activar o desactivar la caja no se validan.
+El selector de **Cajas** y `PATCH /api/cash/registers/{id}` usan la misma regla (`canBeAssignedCashRegister` en `src/modules/cash/services/cashRegisterAssignee.ts`): usuario **activo** de la tienda con `cash.operate` **efectivo**. Son los vendedores, los administradores con el interruptor encendido y quien tenga el permiso concedido; un vendedor con `cash.operate` bloqueado queda fuera. Asignar a cualquier otro → 400 «Solo se puede asignar la caja a un usuario activo de la tienda que pueda operar caja.». Desasignar, renombrar y activar o desactivar la caja no se validan.
+
+Cada usuario tiene como mucho **una caja activa asignada** por tienda: asignarle otra → 409 `CONFLICT` «Ese usuario ya tiene otra caja activa asignada. Desasígnala antes de asignarle esta.» (POS-F7; antes un 409 genérico). La pantalla Cajas («Usuario asignado») muestra el motivo del servidor en un `Toast` y el selector vuelve al valor real.
 
 Al apagar el interruptor **no se borran** las asignaciones: la caja sigue asignada al administrador (así puede cerrar su turno), Cajas lo sigue mostrando en el selector aunque ya no sea una opción elegible, y volver a asignársela responde 400 hasta encenderlo de nuevo.
 

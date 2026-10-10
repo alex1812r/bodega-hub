@@ -14,7 +14,8 @@ Contrato de breakpoints y patrones compartidos para móvil, tablet y desktop.
 
 | Componente | Ubicación | Uso |
 |------------|-----------|-----|
-| `AppShell` | `src/shared/components/AppShell/` | Sidebar desktop + `MobileNavDrawer` |
+| `AppShell` | `src/shared/components/AppShell/` | Sidebar desktop + `MobileNavDrawer`; en ambos el menú va en grupos colapsables (Operación, Dinero, Análisis, Configuración) |
+| `GlobalSearch` | `src/shared/components/AppShell/GlobalSearch.tsx` | Buscador del header: campo visible desde `sm`; por debajo (390 px) solo la lupa, que al pulsarla abre el campo a todo el ancho del header |
 | `PageHeader` | `src/shared/components/PageHeader/` | Título, descripción y acciones responsive |
 | `DataTable` | `src/shared/components/DataTable/` | `layout="auto"` → tarjetas en `< md` |
 | `useIsBelowMd` | `src/shared/hooks/useMediaQuery.ts` | Lógica JS cuando CSS no basta |

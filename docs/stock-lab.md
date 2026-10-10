@@ -330,7 +330,8 @@ plan §8.3: en cada caso lee por SQL el estado antes y después (ventas, líneas
 pagos, movimientos por `seq`, stock) y lo compara con lo que la pantalla dice.
 `pass` = el producto cumple el esperado; `fail` = bug de producto; `finding` =
 stock correcto pero carencia de UX; `error` = el caso no se ejecutó. La ola
-completa (23 casos) tarda ~5-6 min y se puede repetir sin reset: cada run crea productos
+completa (10 flujos, 23 casos: 14 `plan` + 9 `extra`) tarda ~5-6 min y se puede
+repetir sin reset: cada run crea productos
 propios `U404-<run>-<nonce>-…`, con stock por `inventario_inicial`, que no
 dejan filas en las vistas de `reconcile`.
 
@@ -338,16 +339,31 @@ Requisitos: base sembrada, BFF arriba (`stock-lab:start`) y nadie más usando la
 caja de `lab-vendedor-1` (la ola abre su sesión de caja si no lo está y no la
 cierra).
 
+**Orden respecto a `stock-lab:test`:** corre la suite de regresión ANTES de la
+ola UI (o resetea entre ambas). La ola pide `/api/exchange-rates/current` y el
+BFF registra entonces la tasa oficial en la tienda lab, que deja atrás la
+sembrada; ver "Suite de regresión".
+
+Estado tras el plan ux-mejoras (POS-H11, run `h11-final`): 23/23 casos y 10/10
+flujos en `pass`. Los flujos se pusieron al día con la UI actual sin tocar
+oráculos ni aserciones contra la base: login «Iniciar sesión»; el filtro
+«Producto» de `/inventory/movements` es un buscador y la columna es «Saldo»;
+la compra se captura con «Costos en» → REF y el chip «Empaque de <producto>»;
+el buscador de `/inventory` es «Búsqueda»; «Conversión de empaque» está en la
+pestaña «Avanzado» del detalle; SKU y stock del alta de producto están en «Más
+opciones». Los flujos del POS cobran con el chip de método + «Procesar venta»
+(el modal «Cobrar» compacto no interviene en ningún oráculo).
+
 | flujo | esperado (caso `plan`) | casos `extra` |
 |---|---|---|
 | f01 | POS, venta de 3 líneas: una venta, una fila «Venta» por producto en `/inventory/movements` y el stock exacto en el detalle | — |
 | f02 | 3G lento (CDP, 2 s de latencia) + doble clic en «Procesar venta»: UNA venta, un juego de movimientos, un POST | triple clic + Enter; 3 `click()` en la misma tarea JS (único que llega con el botón aún habilitado y ejercita el candado) |
-| f03 | La respuesta del cobro se pierde con la venta ya confirmada. Si la consulta por clave responde, la UI muestra «Venta registrada». Si tampoco responde: aviso «La venta pudo haberse registrado…» + botón «Verificar», y con el aviso a la vista (a) «Verificar», (b) «Limpiar orden», (c) recargar, rehacer el carrito y cobrar, (d) salir a `/sales`, volver, rehacer y cobrar. En todos: exactamente 1 venta, 1 línea, 1 pago y 1 movimiento `venta` para ese carrito, 1 solo POST, y la UI termina nombrando la factura de la base | corte antes de llegar al servidor + reintento; respuesta retenida 35 s |
-| f04 | Compra en modo empaque (3 × 12) como `pedido` → 0 movimientos; «Recibir pedido» → un movimiento `compra` +36 | doble clic en «Confirmar recepción» |
+| f03 | La respuesta del cobro se pierde con la venta ya confirmada. Si la consulta por clave responde, la UI muestra «Venta registrada». Si tampoco responde: aviso «La venta pudo haberse registrado…» + botón «Verificar», y con el aviso a la vista (a) «Verificar», (b) «Limpiar orden», (c) recargar, rehacer el carrito y cobrar, (d) salir a `/sales` (pasando por el guardia «¿Salir sin terminar?» → «Salir»), volver, rehacer y cobrar. En (c) y (d) el POS restaura el borrador del carrito: el script añade solo las unidades que falten para cobrar el MISMO carrito. En todos: exactamente 1 venta, 1 línea, 1 pago y 1 movimiento `venta` para ese carrito, 1 solo POST, y la UI termina nombrando la factura de la base | corte antes de llegar al servidor + reintento; respuesta retenida 35 s |
+| f04 | Compra en modo empaque (3 × 12) como `pedido` → 0 movimientos; «Recibir mercancía» (botón del aviso «Pedido sin recibir») y su confirmación con el efecto → un movimiento `compra` +36 | doble clic en «Recibir mercancía» de la confirmación → una sola entrada |
 | f05 | Compra `pedido`: 0 movimientos y la UI dice de forma explícita que la mercancía no ha entrado | — |
 | f06 | Ajuste de entrada y de salida desde `/inventory` → un movimiento cada uno. El selector «Tipo de movimiento» ofrece solo `Ajuste entrada`, `Ajuste salida` e `Inventario inicial`: una devolución en la lista es `fail` | salida mayor que el stock → mensaje y sin movimiento |
 | f07 | «Abrir empaque» ×2 (x12) desde el detalle: `conversion_salida` −2 y `conversion_entrada` +24 con el mismo `conversion_id` | abrir empaque sin stock → mensaje propio a la vista, sin POST ni movimientos |
-| f08 | Anular una venta `pendiente_pago` desde su detalle (doble clic): un movimiento inverso ligado a la venta, visible en movimientos | anular una venta pagada → rechazo explicado a la vista sin scroll, base intacta |
+| f08 | Anular una venta `pendiente_pago` desde su detalle (confirmación con el efecto; doble clic en «Anular venta»): un movimiento inverso ligado a la venta, visible en movimientos | anular una venta pagada → rechazo explicado a la vista sin scroll, base intacta |
 | f09 | «Nuevo producto» con stock inicial 15: `current_stock` 15 y un movimiento `inventario_inicial` +15 visible | — |
 | f10 | Import Excel de 3 filas con `stock_inicial` 7/14/21: un `inventario_inicial` por producto | — |
 
@@ -452,6 +468,50 @@ en ambos modos.
 Los demás tests de `scripts/stock-lab/*.test.ts` (unitarios, sin base) siguen
 en `npm test`. Para un solo archivo:
 `npm run stock-lab:test -- scripts/stock-lab/regression/<archivo>.test.ts`.
+
+**Precondición:** la suite se corre sobre una base **recién reseteada y
+sembrada** (`stock-lab:db-reset` + `stock-lab:seed`) y **antes** de la ola UI
+(`stock-lab:ui`). Al servir `GET /api/exchange-rates/current` el BFF registra
+la tasa oficial de DolarAPI en la tienda lab y deja atrás la sembrada (52);
+varios tests (`report-inventory-views`, `report-large-ranges`,
+`payments-purchase-rls`, `payments-idempotency`) asumen la tasa de la siembra y
+fallan después (4 suites / 17 tests en rojo en la corrida de POS-H11). No es un
+fallo de producto: resetea y vuelve a sembrar, o respeta el orden.
+
+`regression/pos-two-tabs-same-cart.test.ts` (POS-H6): dos pestañas del POS con
+el mismo carrito cobran a la vez. Con la clave derivada del carrito
+(`deriveSaleRequestId`, `src/modules/sales/sale-create/utils/saleRequestId.ts`),
+20 rondas de dos `create_sale_with_payments` simultáneos dejan una venta por
+ronda, el stock descontado una sola vez y ningún 5xx; la misma clave con otro
+contenido deja una venta y la otra petición recibe 409 (`PT409`); el control
+con dos claves distintas deja dos ventas.
+
+### `e2e:bodegon` contra el lab
+
+`npm run e2e:bodegon` (suite de [`backend-e2e-bodegon.md`](backend-e2e-bodegon.md))
+escribe por el BFF y solo corre contra un destino local. Su guarda
+(`scripts/e2e-bodegon/guard.ts`, sin variable de escape) exige loopback en
+`NEXT_PUBLIC_SUPABASE_URL` y `SMOKE_API_BASE_URL`, y **también** en el
+`NEXT_PUBLIC_SUPABASE_URL` que declaren `.env.local` / `.env` del directorio de
+trabajo, aunque el shell declare uno local. Por eso **nunca** se lanza desde un
+checkout con el `.env.local` de producción: la guarda lo aborta. Se ejecuta
+desde un worktree sin `.env.local` ni `.env`, con el BFF lab arriba:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:14321 SMOKE_API_BASE_URL=http://localhost:3100 npm run e2e:bodegon
+```
+
+Usa los usuarios del seed local de la tienda `default`
+(`admin|vendedor|almacen|contador@example.com`), que existen tras
+`stock-lab:db-reset`. Escribe `scripts/e2e-bodegon/manifest.json` y
+`last-run.json` en el directorio de trabajo y deja residuos en esa tienda
+(ventas, compras, un turno de caja abierto): resetea después. Desde POS-H11 las
+compras se arman con `buildPurchaseBody` (`requests.ts`), cada fase lee la tasa
+vigente, la fase 10 crea una caja, la asigna al vendedor y abre el turno, los
+pagos de compra (fase 9) corren después de la fase 11 y las ventas las hace el
+vendedor (el admin responde 403 salvo con «El administrador puede vender»). La
+cadena completa de fases no se ha ejecutado aún contra un BFF (solo cada cuerpo
+por separado y `phases.test.ts`): no verificado.
 
 ## Informe de producción (solo lectura)
 

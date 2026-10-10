@@ -84,6 +84,19 @@ try {
 
 Códigos frecuentes: `400` entrada inválida, `401` sin sesión, `403` sin permiso, `404` no encontrado, `409` conflicto (unicidad).
 
+Ante un `401` que no sea el de `POST /api/auth/login`, `apiFetch` lleva a `/login?next=<ruta + query actual>` (`redirectToLoginOnSessionExpired`, una sola navegación aunque fallen varias peticiones); tras iniciar sesión se vuelve a esa pantalla.
+
+## Convenciones del BFF
+
+Reglas que toda ruta nueva de `src/app/api/**` debe cumplir. Cada una tiene un test de barrido que descubre las rutas por el sistema de archivos: una ruta nueva que no la cumpla lo hace fallar.
+
+| Regla | Cómo | Test |
+|-------|------|------|
+| Cuerpo vacío o que no es JSON → `400 BAD_REQUEST` («El cuerpo de la solicitud no es un JSON válido.»), nunca 500 | Leer el cuerpo solo con `readJsonBody(request)` o, si es opcional, `readOptionalJsonBody(request)` (sin cuerpo = `{}`), de [`src/lib/api/readJsonBody.ts`](../src/lib/api/readJsonBody.ts). Nada de `request.json()` / `request.text()` directos | `src/app/api/jsonBodySweep.test.ts` |
+| Lista con `skip` mayor que el total → `200` con `items: []` y el `total` real, nunca 500 | En `*.server.ts`, ejecutar la página con `fetchListPage({ rows, count })` de [`src/lib/supabase/pagination.ts`](../src/lib/supabase/pagination.ts) (`count` es la misma consulta con `listCountOptions(true)` y solo se ejecuta si la página queda fuera de rango); el mock ya lo hace con `paginateList` | tests de cada servicio |
+| Sesión caducada o rota → `401 UNAUTHORIZED` con el mensaje único del BFF, nunca 500 | Autenticar **antes** de validar la entrada (`requireStorePermission` / `requirePermission` / `requireStoreAnyPermission` como primera línea del handler). Un handler sin sesión de usuario se declara en `PUBLIC_HANDLERS` del test, con su motivo | `src/lib/supabase/auth/sessionExpired.routes.test.ts` |
+| Contrato OpenAPI al día | Cada `route.ts` tiene su `route.test.ts` y su ruta en `public/openapi.yml` (sin duplicados); toda operación documenta una respuesta `2xx` en `responses` y, si tiene cuerpo, también `400` | `src/app/api/api-contract.test.ts` |
+
 ## Listados paginados
 
 Todos los endpoints de listado devuelven:
@@ -105,6 +118,7 @@ Convenciones:
 |----------|---------|
 | Tipo | `PaginatedList<T>` en [`src/lib/api/pagination.ts`](../src/lib/api/pagination.ts) |
 | Defaults | `skip=0`, `limit=10`, máximo `limit=100` |
+| `skip` > total | `200` con `items: []` y el `total` real (ver [Convenciones del BFF](#convenciones-del-bff)) |
 | Hooks | Tipar respuesta como `PaginatedList<T>`, no `T[]` |
 | UI | Extraer filas con `getPaginatedItems(data)` del mismo módulo |
 | Componente | [`Pagination`](../src/shared/components/Pagination/Pagination.tsx) — listo en Storybook/Jest |
@@ -143,7 +157,7 @@ const products = useProducts({ ...filters, skip, limit });
 | Logout | `useLogout` → `POST /api/auth/logout` |
 | Perfil | `useCurrentUser` → `GET /api/auth/me` |
 | Shell | `AuthenticatedAppShell` + `requiredPermission` por página |
-| 401 global | `query-client.ts` → `/login` |
+| 401 global | `apiFetch` (y `query-client.ts` como red de seguridad) → `/login?next=` |
 | Tasa header | `useCurrentExchangeRate` en shell |
 | Pendiente | MFA (proxy de sesión ya en `src/proxy.ts`) |
 
@@ -201,7 +215,7 @@ Rutas privadas actuales (cada `page.tsx` envuelve con `AuthenticatedAppShell`):
 /contacts, /payments, /reports, /settings
 ```
 
-Sin sesión, la API responde 401 y el cliente redirige a `/login`. En dev con demo headers, la API puede aceptar `x-demo-role`.
+Sin sesión (o con la sesión caducada), la API responde 401 y el cliente redirige a `/login?next=<pantalla actual>`; `src/proxy.ts` hace lo mismo con las páginas privadas. Un usuario inactivo o bloqueado recibe 403 en el login y no obtiene sesión. En dev con demo headers, la API puede aceptar `x-demo-role`.
 
 ## Módulos (resumen)
 
