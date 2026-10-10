@@ -1795,16 +1795,16 @@ select
   )
 union all
 select
-  'rpc reprice_product_to_markup: una firma (uuid, numeric, text, numeric), security definer con search_path, tienda de la sesion, admin / almacen (PT403), % en (0, 1000], producto bloqueado (PT404), sin costo PT400, costo esperado PT409 y delega en update_product_price (20261009f)',
+  'rpc reprice_product_to_markup: una firma (uuid, numeric, text, numeric, uuid), security definer con search_path, tienda de la sesion, admin / almacen (PT403), % en (0, 1000], producto bloqueado (PT404), sin costo PT400, costo esperado PT409 y delega en update_product_price (20261009f, firma de 20261017a)',
   (
     select count(*) = 1
        and bool_and(
-         p.oid = to_regprocedure('public.reprice_product_to_markup(uuid, numeric, text, numeric)')
+         p.oid = to_regprocedure('public.reprice_product_to_markup(uuid, numeric, text, numeric, uuid)')
          and p.prosecdef
          and p.prorettype = to_regtype('public.products')
          and not p.proretset
          and p.proconfig @> array['search_path=public']
-         and p.prosrc ilike '%v_store_id := public.assert_store_context();%assert_finite_numeric(p_markup_pct%not in (''admin'', ''almacen'')%errcode = ''PT403''%p_markup_pct <= 0 or p_markup_pct > 1000%and store_id = v_store_id%for update%errcode = ''PT404''%hint = ''NO_COST''%assert_expected_cost_ref(v_product.current_cost_ref, p_expected_cost_ref)%return public.update_product_price(%public.price_from_markup(v_product.current_cost_ref, p_markup_pct)%'
+         and p.prosrc ilike '%v_store_id := public.assert_store_context();%assert_finite_numeric(p_markup_pct%not in (''admin'', ''almacen'')%errcode = ''PT403''%p_markup_pct <= 0 or p_markup_pct > 1000%and store_id = v_store_id%for update%errcode = ''PT404''%hint = ''NO_COST''%assert_expected_cost_ref(v_product.current_cost_ref, p_expected_cost_ref)%v_new_price := public.price_from_markup(v_product.current_cost_ref, p_markup_pct);%v_product := public.update_product_price(p_product_id, v_new_price, p_reason);%'
          and p.prosrc not ilike '%update public.products%'
          and p.prosrc not ilike '%insert into%'
          and p.prosrc not ilike '%current_stock%'
@@ -1814,6 +1814,36 @@ select
        )
     from pg_proc p
     where p.pronamespace = 'public'::regnamespace and p.proname = 'reprice_product_to_markup'
+  )
+union all
+select
+  'rpc reprice_product_to_markup: con clave, el reintento se reconoce con el producto ya bloqueado y antes de calcular (misma clave con otro % PT409 REQUEST_REUSED); mismo precio sobre una instantanea con el costo y la banda vigentes no inserta historial; la fila del cambio queda marcada con clave y huella (20261017a)',
+  (
+    select count(*) = 1
+       and bool_and(
+         p.prosrc ilike '%for update;%if p_client_request_id is not null then%v_request_hash := round(p_markup_pct, 2)::text;%h.client_request_id = p_client_request_id%v_prior_hash is distinct from v_request_hash%errcode = ''PT409''%hint = ''REQUEST_REUSED''%return v_product;%hint = ''NO_COST''%if v_new_price = v_product.sale_price_ref then%order by h.snapshot_seq desc%v_last.new_sale_price_ref = v_new_price%v_last.cost_ref_snapshot = v_product.current_cost_ref%v_last.margin_band_snapshot = public.product_margin_band(v_store_id, v_product.margin_pct)%return v_product;%public.update_product_price(p_product_id, v_new_price, p_reason)%update public.product_price_history h%set client_request_id = p_client_request_id,%client_request_hash = v_request_hash%'
+       )
+    from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.proname = 'reprice_product_to_markup'
+  )
+union all
+select
+  'product_price_history.client_request_id (uuid) y client_request_hash (text) opcionales, con indice unico parcial (product_id, client_request_id) where client_request_id is not null (20261017a)',
+  (
+    select count(*) = 2 and bool_and(c.is_nullable = 'YES' and c.column_default is null)
+    from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'product_price_history'
+      and ((c.column_name = 'client_request_id' and c.data_type = 'uuid')
+        or (c.column_name = 'client_request_hash' and c.data_type = 'text'))
+  )
+  and exists (
+    select 1
+    from pg_index i
+    where i.indexrelid = to_regclass('public.product_price_history_product_client_request_unique')
+      and i.indrelid = 'public.product_price_history'::regclass
+      and i.indisunique
+      and i.indisvalid
+      and pg_get_indexdef(i.indexrelid) ilike '%(product_id, client_request_id) where (client_request_id is not null)'
   )
 union all
 select

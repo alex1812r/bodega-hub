@@ -207,6 +207,8 @@ const repriceProductIdSchema = z.string().trim().min(1);
  */
 export const repriceProductsSchema = z
   .object({
+    /** Clave de idempotencia del lote (FIN-03): repetir la petición con la misma no repite el cambio. */
+    clientRequestId: z.string().uuid().optional(),
     items: z
       .array(
         z.object({

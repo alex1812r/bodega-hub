@@ -126,6 +126,8 @@ describe("RepriceConfirmModal · costo de la vista previa (ALTA-1)", () => {
     expect(posts()).toEqual([
       {
         body: {
+          // Clave de idempotencia del intento (FIN-03).
+          clientRequestId: expect.any(String),
           items: [
             { expectedCostRef: 12, productId: "prod-1" },
             { expectedCostRef: 0, productId: "prod-2" },

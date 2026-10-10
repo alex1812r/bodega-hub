@@ -821,3 +821,18 @@ notify pgrst, 'reload schema';
 -- Orden con el BFF: indistinto. Sin el parche el BFF lee el umbral como 0 (GET /api/settings y
 -- GET /api/settings/cash-close no fallan) y PATCH /api/settings con `cashCloseDiffAlertVes` responde 409 sin escribir
 -- nada; el resto de ajustes se sigue guardando.
+-- -----------------------------------------------------------------------------
+-- 20261017a — reprice idempotency (FIN-03): clave de idempotencia del reprecio masivo
+--             (reprice_product_to_markup gana p_client_request_id; product_price_history.client_request_id /
+--             client_request_hash + indice unico por producto) y reprecio sin cambio que no inserta historial
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261017a-reprice-idempotency.sql
+-- Requiere 20261009c y 20261009f. Idempotente, una transaccion. Elimina la firma de cuatro argumentos de
+-- reprice_product_to_markup y crea la de cinco (las llamadas con cuatro siguen resolviendo). No cambia como se calcula
+-- el precio, ni update_product_price, update_product_price_checked o keep_product_price; no toca stock, dinero ni
+-- politicas. Las columnas nuevas no son numeric (los triggers de 20261006i no se regeneran).
+-- OJO: reaplicar 20261009f reinstala la firma de cuatro argumentos y deja dos sobrecargas (PGRST203 en el reprecio):
+-- volver a aplicar este parche despues y correr verify-patches.sql.
+-- ORDEN DE DESPLIEGUE (FIN-03): ... -> 20261015a -> este parche -> verify -> BFF -> 20261011d -> verify. El BFF anterior
+-- funciona sobre la base parcheada (no envia la clave). El BFF nuevo sin el parche: el reprecio masivo desde la
+-- interfaz (que envia clientRequestId) responde error en cada fila y no cambia ningun precio.

@@ -298,6 +298,8 @@ describe("RepriceConfirmModal · relee los seleccionados al abrir (CAOS-04b)", (
 
     await waitFor(() => expect(onDone).toHaveBeenCalledWith(result));
     expect(calls.writes[0].body).toEqual({
+      // Clave de idempotencia del intento (FIN-03).
+      clientRequestId: expect.any(String),
       items: [
         { expectedCostRef: 9, productId: "prod-1" },
         { expectedCostRef: 12, productId: "prod-2" },

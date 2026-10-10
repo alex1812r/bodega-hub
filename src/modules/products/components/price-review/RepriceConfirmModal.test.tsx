@@ -210,6 +210,8 @@ describe("RepriceConfirmModal (CNF-07)", () => {
     expect(posts()).toEqual([
       {
         body: {
+          // Clave de idempotencia del intento (FIN-03).
+          clientRequestId: expect.any(String),
           items: [
             { expectedCostRef: 9, productId: "p-arroz" },
             { expectedCostRef: 10, productId: "p-harina" },
@@ -219,6 +221,23 @@ describe("RepriceConfirmModal (CNF-07)", () => {
         url: "/api/products/price-review/reprice",
       },
     ]);
+  });
+
+  // FIN-03: el reintento tras un resultado incierto viaja con la misma clave; el servidor no repite el cambio.
+  it("envía una clientRequestId y el reintento tras un 500 repite la misma", async () => {
+    repriceResponse = jsonResponse({ error: { code: "INTERNAL_ERROR", message: "Ocurrió un error inesperado." } }, 500);
+    const { onDone, user } = await renderModal();
+
+    await user.click(screen.getByRole("button", { name: "Cambiar 2 precios" }));
+    await within(screen.getByRole("dialog")).findByRole("alert");
+    repriceResponse = jsonResponse({ data: { failed: 0, results: [], updated: 2 } });
+    await user.click(screen.getByRole("button", { name: "Cambiar 2 precios" }));
+
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    const keys = posts().map((post) => post.body.clientRequestId);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(keys[1]).toBe(keys[0]);
   });
 
   it("un error del servidor se muestra tal cual y el modal sigue abierto", async () => {

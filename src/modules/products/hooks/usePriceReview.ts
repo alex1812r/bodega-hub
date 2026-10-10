@@ -37,6 +37,8 @@ export type KeepProductPriceResult = {
 };
 
 export type RepriceProductsInput = {
+  /** Clave de idempotencia del lote: el reintento con la misma no repite el cambio. */
+  clientRequestId?: string;
   /** % de ganancia sobre el costo (> 0 y ≤ 1000). */
   markupPct: number;
   /**

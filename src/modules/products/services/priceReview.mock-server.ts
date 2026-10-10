@@ -29,6 +29,7 @@ import {
   PRICE_BASELINE_REASON,
   PRICE_KEEP_REASON,
   REPRICE_NO_COST_MESSAGE,
+  REPRICE_REQUEST_REUSED_MESSAGE,
   resolveRepriceTargets,
   summarizeReprice,
   type ProductPriceHistoryEntry,
@@ -324,9 +325,25 @@ export function keepProductPrice(id: string, input: KeepProductPriceInput, store
   );
 }
 
-/** Como el servicio real: un cambio de precio por producto y un resultado por producto. */
+/**
+ * Reprecios ya aplicados con clave: `tienda:clave:producto` → % enviado. Es lo que
+ * en la base guardan `product_price_history.client_request_id` / `client_request_hash`.
+ */
+function repriceRequests() {
+  return mockState("products:reprice-requests", () => new Map<string, number>());
+}
+
+/**
+ * Como el servicio real: un cambio de precio por producto y un resultado por
+ * producto. Igual que `reprice_product_to_markup` (parche 20261017a): la misma
+ * `clientRequestId` no repite el cambio de un producto, y un reprecio que deja el
+ * mismo precio sobre una instantánea que ya guarda el costo y la banda vigentes
+ * no inserta historial.
+ */
 export function repriceProducts(input: RepriceProductsInput, storeId: string) {
   const reason = input.reason ?? buildRepriceReason(input.markupPct);
+  const markupPct = normalizeRepriceMarkupPct(input.markupPct);
+  const requests = repriceRequests();
   const results: RepriceProductResult[] = [];
 
   for (const { expectedCostRef, productId } of resolveRepriceTargets(input)) {
@@ -334,6 +351,19 @@ export function repriceProducts(input: RepriceProductsInput, storeId: string) {
 
     if (!product) {
       results.push({ code: "NOT_FOUND", message: "Producto no encontrado.", productId, status: "error" });
+      continue;
+    }
+
+    const requestKey = input.clientRequestId ? `${storeId}:${input.clientRequestId}:${productId}` : null;
+    const priorMarkupPct = requestKey ? requests.get(requestKey) : undefined;
+
+    // Reintento de una petición que ya cambió este producto: no se repite.
+    if (priorMarkupPct !== undefined) {
+      results.push(
+        priorMarkupPct === markupPct
+          ? { productId, salePriceRef: product.salePriceRef, status: "ok" }
+          : { code: "CONFLICT", message: REPRICE_REQUEST_REUSED_MESSAGE, productId, status: "error" },
+      );
       continue;
     }
 
@@ -353,13 +383,27 @@ export function repriceProducts(input: RepriceProductsInput, storeId: string) {
       continue;
     }
 
-    const salePriceRef = priceFromMarkup(
-      product.currentCostRef,
-      normalizeRepriceMarkupPct(input.markupPct),
-    );
+    const salePriceRef = priceFromMarkup(product.currentCostRef, markupPct);
 
-    recordMockPriceChange(product, { reason, salePriceRef });
-    product.salePriceRef = salePriceRef;
+    ensureMockPriceBaselines();
+    const last = latestSnapshot(product.id);
+    // La fila nueva sería idéntica a la última instantánea: no se escribe.
+    const nothingToRecord =
+      salePriceRef === product.salePriceRef &&
+      last?.salePriceRef === salePriceRef &&
+      last.costRefSnapshot === product.currentCostRef &&
+      last.marginBandSnapshot ===
+        getPriceSnapshotBand(product.currentCostRef, salePriceRef, thresholdsOf(storeId));
+
+    if (!nothingToRecord) {
+      recordMockPriceChange(product, { reason, salePriceRef });
+      product.salePriceRef = salePriceRef;
+
+      if (requestKey) {
+        requests.set(requestKey, markupPct);
+      }
+    }
+
     results.push({ productId, salePriceRef, status: "ok" });
   }
 

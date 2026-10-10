@@ -139,6 +139,10 @@ function toRepriceFailure(productId: string, error: { hint?: string | null }): R
  * responde `COST_CHANGED` sin tocar el precio. Un fallo no aborta el lote: cada
  * producto responde con su precio nuevo o con su error. Un producto sin costo es
  * un error de su fila (nunca se le pone precio 0).
+ *
+ * Con `clientRequestId` (parche 20261017a) la RPC reconoce el reintento por
+ * producto: no repite el cambio y responde el precio vigente. Con o sin clave,
+ * un reprecio que no cambia nada no inserta historial.
  */
 export async function repriceProducts(input: RepriceProductsInput) {
   const supabase = await createRouteSupabaseClient();
@@ -150,6 +154,8 @@ export async function repriceProducts(input: RepriceProductsInput) {
   // La tienda la fija la sesión dentro de la RPC (otra tienda: PT404).
   for (const { expectedCostRef, productId } of resolveRepriceTargets(input)) {
     const { data, error } = await supabase.rpc("reprice_product_to_markup", {
+      // Sin clave no se envía: la llamada es la misma que antes del parche 20261017a.
+      ...(input.clientRequestId === undefined ? {} : { p_client_request_id: input.clientRequestId }),
       p_expected_cost_ref: expectedCostRef,
       p_markup_pct: markupPct,
       p_product_id: productId,

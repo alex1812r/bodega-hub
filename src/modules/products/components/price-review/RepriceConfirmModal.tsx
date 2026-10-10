@@ -1,5 +1,6 @@
 "use client";
 
+import { useReleaseAttemptOnClose, useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { ConfirmActionModal, type ConfirmActionStatus } from "@/shared/components/ConfirmActionModal";
 import { formatMarkupPct } from "@/shared/components/MarginBadge";
 import { type MarginThresholds, priceFromMarkup } from "@/shared/utils/pricing";
@@ -71,6 +72,10 @@ export function RepriceConfirmModal({
   thresholds,
 }: RepriceConfirmModalProps) {
   const reprice = useRepriceProducts();
+  // Una clave por contenido: el reintento tras un error de resultado incierto
+  // viaja con la misma y el servidor no repite el cambio (FIN-03).
+  const requestAttempt = useRequestAttempt({ lockAfterSuccess: true, renewOnContentChange: true });
+  useReleaseAttemptOnClose(requestAttempt, open);
   const freshRead = useFreshReviewPricing(
     products.map((product) => product.id),
     open,
@@ -130,8 +135,24 @@ export function RepriceConfirmModal({
 
     // Cada producto viaja con el costo de la vista previa: si ya es otro, su fila
     // vuelve como `COST_CHANGED` y su precio no cambia.
-    const result = await reprice.mutateAsync({ items, markupPct });
+    const content = { items, markupPct };
+    const clientRequestId = requestAttempt.begin(content);
 
+    if (!clientRequestId) {
+      return;
+    }
+
+    let result: RepriceResult;
+
+    try {
+      result = await reprice.mutateAsync({ ...content, clientRequestId });
+    } catch (error) {
+      // El error lo muestra el modal (`reprice.error`); aquí solo se cierra el intento.
+      requestAttempt.fail(error);
+      throw error;
+    }
+
+    requestAttempt.succeed();
     onDone(result);
     handleOpenChange(false);
   }

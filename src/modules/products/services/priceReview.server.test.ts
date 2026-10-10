@@ -331,6 +331,21 @@ describe("priceReview.server repriceProducts", () => {
     });
   });
 
+  // FIN-03: la clave del lote viaja a cada RPC, que reconoce el reintento por producto.
+  it("forwards the batch clientRequestId to every reprice_product_to_markup call, and omits it when absent", async () => {
+    const { rpc } = mockSupabase({ rpc: repriceRpc });
+    const clientRequestId = "7b0c7a52-7f0e-4c7e-9d50-0c1f4f1f0a01";
+
+    await repriceProducts({ clientRequestId, markupPct: 25, productIds: ["prod-a", "prod-b"], reason: null });
+    await repriceProducts({ markupPct: 25, productIds: ["prod-c"], reason: null });
+
+    expect(rpc.mock.calls.map(([, args]) => args)).toEqual([
+      { p_client_request_id: clientRequestId, p_expected_cost_ref: null, p_markup_pct: 25, p_product_id: "prod-a", p_reason: "Reprecio al 25 %" },
+      { p_client_request_id: clientRequestId, p_expected_cost_ref: null, p_markup_pct: 25, p_product_id: "prod-b", p_reason: "Reprecio al 25 %" },
+      { p_expected_cost_ref: null, p_markup_pct: 25, p_product_id: "prod-c", p_reason: "Reprecio al 25 %" },
+    ]);
+  });
+
   it("sends each product's expected cost and reports COST_CHANGED for the row whose cost moved, without stopping the batch", async () => {
     const { rpc } = mockSupabase({ rpc: repriceRpc });
 

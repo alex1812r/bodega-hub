@@ -157,6 +157,10 @@ export type RepriceResult = {
 export const REPRICE_NO_COST_MESSAGE =
   "El producto no tiene costo: no se puede calcular el precio a partir de un % de ganancia.";
 
+/** Misma `clientRequestId` con otro %: el texto del `PT409` de `reprice_product_to_markup`. */
+export const REPRICE_REQUEST_REUSED_MESSAGE =
+  "Esta solicitud de reprecio ya se usó con otro % de ganancia";
+
 /**
  * Código de la fila de un reprecio cuyo producto ya no cuesta lo que el usuario
  * vio, y `hint` con el que las RPC de precio marcan ese rechazo (`PT409`).

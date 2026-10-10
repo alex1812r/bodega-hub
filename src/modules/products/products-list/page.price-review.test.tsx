@@ -361,6 +361,8 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
     expect(posts[0]).toEqual({
       // Cada producto con el costo de la vista previa (PRO-F9, ALTA-1).
       body: {
+        // Clave de idempotencia del intento (FIN-03).
+        clientRequestId: expect.any(String),
         items: [
           { expectedCostRef: 9, productId: "p-arroz" },
           { expectedCostRef: 10, productId: "p-harina" },
@@ -677,6 +679,8 @@ describe("ProductsListPage · Por revisar (PRO-11)", () => {
 
     await waitFor(() => expect(posts).toHaveLength(2));
     expect(posts[1]?.body).toEqual({
+      // Clave de idempotencia del intento (FIN-03).
+      clientRequestId: expect.any(String),
       items: [{ expectedCostRef: 12, productId: "p-arroz" }],
       markupPct: 20,
     });
