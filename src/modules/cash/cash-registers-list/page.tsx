@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Banknote, CircleDollarSign, Landmark } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { DashboardKpiCard } from "@/modules/dashboard/components/DashboardKpiCard";
 import { apiFetch } from "@/shared/api/apiFetch";
@@ -17,6 +17,7 @@ import { EntityListPage } from "@/shared/components/EntityListPage";
 import { Input } from "@/shared/components/Input";
 import { Modal } from "@/shared/components/Modal";
 import { SelectField } from "@/shared/components/SelectField";
+import { useToast } from "@/shared/components/Toast";
 import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { withReturnTo } from "@/shared/utils/returnTo";
@@ -142,7 +143,7 @@ export function CashRegistersListPage() {
               {item.name}
             </Link>
             <p className="truncate text-xs text-on-surface-variant">
-              {item.assignedUserName ?? "Sin vendedor asignado"}
+              {item.assignedUserName ?? "Sin usuario asignado"}
             </p>
           </div>
         ),
@@ -197,7 +198,7 @@ export function CashRegistersListPage() {
         visibility: "lg",
       },
       {
-        header: "Vendedor asignado",
+        header: "Usuario asignado",
         key: "assignedUserId",
         render: (item) => <RegisterAssignment register={item} vendors={vendors} />,
         visibility: "md",
@@ -303,7 +304,7 @@ export function CashRegistersListPage() {
           </CardHeader>
           <CardContent className="p-0 sm:px-4 sm:pb-4">
             <DataTable
-              cardSubtitle={(item) => item.assignedUserName ?? "Sin vendedor asignado"}
+              cardSubtitle={(item) => item.assignedUserName ?? "Sin usuario asignado"}
               cardTitle={(item) => (
                 <Link className={cardTitleLinkClass} href={registerDetailHref(item.id)}>
                   {item.name}
@@ -340,6 +341,8 @@ function CreateCashRegisterModal({
   const create = useCreateCashRegister();
   const [name, setName] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // `isPending` llega con el siguiente render: el segundo clic del mismo gesto se corta aquí.
+  const submittingRef = useRef(false);
 
   function reset() {
     setName("");
@@ -347,10 +350,16 @@ function CreateCashRegisterModal({
   }
 
   async function handleSubmit() {
+    if (submittingRef.current) {
+      return;
+    }
+
     if (!name.trim()) {
       setErrorMessage("Escribe un nombre para la caja.");
       return;
     }
+
+    submittingRef.current = true;
 
     try {
       setErrorMessage(null);
@@ -359,12 +368,14 @@ function CreateCashRegisterModal({
       onOpenChange(false);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "No se pudo crear la caja.");
+    } finally {
+      submittingRef.current = false;
     }
   }
 
   return (
     <Modal
-      description="La caja queda activa y sin vendedor asignado."
+      description="La caja queda activa y sin usuario asignado."
       footer={({ close }) => (
         <>
           <Button
@@ -440,8 +451,45 @@ function RegisterCashCell({ session }: { session?: CashSession }) {
   );
 }
 
+/**
+ * Cambios de una caja desde la tabla (asignar, activar, desactivar): uno a la
+ * vez, y si el servidor lo rechaza se avisa con su motivo. El control muestra
+ * siempre el valor de la caja, así que tras un fallo vuelve solo al real.
+ */
+function useRegisterUpdate(registerId: string) {
+  const update = useUpdateCashRegister(registerId);
+  const { showToast } = useToast();
+  // `isPending` llega con el siguiente render: el segundo cambio del mismo gesto se corta aquí.
+  const inFlightRef = useRef(false);
+
+  async function run(
+    input: Partial<Pick<CashRegister, "assignedUserId" | "assignedUserName" | "isActive">>,
+    errorTitle: string,
+  ) {
+    if (inFlightRef.current) {
+      return;
+    }
+
+    inFlightRef.current = true;
+
+    try {
+      await update.mutateAsync(input);
+    } catch (error) {
+      showToast({
+        description: error instanceof Error ? error.message : undefined,
+        title: errorTitle,
+        tone: "error",
+      });
+    } finally {
+      inFlightRef.current = false;
+    }
+  }
+
+  return { isPending: update.isPending, run };
+}
+
 function RegisterRowActions({ register }: { register: CashRegister }) {
-  const update = useUpdateCashRegister(register.id);
+  const update = useRegisterUpdate(register.id);
 
   return (
     <ActionsMenu
@@ -450,7 +498,11 @@ function RegisterRowActions({ register }: { register: CashRegister }) {
         {
           disabled: update.isPending,
           label: register.isActive ? "Desactivar caja" : "Activar caja",
-          onSelect: () => update.mutate({ isActive: !register.isActive }),
+          onSelect: () =>
+            void update.run(
+              { isActive: !register.isActive },
+              register.isActive ? "No se pudo desactivar la caja" : "No se pudo activar la caja",
+            ),
           variant: register.isActive ? "danger" : "default",
         },
       ]}
@@ -460,7 +512,7 @@ function RegisterRowActions({ register }: { register: CashRegister }) {
 }
 
 function RegisterAssignment({ register, vendors }: { register: CashRegister; vendors: User[] }) {
-  const update = useUpdateCashRegister(register.id);
+  const update = useRegisterUpdate(register.id);
   const assignedUserId = register.assignedUserId ?? "";
   // La asignación se conserva aunque el usuario ya no pueda operar caja (p. ej. un
   // administrador tras apagar «El administrador puede vender»): se sigue mostrando.
@@ -474,10 +526,13 @@ function RegisterAssignment({ register, vendors }: { register: CashRegister; ven
       aria-label={`Asignar ${register.name}`}
       disabled={update.isPending}
       onChange={(event) =>
-        update.mutate({
-          assignedUserId: event.target.value || null,
-          assignedUserName: vendors.find((user) => user.id === event.target.value)?.name ?? null,
-        })
+        void update.run(
+          {
+            assignedUserId: event.target.value || null,
+            assignedUserName: vendors.find((user) => user.id === event.target.value)?.name ?? null,
+          },
+          event.target.value ? "No se pudo asignar la caja" : "No se pudo desasignar la caja",
+        )
       }
       options={[
         { label: "Sin asignar", value: "" },

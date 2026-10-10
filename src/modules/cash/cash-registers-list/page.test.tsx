@@ -5,7 +5,7 @@
  */
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 jest.mock("next/navigation", () => ({
@@ -13,6 +13,8 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
+
+import { ToastProvider } from "@/shared/components/Toast";
 
 import type { CashRegister } from "../types";
 import { CashRegistersListPage } from "./page";
@@ -268,5 +270,231 @@ describe("CashRegistersListPage · a quién se puede asignar una caja (POS-F5)",
     expect(select.value).toBe("admin-plain");
     expect(select.selectedOptions[0]).toHaveTextContent("Admin Sin Venta");
     expect(optionLabels(select).filter((label) => label?.includes("Admin Sin Venta"))).toHaveLength(1);
+  });
+});
+
+/**
+ * POS-F7 (qa-final N1): asignar una caja a quien ya tiene otra activa respondía
+ * 409 y la pantalla no decía nada. Todo fallo al asignar, activar o desactivar se
+ * avisa con el motivo del servidor, y cada acción se envía una sola vez.
+ */
+describe("CashRegistersListPage · errores y doble envío (POS-F7)", () => {
+  const CONFLICT_MESSAGE =
+    "Ese usuario ya tiene otra caja activa asignada. Desasígnala antes de asignarle esta.";
+  const originalMatchMedia = window.matchMedia;
+  const users = [{ id: "seller", isActive: true, name: "Vendedora Activa", role: "vendedor" }];
+  let listed: CashRegister[];
+  let writes: Array<{ body: unknown; method: string; url: string }>;
+  /** Respuesta de la siguiente escritura; si es una promesa, la escritura queda en vuelo. */
+  let writeResponse: () => Promise<{ data?: unknown; error?: unknown; status: number }>;
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    window.history.replaceState(null, "", "/cash/registers");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string) => ({
+        addEventListener: jest.fn(),
+        matches: false,
+        media: query,
+        removeEventListener: jest.fn(),
+      }),
+    });
+    listed = [register("001")];
+    writes = [];
+    writeResponse = async () => ({ data: register("001"), status: 200 });
+    global.fetch = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(url).split("?")[0];
+      const method = init?.method ?? "GET";
+      let payload: { data?: unknown; error?: unknown } = { data: [] };
+      let status = 200;
+
+      if (method !== "GET") {
+        writes.push({ body: JSON.parse(String(init?.body)), method, url: path });
+        ({ status, ...payload } = await writeResponse());
+      } else if (path === "/api/cash/registers") {
+        payload = { data: listed };
+      } else if (path === "/api/users") {
+        payload = { data: { items: users, limit: 100, skip: 0, total: users.length } };
+      }
+
+      return {
+        headers: { get: () => "application/json" },
+        json: async () => payload,
+        ok: status < 400,
+        status,
+      };
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: originalMatchMedia,
+    });
+  });
+
+  function renderPage() {
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <CashRegistersListPage />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  async function assignmentSelect() {
+    const [select] = await screen.findAllByRole("combobox", { name: "Asignar Caja 001" });
+
+    await waitFor(() => expect(select.querySelectorAll("option")).toHaveLength(2));
+
+    return select as HTMLSelectElement;
+  }
+
+  function rejectWith(status: number, code: string, message: string) {
+    writeResponse = async () => ({ error: { code, message }, status });
+  }
+
+  it("asignar a quien ya tiene otra caja activa: avisa con el motivo y el selector vuelve a «Sin asignar»", async () => {
+    const user = userEvent.setup();
+
+    rejectWith(409, "CONFLICT", CONFLICT_MESSAGE);
+    renderPage();
+
+    const select = await assignmentSelect();
+
+    await user.selectOptions(select, "seller");
+
+    const alert = await screen.findByRole("alert");
+
+    expect(alert).toHaveTextContent("No se pudo asignar la caja");
+    expect(alert).toHaveTextContent(CONFLICT_MESSAGE);
+    expect(writes).toHaveLength(1);
+    await waitFor(() => expect(select).toBeEnabled());
+    expect(select.value).toBe("");
+    expect(select.selectedOptions[0]).toHaveTextContent("Sin asignar");
+  });
+
+  it("desasignar que falla también avisa y el selector conserva al usuario asignado", async () => {
+    const user = userEvent.setup();
+
+    listed = [{ ...register("001"), assignedUserId: "seller", assignedUserName: "Vendedora Activa" }];
+    rejectWith(500, "INTERNAL_ERROR", "Fallo de prueba al desasignar.");
+    renderPage();
+
+    const select = await assignmentSelect();
+
+    await user.selectOptions(select, "");
+
+    const alert = await screen.findByRole("alert");
+
+    expect(alert).toHaveTextContent("No se pudo desasignar la caja");
+    expect(alert).toHaveTextContent("Fallo de prueba al desasignar.");
+    expect(writes).toEqual([
+      {
+        body: { assignedUserId: null, assignedUserName: null },
+        method: "PATCH",
+        url: "/api/cash/registers/001",
+      },
+    ]);
+    await waitFor(() => expect(select).toBeEnabled());
+    expect(select.value).toBe("seller");
+  });
+
+  it("dos cambios seguidos del selector envían una sola petición", async () => {
+    let release: (value: { data: unknown; status: number }) => void = () => undefined;
+
+    writeResponse = () =>
+      new Promise((resolve) => {
+        release = resolve;
+      });
+    renderPage();
+
+    const select = await assignmentSelect();
+
+    act(() => {
+      fireEvent.change(select, { target: { value: "seller" } });
+      fireEvent.change(select, { target: { value: "" } });
+    });
+
+    await waitFor(() => expect(select).toBeDisabled());
+    expect(writes).toEqual([
+      {
+        body: { assignedUserId: "seller", assignedUserName: "Vendedora Activa" },
+        method: "PATCH",
+        url: "/api/cash/registers/001",
+      },
+    ]);
+
+    await act(async () => release({ data: register("001"), status: 200 }));
+    await waitFor(() => expect(select).toBeEnabled());
+    expect(writes).toHaveLength(1);
+  });
+
+  it("desactivar una caja que falla avisa con el motivo", async () => {
+    const user = userEvent.setup();
+
+    rejectWith(409, "CONFLICT", "La caja tiene un turno abierto.");
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Acciones de Caja 001" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Desactivar caja" }));
+
+    const alert = await screen.findByRole("alert");
+
+    expect(alert).toHaveTextContent("No se pudo desactivar la caja");
+    expect(alert).toHaveTextContent("La caja tiene un turno abierto.");
+    expect(writes).toEqual([
+      { body: { isActive: false }, method: "PATCH", url: "/api/cash/registers/001" },
+    ]);
+  });
+
+  it("doble clic en «Crear caja» crea una sola; si falla, el motivo queda en el diálogo", async () => {
+    const user = userEvent.setup();
+    let release: (value: { error: unknown; status: number }) => void = () => undefined;
+
+    writeResponse = () =>
+      new Promise((resolve) => {
+        release = resolve;
+      });
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Nueva caja" }));
+    await user.type(await screen.findByLabelText("Nombre de la caja"), "Caja nueva");
+
+    const submit = screen.getByRole("button", { name: "Crear caja" });
+
+    act(() => {
+      fireEvent.click(submit);
+      fireEvent.click(submit);
+    });
+
+    await waitFor(() => expect(writes).toHaveLength(1));
+    await act(async () =>
+      release({ error: { code: "CONFLICT", message: "Ya existe una caja con ese nombre." }, status: 409 }),
+    );
+
+    expect(await screen.findByText("Ya existe una caja con ese nombre.")).toBeInTheDocument();
+    expect(writes).toEqual([
+      { body: { name: "Caja nueva" }, method: "POST", url: "/api/cash/registers" },
+    ]);
+  });
+
+  it("habla de «usuario asignado», no de vendedor: la caja también puede ser de un administrador", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+    await assignmentSelect();
+
+    expect(screen.getAllByText("Usuario asignado").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Sin usuario asignado").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/vendedor asignado/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Nueva caja" }));
+
+    expect(await screen.findByText("La caja queda activa y sin usuario asignado.")).toBeInTheDocument();
   });
 });

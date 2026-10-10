@@ -7,6 +7,10 @@ import { canBeAssignedCashRegister, CASH_REGISTER_ASSIGNEE_MESSAGE } from "./cas
 
 const registers: CashRegister[] = [];
 
+/** Un usuario tiene como mucho una caja activa por tienda (índice único en la base). */
+export const CASH_REGISTER_ASSIGNMENT_CONFLICT_MESSAGE =
+  "Ese usuario ya tiene otra caja activa asignada. Desasígnala antes de asignarle esta.";
+
 function now() {
   return new Date().toISOString();
 }
@@ -64,15 +68,19 @@ export function assertCashRegisterAssignee(userId: string, storeId: string) {
 
 export function updateCashRegister(id: string, input: CashRegisterUpdateInput, storeId: string) {
   const register = getCashRegister(id, storeId);
-  if (input.assignedUserId && input.isActive !== false) {
+  // Misma regla que el índice único de la base: se mira cómo quedaría la caja.
+  const nextAssignedUserId =
+    input.assignedUserId !== undefined ? input.assignedUserId : register.assignedUserId;
+  const nextIsActive = input.isActive ?? register.isActive;
+  if (nextAssignedUserId && nextIsActive) {
     const assigned = registers.find(
       (item) =>
         item.id !== id &&
         item.storeId === storeId &&
         item.isActive &&
-        item.assignedUserId === input.assignedUserId,
+        item.assignedUserId === nextAssignedUserId,
     );
-    if (assigned) throw new ApiError(409, "CONFLICT", "El usuario ya tiene una caja activa asignada.");
+    if (assigned) throw new ApiError(409, "CONFLICT", CASH_REGISTER_ASSIGNMENT_CONFLICT_MESSAGE);
   }
   Object.assign(register, input, { updatedAt: now() });
   return register;

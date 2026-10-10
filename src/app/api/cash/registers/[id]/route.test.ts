@@ -14,6 +14,7 @@ import { adminSellPermissions } from "@bodega/core";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { CASH_REGISTER_ASSIGNEE_MESSAGE } from "@/modules/cash/services/cashRegisterAssignee";
 import {
+  CASH_REGISTER_ASSIGNMENT_CONFLICT_MESSAGE,
   createCashRegister,
   updateCashRegister,
 } from "@/modules/cash/services/cash.registers.mock-server";
@@ -35,6 +36,14 @@ function patch(registerId: string, body: unknown) {
     }),
     { params: Promise.resolve({ id: registerId }) },
   );
+}
+
+async function expectAssignmentConflict(response: Response) {
+  expect(response.status).toBe(409);
+  expect((await response.json()).error).toEqual({
+    code: "CONFLICT",
+    message: CASH_REGISTER_ASSIGNMENT_CONFLICT_MESSAGE,
+  });
 }
 
 async function expectAssigneeRejected(response: Response) {
@@ -142,6 +151,51 @@ describe("PATCH /api/cash/registers/[id] · a quién se asigna la caja", () => {
       expect((await renamed.json()).data.assignedUserId).toBe(ADMIN);
       expect((await patch(registerId, { assignedUserId: null })).status).toBe(200);
     });
+
+    // POS-F7 (qa-final N1): un usuario, una caja activa; el 409 dice qué hacer.
+    describe("un usuario, una caja activa (POS-F7)", () => {
+      // Usuario demo por rol: no depende de los perfiles mock que tocan los casos de arriba.
+      const DEMO_SELLER = "user-vendedor";
+      let otherId = "";
+
+      beforeEach(() => {
+        otherId = createCashRegister({ name: `Caja POS-F7 ${registerCount}` }, DEFAULT_STORE_ID).id;
+      });
+
+      afterEach(() => {
+        updateCashRegister(otherId, { assignedUserId: null }, DEFAULT_STORE_ID);
+        updateCashRegister(registerId, { assignedUserId: null, isActive: true }, DEFAULT_STORE_ID);
+      });
+
+      it("asignar a quien ya tiene otra caja activa → 409 con el mensaje y sin cambios", async () => {
+        expect((await patch(otherId, { assignedUserId: DEMO_SELLER })).status).toBe(200);
+
+        const response = await patch(registerId, { assignedUserId: DEMO_SELLER, assignedUserName: "Vendedor" });
+
+        expect(CASH_REGISTER_ASSIGNMENT_CONFLICT_MESSAGE).toBe(
+          "Ese usuario ya tiene otra caja activa asignada. Desasígnala antes de asignarle esta.",
+        );
+        await expectAssignmentConflict(response);
+        expect(updateCashRegister(registerId, {}, DEFAULT_STORE_ID).assignedUserId ?? null).toBeNull();
+      });
+
+      it("activar una caja cuyo usuario ya tiene otra activa → 409; inactiva sí se puede asignar", async () => {
+        expect((await patch(otherId, { assignedUserId: DEMO_SELLER })).status).toBe(200);
+        expect((await patch(registerId, { isActive: false })).status).toBe(200);
+        expect((await patch(registerId, { assignedUserId: DEMO_SELLER })).status).toBe(200);
+
+        await expectAssignmentConflict(await patch(registerId, { isActive: true }));
+        expect(updateCashRegister(registerId, {}, DEFAULT_STORE_ID).isActive).toBe(false);
+
+        expect((await patch(registerId, { assignedUserId: null, isActive: true })).status).toBe(200);
+      });
+
+      it("reenviar la asignación de la propia caja o renombrarla no choca consigo misma", async () => {
+        expect((await patch(registerId, { assignedUserId: DEMO_SELLER })).status).toBe(200);
+        expect((await patch(registerId, { assignedUserId: DEMO_SELLER })).status).toBe(200);
+        expect((await patch(registerId, { name: `Caja POS-F7 propia ${registerCount}` })).status).toBe(200);
+      });
+    });
   });
 
   describe("supabase", () => {
@@ -154,6 +208,7 @@ describe("PATCH /api/cash/registers/[id] · a quién se asigna la caja", () => {
 
     let profiles: Record<string, ProfileRow>;
     let updates: Array<Record<string, unknown>>;
+    let updateError: { code: string; details?: string; message: string } | null;
 
     function mountSupabase() {
       (createRouteSupabaseClient as jest.Mock).mockResolvedValue({
@@ -186,6 +241,10 @@ describe("PATCH /api/cash/registers/[id] · a quién se asigna la caja", () => {
             async maybeSingle() {
               updates.push(values);
 
+              if (updateError) {
+                return { data: null, error: updateError };
+              }
+
               return {
                 data: {
                   assigned_user: null,
@@ -215,6 +274,7 @@ describe("PATCH /api/cash/registers/[id] · a quién se asigna la caja", () => {
     beforeEach(() => {
       process.env.API_DATA_SOURCE = "supabase";
       updates = [];
+      updateError = null;
       profiles = {
         "admin-apagado": { denied_permissions: [], granted_permissions: [], is_active: true, role: "admin" },
         "admin-vende": {
@@ -250,6 +310,33 @@ describe("PATCH /api/cash/registers/[id] · a quién se asigna la caja", () => {
 
       expect((await patch("reg-1", { assignedUserId: null })).status).toBe(200);
       expect(updates).toEqual([{ assigned_user_id: null }]);
+    });
+
+    // POS-F7 (qa-final N1): el 23505 del índice de «una caja activa por usuario» se explica.
+    it("el choque con cash_registers_one_active_assignment_per_store_idx → 409 con el mensaje, sin lecturas extra", async () => {
+      updateError = {
+        code: "23505",
+        details: "Key (store_id, assigned_user_id)=(s, u) already exists.",
+        message:
+          'duplicate key value violates unique constraint "cash_registers_one_active_assignment_per_store_idx"',
+      };
+
+      await expectAssignmentConflict(await patch("reg-1", { assignedUserId: "vendedor-activo" }));
+      expect(updates).toEqual([{ assigned_user_id: "vendedor-activo" }]);
+
+      await expectAssignmentConflict(await patch("reg-1", { isActive: true }));
+    });
+
+    it("otro 23505 (nombre repetido) conserva el 409 genérico", async () => {
+      updateError = {
+        code: "23505",
+        message: 'duplicate key value violates unique constraint "cash_registers_store_name_key"',
+      };
+
+      const response = await patch("reg-1", { name: "Caja 2" });
+
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toEqual({ code: "CONFLICT", message: "El recurso ya existe." });
     });
   });
 });
