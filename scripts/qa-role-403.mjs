@@ -86,8 +86,22 @@ try {
     async function visit(path) {
       current = path;
       visited += 1;
-      await page.goto(APP + path, { waitUntil: "domcontentloaded", timeout: 180_000 });
-      await page.locator("main").first().waitFor({ timeout: 120_000 });
+      // `next dev` compila cada ruta la primera vez y a veces deja la carga a medias:
+      // un segundo intento de navegación; si tampoco pinta `<main>`, el guion falla.
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          await page.goto(APP + path, { waitUntil: "domcontentloaded", timeout: 120_000 });
+          await page.locator("main").first().waitFor({ timeout: 60_000 });
+          break;
+        } catch (error) {
+          if (attempt === 2) {
+            throw error;
+          }
+
+          console.log(`    · ${role} ${path}: no cargó a la primera, se reintenta`);
+        }
+      }
+
       await settle(page);
     }
 
