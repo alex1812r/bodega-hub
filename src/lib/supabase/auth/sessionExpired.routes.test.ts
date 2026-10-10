@@ -140,6 +140,19 @@ describe("POS-H3 · sesión caducada en las rutas del BFF", () => {
   );
 
   it.each(protectedCases)(
+    "%s responde 401 con cookies de sesión y refresh token mal formado (POS-F2)",
+    async (_name, handler) => {
+      // Forma exacta de GoTrue: 400 `validation_failed`.
+      withSession(new AuthApiError("Refresh token is not valid", 400, "validation_failed"));
+
+      const response = await call(handler);
+
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toEqual(UNAUTHORIZED_BODY);
+    },
+  );
+
+  it.each(protectedCases)(
     "%s responde 401 con un Bearer caducado",
     async (_name, handler) => {
       withSession(new AuthApiError("invalid JWT: token is expired", 403, "bad_jwt"), "Bearer expired");
@@ -163,5 +176,19 @@ describe("POS-H3 · sesión caducada en las rutas del BFF", () => {
     const response = await call(handler);
 
     expect(response.status).toBeGreaterThanOrEqual(500);
+  });
+
+  it("no convierte en 401 el límite de peticiones del servidor de auth", async () => {
+    const handler = handlers.find((candidate) => candidate.name === "GET /api/auth/me");
+
+    if (!handler) {
+      throw new Error("GET /api/auth/me no existe");
+    }
+
+    withSession(new AuthApiError("Too many requests", 429, "over_request_rate_limit"));
+
+    const response = await call(handler);
+
+    expect(response.status).not.toBe(401);
   });
 });

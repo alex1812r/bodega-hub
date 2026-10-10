@@ -5,7 +5,10 @@
  * por tipo (`name`), código (`code`) y estado HTTP del error, no por su texto.
  */
 
-/** Códigos de GoTrue que significan que la credencial ya no sirve. */
+/**
+ * Códigos de GoTrue que significan que la credencial ya no sirve; deciden
+ * cuando el error llega sin estado HTTP.
+ */
 const SESSION_ERROR_CODES = new Set([
   "bad_jwt",
   "invalid_jwt",
@@ -25,14 +28,16 @@ const SESSION_ERROR_NAMES = new Set([
   "AuthSessionMissingError",
 ]);
 
+/** Límite de peticiones: el servidor no llegó a evaluar la credencial. */
+const RATE_LIMIT_STATUS = 429;
+
 /**
- * GoTrue anterior a los códigos de error rechaza el refresh con 400
- * `invalid_grant` y solo este texto ("Invalid Refresh Token: Refresh Token Not
- * Found", "…: Already Used"). Único caso que se decide por mensaje, y solo
- * para un 400 sin `code`.
+ * Textos de sesión de un error que llega sin estado HTTP ni `code` ("Invalid
+ * Refresh Token: Refresh Token Not Found", "…: Already Used"). Único caso que
+ * se decide por mensaje: con estado HTTP manda el estado.
  */
 const LEGACY_REFRESH_MESSAGE = /^invalid refresh token\b/i;
-/** Textos de JWT de respuestas sin `code` (GoTrue antiguo), con 400. */
+/** Textos de JWT de un error sin estado HTTP ni `code`. */
 const LEGACY_JWT_MESSAGE = /^(?:invalid jwt\b|auth session missing\b)|\b(?:jwt|token is) expired\b/i;
 
 type AuthErrorShape = {
@@ -77,9 +82,19 @@ export function isAuthServiceFailure(error: unknown): boolean {
 
 /**
  * `true` si el error dice que la petición no trae una sesión válida: sin
- * cookie, access token caducado con refresh token inválido, revocado o ya
- * usado, sesión cerrada en otro dispositivo, JWT caducado o manipulado (cookies
- * y Bearer). El BFF responde 401 y el cliente vuelve a iniciar sesión.
+ * cookie, access token caducado con refresh token inválido, mal formado,
+ * revocado o ya usado, sesión cerrada en otro dispositivo, JWT caducado o
+ * manipulado (cookies y Bearer). El BFF responde 401 y el cliente vuelve a
+ * iniciar sesión.
+ *
+ * Al leer la sesión, cualquier rechazo 4xx del servidor de auth significa que
+ * la credencial enviada no sirve, sea cual sea su `code` (`validation_failed`
+ * o `bad_json` de un refresh token mal formado, `invalid_grant`,
+ * `refresh_token_*`, `session_*`, `bad_jwt`…). La excepción es 429: el límite
+ * de peticiones no dice nada de la credencial y sigue siendo error de servidor.
+ *
+ * Solo para errores de `getUser()`/refresh de sesión; no clasifica el inicio
+ * de sesión con credenciales.
  */
 export function isSessionAuthError(error: unknown): boolean {
   const shape = readAuthError(error);
@@ -88,9 +103,12 @@ export function isSessionAuthError(error: unknown): boolean {
     return false;
   }
 
+  if (shape.status === RATE_LIMIT_STATUS) {
+    return false;
+  }
+
   if (
-    shape.status === 401 ||
-    shape.status === 403 ||
+    (shape.status !== null && shape.status >= 400) ||
     SESSION_ERROR_NAMES.has(shape.name) ||
     (shape.code !== null && SESSION_ERROR_CODES.has(shape.code))
   ) {
@@ -99,7 +117,7 @@ export function isSessionAuthError(error: unknown): boolean {
 
   return (
     shape.code === null &&
-    (shape.status === 400 || shape.status === null) &&
+    shape.status === null &&
     (LEGACY_REFRESH_MESSAGE.test(shape.message) || LEGACY_JWT_MESSAGE.test(shape.message))
   );
 }

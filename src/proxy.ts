@@ -5,6 +5,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getDefaultHomePathForAuthUserId } from "@/lib/supabase/auth/profile.server";
 import { buildLoginUrl } from "@/shared/auth/loginRedirect";
 
+/**
+ * Primer segmento de toda página de `src/app` que exige sesión. Una carpeta de
+ * página nueva entra aquí o en las públicas de `proxy.test.ts`.
+ */
 const privatePathPrefixes = [
   "/dashboard",
   "/products",
@@ -16,6 +20,10 @@ const privatePathPrefixes = [
   "/reports",
   "/settings",
   "/platform",
+  "/vault",
+  "/cash",
+  "/payroll",
+  "/assistant",
 ] as const;
 
 function isPrivatePath(pathname: string) {
