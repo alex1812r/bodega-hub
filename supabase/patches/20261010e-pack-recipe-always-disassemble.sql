@@ -19,17 +19,23 @@
 --      receive_purchase, receive_purchase_and_disassemble y
 --      convert_pack_to_units NO leen esta columna: no cambia stock, costo,
 --      dinero ni ninguna huella de idempotencia.
---   2. Se lee y se escribe por la MISMA via que el resto de la receta: tabla
---      directa por PostgREST (no hay RPC de recetas en esta rama). La RLS de la
---      cabecera ya la cubre: la lee toda la tienda; la escriben admin y almacen
---      de la tienda; otra tienda y anon no ven ni escriben filas.
+--   2. Se LEE por tabla directa (PostgREST) con la RLS de la cabecera: la lee
+--      toda la tienda; otra tienda y anon no ven filas. Se ESCRIBE solo por la
+--      RPC save_pack_recipe (argumento p_always_disassemble_on_receive, parche
+--      20261012a): 20261011d revoca insert / update / delete de authenticated
+--      sobre la cabecera, tambien para admin y almacen. Cuando se escribio este
+--      parche (rama de Compras) el BFF la escribia por tabla directa; esa via
+--      ya no existe.
 --   3. Un update que solo nombra esta columna no dispara la reescritura de
 --      componentes del trigger de compatibilidad de 20261009d (ese solo
 --      reacciona a unit_product_id / units_per_pack).
 --   4. No migra datos: toda receta existente queda en false (como hasta hoy).
---   5. La preferencia es de la cabecera: cuando el BFF reemplaza una receta
---      (cabecera nueva, la anterior inactiva) copia el valor a la nueva.
+--   5. La preferencia es de la cabecera: cuando una receta reemplaza a otra
+--      (cabecera nueva, la anterior inactiva) save_pack_recipe hace que la
+--      nueva herede el valor de la anterior (20261012a).
 --
+-- ORDEN DE DESPLIEGUE: este parche -> 20261011c -> 20261012a -> verify -> BFF.
+-- Orden completo del plan: docs/despliegue-ux-mejoras.md.
 -- Idempotente, una transaccion. NO se aplica a produccion desde este plan.
 -- Reaplicar 20261009d no elimina la columna (solo anade las suyas): no hace
 -- falta reaplicar este parche despues.

@@ -346,7 +346,7 @@ Resumen: 29 implementadas, 8 implementadas con desvío, 0 descartadas, 0 pospues
 | R34 | Implementada | PRO-12, PRO-13, COM-14, INV-08, INV-09 | Receta de N componentes, reparto ajustable y «Desarmar al recibir» |
 | R35 | Implementada | SHR-11, CNF-15, CNF-16 | Guardia en los procesos listados en [`modules-catalog.md`](modules-catalog.md#procesos-protegidos-processguard) y borrador de compra y de carrito. La navegación programática pasa por `guardedNavigate` |
 | R36 | Implementada | PRO-14 | Sección Proveedores en el formulario con habitual único (`20261009e`) |
-| R37 | Implementada con desvío | SHR-12, DET-06 | El parámetro es `returnTo` (no `from`) y la URL se escribe con `history.replaceState`. «Recordar últimos filtros» existe como hook y chip, sin montar en ningún listado |
+| R37 | Implementada con desvío | SHR-12, DET-06 | El parámetro es `returnTo` (no `from`) y la URL se escribe con `history.replaceState`. «Recordar últimos filtros»: **pospuesto (sin cablear)**; `useRememberedListFilters` y `RememberedFiltersChip` existen con sus tests, pero ningún listado los monta (8.2) |
 
 ### 8.2 Partes pospuestas y decisiones que esperan al dueño
 

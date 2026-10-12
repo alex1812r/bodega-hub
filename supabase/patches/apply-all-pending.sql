@@ -4,6 +4,16 @@
 -- Uso: pegar en Supabase Dashboard → SQL Editor → Run
 -- Idempotente: se puede re-ejecutar sin romper datos existentes.
 -- Ver: docs/supabase-setup.md (seccion patches)
+--
+-- ORDEN DE DESPLIEGUE del plan ux-mejoras (20261007a ... 20261017a): el orden de
+-- los bloques de este archivo es el de los nombres, NO el de despliegue. La unica
+-- fuente del orden es docs/despliegue-ux-mejoras.md, seccion 2:
+--   20261007a, 7b, 8a, 9a-9f, 10a, 10b, 10d, 10e, 10f, 11a, 11b, 11c, 12a, 12b,
+--   13a, 13b, 15a, 17a -> verify -> BFF -> 20261010c -> 20261011d -> verify.
+-- 20261010c y 20261011d van DESPUES del BFF. En el primer verify quedan en fail
+-- tres filas, y solo esas: la de 20261010c, la de privilegios de 20261011d y la
+-- de RLS de product_pack_components de 20261009d. En el segundo, fail = 0.
+-- 20261008a y 20261015a: orden con el BFF indistinto (van antes por simplicidad).
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -617,6 +627,8 @@ notify pgrst, 'reload schema';
 -- ORDEN DE DESPLIEGUE (COM-16): BFF -> parche -> verify. El BFF anterior lee payments con la sesion del usuario en
 -- GET /api/purchases/[id] y sobrescribe Pagado con esa suma: sobre la base parcheada almacen veria "Pagado 0". El BFF
 -- nuevo no consulta payments para almacen y funciona igual con o sin parche.
+-- Ningun otro parche depende de este: se aplica tras el BFF, antes de 20261011d (BFF -> 20261010c -> 20261011d -> verify).
+-- Hasta entonces su fila de verify-patches.sql queda en fail: es la tercera fila esperada del primer verify.
 -- -----------------------------------------------------------------------------
 -- 20261010d — receive disassemble (COM-14): la linea de compra marcada "Desarmar al recibir" se abre en los componentes de
 --             la receta de su empaque en la misma transaccion que la recibe
@@ -652,7 +664,7 @@ notify pgrst, 'reload schema';
 -- nace con el chip "Desarmar al recibir" marcado en /purchases/create; la marca que decide sigue viajando por linea.
 -- Se LEE por tabla directa (PostgREST) con la RLS de la cabecera (lectura de la tienda). Se ESCRIBE por la RPC
 -- save_pack_recipe desde 20261012a (INT-02): 20261011d revoca la escritura directa de la cabecera, tambien para admin y
--- almacen. La cabecera del parche aun describe la escritura por tabla de la rama de Compras: ya no aplica.
+-- almacen.
 -- ORDEN DE DESPLIEGUE: parche -> verify -> BFF. El BFF anterior funciona sobre la base parcheada. El BFF nuevo sobre la
 -- base sin parche responde error al leer recetas (pide la columna nueva). Aplicar ANTES de 20261012a (usa la columna).
 -- -----------------------------------------------------------------------------
@@ -734,7 +746,7 @@ notify pgrst, 'reload schema';
 -- debe pasar a la RPC save_pack_recipe.
 -- ORDEN DE DESPLIEGUE (INV-L2): 20261011c -> verify -> BFF nuevo (INV-09) -> este parche -> verify. En el primer verify
 -- quedan en fail, y solo ellas, las dos filas que exigen este parche (la de privilegios de 20261011d y la de RLS de
--- product_pack_components de 20261009d); en el segundo, fail=0. Si despues se reaplica 20261009d, reaplicar este. NO aplicar antes del
+-- product_pack_components de 20261009d; con el orden completo del plan se suma la fila de 20261010c, que tambien va tras el BFF); en el segundo, fail=0. Si despues se reaplica 20261009d, reaplicar este. NO aplicar antes del
 -- BFF nuevo: el BFF anterior escribe la receta por tabla y, sobre la base con este parche, guardar, editar o desactivar
 -- la receta de un empaque le responde 403. Deshacer: grant insert, update, delete on public.product_pack_conversions,
 -- public.product_pack_components to authenticated;
