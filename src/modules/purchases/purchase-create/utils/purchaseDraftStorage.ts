@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { formatTaxRatePct } from "@/shared/components/TaxRateChips";
+import type { TaxRate } from "@/shared/hooks/useTaxRates";
 import { formatVesBs, roundMoney } from "@/shared/utils/currency";
 
 import type { PurchaseLinesSnapshot } from "../hooks/usePurchaseLines";
@@ -8,6 +10,7 @@ import type { PurchaseCostCurrency, PurchaseLineCatalogMeta } from "../types";
 import type { PurchaseLineSource } from "./duplicatePurchase";
 import { syncLineCostFields } from "./normalizePurchaseLine";
 import { switchPurchaseReviewCostCurrency } from "./purchaseLineReview";
+import { resolvePurchaseLineTax } from "./purchaseLineTax";
 
 /**
  * Borrador LOCAL de la compra en curso (COM-09): lo que se guarda en
@@ -227,7 +230,10 @@ export type RestoredPurchaseDraft = {
   costCurrency: PurchaseCostCurrency;
   lineMeta: Map<string, PurchaseLineCatalogMeta>;
   lines: PurchaseLinesSnapshot;
-  /** Avisos para el usuario: tasa distinta de la guardada y productos que se quitaron. */
+  /**
+   * Avisos para el usuario: tasa distinta de la guardada, líneas cuyo IVA cambió con
+   * la alícuota de su categoría y productos que se quitaron.
+   */
   notices: string[];
 };
 
@@ -237,14 +243,22 @@ export type RestoredPurchaseDraft = {
  * - los costos se sincronizan con la tasa VIGENTE dejando fijo el monto en la moneda
  *   de captura de la compra, también en las fotos de revisión para que el cambio de
  *   tasa no cuente como edición;
- * - nombre, SKU, empaques y % de categoría se toman del catálogo actual.
+ * - nombre, SKU, empaques y % de categoría se toman del catálogo actual. Un borrador no
+ *   está confirmado, así que sus líneas toman la alícuota VIGENTE de la categoría; las que
+ *   quedan con un IVA distinto del guardado se nombran en un aviso (GC-02). Una alícuota
+ *   elegida a mano que sigue activa se conserva, y «Compra exenta» también.
+ *
+ * `taxRates`: el catálogo de alícuotas de la tienda, para saber cuál aplicaba y cuál
+ * aplica a cada línea; sin él se compara el % de la categoría.
  */
 export function restorePurchaseDraft(
   draft: StoredPurchaseDraft,
-  input: { products: PurchaseProductResolutions; rateVes: number },
+  input: { products: PurchaseProductResolutions; rateVes: number; taxRates?: TaxRate[] },
 ): RestoredPurchaseDraft {
   const lineMeta = new Map<string, PurchaseLineCatalogMeta>();
   const removedNames = new Map<string, string>();
+  /** "de>a" -> nombres de las líneas cuyo IVA cambió con la alícuota de su categoría. */
+  const taxChanges = new Map<string, { from: number; names: string[]; to: number }>();
   const items = draft.lines.items.flatMap((item) => {
     const resolution = input.products.get(item.productId);
 
@@ -259,6 +273,27 @@ export function restorePurchaseDraft(
     const { name, packUnits, sku, taxRate } = resolution.product;
 
     lineMeta.set(item.productId, { name, packUnits, sku, taxRate });
+
+    const savedCategoryPct = draft.lineMeta[item.productId]?.taxRate;
+
+    if (savedCategoryPct !== undefined) {
+      const lineTax = {
+        choiceCode: draft.lines.taxState.choices[item.id],
+        exempt: draft.lines.taxState.exempt,
+        rates: input.taxRates ?? [],
+      };
+      const from = resolvePurchaseLineTax({ ...lineTax, categoryPct: savedCategoryPct }).rate;
+      const to = resolvePurchaseLineTax({ ...lineTax, categoryPct: taxRate }).rate;
+
+      if (from !== to) {
+        const key = `${from}>${to}`;
+        const change = taxChanges.get(key) ?? { from, names: [], to };
+
+        change.names.push(name);
+        taxChanges.set(key, change);
+      }
+    }
+
     return [syncLineCostFields(item, input.rateVes)];
   });
   const keptIds = new Set(items.map((item) => item.id));
@@ -268,6 +303,14 @@ export function restorePurchaseDraft(
   if (roundMoney(draft.rateVes) !== roundMoney(input.rateVes)) {
     notices.push(
       `La tasa cambió desde que guardaste la compra (de ${formatVesBs(draft.rateVes)} a ${formatVesBs(input.rateVes)}): los costos se recalcularon con la tasa actual.`,
+    );
+  }
+
+  for (const { from, names, to } of taxChanges.values()) {
+    const lineCount = names.length === 1 ? "1 línea" : `${names.length} líneas`;
+
+    notices.push(
+      `El IVA de ${lineCount} cambió de ${formatTaxRatePct(from)} a ${formatTaxRatePct(to)} desde que guardaste el borrador: ${names.join(", ")}.`,
     );
   }
 

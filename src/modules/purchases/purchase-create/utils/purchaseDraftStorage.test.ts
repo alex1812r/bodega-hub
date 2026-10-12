@@ -1,3 +1,5 @@
+import type { TaxRate } from "@/shared/hooks/useTaxRates";
+
 import type { PurchaseCatalogProduct } from "../components/PurchaseProductPickerCard";
 import type { PurchaseProductResolutions } from "../services/resolvePurchaseProducts";
 import { createPackDraftItem, createUnitDraftItem } from "../types";
@@ -360,6 +362,96 @@ describe("restorePurchaseDraft", () => {
     expect(restored.notices).toEqual([
       "Se quitaron 2 productos que ya no existen o están inactivos: Refresco Cola, Cable HDMI.",
     ]);
+  });
+});
+
+describe("restorePurchaseDraft · alícuota de categoría cambiada con el borrador guardado (GC-02)", () => {
+  const rate = (code: string, pct: number): TaxRate => ({
+    code,
+    id: `tax-${code}`,
+    isActive: true,
+    isDefault: code === "general",
+    isGlobal: true,
+    label: code,
+    pct,
+    sortOrder: 0,
+  });
+  const taxRates = [rate("exento", 0), rate("reducida", 8), rate("general", 16)];
+
+  function storedDraft(taxState: PurchaseDraftContent["lines"]["taxState"]) {
+    const draft = parseStoredPurchaseDraft(
+      serializePurchaseDraft(
+        buildContent({
+          lines: {
+            items: [refresco, cable],
+            locks: { locked: {} },
+            review: { baselines: {}, reviewed: {} },
+            taxState,
+          },
+        }),
+        session,
+        savedAt,
+      ),
+      session,
+    );
+
+    if (!draft) {
+      throw new Error("El borrador de prueba no es válido.");
+    }
+
+    return draft;
+  }
+
+  // Guardado con la categoría al 16 %; el catálogo de hoy (`allActive`) la trae al 8 %.
+  it("avisa de las líneas que toman la alícuota nueva, con sus nombres", () => {
+    const restored = restorePurchaseDraft(storedDraft({ choices: {}, exempt: false }), {
+      products: allActive(),
+      rateVes: 510,
+      taxRates,
+    });
+
+    expect(restored.notices).toEqual([
+      "El IVA de 2 líneas cambió de 16 % a 8 % desde que guardaste el borrador: Refresco, Cable HDMI 2 m.",
+    ]);
+    expect(restored.lineMeta.get("prod-cable")?.taxRate).toBe(8);
+  });
+
+  it("una alícuota elegida a mano que sigue activa se conserva y no se cuenta", () => {
+    const restored = restorePurchaseDraft(
+      storedDraft({ choices: { "line-refresco": "general" }, exempt: false }),
+      { products: allActive(), rateVes: 510, taxRates },
+    );
+
+    expect(restored.lines.taxState.choices).toEqual({ "line-refresco": "general" });
+    expect(restored.notices).toEqual([
+      "El IVA de 1 línea cambió de 16 % a 8 % desde que guardaste el borrador: Cable HDMI 2 m.",
+    ]);
+  });
+
+  it("con «Compra exenta» las líneas siguen exentas: no hay nada que avisar", () => {
+    const restored = restorePurchaseDraft(storedDraft({ choices: {}, exempt: true }), {
+      products: allActive(),
+      rateVes: 510,
+      taxRates,
+    });
+
+    expect(restored.notices).toEqual([]);
+  });
+
+  it("si la categoría no cambió de alícuota no avisa", () => {
+    const sameRate = (productId: string, name: string) =>
+      ({ product: { ...catalogProduct(productId, name), taxRate: 16 }, status: "active" }) as const;
+    const products: PurchaseProductResolutions = new Map([
+      ["prod-cable", sameRate("prod-cable", "Cable")],
+      ["prod-refresco", sameRate("prod-refresco", "Refresco")],
+    ]);
+    const restored = restorePurchaseDraft(storedDraft({ choices: {}, exempt: false }), {
+      products,
+      rateVes: 510,
+      taxRates,
+    });
+
+    expect(restored.notices).toEqual([]);
   });
 });
 

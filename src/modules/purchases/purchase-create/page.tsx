@@ -600,6 +600,7 @@ export function PurchaseCreatePage() {
                 stored.lines.items.map((item) => item.productId),
               ),
               rateVes: currentRateVes,
+              taxRates: taxRates.rates,
             })
           : null;
 
