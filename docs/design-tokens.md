@@ -119,6 +119,26 @@ Reglas:
 - Las series no significan estado: ninguna es el rojo de `--error` ni el verde de éxito. Para "bien / mal" se usan los semánticos, no `--chart-N`. Con deuteranopia el ámbar (`--chart-2`) queda cerca de `--error`: no pintes un error junto a una serie sin icono o texto.
 - Al cambiar un valor, cámbialo en `:root` y en `.dark` y pasa `chartTheme.test.ts`.
 
+## Patrones del plan ux-mejoras
+
+Qué tokens usa cada patrón nuevo. Maquetación en [`responsive-ui.md`](responsive-ui.md#patrones-de-pantalla).
+
+| Patrón | Componente | Tokens |
+|--------|-----------|--------|
+| Sección colapsable | `CollapsibleSection` | Superficie de `Card`; título `slate-950` / `slate-100`; resumen `slate-500` / `slate-400`; foco `ring-ring`; transición de 200 ms, sin animación con `motion-reduce` |
+| Pestañas | `Tabs` | Barra con `border-outline-variant`; pestaña activa con `border-b-2 border-primary`, `font-semibold` y `text-primary` (`indigo-300` en oscuro, donde `text-primary` no llega a AA sobre `surface`) |
+| Cabecera de detalle | `PrimaryStateAction` | `Card` con `p-4 sm:p-6`; cada cifra en `rounded-xl` sobre `slate-50` / `slate-950` con borde `slate-100` / `slate-800`; etiqueta en mayúsculas `slate-500` / `slate-400` |
+| Aviso de campo | `Input` (`notice`), `FloatingFieldNotice` | Borde `amber-500` (`amber-600` en oscuro) y anillo `amber-200` / `amber-950` (`formControlNoticeClassName` en `src/shared/styles/form-controls.ts`). Es el semántico de aviso, no el de error |
+| Semáforo de ganancia | `MarginBadge` | Semánticos danger / warning / success según los umbrales de la tienda, siempre con el % escrito |
+| Confirmación | `ConfirmActionModal` | Variante peligro con los semánticos de error; los efectos «antes → después» usan tono, nunca solo color |
+| Gráficos | `TimeSeriesChart`, `RankingBarChart`, `HeatmapChart` | `--chart-1` … `--chart-5` (sección anterior) |
+
+Reglas:
+
+- **Tema oscuro obligatorio.** Los tokens de `.dark` están completos desde SHR-13 (ver [Tema oscuro](#tema-oscuro)): un componente nuevo se prueba en claro y oscuro, y a 1280 y 390 px.
+- **Sin diálogos nativos.** `window.confirm`, `alert` y `prompt` están prohibidos por lint (`no-restricted-globals` / `no-restricted-properties`, sin excepciones). Confirmar = `ConfirmActionModal`; avisar = `Toast`. La única excepción es el aviso `beforeunload` del navegador que usa `ProcessGuard`.
+- **Sin librerías de UI nuevas.** `Tabs` y `CollapsibleSection` son React + estos tokens.
+
 ## Tipografía
 
 - **Familia:** Inter (`next/font/google`, variable `--font-inter`)

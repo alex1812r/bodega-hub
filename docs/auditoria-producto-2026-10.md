@@ -294,3 +294,113 @@ Medir antes y después con usuarios reales (o con el eval de navegador del equip
 ## 7. Cómo ejecutar
 
 Estas recomendaciones se pueden convertir en un plan `docs/agent-prompts/ux-compras-pagos-gtm.md` con el formato de los demás planes (fases, agentes, caos, QA, definición de hecho), empezando por la Prioridad 1. Las de Prioridad 2 dependen de que el plan de integridad de inventario (`stock-integrity-gtm.md`) haya cerrado, para no construir vistas de stock sobre datos descuadrados.
+
+
+---
+
+## 8. Estado de las recomendaciones
+
+Cierre del plan [`agent-prompts/ux-mejoras-gtm.md`](agent-prompts/ux-mejoras-gtm.md) sobre la rama `feat/ux-mejoras` (HEAD `4974a90`, 2026-10-12). Nada de esto está en producción: el orden de despliegue y los hallazgos que quedaron fuera de alcance están en [`despliegue-ux-mejoras.md`](despliegue-ux-mejoras.md).
+
+Estados: **implementada** (hace lo que pide la recomendación) · **implementada con desvío** (hecha, pero una parte difiere de lo escrito aquí o quedó pospuesta; la nota dice cuál) · **descartada** · **pospuesta**.
+
+Resumen: 29 implementadas, 8 implementadas con desvío, 0 descartadas, 0 pospuestas enteras. Lo pospuesto son partes de una recomendación y está listado en [8.2](#82-partes-pospuestas-y-decisiones-que-esperan-al-dueño).
+
+### 8.1 Tabla R1–R37
+
+| # | Estado | Tickets | Nota |
+|---|--------|---------|------|
+| R1 | Implementada | COM-01, COM-02, COM-03 | Buscador sobre todos los activos, vínculo al confirmar y «Nuevo producto» reducido. Un pedido sin recibir ya deja vínculo y costo del proveedor (`20261010a`) |
+| R2 | Implementada | COM-04, COM-05, COM-11 | 4 campos por línea; moneda una vez por compra; el chip de IVA son las alícuotas de R32 |
+| R3 | Implementada | SHR-03, PAG-01, PAG-02, COM-06 | Pago dentro del detalle de compra y de venta; «Pagar ahora» al crear (compra y pago en secuencia, no en una transacción) |
+| R4 | Implementada | PAG-03 | `/payments` abre un buscador de documentos con saldo; ya no hay campo de ID |
+| R5 | Implementada | COM-08 | Pagado, Saldo, badge de pago, «Con saldo pendiente» y rango de fechas en la URL |
+| R6 | Implementada | COM-07 | Banner de pedido con «Recibir mercancía» y badge propio en la lista |
+| R7 | Implementada | INV-01, INV-02, INV-06 | `/inventory` es la vista única; `/products` enlaza a su fila |
+| R8 | Implementada con desvío | INV-03, DET-01 | El kardex está en la pestaña Resumen como sección colapsada, no como primera tarjeta abierta (el detalle abre con 3 bloques) |
+| R9 | Implementada | INV-04 | Tipo, rango, producto y documento filtrados y paginados en servidor |
+| R10 | Implementada | PRO-03 | Stock en solo lectura + «Ajustar stock»; `PATCH` con `currentStock` → 400 (plan de stock) |
+| R11 | Implementada | INV-05 | Desde stock bajo (dashboard y reporte), con cantidad sugerida y proveedor habitual (R36) |
+| R12 | Implementada | SHR-01 | `CollapsibleSection` propio, sin librería nueva |
+| R13 | Implementada | SHR-02, DET-01 | Resumen · Proveedores · Historial · Avanzado, con `?tab=` |
+| R14 | Implementada con desvío | SHR-04, DET-02, DET-03, DET-04 | Cabecera con 4 cifras y acción primaria. «Recibir» no está en la cabecera: vive solo en el banner de pedido (R6) |
+| R15 | Implementada | DET-05 | Producto ↔ compra ↔ venta ↔ movimiento en ambos sentidos |
+| R16 | Implementada | PRO-02 | «+ Nueva categoría» en el select, con alícuota por chips |
+| R17 | Implementada | PRO-01, PRO-05 | Básico + «Más opciones»; SKU opcional (se genera) |
+| R18 | Implementada con desvío | POS-01 | Abre con método + monto. En pago móvil, banco/teléfono/referencia se piden al primer «Cobrar» o con «Expandir» (+1 clic): decisión a validar con el dueño |
+| R19 | Implementada | PAG-04 | Pestaña Saldos y «Abonar» a los más antiguos; un pago por documento, enviados en serie con su clave |
+| R20 | Implementada | PRO-04, COM-09 | «Guardar y crear otro» en producto y contacto; «Duplicar compra» |
+| R21 | Implementada con desvío | POS-02 | Interruptor sin SQL ni ajuste: son `granted_permissions` de los admin. Riesgo de despliegue y regla de anular/devolver en [`auth-permissions.md`](auth-permissions.md#el-administrador-puede-vender) |
+| R22 | Implementada | POS-03 | Código de barras, SKU, N.º de factura, N.º de compra y contacto (`GET /api/search`) |
+| R23 | Implementada con desvío | POS-04 | Menú en 4 grupos colapsables. Pagos quedó en el grupo «Dinero», no bajo Reportes; la ruta se conserva |
+| R24 | Implementada | COM-07, CNF-04 | Previsualización de cantidades (y del desarme) antes de recibir |
+| R25 | Implementada | SHR-05, COM-10, PRO-06, INV-07 | 0 selects con lista completa de productos o contactos |
+| R26 | Implementada | SHR-06, PRO-07, PRO-09, PRO-11 | Columna Ganancia con semáforo, umbrales por tienda y cola «Por revisar» |
+| R27 | Implementada | PRO-08, PRO-09, PRO-10 | Chips de % en producto, cambio de precio y compra; aviso de reprecio al recibir |
+| R28 | Implementada con desvío | SHR-07, SHR-08, CNF-01…CNF-14 | Anular con pagos activos se bloquea y remite a anular los pagos (las RPC no revierten dinero); la devolución de venta es solo total |
+| R29 | Implementada | REP-01, REP-09 | Línea con picos y periodo anterior en dashboard y reportes de serie |
+| R30 | Implementada | REP-02, REP-03, REP-04, REP-05, REP-08 | `DateRangeField`, catálogo agrupado, gráfico sobre la tabla, comparar y agrupar; exportes con gráfico |
+| R31 | Implementada | REP-06, REP-07 | Los seis reportes nuevos; sin reporte por vendedor. Dos sin datos en la base del QA global (ver métrica 15) |
+| R32 | Implementada | SHR-09, SHR-10, COM-11, PRO-02, PRO-09 | Catálogo `tax_rates`, chips, «Compra exenta» y alta de alícuotas solo en Configuración |
+| R33 | Implementada con desvío | SHR-09, COM-12, COM-13 | Tras un escaneo el foco se queda en el buscador (a Cantidad solo por clic, teclado o «Nuevo producto»). `30.600` se lee 30,60 con aviso no bloqueante |
+| R34 | Implementada | PRO-12, PRO-13, COM-14, INV-08, INV-09 | Receta de N componentes, reparto ajustable y «Desarmar al recibir» |
+| R35 | Implementada | SHR-11, CNF-15, CNF-16 | Guardia en los procesos listados en [`modules-catalog.md`](modules-catalog.md#procesos-protegidos-processguard) y borrador de compra y de carrito. La navegación programática pasa por `guardedNavigate` |
+| R36 | Implementada | PRO-14 | Sección Proveedores en el formulario con habitual único (`20261009e`) |
+| R37 | Implementada con desvío | SHR-12, DET-06 | El parámetro es `returnTo` (no `from`) y la URL se escribe con `history.replaceState`. «Recordar últimos filtros» existe como hook y chip, sin montar en ningún listado |
+
+### 8.2 Partes pospuestas y decisiones que esperan al dueño
+
+Pospuesto, con su dependencia:
+
+| Qué | De | Depende de |
+|-----|----|-----------|
+| Devolución **parcial** de venta con confirmación | R28 (CNF-03) | No hay RPC: `return_sale` es solo total. Exige una RPC nueva de stock y dinero |
+| Anular venta o compra y revertir sus pagos en un paso | R28 (CNF-02, CNF-05) | `cancel_sale`, `cancel_purchase` y `return_purchase` rechazan con pagos activos; cambiarlo es cambiar semántica monetaria de RPC |
+| Vencimiento de ventas `pendiente_pago` y liberación de su stock | plan de stock | Cambiar la RPC de venta |
+| Recordar los últimos filtros de cada lista | R37 (parte opcional) | Montar `useRememberedListFilters` + `RememberedFiltersChip` en los listados |
+
+Decisiones tomadas durante el plan que conviene validar:
+
+- Pago móvil en el POS: datos del banco al primer «Cobrar» (R18).
+- `30.600` tecleado = 30,60. Un único separador es decimal; el campo avisa, no bloquea (R33).
+- Con el interruptor de R21 apagado, el administrador no puede anular ni devolver ventas: esas rutas exigen `sales.create`. Ya era así antes del plan; no se cambió.
+- Las ventas en `borrador` cuentan como venta en los reportes (criterio único, heredado).
+
+### 8.3 Abiertos del plan de integridad de stock
+
+| Abierto | Estado | Ticket | Nota |
+|---------|--------|--------|------|
+| P4-2 — descuento sin tope | Cerrado en el BFF | POS-05 | Vendedor con descuento > 0 → 403; descuento ≥ subtotal → 400. La RPC llamada directo por PostgREST lo sigue aceptando |
+| P4-3 — pago duplicado al reintentar | Cerrado | PAG-06 | `clientRequestId` en `POST /api/payments` y `register_payment` (`20261008a`) |
+| Compra y ajuste sobre producto inactivo | Cerrado | COM-15 | `create_purchase` → `PT400` (`20261010b`); entrada por ajuste → `PT409` (`20261011b`). Recibir un pedido anterior a la desactivación se permite |
+| Venta `pendiente_pago` abandonada | Solo visibilidad | PAG-07 | Aviso en `/payments` de las de 7 días o más, con Cobrar y acceso a Anular. El vencimiento está pospuesto (8.2) |
+
+### 8.4 Métricas antes / después
+
+Medidas en la pasada 1 del QA final global sobre `a11df06`, en navegador real contra la base del laboratorio. Las 23 están en meta; el QA dejó reserva en tres (15, 22 y 23) y en la 6 y la 16 se anota un matiz. No se han vuelto a medir sobre `4974a90`.
+
+| # | Métrica | Auditoría | Meta | Medido | Reserva |
+|---|---------|-----------|------|--------|---------|
+| 1 | Pantallas para comprar un producto nuevo y pagarlo | 5 | 1 | 1 | — |
+| 2 | Campos visibles por línea de compra simple | 8–9 | 4 | 4 | — |
+| 3 | Clics de detalle de compra a pago registrado | 6–8 | ≤ 3 | 3 | — |
+| 4 | Pantallas para responder «¿por qué este stock?» | 3 | 1 | 1 | — |
+| 5 | Bloques expandidos al abrir el detalle de producto | 8 | ≤ 3 (+ tabs) | 3 + 4 tabs | — |
+| 6 | Campos visibles al abrir «Cobrar» con pago móvil exacto | 6+ | 2 | 2 | Los datos del banco se piden al primer «Cobrar» (R18) |
+| 7 | Campos visibles al abrir «Nuevo producto» | 11 | ≤ 6 | 5 | — |
+| 8 | «¿Qué compras debo?» desde la lista | imposible | 1 pantalla, 1 filtro | 1 pantalla, 1 clic | — |
+| 9 | Selects con lista completa de productos o contactos en modales | 4 | 0 | 0 | — |
+| 10 | Productos con % de ganancia y semáforo visibles | 0 % | 100 % | 77 de 77 | — |
+| 11 | Pasos para fijar un precio al 30 % sobre el costo | calculadora + 1 campo | 1 chip | 1 chip | — |
+| 12 | Productos cuya ganancia bajó de banda sin que nadie lo sepa | todos | 0 | 0 | — |
+| 13 | Operaciones que mueven stock o dinero sin confirmación con efecto visible | 10 | 0 | 0 de 10 | — |
+| 14 | Confirmaciones en acciones inofensivas | 3 | 0 | 0 | — |
+| 15 | Reportes con gráfico | 0 de 13 | todos los de serie o ranking | 14 de 21 con gráfico; el resto no es de serie ni ranking | «Productos sin movimiento» y «Ajustes y mermas» no tenían datos en esa base: sin verificar en esta pasada |
+| 16 | Inputs de fecha nativos en reportes | 2 | 0 | 0 | Queda 1 `type="date"` fuera de reportes (ajustes de nómina) |
+| 17 | Elegir «mes pasado» en un reporte | 2 fechas tecleadas | 1 clic | 1 clic | — |
+| 18 | Gestos para marcar una compra exenta | 3 por línea | 1 por compra | 1 clic | — |
+| 19 | Porcentajes de IVA tecleables a mano | 3 sitios | 0 | 0 | — |
+| 20 | Inputs numéricos que cambian con la rueda del ratón | todos | 0 | 0 | — |
+| 21 | Registrar una caja surtida y venderla por sabor | imposible | 1 compra + 1 apertura | 1 compra + 1 recepción con desarme | — |
+| 22 | Procesos críticos que se pierden al navegar o recargar sin aviso | todos | 0 | 0 en lo medido | Se midieron compra y carrito del POS; el resto de procesos protegidos solo en el QA de su módulo |
+| 23 | Listados que conservan filtros, orden y página al volver del detalle | 0 de 12 | 12 de 12 | 9 medidos, 9 conservan | Sin medir: inventario (el guion no halló enlace) y tiendas y usuarios de plataforma (sin credenciales de superadmin). Por módulo: 12 de 12 |

@@ -35,7 +35,7 @@ Documentos relacionados:
 | Asistente IA | `/assistant` | `assistant.use` | `assistant_queries`, vista `store_capital_summary` |
 | Settings | `/settings` | `settings.view` / `users.manage` | `app_settings`, `profiles`, `exchange_rates` |
 
-**Rol admin:** sin `sales.create` ni `cash.operate` (no POS ni “Mi caja”). Conserva `sales.view`, `cash.manage` y `vault.*`. Para reactivar: devolver esos permisos en [`src/shared/auth/permissions.ts`](../src/shared/auth/permissions.ts).
+**Rol admin:** de base sin `sales.create` ni `cash.operate` (no POS ni «Mi caja»). Conserva `sales.view`, `cash.manage` y `vault.*`. Se le conceden con el interruptor «El administrador puede vender» de Configuración ([`auth-permissions.md`](auth-permissions.md#el-administrador-puede-vender)), no editando `permissions.ts`. Mientras esté apagado tampoco puede anular ni devolver ventas: esas rutas exigen `sales.create`.
 
 **Caja — tope de jornada:** una sesión abierta vence al **mínimo** entre medianoche Caracas del día de apertura y 24 h. El cron `GET/POST /api/cron/cash-sessions/auto-close` (cada 15 min, `CRON_SECRET`) cierra con el monto teórico y no transfiere al baúl. POS y Mi caja muestran cuenta regresiva y bloquean ventas al vencer. Patch: `supabase/patches/20260819-cash-session-auto-close.sql`.
 
@@ -95,6 +95,34 @@ page.tsx (App Router)
   - Lo que de verdad hacen las RPC (y por tanto muestra el modal): **anular** una venta o una compra con un pago activo se rechaza (`allowed=false`, el pago sale `blocks_action`): ninguna de las dos toca dinero. **Devolver una venta** es siempre total y anula cada pago activo con `cancel_payment_apply`. **Recibir una compra** fija el último costo con IVA (no promedio) y, al desarmar, el componente queda en promedio ponderado. **Cancelar/devolver una compra** no revierte pagos ni costos. **Anular un cobro** saca el dinero de la caja (borra su asiento) y **anular un pago a proveedor** lo devuelve al baúl sin cambiar el estado de la compra. No existe devolución parcial en `return_sale` (la parcial es un ajuste `devolucion_cliente`, otra acción).
   - Casos declarados inexactos: modo demo (el mock no guarda asientos de caja/baúl por pago), más de un asiento del mismo tipo para un pago, baúl ilegible, asiento de caja de tipo desconocido, producto que ya no existe, costo/IVA/peso no legibles. No detectable en lectura: carreras entre el impact y la ejecución; por eso el modal muestra además el `error.message` de la mutación si la RPC rechaza.
   - Para añadir un impact: función pura `compute…Impact` en `src/modules/<dom>/services/<doc>Impact.ts`, cargador `…Impact.server.ts` (solo `select`, filtrando `id` + `store_id` del servidor) y `…Impact.mock-server.ts` con la misma firma, ruta con `requireStorePermission(<permiso de la acción real>)` → `parseImpactAction` → `resolveDataSource()` → `impactJson`, entrada en `public/openapi.yml`, hook con `impactQueryOptions` y test de laboratorio copiando `scripts/stock-lab/regression/impact-sale.test.ts`.
+
+### Componentes compartidos
+
+Piezas de `src/shared/` que nacieron o cambiaron con el plan ux-mejoras. Todas usan los tokens de [`design-tokens.md`](design-tokens.md), tienen story y test junto al código, y funcionan en claro, oscuro y 390 px. No se añadió ninguna librería de UI: `Tabs` y `CollapsibleSection` son React + tokens. Patrones de maquetación en [`responsive-ui.md`](responsive-ui.md#patrones-de-pantalla).
+
+| Pieza | Ubicación | Para qué | API que importa |
+| --- | --- | --- | --- |
+| `CollapsibleSection` | `components/CollapsibleSection/` | Sección plegable de detalle, formulario o menú | `title`, `summary` (una línea, solo cerrada), `defaultOpen`, `open` / `onOpenChange` (controlada), `storageKey` (recuerda el estado en `localStorage`) |
+| `Tabs` | `components/Tabs/` | Pestañas de detalle y de Configuración | `items` (`value`, `label`, `badge?`, `disabled?`, `content`), `ariaLabel`, y **o** `value` / `onValueChange` **o** `urlParam` (p. ej. `"tab"`): la pestaña vive en la URL, escrita con `history.replaceState` |
+| `PaymentFormFields` | `payments/PaymentFormFields/` | Campos de un pago por método; los usan `RegisterPaymentModal`, `ContactSettlementModal` y «Pagar ahora» de la compra | `methods`, `values` / `onChange`, `pendingBalance` (activa «Completar saldo» y los atajos 25 / 50 / 100 %), `rateVes` (equivalencia en vivo), `minPayableVes`, `overpayToleranceVes`, `showErrors`. Lógica pura en `paymentForm.ts` |
+| `PrimaryStateAction` | `components/PrimaryStateAction/` | Cabecera de detalle: cifras + acción primaria del estado + menú secundario | `figures`, `status`, `primaryAction`, `secondaryActions`, `notice` |
+| `EntityAutocomplete` | `components/EntityAutocomplete/` | Elegir un producto o un contacto. Sustituye a todo select alimentado con la lista completa; `SelectField` queda para listas cortas y fijas | `entity` (`"product"` \| `"contact"`), `value` / `onChange`, `filters`, `fetcher?`, `recentsKey`, `getOptionDisabled`, `renderSecondary`, `onNotFound`. Busca en servidor (8 resultados, 250 ms, desde 2 caracteres), admite lector de barras (Enter) y teclado |
+| `MarginBadge` | `components/MarginBadge/` | Semáforo de % de ganancia sobre el costo (ya con IVA) | `cost` + `price` **o** `pct`; `thresholds` (de `usePricingSettings`), `review` (marca «Por revisar»), `size`. Cálculo en `@bodega/core` (`pricing.ts`) |
+| `PricingFields` | `components/PricingFields/` | Precio ↔ % de ganancia con chips | `cost`, `price`, `onPriceChange`, `onMarkupChange`, `chips`, `suggestedPct` (el de la categoría), `thresholds`, `hideCost`, `customPct` |
+| `ConfirmActionModal` | `components/ConfirmActionModal/` | Confirmación única con «Qué va a pasar» | Descrita arriba, con los endpoints `impact` |
+| `NumberInput` | `components/NumberInput/` | Todo campo numérico (no queda ningún `type="number"`) | `decimals`, `min` (0 por defecto), `max`, `allowNegative`, `allowArrowStep`, `padDecimals`, `onValueChange`. Ignora la rueda, selecciona al enfocar, redondea al salir. **Aviso de miles:** ver abajo |
+| `TaxRateChips` + `useTaxRates` | `components/TaxRateChips/`, `hooks/useTaxRates.ts` | Elegir alícuota de IVA; no existe input numérico de IVA | `value` (código) / `onChange`, `categoryDefaultCode`, `valuePct`, `rates?`, `size`, `isLoading`, `onRetry` |
+| `ProcessGuard`, `useProcessGuard`, `useFormModalDiscardGuard` | `components/ProcessGuard/`, `hooks/` | Aviso al salir de un proceso a medias | Ver [Procesos protegidos](#procesos-protegidos-processguard) |
+| `PageBackButton` + `returnTo` | `components/PageBackButton/`, `utils/returnTo.ts` | «Volver» a la lista tal como estaba | `fallbackHref` (destino sin `returnTo` válido), `chained` (conserva el `returnTo` anidado), `shortcuts` (Esc y Alt+←). Los enlaces de fila se construyen con `withReturnTo(href, urlActual)`. El parámetro es `returnTo` (`RETURN_TO_PARAM`); `from` / `to` quedan para rangos de fecha. Un `returnTo` externo se descarta (`isSafeInternalPath`) |
+| `useUrlListState` | `hooks/useUrlListState.ts` | Filtros, búsqueda, orden y página de un listado en la URL | `useUrlListState(schema)` con un objeto de Zod (ayudas en `listParams`); búsqueda con espera de 300 ms; escribe con `history.replaceState`, no con `router.replace` (ATRÁS se saltaba la lista). Dos listas en una pantalla usan campos y `pageField` distintos. Va con `useScrollRestoration` (posición por URL) y `UrlListBoundary` |
+| `DateRangeField` | `components/DateRangeField/` | Rango de fechas con presets en día de Caracas; sustituye a los `input type="date"` de reportes y listados | `value`, `onChange`, `presets`, `today`, `minDate`, `maxDate`, `clearable`, `label`, `size` |
+| `TimeSeriesChart`, `RankingBarChart`, `HeatmapChart` | `components/<nombre>/`, tema en `components/charts/` | Gráficos de serie, ranking y mapa de calor | Ver [Componentes compartidos de reportes](#componentes-compartidos-de-reportes). Colores solo desde `chartTheme.ts` |
+| `Toast` | `components/Toast/` (`ToastProvider` montado en `app-providers.tsx`) | Aviso no bloqueante de resultado | `useToast().showToast({ title, description?, tone?, action?, durationMs? })`; tonos `success` / `info` / `error`; 6 s por defecto, hasta 3 apilados |
+| `useRequestAttempt` | `src/modules/inventory/utils/requestAttempt.ts` (no está en `shared`) | Clave de idempotencia de un formulario que mueve stock, dinero o precios | `begin()` entrega la clave o `null` si hay un envío en vuelo; la clave se conserva tras un error incierto y se renueva al confirmar. Opciones: `renewOnContentChange` (clave nueva si cambia el contenido) y `lockAfterSuccess` (no reenvía hasta `reopen()`). `useReleaseAttemptOnClose` para modales |
+
+**Aviso de miles de `NumberInput`.** Un único separador (coma o punto) siempre es decimal: `30.600` se guarda como 30,60. Cuando lo escrito parece llevar un punto de miles (punto + exactamente tres dígitos) el campo lo dice bajo el valor, sin bloquear. `thousandsHint` (por defecto activo; no aplica a enteros) lo apaga; `thousandsHintPlacement="floating"` lo ancla al campo sin mover lo de alrededor y solo con foco o puntero, para celdas de tabla (líneas de compra, proveedores del producto, filas de nómina).
+
+Existen y no están montados en ninguna pantalla: `useRememberedListFilters` y `RememberedFiltersChip` (recordar los últimos filtros de una lista).
 
 ### Procesos protegidos (ProcessGuard)
 
@@ -230,6 +258,8 @@ Definido en [`src/shared/components/AppShell/appShellNav.ts`](../src/shared/comp
 | `useDashboardLowStock` | GET `/api/dashboard/low-stock` | `skip`, `limit` |
 | `useCurrentExchangeRate` | GET `/api/exchange-rates/current` | Tasa en header del shell |
 
+**Tarjetas del plan ux-mejoras** (montadas en `src/app/dashboard/page.tsx`): `DashboardPeriodField` (`DateRangeField` con presets; sustituye al modal de periodo), `DashboardSalesChartCard` (`TimeSeriesChart` con el periodo anterior superpuesto), `PriceReviewDashboardCard` (productos «Por revisar», con enlace a la lista filtrada), `DashboardOverdueReceivablesCard` (cuentas por cobrar vencidas) y, en stock bajo, `RestockSelection` («Crear compra con estos productos»). La tarjeta de métodos de pago no se pide sin permiso.
+
 **Tablas/vistas:** `daily_sales_summary`, `low_stock_products`, agregados sobre `sales`.
 
 **Pendiente:** enlaces desde filas a detalle.
@@ -242,9 +272,9 @@ Definido en [`src/shared/components/AppShell/appShellNav.ts`](../src/shared/comp
 
 | Ruta | Permiso | Pantalla |
 |------|---------|----------|
-| `/products` | `products.view` | Listado, filtros, crear, importar, desactivar, enlace a categorías. Costo/PVP en una columna: **REF** (principal) + Bs (secundario) con `useCurrentExchangeRate`. Costo se muestra **con impuesto** de la categoría (`currentCostRef × (1 + taxRate/100)`); en DB el costo sigue siendo neto |
+| `/products` | `products.view` | Listado, filtros, crear, importar, desactivar, enlace a categorías. Costo/PVP en una columna: **REF** (principal) + Bs (secundario). Columna **Ganancia** (`MarginBadge`) con filtro baja / media / alta y orden por %; badge y filtro **Por revisar** con la acción masiva «Reprecio al X %» y «Mantener precio». Todo el estado en la URL (`useUrlListState`). La celda Stock enlaza a `/inventory` |
 | `/products/categories` | `products.view` | CRUD categorías (escritura: `products.manage`) |
-| `/products/[id]` | `products.view` | Resumen, stock, historial precios, historial de ventas del SKU, proveedores (tabla + cards + M10–M14), editar |
+| `/products/[id]` | `products.view` | Pestañas (`Tabs`, `?tab=`): **Resumen** (información, stock con «Ajustar stock», cambio de precio con `PricingFields`, kardex colapsado) · **Proveedores** · **Historial** (precios y ventas, paginados) · **Avanzado** (empaques e imagen). Abre con 3 bloques expandidos |
 | `/products/import` | `products.manage` | Wizard importación Excel |
 
 ### Hooks y endpoints
@@ -259,6 +289,12 @@ Definido en [`src/shared/components/AppShell/appShellNav.ts`](../src/shared/comp
 | `useProductPriceHistory` | GET `/api/products/[id]/price-history` |
 | `useProductSales` | GET `/api/products/[id]/sales` — `skip`, `limit`; datetime Caracas; totales `units`/`totalRef`/`totalVes` (excluye `cancelada`) |
 | `useProductSuppliers` | GET `/api/products/[id]/suppliers` |
+| `useSaveProductSuppliers` | PUT `/api/products/[id]/suppliers` → RPC `save_product_suppliers` (vínculos y habitual en una transacción) |
+| `usePriceReview` / `usePriceReviewSummary` | GET `/api/products/price-review` (`?purchaseId`) / GET `/api/products/price-review/summary` |
+| `useKeepProductPrice` | POST `/api/products/[id]/keep-price` → RPC `keep_product_price` (`expectedCostRef` opcional: 409 si el costo cambió) |
+| `useRepriceProducts` | POST `/api/products/price-review/reprice` — `items[{ productId, expectedCostRef }]`, `clientRequestId`; el precio se calcula en la base (`reprice_product_to_markup`) |
+| `usePricingSettings` | GET `/api/settings/pricing` — umbrales del semáforo y chips de % de la tienda |
+| `useAllCategories` | todas las páginas de GET `/api/categories` (selects y POS; `useCategories` solo trae una página) |
 | `useCategories` | GET `/api/categories` — `search`, `skip`, `limit` |
 | `useCreateCategory` | POST `/api/categories` |
 | `useUpdateCategory` | PATCH `/api/categories/[id]` |
@@ -284,6 +320,17 @@ Definido en [`src/shared/components/AppShell/appShellNav.ts`](../src/shared/comp
 
 **Stock → Inventario (INV-06).** En `/products` la celda Stock enlaza a `/inventory?product=<id>&returnTo=<lista>` y los filtros de stock se sustituyen por el atajo "Ver stock en Inventario" (lleva búsqueda y categoría); ambos solo con `inventory.view`. **Receta de empaque (INV-09):** el BFF la guarda, reemplaza o desactiva solo por la RPC `save_pack_recipe` (parche `20261011c`: una transacción y regla de cadenas en la base); ver [`stock-integrity.md`](stock-integrity.md) §1. El detalle `/products/[id]` monta `ProductKardexCard` (ver Inventario).
 
+### Formulario, precio y ganancia (plan ux-mejoras)
+
+- **`ProductFormModal` en dos niveles** (PRO-01): básico (imagen, nombre, categoría, código de barras, costo y precio REF) y «Más opciones» colapsado (`ProductFormMoreOptions`: SKU, descripción, stock mínimo, empaque, proveedores). Modo `compact` para «Nuevo producto» desde la compra (5 campos). El SKU es opcional: vacío, se genera. `POST /api/products` acepta `clientRequestId` (reintento sin duplicar).
+- **Categoría sin salir** (PRO-02): «+ Nueva categoría» en el select abre `CategoryQuickCreateModal` (nombre + `TaxRateChips`). La categoría tiene «% sugerido» (`defaultMarkupPct`).
+- **«Guardar y crear otro»** (PRO-04) en producto y contacto, con `Toast` «Producto creado» y enlace «Ver».
+- **Stock** (PRO-03): en edición es de solo lectura, con «Ajustar stock» (`InventoryAdjustmentModal` precargado).
+- **Precio desde el %** (PRO-08): `PricingFields` en el formulario y en `ProductDetailPriceChangeCard`; base `currentCostRef`, que ya incluye IVA. `POST /api/products/[id]/price` acepta `reason` y `expectedCostRef`; `PATCH` con `salePriceRef` pasa por `update_product_price` y deja historial.
+- **Cola «Por revisar»** (PRO-10 / PRO-11, `src/modules/products/components/price-review/`): al fijar un precio se guarda el costo y la banda; si una compra recibida sube el costo y la banda empeora, el producto queda marcado en lista, detalle (`PriceReviewDetailNotice`), dashboard y en el detalle de la compra que lo causó (`PurchaseRepriceNotice`: «Aplicar» / «Mantener precio»). Nunca se cambia un precio solo. Filtros de lista: `margin=low|mid|high|none`, `sortBy=marginPct`, `review=1`.
+- **Empaque surtido** (PRO-12 / PRO-13): `ProductPackConversionFields` gana el modo «Surtido (varios productos)» (`PackAssortedComponentsFields`): N productos unidad con cantidad por defecto y peso de costo opcional; un producto unidad puede venir de varios empaques. Tarjetas «Se abre en» / «Proviene de» en Avanzado. Se guarda solo por la RPC `save_pack_recipe`; casilla «Desarmar siempre al recibir compras».
+- **Proveedores en el formulario** (PRO-14): `ProductSuppliersFields` con `EntityAutocomplete` de contactos proveedor / ambos, costo y SKU del proveedor opcionales y un **habitual** por producto (`supplier_products.is_preferred`). El habitual alimenta el chip «Habitual» de la compra, la reposición desde stock bajo y el aviso de reprecio.
+
 ### Imagen de producto
 
 | Endpoint | Permiso | Descripcion |
@@ -307,7 +354,7 @@ Definido en [`src/shared/components/AppShell/appShellNav.ts`](../src/shared/comp
 | GET/POST `/api/categories` | `products.view` / `products.manage` |
 | GET/PATCH/DELETE `/api/categories/[id]` | soft delete |
 
-UI: [`/products/categories`](../../src/modules/products/categories-list/page.tsx) — listado, búsqueda, modal crear/editar, desactivar. Diseño Stitch: [`docs/stitch-prompts/categories-list.md`](stitch-prompts/categories-list.md).
+UI: [`/products/categories`](../src/modules/products/categories-list/page.tsx) — listado, búsqueda, modal crear/editar (`CategoryFormModal`: alícuota por `TaxRateChips`, sin IVA tecleable, y «% sugerido»), desactivar/reactivar con `CategoryStatusConfirmModal`. Diseño Stitch: [`docs/stitch-prompts/categories-list.md`](stitch-prompts/categories-list.md).
 
 ### Import Excel
 
@@ -451,7 +498,9 @@ Errores de negocio: SQLSTATE `PT400` / `PT403` / `PT404` / `PT409` (PostgREST re
 
 **Por cobrar / Por pagar de la cabecera (PAG-F8):** salen de la misma consulta que la pestaña Saldos (`useOpenDocuments({ contactId, type, limit })` → `totals.pendingRef`; misma clave, se refrescan juntas), no de la primera página de ventas/compras/pagos del contacto, que con más de 10 pagos dejaba el saldo mal. Misma regla de permisos que la pestaña: sin una sección (`getContactBalanceSections`), y mientras la lista carga, esa métrica conserva el cálculo con las filas recibidas (`computeContactDetailMetrics`). Las demás métricas no cambian.
 
-**Pendiente:** `Can` en botón crear; enlaces desde tablas de actividad a detalle venta/compra.
+**Detalle (`/contacts/[id]`, DET-04):** cabecera con el resumen del contacto y pestañas `Tabs` en la URL (`?tab=`): Actividad reciente · Ventas · Compras · Pagos · Saldos · Productos (según tipo y permisos). Las sublistas paginan en servidor, sus filas enlazan al documento con `returnTo` y al volver se restaura el scroll. `ContactFormModal` tiene «Guardar y crear otro» y guardia de salida.
+
+**Pendiente:** `Can` en botón crear. Bajo aceptado: los totales de compras y ventas de la cabecera suman como mucho 100 filas.
 
 ---
 
@@ -494,7 +543,11 @@ Errores de negocio: SQLSTATE `PT400` / `PT403` / `PT404` / `PT409` (PostgREST re
 
 **Tablas:** `sales`, `sale_items`, `payments`, `stock_movements`.
 
-**Pendiente:** PDF recibo (detalle ya exporta factura PDF); venta borrador; confirmación antes de anular (parcial vía menú).
+**Detalle (`/sales/[id]`, DET-03):** cabecera `SaleDetailHeader` (`PrimaryStateAction`; primaria «Cobrar saldo» o «Recibo») y secciones `CollapsibleSection`: Productos, Pagos, Cliente / Vendedor y Vista previa del recibo (colapsada). «Descargar PDF» y «Recibo» exportan directo, sin confirmación.
+
+**Anular y devolver (CNF-02 / CNF-03):** desde el detalle y desde las filas de `/sales`, con `ConfirmActionModal` y el efecto de `GET /api/sales/[id]/impact`. Exigen `sales.create` (el administrador solo con el interruptor encendido). Anular con pagos activos se bloquea y remite a anular los pagos. Devolver es **solo total** (`return_sale` no tiene parcial) y pide escribir DEVOLVER; una venta anulada no ofrece devolución.
+
+**Pendiente:** PDF recibo (detalle ya exporta factura PDF); venta borrador; devolución parcial (sin RPC); `PATCH /api/sales/[id]` (notas) no lo puede usar ningún rol por defecto.
 
 ---
 
@@ -522,7 +575,17 @@ Errores de negocio: SQLSTATE `PT400` / `PT403` / `PT404` / `PT409` (PostgREST re
 
 **Crear:** `supplierId`, `status` (`pedido`|`recibido`), `items[]` con `entryMode` `unit` o `pack`, `discountRef`, `taxRef`, `refRateVes`, pago inicial opcional. Modo **empaque:** `packLabel`, `packCount`, `unitsPerPack`, `packCostRef` (RPC normaliza a unidades y costo unitario). Modo **unidad:** `quantity`, `unitCostRef`.
 
-**UI `/purchases/create`:** toggle Unidad/Empaque por línea; presets desde catálogo `supplier_product_pack_units`; autocompletado si hay empaque predeterminado al agregar producto.
+**UI `/purchases/create` (plan ux-mejoras):**
+
+- **Buscador** (`PurchaseProductPickerCard`, COM-01) sobre todos los productos activos, con los del proveedor primero (chip «Habitual» y último costo). Un producto sin vínculo se vincula al confirmar (`20261010a`). «Nuevo producto» (`PurchaseNewProductModal`, COM-03) crea con `ProductFormModal` compacto y lo agrega.
+- **Línea simple** (`PurchaseLineRow`, COM-04): producto, cantidad, costo y total. El chip «Empaque» abre los campos de empaque (presets de `supplier_product_pack_units`); la alícuota va en `TaxRateChips` junto al producto (COM-11) y «Compra exenta» en la cabecera pone todas las líneas en exento. Sin input numérico de IVA.
+- **Moneda del costo una vez por compra** (COM-05): conmutador REF / Bs en el resumen.
+- **Líneas bloqueables** (COM-12): candado por línea y «Bloquear / Desbloquear todas»; al agregar una línea las anteriores se bloquean (preferencia en `localStorage`). Una línea bloqueada no responde a teclado ni a la rueda.
+- **Edición segura** (COM-13): `NumberInput` en todas las celdas (`PurchaseLineNumberCell`, aviso de miles flotante), resalte de la celda que cambió, Esc deshace, «N líneas editadas» en el resumen.
+- **Foco y lector:** tras un **escaneo** el foco se queda en el buscador para encadenar códigos; pasa a Cantidad solo al agregar por clic, teclado o «Nuevo producto».
+- **Confirmar** abre `PurchaseConfirmModal` (`ConfirmActionModal`, CNF-01): lo que entra, costo anterior → nuevo, vínculos nuevos, total y pago.
+
+**Detalle (`/purchases/[id]`, DET-02):** cabecera `PurchaseDetailStateHeader` (`PrimaryStateAction`: total, pagado, saldo, estado; primaria «Pagar» o «Ver PDF») y secciones `CollapsibleSection` (Productos, Pagos, Proveedor, Fechas, Notas) que recuerdan su estado. Un `pedido` muestra `PurchasePendingReceiptBanner` («El inventario no ha cambiado») con «Recibir mercancía»: **recibir vive solo en ese banner**, no en la cabecera ni en el menú, y pasa por `PurchaseReceivePreviewModal`. Cancelar y devolver confirman con el efecto calculado por `GET /api/purchases/[id]/impact`; con pagos activos se bloquean y remiten a anular los pagos.
 
 **Relaciones proveedor-producto:** GET/POST `/api/supplier-products`, PATCH metadatos `/api/supplier-products/[id]`, POST precios `/api/supplier-products/[id]/prices`, GET historial `/api/supplier-products/[id]/price-history`, PATCH baja `/api/supplier-products/[id]/deactivate`, **empaques** GET/POST `/api/supplier-products/[id]/pack-units`, PATCH/DELETE `/api/supplier-products/[id]/pack-units/[packId]`. Modal M15 `ManageSupplierProductPackUnitsModal` en tab Productos (contacto) y tabla Proveedores (producto).
 
@@ -929,16 +992,19 @@ La tool devuelve **cada componente por separado** además del total y su equival
 | `useExchangeRates` | GET `/api/exchange-rates` |
 | `useCurrentExchangeRate` | GET `/api/exchange-rates/current` — tasa oficial vía servidor ([DolarAPI](https://ve.dolarapi.com/v1/dolares/oficial), campo `promedio`) |
 | `useCreateExchangeRate` | POST `/api/exchange-rates` — solo historial manual |
-| _(sin hook aún)_ | GET/POST `/api/tax-rates`, PATCH `/api/tax-rates/[id]` — catálogo de alícuotas de IVA por tienda (globales + propias); lectura `products.view` / `purchases.view` / `settings.view`, escritura `users.manage`; el PATCH es atómico (RPC `override_tax_rate_for_store`) |
+| `useTaxRates` (`src/shared/hooks/`) / `useCreateTaxRate` / `useUpdateTaxRate` (`useTaxRatesAdmin.ts`) | GET/POST `/api/tax-rates`, PATCH `/api/tax-rates/[id]` — catálogo de alícuotas de IVA por tienda (globales + propias); lectura `products.view` / `purchases.view` / `settings.view`, escritura `users.manage`; el PATCH es atómico (RPC `override_tax_rate_for_store`) |
+| `usePricingSettings` / `useCashCloseSettings` | GET `/api/settings/pricing` (`products.view` o `settings.view`) / GET `/api/settings/cash-close` |
 | `useAdminCanSell` / `useSetAdminCanSell` | GET / PUT `/api/settings/admin-can-sell` — `users.manage`; estado `{ enabled, admins: [{ id, name, canSell }] }`, cuerpo del PUT `{ enabled }` |
 
-**UI:** tabs en `/settings` — General / sistema, Usuarios (crear + listar/editar), Tasas.
+**UI:** pestañas `Tabs` en `/settings`, en la URL (`?tab=`): **General / sistema** (`GeneralSettingsCard`, `AdminCanSellCard`, umbral de faltante al cerrar caja), **Impuestos** (`TaxSettingsSection`: activar / desactivar alícuotas y «Añadir alícuota» con `TaxRateCreateModal`, el único sitio donde se teclea un %), **Precios** (`PricingSettingsSection`: umbrales del semáforo y chips de %), **Usuarios** (crear, listar, editar) y **Tasas**. Usuarios y Tasas paginan en la URL con `pageField` distinto.
+
+**Cambios que confirman (CNF-11):** rol o estado de un usuario ya no se guardan al cambiar el select: botón «Guardar» + `UserChangeConfirmModal` con los permisos que gana o pierde; `PATCH /api/users/[id]` responde 409 si dejaría la tienda sin administrador. Alícuota por defecto y métodos habilitados también confirman.
 
 **«El administrador puede vender» (POS-02):** tarjeta «Ventas del administrador» (`AdminCanSellCard`) en General / sistema. Interruptor apagado por defecto que concede o retira `sales.create` y `cash.operate` a todos los administradores de la tienda (no hay ajuste ni SQL nuevo: el estado son sus `granted_permissions`). Confirma con `ConfirmActionModal` («Vender en el POS», «Operar caja», administradores afectados y, al apagar, los turnos de caja que tengan abiertos). Con el interruptor apagado y un turno propio abierto, la tarjeta ofrece «Cerrar mi caja». Reglas completas en [`auth-permissions.md`](auth-permissions.md#el-administrador-puede-vender).
 
 **Tasa vigente (servidor):** [`src/lib/exchange-rates/dolarApi.ts`](../src/lib/exchange-rates/dolarApi.ts), cache [`officialRateCache.ts`](../src/lib/exchange-rates/officialRateCache.ts), persistencia en `exchange_rates` con `source = "DolarAPI oficial"` (admin client, 1x/día o al cambiar valor). Variables: `DOLAR_API_OFFICIAL_URL`, `DOLAR_API_CACHE_TTL_MS`, `DOLAR_API_FETCH_TIMEOUT_MS`.
 
-**`app_settings`:** `businessName`, `invoicePrefix`, `defaultTaxRate`, `defaultTaxRateId` (solo lectura, alícuota del catálogo), `lowStockThreshold`, `enabledPaymentMethods`.
+**`app_settings`:** `businessName`, `invoicePrefix`, `defaultTaxRate`, `defaultTaxRateId` (alícuota del catálogo), `lowStockThreshold`, `enabledPaymentMethods`, `pricing { yellowFromPct, greenFromPct, chipsPct }` (parche `20261009b`; por defecto 15 / 25 y 12, 20, 30) y `cashCloseDiffAlertVes` (parche `20261015a`; 0 = cualquier faltante pide confirmación al cerrar caja).
 
 **`tax_rates`:** `code`, `label`, `pct`, `isActive`, `sortOrder`; `isGlobal` (semilla común: exento 0, reducida 8, general 16) e `isDefault`. Cambiar una global crea la fila propia de la tienda con el mismo `code`. Las categorías exponen `taxRateId` y las líneas de compra aceptan `taxRateCode`. Parches `20261007a` y `20261007b` (aplicarlos antes de desplegar el BFF).
 

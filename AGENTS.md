@@ -12,4 +12,6 @@ Antes de modificar caja, baúl, pagos o cierres, leer [`docs/cuadre-baul.md`](do
 
 Antes de tocar RPC de stock, leer `docs/stock-integrity.md` y correr `npm run stock-lab:run`.
 
+Antes de desplegar la rama `feat/ux-mejoras` o reaplicar uno de sus parches SQL, leer [`docs/despliegue-ux-mejoras.md`](docs/despliegue-ux-mejoras.md): orden de parches, cadenas de reaplicación y hallazgos fuera de alcance.
+
 Para ejecutar un plan de `docs/agent-prompts/*-gtm.md` en modo equipo (gerente + supervisor + coders + fixer + caos + QA), seguir [`docs/agent-prompts/equipo.md`](docs/agent-prompts/equipo.md); los roles están en `.claude/agents/`.

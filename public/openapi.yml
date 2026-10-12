@@ -2362,6 +2362,35 @@ paths:
                 $ref: "#/components/schemas/SaleResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Sales]
+      summary: Actualizar las notas de una venta
+      description: >-
+        Solo cambia `notes`; no toca lineas, totales, stock ni pagos. Hallazgo abierto: con los roles por
+        defecto el administrador recibe 403 (no tiene `sales.create`) y el vendedor 404 sobre su propia venta.
+      x-permission: sales.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [notes]
+              properties:
+                notes: { type: string }
+      responses:
+        "200":
+          description: Venta actualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/sales/{id}/cancel:
     parameters:
       - $ref: "#/components/parameters/Id"

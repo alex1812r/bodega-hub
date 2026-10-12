@@ -323,6 +323,31 @@ where role = 'admin'
   and (granted_permissions ? 'sales.create' or granted_permissions ? 'cash.operate');
 ```
 
+### Riesgo al desplegar
+
+El interruptor no tiene SQL: lo que cambia es `getEffectivePermissions` (`@bodega/core`), que ahora respeta `sales.create` y `cash.operate` concedidos a un administrador. Un perfil `admin` que ya los tuviera en `granted_permissions` (antes ignorados) **empieza a vender y a operar caja en cuanto se despliega el BFF**, sin que nadie encienda nada, y la tarjeta puede mostrarse apagada o «Solo algunos». La consulta de «Administradores nuevos y cambios de rol» (arriba) los lista: correrla **antes** de desplegar y vaciar esos permisos donde no se quieran. Está también en las comprobaciones previas de [`despliegue-ux-mejoras.md`](despliegue-ux-mejoras.md#1-comprobaciones-previas).
+
+Límites conocidos, sin corregir:
+
+- Quien tiene `users.manage` puede conceder los dos permisos a un administrador con `PATCH /api/users/{id}` aunque el interruptor esté apagado (es el mismo rol que puede encenderlo).
+- Con el interruptor apagado, un administrador puede vender y abrir o cerrar caja llamando las RPC por PostgREST con su sesión: `create_sale*`, `open_cash_session` y `close_cash_session` aceptan el rol `admin`. El interruptor es una regla del BFF y de la interfaz, no de la base.
+
+### Quién puede anular y devolver ventas hoy
+
+`PATCH /api/sales/{id}/cancel`, `POST /api/sales/{id}/return` y `GET /api/sales/{id}/impact` exigen `sales.create`. En la práctica:
+
+| Rol | Anular / devolver una venta |
+| --- | --- |
+| Vendedor | Sí |
+| Administrador, interruptor **apagado** | **No** (403; la interfaz no ofrece la acción) |
+| Administrador, interruptor encendido | Sí |
+| Almacén, contador | No |
+
+Es decir: en una tienda con el interruptor apagado, el dueño no puede anular ni devolver una venta; tiene que hacerlo un vendedor o encender el interruptor. La regla es anterior al plan ux-mejoras (ya estaba en `cancel/route.ts`) y no se cambió: separar «anular / devolver» de «vender» es una decisión de permisos de negocio pendiente del dueño.
+
+Además, sea quien sea: anular una venta con pagos activos se rechaza (antes hay que anular cada pago, que exige `payments.manage`, que el vendedor no tiene) y la devolución es siempre total.
+
+
 ### Apagarlo con una caja abierta
 
 Al apagar, el administrador deja de poder vender (`POST /api/sales` → 403) y de abrir un turno nuevo (`POST /api/cash/session/open` → 403) de inmediato. Un turno que ya tuviera abierto **no queda atrapado**:
@@ -331,3 +356,21 @@ Al apagar, el administrador deja de poder vender (`POST /api/sales` → 403) y d
 - La confirmación de apagar avisa de los turnos abiertos por un administrador. El turno es de quien lo abrió: el propio sale de `GET /api/cash/session` («Tienes una caja abierta: podrás cerrarla, pero no vender») y el de los demás de `openedBy` en `GET /api/cash/session/open` (la caja de un turno no trae a quién está asignada).
 - Como «Mi caja» deja de estar en el menú, la tarjeta del interruptor muestra al administrador «Tienes abierta la caja …» con el botón **Cerrar mi caja** (el mismo diálogo de cierre de siempre).
 - Si no la cierra, el cierre automático de fin de jornada sigue aplicando.
+
+
+## Mis recibos (`payroll.view_own`)
+
+La entrada «Mis recibos» del menú (`/payroll/mine`) se decide por el permiso `payroll.view_own`, no por el rol (`appShellNav.ts`). De base solo lo tiene el vendedor; un usuario de otro rol al que se le conceda lo ve, y un vendedor al que se le bloquee deja de verlo. El administrador lo tiene bloqueado (`adminBlockedPermissions`) también con «El administrador puede vender» encendido.
+
+## Lecturas con service role en los `impact`
+
+Los tres endpoints que calculan el efecto de una acción antes de confirmarla (`GET /api/sales/{id}/impact`, `/api/purchases/{id}/impact`, `/api/payments/{id}/impact`) son el único uso nuevo de service role del plan ux-mejoras. Hacen falta porque la RLS oculta al usuario asientos de caja y baúl que la RPC sí va a revertir, y el modal tiene que decirlos.
+
+Cómo están acotados (`*Impact.server.ts`, `{ privileged: createAdminSupabaseClient, user }`):
+
+1. **Permiso de la acción real, primero**: `sales.create`, `purchases.create` o `payments.manage` + acceso al pago (`requireStorePermission`).
+2. **El documento se lee con la sesión del usuario** y con el `store_id` del servidor. Inexistente o de otra tienda → 404. Nada del cliente decide la tienda.
+3. **Solo entonces** la lectura privilegiada, filtrada por ese `store_id` y por el id ya validado. Solo `select`: ningún `impact` escribe.
+4. **Lo que viaja depende de los permisos de quien pregunta**: los saldos del baúl solo con `vault.view`, el detalle de la caja solo con `cash.view`, y los pagos de una compra solo para quien puede ver pagos de compra (`canViewPurchasePayments`: admin y contador). Sin el permiso esas cifras no viajan (los saldos salen vacíos); el valor por defecto es cerrado.
+
+Regla para un `impact` nuevo: mismo orden (permiso → documento con la sesión → lectura privilegiada acotada) y nunca devolver una cifra que el usuario no podría leer por su propio endpoint.
