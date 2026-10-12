@@ -20,6 +20,7 @@ import { ConfirmActionModal } from "@/shared/components/ConfirmActionModal";
 import { Modal } from "@/shared/components/Modal";
 import { ProcessGuard, ProcessGuardModal } from "@/shared/components/ProcessGuard";
 import { useFormModalDiscardGuard } from "@/shared/hooks/useFormModalDiscardGuard";
+import { documentBalance } from "@/shared/payments/documentBalance";
 import { MIN_PAYABLE_VES_BY_DOCUMENT } from "@/shared/payments/moneyConversion";
 import {
   PENDING_BALANCE_SHARES,
@@ -379,11 +380,11 @@ function RegisterPaymentForm({
       : undefined;
   const pendingBalanceVes = useMemo(() => {
     if (sale.data) {
-      return Math.max(sale.data.totalVes - sale.data.paidVes, 0);
+      return documentBalance({ ...sale.data, type: "sale" }).pendingVes;
     }
 
     if (purchase.data) {
-      return Math.max(purchase.data.totalVes - purchase.data.paidVes, 0);
+      return documentBalance({ ...purchase.data, type: "purchase" }).pendingVes;
     }
 
     return undefined;

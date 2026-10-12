@@ -16,6 +16,7 @@ import {
 } from "@/lib/supabase/pagination";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { rpcWithClientRequestId } from "@/modules/inventory/services/rpcWithClientRequestId";
+import { documentBalance as computeDocumentBalance } from "@/shared/payments/documentBalance";
 import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
@@ -195,7 +196,7 @@ async function resolveDocumentBalance(
   if (payment.sale_id) {
     const { data, error } = await supabase
       .from("sales")
-      .select("id, invoice_number, total_ves, paid_ves")
+      .select("id, invoice_number, status, total_ves, paid_ves")
       .eq("id", payment.sale_id)
       .maybeSingle();
 
@@ -212,7 +213,8 @@ async function resolveDocumentBalance(
       href: `/sales/${data.id}`,
       label: data.invoice_number,
       paidVes,
-      pendingVes: Math.max(totalVes - paidVes, 0),
+      pendingVes: computeDocumentBalance({ paidVes, status: data.status, totalVes, type: "sale" })
+        .pendingVes,
       totalVes,
     };
   }
@@ -220,7 +222,7 @@ async function resolveDocumentBalance(
   if (payment.purchase_id) {
     const { data, error } = await supabase
       .from("purchases")
-      .select("id, purchase_number, total_ves, total_ref, paid_ves, paid_ref")
+      .select("id, purchase_number, status, total_ves, total_ref, paid_ves, paid_ref")
       .eq("id", payment.purchase_id)
       .maybeSingle();
 
@@ -234,14 +236,22 @@ async function resolveDocumentBalance(
     const paidVes = Number(data.paid_ves ?? 0);
     const totalRef = Number(data.total_ref ?? 0);
     const paidRef = Number(data.paid_ref ?? 0);
+    const balance = computeDocumentBalance({
+      paidRef,
+      paidVes,
+      status: data.status,
+      totalRef,
+      totalVes,
+      type: "purchase",
+    });
 
     return {
       href: `/purchases/${data.id}`,
       label: formatPurchaseNumberDisplay(data.purchase_number),
       paidRef,
       paidVes,
-      pendingRef: Math.max(Math.round((totalRef - paidRef) * 100) / 100, 0),
-      pendingVes: Math.max(totalVes - paidVes, 0),
+      pendingRef: balance.pendingRef,
+      pendingVes: balance.pendingVes,
       totalRef,
       totalVes,
     };

@@ -12,6 +12,7 @@ import {
   isUtcTimestampInCaracasDateRange,
   shiftIsoDate,
 } from "@/shared/utils/caracasBusinessDay";
+import { documentBalance } from "@/shared/payments/documentBalance";
 import { roundMoney } from "@/shared/utils/currency";
 
 import { formatPurchaseNumberDisplay } from "../payments-list/utils/paymentReference";
@@ -93,14 +94,14 @@ type OpenDocumentSource = {
 };
 
 /**
- * Arma el documento con su saldo, o `null` si no queda nada por pagar. El saldo
- * usa el mismo redondeo que el detalle (`roundMoney`), igual que el
- * `round(total_ves - paid_ves, 2)` de `register_payment`.
+ * Arma el documento con su saldo, o `null` si no queda nada por pagar. Saldado o
+ * no, y cuánto falta, lo dice `documentBalance`: la misma respuesta que el detalle,
+ * la lista de compras y los reportes (GQ-07).
  */
 export function buildOpenDocument(source: OpenDocumentSource): OpenDocument | null {
-  const pendingVes = roundMoney(source.totalVes - source.paidVes);
+  const { pendingRef, pendingVes, settled } = documentBalance(source);
 
-  if (pendingVes <= 0) {
+  if (settled) {
     return null;
   }
 
@@ -124,12 +125,12 @@ export function buildOpenDocument(source: OpenDocumentSource): OpenDocument | nu
     return {
       ...base,
       paidRef,
-      pendingRef: Math.max(roundMoney(source.totalRef - paidRef), 0),
+      pendingRef,
     };
   }
 
   return source.refRateVes > 0
-    ? { ...base, pendingRef: roundMoney(pendingVes / source.refRateVes) }
+    ? { ...base, pendingRef }
     : base;
 }
 

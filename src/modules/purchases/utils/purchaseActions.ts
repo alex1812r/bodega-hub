@@ -1,6 +1,6 @@
 import { canViewPurchasePayments } from "@/shared/auth/paymentAccess";
 import type { Permission, UserRole } from "@/shared/auth/permissions";
-import { roundMoney } from "@/shared/utils/currency";
+import { documentBalance } from "@/shared/payments/documentBalance";
 
 /** Lo que hace falta saber de la sesión: `usePermission()` lo trae tal cual. */
 export type PurchaseActionsAccess = {
@@ -47,14 +47,12 @@ export function getPurchaseActions(
 ): PurchaseActions {
   const isOpen = purchase.status !== "cancelado" && purchase.status !== "devuelto";
   const canManage = can("purchases.create");
-  const pendingVes = roundMoney((purchase.totalVes ?? 0) - (purchase.paidVes ?? 0));
 
   return {
     canCancelOrReturn: canManage,
     canDuplicate: canManage,
     canPay:
-      pendingVes > 0 &&
-      isOpen &&
+      documentBalance({ ...purchase, type: "purchase" }).open &&
       can("payments.manage") &&
       role !== undefined &&
       canViewPurchasePayments(role),

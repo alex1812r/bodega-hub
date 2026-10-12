@@ -1,5 +1,10 @@
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
-import { roundMoney } from "@/shared/utils/currency";
+import {
+  documentBalance,
+  type DocumentBalance,
+  type DocumentPaymentStatus,
+  isPayableDocumentStatus,
+} from "@/shared/payments/documentBalance";
 
 /**
  * Compras que todavía pueden deberse: las vigentes (pedidas o recibidas). Es la
@@ -11,39 +16,45 @@ export const PAYABLE_PURCHASE_STATUSES = [
   "recibido",
 ] as const satisfies readonly PurchaseStatus[];
 
-/** Por debajo de un céntimo de REF no hay saldo (misma tolerancia que el detalle de compra). */
-export const PURCHASE_BALANCE_TOLERANCE_REF = 0.01;
+export type PurchasePaymentStatus = DocumentPaymentStatus;
 
-export type PurchasePaymentStatus = "pagada" | "parcial" | "pendiente";
-
-type PurchaseAmounts = { paidRef?: number; totalRef: number };
+/**
+ * Importes de la cabecera. El saldo se decide en Bs (`documentBalance`, el criterio de
+ * `register_payment`), no comparando `paidRef` con `totalRef`: es la misma respuesta
+ * que dan el detalle, Saldos del proveedor y Cuentas por pagar (GQ-07).
+ */
+type PurchaseAmounts = {
+  paidRef?: number;
+  paidVes?: number;
+  status: string;
+  totalRef: number;
+  totalVes?: number;
+};
 
 export function isPayablePurchaseStatus(status: string) {
-  return (PAYABLE_PURCHASE_STATUSES as readonly string[]).includes(status);
+  return isPayableDocumentStatus("purchase", status);
 }
 
-/** Total − pagado en REF, nunca negativo (como el detalle de compra). */
-export function getPurchasePendingRef({ paidRef = 0, totalRef }: PurchaseAmounts) {
-  return Math.max(0, roundMoney(totalRef - paidRef));
+export function getPurchaseBalance(purchase: PurchaseAmounts): DocumentBalance {
+  return documentBalance({ ...purchase, type: "purchase" });
+}
+
+/** Saldo en REF de la compra; 0 si ya está saldada. */
+export function getPurchasePendingRef(purchase: PurchaseAmounts) {
+  return getPurchaseBalance(purchase).pendingRef;
 }
 
 /** Saldo que cuenta como deuda: `null` si la compra no está vigente. */
-export function getPurchaseBalanceRef(purchase: PurchaseAmounts & { status: string }) {
+export function getPurchaseBalanceRef(purchase: PurchaseAmounts) {
   return isPayablePurchaseStatus(purchase.status) ? getPurchasePendingRef(purchase) : null;
 }
 
-/** Filtro "Con saldo pendiente": compra vigente a la que le falta al menos un céntimo de REF. */
-export function hasPendingBalance(purchase: PurchaseAmounts & { status: string }) {
-  const balanceRef = getPurchaseBalanceRef(purchase);
-
-  return balanceRef !== null && balanceRef >= PURCHASE_BALANCE_TOLERANCE_REF;
+/** Filtro "Con saldo pendiente": compra vigente a la que el servidor aún le acepta un pago. */
+export function hasPendingBalance(purchase: PurchaseAmounts) {
+  return getPurchaseBalance(purchase).open;
 }
 
-/** Estado de pago con los mismos umbrales que la tarjeta "Estado de pago" del detalle. */
+/** Estado de pago: el mismo que la tarjeta "Estado de pago" del detalle. */
 export function getPurchasePaymentStatus(purchase: PurchaseAmounts): PurchasePaymentStatus {
-  if (getPurchasePendingRef(purchase) < PURCHASE_BALANCE_TOLERANCE_REF) {
-    return "pagada";
-  }
-
-  return (purchase.paidRef ?? 0) > PURCHASE_BALANCE_TOLERANCE_REF ? "parcial" : "pendiente";
+  return getPurchaseBalance(purchase).paymentStatus;
 }

@@ -13,10 +13,8 @@ import { DetailSkeleton } from "@/shared/components/DetailSkeleton";
 import { ErrorState } from "@/shared/components/ErrorState";
 import type { PrimaryStateActionConfig } from "@/shared/components/PrimaryStateAction";
 import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
-import { roundMoney } from "@/shared/utils/currency";
 import { withChainedReturnTo } from "@/shared/utils/returnTo";
 import { PurchaseRepriceNotice } from "@/modules/products/components/price-review/PurchaseRepriceNotice";
-import { useCurrentExchangeRate } from "@/modules/settings/hooks/useCurrentExchangeRate";
 
 import { PurchaseCancelConfirmModal } from "../components/PurchaseCancelConfirmModal";
 import { PurchaseReturnConfirmModal } from "../components/PurchaseReturnConfirmModal";
@@ -55,7 +53,6 @@ export function PurchaseDetailsPage({
   purchaseId = "purchase-001",
 }: PurchaseDetailsPageProps) {
   const purchase = usePurchase(purchaseId);
-  const exchangeRate = useCurrentExchangeRate();
   const cancelPurchase = useCancelPurchase(purchaseId);
   const receivePurchase = useReceivePurchase(purchaseId);
   const returnPurchase = useReturnPurchase(purchaseId);
@@ -249,8 +246,6 @@ export function PurchaseDetailsPage({
 
   const data = purchase.data;
   const paidRef = data.paidRef ?? 0;
-  const pendingRef = Math.max(0, roundMoney(data.totalRef - paidRef));
-  const currentRateVes = exchangeRate.data?.rateVes ?? 0;
   // "Pagar" sigue las reglas de `register_payment` y de POST /api/payments: el saldo
   // es el de bolívares (total − pagado), una compra cancelada o devuelta no admite
   // pagos, y solo paga quien tiene `payments.manage` y no es vendedor. Es la misma
@@ -313,10 +308,8 @@ export function PurchaseDetailsPage({
             status={data.status}
           />
         }
-        currentRateVes={currentRateVes}
         paidRef={paidRef}
         paidVes={data.paidVes}
-        pendingRef={pendingRef}
         primaryAction={primaryActions[primaryActionKind]}
         purchaseNumber={data.purchaseNumber}
         refRateVes={data.refRateVes}
@@ -333,7 +326,6 @@ export function PurchaseDetailsPage({
         canViewProducts={can("products.view")}
         detailUrl={detailUrl}
         paidRef={paidRef}
-        pendingRef={pendingRef}
         purchase={data}
       />
 

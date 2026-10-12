@@ -60,7 +60,15 @@ function mockQueries(results: QueryResult[]) {
 }
 
 function balanceRow(id: string, totalRef: number, paidRef: number, status = "recibido") {
-  return { id, paid_ref: paidRef, status, total_ref: totalRef };
+  // Como `listRow`: Bs a la tasa 510. El saldo se decide en Bs (GQ-07).
+  return {
+    id,
+    paid_ref: paidRef,
+    paid_ves: paidRef * 510,
+    status,
+    total_ref: totalRef,
+    total_ves: totalRef * 510,
+  };
 }
 
 function listRow(id: string, totalRef: number, paidRef: number) {
@@ -116,8 +124,8 @@ describe("purchases.server · listPurchases (COM-08)", () => {
           balanceRow("debe-todo", 20, 0),
           balanceRow("pagada", 20, 20),
           balanceRow("debe-parte", 18, 5.02, "pedido"),
-          // Menos de un céntimo de diferencia no es saldo.
-          balanceRow("redondeo", 10, 9.996),
+          // Saldada en Bs (criterio de `register_payment`): un céntimo de REF de menos no es saldo.
+          { ...balanceRow("redondeo", 10, 9.99), paid_ves: 5100 },
           balanceRow("debe-poco", 7.5, 7.49),
         ],
         error: null,
@@ -145,7 +153,7 @@ describe("purchases.server · listPurchases (COM-08)", () => {
     expect(result.items[1]).toEqual(expect.objectContaining({ paidRef: 5.02, totalRef: 18 }));
 
     // Recorrido: solo cabeceras vigentes de la tienda, con los demás filtros aplicados.
-    expect(queries[0].select).toHaveBeenCalledWith("id, total_ref, paid_ref, status");
+    expect(queries[0].select).toHaveBeenCalledWith("id, total_ref, total_ves, paid_ref, paid_ves, status");
     expect(queries[0].eq).toHaveBeenCalledWith("store_id", DEFAULT_STORE_ID);
     expect(queries[0].in).toHaveBeenCalledWith("status", ["pedido", "recibido"]);
     expect(queries[0].eq).toHaveBeenCalledWith("status", "recibido");

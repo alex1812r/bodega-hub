@@ -7,7 +7,8 @@ import {
   type PrimaryStateFigureTone,
 } from "@/shared/components/PrimaryStateAction";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
-import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
+import { documentBalance, type DocumentPaymentStatus } from "@/shared/payments/documentBalance";
+import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 
 import { formatPurchaseHeading } from "../utils/purchaseDetailLabels";
 import { getPurchaseClosedNotice } from "./purchasePrimaryAction";
@@ -15,11 +16,8 @@ import { getPurchaseClosedNotice } from "./purchasePrimaryAction";
 type PurchaseDetailStateHeaderProps = {
   /** Menú "…" de la compra; va junto al título, con sus acciones de siempre. */
   actionsMenu: ReactNode;
-  /** Tasa de hoy: con ella el saldo se muestra también en bolívares. */
-  currentRateVes?: number;
   paidRef: number;
   paidVes: number;
-  pendingRef: number;
   /** Acción que toca según el estado; sin ella la cabecera no pinta botón. */
   primaryAction?: PrimaryStateActionConfig;
   purchaseNumber: string;
@@ -31,50 +29,17 @@ type PurchaseDetailStateHeaderProps = {
 
 type PaymentState = { label: string; tone: PrimaryStateFigureTone };
 
-function getPaymentState(paidRef: number, pendingRef: number): PaymentState {
-  if (pendingRef < 0.01) {
-    return { label: "Pagado", tone: "success" };
-  }
-
-  return paidRef > 0.01
-    ? { label: "Pago parcial", tone: "warning" }
-    : { label: "Pendiente", tone: "default" };
-}
-
-/**
- * Saldo en bolívares a la tasa de hoy. Si la tasa de hoy es la de la compra, es
- * el saldo en Bs del documento (total − pagado): recalcularlo desde el saldo REF
- * redondeado se desviaba un céntimo. Con otra tasa, saldo REF × tasa de hoy.
- */
-export function getPendingVesToday({
-  currentRateVes,
-  paidVes,
-  pendingRef,
-  refRateVes,
-  totalVes,
-}: {
-  currentRateVes: number;
-  paidVes: number;
-  pendingRef: number;
-  refRateVes: number;
-  totalVes: number;
-}): number | null {
-  if (!(currentRateVes > 0)) {
-    return null;
-  }
-
-  return currentRateVes === refRateVes
-    ? Math.max(0, roundMoney(totalVes - paidVes))
-    : roundMoney(pendingRef * currentRateVes);
-}
+const PAYMENT_STATES: Record<DocumentPaymentStatus, PaymentState> = {
+  pagada: { label: "Pagado", tone: "success" },
+  parcial: { label: "Pago parcial", tone: "warning" },
+  pendiente: { label: "Pendiente", tone: "default" },
+};
 
 /** Cabecera del detalle: número y estado de la compra, sus cifras y la acción que toca. */
 export function PurchaseDetailStateHeader({
   actionsMenu,
-  currentRateVes = 0,
   paidRef,
   paidVes,
-  pendingRef,
   primaryAction,
   purchaseNumber,
   refRateVes,
@@ -82,14 +47,18 @@ export function PurchaseDetailStateHeader({
   totalRef,
   totalVes,
 }: PurchaseDetailStateHeaderProps) {
-  const paymentState = getPaymentState(paidRef, pendingRef);
-  const pendingVesToday = getPendingVesToday({
-    currentRateVes,
+  // Saldo y estado de pago salen de `documentBalance` (criterio del servidor, en Bs):
+  // lo mismo que deciden «Pagar», la lista, Saldos del proveedor y Cuentas por pagar.
+  const balance = documentBalance({
+    paidRef,
     paidVes,
-    pendingRef,
     refRateVes,
+    status,
+    totalRef,
     totalVes,
+    type: "purchase",
   });
+  const paymentState = PAYMENT_STATES[balance.paymentStatus];
   const closedNotice = getPurchaseClosedNotice(status);
 
   return (
@@ -108,11 +77,13 @@ export function PurchaseDetailStateHeader({
         },
         { hint: formatVesBs(paidVes), label: "Pagado", value: formatRefUsd(paidRef) },
         {
-          hint: pendingVesToday != null ? `≈ hoy en Bs: ${formatVesBs(pendingVesToday)}` : undefined,
+          // La deuda de una compra está fijada en Bs: es lo que `register_payment` deja
+          // pagar hoy, con cualquier tasa del día.
+          hint: `≈ hoy en Bs: ${formatVesBs(balance.pendingVes)}`,
           label: "Saldo",
           // Una compra cancelada o devuelta ya no se paga: su saldo no es una alerta.
-          tone: pendingRef > 0.01 && closedNotice === null ? "danger" : "default",
-          value: formatRefUsd(pendingRef),
+          tone: !balance.settled && closedNotice === null ? "danger" : "default",
+          value: formatRefUsd(balance.pendingRef),
         },
         { label: "Estado de pago", tone: paymentState.tone, value: paymentState.label },
       ]}

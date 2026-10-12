@@ -26,6 +26,7 @@ import {
   useUrlListState,
   withUrlListBoundary,
 } from "@/shared/hooks/useUrlListState";
+import { documentBalance } from "@/shared/payments/documentBalance";
 import { formatDateTimeShort } from "@/shared/utils/date";
 import { cn } from "@/shared/utils/cn";
 import { withReturnTo } from "@/shared/utils/returnTo";
@@ -54,8 +55,7 @@ function formatInvoiceNumber(invoiceNumber: string) {
 function isPartiallyPaid(sale: SaleListItem) {
   return (
     sale.status === "pendiente_pago" &&
-    sale.paidVes > 0 &&
-    sale.paidVes < sale.totalVes
+    documentBalance({ ...sale, type: "sale" }).paymentStatus === "parcial"
   );
 }
 

@@ -1,6 +1,7 @@
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createRouteSupabaseClient } from "@/lib/supabase/route-client";
 import { listCountOptions } from "@/modules/products/services/listRange";
+import { documentBalance } from "@/shared/payments/documentBalance";
 
 import {
   agingDocumentHref,
@@ -170,6 +171,18 @@ type DbAgingSummaryRow = {
 };
 
 function mapAgingRow(type: AgingDocumentType, row: DbAgingRow): AgingDocumentRow {
+  // La vista ya filtra con el criterio del servidor (`round(total_ves - paid_ves, 2) > 0`);
+  // el saldo de cada fila se lee con `documentBalance`, como en el detalle y en Saldos.
+  const balance = documentBalance({
+    paidRef: Number(row.paid_ref),
+    paidVes: Number(row.paid_ves),
+    refRateVes: Number(row.ref_rate_ves),
+    status: type === "sale" ? "pendiente_pago" : "recibido",
+    totalRef: Number(row.total_ref),
+    totalVes: Number(row.total_ves),
+    type,
+  });
+
   return {
     bucket: row.bucket,
     contact: row.contact_name === null ? null : { id: row.contact_id, name: row.contact_name },
@@ -184,8 +197,8 @@ function mapAgingRow(type: AgingDocumentType, row: DbAgingRow): AgingDocumentRow
     },
     paidRef: Number(row.paid_ref),
     paidVes: Number(row.paid_ves),
-    pendingRef: Number(row.pending_ref),
-    pendingVes: Number(row.pending_ves),
+    pendingRef: balance.pendingRef,
+    pendingVes: balance.pendingVes,
     refRateVes: Number(row.ref_rate_ves),
     totalRef: Number(row.total_ref),
     totalVes: Number(row.total_ves),

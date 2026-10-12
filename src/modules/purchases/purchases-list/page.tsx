@@ -27,7 +27,7 @@ import {
   useUrlListState,
   withUrlListBoundary,
 } from "@/shared/hooks/useUrlListState";
-import { formatRefUsd } from "@/shared/utils/currency";
+import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDateTimeShort } from "@/shared/utils/date";
 import { cn } from "@/shared/utils/cn";
 import { withReturnTo } from "@/shared/utils/returnTo";
@@ -48,10 +48,9 @@ import { PurchasesExportActions } from "./components/PurchasesExportActions";
 import { PurchasesListFilters } from "./components/PurchasesListFilters";
 import { PurchasesStatusBadge } from "./components/PurchasesStatusBadge";
 import {
-  getPurchaseBalanceRef,
+  getPurchaseBalance,
   getPurchasePaymentStatus,
   isPayablePurchaseStatus,
-  PURCHASE_BALANCE_TOLERANCE_REF,
 } from "./utils/purchaseBalance";
 import {
   CLEARED_PURCHASES_FILTERS,
@@ -178,19 +177,19 @@ function buildColumns(listHref: string): DataTableColumn<PurchaseListRow>[] {
       header: "Saldo (REF)",
       key: "balanceRef",
       render: (purchase) => {
-        const balanceRef = getPurchaseBalanceRef(purchase);
-
-        if (balanceRef === null) {
+        if (!isPayablePurchaseStatus(purchase.status)) {
           return <NotApplicable />;
         }
 
+        const balance = getPurchaseBalance(purchase);
+
+        // Deuda de céntimos de Bs que no llega a un céntimo de REF: se muestra en Bs,
+        // que es en lo que se debe (y en lo que se puede pagar).
         return (
-          <span
-            className={cn(
-              balanceRef >= PURCHASE_BALANCE_TOLERANCE_REF ? "text-destructive" : "text-foreground",
-            )}
-          >
-            {formatRefUsd(balanceRef)}
+          <span className={cn(balance.open ? "text-destructive" : "text-foreground")}>
+            {balance.open && balance.pendingRef <= 0
+              ? formatVesBs(balance.pendingVes)
+              : formatRefUsd(balance.pendingRef)}
           </span>
         );
       },

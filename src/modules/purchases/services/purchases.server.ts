@@ -311,13 +311,15 @@ const BALANCE_SCAN_PAGE_SIZE = 1000;
 type PurchaseBalanceRow = {
   id: string;
   paid_ref: number | string | null;
+  paid_ves: number | string | null;
   status: string;
   total_ref: number | string | null;
+  total_ves: number | string | null;
 };
 
 /**
  * `pendingBalance=1`: compras vigentes con saldo. PostgREST no compara dos
- * columnas (`total_ref` contra `paid_ref`), así que se recorren las cabeceras
+ * columnas (`total_ves` contra `paid_ves`), así que se recorren las cabeceras
  * vigentes que cumplen los demás filtros (solo id e importes), el saldo se
  * decide aquí con la regla de `purchaseBalance` y se pide la página pedida por
  * id. Lo pagado es el de la cabecera (`purchases.paid_ref`): nunca se leen
@@ -335,7 +337,7 @@ async function listPurchasesWithPendingBalance(
   for (let offset = 0; ; offset += BALANCE_SCAN_PAGE_SIZE) {
     const scan = supabase
       .from("purchases")
-      .select("id, total_ref, paid_ref, status")
+      .select("id, total_ref, total_ves, paid_ref, paid_ves, status")
       .eq("store_id", storeId)
       .in("status", [...PAYABLE_PURCHASE_STATUSES])
       .order("created_at", { ascending: false })
@@ -353,8 +355,10 @@ async function listPurchasesWithPendingBalance(
     for (const row of rows) {
       const amounts = {
         paidRef: Number(row.paid_ref ?? 0),
+        paidVes: Number(row.paid_ves ?? 0),
         status: row.status,
         totalRef: Number(row.total_ref ?? 0),
+        totalVes: Number(row.total_ves ?? 0),
       };
 
       if (hasPendingBalance(amounts)) {

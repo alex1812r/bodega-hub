@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { DocumentStockMovementsLink } from "@/modules/inventory/components/DocumentStockMovementsLink";
 import { CollapsibleSection } from "@/shared/components/CollapsibleSection";
+import { documentBalance } from "@/shared/payments/documentBalance";
 import { formatRefUsd } from "@/shared/utils/currency";
 
 import type { PurchaseDetails } from "../../hooks/usePurchases";
@@ -36,7 +37,6 @@ type PurchaseDetailSectionsProps = {
   /** URL actual del detalle, con su `returnTo`: a ella vuelven los enlaces salientes. */
   detailUrl: string;
   paidRef: number;
-  pendingRef: number;
   purchase: PurchaseDetails;
 };
 
@@ -56,12 +56,13 @@ export function PurchaseDetailSections({
   canViewProducts = false,
   detailUrl,
   paidRef,
-  pendingRef,
   purchase,
 }: PurchaseDetailSectionsProps) {
   // Se decide al entrar: saldar la compra con «Pagar» no pliega el historial que
   // se está mirando. Lo que el usuario abra o cierre manda después (`storageKey`).
-  const [paymentsOpenByDefault] = useState(pendingRef >= 0.01);
+  const [paymentsOpenByDefault] = useState(
+    () => !documentBalance({ ...purchase, type: "purchase" }).settled,
+  );
   const notes = purchase.notes?.trim() ?? "";
   const info = getPurchaseInfoBanner(purchase.status, {
     createdAt: purchase.createdAt,

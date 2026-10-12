@@ -13,6 +13,7 @@ import { ErrorState } from "@/shared/components/ErrorState";
 import { useToast } from "@/shared/components/Toast";
 import { useCurrentUrl } from "@/shared/hooks/useCurrentUrl";
 import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
+import { documentBalance } from "@/shared/payments/documentBalance";
 import { formatRefUsd, formatVesBs, roundMoney } from "@/shared/utils/currency";
 import { withChainedReturnTo } from "@/shared/utils/returnTo";
 
@@ -115,16 +116,17 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
   }
 
   const data = sale.data;
-  const pendingVes = Math.max(0, data.totalVes - data.paidVes);
-  const hasBalance = roundMoney(pendingVes) > 0;
+  // Saldo y "cobrable" salen de `documentBalance` (criterio de `register_payment`), lo
+  // mismo que leen Saldos del cliente, `open-documents` y Cuentas por cobrar.
+  const balance = documentBalance({ ...data, type: "sale" });
+  const pendingVes = balance.pendingVes;
   const seller = resolveSeller(data.userId);
   const companyName = settings.data?.businessName ?? undefined;
   // Mismas reglas que el servidor: `register_payment` solo cobra ventas pagadas o
   // pendientes (no borrador, anulada ni devuelta) con saldo, y `POST /api/payments`
   // exige `payments.manage` o `sales.create`.
   const canCollectBalance =
-    hasBalance &&
-    (data.status === "pendiente_pago" || data.status === "pagada") &&
+    balance.open &&
     (can("payments.manage") || can("sales.create"));
   // Un pago anulado sigue en el historial, pero no cuenta como cobro.
   const activePayments = data.payments.filter((payment) => payment.status !== "anulado").length;
@@ -248,7 +250,7 @@ export function SaleDetailsPage({ saleId = "sale-001" }: SaleDetailsPageProps) {
       </CollapsibleSection>
 
       <CollapsibleSection
-        defaultOpen={hasBalance}
+        defaultOpen={!balance.settled}
         storageKey="sale-detail:payments-open"
         summary={
           activePayments === 0

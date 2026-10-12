@@ -4,6 +4,7 @@ import autoTable from "jspdf-autotable";
 import type { PurchaseDetails } from "@/modules/purchases/hooks/usePurchases";
 import { formatPurchaseNumberForExport } from "@/modules/purchases/utils/purchaseExportSheetColumns";
 import type { PurchaseStatus } from "@/shared/mocks/erp-data";
+import { documentBalance } from "@/shared/payments/documentBalance";
 import { formatRefUsd, formatVesBs } from "@/shared/utils/currency";
 import { formatDateTimeShort } from "@/shared/utils/date";
 
@@ -160,11 +161,11 @@ export function buildPurchaseDetailPdf(
       ["Pagado (VES)", formatVesBs(purchase.paidVes)],
       [
         "Pendiente (REF)",
-        formatRefUsd(Math.max(0, purchase.totalRef - (purchase.paidRef ?? 0))),
+        formatRefUsd(documentBalance({ ...purchase, type: "purchase" }).pendingRef),
       ],
       [
         "Pendiente (VES histórico)",
-        formatVesBs(Math.max(0, purchase.totalVes - purchase.paidVes)),
+        formatVesBs(documentBalance({ ...purchase, type: "purchase" }).pendingVes),
       ],
     ],
     columnStyles: {

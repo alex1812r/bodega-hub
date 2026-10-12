@@ -11,6 +11,7 @@ import {
 import { findMockPurchase } from "@/modules/purchases/services/purchases.mock-server";
 import { mockState } from "@/shared/mocks/mockStore";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
+import { documentBalance as computeDocumentBalance } from "@/shared/payments/documentBalance";
 import { isUtcTimestampInCaracasDateRange } from "@/shared/utils/caracasBusinessDay";
 
 import type { PaymentDocumentBalance } from "../payment-details/types";
@@ -130,7 +131,7 @@ function resolveMockDocumentBalance(
       href: `/sales/${sale.id}`,
       label: sale.invoiceNumber,
       paidVes: sale.paidVes,
-      pendingVes: Math.max(sale.totalVes - sale.paidVes, 0),
+      pendingVes: computeDocumentBalance({ ...sale, type: "sale" }).pendingVes,
       totalVes: sale.totalVes,
     };
   }
@@ -147,11 +148,8 @@ function resolveMockDocumentBalance(
       label: formatPurchaseNumberDisplay(purchase.purchaseNumber),
       paidRef: purchase.paidRef ?? 0,
       paidVes: purchase.paidVes,
-      pendingRef: Math.max(
-        Math.round((purchase.totalRef - (purchase.paidRef ?? 0)) * 100) / 100,
-        0,
-      ),
-      pendingVes: Math.max(purchase.totalVes - purchase.paidVes, 0),
+      pendingRef: computeDocumentBalance({ ...purchase, type: "purchase" }).pendingRef,
+      pendingVes: computeDocumentBalance({ ...purchase, type: "purchase" }).pendingVes,
       totalRef: purchase.totalRef,
       totalVes: purchase.totalVes,
     };
@@ -304,14 +302,16 @@ function registerMockPayment(input: PaymentInput, storeId: string) {
     purchase.paidRef = Math.round(((purchase.paidRef ?? 0) + amountRef) * 100) / 100;
   }
 
+  // El saldo que queda es el de Bs del documento, como en `payments.server` (GQ-07):
+  // antes el mock lo deducía del REF y daba 0 con céntimos de Bs aún por pagar.
   const pendingBalanceVes = purchase
-    ? Math.max(
-        Math.round(
-          ((purchase.totalRef - (purchase.paidRef ?? 0)) * refRateVes) * 100,
-        ) / 100,
-        0,
-      )
-    : Math.max(totalVes - paidVes - amountVes, 0);
+    ? computeDocumentBalance({ ...purchase, type: "purchase" }).pendingVes
+    : computeDocumentBalance({
+        paidVes: paidVes + amountVes,
+        status: sale?.status ?? "pendiente_pago",
+        totalVes,
+        type: "sale",
+      }).pendingVes;
 
   const payment = {
     amount: input.amount,
