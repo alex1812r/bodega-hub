@@ -3,6 +3,7 @@
 import { Save, Tag } from "lucide-react";
 import { useRef, useState } from "react";
 
+import { useRequestAttempt } from "@/modules/inventory/utils/requestAttempt";
 import { Button } from "@/shared/components/Button";
 import { ConfirmActionModal, type ConfirmActionStatus } from "@/shared/components/ConfirmActionModal";
 import { Input } from "@/shared/components/Input";
@@ -122,8 +123,11 @@ export function ProductDetailPriceChangeCard({
   const [confirmError, setConfirmError] = useState<string | null>(null);
   // Precio ya guardado que la página aún no ha releído: no se vuelve a enviar.
   const [savedPriceRef, setSavedPriceRef] = useState<number | null>(null);
-  // Un solo envío por intento, aunque dos confirmaciones caigan en el mismo tick.
-  const isSendingRef = useRef(false);
+  // Un solo envío por cambio (GQ-09: `update_product_price` no tiene clave de idempotencia
+  // y un segundo POST es otra fila de historial). Bloquea en vuelo y, tras el éxito,
+  // hasta que se abre la confirmación de otro precio: el modal que se está cerrando ya
+  // no puede reenviar el mismo.
+  const attempt = useRequestAttempt({ lockAfterSuccess: true });
   const { showToast } = useToast();
   // Lectura del producto de la confirmación abierta, y lo que mostraba el formulario al abrirla.
   const [freshRead, setFreshRead] = useState<FreshRead>({ status: "loading" });
@@ -228,6 +232,8 @@ export function ProductDetailPriceChangeCard({
       return;
     }
 
+    // Otro precio (el ya guardado no llega aquí): otra operación.
+    attempt.reopen();
     setConfirmError(null);
     setShownAtOpen({ currentCostRef, currentPriceRef });
     readFreshProduct();
@@ -235,13 +241,16 @@ export function ProductDetailPriceChangeCard({
   }
 
   async function handleConfirm() {
-    if (price === null || isSendingRef.current || !confirmBase || confirmStatus !== "ready") {
+    if (price === null || !confirmBase || confirmStatus !== "ready") {
       return;
     }
 
     const shownPriceRef = confirmBase.currentPriceRef;
 
-    isSendingRef.current = true;
+    if (attempt.begin({ price }) === null) {
+      return;
+    }
+
     setConfirmError(null);
 
     try {
@@ -249,6 +258,7 @@ export function ProductDetailPriceChangeCard({
       const savedRef = typeof result?.salePriceRef === "number" ? result.salePriceRef : price;
       const replacedRef = result?.previousSalePriceRef;
 
+      attempt.succeed();
       setSavedPriceRef(price);
       setIsConfirmOpen(false);
       showToast({
@@ -260,13 +270,12 @@ export function ProductDetailPriceChangeCard({
         tone: "success",
       });
     } catch (error) {
+      attempt.fail(error);
       setConfirmError(
         error instanceof Error && error.message ? error.message : PRICE_UPDATE_FALLBACK_ERROR,
       );
       // El rechazo puede deberse a que el producto cambió (409 por costo): se relee.
       readFreshProduct(true);
-    } finally {
-      isSendingRef.current = false;
     }
   }
 

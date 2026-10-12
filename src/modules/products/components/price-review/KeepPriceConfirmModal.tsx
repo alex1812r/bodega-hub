@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 
+import {
+  useReleaseAttemptOnClose,
+  useRequestAttempt,
+} from "@/modules/inventory/utils/requestAttempt";
 import { ConfirmActionModal, type ConfirmActionStatus } from "@/shared/components/ConfirmActionModal";
 import { Input } from "@/shared/components/Input";
 import { formatMarkupPct } from "@/shared/components/MarginBadge";
@@ -68,6 +72,12 @@ export function KeepPriceConfirmModal({
   const { showToast } = useToast();
   const keepPrice = useKeepProductPrice();
   const costConflict = useCostConflictRefresh();
+  // Un solo envío por decisión (GQ-09: `keep_product_price` no tiene clave de idempotencia
+  // y un segundo POST es otra fila de historial). Bloquea en vuelo y, tras el éxito,
+  // hasta que el modal termina de cerrarse.
+  const attempt = useRequestAttempt({ lockAfterSuccess: true });
+
+  useReleaseAttemptOnClose(attempt, open && product !== null);
   const [reason, setReason] = useState("");
   // Cifras releídas tras un 409: mandan sobre las que traía quien abrió el modal.
   const [refreshed, setRefreshed] = useState<KeepPriceProduct | null>(null);
@@ -99,7 +109,7 @@ export function KeepPriceConfirmModal({
   }
 
   async function handleConfirm() {
-    if (!product || !figures) {
+    if (!product || !figures || attempt.begin({ productId: product.id }) === null) {
       return;
     }
 
@@ -111,7 +121,10 @@ export function KeepPriceConfirmModal({
         productId: product.id,
         reason: reason.trim() || defaultReason || undefined,
       });
+      attempt.succeed();
     } catch (error) {
+      attempt.fail(error);
+
       const fresh = await costConflict.fetchProduct(error, product.id);
 
       if (fresh && !fresh.priceReview) {
