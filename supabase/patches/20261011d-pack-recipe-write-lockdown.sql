@@ -37,10 +37,13 @@
 -- fuera de la RPC desde INV-09.
 --
 -- ORDEN DE DESPLIEGUE: 20261011c -> verify -> BFF nuevo (INV-09) -> este parche
--- -> verify. En el primer verify quedan en fail, y solo ellas, las dos filas que
--- exigen este parche: la de privilegios de 20261011d y la de RLS de
--- product_pack_components de 20261009d (que desde INV-L2 exige que authenticated
--- solo lea la tabla). En el segundo, fail = 0.
+-- -> verify. En el primer verify quedan en fail las dos filas que exigen este
+-- parche: la de privilegios de 20261011d y la de RLS de product_pack_components
+-- de 20261009d (que desde INV-L2 exige que authenticated solo lea la tabla). En
+-- el despliegue de ux-mejoras 20261010c tambien va despues del BFF, asi que en
+-- ese primer verify son TRES, y solo esas: las dos de arriba y la de la politica
+-- de lectura de payments de 20261010c (docs/despliegue-ux-mejoras.md, seccion 2).
+-- En el segundo, fail = 0.
 -- El BFF ANTERIOR a INV-09 escribe la receta por tabla: sobre una base con este
 -- parche, guardar, editar o desactivar la receta de un empaque le responde 403
 -- (permission denied). No aplicar antes de desplegar el BFF que usa la RPC.

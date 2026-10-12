@@ -123,6 +123,4 @@ Sin verificar por nadie en este plan: lector de barras físico, táctil real, Fi
 
 ## Contradicciones sin resolver
 
-Las cuatro diferencias que este documento listaba al cierre del plan quedaron resueltas en DOC-02 (posición de `20261010c`, cabecera de `20261010e`, lista de `stock-integrity.md` §7 y `20261008a` «indistinto»). Queda una, de texto:
-
-1. **Filas en `fail` del primer verify.** La cabecera de `20261011d-pack-recipe-write-lockdown.sql` dice: «En el primer verify quedan en fail, y solo ellas, las dos filas que exigen este parche». Eso vale para la secuencia de ese parche aislado. Con `20261010c` también después del BFF son tres (fila de verificación de la tabla de la sección 2). La cabecera del parche no se ha tocado.
+Ninguna. Las cuatro diferencias que este documento listaba al cierre del plan quedaron resueltas en DOC-02 (posición de `20261010c`, cabecera de `20261010e`, lista de `stock-integrity.md` §7 y `20261008a` «indistinto»), y la quinta en GQ-08: la cabecera de `20261011d-pack-recipe-write-lockdown.sql` ya dice que, con `20261010c` también después del BFF, en el primer verify quedan en `fail` tres filas (las dos de `11d` y la de `10c`), como la tabla de la sección 2.
