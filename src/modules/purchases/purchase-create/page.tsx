@@ -1021,8 +1021,12 @@ export function PurchaseCreatePage() {
         />
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-12 lg:items-start">
-        <div className="flex min-w-0 flex-col gap-6 lg:col-span-8">
+      {/* Dos columnas solo si además caben: `lg:` mide la ventana en px y no se entera de
+          una fuente al 130 %; `@xl` mide este bloque en rem. A 1024 px con fuente grande la
+          columna lateral quedaba en ~110 px y cortaba «Método» de «Pagar ahora» (F5). */}
+      <div className="@container">
+      <div className="grid gap-6 lg:@xl:grid-cols-12 lg:@xl:items-start">
+        <div className="flex min-w-0 flex-col gap-6 lg:@xl:col-span-8">
           <PurchaseSupplierCard
             onSupplierChange={handleSupplierChange}
             selectedSupplierId={supplierId}
@@ -1082,7 +1086,7 @@ export function PurchaseCreatePage() {
           />
         </div>
 
-        <div className="flex min-w-0 flex-col gap-6 lg:col-span-4 lg:sticky lg:top-6">
+        <div className="flex min-w-0 flex-col gap-6 lg:@xl:sticky lg:@xl:top-6 lg:@xl:col-span-4">
           <PurchaseStatusNotesCard
             notes={notes}
             onNotesChange={setNotes}
@@ -1129,6 +1133,7 @@ export function PurchaseCreatePage() {
             taxVes={totals.taxVes}
           />
         </div>
+      </div>
       </div>
 
       {canCreateProduct ? (

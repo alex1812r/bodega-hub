@@ -1253,6 +1253,44 @@ describe("InventoryListPage · vista única de stock", () => {
       expect(scrollTo).toHaveBeenCalledWith(0, 640);
     });
 
+    it("GQ-08 / F9: al volver con una fila expandida espera a que su panel pinte los movimientos, restaura ahí y no vuelve a centrar la fila", async () => {
+      const originalScrollIntoView = Element.prototype.scrollIntoView;
+      const scrollIntoView = jest.fn();
+      Element.prototype.scrollIntoView = scrollIntoView;
+      const scrollTo = rememberScroll("/inventory?status=low&product=p-arroz", 750);
+      const baseFetch = fetchMock.getMockImplementation() as (url: string) => Promise<Response>;
+      let releaseMovements: () => void = () => undefined;
+      const movementsGate = new Promise<void>((resolve) => {
+        releaseMovements = resolve;
+      });
+
+      fetchMock.mockImplementation(async (url: string) => {
+        if (String(url).split("?")[0] === "/api/inventory/movements") {
+          await movementsGate;
+        }
+
+        return baseFetch(url);
+      });
+
+      try {
+        renderPage("status=low&product=p-arroz");
+        await findRow("Arroz");
+        await screen.findByText("Cargando movimientos...");
+
+        // Las filas ya están, pero la fila expandida aún no tiene su alto: 750 no cabe todavía.
+        expect(scrollTo).not.toHaveBeenCalled();
+
+        releaseMovements();
+
+        await waitFor(() => expect(scrollTo).toHaveBeenCalledWith(0, 750));
+        expect(scrollTo).toHaveBeenCalledTimes(1);
+        // Es un regreso, no una llegada: centrar la fila competía con la restauración.
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      } finally {
+        Element.prototype.scrollIntoView = originalScrollIntoView;
+      }
+    });
+
     it("does not move the scroll on a URL without a saved position", async () => {
       const scrollTo = rememberScroll("/inventory?status=low&page=2", 640);
 

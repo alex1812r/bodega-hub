@@ -167,10 +167,14 @@ describe("PurchaseCreatePage · sin desborde entre 320 y 390 px (COM-F12)", () =
     const mainColumn = screen.getByRole("button", { name: "elegir proveedor" }).parentElement;
     const grid = mainColumn?.parentElement;
 
-    expect(grid).toHaveClass("grid", "lg:grid-cols-12");
+    expect(grid).toHaveClass("grid", "lg:@xl:grid-cols-12");
     expect(grid?.children).toHaveLength(2);
-    expect(mainColumn).toHaveClass("min-w-0", "lg:col-span-8");
-    expect(grid?.children[1]).toHaveClass("min-w-0", "lg:col-span-4");
+    expect(mainColumn).toHaveClass("min-w-0", "lg:@xl:col-span-8");
+    expect(grid?.children[1]).toHaveClass("min-w-0", "lg:@xl:col-span-4");
+    // GQ-08 / F5: las dos columnas dependen también del ancho en rem del bloque, no solo
+    // de la ventana: con fuente al 130 % a 1024 px el resumen baja debajo.
+    expect(grid?.parentElement).toHaveClass("@container");
+    expect(grid?.className).not.toMatch(/(^|s)lg:grid-cols-12(s|$)/);
     expect(searchBox().closest("section")).toHaveClass("min-w-0");
     expect(
       screen.getByRole("heading", { name: "Resumen de Compra" }).closest("section"),

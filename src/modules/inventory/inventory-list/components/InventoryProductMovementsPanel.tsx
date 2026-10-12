@@ -2,6 +2,7 @@
 
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
+import { useEffect } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { ClientApiError } from "@/shared/api/apiFetch";
@@ -18,6 +19,8 @@ export const INVENTORY_PANEL_MOVEMENTS = 10;
 type InventoryProductMovementsPanelProps = {
   /** `id` del panel: el botón que lo abre lo referencia con `aria-controls`. */
   id: string;
+  /** Los movimientos (o su error) ya están pintados: el panel tiene su alto definitivo. */
+  onSettled?: (productId: string) => void;
   product: Pick<InventoryOverviewItem, "currentStock" | "id" | "name" | "reconciliationDiff">;
   /**
    * URL de la lista con `product=<id>`: a ella vuelven el kardex completo (con el
@@ -33,6 +36,7 @@ type InventoryProductMovementsPanelProps = {
  */
 export function InventoryProductMovementsPanel({
   id,
+  onSettled,
   product,
   returnTo,
 }: InventoryProductMovementsPanelProps) {
@@ -41,6 +45,13 @@ export function InventoryProductMovementsPanel({
     productId: product.id,
   });
   const movements = getPaginatedItems(movementsQuery.data);
+  const isSettled = movementsQuery.data !== undefined || movementsQuery.error !== null;
+
+  useEffect(() => {
+    if (isSettled) {
+      onSettled?.(product.id);
+    }
+  }, [isSettled, onSettled, product.id]);
   const isForbidden =
     movementsQuery.error instanceof ClientApiError && movementsQuery.error.status === 403;
   // Solo el admin recibe el campo; `null` y 0 = el stock cuadra con el libro.

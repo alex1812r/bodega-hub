@@ -3,7 +3,7 @@
 import { Lock } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
 import { ClientApiError } from "@/shared/api/apiFetch";
@@ -21,7 +21,7 @@ import {
 } from "@/shared/components/Pagination";
 import { Typography } from "@/shared/components/Typography";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
-import { useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
+import { hasSavedScrollPosition, useScrollRestoration } from "@/shared/hooks/useScrollRestoration";
 import {
   URL_LIST_DEBOUNCE_MS,
   useUrlListState,
@@ -187,11 +187,22 @@ function InventoryList() {
     }
   }, [isPagePastTheEnd, lastPage, setListState]);
 
-  // Al volver de los movimientos o de un documento la lista reaparece a la altura en que se dejó.
-  useScrollRestoration(list.href, { ready: !inventoryQuery.isLoading });
-
   const isSelectedInPage =
     selectedProductId !== "" && inventory.some((item) => item.id === selectedProductId);
+  // Producto cuyo panel en línea ya pintó sus movimientos (o su error).
+  const [settledPanelProductId, setSettledPanelProductId] = useState("");
+  // Se vuelve a una posición guardada (regreso de un documento o del kardex), no se llega.
+  const [isReturnVisit] = useState(() => hasSavedScrollPosition(list.href));
+
+  // Al volver de los movimientos o de un documento la lista reaparece a la altura en que
+  // se dejó. Con una fila expandida se espera a que su panel tenga el alto definitivo: sin
+  // él la posición guardada no cabe todavía y el scroll quedaba corto (F9).
+  useScrollRestoration(list.href, {
+    ready:
+      !inventoryQuery.isLoading &&
+      (!isReturnVisit || !isSelectedInPage || settledPanelProductId === selectedProductId),
+  });
+
   // El producto de la URL no está en la página visible: se pide aparte y se fija
   // arriba. Se espera a que la página cargue para no pedirlo si ya viene en ella.
   const mustFetchSelected =
@@ -219,7 +230,8 @@ function InventoryList() {
 
   // Producto con el que se llegó a la pantalla (`/inventory?product=<id>`): la
   // página se desplaza hasta él una sola vez, cuando ya está pintado.
-  const arrivalProductRef = useRef(selectedProductId);
+  // En un regreso manda la posición guardada: centrar la fila competía con ella.
+  const arrivalProductRef = useRef(isReturnVisit ? "" : selectedProductId);
   const isSelectedRendered = isSelectedInPage || showSelectedBlock;
 
   useEffect(() => {
@@ -425,6 +437,7 @@ function InventoryList() {
                   item.id === selectedProductId ? (
                     <InventoryProductMovementsPanel
                       id={getInventoryMovementsPanelId(item.id)}
+                      onSettled={setSettledPanelProductId}
                       product={item}
                       returnTo={list.href}
                     />

@@ -60,6 +60,11 @@ function readPosition(key: string): number | null {
   return readEntries().find(([entryKey]) => entryKey === key)?.[1] ?? null;
 }
 
+/** `true` si hay una posición guardada para `key`: la pantalla es un regreso, no una llegada. */
+export function hasSavedScrollPosition(key: string) {
+  return typeof window !== "undefined" && readPosition(key) !== null;
+}
+
 /** Guarda la posición de `key` como la más reciente. Arriba del todo (0) no ocupa sitio. */
 function writePosition(key: string, top: number) {
   if (key.length > MAX_SCROLL_KEY_LENGTH) {
