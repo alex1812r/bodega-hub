@@ -323,7 +323,7 @@ Definido en [`src/shared/components/AppShell/appShellNav.ts`](../src/shared/comp
 ### Formulario, precio y ganancia (plan ux-mejoras)
 
 - **`ProductFormModal` en dos niveles** (PRO-01): básico (imagen, nombre, categoría, código de barras, costo y precio REF) y «Más opciones» colapsado (`ProductFormMoreOptions`: SKU, descripción, stock mínimo, empaque, proveedores). Modo `compact` para «Nuevo producto» desde la compra (5 campos). El SKU es opcional: vacío, se genera. `POST /api/products` acepta `clientRequestId` (reintento sin duplicar).
-- **Categoría sin salir** (PRO-02): «+ Nueva categoría» en el select abre `CategoryQuickCreateModal` (nombre + `TaxRateChips`). La categoría tiene «% sugerido» (`defaultMarkupPct`).
+- **Categoría sin salir** (PRO-02): «+ Nueva categoría» en el select abre `CategoryQuickCreateModal` (nombre + `TaxRateChips`). Si el nombre ya lo tiene una categoría activa (409: la creó otro usuario), queda seleccionada, el mini-modal se cierra y se avisa con un `Toast`; si está inactiva, el error lo dice y no se selecciona. Enfocar el select o abrir el mini-modal refresca la lista (`useRefreshCategories`). La categoría tiene «% sugerido» (`defaultMarkupPct`).
 - **«Guardar y crear otro»** (PRO-04) en producto y contacto, con `Toast` «Producto creado» y enlace «Ver».
 - **Stock** (PRO-03): en edición es de solo lectura, con «Ajustar stock» (`InventoryAdjustmentModal` precargado).
 - **Precio desde el %** (PRO-08): `PricingFields` en el formulario y en `ProductDetailPriceChangeCard`; base `currentCostRef`, que ya incluye IVA. `POST /api/products/[id]/price` acepta `reason` y `expectedCostRef`; `PATCH` con `salePriceRef` pasa por `update_product_price` y deja historial.

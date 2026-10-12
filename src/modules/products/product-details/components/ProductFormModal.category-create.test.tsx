@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 
 import { getPaginatedItems } from "@/lib/api/pagination";
+import { ToastProvider } from "@/shared/components/Toast";
 import type { TaxRate } from "@/shared/hooks/useTaxRates";
 import type { CategoryMock } from "@/shared/mocks/erp-data";
 
@@ -68,6 +69,9 @@ const snacks: CategoryMock = {
   taxRateId: "tax-reducida",
 };
 
+/** El 409 de `POST /api/categories` tal como lo dan el servidor (23505) y el mock. */
+const DUPLICATE_RESPONSE = { error: { code: "CONFLICT", message: "El recurso ya existe." } };
+
 /** `fetch` de prueba: el catálogo de alícuotas y la lista de categorías del servidor. */
 function installApi() {
   const server = { categories: [drinks] };
@@ -92,10 +96,14 @@ type FormProps = Partial<ProductFormModalProps>;
 /** La prop `categories` no cambia nunca: la categoría nueva no llega por ahí. */
 function renderForm(props: FormProps = {}) {
   const user = userEvent.setup({ delay: null });
+  const QueryWrapper = createQueryWrapper();
 
-  render(<ProductFormModal categories={[drinks]} onOpenChange={jest.fn()} open {...props} />, {
-    wrapper: createQueryWrapper(),
-  });
+  render(
+    <ToastProvider>
+      <ProductFormModal categories={[drinks]} onOpenChange={jest.fn()} open {...props} />
+    </ToastProvider>,
+    { wrapper: QueryWrapper },
+  );
 
   return user;
 }
@@ -259,24 +267,126 @@ describe("ProductFormModal · + Nueva categoría (PRO-02)", () => {
     expect(within(select).getAllByRole("option", { name: "Chucherías" })).toHaveLength(1);
   });
 
-  it("nombre duplicado: el mensaje del servidor queda en el mini-modal, que no se cierra", async () => {
+  // GC-01 · plan §7.2: otro usuario creó la categoría con el formulario ya abierto.
+  it.each([
+    ["completo", false],
+    ["compact", true],
+  ])(
+    "modo %s: 409 por una categoría activa que creó otro: queda seleccionada, el mini-modal se cierra y se avisa",
+    async (_label, compact) => {
+      const api = installApi();
+      const onSubmit = jest.fn();
+      const user = renderForm({ compact, onSubmit });
+
+      await user.click(screen.getByLabelText("Nombre"));
+      await user.paste("Chupeta");
+
+      const dialog = await openCategoryCreate(user);
+
+      // El nombre se compara como lo guarda el servidor: sin espacios sobrantes.
+      await fillCategoryName(user, "  Chucherías ");
+      api.server.categories = [drinks, snacks];
+      api.respondToNextPost(DUPLICATE_RESPONSE, 409);
+      await user.click(dialog.getByRole("button", { name: "Crear categoría" }));
+
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Nueva categoría" })).not.toBeInTheDocument(),
+      );
+
+      const select = screen.getByLabelText("Categoría");
+
+      expect(select).toHaveValue("cat-snacks");
+      expect(within(select).getAllByRole("option", { name: "Chucherías" })).toHaveLength(1);
+      expect(
+        await screen.findByText("La categoría «Chucherías» ya existía; quedó seleccionada"),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText("Nombre")).toHaveValue("Chupeta");
+      expect(screen.getByRole("dialog", { name: productDialogName(compact) })).toBeInTheDocument();
+      expect(api.posts).toHaveLength(1);
+      expect(onSubmit).not.toHaveBeenCalled();
+    },
+  );
+
+  it("409 y la categoría con ese nombre está inactiva: error visible con la indicación, nada seleccionado", async () => {
+    const api = installApi();
+    const user = renderForm();
+    const dialog = await openCategoryCreate(user);
+
+    await fillCategoryName(user, "Chucherías");
+    api.server.categories = [drinks, { ...snacks, isActive: false }];
+    api.respondToNextPost(DUPLICATE_RESPONSE, 409);
+    await user.click(dialog.getByRole("button", { name: "Crear categoría" }));
+
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      "Ya existe una categoría con ese nombre. Está inactiva: reactívala desde Categorías.",
+    );
+    expect(categoryDialog()).toBeInTheDocument();
+
+    const select = screen.getByLabelText("Categoría", { selector: "select" });
+
+    expect(select).toHaveValue("");
+    expect(within(select).queryByRole("option", { name: "Chucherías" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/ya existía; quedó seleccionada/)).not.toBeInTheDocument();
+  });
+
+  it("solo cambian las mayúsculas: no es la misma categoría para el servidor y no se selecciona", async () => {
+    const api = installApi();
+    const user = renderForm();
+    const dialog = await openCategoryCreate(user);
+
+    await fillCategoryName(user, "bebidas");
+    api.respondToNextPost(DUPLICATE_RESPONSE, 409);
+    await user.click(dialog.getByRole("button", { name: "Crear categoría" }));
+
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      "Ya existe una categoría con ese nombre.",
+    );
+    expect(screen.getByLabelText("Categoría", { selector: "select" })).toHaveValue("");
+  });
+
+  it.each([
+    ["enfocar el select de Categoría", "select"],
+    ["abrir «+ Nueva categoría»", "create"],
+  ])("%s refresca la lista: aparece la categoría que creó otro usuario", async (_label, how) => {
+    const api = installApi();
+    const user = userEvent.setup({ delay: null });
+
+    render(<QueryHarness />, { wrapper: createQueryWrapper() });
+
+    const select = screen.getByLabelText("Categoría");
+
+    await within(select).findByRole("option", { name: "Bebidas" });
+    expect(within(select).queryByRole("option", { name: "Chucherías" })).not.toBeInTheDocument();
+
+    api.server.categories = [drinks, snacks];
+
+    if (how === "select") {
+      await user.click(select);
+    } else {
+      await user.click(createCategoryButton());
+    }
+
+    // `hidden`: con el mini-modal abierto, el formulario de debajo queda fuera del árbol accesible.
+    expect(
+      await within(select).findByRole("option", { hidden: true, name: "Chucherías" }),
+    ).toBeInTheDocument();
+  });
+
+  it("nombre duplicado que ya no se encuentra: el mensaje queda en el mini-modal, que no se cierra", async () => {
     const api = installApi();
     const onSubmit = jest.fn();
     const user = renderForm({ onSubmit });
     const dialog = await openCategoryCreate(user);
 
-    await fillCategoryName(user, "Bebidas");
-    api.respondToNextPost(
-      { error: { code: "CONFLICT", message: "Ya existe una categoría con ese nombre." } },
-      409,
-    );
+    await fillCategoryName(user, "Fantasma");
+    api.respondToNextPost(DUPLICATE_RESPONSE, 409);
     await user.click(dialog.getByRole("button", { name: "Crear categoría" }));
 
     expect(await dialog.findByRole("alert")).toHaveTextContent(
       "Ya existe una categoría con ese nombre.",
     );
     expect(categoryDialog()).toBeInTheDocument();
-    expect(dialog.getByLabelText("Nombre")).toHaveValue("Bebidas");
+    expect(dialog.getByLabelText("Nombre")).toHaveValue("Fantasma");
     expect(screen.getByLabelText("Categoría", { selector: "select" })).toHaveValue("");
     expect(onSubmit).not.toHaveBeenCalled();
 

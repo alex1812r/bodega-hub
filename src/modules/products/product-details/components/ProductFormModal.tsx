@@ -42,6 +42,7 @@ import {
   useProductSuppliers,
   useSaveSuppliersForProduct,
 } from "../../hooks/useProducts";
+import { useRefreshCategories } from "../../hooks/useRefreshCategories";
 import { getProductPricingOptions } from "../../services/productMargin";
 import { normalizeBarcode } from "../../services/productSearch";
 import { cleanText } from "../../services/productText";
@@ -452,6 +453,9 @@ export function ProductFormModal({
   const [createdCategories, setCreatedCategories] = useState<CategoryMock[]>([]);
   const [categoryCreateOpen, setCategoryCreateOpen] = useState(false);
   const categoryCreateTriggerRef = useRef<HTMLButtonElement | null>(null);
+  // La lista llega por `categories` y puede llevar rato abierta: al enfocar el
+  // select o abrir "+ Nueva categoría" se pide de nuevo (GC-01).
+  const refreshCategories = useRefreshCategories();
   const categoryOptions = useMemo(
     () => [
       ...categories,
@@ -699,6 +703,7 @@ export function ProductFormModal({
 
   function openCategoryCreate(trigger: HTMLButtonElement) {
     categoryCreateTriggerRef.current = trigger;
+    refreshCategories();
     setCategoryCreateOpen(true);
   }
 
@@ -713,8 +718,12 @@ export function ProductFormModal({
     categoryCreateTriggerRef.current?.focus();
   }
 
+  // También la que ya existía (la creó otro usuario) y el alta rápida encontró.
   function handleCategoryCreated(category: CategoryMock) {
-    setCreatedCategories((current) => [...current, category]);
+    setCreatedCategories((current) => [
+      ...current.filter((created) => created.id !== category.id),
+      category,
+    ]);
     setCategoryId(category.id);
   }
 
@@ -1171,7 +1180,13 @@ export function ProductFormModal({
         className="grid gap-4"
         id={formId}
         key={formResetKey}
-        onFocus={trackFocus}
+        onFocus={(event) => {
+          trackFocus(event);
+
+          if (event.target instanceof HTMLSelectElement && event.target.name === "categoryId") {
+            refreshCategories();
+          }
+        }}
         onInput={(event) =>
           setUncontrolledDirty(
             readUncontrolledFields(event.currentTarget) !== uncontrolledBaselineRef.current,
