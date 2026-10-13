@@ -1,8 +1,8 @@
 # Despliegue del plan ux-mejoras
 
-Qué hay que aplicar, en qué orden y qué cambia a la vista al desplegar la rama `feat/ux-mejoras` (plan [`agent-prompts/ux-mejoras-gtm.md`](agent-prompts/ux-mejoras-gtm.md), HEAD `4974a90`). El estado de cada recomendación y las métricas están en [`auditoria-producto-2026-10.md` §8](auditoria-producto-2026-10.md#8-estado-de-las-recomendaciones).
+Qué hay que aplicar, en qué orden y qué cambia a la vista al desplegar la rama `feat/ux-mejoras` (plan [`agent-prompts/ux-mejoras-gtm.md`](agent-prompts/ux-mejoras-gtm.md), HEAD `d91be94`). El estado de cada recomendación y las métricas están en [`auditoria-producto-2026-10.md` §8](auditoria-producto-2026-10.md#8-estado-de-las-recomendaciones).
 
-**Nada de esto se ha aplicado a producción.** Los 25 parches solo han corrido en el laboratorio local (`verify-patches` 166 ok / 0 fail, `stock-lab:reconcile` 0/9 sobre `4974a90`).
+**Nada de esto se ha aplicado a producción.** Los 25 parches solo han corrido en el laboratorio local (`verify-patches` 166 ok / 0 fail, `stock-lab:reconcile` 0/9 sobre `d3e3dda`, pasada 4 del QA global). No hay SQL nuevo desde `20261017a`: lo posterior (GQ-07 a GQ-10, GC-01, GC-02) es BFF e interfaz, y el único cambio en `supabase/patches/` es el comentario de cabecera de `20261011d`. El orden de la sección 2 no cambia.
 
 Fuentes: las cabeceras de cada parche en `supabase/patches/` y los bloques de [`apply-all-pending.sql`](../supabase/patches/apply-all-pending.sql). **Este documento es la única fuente del orden de despliegue**; [`stock-integrity.md` §7](stock-integrity.md#7-despliegue) y `apply-all-pending.sql` remiten aquí. Queda una diferencia de texto sin corregir, anotada en [Contradicciones sin resolver](#contradicciones-sin-resolver).
 
@@ -22,6 +22,33 @@ Fuentes: las cabeceras de cada parche en `supabase/patches/` y los bloques de [`
 3. **Ventana sin operación.** `20261009a` reescribe `products` con bloqueo exclusivo; `20261011a` y `20261012b` crean índices sin `concurrently` (bloquean las escrituras de `stock_movements` y `purchase_items` mientras se construyen).
 4. **App móvil (otro repositorio, no revisada en este plan).** Tres cosas la pueden afectar: las vistas `daily_sales_summary` y `gross_profit_summary` pasan a día de Caracas (`20261013a`); un vendedor que envíe `discountRef` > 0 recibe 403; `@bodega/core` cambia etiquetas con tilde y el orden de los permisos efectivos del admin.
 5. **Scripts propios** que escriban recetas de empaque con un JWT de usuario o carguen stock inicial sobre productos inactivos: ver las notas de `20261011d` y `20261011b`.
+6. **Compras con `paid_ref` / `paid_ves` desalineados de sus pagos.** Desde GQ-10 el detalle de compra muestra lo pagado de la cabecera (`purchases.paid_ref` y `paid_ves`) en vez de sumar los pagos. Una compra antigua con la cabecera nula o distinta de la suma de sus pagos activos se vería con la cifra de la cabecera (un nulo, como 0 REF). Consulta de solo lectura; lo esperado son 0 filas, y las que salgan hay que revisarlas antes de desplegar:
+
+   ```sql
+   select p.id, p.store_id, p.status,
+          p.total_ref, p.paid_ref, p.paid_ves,
+          coalesce(a.sum_ref, 0) as pagos_activos_ref,
+          coalesce(a.sum_ves, 0) as pagos_activos_ves,
+          coalesce(a.n, 0)       as pagos_activos
+   from public.purchases p
+   left join (
+     select purchase_id,
+            sum(amount_ref) as sum_ref,
+            sum(amount_ves) as sum_ves,
+            count(*)        as n
+     from public.payments
+     where purchase_id is not null
+       and status is distinct from 'anulado'
+     group by purchase_id
+   ) a on a.purchase_id = p.id
+   where p.paid_ref is null
+      or p.paid_ves is null
+      or round(p.paid_ref, 2) <> round(coalesce(a.sum_ref, 0), 2)
+      or round(p.paid_ves, 2) <> round(coalesce(a.sum_ves, 0), 2)
+   order by p.store_id, p.id;
+   ```
+
+   La consulta está escrita a partir de las columnas que lee el BFF (`payments.purchase_id`, `amount_ref`, `amount_ves`, `status`) y **no se ha ejecutado en ninguna base**, tampoco en el laboratorio. Una diferencia de 0,01 en `paid_ref` puede ser el redondeo de `register_payment` (B2 en la sección 5), no un dato dañado.
 
 ## 2. Orden de aplicación
 
@@ -94,7 +121,11 @@ Además de las pantallas nuevas, cambian comportamientos que el usuario ya conoc
 - **Producto inactivo**: no admite compras nuevas ni entradas por ajuste (sí salidas y recibir pedidos anteriores).
 - **Almacén ya no ve los pagos de una compra**, solo lo pagado y el saldo de la cabecera.
 - **Pedidos**: un pedido sin recibir ya vincula el producto al proveedor con el costo de la línea.
-- **Números con punto**: `30.600` se lee 30,60; el campo lo avisa bajo el valor y no bloquea.
+- **Números con punto**: `30.600` se lee 30,60; el campo lo avisa bajo el valor («Se leerá como 30,60…») y no bloquea.
+- **Compra pagada en USD que queda «Pago parcial».** Cuando el total en Bs de la compra no es exactamente `total_ref × tasa`, pagar todo el REF en USD deja un resto de unos bolívares (en el laboratorio, Bs 4,54 y 4,58 sobre una compra de 161,10 REF). Detalle, lista, Saldos del proveedor y Cuentas por pagar la muestran ahora «Pago parcial», con REF 0,00, el resto en Bs y botón «Pagar»; antes el detalle decía «Pagado». **Ese resto solo se salda con un pago en Bs.**
+- **El detalle de compra ya no cuenta los pagos anulados.** Tras anular un pago, el detalle vuelve a mostrar el saldo y el botón «Pagar» (antes seguía en «Pagado», también en `main`). Los anulados siguen en el historial de pagos.
+- **Categoría repetida al crearla desde el producto**: si otro usuario ya la creó, queda seleccionada con un aviso en vez de un error.
+- **Borrador de compra restaurado**: si la alícuota de una categoría cambió desde que se guardó, un aviso dice qué líneas cambian.
 - **Pago móvil en el POS**: banco, teléfono y referencia se piden al pulsar «Cobrar» la primera vez.
 
 ## 4. Hallazgos fuera de alcance
@@ -116,10 +147,39 @@ Problemas altos y medios que el plan encontró y **no** tocó, casi todos anteri
 | D66 | Medio | Nadie edita las notas de una venta con los roles por defecto (admin 403, vendedor 404) | `PATCH /api/sales/{id}` | Regla de permisos, sin decisión |
 | D66 | Bajo | La caché de tasa oficial es única por proceso, no por tienda | `officialRateCache.ts` | El POS solo usa el valor; sin efecto medido |
 | D74 | Medio | Un carácter NUL en texto libre de rutas no cubiertas llega a la base antes de responder 400, y en valores de query no se filtra. Cinco rutas se corrigieron (FIN-02) | BFF, rutas con texto libre | Lote acotado por presupuesto |
-| D74 | Bajo | `update_product_price` y `keep_product_price` no tienen clave de idempotencia: una fila de historial por llamada repetida | `20261009c` / `f` | Solo se cerró el reprecio masivo (`20261017a`) |
-| F1 | Medio | Con el interruptor apagado el admin no puede anular ni devolver ventas: las rutas exigen `sales.create` | `sales/[id]/cancel`, `return`, `impact` | Regla de permisos de negocio anterior al plan; espera decisión del dueño |
+| D74, D84 | Bajo | `update_product_price` y `keep_product_price` no tienen clave de idempotencia en la base: una fila de historial por llamada repetida. Dos pestañas sobre el mismo producto envían cada una su POST (N2 en la sección 5) | `20261009c` / `f` | Solo se cerró el reprecio masivo (`20261017a`); la interfaz ya no envía un segundo POST al repetir el clic (GQ-09) |
+| F1 | Medio | Con el interruptor «El administrador puede vender» apagado, el admin no puede anular ni devolver ventas: las rutas exigen `sales.create`. Las pasadas de QA lo probaron con el interruptor encendido | `sales/[id]/cancel`, `return`, `impact` | Regla de permisos de negocio anterior al plan; espera decisión del dueño |
+| D84 | Medio | `register_payment` convierte el pago con `round(monto × tasa, 2)` y rechaza lo que pase del saldo + Bs 0,01: un pago en USD no puede saldar exacto una compra cuyo total en Bs no es `total_ref × tasa`. Queda un resto que solo se salda en Bs, y tras saldarlo `paid_ref` queda 0,01 por encima del total (B2) | RPC `register_payment` (`20261008a`) y totales de `create_purchase` | Aritmética monetaria de RPC, ya en `main`. El plan solo unificó cómo se muestra (GQ-07) |
+| N4 | Bajo | Una compra ya saldada admite un pago extra de Bs 0,01 (la holgura de un céntimo): `paid_ves` queda en total + 0,01 y sale Bs 0,01 del baúl. El segundo intento da 400. Solo por API: ninguna pantalla ofrece «Pagar» con saldo 0. Las ventas no lo admiten | `20260904-payment-guards.sql:311` (`v_amount_ves > v_outstanding_ves + 0.01`) | Semántica monetaria de RPC y baúl; anterior al plan |
+| D84 | Medio | El resumen de capital suma las cuentas por pagar en REF (`total_ref − paid_ref`), otro criterio que el del resto de la aplicación (Bs): una compra con resto solo en Bs no cuenta como deuda ahí | `store-capital-summary` (`20260906-store-capital-summary.sql`) | Vista de capital anterior al plan; cambiarla mueve la cifra de capital |
+| D88 | Bajo | El índice único de nombres de categoría solo cubre las activas: se puede crear una categoría con el mismo nombre que una inactiva (201, no 409) | `uq_categories_store_name_active` (`20260716-multi-store.sql`) | Anterior al plan; decidir si una inactiva reserva el nombre es regla de negocio |
+| D88 | Bajo | Los números `V-AAAAMMDD-…` y `C-AAAAMMDD-…` usan la fecha UTC: una venta de las 20:00 de Caracas del día 12 se numera con el 13 | `to_char(clock_timestamp(), 'YYYYMMDD')` (`20261006b`) | Ya en `main`; cambiarlo toca la numeración de documentos |
+| — | Bajo | La regla `@page { size: 80mm auto }` del ticket no es un tamaño de página válido: el recibo sale en hoja Carta | `SaleReceiptPrintPageStyle.tsx` (la regla venía de `globals.css`) | Anterior al plan; hay que probarlo con la impresora térmica real |
 
-Sin verificar por nadie en este plan: lector de barras físico, táctil real, Firefox y Safari, la app móvil, la ruta del cron de autocierre con su secreto, y las pasadas 2 y 3 de QA y caos globales (la 2 estaba en curso al escribir esto).
+Sin verificar por nadie en este plan: lector de barras físico, táctil real, Firefox y Safari, la app móvil y la ruta del cron de autocierre con su secreto.
+
+Pasadas de cierre: QA global 2, 3 y 4 y caos global 2 y 3 están hechas. La pasada 3 (QA y caos) salió limpia sobre `d3e3dda`; la pasada 4 de QA, sobre el mismo commit, no halló altos ni medios introducidos por el plan y sí un medio anterior al plan (el detalle de compra contaba pagos anulados), reparado en `d91be94` (GQ-10). El caos global de la pasada 4 se ejecuta sobre `d91be94` e incluye la verificación de GQ-10 contra base real; al escribir esto no había terminado. Es una rebaja declarada del criterio «dos pasadas limpias consecutivas sobre el mismo commit».
+
+## 5. Bajos conocidos al cierre
+
+Defectos menores que el plan dejó sin corregir. Casi todos son de presentación; los que tocan dinero remiten a la sección 4.
+
+| Ref. | Qué se ve | Dónde |
+|------|-----------|-------|
+| B1 | La columna «SALDO (REF)» de la lista de compras muestra «Bs. 4,54» cuando el saldo en REF es 0 y queda resto en Bs; la banda de saldo cuenta esa compra con ref 0,00 | Lista de compras (desde GQ-07) |
+| B2 | Tras saldar en Bs el resto, el detalle dice «PAGADO ref 161.11» sobre un total de ref 161.10 | Detalle de compra; aritmética de `register_payment` (sección 4) |
+| N1 | Borrador de compra con una alícuota elegida a mano que luego se desactiva: al restaurar, esas líneas pasan a la alícuota de su categoría y el aviso no lo nombra bien | `purchaseDraftStorage.ts` (residuo de GC-02) |
+| N2 | Dos pestañas sobre el mismo producto en «Por revisar»: cada una envía su POST; una pestaña obsoleta puede «Aplicar» después de un «Mantener», y puede quedar una fila de historial sin cambio. A lo sumo un cambio real de precio | Cambio de precio y «Mantener precio» |
+| N3 | El aviso de IVA del borrador enumera todas las líneas por nombre: con muchas líneas es un párrafo | Restaurar borrador de compra |
+| — | El Excel de compras solo trae REF y no tiene columna de estado de pago: una compra con resto en Bs se lee como saldada | Exportación de la lista de compras |
+| — | `PaymentDetailBalanceCard` muestra el saldo solo en REF: «SALDO RESTANTE 0,00 REF» mientras lista, Saldos y Cuentas por pagar dicen Bs. 4,58 | Detalle de un pago (`/payments/<id>`) |
+| — | El resumen de la sección Pagos del detalle de compra cuenta también los anulados («1 pago · pagado ref 0.00») | Detalle de compra (tras GQ-10) |
+| — | `CategoryFormModal` no recibió el arreglo de GC-01: ante un nombre repetido solo muestra el mensaje de error | Pantalla de Categorías |
+| — | «Duplicar compra» y la reposición no muestran el aviso de cambio de IVA de GC-02 | Compra nueva precargada |
+| — | La categoría creada desde el mini-modal nace con alícuota 0 % | `CategoryQuickCreateModal` |
+| — | 14 stories de Storybook fallan; Storybook no forma parte del gate (typecheck, lint, jest, build) | Storybook |
+| — | Reportes con gráfico: 17 de 21. Sin gráfico: Bajo stock, Kardex, Cierre del día y Depreciación FX | Reportes |
+| — | «Recordar los últimos filtros» existe (`useRememberedListFilters`, `RememberedFiltersChip`) pero ningún listado lo monta | Listados |
 
 ## Contradicciones sin resolver
 
