@@ -46,6 +46,11 @@ type Role = LabRoleKey | "anon";
 
 const TAG = `rep06a-${Date.now().toString(36)}${randomUUID().slice(0, 4)}`;
 const PATCH = resolve(__dirname, "../../../supabase/patches/20261013a-report-money-views.sql");
+/**
+ * Reaplicar 20261013a devuelve a cuatro vistas el criterio anterior a DEC-01 (un borrador contaría): la cadena de
+ * reaplicación pide aplicar después 20261018a, que es quien deja la definición vigente.
+ */
+const VIGENT_PATCH = resolve(__dirname, "../../../supabase/patches/20261018a-reports-exclude-draft-sales.sql");
 const INSUFFICIENT_PRIVILEGE = "42501";
 /** Vista con agregados o ventanas: Postgres la rechaza por no actualizable antes de mirar privilegios. */
 const NOT_UPDATABLE = "55000";
@@ -273,6 +278,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (db) {
+    // Pase lo que pase, las vistas quedan en su definición vigente (20261013a + 20261018a).
+    await db.query(readFileSync(VIGENT_PATCH, "utf8")).catch(() => undefined);
     await db.query("delete from public.sales where invoice_number like $1", [`${TAG}%`]).catch(() => undefined);
     await db.query("delete from public.purchases where purchase_number like $1", [`${TAG}%`]).catch(() => undefined);
   }
@@ -280,11 +287,23 @@ afterAll(async () => {
 });
 
 describe("20261013a · forma del esquema e idempotencia", () => {
-  it("el parche se puede aplicar dos veces seguidas sin error", async () => {
+  it("el parche se puede aplicar dos veces seguidas sin error, y después su cadena (20261018a) deja las vistas vigentes", async () => {
     const patch = readFileSync(PATCH, "utf8");
+    const definitions = async () =>
+      (
+        await db.query<{ definition: string }>(
+          "select pg_get_viewdef(format('public.%I', v)::regclass) as definition from unnest($1::text[]) v",
+          [["daily_sales_summary", "gross_profit_summary", "report_sales_by_hour", "report_sales_by_category"]],
+        )
+      ).rows.map((row) => row.definition);
 
     await expect(db.query(patch)).resolves.toBeDefined();
     await expect(db.query(patch)).resolves.toBeDefined();
+    // 20261013a solo deja fuera canceladas y devueltas: por eso NO puede quedar como último parche aplicado.
+    expect((await definitions()).every((definition) => /'cancelada'/.test(definition))).toBe(true);
+
+    await expect(db.query(readFileSync(VIGENT_PATCH, "utf8"))).resolves.toBeDefined();
+    expect((await definitions()).every((definition) => /'pendiente_pago'::(public\.)?sale_status, 'pagada'/.test(definition))).toBe(true);
   });
 
   it("las siete vistas son security_invoker, solo lectura para authenticated / service_role y sin acceso anon", async () => {
@@ -418,12 +437,12 @@ describe("20261013a · día operativo de Caracas", () => {
         "admin",
         `select
            (select row(count(*), sum(total_ref), sum(total_ves), sum(paid_ves))::text from public.sales
-             where status not in ('cancelada', 'devuelta')) as base_sales,
+             where status in ('pendiente_pago', 'pagada')) as base_sales,
            (select row(sum(sales_count), sum(total_ref), sum(total_ves), sum(paid_ves))::text from public.daily_sales_summary) as daily,
            (select row(sum(sales_count), sum(total_ref), sum(total_ves))::text from public.report_sales_by_hour) as hourly,
            (select row(sum(i.subtotal_ref), sum(i.unit_cost_ref_snapshot * i.quantity), sum(i.gross_profit_ref))::text
               from public.sale_items i join public.sales s on s.id = i.sale_id
-             where s.status not in ('cancelada', 'devuelta')) as base_items,
+             where s.status in ('pendiente_pago', 'pagada')) as base_items,
            (select row(sum(revenue_ref), sum(cost_ref), sum(gross_profit_ref))::text from public.gross_profit_summary) as profit,
            (select row(sum(revenue_ref), sum(cost_ref), sum(gross_profit_ref))::text from public.report_sales_by_category) as by_category`,
       );

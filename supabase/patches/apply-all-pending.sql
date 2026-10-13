@@ -5,11 +5,15 @@
 -- Idempotente: se puede re-ejecutar sin romper datos existentes.
 -- Ver: docs/supabase-setup.md (seccion patches)
 --
--- ORDEN DE DESPLIEGUE del plan ux-mejoras (20261007a ... 20261017a): el orden de
+-- ORDEN DE DESPLIEGUE del plan ux-mejoras (20261007a ... 20261018a): el orden de
 -- los bloques de este archivo es el de los nombres, NO el de despliegue. La unica
 -- fuente del orden es docs/despliegue-ux-mejoras.md, seccion 2:
 --   20261007a, 7b, 8a, 9a-9f, 10a, 10b, 10d, 10e, 10f, 11a, 11b, 11c, 12a, 12b,
---   13a, 13b, 15a, 17a -> verify -> BFF -> 20261010c -> 20261011d -> verify.
+--   13a, 13b, 15a, 17a, 18a -> verify -> BFF -> 20261010c -> 20261011d -> verify.
+-- Forma recomendada de ejecutarlo: los dos archivos ya concatenados en ese orden,
+--   supabase/patches/deploy/ux-mejoras-01-antes-del-bff.sql   (-> verify -> BFF)
+--   supabase/patches/deploy/ux-mejoras-02-despues-del-bff.sql (-> verify)
+-- que genera "npm run deploy:sql" (scripts/build-deploy-sql.mjs).
 -- 20261010c y 20261011d van DESPUES del BFF. En el primer verify quedan en fail
 -- tres filas, y solo esas: la de 20261010c, la de privilegios de 20261011d y la
 -- de RLS de product_pack_components de 20261009d. En el segundo, fail = 0.
@@ -848,3 +852,23 @@ notify pgrst, 'reload schema';
 -- ORDEN DE DESPLIEGUE (FIN-03): ... -> 20261015a -> este parche -> verify -> BFF -> 20261011d -> verify. El BFF anterior
 -- funciona sobre la base parcheada (no envia la clave). El BFF nuevo sin el parche: el reprecio masivo desde la
 -- interfaz (que envia clientRequestId) responde error en cada fila y no cambia ningun precio.
+-- -----------------------------------------------------------------------------
+-- 20261018a — reports exclude draft sales (DEC-01): una venta en 'borrador' deja de contar en los reportes. Las 6 vistas
+--             que filtran ventas por estado pasan de "todo menos cancelada y devuelta" a status in ('pendiente_pago',
+--             'pagada'): daily_sales_summary, gross_profit_summary, report_sales_by_hour, report_sales_by_category,
+--             product_profitability y customer_purchase_summary
+-- -----------------------------------------------------------------------------
+-- Ejecutar: supabase/patches/20261018a-reports-exclude-draft-sales.sql
+-- Requiere 20260716b, 20261006a, 20261006h y 20261013a. Idempotente, una transaccion. SOLO LECTURA: redefine vistas con
+-- create or replace (mismas columnas, tipos y orden; security_invoker; sin acceso para anon / public); no toca tablas,
+-- filas, RPC, politicas, stock ni dinero. Los dos resumenes diarios siguen en dia operativo de Caracas (parte de la
+-- definicion de 20261013a, no de la de 20260716b).
+-- CAMBIO VISIBLE: solo donde existan ventas en 'borrador' (ninguna RPC ni pantalla las crea hoy): dejan de sumar en
+-- ventas diarias, ganancia bruta, ventas por hora, ventas por categoria, rentabilidad por producto, compras por cliente y
+-- la tendencia del dashboard. Con 0 borradores todas las cifras son identicas.
+-- ORDEN DE DESPLIEGUE (DEC-01): no depende del BFF; va en la tanda previa, despues de 20261017a: ... -> 20261017a -> este
+-- parche -> verify -> BFF -> 20261010c -> 20261011d -> verify. El BFF anterior funciona sobre la base parcheada; el BFF
+-- nuevo sin el parche deja de contar los borradores en lo que calcula el (dashboard, top productos / clientes, cierre del
+-- dia) pero las 6 vistas los seguirian contando.
+-- OJO: reaplicar 20260716b (y despues 20261006a y 20261013a) o reaplicar 20261013a devuelve a las vistas el criterio
+-- anterior: volver a aplicar este parche AL FINAL y correr verify-patches.sql (filas "(20261018a)").

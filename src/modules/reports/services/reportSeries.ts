@@ -3,6 +3,7 @@ import { shiftIsoDate } from "@bodega/core/dates";
 
 import { ApiError } from "@/lib/api/apiError";
 import type { TimeSeriesPoint } from "@/shared/components/TimeSeriesChart";
+import { NOT_COUNTED_SALE_STATUSES } from "@/shared/sales/countedSaleStatuses";
 import { roundMoney } from "@/shared/utils/currency";
 
 import { isoDayNumber, readReportDayParam } from "./reportParams";
@@ -551,8 +552,12 @@ export function buildPurchasesSeries(
   });
 }
 
-/** Estados que no cuentan como venta ni como compra en las series (igual que las vistas SQL). */
-export const SERIES_EXCLUDED_SALE_STATUSES = ["cancelada", "devuelta"] as const;
+/**
+ * Estados que no cuentan como venta ni como compra en las series (igual que las
+ * vistas SQL). Los de venta son los del criterio único de
+ * `@/shared/sales/countedSaleStatuses` (DEC-01: un `borrador` no cuenta).
+ */
+export const SERIES_EXCLUDED_SALE_STATUSES = NOT_COUNTED_SALE_STATUSES;
 export const SERIES_EXCLUDED_PURCHASE_STATUSES = ["cancelado", "devuelto"] as const;
 
 /** Valores del enum `purchase_status` de la base. */

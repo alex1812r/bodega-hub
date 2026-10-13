@@ -11,8 +11,13 @@
  * compara. Además comprueba contra SQL directo que las cifras son las de la base, también en el rango de 12 días
  * (~220 ventas, varios lotes de ids), que antes del arreglo de REP-F7 fallaba con "URI too long".
  *
- * Al terminar, aunque falle, `afterAll` deja las dos vistas con la definición de
- * `supabase/patches/20261013a-report-money-views.sql` (leída del propio parche) y borra los datos sembrados.
+ * Al terminar, aunque falle, `afterAll` deja las dos vistas con su definición VIGENTE: la de
+ * `supabase/patches/20261018a-reports-exclude-draft-sales.sql` (DEC-01: día operativo de Caracas de `20261013a` y sin
+ * contar borradores), leída del propio parche, y borra los datos sembrados. Restaurarlas desde `20261013a` les
+ * devolvería el criterio anterior (un borrador contaría) y dejaría `verify-patches.sql` en `fail`.
+ *
+ * El oráculo SQL de este test conserva a propósito el criterio ANTERIOR a DEC-01 (`borrador` incluido): los datos
+ * sembrados no tienen borradores, así que demuestra que el cierre del día y la depreciación FX no cambiaron con DEC-01.
  *
  *   npm run stock-lab:test -- scripts/stock-lab/regression/report-daily-close-fx-invariance.test.ts
  *
@@ -30,7 +35,9 @@ import { Lab } from "../scenarios/db";
 jest.mock("../../../src/lib/supabase/route-client", () => ({ createRouteSupabaseClient: jest.fn() }));
 
 const TAG = `repf7-${Date.now().toString(36)}${randomUUID().slice(0, 4)}`;
-const PATCH_FILE = path.resolve(__dirname, "../../../supabase/patches/20261013a-report-money-views.sql");
+/** Parche con la definición vigente de las dos vistas (20261013a + DEC-01). */
+const PATCH_NAME = "20261018a-reports-exclude-draft-sales.sql";
+const PATCH_FILE = path.resolve(__dirname, "../../../supabase/patches", PATCH_NAME);
 const VIEWS = ["daily_sales_summary", "gross_profit_summary"] as const;
 
 /** Primera venta: 20:15 del 19 de septiembre de 2017 en Caracas (00:15 UTC del 20). Una por hora. */
@@ -79,7 +86,7 @@ where s.status not in ('cancelada', 'devuelta')
 group by s.store_id, date_trunc('day', s.created_at)::date;
 `;
 
-/** Las dos vistas tal como las define el parche 20261013a (día operativo de Caracas). */
+/** Las dos vistas tal como las define el parche vigente (día operativo de Caracas, sin borradores). */
 function caracasViewsSql() {
   const patch = readFileSync(PATCH_FILE, "utf8");
 
@@ -88,13 +95,13 @@ function caracasViewsSql() {
     const end = patch.indexOf(";", start);
 
     if (start < 0 || end < 0) {
-      throw new Error(`SETUP · el parche 20261013a no define public.${view}`);
+      throw new Error(`SETUP · el parche ${PATCH_NAME} no define public.${view}`);
     }
 
     const statement = patch.slice(start, end + 1);
 
     if (!statement.includes("America/Caracas")) {
-      throw new Error(`SETUP · la definición de public.${view} en 20261013a no agrupa por día de Caracas`);
+      throw new Error(`SETUP · la definición de public.${view} en ${PATCH_NAME} no agrupa por día de Caracas`);
     }
 
     return statement;
@@ -211,7 +218,7 @@ beforeAll(async () => {
     const groupBy = await viewsGroupBy();
 
     if (groupBy.some((value) => value !== "caracas")) {
-      throw new Error(`las vistas no están en la definición de 20261013a (${groupBy.join(", ")}): falta aplicar el parche`);
+      throw new Error(`las vistas no agrupan por día de Caracas (${groupBy.join(", ")}): falta aplicar 20261013a y ${PATCH_NAME}`);
     }
 
     const contact = await lab.db.query<{ id: string }>(
@@ -266,7 +273,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (!lab) return;
 
-  // Lo primero y pase lo que pase: las vistas vuelven a la definición de 20261013a.
+  // Lo primero y pase lo que pase: las vistas vuelven a su definición vigente (20261018a).
   let restoreError: unknown = null;
   try {
     await applyViews(caracasViewsSql());
@@ -285,7 +292,7 @@ afterAll(async () => {
 
   if (restoreError || groupBy.length !== VIEWS.length || groupBy.some((value) => value !== "caracas")) {
     throw new Error(
-      `LAS VISTAS NO QUEDARON EN 20261013a (${groupBy.join(", ")}): reaplica supabase/patches/20261013a-report-money-views.sql. ${restoreError instanceof Error ? restoreError.message : ""}`,
+      `LAS VISTAS NO QUEDARON EN SU DEFINICIÓN VIGENTE (${groupBy.join(", ")}): reaplica supabase/patches/${PATCH_NAME}. ${restoreError instanceof Error ? restoreError.message : ""}`,
     );
   }
 });

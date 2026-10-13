@@ -116,7 +116,8 @@ describe("assistant chaos", () => {
     const forgedTotals = toolOutputs(forged)[0]!.output as { data: { actual: { totalRef: number } } };
 
     expect(forgedTotals.data.actual.totalRef).toBe(honestTotals.data.actual.totalRef);
-    expect(honestTotals.data.actual.totalRef).toBe(77.5);
+    // DEC-01: sin la venta en borrador del 17 (sale-003, 40 REF).
+    expect(honestTotals.data.actual.totalRef).toBe(37.5);
   });
 
   // 9.4 — un nombre de producto malicioso es dato, no instruccion.
@@ -246,7 +247,8 @@ describe("assistant chaos", () => {
       otherTools.ventas_periodo!.execute!(args, options),
     ])) as Array<AssistantToolResult<{ actual: { totalRef: number } }>>;
 
-    expect(first.ok && first.data.actual.totalRef).toBe(115);
+    // DEC-01: mayo de la tienda por defecto sin su venta en borrador (sale-003, 40 REF).
+    expect(first.ok && first.data.actual.totalRef).toBe(75);
     expect(second.ok && second.data.actual.totalRef).toBe(51);
   });
 });

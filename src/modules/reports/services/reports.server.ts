@@ -5,6 +5,7 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { mapNullableString } from "@/lib/supabase/mappers";
 import { listCountOptions } from "@/modules/products/services/listRange";
 
+import { COUNTED_SALE_STATUSES } from "@/shared/sales/countedSaleStatuses";
 import { applyCreatedAtCaracasRange, toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
 import { fetchAllRows, fetchAllRowsByIds, fetchCountedPage } from "./reportPagination";
@@ -550,7 +551,8 @@ type DbTopCustomerSale = {
 type ReportsClient = Awaited<ReturnType<typeof getReportsClient>>;
 
 /**
- * Todas las ventas que cuentan (ni canceladas ni devueltas) del rango, leídas
+ * Todas las ventas que cuentan (`COUNTED_SALE_STATUSES`: ni borradores, ni
+ * canceladas ni devueltas) del rango, leídas
  * en páginas: PostgREST corta cada respuesta en 1.000 filas. Van en orden de
  * creación, con `id` (único) de desempate para que no cambie entre páginas.
  */
@@ -566,7 +568,7 @@ async function fetchRangeSales<Row extends { id: string }>(
       let query = supabase
         .from("sales")
         .select(columns, { count: "exact" })
-        .in("status", ["borrador", "pagada", "pendiente_pago"]);
+        .in("status", [...COUNTED_SALE_STATUSES]);
       query = applyStoreIdsFilter(query, storeIds);
       query = applyCreatedAtRange(query, from, to);
 

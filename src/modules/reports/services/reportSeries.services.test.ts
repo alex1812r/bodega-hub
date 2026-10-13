@@ -236,7 +236,7 @@ function useTables(tables: Record<string, Row[]>) {
   });
 }
 
-const SERIES_SALE_STATUSES = ["borrador", "pagada", "pendiente_pago"];
+const SERIES_SALE_STATUSES = ["pagada", "pendiente_pago"];
 
 /** Lo que devolverían las vistas de resumen para los datos del mock, por tienda y día. */
 function summaryViewRows() {
@@ -655,7 +655,7 @@ describe.each(sources)("series de reportes (%s)", (_name, services) => {
     await expect(services.purchases("status=ALL")).rejects.toBeInstanceOf(ApiError);
   });
 
-  // REP-F4: el ranking no cuenta ventas canceladas ni devueltas (un borrador sí).
+  // REP-F4 + DEC-01: el ranking no cuenta ventas canceladas, devueltas ni en borrador.
   it("top productos y top clientes: sin ventas canceladas ni devueltas ni de otra tienda", async () => {
     const products = await services.topProducts(RANGE);
     const customers = await services.topCustomers(RANGE);

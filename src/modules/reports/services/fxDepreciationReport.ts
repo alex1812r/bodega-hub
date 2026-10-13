@@ -41,6 +41,15 @@ export type FxDepreciationReportRow = {
   vesRefToday: number;
 };
 
+/**
+ * Ventas cuyos cobros NO entran en la depreciación FX. El reporte mide los
+ * cobros activos de las ventas del rango: quedan fuera los de una venta
+ * `cancelada` (como siempre) y los de un `borrador`, que no es una venta
+ * (DEC-01; ninguna RPC le registra pagos). Los de una `devuelta` siguen
+ * entrando si quedaran activos: `return_sale` los anula.
+ */
+export const FX_EXCLUDED_SALE_STATUSES = ["cancelada", "borrador"] as const;
+
 export type FxDepreciationReportResult = PaginatedList<FxDepreciationReportRow> & {
   summary: FxDepreciationReportSummary;
 };

@@ -3,6 +3,7 @@ import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 
 import {
   computeFxDepreciationReport,
+  FX_EXCLUDED_SALE_STATUSES,
   type FxDepreciationReportResult,
 } from "./fxDepreciationReport";
 import { matchesStoreIds, normalizeStoreIds } from "./storeScope";
@@ -24,7 +25,7 @@ export function getFxDepreciationReport(
     .filter(
       (sale) =>
         matchesStoreIds(sale.storeId, storeIds) &&
-        sale.status !== "cancelada" &&
+        !(FX_EXCLUDED_SALE_STATUSES as readonly string[]).includes(sale.status) &&
         isWithinDateRange(sale.createdAt, from, to),
     )
     .map((sale) => ({

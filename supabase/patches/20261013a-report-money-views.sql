@@ -31,10 +31,14 @@
 --       la base lab: .notes/ux-mejoras/reportes/lab/no-rompe/, diff vacio).
 --
 --    CRITERIO UNICO DE ESTADOS de los reportes de ventas (vistas existentes y
---    las de este parche): se excluyen SOLO 'cancelada' y 'devuelta'. Una venta
---    en 'borrador' CUENTA ('borrador', 'pendiente_pago' y 'pagada' entran).
---    Es un hallazgo abierto que no se cambia en el plan ux-mejoras: cambiarlo
---    exige hacerlo a la vez en todas las vistas y en el mock. Los reportes de
+--    las de este parche). VIGENTE DESDE 20261018a (DEC-01, decision de
+--    negocio): cuentan SOLO 'pendiente_pago' y 'pagada'; NO cuentan
+--    'borrador', 'cancelada' ni 'devuelta'. Las definiciones de este archivo
+--    conservan el filtro con el que nacieron (se excluian solo 'cancelada' y
+--    'devuelta', asi que un 'borrador' contaba): 20261018a las redefine con el
+--    criterio vigente y hay que aplicarlo SIEMPRE despues de este parche (y
+--    volver a aplicarlo si este se reaplica). En el BFF el criterio vive en
+--    src/shared/sales/countedSaleStatuses.ts. Los reportes de
 --    inventario (20261013b) no filtran por estado de venta: leen el libro
 --    stock_movements, y una venta cancelada o devuelta aparece alli con su
 --    salida y su reversion; para "que es una venta que cuenta" remiten a esta

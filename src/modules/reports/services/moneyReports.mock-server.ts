@@ -67,7 +67,7 @@ function inStore(entityStoreId: string | null | undefined, storeId: string) {
   return (entityStoreId ?? DEFAULT_STORE_ID) === storeId;
 }
 
-/** Ventas del rango que cuentan como venta: ni canceladas ni devueltas. */
+/** Ventas del rango que cuentan como venta: ni borradores, ni canceladas ni devueltas. */
 function reportSales(range: MoneyReportRange, storeId: string) {
   return mockSales.filter(
     (sale) =>

@@ -56,9 +56,9 @@
 --    current_cost_ref ACTUAL y cost_basis lo dice ('current_cost').
 --
 -- Estado de la venta: el criterio de los reportes es el de daily_sales_summary
--- (definicion vigente y descripcion en 20261013a-report-money-views.sql, puntos
--- 0 y 1: cuentan todas las ventas salvo 'cancelada' y 'devuelta'; un 'borrador'
--- cuenta). Estas vistas NO filtran por sales.status: leen el libro, donde una
+-- (definicion vigente en 20261018a-reports-exclude-draft-sales.sql, DEC-01:
+-- cuentan 'pendiente_pago' y 'pagada'; no cuentan 'borrador', 'cancelada' ni
+-- 'devuelta'). Estas vistas NO filtran por sales.status: leen el libro, donde una
 -- venta anulada o devuelta queda en neto 0 porque su reversion compensa la
 -- salida (mismo resultado que excluirla, con cada movimiento en su dia), una
 -- devolucion parcial resta solo lo devuelto y un borrador no tiene movimientos.

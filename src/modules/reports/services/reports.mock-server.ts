@@ -43,7 +43,8 @@ function isDayWithinRange(day: string, from: string | null, to: string | null) {
 
 /**
  * Lo que devuelve la vista `daily_sales_summary`: una fila por tienda y día
- * operativo de Caracas, sin ventas canceladas ni devueltas.
+ * operativo de Caracas, solo con las ventas que cuentan (ni borradores, ni
+ * canceladas ni devueltas).
  */
 function dailySalesSummaryRows(storeIds: string[]) {
   const byDay = new Map<
@@ -88,7 +89,7 @@ function dailySalesSummaryRows(storeIds: string[]) {
 
 /**
  * Lo que devuelve la vista `gross_profit_summary`: una fila por tienda y día
- * operativo de Caracas con las líneas de las ventas no canceladas ni devueltas
+ * operativo de Caracas con las líneas de las ventas que cuentan
  * (una venta sin líneas no aporta fila).
  */
 function grossProfitSummaryRows(storeIds: string[]) {
@@ -213,10 +214,17 @@ export function getProductProfitabilityReport(
   storeIdOrIds: string | string[],
 ) {
   const storeIds = toStoreIds(storeIdOrIds);
+  // Como la vista `product_profitability`: solo las líneas de ventas que cuentan,
+  // y un producto sin ninguna no aporta fila.
+  const countedSaleIds = new Set(
+    mockSales.filter((sale) => isSeriesSale(sale.status)).map((sale) => sale.id),
+  );
   const items = mockProducts
     .filter((product) => matchesStoreIds(product.storeId, storeIds))
     .map((product) => {
-      const items = mockSaleItems.filter((item) => item.productId === product.id);
+      const items = mockSaleItems.filter(
+        (item) => item.productId === product.id && countedSaleIds.has(item.saleId),
+      );
       const revenueRef = items.reduce((total, item) => total + item.subtotalRef, 0);
       const costRef = items.reduce(
         (total, item) => total + item.unitCostRefSnapshot * item.quantity,
@@ -234,6 +242,7 @@ export function getProductProfitabilityReport(
         unitsSold: items.reduce((total, item) => total + item.quantity, 0),
       };
     })
+    .filter((item) => item.unitsSold > 0)
     .sort((first, second) => second.grossProfitRef - first.grossProfitRef);
 
   return paginateList(items, searchParams);
@@ -280,7 +289,10 @@ export function getCustomerPurchasesReport(
         (contact.type === "cliente" || contact.type === "ambos"),
     )
     .map((contact) => {
-      const sales = mockSales.filter((sale) => sale.customerId === contact.id);
+      // Como la vista `customer_purchase_summary`: solo las ventas que cuentan.
+      const sales = mockSales.filter(
+        (sale) => sale.customerId === contact.id && isSeriesSale(sale.status),
+      );
 
       return {
         customerId: contact.id,
@@ -333,7 +345,7 @@ export function getTopProductsReport(searchParams: URLSearchParams, storeIdOrIds
   const storeIds = toStoreIds(storeIdOrIds);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
-  // Como el servidor: una venta cancelada o devuelta no entra en el ranking.
+  // Como el servidor: un borrador, una venta cancelada o una devuelta no entran en el ranking.
   const sales = mockSales.filter(
     (sale) =>
       matchesStoreIds(sale.storeId, storeIds) &&
@@ -371,7 +383,7 @@ export function getTopCustomersReport(
   const storeIds = toStoreIds(storeIdOrIds);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
-  // Como el servidor: una venta cancelada o devuelta no entra en el ranking.
+  // Como el servidor: un borrador, una venta cancelada o una devuelta no entran en el ranking.
   const sales = mockSales.filter(
     (sale) =>
       matchesStoreIds(sale.storeId, storeIds) &&

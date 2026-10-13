@@ -2341,4 +2341,49 @@ select
       and t.tgrelid = to_regclass('public.app_settings')
       and pg_get_triggerdef(t.oid) ilike '%cash_close_diff_alert_ves%'
   )
+union all
+select
+  'las 6 vistas de reportes que filtran ventas por estado (daily_sales_summary, gross_profit_summary, report_sales_by_hour, report_sales_by_category, product_profitability, customer_purchase_summary) solo cuentan pendiente_pago y pagada: una venta en borrador no cuenta (20261018a)',
+  (
+    select count(*) = 6
+      and bool_and(c.relkind = 'v')
+      and bool_and(pg_get_viewdef(c.oid) ilike '%status = any (array[''pendiente_pago''::%sale_status, ''pagada''::%sale_status])%')
+      and bool_and(pg_get_viewdef(c.oid) not ilike '%cancelada%' and pg_get_viewdef(c.oid) not ilike '%borrador%')
+    from pg_class c
+    where c.oid in (
+      to_regclass('public.daily_sales_summary'),
+      to_regclass('public.gross_profit_summary'),
+      to_regclass('public.report_sales_by_hour'),
+      to_regclass('public.report_sales_by_category'),
+      to_regclass('public.product_profitability'),
+      to_regclass('public.customer_purchase_summary')
+    )
+  )
+union all
+select
+  'product_profitability y customer_purchase_summary: security_invoker, select solo para authenticated / service_role, sin escritura y con sus columnas en orden; daily_sales_summary y gross_profit_summary siguen en dia operativo de Caracas (20261018a)',
+  (
+    select count(*) = 2
+      and bool_and(c.relkind = 'v' and c.reloptions @> array['security_invoker=true'])
+      and bool_and(has_table_privilege('authenticated', c.oid, 'select') and has_table_privilege('service_role', c.oid, 'select'))
+      and bool_and(not has_table_privilege('anon', c.oid, 'select'))
+      and bool_and(not has_table_privilege('authenticated', c.oid, 'insert, update, delete'))
+    from pg_class c
+    where c.oid in (to_regclass('public.product_profitability'), to_regclass('public.customer_purchase_summary'))
+  )
+  and (
+    select string_agg(col.column_name || ':' || col.data_type, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'product_profitability'
+  ) = 'store_id:uuid,product_id:uuid,sku:text,name:text,units_sold:bigint,revenue_ref:numeric,cost_ref:numeric,gross_profit_ref:numeric'
+  and (
+    select string_agg(col.column_name || ':' || col.data_type, ',' order by col.ordinal_position)
+    from information_schema.columns col
+    where col.table_schema = 'public' and col.table_name = 'customer_purchase_summary'
+  ) = 'store_id:uuid,customer_id:uuid,name:text,sales_count:bigint,total_ref:numeric,total_ves:numeric,pending_ves:numeric,last_purchase_at:timestamp with time zone'
+  and (
+    select count(*) = 2 and bool_and(pg_get_viewdef(c.oid) ilike '%at time zone ''America/Caracas''%')
+    from pg_class c
+    where c.oid in (to_regclass('public.daily_sales_summary'), to_regclass('public.gross_profit_summary'))
+  )
 order by 1;

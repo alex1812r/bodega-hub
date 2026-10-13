@@ -4,6 +4,8 @@
  * lo que hace que una lista de ids no quepa en la URL.
  */
 
+import { COUNTED_SALE_STATUSES as SHARED_COUNTED_SALE_STATUSES } from "@/shared/sales/countedSaleStatuses";
+
 export const FIXTURE_STORE_ID = "store-0000-0000-0000-000000000001";
 export const FIXTURE_DAY = "2026-05-18";
 
@@ -135,4 +137,5 @@ export function buildSalesFixture(count: number) {
   };
 }
 
-export const COUNTED_SALE_STATUSES = ["borrador", "pagada", "pendiente_pago"];
+/** El criterio único de ventas que cuentan (DEC-01), como lista de texto para comparar con el fixture. */
+export const COUNTED_SALE_STATUSES: readonly string[] = SHARED_COUNTED_SALE_STATUSES;

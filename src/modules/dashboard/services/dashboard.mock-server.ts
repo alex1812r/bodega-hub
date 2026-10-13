@@ -5,6 +5,7 @@ import {
   mockSaleItems,
   mockSales,
 } from "@/shared/mocks/erp-data";
+import { countsAsSale } from "@/shared/sales/countedSaleStatuses";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { getDailySalesReport } from "@/modules/reports/services/reports.mock-server";
 import { matchesStoreIds, normalizeStoreIds } from "@/modules/reports/services/storeScope";
@@ -61,16 +62,10 @@ export function getDashboardSummary(storeIdOrIds: string | string[]) {
   const yesterday = shiftIsoDate(today, -1);
   const storeSales = salesForStores(storeIds);
   const todaysSales = storeSales.filter(
-    (sale) =>
-      sale.status !== "cancelada" &&
-      sale.status !== "devuelta" &&
-      isUtcTimestampInCaracasDate(sale.createdAt, today),
+    (sale) => countsAsSale(sale.status) && isUtcTimestampInCaracasDate(sale.createdAt, today),
   );
   const yesterdaysSales = storeSales.filter(
-    (sale) =>
-      sale.status !== "cancelada" &&
-      sale.status !== "devuelta" &&
-      isUtcTimestampInCaracasDate(sale.createdAt, yesterday),
+    (sale) => countsAsSale(sale.status) && isUtcTimestampInCaracasDate(sale.createdAt, yesterday),
   );
   const totalRef = sumSalesTotalRef(todaysSales);
   const totalVes = todaysSales.reduce((total, sale) => total + sale.totalVes, 0);
@@ -101,14 +96,11 @@ export function getDashboardSummary(storeIdOrIds: string | string[]) {
   };
 }
 
-const METRICS_SALE_STATUSES = new Set(["borrador", "pagada", "pendiente_pago"]);
-
 export function getDashboardMetrics(searchParams: URLSearchParams, storeIdOrIds: string | string[]) {
   const storeIds = toStoreIds(storeIdOrIds);
   const { from, to } = parseDashboardMetricsDateParams(searchParams);
   const sales = salesForStores(storeIds).filter(
-    (sale) =>
-      METRICS_SALE_STATUSES.has(sale.status) && isWithinDateRange(sale.createdAt, from, to),
+    (sale) => countsAsSale(sale.status) && isWithinDateRange(sale.createdAt, from, to),
   );
   const totalRef = sales.reduce((total, sale) => total + sale.totalRef, 0);
   const totalVes = sales.reduce((total, sale) => total + sale.totalVes, 0);
@@ -170,7 +162,8 @@ export function getDashboardSalesTrend(
   >();
 
   for (const sale of salesForStores(storeIds)) {
-    if (!isWithinDateRange(sale.createdAt, from, to)) {
+    // Como la vista `daily_sales_summary` del servidor: solo las ventas que cuentan.
+    if (!countsAsSale(sale.status) || !isWithinDateRange(sale.createdAt, from, to)) {
       continue;
     }
 

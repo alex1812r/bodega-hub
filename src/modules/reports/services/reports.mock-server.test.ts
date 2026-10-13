@@ -1,10 +1,12 @@
 /**
  * REP-04 / REP-F2 · el mock de ventas diarias y de ganancia bruta devuelve lo
  * mismo que las vistas `daily_sales_summary` / `gross_profit_summary`: una fila
- * por día operativo de Caracas, sin ventas canceladas ni devueltas, filtrada por
- * `from` / `to`. Así la suma de la tabla es el total del gráfico.
+ * por día operativo de Caracas, solo con las ventas que cuentan (DEC-01: ni
+ * borradores, ni canceladas ni devueltas), filtrada por `from` / `to`. Así la
+ * suma de la tabla es el total del gráfico.
  */
 import { mockProducts, mockPurchases, mockSaleItems, mockSales } from "@/shared/mocks/erp-data";
+import { countsAsSale } from "@/shared/sales/countedSaleStatuses";
 import { DEFAULT_STORE_ID } from "@/shared/stores/constants";
 import { toCaracasDateKey } from "@/shared/utils/caracasBusinessDay";
 
@@ -20,9 +22,7 @@ import {
 // Una venta mock sin `storeId` pertenece a la tienda por defecto.
 const STORE_ID = DEFAULT_STORE_ID;
 const storeSales = mockSales.filter((sale) => (sale.storeId ?? DEFAULT_STORE_ID) === STORE_ID);
-const countedSales = storeSales.filter(
-  (sale) => sale.status !== "cancelada" && sale.status !== "devuelta",
-);
+const countedSales = storeSales.filter((sale) => countsAsSale(sale.status));
 const saleIdsWithItems = new Set(mockSaleItems.map((item) => item.saleId));
 
 function daysOf(sales: typeof countedSales) {
@@ -48,9 +48,12 @@ describe.each([
 ] as const)("mock de %s: la tabla es la vista diaria", (_name, getReport, days) => {
   const LAST_DAY = days[days.length - 1];
 
-  it("los datos de prueba tienen ventas en más de un día y alguna cancelada o devuelta", () => {
+  it("los datos de prueba tienen ventas en más de un día y alguna en borrador, cancelada y devuelta", () => {
     expect(days.length).toBeGreaterThan(1);
     expect(countedSales.length).toBeLessThan(storeSales.length);
+    for (const status of ["borrador", "cancelada", "devuelta"]) {
+      expect(storeSales.some((sale) => sale.status === status)).toBe(true);
+    }
   });
 
   it("sin rango devuelve una fila por día con ventas, del más reciente al más antiguo", () => {
@@ -109,7 +112,7 @@ describe("mock de reportes de producto: traen el nombre (REP-F2)", () => {
 });
 
 describe("mock de ventas diarias y ganancia bruta: tabla y serie cuadran (REP-F2)", () => {
-  it("ventas diarias: no cuenta canceladas ni devueltas y suma lo mismo que la serie", () => {
+  it("ventas diarias: no cuenta borradores, canceladas ni devueltas y suma lo mismo que la serie", () => {
     const report = getDailySalesReport(params(`${ALL_DAYS}&groupBy=auto`), STORE_ID);
 
     expect(sum(report.items.map((row) => row.salesCount))).toBe(countedSales.length);
@@ -181,7 +184,7 @@ describe("mock de compras: tabla y serie cuadran (REP-F4)", () => {
   });
 });
 
-describe("mock de rankings: sin ventas canceladas ni devueltas, como el servidor (REP-F4)", () => {
+describe("mock de rankings: sin ventas en borrador, canceladas ni devueltas, como el servidor (REP-F4, DEC-01)", () => {
   const countedIds = new Set(countedSales.map((sale) => sale.id));
 
   it("top productos suma solo las líneas de las ventas que cuentan", () => {

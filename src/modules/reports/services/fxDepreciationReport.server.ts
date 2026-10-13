@@ -6,6 +6,7 @@ import { applyCreatedAtCaracasRange } from "@/shared/utils/caracasBusinessDay";
 
 import {
   computeFxDepreciationReport,
+  FX_EXCLUDED_SALE_STATUSES,
   type FxDepreciationReportResult,
 } from "./fxDepreciationReport";
 import { fetchAllRows, fetchAllRowsByIds } from "./reportPagination";
@@ -75,7 +76,7 @@ export async function getFxDepreciationReport(
         .select("id, invoice_number, created_at, ref_rate_ves, total_ref, store_id, status", {
           count: "exact",
         })
-        .neq("status", "cancelada");
+        .not("status", "in", `(${FX_EXCLUDED_SALE_STATUSES.join(",")})`);
       salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
       salesQuery = applyCreatedAtRange(salesQuery, from, to);
 

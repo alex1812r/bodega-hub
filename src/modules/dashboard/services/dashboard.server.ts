@@ -6,6 +6,7 @@ import { fetchListPage, listCountOptions } from "@/lib/supabase/pagination";
 import { fetchAllRows, fetchAllRowsByIds } from "@/modules/reports/services/reportPagination";
 import { getDailySalesReport } from "@/modules/reports/services/reports.server";
 import { normalizeStoreIds } from "@/modules/reports/services/storeScope";
+import { COUNTED_SALE_STATUSES } from "@/shared/sales/countedSaleStatuses";
 import {
   applyCreatedAtCaracasRange,
   getCaracasIsoDate,
@@ -57,7 +58,8 @@ export type DashboardQueryOptions = {
   useAdmin?: boolean;
 };
 
-const METRICS_SALE_STATUSES = ["borrador", "pagada", "pendiente_pago"] as const;
+/** Ventas que cuentan en el resumen y en las métricas: el criterio único (un `borrador` no). */
+const METRICS_SALE_STATUSES = COUNTED_SALE_STATUSES;
 
 type DbMetricsSale = {
   id: string;
@@ -128,7 +130,7 @@ export async function getDashboardSummary(
       let salesQuery = supabase
         .from("sales")
         .select("id, created_at, total_ref, total_ves", { count: "exact" })
-        .not("status", "in", "(cancelada,devuelta)");
+        .in("status", [...METRICS_SALE_STATUSES]);
       salesQuery = applyStoreIdsFilter(salesQuery, storeIds);
       salesQuery = applyCreatedAtRange(salesQuery, yesterday, today);
 
