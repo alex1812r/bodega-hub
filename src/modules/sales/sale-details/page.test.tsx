@@ -202,7 +202,7 @@ async function effectDialog(name: string) {
 
 describe("SaleDetailsPage · anular y devolver confirman con su efecto (CNF-02/03)", () => {
   beforeEach(() => {
-    mockPermissions = ["sales.create", "payments.manage", "payments.view"];
+    mockPermissions = ["sales.create", "sales.cancel", "payments.manage", "payments.view"];
   });
 
   it("«Anular venta» abre la confirmación con el efecto y no anula hasta confirmar", async () => {
@@ -845,8 +845,8 @@ describe("SaleDetailsPage · el menú «…» conserva sus acciones (DET-03)", (
     ["pagada", PAID_SALE],
     ["anulada", { ...PAID_SALE, status: "cancelada" }],
     ["devuelta", { ...PAID_SALE, status: "devuelta" }],
-  ])("venta %s con sales.create: imprimir, PDF, devolución y anular", async (_name, sale) => {
-    mockPermissions = ["sales.create", "payments.manage"];
+  ])("venta %s con sales.cancel: imprimir, PDF, devolución y anular", async (_name, sale) => {
+    mockPermissions = ["sales.create", "sales.cancel", "payments.manage"];
     await renderSale(sale);
 
     expect(await menuItems()).toEqual([
@@ -866,7 +866,7 @@ describe("SaleDetailsPage · el menú «…» conserva sus acciones (DET-03)", (
   ])(
     "venta %s: «Devolución» y «Anular venta» habilitadas = %s (CNF-02/03)",
     async (_name, status, enabled) => {
-      mockPermissions = ["sales.create", "payments.manage"];
+      mockPermissions = ["sales.create", "sales.cancel", "payments.manage"];
       await renderSale({ ...PAID_SALE, status });
       await menuItems();
 
@@ -934,8 +934,40 @@ describe("SaleDetailsPage · el menú «…» conserva sus acciones (DET-03)", (
     expect(requested()).not.toContain("/api/settings");
   });
 
-  it("sin sales.create: imprimir y PDF", async () => {
+  it("sin sales.cancel: imprimir y PDF", async () => {
     mockPermissions = ["sales.view"];
+    await renderSale(PAID_SALE);
+
+    expect(await menuItems()).toEqual(["Imprimir factura", "Descargar PDF"]);
+  });
+
+  // DEC-02: las dos acciones dependen de `sales.cancel`, no de poder vender.
+  it("admin con «El administrador puede vender» apagado (sales.cancel sin sales.create): devolución y anular habilitadas", async () => {
+    mockPermissions = ["sales.view", "sales.cancel", "payments.view", "payments.manage"];
+    await renderSale(PAID_SALE);
+
+    expect(await menuItems()).toEqual([
+      "Imprimir factura",
+      "Descargar PDF",
+      "Devolución",
+      "Anular venta",
+    ]);
+    expect(screen.getByRole("menuitem", { name: "Devolución" })).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: "Anular venta" })).toBeEnabled();
+  });
+
+  it("con sales.create pero sin sales.cancel (se le negó anular): imprimir y PDF", async () => {
+    mockPermissions = ["sales.view", "sales.create"];
+    await renderSale(PAID_SALE);
+
+    expect(await menuItems()).toEqual(["Imprimir factura", "Descargar PDF"]);
+  });
+
+  it.each<[string, Permission[]]>([
+    ["contador", ["dashboard.view", "sales.view", "payments.view", "payments.manage", "reports.view"]],
+    ["almacén", ["dashboard.view", "products.view", "inventory.view"]],
+  ])("%s: imprimir y PDF, sin devolución ni anular", async (_role, permissions) => {
+    mockPermissions = permissions;
     await renderSale(PAID_SALE);
 
     expect(await menuItems()).toEqual(["Imprimir factura", "Descargar PDF"]);

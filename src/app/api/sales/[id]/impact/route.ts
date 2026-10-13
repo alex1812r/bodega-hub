@@ -9,12 +9,12 @@ import { impactJson, parseImpactAction } from "@/shared/impact/impactServer";
 
 /**
  * Efecto de anular (`action=cancel`) o devolver (`action=return`) la venta, sin
- * escribir. Mismo permiso que las acciones reales (`sales.create`). El saldo
+ * escribir. Mismo permiso que las acciones reales (`sales.cancel`: admin y vendedor). El saldo
  * del baúl solo viaja con `vault.view` y el detalle de la caja con `cash.view`.
  */
 export async function GET(request: Request, context: RouteContext<"/api/sales/[id]/impact">) {
   try {
-    const auth = await requireStorePermission(request, "sales.create");
+    const auth = await requireStorePermission(request, "sales.cancel");
     const action = parseImpactAction(request, SALE_IMPACT_ACTIONS);
     const { id } = await context.params;
     const data =

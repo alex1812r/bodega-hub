@@ -7,7 +7,7 @@ import { cancelSale as cancelSaleServer } from "@/modules/sales/services/sales.s
 
 export async function PATCH(request: Request, context: RouteContext<"/api/sales/[id]/cancel">) {
   try {
-    const auth = await requireStorePermission(request, "sales.create");
+    const auth = await requireStorePermission(request, "sales.cancel");
     const { id } = await context.params;
     const data =
       resolveDataSource() === "supabase"

@@ -363,7 +363,7 @@ Decisiones tomadas durante el plan que conviene validar:
 
 - Pago móvil en el POS: datos del banco al primer «Cobrar» (R18).
 - `30.600` tecleado = 30,60. Un único separador es decimal; el campo avisa, no bloquea (R33).
-- Con el interruptor de R21 apagado, el administrador no puede anular ni devolver ventas: esas rutas exigen `sales.create`. Ya era así antes del plan; no se cambió.
+- ~~Con el interruptor de R21 apagado, el administrador no puede anular ni devolver ventas.~~ Resuelto por decisión del dueño (DEC-02): anular y devolver exigen `sales.cancel`, que el administrador tiene siempre; el interruptor solo gobierna vender y operar caja.
 - Las ventas en `borrador` cuentan como venta en los reportes (criterio único, heredado).
 
 ### 8.3 Abiertos del plan de integridad de stock

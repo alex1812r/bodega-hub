@@ -7,7 +7,7 @@ import { returnSale as returnSaleServer } from "@/modules/sales/services/sales.s
 
 export async function POST(request: Request, context: RouteContext<"/api/sales/[id]/return">) {
   try {
-    const auth = await requireStorePermission(request, "sales.create");
+    const auth = await requireStorePermission(request, "sales.cancel");
     const { id } = await context.params;
     const data =
       resolveDataSource() === "supabase"

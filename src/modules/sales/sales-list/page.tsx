@@ -181,7 +181,7 @@ function SalesList() {
   // Anular y devolver se confirman con su efecto a la vista (CNF-02/03).
   const [confirmation, setConfirmation] = useState<SaleConfirmation | null>(null);
   const { can } = usePermission();
-  const canCancelAndReturn = can("sales.create");
+  const canCancelAndReturn = can("sales.cancel");
   const { showToast } = useToast();
   const confirmingSale = confirmation?.sale;
 
@@ -248,7 +248,7 @@ function SalesList() {
               { href: withReturnTo(`/sales/${sale.id}`, listHref), label: "Ver detalle" },
               { href: `/payments?saleId=${sale.id}`, label: "Registrar pago" },
               { href: withReturnTo(`/sales/${sale.id}`, listHref), label: "Ver recibo" },
-              // Como en el detalle: anular y devolver exigen `sales.create`.
+              // Como en el detalle: anular y devolver exigen `sales.cancel`.
               ...(canCancelAndReturn
                 ? [
                     {

@@ -103,11 +103,18 @@ describe("/api/sales/[id]/impact", () => {
   );
 
   it("403 para un rol que no puede anular ni devolver ventas", async () => {
-    for (const role of ["admin", "almacen", "contador"]) {
+    for (const role of ["almacen", "contador"]) {
       const response = await get("sale-002", "?action=cancel", { "x-demo-role": role });
 
       expect(response.status).toBe(403);
     }
+  });
+
+  // DEC-02: el admin anula y devuelve sin «El administrador puede vender».
+  it("200 para el admin con el interruptor de venta apagado", async () => {
+    const response = await get("sale-002", "?action=cancel", { "x-demo-role": "admin" });
+
+    expect(response.status).toBe(200);
   });
 
   it("404 si la venta no existe", async () => {

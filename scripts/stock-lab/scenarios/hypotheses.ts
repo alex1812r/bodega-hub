@@ -14,7 +14,8 @@
  * mecanismo que la hipótesis describe); el `detail` lo dice en cada caso.
  *
  * La CLI corre además los casos `pack.assorted_*` de `./assorted-pack` (PRO-12:
- * empaque surtido), que usan el mismo runner y no pasan por el BFF.
+ * empaque surtido), que usan el mismo runner y no pasan por el BFF, y el caso
+ * `sale.admin_cancel_return_switch_off` de `./admin-sale-reversal` (DEC-02).
  *
  * Todo se hace sobre productos propios `s403-<run>-…`. Los casos que corrompen
  * datos a propósito (update directo, cambio de `store_id`) lo dejan anotado en
@@ -24,6 +25,7 @@ import { randomUUID } from "node:crypto";
 
 import type { ApiResponse } from "../../e2e-bodegon/client";
 import type { LabRoleKey } from "../agents/base";
+import { ADMIN_SALE_REVERSAL_CASES } from "./admin-sale-reversal";
 import { ASSORTED_PACK_CASES } from "./assorted-pack";
 import { RECEIVE_DISASSEMBLE_CASES } from "./receive-disassemble";
 import {
@@ -1818,7 +1820,11 @@ export const HYPOTHESIS_CASES: readonly CaseDef[] = [
 ];
 
 if (require.main === module) {
-  runSuite("hypotheses", [...HYPOTHESIS_CASES, ...ASSORTED_PACK_CASES, ...RECEIVE_DISASSEMBLE_CASES], process.argv.slice(2)).then(
+  runSuite(
+    "hypotheses",
+    [...HYPOTHESIS_CASES, ...ASSORTED_PACK_CASES, ...RECEIVE_DISASSEMBLE_CASES, ...ADMIN_SALE_REVERSAL_CASES],
+    process.argv.slice(2),
+  ).then(
     (code) => process.exit(code),
     (error) => {
       console.error(error);

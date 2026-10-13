@@ -2396,8 +2396,12 @@ paths:
       - $ref: "#/components/parameters/Id"
     patch:
       tags: [Sales]
-      summary: Cancelar venta mock
-      x-permission: sales.create
+      summary: Anular venta
+      description: >-
+        Anula la venta con la RPC `cancel_sale` cuando `API_DATA_SOURCE=supabase`. Exige `sales.cancel`
+        (administrador, también con «El administrador puede vender» apagado, y vendedor). Con pagos activos la
+        RPC responde 409: antes hay que anular cada pago.
+      x-permission: sales.cancel
       responses:
         "200":
           $ref: "#/components/responses/ReportObjectResponse"
@@ -2411,8 +2415,10 @@ paths:
     post:
       tags: [Sales]
       summary: Registrar devolucion de cliente
-      description: Devuelve una venta mediante RPC `return_sale` cuando `API_DATA_SOURCE=supabase`.
-      x-permission: sales.create
+      description: >-
+        Devuelve una venta mediante RPC `return_sale` cuando `API_DATA_SOURCE=supabase`. Exige `sales.cancel`
+        (administrador, también con «El administrador puede vender» apagado, y vendedor).
+      x-permission: sales.cancel
       responses:
         "200":
           $ref: "#/components/responses/ReportObjectResponse"
@@ -2426,8 +2432,10 @@ paths:
     get:
       tags: [Sales]
       summary: Calcular el efecto de anular o devolver una venta
-      description: Solo lectura. Devuelve lo que `cancel_sale` o `return_sale` aplicarian (stock, pagos, caja y baul) sin escribir.
-      x-permission: sales.create
+      description: >-
+        Solo lectura. Devuelve lo que `cancel_sale` o `return_sale` aplicarian (stock, pagos, caja y baul) sin
+        escribir. Mismo permiso que las acciones reales (`sales.cancel`).
+      x-permission: sales.cancel
       parameters:
         - name: action
           in: query
@@ -6100,6 +6108,7 @@ components:
         - dashboard.view
         - sales.view
         - sales.create
+        - sales.cancel
         - purchases.view
         - purchases.create
         - inventory.view

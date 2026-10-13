@@ -87,4 +87,82 @@ describe("permissions", () => {
       expect(hasEffectivePermission({ role }, "assistant.use")).toBe(false);
     }
   });
+
+  // DEC-02: anular y devolver ventas es un permiso propio; el admin no necesita
+  // «El administrador puede vender» para corregir una venta.
+  describe("sales.cancel", () => {
+    it("admin always has it, with the sell switch off or on, and still cannot sell with it off", () => {
+      expect(hasEffectivePermission({ role: "admin" }, "sales.cancel")).toBe(true);
+      expect(hasEffectivePermission({ role: "admin" }, "sales.create")).toBe(false);
+      expect(hasEffectivePermission({ role: "admin" }, "cash.operate")).toBe(false);
+      expect(
+        hasEffectivePermission(
+          { grantedPermissions: ["sales.create", "cash.operate"], role: "admin" },
+          "sales.cancel",
+        ),
+      ).toBe(true);
+      // El admin ignora las excepciones por usuario.
+      expect(
+        hasEffectivePermission({ deniedPermissions: ["sales.cancel"], role: "admin" }, "sales.cancel"),
+      ).toBe(true);
+    });
+
+    it("vendedor has it by default; contador, almacen and superadmin do not", () => {
+      expect(hasEffectivePermission({ role: "vendedor" }, "sales.cancel")).toBe(true);
+
+      for (const role of ["almacen", "contador", "superadmin"] as const) {
+        expect(hasEffectivePermission({ role }, "sales.cancel")).toBe(false);
+      }
+    });
+
+    it("a user whose sales.create was denied does not gain sales.cancel as a side effect", () => {
+      const denied = { deniedPermissions: ["sales.create"], role: "vendedor" } as const;
+
+      expect(hasEffectivePermission(denied, "sales.create")).toBe(false);
+      expect(hasEffectivePermission(denied, "sales.cancel")).toBe(false);
+    });
+
+    it("an explicit grant of sales.cancel wins over a denied sales.create", () => {
+      const profile = {
+        deniedPermissions: ["sales.create"],
+        grantedPermissions: ["sales.cancel"],
+        role: "vendedor",
+      } as const;
+
+      expect(hasEffectivePermission(profile, "sales.create")).toBe(false);
+      expect(hasEffectivePermission(profile, "sales.cancel")).toBe(true);
+    });
+
+    it("denying sales.cancel removes only that permission", () => {
+      const profile = { deniedPermissions: ["sales.cancel"], role: "vendedor" } as const;
+
+      expect(hasEffectivePermission(profile, "sales.cancel")).toBe(false);
+      expect(hasEffectivePermission(profile, "sales.create")).toBe(true);
+    });
+
+    it("an explicit deny of sales.cancel wins over its explicit grant, like any other permission", () => {
+      const profile = {
+        deniedPermissions: ["sales.cancel"],
+        grantedPermissions: ["sales.cancel"],
+        role: "vendedor",
+      } as const;
+
+      expect(hasEffectivePermission(profile, "sales.cancel")).toBe(false);
+    });
+
+    it("is additive: every permission that existed keeps its order and sales.create is untouched", () => {
+      expect(getEffectivePermissions({ role: "vendedor" })).toEqual([
+        "dashboard.view",
+        "sales.view",
+        "sales.create",
+        "sales.cancel",
+        "products.view",
+        "contacts.view",
+        "payments.view",
+        "cash.view",
+        "cash.operate",
+        "payroll.view_own",
+      ]);
+    });
+  });
 });

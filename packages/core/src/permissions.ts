@@ -23,6 +23,7 @@ export const permissions = [
   "dashboard.view",
   "sales.view",
   "sales.create",
+  "sales.cancel",
   "purchases.view",
   "purchases.create",
   "inventory.view",
@@ -69,6 +70,20 @@ const platformPermissions = permissions.filter((permission) =>
 ) as Permission[];
 
 /**
+ * Anular y devolver ventas (DEC-02): `sales.cancel`, aparte de vender
+ * (`sales.create`). Lo tienen por defecto el admin (siempre, sin el interruptor
+ * «El administrador puede vender»: corrige ventas aunque no venda) y el
+ * vendedor. Regla de arrastre para las excepciones por usuario: quien tiene
+ * `sales.create` DENEGADO tampoco recibe `sales.cancel` del rol; solo lo
+ * conserva si se le concede `sales.cancel` explícitamente (y un
+ * `sales.cancel` denegado manda sobre todo, como cualquier otro permiso).
+ * Así, un usuario al que se le quitó vender antes de existir este permiso no
+ * gana la anulación de rebote. Las RPC `cancel_sale` / `return_sale` siguen
+ * aceptando solo los roles admin y vendedor.
+ */
+export const saleCancelPermission = "sales.cancel" as const satisfies Permission;
+
+/**
  * Admin opera el comercio pero no vende en POS ni opera "Mi caja".
  * Tampoco cobra nómina: es el dueño y sus retiros salen del baúl, así que no
  * necesita "Mis recibos" (`payroll.view_own`).
@@ -108,6 +123,7 @@ export const rolePermissions: Record<UserRole, readonly Permission[]> = {
     "dashboard.view",
     "sales.view",
     "sales.create",
+    "sales.cancel",
     "products.view",
     "contacts.view",
     "payments.view",
@@ -165,13 +181,20 @@ export function getEffectivePermissions(profile: PermissionProfile) {
     return permissions.filter((permission) => effectiveAdmin.has(permission));
   }
 
+  const granted = profile.grantedPermissions ?? [];
+  const denied = profile.deniedPermissions ?? [];
   const effectivePermissions = new Set<Permission>([
     ...getRolePermissions(profile.role),
-    ...(profile.grantedPermissions ?? []),
+    ...granted,
   ]);
 
-  for (const permission of profile.deniedPermissions ?? []) {
+  for (const permission of denied) {
     effectivePermissions.delete(permission);
+  }
+
+  // Ver `saleCancelPermission`: sin vender por denegación, tampoco anula salvo concesión explícita.
+  if (denied.includes("sales.create") && !granted.includes(saleCancelPermission)) {
+    effectivePermissions.delete(saleCancelPermission);
   }
 
   return permissions.filter((permission) => effectivePermissions.has(permission));

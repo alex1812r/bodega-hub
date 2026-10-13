@@ -49,7 +49,7 @@ export function SaleDetailActionsMenu({
       },
     ];
 
-    if (can("sales.create")) {
+    if (can("sales.cancel")) {
       // `cancel_sale` y `return_sale` solo aceptan ventas vivas: una anulada,
       // devuelta o en borrador no ofrece ninguna de las dos.
       const isLive = status === "pagada" || status === "pendiente_pago";

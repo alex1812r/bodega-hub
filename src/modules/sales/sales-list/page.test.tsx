@@ -573,11 +573,11 @@ describe("SalesListPage · estado en la URL (DET-06a)", () => {
       }
     });
 
-    it("sin `sales.create` la fila no ofrece «Anular» ni «Devolver», como el detalle (CNF-S1)", async () => {
+    it("sin `sales.cancel` la fila no ofrece «Anular» ni «Devolver», como el detalle (CNF-S1)", async () => {
       const user = userEvent.setup();
       const { impacts } = installRowApi([sale("001", "pagada")]);
 
-      mockDeniedPermissions.add("sales.create");
+      mockDeniedPermissions.add("sales.cancel");
       renderPage();
       await user.click((await screen.findAllByRole("button", { name: /acciones/i }))[0]);
 
@@ -590,7 +590,22 @@ describe("SalesListPage · estado en la URL (DET-06a)", () => {
       expect(impacts).toEqual([]);
     });
 
-    it("con `sales.create` pero sin otros permisos la fila sigue ofreciendo «Anular» y «Devolver»", async () => {
+    // DEC-02: el admin con «El administrador puede vender» apagado no vende, pero sí anula y devuelve.
+    it("con `sales.cancel` y sin `sales.create` la fila ofrece «Anular» y «Devolver», y no «Nueva venta»", async () => {
+      const user = userEvent.setup();
+
+      installRowApi([sale("001", "pagada")]);
+      mockDeniedPermissions.add("sales.create");
+      mockDeniedPermissions.add("cash.operate");
+      renderPage();
+      await user.click((await screen.findAllByRole("button", { name: /acciones/i }))[0]);
+
+      expect(await screen.findByRole("menuitem", { name: "Anular" })).toBeEnabled();
+      expect(screen.getByRole("menuitem", { name: "Devolver" })).toBeEnabled();
+      expect(screen.queryByRole("link", { name: /nueva venta/i })).not.toBeInTheDocument();
+    });
+
+    it("con `sales.cancel` pero sin otros permisos la fila sigue ofreciendo «Anular» y «Devolver»", async () => {
       const user = userEvent.setup();
 
       installRowApi([sale("001", "pagada")]);

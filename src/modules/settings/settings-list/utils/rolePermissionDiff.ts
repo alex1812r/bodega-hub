@@ -68,6 +68,7 @@ export const permissionLabels: Record<Permission, { area: PermissionArea; label:
   "purchases.create": { area: "compras", label: "Registrar y recibir compras" },
   "purchases.view": { area: "compras", label: "Ver compras" },
   "reports.view": { area: "reportes", label: "Ver reportes" },
+  "sales.cancel": { area: "ventas", label: "Anular y devolver ventas" },
   "sales.create": { area: "ventas", label: "Vender en el POS" },
   "sales.view": { area: "ventas", label: "Ver ventas" },
   "settings.view": { area: "administracion", label: "Ver la configuración de la tienda" },

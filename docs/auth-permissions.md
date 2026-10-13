@@ -16,7 +16,7 @@ Ver [`frontend-api-guide.md`](frontend-api-guide.md#autenticación-y-permisos) y
 ## Roles Iniciales
 
 - `superadmin`: solo backoffice plataforma (`platform.dashboard.view`, `platform.stores.*`, `platform.users.*`, `platform.reports.view`) mas `assistant.use`. Home en `/platform/dashboard`. Puede ver usuarios de todas las tiendas, crear **solo** admins y generar reportes/KPIs multi-tienda. No opera el ERP ni crea otros roles.
-- `admin`: acceso total al ERP de **su** tienda (sin permisos `platform.*`), **excepto** venta POS (`sales.create`) y operar caja (`cash.operate`). Puede ver ventas, gestionar cajas/baúl y el resto de módulos. Esos dos permisos se le pueden conceder con el interruptor [«El administrador puede vender»](#el-administrador-puede-vender).
+- `admin`: acceso total al ERP de **su** tienda (sin permisos `platform.*`), **excepto** venta POS (`sales.create`) y operar caja (`cash.operate`). Puede ver ventas, **anularlas y devolverlas** (`sales.cancel`), gestionar cajas/baúl y el resto de módulos. Esos dos permisos se le pueden conceder con el interruptor [«El administrador puede vender»](#el-administrador-puede-vender).
 - `vendedor`: acceso a ventas y datos necesarios para vender.
 - `almacen`: acceso a compras, productos e inventario.
 - `contador`: acceso a pagos, reportes y lectura contable.
@@ -92,6 +92,7 @@ La tabla de perfiles en Supabase es `profiles` (ver SQL más abajo).
 | `dashboard.view` | Si | Si | Si | Si |
 | `sales.view` | Si | Si | No | Si |
 | `sales.create` | No (*) | Si | No | No |
+| `sales.cancel` | Si | Si | No | No |
 | `purchases.view` | Si | No | Si | Si |
 | `purchases.create` | Si | No | Si | No |
 | `inventory.view` | Si | No | Si | No |
@@ -148,6 +149,8 @@ El rol sigue siendo la plantilla base del usuario, pero un administrador puede r
 - `deniedPermissions`: permisos bloqueados aunque el rol los tenga.
 
 El rol `admin` **ignora** estas excepciones, con una sola salvedad: `sales.create` y `cash.operate` en `grantedPermissions` (`adminSellPermissions` en `packages/core/src/permissions.ts`). Ningún otro permiso concedido o bloqueado cambia lo que puede hacer un administrador.
+
+**Regla de arrastre de `sales.cancel`** (`getEffectivePermissions`, roles que no son admin): un usuario con `sales.create` en `deniedPermissions` tampoco recibe `sales.cancel` de su rol; solo lo tiene si `sales.cancel` está en sus `grantedPermissions`. Un `sales.cancel` en `deniedPermissions` lo quita siempre, como cualquier otro permiso. Detalle en [Quién puede anular y devolver ventas](#quién-puede-anular-y-devolver-ventas).
 
 En modo mock (sin sesión), los endpoints aceptan `x-demo-user-id` para probar excepciones. Ejemplo: `55555555-5555-4555-8555-555555555555` (`vendedor.contactos@example.com`) es rol `vendedor` con `contacts.manage` concedido.
 
@@ -332,20 +335,28 @@ Límites conocidos, sin corregir:
 - Quien tiene `users.manage` puede conceder los dos permisos a un administrador con `PATCH /api/users/{id}` aunque el interruptor esté apagado (es el mismo rol que puede encenderlo).
 - Con el interruptor apagado, un administrador puede vender y abrir o cerrar caja llamando las RPC por PostgREST con su sesión: `create_sale*`, `open_cash_session` y `close_cash_session` aceptan el rol `admin`. El interruptor es una regla del BFF y de la interfaz, no de la base.
 
-### Quién puede anular y devolver ventas hoy
+### Quién puede anular y devolver ventas
 
-`PATCH /api/sales/{id}/cancel`, `POST /api/sales/{id}/return` y `GET /api/sales/{id}/impact` exigen `sales.create`. En la práctica:
+Decisión del dueño (DEC-02): **el administrador anula y devuelve ventas siempre; el interruptor no hace falta para eso, porque gobierna vender y operar caja, no corregir una venta.**
 
-| Rol | Anular / devolver una venta |
-| --- | --- |
-| Vendedor | Sí |
-| Administrador, interruptor **apagado** | **No** (403; la interfaz no ofrece la acción) |
-| Administrador, interruptor encendido | Sí |
-| Almacén, contador | No |
+`PATCH /api/sales/{id}/cancel`, `POST /api/sales/{id}/return`, `GET /api/sales/{id}/impact` y las acciones «Anular venta» / «Devolución» (menú del detalle) y «Anular» / «Devolver» (fila de `/sales`) exigen el permiso **`sales.cancel`**, no `sales.create`:
 
-Es decir: en una tienda con el interruptor apagado, el dueño no puede anular ni devolver una venta; tiene que hacerlo un vendedor o encender el interruptor. La regla es anterior al plan ux-mejoras (ya estaba en `cancel/route.ts`) y no se cambió: separar «anular / devolver» de «vender» es una decisión de permisos de negocio pendiente del dueño.
+| Rol | Anular / devolver una venta | Vender (`sales.create`) |
+| --- | --- | --- |
+| Vendedor | Sí | Sí |
+| Administrador, interruptor **apagado** | **Sí** | No (403) |
+| Administrador, interruptor encendido | Sí | Sí |
+| Almacén, contador | No (403; la interfaz no ofrece la acción) | No |
 
-Además, sea quien sea: anular una venta con pagos activos se rechaza (antes hay que anular cada pago, que exige `payments.manage`, que el vendedor no tiene) y la devolución es siempre total.
+Reglas de concesión de `sales.cancel` (`getEffectivePermissions` en `packages/core/src/permissions.ts`):
+
+- Lo traen de base los roles `admin` y `vendedor`. El administrador lo tiene siempre: ignora las excepciones por usuario y el interruptor no lo toca (`adminSellPermissions` sigue siendo solo `sales.create` + `cash.operate`).
+- **Arrastre.** Un usuario que tiene `sales.create` en `deniedPermissions` **no** recibe `sales.cancel` de su rol. Así, un vendedor al que se le quitó vender cuando anular dependía de `sales.create` no gana la anulación al desplegar. Para que anule sin vender hay que concederle `sales.cancel` en `grantedPermissions`.
+- `sales.cancel` en `deniedPermissions` lo quita siempre (también si está concedido): un vendedor puede vender y no anular.
+- Un contador o un almacén con `sales.cancel` concedido a mano pasa el BFF, pero las RPC `cancel_sale` (`20261006g`) y `return_sale` (`20261006b`) solo aceptan los roles `admin` y `vendedor` y responden `PT403`. No cambian con esta decisión: ya aceptaban al administrador.
+- El cambio es aditivo para quien consume `@bodega/core` (la app móvil): no se renombra ni se quita ningún permiso; `sales.cancel` se inserta después de `sales.create` en la lista.
+
+El flujo es el de siempre: anular una venta con pagos activos se rechaza y el modal remite a anular antes cada pago (exige `payments.manage`: el administrador lo tiene, el vendedor no), y la devolución es siempre total.
 
 
 ### Apagarlo con una caja abierta
@@ -368,7 +379,7 @@ Los tres endpoints que calculan el efecto de una acción antes de confirmarla (`
 
 Cómo están acotados (`*Impact.server.ts`, `{ privileged: createAdminSupabaseClient, user }`):
 
-1. **Permiso de la acción real, primero**: `sales.create`, `purchases.create` o `payments.manage` + acceso al pago (`requireStorePermission`).
+1. **Permiso de la acción real, primero**: `sales.cancel`, `purchases.create` o `payments.manage` + acceso al pago (`requireStorePermission`).
 2. **El documento se lee con la sesión del usuario** y con el `store_id` del servidor. Inexistente o de otra tienda → 404. Nada del cliente decide la tienda.
 3. **Solo entonces** la lectura privilegiada, filtrada por ese `store_id` y por el id ya validado. Solo `select`: ningún `impact` escribe.
 4. **Lo que viaja depende de los permisos de quien pregunta**: los saldos del baúl solo con `vault.view`, el detalle de la caja solo con `cash.view`, y los pagos de una compra solo para quien puede ver pagos de compra (`canViewPurchasePayments`: admin y contador). Sin el permiso esas cifras no viajan (los saldos salen vacíos); el valor por defecto es cerrado.
