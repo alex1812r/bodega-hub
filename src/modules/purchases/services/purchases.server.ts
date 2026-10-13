@@ -128,6 +128,7 @@ const paymentSelect = `
   ref_rate_ves,
   bank_name,
   reference_code,
+  status,
   created_at,
   contact:contacts(${contactSelect})
 `;
@@ -506,31 +507,11 @@ export async function getPurchaseById(
     };
   });
 
-  const activePayments = mappedPayments.filter((payment) => payment.status !== "anulado");
-  const paidRefFromPayments =
-    Math.round(
-      activePayments.reduce((sum, payment) => {
-        if (payment.amountRef > 0) {
-          return sum + payment.amountRef;
-        }
-
-        if (payment.refRateVes > 0 && payment.amountVes > 0) {
-          return sum + payment.amountVes / payment.refRateVes;
-        }
-
-        return sum;
-      }, 0) * 100,
-    ) / 100;
-  const paidVesFromPayments =
-    Math.round(activePayments.reduce((sum, payment) => sum + payment.amountVes, 0) * 100) / 100;
-
-  const mappedPurchase = mapPurchase(data);
-
+  // Pagado sale de la cabecera (`paid_ref` / `paid_ves`: solo pagos activos, lo mantienen
+  // `register_payment` y `cancel_payment`), igual que en la lista y sin permiso. La lista de
+  // pagos es historial: incluye los anulados, con su `status`, y no se suma.
   return {
-    ...mappedPurchase,
-    // Prefer sums from payment history so the status card stays in sync with the table.
-    paidRef: paidRefFromPayments,
-    paidVes: paidVesFromPayments,
+    ...mapPurchase(data),
     items: (data.purchase_items ?? []).map((item) => mapPurchaseDetailItem(item, recipes)),
     payments: mappedPayments,
     supplier: data.supplier ? mapContact(data.supplier) : undefined,

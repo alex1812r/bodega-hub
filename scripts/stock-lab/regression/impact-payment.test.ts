@@ -19,12 +19,20 @@ import { randomUUID } from "node:crypto";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { createAdminSupabaseClient } from "../../../src/lib/supabase/admin-client";
+import { createRouteSupabaseClient } from "../../../src/lib/supabase/route-client";
 import { computePaymentImpact, type PaymentImpact } from "../../../src/modules/payments/services/paymentImpact";
 import { loadPaymentImpactInputs } from "../../../src/modules/payments/services/paymentImpact.server";
+import { getPurchaseById } from "../../../src/modules/purchases/services/purchases.server";
 import type { UserRole } from "../../../src/shared/auth/permissions";
 import { FULL_IMPACT_LEDGER_ACCESS } from "../../../src/shared/impact/impactAccess";
+import { documentBalance } from "../../../src/shared/payments/documentBalance";
 import type { LabRoleKey } from "../agents/base";
 import { Lab } from "../scenarios/db";
+
+// GQ-10: `getPurchaseById` (lo que sirve GET /api/purchases/{id}) corre con los clientes del lab.
+jest.mock("../../../src/lib/supabase/route-client", () => ({ createRouteSupabaseClient: jest.fn() }));
+jest.mock("../../../src/lib/supabase/admin-client", () => ({ createAdminSupabaseClient: jest.fn() }));
 
 type Row = Record<string, unknown>;
 type RpcResult = { data: unknown; error: { message: string; code?: string } | null };
@@ -390,6 +398,8 @@ async function cleanup(): Promise<void> {
 beforeAll(async () => {
   lab = await setup("abrir el laboratorio", () => Lab.open("rimpp"));
   vaultAtStart = await setup("saldos iniciales del baúl", () => vaultBalances());
+  (createRouteSupabaseClient as jest.Mock).mockResolvedValue(await setup("sesión de admin", () => lab.supa("admin")));
+  (createAdminSupabaseClient as jest.Mock).mockImplementation(() => lab.service());
 });
 
 afterAll(async () => {
@@ -590,6 +600,25 @@ describe("CNF-14 · impact de anular un pago a proveedor = lo que aplica cancel_
     expect(impact.effects).toEqual([
       expect.objectContaining({ currency: "VES", delta: impact.payment.amountVes, target: "baul_efectivo_ves" }),
     ]);
+
+    // GQ-10 · el detalle de la compra (GET /api/purchases/{id}, con permiso para ver pagos) tras
+    // anular: el pago sigue en el historial como anulado y no cuenta; pendiente = total.
+    const { purchase_id: purchaseId } = await one("select purchase_id from public.payments where id = $1", [paymentId]);
+    const detail = await getPurchaseById(String(purchaseId), lab.storeId, { canViewPayments: true });
+
+    expect(detail.payments.map((payment) => [payment.id, payment.status])).toEqual([[paymentId, "anulado"]]);
+    expect({ paidRef: detail.paidRef, paidVes: detail.paidVes }).toEqual({ paidRef: 0, paidVes: 0 });
+    expect(
+      documentBalance({
+        paidRef: detail.paidRef,
+        paidVes: detail.paidVes,
+        refRateVes: detail.refRateVes,
+        status: detail.status,
+        totalRef: detail.totalRef,
+        totalVes: detail.totalVes,
+        type: "purchase",
+      }),
+    ).toMatchObject({ paymentStatus: "pendiente", pendingVes: detail.totalVes, settled: false });
   });
 
   it("desde el baúl en efectivo USD: vuelve REF al baúl (efectivo REF)", async () => {

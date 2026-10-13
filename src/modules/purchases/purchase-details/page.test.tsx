@@ -719,6 +719,20 @@ describe("PurchaseDetailsPage · secciones plegables (DET-02)", () => {
     expect(sectionToggle("Pagos")).toHaveTextContent(`1 pago · pagado ${formatRefUsd(40)}`);
   });
 
+  // GQ-10: lo que devuelve el BFF tras anular el único pago de la compra.
+  it("pago anulado: sigue en Pagos marcado «Anulado», no cuenta como pagado y se puede pagar", async () => {
+    await renderPage({ paidRef: 0, paidVes: 0, payments: [{ ...PAYMENT, status: "anulado" }] });
+
+    expect(figure("Pagado")).toContain(formatRefUsd(0));
+    expect(figure("Saldo")).toContain(formatRefUsd(40));
+    expect(figure("Estado de pago")).toBe("Pendiente");
+    expect(payButton()).toBeInTheDocument();
+
+    const row = within(screen.getByText("TRX-DET02").closest("tr") as HTMLElement);
+
+    expect(row.getByText("Anulado")).toBeInTheDocument();
+  });
+
   it("compra sin pagos: estado vacío dentro de Pagos, sin error", async () => {
     await renderPage();
 
